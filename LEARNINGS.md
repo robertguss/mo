@@ -12,9 +12,15 @@
   sources and arena until all consumers of the returned module set finish.
 - `mo_protocol_build` returns an owned, loaded but uninitialized image. Its
   sources are embedded; private runtime modules are not library modules. The
-  builder checks the header entry points and their full structural type shapes
-  before returning the image, including field and case order. Callers follow
-  each function's loaded parameter ownership when transferring cells.
+  builder checks the header and catalog entry points and their full structural
+  type shapes before returning the image, including field and case order and
+  recursive Json identity. Callers follow each function's loaded parameter
+  ownership when transferring cells.
+- The private protocol ABI sees lowered field names: source enum payloads use
+  `"0"`, while builtin Option and Result payloads are unnamed. That ABI check
+  is not service shape inference. Service schemas use the explicit shape
+  table, including its payload flags, and copy names into the protocol heap
+  so catalog generation does not borrow the service image.
 - The `MO_LIMIT_MCP_HEADER_*` bounds are experimental measurement targets,
   not frozen defaults. Header scanning retains only delimiter state and byte
   counts between fragments. Header parsing returns spans into native ingress;

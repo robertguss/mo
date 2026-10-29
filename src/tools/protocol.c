@@ -25,7 +25,25 @@ enum abi_type {
     ABI_HEAD_RESULT,
     ABI_SCAN_RESULT,
     ABI_SPAN_OPTION,
-    ABI_INT_RESULT
+    ABI_INT_RESULT,
+    ABI_TEXT,
+    ABI_INTS,
+    ABI_INT_OPTION,
+    ABI_MCP_KIND,
+    ABI_MCP_KINDS,
+    ABI_MCP_FIELD,
+    ABI_MCP_FIELDS,
+    ABI_MCP_CASE,
+    ABI_MCP_CASES,
+    ABI_MCP_PAYLOAD,
+    ABI_MCP_TOOL,
+    ABI_MCP_TOOLS,
+    ABI_MCP_SERVICE,
+    ABI_JSON,
+    ABI_JSON_NUMBER,
+    ABI_JSON_ARRAY,
+    ABI_JSON_OBJECT,
+    ABI_COUNT
 };
 
 struct abi_field {
@@ -36,7 +54,7 @@ struct abi_field {
 struct abi_case {
     const char *name;
     uint32_t count;
-    struct abi_field fields[5];
+    struct abi_field fields[6];
 };
 
 static const struct abi_case span[] = {{"Span", 2, {{"start", ABI_INT}, {"size", ABI_INT}}}};
@@ -61,10 +79,55 @@ static const struct abi_case scan_result[] = {{"Ok", 1, {{NULL, ABI_SCAN}}},
 static const struct abi_case span_option[] = {{.name = "None"}, {"Some", 1, {{NULL, ABI_SPAN}}}};
 static const struct abi_case int_result[] = {{"Ok", 1, {{NULL, ABI_INT}}},
                                              {"Error", 1, {{NULL, ABI_PROBLEM}}}};
+static const struct abi_case int_option[] = {{.name = "None"}, {"Some", 1, {{NULL, ABI_INT}}}};
+static const struct abi_case mcp_kind[] = {
+    {.name = "UnitType"},
+    {.name = "BoolType"},
+    {.name = "ByteType"},
+    {.name = "IntType"},
+    {.name = "FloatType"},
+    {.name = "CharType"},
+    {.name = "TimeType"},
+    {.name = "DurationType"},
+    {.name = "DecimalType"},
+    {.name = "TextType"},
+    {.name = "BytesType"},
+    {.name = "BigIntType"},
+    {"TupleType", 1, {{"0", ABI_INTS}}},
+    {"ListType", 1, {{"0", ABI_INT}}},
+    {"SetType", 1, {{"0", ABI_INT}}},
+    {"MapType", 2, {{"key", ABI_INT}, {"value", ABI_INT}}},
+    {.name = "RangeType"},
+    {"StructType", 1, {{"0", ABI_MCP_FIELDS}}},
+    {"ChoiceType", 1, {{"0", ABI_MCP_CASES}}},
+};
+static const struct abi_case mcp_field[] = {
+    {"Field", 2, {{"name", ABI_TEXT}, {"type_index", ABI_INT}}}};
+static const struct abi_case mcp_case[] = {
+    {"Case", 2, {{"name", ABI_TEXT}, {"payload", ABI_MCP_PAYLOAD}}}};
+static const struct abi_case mcp_payload[] = {
+    {.name = "Empty"}, {"Unnamed", 1, {{"0", ABI_INT}}}, {"Named", 1, {{"0", ABI_MCP_FIELDS}}}};
+static const struct abi_case mcp_tool[] = {{"Tool",
+                                            6,
+                                            {{"name", ABI_TEXT},
+                                             {"description", ABI_TEXT},
+                                             {"read_only", ABI_BOOL},
+                                             {"arguments", ABI_MCP_FIELDS},
+                                             {"reply", ABI_INT},
+                                             {"error", ABI_INT_OPTION}}}};
+static const struct abi_case mcp_service[] = {
+    {"Service", 2, {{"types", ABI_MCP_KINDS}, {"tools", ABI_MCP_TOOLS}}}};
+static const struct abi_case json[] = {{.name = "Null"},
+                                       {"Boolean", 1, {{"0", ABI_BOOL}}},
+                                       {"Number", 1, {{"0", ABI_JSON_NUMBER}}},
+                                       {"String", 1, {{"0", ABI_TEXT}}},
+                                       {"Array", 1, {{"0", ABI_JSON_ARRAY}}},
+                                       {"Object", 1, {{"0", ABI_JSON_OBJECT}}}};
+static const struct abi_case json_number[] = {{"JsonNumber", 1, {{"text", ABI_TEXT}}}};
 
 static const struct {
     enum mo_type_kind kind;
-    enum abi_type element;
+    enum abi_type element, value;
     uint32_t count;
     const struct abi_case *cases;
 } abi[] = {
@@ -83,15 +146,40 @@ static const struct {
     [ABI_SCAN_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = scan_result},
     [ABI_SPAN_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = span_option},
     [ABI_INT_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = int_result},
+    [ABI_TEXT] = {.kind = MO_TYPE_TEXT},
+    [ABI_INTS] = {.kind = MO_TYPE_LIST, .element = ABI_INT},
+    [ABI_INT_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = int_option},
+    [ABI_MCP_KIND] = {.kind = MO_TYPE_CHOICE, .count = 19, .cases = mcp_kind},
+    [ABI_MCP_KINDS] = {.kind = MO_TYPE_LIST, .element = ABI_MCP_KIND},
+    [ABI_MCP_FIELD] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = mcp_field},
+    [ABI_MCP_FIELDS] = {.kind = MO_TYPE_LIST, .element = ABI_MCP_FIELD},
+    [ABI_MCP_CASE] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = mcp_case},
+    [ABI_MCP_CASES] = {.kind = MO_TYPE_LIST, .element = ABI_MCP_CASE},
+    [ABI_MCP_PAYLOAD] = {.kind = MO_TYPE_CHOICE, .count = 3, .cases = mcp_payload},
+    [ABI_MCP_TOOL] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = mcp_tool},
+    [ABI_MCP_TOOLS] = {.kind = MO_TYPE_LIST, .element = ABI_MCP_TOOL},
+    [ABI_MCP_SERVICE] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = mcp_service},
+    [ABI_JSON] = {.kind = MO_TYPE_CHOICE, .count = 6, .cases = json},
+    [ABI_JSON_NUMBER] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = json_number},
+    [ABI_JSON_ARRAY] = {.kind = MO_TYPE_LIST, .element = ABI_JSON},
+    [ABI_JSON_OBJECT] = {.kind = MO_TYPE_MAP, .element = ABI_TEXT, .value = ABI_JSON},
 };
 
-static bool matches(const struct mo_types *types, uint32_t index, enum abi_type expected) {
+static bool matches(const struct mo_types *types, uint32_t index, enum abi_type expected,
+                    uint32_t *seen) {
+    if (seen[expected] != MO_NO_INDEX)
+        return seen[expected] == index;
+    seen[expected] = index;
     const struct mo_type *type = &types->items[index];
     if (type->kind != abi[expected].kind)
         return false;
     if (type->kind == MO_TYPE_LIST)
         return type->parameter_count == 1 &&
-               matches(types, type->parameters[0], abi[expected].element);
+               matches(types, type->parameters[0], abi[expected].element, seen);
+    if (type->kind == MO_TYPE_MAP)
+        return type->parameter_count == 2 &&
+               matches(types, type->parameters[0], abi[expected].element, seen) &&
+               matches(types, type->parameters[1], abi[expected].value, seen);
     if (type->kind != MO_TYPE_CHOICE)
         return true;
     if (type->case_count != abi[expected].count)
@@ -105,7 +193,7 @@ static bool matches(const struct mo_types *types, uint32_t index, enum abi_type 
         for (uint32_t j = 0; j < actual->field_count; j++) {
             const char *a = actual->fields[j].name, *b = wanted->fields[j].name;
             if ((a == NULL) != (b == NULL) || (a != NULL && strcmp(a, b) != 0) ||
-                !matches(types, actual->fields[j].type, wanted->fields[j].type))
+                !matches(types, actual->fields[j].type, wanted->fields[j].type, seen))
                 return false;
         }
     }
@@ -122,9 +210,13 @@ static bool valid_abi(const struct mo_image *image) {
         {"Http.parse_headers", 2, {ABI_BYTES, ABI_LIMITS}, ABI_HEAD_RESULT},
         {"Http.bearer_span", 2, {ABI_BYTES, ABI_HEAD}, ABI_SPAN_OPTION},
         {"Http.chunk_size", 3, {ABI_BYTES, ABI_INT, ABI_INT}, ABI_INT_RESULT},
+        {"Mcp.catalog", 1, {ABI_MCP_SERVICE}, ABI_JSON},
     };
     const struct mo_bytecode *file = mo_image_bytecode(image);
     const struct mo_types *types = mo_image_types(image);
+    uint32_t seen[ABI_COUNT];
+    for (uint32_t i = 0; i < ABI_COUNT; i++)
+        seen[i] = MO_NO_INDEX;
     for (size_t i = 0; i < sizeof functions / sizeof *functions; i++) {
         bool found = false;
         for (uint32_t j = 0; j < file->function_count; j++) {
@@ -135,10 +227,10 @@ static bool valid_abi(const struct mo_image *image) {
                 continue;
             if (found || function->kind != MO_FUNCTION_FUNCTION || function->spec_code ||
                 function->capture_count != 0 || function->parameter_count != functions[i].count ||
-                !matches(types, function->result_type, functions[i].result))
+                !matches(types, function->result_type, functions[i].result, seen))
                 return false;
             for (uint32_t k = 0; k < function->parameter_count; k++)
-                if (!matches(types, function->parameters[k].type, functions[i].parameters[k]))
+                if (!matches(types, function->parameters[k].type, functions[i].parameters[k], seen))
                     return false;
             found = true;
         }

@@ -1,6 +1,23 @@
 module Mcp
-expose success, application_error
+expose success, application_error, catalog
 use Json
+use McpSchema
+use McpType
+
+fn catalog(descriptor: McpType.Service) : Json.Json
+  var tools = []
+  for tool in descriptor.tools
+    tools = tools.append(
+      Json.Object({
+        "name": Json.String(tool.name),
+        "description": Json.String(tool.description),
+        "inputSchema": McpSchema.input(descriptor.types, tool.arguments),
+        "outputSchema": McpSchema.output(descriptor.types, tool.reply, tool.error)
+      })
+    )
+  end
+  Json.Object({"tools": Json.Array(tools)})
+end
 
 fn success(value: Json.Json) : Json.Json
   tool_result(Json.Object({"value": value}), false)

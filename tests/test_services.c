@@ -5,6 +5,7 @@
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "program_fixture.h"
+#include "tools/protocol.h"
 #include "vm/vm.h"
 
 #include <time.h>
@@ -461,6 +462,8 @@ static void shared_shape_work(void) {
     mo_arena_free(&arena);
 }
 
+static void descriptor_results(struct mo_image *service);
+
 static void descriptor(void) {
     struct fixture f;
     init(&f,
@@ -532,6 +535,7 @@ static void descriptor(void) {
     table_refusals(file);
     schema_refusals(file, &wire);
     shape_refusals(file, &wire);
+    descriptor_results(image);
     CHECK(file->service_count == 1 && file->header.flags == MO_BYTECODE_SERVICE_FLAG);
     MO_ASSERT(file->service_count == 1);
     const struct mo_bytecode_service *s = &file->services[0];
@@ -695,6 +699,190 @@ static void selected_overload(void) {
     mo_arena_free(&arena);
 }
 
+static uint32_t protocol_function(const struct mo_bytecode *file, const char *name) {
+    for (uint32_t i = 0; i < file->function_count; i++)
+        if (named(file, file->functions[i].name, name))
+            return i;
+    MO_ASSERT(false);
+    return 0;
+}
+
+static struct mo_cell protocol_call(const struct mo_bytecode *file, struct mo_process *process,
+                                    uint32_t index, struct mo_cell argument) {
+    const struct mo_bytecode_function *function = &file->functions[index];
+    MO_ASSERT(function->parameter_count == 1);
+    if (function->parameters[0].ownership == MO_PARAMETER_OWNED)
+        argument = mo_value_dup(mo_process_heap(process), function->parameters[0].type, argument);
+    struct mo_cell result;
+    struct mo_defect defect;
+    MO_ASSERT(mo_call(process, index, &argument, 1, &result, &defect) == MO_RETURNED);
+    return result;
+}
+
+static struct mo_cell json_property(struct mo_heap *heap, const struct mo_types *types,
+                                    uint32_t json, struct mo_cell object, const char *name) {
+    MO_ASSERT(mo_cell_get_tag(object) == 5);
+    uint32_t map = types->items[json].cases[5].fields[0].type;
+    struct mo_cell key, result;
+    MO_ASSERT(mo_value_text(heap, name, strlen(name), &key));
+    bool found;
+    MO_ASSERT(mo_table_get(heap, map, mo_cell_get_payload(object), key, &found, &result));
+    mo_value_drop(heap, types->items[map].parameters[0], key);
+    MO_ASSERT(found);
+    return result;
+}
+
+static void descriptor_refusals(struct mo_image *image, struct mo_image *service) {
+    bool refused = false, succeeded = false;
+    struct mo_limits limits = mo_limits_default();
+    for (size_t budget = 256; budget <= 65536; budget *= 2) {
+        limits.heap_size = budget;
+        struct mo_process *process = mo_process_new(image, &limits);
+        if (process == NULL)
+            continue;
+        struct mo_heap *heap = mo_process_heap(process);
+        struct mo_protocol_descriptor value = {MO_NO_INDEX, mo_cell_int(73)};
+        if (mo_protocol_descriptor(image, heap, service, 0, &value)) {
+            succeeded = true;
+            mo_value_drop(heap, value.type, value.value);
+        } else {
+            refused = true;
+            CHECK(value.type == MO_NO_INDEX && mo_cell_get_int(value.value) == 73);
+        }
+        CHECK(mo_heap_objects(heap) == 0);
+        mo_process_free(process);
+    }
+    CHECK(refused && succeeded);
+}
+
+static void descriptor_results(struct mo_image *service) {
+    struct mo_image *image = mo_protocol_build();
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    struct mo_protocol_descriptor descriptor;
+    MO_ASSERT(mo_protocol_descriptor(image, heap, service, 0, &descriptor));
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_types *types = mo_image_types(image);
+    uint32_t catalog = protocol_function(file, "Mcp.catalog");
+    uint32_t json = file->functions[catalog].result_type;
+    struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
+    struct mo_cell tools = mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
+    CHECK(mo_list_size(tools) == 8);
+    const char *expected[] = {"array",      "boolean", "boolean", "#/$defs/t0",
+                              "#/$defs/t0", "array",   "boolean", "array"};
+    for (uint32_t i = 0; i < 8; i++) {
+        struct mo_cell tool, branch;
+        MO_ASSERT(mo_list_get(tools, i, &tool));
+        struct mo_cell output = json_property(heap, types, json, tool, "outputSchema");
+        struct mo_cell branches =
+            mo_cell_get_payload(json_property(heap, types, json, output, "oneOf"));
+        CHECK(mo_list_size(branches) == (i == 2 || i == 6 || i == 7 ? 3U : 2U));
+        MO_ASSERT(mo_list_get(branches, 0, &branch));
+        struct mo_cell properties = json_property(heap, types, json, branch, "properties");
+        struct mo_cell value = json_property(heap, types, json, properties, "value");
+        struct mo_cell kind = mo_cell_get_payload(
+            json_property(heap, types, json, value, i == 3 || i == 4 ? "$ref" : "type"));
+        size_t size;
+        const uint8_t *bytes = mo_value_data(kind, &size);
+        CHECK(size == strlen(expected[i]) && memcmp(bytes, expected[i], size) == 0);
+    }
+    mo_value_drop(heap, json, result);
+    mo_value_drop(heap, descriptor.type, descriptor.value);
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
+static void descriptor_catalog(struct mo_image *service) {
+    struct mo_image *image = mo_protocol_build();
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    descriptor_refusals(image, service);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    struct mo_protocol_descriptor descriptor;
+    bool built = mo_protocol_descriptor(image, heap, service, 0, &descriptor);
+    CHECK(built);
+    mo_image_free(service);
+    if (built) {
+        const struct mo_bytecode *file = mo_image_bytecode(image);
+        const struct mo_types *types = mo_image_types(image);
+        uint32_t catalog = protocol_function(file, "Mcp.catalog");
+        uint32_t text = protocol_function(file, "Json.to_text@Json");
+        uint32_t json = file->functions[catalog].result_type;
+        struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
+        struct mo_cell tools =
+            mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
+        CHECK(mo_list_size(tools) == 3);
+        struct mo_cell entry, record;
+        MO_ASSERT(mo_list_get(tools, 1, &entry) && mo_list_get(tools, 2, &record));
+        const char *keys[] = {"inputSchema", "outputSchema"};
+        for (uint32_t i = 0; i < 2; i++) {
+            struct mo_cell a = protocol_call(file, process, text,
+                                             json_property(heap, types, json, entry, keys[i]));
+            struct mo_cell b = protocol_call(file, process, text,
+                                             json_property(heap, types, json, record, keys[i]));
+            size_t a_size, b_size;
+            const uint8_t *a_bytes = mo_value_data(a, &a_size),
+                          *b_bytes = mo_value_data(b, &b_size);
+            CHECK(a_size == b_size && memcmp(a_bytes, b_bytes, a_size) == 0);
+            mo_value_drop(heap, file->functions[text].result_type, a);
+            mo_value_drop(heap, file->functions[text].result_type, b);
+        }
+        struct mo_cell name = mo_cell_get_payload(json_property(heap, types, json, entry, "name"));
+        size_t size;
+        const uint8_t *bytes = mo_value_data(name, &size);
+        CHECK(size == 10 && memcmp(bytes, "copy_entry", size) == 0);
+        struct mo_cell description =
+            mo_cell_get_payload(json_property(heap, types, json, entry, "description"));
+        bytes = mo_value_data(description, &size);
+        CHECK(size == 17 && memcmp(bytes, "Exact \"entry\". é", size) == 0);
+        struct mo_cell input = json_property(heap, types, json, entry, "inputSchema");
+        struct mo_cell arguments = json_property(heap, types, json, input, "properties");
+        (void)json_property(heap, types, json, arguments, "_item");
+        struct mo_cell definitions = json_property(heap, types, json, input, "$defs");
+        struct mo_cell shape = json_property(heap, types, json, definitions, "t0");
+        struct mo_cell properties = json_property(heap, types, json, shape, "properties");
+        (void)json_property(heap, types, json, properties, "name");
+        (void)json_property(heap, types, json, properties, "kind");
+        shape = json_property(heap, types, json, definitions, "t1");
+        struct mo_cell choices =
+            mo_cell_get_payload(json_property(heap, types, json, shape, "oneOf"));
+        CHECK(mo_list_size(choices) == 4);
+        struct mo_cell echo, variant;
+        MO_ASSERT(mo_list_get(tools, 0, &echo));
+        input = json_property(heap, types, json, echo, "inputSchema");
+        definitions = json_property(heap, types, json, input, "$defs");
+        shape = json_property(heap, types, json, definitions, "t2");
+        choices = mo_cell_get_payload(json_property(heap, types, json, shape, "oneOf"));
+        CHECK(mo_list_size(choices) == 1);
+        MO_ASSERT(mo_list_get(choices, 0, &variant));
+        properties = json_property(heap, types, json, variant, "properties");
+        (void)json_property(heap, types, json, properties, "fields");
+        shape = json_property(heap, types, json, definitions, "t3");
+        choices = mo_cell_get_payload(json_property(heap, types, json, shape, "oneOf"));
+        MO_ASSERT(mo_list_get(choices, 1, &variant));
+        properties = json_property(heap, types, json, variant, "properties");
+        (void)json_property(heap, types, json, properties, "value");
+        MO_ASSERT(mo_list_get(choices, 2, &variant));
+        properties = json_property(heap, types, json, variant, "properties");
+        (void)json_property(heap, types, json, properties, "fields");
+        mo_value_drop(heap, json, result);
+        mo_value_drop(heap, descriptor.type, descriptor.value);
+    }
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
 static void source_shapes(void) {
     struct fixture f;
     init(&f, "module Main\n"
@@ -702,10 +890,14 @@ static void source_shapes(void) {
              "struct Record\nname: Text\nkind: EntryKind\nend\n"
              "enum One\nOnly(name: Text, kind: EntryKind)\nend\n"
              "enum Payload\nEmpty\nUnnamed(Int)\nNamed(value: Int)\nend\n"
-             "service\nstate Int = 0\ntools echo\ntoken from env \"TOKEN\"\nend\n"
+             "service\nstate Int = 0\ntools echo, copy_entry, copy_record\n"
+             "token from env \"TOKEN\"\nend\n"
              "fn echo(_state: Int, _now: Time, record: Record, one: One, payload: Payload, "
              "entry: Entry, entries: List(Entry)) : (Record, One, Payload, Entry, List(Entry))\n"
-             "(record, one, payload, entry, entries)\nend\n");
+             "(record, one, payload, entry, entries)\nend\n"
+             "## Exact \"entry\". é\n"
+             "fn copy_entry(_state: Int, _now: Time, _item: Entry) : Entry\n_item\nend\n"
+             "fn copy_record(_state: Int, _now: Time, _item: Record) : Record\n_item\nend\n");
     MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
     const char *modules[] = {"Main"};
     f.set.names = modules;
@@ -765,7 +957,7 @@ static void source_shapes(void) {
     CHECK(found == 5);
     shape_refusals(file, &wire);
     seed(&wire, "service-shapes.bc");
-    mo_image_free(image);
+    descriptor_catalog(image);
     text_roundtrip(&wire);
     mo_buffer_free(&wire);
     mo_diags_free(&diags);

@@ -1,5 +1,5 @@
 module McpType
-expose Kind(..), Field(..), Case(..), Payload(..)
+expose Kind(..), Field(..), Case(..), Payload(..), Tool(..), Service(..)
 
 enum Kind
   UnitType
@@ -37,4 +37,18 @@ enum Payload
   Empty
   Unnamed(Int)
   Named(List(Field))
+end
+
+struct Tool
+  name: Text
+  description: Text
+  read_only: Bool
+  arguments: List(Field)
+  reply: Int
+  error: Option(Int)
+end
+
+struct Service
+  types: List(Kind)
+  tools: List(Tool)
 end
