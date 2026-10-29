@@ -40,6 +40,55 @@ static struct mo_cell payload(uint32_t type, struct mo_cell value) {
     return shape == MO_CASE_BOXED ? mo_value_field(result, 0) : result;
 }
 
+static bool same_key(const struct mo_protocol_values *types, struct mo_heap *heap, uint32_t index,
+                     struct mo_cell left, struct mo_cell right) {
+    const struct mo_type *type = &types->service->items[index];
+    if (type->kind == MO_TYPE_INT) {
+        bool equal;
+        MO_ASSERT(mo_value_equal(heap, types->value, left, right, &equal));
+        return equal;
+    }
+    MO_ASSERT(type->kind == MO_TYPE_SET);
+    struct mo_cell a = payload(types->value, left), b = payload(types->value, right);
+    if (mo_list_size(a) != mo_list_size(b))
+        return false;
+    for (uint32_t i = 0; i < mo_list_size(a); i++) {
+        struct mo_cell item;
+        MO_ASSERT(mo_list_get(a, i, &item));
+        bool found = false;
+        for (uint32_t j = 0; !found && j < mo_list_size(b); j++) {
+            struct mo_cell other;
+            MO_ASSERT(mo_list_get(b, j, &other));
+            found = same_key(types, heap, type->parameters[0], item, other);
+        }
+        if (!found)
+            return false;
+    }
+    return true;
+}
+
+static bool unique_keys(const struct mo_protocol_values *types, struct mo_heap *heap,
+                        uint32_t index, struct mo_cell value) {
+    const struct mo_type *type = &types->service->items[index];
+    if (type->kind != MO_TYPE_SET && type->kind != MO_TYPE_MAP)
+        return true;
+    struct mo_cell items = payload(types->value, value);
+    uint32_t stride = type->kind == MO_TYPE_MAP ? 2 : 1;
+    for (uint32_t i = 0; i < mo_list_size(items); i += stride) {
+        struct mo_cell key;
+        MO_ASSERT(mo_list_get(items, i, &key));
+        if (!unique_keys(types, heap, type->parameters[0], key))
+            return false;
+        for (uint32_t j = 0; j < i; j += stride) {
+            struct mo_cell previous;
+            MO_ASSERT(mo_list_get(items, j, &previous));
+            if (same_key(types, heap, type->parameters[0], key, previous))
+                return false;
+        }
+    }
+    return true;
+}
+
 static void roundtrip(struct mo_process *process, struct mo_cell json) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     struct mo_protocol_descriptor descriptor;
@@ -67,9 +116,12 @@ static void roundtrip(struct mo_process *process, struct mo_cell json) {
         if (mo_cell_get_tag(decoded) == 0) {
             uint32_t native_type = types.descriptor->tools[0].argument_types[i];
             struct mo_cell value = payload(result_type, decoded), copied = mo_cell_int(73);
+            enum mo_protocol_value_status wanted = unique_keys(&types, heap, native_type, value)
+                                                       ? MO_PROTOCOL_VALUE_OK
+                                                       : MO_PROTOCOL_VALUE_INVALID;
             enum mo_protocol_value_status status = mo_protocol_value_unpack(
                 &types, native, native_type, value, MO_LIMIT_MCP_BIGINT_DIGITS + 2, &copied);
-            MO_ASSERT(status == MO_PROTOCOL_VALUE_OK || status == MO_PROTOCOL_VALUE_INVALID);
+            MO_ASSERT(status == wanted);
             if (status == MO_PROTOCOL_VALUE_OK) {
                 struct mo_cell packed;
                 MO_ASSERT(mo_protocol_value_pack(&types, heap, native_type, copied,
@@ -80,6 +132,7 @@ static void roundtrip(struct mo_process *process, struct mo_cell json) {
                 struct mo_cell expected = call(process, encode, args);
                 args[2] = packed;
                 struct mo_cell actual = call(process, encode, args);
+                MO_ASSERT(mo_cell_get_tag(expected) == 0 && mo_cell_get_tag(actual) == 0);
                 bool equal;
                 MO_ASSERT(mo_value_equal(heap, json_result, expected, actual, &equal) && equal);
                 mo_value_drop(heap, json_result, expected);
