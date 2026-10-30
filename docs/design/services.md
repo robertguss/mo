@@ -463,6 +463,18 @@ with array params, receives HTTP 202 with an empty body and never runs a tool.
 The regression-list line requesting HTTP 400 was a mistake. This unit returns
 `Notification` for those envelopes; the HTTP mapping belongs to the listener.
 
+### MO-160 node admission (D326 and D330)
+
+Robert approved D330 on 30 Oct 2026 at 16:59 UTC. Both node-overflow paths return
+HTTP 413 with an empty body, before consuming any rate token or admitting service
+work. The native prescan refuses when Q + 1 exceeds 16,448, where Q counts opening
+brackets, opening braces and commas outside strings. After parsing, Mo enforces
+the exact limits of 16,384 payload nodes and 64 envelope nodes. Each Json value
+counts as one node; object keys count toward bytes, not nodes. For `tools/call`,
+only `params.arguments` is payload. Everything else belongs to the envelope;
+methods without a payload must fit within 64 nodes. Wrappers and application
+Bytes elements count. D330 assigns the response without changing those limits.
+
 ## 10. Done means
 
 Mo's own agents take every task from the job queue for one week with no restart, and a deliberate

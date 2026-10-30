@@ -120,7 +120,7 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
-PROTOCOL_SOURCES := runtime/http.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
+PROTOCOL_SOURCES := runtime/http.mo runtime/http-authority.mo runtime/http-policy.mo runtime/http-body.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
 build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCES) Makefile
 	python3 ci/embed_protocol.py $@ $(PROTOCOL_SOURCES)
 	@touch $@

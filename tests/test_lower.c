@@ -2350,6 +2350,8 @@ int main(int argc, char **argv) {
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
                             "tests/runtime/http-check.mo") == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                            "tests/runtime/http-transport-check.mo") == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
                             "tests/runtime/mcp-check.mo") == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
                             "tests/runtime/mcp-schema-check.mo") == 0);
