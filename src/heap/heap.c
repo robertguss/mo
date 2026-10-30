@@ -223,6 +223,7 @@ struct mo_heap *mo_heap_new(struct mo_heap_image *image, const struct mo_limits 
     process->types = image->types;
     process->image = image;
     process->used = sizeof *process;
+    process->peak = process->used;
     process->limit = limits->heap_size;
     process->hash_key = image->hash_key;
     process->abilities = image->abilities;
@@ -233,6 +234,11 @@ struct mo_heap *mo_heap_new(struct mo_heap_image *image, const struct mo_limits 
 size_t mo_heap_used(const struct mo_heap *process) {
     MO_ASSERT(process != NULL);
     return process->used;
+}
+
+size_t mo_heap_peak(const struct mo_heap *process) {
+    MO_ASSERT(process != NULL);
+    return process->peak;
 }
 
 size_t mo_heap_objects(const struct mo_heap *process) {
@@ -268,6 +274,8 @@ struct mo_allocation *mo_heap_allocate(struct mo_heap *process, uint32_t type, u
     }
     process->allocations = allocation;
     process->used += size;
+    if (process->used > process->peak)
+        process->peak = process->used;
     process->objects++;
     return allocation;
 }
@@ -440,6 +448,8 @@ void *mo_scratch_resize(struct mo_scratch *scratch, void *bytes, size_t old_size
     errno = ENOSPC;
     void *result = mo_arena_resize(&scratch->arena, bytes, old_size, new_size, 16);
     scratch->process->used = scratch->process->used - before + scratch->arena.used;
+    if (scratch->process->used > scratch->process->peak)
+        scratch->process->peak = scratch->process->used;
     MO_ASSERT(scratch->process->used <= scratch->process->limit);
     return result;
 }

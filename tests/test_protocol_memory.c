@@ -163,6 +163,7 @@ static unsigned headers(struct mo_image *image, uint32_t parse, unsigned fault, 
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
     mo_process_confidential(process);
+    mo_process_account_stack(process);
     mo_process_instruction_limit(process, budget);
     struct mo_heap *heap = mo_process_heap(process);
     const struct mo_bytecode_function *function = &mo_image_bytecode(image)->functions[parse];
@@ -195,20 +196,78 @@ static unsigned headers(struct mo_image *image, uint32_t parse, unsigned fault, 
     return count;
 }
 
+static void request_budget(struct mo_image *image, uint32_t chunk) {
+    const struct mo_bytecode_function *function = &mo_image_bytecode(image)->functions[chunk];
+    for (unsigned pressure = 0; pressure < 2; pressure++) {
+        struct mo_limits limits = mo_limits_default();
+        limits.heap_size = MO_LIMIT_MCP_HEADER_HEAP;
+        limits.stack_size = MO_LIMIT_MCP_HEADER_HEAP;
+        struct mo_process *process = mo_process_new(image, &limits);
+        MO_ASSERT(process != NULL);
+        mo_process_confidential(process);
+        mo_process_account_stack(process);
+        mo_process_instruction_limit(process, MO_LIMIT_MCP_HEADER_WORK);
+        struct mo_heap *heap = mo_process_heap(process);
+        struct mo_cell bytes[] = {mo_cell_byte('0'), mo_cell_byte('\r'), mo_cell_byte('\n')};
+        struct mo_cell input;
+        MO_ASSERT(mo_value_list(heap, function->parameters[0].type, bytes, 3, &input));
+        struct mo_scratch native;
+        mo_scratch_init(&native, heap);
+        size_t available = limits.heap_size - mo_process_memory_used(process);
+        size_t size = pressure == 0 ? 4096 : available - MO_ARENA_CHUNK_HEADER - 256;
+        uint8_t *buffer = mo_scratch_resize(&native, NULL, 0, size);
+        MO_ASSERT(buffer != NULL);
+        memset(buffer, 0x69, size);
+        uint64_t previous = mo_process_instructions_remaining(process), consumed = 0;
+        for (unsigned repeat = 0; repeat < (pressure == 0 ? 2u : 1u); repeat++) {
+            struct mo_cell arguments[] = {input, mo_cell_int(0), mo_cell_int(8)};
+            if (function->parameters[0].ownership == MO_PARAMETER_OWNED)
+                arguments[0] = mo_value_dup(heap, function->parameters[0].type, input);
+            struct mo_cell result;
+            struct mo_defect defect;
+            enum mo_outcome outcome = mo_call(process, chunk, arguments, 3, &result, &defect);
+            CHECK(outcome == (pressure == 0 ? MO_RETURNED : MO_STOPPED));
+            if (outcome == MO_RETURNED) {
+                CHECK(mo_cell_get_tag(result) == 0);
+                mo_value_drop(heap, function->result_type, result);
+            }
+            uint64_t remaining = mo_process_instructions_remaining(process);
+            if (pressure == 0) {
+                CHECK(remaining < previous);
+                CHECK(repeat == 0 || consumed == previous - remaining);
+                consumed = previous - remaining;
+                previous = remaining;
+            }
+            CHECK(mo_process_memory_peak(process) >= mo_process_memory_used(process));
+            CHECK(mo_process_memory_peak(process) <= limits.heap_size);
+            CHECK(buffer[0] == 0x69 && buffer[size - 1] == 0x69);
+        }
+        size_t peak = mo_process_memory_peak(process);
+        mo_scratch_free(&native);
+        CHECK(mo_process_memory_peak(process) == peak);
+        CHECK(mo_process_memory_used(process) < peak);
+        mo_value_drop(heap, function->parameters[0].type, input);
+        mo_process_free(process);
+    }
+}
+
 int main(void) {
     struct mo_image *image = mo_protocol_build();
     MO_ASSERT(image != NULL);
     struct mo_limits limits = mo_limits_default();
     struct mo_defect defect;
     MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
-    uint32_t parse = UINT32_MAX;
+    uint32_t parse = UINT32_MAX, chunk = UINT32_MAX;
     const struct mo_bytecode *file = mo_image_bytecode(image);
     for (uint32_t i = 0; i < file->function_count; i++) {
         const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
         if (name->length == 18 && memcmp(name->bytes, "Http.parse_headers", 18) == 0)
             parse = i;
+        if (name->length == 15 && memcmp(name->bytes, "Http.chunk_size", 15) == 0)
+            chunk = i;
     }
-    MO_ASSERT(parse != UINT32_MAX);
+    MO_ASSERT(parse != UINT32_MAX && chunk != UINT32_MAX);
+    request_budget(image, chunk);
     scratch(image);
     unsigned count = headers(image, parse, 0, MO_LIMIT_MCP_HEADER_WORK);
     CHECK(count > 1);

@@ -40,6 +40,7 @@ struct mo_heap {
     struct mo_heap_image *image;
     struct mo_allocation *allocations;
     size_t used;
+    size_t peak;
     size_t limit;
     size_t objects;
     bool confidential;

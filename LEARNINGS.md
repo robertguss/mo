@@ -50,6 +50,13 @@
   confidential arenas; VM operand arrays and the process structure are wiped
   too. This does not suppress defect rendering: the adapter must still keep
   protocol defects out of rendering and variable visitors.
+- Confidential storage alone does not combine stack and heap limits. Call
+  `mo_process_account_stack` before execution to charge retained stack chunks
+  through the process heap, alongside native `mo_scratch` buffers. The process
+  memory counters include its native structure; instruction remaining is
+  cumulative across calls until explicitly reset. A nearly full native scratch
+  buffer plus a small scalar-returning Mo call distinguishes a charged stack from
+  an uncharged one without relying on private VM layouts.
 - Confidential arenas avoid `realloc`, which could release an unwiped old
   allocation. Moved blocks are cleared; their chunks stay charged to the arena
   until destruction. Capacity planning must include those retained chunks,

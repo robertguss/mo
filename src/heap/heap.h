@@ -88,6 +88,7 @@ MO_MUST_USE struct mo_heap *mo_heap_new(struct mo_heap_image *image,
 void mo_heap_free(struct mo_heap *process);
 void mo_heap_confidential(struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_used(const struct mo_heap *process);
+MO_MUST_USE size_t mo_heap_peak(const struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_objects(const struct mo_heap *process);
 
 /* Temporary native operands and walk storage share the heap's remaining

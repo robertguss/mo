@@ -50,6 +50,9 @@ MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image,
                                               const struct mo_limits *limits);
 void mo_process_free(struct mo_process *process);
 void mo_process_confidential(struct mo_process *process);
+void mo_process_account_stack(struct mo_process *process);
+MO_MUST_USE size_t mo_process_memory_used(const struct mo_process *process);
+MO_MUST_USE size_t mo_process_memory_peak(const struct mo_process *process);
 MO_MUST_USE struct mo_heap *mo_process_heap(struct mo_process *process);
 /* C harness I/O descriptors and portable-resolution selection. The context
  * belongs to the process; descriptors are borrowed and must outlive its calls. */
@@ -104,6 +107,7 @@ MO_MUST_USE enum mo_outcome mo_call_main(struct mo_process *process, uint32_t fu
 /* C harness hook, not a Mo resource limit. Default is unlimited. Exhaustion
  * produces an internal stop before the next instruction (for bounded fuzzing). */
 void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);
+MO_MUST_USE uint64_t mo_process_instructions_remaining(const struct mo_process *process);
 /* Exact image name bytes (length authoritative), file type index and borrowed
  * cell. The view itself lasts only for the callback; its contents belong to
  * the stopped process/image and never transfer ownership. */
