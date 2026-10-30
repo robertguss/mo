@@ -5,12 +5,7 @@
 
 #include <string.h>
 
-bool mo_protocol_catalog(struct mo_protocol_server *s, struct protocol_connection *c) {
-    if (c != NULL) {
-        c->descriptor = s->cached_descriptor;
-        c->catalog = s->cached_catalog;
-        return true;
-    }
+bool mo_protocol_catalog(struct mo_protocol_server *s) {
     struct mo_heap *heap = mo_process_heap(s->catalog_process);
     struct mo_protocol_descriptor descriptor;
     if (!mo_protocol_descriptor(s->protocol, heap, s->image, s->service_index, &descriptor))
@@ -26,7 +21,7 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, struct protocol_connectio
     if (!mo_value_text(heap, hex, sizeof hex, &args[1]))
         return false;
     args[2] = mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES);
-    if (!mo_protocol_invoke(s, c, PF_PREPARE, args, &catalog))
+    if (!mo_protocol_invoke(s, NULL, PF_PREPARE, args, &catalog))
         return false;
     if (mo_cell_get_tag(catalog) != 1)
         return false;
@@ -38,7 +33,7 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, struct protocol_connectio
         return false;
     s->cached_descriptor = descriptor.value;
     s->cached_catalog = prepared;
-    mo_protocol_drop(s, c, PF_PREPARE, catalog);
+    mo_protocol_drop(s, NULL, PF_PREPARE, catalog);
     mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->parameters[1].type, args[1]);
     return true;
 }
@@ -223,10 +218,8 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
         mo_protocol_fail(s, c, 413);
         return;
     }
-    if (!mo_protocol_catalog(s, c)) {
-        mo_protocol_fail(s, c, 413);
-        return;
-    }
+    c->descriptor = s->cached_descriptor;
+    c->catalog = s->cached_catalog;
     struct mo_heap *heap = mo_process_heap(c->process);
     struct mo_cell args[5];
     const uint8_t *body = c->body;
@@ -293,7 +286,7 @@ void mo_protocol_complete(struct mo_protocol_server *s, struct protocol_connecti
     if (failed)
         declared = mo_cell_get_payload(declared);
     struct mo_protocol_values transfer = bridge(s, c);
-    transfer.node_limit = MO_LIMIT_MCP_RESPONSE_BYTES / 2 - 1;
+    transfer.node_limit = MO_LIMIT_MCP_RESPONSE_NODES;
     struct mo_heap *heap = mo_process_heap(c->process);
     struct mo_cell packed;
     enum mo_protocol_value_status copied =

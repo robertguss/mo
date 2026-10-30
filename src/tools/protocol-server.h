@@ -128,8 +128,7 @@ MO_MUST_USE bool mo_protocol_body_complete(const struct protocol_connection *con
 void mo_protocol_receive(struct mo_protocol_server *server, struct protocol_connection *connection);
 void mo_protocol_complete(struct mo_protocol_server *server,
                           struct protocol_connection *connection);
-MO_MUST_USE bool mo_protocol_catalog(struct mo_protocol_server *server,
-                                     struct protocol_connection *connection);
+MO_MUST_USE bool mo_protocol_catalog(struct mo_protocol_server *server);
 MO_MUST_USE bool mo_protocol_request_process(struct mo_protocol_server *server,
                                              struct protocol_connection *connection);
 

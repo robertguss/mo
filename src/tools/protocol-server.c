@@ -377,8 +377,11 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
         goto fail;
     for (size_t i = 0; i < authority_count; i++) {
         struct mo_cell text;
-        if (authorities[i] == NULL ||
-            !mo_value_text(heap, authorities[i], strlen(authorities[i]), &text))
+        if (authorities[i] == NULL) {
+            status = MO_PROTOCOL_SERVER_CONFIG;
+            goto fail;
+        }
+        if (!mo_value_text(heap, authorities[i], strlen(authorities[i]), &text))
             goto fail;
         bool ok = mo_list_append(heap, list_type, &s->authorities, text);
         mo_value_drop(heap, mo_image_types(s->protocol)->items[list_type].parameters[0], text);
@@ -392,7 +395,7 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
         status = MO_PROTOCOL_SERVER_CONFIG;
         goto fail;
     }
-    if (!mo_value_make_immortal(heap, list_type, s->authorities) || !mo_protocol_catalog(s, NULL) ||
+    if (!mo_value_make_immortal(heap, list_type, s->authorities) || !mo_protocol_catalog(s) ||
         !templates(s))
         goto fail;
     s->metrics.catalog_memory = s->arena.used + mo_process_memory_peak(s->catalog_process);
@@ -536,11 +539,10 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
         }
     }
     uint64_t before = clock_now(s).elapsed;
-    bool stepped = mo_service_step(s->service);
+    (void)!mo_service_step(s->service);
     uint64_t elapsed = clock_now(s).elapsed - before;
     if (elapsed > s->metrics.stage_us)
         s->metrics.stage_us = elapsed;
-    (void)stepped;
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
         if (s->connections[i].reply_ready)
             mo_protocol_complete(s, &s->connections[i]);

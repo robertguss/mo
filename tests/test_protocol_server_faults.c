@@ -8,6 +8,7 @@ static uint64_t admitted_before;
 static bool exhaust_reply, record_resizes, fail_append;
 static unsigned exhausted_calls, memory_stops, decode_after, decode_failures, append_failures;
 static unsigned fail_call_after;
+static bool scan_limit_zero;
 static size_t resize_calls, resize_after, resize_failures, resize_sizes[4096];
 
 enum mo_outcome mo_protocol_server_fault_call(struct mo_process *process, uint32_t function,
@@ -33,6 +34,14 @@ enum mo_outcome mo_protocol_server_fault_call(struct mo_process *process, uint32
         exhausted_calls++;
         struct mo_heap *heap = mo_process_heap(process);
         mo_heap_set_limit(heap, mo_heap_used(heap));
+    }
+    struct mo_cell scan_args[3];
+    if (scan_limit_zero) {
+        MO_ASSERT(count == 3);
+        memcpy(scan_args, arguments, sizeof scan_args);
+        scan_args[2] = mo_cell_int(0);
+        arguments = scan_args;
+        scan_limit_zero = false;
     }
     enum mo_outcome outcome = mo_call(process, function, arguments, count, out, defect);
     if (exhaust) {
@@ -208,8 +217,108 @@ static void preauth_failure(void) {
     finish(&f);
 }
 
+static struct mo_listener *wait_listener;
+static uint64_t wait_advance;
+static enum mo_listener_status write_status;
+static bool fail_half_close;
+static unsigned injected_waits, injected_writes;
+
+enum mo_listener_status mo_protocol_server_fault_listener(
+    struct mo_listener *listener, enum mo_listener_operation operation,
+    const union mo_listener_request *request, union mo_listener_result *result);
+
+enum mo_listener_status mo_protocol_server_fault_listener(
+    struct mo_listener *listener, enum mo_listener_operation operation,
+    const union mo_listener_request *request, union mo_listener_result *result) {
+    if (operation == MO_LISTENER_WAIT && listener == wait_listener && wait_advance != 0) {
+        MO_ASSERT(mo_listener_fake_advance(listener, wait_advance) == MO_LISTENER_OK);
+        wait_advance = 0;
+        injected_waits++;
+    }
+    if (operation == MO_LISTENER_WRITE && write_status != MO_LISTENER_OK) {
+        enum mo_listener_status status = write_status;
+        write_status = MO_LISTENER_OK;
+        injected_writes++;
+        return status;
+    }
+    if (operation == MO_LISTENER_HALF_CLOSE && fail_half_close) {
+        fail_half_close = false;
+        return MO_LISTENER_IO;
+    }
+    return mo_listener_call(listener, operation, request, result);
+}
+
+static void poll_failures(void) {
+    struct fixture_server f = start();
+    wait_listener = f.listener;
+    char out[4096];
+    struct mo_listener_fake_peer peer = {.output = (uint8_t *)out,
+                                         .output_capacity = sizeof out,
+                                         .writable = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
+    poll_server(&f);
+    wait_advance = 5000000;
+    poll_server(&f);
+    CHECK(peer.closed && peer.output_size == 0 && injected_waits == 1);
+    peer = (struct mo_listener_fake_peer){.read_error = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
+    poll_server(&f);
+    poll_server(&f);
+    CHECK(peer.closed && peer.output_size == 0);
+    struct mo_buffer input;
+    input_request(&input, "", auth);
+    peer = (struct mo_listener_fake_peer){.input = input.bytes,
+                                          .input_size = input.length,
+                                          .output = (uint8_t *)out,
+                                          .output_capacity = sizeof out - 1,
+                                          .readable = true,
+                                          .writable = true,
+                                          .eof = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
+    poll_server(&f);
+    scan_limit_zero = true;
+    for (unsigned i = 0; i < 8 && !peer.closed; i++)
+        poll_server(&f);
+    CHECK(peer.closed && peer.half_closed && !scan_limit_zero);
+    out[peer.output_size] = 0;
+    CHECK(strstr(out, "HTTP/1.1 431 ") == out);
+    peer = (struct mo_listener_fake_peer){.input = input.bytes,
+                                          .input_size = input.length,
+                                          .output = (uint8_t *)out,
+                                          .output_capacity = sizeof out,
+                                          .readable = true,
+                                          .writable = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
+    poll_server(&f);
+    poll_server(&f);
+    write_status = MO_LISTENER_AGAIN;
+    poll_server(&f);
+    CHECK(!peer.closed && peer.output_size == 0 && injected_writes == 1);
+    write_status = MO_LISTENER_IO;
+    poll_server(&f);
+    CHECK(peer.closed && peer.output_size == 0 && injected_writes == 2);
+    uint64_t completed = mo_protocol_server_metrics(f.server).completed;
+    peer = (struct mo_listener_fake_peer){.input = input.bytes,
+                                          .input_size = input.length,
+                                          .output = (uint8_t *)out,
+                                          .output_capacity = sizeof out,
+                                          .readable = true,
+                                          .writable = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
+    fail_half_close = true;
+    for (unsigned i = 0; i < 8 && !peer.closed; i++)
+        poll_server(&f);
+    CHECK(peer.closed && !peer.half_closed && !fail_half_close);
+    CHECK(peer.output_size > 0);
+    CHECK(mo_protocol_server_metrics(f.server).completed == completed);
+    wait_listener = NULL;
+    mo_buffer_free(&input);
+    finish(&f);
+}
+
 static void run_faults(void *context) {
     wire(context);
+    poll_failures();
     reserved_fallback();
     preauth_failure();
     exhausted_fallback();

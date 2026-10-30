@@ -190,6 +190,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 		if [ "$$base" = fuzz_bytecode_io ]; then variants="small large"; fi; \
 		for variant in $$variants; do \
 			name=$$base; options=; \
+			if [ "$$base" = fuzz_protocol_server ]; then options="-max_len=24578"; fi; \
 			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
 			if [ "$$base" = fuzz_bytecode_text ]; then options="-max_len=16777216 -timeout=30"; fi; \
 			if [ "$$base" = fuzz_vm ] || [ "$$base" = fuzz_bytecode_verify ]; then options="-max_len=65536 -timeout=15"; fi; \
@@ -449,11 +450,11 @@ $(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_
 PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
 
 $(BUILD)/sanitize/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)

@@ -30,7 +30,7 @@ end
 
 fn receive(text: Text, version: Option(Text)) : McpTransport.Action
   shape = descriptor(1)
-  catalog = Mcp.prepare(shape, "0123456789abcdef", 262144) or stop "catalog"
+  catalog = Mcp.prepare(shape, "0123456789abcdef", 32768) or stop "catalog"
   McpTransport.receive(text, version, shape, catalog, "fixture-version")
 end
 
@@ -171,7 +171,7 @@ fn pages()
   id = Json.int(-7)
   for count in [0, 31, 32, 33, 64]
     shape = descriptor(count)
-    catalog = Mcp.prepare(shape, key, 262144) or stop "page catalog"
+    catalog = Mcp.prepare(shape, key, 32768) or stop "page catalog"
     var fields = {"tools": Json.Array(catalog.tools.take(32))}
     if count > 32
       fields = fields.set("nextCursor", Json.String("32.#{key}"))

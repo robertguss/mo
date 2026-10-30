@@ -522,7 +522,10 @@ a fixed buffer for the largest permitted fallback and a maximally escaped
 128-byte ID. Native code splices only those exact bytes and uses precomputed HTTP
 headers; fallback emission allocates nothing from an exhausted request heap.
 Successful callback values are retained only until the poll loop projects and
-serializes them. Serialization failure never retries an admitted operation.
+serializes them. Native result packing retains its derived node guard,
+`MO_LIMIT_MCP_RESPONSE_NODES = MO_LIMIT_MCP_RESPONSE_BYTES / 2 - 1` (16,383).
+This guard is separate from the request payload and envelope node limits.
+Serialization failure never retries an admitted operation.
 Result rendering reuses the compact content text and rejects it before building
 the duplicated RPC body when those two copies alone exceed the response ceiling.
 

@@ -381,8 +381,94 @@ static void small_body_reads(void) {
     finish(&f);
 }
 
+static void raw_status(struct fixture_server *f, const char *input, int status) {
+    char out[4096], expected[32];
+    struct mo_listener_fake_peer peer = {.input = (const uint8_t *)input,
+                                         .input_size = strlen(input),
+                                         .output = (uint8_t *)out,
+                                         .output_capacity = sizeof out - 1,
+                                         .readable = true,
+                                         .writable = true,
+                                         .eof = true};
+    MO_ASSERT(mo_listener_fake_connect(f->listener, &peer) == MO_LISTENER_OK);
+    for (unsigned i = 0; i < 100 && !peer.closed; i++)
+        poll_server(f);
+    CHECK(peer.closed);
+    out[peer.output_size] = 0;
+    int n = snprintf(expected, sizeof expected, "HTTP/1.1 %d ", status);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof expected);
+    CHECK(strstr(out, expected) == out);
+    check_wire(out);
+}
+
+static void rejection_paths(void) {
+    struct fixture_server f = start();
+    raw_status(&f, "POST /mcp HTTP/1.1\r\nBad Header: x\r\n\r\n", 400);
+    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: other\r\n\r\n", 421);
+    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost:99999\r\n\r\n", 400);
+    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+                   "Authorization: Bearer McpSecretCanary42\r\n"
+                   "Content-Type: text/plain\r\nContent-Length: 0\r\n\r\n", 415);
+    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+                   "Authorization: Bearer McpSecretCanary42\r\n"
+                   "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
+                   "z\r\n", 400);
+    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost:", 400);
+    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+                   "Authorization: Bearer McpSecretCanary42\r\n"
+                   "Content-Type: application/json\r\nContent-Length: 10\r\n\r\n{", 400);
+    char incomplete[1025];
+    memset(incomplete, 'x', 1024);
+    incomplete[1024] = 0;
+    raw_status(&f, incomplete, 431);
+    char out[4096];
+    request(&f, "", auth, out, sizeof out, 0);
+    CHECK(strstr(out, "HTTP/1.1 400 ") == out);
+    CHECK(strstr(out, "\"code\":-32700") != NULL);
+    request(&f, "\xff", auth, out, sizeof out, 0);
+    CHECK(strstr(out, "HTTP/1.1 400 ") == out);
+    CHECK(strstr(out, "\"code\":-32700") != NULL);
+    struct mo_protocol_server *invalid = NULL;
+    const char *authorities[] = {NULL};
+    CHECK(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &invalid) ==
+          MO_PROTOCOL_SERVER_CONFIG);
+    CHECK(invalid == NULL);
+    finish(&f);
+}
+
+static void result_updates(void) {
+    const char *text =
+        "module Main\nenum QErr\nNotLeased\nNoSuchJob(id: Int)\nend\n"
+        "struct Job\nid: Int\npayload: Text\nend\n"
+        "service\nstate Int = 0\ntools ack, lease, read\n"
+        "token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+        "fn ack(state: Int, _now: Time, id: Int) : Result((Int, Unit), QErr)\n"
+        "if id == 1\nOk((state + 1, Unit))\nelse if id == 2\nError(NotLeased)\n"
+        "else\nError(NoSuchJob(id: id))\nend\nend\n"
+        "fn lease(state: Int, _now: Time) : Result((Int, Option(Job)), QErr)\n"
+        "Ok((state + 1, Some(Job(id: state, payload: \"p\"))))\nend\n"
+        "fn read(state: Int, _now: Time) : Text\nstate.to_text\nend\n";
+    struct fixture_server f = start_source(text);
+    char out[8192];
+    tool_request(&f, "ack", "{\"id\":\"1\"}", "1", out, sizeof out);
+    CHECK(strstr(out, "\"structuredContent\":{\"value\":null}") != NULL);
+    tool_request(&f, "ack", "{\"id\":\"2\"}", "2", out, sizeof out);
+    CHECK(strstr(out, "\"kind\":\"application\"") != NULL);
+    CHECK(strstr(out, "\"case\":\"NotLeased\"") != NULL);
+    tool_request(&f, "ack", "{\"id\":\"3\"}", "3", out, sizeof out);
+    CHECK(strstr(out, "\"case\":\"NoSuchJob\",\"fields\":{\"id\":\"3\"}") != NULL);
+    tool_request(&f, "lease", "{}", "4", out, sizeof out);
+    CHECK(strstr(out, "\"case\":\"Some\",\"value\":{\"id\":\"1\",\"payload\":\"p\"}") != NULL);
+    tool_request(&f, "read", "{}", "5", out, sizeof out);
+    CHECK(strstr(out, "\"structuredContent\":{\"value\":\"2\"}") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 5);
+    finish(&f);
+}
+
 static void run(void *context) {
     wire(context);
+    rejection_paths();
+    result_updates();
     small_body_reads();
     rate();
     stopped();

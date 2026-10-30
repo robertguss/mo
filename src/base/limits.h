@@ -461,6 +461,7 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_MCP_CONNECTIONS 8
 #define MO_LIMIT_MCP_INGRESS_BYTES (24 << 10)
 #define MO_LIMIT_MCP_RESPONSE_BYTES (32 << 10)
+#define MO_LIMIT_MCP_RESPONSE_NODES (MO_LIMIT_MCP_RESPONSE_BYTES / 2 - 1)
 #define MO_LIMIT_MCP_CHUNKS 1024
 #define MO_LIMIT_MCP_TRAILER_BYTES (16 << 10)
 #define MO_LIMIT_MCP_TRAILER_FIELDS 64

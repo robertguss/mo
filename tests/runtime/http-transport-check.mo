@@ -15,7 +15,7 @@ fn require(ok: Bool)
 end
 
 fn head(bytes: List(Byte)) : Http.Head
-  case Http.parse_headers(bytes, Http.HeaderLimits(bytes: 65536, line: 8192, fields: 64))
+  case Http.parse_headers(bytes, Http.HeaderLimits(bytes: 1024, line: 8192, fields: 64))
     Ok(value): value
     Error(_): stop "header fixture"
   end
@@ -34,7 +34,8 @@ fn authorities()
     "[2001:db8::1]:1234",
     "[::ffff:192.0.2.1]",
     "[1:2:3:4:5:6:192.0.2.1]",
-    "host:999999999999999999999999"
+    "host:65535",
+    "host:00065535"
   ]
     require(HttpAuthority.check([entry]))
   end
@@ -43,6 +44,9 @@ fn authorities()
     ":80",
     "user@localhost",
     "localhost:abc",
+    "localhost:65536",
+    "localhost:99999",
+    "host:999999999999999999999999",
     "localhost:-1",
     "localhost:1:2",
     "localhost/x",
@@ -447,23 +451,23 @@ fn body_limits()
   end
 end
 
-fn transport_limits()
+fn parameterized_body_algorithm_limits()
   bounds = HttpBody.Bounds(
-    body: 262144,
-    ingress: 524288,
+    body: 16384,
+    ingress: 24576,
     chunks: 1024,
     line: 8192,
     trailer_bytes: 16384,
     trailer_fields: 64
   )
-  body = octets("x".repeat(262144))
-  case HttpBody.feed(HttpBody.fixed(262144), body.concat(octets("NEXT")), bounds)
+  body = octets("x".repeat(16384))
+  case HttpBody.feed(HttpBody.fixed(16384), body.concat(octets("NEXT")), bounds)
     Ok(step):
-      require(step.payload == [Http.Span(start: 0, size: 262144)])
-      require(step.consumed == 262144 and step.state.phase == HttpBody.Complete)
-    Error(_): stop "256 KiB body boundary"
+      require(step.payload == [Http.Span(start: 0, size: 16384)])
+      require(step.consumed == 16384 and step.state.phase == HttpBody.Complete)
+    Error(_): stop "16 KiB body boundary"
   end
-  require(HttpBody.feed(HttpBody.fixed(262145), body, bounds) == Error(413))
+  require(HttpBody.feed(HttpBody.fixed(16385), body, bounds) == Error(413))
   for (count, expected) in [(1024, 0), (1025, 413)]
     bytes = octets("#{"1\r\nx\r\n".repeat(count)}0\r\n\r\n")
     case HttpBody.feed(HttpBody.chunked(), bytes, bounds)
@@ -502,14 +506,14 @@ fn transport_limits()
       Error(code): require(code == expected)
     end
   end
-  padded = "1;x=#{"a".repeat(503)}\r\nx\r\n"
-  for (size, expected) in [(498, 0), (499, 413)]
+  padded = "1;x=#{"a".repeat(15)}\r\nx\r\n"
+  for (size, expected) in [(10, 0), (11, 413)]
     bytes = octets("#{padded.repeat(1023)}1;x=#{"a".repeat(size)}\r\nx\r\n0\r\n\r\n")
-    require(bytes.size == 524288 + size - 498)
+    require(bytes.size == 24576 + size - 10)
     case HttpBody.feed(HttpBody.chunked(), bytes, bounds)
       Ok(step):
         require(expected == 0 and step.state.phase == HttpBody.Complete)
-        require(step.state.encoded == 524288 and step.state.decoded == 1024)
+        require(step.state.encoded == 24576 and step.state.decoded == 1024)
       Error(code): require(code == expected)
     end
   end
@@ -521,6 +525,6 @@ fn main() : Int
   planning()
   bodies()
   body_limits()
-  transport_limits()
+  parameterized_body_algorithm_limits()
   37
 end

@@ -132,6 +132,29 @@ static void depths(const struct mo_protocol_values *types, struct mo_heap *nativ
     CHECK(mo_heap_objects(native) == before_native && mo_heap_objects(protocol) == before_protocol);
 }
 
+static void output_nodes(struct mo_protocol_values types, struct mo_heap *native,
+                         struct mo_heap *protocol, uint32_t list_type) {
+    types.node_limit = MO_LIMIT_MCP_RESPONSE_NODES;
+    CHECK(types.node_limit == 16383);
+    struct mo_cell list;
+    MO_ASSERT(mo_value_list(native, list_type, NULL, 0, &list));
+    struct mo_cell none;
+    uint32_t option = types.service->items[list_type].parameters[0];
+    MO_ASSERT(mo_value_case(native, option, 0, NULL, 0, &none));
+    for (size_t i = 0; i < 16382; i++)
+        MO_ASSERT(mo_list_append(native, list_type, &list, none));
+    struct mo_cell packed;
+    CHECK(mo_protocol_value_pack(&types, protocol, list_type, list,
+                                 MO_LIMIT_MCP_RESPONSE_BYTES, &packed) == MO_PROTOCOL_VALUE_OK);
+    mo_value_drop(protocol, types.value, packed);
+    MO_ASSERT(mo_list_append(native, list_type, &list, none));
+    packed = mo_cell_int(73);
+    CHECK(mo_protocol_value_pack(&types, protocol, list_type, list,
+                                 MO_LIMIT_MCP_RESPONSE_BYTES, &packed) == MO_PROTOCOL_VALUE_LIMIT);
+    CHECK(mo_cell_get_int(packed) == 73);
+    mo_value_drop(native, list_type, list);
+}
+
 static void run(void *unused) {
     (void)unused;
     struct mo_image *service = compile(source), *protocol = mo_protocol_build();
@@ -160,6 +183,7 @@ static void run(void *unused) {
                                        .service = mo_image_types(service),
                                        .descriptor = &mo_image_bytecode(service)->services[0],
                                        .value = value_type};
+    output_nodes(types, to, heap, types.service->items[native].cases[0].fields[3].type);
     depths(&types, to, heap, types.service->items[native].cases[0].fields[7].type);
     struct mo_cell kind;
     MO_ASSERT(mo_list_get(graph, (uint32_t)mo_cell_get_int(graph_index), &kind));

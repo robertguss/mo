@@ -105,8 +105,11 @@ fn parse(text: Text) : Option(Authority)
   if end_host < chars.size
     return None if chars.get(end_host) != Some(':')
     digits = chars.drop(end_host + 1)
+    var number = 0
     for c in digits
       return None if c < '0' or c > '9'
+      number = number * 10 + c.code - 48
+      return None if number > 65535
     end
     if not digits.empty?
       var start = 0
