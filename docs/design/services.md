@@ -506,7 +506,10 @@ raw credential bytes are wiped before the authenticated request process starts.
 Unknown tools and malformed params precede rate consumption. Every known-tool
 call consumes a rate token before typed decoding, including invalid arguments.
 The token-wide rate remains 20 calls per second with burst 40. Node overflows
-precede both rate consumption and admission as D330 requires.
+precede both rate consumption and admission as D330 requires. Resource failures
+at the header stage return HTTP 413 with an empty body, without taking a rate
+token or admitting service work. Allocation failure during accept instead closes
+the connection silently, without sending response bytes.
 
 Tool results follow D319: success and application/runtime errors each carry one
 compact object in both `structuredContent` and the text-content block. Both
@@ -575,6 +578,12 @@ connections. Original node-ceiling requests exceed the lower body ceiling and
 are refused before parsing; the pure transport fixtures retain the exact node
 boundary checks. Results and timings are recorded in the PR. Raising any limit
 or adding memory/work requires Robert's approval.
+
+Request work depends on how finely bytes arrive. The listener coalesces body
+bytes available during a poll, but one new byte per poll can make a 16 KiB body
+hit the 32,000,000 request-work ceiling and receive HTTP 413. Work remains bounded
+by that ceiling; a body within the byte limit is not guaranteed to fit the work
+budget under every delivery pattern.
 
 ## 10. Done means
 

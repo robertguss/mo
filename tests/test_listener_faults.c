@@ -46,11 +46,24 @@ static void retry_accept(void *context) {
     const char *authorities[] = {"localhost"};
     MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &f.server) ==
               MO_PROTOCOL_SERVER_OK);
-    const int errors[] = {ECONNABORTED, EPROTO, ENETDOWN, ENOPROTOOPT, EHOSTDOWN,
-#if defined(ENONET)
-                          ENONET,
+    const int errors[] = {
+        ECONNABORTED,
+        EPROTO,
+        ENETDOWN,
+        ENOPROTOOPT,
+#if defined(EHOSTDOWN)
+        EHOSTDOWN,
 #endif
-                          EHOSTUNREACH, EOPNOTSUPP, ENETUNREACH, ENOBUFS, ENOMEM, EINTR};
+#if defined(ENONET)
+        ENONET,
+#endif
+        EHOSTUNREACH,
+        EOPNOTSUPP,
+        ENETUNREACH,
+        ENOBUFS,
+        ENOMEM,
+        EINTR
+    };
     for (size_t i = 0; i < sizeof errors / sizeof *errors; i++) {
         int client = socket(AF_INET, SOCK_STREAM, 0);
         MO_ASSERT(client >= 0);
@@ -75,6 +88,16 @@ static void retry_accept(void *context) {
         CHECK(close(client) == 0);
         mo_buffer_free(&input);
     }
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    MO_ASSERT(client >= 0);
+    struct sockaddr_in target = {.sin_family = AF_INET,
+                                 .sin_port = htons(mo_listener_port(f.listener))};
+    MO_ASSERT(inet_pton(AF_INET, "127.0.0.1", &target.sin_addr) == 1);
+    MO_ASSERT(connect(client, (const struct sockaddr *)&target, sizeof target) == 0);
+    accept_error = EBADF;
+    CHECK(mo_protocol_server_poll(f.server, 0) == MO_PROTOCOL_SERVER_IO);
+    CHECK(accept_error == 0);
+    CHECK(close(client) == 0);
     finish(&f);
 }
 

@@ -132,10 +132,10 @@ static void tool_error(const char *out, const char *code, const char *effect, co
 
 static void maximum_id(char *out) {
     out[0] = '"';
-    for (size_t i = 0; i < MO_LIMIT_MCP_ID_BYTES; i++)
+    for (size_t i = 0; i < 128; i++)
         memcpy(out + 1 + 6 * i, "\\u0001", 6);
-    out[1 + 6 * MO_LIMIT_MCP_ID_BYTES] = '"';
-    out[2 + 6 * MO_LIMIT_MCP_ID_BYTES] = '\0';
+    out[1 + 6 * 128] = '"';
+    out[2 + 6 * 128] = '\0';
 }
 
 static void empty_continue(struct fixture_server *f) {
@@ -293,7 +293,7 @@ static void stopped(void) {
 
 static void response_limit(void) {
     struct fixture_server f = start();
-    char out[4096], id[6 * MO_LIMIT_MCP_ID_BYTES + 3];
+    char out[4096], id[6 * 128 + 3];
     maximum_id(id);
     tool_request(&f, "large", "{}", id, out, sizeof out);
     tool_error(out, "response_limit", "none", id);
@@ -376,7 +376,7 @@ static void small_body_reads(void) {
         request(&f, body, auth, out, sizeof out, quantum);
         CHECK(strstr(out, "HTTP/1.1 200 ") == out);
         CHECK(strstr(out, "\"id\":1,\"result\":{}") != NULL);
-        CHECK(mo_protocol_server_metrics(f.server).work <= MO_LIMIT_MCP_REQUEST_WORK / 2);
+        CHECK(mo_protocol_server_metrics(f.server).work <= UINT64_C(800000));
     }
     finish(&f);
 }
@@ -401,22 +401,113 @@ static void raw_status(struct fixture_server *f, const char *input, int status) 
     check_wire(out);
 }
 
+static void literal_boundaries(void) {
+    CHECK(MO_LIMIT_MCP_ID_BYTES == 128);
+    struct fixture_server f = start();
+    char id[132], body[256], out[4096];
+    for (size_t size = 128; size <= 129; size++) {
+        memset(id, 'a', size);
+        id[size] = 0;
+        int n = snprintf(body, sizeof body,
+                         "{\"jsonrpc\":\"2.0\",\"id\":\"%s\",\"method\":\"ping\"}", id);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof body);
+        request(&f, body, auth, out, sizeof out, 0);
+        CHECK(strstr(out, size == 128 ? "HTTP/1.1 200 " : "HTTP/1.1 400 ") == out);
+        if (size == 128)
+            CHECK(strstr(out, id) != NULL && strstr(out, "\"result\":{}") != NULL);
+        else
+            CHECK(strstr(out, "\"code\":-32600") != NULL);
+    }
+    for (size_t size = 16384; size <= 16385; size++) {
+        struct mo_buffer input;
+        mo_buffer_init(&input, MO_LIMIT_MCP_INGRESS_BYTES);
+        MO_ASSERT(mo_buffer_append_text(
+            &input, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+                    "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n"));
+        MO_ASSERT(mo_buffer_append_text(&input, auth));
+        MO_ASSERT(mo_buffer_append_text(&input, "\r\n2\r\n{}\r\n0\r\n"));
+        const size_t lines[] = {6000, 6000, size - 12002};
+        for (size_t i = 0; i < 3; i++) {
+            MO_ASSERT(mo_buffer_append_text(&input, "X: "));
+            for (size_t j = 0; j < lines[i] - 5; j++)
+                MO_ASSERT(mo_buffer_append_byte(&input, 'a'));
+            MO_ASSERT(mo_buffer_append_text(&input, "\r\n"));
+        }
+        MO_ASSERT(mo_buffer_append_text(&input, "\r\n") && mo_buffer_append_byte(&input, 0));
+        raw_status(&f, (const char *)input.bytes, size == 16384 ? 400 : 413);
+        mo_buffer_free(&input);
+    }
+    finish(&f);
+}
+
+static void service_hangup(void) {
+    for (unsigned mode = 0; mode < 3; mode++) {
+        struct fixture_server f = start();
+        struct mo_buffer input;
+        input_request(&input,
+                      "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
+                      "\"params\":{\"name\":\"read\"}}",
+                      auth);
+        char out[8][4096];
+        struct mo_listener_fake_peer peers[8];
+        for (size_t i = 0; i < 8; i++) {
+            peers[i] = (struct mo_listener_fake_peer){.input = input.bytes,
+                                                      .input_size = input.length - 1,
+                                                      .output = (uint8_t *)out[i],
+                                                      .output_capacity = sizeof out[i] - 1,
+                                                      .readable = true,
+                                                      .writable = true};
+            MO_ASSERT(mo_listener_fake_connect(f.listener, &peers[i]) == MO_LISTENER_OK);
+        }
+        for (unsigned n = 0; n < 16; n++)
+            poll_server(&f);
+        for (size_t i = 0; i < 8; i++) {
+            CHECK(peers[i].input_offset == input.length - 1);
+            peers[i].input_size = input.length;
+        }
+        poll_server(&f);
+        CHECK(mo_protocol_server_metrics(f.server).admitted == 8);
+        CHECK(mo_protocol_server_metrics(f.server).completed == 0);
+        for (size_t i = 0; i < 8; i++) {
+            CHECK(!peers[i].closed && peers[i].output_size == 0);
+            peers[i].eof = true;
+            peers[i].read_error = mode == 0;
+            peers[i].write_error = mode != 2;
+        }
+        for (unsigned n = 0; n < 32; n++)
+            poll_server(&f);
+        for (size_t i = 0; i < 8; i++)
+            CHECK(peers[i].closed);
+        tool_request(&f, "read", "{}", "2", out[0], sizeof out[0]);
+        CHECK(strstr(out[0], "\"structuredContent\":{\"value\":\"0\"}") != NULL);
+        CHECK(mo_protocol_server_metrics(f.server).admitted == 9);
+        mo_buffer_free(&input);
+        finish(&f);
+    }
+}
+
 static void rejection_paths(void) {
     struct fixture_server f = start();
     raw_status(&f, "POST /mcp HTTP/1.1\r\nBad Header: x\r\n\r\n", 400);
     raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: other\r\n\r\n", 421);
     raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost:99999\r\n\r\n", 400);
-    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
-                   "Authorization: Bearer McpSecretCanary42\r\n"
-                   "Content-Type: text/plain\r\nContent-Length: 0\r\n\r\n", 415);
-    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
-                   "Authorization: Bearer McpSecretCanary42\r\n"
-                   "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
-                   "z\r\n", 400);
+    raw_status(&f,
+               "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+               "Authorization: Bearer McpSecretCanary42\r\n"
+               "Content-Type: text/plain\r\nContent-Length: 0\r\n\r\n",
+               415);
+    raw_status(&f,
+               "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+               "Authorization: Bearer McpSecretCanary42\r\n"
+               "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
+               "z\r\n",
+               400);
     raw_status(&f, "POST /mcp HTTP/1.1\r\nHost:", 400);
-    raw_status(&f, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
-                   "Authorization: Bearer McpSecretCanary42\r\n"
-                   "Content-Type: application/json\r\nContent-Length: 10\r\n\r\n{", 400);
+    raw_status(&f,
+               "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
+               "Authorization: Bearer McpSecretCanary42\r\n"
+               "Content-Type: application/json\r\nContent-Length: 10\r\n\r\n{",
+               400);
     char incomplete[1025];
     memset(incomplete, 'x', 1024);
     incomplete[1024] = 0;
@@ -437,17 +528,16 @@ static void rejection_paths(void) {
 }
 
 static void result_updates(void) {
-    const char *text =
-        "module Main\nenum QErr\nNotLeased\nNoSuchJob(id: Int)\nend\n"
-        "struct Job\nid: Int\npayload: Text\nend\n"
-        "service\nstate Int = 0\ntools ack, lease, read\n"
-        "token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
-        "fn ack(state: Int, _now: Time, id: Int) : Result((Int, Unit), QErr)\n"
-        "if id == 1\nOk((state + 1, Unit))\nelse if id == 2\nError(NotLeased)\n"
-        "else\nError(NoSuchJob(id: id))\nend\nend\n"
-        "fn lease(state: Int, _now: Time) : Result((Int, Option(Job)), QErr)\n"
-        "Ok((state + 1, Some(Job(id: state, payload: \"p\"))))\nend\n"
-        "fn read(state: Int, _now: Time) : Text\nstate.to_text\nend\n";
+    const char *text = "module Main\nenum QErr\nNotLeased\nNoSuchJob(id: Int)\nend\n"
+                       "struct Job\nid: Int\npayload: Text\nend\n"
+                       "service\nstate Int = 0\ntools ack, lease, read\n"
+                       "token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+                       "fn ack(state: Int, _now: Time, id: Int) : Result((Int, Unit), QErr)\n"
+                       "if id == 1\nOk((state + 1, Unit))\nelse if id == 2\nError(NotLeased)\n"
+                       "else\nError(NoSuchJob(id: id))\nend\nend\n"
+                       "fn lease(state: Int, _now: Time) : Result((Int, Option(Job)), QErr)\n"
+                       "Ok((state + 1, Some(Job(id: state, payload: \"p\"))))\nend\n"
+                       "fn read(state: Int, _now: Time) : Text\nstate.to_text\nend\n";
     struct fixture_server f = start_source(text);
     char out[8192];
     tool_request(&f, "ack", "{\"id\":\"1\"}", "1", out, sizeof out);
@@ -467,6 +557,8 @@ static void result_updates(void) {
 
 static void run(void *context) {
     wire(context);
+    literal_boundaries();
+    service_hangup();
     rejection_paths();
     result_updates();
     small_body_reads();

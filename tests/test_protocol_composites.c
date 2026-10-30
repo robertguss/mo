@@ -144,13 +144,13 @@ static void output_nodes(struct mo_protocol_values types, struct mo_heap *native
     for (size_t i = 0; i < 16382; i++)
         MO_ASSERT(mo_list_append(native, list_type, &list, none));
     struct mo_cell packed;
-    CHECK(mo_protocol_value_pack(&types, protocol, list_type, list,
-                                 MO_LIMIT_MCP_RESPONSE_BYTES, &packed) == MO_PROTOCOL_VALUE_OK);
+    CHECK(mo_protocol_value_pack(&types, protocol, list_type, list, MO_LIMIT_MCP_RESPONSE_BYTES,
+                                 &packed) == MO_PROTOCOL_VALUE_OK);
     mo_value_drop(protocol, types.value, packed);
     MO_ASSERT(mo_list_append(native, list_type, &list, none));
     packed = mo_cell_int(73);
-    CHECK(mo_protocol_value_pack(&types, protocol, list_type, list,
-                                 MO_LIMIT_MCP_RESPONSE_BYTES, &packed) == MO_PROTOCOL_VALUE_LIMIT);
+    CHECK(mo_protocol_value_pack(&types, protocol, list_type, list, MO_LIMIT_MCP_RESPONSE_BYTES,
+                                 &packed) == MO_PROTOCOL_VALUE_LIMIT);
     CHECK(mo_cell_get_int(packed) == 73);
     mo_value_drop(native, list_type, list);
 }

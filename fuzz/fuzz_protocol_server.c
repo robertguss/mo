@@ -18,14 +18,13 @@ static void run(void *context) {
     const struct input *input = context;
     if (image == NULL) {
         MO_ASSERT(setenv("MO_FUZZ_MCP_TOKEN", "fuzz-token", 1) == 0);
-        image = compile(
-            "module Main\nservice\nstate Int = 0\ntools add, read, reject\n"
-            "token from env \"MO_FUZZ_MCP_TOKEN\"\nend\n"
-            "fn add(state: Int, _now: Time, amount: Int) : (Int, Int)\n"
-            "(state + amount, state)\nend\n"
-            "fn read(state: Int, _now: Time) : Text\nstate.to_text\nend\n"
-            "fn reject(state: Int, _now: Time, ok: Bool) : Result((Int, Unit), Text)\n"
-            "if ok\nOk((state + 1, Unit))\nelse\nError(\"denied\")\nend\nend\n");
+        image = compile("module Main\nservice\nstate Int = 0\ntools add, read, reject\n"
+                        "token from env \"MO_FUZZ_MCP_TOKEN\"\nend\n"
+                        "fn add(state: Int, _now: Time, amount: Int) : (Int, Int)\n"
+                        "(state + amount, state)\nend\n"
+                        "fn read(state: Int, _now: Time) : Text\nstate.to_text\nend\n"
+                        "fn reject(state: Int, _now: Time, ok: Bool) : Result((Int, Unit), Text)\n"
+                        "if ok\nOk((state + 1, Unit))\nelse\nError(\"denied\")\nend\nend\n");
     }
     struct mo_listener *listener;
     struct mo_store *store;

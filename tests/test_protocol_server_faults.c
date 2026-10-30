@@ -223,13 +223,15 @@ static enum mo_listener_status write_status;
 static bool fail_half_close;
 static unsigned injected_waits, injected_writes;
 
-enum mo_listener_status mo_protocol_server_fault_listener(
-    struct mo_listener *listener, enum mo_listener_operation operation,
-    const union mo_listener_request *request, union mo_listener_result *result);
+enum mo_listener_status mo_protocol_server_fault_listener(struct mo_listener *listener,
+                                                          enum mo_listener_operation operation,
+                                                          const union mo_listener_request *request,
+                                                          union mo_listener_result *result);
 
-enum mo_listener_status mo_protocol_server_fault_listener(
-    struct mo_listener *listener, enum mo_listener_operation operation,
-    const union mo_listener_request *request, union mo_listener_result *result) {
+enum mo_listener_status mo_protocol_server_fault_listener(struct mo_listener *listener,
+                                                          enum mo_listener_operation operation,
+                                                          const union mo_listener_request *request,
+                                                          union mo_listener_result *result) {
     if (operation == MO_LISTENER_WAIT && listener == wait_listener && wait_advance != 0) {
         MO_ASSERT(mo_listener_fake_advance(listener, wait_advance) == MO_LISTENER_OK);
         wait_advance = 0;
@@ -252,9 +254,8 @@ static void poll_failures(void) {
     struct fixture_server f = start();
     wait_listener = f.listener;
     char out[4096];
-    struct mo_listener_fake_peer peer = {.output = (uint8_t *)out,
-                                         .output_capacity = sizeof out,
-                                         .writable = true};
+    struct mo_listener_fake_peer peer = {
+        .output = (uint8_t *)out, .output_capacity = sizeof out, .writable = true};
     MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
     poll_server(&f);
     wait_advance = 5000000;

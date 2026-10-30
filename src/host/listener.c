@@ -345,7 +345,9 @@ static enum mo_listener_status accept_connection(struct mo_listener *listener,
             case EPROTO:
             case ENETDOWN:
             case ENOPROTOOPT:
+#if defined(EHOSTDOWN)
             case EHOSTDOWN:
+#endif
 #if defined(ENONET)
             case ENONET:
 #endif

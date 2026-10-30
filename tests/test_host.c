@@ -1215,9 +1215,9 @@ static void test_bearer(void) {
         CHECK(!mo_bearer_read(&bearer, environment));
         CHECK(bearer.length == 0);
     }
-    uint8_t value[MO_LIMIT_MCP_TOKEN_BYTES + 2];
+    uint8_t value[258];
     memset(value, 'A', sizeof value);
-    const size_t lengths[] = {1, 17, MO_LIMIT_MCP_TOKEN_BYTES};
+    const size_t lengths[] = {1, 17, 256};
     for (size_t i = 0; i < sizeof lengths / sizeof *lengths; i++) {
         size_t length = lengths[i];
         value[length] = 0;

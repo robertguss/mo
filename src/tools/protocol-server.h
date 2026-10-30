@@ -25,15 +25,7 @@ enum protocol_function {
     PF_COUNT
 };
 
-enum protocol_phase {
-    PS_EMPTY,
-    PS_HEADERS,
-    PS_BODY,
-    PS_CONTINUE,
-    PS_SERVICE,
-    PS_WRITE,
-    PS_DRAIN
-};
+enum protocol_phase { PS_EMPTY, PS_HEADERS, PS_BODY, PS_CONTINUE, PS_SERVICE, PS_WRITE, PS_DRAIN };
 
 enum protocol_error {
     PE_ARGUMENTS,

@@ -195,8 +195,11 @@ Dead PS_ABANDONED branches were removed structurally; pending slots still stay
 occupied through the service reply. These are further class 6/8 evidence; no
 supervisor-event behavior was changed.
 
-Round F, PR #262 (2026-10-30): native ceiling tests now use literal D329 byte
-boundaries, so increasing a production macro cannot move the test input with it.
+Round F, PR #262 (2026-10-30): native ceiling tests added literal D329 byte
+boundaries, but token and ID inputs still followed their macros and trailer bytes
+had no native boundary pair. Round I pins token bytes at 256/257, decoded ID
+bytes at 128/129 and trailer bytes at 16,384/16,385 with literal inputs. Both +1
+and -1 production-macro mutants must fail these tests.
 The native protocol tests cover malformed headers, inspect/plan/feed status
 mapping, EOF, invalid UTF-8, empty fixed bodies, poll-time expiry, write failure,
 error events and updating Result replies. The output packing guard is named as
