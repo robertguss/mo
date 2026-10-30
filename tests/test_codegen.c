@@ -2368,6 +2368,101 @@ static void test_join(void) {
     }
     mo_arena_free(&arena);
 }
+static void test_reachable_children(void) {
+    const char *cases[] = {
+        /* A join in the case scrutinee must be visited. */
+        "(Program ((DataDecl \"Main.Choice\" ((Ctor \"First\" ((\"0\" "
+        "(text)))) (Ctor \"Second\" ((\"0\" (text))))))) ((FunDecl "
+        "\"Main.show\" ((\"%52\" (text)) (\"%53\" (text))) (text) (let_ "
+        "\"%54\" (var \"%53\") (let_ \"%55\" (var \"%52\") (prim (text "
+        "(concat)) ((lit (text \"\")) (prim (text (concat)) ((var "
+        "\"%54\") (prim (text (concat)) ((lit (text \"\")) (prim (text "
+        "(concat)) ((var \"%55\") (lit (text \"\")))))))))))) \"Main\" "
+        "(function) 0) (FunDecl \"Main.f\" ((\"a\" (data \"Main.Choice\")) "
+        "(\"n\" (text))) (text) (case_ (join \"q\" ((\"w\" (data "
+        "\"Main.Choice\"))) (var \"w\") (jump \"q\" ((var \"a\")))) ((\"First\""
+        " (\"t\") (var \"t\")) (\"Second\" (\"u\") (var \"u\")))) \"Main\" "
+        "(function) 0) (FunDecl \"Main.main\" () (int) (let_ \"c\" (con "
+        "(data \"Main.Choice\") \"Second\" ((lit (text \"x\")))) (let_ \"r\" "
+        "(call \"Main.f\" ((var \"c\") (lit (text \"n\")))) (lit (int 0))))"
+        " \"Main\" (function) 0)) () \"Main.main\" (noSource))",
+        /* A join in a jump argument must be visited. */
+        "(Program ((DataDecl \"Main.Choice\" ((Ctor \"First\" ((\"0\" "
+        "(text)))) (Ctor \"Second\" ((\"0\" (text))))))) ((FunDecl "
+        "\"Main.show\" ((\"%52\" (text)) (\"%53\" (text))) (text) (let_ "
+        "\"%54\" (var \"%53\") (let_ \"%55\" (var \"%52\") (prim (text "
+        "(concat)) ((lit (text \"\")) (prim (text (concat)) ((var "
+        "\"%54\") (prim (text (concat)) ((lit (text \"\")) (prim (text "
+        "(concat)) ((var \"%55\") (lit (text \"\")))))))))))) \"Main\" "
+        "(function) 0) (FunDecl \"Main.f\" ((\"a\" (data \"Main.Choice\")) "
+        "(\"n\" (text))) (text) (join \"r\" ((\"v\" (text))) (var \"v\") "
+        "(jump \"r\" ((join \"q\" ((\"w\" (text))) (var \"w\") (jump \"q\" "
+        "((var \"n\"))))))) \"Main\" (function) 0) (FunDecl \"Main.main\" "
+        "() (int) (let_ \"c\" (con (data \"Main.Choice\") \"Second\" ((lit "
+        "(text \"x\")))) (let_ \"r\" (call \"Main.f\" ((var \"c\") (lit (text"
+        " \"n\")))) (lit (int 0)))) \"Main\" (function) 0)) () "
+        "\"Main.main\" (noSource))",
+        /* A terminal call operand prevents the let body and its jump. */
+        "(Program ((DataDecl \"Main.Choice\" ((Ctor \"First\" ((\"0\" "
+        "(text)))) (Ctor \"Second\" ((\"0\" (text))))))) ((FunDecl "
+        "\"Main.show\" ((\"%52\" (text)) (\"%53\" (text))) (text) (let_ "
+        "\"%54\" (var \"%53\") (let_ \"%55\" (var \"%52\") (prim (text "
+        "(concat)) ((lit (text \"\")) (prim (text (concat)) ((var "
+        "\"%54\") (prim (text (concat)) ((lit (text \"\")) (prim (text "
+        "(concat)) ((var \"%55\") (lit (text \"\")))))))))))) \"Main\" "
+        "(function) 0) (FunDecl \"Main.pick\" ((\"%56\" (data "
+        "\"Main.Choice\")) (\"%57\" (data \"Main.Choice\")) (\"%58\" (text)))"
+        " (text) (join \"%63\" ((\"%64\" (text))) (var \"%64\") (let_ \"%65\""
+        " (var \"%56\") (join \"%66\" ((\"%67\" (text))) (let_ \"%62\" (var "
+        "\"%67\") (call \"Main.show\" ((var \"%62\") (var \"%58\")))) (join "
+        "\"%69\" () (join \"%68\" () (stop \"unreachable pattern failure\")"
+        " (join \"%104\" () (let_ \"%74\" (var \"%57\") (join \"%75\" ((\"%76\""
+        " (text))) (let_ \"%61\" (var \"%76\") (jump \"%66\" ((call "
+        "\"Main.show\" ((var \"%61\") (var \"%58\")))))) (join \"%78\" () "
+        "(join \"%77\" () (stop \"unreachable pattern failure\") (join "
+        "\"%98\" () (let_ \"%83\" (var \"%57\") (join \"%84\" ((\"%85\" "
+        "(text))) (let_ \"%60\" (var \"%85\") (jump \"%75\" ((call "
+        "\"Main.show\" ((var \"%60\") (var \"%58\")))))) (join \"%87\" () "
+        "(join \"%86\" () (stop \"unreachable pattern failure\") (join "
+        "\"%92\" () (let_ \"z\" (call \"Main.show\" ((stop \"b\") (lit (text "
+        "\"z\")))) (jump \"%84\" ((var \"z\")))) (join \"%93\" () (jump \"%86\""
+        " ()) (case_ (var \"%83\") ((\"First\" (\"%94\") (jump \"%93\" ())) "
+        "(\"Second\" (\"%95\") (jump \"%92\" ()))))))) (join \"%88\" () (jump"
+        " \"%63\" ((lit (text \"c\")))) (join \"%89\" () (jump \"%87\" ()) "
+        "(case_ (var \"%83\") ((\"First\" (\"%90\") (jump \"%88\" ())) "
+        "(\"Second\" (\"%91\") (jump \"%89\" ()))))))))) (join \"%99\" () "
+        "(jump \"%77\" ()) (case_ (var \"%74\") ((\"First\" (\"%100\") (jump "
+        "\"%99\" ())) (\"Second\" (\"%101\") (jump \"%98\" ()))))))) (join "
+        "\"%79\" () (jump \"%63\" ((lit (text \"b\")))) (join \"%80\" () "
+        "(jump \"%78\" ()) (case_ (var \"%74\") ((\"First\" (\"%81\") (jump "
+        "\"%79\" ())) (\"Second\" (\"%82\") (jump \"%80\" ()))))))))) (join "
+        "\"%105\" () (jump \"%68\" ()) (case_ (var \"%65\") ((\"First\" "
+        "(\"%106\") (jump \"%105\" ())) (\"Second\" (\"%107\") (jump \"%104\" "
+        "()))))))) (join \"%70\" ((\"%59\" (text))) (jump \"%66\" ((var "
+        "\"%59\"))) (join \"%71\" () (jump \"%69\" ()) (case_ (var \"%65\") "
+        "((\"First\" (\"%72\") (let_ \"%59\" (var \"%72\") (jump \"%70\" ((var "
+        "\"%59\"))))) (\"Second\" (\"%73\") (jump \"%71\" ())))))))))) \"Main\""
+        " (function) 0) (FunDecl \"Main.main\" () (int) (let_ \"c\" (con "
+        "(data \"Main.Choice\") \"Second\" ((lit (text \"x\")))) (let_ \"r\" "
+        "(call \"Main.pick\" ((var \"c\") (var \"c\") (lit (text \"n\")))) "
+        "(lit (int 0)))) \"Main\" (function) 0)) () \"Main.main\" "
+        "(noSource))",
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        struct mo_arena arena;
+        struct mo_diags diags;
+        mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+        CHECK(mo_diags_init(&diags));
+        struct mo_core *p = parse(&arena, cases[i], &diags);
+        CHECK(p != NULL && mo_core_check(p, &diags));
+        mo_diags_free(&diags);
+        mo_arena_free(&arena);
+        mo_arena_init(&arena, MO_LIMIT_BYTECODE_SIZE);
+        struct mo_bytecode *b = compile(&arena, cases[i]);
+        CHECK(b != NULL);
+        mo_arena_free(&arena);
+    }
+}
 static void test_join_metadata(void) {
     struct mo_arena arena;
     struct mo_diags diags;
@@ -2501,6 +2596,7 @@ static MO_MUST_USE int tests(int argc, char **argv) {
     test_entry_record();
     test_merge();
     test_join();
+    test_reachable_children();
     test_join_metadata();
     test_depth();
     return mo_test_report("test_codegen");
