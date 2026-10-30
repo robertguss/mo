@@ -70,6 +70,7 @@ struct join {
     uint32_t offset, checkpoint;
     struct live_set live;
     bool *used;
+    bool referenced;
 };
 struct function {
     struct vector regs, code, spans, names, captures, joins, changes;
@@ -1617,6 +1618,7 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         struct mo_codegen_index *entry = mo_codegen_find(f->join_names, expr->as.jump.name);
         MO_ASSERT(entry != NULL && entry->value != MO_NO_INDEX);
         n->index = entry->value;
+        ((struct join *)f->joins.items)[n->index].referenced = true;
         if (!children(c, f, n, expr->as.jump.args, MO_NO_INDEX, depth))
             return NULL;
         n->bind_count = n->count;
@@ -2878,11 +2880,14 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                     return false;
             }
         uint32_t start = f->code.count;
-        if (!generate(c, f, n->children[0], tail, depth + 1, live))
+        /* An exhaustive terminal rest can leave a continuation with no incoming jump.
+         * Its body has no valid reference state and must not be generated. */
+        bool reachable = joins[n->index].referenced;
+        if (reachable && !generate(c, f, n->children[0], tail, depth + 1, live))
             return false;
         uint32_t exit = MO_NO_INDEX;
-        bool any = *live;
-        if (*live) {
+        bool any = reachable && *live;
+        if (any) {
             bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
             if (!copy(c, f, n->reg, n->children[0]->reg, owned, n->span, n->last[0]) ||
                 !normalize(c, f, checkpoint, n->reg, n->span, &n->after))
