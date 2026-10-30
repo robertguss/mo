@@ -1106,6 +1106,12 @@ block has no explicit generic-specialization syntax. The state, handler inputs
 and handler results must contain neither capabilities nor function values,
 including inside records, choices, tuples and collections.
 
+Tool names cannot end in `?` (E0106). Arguments after State and Time, the reply
+and any application error must have visible fields and cases, including nested
+types (E0105). Imported wire types need their representation exposed with `(..)`;
+types declared in this module are visible locally. Private service state need
+not be exposed. These wire checks run after the bare-state result check E0101.
+
 A tool updates stored state only when it returns `(State, Reply)` or
 `Result((State, Reply), E)`. Returning exactly `State`, or `Result(State, E)`, is an error.
 For a bare `State` result, the error offers two fixes: return `(state, Unit)` to
@@ -1133,6 +1139,14 @@ and cannot start with a digit. Checking does not read that variable or run a
 service. This build checks, tests, formats and fixes service modules, but
 `mo run` of a service entry module reports E1408, "mo run does not start
 services yet". Importing a service module does not start it.
+
+The private C embedding can expose a service through authenticated MCP over
+plain HTTP/1.1. It provides no new Mo function, capability or command. A tool's
+`structuredContent` is an object with `value` on success or `error` on failure;
+one text-content block contains the same compact object. Runtime errors report
+an effect of `none`, `applied` or `unknown` on this call's service state. An effect
+does not promise retry safety; an updating call whose response is lost has an
+unknown effect from the client's perspective.
 
 ## 12. Examples, promises and tests
 

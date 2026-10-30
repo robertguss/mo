@@ -266,6 +266,27 @@ fn fallbacks()
   )
 end
 
+fn tool_replies()
+  for failed in [false, true]
+    for id in [json("-0"), Json.String("é\"\\\n\u{0}")]
+      for value in [Json.Null, Json.String("é😀\"\\\n\r\t\u{0}\u{1f}"), json("{\"a\":[1,true]}")]
+        result = if failed: Mcp.application_error(value) else: Mcp.success(value)
+        expected = McpTransport.reply(id, result)
+        bound = expected.byte_count
+        require(Mcp.tool_reply(id, value, failed, bound) == Some(expected), "tool reply at bound")
+        require(Mcp.tool_reply(id, value, failed, bound - 1) == None, "tool reply exceeds bound")
+      end
+    end
+    for bound in [0, -1]
+      require(Mcp.tool_reply(Json.int(1), Json.Null, failed, bound) == None, "tool reply no room")
+    end
+    require(
+      Mcp.tool_reply(Json.int(1), Json.String("\u{0}".repeat(32768)), failed, 32768) == None,
+      "oversized NUL tool reply"
+    )
+  end
+end
+
 fn http()
   require(
     McpTransport.http_head(200, 770) ==
@@ -375,6 +396,7 @@ fn main() : Int
   methods()
   pages()
   fallbacks()
+  tool_replies()
   http()
   limits()
   37

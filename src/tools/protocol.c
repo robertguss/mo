@@ -385,6 +385,7 @@ static bool valid_abi(const struct mo_image *image) {
         {"Mcp.page", 3, {ABI_CATALOG, ABI_INT, ABI_JSON}, ABI_JSON_OPTION},
         {"Mcp.success", 1, {ABI_JSON}, ABI_JSON},
         {"Mcp.application_error", 1, {ABI_JSON}, ABI_JSON},
+        {"Mcp.tool_reply", 4, {ABI_JSON, ABI_JSON, ABI_BOOL, ABI_INT}, ABI_TEXT_OPTION},
         {"McpTransport.receive",
          5,
          {ABI_TEXT, ABI_TEXT_OPTION, ABI_MCP_SERVICE, ABI_CATALOG, ABI_TEXT},

@@ -456,8 +456,9 @@ unit; D325's approved wording belongs to MO-160 part 2.
 ceiling with the worst-case escaped ID and its cursor, when needed. `Mcp.page`
 counts serialized UTF-8 bytes, including the RPC envelope, and omits `nextCursor`
 on the last page. These functions take the image key and response ceiling from
-the caller; they do not freeze resource defaults. The listener still needs to
-supply the loaded image key and `mo_version()` and enforce HTTP status mapping.
+the caller; they do not freeze resource defaults. The private C embedding supplies
+the loaded image key and `mo_version()`; embedded `McpTransport` owns HTTP status
+mapping and D325's exact protocol errors.
 D324 confirms D322 item 10: every notification that passes item 4, including one
 with array params, receives HTTP 202 with an empty body and never runs a tool.
 The regression-list line requesting HTTP 400 was a mistake. This unit returns
@@ -474,6 +475,101 @@ counts as one node; object keys count toward bytes, not nodes. For `tools/call`,
 only `params.arguments` is payload. Everything else belongs to the envelope;
 methods without a payload must fit within 64 nodes. Wrappers and application
 Bytes elements count. D330 assigns the response without changing those limits.
+
+### MO-160 listener and client hookup
+
+`tools/protocol.h` exposes the private C server constructor, polling loop and
+metrics. It takes an already loaded service image, an open store, a listener and
+explicit configured authorities. There is no `mo serve` command. The existing
+service loop still owns admission, timers, supervision and durable updates.
+
+The runtime-only listener family in `base/hostops.def` has real and fake
+implementations. Real binds use numeric addresses, default to `127.0.0.1`, require
+an explicit port (zero requests an ephemeral port), and require explicit consent
+for non-loopback exposure. IPv6 listeners are IPv6-only. Native code owns socket
+readiness, credentials and constant-time bearer authentication. Embedded Mo owns
+header syntax, authority comparison, request policy, body framing, JSON parsing,
+method validation, schemas and wire-value conversion. Authority comparison uses
+ASCII host case folding and numeric ports, with default port 80. It performs no
+DNS or alias expansion. Malformed authorities get 400, unconfigured authorities
+421; absolute-form targets own their authority.
+
+Eight connection slots remain occupied through a pending service reply. Polling
+rotates slots and waits no later than the next service deadline. Headers and
+bodies have absolute deadlines; fragments do not reset them. Each stage runs to
+completion, so these deadlines are not a wall-clock execution interrupt. Final
+responses close the connection, disable caching, half-close writing and drain
+at most 512 KiB or 250 ms without parsing another request.
+
+Authentication precedes body planning and JSON decoding. Header-stage values and
+raw credential bytes are wiped before the authenticated request process starts.
+Unknown tools and malformed params precede rate consumption. Every known-tool
+call consumes a rate token before typed decoding, including invalid arguments.
+The token-wide rate remains 20 calls per second with burst 40. Node overflows
+precede both rate consumption and admission as D330 requires.
+
+Tool results follow D319: success and application/runtime errors each carry one
+compact object in both `structuredContent` and the text-content block. Both
+copies count toward the complete response ceiling. `outputSchema` is a 2020-12
+object union of success, application error when present, and runtime error.
+`runtime/mcp-transport.mo` contains D328's fixed runtime messages and D325's fixed
+protocol messages. The effects `none`, `applied` and `unknown` describe only this
+call's service-state update, not retry safety. A lost updating reply has unknown
+effect for the client.
+
+Mo prepares fallback prefixes and suffixes at catalog time. Each slot reserves
+a fixed buffer for the largest permitted fallback and a maximally escaped
+128-byte ID. Native code splices only those exact bytes and uses precomputed HTTP
+headers; fallback emission allocates nothing from an exhausted request heap.
+Successful callback values are retained only until the poll loop projects and
+serializes them. Serialization failure never retries an admitted operation.
+Result rendering reuses the compact content text and rejects it before building
+the duplicated RPC body when those two copies alone exceed the response ceiling.
+
+Descriptor, catalog and configured-authority graphs are frozen during server
+construction and shared immutably across requests. Their owning catalog heap
+outlives every connection process. Request heaps, expanded byte lists, VM stack
+scratch and temporary native arenas share the request memory allowance. Typed
+copy-in temporarily constrains the destination service heap to the request's
+remaining allowance, then restores the service limit before admission.
+
+E0105 checks only wire arguments after State and Time, projected replies and
+application errors, recursively. Private state and update-state wrappers are
+excluded. E0106 rejects selected tool names ending in `?`; ordinary helpers and
+timers remain unaffected. Both checks follow E0101 across all services (D328).
+
+### MO-160 measurement accounting (D317 and D329)
+
+VM work is bytecode dispatch, including one instruction per native primitive.
+The transport additionally charges linear native byte/node visits; it does not
+claim to meter each C table probe or comparison as a VM instruction. Native
+scanning, copying and conversion have byte, node, depth and iteration bounds,
+and their wall time must be measured. Hashing and typed Map/Set duplicate checks
+remain in the service image's runtime, not JSON equality.
+
+`request_memory` includes the connection resident bytes, the protocol-process
+lifetime peak and a conservative bound for temporary service copy-in. Native
+scratch telemetry counts aggregate arena reservations, including capacity and
+allocator headers, across simultaneous arenas. `native_memory` adds connection
+resident bytes and these scratch peaks; the service copy-in contribution may
+conservatively include earlier heap activity. `concurrent_memory` sums active
+connections' lifetime peak bounds, not a sampled simultaneous-live peak. Catalog
+memory is separate. Compiled images, the service's existing allowance and SQLite
+storage are not claimed as transport memory or total RSS.
+
+The original D329 working byte ceilings failed the required 2× matrix. The
+measured defaults lower the header block from 2 KiB to 1 KiB, decoded body from 256 KiB
+to 16 KiB, complete response from 256 KiB to 32 KiB, and encoded ingress from
+512 KiB to 24 KiB, including headers. The allowances remain 1 MiB/1M work for
+pre-authentication inside 16 MiB/32M work per request, and 64 MiB for catalog
+preparation. Node, depth, connection, rate and type-graph limits are unchanged.
+The complete matrix passes with these reductions under strict GCC `-O2`:
+bytewise pre-authentication, byte-fit values and duplicates, depth 60/61, escaped
+results, maximum responses, catalog pages, 1,024 chunks and eight retained peak
+connections. Original node-ceiling requests exceed the lower body ceiling and
+are refused before parsing; the pure transport fixtures retain the exact node
+boundary checks. Results and timings are recorded in the PR. Raising any limit
+or adding memory/work requires Robert's approval.
 
 ## 10. Done means
 

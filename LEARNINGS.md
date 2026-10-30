@@ -115,6 +115,18 @@
   arguments, reply and application error. Run those wire checks after E0101
   across all services so a hidden type or predicate name cannot mask the
   approved bare-state diagnostic.
+- D317's instruction allowance is not native C gas: one primitive dispatch is
+  one instruction. Bound native byte/node/iteration work and measure its stage
+  time separately. An invented quadratic comparison reservation can reject
+  valid Map/Set inputs before the runtime's typed duplicate check.
+- Prepared descriptor and catalog graphs must not be rebuilt per request.
+  Freeze the immutable graphs, including their hash caches, during server
+  construction and keep the owning heap alive until every request is freed.
+  Ordinary refcounted cells cannot be shared across process heaps this way.
+- A post-call live-memory sample misses transient scratch. Track aggregate
+  scratch reservations in the heap, including simultaneous arenas and headers.
+  A sum of active request lifetime peaks is a conservative concurrent bound,
+  not a measured simultaneous-live high-water mark.
 
 ## MO-159 simulation boundaries
 

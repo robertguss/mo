@@ -229,5 +229,6 @@ MO_MUST_USE enum mo_service_status mo_service_send(struct mo_service_loop *servi
 MO_MUST_USE bool mo_service_step(struct mo_service_loop *service);
 MO_MUST_USE uint32_t mo_service_pending(const struct mo_service_loop *service);
 MO_MUST_USE bool mo_service_running(const struct mo_service_loop *service);
+MO_MUST_USE bool mo_service_next_deadline(const struct mo_service_loop *service, uint64_t *out);
 
 #endif

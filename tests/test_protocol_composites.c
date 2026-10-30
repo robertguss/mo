@@ -156,8 +156,10 @@ static void run(void *unused) {
                               ->functions[function(protocol, "McpValue.encode")]
                               .parameters[2]
                               .type;
-    struct mo_protocol_values types = {mo_image_types(protocol), mo_image_types(service),
-                                       &mo_image_bytecode(service)->services[0], value_type};
+    struct mo_protocol_values types = {.protocol = mo_image_types(protocol),
+                                       .service = mo_image_types(service),
+                                       .descriptor = &mo_image_bytecode(service)->services[0],
+                                       .value = value_type};
     depths(&types, to, heap, types.service->items[native].cases[0].fields[7].type);
     struct mo_cell kind;
     MO_ASSERT(mo_list_get(graph, (uint32_t)mo_cell_get_int(graph_index), &kind));
