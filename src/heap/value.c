@@ -248,6 +248,16 @@ bool mo_value_construct(struct mo_heap *process, uint32_t layout, const struct m
     return construct(process, layout, fields, count, false, out);
 }
 
+bool mo_value_product(struct mo_heap *process, uint32_t type, const struct mo_cell *fields,
+                      uint32_t count, struct mo_cell *out) {
+    MO_ASSERT(process != NULL && out != NULL);
+    if (type >= process->types->count || (process->types->items[type].kind != MO_TYPE_RECORD &&
+                                          process->types->items[type].kind != MO_TYPE_TUPLE))
+        return false;
+    struct mo_layout_lookup *layout = mo_heap_layout(process, 0, type, MO_NO_INDEX);
+    return layout != NULL && construct(process, layout->index, fields, count, false, out);
+}
+
 bool mo_value_construct_owned(struct mo_heap *process, uint32_t layout,
                               const struct mo_cell *fields, uint32_t count, struct mo_cell *out) {
     return construct(process, layout, fields, count, true, out);

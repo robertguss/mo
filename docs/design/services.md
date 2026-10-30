@@ -439,6 +439,30 @@ Its submit/crash/restart/lease test exercises real recovery; ignoring an accepte
 reply and retrying after recovery produces two jobs. Promise generators, the
 MO-162 service, networking and deployment are outside this change.
 
+### MO-160 private request processing
+
+The embedded `McpRpc` module implements D322's pure request classification and
+method validation. It uses `Json.parse`; duplicate object member names are refused
+as unparseable. This includes decoded-equivalent names and duplicates inside tool
+arguments. It does not invoke handlers or consume rate tokens. Notifications and
+validated requests have different result variants.
+
+RPC integer IDs retain their original spelling, including `-0`, within D317's
+128-byte limit. String IDs are limited to 128 decoded UTF-8 bytes. Error envelopes
+omit an indeterminate ID. Exact error messages remain caller-supplied in this
+unit; D325's approved wording belongs to MO-160 part 2.
+
+`Mcp.prepare` checks that every single-tool page fits the supplied response
+ceiling with the worst-case escaped ID and its cursor, when needed. `Mcp.page`
+counts serialized UTF-8 bytes, including the RPC envelope, and omits `nextCursor`
+on the last page. These functions take the image key and response ceiling from
+the caller; they do not freeze resource defaults. The listener still needs to
+supply the loaded image key and `mo_version()` and enforce HTTP status mapping.
+D324 confirms D322 item 10: every notification that passes item 4, including one
+with array params, receives HTTP 202 with an empty body and never runs a tool.
+The regression-list line requesting HTTP 400 was a mistake. This unit returns
+`Notification` for those envelopes; the HTTP mapping belongs to the listener.
+
 ## 10. Done means
 
 Mo's own agents take every task from the job queue for one week with no restart, and a deliberate

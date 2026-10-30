@@ -56,7 +56,7 @@ static MO_MUST_USE bool count_variable(const struct mo_defect_variable *variable
 
 static void reporting_faults(void) {
     const char *source =
-        "bytecode 0.2 shorthand\nmodule M exposes [M.stop]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.stop]\n"
         "function M.stop(x: Int owned) : Unit function in M\n registers [r1: Text]\n"
         " variables [(r0, \"value\", @start, @end), (r1, \"unchecked\", @start, @end)]\n"
         " @start:\n const r1, \"stop\"\n stop r1\n @end:\nend\n";
@@ -106,7 +106,7 @@ static void reporting_faults(void) {
 
 int main(void) {
     const char *source =
-        "bytecode 0.2 shorthand\nrecord Box\n value: Int\nend\nmodule M exposes [M.box]\n"
+        "bytecode 0.3 shorthand\nrecord Box\n value: Int\nend\nmodule M exposes [M.box]\n"
         "function M.box(x: Int owned) : Box function in M\n registers [r1: Box]\n"
         " construct r1, Box, r0\n ret r1\nend\n";
     struct mo_buffer wire;

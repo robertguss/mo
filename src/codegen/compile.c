@@ -1,6 +1,7 @@
 #include "codegen/codegen.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "base/capabilities.h"
@@ -89,7 +90,7 @@ struct compiler {
     const struct mo_services *services;
     struct mo_arena arena;
     struct mo_types types;
-    struct vector strings, constants, modules, constructors, ownership, edges, constraints;
+    struct vector strings, constants, modules, constructors, ownership, edges, constraints, shapes;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
         *module_index, *builtin_index, *annotation_index, *operation_index;
     struct mo_codegen_index *bigint_index[2];
@@ -155,6 +156,25 @@ static MO_MUST_USE void *append(struct compiler *c, struct vector *v, uint32_t n
     void *p = (uint8_t *)v->items + (size_t)v->count * v->width;
     v->count = required;
     return p;
+}
+static MO_MUST_USE bool service_shape(struct compiler *c, uint32_t type,
+                                      const struct mo_service_shape *source) {
+    if (c->services == NULL || c->services->count == 0)
+        return true;
+    struct mo_bytecode_service_shape *shape =
+        append(c, &c->shapes, 1, MO_LIMIT_TYPES, MO_CODE_BYTECODE_TOO_BIG);
+    if (shape == NULL)
+        return false;
+    bool *unnamed = NULL;
+    if (source->case_count != 0) {
+        unnamed = allocate(c, source->case_count, sizeof *unnamed);
+        if (unnamed == NULL)
+            return false;
+        memcpy(unnamed, source->unnamed, source->case_count * sizeof *unnamed);
+    }
+    *shape =
+        (struct mo_bytecode_service_shape){type, source->is_struct, source->case_count, unnamed};
+    return true;
 }
 static MO_MUST_USE mo_core_string text(const char *s) {
     return (mo_core_string){s, strlen(s)};
@@ -454,7 +474,11 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             }
         }
         status = mo_types_define_choice(&c->types, id, cases, n);
+        const bool unnamed[] = {cases[0].unnamed, cases[1].unnamed, cases[2].unnamed,
+                                cases[3].unnamed};
         if (type_result(c, status, id) == MO_NO_INDEX ||
+            !service_shape(c, id,
+                           &(struct mo_service_shape){.case_count = n, .unnamed = unnamed}) ||
             index_add(c, &c->builtin_index, bytes, id, true) == NULL)
             return MO_NO_INDEX;
         return id;
@@ -529,6 +553,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         const struct mo_type_field fields[] = {{"name", text_type}, {"kind", kind_type}};
         status = mo_types_define_record(&c->types, id, fields, 2);
         if (type_result(c, status, id) == MO_NO_INDEX ||
+            !service_shape(c, id, &(struct mo_service_shape){.is_struct = true}) ||
             index_add(c, &c->builtin_index, bytes, id, true) == NULL)
             return MO_NO_INDEX;
         return id;
@@ -3030,6 +3055,8 @@ static MO_MUST_USE bool count_lambdas(struct compiler *c, mo_core_expr e, unsign
 }
 static MO_MUST_USE bool declarations(struct compiler *c) {
     const struct mo_core *p = c->core;
+    if (c->services != NULL && c->services->count != 0 && c->services->data_count != p->data.count)
+        return problem(c, MO_CODE_CODEGEN_INVALID, "Service shapes differ from Core data table.");
     if (p->funs.count > MO_LIMIT_FUNCTIONS ||
         p->consts.count > (MO_LIMIT_FUNCTIONS - p->funs.count) / 2 ||
         p->consts.count > MO_LIMIT_GLOBALS || p->data.count > MO_LIMIT_TYPES)
@@ -3073,6 +3100,9 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
         enum mo_type_problem status = mo_types_declare(&c->types, MO_TYPE_CHOICE, n, &c->data[i]);
         if (type_result(c, status, c->data[i]) == MO_NO_INDEX ||
             index_add(c, &c->data_index, p->data.items[i].name, c->data[i], false) == NULL)
+            return false;
+        if (c->services != NULL && c->services->count != 0 &&
+            !service_shape(c, c->data[i], &c->services->data_shapes[i]))
             return false;
     }
     for (size_t i = 0; i < p->data.count; i++) {
@@ -3457,6 +3487,36 @@ static MO_MUST_USE bool initializer(struct compiler *c, struct function *f, uint
            emit(c, f, c->declaration, MO_OP_CONST, result, 2, NULL, 0) != MO_NO_INDEX &&
            emit(c, f, c->declaration, MO_OP_RET, &unit, 1, NULL, 0) != MO_NO_INDEX;
 }
+static MO_MUST_USE bool service_shapes(struct compiler *c, struct mo_bytecode_service *services,
+                                       const struct mo_bytecode *file) {
+    const struct mo_bytecode_service_shape **by_type = allocate(c, c->types.count, sizeof *by_type);
+    if (by_type == NULL)
+        return false;
+    memset(by_type, 0, c->types.count * sizeof *by_type);
+    const struct mo_bytecode_service_shape *known = c->shapes.items;
+    for (uint32_t i = 0; i < c->shapes.count; i++) {
+        MO_ASSERT(known[i].type < c->types.count && by_type[known[i].type] == NULL);
+        by_type[known[i].type] = &known[i];
+    }
+    struct mo_bytecode_service_reach *reach;
+    if (!mo_bytecode_service_reach(&c->arena, file, &reach))
+        return problem(c, MO_CODE_CODEGEN_MEMORY,
+                       "Code generation exhausted its scratch limit or memory.");
+    for (uint32_t i = 0; i < file->service_count; i++) {
+        struct mo_bytecode_service *s = &services[i];
+        s->shape_count = reach[i].count;
+        struct mo_bytecode_service_shape *shapes = allocate(c, s->shape_count, sizeof *shapes);
+        if (shapes == NULL)
+            return false;
+        s->shapes = shapes;
+        for (uint32_t j = 0; j < s->shape_count; j++) {
+            uint32_t type = reach[i].types[j];
+            MO_ASSERT(by_type[type] != NULL);
+            shapes[j] = *by_type[type];
+        }
+    }
+    return true;
+}
 static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_bytecode *file) {
     if (c->services == NULL || c->services->count == 0)
         return true;
@@ -3525,7 +3585,7 @@ static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_byteco
     }
     file->string_count = c->strings.count;
     file->strings = c->strings.items;
-    return c->error == 0;
+    return c->error == 0 && service_shapes(c, items, file);
 }
 
 static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
@@ -3714,6 +3774,7 @@ bool mo_compile_services(const struct mo_core *core, const struct mo_services *s
     c.ownership.width = sizeof(struct ownership);
     c.edges.width = sizeof(struct edge);
     c.constraints.width = sizeof(struct constraint);
+    c.shapes.width = sizeof(struct mo_bytecode_service_shape);
     bool ok = declarations(&c) && globals(&c) && bodies(&c) && entry_valid(&c) &&
               abilities_valid(&c) && borrow_infer(&c) && output(&c, out);
     if (!ok) {

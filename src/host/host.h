@@ -98,7 +98,16 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
  * A disk path names one service's database, locked exclusively until close.
  * Each handle belongs to at most one live service. Only success writes out. */
 struct mo_store;
-enum mo_store_status { MO_STORE_OK, MO_STORE_IO, MO_STORE_CORRUPT, MO_STORE_LIMIT };
+enum mo_store_status {
+    MO_STORE_OK,
+    MO_STORE_IO,
+    MO_STORE_CORRUPT,
+    MO_STORE_MEMORY,
+    MO_STORE_EMPTY_PATH,
+    MO_STORE_MEMORY_PATH,
+    MO_STORE_HANDLES
+};
+MO_MUST_USE const char *mo_store_status_text(enum mo_store_status status);
 enum mo_store_operation {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only)
 #define STOREOP(id) MO_STORE_##id,
@@ -129,5 +138,14 @@ MO_MUST_USE enum mo_store_status
 mo_store_call(struct mo_store *store, enum mo_store_operation operation,
               const struct mo_store_record *record,
               bool (*consume)(const struct mo_store_record *record, void *context), void *context);
+
+struct mo_bearer {
+    uint8_t bytes[MO_LIMIT_MCP_TOKEN_BYTES];
+    size_t length;
+};
+MO_MUST_USE bool mo_bearer_read(struct mo_bearer *out, const char *environment);
+MO_MUST_USE bool mo_bearer_check(const struct mo_bearer *bearer, const uint8_t *bytes,
+                                 size_t length);
+void mo_host_wipe(void *bytes, size_t length);
 
 #endif

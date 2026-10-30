@@ -1,6 +1,6 @@
 # Shorthand, indexed sections, metadata and the opcodes in bytecode/opcodes.def.
-"bytecode 0.2 shorthand\x0a"
-"bytecode 0.2 indexed\x0a"
+"bytecode 0.3 shorthand\x0a"
+"bytecode 0.3 indexed\x0a"
 "strings\x0a"
 "types\x0a"
 "layouts\x0a"
@@ -159,4 +159,7 @@
 "services\x0a"
 "tools"
 "timers"
+"shapes"
+"struct"
+"enum"
 "S0"

@@ -63,10 +63,9 @@ const char *mo_service_status_text(enum mo_service_status status) {
     case MO_SERVICE_INTERVAL:
         return "service timer interval must be positive";
     case MO_SERVICE_STORE:
-        return "service store failed; reopen it to see whether the last change was saved";
+        return mo_store_status_text(MO_STORE_IO);
     case MO_SERVICE_SAVED_INVALID:
-        return "saved service data is damaged or was written by a different program; recovery "
-               "refused";
+        return mo_store_status_text(MO_STORE_CORRUPT);
     }
     MO_UNREACHABLE();
 }

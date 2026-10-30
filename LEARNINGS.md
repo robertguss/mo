@@ -1,5 +1,109 @@
 # Learnings
 
+## MO-160 protocol image loading
+
+- Json has implicit library dependencies even though it has no `use` lines:
+  its parser and writer need List, Option and Result. The embedded protocol
+  sources include those modules; the lowering test checks their exact bytes
+  against `lib/` and executes the compiled Json parser and writer.
+- `mo_load_program_sources` consumes a nonempty, already populated source set.
+  Source zero is the entry; library flags correspond to source indices. It loads
+  only that closed set, with no filesystem fallback. The caller retains both
+  sources and arena until all consumers of the returned module set finish.
+- `mo_protocol_build` returns an owned, loaded but uninitialized image. Its
+  sources are embedded; private runtime modules are not library modules. The
+  builder checks the header and catalog entry points and their full structural
+  type shapes before returning the image, including field and case order and
+  recursive Json identity. Callers follow each function's loaded parameter
+  ownership when transferring cells.
+- The private protocol ABI sees lowered field names: source enum payloads use
+  `"0"`, while builtin Option and Result payloads are unnamed. That ABI check
+  is not service shape inference. Service schemas use the explicit shape
+  table, including its payload flags, and copy names into the protocol heap
+  so catalog generation does not borrow the service image.
+- The `MO_LIMIT_MCP_HEADER_*` bounds are experimental measurement targets,
+  not frozen defaults. Header scanning retains only delimiter state and byte
+  counts between fragments. Header parsing returns spans into native ingress;
+  it does not interpret body framing or turn field values into Text or Bytes.
+- The first header measurement rejected 16 KiB: scanning plus parsing a
+  64-field header with a 256-byte token took 2,579,101 VM instructions before
+  authority/authentication checks. At 2 KiB those stages took 357,021; the
+  experimental header ceiling was lowered accordingly, retaining the 1M
+  instruction budget. Full pre-auth work and peak memory still need measurement.
+- Source structs lower to one-case choices, not `MO_TYPE_RECORD`. A nested
+  choice payload can require a boxed wrapper. Bridge code must validate the
+  actual types and case shapes rather than assume C record layouts.
+- Preserve source struct/enum form and unnamed-payload flags while lowering,
+  before the Core representation loses those distinctions. The service
+  sidecar owns copies in the lowering arena and indexes them by Core data
+  order. Built-in Entry is a physical record, not a source data declaration;
+  its descriptor shape must be supplied separately during code generation.
+- Per-service shape traversal repeated large shared structural subgraphs even
+  when they contained no nominal types: 4096 services over one 65535-field
+  tuple caused 268431360 edge visits. Keeping one global visited set would
+  lose per-service completeness. Shared component analysis with 64-service
+  membership batches preserves isolation without allocating the full
+  types-by-services reachability matrix; its work bound includes batch count.
+- Heap value allocations already wipe before release, but that does not cover
+  VM stacks or native scratch arenas. Mark a protocol process confidential
+  before allocating values or calling it. Its stack and scratch then use
+  confidential arenas; VM operand arrays and the process structure are wiped
+  too. This does not suppress defect rendering: the adapter must still keep
+  protocol defects out of rendering and variable visitors.
+- Confidential arenas avoid `realloc`, which could release an unwiped old
+  allocation. Moved blocks are cleared; their chunks stay charged to the arena
+  until destruction. Capacity planning must include those retained chunks,
+  not just the newest live buffer. Ordinary arenas keep their existing growth
+  behaviour. The allocation-boundary test checks complete chunk wiping on
+  success, allocation failure and instruction-budget stops; it is not the
+  full protocol canary/deadline test.
+- Final chunk wiping can hide a missing move-time or shrink-time wipe. Check
+  discarded scratch bytes immediately after resizing, before freeing the
+  arena, and keep live prefixes and neighboring allocations as controls.
+- CBMC loop IDs do not follow source nesting order. In `service_entry`, loop
+  `.2` is the inner four-byte case loop and `.3` is the outer twelve-byte
+  shape loop. Check `goto-instrument --show-loops` before assigning byte-based
+  unwind bounds; swapped divisors fail the inner loop's unwinding assertion.
+- For valid JSON, counting opening brackets/braces and commas outside strings
+  gives `nodes - 1 + empty containers`, where nodes are JSON values and object
+  keys are not separate values. This is not an exact semantic-node count.
+  The approved native prescan only returns that marker count or a byte-budget
+  refusal; JSON validity and the eventual node admission policy remain in Mo.
+  The body byte ceiling is experimental, like the header ceilings.
+- JsonNumber is opaque outside Json. Its compact JSON rendering preserves the
+  original numeric token, so protocol Byte decoding can inspect that spelling
+  without a new accessor or a Float conversion. An all-zero mantissa is zero
+  even with a huge exponent; a nonzero token must prove both integrality and
+  range before conversion.
+- BigInt text input uses nine-digit chunks over the existing arithmetic, not
+  a new primitive. The 4096-digit target is experimental: isolated GCC O2
+  decoding used 373001 VM instructions and about 6 ms in the initial probe.
+  That result does not freeze an aggregate request budget. Native copying,
+  Json parsing, collection sizes and concurrent connections still count.
+- JSON Schema 2020-12 requires `prefixItems` to be nonempty. An empty tuple
+  uses `minItems: 0`, `maxItems: 0` and `items: false` without `prefixItems`.
+  An empty enum uses the false schema, not an empty `oneOf`. Validate generated
+  schemas against the metaschema as well as validating example values.
+- D321's private Time bridge clarification permits `TimeValue(Time)` so Mo
+  retains parsing and canonical formatting without a new public constructor.
+  C copies only signed microseconds into a fresh cell. Duration remains an
+  Int payload in microseconds; neither conversion transfers image-local types
+  or heap references. Temporary Bytes conversion storage uses `mo_scratch_resize`
+  so it shares the destination heap budget.
+- Composite conversion must use the service image's typed equality for Map
+  keys and Set elements. Different accepted wire spellings can become the same
+  value, so JSON equality cannot enforce uniqueness. Destination table
+  cardinality detects that collapse after typed conversion. Product construction
+  uses the heap's indexed layout lookup rather than scanning layouts per value.
+- D322's RPC classification checks the version header after parsing an object
+  but before validating its envelope, except for an exact string `initialize`
+  method. Parse errors precede that check. Numeric RPC IDs keep their lexical
+  spelling rather than using the mathematical Byte or tool-Int decoders.
+- Pagination admission must include the RPC envelope, the worst-case escaped
+  ID and the next cursor. Checking only a tool's schema size can admit a catalog
+  that cannot advance for a valid request. Cached serialized tool sizes avoid
+  rendering every growing page prefix to choose its boundary.
+
 ## MO-159 simulation boundaries
 
 - `mo_service_send` returning `MO_SERVICE_MEMORY` means admission failed before

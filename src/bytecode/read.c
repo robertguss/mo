@@ -461,6 +461,19 @@ static void service_entry(struct reader *r, struct mo_bytecode_service *s) {
         timers[j].function = word(r);
         timers[j].interval = word(r);
     }
+    struct mo_bytecode_service_shape *shapes =
+        array(r, &s->shape_count, MO_LIMIT_TYPES, 12, sizeof *shapes,
+              _Alignof(struct mo_bytecode_service_shape));
+    s->shapes = shapes;
+    for (uint32_t j = 0; j < s->shape_count && !r->failed; j++) {
+        shapes[j].type = word(r);
+        shapes[j].is_struct = boolean(r);
+        bool *unnamed =
+            array(r, &shapes[j].case_count, MO_LIMIT_FIELDS, 4, sizeof *unnamed, _Alignof(bool));
+        shapes[j].unnamed = unnamed;
+        for (uint32_t k = 0; k < shapes[j].case_count && !r->failed; k++)
+            unnamed[k] = boolean(r);
+    }
 }
 
 static void sections(struct reader *r) {
@@ -524,7 +537,7 @@ static void sections(struct reader *r) {
     }
     if (f->header.flags == MO_BYTECODE_SERVICE_FLAG) {
         struct mo_bytecode_service *services =
-            array(r, &f->service_count, MO_LIMIT_SERVICES, 24, sizeof *services,
+            array(r, &f->service_count, MO_LIMIT_SERVICES, 28, sizeof *services,
                   _Alignof(struct mo_bytecode_service));
         f->services = services;
         if (!r->failed && f->service_count == 0)

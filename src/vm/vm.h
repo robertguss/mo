@@ -49,6 +49,7 @@ MO_MUST_USE bool mo_image_global(const struct mo_image *image, uint32_t global,
 MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image,
                                               const struct mo_limits *limits);
 void mo_process_free(struct mo_process *process);
+void mo_process_confidential(struct mo_process *process);
 MO_MUST_USE struct mo_heap *mo_process_heap(struct mo_process *process);
 /* C harness I/O descriptors and portable-resolution selection. The context
  * belongs to the process; descriptors are borrowed and must outlive its calls. */

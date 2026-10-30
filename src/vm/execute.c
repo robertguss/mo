@@ -236,6 +236,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             if (tail)
                 clean(f);
             mo_vm_enter(p, target, arguments, environment, closure, tail, tail ? 0 : a[0], next);
+            if (p->confidential)
+                mo_host_wipe(arguments, sizeof arguments);
             continue;
         }
         case MO_OP_RET: {
@@ -309,6 +311,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                 ok = mo_value_construct_owned(p->heap, a[1], fields, count, &value);
             int failure = errno;
             mo_scratch_free(&scratch);
+            if (p->confidential)
+                mo_host_wipe(local, sizeof local);
             if (!ok) {
                 errno = failure;
                 return memory(p);
@@ -392,6 +396,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             const char *reason;
             enum mo_prim_status status = mo_prim_call(p->heap, p->types, (enum mo_primitive_id)a[1],
                                                       a[2], arguments, &value, &reason);
+            if (p->confidential)
+                mo_host_wipe(arguments, sizeof arguments);
             if (status != MO_PRIM_RETURNED)
                 return primitive_stop(p, status, reason);
             /* The primitive transferred owned cells only after success. */
@@ -408,6 +414,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                 arguments[i] = read(p, f, a[4 + i]);
             enum mo_outcome outcome =
                 mo_vm_simulate(p, a[1], a[2], a[3], fn->register_types[a[0]], arguments, &value);
+            if (p->confidential)
+                mo_host_wipe(arguments, sizeof arguments);
             if (outcome != MO_RETURNED)
                 return outcome;
             write(p, f, a[0], value, false);
@@ -423,6 +431,8 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             struct mo_host_error error;
             enum mo_host_outcome outcome = mo_host_call(
                 &p->host, p->heap, a[1], fn->register_types[a[0]], arguments, &value, &error);
+            if (p->confidential)
+                mo_host_wipe(arguments, sizeof arguments);
             if (outcome == MO_HOST_OUT_OF_MEMORY && errno == EOVERFLOW)
                 return mo_vm_stop(p, "running out of memory: MO_LIMIT_VALUE_BYTES", "native memory",
                                   false, mo_cell_unit(), MO_STOPPED);

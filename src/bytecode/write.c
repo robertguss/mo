@@ -331,6 +331,15 @@ static MO_MUST_USE bool sections(struct writer *w) {
                 WRITE(word(w, s->timers[j].function));
                 WRITE(word(w, s->timers[j].interval));
             }
+            WRITE(count(w, s->shape_count, MO_LIMIT_TYPES, s->shapes));
+            for (uint32_t j = 0; j < s->shape_count; j++) {
+                const struct mo_bytecode_service_shape *shape = &s->shapes[j];
+                WRITE(word(w, shape->type));
+                WRITE(word(w, shape->is_struct ? 1U : 0U));
+                WRITE(count(w, shape->case_count, MO_LIMIT_FIELDS, shape->unnamed));
+                for (uint32_t k = 0; k < shape->case_count; k++)
+                    WRITE(word(w, shape->unnamed[k] ? 1U : 0U));
+            }
         }
     }
     return true;

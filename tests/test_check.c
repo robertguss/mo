@@ -37,6 +37,57 @@ static void load_graph(void) {
     mo_sources_free(&sources);
 }
 
+static void load_memory(void) {
+    const char *programs[][3] = {
+        {"module Main\nuse Json\nfn main() : Int\n Json.answer()\nend\n",
+         "module Json\nexpose answer\nuse Support\nfn answer() : Int\n Support.answer()\nend\n",
+         "module Support\nexpose answer\nfn answer() : Int\n 37\nend\n"},
+        {"module Main\nuse Shared\n", "module Support\n", NULL},
+        {"module Main\nuse Json\n", "module Json\nuse Main\n", NULL},
+        {"module Main\nuse Support\n", "module Support\nuse Main\n", NULL},
+        {"module Main\n", "module Main\n", NULL},
+    };
+    const uint16_t errors[] = {0, MO_CODE_MODULE_MISSING, MO_CODE_MODULE_MISSING,
+                               MO_CODE_MODULE_CYCLE, MO_CODE_MODULE_RESERVED};
+    for (size_t i = 0; i < sizeof(programs) / sizeof(programs[0]); i++) {
+        struct mo_sources sources;
+        struct mo_diags diags;
+        struct mo_arena arena;
+        MO_ASSERT(mo_sources_init(&sources));
+        MO_ASSERT(mo_diags_init(&diags));
+        mo_arena_init(&arena, 64 << 20);
+        const char *paths[] = {"tests/check/load/main.mo", "memory/json.mo", "memory/support.mo"};
+        for (uint32_t j = 0; j < 3 && programs[i][j] != NULL; j++) {
+            uint32_t file;
+            struct mo_source_error error;
+            MO_ASSERT(mo_sources_add_bytes(&sources, paths[j], (const uint8_t *)programs[i][j],
+                                           strlen(programs[i][j]), &file, &error));
+        }
+        bool library[] = {false, i < 3, true};
+        struct mo_module_set *set = mo_load_program_sources(&arena, &sources, library, &diags);
+        if (errors[i] != 0) {
+            CHECK(set == NULL);
+            CHECK(diags.count == 1 && diags.items[0].code == errors[i]);
+        } else {
+            CHECK(set != NULL && diags.count == 0);
+            if (set != NULL) {
+                CHECK(set->count == 3 && sources.count == 3);
+                CHECK(set->uses[0][0] == 1 && set->uses[1][0] == 2);
+                CHECK(set->order[0] == 2 && set->order[1] == 1 && set->order[2] == 0);
+                CHECK(!set->library[0] && set->library[1] && set->library[2]);
+                CHECK(mo_check(&arena, set, &diags) != NULL && diags.count == 0);
+            }
+            mo_arena_free(&arena);
+            mo_arena_init(&arena, 0);
+            CHECK(mo_load_program_sources(&arena, &sources, library, &diags) == NULL);
+            CHECK(diags.count == 1 && diags.items[0].code == MO_CODE_CHECK_NO_MEMORY);
+        }
+        mo_arena_free(&arena);
+        mo_diags_free(&diags);
+        mo_sources_free(&sources);
+    }
+}
+
 static void interfaces(void) {
     struct mo_sources sources;
     struct mo_diags diags;
@@ -2405,6 +2456,7 @@ static void source_limits(void) {
 static void run_tests(void *argument) {
     (void)argument;
     load_graph();
+    load_memory();
     interfaces();
     corpus();
     samples();

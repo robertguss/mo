@@ -410,10 +410,18 @@ void mo_heap_drop_object(struct mo_heap *process, struct mo_object *object) {
     }
 }
 
+void mo_heap_confidential(struct mo_heap *process) {
+    MO_ASSERT(process != NULL && process->objects == 0);
+    process->confidential = true;
+}
+
 void mo_scratch_init(struct mo_scratch *scratch, struct mo_heap *process) {
     MO_ASSERT(scratch != NULL && process != NULL);
     size_t available = process->limit - process->used;
-    mo_arena_init(&scratch->arena, available);
+    if (process->confidential)
+        mo_arena_init_confidential(&scratch->arena, available);
+    else
+        mo_arena_init(&scratch->arena, available);
     scratch->process = process;
 }
 
