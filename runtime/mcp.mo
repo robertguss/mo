@@ -1,5 +1,5 @@
 module Mcp
-expose Catalog(..), success, application_error, catalog, prepare, page
+expose Catalog(..), success, application_error, tool_result, catalog, prepare, page
 use Json
 use McpRpc
 use McpSchema
@@ -51,16 +51,27 @@ fn prepare(descriptor: McpType.Service, image_key: Text, response_bytes: Int) : 
     end
     sizes = sizes.append(size)
   end
+  if tools.empty? and
+    McpRpc.result(Json.String("\u{0}".repeat(128)), page_result([], image_key, None)).to_text
+      .byte_count >
+      response_bytes
+    return None
+  end
   Some(Catalog(tools: tools, sizes: sizes, image_key: image_key, response_bytes: response_bytes))
 end
 
 fn page(catalog: Catalog, start: Int, id: Json.Json) : Option(Json.Json)
+  if start == 0 and catalog.tools.empty?
+    value = McpRpc.result(id, page_result([], catalog.image_key, None))
+    return if value.to_text.byte_count <= catalog.response_bytes: Some(value) else: None
+  end
   return None if start < 0 or start >= catalog.tools.size
   id_bytes = id.to_text.byte_count
   var items = []
   var bytes = 0
   var after = start
   for i in start..catalog.tools.size
+    break if i - start >= 32
     size = catalog.sizes.get(i) or stop "MCP catalog size"
     next = if i + 1 < catalog.tools.size: Some(i + 1) else: None
     if page_size(id_bytes, catalog.image_key, next, i - start + 1, bytes + size) >
