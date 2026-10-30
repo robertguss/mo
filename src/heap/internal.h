@@ -41,6 +41,8 @@ struct mo_heap {
     struct mo_allocation *allocations;
     size_t used;
     size_t peak;
+    size_t scratch_used;
+    size_t scratch_peak;
     size_t limit;
     size_t objects;
     bool confidential;
