@@ -217,12 +217,12 @@ static void replied(const struct mo_service_response *reply, void *context) {
         return;
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++) {
         struct protocol_connection *c = &s->connections[i];
-        if ((c->phase != PS_SERVICE && c->phase != PS_ABANDONED) || c->id != reply->id)
+        if (c->phase != PS_SERVICE || c->id != reply->id)
             continue;
         c->reply = *reply;
         c->reply.defect = NULL;
         c->reply_ready = true;
-        if (reply->status == MO_SERVICE_OK && c->phase != PS_ABANDONED) {
+        if (reply->status == MO_SERVICE_OK) {
             c->reply.value = mo_value_dup(s->service_heap, reply->type, reply->value);
             c->retained = true;
         }
@@ -493,15 +493,13 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
         struct protocol_connection *c = &s->connections[slot];
         if (c->phase == PS_EMPTY)
             continue;
-        if (c->phase != PS_SERVICE && c->phase != PS_ABANDONED &&
-            s->now.monotonic_us >= c->deadline) {
+        if (c->phase != PS_SERVICE && s->now.monotonic_us >= c->deadline) {
             mo_protocol_close(s, c);
             continue;
         }
-        if (c->deadline < request.wait.until_us && c->phase != PS_SERVICE &&
-            c->phase != PS_ABANDONED)
+        if (c->deadline < request.wait.until_us && c->phase != PS_SERVICE)
             request.wait.until_us = c->deadline;
-        if (c->phase == PS_SERVICE || c->phase == PS_ABANDONED)
+        if (c->phase == PS_SERVICE)
             continue;
         unsigned events = c->phase == PS_WRITE || c->phase == PS_CONTINUE ? MO_LISTENER_WRITABLE
                                                                           : MO_LISTENER_READABLE;
@@ -527,16 +525,13 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
             continue;
         }
         if ((events & MO_LISTENER_ERROR) != 0) {
-            if (c->phase == PS_SERVICE)
-                c->phase = PS_ABANDONED;
-            else if (c->phase != PS_ABANDONED)
-                mo_protocol_close(s, c);
+            mo_protocol_close(s, c);
         } else if ((events & MO_LISTENER_WRITABLE) != 0)
             write_ready(s, c);
         else if ((events & MO_LISTENER_READABLE) != 0) {
             if (c->phase == PS_DRAIN)
                 drain_ready(s, c);
-            else if (c->phase != PS_ABANDONED)
+            else
                 mo_protocol_read(s, c);
         }
     }

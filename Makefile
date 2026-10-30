@@ -432,7 +432,21 @@ $(BUILD)/debug/tests/test_protocol_memory.test: $(BUILD)/debug/tests/test_protoc
 $(BUILD)/sanitize/tests/test_protocol_memory.test: $(BUILD)/sanitize/tests/test_protocol_memory.o $(call objects,$(BUILD)/sanitize,$(filter-out $(PROTOCOL_MEMORY_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/protocol-memory/%.o,$(PROTOCOL_MEMORY_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/vm/service.c
+$(BUILD)/debug/listener-faults/listener.o: src/host/listener.c tests/listener_faults.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -include tests/listener_faults.h -c $< -o $@
+
+$(BUILD)/sanitize/listener-faults/listener.o: src/host/listener.c tests/listener_faults.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -include tests/listener_faults.h -c $< -o $@
+
+$(BUILD)/debug/tests/test_listener_faults.test: $(BUILD)/debug/tests/test_listener_faults.o $(call objects,$(BUILD)/debug,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/debug/listener-faults/listener.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_listener_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/sanitize/listener-faults/listener.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
@@ -440,6 +454,14 @@ $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protoco
 $(BUILD)/sanitize/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
+
+$(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
+
+$(BUILD)/sanitize/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
 
 $(BUILD)/debug/protocol-server-faults/vm/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)

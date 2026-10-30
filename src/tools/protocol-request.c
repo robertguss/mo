@@ -199,7 +199,7 @@ static void head_complete(struct mo_protocol_server *s, struct protocol_connecti
                           size_t buffered) {
     if (!authenticate(s, c)) {
         if (c->phase == PS_HEADERS)
-            mo_protocol_close(s, c);
+            mo_protocol_fail(s, c, 413);
         return;
     }
     bool send_continue;
@@ -226,17 +226,6 @@ static void head_complete(struct mo_protocol_server *s, struct protocol_connecti
 }
 
 void mo_protocol_read(struct mo_protocol_server *s, struct protocol_connection *c) {
-    if (c->phase == PS_SERVICE) {
-        uint8_t byte;
-        union mo_listener_request request = {.read = {c->key, &byte, 1}};
-        union mo_listener_result result;
-        enum mo_listener_status status =
-            mo_listener_call(s->listener, MO_LISTENER_READ, &request, &result);
-        mo_host_wipe(&byte, 1);
-        if (status == MO_LISTENER_EOF || (status != MO_LISTENER_OK && status != MO_LISTENER_AGAIN))
-            c->phase = PS_ABANDONED;
-        return;
-    }
     size_t at = c->phase == PS_HEADERS ? c->header_size : 0;
     if (at == sizeof c->input) {
         mo_protocol_fail(s, c, 431);
@@ -256,7 +245,17 @@ void mo_protocol_read(struct mo_protocol_server *s, struct protocol_connection *
         return;
     }
     if (c->phase == PS_BODY) {
-        feed(s, c, c->input, result.transferred);
+        size_t buffered = result.transferred;
+        while (buffered < sizeof c->input) {
+            request.read.bytes = c->input + buffered;
+            request.read.capacity = sizeof c->input - buffered;
+            status = mo_listener_call(s->listener, MO_LISTENER_READ, &request, &result);
+            if (status != MO_LISTENER_OK)
+                break;
+            MO_ASSERT(result.transferred > 0);
+            buffered += result.transferred;
+        }
+        feed(s, c, c->input, buffered);
         mo_host_wipe(c->input, sizeof c->input);
         return;
     }
@@ -265,7 +264,7 @@ void mo_protocol_read(struct mo_protocol_server *s, struct protocol_connection *
     args[2] = mo_cell_int(MO_LIMIT_MCP_HEADER_BYTES);
     if (!byte_list(s, c, c->input + at, result.transferred, &args[0]) ||
         !mo_protocol_invoke(s, c, PF_SCAN, args, &scan)) {
-        mo_protocol_close(s, c);
+        mo_protocol_fail(s, c, 413);
         return;
     }
     if (mo_cell_get_tag(scan) != 0) {

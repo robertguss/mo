@@ -181,3 +181,13 @@ Codegen now walks reachable paths before emission, visiting a join's rest before
 The golden regression fails on the prior fix and checks all three outcomes plus a partial-return
 continuation. This is class 6's 35th occurrence across 18 tasks. C types cannot distinguish
 reachable jumps from syntactic references; the traversal and executable regression enforce it.
+
+Round E, PR #262 (2026-10-30): listener restart and transient-accept failures lacked
+regressions, pre-auth resource failures silently closed, and body work depended on
+read fragmentation. Fixed at the test level: fixed-port reopen after server-first
+close, per-errno accept injection through a real protocol server, pre-auth invoke
+and allocation injection, and 16 KiB bodies at one- and two-byte read quanta.
+The archived D329 runner now measures both plain and escaped small-read bodies.
+Dead PS_ABANDONED branches were removed structurally; pending slots still stay
+occupied through the service reply. These are further class 6/8 evidence; no
+supervisor-event behavior was changed.

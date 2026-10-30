@@ -262,10 +262,6 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
 
 void mo_protocol_complete(struct mo_protocol_server *s, struct protocol_connection *c) {
     c->reply_ready = false;
-    if (c->phase == PS_ABANDONED) {
-        mo_protocol_close(s, c);
-        return;
-    }
     enum protocol_effect effect = c->reply.updated ? EFFECT_APPLIED : EFFECT_NONE;
     if (c->reply.status != MO_SERVICE_OK) {
         if (c->reply.status == MO_SERVICE_STORE || c->reply.status == MO_SERVICE_INTERVAL ||

@@ -31,7 +31,6 @@ enum protocol_phase {
     PS_BODY,
     PS_CONTINUE,
     PS_SERVICE,
-    PS_ABANDONED,
     PS_WRITE,
     PS_DRAIN
 };

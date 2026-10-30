@@ -354,6 +354,11 @@ static void real_io(const char *address) {
     CHECK(close(client) == 0);
     CHECK(sigaction(SIGPIPE, NULL, &after) == 0);
     CHECK(before.sa_handler == after.sa_handler);
+    config.port = mo_listener_port(listener);
+    mo_listener_close(listener);
+    listener = NULL;
+    CHECK(mo_listener_open(&config, environment, &listener) == MO_LISTENER_OK);
+    CHECK(listener != NULL);
     mo_listener_close(listener);
 }
 

@@ -172,6 +172,11 @@ enum mo_listener_status mo_listener_open(const struct mo_listener_config *config
         status = io_status();
         goto fail;
     }
+    int reuse = 1;
+    if (setsockopt(listener->fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof reuse) != 0) {
+        status = io_status();
+        goto fail;
+    }
     if (family == AF_INET6) {
         int enabled = 1;
         if (setsockopt(listener->fd, IPPROTO_IPV6, IPV6_V6ONLY, &enabled, sizeof enabled) != 0) {
@@ -334,8 +339,26 @@ static enum mo_listener_status accept_connection(struct mo_listener *listener,
 #else
         int fd = accept(listener->fd, NULL, NULL);
 #endif
-        if (fd < 0)
-            return io_status();
+        if (fd < 0) {
+            switch (errno) {
+            case ECONNABORTED:
+            case EPROTO:
+            case ENETDOWN:
+            case ENOPROTOOPT:
+            case EHOSTDOWN:
+#if defined(ENONET)
+            case ENONET:
+#endif
+            case EHOSTUNREACH:
+            case EOPNOTSUPP:
+            case ENETUNREACH:
+            case ENOBUFS:
+            case ENOMEM:
+                return MO_LISTENER_AGAIN;
+            default:
+                return io_status();
+            }
+        }
         if (!socket_options(fd)) {
             enum mo_listener_status status = io_status();
             (void)close(fd);

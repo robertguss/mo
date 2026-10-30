@@ -363,8 +363,27 @@ static void busy(void) {
     finish(&f);
 }
 
+static void small_body_reads(void) {
+    struct fixture_server f = start();
+    char body[MO_LIMIT_MCP_BODY_BYTES + 1];
+    const char *ping = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
+    size_t size = strlen(ping);
+    memcpy(body, ping, size);
+    memset(body + size, ' ', MO_LIMIT_MCP_BODY_BYTES - size);
+    body[MO_LIMIT_MCP_BODY_BYTES] = '\0';
+    for (size_t quantum = 1; quantum <= 2; quantum++) {
+        char out[4096];
+        request(&f, body, auth, out, sizeof out, quantum);
+        CHECK(strstr(out, "HTTP/1.1 200 ") == out);
+        CHECK(strstr(out, "\"id\":1,\"result\":{}") != NULL);
+        CHECK(mo_protocol_server_metrics(f.server).work <= MO_LIMIT_MCP_REQUEST_WORK / 2);
+    }
+    finish(&f);
+}
+
 static void run(void *context) {
     wire(context);
+    small_body_reads();
     rate();
     stopped();
     response_limit();

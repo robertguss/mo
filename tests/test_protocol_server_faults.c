@@ -7,6 +7,7 @@ static struct mo_protocol_server *fault_server;
 static uint64_t admitted_before;
 static bool exhaust_reply, record_resizes, fail_append;
 static unsigned exhausted_calls, memory_stops, decode_after, decode_failures, append_failures;
+static unsigned fail_call_after;
 static size_t resize_calls, resize_after, resize_failures, resize_sizes[4096];
 
 enum mo_outcome mo_protocol_server_fault_call(struct mo_process *process, uint32_t function,
@@ -23,6 +24,8 @@ enum mo_store_status mo_protocol_server_fault_store(
 enum mo_outcome mo_protocol_server_fault_call(struct mo_process *process, uint32_t function,
                                               const struct mo_cell *arguments, uint32_t count,
                                               struct mo_cell *out, struct mo_defect *defect) {
+    if (fail_call_after != 0 && --fail_call_after == 0)
+        return MO_STOPPED;
     bool exhaust = exhaust_reply && fault_server != NULL &&
                    mo_protocol_server_metrics(fault_server).admitted > admitted_before;
     if (exhaust) {
@@ -182,9 +185,33 @@ static void store_failure(void) {
     finish(&f);
 }
 
+static void preauth_failure(void) {
+    struct fixture_server f = start();
+    char out[4096];
+    for (unsigned after = 1; after <= 4; after++) {
+        fail_call_after = after;
+        request(&f, "{}", auth, out, sizeof out, 0);
+        CHECK(fail_call_after == 0);
+        CHECK(strstr(out, "HTTP/1.1 413 ") == out);
+        CHECK(strstr(out, "Content-Length: 0\r\n") != NULL);
+        CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
+    }
+    resize_after = 1;
+    size_t failed_before = resize_failures;
+    request(&f, "{}", auth, out, sizeof out, 0);
+    CHECK(resize_after == 0 && resize_failures == failed_before + 1);
+    CHECK(strstr(out, "HTTP/1.1 413 ") == out);
+    CHECK(strstr(out, "Content-Length: 0\r\n") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
+    tool_request(&f, "read", "{}", "1", out, sizeof out);
+    CHECK(strstr(out, "\"structuredContent\":{\"value\":\"0\"}") != NULL);
+    finish(&f);
+}
+
 static void run_faults(void *context) {
     wire(context);
     reserved_fallback();
+    preauth_failure();
     exhausted_fallback();
     saved_copy_memory();
     store_failure();
