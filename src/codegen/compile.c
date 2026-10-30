@@ -70,6 +70,7 @@ struct join {
     uint32_t offset, checkpoint;
     struct live_set live;
     bool *used;
+    bool reachable; /* generate will emit at least one jump to this continuation. */
 };
 struct function {
     struct vector regs, code, spans, names, captures, joins, changes;
@@ -2489,6 +2490,39 @@ static MO_MUST_USE bool uncons(struct compiler *c, struct function *f, struct no
     owner_remove(f, list);
     return state(c, f, list, REF_MOVED) && merged(c, f, n->reg) && drop(c, f, first, n->span);
 }
+/* Jumps only target enclosing joins. Visit the rest before the continuation body so
+ * jumps in unreachable bodies cannot make an enclosing continuation reachable.
+ * Return whether evaluation falls through to the next expression. Tail returns
+ * need no special handling: their enclosing expression has no next operand. */
+static MO_MUST_USE bool reachable_walk(struct function *f, const struct node *n, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    if (n->core->tag == MO_CORE_EXPR_JOIN) {
+        bool live = reachable_walk(f, n->children[1], depth + 1);
+        if (((struct join *)f->joins.items)[n->index].reachable)
+            live |= reachable_walk(f, n->children[0], depth + 1);
+        return live;
+    }
+    if (n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE) {
+        if (!reachable_walk(f, n->children[0], depth + 1))
+            return false;
+        bool live = false;
+        /* CASE arm wrappers copy the body's tag, but hold only the body as a child. */
+        for (uint32_t i = 1; i < n->count; i++) {
+            const struct node *arm = n->children[i];
+            live |= reachable_walk(f, n->core->tag == MO_CORE_EXPR_CASE ? arm->children[0] : arm,
+                                   depth + 1);
+        }
+        return live;
+    }
+    for (uint32_t i = 0; i < n->count; i++)
+        if (!reachable_walk(f, n->children[i], depth + 1))
+            return false;
+    if (n->core->tag == MO_CORE_EXPR_JUMP) {
+        ((struct join *)f->joins.items)[n->index].reachable = true;
+        return false;
+    }
+    return n->core->tag != MO_CORE_EXPR_FAIL && n->core->tag != MO_CORE_EXPR_STOP;
+}
 /* false through *live means a terminal path, not a compiler refusal. */
 static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct node *n, bool tail,
                                  unsigned depth, bool *live) {
@@ -2878,11 +2912,14 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                     return false;
             }
         uint32_t start = f->code.count;
-        if (!generate(c, f, n->children[0], tail, depth + 1, live))
+        /* An exhaustive terminal rest can leave a continuation with no incoming jump.
+         * Its body has no valid reference state and must not be generated. */
+        bool reachable = joins[n->index].reachable;
+        if (reachable && !generate(c, f, n->children[0], tail, depth + 1, live))
             return false;
         uint32_t exit = MO_NO_INDEX;
-        bool any = *live;
-        if (*live) {
+        bool any = reachable && *live;
+        if (any) {
             bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
             if (!copy(c, f, n->reg, n->children[0]->reg, owned, n->span, n->last[0]) ||
                 !normalize(c, f, checkpoint, n->reg, n->span, &n->after))
@@ -2941,6 +2978,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                     return false;
             }
         }
+        MO_ASSERT(target->reachable);
         if (emit(c, f, n->span, MO_OP_JUMP, &target->offset, 1, NULL, 0) == MO_NO_INDEX)
             return false;
         *live = false;
@@ -3629,7 +3667,7 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
             if (!initializer(c, f, i))
                 return false;
         } else {
-            bool live;
+            bool live = reachable_walk(f, f->body, 0);
             if (!generate(c, f, f->body, true, 0, &live))
                 return false;
             MO_ASSERT(!live);
