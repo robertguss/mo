@@ -35,7 +35,10 @@ or non-byte ceiling increased. The 64 KiB ingress attempt exhausted work;
 32 KiB exceeded the 2x threshold; 24 KiB passed.
 
 The original strict GCC 12.2 `-O2` matrix and all eight catalog modes exited zero,
-with zero semantic or headroom failures. The GCC 13.3.0 rerun in the
+with zero semantic or headroom failures. Its before/after source manifests are
+identical. Its metadata records parent commit
+`357d102577f8ca530a09b7181fb1c528ef24fc00`: those measurements included the then
+uncommitted source, not only that parent commit. The GCC 13.3.0 rerun in the
 [GCC/drivers report](mo-160-part-2-gcc-drivers.md) passed too. Round E's rerun,
 which added the small-read body cases, passed all 31 matrix cases and all eight
 catalog modes ([report](mo-160-part-2-round-e.md)). Round F changed source after
@@ -111,7 +114,8 @@ the final head.
 ## Reviews and open items
 
 - A Claude review and a Cursor review of `ae4372e` found issues that Rounds E and F
-  addressed. Round E also had its own fresh-context review.
+  addressed. Round E also had its own fresh-context review; no review of Round F's
+  commit is recorded.
 - The supervisor-event logging finding is pending Robert's decision and is untouched.
 
 ## Continue in the receiving process

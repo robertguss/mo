@@ -533,10 +533,10 @@ Descriptor and catalog graphs are frozen during server construction and shared
 immutably across requests. Their owning catalog heap outlives every connection
 process. Configured authorities are frozen in that heap too, but each request's
 header-stage process copies them into its own heap and charges their bytes to
-that request. Request heaps, expanded byte lists, VM stack
-scratch and temporary native arenas share the request memory allowance. Typed
-copy-in temporarily constrains the destination service heap to the request's
-remaining allowance, then restores the service limit before admission.
+that request. Request heaps, expanded byte lists, VM stack scratch and temporary
+native arenas share the request memory allowance. Typed copy-in temporarily
+constrains the destination service heap to the request's remaining allowance,
+then restores the service limit before admission.
 
 E0105 checks only wire arguments after State and Time, projected replies and
 application errors, recursively. Private state and update-state wrappers are

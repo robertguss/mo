@@ -20,9 +20,9 @@ or bytecode operation exposes it. See [saved state](saved-state.md).
 
 The runtime-only `LISTENEROP` section of `hostops.def` is not a library family
 either. `NOW`, `WAIT`, `ACCEPT`, `READ`, `WRITE`, `AUTH`, `HALF_CLOSE` and `CLOSE`
-are the private MCP server's socket operations. `host/listener.c` implements all
-eight for real sockets and its fake. No handler receives the listener, and it has
-no Mo type, checker signature, Core form or bytecode operation. See
+are the operations the private MCP server calls on its listener. `host/listener.c`
+implements all eight for real sockets and its fake. No handler receives the listener,
+and it has no Mo type, checker signature, Core form or bytecode operation. See
 [services](services.md).
 
 The `SIMOP` section is VM-handled, not host-dispatched. Those rows carry no
