@@ -21,15 +21,19 @@
   is not service shape inference. Service schemas use the explicit shape
   table, including its payload flags, and copy names into the protocol heap
   so catalog generation does not borrow the service image.
-- The `MO_LIMIT_MCP_HEADER_*` bounds are experimental measurement targets,
-  not frozen defaults. Header scanning retains only delimiter state and byte
-  counts between fragments. Header parsing returns spans into native ingress;
-  it does not interpret body framing or turn field values into Text or Bytes.
-- The first header measurement rejected 16 KiB: scanning plus parsing a
+- The `MO_LIMIT_MCP_HEADER_*` bounds are measured defaults: D329 froze the
+  1 KiB header block with its 1M-instruction and 1 MiB memory budget. Header
+  scanning retains only delimiter state and byte counts between fragments.
+  Header parsing returns spans into native ingress; it does not interpret body
+  framing or turn field values into Text or Bytes.
+- History: the first header measurement rejected 16 KiB: scanning plus parsing a
   64-field header with a 256-byte token took 2,579,101 VM instructions before
   authority/authentication checks. At 2 KiB those stages took 357,021; the
   experimental header ceiling was lowered accordingly, retaining the 1M
-  instruction budget. Full pre-auth work and peak memory still need measurement.
+  instruction budget. D329's matrix then lowered it to 1 KiB. Bytewise
+  pre-authentication there took 482,877 instructions and 75,862 bytes, inside
+  the 2x thresholds of 500,000 and 524,288
+  (`docs/status/mo-160-part-2-round-e.md`).
 - Source structs lower to one-case choices, not `MO_TYPE_RECORD`. A nested
   choice payload can require a boxed wrapper. Bridge code must validate the
   actual types and case shapes rather than assume C record layouts.
@@ -76,7 +80,8 @@
   keys are not separate values. This is not an exact semantic-node count.
   The approved native prescan only returns that marker count or a byte-budget
   refusal; JSON validity and the eventual node admission policy remain in Mo.
-  The body byte ceiling is experimental, like the header ceilings.
+  D329 froze the 16 KiB body byte ceiling as a measured default, like the
+  header ceilings.
 - JsonNumber is opaque outside Json. Its compact JSON rendering preserves the
   original numeric token, so protocol Byte decoding can inspect that spelling
   without a new accessor or a Float conversion. An all-zero mantissa is zero

@@ -529,9 +529,11 @@ Serialization failure never retries an admitted operation.
 Result rendering reuses the compact content text and rejects it before building
 the duplicated RPC body when those two copies alone exceed the response ceiling.
 
-Descriptor, catalog and configured-authority graphs are frozen during server
-construction and shared immutably across requests. Their owning catalog heap
-outlives every connection process. Request heaps, expanded byte lists, VM stack
+Descriptor and catalog graphs are frozen during server construction and shared
+immutably across requests. Their owning catalog heap outlives every connection
+process. Configured authorities are frozen in that heap too, but each request's
+header-stage process copies them into its own heap and charges their bytes to
+that request. Request heaps, expanded byte lists, VM stack
 scratch and temporary native arenas share the request memory allowance. Typed
 copy-in temporarily constrains the destination service heap to the request's
 remaining allowance, then restores the service limit before admission.
