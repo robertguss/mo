@@ -450,11 +450,11 @@ $(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_
 PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
 
 $(BUILD)/sanitize/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)

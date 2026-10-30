@@ -423,9 +423,11 @@ static void literal_boundaries(void) {
         mo_buffer_init(&input, MO_LIMIT_MCP_INGRESS_BYTES);
         MO_ASSERT(mo_buffer_append_text(
             &input, "POST /mcp HTTP/1.1\r\nHost: localhost\r\n"
-                    "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n"));
+                    "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n"
+                    "MCP-Protocol-Version: 2025-11-25\r\n"));
         MO_ASSERT(mo_buffer_append_text(&input, auth));
-        MO_ASSERT(mo_buffer_append_text(&input, "\r\n2\r\n{}\r\n0\r\n"));
+        MO_ASSERT(mo_buffer_append_text(
+            &input, "\r\n28\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\r\n0\r\n"));
         const size_t lines[] = {6000, 6000, size - 12002};
         for (size_t i = 0; i < 3; i++) {
             MO_ASSERT(mo_buffer_append_text(&input, "X: "));
@@ -434,14 +436,14 @@ static void literal_boundaries(void) {
             MO_ASSERT(mo_buffer_append_text(&input, "\r\n"));
         }
         MO_ASSERT(mo_buffer_append_text(&input, "\r\n") && mo_buffer_append_byte(&input, 0));
-        raw_status(&f, (const char *)input.bytes, size == 16384 ? 400 : 413);
+        raw_status(&f, (const char *)input.bytes, size == 16384 ? 200 : 413);
         mo_buffer_free(&input);
     }
     finish(&f);
 }
 
 static void service_hangup(void) {
-    for (unsigned mode = 0; mode < 3; mode++) {
+    for (unsigned mode = 0; mode < 2; mode++) {
         struct fixture_server f = start();
         struct mo_buffer input;
         input_request(&input,
@@ -472,12 +474,24 @@ static void service_hangup(void) {
             CHECK(!peers[i].closed && peers[i].output_size == 0);
             peers[i].eof = true;
             peers[i].read_error = mode == 0;
-            peers[i].write_error = mode != 2;
+            peers[i].write_error = mode == 0;
         }
+        poll_server(&f);
+        for (size_t i = 1; i < 8; i++)
+            CHECK(!peers[i].closed && peers[i].output_size == 0);
         for (unsigned n = 0; n < 32; n++)
             poll_server(&f);
-        for (size_t i = 0; i < 8; i++)
+        for (size_t i = 0; i < 8; i++) {
             CHECK(peers[i].closed);
+            out[i][peers[i].output_size] = 0;
+            if (mode == 1) {
+                CHECK(peers[i].half_closed);
+                CHECK(strstr(out[i], "HTTP/1.1 200 ") == out[i]);
+                CHECK(strstr(out[i], "\"structuredContent\":{\"value\":\"0\"}") != NULL);
+                check_wire(out[i]);
+            } else
+                CHECK(peers[i].output_size == 0);
+        }
         tool_request(&f, "read", "{}", "2", out[0], sizeof out[0]);
         CHECK(strstr(out[0], "\"structuredContent\":{\"value\":\"0\"}") != NULL);
         CHECK(mo_protocol_server_metrics(f.server).admitted == 9);

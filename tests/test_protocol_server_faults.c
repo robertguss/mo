@@ -92,6 +92,49 @@ enum mo_store_status mo_protocol_server_fault_store(
     return mo_store_call(store, operation, record, consume, context);
 }
 
+static bool fail_process_new;
+static unsigned process_new_failures;
+
+struct mo_process *mo_protocol_server_fault_process_new(const struct mo_image *image,
+                                                        const struct mo_limits *limits);
+
+struct mo_process *mo_protocol_server_fault_process_new(const struct mo_image *image,
+                                                        const struct mo_limits *limits) {
+    if (fail_process_new) {
+        fail_process_new = false;
+        process_new_failures++;
+        return NULL;
+    }
+    return mo_process_new(image, limits);
+}
+
+static void accept_allocation_failure(void) {
+    struct fixture_server f = start();
+    struct mo_buffer input;
+    input_request(&input, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}", auth);
+    char out[4096];
+    struct mo_listener_fake_peer peer = {.input = input.bytes,
+                                         .input_size = input.length,
+                                         .output = (uint8_t *)out,
+                                         .output_capacity = sizeof out,
+                                         .readable = true,
+                                         .writable = true,
+                                         .eof = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
+    fail_process_new = true;
+    for (unsigned i = 0; i < 8 && !peer.closed; i++)
+        poll_server(&f);
+    CHECK(!fail_process_new && process_new_failures == 1);
+    CHECK(peer.closed && peer.output_size == 0);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
+    tool_request(&f, "read", "{}", "2", out, sizeof out);
+    CHECK(strstr(out, "HTTP/1.1 200 ") == out);
+    CHECK(strstr(out, "\"structuredContent\":{\"value\":\"0\"}") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 1);
+    mo_buffer_free(&input);
+    finish(&f);
+}
+
 static void reserved_fallback(void) {
     resize_calls = 0;
     record_resizes = true;
@@ -129,7 +172,7 @@ static void reserved_fallback(void) {
 
 static void exhausted_fallback(void) {
     struct fixture_server f = start();
-    char out[4096], id[6 * MO_LIMIT_MCP_ID_BYTES + 3];
+    char out[4096], id[6 * 128 + 3];
     maximum_id(id);
     fault_server = f.server;
     for (unsigned updating = 0; updating < 2; updating++) {
@@ -321,6 +364,7 @@ static void run_faults(void *context) {
     wire(context);
     poll_failures();
     reserved_fallback();
+    accept_allocation_failure();
     preauth_failure();
     exhausted_fallback();
     saved_copy_memory();

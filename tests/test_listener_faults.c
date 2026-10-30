@@ -36,7 +36,7 @@ int mo_listener_fault_accept(int fd, struct sockaddr *address, socklen_t *length
 
 static void retry_accept(void *context) {
     wire(context);
-    char id[6 * MO_LIMIT_MCP_ID_BYTES + 3];
+    char id[6 * 128 + 3];
     maximum_id(id);
     struct fixture_server f = start();
     mo_protocol_server_free(f.server);

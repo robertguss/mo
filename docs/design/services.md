@@ -579,9 +579,10 @@ are refused before parsing; the pure transport fixtures retain the exact node
 boundary checks. Results and timings are recorded in the PR. Raising any limit
 or adding memory/work requires Robert's approval.
 
-Request work depends on how finely bytes arrive. The listener coalesces body
-bytes available during a poll, but one new byte per poll can make a 16 KiB body
-hit the 32,000,000 request-work ceiling and receive HTTP 413. Work remains bounded
+Request work depends on how finely bytes arrive. The protocol request reader
+coalesces available body bytes up to its 1 KiB input buffer during a poll, but
+one new byte per poll can make a 16 KiB body hit the 32,000,000 request-work
+ceiling and receive HTTP 413. Work remains bounded
 by that ceiling; a body within the byte limit is not guaranteed to fit the work
 budget under every delivery pattern.
 
