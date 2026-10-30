@@ -70,7 +70,7 @@ struct join {
     uint32_t offset, checkpoint;
     struct live_set live;
     bool *used;
-    bool referenced;
+    bool reachable; /* A jump from a reachable path targets this continuation. */
 };
 struct function {
     struct vector regs, code, spans, names, captures, joins, changes;
@@ -1618,7 +1618,6 @@ static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, 
         struct mo_codegen_index *entry = mo_codegen_find(f->join_names, expr->as.jump.name);
         MO_ASSERT(entry != NULL && entry->value != MO_NO_INDEX);
         n->index = entry->value;
-        ((struct join *)f->joins.items)[n->index].referenced = true;
         if (!children(c, f, n, expr->as.jump.args, MO_NO_INDEX, depth))
             return NULL;
         n->bind_count = n->count;
@@ -2491,6 +2490,28 @@ static MO_MUST_USE bool uncons(struct compiler *c, struct function *f, struct no
     owner_remove(f, list);
     return state(c, f, list, REF_MOVED) && merged(c, f, n->reg) && drop(c, f, first, n->span);
 }
+/* Jumps only target enclosing joins. Visit the rest before the continuation body so
+ * jumps in unreachable bodies cannot make an enclosing continuation reachable. */
+static void reachable_walk(struct function *f, const struct node *n, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    if (n->core->tag == MO_CORE_EXPR_JOIN) {
+        reachable_walk(f, n->children[1], depth + 1);
+        if (((struct join *)f->joins.items)[n->index].reachable)
+            reachable_walk(f, n->children[0], depth + 1);
+        return;
+    }
+    if (n->core->tag == MO_CORE_EXPR_JUMP)
+        ((struct join *)f->joins.items)[n->index].reachable = true;
+    if (n->core->tag == MO_CORE_EXPR_CASE) {
+        reachable_walk(f, n->children[0], depth + 1);
+        /* Arm wrappers copy the body's tag, but hold only the body as a child. */
+        for (uint32_t i = 1; i < n->count; i++)
+            reachable_walk(f, n->children[i]->children[0], depth + 1);
+        return;
+    }
+    for (uint32_t i = 0; i < n->count; i++)
+        reachable_walk(f, n->children[i], depth + 1);
+}
 /* false through *live means a terminal path, not a compiler refusal. */
 static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct node *n, bool tail,
                                  unsigned depth, bool *live) {
@@ -2882,7 +2903,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
         uint32_t start = f->code.count;
         /* An exhaustive terminal rest can leave a continuation with no incoming jump.
          * Its body has no valid reference state and must not be generated. */
-        bool reachable = joins[n->index].referenced;
+        bool reachable = joins[n->index].reachable;
         if (reachable && !generate(c, f, n->children[0], tail, depth + 1, live))
             return false;
         uint32_t exit = MO_NO_INDEX;
@@ -3634,6 +3655,7 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
             if (!initializer(c, f, i))
                 return false;
         } else {
+            reachable_walk(f, f->body, 0);
             bool live;
             if (!generate(c, f, f->body, true, 0, &live))
                 return false;

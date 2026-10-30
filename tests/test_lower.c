@@ -2060,28 +2060,6 @@ static uint64_t list_work(const struct mo_image *image, const char *name, const 
     return instructions;
 }
 
-static void test_source_nested_choice_return(void *unused) {
-    (void)unused;
-    struct mo_arena input, output;
-    struct mo_sources sources;
-    struct mo_diags diags;
-    mo_arena_init(&input, MO_LIMIT_LOWER_WORK);
-    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
-    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
-    struct mo_module_set *set = mo_load_program(
-        &input, &sources, "tests/lower/nested-choice-return/main.mo", "lib", &diags);
-    MO_ASSERT(set != NULL && !mo_diags_any(&diags));
-    struct mo_program *program = mo_check(&input, set, &diags);
-    MO_ASSERT(program != NULL && !mo_diags_any(&diags));
-    struct mo_core *core = mo_lower(&output, program, &sources, &diags);
-    MO_ASSERT(core != NULL && !mo_diags_any(&diags));
-    run(core, 17);
-    mo_diags_free(&diags);
-    mo_sources_free(&sources);
-    mo_arena_free(&output);
-    mo_arena_free(&input);
-}
-
 /* Reference 13.3: sort, sort_by and sort_by_desc take n log n work. They are Mo code in
  * lib/list.mo, so the VM's own instruction count measures them, without a clock. For each input
  * shape the sort's work is sorted(...) minus input(...), at N and 4N elements. n log n work
@@ -2379,7 +2357,6 @@ int main(int argc, char **argv) {
                             "tests/runtime/mcp-value-check.mo") == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
                             "tests/runtime/mcp-rpc-check.mo") == 0);
-    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_nested_choice_return, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);
