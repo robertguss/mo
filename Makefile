@@ -415,19 +415,37 @@ $(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o 
 $(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-PROTOCOL_MEMORY_RENAMES := -Dmalloc=mo_protocol_memory_malloc -Drealloc=mo_protocol_memory_realloc -Dfree=mo_protocol_memory_free
-$(BUILD)/debug/protocol-memory/arena.o: src/base/arena.c Makefile $(SOURCE_LIST)
+PROTOCOL_MEMORY_SOURCES := src/base/arena.c src/vm/process.c src/vm/execute.c
+PROTOCOL_MEMORY_RENAMES := -Dmalloc=mo_protocol_memory_malloc -Dcalloc=mo_protocol_memory_calloc \
+	-Drealloc=mo_protocol_memory_realloc -Dfree=mo_protocol_memory_free -Dmo_host_wipe=mo_protocol_memory_wipe
+$(BUILD)/debug/protocol-memory/%.o: src/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(PROTOCOL_MEMORY_RENAMES) -c $< -o $@
 
-$(BUILD)/sanitize/protocol-memory/arena.o: src/base/arena.c Makefile $(SOURCE_LIST)
+$(BUILD)/sanitize/protocol-memory/%.o: src/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) $(PROTOCOL_MEMORY_RENAMES) -c $< -o $@
 
-$(BUILD)/debug/tests/test_protocol_memory.test: $(BUILD)/debug/tests/test_protocol_memory.o $(call objects,$(BUILD)/debug,$(filter-out src/base/arena.c,$(LIB_SOURCES))) $(BUILD)/debug/protocol-memory/arena.o
+$(BUILD)/debug/tests/test_protocol_memory.test: $(BUILD)/debug/tests/test_protocol_memory.o $(call objects,$(BUILD)/debug,$(filter-out $(PROTOCOL_MEMORY_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/protocol-memory/%.o,$(PROTOCOL_MEMORY_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
-$(BUILD)/sanitize/tests/test_protocol_memory.test: $(BUILD)/sanitize/tests/test_protocol_memory.o $(call objects,$(BUILD)/sanitize,$(filter-out src/base/arena.c,$(LIB_SOURCES))) $(BUILD)/sanitize/protocol-memory/arena.o
+$(BUILD)/sanitize/tests/test_protocol_memory.test: $(BUILD)/sanitize/tests/test_protocol_memory.o $(call objects,$(BUILD)/sanitize,$(filter-out $(PROTOCOL_MEMORY_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/protocol-memory/%.o,$(PROTOCOL_MEMORY_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+PROTOCOL_ABI_RENAMES := -Dmo_protocol_build=mo_protocol_bad_abi_build \
+	-Dmo_protocol_body_marks=mo_protocol_bad_abi_body_marks -Dmo_sources_add_bytes=mo_protocol_bad_abi_sources
+$(BUILD)/debug/protocol-abi/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(PROTOCOL_ABI_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/protocol-abi/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(PROTOCOL_ABI_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_lower.test: $(BUILD)/debug/tests/test_lower.o $(call objects,$(BUILD)/debug,$(LIB_SOURCES)) $(BUILD)/debug/protocol-abi/protocol.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_lower.test: $(BUILD)/sanitize/tests/test_lower.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES)) $(BUILD)/sanitize/protocol-abi/protocol.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 # Only the service test substitutes allocation at its arena, process and heap boundaries.

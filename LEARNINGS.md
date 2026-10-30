@@ -60,6 +60,10 @@
 - Final chunk wiping can hide a missing move-time or shrink-time wipe. Check
   discarded scratch bytes immediately after resizing, before freeing the
   arena, and keep live prefixes and neighboring allocations as controls.
+- CBMC loop IDs do not follow source nesting order. In `service_entry`, loop
+  `.2` is the inner four-byte case loop and `.3` is the outer twelve-byte
+  shape loop. Check `goto-instrument --show-loops` before assigning byte-based
+  unwind bounds; swapped divisors fail the inner loop's unwinding assertion.
 - For valid JSON, counting opening brackets/braces and commas outside strings
   gives `nodes - 1 + empty containers`, where nodes are JSON values and object
   keys are not separate values. This is not an exact semantic-node count.

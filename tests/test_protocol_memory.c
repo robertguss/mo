@@ -1,4 +1,5 @@
 #include "base/limits.h"
+#include "host/host.h"
 #include "test.h"
 #include "tools/protocol.h"
 #include "vm/vm.h"
@@ -13,10 +14,15 @@ static struct {
 } allocations[256];
 static bool watching;
 static unsigned calls, released, fail_after;
+static void *process_address;
+static size_t process_size;
+static unsigned processes_released, operand_wipes, nonzero_operands;
 
 void *mo_protocol_memory_malloc(size_t size);
+void *mo_protocol_memory_calloc(size_t count, size_t size);
 void *mo_protocol_memory_realloc(void *address, size_t size);
 void mo_protocol_memory_free(void *address);
+void mo_protocol_memory_wipe(void *address, size_t size);
 
 void *mo_protocol_memory_malloc(size_t size) {
     if (watching) {
@@ -40,13 +46,46 @@ void *mo_protocol_memory_malloc(size_t size) {
     return address;
 }
 
+void *mo_protocol_memory_calloc(size_t count, size_t size) {
+    void *address = calloc(count, size);
+    if (watching && address != NULL) {
+        MO_ASSERT(count == 1 && process_address == NULL);
+        process_address = address;
+        process_size = size;
+    }
+    return address;
+}
+
 void *mo_protocol_memory_realloc(void *address, size_t size) {
     for (size_t i = 0; i < sizeof allocations / sizeof *allocations; i++)
         MO_ASSERT(allocations[i].address == NULL || allocations[i].address != address);
     return realloc(address, size);
 }
 
+void mo_protocol_memory_wipe(void *address, size_t size) {
+    bool nonzero = false;
+    const uint8_t *bytes = address;
+    for (size_t i = 0; i < size; i++)
+        nonzero = nonzero || bytes[i] != 0;
+    mo_host_wipe(address, size);
+    for (size_t i = 0; i < size; i++)
+        CHECK(bytes[i] == 0);
+    if (watching && address != process_address) {
+        operand_wipes++;
+        nonzero_operands += nonzero ? 1u : 0u;
+    }
+}
+
 void mo_protocol_memory_free(void *address) {
+    if (address != NULL && address == process_address) {
+        const uint8_t *bytes = address;
+        bool cleared = true;
+        for (size_t i = 0; i < process_size; i++)
+            cleared = cleared && bytes[i] == 0;
+        CHECK(cleared);
+        process_address = NULL;
+        processes_released++;
+    }
     for (size_t i = 0; i < sizeof allocations / sizeof *allocations; i++) {
         if (address != NULL && allocations[i].address == address) {
             const uint8_t *bytes = address;
@@ -64,10 +103,10 @@ void mo_protocol_memory_free(void *address) {
 static void scratch(struct mo_image *image) {
     static const uint8_t zero[4096] = {0};
     struct mo_limits limits = mo_limits_default();
+    watching = true;
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
     mo_process_confidential(process);
-    watching = true;
     for (unsigned fault = 0; fault < 2; fault++) {
         struct mo_scratch work;
         mo_scratch_init(&work, mo_process_heap(process));
@@ -119,6 +158,8 @@ static unsigned headers(struct mo_image *image, uint32_t parse, unsigned fault, 
     for (size_t i = 0; i < size; i++)
         input[i] = mo_cell_byte((uint8_t)header[i]);
     struct mo_limits limits = mo_limits_default();
+    watching = true;
+    unsigned previous = processes_released;
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
     mo_process_confidential(process);
@@ -132,8 +173,9 @@ static unsigned headers(struct mo_image *image, uint32_t parse, unsigned fault, 
                                mo_cell_int(MO_LIMIT_MCP_LINE_BYTES),
                                mo_cell_int(MO_LIMIT_MCP_HEADER_FIELDS)};
     MO_ASSERT(mo_value_case(heap, function->parameters[1].type, 0, bounds, 3, &arguments[1]));
-    watching = true;
     calls = 0;
+    operand_wipes = 0;
+    nonzero_operands = 0;
     fail_after = fault;
     struct mo_cell result;
     struct mo_defect defect;
@@ -141,9 +183,12 @@ static unsigned headers(struct mo_image *image, uint32_t parse, unsigned fault, 
     CHECK(outcome == (fault != 0 || budget == 0 ? MO_STOPPED : MO_RETURNED));
     if (outcome == MO_RETURNED)
         CHECK(mo_cell_get_tag(result) == 0);
+    if (fault == 0 && budget != 0)
+        CHECK(operand_wipes > 0 && nonzero_operands > 0);
     unsigned count = calls;
     fail_after = 0;
     mo_process_free(process);
+    CHECK(process_address == NULL && processes_released == previous + 1);
     watching = false;
     for (size_t i = 0; i < sizeof allocations / sizeof *allocations; i++)
         CHECK(allocations[i].address == NULL);

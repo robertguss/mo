@@ -113,6 +113,23 @@ fn main() : Int
     Http.parse_headers(input, Http.HeaderLimits(bytes: input.size, line: 17, fields: 2)) ==
       Error(Http.TooLarge)
   )
+  bare = octets("POST /mcp HTTP/1.1\r\n\r\n")
+  require(
+    Http.parse_headers(bare, Http.HeaderLimits(bytes: 22, line: 18, fields: 1)) ==
+      Ok(
+        Http.Head(
+          method: Http.Span(start: 0, size: 4),
+          target: Http.Span(start: 5, size: 4),
+          version: Http.Span(start: 10, size: 8),
+          fields: [],
+          after: 22
+        )
+      )
+  )
+  require(
+    Http.parse_headers(bare, Http.HeaderLimits(bytes: 22, line: 17, fields: 1)) ==
+      Error(Http.TooLarge)
+  )
   require(Http.parse_headers(input.take(input.size - 1), limits) == Error(Http.Incomplete))
   for bad in [
     "POST /mcp HTTP/1.1\nHost: localhost\r\n\r\n",

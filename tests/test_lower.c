@@ -1903,6 +1903,35 @@ static void test_source_library_specs(void *unused) {
     }
 }
 
+struct mo_image *mo_protocol_bad_abi_build(void);
+bool mo_protocol_bad_abi_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
+                                 size_t length, uint32_t *file_out,
+                                 struct mo_source_error *error_out);
+static bool abi_drift_injected;
+
+bool mo_protocol_bad_abi_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
+                                 size_t length, uint32_t *file_out,
+                                 struct mo_source_error *error_out) {
+    if (strcmp(path, "runtime/http.mo") != 0)
+        return mo_sources_add_bytes(sources, path, bytes, length, file_out, error_out);
+    const char before[] = "  Incomplete\n  Malformed\n";
+    const char after[] = "  Malformed\n  Incomplete\n";
+    struct mo_buffer changed;
+    mo_buffer_init(&changed, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append(&changed, bytes, length));
+    for (size_t i = 0; i + sizeof before - 1 <= length; i++) {
+        if (memcmp(changed.bytes + i, before, sizeof before - 1) == 0) {
+            memcpy(changed.bytes + i, after, sizeof after - 1);
+            abi_drift_injected = true;
+            break;
+        }
+    }
+    bool added =
+        mo_sources_add_bytes(sources, path, changed.bytes, changed.length, file_out, error_out);
+    mo_buffer_free(&changed);
+    return added;
+}
+
 static void test_embedded_protocol(void *entry) {
     if (entry == NULL) {
         const struct {
@@ -1928,6 +1957,11 @@ static void test_embedded_protocol(void *entry) {
         CHECK(!mo_protocol_body_marks(body, sizeof body + 1, &marks) && marks == 0);
         struct mo_image *image = mo_protocol_build();
         CHECK(image != NULL);
+        if (image != NULL)
+            mo_image_free(image);
+        abi_drift_injected = false;
+        image = mo_protocol_bad_abi_build();
+        CHECK(abi_drift_injected && image == NULL);
         if (image != NULL)
             mo_image_free(image);
     }
