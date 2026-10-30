@@ -165,3 +165,11 @@ The same review found swapped service-reader CBMC unwind bounds: loop .2 is the 
 four-byte case loop, and .3 is the outer twelve-byte shape loop. The original proof failed its
 line-474 unwinding assertion. Correcting only those bounds passes all 11,274 properties with
 unwinding assertions retained. This is proof configuration, not a production-reader fix.
+
+MO-160 part 2 repeated class 7 during diagnostic integration. E0106 ran before E0101,
+and E0105 inspected private service state instead of only wire types. Robert required
+preserving E0101 precedence and excluding private state. The service checker now runs
+wire checks after existing state-result validation across all services and projects the
+wire signature before traversing visibility. The unchanged E0101 predicate golden and
+the E0105 update fixtures distinguish both mistakes, including imported private state,
+recursive generic public arguments, hidden update replies and application errors.

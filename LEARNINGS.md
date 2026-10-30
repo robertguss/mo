@@ -110,6 +110,11 @@
   ID and the next cursor. Checking only a tool's schema size can admit a catalog
   that cannot advance for a valid request. Cached serialized tool sizes avoid
   rendering every growing page prefix to choose its boundary.
+- Service wire visibility is not handler-signature visibility. Skip State and
+  Time, remove only the outer Result and designated updating pair, then check
+  arguments, reply and application error. Run those wire checks after E0101
+  across all services so a hidden type or predicate name cannot mask the
+  approved bare-state diagnostic.
 
 ## MO-159 simulation boundaries
 

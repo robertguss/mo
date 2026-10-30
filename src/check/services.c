@@ -14,6 +14,11 @@ struct type_pair {
     struct type_pair *next;
 };
 
+struct visible_type {
+    const struct mo_source_type *type;
+    struct visible_type *next;
+};
+
 struct service_check {
     struct mo_arena *arena;
     struct mo_program *program;
@@ -21,6 +26,7 @@ struct service_check {
     struct mo_checked_service *service;
     struct mo_span span;
     struct type_pair *equal;
+    struct visible_type *visible;
     uint32_t *functions;
     bool *named;
     bool failed;
@@ -100,6 +106,53 @@ static MO_MUST_USE bool native(const struct mo_source_type *type, const char *na
 static MO_MUST_USE bool update_pair(struct service_check *p, const struct mo_source_type *type) {
     return type->kind == MO_SOURCE_TUPLE && type->count == 2 &&
            same(p, type->arguments[0], p->service->state, 0);
+}
+
+static MO_MUST_USE bool visible(struct service_check *p, const struct mo_source_type *type,
+                                uint32_t depth) {
+    if (!work(p, 1))
+        return false;
+    if (depth > MO_LIMIT_SOURCE_ABILITY_DEPTH)
+        return report(p, MO_CODE_CHECK_ABILITY_DEPTH, "the type is nested too deeply", NULL);
+    for (const struct visible_type *at = p->visible; at != NULL; at = at->next) {
+        if (!work(p, 1))
+            return false;
+        if (at->type == type)
+            return true;
+    }
+    struct visible_type *seen = allocate(p, 1, sizeof(*seen), _Alignof(struct visible_type));
+    if (seen == NULL)
+        return false;
+    *seen = (struct visible_type){type, p->visible};
+    p->visible = seen;
+    const struct mo_symbol *owner = type->declaration;
+    if (type->kind == MO_SOURCE_NAMED && owner != NULL && owner->module != p->service->module &&
+        !owner->insides)
+        return report(p, MO_CODE_SERVICE_HIDDEN_TYPE, "a service tool uses a hidden type",
+                      "A service tool cannot accept or return a type whose fields or cases are "
+                      "hidden from this module. Expose the type with (..) or use a public type "
+                      "(reference 11.5).");
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!visible(p, type->arguments[i], depth + 1))
+            return false;
+    if (type->kind != MO_SOURCE_NAMED || owner == NULL)
+        return true;
+    bool choice = owner->declaration->kind == MO_S_ENUM;
+    uint32_t count = choice ? owner->case_count : 1;
+    for (uint32_t i = 0; i < count; i++) {
+        if (!work(p, 1))
+            return false;
+        const struct mo_symbol *symbol =
+            choice ? &p->program->interfaces->scopes[owner->module].symbols[owner->cases[i]]
+                   : owner;
+        const struct mo_data_signature *data =
+            mo_data_signature_by_symbol(p->program->signatures, symbol);
+        MO_ASSERT(data != NULL);
+        for (uint32_t j = 0; j < data->count; j++)
+            if (!visible(p, data->by_index[j]->type, depth + 1))
+                return false;
+    }
+    return true;
 }
 
 static MO_MUST_USE bool handler(struct service_check *p, const struct mo_syntax *name, bool timer,
@@ -385,6 +438,36 @@ bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
             if (!mo_check_service_value(arena, program->interfaces, program->signatures, constants,
                                         s->module, timer->syntax, &duration, diags,
                                         &timer->interval))
+                return false;
+        }
+    }
+    for (uint32_t i = 0; i < program->service_count; i++) {
+        const struct mo_checked_service *s = &services[i];
+        p.service = &services[i];
+        p.visible = NULL;
+        for (uint32_t j = 0; j < s->tool_count; j++) {
+            const struct mo_checked_service_tool *tool = &s->tools[j];
+            const struct mo_syntax *name = tool->name;
+            p.span = name->span;
+            uint32_t length = name->span.end - name->span.start;
+            if (length != 0 && name->text[length - 1] == '?')
+                return report(
+                    &p, MO_CODE_SERVICE_TOOL_NAME, "a service tool name ends in ?",
+                    "Service tool names cannot end in ?. Rename the function, for example "
+                    "from paid? to is_paid (reference 11.5).");
+            const struct mo_source_type *type = program->functions[tool->function].signature->type;
+            for (uint32_t k = 2; k + 1 < type->count; k++)
+                if (!visible(&p, type->arguments[k], 0))
+                    return false;
+            const struct mo_source_type *result = type->arguments[type->count - 1];
+            const struct mo_source_type *error = NULL;
+            if (native(result, "Result")) {
+                error = result->arguments[1];
+                result = result->arguments[0];
+            }
+            if (tool->reply != MO_SERVICE_READ_ONLY)
+                result = result->arguments[1];
+            if (!visible(&p, result, 0) || (error != NULL && !visible(&p, error, 0)))
                 return false;
         }
     }
