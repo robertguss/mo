@@ -1452,7 +1452,7 @@ class Served:
     def post(self, body, token, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
         sent = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                "Accept": "application/json", "MCP-Protocol-Version": "2025-11-25"}
+                "MCP-Protocol-Version": "2025-11-25"}
         connection.request("POST", "/mcp", body, {**sent, **(headers or {})})
         response = connection.getresponse()
         data = response.read()
@@ -1484,7 +1484,36 @@ def serve_structured(reply):
     return json.loads(body)["result"]["structuredContent"]
 
 
+def serve_guide():
+    guide = (root / "docs/agent-guide.md").read_text(encoding="utf-8")
+    for sentence in (
+            "`mo serve FILE --port N --data DIR` runs the service that the module in `FILE` "
+            "declares.",
+            "`DIR` exists. `mo serve` never creates it",
+            "Saved state goes in `DIR/service.sqlite`.",
+            "Only one `mo serve` can use a `DIR` at a time.",
+            "A missing or invalid token is E1409, and the message names the variable.",
+            "`mo serve` listens on 127.0.0.1 only.",
+            "mo serve: listening on http://127.0.0.1:PORT/mcp",
+            "any other `Host` gets status 421",
+            "A missing or wrong token gets status 401.",
+            "-H 'Content-Type: application/json'",
+            "-H 'MCP-Protocol-Version: 2025-11-25'",
+            f"-d '{SERVE_INITIALIZE}'",
+            SERVE_INITIALIZED, SERVE_LIST, SERVE_ADD, SERVE_READ,
+            "An `Int` argument is a JSON string",
+            "`mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`",
+            "- 0: SIGTERM or SIGINT stopped it.",
+            "- 69: supervision (D308) stopped the service.",
+            "It stays down until a person fixes the cause and starts it.",
+            "- 70: it died any other way",
+            "`counter.mo` and `./counter.mo` are the same spelling",
+            "An absolute path or `sub/../counter.mo` is a different spelling"):
+        assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
+
+
 def serve_command(binary):
+    serve_guide()
     token = "McpServeCanary42"
     with tempfile.TemporaryDirectory(prefix="mo-serve-") as directory:
         folder = pathlib.Path(directory)
@@ -1549,6 +1578,16 @@ def serve_command(binary):
             assert not served.finish(0, signal.SIGTERM)
         errors = refused(folder / counter)
         assert b"written by a different program" in errors, errors
+        elsewhere = folder / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / counter).write_text(SERVE_COUNTER)
+        served = Served(binary, counter, data, env, elsewhere)
+        try:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            assert not served.finish(0, signal.SIGTERM)
+        finally:
+            served.close()
+            outputs.append(served.line + served.errors())
 
         with serving() as served:
             for attempt in range(15):
@@ -3392,7 +3431,7 @@ def guide_claims(binary):
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide` and `mo emit`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit` and `mo serve`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -3403,7 +3442,7 @@ def guide_claims(binary):
          "compile, use that instead.",
          "Deleting a required spec, promise or capability to silence a diagnostic leaves the "
          "task undone.")
-    says("This build checks, formats and fixes `service ... end` blocks (reference 11.5).",
+    says("This build checks, formats, fixes and serves `service ... end` blocks (reference 11.5).",
          "`mo check --emit=bytecode FILE` prints the program's bytecode as indexed text, with a "
          "`services` section holding one descriptor for each module that declares a service, "
          "including imported modules.",

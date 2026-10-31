@@ -15,7 +15,7 @@ later-phase hooks. Section 13 lists open questions.
 ## 1. The shape of the system
 
 One program, `mo`, with the commands `mo check`, `mo run`, `mo test`,
-`mo format`, `mo fix`, `mo emit` and `mo guide`. It compiles a whole program
+`mo format`, `mo fix`, `mo emit`, `mo serve` and `mo guide`. It compiles a whole program
 at once, from source to bytecode, and runs the bytecode on its own virtual
 machine (D195).
 
@@ -74,7 +74,7 @@ src/prim/      the primitives of prims.def
 src/host/      capabilities, real and fake, and the runtime's service store
 src/vm/        processes, the interpreter, calls and frames, stops, defect reports
                and the in-process service loop (service.c)
-src/tools/     the mo command: check, run, test, format, fix, emit and guide;
+src/tools/     the mo command: check, run, test, format, fix, emit, serve and guide;
                diagnostics as text and JSON
 lib/           the standard library written in Mo (condition 4 of D207)
 vendor/sqlite/ SQLite, unmodified and pinned (vendor/sqlite/README.md); only
@@ -476,7 +476,7 @@ and functions. These summaries reach a fixed point across recursive types.
 Checking does not run an initializer or read a token. Lowering emits service
 descriptors; `src/vm/service.c` runs the in-process loop and `src/host/store.c`
 saves state. The CLI still refuses `mo run` of a service entry module with
-E1408. Ordinary emission retains its existing `main` requirement.
+E1408; `mo serve` is the command that starts one. Ordinary emission retains its existing `main` requirement.
 
 Symbols are sorted by name and source position; lookup is binary search.
 `mo_find_symbol` accepts bytes and length, without copying syntax spellings.

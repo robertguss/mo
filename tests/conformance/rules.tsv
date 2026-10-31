@@ -184,7 +184,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c
 13.3/8	txt-ordering,col-list-map-find,col-list-order-ties					measured:tests/test_lower.c:test_source_sort_work
 13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
-13.4/1	ref-shout,tst-passing				ci/check_cli.py:check,ci/check_cli.py:emit_command,ci/check_cli.py:guide_claims,ci/check_cli.py:fix_command
+13.4/1	ref-shout,tst-passing				ci/check_cli.py:check,ci/check_cli.py:emit_command,ci/check_cli.py:guide_claims,ci/check_cli.py:fix_command,ci/check_cli.py:serve_command
 13.4/2					ci/check_cli.py:promise_selection
 13.4/3	lang-recursion-tail				ci/check_cli.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
 13.4/4					ci/check_cli.py:records,ci/check_cli.py:check		No program can show that a field keeps its name, type and meaning in later versions of the format.

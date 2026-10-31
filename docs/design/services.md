@@ -72,7 +72,7 @@ Handlers are ordinary functions, and one small `service` block in the module wir
 (D266, D301). The block names the state type and its start value, which functions are tools, the
 timers, and where the access token comes from. This sketch turns `examples/job-queue.mo` into the
 task-queue service. MO-155 adds the service block. The C service loop and SQLite
-store have landed; `mo run` still does not start a service (section 9).
+store have landed; `mo serve` starts a service and `mo run` still does not (section 9).
 
 ```mo
 ## Mo's own task queue. Agents lease a task, check in while working, and
@@ -401,7 +401,7 @@ supervisor restart keeps the in-memory state, which is always the last committed
 state, so it does not reread the store. A storage failure stops the loop
 without counting as a handler failure. The [saved-state format](saved-state.md)
 defines the SQLite transactions, bounds, value encoding and refusal behavior.
-This C embedding still exposes no Mo simulation API or service CLI command.
+MO-159 adds the Mo simulation API, and MO-161 adds the `mo serve` command.
 
 ### MO-159 test simulation
 
@@ -480,7 +480,7 @@ Bytes elements count. D330 assigns the response without changing those limits.
 
 `tools/protocol.h` exposes the private C server constructor, polling loop and
 metrics. It takes an already loaded service image, an open store, a listener and
-explicit configured authorities. There is no `mo serve` command. The existing
+explicit configured authorities. `mo serve` (MO-161) is its one caller. The existing
 service loop still owns admission, timers, supervision and durable updates.
 
 The runtime-only listener family in `base/hostops.def` has real and fake
@@ -545,6 +545,37 @@ E0105 checks only wire arguments after State and Time, projected replies and
 application errors, recursively. Private state and update-state wrappers are
 excluded. E0106 rejects selected tool names ending in `?`; ordinary helpers and
 timers remain unaffected. Both checks follow E0101 across all services (D328).
+
+### MO-161 mo serve
+
+`mo serve FILE --port N --data DIR` (D331) runs the entry module's service. It
+compiles, initializes and checks anchors as `mo run` does, then
+`src/tools/serve.c` opens the listener and the store and polls the server. The
+flags are only `--port` and `--data`. It binds 127.0.0.1 and allows the
+authorities `127.0.0.1:PORT` and `localhost:PORT`, using the bound port.
+
+`DIR` must exist and is never created, so a mistyped path cannot start an empty
+queue. The database is always `DIR/service.sqlite`. SQLite's exclusive lock
+refuses a second server on the same `DIR`. Every startup refusal is E1409.
+
+The server constructor takes an event sink, because startup events fire inside
+`mo_service_open`. The sink writes one `mo serve: failure:`, `restart:` or
+`stop:` line to standard error, followed by the defect report when the event
+has one. journald adds the timestamps.
+
+A signal sets a flag, and a 200 ms tick notices it, because the pipeline runs on
+its own thread and `poll` is not reliably interrupted. A signal or a stop event
+starts the flush: the loop keeps polling while
+`mo_protocol_server_replying` is true, for at most `MO_LIMIT_MCP_WRITE_US`. The
+last client therefore gets its reply, and the server still answers `stopped`
+during the flush.
+
+Exit statuses: 0 after SIGTERM or SIGINT; 1 for program errors or a startup
+refusal; 2 for a command mistake; 69 (`MO_EXIT_SERVICE_STOPPED`) after a D308
+stop; 70 for any other death after start. 69 is outside mo's other statuses and
+systemd's reserved range, so MO-163 can name it in `RestartPreventExitStatus=`.
+A stop whose reason is `MO_SERVICE_STORE` exits 70, so it stays restartable. A
+D308 stop wins over a signal or an I/O failure that races it.
 
 ### MO-160 measurement accounting (D317 and D329)
 

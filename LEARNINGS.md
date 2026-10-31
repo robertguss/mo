@@ -1,5 +1,18 @@
 # Learnings
 
+## MO-161 mo serve
+
+- The service image key is the bytecode checksum, and debug file paths feed it.
+  `counter.mo` and `./counter.mo` compile alike from any folder, but an absolute
+  path or `sub/../counter.mo` does not, so recovery refuses that spelling. This
+  fails closed; the guide tells operators to keep `FILE` the same.
+- The stop signal handler goes in before the listening line. A client that reads
+  the line and signals at once would otherwise kill the process with the default
+  action.
+- A diagnostic's `reason` prints only when its code has a section, and
+  `tests/test_codes.c` keeps tools codes section-free. E1409's citation of 11.5
+  is therefore in its label.
+
 ## MO-160 protocol image loading
 
 - Json has implicit library dependencies even though it has no `use` lines:

@@ -6,13 +6,13 @@ This page is the procedure for a finished Mo program. Correct Mo is Language Ref
 
 The language headings below use the present tense of the reference.
 
-This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide` and `mo emit`. The program below checks with no errors, runs, and passes its examples and its test.
+This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit` and `mo serve`. The program below checks with no errors, runs, and passes its examples and its test.
 
 `mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks again, and prints the errors that are left, as `mo check` does. It rewrites only the files it is given.
 
 `mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A library module with no `main` is E0079, as for `mo run`, and a file that cannot be written is E1404. This build has no command that runs a bytecode file; run the source with `mo run`.
 
-This build checks, formats and fixes `service ... end` blocks (reference 11.5). `mo test` does not automatically start a service or read its token. Tests and examples can explicitly start one with `Simulation.start(Module, at)`, send registered tools with `Simulation.send(handle, Module.tool, args...)`, advance its fake clock, and crash/restart through the real log and snapshot path backed by an in-memory store. `send` returns the complete declared handler result inside another `Result`; an application `Error` is still inside `Ok`. Helpers may receive the handle. Promise/generator support is deferred. `mo run` on a service entry module still refuses with E1408, "mo run does not start services yet". Importing a service module does not start it.
+This build checks, formats, fixes and serves `service ... end` blocks (reference 11.5). `mo test` does not automatically start a service or read its token. Tests and examples can explicitly start one with `Simulation.start(Module, at)`, send registered tools with `Simulation.send(handle, Module.tool, args...)`, advance its fake clock, and crash/restart through the real log and snapshot path backed by an in-memory store. `send` returns the complete declared handler result inside another `Result`; an application `Error` is still inside `Ok`. Helpers may receive the handle. Promise/generator support is deferred. `mo run` on a service entry module still refuses with E1408, "mo run does not start services yet". Importing a service module does not start it.
 
 `mo check --emit=bytecode FILE` prints the program's bytecode as indexed text, with a `services` section holding one descriptor for each module that declares a service, including imported modules. It works on a module without `main`. `mo emit FILE -o OUT` writes the same descriptors, but still needs a `main` (E0079). Neither command evaluates a service's start value or reads its token, and `mo run` still does not start a service (E1408). `mo check --emit=core FILE` shows the start value and timer intervals as ordinary functions but no service registration, so Core output alone cannot reconstruct a service.
 
@@ -20,7 +20,7 @@ A service tool that returns exactly `State` or `Result(State, E)` gets E0101, "a
 
 Service tool names cannot end in `?` (E0106). Tool arguments after State and Time, projected replies and application errors must have visible fields and cases, including nested types (E0105). Import a wire type with `(..)` to expose its representation. Private service state is not a wire type. E0101 takes precedence over these two checks.
 
-The private C embedding can now connect a service to MCP clients over authenticated plain HTTP/1.1. HTTP policy, JSON-RPC validation and wire values run in embedded Mo; native code owns sockets, credentials and service dispatch. This adds no `mo serve` command. The transport's byte, node, work and memory ceilings are internal bounds, not language configuration. `mo run` still refuses a service entry module, and Simulation still provides no networking.
+`mo serve` connects a service to MCP clients over authenticated plain HTTP/1.1. HTTP policy, JSON-RPC validation and wire values run in embedded Mo; native code owns sockets, credentials and service dispatch. The transport's byte, node, work and memory ceilings are internal bounds, not language configuration. `mo run` still refuses a service entry module, and Simulation still provides no networking.
 
 A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this constant's call dependencies are not implemented". It reports E1150 for a form it checks but cannot compile yet, such as a constant's function value that reads a later constant. The headline is "this constant's deferred function needs globals not yet initialized". E1103 and E1150 mean this toolchain has not implemented that form. `mo run` and `mo test` report the same code for the same form.
 
@@ -135,7 +135,7 @@ The executable grammar in `grammar/mo.y` is the authority. Appendix B summarizes
 
 ## Run these commands
 
-Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo emit FILE -o OUT` writes its bytecode. `mo format` and `mo fix` rewrite the files they are given.
+Each command is given the file of the program's main module. `mo check FILE` reports the program's errors, `mo run FILE [ARGS...]` runs it with the arguments after the file's name, and `mo test FILE` checks its examples, promises and tests. `mo emit FILE -o OUT` writes its bytecode. `mo serve FILE --port N --data DIR` runs its service. `mo format` and `mo fix` rewrite the files they are given.
 
 Duration units accept singular and plural spellings, including `millisecond`.
 `mo format` writes `1.minute` and `2.minutes` on direct integer literals, using
@@ -145,9 +145,58 @@ because it does not infer types (reference 3.9).
 
 `mo guide` needs no file. It prints this page. `mo guide --reference` prints the reference.
 
-`mo` exits with status 0 when everything passed, 1 when the program has errors or an example, promise or test fails, and 2 for a mistake in the command itself. Once the program runs, `mo run` exits with the program's own status, or 70 after a bug. Section 11.2 states the program's own status. Section 13.2 states that bug.
+`mo` exits with status 0 when everything passed, 1 when the program has errors or an example, promise or test fails, and 2 for a mistake in the command itself. Once the program runs, `mo run` exits with the program's own status, or 70 after a bug. Section 11.2 states the program's own status. Section 13.2 states that bug. `mo serve` has more statuses, listed under Run a service.
 
 Section 13.4 names the selection flags and the limits.
+
+## Run a service
+
+`mo serve FILE --port N --data DIR` runs the service that the module in `FILE` declares. Check three things first:
+
+- `FILE` has a `service` block. Without one, `mo serve` refuses with E1409, "this module has no service to start". An imported service does not count.
+- `DIR` exists. `mo serve` never creates it, so a mistyped path cannot start an empty service. Saved state goes in `DIR/service.sqlite`. Only one `mo serve` can use a `DIR` at a time.
+- The environment variable named by `token from env "NAME"` holds the access token. A token is 1 to 256 bytes of letters, digits and `-._~+/`, and may end in `=` padding. A missing or invalid token is E1409, and the message names the variable.
+
+`--port` takes 0 to 65535. Port 0 picks a free port. `mo serve` listens on 127.0.0.1 only. It takes no address flag.
+
+When it is ready, it prints one line to standard output:
+
+```text
+mo serve: listening on http://127.0.0.1:PORT/mcp
+```
+
+Send each request with `POST` to that URL. One connection carries one request. Use the host `127.0.0.1:PORT` or `localhost:PORT`; any other `Host` gets status 421. A missing or wrong token gets status 401. Start with `initialize`:
+
+```sh
+curl -s http://127.0.0.1:PORT/mcp \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"demo","version":"1"}}}'
+```
+
+Send the same headers with each of these bodies. The first gets status 202 and no body. The last two call a tool:
+
+```json
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add","arguments":{"amount":"5"}}}
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read"}}
+```
+
+An `Int` argument is a JSON string, as `tools/list` shows in each tool's `inputSchema`. A tool's reply is in `result.structuredContent`. A failed call has `isError` true and `structuredContent.error.code`, such as `handler_failed` or `store_failed`.
+
+`mo serve` writes one line to standard error for each supervision event: `mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`. A failure that is a bug adds the report `mo run` would print. The lines have no timestamps. The token never appears in output, logs or errors.
+
+`mo serve` exits with one of these statuses:
+
+- 0: SIGTERM or SIGINT stopped it. It finishes replies it owes for up to 10 seconds first.
+- 1: the program has errors, or it could not start (E1409).
+- 2: a mistake in the command.
+- 69: supervision (D308) stopped the service. Five failures within a minute restart it, and three restarts within ten minutes stop it. It stays down until a person fixes the cause and starts it.
+- 70: it died any other way, such as a failed save, a listener failure or a bug in a module constant. Starting it again is safe.
+
+Saved state belongs to one compiled program, and the compiled program records `FILE` as you wrote it. A changed source is E1409, "saved service data is damaged or was written by a different program; recovery refused". `counter.mo` and `./counter.mo` are the same spelling, and the working folder does not matter. An absolute path or `sub/../counter.mo` is a different spelling, so it gets the same refusal. Start a service with the same `FILE` every time.
 
 ## Work in this loop
 
@@ -170,7 +219,7 @@ On a complete toolchain, `mo format`, `mo check`, and `mo test` exit 0. Run `mo 
 
 On this build, accept a remaining diagnostic only when Know this build names it: E1103 or E1150 on a form the reference requires and offers no other way to write the same behaviour, or E1400 on a promise whose inputs `mo test` cannot build. Deleting a required spec, promise or capability to silence a diagnostic leaves the task undone. Deleting a promise because `mo test` returns E1400 leaves the task undone.
 
-E1408 is also an expected build limitation when `mo run` targets a service entry module. Use `Simulation` in tests for scheduling and persistence, or test ordinary handlers directly for their value logic. Simulation provides no networking or deployment.
+E1408 is also an expected build limitation when `mo run` targets a service entry module. Use `mo serve` to run the service. Use `Simulation` in tests for scheduling and persistence, or test ordinary handlers directly for their value logic. Simulation provides no networking or deployment.
 
 Where the reference says nothing, do not add a rule, and do not fill that silence from the architecture or from `formal/TRANSLATION.md`.
 
