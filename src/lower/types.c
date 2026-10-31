@@ -1,5 +1,7 @@
 #include "lower/internal.h"
 
+#include "base/binary.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -32,9 +34,9 @@ static uint32_t bucket(uint64_t h, uint32_t slots) {
 }
 static uint64_t text_hash(struct lowering *p, mo_core_string name) {
     lower_work(p, name.length);
-    uint64_t hash = UINT64_C(0xcbf29ce484222325);
+    uint64_t hash = MO_FNV_OFFSET;
     for (size_t i = 0; i < name.length; i++)
-        hash = (hash ^ (uint8_t)name.bytes[i]) * UINT64_C(0x100000001b3);
+        hash = (hash ^ (uint8_t)name.bytes[i]) * MO_FNV_PRIME;
     return hash;
 }
 static uint64_t source_key(struct lowering *p, const struct mo_source_type *source) {
@@ -221,10 +223,8 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
                     break;
                 }
             if (!found) {
-                static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
-                                                   "Random",  "Args",  "Env"};
-                for (size_t i = 0; i < sizeof caps / sizeof caps[0]; i++)
-                    if (strcmp(source->name, caps[i]) == 0) {
+                for (size_t i = 0; i < MO_CORE_CAPABILITY_COUNT; i++)
+                    if (strcmp(source->name, mo_core_capability_names[i]) == 0) {
                         t->tag = MO_CORE_TY_CAP;
                         t->as.cap = LOWER_NEW(p, struct mo_core_cap, 1);
                         t->as.cap->tag = (enum mo_core_cap_tag)i;

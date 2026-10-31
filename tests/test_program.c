@@ -2675,6 +2675,7 @@ static void rejected_stages(void) {
          MO_CODE_ABILITY_CUSTOMIZER},
         {"fn main() : Text\n\"not an entry result\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(value: Int) : Int\nvalue\nend\n", MO_CODE_MAIN_CONTRACT},
+        {"fn main(_sim: Simulation) : Result(Unit, Text)\nstop \"x\"\nend\n", MO_CODE_MAIN_CONTRACT},
         {"fn main(a: Console, b: Console)\na.print(\"a\")\nb.print(\"b\")\nend\n",
          MO_CODE_MAIN_CONTRACT},
         {"fn main() : Result(Unit, Bytes)\nstop \"no text\"\nend\n", MO_CODE_ABILITY_MISSING},

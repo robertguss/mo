@@ -4417,10 +4417,9 @@ static MO_MUST_USE bool capture_type(struct inference *p, const struct mo_source
                 return false;
         return true;
     }
-    for (uint32_t i = 0; i < MO_CAPABILITY_COUNT; i++)
-        if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
-            strcmp(type->name, mo_capability_names[i]) == 0)
-            *capability = true;
+    if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+        mo_capability_named(type->name))
+        *capability = true;
     for (uint32_t i = 0; i < type->count; i++)
         if (!capture_type(p, type->arguments[i], capability, unknown, depth + 1))
             return false;

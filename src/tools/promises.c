@@ -1,5 +1,6 @@
 #include "tools/promises.h"
 
+#include "base/capabilities.h"
 #include "base/codes.h"
 #include "tools/builders.h"
 #include "tools/deadline.h"
@@ -199,18 +200,17 @@ static bool input_supported(struct eligibility *walk, const struct mo_program *p
         if (type->module == UINT32_MAX) {
             static const char *const scalars[] = {
                 "Unit", "Bool", "Byte", "Int", "Float", "Char", "Time", "Duration", "Decimal",
-                "Range", "Text", "Bytes", "BigInt",
-                /* Capabilities, as generated fakes. */
-                "Console", "Files", "ReadFiles", "Clock", "Random", "Args", "Env"};
+                "Range", "Text", "Bytes", "BigInt"};
             bool supported = (type->count == 1 &&
                               (strcmp(type->name, "List") == 0 || strcmp(type->name, "Set") == 0 ||
                                strcmp(type->name, "Option") == 0)) ||
                              (type->count == 2 && (strcmp(type->name, "Map") == 0 ||
                                                    strcmp(type->name, "Result") == 0));
-            size_t scalar_count =
-                sizeof scalars / sizeof scalars[0] - (walk->plain || walk->copied ? 7 : 0);
-            for (size_t i = 0; type->count == 0 && i < scalar_count; i++)
+            for (size_t i = 0; type->count == 0 && i < sizeof scalars / sizeof scalars[0]; i++)
                 supported |= strcmp(type->name, scalars[i]) == 0;
+            if (!(walk->plain || walk->copied) && type->count == 0)
+                for (unsigned i = 0; i < MO_HOST_CAPABILITY_COUNT; i++)
+                    supported |= strcmp(type->name, mo_capability_names[i]) == 0;
             if (!supported)
                 return false;
         } else {

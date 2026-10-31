@@ -8,6 +8,7 @@
 
 #include "base/arena.h"
 #include "base/base.h"
+#include "base/capabilities.h"
 
 enum mo_type_kind {
     MO_TYPE_UNIT,
@@ -44,6 +45,9 @@ enum mo_capability {
     MO_CAP_RANDOM,
     MO_CAP_SIMULATION,
 };
+_Static_assert((int)MO_CAP_SIMULATION == MO_HOST_CAPABILITY_COUNT,
+               "Simulation must follow host capability slots");
+_Static_assert(MO_CAPABILITY_COUNT == (int)MO_CAP_SIMULATION + 1, "capability name count");
 
 enum mo_case_shape { MO_CASE_EMPTY, MO_CASE_INLINE, MO_CASE_REF, MO_CASE_BOXED };
 enum mo_layout_kind { MO_LAYOUT_RECORD, MO_LAYOUT_TUPLE, MO_LAYOUT_CASE, MO_LAYOUT_CLOSURE };

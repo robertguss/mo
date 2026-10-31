@@ -50,6 +50,8 @@ enum mo_core_cap_tag {
     MO_CORE_CAP_ARGS,
     MO_CORE_CAP_ENV
 };
+enum { MO_CORE_CAPABILITY_COUNT = MO_CORE_CAP_ENV + 1 };
+extern const char *const mo_core_capability_names[MO_CORE_CAPABILITY_COUNT];
 struct mo_core_cap {
     enum mo_core_cap_tag tag;
 };

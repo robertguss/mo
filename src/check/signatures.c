@@ -794,10 +794,9 @@ static MO_MUST_USE bool capture_dependencies(struct preparation *p,
                 return false;
         return true;
     }
-    for (uint32_t i = 0; i < MO_CAPABILITY_COUNT; i++)
-        if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
-            strcmp(type->name, mo_capability_names[i]) == 0)
-            *capability = true;
+    if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX &&
+        mo_capability_named(type->name))
+        *capability = true;
     for (uint32_t i = 0; i < type->count; i++)
         if (!capture_dependencies(p, type->arguments[i], parameters, capability, function))
             return false;

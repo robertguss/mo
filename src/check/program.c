@@ -484,9 +484,8 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         unsigned capabilities = 0;
         for (uint32_t i = 0; i < entry->parameter_count; i++) {
             unsigned capability = 0;
-            for (unsigned j = 0; j < MO_CAPABILITY_COUNT; j++)
-                if (strcmp(mo_capability_names[j], "Simulation") != 0 &&
-                    native_type(entry->parameters[i]->type, mo_capability_names[j]))
+            for (unsigned j = 0; j < MO_HOST_CAPABILITY_COUNT; j++)
+                if (native_type(entry->parameters[i]->type, mo_capability_names[j]))
                     capability = 1u << j;
             if (capability == 0 || (capabilities & capability) != 0) {
                 bool kept = report(diags, MO_CODE_MAIN_CONTRACT, entry_span,

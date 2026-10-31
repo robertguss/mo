@@ -17,7 +17,7 @@ static MO_MUST_USE bool body(struct mo_shorthand *s, unsigned depth, uint32_t *o
             return mo_text_word(r, i, source) && mo_short_pool(s, MO_SECTION_TYPES, source, out);
         }
     }
-    for (uint32_t i = 0; i <= MO_CAP_SIMULATION; i++) {
+    for (uint32_t i = 0; i < MO_CAPABILITY_COUNT; i++) {
         if (mo_text_is(r, mo_capability_names[i])) {
             mo_text_next(r);
             return mo_text_word(r, MO_TYPE_CAPABILITY, source) && mo_text_word(r, i, source) &&

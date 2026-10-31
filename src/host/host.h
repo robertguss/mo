@@ -9,7 +9,7 @@
 struct mo_host_types {
     struct mo_types types;
     uint32_t integer, time, text, texts, folders, files;
-    uint32_t capabilities[MO_CAP_RANDOM + 1];
+    uint32_t capabilities[MO_HOST_CAPABILITY_COUNT];
     uint32_t parameters[2];
 };
 /* Once per image. storage has source->count + MO_HOST_PRIVATE_TYPES entries;

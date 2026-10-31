@@ -22,8 +22,8 @@ struct mo_fake_context {
 
 struct mo_fakes {
     struct mo_host *host;
-    struct mo_input_factory factories[MO_CAP_RANDOM + 1];
-    struct mo_fake_context contexts[MO_CAP_RANDOM + 1];
+    struct mo_input_factory factories[MO_HOST_CAPABILITY_COUNT];
+    struct mo_fake_context contexts[MO_HOST_CAPABILITY_COUNT];
     uint32_t factory_count;
     /* Recipes of the tuple being built, and of the retained best tuple that shrinking copies. */
     struct mo_fake_recipe pending[MO_CLI_FAKE_RECIPES], kept[MO_CLI_FAKE_RECIPES];

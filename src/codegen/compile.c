@@ -641,10 +641,9 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
             }
         }
         if (!found) {
-            static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
-                                               "Random",  "Args",  "Env"};
-            for (uint32_t i = 0; i < sizeof caps / sizeof *caps; i++)
-                if (strlen(caps[i]) == length && memcmp(start, caps[i], length) == 0) {
+            for (uint32_t i = 0; i < MO_CORE_CAPABILITY_COUNT; i++)
+                if (strlen(mo_core_capability_names[i]) == length &&
+                    memcmp(start, mo_core_capability_names[i], length) == 0) {
                     t->tag = MO_CORE_TY_CAP;
                     t->as.cap = allocate(c, 1, sizeof *t->as.cap);
                     if (t->as.cap == NULL)
