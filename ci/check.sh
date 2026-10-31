@@ -167,6 +167,11 @@ if want drivers; then
 isolated_tools_driver=
 if have python3; then
 	later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
+	if have curl; then
+		later "Claude Stop hook: pings the webhook, stays silent and exits 0 otherwise" python3 ci/test_notify_mo.py
+	else
+		missing "curl is not installed"
+	fi
 	later "Reference conformance: every rule has programs or an explicit gap" \
 		python3 ci/check_conformance.py
 	later "Reference conformance: coverage-check regression tests" \
