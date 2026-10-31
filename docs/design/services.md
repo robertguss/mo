@@ -450,7 +450,7 @@ validated requests have different result variants.
 RPC integer IDs retain their original spelling, including `-0`, within D317's
 128-byte limit. String IDs are limited to 128 decoded UTF-8 bytes. Error envelopes
 omit an indeterminate ID. Exact error messages remain caller-supplied in this
-unit; D325's approved wording belongs to MO-160 part 2.
+unit.
 
 `Mcp.prepare` checks that every single-tool page fits the supplied response
 ceiling with the worst-case escaped ID and its cursor, when needed. `Mcp.page`
