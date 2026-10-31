@@ -153,8 +153,8 @@ static bool promote(struct mo_protocol_server *s, struct protocol_connection *c,
         if (!mo_value_text(heap, (const char *)version_bytes, version_size, &text) ||
             !mo_value_case(heap, version_type, 1, &text, 1, &c->version))
             return false;
-        mo_value_drop(heap, mo_image_types(s->protocol)->items[version_type].cases[1].fields[0].type,
-                      text);
+        mo_value_drop(
+            heap, mo_image_types(s->protocol)->items[version_type].cases[1].fields[0].type, text);
     } else if (!mo_value_case(heap, version_type, 0, NULL, 0, &c->version))
         return false;
     struct mo_cell size = mo_cell_int(length);

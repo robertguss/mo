@@ -323,9 +323,8 @@ static bool templates(struct mo_protocol_server *s) {
     MO_ASSERT(split != NULL && *split == '1');
     s->fallback_prefix =
         (struct protocol_bytes){template_bytes.bytes, (size_t)(split - template_bytes.bytes)};
-    s->fallback_suffix =
-        (struct protocol_bytes){split + 1,
-                                (size_t)(template_bytes.bytes + template_bytes.size - split - 1)};
+    s->fallback_suffix = (struct protocol_bytes){
+        split + 1, (size_t)(template_bytes.bytes + template_bytes.size - split - 1)};
     size_t digits = 1;
     for (size_t n = 10; n <= s->fallback_body_max; n *= 10)
         digits++;
