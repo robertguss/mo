@@ -158,3 +158,9 @@ After a PR opens or merges, or after Robert makes a decision, run `notion-sync`.
 When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
 `docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level, using
 the `correct` skill.
+
+`.claude/settings.json` runs `.claude/hooks/notify-mo.sh` when a Claude Code thread in this repo
+stops, which POSTs a small JSON ping to Mo's webhook. The script sources
+`~/.config/mo/webhook.env` for `MO_WEBHOOK_URL` and `MO_WEBHOOK_HEADER` (one full header line, so
+single-quote each value), and does nothing when either is missing.
+`.claude/hooks/notify-mo.sh --test` sends the same ping with `"test": true`.
