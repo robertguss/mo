@@ -27,7 +27,7 @@ install_missing() {
 	fi
 }
 
-packages=(build-essential clang make git python3)
+packages=(build-essential clang curl make git python3)
 if needs static; then packages+=(clang-format-14 clang-tidy-18 bison); fi
 if needs cbmc; then packages+=(cbmc); fi
 install_missing "${packages[@]}"
