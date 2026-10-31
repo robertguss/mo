@@ -235,7 +235,6 @@ struct mo_listener_fake_peer {
     bool readable, writable, eof, read_error, write_error;
     bool closed, half_closed;
 };
-MO_MUST_USE const char *mo_listener_status_text(enum mo_listener_status status);
 MO_MUST_USE enum mo_listener_status mo_listener_open(const struct mo_listener_config *config,
                                                      const char *environment,
                                                      struct mo_listener **out);

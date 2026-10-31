@@ -36,30 +36,6 @@ struct mo_listener {
 static pthread_mutex_t cookie_mutex = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t next_cookie;
 
-const char *mo_listener_status_text(enum mo_listener_status status) {
-    switch (status) {
-    case MO_LISTENER_OK:
-        return NULL;
-    case MO_LISTENER_AGAIN:
-        return "listener operation would block or was interrupted";
-    case MO_LISTENER_EOF:
-        return "listener connection reached end of input";
-    case MO_LISTENER_IO:
-        return "listener input or output failed";
-    case MO_LISTENER_MEMORY:
-        return "listener memory allocation failed";
-    case MO_LISTENER_FULL:
-        return "listener connection capacity exhausted";
-    case MO_LISTENER_STALE:
-        return "listener connection is no longer valid";
-    case MO_LISTENER_CONFIG:
-        return "listener configuration or request is invalid";
-    case MO_LISTENER_CREDENTIAL:
-        return "listener credential is missing or invalid";
-    }
-    MO_UNREACHABLE();
-}
-
 static enum mo_listener_status io_status(void) {
     if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
         return MO_LISTENER_AGAIN;
