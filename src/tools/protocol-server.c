@@ -231,8 +231,9 @@ static void replied(const struct mo_service_response *reply, void *context) {
 }
 
 static void event(const struct mo_service_event *value, void *context) {
-    (void)value;
-    (void)context;
+    struct mo_protocol_server *s = context;
+    if (s->events.event != NULL)
+        s->events.event(value, s->events.context);
 }
 
 static bool catalog_copy(struct mo_protocol_server *s, struct mo_cell value,
@@ -325,7 +326,8 @@ static bool templates(struct mo_protocol_server *s) {
 enum mo_protocol_server_status
 mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_store *store,
                        struct mo_listener *listener, const char *const *authorities,
-                       size_t authority_count, struct mo_protocol_server **out) {
+                       size_t authority_count, const struct mo_protocol_events *events,
+                       struct mo_protocol_server **out) {
     if (image == NULL || listener == NULL || store == NULL || out == NULL ||
         index >= mo_image_bytecode(image)->service_count || authorities == NULL ||
         authority_count == 0 || authority_count > UINT32_MAX)
@@ -341,6 +343,8 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
     *s = (struct mo_protocol_server){.arena = arena,
                                      .image = image,
                                      .listener = listener,
+                                     .events =
+                                         events == NULL ? (struct mo_protocol_events){0} : *events,
                                      .descriptor = &mo_image_bytecode(image)->services[index],
                                      .service_index = index,
                                      .rate_credit = MO_LIMIT_MCP_BURST * UINT64_C(1000000)};
@@ -569,6 +573,16 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
     }
     s->next_slot = (s->next_slot + 1) % MO_LIMIT_MCP_CONNECTIONS;
     return s->io_failed ? MO_PROTOCOL_SERVER_IO : MO_PROTOCOL_SERVER_OK;
+}
+
+bool mo_protocol_server_replying(const struct mo_protocol_server *s) {
+    MO_ASSERT(s != NULL);
+    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++) {
+        enum protocol_phase phase = s->connections[i].phase;
+        if (phase == PS_SERVICE || phase == PS_WRITE || phase == PS_DRAIN)
+            return true;
+    }
+    return false;
 }
 
 struct mo_protocol_metrics mo_protocol_server_metrics(const struct mo_protocol_server *s) {

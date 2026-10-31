@@ -79,6 +79,7 @@ struct mo_protocol_server {
     struct mo_service_loop *service;
     struct mo_heap *service_heap;
     struct mo_listener *listener;
+    struct mo_protocol_events events;
     struct mo_listener_time now;
     struct mo_process *catalog_process;
     struct mo_scratch catalog_scratch;

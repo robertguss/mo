@@ -44,8 +44,8 @@ static void retry_accept(void *context) {
     struct mo_listener_config config = {0};
     MO_ASSERT(mo_listener_open(&config, "MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
     const char *authorities[] = {"localhost"};
-    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &f.server) ==
-              MO_PROTOCOL_SERVER_OK);
+    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, NULL,
+                                     &f.server) == MO_PROTOCOL_SERVER_OK);
     const int errors[] = {
         ECONNABORTED,
         EPROTO,
