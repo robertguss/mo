@@ -125,6 +125,20 @@ static bool number(const char *text, bool bytes, uint64_t maximum, uint64_t *out
     return true;
 }
 
+static bool port_number(const char *text, uint16_t *out) {
+    uint32_t value = 0;
+    const char *p = text;
+    for (; *p >= '0' && *p <= '9'; p++) {
+        value = value * 10 + (uint32_t)(*p - '0');
+        if (value > UINT16_MAX)
+            return false;
+    }
+    if (p == text || *p != '\0')
+        return false;
+    *out = (uint16_t)value;
+    return true;
+}
+
 bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const char **error) {
     MO_ASSERT(out != NULL && error != NULL && argc >= 0);
     *out = (struct mo_cli){
@@ -132,8 +146,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     *error = NULL;
     if (argc < 2)
         return refuse(out, error,
-                      "expected a command: check, run, test, format, fix, guide or emit", NULL,
-                      NULL);
+                      "expected a command: check, run, test, format, fix, guide, emit or serve",
+                      NULL, NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];
     uint32_t count = 0;
@@ -147,15 +161,16 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         out->command = MO_COMMAND_VERSION;
         return argc == 2 || refuse(out, error, "--version takes no other arguments", argv[2], NULL);
     }
-    const char *names[] = {"check", "run", "test", "format", "fix", "guide", "emit"};
+    const char *names[] = {"check", "run", "test", "format", "fix", "guide", "emit", "serve"};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
         if (strcmp(command, names[c]) == 0)
             break;
     if (c == sizeof(names) / sizeof(names[0]))
-        return refuse(out, error,
-                      "unknown command (expected check, run, test, format, fix, guide or emit)",
-                      command, NULL);
+        return refuse(
+            out, error,
+            "unknown command (expected check, run, test, format, fix, guide, emit or serve)",
+            command, NULL);
     out->command = (enum mo_command)c;
     bool flags = true;
     uint32_t seen = 0;
@@ -175,29 +190,32 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             bool value = false;
             const char *flag_names[] = {"--json",  "--list",      "--reference", "--only",
                                         "--in",    "--max-stack", "--max-depth", "--max-heap",
-                                        "--calls", "--seconds",   "-o"};
-            for (flag = 0; flag < 11; flag++)
+                                        "--calls", "--seconds",   "-o",          "--port",
+                                        "--data"};
+            for (flag = 0; flag < 13; flag++)
                 if (strcmp(arg, flag_names[flag]) == 0)
                     break;
             if (strncmp(arg, "--emit=", 7) == 0)
-                flag = 11;
-            if (flag == 11 && strncmp(arg, "--emit=", 7) != 0)
+                flag = 13;
+            if (flag == 13 && strncmp(arg, "--emit=", 7) != 0)
                 return refuse(out, error, "unknown flag", arg, NULL);
             bool check = out->command == MO_COMMAND_CHECK;
             bool test = out->command == MO_COMMAND_TEST;
             bool run = out->command == MO_COMMAND_RUN;
+            bool serve = out->command == MO_COMMAND_SERVE;
             bool allowed = (flag == 0 && (check || test)) || (flag == 1 && test) ||
                            (flag == 2 && out->command == MO_COMMAND_GUIDE) ||
                            ((flag == 3 || flag == 4 || flag == 8 || flag == 9) && test) ||
-                           (flag >= 5 && flag <= 7 && (run || test)) || (flag == 11 && check) ||
-                           (flag == 10 && out->command == MO_COMMAND_EMIT);
+                           (flag >= 5 && flag <= 7 && (run || test)) || (flag == 13 && check) ||
+                           (flag == 10 && out->command == MO_COMMAND_EMIT) ||
+                           ((flag == 11 || flag == 12) && serve);
             if (!allowed)
                 return refuse(out, error, "flag is not accepted by this command", arg, NULL);
             uint32_t bit = UINT32_C(1) << flag;
             if (flag != 3 && (seen & bit) != 0)
                 return refuse(out, error, "flag may be given only once (except --only)", arg, NULL);
             seen |= bit;
-            value = flag >= 3 && flag <= 10;
+            value = flag >= 3 && flag <= 12;
             const char *operand = NULL;
             if (value) {
                 if (i + 1 == argc)
@@ -206,8 +224,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                 MO_ASSERT(operand != NULL);
                 if (!option(out, error, operand, &count, &total))
                     return false;
-                if (operand[0] == '\0' ||
-                    (operand[0] == '-' && (flag < 5 || flag == 10 || operand[1] == '-')))
+                if (operand[0] == '\0' || (operand[0] == '-' && (flag < 5 || flag == 10 ||
+                                                                 flag == 12 || operand[1] == '-')))
                     return refuse(out, error, "flag needs a nonempty value", arg, operand);
             }
             uint64_t n = 0;
@@ -253,6 +271,15 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                 out->output = operand;
                 break;
             case 11:
+                if (!port_number(operand, &out->port))
+                    return refuse(out, error,
+                                  "invalid port (expected a decimal integer from 0 to 65535)", arg,
+                                  operand);
+                break;
+            case 12:
+                out->data = operand;
+                break;
+            case 13:
                 if (strcmp(arg + 7, "core") == 0)
                     out->emit = MO_EMIT_CORE;
                 else if (strcmp(arg + 7, "bytecode") == 0)
@@ -271,7 +298,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             return refuse(out, error, "guide takes no files", arg, NULL);
         if (out->file_count != 0 &&
             (out->command == MO_COMMAND_CHECK || out->command == MO_COMMAND_TEST ||
-             out->command == MO_COMMAND_EMIT))
+             out->command == MO_COMMAND_EMIT || out->command == MO_COMMAND_SERVE))
             return refuse(out, error, "command takes exactly one file", arg, NULL);
         if (out->files == NULL)
             out->files = argv + i;
@@ -286,6 +313,10 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
+    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << 11)) == 0)
+        return refuse(out, error, "serve needs --port N", command, NULL);
+    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << 12)) == 0)
+        return refuse(out, error, "serve needs --data DIR", command, NULL);
     if (out->json && out->emit != MO_EMIT_NONE)
         return refuse(out, error, "--json and --emit cannot be combined", "--json", "--emit");
     return true;

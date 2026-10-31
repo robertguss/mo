@@ -139,6 +139,74 @@ static void parse_commands(void) {
     CHECK(!mo_cli_parse(6, json, &cli, &error));
 }
 
+static void refused(int argc, const char *const *argv, const char *expected) {
+    struct mo_cli cli;
+    const char *error;
+    CHECK(!mo_cli_parse(argc, argv, &cli, &error));
+    CHECK(strcmp(error, expected) == 0);
+}
+
+#define REFUSED(expected, ...)                                                                     \
+    do {                                                                                           \
+        const char *argv[] = {"mo", "serve", __VA_ARGS__};                                         \
+        refused((int)(sizeof argv / sizeof *argv), argv, expected);                                \
+    } while (0)
+
+static void parse_serve(void) {
+    struct mo_cli cli;
+    const char *error;
+    const char *happy[] = {"mo", "serve", "main.mo", "--port", "8080", "--data", "state"};
+    CHECK(mo_cli_parse(7, happy, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_SERVE && cli.file_count == 1 && cli.port == 8080);
+    CHECK(strcmp(mo_cli_file(&cli, 0), "main.mo") == 0 && strcmp(cli.data, "state") == 0);
+    const char *first[] = {"mo", "serve", "--data", "state", "--port", "0", "main.mo"};
+    CHECK(mo_cli_parse(7, first, &cli, &error) && cli.port == 0);
+    const char *highest[] = {"mo", "serve", "main.mo", "--port", "65535", "--data", "state"};
+    CHECK(mo_cli_parse(7, highest, &cli, &error) && cli.port == 65535);
+    const char *padded[] = {"mo", "serve", "main.mo", "--port", "00080", "--data", "state"};
+    CHECK(mo_cli_parse(7, padded, &cli, &error) && cli.port == 80);
+    REFUSED("invalid port (expected a decimal integer from 0 to 65535): \"--port\" \"65536\"",
+            "main.mo", "--port", "65536", "--data", "state");
+    REFUSED("invalid port (expected a decimal integer from 0 to 65535): \"--port\" \"-1\"",
+            "main.mo", "--port", "-1", "--data", "state");
+    REFUSED("invalid port (expected a decimal integer from 0 to 65535): \"--port\" \"1x\"",
+            "main.mo", "--port", "1x", "--data", "state");
+    REFUSED("flag needs a nonempty value: \"--port\" \"\"", "main.mo", "--port", "", "--data",
+            "state");
+    REFUSED("flag needs a nonempty value: \"--port\"", "main.mo", "--data", "state", "--port");
+    REFUSED("flag needs a nonempty value: \"--port\" \"--data\"", "main.mo", "--port", "--data");
+    REFUSED("flag needs a nonempty value: \"--data\" \"-x\"", "main.mo", "--port", "1", "--data",
+            "-x");
+    REFUSED("flag needs a nonempty value: \"--data\"", "main.mo", "--port", "1", "--data");
+    REFUSED("serve needs --port N: \"serve\"", "main.mo", "--data", "state");
+    REFUSED("serve needs --data DIR: \"serve\"", "main.mo", "--port", "1");
+    REFUSED("command needs a file: \"serve\"", "--port", "1", "--data", "state");
+    REFUSED("flag may be given only once (except --only): \"--port\"", "main.mo", "--port", "1",
+            "--port", "2", "--data", "state");
+    REFUSED("flag may be given only once (except --only): \"--data\"", "main.mo", "--port", "1",
+            "--data", "a", "--data", "b");
+    REFUSED("command takes exactly one file: \"b.mo\"", "a.mo", "b.mo", "--port", "1", "--data",
+            "state");
+    REFUSED("flag is not accepted by this command: \"--json\"", "--json", "main.mo", "--port", "1",
+            "--data", "state");
+    REFUSED("flag is not accepted by this command: \"--max-heap\"", "--max-heap", "1MiB", "main.mo",
+            "--port", "1", "--data", "state");
+    const char *wrong_port[] = {"mo", "run", "--port", "1", "main.mo"};
+    refused(5, wrong_port, "flag is not accepted by this command: \"--port\"");
+    const char *wrong_data[] = {"mo", "emit", "--data", "state", "main.mo", "-o", "x"};
+    refused(7, wrong_data, "flag is not accepted by this command: \"--data\"");
+    const char *emit_only[] = {"mo", "serve", "--emit=core", "main.mo"};
+    refused(4, emit_only, "flag is not accepted by this command: \"--emit=core\"");
+    const char *unknown[] = {"mo", "serve", "--emit", "main.mo"};
+    refused(4, unknown, "unknown flag: \"--emit\"");
+    const char *none[] = {"mo"};
+    refused(1, none, "expected a command: check, run, test, format, fix, guide, emit or serve");
+    const char *what[] = {"mo", "what"};
+    refused(2, what,
+            "unknown command (expected check, run, test, format, fix, guide, emit or serve): "
+            "\"what\"");
+}
+
 static void limit_values(void) {
     struct mo_cli cli;
     const char *error;
@@ -583,6 +651,7 @@ int main(int argc, char *argv[]) {
         (strcmp(argv[1], "--render-json") == 0 || strcmp(argv[1], "--render-text") == 0))
         return rendering(strcmp(argv[1], "--render-json") == 0, stdout) ? 0 : 1;
     parse_commands();
+    parse_serve();
     limit_values();
     long_line();
     utf8_display();

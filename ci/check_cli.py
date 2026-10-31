@@ -3587,7 +3587,7 @@ def check(binary):
                  ["check", "--json", "--emit=core", good], ["check", "--version", good],
                  ["check", "--json", "--bad", good]):
         mistake(args)
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide or emit): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit or serve): "bad\\x0a\\x09\\xc3\\xbf"')
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):
             args = [command, flag, *value, *([] if command == "guide" else [good])]
