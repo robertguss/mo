@@ -69,10 +69,12 @@ static bool authorities(struct mo_protocol_server *s, struct protocol_connection
     return true;
 }
 
-static bool authenticate(struct mo_protocol_server *s, struct protocol_connection *c) {
+static bool authenticate(struct mo_protocol_server *s, struct protocol_connection *c,
+                         struct mo_cell bytes, struct mo_cell head) {
     struct mo_cell args[3], value;
-    if (!headers(s, c, &args[0], &args[1]) || !authorities(s, c, &args[2]) ||
-        !mo_protocol_invoke(s, c, PF_INSPECT, args, &value))
+    args[0] = bytes;
+    args[1] = head;
+    if (!authorities(s, c, &args[2]) || !mo_protocol_invoke(s, c, PF_INSPECT, args, &value))
         return false;
     uint32_t type = mo_protocol_function(s, PF_INSPECT)->result_type;
     struct mo_cell part = mo_protocol_field(s->protocol, type, value, 0);
@@ -100,15 +102,16 @@ static bool authenticate(struct mo_protocol_server *s, struct protocol_connectio
     }
     mo_host_wipe(c->input + request.auth.start, request.auth.length);
     memset(c->input + request.auth.start, 'x', request.auth.length);
-    mo_protocol_dispose(s, c);
-    c->authenticated = true;
-    return mo_protocol_request_process(s, c);
+    return true;
 }
 
-static bool plan(struct mo_protocol_server *s, struct protocol_connection *c, bool *send_continue) {
+static bool plan(struct mo_protocol_server *s, struct protocol_connection *c, struct mo_cell bytes,
+                 struct mo_cell head, bool *send_continue, bool *fixed, int64_t *length,
+                 uint32_t *version_type, bool *version_some, uint8_t *version_bytes,
+                 size_t *version_size) {
     struct mo_cell args[3], value;
-    if (!headers(s, c, &args[0], &args[1]))
-        return false;
+    args[0] = bytes;
+    args[1] = head;
     args[2] = mo_cell_int(MO_LIMIT_MCP_BODY_BYTES);
     if (!mo_protocol_invoke(s, c, PF_PLAN, args, &value))
         return false;
@@ -119,18 +122,43 @@ static bool plan(struct mo_protocol_server *s, struct protocol_connection *c, bo
                          (int)mo_cell_get_int(mo_protocol_field(s->protocol, type, value, 0)));
         return false;
     }
-    struct mo_heap *heap = mo_process_heap(c->process);
     uint32_t offset = tag == 1 ? 1U : 0U;
     *send_continue = mo_cell_get_bool(mo_protocol_field(s->protocol, type, value, offset));
-    uint32_t version_type =
-        mo_image_types(s->protocol)->items[type].cases[tag].fields[offset + 1].type;
-    c->version =
-        mo_value_dup(heap, version_type, mo_protocol_field(s->protocol, type, value, offset + 1));
-    struct mo_cell size =
-        tag == 1 ? mo_protocol_field(s->protocol, type, value, 0) : mo_cell_int(0);
-    bool ok = mo_protocol_invoke(s, c, tag == 1 ? PF_FIXED : PF_CHUNKED, &size, &c->body_state);
+    *fixed = tag == 1;
+    *length = tag == 1 ? mo_cell_get_int(mo_protocol_field(s->protocol, type, value, 0)) : 0;
+    *version_type = mo_image_types(s->protocol)->items[type].cases[tag].fields[offset + 1].type;
+    struct mo_cell version = mo_protocol_field(s->protocol, type, value, offset + 1);
+    *version_some = mo_cell_get_tag(version) != 0;
+    *version_size = 0;
+    if (*version_some) {
+        struct mo_cell text = mo_protocol_field(s->protocol, *version_type, version, 0);
+        const uint8_t *data = mo_value_data(text, version_size);
+        MO_ASSERT(*version_size <= MO_LIMIT_MCP_HEADER_BYTES);
+        memcpy(version_bytes, data, *version_size);
+    }
     mo_protocol_drop(s, c, PF_PLAN, value);
-    return ok;
+    return true;
+}
+
+static bool promote(struct mo_protocol_server *s, struct protocol_connection *c, bool fixed,
+                    int64_t length, uint32_t version_type, bool version_some,
+                    const uint8_t *version_bytes, size_t version_size) {
+    mo_protocol_observe(s, c);
+    mo_protocol_dispose(s, c);
+    if (!mo_protocol_request_process(s, c))
+        return false;
+    struct mo_heap *heap = mo_process_heap(c->process);
+    if (version_some) {
+        struct mo_cell text;
+        if (!mo_value_text(heap, (const char *)version_bytes, version_size, &text) ||
+            !mo_value_case(heap, version_type, 1, &text, 1, &c->version))
+            return false;
+        mo_value_drop(heap, mo_image_types(s->protocol)->items[version_type].cases[1].fields[0].type,
+                      text);
+    } else if (!mo_value_case(heap, version_type, 0, NULL, 0, &c->version))
+        return false;
+    struct mo_cell size = mo_cell_int(length);
+    return mo_protocol_invoke(s, c, fixed ? PF_FIXED : PF_CHUNKED, &size, &c->body_state);
 }
 
 bool mo_protocol_body_complete(const struct protocol_connection *c) {
@@ -197,13 +225,26 @@ static void feed(struct mo_protocol_server *s, struct protocol_connection *c, co
 
 static void head_complete(struct mo_protocol_server *s, struct protocol_connection *c,
                           size_t buffered) {
-    if (!authenticate(s, c)) {
+    struct mo_cell bytes, head;
+    if (!headers(s, c, &bytes, &head)) {
         if (c->phase == PS_HEADERS)
             mo_protocol_fail(s, c, 413);
         return;
     }
-    bool send_continue;
-    if (!plan(s, c, &send_continue)) {
+    if (!authenticate(s, c, bytes, head)) {
+        if (c->phase == PS_HEADERS)
+            mo_protocol_fail(s, c, 413);
+        return;
+    }
+    c->authenticated = true;
+    bool send_continue, fixed, version_some;
+    int64_t length;
+    uint32_t version_type;
+    uint8_t version_bytes[MO_LIMIT_MCP_HEADER_BYTES];
+    size_t version_size;
+    if (!plan(s, c, bytes, head, &send_continue, &fixed, &length, &version_type, &version_some,
+              version_bytes, &version_size) ||
+        !promote(s, c, fixed, length, version_type, version_some, version_bytes, version_size)) {
         if (c->phase == PS_HEADERS)
             mo_protocol_fail(s, c, 413);
         return;
@@ -218,7 +259,12 @@ static void head_complete(struct mo_protocol_server *s, struct protocol_connecti
     if (c->phase != PS_BODY)
         return;
     if (send_continue) {
-        c->output = s->errors[100];
+        for (size_t i = 0; i < s->error_count; i++)
+            if (s->errors[i].status == 100) {
+                c->output = s->errors[i].response;
+                break;
+            }
+        MO_ASSERT(c->output.bytes != NULL);
         c->write_offset = 0;
         c->phase = PS_CONTINUE;
     } else if (mo_protocol_body_complete(c))

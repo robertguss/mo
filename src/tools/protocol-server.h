@@ -86,10 +86,13 @@ struct mo_protocol_server {
     uint32_t functions[PF_COUNT];
     uint32_t service_index;
     uint64_t sequence, rate_at, rate_credit;
-    size_t next_slot, fallback_body_max;
+    size_t next_slot, fallback_body_max, error_count;
     struct protocol_fallback fallbacks[PE_COUNT][EFFECT_COUNT];
-    struct protocol_bytes *fallback_headers;
-    struct protocol_bytes errors[506];
+    struct protocol_bytes fallback_prefix, fallback_suffix;
+    struct {
+        int status;
+        struct protocol_bytes response;
+    } errors[15];
     struct protocol_connection connections[MO_LIMIT_MCP_CONNECTIONS];
     struct mo_protocol_metrics metrics;
     bool io_failed;

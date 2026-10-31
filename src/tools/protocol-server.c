@@ -168,9 +168,25 @@ void mo_protocol_start_write(struct mo_protocol_server *s, struct protocol_conne
     mo_protocol_observe(s, c);
 }
 
+static size_t write_decimal(uint8_t *out, size_t value) {
+    uint8_t digits[20];
+    size_t n = 0;
+    do {
+        digits[n++] = (uint8_t)('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    for (size_t i = 0; i < n; i++)
+        out[i] = digits[n - 1 - i];
+    return n;
+}
+
 void mo_protocol_fail(struct mo_protocol_server *s, struct protocol_connection *c, int status) {
-    MO_ASSERT(status >= 0 && (size_t)status < sizeof s->errors / sizeof *s->errors);
-    struct protocol_bytes response = s->errors[status];
+    struct protocol_bytes response = {0};
+    for (size_t i = 0; i < s->error_count; i++)
+        if (s->errors[i].status == status) {
+            response = s->errors[i].response;
+            break;
+        }
     MO_ASSERT(response.bytes != NULL);
     mo_protocol_dispose(s, c);
     mo_host_wipe(c->input, sizeof c->input);
@@ -183,15 +199,18 @@ void mo_protocol_fallback(struct mo_protocol_server *s, struct protocol_connecti
     MO_ASSERT(form->prefix.bytes != NULL && c->id_size != 0);
     size_t body_size = form->prefix.size + c->id_size + form->suffix.size;
     MO_ASSERT(body_size <= s->fallback_body_max);
-    const struct protocol_bytes *header = &s->fallback_headers[body_size];
-    MO_ASSERT(header->size + body_size <= c->fallback_capacity);
     size_t at = 0;
-    const struct protocol_bytes parts[] = {
-        *header, form->prefix, {c->escaped_id, c->id_size}, form->suffix};
+    memcpy(c->fallback + at, s->fallback_prefix.bytes, s->fallback_prefix.size);
+    at += s->fallback_prefix.size;
+    at += write_decimal(c->fallback + at, body_size);
+    memcpy(c->fallback + at, s->fallback_suffix.bytes, s->fallback_suffix.size);
+    at += s->fallback_suffix.size;
+    const struct protocol_bytes parts[] = {form->prefix, {c->escaped_id, c->id_size}, form->suffix};
     for (size_t i = 0; i < sizeof parts / sizeof *parts; i++) {
         memcpy(c->fallback + at, parts[i].bytes, parts[i].size);
         at += parts[i].size;
     }
+    MO_ASSERT(at <= c->fallback_capacity);
     mo_protocol_dispose(s, c);
     mo_protocol_start_write(s, c, (struct protocol_bytes){c->fallback, at});
 }
@@ -285,22 +304,32 @@ static bool templates(struct mo_protocol_server *s) {
         }
     }
     s->fallback_body_max = max_body + sizeof s->connections[0].escaped_id;
-    s->fallback_headers = mo_scratch_resize(
-        &s->catalog_scratch, NULL, 0, (s->fallback_body_max + 1) * sizeof *s->fallback_headers);
-    if (s->fallback_headers == NULL)
+    struct mo_cell head_args[] = {mo_cell_int(200), mo_cell_int(1)}, head;
+    if (!mo_protocol_invoke(s, NULL, PF_HTTP_HEAD, head_args, &head))
         return false;
-    size_t max_header = 0;
-    for (size_t size = 0; size <= s->fallback_body_max; size++) {
-        struct mo_cell args[] = {mo_cell_int(200), mo_cell_int((int64_t)size)}, value;
-        if (!mo_protocol_invoke(s, NULL, PF_HTTP_HEAD, args, &value))
-            return false;
-        bool ok = catalog_copy(s, value, &s->fallback_headers[size]);
-        mo_protocol_drop(s, NULL, PF_HTTP_HEAD, value);
-        if (!ok)
-            return false;
-        if (s->fallback_headers[size].size > max_header)
-            max_header = s->fallback_headers[size].size;
+    struct protocol_bytes template_bytes;
+    bool ok = catalog_copy(s, head, &template_bytes);
+    mo_protocol_drop(s, NULL, PF_HTTP_HEAD, head);
+    if (!ok)
+        return false;
+    static const char marker[] = "Content-Length: ";
+    const uint8_t *split = NULL;
+    for (size_t i = 0; i + sizeof marker <= template_bytes.size; i++) {
+        if (memcmp(template_bytes.bytes + i, marker, sizeof marker - 1) == 0) {
+            split = template_bytes.bytes + i + sizeof marker - 1;
+            break;
+        }
     }
+    MO_ASSERT(split != NULL && *split == '1');
+    s->fallback_prefix =
+        (struct protocol_bytes){template_bytes.bytes, (size_t)(split - template_bytes.bytes)};
+    s->fallback_suffix =
+        (struct protocol_bytes){split + 1,
+                                (size_t)(template_bytes.bytes + template_bytes.size - split - 1)};
+    size_t digits = 1;
+    for (size_t n = 10; n <= s->fallback_body_max; n *= 10)
+        digits++;
+    size_t max_header = s->fallback_prefix.size + digits + s->fallback_suffix.size;
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++) {
         struct protocol_connection *c = &s->connections[i];
         c->fallback_capacity = s->fallback_body_max + max_header;
@@ -310,15 +339,18 @@ static bool templates(struct mo_protocol_server *s) {
     }
     static const int statuses[] = {100, 202, 400, 401, 403, 404, 405, 406,
                                    413, 415, 417, 421, 431, 501, 505};
+    MO_ASSERT(sizeof statuses / sizeof *statuses <= sizeof s->errors / sizeof *s->errors);
     for (size_t i = 0; i < sizeof statuses / sizeof *statuses; i++) {
         struct mo_cell args[] = {mo_cell_int(statuses[i]), mo_cell_int(0)}, value;
         if (!mo_protocol_invoke(s, NULL, PF_HTTP_HEAD, args, &value))
             return false;
-        bool ok = catalog_copy(s, value, &s->errors[statuses[i]]);
+        s->errors[i].status = statuses[i];
+        ok = catalog_copy(s, value, &s->errors[i].response);
         mo_protocol_drop(s, NULL, PF_HTTP_HEAD, value);
         if (!ok)
             return false;
     }
+    s->error_count = sizeof statuses / sizeof *statuses;
     return true;
 }
 
