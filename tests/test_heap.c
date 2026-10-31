@@ -334,6 +334,53 @@ static void test_limit(struct heap_fixture *f) {
     mo_heap_free(p);
 }
 
+static void test_scratch_peak(struct heap_fixture *f) {
+    for (unsigned confidential = 0; confidential < 2; confidential++) {
+        struct mo_limits limits = mo_limits_default();
+        limits.heap_size = 64 << 10;
+        struct mo_heap *p = mo_heap_new(f->image, &limits);
+        MO_ASSERT(p != NULL);
+        if (confidential != 0)
+            mo_heap_confidential(p);
+        size_t baseline = mo_heap_used(p);
+        CHECK(mo_heap_scratch_peak(p) == 0);
+        struct mo_cell value;
+        MO_ASSERT(mo_value_text(p, "value", 5, &value));
+        CHECK(mo_heap_scratch_peak(p) == 0);
+        mo_value_drop(p, f->builtin[MO_TYPE_TEXT], value);
+        struct mo_scratch first, second;
+        mo_scratch_init(&first, p);
+        mo_scratch_init(&second, p);
+        MO_ASSERT(mo_scratch_resize(&first, NULL, 0, 1) != NULL);
+        CHECK(mo_heap_scratch_peak(p) == first.arena.used);
+        void *bytes = mo_scratch_resize(&second, NULL, 0, 8192);
+        MO_ASSERT(bytes != NULL);
+        CHECK(mo_heap_scratch_peak(p) == first.arena.used + second.arena.used);
+        bytes = mo_scratch_resize(&second, bytes, 8192, 16384);
+        MO_ASSERT(bytes != NULL);
+        size_t peak = first.arena.used + second.arena.used;
+        CHECK(mo_heap_scratch_peak(p) == peak);
+        CHECK(mo_heap_used(p) == baseline + peak);
+        CHECK(mo_heap_peak(p) == baseline + peak);
+        mo_scratch_free(&first);
+        mo_scratch_free(&second);
+        CHECK(mo_heap_used(p) == baseline);
+        CHECK(mo_heap_scratch_peak(p) == peak);
+        mo_scratch_init(&first, p);
+        bytes = mo_scratch_resize(&first, NULL, 0, 1);
+        MO_ASSERT(bytes != NULL);
+        CHECK(mo_heap_scratch_peak(p) == peak);
+        size_t used = mo_heap_used(p);
+        CHECK(mo_scratch_resize(&first, bytes, 1, limits.heap_size) == NULL);
+        CHECK(mo_heap_used(p) == used);
+        CHECK(mo_heap_scratch_peak(p) == peak);
+        mo_scratch_free(&first);
+        CHECK(mo_heap_used(p) == baseline && mo_heap_objects(p) == 0);
+        CHECK(mo_heap_scratch_peak(p) == peak);
+        mo_heap_free(p);
+    }
+}
+
 static void test_tables(struct heap_fixture *f) {
     struct mo_limits limits = mo_limits_default();
     struct mo_heap *p = mo_heap_new(f->image, &limits);
@@ -1205,6 +1252,7 @@ int main(int argc, char **argv) {
     test_list_windows(&fixture);
     test_deep_drop(&fixture);
     test_limit(&fixture);
+    test_scratch_peak(&fixture);
     test_tables(&fixture);
     test_generic(&fixture);
     test_print(&fixture);

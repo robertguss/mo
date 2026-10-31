@@ -1,0 +1,13 @@
+POST http://localhost/mcp HTTP/1.1
+Host: other
+Authorization: Bearer fuzz-credential
+Content-Type: application/json
+Transfer-Encoding: chunked
+
+2;x="y"
+{}
+0
+X: y
+Authorization: ignored
+
+POST /mcp HTTP/1.1

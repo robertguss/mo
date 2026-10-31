@@ -98,9 +98,10 @@ static void roundtrip(struct mo_process *process, struct mo_cell json) {
     struct mo_cell graph = mo_value_field(root, 0);
     MO_ASSERT(mo_list_get(mo_value_field(root, 1), 0, &tool));
     struct mo_cell fields = mo_value_field(mo_cell_get_payload(tool), 3);
-    struct mo_protocol_values types = {mo_image_types(image), mo_image_types(service),
-                                       &mo_image_bytecode(service)->services[0],
-                                       file->functions[encode].parameters[2].type};
+    struct mo_protocol_values types = {.protocol = mo_image_types(image),
+                                       .service = mo_image_types(service),
+                                       .descriptor = &mo_image_bytecode(service)->services[0],
+                                       .value = file->functions[encode].parameters[2].type};
     struct mo_limits limits = mo_limits_default();
     struct mo_process *destination = mo_process_new(service, &limits);
     MO_ASSERT(destination != NULL);

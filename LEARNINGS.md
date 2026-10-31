@@ -21,15 +21,19 @@
   is not service shape inference. Service schemas use the explicit shape
   table, including its payload flags, and copy names into the protocol heap
   so catalog generation does not borrow the service image.
-- The `MO_LIMIT_MCP_HEADER_*` bounds are experimental measurement targets,
-  not frozen defaults. Header scanning retains only delimiter state and byte
-  counts between fragments. Header parsing returns spans into native ingress;
-  it does not interpret body framing or turn field values into Text or Bytes.
-- The first header measurement rejected 16 KiB: scanning plus parsing a
+- The `MO_LIMIT_MCP_HEADER_*` bounds are measured defaults: D329 froze the
+  1 KiB header block with its 1M-instruction and 1 MiB memory budget. Header
+  scanning retains only delimiter state and byte counts between fragments.
+  Header parsing returns spans into native ingress; it does not interpret body
+  framing or turn field values into Text or Bytes.
+- History: the first header measurement rejected 16 KiB: scanning plus parsing a
   64-field header with a 256-byte token took 2,579,101 VM instructions before
   authority/authentication checks. At 2 KiB those stages took 357,021; the
   experimental header ceiling was lowered accordingly, retaining the 1M
-  instruction budget. Full pre-auth work and peak memory still need measurement.
+  instruction budget. D329's matrix then lowered it to 1 KiB. Bytewise
+  pre-authentication there took 482,877 instructions and 75,862 bytes, inside
+  the 2x thresholds of 500,000 and 524,288
+  (`docs/status/mo-160-part-2-round-e.md`).
 - Source structs lower to one-case choices, not `MO_TYPE_RECORD`. A nested
   choice payload can require a boxed wrapper. Bridge code must validate the
   actual types and case shapes rather than assume C record layouts.
@@ -50,6 +54,13 @@
   confidential arenas; VM operand arrays and the process structure are wiped
   too. This does not suppress defect rendering: the adapter must still keep
   protocol defects out of rendering and variable visitors.
+- Confidential storage alone does not combine stack and heap limits. Call
+  `mo_process_account_stack` before execution to charge retained stack chunks
+  through the process heap, alongside native `mo_scratch` buffers. The process
+  memory counters include its native structure; instruction remaining is
+  cumulative across calls until explicitly reset. A nearly full native scratch
+  buffer plus a small scalar-returning Mo call distinguishes a charged stack from
+  an uncharged one without relying on private VM layouts.
 - Confidential arenas avoid `realloc`, which could release an unwiped old
   allocation. Moved blocks are cleared; their chunks stay charged to the arena
   until destruction. Capacity planning must include those retained chunks,
@@ -69,7 +80,8 @@
   keys are not separate values. This is not an exact semantic-node count.
   The approved native prescan only returns that marker count or a byte-budget
   refusal; JSON validity and the eventual node admission policy remain in Mo.
-  The body byte ceiling is experimental, like the header ceilings.
+  D329 froze the 16 KiB body byte ceiling as a measured default, like the
+  header ceilings.
 - JsonNumber is opaque outside Json. Its compact JSON rendering preserves the
   original numeric token, so protocol Byte decoding can inspect that spelling
   without a new accessor or a Float conversion. An all-zero mantissa is zero
@@ -103,6 +115,23 @@
   ID and the next cursor. Checking only a tool's schema size can admit a catalog
   that cannot advance for a valid request. Cached serialized tool sizes avoid
   rendering every growing page prefix to choose its boundary.
+- Service wire visibility is not handler-signature visibility. Skip State and
+  Time, remove only the outer Result and designated updating pair, then check
+  arguments, reply and application error. Run those wire checks after E0101
+  across all services so a hidden type or predicate name cannot mask the
+  approved bare-state diagnostic.
+- D317's instruction allowance is not native C gas: one primitive dispatch is
+  one instruction. Bound native byte/node/iteration work and measure its stage
+  time separately. An invented quadratic comparison reservation can reject
+  valid Map/Set inputs before the runtime's typed duplicate check.
+- Prepared descriptor and catalog graphs must not be rebuilt per request.
+  Freeze the immutable graphs, including their hash caches, during server
+  construction and keep the owning heap alive until every request is freed.
+  Ordinary refcounted cells cannot be shared across process heaps this way.
+- A post-call live-memory sample misses transient scratch. Track aggregate
+  scratch reservations in the heap, including simultaneous arenas and headers.
+  A sum of active request lifetime peaks is a conservative concurrent bound,
+  not a measured simultaneous-live high-water mark.
 
 ## MO-159 simulation boundaries
 

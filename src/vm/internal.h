@@ -24,6 +24,7 @@ struct mo_process {
     uint8_t *stack;
     size_t used, capacity, top;
     struct mo_arena confidential_stack;
+    struct mo_scratch budget_stack;
     uint32_t depth;
     uint64_t instructions;
     bool (*keep_running)(void *context);

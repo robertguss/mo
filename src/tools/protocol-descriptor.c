@@ -126,7 +126,7 @@ static bool nominal(struct descriptor_builder *b, uint32_t source, struct mo_cel
 
 static bool make_kind(struct descriptor_builder *b, uint32_t source, struct mo_cell *out) {
     const struct mo_type *type = &b->source->types[source];
-    uint32_t tag;
+    uint32_t tag = 0;
     switch (type->kind) {
     case MO_TYPE_UNIT:
         tag = 0;

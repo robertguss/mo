@@ -510,6 +510,24 @@ bool mo_service_running(const struct mo_service_loop *s) {
     return s->running;
 }
 
+bool mo_service_next_deadline(const struct mo_service_loop *s, uint64_t *out) {
+    MO_ASSERT(s != NULL && out != NULL);
+    if (!s->running)
+        return false;
+    if (s->count != 0) {
+        *out = 0;
+        return true;
+    }
+    mo_u128 first = (mo_u128)UINT64_MAX + 1;
+    for (uint32_t i = 0; i < s->descriptor->timer_count; i++)
+        if (!s->timers[i].waiting && s->timers[i].next < first)
+            first = s->timers[i].next;
+    if (first > UINT64_MAX)
+        return false;
+    *out = (uint64_t)first;
+    return true;
+}
+
 uint64_t mo_service_deadlines(const struct mo_service_loop *s, uint64_t until, uint64_t *next) {
     MO_ASSERT(s != NULL && next != NULL && s->count == 0);
     mo_u128 count = 0, first = (mo_u128)UINT64_MAX + 1;

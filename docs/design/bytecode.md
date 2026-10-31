@@ -1070,6 +1070,10 @@ constructor makes a capability rather than using one, so `host` calls it by
 `STOREOP` entries in `hostops.def` (`LOAD`, `APPEND`, `SNAPSHOT`) are runtime-only:
 they have no bytecode opcode and no `host` encoding.
 
+`LISTENEROP` entries in `hostops.def` (`NOW`, `WAIT`, `ACCEPT`, `READ`, `WRITE`, `AUTH`,
+`HALF_CLOSE`, `CLOSE`) are runtime-only too: they have no Mo type, no checker signature,
+no bytecode opcode and no `host` encoding. `src/host/listener.c` implements them.
+
 `Files.walk` and `ReadFiles.walk` are Mo functions over these operations in
 `lib/files.mo` and `lib/read-files.mo`, not extra host opcodes.
 

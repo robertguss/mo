@@ -1,5 +1,5 @@
 module Mcp
-expose Catalog(..), success, application_error, catalog, prepare, page
+expose Catalog(..), success, application_error, tool_result, tool_reply, catalog, prepare, page
 use Json
 use McpRpc
 use McpSchema
@@ -51,16 +51,27 @@ fn prepare(descriptor: McpType.Service, image_key: Text, response_bytes: Int) : 
     end
     sizes = sizes.append(size)
   end
+  if tools.empty? and
+    McpRpc.result(Json.String("\u{0}".repeat(128)), page_result([], image_key, None)).to_text
+      .byte_count >
+      response_bytes
+    return None
+  end
   Some(Catalog(tools: tools, sizes: sizes, image_key: image_key, response_bytes: response_bytes))
 end
 
 fn page(catalog: Catalog, start: Int, id: Json.Json) : Option(Json.Json)
+  if start == 0 and catalog.tools.empty?
+    value = McpRpc.result(id, page_result([], catalog.image_key, None))
+    return if value.to_text.byte_count <= catalog.response_bytes: Some(value) else: None
+  end
   return None if start < 0 or start >= catalog.tools.size
   id_bytes = id.to_text.byte_count
   var items = []
   var bytes = 0
   var after = start
   for i in start..catalog.tools.size
+    break if i - start >= 32
     size = catalog.sizes.get(i) or stop "MCP catalog size"
     next = if i + 1 < catalog.tools.size: Some(i + 1) else: None
     if page_size(id_bytes, catalog.image_key, next, i - start + 1, bytes + size) >
@@ -91,21 +102,36 @@ fn page_result(tools: List(Json.Json), key: Text, next: Option(Int)) : Json.Json
 end
 
 fn success(value: Json.Json) : Json.Json
-  tool_result(Json.Object({"value": value}), false)
+  tool_result(tool_content(value, false), false)
 end
 
 fn application_error(value: Json.Json) : Json.Json
-  tool_result(
-    Json.Object({"error": Json.Object({"kind": Json.String("application"), "value": value})}),
-    true
-  )
+  tool_result(tool_content(value, true), true)
+end
+
+fn tool_content(value: Json.Json, failed: Bool) : Json.Json
+  if failed
+    Json.Object({"error": Json.Object({"kind": Json.String("application"), "value": value})})
+  else
+    Json.Object({"value": value})
+  end
+end
+
+fn tool_reply(id: Json.Json, value: Json.Json, failed: Bool, byte_limit: Int) : Option(Text)
+  content = tool_content(value, failed)
+  text = content.to_text
+  return None if text.byte_count > byte_limit / 2
+  body = McpRpc.result(id, rendered_tool_result(content, text, failed)).to_text
+  if body.byte_count > byte_limit: None else: Some(body)
 end
 
 fn tool_result(content: Json.Json, failed: Bool) : Json.Json
+  rendered_tool_result(content, content.to_text, failed)
+end
+
+fn rendered_tool_result(content: Json.Json, text: Text, failed: Bool) : Json.Json
   Json.Object({
-    "content": Json.Array([
-      Json.Object({"type": Json.String("text"), "text": Json.String(content.to_text)})
-    ]),
+    "content": Json.Array([Json.Object({"type": Json.String("text"), "text": Json.String(text)})]),
     "structuredContent": content,
     "isError": Json.Boolean(failed)
   })

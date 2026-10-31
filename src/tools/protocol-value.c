@@ -1,5 +1,16 @@
 #include "tools/protocol.h"
 
+static bool charge(const struct mo_protocol_values *types, uint64_t amount) {
+    if (types->work == NULL)
+        return true;
+    if (amount > *types->work) {
+        *types->work = 0;
+        return false;
+    }
+    *types->work -= amount;
+    return true;
+}
+
 static bool composite(enum mo_type_kind kind) {
     return kind == MO_TYPE_TUPLE || kind == MO_TYPE_LIST || kind == MO_TYPE_SET ||
            kind == MO_TYPE_MAP || kind == MO_TYPE_RECORD || kind == MO_TYPE_CHOICE;
@@ -44,13 +55,40 @@ static uint32_t list_type(const struct mo_protocol_values *types) {
     return types->protocol->items[types->value].cases[1].fields[0].type;
 }
 
+static bool charge_scalar(const struct mo_protocol_values *types, enum mo_type_kind kind,
+                          struct mo_cell value, bool packed) {
+    if (types->work == NULL)
+        return true;
+    if (!charge(types, 1))
+        return false;
+    if (packed) {
+        uint32_t scalar = scalar_type(types), tag = mo_cell_get_tag(value);
+        const struct mo_type_case *shape = &types->protocol->items[scalar].cases[tag];
+        if (shape->field_count == 0)
+            return true;
+        kind = types->protocol->items[shape->fields[0].type].kind;
+        value = case_field(types->protocol, scalar, value, 0);
+    }
+    size_t size = 0;
+    if (kind == MO_TYPE_TEXT || kind == MO_TYPE_BYTES || kind == MO_TYPE_BIGINT) {
+        const uint8_t *bytes = mo_value_data(value, &size);
+        (void)bytes;
+    } else if (packed && kind == MO_TYPE_LIST)
+        size = mo_list_size(value);
+    return charge(types, size);
+}
+
 static enum mo_protocol_value_status pack(const struct mo_protocol_values *types,
                                           struct mo_heap *to, uint32_t index, struct mo_cell value,
-                                          size_t byte_limit, unsigned depth, struct mo_cell *out) {
-    if (depth == 0)
+                                          size_t byte_limit, unsigned depth, size_t *nodes,
+                                          struct mo_cell *out) {
+    if (depth == 0 || *nodes == 0 || !charge(types, 1))
         return MO_PROTOCOL_VALUE_LIMIT;
+    --*nodes;
     const struct mo_type *type = &types->service->items[index];
     if (!composite(type->kind)) {
+        if (!charge_scalar(types, type->kind, value, false))
+            return MO_PROTOCOL_VALUE_LIMIT;
         uint32_t scalar = scalar_type(types);
         struct mo_cell leaf;
         enum mo_protocol_value_status status = mo_protocol_scalar_pack(
@@ -81,6 +119,8 @@ static enum mo_protocol_value_status pack(const struct mo_protocol_values *types
             count *= 2;
         }
     }
+    if (count > *nodes || !charge(types, count))
+        return MO_PROTOCOL_VALUE_LIMIT;
     uint32_t list_index = list_type(types);
     struct mo_cell list;
     if (!mo_value_list(to, list_index, NULL, 0, &list))
@@ -101,7 +141,8 @@ static enum mo_protocol_value_status pack(const struct mo_protocol_values *types
         else
             child = mo_value_field(value, i);
         struct mo_cell copied;
-        status = pack(types, to, child_type(type, tag, i), child, byte_limit, depth - 1, &copied);
+        status =
+            pack(types, to, child_type(type, tag, i), child, byte_limit, depth - 1, nodes, &copied);
         if (status != MO_PROTOCOL_VALUE_OK)
             break;
         bool ok = mo_list_append(to, list_index, &list, copied);
@@ -162,16 +203,18 @@ static enum mo_protocol_value_status unpack(const struct mo_protocol_values *typ
                                             struct mo_heap *to, uint32_t index,
                                             struct mo_cell value, size_t byte_limit, unsigned depth,
                                             struct mo_cell *out) {
-    if (depth == 0)
+    if (depth == 0 || !charge(types, 1))
         return MO_PROTOCOL_VALUE_LIMIT;
     const struct mo_type *type = &types->service->items[index];
     uint32_t shape = mo_cell_get_tag(value);
     if (!composite(type->kind)) {
         if (shape != 0)
             return MO_PROTOCOL_VALUE_INVALID;
+        struct mo_cell scalar = case_field(types->protocol, types->value, value, 0);
+        if (!charge_scalar(types, type->kind, scalar, true))
+            return MO_PROTOCOL_VALUE_LIMIT;
         return mo_protocol_scalar_unpack(types->protocol, scalar_type(types), to, type->kind,
-                                         case_field(types->protocol, types->value, value, 0),
-                                         byte_limit, out);
+                                         scalar, byte_limit, out);
     }
     uint32_t tag = 0;
     struct mo_cell list;
@@ -194,6 +237,8 @@ static enum mo_protocol_value_status unpack(const struct mo_protocol_values *typ
         (type->kind == MO_TYPE_TUPLE && count != type->parameter_count) ||
         (type->kind == MO_TYPE_MAP && count % 2 != 0))
         return MO_PROTOCOL_VALUE_INVALID;
+    if (!charge(types, count))
+        return MO_PROTOCOL_VALUE_LIMIT;
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, to);
     size_t size = (size_t)count * sizeof(struct mo_cell);
@@ -222,7 +267,8 @@ enum mo_protocol_value_status mo_protocol_value_pack(const struct mo_protocol_va
                                                      struct mo_heap *to, uint32_t type,
                                                      struct mo_cell value, size_t byte_limit,
                                                      struct mo_cell *out) {
-    return pack(types, to, type, value, byte_limit, MO_LIMIT_MCP_VALUE_DEPTH, out);
+    size_t nodes = types->node_limit == 0 ? SIZE_MAX : types->node_limit;
+    return pack(types, to, type, value, byte_limit, MO_LIMIT_MCP_VALUE_DEPTH, &nodes, out);
 }
 
 enum mo_protocol_value_status mo_protocol_value_unpack(const struct mo_protocol_values *types,

@@ -1,0 +1,7 @@
+error E0106: a service tool name ends in ?  tests/errors/e0106/main.mo:4:9
+
+  4 |   tools paid?
+    |         ^^^^^ a service tool name ends in ?
+
+Service tool names cannot end in ?. Rename the function, for example from paid? to is_paid (reference 11.5).
+

@@ -64,6 +64,16 @@ enum abi_type {
     ABI_RPC_METHOD,
     ABI_CATALOG,
     ABI_CATALOG_OPTION,
+    ABI_SPANS,
+    ABI_INSPECTION,
+    ABI_BODY_PLAN,
+    ABI_BODY_PHASE,
+    ABI_BODY_STATE,
+    ABI_BODY_BOUNDS,
+    ABI_BODY_STEP,
+    ABI_BODY_RESULT,
+    ABI_ACTION,
+    ABI_TEXT_PAIR,
     ABI_COUNT
 };
 
@@ -207,6 +217,43 @@ static const struct abi_case catalog[] = {{"Catalog",
 static const struct abi_case catalog_option[] = {{.name = "None"},
                                                  {"Some", 1, {{NULL, ABI_CATALOG}}}};
 
+static const struct abi_case inspection[] = {{"Ok", 1, {{NULL, ABI_SPAN_OPTION}}},
+                                             {"Error", 1, {{NULL, ABI_INT}}}};
+static const struct abi_case body_plan[] = {
+    {"Reject", 1, {{"0", ABI_INT}}},
+    {"Fixed", 3, {{"length", ABI_INT}, {"send_continue", ABI_BOOL}, {"version", ABI_TEXT_OPTION}}},
+    {"Chunked", 2, {{"send_continue", ABI_BOOL}, {"version", ABI_TEXT_OPTION}}}};
+static const struct abi_case body_phase[] = {{"Fixed", 1, {{"0", ABI_INT}}},
+                                             {"SizeLine", 1, {{"0", ABI_BYTES}}},
+                                             {"Data", 1, {{"0", ABI_INT}}},
+                                             {.name = "DataCr"},
+                                             {.name = "DataLf"},
+                                             {"TrailerLine", 1, {{"0", ABI_BYTES}}},
+                                             {.name = "Complete"}};
+static const struct abi_case body_state[] = {{"State",
+                                              6,
+                                              {{"phase", ABI_BODY_PHASE},
+                                               {"encoded", ABI_INT},
+                                               {"decoded", ABI_INT},
+                                               {"chunks", ABI_INT},
+                                               {"trailer_bytes", ABI_INT},
+                                               {"trailer_fields", ABI_INT}}}};
+static const struct abi_case body_bounds[] = {{"Bounds",
+                                               6,
+                                               {{"body", ABI_INT},
+                                                {"ingress", ABI_INT},
+                                                {"chunks", ABI_INT},
+                                                {"line", ABI_INT},
+                                                {"trailer_bytes", ABI_INT},
+                                                {"trailer_fields", ABI_INT}}}};
+static const struct abi_case body_step[] = {
+    {"Step", 3, {{"state", ABI_BODY_STATE}, {"consumed", ABI_INT}, {"payload", ABI_SPANS}}}};
+static const struct abi_case body_result[] = {{"Ok", 1, {{NULL, ABI_BODY_STEP}}},
+                                              {"Error", 1, {{NULL, ABI_INT}}}};
+static const struct abi_case action[] = {
+    {"Reply", 2, {{"status", ABI_INT}, {"body", ABI_TEXT}}},
+    {"Call", 3, {{"request", ABI_RPC_REQUEST}, {"tool", ABI_INT}, {"arguments", ABI_JSON}}}};
+
 static const struct {
     enum mo_type_kind kind;
     enum abi_type element, value;
@@ -266,6 +313,16 @@ static const struct {
     [ABI_RPC_METHOD] = {.kind = MO_TYPE_CHOICE, .count = 6, .cases = rpc_method},
     [ABI_CATALOG] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = catalog},
     [ABI_CATALOG_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = catalog_option},
+    [ABI_SPANS] = {.kind = MO_TYPE_LIST, .element = ABI_SPAN},
+    [ABI_INSPECTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = inspection},
+    [ABI_BODY_PLAN] = {.kind = MO_TYPE_CHOICE, .count = 3, .cases = body_plan},
+    [ABI_BODY_PHASE] = {.kind = MO_TYPE_CHOICE, .count = 7, .cases = body_phase},
+    [ABI_BODY_STATE] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = body_state},
+    [ABI_BODY_BOUNDS] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = body_bounds},
+    [ABI_BODY_STEP] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = body_step},
+    [ABI_BODY_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = body_result},
+    [ABI_ACTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = action},
+    [ABI_TEXT_PAIR] = {.kind = MO_TYPE_TUPLE, .element = ABI_TEXT, .value = ABI_TEXT},
 };
 
 static bool matches(const struct mo_types *types, uint32_t index, enum abi_type expected,
@@ -280,6 +337,10 @@ static bool matches(const struct mo_types *types, uint32_t index, enum abi_type 
         return type->parameter_count == 1 &&
                matches(types, type->parameters[0], abi[expected].element, seen);
     if (type->kind == MO_TYPE_MAP)
+        return type->parameter_count == 2 &&
+               matches(types, type->parameters[0], abi[expected].element, seen) &&
+               matches(types, type->parameters[1], abi[expected].value, seen);
+    if (type->kind == MO_TYPE_TUPLE)
         return type->parameter_count == 2 &&
                matches(types, type->parameters[0], abi[expected].element, seen) &&
                matches(types, type->parameters[1], abi[expected].value, seen);
@@ -313,9 +374,27 @@ static bool valid_abi(const struct mo_image *image) {
         {"Http.parse_headers", 2, {ABI_BYTES, ABI_LIMITS}, ABI_HEAD_RESULT},
         {"Http.bearer_span", 2, {ABI_BYTES, ABI_HEAD}, ABI_SPAN_OPTION},
         {"Http.chunk_size", 3, {ABI_BYTES, ABI_INT, ABI_INT}, ABI_INT_RESULT},
+        {"HttpAuthority.check", 1, {ABI_TEXTS}, ABI_BOOL},
+        {"HttpPolicy.inspect", 3, {ABI_BYTES, ABI_HEAD, ABI_TEXTS}, ABI_INSPECTION},
+        {"HttpPolicy.body_plan", 3, {ABI_BYTES, ABI_HEAD, ABI_INT}, ABI_BODY_PLAN},
+        {"HttpBody.fixed", 1, {ABI_INT}, ABI_BODY_STATE},
+        {"HttpBody.chunked", 0, {0}, ABI_BODY_STATE},
+        {"HttpBody.feed", 3, {ABI_BODY_STATE, ABI_BYTES, ABI_BODY_BOUNDS}, ABI_BODY_RESULT},
         {"Mcp.catalog", 1, {ABI_MCP_SERVICE}, ABI_JSON},
         {"Mcp.prepare", 3, {ABI_MCP_SERVICE, ABI_TEXT, ABI_INT}, ABI_CATALOG_OPTION},
         {"Mcp.page", 3, {ABI_CATALOG, ABI_INT, ABI_JSON}, ABI_JSON_OPTION},
+        {"Mcp.success", 1, {ABI_JSON}, ABI_JSON},
+        {"Mcp.application_error", 1, {ABI_JSON}, ABI_JSON},
+        {"Mcp.tool_reply", 4, {ABI_JSON, ABI_JSON, ABI_BOOL, ABI_INT}, ABI_TEXT_OPTION},
+        {"McpTransport.receive",
+         5,
+         {ABI_TEXT, ABI_TEXT_OPTION, ABI_MCP_SERVICE, ABI_CATALOG, ABI_TEXT},
+         ABI_ACTION},
+        {"McpTransport.reply", 2, {ABI_JSON, ABI_JSON}, ABI_TEXT},
+        {"McpTransport.fallback", 2, {ABI_TEXT, ABI_TEXT}, ABI_TEXT_PAIR},
+        {"McpTransport.http", 2, {ABI_INT, ABI_TEXT}, ABI_TEXT},
+        {"McpTransport.http_head", 2, {ABI_INT, ABI_INT}, ABI_TEXT},
+        {"McpTransport.http100", 0, {0}, ABI_TEXT},
         {"McpRpc.parse", 2, {ABI_TEXT, ABI_TEXT_OPTION}, ABI_RPC_ENVELOPE},
         {"McpRpc.method", 3, {ABI_RPC_REQUEST, ABI_TEXTS, ABI_TEXT}, ABI_RPC_METHOD},
         {"McpRpc.result", 2, {ABI_JSON, ABI_JSON}, ABI_JSON},

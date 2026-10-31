@@ -8,7 +8,11 @@ HeaderProblem(..),
 scan_headers,
 parse_headers,
 bearer_span,
-chunk_size
+chunk_size,
+ascii?,
+token?,
+line_end,
+field
 
 struct Span
   start: Int

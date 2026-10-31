@@ -1,5 +1,14 @@
 module McpRpc
-expose Request(..), Envelope(..), Method(..), parse, method, result, error, initialized
+expose Request(..),
+Envelope(..),
+Method(..),
+parse,
+classify,
+method,
+validate,
+result,
+error,
+initialized
 use Json
 
 struct Request
@@ -31,6 +40,10 @@ fn parse(text: Text, version: Option(Text)) : Envelope
     Ok(value): value
     Error(_): return Rejected(-32700)
   end
+  classify(body, version)
+end
+
+fn classify(body: Json.Json, version: Option(Text)) : Envelope
   fields = case body
     Json.Object(value): value
     Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return Rejected(
@@ -89,58 +102,70 @@ fn integer_id(text: Text) : Bool
 end
 
 fn method(request: Request, tools: List(Text), image_key: Text) : Method
+  case validate(request, tools, image_key)
+    Ok(value): value
+    Error(_): InvalidParams
+  end
+end
+
+fn validate(request: Request, tools: List(Text), image_key: Text) : Result(Method, Text)
   name = request.method
   if name != "initialize" and name != "ping" and name != "tools/list" and name != "tools/call"
-    return UnknownMethod
+    return Ok(UnknownMethod)
   end
   params = case request.params
     Json.Object(value): value
-    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return InvalidParams
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return Error(
+      "Invalid params: params must be an object"
+    )
   end
   case params.get("_meta")
     None: Unit
     Some(Json.Object(_)): Unit
-    Some(_): return InvalidParams
+    Some(_): return Error("Invalid params: params must be an object")
   end
   if name == "initialize"
     case (params.get("protocolVersion"), params.get("capabilities"), params.get("clientInfo"))
       (Some(Json.String(_)), Some(Json.Object(_)), Some(Json.Object(info))):
         case (info.get("name"), info.get("version"))
-          (Some(Json.String(_)), Some(Json.String(_))): Initialize
-          _: InvalidParams
+          (Some(Json.String(_)), Some(Json.String(_))): Ok(Initialize)
+          _: Error("Invalid params: initialize needs protocolVersion, capabilities and clientInfo")
         end
-      _: InvalidParams
+      _: Error("Invalid params: initialize needs protocolVersion, capabilities and clientInfo")
     end
   else if name == "ping"
-    Ping
+    Ok(Ping)
   else if name == "tools/list"
     case params.get("cursor")
-      None: ListTools(0)
+      None: Ok(ListTools(0))
       Some(Json.String(text)):
         parts = text.split(".")
-        return InvalidParams if parts.size != 2 or parts.get(1) != Some(image_key)
+        return Error("Invalid params: invalid cursor") if parts.size != 2 or
+          parts.get(1) != Some(image_key)
         spelling = parts.get(0) or stop "MCP cursor index"
         index = spelling.to_int or -1
         if index < 0 or index >= tools.size or index.to_text != spelling
-          return InvalidParams
+          return Error("Invalid params: invalid cursor")
         end
-        ListTools(index)
-      Some(_): InvalidParams
+        Ok(ListTools(index))
+      Some(_): Error("Invalid params: invalid cursor")
     end
   else
     tool_name = case params.get("name")
       Some(Json.String(value)): value
-      None | Some(_): return InvalidParams
+      None | Some(_): return Error("Invalid params: name must be a string")
     end
     arguments = params.get("arguments") or Json.Object({})
     case arguments
       Json.Object(_): Unit
-      Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return InvalidParams
+      Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return Error(
+        "Invalid params: arguments must be an object"
+      )
     end
     for i in 0..tools.size
-      return Call(tool: i, arguments: arguments) if tools.get(i) == Some(tool_name)
+      return Ok(Call(tool: i, arguments: arguments)) if tools.get(i) == Some(tool_name)
     end
-    InvalidParams
+    Error("Invalid params: unknown tool")
   end
 end
 
