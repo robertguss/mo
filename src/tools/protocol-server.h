@@ -21,7 +21,6 @@ enum protocol_function {
     PF_FALLBACK,
     PF_HTTP,
     PF_HTTP_HEAD,
-    PF_HTTP100,
     PF_COUNT
 };
 

@@ -52,8 +52,8 @@ fn receive(
     Error(message): return protocol_error(Some(request.id), -32602, message)
   end
   case method
-    McpRpc.InvalidParams: protocol_error(Some(request.id), -32603, "Internal error")
-    McpRpc.UnknownMethod: protocol_error(Some(request.id), -32601, "Method not found")
+    McpRpc.InvalidParams | McpRpc.UnknownMethod:
+      protocol_error(Some(request.id), -32601, "Method not found")
     McpRpc.Initialize: Reply(
       status: 200,
       body: reply(request.id, McpRpc.initialized(server_version))

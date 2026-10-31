@@ -394,7 +394,6 @@ static bool valid_abi(const struct mo_image *image) {
         {"McpTransport.fallback", 2, {ABI_TEXT, ABI_TEXT}, ABI_TEXT_PAIR},
         {"McpTransport.http", 2, {ABI_INT, ABI_TEXT}, ABI_TEXT},
         {"McpTransport.http_head", 2, {ABI_INT, ABI_INT}, ABI_TEXT},
-        {"McpTransport.http100", 0, {0}, ABI_TEXT},
         {"McpRpc.parse", 2, {ABI_TEXT, ABI_TEXT_OPTION}, ABI_RPC_ENVELOPE},
         {"McpRpc.method", 3, {ABI_RPC_REQUEST, ABI_TEXTS, ABI_TEXT}, ABI_RPC_METHOD},
         {"McpRpc.result", 2, {ABI_JSON, ABI_JSON}, ABI_JSON},

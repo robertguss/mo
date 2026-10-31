@@ -10,7 +10,7 @@ static const char *const function_names[PF_COUNT] = {
     "HttpBody.chunked",       "HttpBody.feed",         "Mcp.prepare",
     "McpTransport.receive",   "McpValue.arguments",    "McpValue.encode",
     "Mcp.tool_reply",         "McpTransport.fallback", "McpTransport.http",
-    "McpTransport.http_head", "McpTransport.http100"};
+    "McpTransport.http_head"};
 
 static uint64_t deadline(uint64_t now, uint64_t interval) {
     return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;

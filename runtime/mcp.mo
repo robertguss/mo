@@ -5,6 +5,8 @@ use McpRpc
 use McpSchema
 use McpType
 
+page_tools = 32
+
 struct Catalog
   tools: List(Json.Json)
   sizes: List(Int)
@@ -71,7 +73,7 @@ fn page(catalog: Catalog, start: Int, id: Json.Json) : Option(Json.Json)
   var bytes = 0
   var after = start
   for i in start..catalog.tools.size
-    break if i - start >= 32
+    break if i - start >= page_tools
     size = catalog.sizes.get(i) or stop "MCP catalog size"
     next = if i + 1 < catalog.tools.size: Some(i + 1) else: None
     if page_size(id_bytes, catalog.image_key, next, i - start + 1, bytes + size) >
