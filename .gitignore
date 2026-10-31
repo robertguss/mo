@@ -1,6 +1,3 @@
 /build/
 __pycache__/
 *.pyc
-.context/compound-engineering/
-.compound-engineering/config.yaml
-.compound-engineering/config.local.yaml
