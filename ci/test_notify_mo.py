@@ -186,6 +186,11 @@ class NotifyMo(unittest.TestCase):
                            MO_WEBHOOK_HEADER=HEADER)
             self.run_hook(input=self.hook_input, timeout=8)
 
+    def test_url_with_a_quote_and_a_backslash_arrives_intact(self):
+        self.write_env(MO_WEBHOOK_URL=f'{self.url}/a"b\\c', MO_WEBHOOK_HEADER=HEADER)
+        self.run_hook(input=self.hook_input)
+        self.assert_one_ping(self.body(self.repo, BRANCH, "abc"), path='/hooks/mo/a"b\\c')
+
     def test_url_is_not_globbed(self):
         self.write_env(MO_WEBHOOK_URL=f"{self.url}/{{a,b}}", MO_WEBHOOK_HEADER=HEADER)
         self.run_hook(input=self.hook_input)
@@ -200,7 +205,7 @@ class NotifyMo(unittest.TestCase):
         self.assertNotIn(self.url.encode(), result.stderr)
         self.assert_one_ping(self.body(self.repo, BRANCH, "abc"))
 
-    def test_curl_gets_the_time_limit_and_not_the_header(self):
+    def test_curl_gets_the_time_limit_and_neither_secret(self):
         self.write_env(MO_WEBHOOK_URL=self.url, MO_WEBHOOK_HEADER=HEADER)
         shim = self.plain / "curl"
         arguments = self.plain / "arguments"
@@ -213,6 +218,7 @@ class NotifyMo(unittest.TestCase):
         recorded = arguments.read_text()
         self.assertIn("--max-time\n5\n", recorded)
         self.assertNotIn("s3cret", recorded)
+        self.assertNotIn(self.url, recorded)
 
     def test_curlrc_is_ignored(self):
         self.write_env(MO_WEBHOOK_URL=self.url, MO_WEBHOOK_HEADER=HEADER)

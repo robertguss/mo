@@ -34,7 +34,11 @@ if "--test" in sys.argv:
 print(json.dumps(payload))
 ' "$@" 2>/dev/null) || exit 0
 
+url=${MO_WEBHOOK_URL//\\/\\\\}
+url=${url//\"/\\\"}
+
 curl -q --silent --globoff --output /dev/null --max-time 5 --request POST \
 	--header "Content-Type: application/json" \
 	--header @<(printf '%s\n' "$MO_WEBHOOK_HEADER") \
-	--data-binary "$payload" --url "$MO_WEBHOOK_URL" >/dev/null 2>&1
+	--config <(printf 'url = "%s"\n' "$url") \
+	--data-binary "$payload" >/dev/null 2>&1
