@@ -1,6 +1,0 @@
-passed Cart.apply_code.example.1  cart.mo:53:5
-passed Cart.apply_code.example.2  cart.mo:54:5
-passed Cart.add.example.1  cart.mo:67:5
-passed Cart.discount.example.1  cart.mo:101:5
-passed Cart.receipt.example.1  cart.mo:128:5
-5 passed, 0 failed, 0 stopped

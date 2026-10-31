@@ -1,5 +1,0 @@
-error E1150: this native call is not lowered yet  col-sum.mo:118:16
-
-  118 |   cents = case (hundredths % 100.to_big).to_int
-      |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-

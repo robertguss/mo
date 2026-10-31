@@ -1,7 +1,0 @@
-passed Notioncopy.test.1  answers/notioncopy.mo:131:1
-failed Notioncopy.test.2  answers/notioncopy.mo:137:1
-  left: Error(NotFound(path: "out/piece-01.md"))
-  right: Ok("<table_of_contents/>\nOne line wraps here.\n## Use\n- a list item that continues\n```ruby\nx = 1\n```\n<table header-row=\"true\">\n<tr>\n<td>Form</td>\n<td>Means</td>\n</tr>\n<tr>\n<td>`a | b`</td>\n<td>either</td>\n</tr>\n</table>\n")
-  143 |   assert files.read_text("out/piece-01.md") == Ok(expected)
-      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
-1 passed, 1 failed, 0 stopped

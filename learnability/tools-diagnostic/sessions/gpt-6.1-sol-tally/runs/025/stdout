@@ -1,9 +1,0 @@
-passed Tally.rate.example.1  answers/tally.mo:69:5
-passed Tally.rate.example.2  answers/tally.mo:70:5
-passed Tally.rate.example.3  answers/tally.mo:71:5
-passed Tally.test.1  answers/tally.mo:261:1
-passed Tally.test.2  answers/tally.mo:300:1
-passed Tally.test.3  answers/tally.mo:319:1
-passed Tally.test.4  answers/tally.mo:364:1
-passed Tally.test.5  answers/tally.mo:416:1
-8 passed, 0 failed, 0 stopped

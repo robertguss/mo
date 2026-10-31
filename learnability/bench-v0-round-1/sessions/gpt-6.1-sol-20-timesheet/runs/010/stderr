@@ -1,5 +1,0 @@
-error E1103: this body rule is not implemented by the staged checker  timesheet.mo:72:25
-
-  72 |           shift.start < entry.1.finish and entry.1.start < shift.finish
-     |                         ^^^^^ this body rule is not implemented by the staged checker
-

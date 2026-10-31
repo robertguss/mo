@@ -1,7 +1,0 @@
-error E0074: a condition isn't a yes-or-no answer  answers/tally.mo:153:49
-
-  153 |     parse_lines("{\"a\": 1}\n[]\n", "o") == Ok([Json.parse("{\"a\": 1}") or Json.Null, Json.Array([])])
-      |                                                 ^^^^^^^^^^^^^^^^^^^^^^^^ expected Bool, found Result(Json, JsonError)
-
-Bool is a yes-or-no answer; conditions need Bool (reference 3.1).
-
