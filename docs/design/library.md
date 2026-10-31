@@ -35,8 +35,10 @@ The library is written in Mo wherever it can be (condition 4 of D207). C
 implements only what Mo can't express or must be fast: arithmetic and
 conversions, text and byte operations, the basic list, map and set
 operations, and the capability operations (architecture section 7). Every
-function that takes a function as a parameter is Mo code in `lib/`, so C never
-calls back into Mo (`bytecode.md` section 6).
+function that takes a function as a parameter is Mo code in `lib/`. The private
+MCP/HTTP stack is different: C calls Mo through `mo_protocol_invoke`, then
+`mo_call`, so Mo can own policy, JSON-RPC and wire values in `runtime/*.mo`
+while C owns sockets, credentials and dispatch (`bytecode.md` section 6).
 
 Two facts settle most of the choices that rule leaves open:
 

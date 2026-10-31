@@ -1024,8 +1024,7 @@ native-call coverage belongs to `src/lower`. MO-116 delivered Env.get/of,
 Ordering/Entry/Map text conversion and Ordering comparison (#189), and MO-144
 qualified `T.to_text` and `T.compare` for every type with the ability (#208),
 using existing Core operations rather than new primitives.
-`docs/status/golden-gaps.md` lists working routes still needing golden programs
-and other gaps.
+`docs/status/golden-gaps.md` names the remaining `rules.tsv` gap (11.5/8, E1408).
 
 On a stop, primitives and host operations must leave operands in their
 pre-instruction state, including their ownership and the objects they name, or

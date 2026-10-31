@@ -401,7 +401,7 @@ supervisor restart keeps the in-memory state, which is always the last committed
 state, so it does not reread the store. A storage failure stops the loop
 without counting as a handler failure. The [saved-state format](saved-state.md)
 defines the SQLite transactions, bounds, value encoding and refusal behavior.
-This C embedding still exposes no Mo simulation API or service CLI command.
+This C embedding still exposes no service CLI command.
 
 ### MO-159 test simulation
 

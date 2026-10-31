@@ -150,7 +150,8 @@ cover the block. `14/17` closed when reference 14 adopted maximal invalid
 subparts (D291) and `cap-console-stdin-invalid` gained inputs where that rule
 differs from one U+FFFD per run. `14/22` closed when reference 14 said
 `to_decimal` gives `None` past 18 decimal places and never rounds (D295); it
-cites `lib/json.mo`'s `to_decimal` examples. No row had a gap after MO-140.
+cites `lib/json.mo`'s `to_decimal` examples. One gap remains on 11.5/8: `mo run` of a
+service entry is still E1408.
 
 ## Other drivers, cost and untestable claims
 

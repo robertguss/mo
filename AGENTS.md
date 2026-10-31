@@ -98,6 +98,10 @@ by `make deps`:
 | `vm` | `bytecode`, `heap`, `prim`, `host` |
 | `tools` (the `mo` command, `src/tools/main.c`) | everything |
 
+`runtime/` holds embedded Mo for the private MCP/HTTP stack (policy, JSON-RPC and wire
+values). It is not `lib/`, and there is no `mo serve`; C owns sockets, credentials and
+dispatch (`src/host/listener.c`, `src/tools/protocol*.c`).
+
 Four shared contracts; changing one means changing every side that reads it:
 
 - **Mo Core**: `formal/` (Lean, the reference evaluator) and `src/core/core.h`, exchanged as text

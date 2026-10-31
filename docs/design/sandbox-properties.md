@@ -303,8 +303,9 @@ These are not guaranteed today.
 4. **No operating-system confinement.** Nothing in `src` installs seccomp, pledge, Landlock or a
    similar filter. A bug in the C runtime is not contained by one. Capabilities are the only
    boundary the toolchain provides.
-5. **No concurrency checking.** There is no concurrent code yet, so no ThreadSanitizer run
-   (`implementation.md`, condition 1); property P7's process-wide signal handling and any future
+5. **No concurrency checking.** ThreadSanitizer is not in the sanitize group yet
+   (`implementation.md`, condition 1), even though `base/stack.c` uses pthreads and the
+   stores and listener use mutexes; property P7's process-wide signal handling and those
    threads need their own review.
 6. **Concurrent changes to the filesystem** are outside P8.
 7. **Verified file, not verified compiler.** A compiler bug produces a program that the verifier

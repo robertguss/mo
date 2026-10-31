@@ -19,8 +19,9 @@ CBMC run by hand. The fast groups run before each pull request.
 
 1. **Sanitizers in every test run.** Every test also runs under
    AddressSanitizer and UndefinedBehaviorSanitizer (`bash ci/check.sh sanitize`,
-   run by hand), so memory bugs fail loudly where they happen. ThreadSanitizer joins them in Phase 3, when concurrent
-   code arrives; there is none to check yet.
+   run by hand), so memory bugs fail loudly where they happen. ThreadSanitizer is
+   not in the sanitize group yet (`base/stack.c` uses pthreads; the stores and
+   the listener use mutexes).
 2. **Fuzzing.** The parser, the bytecode loader, the VM and everything
    that reads outside input get fuzz targets in `fuzz/`, with seed inputs in
    `fuzz/corpus/<target>/`. `bash ci/check.sh fuzz` runs every target briefly;
@@ -37,8 +38,10 @@ CBMC run by hand. The fast groups run before each pull request.
    `puts` and `putchar`, so their results are checked by convention only. A
    `(void)` cast discards a result on purpose.
 4. **A small trusted core.** Only the VM, primitives and system calls are C.
-   The standard library above them, including JSON, HTTP routing and MCP, is
-   written in Mo, which is memory-safe by construction.
+   The standard library above them, including JSON, HTTP routing and MCP policy,
+   is written in Mo (`runtime/*.mo` for the private MCP/HTTP stack), which is
+   memory-safe by construction. Mo owns policy, JSON-RPC and wire values; C owns
+   sockets, credentials and dispatch.
 5. **Bytecode verified when it's loaded,** as WebAssembly does, because upgrade
    packages will arrive over the network in Phase 5.
 
@@ -96,8 +99,8 @@ rule is in AGENTS.md "Checks and merging", and the evidence a PR records is in
 
 | Planned with Rust | With C |
 | --- | --- |
-| Miri on the raw-memory core | AddressSanitizer and UndefinedBehaviorSanitizer on every test run, and ThreadSanitizer once there is concurrent code (Phase 3) |
+| Miri on the raw-memory core | AddressSanitizer and UndefinedBehaviorSanitizer on every test run; ThreadSanitizer is not in the sanitize group yet |
 | Kani proofs | CBMC, the engine underneath Kani, on small C functions |
 | Cranelift for machine code (Phase 7) | A C code generator such as MIR, or copy-and-patch as CPython does |
 | rustls | OpenSSL or BoringSSL, through the small trusted core |
-| The Rust MCP SDK | MCP written in Mo |
+| The Rust MCP SDK | MCP policy, JSON-RPC and wire values in Mo (`runtime/*.mo`); C owns sockets, credentials and dispatch |
