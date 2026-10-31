@@ -15,7 +15,11 @@ MO_MUST_USE struct mo_span mo_runtime_span(const struct mo_bytecode *file,
 MO_MUST_USE bool mo_check_anchors(struct mo_image *image, const struct mo_cli *cli,
                                   const struct mo_sources *sources, struct mo_diags *diags);
 MO_MUST_USE int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
-                               const struct mo_buffer *wire, const struct mo_sources *sources,
-                               FILE *output, FILE *errors, struct mo_diags *diags);
+                               const struct mo_buffer *wire, uint32_t service,
+                               const struct mo_sources *sources, FILE *output, FILE *errors,
+                               struct mo_diags *diags);
+MO_MUST_USE int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image,
+                               uint32_t service, FILE *output, FILE *errors,
+                               struct mo_diags *diags);
 
 #endif

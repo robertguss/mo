@@ -1,0 +1,9 @@
+error E1409: this module has no service to start  tests/errors/e1409/main.mo:1:1
+
+  1 | module Main
+    | ^^^^^^^^^^^
+  2 | fn main()
+    | ^^^^^^^^^
+  3 | end
+    | ^^^ a service block declares one (reference 11.5)
+

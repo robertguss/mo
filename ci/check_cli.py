@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """Black-box CLI contracts and goldens, with Python's real JSON parser."""
+import contextlib
 import errno
+import http.client
 import json
 import locale
 import os
 import pathlib
 import resource
+import select
+import shutil
+import signal
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 root = pathlib.Path(__file__).resolve().parent.parent
 
@@ -1381,6 +1388,249 @@ def service_refusals(binary):
         for name in ('TOKEN', '_TOKEN_2', 'T0', '_'):
             path.write_text(source.replace('"TOKEN"', json.dumps(name)))
             run(binary, ['check', str(path)], 0)
+
+
+SERVE_COUNTER = """module Counter
+
+service
+  state Int = 0
+  tools add, read, halt
+  token from env "MO_SERVE_TEST_TOKEN"
+end
+
+## Adds an amount to the count.
+fn add(state: Int, _now: Time, amount: Int) : (Int, Int)
+  (state + amount, state + amount)
+end
+
+## Reads the count.
+fn read(state: Int, _now: Time) : Text
+  state.to_text
+end
+
+## Always stops.
+fn halt(_state: Int, _now: Time) : Text
+  stop "halted on purpose"
+end
+"""
+SERVE_INITIALIZE = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{'
+                    '"protocolVersion":"2025-11-25","capabilities":{},'
+                    '"clientInfo":{"name":"demo","version":"1"}}}')
+SERVE_INITIALIZED = '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+SERVE_LIST = '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+SERVE_ADD = ('{"jsonrpc":"2.0","id":3,"method":"tools/call",'
+             '"params":{"name":"add","arguments":{"amount":"5"}}}')
+SERVE_READ = '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read"}}'
+SERVE_HALT = '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"halt"}}'
+
+
+class Served:
+    """A running mo serve. Its output files outlive it, so a test reads what it wrote."""
+
+    def __init__(self, binary, source, data, env, folder, port="0"):
+        self.stderr = tempfile.NamedTemporaryFile(dir=folder, prefix="stderr-", delete=False)
+        self.outputs = pathlib.Path(self.stderr.name)
+        self.process = subprocess.Popen(
+            [str(binary), "serve", str(source), "--port", port, "--data", str(data)],
+            env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0)
+        line = b""
+        limit = time.monotonic() + 30
+        while not line.endswith(b"\n"):
+            ready = select.select([self.process.stdout], [], [], limit - time.monotonic())[0]
+            assert ready, ("mo serve did not announce its port in time", line)
+            chunk = self.process.stdout.read(1)
+            if not chunk:
+                break
+            line += chunk
+        self.line = line
+        self.port = None
+        if line:
+            prefix, suffix = b"mo serve: listening on http://127.0.0.1:", b"/mcp\n"
+            assert line.startswith(prefix) and line.endswith(suffix), line
+            self.port = int(line[len(prefix):-len(suffix)])
+
+    def post(self, body, token, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
+        sent = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                "Accept": "application/json", "MCP-Protocol-Version": "2025-11-25"}
+        connection.request("POST", "/mcp", body, {**sent, **(headers or {})})
+        response = connection.getresponse()
+        data = response.read()
+        connection.close()
+        return response.status, data
+
+    def finish(self, status, stop=None):
+        if stop is not None:
+            self.process.send_signal(stop)
+        assert self.process.wait(timeout=30) == status, (self.process.returncode, self.errors())
+        rest = self.process.stdout.read()
+        assert not rest, rest
+        return self.errors()
+
+    def errors(self):
+        return self.outputs.read_bytes()
+
+    def close(self):
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait(timeout=30)
+        self.process.stdout.close()
+        self.stderr.close()
+
+
+def serve_structured(reply):
+    status, body = reply
+    assert status == 200, reply
+    return json.loads(body)["result"]["structuredContent"]
+
+
+def serve_command(binary):
+    token = "McpServeCanary42"
+    with tempfile.TemporaryDirectory(prefix="mo-serve-") as directory:
+        folder = pathlib.Path(directory)
+        data = folder / "state"
+        data.mkdir()
+        counter = "counter.mo"
+        (folder / counter).write_text(SERVE_COUNTER)
+        env = {**os.environ, "MO_SERVE_TEST_TOKEN": token}
+        outputs = []
+
+        @contextlib.contextmanager
+        def serving(source=counter, folder_for_data=data, port="0", environment=env):
+            served = Served(binary, source, folder_for_data, environment, folder, port)
+            try:
+                yield served
+            finally:
+                served.close()
+                outputs.append(served.line + served.errors())
+
+        def refused(source=counter, folder_for_data=data, port="0", environment=env):
+            with serving(source, folder_for_data, port, environment) as served:
+                assert not served.line, served.line
+                errors = served.finish(1)
+                assert b"error E1409:" in errors, errors
+                return errors
+
+        with serving() as served:
+            status, body = served.post(SERVE_INITIALIZE, token)
+            assert status == 200 and json.loads(body)["result"]["protocolVersion"] == "2025-11-25"
+            assert served.post(SERVE_INITIALIZED, token)[0] == 202
+            status, body = served.post(SERVE_LIST, token)
+            tools = json.loads(body)["result"]["tools"]
+            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"]
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
+            assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            status, body = served.post(SERVE_READ, "WrongCanary42")
+            assert status == 401 and token.encode() not in body, (status, body)
+            assert served.post(SERVE_READ, token, {"Host": "elsewhere.example"})[0] == 421
+            named = {"Host": f"localhost:{served.port}"}
+            assert serve_structured(served.post(SERVE_READ, token, named)) == {"value": "5"}
+            assert not served.finish(0, signal.SIGTERM)
+        assert (data / "service.sqlite").is_file()
+
+        with serving() as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            errors = refused()
+            assert b"could not open saved state at" in errors and b"service.sqlite" in errors, errors
+            blocked = socket.socket()
+            blocked.bind(("127.0.0.1", 0))
+            blocked.listen(1)
+            taken = str(blocked.getsockname()[1])
+            spare = folder / "spare"
+            spare.mkdir()
+            errors = refused(counter, spare, taken)
+            assert b"could not listen on port " + taken.encode() + b": Address already in use" in errors
+            blocked.close()
+            assert not served.finish(0, signal.SIGINT)
+
+        with serving("./counter.mo") as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            assert not served.finish(0, signal.SIGTERM)
+        errors = refused(folder / counter)
+        assert b"written by a different program" in errors, errors
+
+        with serving() as served:
+            for attempt in range(15):
+                status, body = served.post(SERVE_HALT, token)
+                assert status == 200, (attempt, status, body)
+                error = json.loads(body)["result"]["structuredContent"]["error"]
+                assert error["code"] == "handler_failed", (attempt, body)
+            errors = served.finish(69)
+        assert errors.count(b"mo serve: failure: ") == 15, errors
+        assert errors.count(b"mo serve: restart: ") == 3, errors
+        assert errors.count(b"mo serve: stop: ") == 1, errors
+        assert errors.count(b"halted on purpose") == 15, errors
+
+        with serving() as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            shutil.rmtree(data)
+            error = serve_structured(served.post(SERVE_ADD, token))["error"]
+            assert (error["code"], error["effect"]) == ("store_failed", "unknown"), error
+            errors = served.finish(70)
+        assert errors.count(b"mo serve: stop: ") == 1, errors
+        assert b"mo serve: failure: " not in errors, errors
+
+        errors = refused(counter, data)
+        assert b"can't use the data folder" in errors and b"state: No such file" in errors, errors
+        assert not data.exists(), "mo serve must not create its data folder"
+        data.mkdir()
+        errors = refused(counter, counter)
+        assert b"Not a directory" in errors, errors
+
+        missing = {key: value for key, value in env.items() if key != "MO_SERVE_TEST_TOKEN"}
+        errors = refused(environment=missing)
+        assert b"environment variable MO_SERVE_TEST_TOKEN" in errors, errors
+        invalid = "Not a valid canary"
+        errors = refused(environment={**env, "MO_SERVE_TEST_TOKEN": invalid})
+        assert b"environment variable MO_SERVE_TEST_TOKEN" in errors, errors
+        assert invalid.encode() not in errors, errors
+
+        crash = folder / "crash.mo"
+        crash.write_text(SERVE_COUNTER.replace("module Counter", "module Crash")
+                         .replace("state Int = 0", 'state Int = stop "start refused"'))
+        fresh = folder / "fresh"
+        fresh.mkdir()
+        errors = refused(crash, fresh)
+        assert b"mo serve: failure: " in errors and b"start refused" in errors, errors
+
+        with open("/dev/full", "wb") as full:
+            result = subprocess.run([str(binary), "serve", counter, "--port", "0", "--data",
+                                     str(fresh)], env=env, stdout=full, stderr=subprocess.PIPE,
+                                    cwd=folder, timeout=30)
+        assert result.returncode == 1 and b"E1409" in result.stderr, result
+        assert b"could not write its listening line" in result.stderr, result
+
+        (folder / "aaa.mo").write_text('module Aaa\nexpose peek\n\nservice\n  state Int = 7\n'
+                                       '  tools peek\n  token from env "MO_SERVE_OTHER_TOKEN"\n'
+                                       'end\n\n## Peeks.\nfn peek(state: Int, _now: Time) : Text\n'
+                                       '  state.to_text\nend\n')
+        entry = folder / "zzz.mo"
+        entry.write_text('module Zzz\nuse Aaa\n\nservice\n  state Int = 3\n  tools look\n'
+                         '  token from env "MO_SERVE_TEST_TOKEN"\nend\n\n## Looks.\n'
+                         'fn look(state: Int, now: Time) : Text\n'
+                         '  "#{state}#{Aaa.peek(1, now)}"\nend\n')
+        imported = folder / "imported"
+        imported.mkdir()
+        with serving(entry, imported) as served:
+            status, body = served.post(SERVE_LIST, token)
+            tools = json.loads(body)["result"]["tools"]
+            assert status == 200 and [tool["name"] for tool in tools] == ["look"], body
+            look = SERVE_READ.replace('"read"', '"look"')
+            assert serve_structured(served.post(look, token)) == {"value": "31"}
+            assert not served.finish(0, signal.SIGTERM)
+        plain = folder / "plain.mo"
+        plain.write_text("module Plain\nuse Aaa\n\nfn main(console: Console)\n"
+                         "  now = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"valid time\"\n"
+                         "  console.print(Aaa.peek(1, now))\nend\n")
+        errors = refused(plain, imported)
+        assert b"this module has no service to start" in errors, errors
+
+        for output in outputs:
+            assert token.encode() not in output, output
+        for path in folder.rglob("*"):
+            if path.is_file():
+                assert token.encode() not in path.read_bytes(), path
 
 
 def imported_constants(binary):
@@ -3478,6 +3728,7 @@ def check(binary):
     guide_claims(binary)
     service_commands(binary)
     service_refusals(binary)
+    serve_command(binary)
     emit_command(binary)
     runner(binary)
     lower_source_fixtures(binary)
@@ -3585,8 +3836,17 @@ def check(binary):
                  ["check", good, good], ["test", good, good], ["check", "--bad", good],
                  ["check", "--emit=bad", good], ["check", "--emit", "core", good],
                  ["check", "--json", "--emit=core", good], ["check", "--version", good],
-                 ["check", "--json", "--bad", good]):
+                 ["check", "--json", "--bad", good], ["serve"], ["serve", good],
+                 ["serve", good, "--port", "0"], ["serve", good, "--data", "state"],
+                 ["serve", good, good, "--port", "0", "--data", "state"],
+                 ["serve", "--json", good, "--port", "0", "--data", "state"]):
         mistake(args)
+    mistake(["serve", good, "--port", "65536", "--data", "state"],
+            'invalid port (expected a decimal integer from 0 to 65535): "--port" "65536"')
+    mistake(["serve", good, "--port", "0", "--data", "-x"],
+            'flag needs a nonempty value: "--data" "-x"')
+    mistake(["serve", good, "--data", "state"], 'serve needs --port N: "serve"')
+    mistake(["serve", good, "--port", "0"], 'serve needs --data DIR: "serve"')
     mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit or serve): "bad\\x0a\\x09\\xc3\\xbf"')
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):

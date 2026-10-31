@@ -276,7 +276,8 @@
     /* Fixing is given no regular source file, or cannot atomically replace one. */                \
     X(1407, TOOL_FIX_IO, NULL)                                                                     \
     /* Running a service is not implemented in this build. */                                      \
-    X(1408, TOOL_SERVICE_UNAVAILABLE, NULL)
+    X(1408, TOOL_SERVICE_UNAVAILABLE, NULL)                                                        \
+    X(1409, TOOL_SERVICE_START, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

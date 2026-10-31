@@ -184,8 +184,8 @@ static int stopped(struct mo_process *process, const char *reason, const char *l
 }
 
 int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
-                   const struct mo_buffer *wire, const struct mo_sources *sources, FILE *output,
-                   FILE *errors, struct mo_diags *diags) {
+                   const struct mo_buffer *wire, uint32_t service, const struct mo_sources *sources,
+                   FILE *output, FILE *errors, struct mo_diags *diags) {
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
@@ -227,6 +227,10 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
     }
     if (cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_EMIT) {
         status = 0;
+        goto done;
+    }
+    if (cli->command == MO_COMMAND_SERVE) {
+        status = mo_serve_image(cli, image, service, output, errors, diags);
         goto done;
     }
     errno = 0;

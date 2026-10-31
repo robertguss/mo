@@ -21,6 +21,8 @@ enum mo_command {
     MO_COMMAND_VERSION,
 };
 
+#define MO_EXIT_SERVICE_STOPPED 69
+
 enum mo_emit { MO_EMIT_NONE, MO_EMIT_CORE, MO_EMIT_BYTECODE };
 
 struct mo_cli {
