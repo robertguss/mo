@@ -1425,8 +1425,6 @@ SERVE_HALT = '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ha
 
 
 class Served:
-    """A running mo serve. Its output files outlive it, so a test reads what it wrote."""
-
     def __init__(self, binary, source, data, env, folder, port="0"):
         self.stderr = tempfile.NamedTemporaryFile(dir=folder, prefix="stderr-", delete=False)
         self.outputs = pathlib.Path(self.stderr.name)
@@ -1658,6 +1656,26 @@ def serve_command(binary):
             look = SERVE_READ.replace('"read"', '"look"')
             assert serve_structured(served.post(look, token)) == {"value": "31"}
             assert not served.finish(0, signal.SIGTERM)
+        def timed(name, every, parameter, body):
+            source = (SERVE_COUNTER.replace("module Counter", f"module {name}")
+                      .replace("  token from", f"  every {every} tick\n  token from"))
+            path = folder / f"{name.lower()}.mo"
+            path.write_text(source + f"\nfn tick({parameter}: Int, _now: Time) : Int\n  {body}\nend\n")
+            state = folder / f"{name.lower()}-state"
+            state.mkdir()
+            return path, state
+
+        path, state = timed("Ticking", "1.hour", "state", "state + 1")
+        with serving(path, state) as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "1"}
+            assert not served.finish(0, signal.SIGTERM)
+        path, state = timed("Failing", "1.millisecond", "_state", 'stop "tick failed"')
+        with serving(path, state) as served:
+            errors = served.finish(69)
+        assert errors.count(b"mo serve: failure: ") == 15, errors
+        assert errors.count(b"mo serve: restart: ") == 3, errors
+        assert errors.count(b"mo serve: stop: ") == 1, errors
+
         plain = folder / "plain.mo"
         plain.write_text("module Plain\nuse Aaa\n\nfn main(console: Console)\n"
                          "  now = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"valid time\"\n"
