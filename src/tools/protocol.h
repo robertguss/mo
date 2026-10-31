@@ -36,7 +36,8 @@ mo_protocol_server_new(const struct mo_image *service, uint32_t index, struct mo
 void mo_protocol_server_free(struct mo_protocol_server *server);
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_poll(struct mo_protocol_server *server, uint64_t until_us);
-MO_MUST_USE bool mo_protocol_server_replying(const struct mo_protocol_server *server);
+void mo_protocol_server_stop_accepting(struct mo_protocol_server *server);
+MO_MUST_USE bool mo_protocol_server_connected(const struct mo_protocol_server *server);
 MO_MUST_USE struct mo_protocol_metrics
 mo_protocol_server_metrics(const struct mo_protocol_server *server);
 

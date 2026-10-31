@@ -1,18 +1,30 @@
 #define _GNU_SOURCE
 #define MO_PROTOCOL_SERVER_FAULT_TEST
 #include "test_protocol_server.c"
+#include "tools/run.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-static int accept_error;
+static int accept_error, poll_error;
 
 #if defined(__linux__)
 int mo_listener_fault_accept4(int fd, struct sockaddr *address, socklen_t *length, int flags);
 #endif
 int mo_listener_fault_accept(int fd, struct sockaddr *address, socklen_t *length);
+int mo_listener_fault_poll(struct pollfd *descriptors, nfds_t count, int timeout);
+
+int mo_listener_fault_poll(struct pollfd *descriptors, nfds_t count, int timeout) {
+    if (poll_error != 0) {
+        errno = poll_error;
+        poll_error = 0;
+        return -1;
+    }
+    return poll(descriptors, count, timeout);
+}
 
 #if defined(__linux__)
 int mo_listener_fault_accept4(int fd, struct sockaddr *address, socklen_t *length, int flags) {
@@ -101,7 +113,33 @@ static void retry_accept(void *context) {
     finish(&f);
 }
 
+static void serve_listener_death(void *context) {
+    wire(context);
+    struct fixture_server f = start();
+    char data[] = "/tmp/mo-serve-XXXXXX", path[sizeof data + sizeof "/service.sqlite"];
+    MO_ASSERT(mkdtemp(data) != NULL);
+    int length = snprintf(path, sizeof path, "%s/service.sqlite", data);
+    MO_ASSERT(length > 0 && (size_t)length < sizeof path);
+    struct mo_cli cli = {.command = MO_COMMAND_SERVE, .port = 0, .data = data};
+    FILE *output = tmpfile(), *errors = tmpfile();
+    MO_ASSERT(output != NULL && errors != NULL);
+    struct mo_diags diags;
+    MO_ASSERT(mo_diags_init(&diags));
+    poll_error = EBADF;
+    CHECK(mo_serve_image(&cli, f.image, 0, output, errors, &diags) == 70);
+    CHECK(poll_error == 0 && !mo_diags_any(&diags));
+    char text[256] = {0};
+    rewind(errors);
+    CHECK(fread(text, 1, sizeof text - 1, errors) > 0);
+    CHECK(strcmp(text, "mo serve: stop: listener input or output failed\n") == 0);
+    mo_diags_free(&diags);
+    CHECK(fclose(output) == 0 && fclose(errors) == 0);
+    CHECK(remove(path) == 0 && rmdir(data) == 0);
+    finish(&f);
+}
+
 int main(void) {
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, retry_accept, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, serve_listener_death, NULL) == 0);
     return mo_test_report("listener_faults");
 }

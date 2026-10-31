@@ -561,18 +561,21 @@ refuses a second server on the same `DIR`. Every startup refusal is E1409.
 The server constructor takes an event sink, because startup events fire inside
 `mo_service_open`. The sink writes one `mo serve: failure:`, `restart:` or
 `stop:` line to standard error, followed by the defect report when the event
-has one. journald adds the timestamps.
+has one. A signal stop and a listener failure write a `stop:` line too.
+journald adds the timestamps.
 
-A signal sets a flag, and a 200 ms tick notices it, because the pipeline runs on
-its own thread and `poll` is not reliably interrupted. A signal or a stop event
-starts the flush: the loop keeps polling while
-`mo_protocol_server_replying` is true, for at most `MO_LIMIT_MCP_WRITE_US`. The
-last client therefore gets its reply, and the server still answers `stopped`
-during the flush.
+Signal handlers go in before the listener and store open, so a signal during
+startup lets the first commit finish. A signal sets a flag, and a 200 ms tick
+notices it, because the pipeline runs on its own thread and `poll` is not
+reliably interrupted. A signal or a stop event stops accepting, and the loop
+keeps polling until `mo_protocol_server_connected` is false. Open connections
+therefore finish, a stop's last client gets its reply, and a request already
+sent is not reset. Each connection stage has its own deadline, so this ends
+within about 25 seconds with no separate timer.
 
 Exit statuses: 0 after SIGTERM or SIGINT; 1 for program errors or a startup
 refusal; 2 for a command mistake; 69 (`MO_EXIT_SERVICE_STOPPED`) after a D308
-stop; 70 for any other death after start. 69 is outside mo's other statuses and
+stop; 70 for any other death, including a bug in a module constant. 69 is outside mo's other statuses and
 systemd's reserved range, so MO-163 can name it in `RestartPreventExitStatus=`.
 A stop whose reason is `MO_SERVICE_STORE` exits 70, so it stays restartable. A
 D308 stop wins over a signal or an I/O failure that races it.

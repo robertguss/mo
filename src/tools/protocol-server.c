@@ -490,7 +490,7 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
     (void)clock_now(s);
     if (s->io_failed)
         return MO_PROTOCOL_SERVER_IO;
-    union mo_listener_request request = {.wait = {.until_us = until_us, .accept = true}};
+    union mo_listener_request request = {.wait = {.until_us = until_us, .accept = !s->closing}};
     size_t slots[MO_LIMIT_MCP_CONNECTIONS];
     uint64_t next_service;
     if (mo_service_next_deadline(s->service, &next_service) && next_service < request.wait.until_us)
@@ -575,13 +575,16 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
     return s->io_failed ? MO_PROTOCOL_SERVER_IO : MO_PROTOCOL_SERVER_OK;
 }
 
-bool mo_protocol_server_replying(const struct mo_protocol_server *s) {
+void mo_protocol_server_stop_accepting(struct mo_protocol_server *s) {
     MO_ASSERT(s != NULL);
-    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++) {
-        enum protocol_phase phase = s->connections[i].phase;
-        if (phase == PS_SERVICE || phase == PS_WRITE || phase == PS_DRAIN)
+    s->closing = true;
+}
+
+bool mo_protocol_server_connected(const struct mo_protocol_server *s) {
+    MO_ASSERT(s != NULL);
+    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
+        if (s->connections[i].phase != PS_EMPTY)
             return true;
-    }
     return false;
 }
 

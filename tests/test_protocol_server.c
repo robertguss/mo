@@ -35,14 +35,14 @@ struct event_log {
     struct mo_service_event events[32];
     size_t count;
     struct mo_protocol_server **server;
-    bool replying;
+    bool connected;
 };
 
 static void note_event(const struct mo_service_event *event, void *context) {
     struct event_log *log = context;
     MO_ASSERT(log->count < sizeof log->events / sizeof *log->events);
     log->events[log->count++] = *event;
-    log->replying = mo_protocol_server_replying(*log->server);
+    log->connected = mo_protocol_server_connected(*log->server);
 }
 
 static struct fixture_server start_events(const char *text, struct event_log *log) {
@@ -337,11 +337,11 @@ static void events_reach_the_sink(void) {
     finish(&f);
 }
 
-static void replying(void) {
+static void connected(void) {
     struct event_log log = {.count = 0};
     struct fixture_server f = start_events(source, &log);
     log.server = &f.server;
-    CHECK(!mo_protocol_server_replying(f.server));
+    CHECK(!mo_protocol_server_connected(f.server));
     struct mo_buffer input;
     input_request(&input,
                   "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
@@ -357,21 +357,29 @@ static void replying(void) {
     for (unsigned i = 0; i < 8; i++)
         poll_server(&f);
     CHECK(peer.input_offset == input.length - 1 && log.count == 0);
-    CHECK(!mo_protocol_server_replying(f.server));
+    CHECK(mo_protocol_server_connected(f.server));
+    mo_protocol_server_stop_accepting(f.server);
+    char late_out[64];
+    struct mo_listener_fake_peer late = {.output = (uint8_t *)late_out,
+                                         .output_capacity = sizeof late_out,
+                                         .readable = true,
+                                         .writable = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &late) == MO_LISTENER_OK);
     peer.input_size = input.length;
     for (unsigned i = 0; i < 8; i++)
         poll_server(&f);
-    CHECK(log.count == 1 && log.replying);
-    CHECK(peer.output_size == 0 && mo_protocol_server_replying(f.server));
+    CHECK(log.count == 1 && log.connected);
+    CHECK(peer.output_size == 0 && mo_protocol_server_connected(f.server));
     peer.writable = true;
     for (unsigned i = 0; i < 8 && !peer.half_closed; i++)
         poll_server(&f);
     CHECK(peer.half_closed && !peer.closed);
-    CHECK(mo_protocol_server_replying(f.server));
+    CHECK(mo_protocol_server_connected(f.server));
     peer.eof = true;
     for (unsigned i = 0; i < 8 && !peer.closed; i++)
         poll_server(&f);
-    CHECK(peer.closed && !mo_protocol_server_replying(f.server));
+    CHECK(peer.closed && !mo_protocol_server_connected(f.server));
+    CHECK(!late.closed && late.output_size == 0);
     mo_buffer_free(&input);
     finish(&f);
 }
@@ -664,7 +672,7 @@ static void run(void *context) {
     rate();
     stopped();
     events_reach_the_sink();
-    replying();
+    connected();
     response_limit();
     busy();
 }

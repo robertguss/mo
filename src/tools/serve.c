@@ -8,16 +8,17 @@
 
 #include <errno.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <sys/stat.h>
 
 #define DATA_FILE "service.sqlite"
 
-static volatile sig_atomic_t signalled;
+static atomic_bool signalled;
 
 static void note_signal(int number) {
     (void)number;
-    signalled = 1;
+    atomic_store(&signalled, true);
 }
 
 static bool watch_signals(void) {
@@ -99,26 +100,16 @@ static const char *server_refusal(enum mo_protocol_server_status status,
 
 static bool serve_requests(struct mo_protocol_server *server, struct mo_listener *listener,
                            const struct serve_log *log) {
-    bool stopping = false;
-    uint64_t flush_until = 0;
     for (;;) {
+        if (atomic_load(&signalled) || log->stopped) {
+            mo_protocol_server_stop_accepting(server);
+            if (!mo_protocol_server_connected(server))
+                return true;
+        }
         union mo_listener_result clock;
-        enum mo_listener_status read = mo_listener_call(listener, MO_LISTENER_NOW, NULL, &clock);
-        if (read != MO_LISTENER_OK) {
-            log_line(log->errors, "stop", mo_listener_status_text(read));
-            return false;
-        }
-        uint64_t now = clock.now.monotonic_us;
-        if ((signalled != 0 || log->stopped) && !stopping) {
-            stopping = true;
-            flush_until = now + MO_LIMIT_MCP_WRITE_US;
-        }
-        if (stopping && (!mo_protocol_server_replying(server) || now >= flush_until))
-            return true;
-        uint64_t until = now + MO_CLI_SERVE_TICK_US;
-        if (stopping && until > flush_until)
-            until = flush_until;
-        if (mo_protocol_server_poll(server, until) != MO_PROTOCOL_SERVER_OK) {
+        if (mo_listener_call(listener, MO_LISTENER_NOW, NULL, &clock) != MO_LISTENER_OK ||
+            mo_protocol_server_poll(server, clock.now.monotonic_us + MO_CLI_SERVE_TICK_US) !=
+                MO_PROTOCOL_SERVER_OK) {
             log_line(log->errors, "stop", mo_listener_status_text(MO_LISTENER_IO));
             return false;
         }
@@ -128,7 +119,10 @@ static bool serve_requests(struct mo_protocol_server *server, struct mo_listener
 static int exit_status(const struct serve_log *log, bool served) {
     if (log->stopped)
         return log->stop == MO_SERVICE_STORE ? 70 : MO_EXIT_SERVICE_STOPPED;
-    return served ? 0 : 70;
+    if (!served)
+        return 70;
+    log_line(log->errors, "stop", "a signal asked the service to stop");
+    return 0;
 }
 
 static void refuse_listener(struct mo_diags *diags, enum mo_listener_status status, int reason,
@@ -148,6 +142,7 @@ static void refuse_listener(struct mo_diags *diags, enum mo_listener_status stat
 int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint32_t service,
                    FILE *output, FILE *errors, struct mo_diags *diags) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
+    MO_ASSERT(service < file->service_count);
     const struct mo_bytecode_string *token = &file->strings[file->services[service].token_env];
     struct serve_log log = {.errors = errors};
     struct mo_listener *listener = NULL;
@@ -156,6 +151,10 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     struct mo_buffer name;
     mo_buffer_init(&name, MO_LIMIT_STRING_SIZE + 1);
     int status = 1;
+    if (!watch_signals()) {
+        refuse(diags, "mo serve could not watch for stop signals", NULL, strerror(errno));
+        goto done;
+    }
     struct stat data;
     int found = stat(cli->data, &data);
     if (found != 0 || !S_ISDIR(data.st_mode)) {
@@ -193,10 +192,6 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
         mo_protocol_server_new(image, service, store, listener, authorities, 2, &events, &server);
     if (built != MO_PROTOCOL_SERVER_OK) {
         refuse(diags, "mo serve could not start the service", NULL, server_refusal(built, &log));
-        goto done;
-    }
-    if (!watch_signals()) {
-        refuse(diags, "mo serve could not watch for stop signals", NULL, strerror(errno));
         goto done;
     }
     if (fprintf(output, "mo serve: listening on http://%s/mcp\n", numeric) < 0 ||

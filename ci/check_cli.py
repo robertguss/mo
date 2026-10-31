@@ -1394,8 +1394,8 @@ SERVE_COUNTER = """module Counter
 
 service
   state Int = 0
-  tools add, read, halt
-  token from env "MO_SERVE_TEST_TOKEN"
+  tools add, read
+  token from env "COUNTER_TOKEN"
 end
 
 ## Adds an amount to the count.
@@ -1407,12 +1407,11 @@ end
 fn read(state: Int, _now: Time) : Text
   state.to_text
 end
-
-## Always stops.
-fn halt(_state: Int, _now: Time) : Text
-  stop "halted on purpose"
-end
 """
+SERVE_HALTING = (SERVE_COUNTER.replace("tools add, read", "tools add, read, halt") +
+                 '\n## Always stops.\nfn halt(_state: Int, _now: Time) : Text\n'
+                 '  stop "halted on purpose"\nend\n')
+SERVE_SIGNALLED = b"mo serve: stop: a signal asked the service to stop\n"
 SERVE_INITIALIZE = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{'
                     '"protocolVersion":"2025-11-25","capabilities":{},'
                     '"clientInfo":{"name":"demo","version":"1"}}}')
@@ -1476,6 +1475,9 @@ class Served:
         self.stderr.close()
 
 
+STORE_FAILED = b"service store failed; reopen it to see whether the last change was saved"
+
+
 def serve_structured(reply):
     status, body = reply
     assert status == 200, reply
@@ -1493,7 +1495,8 @@ def serve_guide():
             "A missing or invalid token is E1409, and the message names the variable.",
             "`mo serve` listens on 127.0.0.1 only.",
             "mo serve: listening on http://127.0.0.1:PORT/mcp",
-            "any other `Host` gets status 421",
+            "Any other well-formed `Host` gets status 421, and a malformed or missing one gets 400.",
+            SERVE_COUNTER,
             "A missing or wrong token gets status 401.",
             "-H 'Content-Type: application/json'",
             "-H 'MCP-Protocol-Version: 2025-11-25'",
@@ -1501,7 +1504,9 @@ def serve_guide():
             SERVE_INITIALIZED, SERVE_LIST, SERVE_ADD, SERVE_READ,
             "An `Int` argument is a JSON string",
             "`mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`",
-            "- 0: SIGTERM or SIGINT stopped it.",
+            "- 0: SIGTERM or SIGINT stopped it. It accepts no new connections and finishes the "
+            "open ones first, which their deadlines bound to about 25 seconds.",
+            "An empty `service.sqlite` never held data, so delete it and start again.",
             "- 69: supervision (D308) stopped the service.",
             "It stays down until a person fixes the cause and starts it.",
             "- 70: it died any other way",
@@ -1518,8 +1523,8 @@ def serve_command(binary):
         data = folder / "state"
         data.mkdir()
         counter = "counter.mo"
-        (folder / counter).write_text(SERVE_COUNTER)
-        env = {**os.environ, "MO_SERVE_TEST_TOKEN": token}
+        (folder / counter).write_text(SERVE_HALTING)
+        env = {**os.environ, "COUNTER_TOKEN": token}
         outputs = []
 
         @contextlib.contextmanager
@@ -1545,6 +1550,7 @@ def serve_command(binary):
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
             assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"]
+            assert all(tool["inputSchema"]["type"] == "object" for tool in tools), tools
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
             assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
@@ -1553,36 +1559,66 @@ def serve_command(binary):
             assert served.post(SERVE_READ, token, {"Host": "elsewhere.example"})[0] == 421
             named = {"Host": f"localhost:{served.port}"}
             assert serve_structured(served.post(SERVE_READ, token, named)) == {"value": "5"}
-            assert not served.finish(0, signal.SIGTERM)
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         assert (data / "service.sqlite").is_file()
 
+        spare = folder / "spare"
+        spare.mkdir()
+        with serving(counter, spare) as served:
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        shutil.rmtree(spare)
+        spare.mkdir()
+
         with serving() as served:
-            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            body = SERVE_ADD.encode()
+            connection = socket.create_connection(("127.0.0.1", served.port), timeout=30)
+            connection.sendall(
+                b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAuthorization: Bearer %s\r\n"
+                b"Content-Type: application/json\r\nMCP-Protocol-Version: 2025-11-25\r\n"
+                b"Expect: 100-continue\r\nContent-Length: %d\r\n\r\n"
+                % (served.port, token.encode(), len(body)))
+            interim = b""
+            while not interim.endswith(b"\r\n\r\n"):
+                interim += connection.recv(1)
+            assert interim.startswith(b"HTTP/1.1 100 "), interim
+            served.process.send_signal(signal.SIGTERM)
+            time.sleep(0.4)
+            assert served.process.poll() is None, "mo serve left before its open client finished"
+            connection.sendall(body)
+            reply = b""
+            while chunk := connection.recv(65536):
+                reply += chunk
+            connection.close()
+            assert reply.startswith(b"HTTP/1.1 200 ") and b'"value":"10"' in reply, reply
+            assert served.finish(0) == SERVE_SIGNALLED
+
+        with serving() as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
             errors = refused()
-            assert b"could not open saved state at" in errors and b"service.sqlite" in errors, errors
+            expected = b"error E1409: mo serve could not open saved state at %s/service.sqlite: %s" % (
+                str(data).encode(), STORE_FAILED)
+            assert errors.startswith(expected), errors
             blocked = socket.socket()
             blocked.bind(("127.0.0.1", 0))
             blocked.listen(1)
             taken = str(blocked.getsockname()[1])
-            spare = folder / "spare"
-            spare.mkdir()
             errors = refused(counter, spare, taken)
             assert b"could not listen on port " + taken.encode() + b": Address already in use" in errors
             blocked.close()
-            assert not served.finish(0, signal.SIGINT)
+            assert served.finish(0, signal.SIGINT) == SERVE_SIGNALLED
 
         with serving("./counter.mo") as served:
-            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
-            assert not served.finish(0, signal.SIGTERM)
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         errors = refused(folder / counter)
         assert b"written by a different program" in errors, errors
         elsewhere = folder / "elsewhere"
         elsewhere.mkdir()
-        (elsewhere / counter).write_text(SERVE_COUNTER)
+        (elsewhere / counter).write_text(SERVE_HALTING)
         served = Served(binary, counter, data, env, elsewhere)
         try:
-            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
-            assert not served.finish(0, signal.SIGTERM)
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         finally:
             served.close()
             outputs.append(served.line + served.errors())
@@ -1594,13 +1630,14 @@ def serve_command(binary):
                 error = json.loads(body)["result"]["structuredContent"]["error"]
                 assert error["code"] == "handler_failed", (attempt, body)
             errors = served.finish(69)
+        assert not errors.endswith(SERVE_SIGNALLED), errors
         assert errors.count(b"mo serve: failure: ") == 15, errors
         assert errors.count(b"mo serve: restart: ") == 3, errors
         assert errors.count(b"mo serve: stop: ") == 1, errors
         assert errors.count(b"halted on purpose") == 15, errors
 
         with serving() as served:
-            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
             shutil.rmtree(data)
             error = serve_structured(served.post(SERVE_ADD, token))["error"]
             assert (error["code"], error["effect"]) == ("store_failed", "unknown"), error
@@ -1615,12 +1652,12 @@ def serve_command(binary):
         errors = refused(counter, counter)
         assert b"Not a directory" in errors, errors
 
-        missing = {key: value for key, value in env.items() if key != "MO_SERVE_TEST_TOKEN"}
+        missing = {key: value for key, value in env.items() if key != "COUNTER_TOKEN"}
         errors = refused(environment=missing)
-        assert b"environment variable MO_SERVE_TEST_TOKEN" in errors, errors
+        assert b"environment variable COUNTER_TOKEN" in errors, errors
         invalid = "Not a valid canary"
-        errors = refused(environment={**env, "MO_SERVE_TEST_TOKEN": invalid})
-        assert b"environment variable MO_SERVE_TEST_TOKEN" in errors, errors
+        errors = refused(environment={**env, "COUNTER_TOKEN": invalid})
+        assert b"environment variable COUNTER_TOKEN" in errors, errors
         assert invalid.encode() not in errors, errors
 
         crash = folder / "crash.mo"
@@ -1629,7 +1666,10 @@ def serve_command(binary):
         fresh = folder / "fresh"
         fresh.mkdir()
         errors = refused(crash, fresh)
-        assert b"mo serve: failure: " in errors and b"start refused" in errors, errors
+        assert b"mo serve: failure: service handler failed" in errors, errors
+        assert b"start refused" in errors, errors
+        assert (b"error E1409: mo serve could not start the service: "
+                b"service handler failed") in errors, errors
 
         with open("/dev/full", "wb") as full:
             result = subprocess.run([str(binary), "serve", counter, "--port", "0", "--data",
@@ -1644,7 +1684,7 @@ def serve_command(binary):
                                        '  state.to_text\nend\n')
         entry = folder / "zzz.mo"
         entry.write_text('module Zzz\nuse Aaa\n\nservice\n  state Int = 3\n  tools look\n'
-                         '  token from env "MO_SERVE_TEST_TOKEN"\nend\n\n## Looks.\n'
+                         '  token from env "COUNTER_TOKEN"\nend\n\n## Looks.\n'
                          'fn look(state: Int, now: Time) : Text\n'
                          '  "#{state}#{Aaa.peek(1, now)}"\nend\n')
         imported = folder / "imported"
@@ -1655,7 +1695,7 @@ def serve_command(binary):
             assert status == 200 and [tool["name"] for tool in tools] == ["look"], body
             look = SERVE_READ.replace('"read"', '"look"')
             assert serve_structured(served.post(look, token)) == {"value": "31"}
-            assert not served.finish(0, signal.SIGTERM)
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         def timed(name, every, parameter, body):
             source = (SERVE_COUNTER.replace("module Counter", f"module {name}")
                       .replace("  token from", f"  every {every} tick\n  token from"))
@@ -1668,7 +1708,7 @@ def serve_command(binary):
         path, state = timed("Ticking", "1.hour", "state", "state + 1")
         with serving(path, state) as served:
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "1"}
-            assert not served.finish(0, signal.SIGTERM)
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         path, state = timed("Failing", "1.millisecond", "_state", 'stop "tick failed"')
         with serving(path, state) as served:
             errors = served.finish(69)
@@ -3422,6 +3462,8 @@ flags = {
     "--max-heap": (["1GiB"], {"run", "test"}),
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
+    "--port": (["0"], {"serve"}),
+    "--data": (["state"], {"serve"}),
     "--emit=core": ([], {"check"}),
     "--emit=bytecode": ([], {"check"}),
 }
@@ -3917,7 +3959,8 @@ def check(binary):
         if value:
             for missing in ([], [""], ["--json"]):
                 suffix = ''.join(f' "{v}"' for v in missing)
-                mistake(["test", flag, *missing], f'flag needs a nonempty value: "{flag}"{suffix}')
+                command = "test" if "test" in allowed else "serve"
+                mistake([command, flag, *missing], f'flag needs a nonempty value: "{flag}"{suffix}')
     for flag in ("--max-stack", "--max-depth", "--max-heap", "--calls", "--seconds"):
         for value in ("0", "-1", "+1", " 1", "1 ", "1.5", "1KB", "1mib", "18446744073709551616"):
             mistake(["test", flag, value, good])

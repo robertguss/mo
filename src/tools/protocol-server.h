@@ -93,7 +93,7 @@ struct mo_protocol_server {
     struct protocol_bytes errors[506];
     struct protocol_connection connections[MO_LIMIT_MCP_CONNECTIONS];
     struct mo_protocol_metrics metrics;
-    bool io_failed;
+    bool io_failed, closing;
 };
 
 MO_MUST_USE const struct mo_bytecode_function *

@@ -159,13 +159,35 @@ Section 13.4 names the selection flags and the limits.
 
 `--port` takes 0 to 65535. Port 0 picks a free port. `mo serve` listens on 127.0.0.1 only. It takes no address flag.
 
+The requests below call this service, saved as `counter.mo`:
+
+```text
+module Counter
+
+service
+  state Int = 0
+  tools add, read
+  token from env "COUNTER_TOKEN"
+end
+
+## Adds an amount to the count.
+fn add(state: Int, _now: Time, amount: Int) : (Int, Int)
+  (state + amount, state + amount)
+end
+
+## Reads the count.
+fn read(state: Int, _now: Time) : Text
+  state.to_text
+end
+```
+
 When it is ready, it prints one line to standard output:
 
 ```text
 mo serve: listening on http://127.0.0.1:PORT/mcp
 ```
 
-Send each request with `POST` to that URL. One connection carries one request. Use the host `127.0.0.1:PORT` or `localhost:PORT`; any other `Host` gets status 421. A missing or wrong token gets status 401. Start with `initialize`:
+Send each request with `POST` to that URL. One connection carries one request. Use the host `127.0.0.1:PORT` or `localhost:PORT`. Any other well-formed `Host` gets status 421, and a malformed or missing one gets 400. A missing or wrong token gets status 401. Start with `initialize`:
 
 ```sh
 curl -s http://127.0.0.1:PORT/mcp \
@@ -186,17 +208,19 @@ Send the same headers with each of these bodies. The first gets status 202 and n
 
 An `Int` argument is a JSON string, as `tools/list` shows in each tool's `inputSchema`. A tool's reply is in `result.structuredContent`. A failed call has `isError` true and `structuredContent.error.code`, such as `handler_failed` or `store_failed`.
 
-`mo serve` writes one line to standard error for each supervision event: `mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`. A failure that is a bug adds the report `mo run` would print. The lines have no timestamps. The token never appears in output, logs or errors.
+`mo serve` writes one line to standard error for each failure, restart and stop: `mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`. A failure that is a bug adds the report `mo run` would print. The lines have no timestamps. The token never appears in output, logs or errors.
 
 `mo serve` exits with one of these statuses:
 
-- 0: SIGTERM or SIGINT stopped it. It finishes replies it owes for up to 10 seconds first.
+- 0: SIGTERM or SIGINT stopped it. It accepts no new connections and finishes the open ones first, which their deadlines bound to about 25 seconds.
 - 1: the program has errors, or it could not start (E1409).
 - 2: a mistake in the command.
 - 69: supervision (D308) stopped the service. Five failures within a minute restart it, and three restarts within ten minutes stop it. It stays down until a person fixes the cause and starts it.
 - 70: it died any other way, such as a failed save, a listener failure or a bug in a module constant. Starting it again is safe.
 
 Saved state belongs to one compiled program, and the compiled program records `FILE` as you wrote it. A changed source is E1409, "saved service data is damaged or was written by a different program; recovery refused". `counter.mo` and `./counter.mo` are the same spelling, and the working folder does not matter. An absolute path or `sub/../counter.mo` is a different spelling, so it gets the same refusal. Start a service with the same `FILE` every time.
+
+A process killed during its very first start can leave an empty `service.sqlite`, which E1409 also refuses. An empty `service.sqlite` never held data, so delete it and start again.
 
 ## Work in this loop
 
