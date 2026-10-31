@@ -114,6 +114,19 @@ int main(void) {
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     CHECK(mo_bytecode_assemble(source, strlen(source), &wire, &error));
     struct mo_limits limits = mo_limits_default();
+    {
+        struct mo_load_error load_error;
+        struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+        MO_ASSERT(image != NULL);
+        struct mo_limits tiny = limits;
+        tiny.heap_size = 1;
+        struct mo_defect defect;
+        CHECK(mo_image_init(image, &tiny, &defect) == MO_STOPPED);
+        CHECK(strcmp(defect.reason, "running out of memory") == 0 &&
+              defect.limit_name != NULL && strcmp(defect.limit_name, "--max-heap") == 0 &&
+              defect.memory && defect.process == NULL && mo_image_runtime(image) == NULL);
+        mo_image_free(image);
+    }
     for (unsigned fault = 0; fault < 3; fault++) {
         struct mo_load_error load_error;
         struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);

@@ -35,17 +35,6 @@ struct mo_service_loop {
     bool running;
 };
 
-enum {
-    LOG_TIMER_WIDTH = 1,
-    LOG_HANDLER_WIDTH = 4,
-    LOG_ARRIVAL_WIDTH = 8,
-    LOG_COUNT_WIDTH = 4,
-    LOG_CHECKSUM_WIDTH = 8,
-    LOG_ARGUMENT_LENGTH_WIDTH = 4,
-    MESSAGE_HEADER_BYTES = LOG_TIMER_WIDTH + LOG_HANDLER_WIDTH + LOG_ARRIVAL_WIDTH +
-                           LOG_COUNT_WIDTH + LOG_CHECKSUM_WIDTH
-};
-
 const char *mo_service_status_text(enum mo_service_status status) {
     switch (status) {
     case MO_SERVICE_OK:
