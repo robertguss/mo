@@ -5,11 +5,11 @@
 #include <string.h>
 
 static const char *const function_names[PF_COUNT] = {
-    "Http.scan_headers",      "Http.parse_headers",    "HttpAuthority.check",
-    "HttpPolicy.inspect",     "HttpPolicy.body_plan",  "HttpBody.fixed",
-    "HttpBody.chunked",       "HttpBody.feed",         "Mcp.prepare",
-    "McpTransport.receive",   "McpValue.arguments",    "McpValue.encode",
-    "Mcp.tool_reply",         "McpTransport.fallback", "McpTransport.http",
+    "Http.scan_headers",     "Http.parse_headers",    "HttpAuthority.check",
+    "HttpPolicy.inspect",    "HttpPolicy.body_plan",  "HttpBody.fixed",
+    "HttpBody.chunked",      "HttpBody.feed",         "Mcp.prepare",
+    "McpTransport.receive",  "McpValue.arguments",    "McpValue.encode",
+    "Mcp.tool_reply",        "McpTransport.fallback", "McpTransport.http",
     "McpTransport.http_head"};
 
 static uint64_t deadline(uint64_t now, uint64_t interval) {
