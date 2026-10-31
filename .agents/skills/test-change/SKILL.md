@@ -47,7 +47,7 @@ The code is wrong until shown otherwise. Fix the code to meet the contract. Chan
 
 ## Reading a red gate
 
-Groups run in order: gcc, clang, sanitize, drivers, fuzz, static. Fix the first red one; later failures are often its consequence. Rerun just that group (`bash ci/check.sh sanitize`); in a CI-orb run, read the end of its log.
+Groups run in order: gcc, clang, sanitize, fuzz, drivers, lean, static, cbmc. Fix the first red one; later failures are often its consequence. Rerun just that group (`bash ci/check.sh sanitize`); in a CI-orb run, read the end of its log.
 
 - **gcc or clang**: a warning is an error, and the two compilers warn differently, so build with both.
 - **sanitize**: rerun the single test file under `make sanitize` for the stack trace.
