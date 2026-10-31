@@ -18,6 +18,13 @@ covered log. `host/store.c` implements all three for disk and in-memory SQLite.
 No handler receives the store capability, and no checker signature, Core form
 or bytecode operation exposes it. See [saved state](saved-state.md).
 
+The runtime-only `LISTENEROP` section of `hostops.def` is not a library family
+either. `NOW`, `WAIT`, `ACCEPT`, `READ`, `WRITE`, `AUTH`, `HALF_CLOSE` and `CLOSE`
+are the operations the private MCP server calls on its listener. `host/listener.c`
+implements all eight for real sockets and its fake. No handler receives the listener,
+and it has no Mo type, checker signature, Core form or bytecode operation. See
+[services](services.md).
+
 The `SIMOP` section is VM-handled, not host-dispatched. Those rows carry no
 fixed Mo signature: a checked service/tool selector supplies the types.
 The map prefixes their row IDs with `SIM_` to distinguish this family.
@@ -28,8 +35,10 @@ The library is written in Mo wherever it can be (condition 4 of D207). C
 implements only what Mo can't express or must be fast: arithmetic and
 conversions, text and byte operations, the basic list, map and set
 operations, and the capability operations (architecture section 7). Every
-function that takes a function as a parameter is Mo code in `lib/`, so C never
-calls back into Mo (`bytecode.md` section 6).
+function that takes a function as a parameter is Mo code in `lib/`. The private
+MCP/HTTP stack is different: C calls Mo through `mo_protocol_invoke`, then
+`mo_call`, so Mo can own policy, JSON-RPC and wire values in `runtime/*.mo`
+while C owns sockets, credentials and dispatch (`bytecode.md` section 6).
 
 Two facts settle most of the choices that rule leaves open:
 

@@ -1,16 +1,17 @@
 # Mo Architecture v0.1
 
-**Checked 28 October 2026 against main at
-[`e11b5f1a`](https://github.com/robertguss/mo/commit/e11b5f1a94fa1d3b1cbc995462039ac34370ac06).**
+**Checked 31 October 2026 against main at
+[`84876be0`](https://github.com/robertguss/mo/commit/84876be04812941d59921397f492ee6c947fa733).**
 This describes the `mo` toolchain in C (decision D207): the compiler, the
 virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
 disagree. It also builds on Mo Core (`formal/`) and the bytecode
 specification (`bytecode.md`). The pipeline is integrated; remaining unsupported
-forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) records
-Phase 2 as finished. Service descriptors, the C service loop, SQLite store and
-test Simulation API have landed; `mo run` still does not start a service.
-Section 9 describes later-phase hooks. Section 13 lists open questions.
+forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) lists
+the phases; Phase 2 is finished. Service descriptors, the C service loop, SQLite store,
+test Simulation API and the private MCP/HTTP stack have landed; `mo run` still does not
+start a service and there is no `mo serve`. Section 9 describes later-phase hooks.
+Section 13 lists open questions.
 
 ## 1. The shape of the system
 
@@ -71,13 +72,16 @@ src/heap/      the runtime type table and layouts (types.h); values, cells, heap
                objects, reference counts, and the generic equality, hashing,
                dropping, printing and saved-value encoding walks
 src/prim/      the primitives of prims.def
-src/host/      capabilities, real and fake, and the runtime's service store
+src/host/      capabilities, real and fake, the runtime's service store, and the
+               private MCP listener (listener.c)
 src/vm/        processes, the interpreter, calls and frames, stops, defect reports,
                the in-process service loop (service.c) and the test Simulation
                capability (simulation.c, SIMOP)
 src/tools/     the mo command: check, run, test, format, fix, emit and guide;
-               diagnostics as text and JSON
+               diagnostics as text and JSON; the private protocol server
+               (protocol*.c)
 lib/           the standard library written in Mo (condition 4 of D207)
+runtime/       embedded Mo for the private MCP/HTTP stack (not lib/; no `mo serve`)
 vendor/sqlite/ SQLite, unmodified and pinned (vendor/sqlite/README.md); only
                src/host/store.c includes it, and it allocates through base
 ```
@@ -1032,7 +1036,7 @@ also lower (#186). Env.get/of, Ordering/Entry/Map text conversion and Ordering
 comparison lower and run (#189, MO-116). Qualified `T.to_text` and `T.compare`,
 called or taken as values, lower through the same Text or Order proof as the dot
 form for every type with the ability (#208, D285).
-`docs/status/golden-gaps.md` names the remaining `rules.tsv` gap;
+`docs/status/golden-gaps.md` names the remaining `rules.tsv` gap (11.5/8, E1408);
 `src/lower/expressions.c` owns native dispatch.
 
 Numeric immediates fold unary minus before building Core scalars, including
@@ -1412,7 +1416,8 @@ it is given. It never calls the operating system itself.
   Its C caller supplies borrowed argument/environment values and a directory
   descriptor; construction retains them before that caller releases them.
 - **Fakes** are made by the fake constructors, which only spec code may call:
-  `Console.fake()`, `Files.in_memory(...)` and the rest (reference 12.4). A
+  `Console.fake()`, `Files.in_memory(...)`, `Simulation.start(...)` and the rest
+  (reference 12.4). A
   fake's state is a mutable object shared by every handle on that fake. So a
   file `main` writes can be read back, and two fakes in one test stay
   separate. That state holds only texts, bytes, lists and maps, which change
@@ -1532,7 +1537,9 @@ implements only what Mo can't express or must be fast: arithmetic and
 conversions, text and byte operations, the basic list, map and set
 operations, and the capability operations. Every library function that takes
 a function, from `map` and `filter` to `sort_by` and `group_by`, is Mo code
-in `lib/`. So C never calls back into Mo.
+in `lib/`. The private MCP/HTTP stack is different: C calls Mo through
+`mo_protocol_invoke`, then `mo_call`, so Mo can own policy, JSON-RPC and wire
+values in `runtime/*.mo` while C owns sockets, credentials and dispatch.
 
 ## 8. Running: processes, outcomes and bugs
 
@@ -1643,7 +1650,11 @@ constant stack (reference 5.3); a callee with more registers grows that frame
 ## 9. Hooks for later phases
 
 - **Processes (Phase 3):** one service's loop, mailbox, timers and supervisor
-  live in `src/vm/service.c`, each with its own `mo_process`. A multi-core
+  live in `src/vm/service.c`, each with its own `mo_process`. Specs and tests
+  drive that loop through Simulation (`src/vm/simulation.c`). The private
+  MCP/HTTP stack (`runtime/*.mo`, `src/host/listener.c`, `src/tools/protocol*.c`)
+  connects authenticated clients to an already loaded service; there is no
+  `mo serve`, and `mo run` still refuses a service entry. A multi-core
   scheduler, and messages between processes that copy values or share them
   when deeply immutable, wait for later phases.
 - **Introspection (Phase 4):** debug information maps every instruction to its
@@ -2510,8 +2521,9 @@ local Lean build (`make formal`) and proofs. Robert approves merges. Nightly
 failures are visible in Actions; email delivery depends on the recipient's
 GitHub Actions notification settings, not on the workflow.
 
-The recorded hour-long fuzz runs cover 22 sources and a large-bytecode variant,
-23 runs with no crash (`docs/status/v3-fuzz-log.md`). CBMC covers the reader,
+There are 30 fuzz targets in `fuzz/` (plus a large-bytecode variant of
+`fuzz_bytecode_io`). The recorded hour-long runs in `docs/status/v3-fuzz-log.md`
+cover an earlier 22-source set and that variant, 23 runs with no crash. CBMC covers the reader,
 arena, verifier transfer functions, arithmetic and UTF-8, paths, reference
 count updates and hash probing within the bounds in `cbmc/README.md` (D274).
 These are bounded results, not proofs of the whole VM. One million generated

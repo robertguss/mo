@@ -582,10 +582,19 @@ void lower_data(struct lowering *p, struct data_instance *d) {
     bool choice = type->declaration->kind == MO_S_ENUM;
     d->data.ctors.count = choice ? type->case_count : 1;
     d->data.ctors.items = LOWER_NEW(p, struct mo_core_ctor, d->data.ctors.count);
+    bool *unnamed = NULL;
+    d->shape.is_struct = !choice;
+    if (choice && p->program->service_count != 0) {
+        d->shape.case_count = type->case_count;
+        unnamed = LOWER_NEW(p, bool, type->case_count);
+        d->shape.unnamed = unnamed;
+    }
     for (size_t i = 0; i < d->data.ctors.count; i++) {
         const struct mo_symbol *symbol =
             choice ? &p->program->interfaces->scopes[type->module].symbols[type->cases[i]] : type;
         const struct mo_data_signature *sig = signature(p, symbol);
+        if (unnamed != NULL)
+            unnamed[i] = sig->count == 1 && sig->by_index[0]->name == NULL;
         struct mo_core_ctor *ctor = &d->data.ctors.items[i];
         ctor->name = lower_text(p, symbol->name);
         ctor->fields.count = sig->count;

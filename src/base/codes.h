@@ -130,6 +130,8 @@
     X(102, SERVICE_TOKEN, "11.5")                                                                  \
     X(103, SERVICE_VALUE, "11.5")                                                                  \
     X(104, SERVICE_CAPABILITY, "11.5")                                                             \
+    X(105, SERVICE_HIDDEN_TYPE, "11.5")                                                            \
+    X(106, SERVICE_TOOL_NAME, "11.5")                                                              \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

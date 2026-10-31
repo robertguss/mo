@@ -98,7 +98,16 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
  * A disk path names one service's database, locked exclusively until close.
  * Each handle belongs to at most one live service. Only success writes out. */
 struct mo_store;
-enum mo_store_status { MO_STORE_OK, MO_STORE_IO, MO_STORE_CORRUPT, MO_STORE_LIMIT };
+enum mo_store_status {
+    MO_STORE_OK,
+    MO_STORE_IO,
+    MO_STORE_CORRUPT,
+    MO_STORE_MEMORY,
+    MO_STORE_EMPTY_PATH,
+    MO_STORE_MEMORY_PATH,
+    MO_STORE_HANDLES
+};
+MO_MUST_USE const char *mo_store_status_text(enum mo_store_status status);
 enum mo_store_operation {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only)
 #define STOREOP(id) MO_STORE_##id,
@@ -129,5 +138,118 @@ MO_MUST_USE enum mo_store_status
 mo_store_call(struct mo_store *store, enum mo_store_operation operation,
               const struct mo_store_record *record,
               bool (*consume)(const struct mo_store_record *record, void *context), void *context);
+
+struct mo_bearer {
+    uint8_t bytes[MO_LIMIT_MCP_TOKEN_BYTES];
+    size_t length;
+};
+MO_MUST_USE bool mo_bearer_read(struct mo_bearer *out, const char *environment);
+MO_MUST_USE bool mo_bearer_check(const struct mo_bearer *bearer, const uint8_t *bytes,
+                                 size_t length);
+void mo_host_wipe(void *bytes, size_t length);
+
+struct mo_listener;
+enum mo_listener_status {
+    MO_LISTENER_OK,
+    MO_LISTENER_AGAIN,
+    MO_LISTENER_EOF,
+    MO_LISTENER_IO,
+    MO_LISTENER_MEMORY,
+    MO_LISTENER_FULL,
+    MO_LISTENER_STALE,
+    MO_LISTENER_CONFIG,
+    MO_LISTENER_CREDENTIAL
+};
+enum mo_listener_operation {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only)
+#define LISTENEROP(id) MO_LISTENER_##id,
+#include "base/hostops.def"
+};
+struct mo_listener_config {
+    const char *address;
+    uint16_t port;
+    bool expose;
+};
+struct mo_listener_key {
+    uint64_t cookie, generation;
+    size_t slot;
+};
+struct mo_listener_time {
+    uint64_t monotonic_us;
+    int64_t wall_us;
+};
+enum mo_listener_event {
+    MO_LISTENER_READABLE = 1,
+    MO_LISTENER_WRITABLE = 2,
+    MO_LISTENER_ERROR = 4
+};
+struct mo_listener_interest {
+    struct mo_listener_key connection;
+    unsigned events;
+};
+struct mo_listener_wait {
+    uint64_t until_us;
+    bool accept;
+    size_t count;
+    struct mo_listener_interest interests[MO_LIMIT_MCP_CONNECTIONS];
+};
+struct mo_listener_read {
+    struct mo_listener_key connection;
+    uint8_t *bytes;
+    size_t capacity;
+};
+struct mo_listener_write {
+    struct mo_listener_key connection;
+    const uint8_t *bytes;
+    size_t size;
+};
+struct mo_listener_auth {
+    const uint8_t *bytes;
+    size_t size, start, length;
+};
+union mo_listener_request {
+    struct mo_listener_wait wait;
+    struct mo_listener_read read;
+    struct mo_listener_write write;
+    struct mo_listener_auth auth;
+    struct mo_listener_key connection;
+};
+struct mo_listener_ready {
+    struct mo_listener_time now;
+    bool accept;
+    unsigned events[MO_LIMIT_MCP_CONNECTIONS];
+};
+union mo_listener_result {
+    struct mo_listener_time now;
+    struct mo_listener_ready wait;
+    struct mo_listener_key accepted;
+    size_t transferred;
+    bool authenticated;
+};
+struct mo_listener_fake_peer {
+    const uint8_t *input;
+    size_t input_size, input_offset;
+    uint8_t *output;
+    size_t output_capacity, output_size;
+    size_t read_quantum, write_quantum;
+    bool readable, writable, eof, read_error, write_error;
+    bool closed, half_closed;
+};
+MO_MUST_USE const char *mo_listener_status_text(enum mo_listener_status status);
+MO_MUST_USE enum mo_listener_status mo_listener_open(const struct mo_listener_config *config,
+                                                     const char *environment,
+                                                     struct mo_listener **out);
+MO_MUST_USE enum mo_listener_status mo_listener_fake(const char *environment,
+                                                     struct mo_listener **out);
+void mo_listener_close(struct mo_listener *listener);
+MO_MUST_USE uint16_t mo_listener_port(const struct mo_listener *listener);
+MO_MUST_USE enum mo_listener_status mo_listener_call(struct mo_listener *listener,
+                                                     enum mo_listener_operation operation,
+                                                     const union mo_listener_request *request,
+                                                     union mo_listener_result *out);
+MO_MUST_USE enum mo_listener_status mo_listener_fake_connect(struct mo_listener *listener,
+                                                             struct mo_listener_fake_peer *peer);
+MO_MUST_USE enum mo_listener_status mo_listener_fake_advance(struct mo_listener *listener,
+                                                             uint64_t microseconds);
 
 #endif

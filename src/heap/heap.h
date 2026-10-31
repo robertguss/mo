@@ -86,8 +86,13 @@ MO_MUST_USE struct mo_heap *mo_heap_image_constants(struct mo_heap_image *image)
 MO_MUST_USE struct mo_heap *mo_heap_new(struct mo_heap_image *image,
                                         const struct mo_limits *limits);
 void mo_heap_free(struct mo_heap *process);
+void mo_heap_confidential(struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_used(const struct mo_heap *process);
+MO_MUST_USE size_t mo_heap_peak(const struct mo_heap *process);
+MO_MUST_USE size_t mo_heap_scratch_peak(const struct mo_heap *process);
 MO_MUST_USE size_t mo_heap_objects(const struct mo_heap *process);
+MO_MUST_USE size_t mo_heap_limit(const struct mo_heap *process);
+void mo_heap_set_limit(struct mo_heap *process, size_t limit);
 
 /* Temporary native operands and walk storage share the heap's remaining
  * budget, including concurrent scratch arenas. Free before ending the heap. */
@@ -240,6 +245,9 @@ MO_MUST_USE bool mo_value_bigint(struct mo_heap *process, enum mo_bigint_sign si
 MO_MUST_USE bool mo_value_construct(struct mo_heap *process, uint32_t layout,
                                     const struct mo_cell *fields, uint32_t count,
                                     struct mo_cell *out);
+MO_MUST_USE bool mo_value_product(struct mo_heap *process, uint32_t type,
+                                  const struct mo_cell *fields, uint32_t count,
+                                  struct mo_cell *out);
 MO_MUST_USE bool mo_value_case(struct mo_heap *process, uint32_t type, uint32_t tag,
                                const struct mo_cell *fields, uint32_t count, struct mo_cell *out);
 MO_MUST_USE bool mo_value_list(struct mo_heap *process, uint32_t type,

@@ -31,6 +31,11 @@ MO_MUST_USE struct mo_module_set *mo_load_program(struct mo_arena *arena,
                                                   struct mo_sources *sources, const char *entry,
                                                   const char *library, struct mo_diags *diags);
 
+MO_MUST_USE struct mo_module_set *mo_load_program_sources(struct mo_arena *arena,
+                                                          struct mo_sources *sources,
+                                                          const bool *library,
+                                                          struct mo_diags *diags);
+
 struct mo_symbol {
     const char *name;
     const struct mo_syntax *declaration;

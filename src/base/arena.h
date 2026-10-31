@@ -10,6 +10,7 @@
 #ifndef MO_ARENA_H
 #define MO_ARENA_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "base/base.h"
@@ -37,11 +38,13 @@ struct mo_arena {
     size_t used;                  /* bytes taken from the system, chunk headers included */
     size_t limit;                 /* the most bytes it may take */
     size_t next_chunk_size;       /* the size of the next chunk, unless a request needs more */
+    bool confidential;
 };
 
 /* Prepares an empty arena that may take up to limit bytes from the system. It takes nothing yet,
  * so it can't fail. */
 void mo_arena_init(struct mo_arena *arena, size_t limit);
+void mo_arena_init_confidential(struct mo_arena *arena, size_t limit);
 
 /* Frees everything the arena handed out, at once. The arena is then empty, with the same limit,
  * and can be used again. */

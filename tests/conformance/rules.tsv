@@ -148,10 +148,12 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.5/1	service-read-only	e1408			ci/check_cli.py:service_commands
 11.5/2	service-read-only				tests/test_syntax.c:services,tests/test_program.c:service_rules
 11.5/3	service-read-only	e0099,e0099-duplicate-handler			ci/check_cli.py:service_refusals,tests/test_program.c:service_rules,Makefile:grammar
-11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function		mo run of a service entry is still E1408	ci/check_cli.py:service_refusals,tests/test_program.c:service_handlers
-11.5/5	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state			ci/check_cli.py:service_commands,tests/test_program.c:service_handlers,tests/test_fix.c:service_fixes,tests/test_service_store.c:run
-11.5/6	service-read-only	e0103-interval			ci/check_cli.py:service_refusals,tests/test_program.c:service_inputs,tests/test_service_runtime.c:timers
-11.5/7	service-read-only	e0102,e1408			ci/check_cli.py:service_commands,ci/check_cli.py:service_refusals,ci/check_cli.py:guide_claims
+11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function			ci/check_cli.py:service_refusals,tests/test_program.c:service_handlers
+11.5/5	service-read-only	e0105,e0105-nested,e0105-update,e0105-result-update,e0106,e0101-predicate			ci/check_errors.py:check_cases
+11.5/6	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state			ci/check_cli.py:service_commands,tests/test_program.c:service_handlers,tests/test_fix.c:service_fixes,tests/test_service_store.c:run
+11.5/7	service-read-only	e0103-interval			ci/check_cli.py:service_refusals,tests/test_program.c:service_inputs,tests/test_service_runtime.c:timers
+11.5/8	service-read-only	e0102,e1408		mo run of a service entry is still E1408	ci/check_cli.py:service_commands,ci/check_cli.py:service_refusals,ci/check_cli.py:guide_claims
+11.5/9					tests/test_protocol_server.c:wire,tests/test_protocol_server.c:response_limit,tests/test_protocol_server.c:small_body_reads,tests/test_protocol_server.c:rejection_paths,tests/test_protocol_server.c:result_updates,tests/test_protocol_server_faults.c:exhausted_fallback,tests/test_protocol_server_faults.c:store_failure,tests/test_protocol_server_faults.c:preauth_failure,tests/test_protocol_server_faults.c:poll_failures,tests/test_protocol_bounds.c:header_bytes,tests/test_protocol_bounds.c:header_fields,tests/test_protocol_bounds.c:body_ceiling,tests/test_protocol_bounds.c:chunk_ceilings,tests/test_protocol_bounds.c:response_ceiling,tests/test_protocol_composites.c:output_nodes,tests/test_listener.c:real_io,tests/test_listener_faults.c:retry_accept,tests/test_lower.c:test_embedded_protocol
 12/1	tst-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
 12.1/1	tst-passing	tst-failing-example		
 12.2/1	tst-promise-holds	e0015		

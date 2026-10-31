@@ -1,6 +1,7 @@
 #include "codegen/codegen.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "base/capabilities.h"
@@ -69,6 +70,7 @@ struct join {
     uint32_t offset, checkpoint;
     struct live_set live;
     bool *used;
+    bool reachable; /* generate will emit at least one jump to this continuation. */
 };
 struct function {
     struct vector regs, code, spans, names, captures, joins, changes;
@@ -89,7 +91,7 @@ struct compiler {
     const struct mo_services *services;
     struct mo_arena arena;
     struct mo_types types;
-    struct vector strings, constants, modules, constructors, ownership, edges, constraints;
+    struct vector strings, constants, modules, constructors, ownership, edges, constraints, shapes;
     struct mo_codegen_index *string_index, *constant_index, *data_index, *fun_index, *global_index,
         *module_index, *builtin_index, *annotation_index, *operation_index;
     struct mo_codegen_index *bigint_index[2];
@@ -155,6 +157,25 @@ static MO_MUST_USE void *append(struct compiler *c, struct vector *v, uint32_t n
     void *p = (uint8_t *)v->items + (size_t)v->count * v->width;
     v->count = required;
     return p;
+}
+static MO_MUST_USE bool service_shape(struct compiler *c, uint32_t type,
+                                      const struct mo_service_shape *source) {
+    if (c->services == NULL || c->services->count == 0)
+        return true;
+    struct mo_bytecode_service_shape *shape =
+        append(c, &c->shapes, 1, MO_LIMIT_TYPES, MO_CODE_BYTECODE_TOO_BIG);
+    if (shape == NULL)
+        return false;
+    bool *unnamed = NULL;
+    if (source->case_count != 0) {
+        unnamed = allocate(c, source->case_count, sizeof *unnamed);
+        if (unnamed == NULL)
+            return false;
+        memcpy(unnamed, source->unnamed, source->case_count * sizeof *unnamed);
+    }
+    *shape =
+        (struct mo_bytecode_service_shape){type, source->is_struct, source->case_count, unnamed};
+    return true;
 }
 static MO_MUST_USE mo_core_string text(const char *s) {
     return (mo_core_string){s, strlen(s)};
@@ -454,7 +475,11 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             }
         }
         status = mo_types_define_choice(&c->types, id, cases, n);
+        const bool unnamed[] = {cases[0].unnamed, cases[1].unnamed, cases[2].unnamed,
+                                cases[3].unnamed};
         if (type_result(c, status, id) == MO_NO_INDEX ||
+            !service_shape(c, id,
+                           &(struct mo_service_shape){.case_count = n, .unnamed = unnamed}) ||
             index_add(c, &c->builtin_index, bytes, id, true) == NULL)
             return MO_NO_INDEX;
         return id;
@@ -529,6 +554,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         const struct mo_type_field fields[] = {{"name", text_type}, {"kind", kind_type}};
         status = mo_types_define_record(&c->types, id, fields, 2);
         if (type_result(c, status, id) == MO_NO_INDEX ||
+            !service_shape(c, id, &(struct mo_service_shape){.is_struct = true}) ||
             index_add(c, &c->builtin_index, bytes, id, true) == NULL)
             return MO_NO_INDEX;
         return id;
@@ -2464,6 +2490,39 @@ static MO_MUST_USE bool uncons(struct compiler *c, struct function *f, struct no
     owner_remove(f, list);
     return state(c, f, list, REF_MOVED) && merged(c, f, n->reg) && drop(c, f, first, n->span);
 }
+/* Jumps only target enclosing joins. Visit the rest before the continuation body so
+ * jumps in unreachable bodies cannot make an enclosing continuation reachable.
+ * Return whether evaluation falls through to the next expression. Tail returns
+ * need no special handling: their enclosing expression has no next operand. */
+static MO_MUST_USE bool reachable_walk(struct function *f, const struct node *n, unsigned depth) {
+    MO_ASSERT(depth < MO_LIMIT_CORE_DEPTH);
+    if (n->core->tag == MO_CORE_EXPR_JOIN) {
+        bool live = reachable_walk(f, n->children[1], depth + 1);
+        if (((struct join *)f->joins.items)[n->index].reachable)
+            live |= reachable_walk(f, n->children[0], depth + 1);
+        return live;
+    }
+    if (n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE) {
+        if (!reachable_walk(f, n->children[0], depth + 1))
+            return false;
+        bool live = false;
+        /* CASE arm wrappers copy the body's tag, but hold only the body as a child. */
+        for (uint32_t i = 1; i < n->count; i++) {
+            const struct node *arm = n->children[i];
+            live |= reachable_walk(f, n->core->tag == MO_CORE_EXPR_CASE ? arm->children[0] : arm,
+                                   depth + 1);
+        }
+        return live;
+    }
+    for (uint32_t i = 0; i < n->count; i++)
+        if (!reachable_walk(f, n->children[i], depth + 1))
+            return false;
+    if (n->core->tag == MO_CORE_EXPR_JUMP) {
+        ((struct join *)f->joins.items)[n->index].reachable = true;
+        return false;
+    }
+    return n->core->tag != MO_CORE_EXPR_FAIL && n->core->tag != MO_CORE_EXPR_STOP;
+}
 /* false through *live means a terminal path, not a compiler refusal. */
 static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct node *n, bool tail,
                                  unsigned depth, bool *live) {
@@ -2853,11 +2912,14 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                     return false;
             }
         uint32_t start = f->code.count;
-        if (!generate(c, f, n->children[0], tail, depth + 1, live))
+        /* An exhaustive terminal rest can leave a continuation with no incoming jump.
+         * Its body has no valid reference state and must not be generated. */
+        bool reachable = joins[n->index].reachable;
+        if (reachable && !generate(c, f, n->children[0], tail, depth + 1, live))
             return false;
         uint32_t exit = MO_NO_INDEX;
-        bool any = *live;
-        if (*live) {
+        bool any = reachable && *live;
+        if (any) {
             bool owned = ((struct ownership *)c->ownership.items)[flow_id(f, n->reg)].owned;
             if (!copy(c, f, n->reg, n->children[0]->reg, owned, n->span, n->last[0]) ||
                 !normalize(c, f, checkpoint, n->reg, n->span, &n->after))
@@ -2916,6 +2978,7 @@ static MO_MUST_USE bool generate(struct compiler *c, struct function *f, struct 
                     return false;
             }
         }
+        MO_ASSERT(target->reachable);
         if (emit(c, f, n->span, MO_OP_JUMP, &target->offset, 1, NULL, 0) == MO_NO_INDEX)
             return false;
         *live = false;
@@ -3030,6 +3093,8 @@ static MO_MUST_USE bool count_lambdas(struct compiler *c, mo_core_expr e, unsign
 }
 static MO_MUST_USE bool declarations(struct compiler *c) {
     const struct mo_core *p = c->core;
+    if (c->services != NULL && c->services->count != 0 && c->services->data_count != p->data.count)
+        return problem(c, MO_CODE_CODEGEN_INVALID, "Service shapes differ from Core data table.");
     if (p->funs.count > MO_LIMIT_FUNCTIONS ||
         p->consts.count > (MO_LIMIT_FUNCTIONS - p->funs.count) / 2 ||
         p->consts.count > MO_LIMIT_GLOBALS || p->data.count > MO_LIMIT_TYPES)
@@ -3073,6 +3138,9 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
         enum mo_type_problem status = mo_types_declare(&c->types, MO_TYPE_CHOICE, n, &c->data[i]);
         if (type_result(c, status, c->data[i]) == MO_NO_INDEX ||
             index_add(c, &c->data_index, p->data.items[i].name, c->data[i], false) == NULL)
+            return false;
+        if (c->services != NULL && c->services->count != 0 &&
+            !service_shape(c, c->data[i], &c->services->data_shapes[i]))
             return false;
     }
     for (size_t i = 0; i < p->data.count; i++) {
@@ -3457,6 +3525,36 @@ static MO_MUST_USE bool initializer(struct compiler *c, struct function *f, uint
            emit(c, f, c->declaration, MO_OP_CONST, result, 2, NULL, 0) != MO_NO_INDEX &&
            emit(c, f, c->declaration, MO_OP_RET, &unit, 1, NULL, 0) != MO_NO_INDEX;
 }
+static MO_MUST_USE bool service_shapes(struct compiler *c, struct mo_bytecode_service *services,
+                                       const struct mo_bytecode *file) {
+    const struct mo_bytecode_service_shape **by_type = allocate(c, c->types.count, sizeof *by_type);
+    if (by_type == NULL)
+        return false;
+    memset(by_type, 0, c->types.count * sizeof *by_type);
+    const struct mo_bytecode_service_shape *known = c->shapes.items;
+    for (uint32_t i = 0; i < c->shapes.count; i++) {
+        MO_ASSERT(known[i].type < c->types.count && by_type[known[i].type] == NULL);
+        by_type[known[i].type] = &known[i];
+    }
+    struct mo_bytecode_service_reach *reach;
+    if (!mo_bytecode_service_reach(&c->arena, file, &reach))
+        return problem(c, MO_CODE_CODEGEN_MEMORY,
+                       "Code generation exhausted its scratch limit or memory.");
+    for (uint32_t i = 0; i < file->service_count; i++) {
+        struct mo_bytecode_service *s = &services[i];
+        s->shape_count = reach[i].count;
+        struct mo_bytecode_service_shape *shapes = allocate(c, s->shape_count, sizeof *shapes);
+        if (shapes == NULL)
+            return false;
+        s->shapes = shapes;
+        for (uint32_t j = 0; j < s->shape_count; j++) {
+            uint32_t type = reach[i].types[j];
+            MO_ASSERT(by_type[type] != NULL);
+            shapes[j] = *by_type[type];
+        }
+    }
+    return true;
+}
 static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_bytecode *file) {
     if (c->services == NULL || c->services->count == 0)
         return true;
@@ -3525,7 +3623,7 @@ static MO_MUST_USE bool service_descriptors(struct compiler *c, struct mo_byteco
     }
     file->string_count = c->strings.count;
     file->strings = c->strings.items;
-    return c->error == 0;
+    return c->error == 0 && service_shapes(c, items, file);
 }
 
 static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
@@ -3569,7 +3667,7 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
             if (!initializer(c, f, i))
                 return false;
         } else {
-            bool live;
+            bool live = reachable_walk(f, f->body, 0);
             if (!generate(c, f, f->body, true, 0, &live))
                 return false;
             MO_ASSERT(!live);
@@ -3714,6 +3812,7 @@ bool mo_compile_services(const struct mo_core *core, const struct mo_services *s
     c.ownership.width = sizeof(struct ownership);
     c.edges.width = sizeof(struct edge);
     c.constraints.width = sizeof(struct constraint);
+    c.shapes.width = sizeof(struct mo_bytecode_service_shape);
     bool ok = declarations(&c) && globals(&c) && bodies(&c) && entry_valid(&c) &&
               abilities_valid(&c) && borrow_infer(&c) && output(&c, out);
     if (!ok) {

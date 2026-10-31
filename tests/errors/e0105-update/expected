@@ -1,0 +1,7 @@
+error E0105: a service tool uses a hidden type  tests/errors/e0105-update/main.mo:5:35
+
+  5 |   tools read, update, try_update, snapshot
+    |                                   ^^^^^^^^ a service tool uses a hidden type
+
+A service tool cannot accept or return a type whose fields or cases are hidden from this module. Expose the type with (..) or use a public type (reference 11.5).
+

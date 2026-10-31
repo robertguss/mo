@@ -44,7 +44,20 @@ const char *mo_vm_reserve(struct mo_process *process, size_t needed, uint32_t de
     }
     if (capacity > process->limits.stack_size)
         capacity = process->limits.stack_size;
-    void *stack = realloc(process->stack, capacity);
+    void *stack;
+    if (process->budget_stack.process != NULL) {
+        stack =
+            mo_scratch_resize(&process->budget_stack, process->stack, process->capacity, capacity);
+        if (stack == NULL)
+            return errno == ENOSPC ? "--max-heap" : "native memory";
+    } else if (process->confidential) {
+        errno = ENOSPC;
+        stack = mo_arena_resize(&process->confidential_stack, process->stack, process->capacity,
+                                capacity, _Alignof(struct mo_vm_frame));
+        if (stack == NULL)
+            return errno == ENOSPC ? "--max-stack" : "native memory";
+    } else
+        stack = realloc(process->stack, capacity);
     if (stack == NULL)
         return "native memory";
     process->stack = stack;
@@ -127,8 +140,37 @@ struct mo_process *mo_process_new(const struct mo_image *image, const struct mo_
     return process;
 }
 
+void mo_process_confidential(struct mo_process *process) {
+    MO_ASSERT(process != NULL && process->owns_heap && process->capacity == 0 &&
+              !process->terminal);
+    process->confidential = true;
+    mo_arena_init_confidential(&process->confidential_stack, process->limits.stack_size);
+    mo_heap_confidential(process->heap);
+}
+
+void mo_process_account_stack(struct mo_process *process) {
+    MO_ASSERT(process != NULL && process->confidential && process->capacity == 0 &&
+              !process->terminal && process->budget_stack.process == NULL);
+    mo_scratch_init(&process->budget_stack, process->heap);
+}
+
+size_t mo_process_memory_used(const struct mo_process *process) {
+    MO_ASSERT(process != NULL && process->budget_stack.process != NULL);
+    return sizeof *process + mo_heap_used(process->heap);
+}
+
+size_t mo_process_memory_peak(const struct mo_process *process) {
+    MO_ASSERT(process != NULL && process->budget_stack.process != NULL);
+    return sizeof *process + mo_heap_peak(process->heap);
+}
+
 void mo_vm_dispose(struct mo_process *process) {
-    free(process->stack);
+    if (process->budget_stack.process != NULL)
+        mo_scratch_free(&process->budget_stack);
+    else if (process->confidential)
+        mo_arena_free(&process->confidential_stack);
+    else
+        free(process->stack);
     if (process->owns_heap)
         mo_heap_free(process->heap);
 }
@@ -136,6 +178,8 @@ void mo_vm_dispose(struct mo_process *process) {
 void mo_process_free(struct mo_process *process) {
     if (process != NULL) {
         mo_vm_dispose(process);
+        if (process->confidential)
+            mo_host_wipe(process, sizeof *process);
         free(process);
     }
 }
@@ -159,6 +203,11 @@ void mo_process_instruction_limit(struct mo_process *process, uint64_t instructi
     MO_ASSERT(process != NULL && !process->terminal && process->depth == 0);
     process->bounded = true;
     process->instructions = instructions;
+}
+
+uint64_t mo_process_instructions_remaining(const struct mo_process *process) {
+    MO_ASSERT(process != NULL && process->bounded);
+    return process->instructions;
 }
 
 /* No frame owns these transferred arguments yet. */

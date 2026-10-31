@@ -390,7 +390,7 @@ bool mo_bytecode_assemble(const char *text, size_t length, struct mo_buffer *out
     mo_text_next(&r);
     bool ok = (r.token.kind != 'n' || mo_text_end_line(&r)) &&
               mo_text_take(&r, "bytecode", "expected bytecode header") &&
-              mo_text_take(&r, "0.2", "expected bytecode version 0.2");
+              mo_text_take(&r, "0.3", "expected bytecode version 0.3");
     if (ok) {
         r.shorthand = mo_text_is(&r, "shorthand");
         ok = mo_text_take(&r, r.shorthand ? "shorthand" : "indexed",

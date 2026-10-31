@@ -42,13 +42,16 @@ missing() {
 	skipped+=("$1")
 }
 has_libfuzzer() {
-	local dir
+	local dir err
 	dir=$(mktemp -d)
 	printf 'int LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n);\nint LLVMFuzzerTestOneInput(const unsigned char *d, unsigned long n) { (void)d; (void)n; return 0; }\n' >"$dir/probe.c"
-	local ok=1
-	clang -fsanitize=fuzzer "$dir/probe.c" -o "$dir/probe" >/dev/null 2>&1 || ok=0
+	if ! err=$(clang -fsanitize=fuzzer "$dir/probe.c" -o "$dir/probe" 2>&1); then
+		printf '%s\n' "$err" >&2
+		rm -rf "$dir"
+		return 1
+	fi
 	rm -rf "$dir"
-	((ok == 1))
+	return 0
 }
 
 # Checks that don't depend on each other run side by side, as many at a time as there are
@@ -277,10 +280,12 @@ fi
 
 if want fuzz; then
 step "Fuzz every target briefly"
-if have clang && has_libfuzzer; then
+if ! have clang; then
+	missing "clang with libFuzzer is not installed"
+elif has_libfuzzer; then
 	make --no-print-directory fuzz-smoke
 else
-	missing "clang with libFuzzer is not installed"
+	missing "clang -fsanitize=fuzzer failed (compiler output above)"
 fi
 fi
 

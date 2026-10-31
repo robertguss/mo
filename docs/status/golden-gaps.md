@@ -15,7 +15,7 @@ calls and as values, have `ref-qualified-abilities` (D285). Their former unsuppo
 not be retained as language limitations. Invalid UTF-8 on standard input gives one U+FFFD per
 maximal invalid subpart, as reference 14 now says (D291), and `cap-console-stdin-invalid` pins
 inputs where that differs from one U+FFFD per run. One `rules.tsv` gap remains:
-11.5/4 (`mo run` of a service entry is still E1408, a CLI gap).
+11.5/8 (`mo run` of a service entry is still E1408, a CLI gap).
 
 ## Other
 

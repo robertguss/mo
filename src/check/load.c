@@ -33,6 +33,7 @@ struct loader {
     const char *real_library;
     const char *real_entry; /* the entry's real path when the entry is a library file */
     uint32_t index;         /* AVL root, one-based; zero is absent */
+    bool memory_only;
     bool failed;
 };
 
@@ -254,29 +255,8 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
     return 0;
 }
 
-static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
-                                        const char *expected, struct mo_span origin, bool library) {
-    if (expected != NULL || library) {
-        const char *root = library ? l->real_library : l->real_root;
-        MO_ASSERT(root != NULL);
-        char *real = real_path(l, file_path, origin, false);
-        if (real == NULL)
-            return 0;
-        size_t n = strlen(root);
-        if (strncmp(root, real, n) != 0 || (n != 1 && real[n] != '/')) {
-            bool kept = report(l, MO_CODE_MODULE_OUTSIDE_ROOT, origin,
-                               "a module's file is outside its root folder", NULL, file_path);
-            (void)kept;
-            return 0;
-        }
-    }
-    uint32_t file;
-    struct mo_source_error error;
-    if (!mo_sources_add(l->sources, file_path, &file, &error)) {
-        bool kept = source_error(l, error, file_path, origin);
-        (void)kept;
-        return 0;
-    }
+static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const char *expected,
+                                         struct mo_span origin, bool library) {
     struct mo_header header;
     uint32_t before = l->diags->count;
     if (!mo_read_header(l->arena, l->sources, file, &header, l->diags) ||
@@ -324,6 +304,33 @@ static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
         return 0;
     l->index = insert(l, l->index, id);
     return id;
+}
+
+static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
+                                        const char *expected, struct mo_span origin, bool library) {
+    MO_ASSERT(!l->memory_only);
+    if (expected != NULL || library) {
+        const char *root = library ? l->real_library : l->real_root;
+        MO_ASSERT(root != NULL);
+        char *real = real_path(l, file_path, origin, false);
+        if (real == NULL)
+            return 0;
+        size_t n = strlen(root);
+        if (strncmp(root, real, n) != 0 || (n != 1 && real[n] != '/')) {
+            bool kept = report(l, MO_CODE_MODULE_OUTSIDE_ROOT, origin,
+                               "a module's file is outside its root folder", NULL, file_path);
+            (void)kept;
+            return 0;
+        }
+    }
+    uint32_t file;
+    struct mo_source_error error;
+    if (!mo_sources_add(l->sources, file_path, &file, &error)) {
+        bool kept = source_error(l, error, file_path, origin);
+        (void)kept;
+        return 0;
+    }
+    return index_module(l, file, expected, origin, library);
 }
 
 static MO_MUST_USE char *join(struct loader *l, const char *root, const char *relative,
@@ -504,6 +511,13 @@ static MO_MUST_USE bool graph(struct loader *l) {
             if (name == NULL)
                 return false;
             uint32_t target = find(l, name);
+            if (l->memory_only &&
+                (target == 0 || (l->out->library[frame->id - 1] && !l->out->library[target - 1]))) {
+                bool kept = source_error(
+                    l, (struct mo_source_error){.problem = MO_SOURCE_UNREADABLE}, name, path->span);
+                (void)kept;
+                return false;
+            }
             if (l->out->library[frame->id - 1] && (target == 0 || !l->out->library[target - 1])) {
                 char *relative = path_text(l, path, true);
                 char *prefix = join(l, l->real_library, "/", path->span);
@@ -572,24 +586,41 @@ static MO_MUST_USE bool graph(struct loader *l) {
     return true;
 }
 
+static MO_MUST_USE bool prepare(struct loader *l) {
+    l->out = allocate(l, 1, sizeof(*l->out), _Alignof(struct mo_module_set));
+    if (l->out == NULL)
+        return false;
+    *l->out = (struct mo_module_set){.sources = l->sources};
+    l->items = allocate(l, MO_LIMIT_FILES, sizeof(*l->items), _Alignof(struct loaded));
+    l->out->modules =
+        allocate(l, MO_LIMIT_FILES, sizeof(*l->out->modules), _Alignof(struct mo_module_syntax *));
+    l->out->order = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->order), _Alignof(uint32_t));
+    l->out->names = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->names), _Alignof(const char *));
+    l->out->library = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->library), _Alignof(bool));
+    l->out->uses = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->uses), _Alignof(uint32_t *));
+    return !l->failed;
+}
+
+static MO_MUST_USE struct mo_module_set *parse_modules(struct loader *l) {
+    if (!graph(l))
+        return NULL;
+    uint32_t before = l->diags->count;
+    for (uint32_t i = 0; i < l->out->count; i++) {
+        l->out->modules[i] = mo_parse(l->arena, l->sources, l->items[i].file, l->diags);
+        if (l->out->modules[i] == NULL)
+            return NULL;
+    }
+    mo_diags_sort(l->diags);
+    return l->diags->count == before && l->diags->dropped == 0 ? l->out : NULL;
+}
+
 static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_sources *sources,
                                               const char *entry, const char *library,
                                               struct mo_diags *diags) {
     MO_ASSERT(arena != NULL && sources != NULL && entry != NULL && diags != NULL);
     MO_ASSERT(sources->count == 0);
     struct loader l = {.arena = arena, .sources = sources, .diags = diags};
-    l.out = allocate(&l, 1, sizeof(*l.out), _Alignof(struct mo_module_set));
-    if (l.out == NULL)
-        return NULL;
-    *l.out = (struct mo_module_set){.sources = sources};
-    l.items = allocate(&l, MO_LIMIT_FILES, sizeof(*l.items), _Alignof(struct loaded));
-    l.out->modules =
-        allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->modules), _Alignof(struct mo_module_syntax *));
-    l.out->order = allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->order), _Alignof(uint32_t));
-    l.out->names = allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->names), _Alignof(const char *));
-    l.out->library = allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->library), _Alignof(bool));
-    l.out->uses = allocate(&l, MO_LIMIT_FILES, sizeof(*l.out->uses), _Alignof(uint32_t *));
-    if (l.failed)
+    if (!prepare(&l))
         return NULL;
     entry = normal_path(&l, entry);
     if (entry == NULL)
@@ -638,22 +669,33 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
         return NULL;
     if (library != NULL && !library_files(&l, library))
         return NULL;
-    if (!graph(&l))
-        return NULL;
-    uint32_t before = diags->count;
-    for (uint32_t i = 0; i < l.out->count; i++) {
-        l.out->modules[i] = mo_parse(arena, sources, l.items[i].file, diags);
-        if (l.out->modules[i] == NULL)
-            return NULL;
-    }
-    mo_diags_sort(diags);
-    return diags->count == before && diags->dropped == 0 ? l.out : NULL;
+    return parse_modules(&l);
 }
 
 struct mo_module_set *mo_load_program(struct mo_arena *arena, struct mo_sources *sources,
                                       const char *entry, const char *library,
                                       struct mo_diags *diags) {
     struct mo_module_set *set = load(arena, sources, entry, library, diags);
+    mo_diags_sort(diags);
+    return set;
+}
+
+struct mo_module_set *mo_load_program_sources(struct mo_arena *arena, struct mo_sources *sources,
+                                              const bool *library, struct mo_diags *diags) {
+    MO_ASSERT(arena != NULL && sources != NULL && diags != NULL);
+    MO_ASSERT(sources->count != 0 && sources->count <= MO_LIMIT_FILES);
+    struct loader l = {.arena = arena, .sources = sources, .diags = diags, .memory_only = true};
+    struct mo_module_set *set = NULL;
+    if (!prepare(&l))
+        goto done;
+    l.out->root = "";
+    for (uint32_t i = 0; i < sources->count; i++) {
+        if (index_module(&l, i, NULL, (struct mo_span){UINT32_MAX, 0, 0},
+                         library != NULL && library[i]) == 0)
+            goto done;
+    }
+    set = parse_modules(&l);
+done:
     mo_diags_sort(diags);
     return set;
 }

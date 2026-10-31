@@ -1445,7 +1445,7 @@ static MO_MUST_USE bool keep_running(void *context) {
 
 static void test_controlled_entry(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.accept]\n"
+        assemble("bytecode 0.3 shorthand\nmodule M exposes [M.accept]\n"
                  "function M.accept(x: Text owned, y: Text borrowed) : Text function in M\n"
                  " registers [r2: Text]\n drop r0\n dup r2, r1\n ret r2\nend\n");
     if (image == NULL)
@@ -1505,7 +1505,7 @@ static MO_MUST_USE enum mo_controlled_outcome controlled_return(struct mo_proces
 
 static void test_controlled_return(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.accept]\n"
+        assemble("bytecode 0.3 shorthand\nmodule M exposes [M.accept]\n"
                  "function M.accept(x: Text owned, y: Text borrowed) : Text function in M\n"
                  " registers [r2: Text]\n drop r0\n dup r2, r1\n ret r2\nend\n");
     if (image == NULL)
@@ -1560,15 +1560,15 @@ static void test_controlled_return(void) {
 
 static void test_controlled_loops(void) {
     const char *const sources[] = {
-        "bytecode 0.2 shorthand\nmodule M exposes [M.loop]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.loop]\n"
         "function M.loop(x: Text owned, y: Text borrowed) : Unit function in M\n"
         " registers []\n drop r0\n @loop:\n jump @loop\nend\n",
-        "bytecode 0.2 shorthand\nmodule M exposes [M.outer]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.outer]\n"
         "function M.outer(x: Text owned, y: Text borrowed) : Unit function in M\n"
         " registers [r2: Unit]\n call r2, M.loop, r0, r1\n ret r2\nend\n"
         "function M.loop(x: Text owned, y: Text borrowed) : Unit function in M\n"
         " registers []\n drop r0\n @loop:\n jump @loop\nend\n",
-        "bytecode 0.2 shorthand\nmodule M exposes [M.outer]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.outer]\n"
         "function M.outer(x: Text owned, y: Text borrowed) : Unit function in M\n"
         " registers []\n tail_call M.loop, r0, r1\nend\n"
         "function M.loop(x: Text owned, y: Text borrowed) : Unit function in M\n"
@@ -1617,10 +1617,10 @@ static void test_controlled_loops(void) {
 
 static void test_controlled_defects(void) {
     const char *const sources[] = {
-        "bytecode 0.2 shorthand\nmodule M exposes [M.stop]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.stop]\n"
         "function M.stop() : Unit function in M\n registers [r0: Text]\n"
         " const r0, \"genuine\"\n stop r0\nend\n",
-        "bytecode 0.2 shorthand\nmodule M exposes []\n"
+        "bytecode 0.3 shorthand\nmodule M exposes []\n"
         "function M.failure() : Unit test spec in M\n registers [r0: Text]\n"
         " const r0, \"genuine\"\n fail r0\nend\n"};
     for (unsigned kind = 0; kind < sizeof sources / sizeof sources[0]; kind++) {
@@ -1671,7 +1671,7 @@ static MO_MUST_USE bool unexpected_poll(void *context) {
 
 static void test_controlled_preconditions(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nglobal M.g: Unit in M\ninit [M.initializer]\n"
+        assemble("bytecode 0.3 shorthand\nglobal M.g: Unit in M\ninit [M.initializer]\n"
                  "module M exposes [M.identity]\n"
                  "function M.identity(x: Int owned) : Int function in M\n"
                  " registers []\n ret r0\nend\n"
@@ -1739,7 +1739,7 @@ static MO_MUST_USE bool capture_variable(const struct mo_defect_variable *variab
 
 static void test_stopped_variables(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.observe]\n"
+        assemble("bytecode 0.3 shorthand\nmodule M exposes [M.observe]\n"
                  "function M.observe(x: Text borrowed) : Unit function in M\n"
                  " registers [r1: Text, r2: Int, r3: Int]\n"
                  " variables [(r2, \"shadow\", @start, @new),"
@@ -1822,7 +1822,7 @@ static void test_stopped_variables(void) {
 
 static void test_variable_frames(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.outer]\n"
+        assemble("bytecode 0.3 shorthand\nmodule M exposes [M.outer]\n"
                  "function M.outer(x: Text owned, y: Text borrowed) : Unit function in M\n"
                  " registers [r2: Unit]\n variables [(r0, \"transferred\", @start, @end),"
                  " (r1, \"caller\", @start, @end), (r2, \"undefined\", @start, @end)]\n"
@@ -1875,7 +1875,7 @@ static void test_variable_frames(void) {
 
 static void test_variable_reuse(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nrecord Box\n value: Int\nend\n"
+        assemble("bytecode 0.3 shorthand\nrecord Box\n value: Int\nend\n"
                  "module M exposes [M.reuse]\nfunction M.reuse() : Unit function in M\n"
                  " registers [r0: Int, r1: Box, r2: Box, r3: Text]\n"
                  " variables [(r1, \"retired\", @start, @new),"
@@ -1918,7 +1918,7 @@ static void test_variable_reuse(void) {
 
 /* Tools read a module constant from an initialized image, never one that stopped. */
 static void test_image_global(void) {
-    const char *source = "bytecode 0.2 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
+    const char *source = "bytecode 0.3 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
                          "module M exposes []\nfunction M.init() : Unit init in M\n"
                          " registers [r0: Int, r1: Unit]\n const r0, 43\n set_global M.g, r0\n"
                          " const r1, ()\n ret r1\nend\n";
@@ -1932,7 +1932,7 @@ static void test_image_global(void) {
     CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
     CHECK(mo_image_global(image, 0, &value) && mo_cell_get_int(value) == 43);
     mo_image_free(image);
-    image = assemble("bytecode 0.2 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
+    image = assemble("bytecode 0.3 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
                      "module M exposes []\nfunction M.init() : Unit init in M\n"
                      " registers [r0: Int, r1: Text]\n const r0, 43\n set_global M.g, r0\n"
                      " const r1, \"later\"\n stop r1\nend\n");
@@ -1946,7 +1946,7 @@ static void test_image_global(void) {
 
 static void test_initializer_variables(void) {
     struct mo_image *image = assemble(
-        "bytecode 0.2 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
+        "bytecode 0.3 shorthand\nglobal M.g: Int in M\ninit [M.init]\n"
         "module M exposes []\nfunction M.init() : Unit init in M\n"
         " registers [r0: Int, r1: Text]\n variables [(r0, \"initialized\", @start, @end)]\n"
         " @start:\n const r0, 43\n set_global M.g, r0\n"
@@ -1978,7 +1978,7 @@ static void test_initializer_variables(void) {
 
 static void test_clear(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.clear]\n"
+        assemble("bytecode 0.3 shorthand\nmodule M exposes [M.clear]\n"
                  "function M.clear(x: Text borrowed, n: Int owned) : Unit function in M\n"
                  " registers [r2: Text, r3: Int, r4: Text, r5: Text]\n"
                  " variables [(r0, \"cleared\", @start, @end),"
@@ -2031,7 +2031,7 @@ static void test_clear(void) {
 
 static void test_bounded_report(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.loop]\n"
+        assemble("bytecode 0.3 shorthand\nmodule M exposes [M.loop]\n"
                  "function M.loop() : Unit function in M\n registers [r0: Unit]\n"
                  " call r0, M.loop\n ret r0\nend\n");
     if (image == NULL)
@@ -2353,7 +2353,7 @@ static void test_report_names(void) {
 
 static void test_tail_growth_and_later_stop(void) {
     struct mo_image *image =
-        assemble("bytecode 0.2 shorthand\nmodule M exposes [M.start]\n"
+        assemble("bytecode 0.3 shorthand\nmodule M exposes [M.start]\n"
                  "function M.start(x: Int owned) : Int function in M\n registers []\n"
                  " tail_call M.larger, r0\nend\n"
                  "function M.larger(x: Int owned) : Int function in M\n"
@@ -2381,7 +2381,7 @@ static void test_tail_growth_and_later_stop(void) {
     }
     mo_image_free(image);
     image = assemble(
-        "bytecode 0.2 shorthand\nmodule M exposes [M.later]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.later]\n"
         "function M.later(ok: Bool owned) : Unit function in M\n registers [r1: Unit, r2: Text]\n"
         " branch r0, @ok, @bad\n@ok:\n const r1, ()\n ret r1\n"
         "@bad:\n const r2, \"later\"\n stop r2\nend\n");
