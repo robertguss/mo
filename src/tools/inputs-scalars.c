@@ -383,7 +383,7 @@ static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
                 if (bytes[length - 1] == 0)
                     bytes[length - 1] = 1;
                 sign = random ? (mo_splitmix64(&builder->random) & 1) != 0 ? MO_BIGINT_NEGATIVE
-                                                                             : MO_BIGINT_POSITIVE
+                                                                           : MO_BIGINT_POSITIVE
                        : index == 2 || index == 4 ? MO_BIGINT_NEGATIVE
                                                   : MO_BIGINT_POSITIVE;
             }

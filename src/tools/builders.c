@@ -840,8 +840,9 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
         bool ordered = attempt >= random_attempts;
         uint32_t rank = attempt - random_attempts;
         struct builder *start =
-            &hidden->builders[hidden->starts[ordered ? rank % hidden->start_count
-                                                     : mo_splitmix64(&random) % hidden->start_count]];
+            &hidden
+                 ->builders[hidden->starts[ordered ? rank % hidden->start_count
+                                                   : mo_splitmix64(&random) % hidden->start_count]];
         uint64_t ordinal =
             ordered ? rank / hidden->start_count : random_ordinal(start, &random, request->size);
         enum step outcome =
@@ -860,8 +861,9 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
         goto done;
     for (uint32_t i = 0; i < steps; i++) {
         struct builder *step =
-            &hidden->builders[hidden->steps[boundary ? i % hidden->step_count
-                                                     : mo_splitmix64(&random) % hidden->step_count]];
+            &hidden
+                 ->builders[hidden->steps[boundary ? i % hidden->step_count
+                                                   : mo_splitmix64(&random) % hidden->step_count]];
         uint64_t ordinal = boundary ? 1 + i : random_ordinal(step, &random, request->size);
         enum step outcome =
             record_call(hidden, process, step, ordinal, &has_value, &value, recipe, NULL);
