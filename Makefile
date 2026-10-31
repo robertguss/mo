@@ -120,6 +120,15 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
+PROTOCOL_SOURCES := runtime/http.mo runtime/http-authority.mo runtime/http-policy.mo runtime/http-body.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo runtime/mcp-transport.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
+build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCES) Makefile
+	python3 ci/embed_protocol.py $@ $(PROTOCOL_SOURCES)
+	@touch $@
+
+$(BUILD)/debug/tests/test_lower.o $(BUILD)/sanitize/tests/test_lower.o \
+$(BUILD)/debug/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o \
+$(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
+
 # The test executables without running them, for ci/check.sh's drivers group.
 test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo
 sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
@@ -181,6 +190,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 		if [ "$$base" = fuzz_bytecode_io ]; then variants="small large"; fi; \
 		for variant in $$variants; do \
 			name=$$base; options=; \
+			if [ "$$base" = fuzz_protocol_server ]; then options="-max_len=24578"; fi; \
 			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
 			if [ "$$base" = fuzz_bytecode_text ]; then options="-max_len=16777216 -timeout=30"; fi; \
 			if [ "$$base" = fuzz_vm ] || [ "$$base" = fuzz_bytecode_verify ]; then options="-max_len=65536 -timeout=15"; fi; \
@@ -262,7 +272,7 @@ library-map: $(BUILD)/debug/module-path
 # puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
 # are covered by MO_MUST_USE. The flags are the debug build's, so clang-tidy sees the code as
 # the compiler does (it ignores the -M options).
-tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h
+tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h build/generated/tools/protocol-sources.h
 	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='^(src|tests|fuzz|grammar)/' \
 		$(TIDY_FILES) -- $(COMMON) $(DEBUG) $(GRAMMAR_INCLUDES)
 
@@ -406,6 +416,84 @@ $(BUILD)/debug/tests/test_vm_faults.test: $(BUILD)/debug/tests/test_vm_faults.o 
 $(BUILD)/sanitize/tests/test_vm_faults.test: $(BUILD)/sanitize/tests/test_vm_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(VM_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/vm-faults/%.o,$(VM_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+PROTOCOL_MEMORY_SOURCES := src/base/arena.c src/vm/process.c src/vm/execute.c
+PROTOCOL_MEMORY_RENAMES := -Dmalloc=mo_protocol_memory_malloc -Dcalloc=mo_protocol_memory_calloc \
+	-Drealloc=mo_protocol_memory_realloc -Dfree=mo_protocol_memory_free -Dmo_host_wipe=mo_protocol_memory_wipe
+$(BUILD)/debug/protocol-memory/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(PROTOCOL_MEMORY_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/protocol-memory/%.o: src/%.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(PROTOCOL_MEMORY_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_protocol_memory.test: $(BUILD)/debug/tests/test_protocol_memory.o $(call objects,$(BUILD)/debug,$(filter-out $(PROTOCOL_MEMORY_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/protocol-memory/%.o,$(PROTOCOL_MEMORY_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_protocol_memory.test: $(BUILD)/sanitize/tests/test_protocol_memory.o $(call objects,$(BUILD)/sanitize,$(filter-out $(PROTOCOL_MEMORY_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/protocol-memory/%.o,$(PROTOCOL_MEMORY_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/debug/listener-faults/listener.o: src/host/listener.c tests/listener_faults.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -include tests/listener_faults.h -c $< -o $@
+
+$(BUILD)/sanitize/listener-faults/listener.o: src/host/listener.c tests/listener_faults.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -include tests/listener_faults.h -c $< -o $@
+
+$(BUILD)/debug/tests/test_listener_faults.test: $(BUILD)/debug/tests/test_listener_faults.o $(call objects,$(BUILD)/debug,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/debug/listener-faults/listener.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_listener_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/sanitize/listener-faults/listener.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c
+$(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+
+$(BUILD)/sanitize/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+
+$(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
+
+$(BUILD)/sanitize/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
+
+$(BUILD)/debug/protocol-server-faults/vm/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
+
+$(BUILD)/sanitize/protocol-server-faults/vm/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
+
+$(BUILD)/debug/tests/test_protocol_server_faults.test: $(BUILD)/debug/tests/test_protocol_server_faults.o $(call objects,$(BUILD)/debug,$(filter-out $(PROTOCOL_SERVER_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/protocol-server-faults/%.o,$(PROTOCOL_SERVER_FAULT_SOURCES))
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_protocol_server_faults.test: $(BUILD)/sanitize/tests/test_protocol_server_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(PROTOCOL_SERVER_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/protocol-server-faults/%.o,$(PROTOCOL_SERVER_FAULT_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+PROTOCOL_ABI_RENAMES := -Dmo_protocol_build=mo_protocol_bad_abi_build \
+	-Dmo_protocol_body_marks=mo_protocol_bad_abi_body_marks -Dmo_sources_add_bytes=mo_protocol_bad_abi_sources
+$(BUILD)/debug/protocol-abi/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(PROTOCOL_ABI_RENAMES) -c $< -o $@
+
+$(BUILD)/sanitize/protocol-abi/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(PROTOCOL_ABI_RENAMES) -c $< -o $@
+
+$(BUILD)/debug/tests/test_lower.test: $(BUILD)/debug/tests/test_lower.o $(call objects,$(BUILD)/debug,$(LIB_SOURCES)) $(BUILD)/debug/protocol-abi/protocol.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_lower.test: $(BUILD)/sanitize/tests/test_lower.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES)) $(BUILD)/sanitize/protocol-abi/protocol.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Only the service test substitutes allocation at its arena, process and heap boundaries.
 SERVICE_FAULT_SOURCES := src/vm/service.c src/vm/process.c src/heap/heap.c
 SERVICE_FAULT_RENAMES := -Dcalloc=mo_service_fault_calloc -Drealloc=mo_service_fault_realloc \
@@ -429,13 +517,13 @@ $(BUILD)/debug/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -c $< -o $@
 $(BUILD)/debug/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dsqlite3_step=mo_store_fault_step -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) -Dsqlite3_step=mo_store_fault_step -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
 $(BUILD)/sanitize/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -c $< -o $@
 $(BUILD)/sanitize/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
 $(BUILD)/debug/store-faults/simulation.o: src/vm/simulation.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_service_open=mo_simulation_observe_open -Dmo_service_send=mo_simulation_observe_send -Dmo_value_case=mo_simulation_fault_case -c $< -o $@

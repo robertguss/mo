@@ -6,6 +6,8 @@
 #include "lower/lower.h"
 #include "lower_fixture.h"
 #include "test.h"
+#include "tools/protocol-sources.h"
+#include "tools/protocol.h"
 #include "vm/vm.h"
 
 #include <string.h>
@@ -1901,6 +1903,123 @@ static void test_source_library_specs(void *unused) {
     }
 }
 
+struct mo_image *mo_protocol_bad_abi_build(void);
+bool mo_protocol_bad_abi_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
+                                 size_t length, uint32_t *file_out,
+                                 struct mo_source_error *error_out);
+static bool abi_drift_injected;
+
+bool mo_protocol_bad_abi_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
+                                 size_t length, uint32_t *file_out,
+                                 struct mo_source_error *error_out) {
+    if (strcmp(path, "runtime/http.mo") != 0)
+        return mo_sources_add_bytes(sources, path, bytes, length, file_out, error_out);
+    const char before[] = "  Incomplete\n  Malformed\n";
+    const char after[] = "  Malformed\n  Incomplete\n";
+    struct mo_buffer changed;
+    mo_buffer_init(&changed, MO_LIMIT_FILE_SIZE);
+    MO_ASSERT(mo_buffer_append(&changed, bytes, length));
+    for (size_t i = 0; i + sizeof before - 1 <= length; i++) {
+        if (memcmp(changed.bytes + i, before, sizeof before - 1) == 0) {
+            memcpy(changed.bytes + i, after, sizeof after - 1);
+            abi_drift_injected = true;
+            break;
+        }
+    }
+    bool added =
+        mo_sources_add_bytes(sources, path, changed.bytes, changed.length, file_out, error_out);
+    mo_buffer_free(&changed);
+    return added;
+}
+
+static void test_embedded_protocol(void *entry) {
+    if (entry == NULL) {
+        const struct {
+            const char *text;
+            size_t marks;
+        } bodies[] = {{"", 0},
+                      {"[0,true,null]", 3},
+                      {"{\"a\":[{},[]],\"b\":0}", 6},
+                      {"[\"a\\\"[,{}\",{}]", 3},
+                      {"[\"a\\\\\",{}]", 3},
+                      {"\"[,{}", 0},
+                      {"[,[{", 4}};
+        size_t marks;
+        CHECK(mo_protocol_body_marks(NULL, 0, &marks) && marks == 0);
+        for (size_t i = 0; i < sizeof bodies / sizeof *bodies; i++) {
+            CHECK(mo_protocol_body_marks((const uint8_t *)bodies[i].text, strlen(bodies[i].text),
+                                         &marks));
+            CHECK(marks == bodies[i].marks);
+        }
+        static uint8_t body[MO_LIMIT_MCP_BODY_BYTES];
+        memset(body, ',', sizeof body);
+        CHECK(mo_protocol_body_marks(body, sizeof body, &marks) && marks == sizeof body);
+        CHECK(!mo_protocol_body_marks(body, sizeof body + 1, &marks) && marks == 0);
+        struct mo_image *image = mo_protocol_build();
+        CHECK(image != NULL);
+        if (image != NULL)
+            mo_image_free(image);
+        abi_drift_injected = false;
+        image = mo_protocol_bad_abi_build();
+        CHECK(abi_drift_injected && image == NULL);
+        if (image != NULL)
+            mo_image_free(image);
+    }
+    struct mo_arena input, output;
+    struct mo_sources sources, disk;
+    struct mo_diags diags;
+    mo_arena_init(&input, MO_LIMIT_LOWER_WORK);
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_sources_init(&sources) && mo_sources_init(&disk) && mo_diags_init(&diags));
+    const char source[] =
+        "module Main\nuse Json\nfn main() : Int\n"
+        "text = \"{\\\"n\\\":-0,\\\"xs\\\":[true,null,\\\"é\\\"]}\"\n"
+        "value = case Json.parse(text)\nOk(json): json\nError(_): stop \"parse\"\nend\n"
+        "if value.to_text != text\nreturn -1\nend\n"
+        "case Json.parse(\"{\\\"x\\\":1,\\\"x\\\":2}\")\nError(_): 37\nOk(_): -2\nend\nend\n";
+    uint32_t file;
+    struct mo_source_error error;
+    if (entry == NULL)
+        MO_ASSERT(mo_sources_add_bytes(&sources, "embedded/main.mo", (const uint8_t *)source,
+                                       sizeof(source) - 1, &file, &error));
+    else
+        MO_ASSERT(mo_sources_add(&sources, entry, &file, &error));
+    bool library[1 + sizeof(mo_protocol_sources) / sizeof(*mo_protocol_sources)] = {false};
+    for (size_t i = 0; i < sizeof(mo_protocol_sources) / sizeof(*mo_protocol_sources); i++) {
+        MO_ASSERT(mo_sources_add(&disk, mo_protocol_sources[i].path, &file, &error));
+        CHECK(disk.files[file].length == mo_protocol_sources[i].size);
+        if (disk.files[file].length == mo_protocol_sources[i].size)
+            CHECK(memcmp(disk.files[file].bytes, mo_protocol_sources[i].bytes,
+                         mo_protocol_sources[i].size) == 0);
+        MO_ASSERT(mo_sources_add_bytes(&sources, mo_protocol_sources[i].path,
+                                       mo_protocol_sources[i].bytes, mo_protocol_sources[i].size,
+                                       &file, &error));
+        library[i + 1] = strncmp(mo_protocol_sources[i].path, "lib/", 4) == 0;
+    }
+    mo_sources_free(&disk);
+    struct mo_module_set *set = mo_load_program_sources(&input, &sources, library, &diags);
+    CHECK(set != NULL && !mo_diags_any(&diags));
+    if (set != NULL) {
+        struct mo_program *program = mo_check(&input, set, &diags);
+        CHECK(program != NULL && !mo_diags_any(&diags));
+        for (uint32_t i = 0; i < diags.count; i++)
+            (void)fprintf(stderr, "%s: %s\n", diags.items[i].message,
+                          diags.items[i].primary.text == NULL ? "" : diags.items[i].primary.text);
+        if (program != NULL) {
+            struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+            CHECK(core != NULL && !mo_diags_any(&diags));
+            if (core != NULL) {
+                CHECK(spec_funs(core, "Json") == 0);
+                run(core, 37);
+            }
+        }
+    }
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+    mo_arena_free(&output);
+    mo_arena_free(&input);
+}
+
 static MO_MUST_USE bool count_instruction(void *context) {
     uint64_t *count = context;
     MO_ASSERT(*count != UINT64_MAX);
@@ -2227,6 +2346,23 @@ int main(int argc, char **argv) {
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_specs, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_constants, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_library_specs, NULL) == 0);
+    if (corpus == NULL) {
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol, NULL) == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/http-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/http-transport-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/mcp-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/mcp-schema-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/mcp-value-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/mcp-rpc-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/mcp-transport-check.mo") == 0);
+    }
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);

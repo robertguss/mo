@@ -105,7 +105,7 @@ static void source(const struct mo_bytecode *f, uint32_t file, uint32_t start, u
 }
 
 static void accepted_tables(const struct mo_bytecode *f, size_t size) {
-    MO_ASSERT(f->header.major == 0 && f->header.minor == 2);
+    MO_ASSERT(f->header.major == 0 && f->header.minor == 3);
     MO_ASSERT(f->header.flags == (f->service_count == 0 ? 0U : 1U));
     MO_ASSERT(f->service_count <= MO_LIMIT_SERVICES);
     for (uint32_t i = 0; i < f->service_count; i++) {
@@ -145,6 +145,24 @@ static void accepted_tables(const struct mo_bytecode *f, size_t size) {
                       fn->result_type == s->state_type && interval->module == s->module &&
                       interval->parameter_count == 0 &&
                       f->types[interval->result_type].kind == MO_TYPE_DURATION);
+        }
+        MO_ASSERT(s->shape_count <= f->type_count);
+        for (uint32_t j = 0; j < s->shape_count; j++) {
+            const struct mo_bytecode_service_shape *shape = &s->shapes[j];
+            MO_ASSERT(shape->type < f->type_count &&
+                      (j == 0 || s->shapes[j - 1].type < shape->type));
+            const struct mo_type *type = &f->types[shape->type];
+            if (shape->is_struct)
+                MO_ASSERT(shape->case_count == 0 &&
+                          (type->kind == MO_TYPE_RECORD ||
+                           (type->kind == MO_TYPE_CHOICE && type->case_count == 1 &&
+                            !type->cases[0].unnamed)));
+            else {
+                MO_ASSERT(type->kind == MO_TYPE_CHOICE && shape->case_count == type->case_count);
+                for (uint32_t k = 0; k < shape->case_count; k++)
+                    MO_ASSERT((!shape->unnamed[k] || type->cases[k].field_count == 1) &&
+                              (!type->cases[k].unnamed || shape->unnamed[k]));
+            }
         }
     }
     MO_ASSERT(f->string_count <= MO_LIMIT_STRINGS && f->type_count <= MO_LIMIT_TYPES &&

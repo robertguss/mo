@@ -40,6 +40,7 @@ struct data_instance {
     uint32_t owner;
     mo_core_ty type;
     struct mo_core_data data;
+    struct mo_service_shape shape;
 };
 
 struct type_cache;

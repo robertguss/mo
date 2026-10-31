@@ -223,6 +223,7 @@ struct mo_heap *mo_heap_new(struct mo_heap_image *image, const struct mo_limits 
     process->types = image->types;
     process->image = image;
     process->used = sizeof *process;
+    process->peak = process->used;
     process->limit = limits->heap_size;
     process->hash_key = image->hash_key;
     process->abilities = image->abilities;
@@ -235,9 +236,29 @@ size_t mo_heap_used(const struct mo_heap *process) {
     return process->used;
 }
 
+size_t mo_heap_peak(const struct mo_heap *process) {
+    MO_ASSERT(process != NULL);
+    return process->peak;
+}
+
+size_t mo_heap_scratch_peak(const struct mo_heap *process) {
+    MO_ASSERT(process != NULL);
+    return process->scratch_peak;
+}
+
 size_t mo_heap_objects(const struct mo_heap *process) {
     MO_ASSERT(process != NULL);
     return process->objects;
+}
+
+size_t mo_heap_limit(const struct mo_heap *process) {
+    MO_ASSERT(process != NULL);
+    return process->limit;
+}
+
+void mo_heap_set_limit(struct mo_heap *process, size_t limit) {
+    MO_ASSERT(process != NULL && limit >= process->used);
+    process->limit = limit;
 }
 
 struct mo_allocation *mo_heap_allocation(struct mo_object *object) {
@@ -268,6 +289,8 @@ struct mo_allocation *mo_heap_allocate(struct mo_heap *process, uint32_t type, u
     }
     process->allocations = allocation;
     process->used += size;
+    if (process->used > process->peak)
+        process->peak = process->used;
     process->objects++;
     return allocation;
 }
@@ -410,28 +433,45 @@ void mo_heap_drop_object(struct mo_heap *process, struct mo_object *object) {
     }
 }
 
+void mo_heap_confidential(struct mo_heap *process) {
+    MO_ASSERT(process != NULL && process->objects == 0);
+    process->confidential = true;
+}
+
 void mo_scratch_init(struct mo_scratch *scratch, struct mo_heap *process) {
     MO_ASSERT(scratch != NULL && process != NULL);
     size_t available = process->limit - process->used;
-    mo_arena_init(&scratch->arena, available);
+    if (process->confidential)
+        mo_arena_init_confidential(&scratch->arena, available);
+    else
+        mo_arena_init(&scratch->arena, available);
     scratch->process = process;
 }
 
 void mo_scratch_free(struct mo_scratch *scratch) {
     MO_ASSERT(scratch->process->used >= scratch->arena.used);
+    MO_ASSERT(scratch->process->scratch_used >= scratch->arena.used);
     int failure = errno;
     scratch->process->used -= scratch->arena.used;
+    scratch->process->scratch_used -= scratch->arena.used;
     mo_arena_free(&scratch->arena);
     errno = failure;
 }
 
 void *mo_scratch_resize(struct mo_scratch *scratch, void *bytes, size_t old_size, size_t new_size) {
     size_t before = scratch->arena.used;
+    MO_ASSERT(scratch->process->scratch_used >= before);
     scratch->arena.limit = before + scratch->process->limit - scratch->process->used;
     /* Arena limit refusals don't set errno; POSIX malloc/realloc failures do. */
     errno = ENOSPC;
     void *result = mo_arena_resize(&scratch->arena, bytes, old_size, new_size, 16);
     scratch->process->used = scratch->process->used - before + scratch->arena.used;
+    if (scratch->process->used > scratch->process->peak)
+        scratch->process->peak = scratch->process->used;
+    scratch->process->scratch_used = scratch->process->scratch_used - before + scratch->arena.used;
+    if (scratch->process->scratch_used > scratch->process->scratch_peak)
+        scratch->process->scratch_peak = scratch->process->scratch_used;
+    MO_ASSERT(scratch->process->scratch_used <= scratch->process->used);
     MO_ASSERT(scratch->process->used <= scratch->process->limit);
     return result;
 }

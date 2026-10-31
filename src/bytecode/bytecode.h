@@ -191,7 +191,7 @@ struct mo_parameter {
 /* The header is exactly 20 bytes on disk: magic at 0, major at 4, minor at 6, flags at 8,
  * checksum at 12. No padding. Integers are little-endian throughout the file. */
 #define MO_BYTECODE_MAGIC "MOBC"
-enum { MO_BYTECODE_MAJOR = 0, MO_BYTECODE_MINOR = 2, MO_BYTECODE_HEADER_SIZE = 20 };
+enum { MO_BYTECODE_MAJOR = 0, MO_BYTECODE_MINOR = 3, MO_BYTECODE_HEADER_SIZE = 20 };
 #define MO_BYTECODE_FLAGS UINT32_C(0)
 #define MO_BYTECODE_SERVICE_FLAG UINT32_C(1)
 #define MO_BYTECODE_FNV_OFFSET MO_FNV_OFFSET
@@ -366,6 +366,13 @@ struct mo_bytecode_service_timer {
     uint32_t interval; /* () : Duration, evaluated at startup */
 };
 
+struct mo_bytecode_service_shape {
+    uint32_t type;
+    bool is_struct;
+    uint32_t case_count;
+    const bool *unnamed;
+};
+
 /* Optional trailing section, present exactly when SERVICE_FLAG is set. Each
  * module has at most one service. The loader does not auto-start it. */
 struct mo_bytecode_service {
@@ -377,6 +384,8 @@ struct mo_bytecode_service {
     const struct mo_bytecode_service_tool *tools;
     uint32_t timer_count;
     const struct mo_bytecode_service_timer *timers;
+    uint32_t shape_count;
+    const struct mo_bytecode_service_shape *shapes;
 };
 
 /* File indexes the filename-byte table, not ordinary UTF-8 strings. Spans use
@@ -507,6 +516,14 @@ struct mo_assemble_error {
  * The file must fit MO_LIMIT_BYTECODE_SIZE and out->limit; either limit returns false. */
 MO_MUST_USE bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
                                    struct mo_write_error *error_out);
+
+struct mo_bytecode_service_reach {
+    uint32_t count;
+    uint32_t *types;
+};
+struct mo_arena;
+MO_MUST_USE bool mo_bytecode_service_reach(struct mo_arena *arena, const struct mo_bytecode *file,
+                                           struct mo_bytecode_service_reach **out);
 
 /* Assemble section 10's indexed or shorthand text into verified bytes. Indexed text supplies
  * every entry and index; shorthand appends first-use entries after optional indexed pool seeds.

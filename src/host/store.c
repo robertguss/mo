@@ -22,6 +22,28 @@ static int initialized = SQLITE_ERROR;
 static pthread_mutex_t stores_mutex = PTHREAD_MUTEX_INITIALIZER;
 static unsigned stores;
 
+const char *mo_store_status_text(enum mo_store_status status) {
+    switch (status) {
+    case MO_STORE_OK:
+        return NULL;
+    case MO_STORE_IO:
+        return "service store failed; reopen it to see whether the last change was saved";
+    case MO_STORE_CORRUPT:
+        return "saved service data is damaged or was written by a different program; recovery "
+               "refused";
+    case MO_STORE_MEMORY:
+        return "service store memory allocation failed";
+    case MO_STORE_EMPTY_PATH:
+        return "service store path is empty; use a file path";
+    case MO_STORE_MEMORY_PATH:
+        return ":memory: is not a service store path; use a file path";
+    case MO_STORE_HANDLES:
+        return "too many open service stores; close one of the " TEXT_OF(
+            MO_LIMIT_STORES) " open stores";
+    }
+    MO_UNREACHABLE();
+}
+
 static bool claim_store(void) {
     MO_ASSERT(pthread_mutex_lock(&stores_mutex) == 0);
     bool ok = stores < MO_LIMIT_STORES;
@@ -80,19 +102,22 @@ static bool table(struct mo_store *s, const char *name, const char *sql) {
 
 enum mo_store_status mo_store_open(const char *path, struct mo_store **out) {
     struct stat info;
-    if (path != NULL && (path[0] == '\0' || strcmp(path, ":memory:") == 0 ||
-                         (stat(path, &info) == 0 && info.st_size == 0)))
+    if (path != NULL && path[0] == '\0')
+        return MO_STORE_EMPTY_PATH;
+    if (path != NULL && strcmp(path, ":memory:") == 0)
+        return MO_STORE_MEMORY_PATH;
+    if (path != NULL && stat(path, &info) == 0 && info.st_size == 0)
         return MO_STORE_CORRUPT;
     if (pthread_once(&once, initialize) != 0 || initialized != SQLITE_OK)
         return MO_STORE_IO;
     if (!claim_store())
-        return MO_STORE_LIMIT;
+        return MO_STORE_HANDLES;
     struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_SERVICE_METADATA);
     struct mo_store *s = mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_store));
     if (s == NULL) {
         release_store();
-        return MO_STORE_LIMIT;
+        return MO_STORE_MEMORY;
     }
     *s = (struct mo_store){.arena = arena};
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;

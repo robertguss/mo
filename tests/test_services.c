@@ -5,6 +5,7 @@
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "program_fixture.h"
+#include "tools/protocol.h"
 #include "vm/vm.h"
 
 #include <time.h>
@@ -75,6 +76,86 @@ static void write_refused(const struct mo_bytecode *file, const char *reason) {
     mo_buffer_free(&wire);
 }
 
+static void shape_refusals(const struct mo_bytecode *file, const struct mo_buffer *wire) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_bytecode changed = *file;
+    struct mo_bytecode_service service = file->services[0];
+    changed.services = &service;
+    size_t size = service.shape_count * sizeof *service.shapes;
+    struct mo_bytecode_service_shape *shapes =
+        mo_arena_copy(&arena, service.shapes, size, _Alignof(struct mo_bytecode_service_shape));
+    MO_ASSERT(shapes != NULL && service.shape_count >= 2);
+    service.shapes = shapes;
+    service.shape_count--;
+    write_refused(&changed, "missing reachable service shape");
+    service.shape_count++;
+    shapes[0].type = file->type_count;
+    write_refused(&changed, "service shape type out of range");
+    shapes[0] = shapes[1];
+    write_refused(&changed, "duplicate or unsorted service shape");
+    shapes[1] = file->services[0].shapes[0];
+    write_refused(&changed, "duplicate or unsorted service shape");
+    memcpy(shapes, file->services[0].shapes, size);
+    for (uint32_t i = 0; i < file->type_count; i++)
+        if (file->types[i].name != NULL && strcmp(file->types[i].name, "Main.Unused") == 0) {
+            uint32_t at = 0;
+            while (at + 1 < service.shape_count && shapes[at + 1].type < i)
+                at++;
+            shapes[at] = (struct mo_bytecode_service_shape){.type = i, .is_struct = true};
+            write_refused(&changed, "unreachable service shape");
+            shapes[at] = file->services[0].shapes[at];
+        }
+    size_t wire_size = 4;
+    for (uint32_t i = 0; i < service.shape_count; i++)
+        wire_size += 12 + 4 * shapes[i].case_count;
+    size_t offset = wire->length - wire_size;
+    refused(wire, offset, MO_LIMIT_TYPES + 1, "count past limit or remaining bytes");
+    offset += 4;
+    for (uint32_t i = 0; i < service.shape_count; i++) {
+        struct mo_bytecode_service_shape *shape = &shapes[i];
+        const struct mo_type *type = &file->types[shape->type];
+        refused(wire, offset + 4, 2, "invalid boolean");
+        refused(wire, offset + 8, MO_LIMIT_FIELDS + 1, "count past limit or remaining bytes");
+        bool flag = false;
+        if (shape->is_struct) {
+            shape->case_count = 1;
+            shape->unnamed = &flag;
+            write_refused(&changed, "struct service shape has payload flags");
+            if (type->kind == MO_TYPE_RECORD) {
+                shape->is_struct = false;
+                write_refused(&changed, "invalid service enum shape");
+            }
+        } else {
+            bool *flags = mo_arena_copy(&arena, shape->unnamed, shape->case_count * sizeof *flags,
+                                        _Alignof(bool));
+            MO_ASSERT(flags != NULL);
+            shape->unnamed = flags;
+            shape->case_count--;
+            write_refused(&changed, "invalid service enum shape");
+            shape->case_count++;
+            for (uint32_t j = 0; j < shape->case_count; j++) {
+                refused(wire, offset + 12 + 4 * j, 2, "invalid boolean");
+                if (type->cases[j].field_count != 1 || type->cases[j].unnamed) {
+                    flags[j] = !flags[j];
+                    write_refused(&changed, type->cases[j].unnamed
+                                                ? "service shape conflicts with unnamed case"
+                                                : "invalid service unnamed payload");
+                    flags[j] = !flags[j];
+                }
+            }
+            if (shape->case_count != 1) {
+                shape->is_struct = true;
+                shape->case_count = 0;
+                write_refused(&changed, "invalid service struct shape");
+            }
+        }
+        *shape = file->services[0].shapes[i];
+        offset += 12 + 4 * shape->case_count;
+    }
+    mo_arena_free(&arena);
+}
+
 static void schema_refusals(const struct mo_bytecode *file, const struct mo_buffer *wire) {
     struct mo_bytecode changed = *file;
     struct mo_bytecode_service service = file->services[0];
@@ -89,8 +170,8 @@ static void schema_refusals(const struct mo_bytecode *file, const struct mo_buff
         uint32_t names[] = {tool.name, tool.name, tool.name};
         tool.argument_names = names;
         tool.argument_name_count = count;
-        if (count != 2)
-            write_refused(&changed, "service tool schema differs from handler");
+        write_refused(&changed, count == 2 ? "duplicate service tool parameter name"
+                                           : "service tool schema differs from handler");
     }
     tool = file->services[0].tools[1];
     uint32_t names[] = {tool.argument_names[0], file->string_count};
@@ -106,10 +187,12 @@ static void schema_refusals(const struct mo_bytecode *file, const struct mo_buff
         &arena, file->string_count + 1, sizeof *strings, _Alignof(struct mo_bytecode_string));
     MO_ASSERT(strings != NULL);
     memcpy(strings, file->strings, file->string_count * sizeof *strings);
-    strings[file->string_count] = (struct mo_bytecode_string){3, (const uint8_t *)"a\0b"};
+    strings[file->string_count] = strings[names[0]];
     changed.strings = strings;
     changed.string_count++;
     names[1] = file->string_count;
+    write_refused(&changed, "duplicate service tool parameter name");
+    strings[file->string_count] = (struct mo_bytecode_string){3, (const uint8_t *)"a\0b"};
     write_refused(&changed, "service tool schema differs from handler");
     tool = file->services[0].tools[0];
     tool.name = file->string_count;
@@ -218,6 +301,169 @@ static void table_refusals(const struct mo_bytecode *file) {
     mo_arena_free(&arena);
 }
 
+static void recursive_shape_reach(void) {
+    const uint32_t b = 3, c = 4, pair[] = {1, 6};
+    const struct mo_type_field a_field = {"children", 2}, b_field = {"back", 1};
+    const struct mo_type_case cases[] = {{.name = "End"},
+                                         {.name = "More", .fields = &b_field, .field_count = 1}};
+    const struct mo_type types[] = {
+        {.kind = MO_TYPE_INT},
+        {.kind = MO_TYPE_RECORD, .name = "A", .field_count = 1, .fields = &a_field},
+        {.kind = MO_TYPE_LIST, .parameter_count = 1, .parameters = &b},
+        {.kind = MO_TYPE_CHOICE, .name = "B", .case_count = 2, .cases = cases},
+        {.kind = MO_TYPE_RECORD, .name = "C"},
+        {.kind = MO_TYPE_TUPLE, .parameter_count = 2, .parameters = pair},
+        {.kind = MO_TYPE_LIST, .parameter_count = 1, .parameters = &c}};
+    struct mo_bytecode_service services[130];
+    struct mo_bytecode_service_tool tools[130];
+    uint32_t roots[130];
+    for (uint32_t i = 0; i < 130; i++) {
+        roots[i] = i % 3 == 0 ? 5 : i % 3 == 1 ? 1 : 6;
+        tools[i] = (struct mo_bytecode_service_tool){
+            .argument_count = 1, .argument_types = &roots[i], .result_type = 0};
+        services[i] = (struct mo_bytecode_service){.tool_count = 1, .tools = &tools[i]};
+    }
+    const struct mo_bytecode file = {
+        .type_count = 7, .types = types, .service_count = 130, .services = services};
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_bytecode_service_reach *reach;
+    CHECK(mo_bytecode_service_reach(&arena, &file, &reach));
+    if (reach != NULL)
+        for (uint32_t i = 0; i < 130; i++) {
+            const uint32_t expected[] = {1, 3, 4};
+            uint32_t offset = i % 3 == 2 ? 2 : 0;
+            uint32_t count = i % 3 == 0 ? 3 : i % 3 == 1 ? 2 : 1;
+            CHECK(reach[i].count == count);
+            if (reach[i].count == count)
+                CHECK(memcmp(reach[i].types, expected + offset, count * sizeof *expected) == 0);
+        }
+    mo_arena_free(&arena);
+}
+
+static void shared_shape_work(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    uint32_t count = MO_LIMIT_SERVICES;
+    uint32_t *tuple =
+        mo_arena_allocate_array(&arena, MO_LIMIT_FIELDS, sizeof *tuple, _Alignof(uint32_t));
+    struct mo_bytecode_string *strings = mo_arena_allocate_array(
+        &arena, 4 + 3 * count, sizeof *strings, _Alignof(struct mo_bytecode_string));
+    struct mo_bytecode_function *functions = mo_arena_allocate_array(
+        &arena, 2 * count, sizeof *functions, _Alignof(struct mo_bytecode_function));
+    struct mo_bytecode_debug *debug = mo_arena_allocate_array(&arena, 2 * count, sizeof *debug,
+                                                              _Alignof(struct mo_bytecode_debug));
+    struct mo_bytecode_module *modules = mo_arena_allocate_array(
+        &arena, count, sizeof *modules, _Alignof(struct mo_bytecode_module));
+    struct mo_bytecode_service *services = mo_arena_allocate_array(
+        &arena, count, sizeof *services, _Alignof(struct mo_bytecode_service));
+    struct mo_bytecode_service_tool *tools = mo_arena_allocate_array(
+        &arena, count, sizeof *tools, _Alignof(struct mo_bytecode_service_tool));
+    uint32_t *exposed = mo_arena_allocate_array(&arena, count, sizeof *exposed, _Alignof(uint32_t));
+    MO_ASSERT(tuple && strings && functions && debug && modules && services && tools && exposed);
+    for (uint32_t i = 0; i < 2 * count; i++)
+        debug[i] = (struct mo_bytecode_debug){.text = MO_BYTECODE_NO_INDEX,
+                                              .file = MO_BYTECODE_NO_INDEX,
+                                              .subject = MO_BYTECODE_NO_INDEX};
+    memset(tuple, 0, MO_LIMIT_FIELDS * sizeof *tuple);
+    struct mo_type types[] = {
+        {.kind = MO_TYPE_INT},
+        {.kind = MO_TYPE_TIME},
+        {.kind = MO_TYPE_BOOL},
+        {.kind = MO_TYPE_TUPLE, .parameter_count = MO_LIMIT_FIELDS, .parameters = tuple}};
+    uint32_t registers[] = {0, 1, 3, 2}, start_register = 0;
+    struct mo_parameter parameters[] = {
+        {0, MO_PARAMETER_OWNED}, {1, MO_PARAMETER_OWNED}, {3, MO_PARAMETER_BORROWED}};
+    uint32_t start_code[] = {MO_OP_CONST, 0, 0, MO_OP_RET, 0};
+    uint32_t tool_code[] = {MO_OP_CONST, 3, 1, MO_OP_RET, 3};
+    struct mo_bytecode_constant constants[] = {{.type = 0}, {.type = 2, .value.immediate = {1}}};
+    const char *shared[] = {"TOKEN", "echo", "arg", ""};
+    for (uint32_t i = 0; i < 4; i++)
+        strings[i] =
+            (struct mo_bytecode_string){(uint32_t)strlen(shared[i]), (const uint8_t *)shared[i]};
+    uint32_t argument_type = 3, argument_name = 2;
+    for (uint32_t i = 0; i < count; i++) {
+        const char *suffixes[] = {"", ".start", ".echo"};
+        for (uint32_t j = 0; j < 3; j++) {
+            char name[48];
+            int n = snprintf(name, sizeof name, "M%u%s", i, suffixes[j]);
+            MO_ASSERT(n > 0 && (size_t)n < sizeof name);
+            uint8_t *bytes = mo_arena_copy(&arena, name, (size_t)n, 1);
+            MO_ASSERT(bytes != NULL);
+            strings[4 + 3 * i + j] = (struct mo_bytecode_string){(uint32_t)n, bytes};
+        }
+        functions[2 * i] = (struct mo_bytecode_function){.name = 5 + 3 * i,
+                                                         .module = i,
+                                                         .kind = MO_FUNCTION_FUNCTION,
+                                                         .result_type = 0,
+                                                         .register_count = 1,
+                                                         .register_types = &start_register,
+                                                         .code_count = 5,
+                                                         .code = start_code};
+        functions[2 * i + 1] = (struct mo_bytecode_function){.name = 6 + 3 * i,
+                                                             .module = i,
+                                                             .kind = MO_FUNCTION_FUNCTION,
+                                                             .parameter_count = 3,
+                                                             .parameters = parameters,
+                                                             .result_type = 2,
+                                                             .register_count = 4,
+                                                             .register_types = registers,
+                                                             .code_count = 5,
+                                                             .code = tool_code};
+        exposed[i] = 2 * i + 1;
+        modules[i] = (struct mo_bytecode_module){
+            .name = 4 + 3 * i, .function_count = 1, .functions = &exposed[i]};
+        tools[i] = (struct mo_bytecode_service_tool){.name = 1,
+                                                     .function = 2 * i + 1,
+                                                     .read_only = true,
+                                                     .argument_count = 1,
+                                                     .argument_types = &argument_type,
+                                                     .result_type = 2,
+                                                     .description = 3,
+                                                     .argument_name_count = 1,
+                                                     .argument_names = &argument_name};
+        services[i] = (struct mo_bytecode_service){.module = i,
+                                                   .state_type = 0,
+                                                   .start = 2 * i,
+                                                   .token_env = 0,
+                                                   .tool_count = 1,
+                                                   .tools = &tools[i]};
+    }
+    struct mo_bytecode file = {.string_count = 4 + 3 * count,
+                               .strings = strings,
+                               .type_count = 4,
+                               .types = types,
+                               .constant_count = 2,
+                               .constants = constants,
+                               .function_count = 2 * count,
+                               .debug_count = 2 * count,
+                               .debug = debug,
+                               .functions = functions,
+                               .module_count = count,
+                               .modules = modules,
+                               .service_count = count,
+                               .services = services};
+    struct mo_buffer wire;
+    struct mo_write_error error;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_write(&file, &wire, &error));
+    clock_t before = clock();
+    for (unsigned i = 0; i < 8; i++) {
+        struct mo_load_error load_error;
+        struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+        CHECK(image != NULL);
+        if (image != NULL) {
+            CHECK(mo_image_bytecode(image)->service_count == count);
+            mo_image_free(image);
+        }
+    }
+    CHECK(before != (clock_t)-1 && (double)(clock() - before) / CLOCKS_PER_SEC < 2.0);
+    mo_buffer_free(&wire);
+    mo_arena_free(&arena);
+}
+
+static void descriptor_results(struct mo_image *service);
+
 static void descriptor(void) {
     struct fixture f;
     init(&f,
@@ -288,6 +534,8 @@ static void descriptor(void) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     table_refusals(file);
     schema_refusals(file, &wire);
+    shape_refusals(file, &wire);
+    descriptor_results(image);
     CHECK(file->service_count == 1 && file->header.flags == MO_BYTECODE_SERVICE_FLAG);
     MO_ASSERT(file->service_count == 1);
     const struct mo_bytecode_service *s = &file->services[0];
@@ -330,7 +578,10 @@ static void descriptor(void) {
         CHECK(mo_cell_get_int(result) == (i == 0 ? 9 : 10));
     }
     mo_process_free(process);
-    size_t size = 28 + 8 * s->timer_count;
+    size_t shape_size = 4;
+    for (uint32_t i = 0; i < s->shape_count; i++)
+        shape_size += 12 + 4 * s->shapes[i].case_count;
+    size_t size = 28 + 8 * s->timer_count + shape_size;
     for (uint32_t i = 0; i < s->tool_count; i++)
         size += 28 + 8 * s->tools[i].argument_count;
     size_t start = wire.length - size;
@@ -354,8 +605,9 @@ static void descriptor(void) {
     refused(&wire, start + 52, s->tools[0].name, "duplicate service handler or tool name");
     refused(&wire, start + 52 + 16, file->functions[s->tools[0].function].result_type,
             "service tool schema differs from handler");
-    refused(&wire, wire.length - 4, s->start, "invalid service timer handler or interval function");
-    refused(&wire, wire.length - 8, s->timers[0].function,
+    refused(&wire, wire.length - shape_size - 4, s->start,
+            "invalid service timer handler or interval function");
+    refused(&wire, wire.length - shape_size - 8, s->timers[0].function,
             "duplicate service handler or tool name");
     uint32_t invalid_functions[] = {s->timers[0].function, UINT32_MAX, UINT32_MAX, UINT32_MAX};
     const char *invalid_names[] = {"Main.bare_result", "Main.impure", "Main.functional"};
@@ -412,7 +664,8 @@ static void selected_overload(void) {
              "## Wrong overload.\n"
              "fn query(_state: Unselected, _now: Time, wrong: Text) : Text\nwrong\nend\n"
              "## Selected overload.\n"
-             "fn query(_state: Selected, _now: Time, wanted: Text) : Text\nwanted\nend\n");
+             "fn query(_state: Selected, _now: Time, wanted: Text, _ignored: Int) : Text\n"
+             "wanted\nend\n");
     MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
     const char *modules[] = {"Main"};
     f.set.names = modules;
@@ -436,8 +689,9 @@ static void selected_overload(void) {
     const struct mo_bytecode_service_tool *tool = &file->services[0].tools[0];
     CHECK(named(file, tool->name, "query"));
     CHECK(named(file, tool->description, "Selected overload."));
-    MO_ASSERT(tool->argument_name_count == 1);
+    MO_ASSERT(tool->argument_name_count == 2);
     CHECK(named(file, tool->argument_names[0], "wanted"));
+    CHECK(named(file, tool->argument_names[1], "_ignored"));
     text_roundtrip(&wire);
     mo_image_free(image);
     mo_buffer_free(&wire);
@@ -445,10 +699,323 @@ static void selected_overload(void) {
     mo_arena_free(&arena);
 }
 
+static uint32_t protocol_function(const struct mo_bytecode *file, const char *name) {
+    for (uint32_t i = 0; i < file->function_count; i++)
+        if (named(file, file->functions[i].name, name))
+            return i;
+    MO_ASSERT(false);
+    return 0;
+}
+
+static struct mo_cell protocol_call(const struct mo_bytecode *file, struct mo_process *process,
+                                    uint32_t index, struct mo_cell argument) {
+    const struct mo_bytecode_function *function = &file->functions[index];
+    MO_ASSERT(function->parameter_count == 1);
+    if (function->parameters[0].ownership == MO_PARAMETER_OWNED)
+        argument = mo_value_dup(mo_process_heap(process), function->parameters[0].type, argument);
+    struct mo_cell result;
+    struct mo_defect defect;
+    MO_ASSERT(mo_call(process, index, &argument, 1, &result, &defect) == MO_RETURNED);
+    return result;
+}
+
+static struct mo_cell json_property(struct mo_heap *heap, const struct mo_types *types,
+                                    uint32_t json, struct mo_cell object, const char *name) {
+    MO_ASSERT(mo_cell_get_tag(object) == 5);
+    uint32_t map = types->items[json].cases[5].fields[0].type;
+    struct mo_cell key, result;
+    MO_ASSERT(mo_value_text(heap, name, strlen(name), &key));
+    bool found;
+    MO_ASSERT(mo_table_get(heap, map, mo_cell_get_payload(object), key, &found, &result));
+    mo_value_drop(heap, types->items[map].parameters[0], key);
+    MO_ASSERT(found);
+    return result;
+}
+
+static void descriptor_refusals(struct mo_image *image, struct mo_image *service) {
+    bool refused = false, succeeded = false;
+    struct mo_limits limits = mo_limits_default();
+    for (size_t budget = 256; budget <= 65536; budget *= 2) {
+        limits.heap_size = budget;
+        struct mo_process *process = mo_process_new(image, &limits);
+        if (process == NULL)
+            continue;
+        struct mo_heap *heap = mo_process_heap(process);
+        struct mo_protocol_descriptor value = {MO_NO_INDEX, mo_cell_int(73)};
+        if (mo_protocol_descriptor(image, heap, service, 0, &value)) {
+            succeeded = true;
+            mo_value_drop(heap, value.type, value.value);
+        } else {
+            refused = true;
+            CHECK(value.type == MO_NO_INDEX && mo_cell_get_int(value.value) == 73);
+        }
+        CHECK(mo_heap_objects(heap) == 0);
+        mo_process_free(process);
+    }
+    CHECK(refused && succeeded);
+}
+
+static void descriptor_results(struct mo_image *service) {
+    struct mo_image *image = mo_protocol_build();
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    struct mo_protocol_descriptor descriptor;
+    MO_ASSERT(mo_protocol_descriptor(image, heap, service, 0, &descriptor));
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_types *types = mo_image_types(image);
+    uint32_t catalog = protocol_function(file, "Mcp.catalog");
+    uint32_t json = file->functions[catalog].result_type;
+    struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
+    struct mo_cell tools = mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
+    CHECK(mo_list_size(tools) == 8);
+    const char *expected[] = {"array",      "boolean", "boolean", "#/$defs/t0",
+                              "#/$defs/t0", "array",   "boolean", "array"};
+    for (uint32_t i = 0; i < 8; i++) {
+        struct mo_cell tool, branch;
+        MO_ASSERT(mo_list_get(tools, i, &tool));
+        struct mo_cell output = json_property(heap, types, json, tool, "outputSchema");
+        struct mo_cell branches =
+            mo_cell_get_payload(json_property(heap, types, json, output, "oneOf"));
+        CHECK(mo_list_size(branches) == (i == 2 || i == 6 || i == 7 ? 3U : 2U));
+        MO_ASSERT(mo_list_get(branches, 0, &branch));
+        struct mo_cell properties = json_property(heap, types, json, branch, "properties");
+        struct mo_cell value = json_property(heap, types, json, properties, "value");
+        struct mo_cell kind = mo_cell_get_payload(
+            json_property(heap, types, json, value, i == 3 || i == 4 ? "$ref" : "type"));
+        size_t size;
+        const uint8_t *bytes = mo_value_data(kind, &size);
+        CHECK(size == strlen(expected[i]) && memcmp(bytes, expected[i], size) == 0);
+    }
+    mo_value_drop(heap, json, result);
+    mo_value_drop(heap, descriptor.type, descriptor.value);
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
+static void descriptor_catalog(struct mo_image *service) {
+    struct mo_image *image = mo_protocol_build();
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    descriptor_refusals(image, service);
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    struct mo_protocol_descriptor descriptor;
+    bool built = mo_protocol_descriptor(image, heap, service, 0, &descriptor);
+    CHECK(built);
+    mo_image_free(service);
+    if (built) {
+        const struct mo_bytecode *file = mo_image_bytecode(image);
+        const struct mo_types *types = mo_image_types(image);
+        uint32_t catalog = protocol_function(file, "Mcp.catalog");
+        uint32_t text = protocol_function(file, "Json.to_text@Json");
+        uint32_t json = file->functions[catalog].result_type;
+        struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
+        struct mo_cell tools =
+            mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
+        CHECK(mo_list_size(tools) == 3);
+        struct mo_cell entry, record;
+        MO_ASSERT(mo_list_get(tools, 1, &entry) && mo_list_get(tools, 2, &record));
+        const char *keys[] = {"inputSchema", "outputSchema"};
+        for (uint32_t i = 0; i < 2; i++) {
+            struct mo_cell a = protocol_call(file, process, text,
+                                             json_property(heap, types, json, entry, keys[i]));
+            struct mo_cell b = protocol_call(file, process, text,
+                                             json_property(heap, types, json, record, keys[i]));
+            size_t a_size, b_size;
+            const uint8_t *a_bytes = mo_value_data(a, &a_size),
+                          *b_bytes = mo_value_data(b, &b_size);
+            CHECK(a_size == b_size && memcmp(a_bytes, b_bytes, a_size) == 0);
+            mo_value_drop(heap, file->functions[text].result_type, a);
+            mo_value_drop(heap, file->functions[text].result_type, b);
+        }
+        struct mo_cell name = mo_cell_get_payload(json_property(heap, types, json, entry, "name"));
+        size_t size;
+        const uint8_t *bytes = mo_value_data(name, &size);
+        CHECK(size == 10 && memcmp(bytes, "copy_entry", size) == 0);
+        struct mo_cell description =
+            mo_cell_get_payload(json_property(heap, types, json, entry, "description"));
+        bytes = mo_value_data(description, &size);
+        CHECK(size == 17 && memcmp(bytes, "Exact \"entry\". é", size) == 0);
+        struct mo_cell input = json_property(heap, types, json, entry, "inputSchema");
+        struct mo_cell arguments = json_property(heap, types, json, input, "properties");
+        (void)json_property(heap, types, json, arguments, "_item");
+        struct mo_cell definitions = json_property(heap, types, json, input, "$defs");
+        struct mo_cell shape = json_property(heap, types, json, definitions, "t0");
+        struct mo_cell properties = json_property(heap, types, json, shape, "properties");
+        (void)json_property(heap, types, json, properties, "name");
+        (void)json_property(heap, types, json, properties, "kind");
+        shape = json_property(heap, types, json, definitions, "t1");
+        struct mo_cell choices =
+            mo_cell_get_payload(json_property(heap, types, json, shape, "oneOf"));
+        CHECK(mo_list_size(choices) == 4);
+        struct mo_cell echo, variant;
+        MO_ASSERT(mo_list_get(tools, 0, &echo));
+        input = json_property(heap, types, json, echo, "inputSchema");
+        definitions = json_property(heap, types, json, input, "$defs");
+        shape = json_property(heap, types, json, definitions, "t2");
+        choices = mo_cell_get_payload(json_property(heap, types, json, shape, "oneOf"));
+        CHECK(mo_list_size(choices) == 1);
+        MO_ASSERT(mo_list_get(choices, 0, &variant));
+        properties = json_property(heap, types, json, variant, "properties");
+        (void)json_property(heap, types, json, properties, "fields");
+        shape = json_property(heap, types, json, definitions, "t3");
+        choices = mo_cell_get_payload(json_property(heap, types, json, shape, "oneOf"));
+        MO_ASSERT(mo_list_get(choices, 1, &variant));
+        properties = json_property(heap, types, json, variant, "properties");
+        (void)json_property(heap, types, json, properties, "value");
+        MO_ASSERT(mo_list_get(choices, 2, &variant));
+        properties = json_property(heap, types, json, variant, "properties");
+        (void)json_property(heap, types, json, properties, "fields");
+        mo_value_drop(heap, json, result);
+        mo_value_drop(heap, descriptor.type, descriptor.value);
+    }
+    CHECK(mo_heap_objects(heap) == 0);
+    mo_process_free(process);
+    mo_image_free(image);
+}
+
+static void source_shapes(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "struct Unused\nvalue: Int\nend\n"
+             "struct Record\nname: Text\nkind: EntryKind\nend\n"
+             "enum One\nOnly(name: Text, kind: EntryKind)\nend\n"
+             "enum Payload\nEmpty\nUnnamed(Int)\nNamed(value: Int)\nend\n"
+             "service\nstate Int = 0\ntools echo, copy_entry, copy_record\n"
+             "token from env \"TOKEN\"\nend\n"
+             "fn echo(_state: Int, _now: Time, record: Record, one: One, payload: Payload, "
+             "entry: Entry, entries: List(Entry)) : (Record, One, Payload, Entry, List(Entry))\n"
+             "(record, one, payload, entry, entries)\nend\n"
+             "## Exact \"entry\". é\n"
+             "fn copy_entry(_state: Int, _now: Time, _item: Entry) : Entry\n_item\nend\n"
+             "fn copy_record(_state: Int, _now: Time, _item: Record) : Record\n_item\nend\n");
+    MO_ASSERT(f.program != NULL && !mo_diags_any(&f.diags));
+    const char *modules[] = {"Main"};
+    f.set.names = modules;
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_services services;
+    struct mo_core *core =
+        mo_lower_services(&arena, f.program, &f.sources, &f.diags, NULL, &services);
+    MO_ASSERT(core != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+    const char *names[] = {"Main.Record", "Main.One", "Main.Payload"};
+    uint32_t found = 0;
+    CHECK(services.data_count == core->data.count);
+    for (uint32_t i = 0; i < services.data_count; i++) {
+        const struct mo_service_shape *shape = &services.data_shapes[i];
+        mo_core_string name = core->data.items[i].name;
+        for (uint32_t j = 0; j < sizeof names / sizeof *names; j++) {
+            if (name.length != strlen(names[j]) || memcmp(name.bytes, names[j], name.length) != 0)
+                continue;
+            found++;
+            CHECK(shape->is_struct == (j == 0));
+            CHECK(shape->case_count == (j == 0 ? 0U : j == 1 ? 1U : 3U));
+            if (shape->is_struct)
+                CHECK(shape->unnamed == NULL);
+            else
+                for (uint32_t k = 0; k < shape->case_count; k++)
+                    CHECK(shape->unnamed[k] == (j == 2 && k == 1));
+        }
+    }
+    CHECK(found == 3);
+    struct mo_diags diags;
+    CHECK(mo_diags_init(&diags));
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_compile_services(core, &services, &wire, &diags));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_bytecode_service *service = &file->services[0];
+    CHECK(service->shape_count == 5);
+    const char *shape_names[] = {"Main.Record", "Main.One", "Main.Payload", "Entry", "EntryKind"};
+    found = 0;
+    for (uint32_t i = 0; i < service->shape_count; i++) {
+        const struct mo_bytecode_service_shape *shape = &service->shapes[i];
+        CHECK(i == 0 || service->shapes[i - 1].type < shape->type);
+        for (uint32_t j = 0; j < sizeof shape_names / sizeof *shape_names; j++) {
+            if (strcmp(file->types[shape->type].name, shape_names[j]) != 0)
+                continue;
+            found++;
+            CHECK(shape->is_struct == (j == 0 || j == 3));
+            CHECK(shape->case_count == (j == 0 || j == 3 ? 0U : j == 1 ? 1U : j == 2 ? 3U : 4U));
+            for (uint32_t k = 0; k < shape->case_count; k++)
+                CHECK(shape->unnamed[k] == (j == 2 && k == 1));
+        }
+    }
+    CHECK(found == 5);
+    shape_refusals(file, &wire);
+    seed(&wire, "service-shapes.bc");
+    descriptor_catalog(image);
+    text_roundtrip(&wire);
+    mo_buffer_free(&wire);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+}
+
+static void shorthand_shapes(void) {
+    const char source[] =
+        "bytecode 0.3 shorthand\n"
+        "strings\n s0 \"M\"\n s1 \"TOKEN\"\n s2 \"echo\"\n s3 \"entry\"\n s4 \"\"\n"
+        " s5 \"Item\"\n s6 \"name\"\n s7 \"kind\"\n s8 \"Kind\"\n s9 \"File\"\n"
+        " s10 \"Next\"\nend\n"
+        "types\n t0 record s5 [(s6, t2), (s7, t1)]\n t1 choice s8 [(s9, []), (s10, [(-, t0)])]\n"
+        " t2 text\n t3 int\n t4 time\nend\n"
+        "module M exposes [M.echo]\n"
+        "function M.start() : Int function in M\n registers [r0: Int]\n"
+        " const r0, 0\n ret r0\nend\n"
+        "function M.echo(state: Int owned, now: Time owned, entry: Item owned) : Item function in "
+        "M\n"
+        " registers []\n ret r2\nend\n"
+        "services\n S0 m0 t3 f0 s1 tools [(s2, f1, 1, [t0], t0, s4, [s3])] timers []"
+        " shapes [(t0, struct, []), (t1, enum, [0, 1])]\nend\n";
+    struct mo_buffer wire;
+    struct mo_assemble_error error;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    bool assembled = mo_bytecode_assemble(source, sizeof source - 1, &wire, &error);
+    CHECK(assembled);
+    if (assembled) {
+        struct mo_load_error load_error;
+        struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+        MO_ASSERT(image != NULL);
+        const struct mo_bytecode *file = mo_image_bytecode(image);
+        const struct mo_bytecode_service *service = &file->services[0];
+        CHECK(service->shape_count == 2 && service->shapes[0].type == 0 &&
+              service->shapes[0].is_struct && service->shapes[0].case_count == 0 &&
+              service->shapes[1].type == 1 && !service->shapes[1].is_struct &&
+              service->shapes[1].case_count == 2 && !service->shapes[1].unnamed[0] &&
+              service->shapes[1].unnamed[1]);
+        size_t types = 24;
+        for (uint32_t i = 0; i < file->string_count; i++)
+            types += 4 + file->strings[i].length;
+        refused(&wire, types + 16, UINT32_MAX, "name string index out of range");
+        text_roundtrip(&wire);
+        seed(&wire, "service-shorthand-shapes.bc");
+        mo_image_free(image);
+    } else
+        CHECK(fprintf(stderr, "shorthand refusal at %u: %s\n", error.offset, error.reason) >= 0);
+    mo_buffer_free(&wire);
+}
+
 static void run(void *context) {
     (void)context;
     descriptor();
     selected_overload();
+    source_shapes();
+    shorthand_shapes();
+    recursive_shape_reach();
+    shared_shape_work();
 }
 
 int main(int argc, char **argv) {

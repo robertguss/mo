@@ -102,6 +102,7 @@ static void *new_table(size_t n, size_t size) {
     NEW_TABLE_OF(struct mo_bytecode_service)
     NEW_TABLE_OF(struct mo_bytecode_service_tool)
     NEW_TABLE_OF(struct mo_bytecode_service_timer)
+    NEW_TABLE_OF(struct mo_bytecode_service_shape)
     uint8_t *p = malloc(most * size);
     __CPROVER_assume(p != NULL);
     return p + (most - n) * size;

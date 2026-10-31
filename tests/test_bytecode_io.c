@@ -436,7 +436,7 @@ static void test_empty(void) {
     mo_buffer_init(&out, 1024);
     CHECK(mo_bytecode_encode(&file, &out, &error));
     CHECK(out.length == 60);
-    CHECK(memcmp(out.bytes, "MOBC\0\0\2\0\0\0\0\0", 12) == 0);
+    CHECK(memcmp(out.bytes, "MOBC\0\0\3\0\0\0\0\0", 12) == 0);
     for (size_t i = 20; i < out.length; i++) {
         CHECK(out.bytes[i] == 0);
     }
@@ -933,7 +933,7 @@ static void test_wire_refusals(void) {
 
     /* A record naming the second of two identical strings is structurally noncanonical. */
     static const uint8_t duplicate_name[] = {
-        'M', 'O', 'B', 'C', 0, 0, 2, 0,   0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0,
+        'M', 'O', 'B', 'C', 0, 0, 3, 0,   0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0,
         0,   0,   'x', 1,   0, 0, 0, 'x', 1, 0, 0, 0, 17, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0,   0,   0,   0,   0, 0, 0, 0,   0, 0, 0, 0, 0,  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     mo_buffer_init(&out, 1024);
@@ -990,7 +990,7 @@ static void test_worked_encoding(void) {
         0,                                /* files */
         1,          0,  0, UINT32_MAX,    /* debug: empty span/name arrays, no text */
         UINT32_MAX, 0,  0, UINT32_MAX, 0, 0}; /* no source or links/lines */
-    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 2, 0};
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 3, 0};
     struct mo_buffer expected, actual;
     mo_buffer_init(&expected, 4096);
     mo_buffer_init(&actual, 4096);
@@ -1228,9 +1228,11 @@ static void test_filename_table(void) {
     rows[0] = (struct mo_bytecode_bytes)STRING("\xc3");
     CHECK(mo_bytecode_write(&file, &wire, &we));
     /* Old binary versions remain refused, even with the new section layout. */
-    wire.bytes[6] = 1;
-    CHECK(mo_load(wire.bytes, wire.length, &le) == NULL && le.offset == 6 &&
-          le.kind == MO_BYTECODE_INVALID);
+    for (uint8_t minor = 1; minor <= 2; minor++) {
+        wire.bytes[6] = minor;
+        CHECK(mo_load(wire.bytes, wire.length, &le) == NULL && le.offset == 6 &&
+              le.kind == MO_BYTECODE_INVALID);
+    }
     mo_buffer_free(&wire);
 }
 
@@ -1490,7 +1492,7 @@ static void test_large_names(void) {
     round_trip(&f); /* names are shared, not copied once per nominal identity */
     struct mo_buffer out;
     mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
-    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 2, 0};
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 3, 0};
     CHECK(mo_buffer_append(&out, header, sizeof header));
     CHECK(mo_buffer_append_le32(&out, 1));
     CHECK(mo_buffer_append_le32(&out, MO_LIMIT_STRING_SIZE));
@@ -1823,7 +1825,7 @@ static void test_refusal_details(void) {
 
     /* The last scalar payload is short, but the advertised count's minimum still fits. */
     mo_buffer_init(&out, 1024);
-    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 2, 0};
+    const uint8_t header[20] = {'M', 'O', 'B', 'C', 0, 0, 3, 0};
     CHECK(mo_buffer_append(&out, header, sizeof header));
     const uint32_t prefix[] = {0, 1, 3, 0, 1, 0};
     for (uint32_t i = 0; i < ARRAY_COUNT(prefix); i++) {

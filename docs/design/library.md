@@ -18,6 +18,13 @@ covered log. `host/store.c` implements all three for disk and in-memory SQLite.
 No handler receives the store capability, and no checker signature, Core form
 or bytecode operation exposes it. See [saved state](saved-state.md).
 
+The runtime-only `LISTENEROP` section of `hostops.def` is not a library family
+either. `NOW`, `WAIT`, `ACCEPT`, `READ`, `WRITE`, `AUTH`, `HALF_CLOSE` and `CLOSE`
+are the operations the private MCP server calls on its listener. `host/listener.c`
+implements all eight for real sockets and its fake. No handler receives the listener,
+and it has no Mo type, checker signature, Core form or bytecode operation. See
+[services](services.md).
+
 The `SIMOP` section is VM-handled, not host-dispatched. Those rows carry no
 fixed Mo signature: a checked service/tool selector supplies the types.
 The map prefixes their row IDs with `SIM_` to distinguish this family.

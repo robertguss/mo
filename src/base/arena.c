@@ -88,15 +88,29 @@ void mo_arena_init(struct mo_arena *arena, size_t limit) {
         .chunk = NULL, .used = 0, .limit = limit, .next_chunk_size = FIRST_CHUNK_SIZE};
 }
 
+void mo_arena_init_confidential(struct mo_arena *arena, size_t limit) {
+    mo_arena_init(arena, limit);
+    arena->confidential = true;
+}
+
+static void wipe(void *bytes, size_t size) {
+    void *(*volatile clear)(void *, int, size_t) = memset;
+    (void)clear(bytes, 0, size);
+}
+
 void mo_arena_free(struct mo_arena *arena) {
     MO_ASSERT(arena != NULL);
+    bool confidential = arena->confidential;
     struct mo_arena_chunk *chunk = arena->chunk;
     while (chunk != NULL) {
         struct mo_arena_chunk *previous = chunk->previous;
+        if (confidential)
+            wipe(chunk, sizeof *chunk + chunk->capacity);
         free(chunk);
         chunk = previous;
     }
     mo_arena_init(arena, arena->limit);
+    arena->confidential = confidential;
 }
 
 void *mo_arena_allocate(struct mo_arena *arena, size_t size, size_t alignment) {
@@ -166,10 +180,12 @@ void *mo_arena_resize(struct mo_arena *arena, void *block, size_t old_size, size
         MO_ASSERT(old_size <= chunk->used);
         size_t offset = chunk->used - old_size;
         if (new_size <= chunk->capacity - offset) {
+            if (arena->confidential && new_size < old_size)
+                wipe(start + new_size, old_size - new_size);
             chunk->used = offset + new_size;
             return block;
         }
-        if (offset == 0 && alignment <= _Alignof(struct mo_arena_chunk)) {
+        if (!arena->confidential && offset == 0 && alignment <= _Alignof(struct mo_arena_chunk)) {
             if (!grow_alone(arena, new_size)) {
                 return NULL;
             }
@@ -179,6 +195,8 @@ void *mo_arena_resize(struct mo_arena *arena, void *block, size_t old_size, size
         }
     }
     if (new_size <= old_size) {
+        if (arena->confidential && new_size < old_size)
+            wipe(start + new_size, old_size - new_size);
         return block;
     }
     void *moved = mo_arena_allocate(arena, new_size, alignment);
@@ -186,6 +204,8 @@ void *mo_arena_resize(struct mo_arena *arena, void *block, size_t old_size, size
         return NULL;
     }
     memcpy(moved, block, old_size);
+    if (arena->confidential)
+        wipe(block, old_size);
     return moved;
 }
 

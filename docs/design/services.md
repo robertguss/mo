@@ -1,13 +1,11 @@
 # Services: the Phase 3 design
 
 Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`
-and the D310, D312 and D313 clarifications in `MO-155`. MO-156 adds descriptors;
-MO-157 adds the in-process C service loop described below. No command starts a service yet.
-MO-155 adds service syntax and checking, with reference section 11.5.
-The pure queue example implements D307. Phase 2 is complete
-(D300), so Phase 3 can begin (D267). D256 to D267 were settled with Robert on 18 Oct 2026;
-section 9 records the decisions
-he made on 24 and 25 Oct 2026.
+and the D310, D312 and D313 clarifications in `MO-155`. D256 to D267 were settled with Robert
+on 18 Oct 2026; section 9 records the decisions he made on 24 and 25 Oct 2026. This note
+describes the design. Which parts are built is tracked in Notion's
+[Status](https://www.notion.so/3fd700320c45810ca58ddf73fb6fc8c2) page and
+[Mo Tasks](https://www.notion.so/657ad0b75b55427aa8310151d0468728), not here.
 
 ## 1. Purpose
 
@@ -307,12 +305,12 @@ checked time addition, like `lease`, and returns `BadLease(length: 30.minutes)` 
 would exceed the year 9999. It leaves every other job, the attempt count and `next_id` unchanged.
 
 The exe.dev documentation describes persistent VMs that stop when their owner stops them and
-does not describe idle sleeping. Deployment still requires a 48-hour idle check. That check and
-the week-long run below have not happened.
+does not describe idle sleeping. Deployment requires a 48-hour idle check (MO-163), separate
+from the week-long run below (MO-164); unit tests satisfy neither.
 
 ### Fix follow-ups, not implemented in MO-155
 
-Robert's PR #231 review records these later improvements:
+Robert's PR #231 review records these later improvements, tracked as MO-171:
 
 - Emit smaller source edits instead of whole-file replacements.
 - Format generated adapters and derive helper and record names from the tool's name.
@@ -440,6 +438,153 @@ The test-only TaskQueue fixture wraps the unchanged `examples/job-queue.mo`.
 Its submit/crash/restart/lease test exercises real recovery; ignoring an accepted
 reply and retrying after recovery produces two jobs. Promise generators, the
 MO-162 service, networking and deployment are outside this change.
+
+### MO-160 private request processing
+
+The embedded `McpRpc` module implements D322's pure request classification and
+method validation. It uses `Json.parse`; duplicate object member names are refused
+as unparseable. This includes decoded-equivalent names and duplicates inside tool
+arguments. It does not invoke handlers or consume rate tokens. Notifications and
+validated requests have different result variants.
+
+RPC integer IDs retain their original spelling, including `-0`, within D317's
+128-byte limit. String IDs are limited to 128 decoded UTF-8 bytes. Error envelopes
+omit an indeterminate ID. Exact error messages remain caller-supplied in this
+unit; D325's approved wording belongs to MO-160 part 2.
+
+`Mcp.prepare` checks that every single-tool page fits the supplied response
+ceiling with the worst-case escaped ID and its cursor, when needed. `Mcp.page`
+counts serialized UTF-8 bytes, including the RPC envelope, and omits `nextCursor`
+on the last page. These functions take the image key and response ceiling from
+the caller; they do not freeze resource defaults. The private C embedding supplies
+the loaded image key and `mo_version()`; embedded `McpTransport` owns HTTP status
+mapping and D325's exact protocol errors.
+D324 confirms D322 item 10: every notification that passes item 4, including one
+with array params, receives HTTP 202 with an empty body and never runs a tool.
+The regression-list line requesting HTTP 400 was a mistake. This unit returns
+`Notification` for those envelopes; the HTTP mapping belongs to the listener.
+
+### MO-160 node admission (D326 and D330)
+
+Robert approved D330 on 30 Oct 2026 at 16:59 UTC. Both node-overflow paths return
+HTTP 413 with an empty body, before consuming any rate token or admitting service
+work. The native prescan refuses when Q + 1 exceeds 16,448, where Q counts opening
+brackets, opening braces and commas outside strings. After parsing, Mo enforces
+the exact limits of 16,384 payload nodes and 64 envelope nodes. Each Json value
+counts as one node; object keys count toward bytes, not nodes. For `tools/call`,
+only `params.arguments` is payload. Everything else belongs to the envelope;
+methods without a payload must fit within 64 nodes. Wrappers and application
+Bytes elements count. D330 assigns the response without changing those limits.
+
+### MO-160 listener and client hookup
+
+`tools/protocol.h` exposes the private C server constructor, polling loop and
+metrics. It takes an already loaded service image, an open store, a listener and
+explicit configured authorities. There is no `mo serve` command. The existing
+service loop still owns admission, timers, supervision and durable updates.
+
+The runtime-only listener family in `base/hostops.def` has real and fake
+implementations. Real binds use numeric addresses, default to `127.0.0.1`, require
+an explicit port (zero requests an ephemeral port), and require explicit consent
+for non-loopback exposure. IPv6 listeners are IPv6-only. Native code owns socket
+readiness, credentials and constant-time bearer authentication. Embedded Mo owns
+header syntax, authority comparison, request policy, body framing, JSON parsing,
+method validation, schemas and wire-value conversion. Authority comparison uses
+ASCII host case folding and numeric ports, with default port 80. It performs no
+DNS or alias expansion. Malformed authorities get 400, unconfigured authorities
+421; absolute-form targets own their authority.
+
+Eight connection slots remain occupied through a pending service reply. Polling
+rotates slots and waits no later than the next service deadline. Headers and
+bodies have absolute deadlines; fragments do not reset them. Each stage runs to
+completion, so these deadlines are not a wall-clock execution interrupt. Final
+responses close the connection, disable caching, half-close writing and drain
+at most 512 KiB or 250 ms without parsing another request.
+
+Authentication precedes body planning and JSON decoding. Header-stage values and
+raw credential bytes are wiped before the authenticated request process starts.
+Unknown tools and malformed params precede rate consumption. Every known-tool
+call consumes a rate token before typed decoding, including invalid arguments.
+The token-wide rate remains 20 calls per second with burst 40. Node overflows
+precede both rate consumption and admission as D330 requires. Resource failures
+at the header stage return HTTP 413 with an empty body, without taking a rate
+token or admitting service work. Allocation failure during accept instead closes
+the connection silently, without sending response bytes.
+
+Tool results follow D319: success and application/runtime errors each carry one
+compact object in both `structuredContent` and the text-content block. Both
+copies count toward the complete response ceiling. `outputSchema` is a 2020-12
+object union of success, application error when present, and runtime error.
+`runtime/mcp-transport.mo` contains D328's fixed runtime messages and D325's fixed
+protocol messages. The effects `none`, `applied` and `unknown` describe only this
+call's service-state update, not retry safety. A lost updating reply has unknown
+effect for the client.
+
+Mo prepares fallback prefixes and suffixes at catalog time. Each slot reserves
+a fixed buffer for the largest permitted fallback and a maximally escaped
+128-byte ID. Native code splices only those exact bytes and uses precomputed HTTP
+headers; fallback emission allocates nothing from an exhausted request heap.
+Successful callback values are retained only until the poll loop projects and
+serializes them. Native result packing retains its derived node guard,
+`MO_LIMIT_MCP_RESPONSE_NODES = MO_LIMIT_MCP_RESPONSE_BYTES / 2 - 1` (16,383).
+This guard is separate from the request payload and envelope node limits.
+Serialization failure never retries an admitted operation.
+Result rendering reuses the compact content text and rejects it before building
+the duplicated RPC body when those two copies alone exceed the response ceiling.
+
+Descriptor and catalog graphs are frozen during server construction and shared
+immutably across requests. Their owning catalog heap outlives every connection
+process. Configured authorities are frozen in that heap too, but each request's
+header-stage process copies them into its own heap and charges their bytes to
+that request. Request heaps, expanded byte lists, VM stack scratch and temporary
+native arenas share the request memory allowance. Typed copy-in temporarily
+constrains the destination service heap to the request's remaining allowance,
+then restores the service limit before admission.
+
+E0105 checks only wire arguments after State and Time, projected replies and
+application errors, recursively. Private state and update-state wrappers are
+excluded. E0106 rejects selected tool names ending in `?`; ordinary helpers and
+timers remain unaffected. Both checks follow E0101 across all services (D328).
+
+### MO-160 measurement accounting (D317 and D329)
+
+VM work is bytecode dispatch, including one instruction per native primitive.
+The transport additionally charges linear native byte/node visits; it does not
+claim to meter each C table probe or comparison as a VM instruction. Native
+scanning, copying and conversion have byte, node, depth and iteration bounds,
+and their wall time must be measured. Hashing and typed Map/Set duplicate checks
+remain in the service image's runtime, not JSON equality.
+
+`request_memory` includes the connection resident bytes, the protocol-process
+lifetime peak and a conservative bound for temporary service copy-in. Native
+scratch telemetry counts aggregate arena reservations, including capacity and
+allocator headers, across simultaneous arenas. `native_memory` adds connection
+resident bytes and these scratch peaks; the service copy-in contribution may
+conservatively include earlier heap activity. `concurrent_memory` sums active
+connections' lifetime peak bounds, not a sampled simultaneous-live peak. Catalog
+memory is separate. Compiled images, the service's existing allowance and SQLite
+storage are not claimed as transport memory or total RSS.
+
+The original D329 working byte ceilings failed the required 2× matrix. The
+measured defaults lower the header block from 2 KiB to 1 KiB, decoded body from 256 KiB
+to 16 KiB, complete response from 256 KiB to 32 KiB, and encoded ingress from
+512 KiB to 24 KiB, including headers. The allowances remain 1 MiB/1M work for
+pre-authentication inside 16 MiB/32M work per request, and 64 MiB for catalog
+preparation. Node, depth, connection, rate and type-graph limits are unchanged.
+The complete matrix passes with these reductions under strict GCC `-O2`:
+bytewise pre-authentication, byte-fit values and duplicates, depth 60/61, escaped
+results, maximum responses, catalog pages, 1,024 chunks and eight retained peak
+connections. Original node-ceiling requests exceed the lower body ceiling and
+are refused before parsing; the pure transport fixtures retain the exact node
+boundary checks. Results and timings are recorded in the PR. Raising any limit
+or adding memory/work requires Robert's approval.
+
+Request work depends on how finely bytes arrive. The protocol request reader
+coalesces available body bytes up to its 1 KiB input buffer during a poll, but
+one new byte per poll can make a 16 KiB body hit the 32,000,000 request-work
+ceiling and receive HTTP 413. Work remains bounded
+by that ceiling; a body within the byte limit is not guaranteed to fit the work
+budget under every delivery pattern.
 
 ## 10. Done means
 

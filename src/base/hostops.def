@@ -104,3 +104,16 @@ SIMOP(ADVANCE, "Simulation", "advance", false)
 SIMOP(CRASH,   "Simulation", "crash",   false)
 SIMOP(RESTART, "Simulation", "restart", false)
 #undef SIMOP
+
+#ifndef LISTENEROP
+#define LISTENEROP(id)
+#endif
+LISTENEROP(NOW)
+LISTENEROP(WAIT)
+LISTENEROP(ACCEPT)
+LISTENEROP(READ)
+LISTENEROP(WRITE)
+LISTENEROP(AUTH)
+LISTENEROP(HALF_CLOSE)
+LISTENEROP(CLOSE)
+#undef LISTENEROP

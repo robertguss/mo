@@ -48,7 +48,7 @@ static MO_MUST_USE struct mo_image *assemble(const struct mo_buffer *text) {
 }
 
 static void literal_text(struct mo_buffer *text, const char *type, const char *literal) {
-    CHECK(mo_buffer_append_text(text, "bytecode 0.2 shorthand\nmodule A exposes [A.value]\n"
+    CHECK(mo_buffer_append_text(text, "bytecode 0.3 shorthand\nmodule A exposes [A.value]\n"
                                       "function A.value() : "));
     CHECK(mo_buffer_append_text(text, type));
     CHECK(mo_buffer_append_text(text, " function in A\n  registers [r0: "));
@@ -131,14 +131,14 @@ static void scalars(void) {
 
 static void programs(void) {
     static const char *const cases[] = {
-        "bytecode 0.2 shorthand\nglobal A.answer: Int in A\ninit [A.init]\n"
+        "bytecode 0.3 shorthand\nglobal A.answer: Int in A\ninit [A.init]\n"
         "function A.get() : Int function in A\n registers [r0: Int]\n"
         " global r0, A.answer\n ret r0\nend\n"
         "function A.init() : Unit init in A\n registers [r0: Int, r1: Unit]\n"
         " const r0, 7\n set_global A.answer, r0\n const r1, ()\n ret r1\nend\n"
         "module A exposes [A.get]\n",
 
-        "bytecode 0.2 shorthand\n"
+        "bytecode 0.3 shorthand\n"
         "function A.apply() : Int function in A\n"
         " registers [r0: Int, r1: fn(Int): Int, r2: Int]\n"
         " const r0, 3\n make_closure r1, A.add, r0\n const r0, 7\n"
@@ -147,7 +147,7 @@ static void programs(void) {
         " registers [r2: Int, r3: Int]\n field r2, r1, 0\n add_int r3, r0, r2\n"
         " drop r1\n ret r3\nend\nmodule A exposes [A.apply]\n",
 
-        "bytecode 0.2 shorthand\nchoice Pair\n case Empty\n"
+        "bytecode 0.3 shorthand\nchoice Pair\n case Empty\n"
         " case Both(left: Int, right: Int)\nend\n"
         "function A.choose(n: Int owned) : Int function in A\n"
         " registers [r1: Pair, r2: Int]\n make_case r1, Pair, 1, r0, r0\n"
@@ -155,34 +155,34 @@ static void programs(void) {
         " @both:\n case_field r2, r1, 1, 0\n drop r1\n ret r2\nend\n"
         "module A exposes [Pair(..), A.choose]\n",
 
-        "bytecode 0.2 shorthand\nrecord Box\n value: Int\nend\n"
+        "bytecode 0.3 shorthand\nrecord Box\n value: Int\nend\n"
         "function A.rebuild(n: Int owned) : Box function in A\n"
         " registers [r1: Box, r2: Box]\n construct r1, t0, r0\n reset r2, r1\n"
         " reuse r1, r2, Box, r0\n set_field r1, r1, 0, r0\n ret r1\nend\n"
         "module A exposes [Box(..), A.rebuild]\n",
 
-        "bytecode 0.2 shorthand\nmodule A exposes []\n"
+        "bytecode 0.3 shorthand\nmodule A exposes []\n"
         "function A.test() : Unit test spec in A\n"
         " registers [r0: Console, r1: Text, r2: Unit, r3: Bytes, r4: Int]\n"
         " text \"prints and counts\"\n host r0, Console.fake\n const r1, \"hello\"\n"
         " host r2, Console.print, r0, r1\n const r3, bytes hex\"0012ff\"\n"
         " prim r4, Bytes.size, fn(Bytes): Int, r3\n drop r0\n ret r2\nend\n",
 
-        "bytecode 0.2 shorthand\nstrings\n s0 \"A\"\n s1 \"A\"\nend\n"
+        "bytecode 0.3 shorthand\nstrings\n s0 \"A\"\n s1 \"A\"\nend\n"
         "types\n t0 int\nend\nconstants\n k0 t0 7\n k1 t0 7\nend\n"
         "module A exposes [A.id]\nfunction A.id(n: Int owned) : Int function in A\n"
         " registers [r1: Int]\n const r1, k1\n const r1, 7\n ret r1\nend\n",
 
-        "bytecode 0.2 shorthand\nconstants\n k0 t0 7\nend\n"
+        "bytecode 0.3 shorthand\nconstants\n k0 t0 7\nend\n"
         "function A.id(n: Int owned) : Int function in A\n registers []\n ret r0\nend\n"
         "module A exposes [A.id]\n",
 
-        "bytecode 0.2 shorthand\nrecord Wrapper(Int,Text)\n value: Int\nend\n"
+        "bytecode 0.3 shorthand\nrecord Wrapper(Int,Text)\n value: Int\nend\n"
         "function A.unwrap(n: Wrapper(Int, Text) borrowed) : Int function in A\n"
         " registers [r1: Int]\n field r1, r0, 0\n ret r1\nend\n"
         "module A exposes [Wrapper(Int, Text)(..), A.unwrap]\n",
 
-        "bytecode 0.2 shorthand\nmodule A exposes [A.clear]\n"
+        "bytecode 0.3 shorthand\nmodule A exposes [A.clear]\n"
         "function A.clear(x: Text borrowed) : Unit function in A\n"
         " registers [r1: Unit, r2: Int, r3: Text]\n"
         " clear r0\n clear r3\n const r2, 7\n clear r2\n const r1, ()\n ret r1\nend\n",
@@ -227,31 +227,31 @@ static void symbolic_names(void) {
         const char *text;
         uint32_t types;
     } cases[] = {
-        {"bytecode 0.2 shorthand\nrecord Box(Text)\n n: Int\nend\n"
+        {"bytecode 0.3 shorthand\nrecord Box(Text)\n n: Int\nend\n"
          "function A.get(b: Box(Text) borrowed) : Int function in A\n registers [r1: Int]\n"
          " field r1, r0, 0\n ret r1\nend\nmodule A exposes [Box(Text), A.get]\n",
          2},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"Column(Product)\"\n s1 \"n\"\nend\n"
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"Column(Product)\"\n s1 \"n\"\nend\n"
          "types\n t0 record s0 [(s1, t1)]\n t1 int\nend\n"
          "function A.get(c: Column(Product) borrowed) : Int function in A\n registers [r1: Int]\n"
          " field r1, r0, 0\n ret r1\nend\nmodule A exposes [Column(Product), A.get]\n",
          2},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"Box(fn(Int) : Int)\"\n s1 \"n\"\nend\n"
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"Box(fn(Int) : Int)\"\n s1 \"n\"\nend\n"
          "types\n t0 record s0 [(s1, t1)]\n t1 int\nend\n"
          "function A.get(c: Box(fn(Int):Int) borrowed) : Int function in A\n registers [r1: Int]\n"
          " field r1, r0, 0\n ret r1\nend\nmodule A exposes [Box(fn(Int) : Int)(..)]\n",
          2},
-        {"bytecode 0.2 shorthand\nrecord Account\n value: Int\nend\n"
+        {"bytecode 0.3 shorthand\nrecord Account\n value: Int\nend\n"
          "module Account exposes [Account]\n",
          2},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"Account\"\n s1 \"value\"\nend\n"
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"Account\"\n s1 \"value\"\nend\n"
          "types\n t0 record s0 [(s1, t1)]\n t1 int\nend\nmodule Account exposes [Account]\n",
          2},
-        {"bytecode 0.2 shorthand\nrecord t1x\n t1: Int\nend\nchoice Mode\n case t1\nend\n"
+        {"bytecode 0.3 shorthand\nrecord t1x\n t1: Int\nend\nchoice Mode\n case t1\nend\n"
          "function A.get(p1: Int owned) : t1x function in A\n registers [r1: t1x]\n"
          " construct r1, t1x, r0\n ret r1\nend\nmodule A exposes [t1x(..), Mode(..), A.get]\n",
          3},
-        {"bytecode 0.2 shorthand\nrecord Page(Int)\n n: Int\nend\n"
+        {"bytecode 0.3 shorthand\nrecord Page(Int)\n n: Int\nend\n"
          "function A.id(Int)(p1: Int borrowed) : Int function in A\n registers []\n ret r0\nend\n"
          "module A exposes [Page(Int), A.id(Int)]\n",
          2},
@@ -280,7 +280,7 @@ static void filenames(void) {
     mo_buffer_init(&source, MO_LIMIT_BYTECODE_TEXT_SIZE);
     CHECK(mo_buffer_append_text(
         &source,
-        "bytecode 0.2 shorthand\nstrings\n s0 \"keep\"\nend\n"
+        "bytecode 0.3 shorthand\nstrings\n s0 \"keep\"\nend\n"
         "files\n P0 hex\"ff\"\n P1 hex\"ff\"\n P2 hex\"c3\"\n"
         " P3 hex\"5c786666\"\n P4 \"é\"\nend\n"
         "module A exposes [A.main]\n"
@@ -309,18 +309,20 @@ static void filenames(void) {
         mo_image_free(image);
     }
     mo_buffer_free(&source);
-    const char *const bad[] = {"bytecode 0.2 shorthand\nfiles\n P0 hex\"\"\nend\n",
-                               "bytecode 0.2 shorthand\nfiles\n P0 hex\"610062\"\nend\n"};
+    const char *const bad[] = {"bytecode 0.3 shorthand\nfiles\n P0 hex\"\"\nend\n",
+                               "bytecode 0.3 shorthand\nfiles\n P0 hex\"610062\"\nend\n"};
     for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++)
         refusal(bad[i], strlen(bad[i]), (uint32_t)(strstr(bad[i], "P0") - bad[i]),
                 "filename must be nonempty and contain no NUL");
-    const char *missing = "bytecode 0.2 shorthand\nmodule A exposes []\n"
+    const char *missing = "bytecode 0.3 shorthand\nmodule A exposes []\n"
                           "function A.main() : Unit function in A\n registers [r0: Unit]\n"
                           " declaration (P0, 0, 1)\n const r0, ()\n ret r0\nend\n";
     refusal(missing, strlen(missing), (uint32_t)(strstr(missing, "P0") - missing),
             "expected filename index in final pool");
-    const char *old = "bytecode 0.1 shorthand\n";
-    refusal(old, strlen(old), 9, "expected bytecode version 0.2");
+    const char *const old[] = {"bytecode 0.1 shorthand\n", "bytecode 0.2 shorthand\n",
+                               "bytecode 0.2 indexed\n"};
+    for (size_t i = 0; i < sizeof old / sizeof *old; i++)
+        refusal(old[i], strlen(old[i]), 9, "expected bytecode version 0.3");
 }
 
 static void refusals(void) {
@@ -328,75 +330,75 @@ static void refusals(void) {
         const char *text, *at, *reason;
     } cases[] = {
         {"", "", "expected bytecode header"},
-        {"bytecode 0.1 indexed\n", "0.1", "expected bytecode version 0.2"},
-        {"bytecode 0.2 mixed\n", "mixed", "expected indexed or shorthand"},
-        {"bytecode 0.2 indexed\ntypes\n", "types", "expected strings section"},
-        {"bytecode 0.2 shorthand\nstrings\n s1 \"a\"\nend\n", "s1",
+        {"bytecode 0.1 indexed\n", "0.1", "expected bytecode version 0.3"},
+        {"bytecode 0.3 mixed\n", "mixed", "expected indexed or shorthand"},
+        {"bytecode 0.3 indexed\ntypes\n", "types", "expected strings section"},
+        {"bytecode 0.3 shorthand\nstrings\n s1 \"a\"\nend\n", "s1",
          "expected consecutive entry index within section limit"},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"a\"\n s0 \"b\"\nend\n", "s0 \"b\"",
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"a\"\n s0 \"b\"\nend\n", "s0 \"b\"",
          "expected consecutive entry index within section limit"},
-        {"bytecode 0.2 shorthand\nstrings\n s0 hex\"61\"\nend\n", "hex",
+        {"bytecode 0.3 shorthand\nstrings\n s0 hex\"61\"\nend\n", "hex",
          "expected quoted UTF-8 string"},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"\\n\"\nend\n", "n",
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"\\n\"\nend\n", "n",
          "expected quote, backslash or hex escape"},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"\\xg0\"\nend\n", "xg0",
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"\\xg0\"\nend\n", "xg0",
          "expected two hex digits after \\x"},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"\\xff\"\nend\n", "\"\\xff",
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"\\xff\"\nend\n", "\"\\xff",
          "expected valid UTF-8 string"},
-        {"bytecode 0.2 shorthand\nstrings\n s0 \"open", "\"open", "expected closing quote"},
-        {"bytecode 0.2 shorthand\r", "\r", "expected LF after CR"},
-        {"bytecode 0.2 shorthand\nmodule A exposes []\nmodule A exposes []\n",
+        {"bytecode 0.3 shorthand\nstrings\n s0 \"open", "\"open", "expected closing quote"},
+        {"bytecode 0.3 shorthand\r", "\r", "expected LF after CR"},
+        {"bytecode 0.3 shorthand\nmodule A exposes []\nmodule A exposes []\n",
          "module A exposes []\nmodule", "expected unique symbolic declaration"},
-        {"bytecode 0.2 shorthand\nmodule m0 exposes []\n", "m0",
+        {"bytecode 0.3 shorthand\nmodule m0 exposes []\n", "m0",
          "expected symbolic name, not reserved index spelling"},
-        {"bytecode 0.2 shorthand\ninit []\ninit []\n", "init []\ninit",
+        {"bytecode 0.3 shorthand\ninit []\ninit []\n", "init []\ninit",
          "expected at most one init declaration"},
-        {"bytecode 0.2 shorthand\nfunctions\n", "functions",
+        {"bytecode 0.3 shorthand\nfunctions\n", "functions",
          "expected record, choice, global, init, function or module"},
-        {"bytecode 0.2 shorthand\ntypes\n t0 list t1\nend\n", "t1",
+        {"bytecode 0.3 shorthand\ntypes\n t0 list t1\nend\n", "t1",
          "expected type index in final pool"},
-        {"bytecode 0.2 indexed\nstrings\nend\ntypes\n t0 int\nend\nlayouts\nend\n"
+        {"bytecode 0.3 indexed\nstrings\nend\ntypes\n t0 int\nend\nlayouts\nend\n"
          "constants\n k0 t1 7\nend\nglobals\nend\ninit\nend\nfunctions\nend\n"
          "modules\nend\nfiles\nend\ndebug\nend\n",
          "t1", "expected type index in final pool"},
-        {"bytecode 0.2 shorthand\nconstants\n k0 t9 7\nend\n"
+        {"bytecode 0.3 shorthand\nconstants\n k0 t9 7\nend\n"
          "module A exposes [A.id]\nfunction A.id(n: Int owned) : Int function in A\n"
          "registers []\nret r0\nend\n",
          "t9", "expected type index in final pool"},
-        {"bytecode 0.2 shorthand\nmodule A exposes [A.id]\n"
+        {"bytecode 0.3 shorthand\nmodule A exposes [A.id]\n"
          "function A.id(n: Int owned) : Int function in A\n"
          "registers [r1: t9]\nconst r1, 7\nret r0\nend\n",
          "t9", "expected type index in final pool"},
-        {"bytecode 0.2 shorthand\ntypes\n t0 record s9 []\nend\n", "s9",
+        {"bytecode 0.3 shorthand\ntypes\n t0 record s9 []\nend\n", "s9",
          "expected string index in final pool"},
-        {"bytecode 0.2 shorthand\nglobal A.value: Int in m9\nmodule A exposes []\n", "m9",
+        {"bytecode 0.3 shorthand\nglobal A.value: Int in m9\nmodule A exposes []\n", "m9",
          "expected module index in final pool"},
-        {"bytecode 0.2 shorthand\nmodule A exposes [A.id]\n"
+        {"bytecode 0.3 shorthand\nmodule A exposes [A.id]\n"
          "function A.id(n: Int owned) : Int function in A\n"
          "registers [r1: fn(Int): Int]\nconstruct r1, closure(f9)\nret r0\nend\n",
          "f9", "expected function index in final pool"},
-        {"bytecode 0.2 shorthand\nmodule A exposes []\nfunction A.test() : Unit test in A\n"
+        {"bytecode 0.3 shorthand\nmodule A exposes []\nfunction A.test() : Unit test in A\n"
          " registers [r0: Unit]\n const r0, ()\n ret r0\nend\n",
          "function A.test", "function spec flag disagrees with kind"},
-        {"bytecode 0.2 shorthand\nmodule A exposes []\nrecord Bad\n n: Int\n n: Int\nend\n",
+        {"bytecode 0.3 shorthand\nmodule A exposes []\nrecord Bad\n n: Int\n n: Int\nend\n",
          "record Bad", "duplicate field name"},
-        {"bytecode 0.2 shorthand\nmodule A exposes []\nfunction A.test(n: Int owned) : Unit test "
+        {"bytecode 0.3 shorthand\nmodule A exposes []\nfunction A.test(n: Int owned) : Unit test "
          "spec in A\n"
          " registers [r1: Unit]\n const r1, ()\n ret r1\nend\n",
          "function A.test", "invalid function kind signature"},
-        {"bytecode 0.2 shorthand\nmodule B exposes [A.id]\nmodule A exposes []\n"
+        {"bytecode 0.3 shorthand\nmodule B exposes [A.id]\nmodule A exposes []\n"
          "function A.id(n: Int owned) : Int function in A\n registers []\n ret r0\nend\n",
          "module B", "exposed function out of range/module"},
-        {"bytecode 0.2 shorthand\nmodule A exposes []\nglobal A.n: Int in A\n", "global A.n",
+        {"bytecode 0.3 shorthand\nmodule A exposes []\nglobal A.n: Int in A\n", "global A.n",
          "init/global or debug/function count mismatch"},
-        {"bytecode 0.2 shorthand\nrecord A.id\n n: Int\nend\n"
+        {"bytecode 0.3 shorthand\nrecord A.id\n n: Int\nend\n"
          "function A.id(n: Int owned) : Int function in A\n registers []\n ret r0\nend\n"
          "module A exposes [A.id]\n",
          "A.id]\n", "expected unambiguous exposed type or function"},
-        {"bytecode 0.2 shorthand\nmodule A exposes []\nfunction A.id() : Int function in A\n"
+        {"bytecode 0.3 shorthand\nmodule A exposes []\nfunction A.id() : Int function in A\n"
          " registers [r0: Int]\n const r0, nope\n bogus r0\nend\n",
          "nope", "expected integer digit in literal radix"},
-        {"bytecode 0.2 indexed\nstrings\n s0 \"A\"\n s1 \"A.test\"\nend\ntypes\n t0 unit\nend\n"
+        {"bytecode 0.3 indexed\nstrings\n s0 \"A\"\n s1 \"A.test\"\nend\ntypes\n t0 unit\nend\n"
          "layouts\nend\nconstants\n k0 t0 ()\nend\nglobals\nend\ninit\nend\nfunctions\n"
          " f0 s1 m0 test spec 0\n params []\n result t0\n captures []\n registers [t0]\n code\n "
          "const r0, k0\n ret r0\n end\n end\nend\n"
@@ -404,7 +406,7 @@ static void refusals(void) {
          "variables [] "
          "text - declaration (-, 0, 0) subject - expectation none lines []\nend\n",
          "f0 s1", "function spec flag disagrees with kind"},
-        {"bytecode 0.2 shorthand\nmodule A exposes []\n"
+        {"bytecode 0.3 shorthand\nmodule A exposes []\n"
          "global A.x: Int in A\nglobal A.y: Int in A\ninit [A.first, A.second]\n"
          "function A.first() : Unit init in A\n registers [r0: Int, r1: Unit]\n"
          " const r0, 1\n set_global A.x, r0\n const r1, ()\n ret r1\nend\n"
@@ -497,7 +499,7 @@ static void instruction_refusals(void) {
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
         struct mo_buffer text;
         mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
-        CHECK(mo_buffer_append_text(&text, "bytecode 0.2 shorthand\nmodule A exposes [A.id]\n"
+        CHECK(mo_buffer_append_text(&text, "bytecode 0.3 shorthand\nmodule A exposes [A.id]\n"
                                            "function A.id(n: Int owned) : Int function in A\n"
                                            "registers [r1: Int, r2: Bool]\n"));
         size_t start = text.length;
@@ -519,7 +521,7 @@ static void instruction_refusals(void) {
  * instruction, at at's first match in the body plus delta. */
 static void reference_refusals(void) {
     static const char header[] =
-        "bytecode 0.2 shorthand\nmodule A exposes [A.f, A.take, A.keep, A.copy]\n"
+        "bytecode 0.3 shorthand\nmodule A exposes [A.f, A.take, A.keep, A.copy]\n"
         "function A.take(a: Text owned, b: Text borrowed) : Unit function in A\n"
         " registers [r2: Unit]\n drop r0\n const r2, ()\n ret r2\nend\n"
         "function A.keep(b: Text borrowed, a: Text owned) : Unit function in A\n"
@@ -617,7 +619,7 @@ static void boundaries(void) {
             "expected BigInt within decimal digit limit (use bigint sign hex)");
 
     mo_buffer_clear(&text);
-    CHECK(mo_buffer_append_text(&text, "bytecode 0.2 shorthand\nstrings\n s0 \""));
+    CHECK(mo_buffer_append_text(&text, "bytecode 0.3 shorthand\nstrings\n s0 \""));
     size_t start = text.length;
     for (unsigned i = 0; i < MO_LIMIT_STRING_SIZE; i++)
         CHECK(mo_buffer_append_byte(&text, 'a'));
@@ -637,7 +639,7 @@ static void boundaries(void) {
             "expected string within byte limit");
 
     mo_buffer_clear(&text);
-    CHECK(mo_buffer_append_text(&text, "bytecode 0.2 shorthand\nmodule A exposes [A.id]\n"
+    CHECK(mo_buffer_append_text(&text, "bytecode 0.3 shorthand\nmodule A exposes [A.id]\n"
                                        "function A.id(n: Int owned) : Int function in A\n"
                                        "registers [r1: "));
     for (unsigned i = 0; i < MO_LIMIT_NESTING_DEPTH - 1; i++)
@@ -650,7 +652,7 @@ static void boundaries(void) {
     if (image != NULL)
         mo_image_free(image);
     mo_buffer_clear(&text);
-    CHECK(mo_buffer_append_text(&text, "bytecode 0.2 shorthand\nmodule A exposes []\n"
+    CHECK(mo_buffer_append_text(&text, "bytecode 0.3 shorthand\nmodule A exposes []\n"
                                        "function A.id(n: Int owned) : Int function in A\n"
                                        "registers [r1: "));
     for (unsigned i = 0; i < MO_LIMIT_NESTING_DEPTH; i++)
@@ -681,7 +683,7 @@ static void boundaries(void) {
         CHECK(fclose(sparse) == 0);
     }
 
-    static const char minimal[] = "bytecode 0.2 shorthand\n";
+    static const char minimal[] = "bytecode 0.3 shorthand\n";
     struct mo_buffer small;
     struct mo_assemble_error error;
     mo_buffer_init(&small, MO_BYTECODE_HEADER_SIZE + 4 * MO_SECTION_SERVICES - 1);
@@ -701,7 +703,7 @@ static void work(const char *kind) {
     struct mo_buffer text, bytes;
     mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
     mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
-    CHECK(mo_buffer_append_text(&text, "bytecode 0.2 shorthand\n"));
+    CHECK(mo_buffer_append_text(&text, "bytecode 0.3 shorthand\n"));
     if (record || choice) {
         CHECK(mo_buffer_append_text(&text, record ? "record Big\n" : "choice Big\ncase Wide("));
         for (unsigned i = 0; i < MO_LIMIT_FIELDS; i++) {
@@ -766,7 +768,7 @@ static void ordered_names(void) {
      * Repeated lookups must also reuse the seed, rather than scanning every earlier name. */
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_BYTECODE_TEXT_SIZE);
-    CHECK(mo_buffer_append_text(&text, "bytecode 0.2 shorthand\n"));
+    CHECK(mo_buffer_append_text(&text, "bytecode 0.3 shorthand\n"));
     for (unsigned i = 0; i < 8192; i++) {
         char declaration[128];
         int n = snprintf(declaration, sizeof declaration,
@@ -787,7 +789,7 @@ static void ordered_names(void) {
 }
 
 static void empty(void) {
-    static const char expected[] = "bytecode 0.2 indexed\nstrings\nend\ntypes\nend\nlayouts\nend\n"
+    static const char expected[] = "bytecode 0.3 indexed\nstrings\nend\ntypes\nend\nlayouts\nend\n"
                                    "constants\nend\nglobals\nend\ninit\nend\nfunctions\nend\n"
                                    "modules\nend\nfiles\nend\ndebug\nend\n";
     struct mo_bytecode file = {0};

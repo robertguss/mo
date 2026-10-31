@@ -464,6 +464,19 @@ static MO_MUST_USE bool services(struct printer *p, const struct mo_bytecode *f)
             if ((j != 0 && !text(p, ", ")) || !number(p, "(f", s->timers[j].function) ||
                 !number(p, ", f", s->timers[j].interval) || !text(p, ")"))
                 return false;
+        if (!text(p, "] shapes ["))
+            return false;
+        for (uint32_t j = 0; j < s->shape_count; j++) {
+            const struct mo_bytecode_service_shape *shape = &s->shapes[j];
+            if ((j != 0 && !text(p, ", ")) || !number(p, "(t", shape->type) ||
+                !text(p, shape->is_struct ? ", struct, [" : ", enum, ["))
+                return false;
+            for (uint32_t k = 0; k < shape->case_count; k++)
+                if ((k != 0 && !text(p, ", ")) || !text(p, shape->unnamed[k] ? "1" : "0"))
+                    return false;
+            if (!text(p, "])"))
+                return false;
+        }
         if (!text(p, "]\n"))
             return false;
     }
@@ -471,7 +484,7 @@ static MO_MUST_USE bool services(struct printer *p, const struct mo_bytecode *f)
 }
 
 static MO_MUST_USE bool print(struct printer *p, const struct mo_bytecode *f) {
-    if (!text(p, "bytecode 0.2 indexed\nstrings\n"))
+    if (!text(p, "bytecode 0.3 indexed\nstrings\n"))
         return false;
     for (uint32_t i = 0; i < f->string_count; i++) {
         if (!number(p, "  s", i) || !text(p, " ") || !quoted(p, &f->strings[i]) || !text(p, "\n"))

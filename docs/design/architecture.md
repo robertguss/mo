@@ -7,8 +7,8 @@ virtual machine, and the contracts between them. It is written against the
 Language Reference v0.1 (`docs/reference/`), whose rules win wherever the two
 disagree. It also builds on Mo Core (`formal/`) and the bytecode
 specification (`bytecode.md`). The pipeline is integrated; remaining unsupported
-forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) records
-Phase 2 as finished. Service descriptors, the C service loop and SQLite store
+forms are refused, not silently accepted. [The roadmap](../ROADMAP.md) lists
+the phases; Phase 2 is finished. Service descriptors, the C service loop and SQLite store
 have landed; `mo run` still does not start a service. Section 9 describes
 later-phase hooks. Section 13 lists open questions.
 

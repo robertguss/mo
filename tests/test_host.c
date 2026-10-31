@@ -925,7 +925,7 @@ static void test_clock_random(void) {
 }
 
 static void test_empty_image(void) {
-    const char *source = "bytecode 0.2 shorthand\nmodule M exposes []\n";
+    const char *source = "bytecode 0.3 shorthand\nmodule M exposes []\n";
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     struct mo_assemble_error assembly;
@@ -950,7 +950,7 @@ static void test_empty_image(void) {
 
 static void test_main_capabilities(void) {
     const char *source =
-        "bytecode 0.2 shorthand\nmodule M exposes [M.main]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.main]\n"
         "function M.main(a: Args borrowed, e: Env borrowed, c: Console borrowed, "
         "f: Files borrowed, ro: ReadFiles borrowed, t: Clock borrowed, n: Random borrowed) "
         ": List(Text) function in M\n registers [r7: List(Text)]\n"
@@ -997,7 +997,7 @@ static void test_main_capabilities(void) {
 
 static void test_supplied_main_capabilities(void) {
     const char *source =
-        "bytecode 0.2 shorthand\nmodule M exposes [M.main]\n"
+        "bytecode 0.3 shorthand\nmodule M exposes [M.main]\n"
         "function M.main(left: Clock borrowed, right: Clock owned): Time function in M\n"
         " registers [r2: Time]\n host r2, Clock.now, r1\n drop r1\n ret r2\nend\n";
     struct mo_buffer wire;
@@ -1037,7 +1037,7 @@ static void test_supplied_main_capabilities(void) {
 
 static void test_vm_host_exhaustion(void) {
     const char *source =
-        "bytecode 0.2 shorthand\n"
+        "bytecode 0.3 shorthand\n"
         /* Host signatures require both boxed layouts; nominal declarations
          * reserve t0/t1 before their Text field introduces t2. */
         "layouts\n L0 case t0 3 [t2, t2]\n L1 case t1 1 [t0]\nend\n"
@@ -1203,6 +1203,50 @@ static MO_MUST_USE int sequence(void) {
     return 0;
 }
 
+static void test_bearer(void) {
+    const char *environment = "MO_TEST_ONLY_MCP_BEARER";
+    struct mo_bearer bearer;
+    MO_ASSERT(unsetenv(environment) == 0);
+    CHECK(!mo_bearer_read(&bearer, environment));
+    CHECK(!mo_bearer_check(&bearer, NULL, 0));
+    const char *invalid[] = {"", "=", "bad token", "a=b", "a\tb", "a:b", "a\nb"};
+    for (size_t i = 0; i < sizeof invalid / sizeof *invalid; i++) {
+        MO_ASSERT(setenv(environment, invalid[i], 1) == 0);
+        CHECK(!mo_bearer_read(&bearer, environment));
+        CHECK(bearer.length == 0);
+    }
+    uint8_t value[258];
+    memset(value, 'A', sizeof value);
+    const size_t lengths[] = {1, 17, 256};
+    for (size_t i = 0; i < sizeof lengths / sizeof *lengths; i++) {
+        size_t length = lengths[i];
+        value[length] = 0;
+        MO_ASSERT(setenv(environment, (const char *)value, 1) == 0);
+        CHECK(mo_bearer_read(&bearer, environment));
+        CHECK(mo_bearer_check(&bearer, value, length));
+        CHECK(!mo_bearer_check(&bearer, value, length - 1));
+        CHECK(!mo_bearer_check(&bearer, value, length + 1));
+        value[length] = 'A';
+        CHECK(!mo_bearer_check(&bearer, value, length + 1));
+        value[length - 1] = 'B';
+        CHECK(!mo_bearer_check(&bearer, value, length));
+        value[length - 1] = 'A';
+    }
+    value[sizeof value - 1] = 0;
+    MO_ASSERT(setenv(environment, (const char *)value, 1) == 0);
+    CHECK(!mo_bearer_read(&bearer, environment));
+    const char alphabet[] = "aZ09-._~+/==";
+    MO_ASSERT(setenv(environment, alphabet, 1) == 0);
+    CHECK(mo_bearer_read(&bearer, environment));
+    CHECK(mo_bearer_check(&bearer, (const uint8_t *)alphabet, sizeof alphabet - 1));
+    mo_host_wipe(&bearer, sizeof bearer);
+    CHECK(bearer.length == 0);
+    for (size_t i = 0; i < sizeof bearer.bytes; i++)
+        CHECK(bearer.bytes[i] == 0);
+    CHECK(!mo_bearer_check(&bearer, NULL, 0));
+    MO_ASSERT(unsetenv(environment) == 0);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--sequence") == 0)
         return sequence();
@@ -1228,6 +1272,7 @@ int main(int argc, char **argv) {
     test_main_capabilities();
     test_supplied_main_capabilities();
     test_vm_host_exhaustion();
+    test_bearer();
     mo_heap_image_free(fixture.image);
     mo_arena_free(&fixture.arena);
     return mo_test_report("host");

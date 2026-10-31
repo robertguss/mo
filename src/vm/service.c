@@ -63,10 +63,9 @@ const char *mo_service_status_text(enum mo_service_status status) {
     case MO_SERVICE_INTERVAL:
         return "service timer interval must be positive";
     case MO_SERVICE_STORE:
-        return "service store failed; reopen it to see whether the last change was saved";
+        return mo_store_status_text(MO_STORE_IO);
     case MO_SERVICE_SAVED_INVALID:
-        return "saved service data is damaged or was written by a different program; recovery "
-               "refused";
+        return mo_store_status_text(MO_STORE_CORRUPT);
     }
     MO_UNREACHABLE();
 }
@@ -509,6 +508,24 @@ uint32_t mo_service_pending(const struct mo_service_loop *s) {
 bool mo_service_running(const struct mo_service_loop *s) {
     MO_ASSERT(s != NULL);
     return s->running;
+}
+
+bool mo_service_next_deadline(const struct mo_service_loop *s, uint64_t *out) {
+    MO_ASSERT(s != NULL && out != NULL);
+    if (!s->running)
+        return false;
+    if (s->count != 0) {
+        *out = 0;
+        return true;
+    }
+    mo_u128 first = (mo_u128)UINT64_MAX + 1;
+    for (uint32_t i = 0; i < s->descriptor->timer_count; i++)
+        if (!s->timers[i].waiting && s->timers[i].next < first)
+            first = s->timers[i].next;
+    if (first > UINT64_MAX)
+        return false;
+    *out = (uint64_t)first;
+    return true;
 }
 
 uint64_t mo_service_deadlines(const struct mo_service_loop *s, uint64_t until, uint64_t *next) {

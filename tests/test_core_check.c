@@ -71,7 +71,7 @@ static void simulation_descriptors(void) {
     const struct mo_service_timer timer = {.function = 2};
     const struct mo_service service = {
         .start = 0, .tool_count = 1, .tools = &tool, .timer_count = 1, .timers = &timer};
-    const struct mo_services services = {1, &service};
+    const struct mo_services services = {.count = 1, .items = &service};
     const char *ops[] = {
         "send 0 0 ((int)) (tuple ((int) (int)))",  "send 1 0 ((int)) (tuple ((int) (int)))",
         "send 0 1 ((int)) (tuple ((int) (int)))",  "send 0 2 ((int)) (tuple ((int) (int)))",
