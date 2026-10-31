@@ -18,6 +18,13 @@ static void round_hash(uint64_t v[4]) {
     v[2] = rotate(v[2], 32);
 }
 
+uint64_t mo_splitmix64(uint64_t *state) {
+    uint64_t z = (*state += UINT64_C(0x9e3779b97f4a7c15));
+    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
+    return z ^ (z >> 31);
+}
+
 uint64_t mo_hash(const uint64_t key[2], const void *bytes, size_t length) {
     MO_ASSERT(key != NULL && (bytes != NULL || length == 0));
     const uint8_t *data = bytes;

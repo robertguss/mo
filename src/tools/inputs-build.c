@@ -1,5 +1,7 @@
 #include "tools/inputs-internal.h"
 
+#include "base/hash.h"
+
 #include <string.h>
 
 struct build_frame {
@@ -123,7 +125,7 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
                 frame->special -= info->case_offsets[frame->tag];
             }
         } else if (frame->request.mode == MO_INPUT_PRNG) {
-            uint32_t start = (uint32_t)(mo_input_random(&builder->random) % info->case_count);
+            uint32_t start = (uint32_t)(mo_splitmix64(&builder->random) % info->case_count);
             bool found = false;
             for (uint32_t i = 0; i < info->case_count; i++) {
                 uint32_t tag = info->case_tags[(start + i) % info->case_count];
@@ -166,7 +168,7 @@ static MO_MUST_USE enum mo_input_result frame_init(struct mo_input_builder *buil
                     inputs->info[type->parameters[p]].depth > builder->budget.left.depth - depth)
                     maximum = 0;
             }
-            count = (uint32_t)(mo_input_random(&builder->random) % ((uint64_t)maximum + 1));
+            count = (uint32_t)(mo_splitmix64(&builder->random) % ((uint64_t)maximum + 1));
         }
         if (count > inputs->limits.elements)
             return MO_INPUT_LIMIT;

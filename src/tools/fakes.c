@@ -1,5 +1,7 @@
 #include "tools/fakes.h"
 
+#include "base/hash.h"
+
 #include <string.h>
 
 /* The contents come from small fixed palettes, so a fake's size is bounded and its texts are
@@ -23,13 +25,6 @@ static const char *const env_values[] = {"/home/mo", "/usr/bin", "mo", "", "en_U
 #define COUNT(array) (sizeof(array) / sizeof((array)[0]))
 #define MAX_ITEMS 8
 #define BOUNDARIES 3
-
-static uint64_t next_random(uint64_t *state) {
-    uint64_t z = (*state += UINT64_C(0x9e3779b97f4a7c15));
-    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
-    return z ^ (z >> 31);
-}
 
 /* What a fake holds: up to MAX_ITEMS texts, or key/value pairs, picked from a palette. */
 struct contents {
@@ -65,7 +60,7 @@ static void pick(const struct mo_input_request *request, uint64_t *random, uint3
     for (uint32_t i = 0; i < k && request->kind == MO_INPUT_BOUNDARY; i++)
         out[i] = all[i];
     for (uint32_t i = 0; i < k && request->kind != MO_INPUT_BOUNDARY; i++) {
-        uint32_t j = i + (uint32_t)(next_random(random) % (n - i));
+        uint32_t j = i + (uint32_t)(mo_splitmix64(random) % (n - i));
         uint32_t swap = all[i];
         all[i] = all[j];
         all[j] = swap;
@@ -77,7 +72,7 @@ static uint32_t amount(const struct mo_input_request *request, uint64_t *random,
     if (request->kind == MO_INPUT_BOUNDARY)
         return request->boundary == 0 ? 0 : request->boundary == 1 ? (most > 1 ? 1 : most) : most;
     uint32_t limit = request->size < most ? request->size : most;
-    return (uint32_t)(next_random(random) % (limit + 1));
+    return (uint32_t)(mo_splitmix64(random) % (limit + 1));
 }
 
 static void file_contents(const struct mo_input_request *request, struct contents *out) {
@@ -90,7 +85,7 @@ static void file_contents(const struct mo_input_request *request, struct content
         out->keys[i] = paths[chosen[i]];
         out->values[i] = request->kind == MO_INPUT_BOUNDARY
                              ? file_texts[(i + (count == 1 ? 1 : 0)) % COUNT(file_texts)]
-                             : file_texts[next_random(&random) % COUNT(file_texts)];
+                             : file_texts[mo_splitmix64(&random) % COUNT(file_texts)];
     }
 }
 
