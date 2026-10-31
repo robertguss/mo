@@ -11,4 +11,6 @@
  * NULL only for an empty span. Hashing takes linear work and constant space. */
 MO_MUST_USE uint64_t mo_hash(const uint64_t key[2], const void *bytes, size_t length);
 
+MO_MUST_USE uint64_t mo_splitmix64(uint64_t *state);
+
 #endif

@@ -7,14 +7,6 @@
 /* This key is public and fixed, not a process's private hash domain. */
 static const uint64_t input_key[2] = {UINT64_C(0x6d6f2d70726f6d69), UINT64_C(0x73652d696e707574)};
 
-uint64_t mo_input_random(uint64_t *state) {
-    *state += UINT64_C(0x9e3779b97f4a7c15);
-    uint64_t word = *state;
-    word = (word ^ (word >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    word = (word ^ (word >> 27)) * UINT64_C(0x94d049bb133111eb);
-    return word ^ (word >> 31);
-}
-
 static MO_MUST_USE uint64_t input_stream(uint64_t seed, uint64_t ordinal) {
     /* Advancing the starting state by SplitMix's step would overlap streams. */
     uint8_t bytes[16];

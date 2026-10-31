@@ -73,7 +73,6 @@ MO_MUST_USE uint32_t mo_input_skip_base(const struct mo_inputs *inputs, uint32_t
 MO_MUST_USE uint32_t mo_input_variants(const struct mo_inputs *inputs, uint32_t parent,
                                        uint32_t field);
 MO_MUST_USE uint32_t mo_input_scalar_count(enum mo_type_kind kind);
-MO_MUST_USE uint64_t mo_input_random(uint64_t *state);
 MO_MUST_USE enum mo_input_result mo_input_prepare(struct mo_inputs *inputs,
                                                   const struct mo_input_factory *factories,
                                                   uint32_t factory_count, size_t name_work);

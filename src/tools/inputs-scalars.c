@@ -1,5 +1,7 @@
 #include "tools/inputs-internal.h"
 
+#include "base/hash.h"
+
 #include <string.h>
 
 static MO_MUST_USE int64_t signed_word(uint64_t word) {
@@ -7,7 +9,7 @@ static MO_MUST_USE int64_t signed_word(uint64_t word) {
 }
 
 static MO_MUST_USE int64_t integer(struct mo_input_builder *builder) {
-    uint64_t word = mo_input_random(&builder->random);
+    uint64_t word = mo_splitmix64(&builder->random);
     uint32_t bits = builder->size < 60 ? builder->size + 4 : 64;
     if (bits < 64) {
         word &= (UINT64_C(1) << bits) - 1;
@@ -102,13 +104,13 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
         break;
     case MO_TYPE_BOOL:
         result = mo_cell_bool(copy     ? false
-                              : random ? (mo_input_random(&builder->random) & 1) != 0
+                              : random ? (mo_splitmix64(&builder->random) & 1) != 0
                                        : index != 0);
         break;
     case MO_TYPE_BYTE: {
         const uint8_t bytes[] = {0, 1, UINT8_MAX};
         uint8_t value = copy     ? (uint8_t)smaller(mo_cell_get_byte(request->source), variant)
-                        : random ? (uint8_t)mo_input_random(&builder->random)
+                        : random ? (uint8_t)mo_splitmix64(&builder->random)
                                  : bytes[index];
         result = mo_cell_byte(value);
         break;
@@ -124,7 +126,7 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
             memcpy(&bits, request->source.bytes, sizeof bits);
             bits = float_smaller(bits, variant);
         } else {
-            bits = random ? mo_input_random(&builder->random) : floats[index];
+            bits = random ? mo_splitmix64(&builder->random) : floats[index];
         }
         memcpy(result.bytes, &bits, sizeof bits);
         break;
@@ -136,7 +138,7 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
             if (scalar >= 0xd800 && scalar <= 0xdfff)
                 scalar = 0xd7ff;
         } else if (random) {
-            scalar = (uint32_t)(mo_input_random(&builder->random) % 0x10f800);
+            scalar = (uint32_t)(mo_splitmix64(&builder->random) % 0x10f800);
             if (scalar >= 0xd800)
                 scalar += 0x800;
         } else
@@ -146,7 +148,7 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
     }
     case MO_TYPE_TIME: {
         int64_t value = copy     ? (int64_t)smaller(mo_cell_get_time(request->source), variant)
-                        : random ? times[1] + (int64_t)(mo_input_random(&builder->random) %
+                        : random ? times[1] + (int64_t)(mo_splitmix64(&builder->random) %
                                                         UINT64_C(315537897600000000))
                                  : times[index];
         result = mo_cell_time(value);
@@ -166,17 +168,17 @@ enum mo_input_result mo_input_immediate_build(struct mo_input_builder *builder,
             value = decimal_smaller(mo_cell_get_decimal(request->source), variant);
         } else if (random) {
             uint32_t cap = builder->size < 37 ? builder->size + 1 : 38;
-            uint32_t digits = 1 + (uint32_t)(mo_input_random(&builder->random) % cap);
-            uint32_t scale = (uint32_t)(mo_input_random(&builder->random) % 19);
+            uint32_t digits = 1 + (uint32_t)(mo_splitmix64(&builder->random) % cap);
+            uint32_t scale = (uint32_t)(mo_splitmix64(&builder->random) % 19);
             mo_u128 magnitude = 0;
             for (uint32_t d = 0; d < digits; d++)
-                magnitude = magnitude * 10 + mo_input_random(&builder->random) % 10;
+                magnitude = magnitude * 10 + mo_splitmix64(&builder->random) % 10;
             /* A scale of 0 is integral; 18 retains the smallest step. Stop
              * increasing the magnitude before the representation maximum. */
             for (uint32_t d = scale; d < 18 && magnitude <= (mo_u128)max / 10; d++)
                 magnitude *= 10;
             value = (mo_i128)magnitude;
-            if ((mo_input_random(&builder->random) & 1) != 0)
+            if ((mo_splitmix64(&builder->random) & 1) != 0)
                 value = -value;
         } else
             value = decimals[index];
@@ -334,7 +336,7 @@ static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
             uint64_t cap = (uint64_t)request->size * (kind == MO_TYPE_BIGINT ? 16 : 4);
             if (cap > builder->budget.left.bytes)
                 cap = builder->budget.left.bytes;
-            length = (size_t)(mo_input_random(&builder->random) % (cap + 1));
+            length = (size_t)(mo_splitmix64(&builder->random) % (cap + 1));
         } else
             length = index == 0 ? 0 : index < 3 ? 1 : kind == MO_TYPE_BIGINT ? 128 : 1024;
         if (!mo_input_bytes(&builder->budget, length))
@@ -345,7 +347,7 @@ static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
                 return MO_INPUT_NO_MEMORY;
             if (random) {
                 for (size_t i = 0; i < length; i++)
-                    bytes[i] = (uint8_t)mo_input_random(&builder->random);
+                    bytes[i] = (uint8_t)mo_splitmix64(&builder->random);
             } else
                 memset(bytes, kind == MO_TYPE_TEXT ? 'x' : UINT8_MAX, length);
         }
@@ -363,7 +365,7 @@ static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
                                                       "\xf0\x9f\x98\x80"};
                 static const size_t lengths[] = {1, 2, 3, 4};
                 for (size_t i = 0; random && i < length;) {
-                    uint32_t scalar = (uint32_t)(mo_input_random(&builder->random) % 4);
+                    uint32_t scalar = (uint32_t)(mo_splitmix64(&builder->random) % 4);
                     if (lengths[scalar] > length - i)
                         scalar = 0;
                     memcpy(bytes + i, scalars[scalar], lengths[scalar]);
@@ -380,8 +382,8 @@ static MO_MUST_USE enum mo_input_result blob(struct mo_input_builder *builder,
                     bytes[0] = 1;
                 if (bytes[length - 1] == 0)
                     bytes[length - 1] = 1;
-                sign = random ? (mo_input_random(&builder->random) & 1) != 0 ? MO_BIGINT_NEGATIVE
-                                                                             : MO_BIGINT_POSITIVE
+                sign = random ? (mo_splitmix64(&builder->random) & 1) != 0 ? MO_BIGINT_NEGATIVE
+                                                                           : MO_BIGINT_POSITIVE
                        : index == 2 || index == 4 ? MO_BIGINT_NEGATIVE
                                                   : MO_BIGINT_POSITIVE;
             }
@@ -421,7 +423,7 @@ enum mo_input_result mo_input_scalar_build(struct mo_input_builder *builder,
                 .kind = request->mode == MO_INPUT_PRNG ? MO_INPUT_RANDOM : MO_INPUT_BOUNDARY,
                 .boundary = request->mode == MO_INPUT_SAMPLE ? request->boundary : 0,
                 .size = request->size,
-                .seed = mo_input_random(&builder->random)};
+                .seed = mo_splitmix64(&builder->random)};
             result = factory->build(factory->context, builder->heap, &leaf, &remaining, out);
         }
         MO_ASSERT(remaining.nodes <= before.nodes && remaining.bytes <= before.bytes &&

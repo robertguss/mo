@@ -2,6 +2,8 @@
 #define _POSIX_C_SOURCE 200809L
 #include "host/internal.h"
 
+#include "base/hash.h"
+
 #include <string.h>
 #include <sys/random.h>
 #include <unistd.h>
@@ -9,14 +11,6 @@
 struct random_state {
     uint64_t words[4];
 };
-
-static MO_MUST_USE uint64_t mix(uint64_t *seed) {
-    *seed += UINT64_C(0x9e3779b97f4a7c15);
-    uint64_t z = *seed;
-    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
-    return z ^ (z >> 31);
-}
 
 static MO_MUST_USE uint64_t rotate(uint64_t x, unsigned shift) {
     return (x << shift) | (x >> (64 - shift));
@@ -59,7 +53,7 @@ enum mo_host_outcome mo_host_random_new(struct mo_host *host, struct mo_heap *he
     }
     struct random_state state;
     for (unsigned i = 0; i < 4; i++)
-        state.words[i] = mix(&seed);
+        state.words[i] = mo_splitmix64(&seed);
     /* SplitMix64 is bijective: four distinct inputs cannot all produce zero. */
     MO_ASSERT((state.words[0] | state.words[1] | state.words[2] | state.words[3]) != 0);
     return mo_host_random_restore(heap, type, fake, state.words, out) ? MO_HOST_RETURNED

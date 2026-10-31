@@ -1,5 +1,7 @@
 #include "tools/builders.h"
 
+#include "base/hash.h"
+
 #include <string.h>
 
 #define BOUNDARIES 3
@@ -79,13 +81,6 @@ struct mo_hidden {
     struct mo_cell companion;
     uint32_t companion_slot; /* MO_NO_INDEX for none */
 };
-
-static uint64_t next_random(uint64_t *state) {
-    uint64_t z = (*state += UINT64_C(0x9e3779b97f4a7c15));
-    z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-    z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
-    return z ^ (z >> 31);
-}
 
 static bool option_or_result(const struct mo_type *type, const char *base) {
     size_t length = strlen(base);
@@ -678,7 +673,7 @@ static uint64_t random_ordinal(const struct builder *builder, uint64_t *random, 
         return 0;
     uint64_t grown = size > 64 ? 64 : size;
     return mo_inputs_boundaries(&builder->arguments) + 4 * (grown == 0 ? 0 : grown - 1) +
-           next_random(random) % 4;
+           mo_splitmix64(random) % 4;
 }
 
 /* The generator already counted the value's root node, so the copy's own count of it is
@@ -822,7 +817,7 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
     uint32_t steps = boundary ? (request->boundary == 0   ? 0
                                  : request->boundary == 1 ? 1
                                                           : STEPS)
-                              : (uint32_t)(next_random(&random) %
+                              : (uint32_t)(mo_splitmix64(&random) %
                                            ((request->size < STEPS ? request->size : STEPS) + 1));
     if (hidden->step_count == 0)
         steps = 0;
@@ -845,8 +840,9 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
         bool ordered = attempt >= random_attempts;
         uint32_t rank = attempt - random_attempts;
         struct builder *start =
-            &hidden->builders[hidden->starts[ordered ? rank % hidden->start_count
-                                                     : next_random(&random) % hidden->start_count]];
+            &hidden
+                 ->builders[hidden->starts[ordered ? rank % hidden->start_count
+                                                   : mo_splitmix64(&random) % hidden->start_count]];
         uint64_t ordinal =
             ordered ? rank / hidden->start_count : random_ordinal(start, &random, request->size);
         enum step outcome =
@@ -865,8 +861,9 @@ static enum mo_input_result build(void *context, struct mo_heap *destination,
         goto done;
     for (uint32_t i = 0; i < steps; i++) {
         struct builder *step =
-            &hidden->builders[hidden->steps[boundary ? i % hidden->step_count
-                                                     : next_random(&random) % hidden->step_count]];
+            &hidden
+                 ->builders[hidden->steps[boundary ? i % hidden->step_count
+                                                   : mo_splitmix64(&random) % hidden->step_count]];
         uint64_t ordinal = boundary ? 1 + i : random_ordinal(step, &random, request->size);
         enum step outcome =
             record_call(hidden, process, step, ordinal, &has_value, &value, recipe, NULL);

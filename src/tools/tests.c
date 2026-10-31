@@ -3,6 +3,7 @@
 #include "tools/tests.h"
 
 #include "base/codes.h"
+#include "tools/deadline.h"
 #include "tools/promises.h"
 #include "tools/run.h"
 
@@ -263,19 +264,6 @@ static struct mo_span assertion_span(const struct mo_checked_spec *spec, struct 
     return result;
 }
 
-static uint64_t microseconds(struct timespec start, struct timespec end) {
-    MO_ASSERT(end.tv_sec >= start.tv_sec);
-    uint64_t seconds = (uint64_t)end.tv_sec - (uint64_t)start.tv_sec;
-    long nanos = end.tv_nsec - start.tv_nsec;
-    if (nanos < 0) {
-        MO_ASSERT(seconds != 0);
-        seconds--;
-        nanos += 1000000000;
-    }
-    MO_ASSERT(seconds <= (UINT64_MAX - 999999) / 1000000);
-    return seconds * 1000000 + (uint64_t)nanos / 1000;
-}
-
 void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
                      const struct mo_test_selection *selection, const struct mo_buffer *wire,
                      const struct mo_sources *sources, FILE *output, struct mo_diags *diags,
@@ -373,7 +361,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         }
         bool shown = false;
         if (clock_gettime(CLOCK_MONOTONIC, &end) == 0) {
-            result.microseconds = microseconds(start, end);
+            struct mo_deadline elapsed = {.start = start, .last = end};
+            result.microseconds = mo_deadline_microseconds(&elapsed);
             shown = mo_write_test_result(output, cli->json, sources, &result);
         }
         mo_process_free(process);
