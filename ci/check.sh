@@ -3,9 +3,9 @@
 # their checks side by side. GitHub's nightly workflow runs gcc clang sanitize drivers static
 # lean bench on main with MO_ALL_DRIVERS=1. Before a pull request, run `bash ci/check.sh gcc`.
 #
-# The drivers, bench and lean groups drive built executables. By default they drive the first one
-# found (gcc debug, else clang debug, then the sanitize builds); MO_ALL_DRIVERS=1 drives every one
-# that is built, which is what the nightly run does.
+# The drivers, bench and lean groups drive built executables. By default they drive one: the debug
+# build of an installed compiler (gcc before clang), else a sanitize build of one; MO_ALL_DRIVERS=1
+# drives every one that is built, which is what the nightly run does.
 #
 # A check whose tool is missing is skipped with a note, and the summary at the end counts what
 # was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an
@@ -139,15 +139,22 @@ finish() {
 }
 trap finish EXIT
 
-built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/:
-	# the first one found, or every one when MO_ALL_DRIVERS=1
-	local driver
+built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/: every one
+	# when MO_ALL_DRIVERS=1, else the first debug build of an installed compiler (a leftover build
+	# of a compiler that is not installed would be stale), else the first sanitize build of one
+	local mode compiler driver
 	drivers=()
-	for driver in build/{gcc,clang}/{debug,sanitize}/"$1"; do
-		if [[ -x "$driver" ]]; then
-			drivers+=("$driver")
-			if [[ "${MO_ALL_DRIVERS:-}" != 1 ]]; then return; fi
-		fi
+	for mode in debug sanitize; do
+		for compiler in gcc clang; do
+			driver=build/$compiler/$mode/$1
+			if [[ ! -x "$driver" ]]; then continue; fi
+			if [[ "${MO_ALL_DRIVERS:-}" == 1 ]]; then
+				drivers+=("$driver")
+			elif have "$compiler"; then
+				drivers=("$driver")
+				return
+			fi
+		done
 	done
 }
 
@@ -315,18 +322,21 @@ if have python3; then
 			later "The three tools: linkcheck, tally and notioncopy pass their tests and do their jobs here ($driver)" \
 				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" --no-hidden
 		done
-		later "The three tools' frozen tasks: hashes match and each reference passes its hidden tests" \
-			python3 bench/tools/grade.py --check
 		later "The learnability protocol's Wilson and kappa calculator" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_wilson.py
 		later "The round report's first-retry numbers, from the reference tally" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_retry.py
 		report_status=0
 		report || report_status=$?
+		# The frozen tasks' hidden tests have time limits, so they run alone, after the checks
+		# that ran side by side, and even when one of those failed.
+		step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
+		frozen_status=0
+		python3 bench/tools/grade.py --check || frozen_status=$?
 		step "The three tools: tests, frozen tasks and repository checks (${drivers[0]})"
 		tools_status=0
 		PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "${drivers[0]}" || tools_status=$?
-		if ((report_status != 0 || tools_status != 0)); then exit 1; fi
+		if ((report_status != 0 || frozen_status != 0 || tools_status != 0)); then exit 1; fi
 	else
 		missing "no mo command executable is built"
 	fi

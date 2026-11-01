@@ -57,6 +57,7 @@ class Scheduling(unittest.TestCase):
             commands = root / "commands"
             commands.mkdir()
             for path in [commands / "make", commands / "getconf", commands / "python3",
+                         commands / "gcc", commands / "clang",
                          root / "build/gcc/debug/tests/test_format.test",
                          *[root / "build" / build / "mo" for build in builds],
                          *[root / "build/gcc/debug/tests" / name for name in
@@ -97,6 +98,8 @@ class Scheduling(unittest.TestCase):
                 elif record["name"] == "check_tools.py":
                     ordinary_tools.append(record["args"])
             self.assertFalse(active)
+            self.assertTrue(result.stdout.rstrip().endswith(
+                "check.sh finished: fail" if failure else "check.sh finished: pass"), result.stdout)
             return hidden, sorted(ordinary_tools), timing, driven
 
     def test_drivers_drives_every_build_and_times_the_first(self):
@@ -131,7 +134,9 @@ class Scheduling(unittest.TestCase):
         for group, failure in (("drivers", "parallel"), ("drivers", "timing"),
                                ("bench", "parallel"), ("bench", "hidden")):
             with self.subTest(group=group, failure=failure):
-                self.run_group(group, THREE, failure)
+                hidden, _, timing, _ = self.run_group(group, THREE, failure)
+                self.assertEqual((hidden, timing), ([], [["build/gcc/debug/mo"]]) if group == "drivers"
+                                 else ([["build/gcc/debug/mo"]], []))
 
 
 class SanitizeCompiler(unittest.TestCase):

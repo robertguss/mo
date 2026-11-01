@@ -8,7 +8,7 @@ After:
 
 ## Tests
 
-<!-- Each behaviour and the test that proves it. -->
+<!-- Each behaviour, its test, and that you saw it fail before it passed. -->
 
 ## Checks
 
