@@ -13,6 +13,7 @@ struct reader {
     const uint8_t *bytes;
     size_t length;
     size_t offset;
+    size_t files_start, files_end;
     uint32_t field;
     uint32_t *code_positions;
     struct mo_bytecode_debug_positions *debug_positions;
@@ -476,6 +477,13 @@ static void service_entry(struct reader *r, struct mo_bytecode_service *s) {
     }
 }
 
+static MO_MUST_USE uint64_t fnv1a(uint64_t hash, const uint8_t *bytes, size_t start, size_t end) {
+    for (size_t i = start; i < end; i++) {
+        hash = (hash ^ bytes[i]) * MO_BYTECODE_FNV_PRIME;
+    }
+    return hash;
+}
+
 static void sections(struct reader *r) {
     struct mo_bytecode *f = r->file;
     struct mo_bytecode_string *strings =
@@ -521,12 +529,14 @@ static void sections(struct reader *r) {
     for (uint32_t i = 0; i < f->module_count && !r->failed; i++) {
         module_entry(r, &modules[i]);
     }
+    r->files_start = r->offset;
     struct mo_bytecode_bytes *files = array(r, &f->file_count, MO_LIMIT_FILES, 5, sizeof *files,
                                             _Alignof(struct mo_bytecode_bytes));
     f->files = files;
     for (uint32_t i = 0; i < f->file_count && !r->failed; i++) {
         file_entry(r, &files[i]);
     }
+    r->files_end = r->offset;
     struct mo_bytecode_debug *debug = array(r, &f->debug_count, MO_LIMIT_FUNCTIONS, 36,
                                             sizeof *debug, _Alignof(struct mo_bytecode_debug));
     f->debug = debug;
@@ -578,10 +588,7 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
     for (unsigned i = 0; i < 8; i++) {
         expected |= (uint64_t)bytes[12 + i] << (i * 8);
     }
-    uint64_t checksum = MO_BYTECODE_FNV_OFFSET;
-    for (size_t i = MO_BYTECODE_HEADER_SIZE; i < length; i++) {
-        checksum = (checksum ^ bytes[i]) * MO_BYTECODE_FNV_PRIME;
-    }
+    uint64_t checksum = fnv1a(MO_BYTECODE_FNV_OFFSET, bytes, MO_BYTECODE_HEADER_SIZE, length);
     if (checksum != expected) {
         *error = (struct mo_load_error){.offset = 12, .reason = "checksum mismatch"};
         return NULL;
@@ -612,6 +619,10 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
         mo_arena_free(&r.scratch);
         return NULL;
     }
+    MO_ASSERT(r.files_start <= r.files_end && r.files_end <= length);
+    r.file->program_checksum =
+        fnv1a(fnv1a(MO_BYTECODE_FNV_OFFSET, bytes, MO_BYTECODE_HEADER_SIZE, r.files_start), bytes,
+              r.files_end, length);
     struct mo_bytecode_read_info info = {
         .types = {.items = r.types, .count = r.file->type_count, .finished = true},
         .names = &r.names,

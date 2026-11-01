@@ -55,8 +55,8 @@ proof small.
 | `constants`, `parameters`, `functions` | each constant and function, and their tables | the helpers above |
 | `layout_entry`, `module_entry`, `file_entry`, `debug_entry` | one layout, module, filename or debug record | `word`, `array`, `boolean`, `indices`, `blob` |
 | `service_entry` | one descriptor, including its tool and timer tables | `word`, `array`, `boolean`, `indices` |
-| `sections` | every section in order, the reader's objects unchanged | every function above |
-| `decode` | `mo_bytecode_decode_info`: header, checksum, trailing bytes, types' references | `allocate`, `sections` |
+| `sections` | every section in order, the reader's objects unchanged, the `files` bounds inside what it read | every function above |
+| `decode` | `mo_bytecode_decode_info`: header, both checksums, trailing bytes, types' references | `allocate`, `sections` |
 
 Loops are unwound to bounds the input size implies (a table of entries of at least 4 bytes has
 at most `MO_CBMC_INPUT / 4` of them), and every bound carries an unwinding assertion, so a bound

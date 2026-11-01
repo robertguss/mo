@@ -1,7 +1,7 @@
 # Saved service state, version 1
 
 MO-158 implements D262, D263 and the MO-151 validation boundary. This is an
-internal disk format, not a Mo API. Phase 3 requires the same bytecode image
+internal disk format, not a Mo API. Phase 3 requires the same compiled program
 for recovery. Phase 5 must explicitly migrate between schemas and images.
 
 ## Ownership and transactions
@@ -126,10 +126,18 @@ not deliberate modification or rollback of an entire valid database.
 | Magic and version | 5 | `4d 4f 53 54 01` (`MOST`, version 1) |
 | Kind | 1 | 1 for a log message, 2 for a snapshot |
 | Sequence | 8 | Unsigned, at most INT64_MAX |
-| Image key | 8 | Bytecode checksum XOR (service descriptor index shifted left 32) |
+| Image key | 8 | Program checksum XOR (service descriptor index shifted left 32) |
 | Payload length | 4 | Exact number of payload bytes |
 | Payload | variable | As specified below |
 | Checksum | 8 | FNV-1a-64 of every preceding byte |
+
+The program checksum is FNV-1a-64 of the bytes the bytecode checksum covers,
+without the `files` section (`bytecode.md` section 3). The data folder names the
+store, and the image key only guards that the same compiled program wrote it.
+So the spelling of `FILE`, the folder a program lives in and the folder holding
+`lib/` do not reach it, and everything else after the file's header does,
+including debug spans. MO-182 replaced the whole-file checksum here. Nothing was deployed, so no
+store needs migrating.
 
 A snapshot payload is one encoded value of the service's state type.
 A message payload has these fields, in order:
@@ -214,7 +222,7 @@ needs two copies of the state.
 `MO_SERVICE_SAVED_INVALID` identifies invalid or incompatible saved input:
 content checks, SQLite's own corruption codes, and a stored value longer than
 the runtime ever writes (`SQLITE_TOOBIG`), including data written by a
-different bytecode image. Any other SQLite failure
+different compiled program. Any other SQLite failure
 while loading, such as an I/O error or an exhausted store budget, is
 `MO_SERVICE_STORE`, because a retry may succeed and the data may be intact.
 `mo_service_status_text` describes it as `saved service data is damaged or

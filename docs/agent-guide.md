@@ -218,7 +218,7 @@ An `Int` argument is a JSON string, as `tools/list` shows in each tool's `inputS
 - 69: supervision (D308) stopped the service. Five failures within a minute restart it, and three restarts within ten minutes stop it. It stays down until a person starts it, as Recover from a stop says.
 - 70: it died any other way, such as a failed save, a listener failure or a bug in a module constant. Starting it again is safe.
 
-Saved state belongs to one compiled program, and the compiled program records `FILE` as you wrote it. A changed source is E1409, "saved service data is damaged or was written by a different program; recovery refused". `counter.mo` and `./counter.mo` are the same spelling, and the working folder does not matter. An absolute path or `sub/../counter.mo` is a different spelling, so it gets the same refusal. Start a service with the same `FILE` every time.
+`DIR` holds the saved state, and recovery only checks that the same compiled program wrote it. How you spell `FILE` does not matter, and neither does the working folder or where the program's folder is. `counter.mo`, `./counter.mo`, an absolute path, `sub/../counter.mo`, a symlinked folder and a copy of the folder all recover the same `DIR`. So does a symlink to `FILE` itself, if it keeps the file's name and `use` still finds its modules from the link's folder. A changed source is E1409, "saved service data is damaged or was written by a different program; recovery refused". That covers any change to code, a name or a tool's `##` comment, and any edit that moves code, such as a blank line or a `#` comment above it. Other comment and whitespace edits may recover or be refused. Treat E1409 as a guard on saved data, not as a way to detect every edit.
 
 A process killed during its very first start can leave an empty `service.sqlite`, which E1409 also refuses. An empty `service.sqlite` never held data, so delete it and start again.
 
@@ -226,7 +226,7 @@ A process killed during its very first start can leave an empty `service.sqlite`
 
 After status 69, read the `mo serve: failure:` lines and their reports to find the handler that failed. Then choose one of these:
 
-- Start the same program. Use the unchanged `FILE`, spelled the same way, and the same `DIR`. All saved state comes back. If callers still send the message that failed, stop them first, or the service stops again.
+- Start the same program. Use the unchanged source, however you spell `FILE`, and the same `DIR`. All saved state comes back. If callers still send the message that failed, stop them first, or the service stops again.
 - Run a fixed program. A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409. This build has no migration, and the old state can be read only by the old program. Start the old program on the old `DIR`, read what you need through its tools, and stop it. Then start the fixed program on a new, empty `DIR` and send that data to its tools. State that no tool returns stays behind, so keep the old source and the old `DIR`.
 
 ## Work in this loop

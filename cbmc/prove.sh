@@ -55,7 +55,7 @@ proofs=(
 	"debug_entry|array word|debug_entry.0:/16,debug_entry.1:/16,debug_entry.2:/16|52"
 	"service_entry|word array boolean indices|service_entry.0:/28,service_entry.1:/8,service_entry.2:/4,service_entry.3:/12|68"
 	"sections|array blob types layout_entry constants word indices functions module_entry file_entry debug_entry service_entry scratch|sections.0:/4,sections.1:/12,sections.2:/12,sections.3:/16,sections.4:/5,sections.5:/36,sections.6:/28,mo_bytecode_names_init.0:/4|64"
-	"decode|allocate sections|mo_bytecode_decode_info.0:9,mo_bytecode_decode_info.1:+,mo_bytecode_decode_info.2:/4,mo_bytecode_decode_info.3:/4,memcmp.0:5|"
+	"decode|allocate sections|mo_bytecode_decode_info.0:9,fnv1a.0:+,mo_bytecode_decode_info.1:/4,mo_bytecode_decode_info.2:/4,memcmp.0:5|"
 	"arena_allocate||||arena.c"
 	"arena_allocate_array|mo_arena_allocate|||arena.c"
 	"arena_resize||||arena.c"
@@ -121,7 +121,7 @@ proved_function() {
 	case "$1" in
 	# The wrapper is one call; cover the shared decoder it now uses.
 	utf8) echo 'mo_bytecode_utf8|mo_utf8_valid|mo_utf8_decode' ;;
-	decode) echo mo_bytecode_decode_info ;;
+	decode) echo 'mo_bytecode_decode_info|fnv1a' ;;
 	# An arena proof covers the static helpers its function calls, too.
 	arena_allocate) echo 'mo_arena_allocate|add_chunk|fits|padding_for' ;;
 	arena_resize) echo 'mo_arena_resize|grow_alone' ;;

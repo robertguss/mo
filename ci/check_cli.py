@@ -1411,9 +1411,11 @@ end
 SERVE_HALTING = (SERVE_COUNTER.replace("tools add, read", "tools add, read, halt") +
                  '\n## Always stops.\nfn halt(_state: Int, _now: Time) : Text\n'
                  '  stop "halted on purpose"\nend\n')
-SERVE_EDITS = (("(state + amount, state + amount)", "(state - amount, state + amount)"),
+SERVE_EDITS = (("(state + amount, state + amount)", "(state + amount, state * amount)"),
                ("state Int = 0", "state Int = 1"),
-               ("## Reads the count.", "## Reads the total."))
+               ("## Reads the count.", "## Reads the total."),
+               ("## Reads the count.", "\n## Reads the count."))
+SERVE_TOOL_PAGE = 32
 SERVE_SIGNALLED = b"mo serve: stop: a signal asked the service to stop\n"
 SERVE_INITIALIZE = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{'
                     '"protocolVersion":"2025-11-25","capabilities":{},'
@@ -1526,8 +1528,9 @@ def serve_guide():
             "A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409.",
             "`service.sqlite` is readable only by its owner.",
             "- 70: it died any other way",
-            "`counter.mo` and `./counter.mo` are the same spelling",
-            "An absolute path or `sub/../counter.mo` is a different spelling"):
+            "`counter.mo`, `./counter.mo`, an absolute path, `sub/../counter.mo`, a symlinked folder "
+            "and a copy of the folder all recover the same `DIR`.",
+            "Other comment and whitespace edits may recover or be refused."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
 
 
@@ -1659,7 +1662,8 @@ def serve_command(binary):
             "  value.to_text\nend\n")
         (tree / "app.mo").write_text(
             SERVE_COUNTER.replace("module Counter", "module App\nuse Shop.Account")
-            .replace("state.to_text", "Account.show(state)"))
+            .replace("state.to_text", "Account.show(state)")
+            .replace("## Reads the count.", "# note one\n## Reads the count."))
         modules = folder / "modules-state"
         modules.mkdir()
         served = Served(binary, "app.mo", modules, env, tree)
@@ -1671,6 +1675,37 @@ def serve_command(binary):
             outputs.append(served.line + served.errors())
         with serving(tree / "app.mo", modules) as served:
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        (tree / "app.mo").write_text((tree / "app.mo").read_text().replace("# note one", "# note two"))
+        with serving(tree / "app.mo", modules) as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+
+        pages = folder / "pages"
+        pages.mkdir()
+        names = [f"t{i}" for i in range(SERVE_TOOL_PAGE + 1)]
+        (pages / "paged.mo").write_text(
+            'module Paged\n\nservice\n  state Int = 0\n  tools ' + ", ".join(names) +
+            '\n  token from env "COUNTER_TOKEN"\nend\n' + "".join(
+                f"\n## Reads the count.\nfn {name}(state: Int, _now: Time) : Text\n"
+                "  state.to_text\nend\n" for name in names))
+        paged_state = folder / "paged-state"
+        paged_state.mkdir()
+        served = Served(binary, "paged.mo", paged_state, env, pages)
+        try:
+            status, body = served.post(SERVE_LIST, token)
+            assert status == 200, body
+            cursor = json.loads(body)["result"]["nextCursor"]
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        finally:
+            served.close()
+            outputs.append(served.line + served.errors())
+        with serving(pages / "paged.mo", paged_state) as served:
+            status, body = served.post(json.dumps(
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"cursor": cursor}}),
+                token)
+            assert status == 200, body
+            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:], body
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
 
         with serving() as served:

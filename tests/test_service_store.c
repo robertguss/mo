@@ -589,7 +589,7 @@ static void foreign_image(struct mo_image *image, const char *path) {
     struct mo_image *other =
         compile("module Main\nservice\nstate Int = 7\ntools add\ntoken from env \"TOKEN\"\nend\n"
                 "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n(state - n, state)\nend\n");
-    CHECK(mo_image_bytecode(other)->header.checksum != mo_image_bytecode(image)->header.checksum);
+    CHECK(mo_image_key(other, 0) != mo_image_key(image, 0));
     MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
     struct mo_service_hooks hooks = {clock_now, reply, event, &o};
     s = NULL;
@@ -716,9 +716,9 @@ static void invalid_payloads(struct mo_image *image) {
                                                        : 17;
                 bytes.bytes[offset] = 255;
             }
-            struct mo_store_record record = {
-                (enum mo_store_record_kind)kind, kind == MO_STORE_STATE ? 0 : 1,
-                mo_image_bytecode(image)->header.checksum, bytes.bytes, bytes.length};
+            struct mo_store_record record = {(enum mo_store_record_kind)kind,
+                                             kind == MO_STORE_STATE ? 0 : 1, mo_image_key(image, 0),
+                                             bytes.bytes, bytes.length};
             MO_ASSERT(mo_store_call(store,
                                     kind == MO_STORE_STATE ? MO_STORE_SNAPSHOT : MO_STORE_APPEND,
                                     &record, NULL, NULL) == MO_STORE_OK);
@@ -772,8 +772,8 @@ static void wrong_state_checksum(void) {
     mo_service_free(s);
     MO_ASSERT(saved.bytes.length > 17);
     saved.bytes.bytes[17] ^= 1;
-    struct mo_store_record record = {MO_STORE_LOG, 1, mo_image_bytecode(image)->header.checksum,
-                                     saved.bytes.bytes, saved.bytes.length};
+    struct mo_store_record record = {MO_STORE_LOG, 1, mo_image_key(image, 0), saved.bytes.bytes,
+                                     saved.bytes.length};
     MO_ASSERT(mo_store_call(store, MO_STORE_APPEND, &record, NULL, NULL) == MO_STORE_OK);
     struct mo_service_hooks hooks = {clock_now, reply, event, &o};
     unsigned replies = o.replies, failures = o.failures;
@@ -818,8 +818,8 @@ static void replay_limit(void) {
         MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
         s = open_service(image, store, &o);
         mo_service_free(s);
-        struct mo_store_record record = {MO_STORE_LOG, 1, mo_image_bytecode(image)->header.checksum,
-                                         saved.bytes.bytes, saved.bytes.length};
+        struct mo_store_record record = {MO_STORE_LOG, 1, mo_image_key(image, 0), saved.bytes.bytes,
+                                         saved.bytes.length};
         MO_ASSERT(mo_store_call(store, MO_STORE_APPEND, &record, NULL, NULL) == MO_STORE_OK);
         struct mo_service_hooks hooks = {clock_now, reply, event, &o};
         s = NULL;
@@ -848,8 +848,7 @@ static void long_tail(struct mo_image *image) {
         s = open_service(image, store, &o);
         mo_service_free(s);
         for (uint64_t seq = 1; seq <= MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES + extra; seq++) {
-            struct mo_store_record record = {MO_STORE_LOG, seq,
-                                             mo_image_bytecode(image)->header.checksum,
+            struct mo_store_record record = {MO_STORE_LOG, seq, mo_image_key(image, 0),
                                              saved.bytes.bytes, saved.bytes.length};
             MO_ASSERT(mo_store_call(store, MO_STORE_APPEND, &record, NULL, NULL) == MO_STORE_OK);
         }

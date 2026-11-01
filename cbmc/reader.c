@@ -140,6 +140,7 @@ static bool same_reader(const struct reader *a, const struct reader *b) {
            a->names.items == b->names.items && a->names.pointers == b->names.pointers &&
            a->names.canonical == b->names.canonical && a->names.count == b->names.count &&
            a->bytes == b->bytes && a->length == b->length && a->offset == b->offset &&
+           a->files_start == b->files_start && a->files_end == b->files_end &&
            a->field == b->field && a->code_positions == b->code_positions &&
            a->debug_positions == b->debug_positions && a->file == b->file && a->types == b->types &&
            a->layouts == b->layouts && a->error == b->error && a->failed == b->failed;
@@ -148,8 +149,8 @@ static bool same_reader(const struct reader *a, const struct reader *b) {
 static bool same_file(const struct mo_bytecode *a, const struct mo_bytecode *b) {
     return a->header.major == b->header.major && a->header.minor == b->header.minor &&
            a->header.flags == b->header.flags && a->header.checksum == b->header.checksum &&
-           a->string_count == b->string_count && a->strings == b->strings &&
-           a->type_count == b->type_count && a->types == b->types &&
+           a->program_checksum == b->program_checksum && a->string_count == b->string_count &&
+           a->strings == b->strings && a->type_count == b->type_count && a->types == b->types &&
            a->layout_count == b->layout_count && a->layouts == b->layouts &&
            a->constant_count == b->constant_count && a->constants == b->constants &&
            a->global_count == b->global_count && a->globals == b->globals &&
@@ -446,6 +447,10 @@ void model_sections(struct reader *r) {
     if (r->failed) {
         return;
     }
+    r->files_start = nondet_size();
+    r->files_end = nondet_size();
+    __CPROVER_assume(old.offset <= r->files_start && r->files_start <= r->files_end &&
+                     r->files_end <= r->offset);
     uint32_t count = nondet_u32();
     __CPROVER_assume(count <= MOST_ENTRIES);
     struct mo_type *types = count == 0 ? NULL : new_table(count, sizeof *types);
@@ -952,6 +957,9 @@ void harness_sections(void) {
                          (TYPES(r) && cases_bounded(r) && r->file->function_count <= MOST_ENTRIES &&
                           TABLE(r->code_positions, r->file->function_count, 4)),
                      "sections: bounded types and a code position for each function");
+    __CPROVER_assert(r->failed || (old.offset <= r->files_start && r->files_start <= r->files_end &&
+                                   r->files_end <= r->offset),
+                     "sections: the files section lies within what was read");
     __CPROVER_assert(r->bytes == old.bytes && r->length == old.length && r->error == old.error &&
                          r->arena == old.arena && r->file == old.file,
                      "sections: same input and objects");

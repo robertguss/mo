@@ -408,7 +408,7 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     *s = (struct mo_service_loop){.descriptor = &file->services[index],
                                   .hooks = *hooks,
                                   .store = store,
-                                  .image_key = file->header.checksum ^ ((uint64_t)index << 32)};
+                                  .image_key = mo_image_key(image, index)};
     s->timers = mo_arena_allocate_array(&arena, s->descriptor->timer_count, sizeof *s->timers,
                                         _Alignof(struct service_timer));
     s->arena = arena;

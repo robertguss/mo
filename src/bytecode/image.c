@@ -49,6 +49,11 @@ const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image) {
     return image->file;
 }
 
+uint64_t mo_image_key(const struct mo_image *image, uint32_t service) {
+    MO_ASSERT(image != NULL && service < image->file->service_count);
+    return image->file->program_checksum ^ ((uint64_t)service << 32);
+}
+
 const struct mo_types *mo_image_types(const struct mo_image *image) {
     MO_ASSERT(image != NULL);
     return &image->types;

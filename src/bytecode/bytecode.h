@@ -450,6 +450,8 @@ struct mo_bytecode_debug {
  * which also owns the immortal constants/globals, their heap and initialization state. */
 struct mo_bytecode {
     struct mo_bytecode_header header;
+    uint64_t program_checksum; /* Set by decoding, never on disk: FNV-1a of what checksum covers,
+                                * less the files section, so source paths do not reach it. */
     uint32_t string_count;
     const struct mo_bytecode_string *strings;
     uint32_t type_count;
@@ -556,6 +558,9 @@ MO_MUST_USE struct mo_image *mo_load(const uint8_t *bytes, size_t length,
  * mo_image_free, including across initialization and calls. Nothing is remapped. Tools read
  * kinds, signatures, debug text and module contents_exposed here to enumerate/generate specs. */
 MO_MUST_USE const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image);
+/* The key on a service's saved records and MCP cursors: one service of one compiled program,
+ * however its source paths were spelled. service is below file->service_count. */
+MO_MUST_USE uint64_t mo_image_key(const struct mo_image *image, uint32_t service);
 /* The sealed runtime table retains file indices. Borrowed until image_free. */
 struct mo_types;
 MO_MUST_USE const struct mo_types *mo_image_types(const struct mo_image *image);
