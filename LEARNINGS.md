@@ -152,3 +152,17 @@
   handler identity only while invoking that handler or accepting its value;
   replay supplies its own identity. A stopped startup is not necessarily a
   failed initializer.
+
+## CI planning
+
+- `ci/check.sh` skips individual checks, not whole groups. A group can run
+  some checks and skip others. Sanitizers accept clang or gcc; the grammar
+  accepts bison plus either compiler. CBMC needs `cbmc`, `goto-cc`, and
+  `goto-instrument`, despite its generic missing-tool message.
+- Lean discovery tries `ELAN_HOME`, `/opt/elan`, and `HOME/.elan` before
+  falling back to `lake` on PATH. Its PATH update also affects later checks
+  in the same invocation. Tool presence does not prove that elan has the
+  pinned Lean toolchain installed.
+- The shell runner checks clang-format presence, not its version. Repository
+  formatting requires exactly 14.0.6. libFuzzer availability needs a compile
+  and link probe; a clang executable alone does not establish it.

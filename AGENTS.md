@@ -63,6 +63,8 @@ his GitHub notification settings and be the scheduled workflow's notification re
 creator, latest cron editor, or person who re-enabled it). Manual-run notifications go to the
 person who dispatched the run.
 
+Before opening a PR, run `python3 ci/plan.py` and paste its summary line into the PR body.
+
 `main` still requires no status check (only force-pushes are blocked). The Socket Security app
 may still post its own checks; none is required. Before opening a PR, run
 `bash ci/check.sh gcc` (build and unit tests)

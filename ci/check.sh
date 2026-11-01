@@ -403,7 +403,11 @@ step "The library map: docs/design/library.md has a row for every primitive and 
 make --no-print-directory library-map
 
 step "Every fuzz target has a committed corpus or a Makefile generated-seed branch"
-if have python3; then python3 ci/check_fuzz_seeds.py; else missing "python3 is not installed"; fi
+if have python3; then
+	python3 ci/check_fuzz_seeds.py
+	step "The check planner: Git changes, check groups and runner tool gates"
+	PYTHONDONTWRITEBYTECODE=1 python3 ci/test_plan.py
+else missing "python3 is not installed"; fi
 
 step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
 if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi

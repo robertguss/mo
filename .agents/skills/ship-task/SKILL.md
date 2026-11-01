@@ -27,7 +27,9 @@ Done when the plan has no open questions.
 
 Write the code and its tests following `test-change`, in commits that each leave the tree building.
 
-Done when every behaviour in the plan has a test seen red, then green, and the `ci/check.sh` groups the change touches pass, or each skipped check is named with the tool it lacks. A PR merges when Robert says so (AGENTS.md "Checks and merging"). Nightly runs on main; pull requests are not gated, so local `ci/check.sh` is still required.
+Run `python3 ci/plan.py` to check whether the base moved, choose the `ci/check.sh` groups, and identify missing tools. Inspect its unmapped paths for any additional checks. Rebase if needed, install missing tools, and run the printed command. Rerun the planner after changes to the diff or base.
+
+Done when every behaviour in the plan has a test seen red, then green, and the planned `ci/check.sh` groups pass, or each skipped check is named with the tool it lacks. A PR merges when Robert says so (AGENTS.md "Checks and merging"). Nightly runs on main; pull requests are not gated, so local `ci/check.sh` is still required.
 
 ## 5. Review
 
@@ -36,6 +38,8 @@ Run `review-change`. It reviews in a fresh context, so it judges the change cold
 Done when every finding is fixed or answered and the checks are green again.
 
 ## 6. Open the PR
+
+Run `python3 ci/plan.py` again before opening the PR and paste its summary line into the PR body's Checks section. The planner selects checks; it does not prove they passed.
 
 Title it `MO-NN: <what it adds>` so the GitHub sync links it to the task, and fill in every section of the PR template. Then run `notion-sync` so the task shows as "In review".
 

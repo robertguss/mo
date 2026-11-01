@@ -18,7 +18,9 @@ Done when you hold the full file list and the task.
 
 ## 2. Run the gates
 
-Run `bash ci/check.sh gcc` plus each group the change reaches (AGENTS.md "Checks and merging" says which; a bare `bash ci/check.sh` runs every group, the slow ones included), and record each as green, red (with the first failing line), or skipped (with the missing tool). A red group is the top finding. A group you could not run is named as not run.
+Run `python3 ci/plan.py` to check base movement, select groups, and identify missing tools. Inspect unmapped paths for additional checks, then run the printed command. Keep its summary line with the gate results for the PR body. The planner does not run the checks. A bare `bash ci/check.sh` still runs every group, the slow ones included.
+
+Record each group as green, red (with the first failing line), or skipped (with the missing tool). A moved base or a red group is a top finding. A group you could not run is named as not run.
 
 ## 3. Apply every rule to every changed file
 
