@@ -40,6 +40,7 @@ make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer;
 make formal                # build Mo Core in Lean and check every proof (needs elan)
 make cbmc                  # prove the bytecode reader, arena, verifier, primitives, path containment and resolution, refcounts, hash tables (needs CBMC)
 bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers lean static cbmc
+ci/wait-for-results FILE [TIMEOUT]  # wait for a detached ci/check.sh run (see Waiting on checks)
 ```
 
 - Each compiler builds into its own `build/<compiler>/` tree, so switching `CC` doesn't rebuild.
@@ -76,6 +77,39 @@ build embeds or checks `docs/agent-guide.md`, `docs/reference/README.md` and
 `docs/design/library.md`, so after editing one, also run `bash ci/check.sh drivers static`. A PR
 merges when Robert says so. He lets agents merge docs-only PRs without review: PRs that change only
 Markdown files, other than those three. PRs are squash-merged.
+
+### Waiting on checks
+
+A run of `ci/check.sh` takes longer than one Bash tool call allows. Start it detached with its
+output in a results file, then wait for it in the foreground, in the same turn. Never end the turn
+while checks run.
+
+```sh
+mkdir -p build
+rm -f build/check-results.txt
+nohup timeout --kill-after=30 3600 bash ci/check.sh gcc >build/check-results.txt 2>&1 &
+```
+
+`rm -f` keeps an earlier run's marker out of this run's file. `timeout` ends a hung run, which then
+reads as failed, so raise its 3600 seconds for a longer run such as `cbmc`. Then, in a separate
+call:
+
+```sh
+ci/wait-for-results build/check-results.txt
+```
+
+Repeat that call until it exits 0 or 1. Each call waits up to 540 seconds, or the `TIMEOUT` you
+pass. `TIMEOUT` 0 checks once. Give the tool call a longer timeout than that, or it dies first.
+
+| Exit | Meaning | What to do |
+| --- | --- | --- |
+| 0 | The checks passed. | Report the result. A pass with skips still prints what was skipped. |
+| 1 | The checks failed, the run stopped without a marker, or a minute passed with no started line. | Read what it printed and the results file. |
+| 66 | The file is missing or not a regular file. | Start `ci/check.sh` first. |
+| 75 | The run is still going. | Call `ci/wait-for-results` again. |
+
+A run ends with `check.sh finished: pass` or `check.sh finished: fail`, and only the last line of
+the file counts. `2>&1` matters: the `failed:` lines naming each failed check go to stderr.
 
 ## Architecture
 
