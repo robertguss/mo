@@ -2,7 +2,7 @@
 
 Pull requests are not gated (`main` requires no status check, D270). GitHub's
 nightly workflow (`.github/workflows/nightly.yml`, MO-152) runs
-`gcc clang sanitize drivers static lean` on main; fuzz and CBMC stay by hand.
+`gcc clang sanitize drivers static lean bench` on main; fuzz and CBMC stay by hand.
 `ci/check.sh` runs every check locally. The CI orb is an optional runner that
 runs it on a pull request when asked (decisions D208 and D214); an equivalent
 verified Linux environment, including a Docker container on the Mac, works too.
