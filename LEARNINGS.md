@@ -1,11 +1,29 @@
 # Learnings
 
+## MO-182 image key
+
+- Debug file paths reach only the `files` section. Emitted bytecode for an
+  absolute path, `sub/../counter.mo` and a symlinked folder differs from
+  `counter.mo` in no other row, sibling modules included, so the service image
+  key hashes the file without that one section. `lib/` rows hold the absolute
+  `lib/` path, so the old key also moved with the toolchain's folder.
+- Only the reader knows wire offsets, and it keeps no bytes after decoding, so
+  it computes `program_checksum` itself. That puts the key inside the `read.c`
+  proofs: `sections` proves the bounds that `decode` hashes between.
+- Debug spans stay in the key, so an edit that moves code changes it. Comment
+  and whitespace edits that move nothing do not, and an edit after the last
+  `end` depends on the program: an entry module with no `main` has a debug row
+  spanning the whole file, so it is refused, while a sibling module or a module
+  with `main` recovers. The guide therefore promises neither way.
+- Replay also refuses an edit that changes saved state, because it reruns each
+  logged message and compares a state checksum. `state * amount` in the state
+  slot stayed refused with a broken key, for that reason. A test of the key has
+  to change only a reply, a start value or a description.
+
 ## MO-161 mo serve
 
-- The service image key is the bytecode checksum, and debug file paths feed it.
-  `counter.mo` and `./counter.mo` compile alike from any folder, but an absolute
-  path or `sub/../counter.mo` does not, so recovery refuses that spelling. This
-  fails closed; the guide tells operators to keep `FILE` the same.
+- The service image key hashed every byte of the bytecode, debug file paths
+  included, until MO-182. An absolute path or `sub/../counter.mo` was refused.
 - The stop signal handlers go in before the store opens. A signal during the
   first open would otherwise kill the process mid-commit and leave a zero-byte
   `service.sqlite`, which later starts refuse as damaged.

@@ -1236,6 +1236,78 @@ static void test_filename_table(void) {
     mo_buffer_free(&wire);
 }
 
+static uint64_t fnv1a(uint64_t hash, const uint8_t *bytes, size_t length) {
+    for (size_t i = 0; i < length; i++)
+        hash = (hash ^ bytes[i]) * MO_BYTECODE_FNV_PRIME;
+    return hash;
+}
+
+static void put_word(struct mo_buffer *out, uint32_t value) {
+    for (unsigned i = 0; i < 4; i++)
+        CHECK(mo_buffer_append_byte(out, (uint8_t)(value >> (i * 8))));
+}
+
+static void test_program_checksum(void) {
+    struct mo_buffer wire, moved_wire, renamed_wire, section;
+    struct mo_write_error we;
+    struct mo_load_error le;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&moved_wire, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&renamed_wire, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&section, 4096);
+    CHECK(mo_bytecode_encode(&fixture, &wire, &we));
+
+    const struct mo_bytecode_bytes moved_files[ARRAY_COUNT(files)] = {
+        STRING("/somewhere/else/sub/../wc.mo"), STRING("x"), STRING("\xfe/y.mo")};
+    struct mo_bytecode moved = fixture;
+    moved.files = moved_files;
+    CHECK(mo_bytecode_encode(&moved, &moved_wire, &we));
+
+    struct mo_bytecode_string renamed_strings[ARRAY_COUNT(strings)];
+    memcpy(renamed_strings, strings, sizeof renamed_strings);
+    renamed_strings[ARRAY_COUNT(strings) - 1] = (struct mo_bytecode_string)STRING("renamed-string");
+    struct mo_bytecode renamed = fixture;
+    renamed.strings = renamed_strings;
+    CHECK(mo_bytecode_encode(&renamed, &renamed_wire, &we));
+
+    struct mo_arena arena;
+    mo_arena_init(&arena, (size_t)4 << 30);
+    uint64_t base_key = 0, other_key = 0, code_key = 0;
+    const struct mo_bytecode *base =
+        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, NULL, NULL, &base_key, NULL, &le);
+    const struct mo_bytecode *other = mo_bytecode_decode_info(
+        &arena, moved_wire.bytes, moved_wire.length, NULL, NULL, &other_key, NULL, &le);
+    const struct mo_bytecode *code = mo_bytecode_decode_info(
+        &arena, renamed_wire.bytes, renamed_wire.length, NULL, NULL, &code_key, NULL, &le);
+    CHECK(base != NULL && other != NULL && code != NULL);
+    if (base != NULL && other != NULL && code != NULL) {
+        CHECK(base->header.checksum != other->header.checksum);
+        CHECK(base_key == other_key);
+        CHECK(base_key != code_key);
+
+        put_word(&section, ARRAY_COUNT(files));
+        for (uint32_t i = 0; i < ARRAY_COUNT(files); i++) {
+            put_word(&section, files[i].length);
+            CHECK(mo_buffer_append(&section, files[i].bytes, files[i].length));
+        }
+        size_t start = 0;
+        while (start + section.length <= wire.length &&
+               memcmp(wire.bytes + start, section.bytes, section.length) != 0)
+            start++;
+        CHECK(start + section.length <= wire.length);
+        uint64_t expected = fnv1a(MO_BYTECODE_FNV_OFFSET, wire.bytes + MO_BYTECODE_HEADER_SIZE,
+                                  start - MO_BYTECODE_HEADER_SIZE);
+        expected = fnv1a(expected, wire.bytes + start + section.length,
+                         wire.length - start - section.length);
+        CHECK(base_key == expected);
+    }
+    mo_arena_free(&arena);
+    mo_buffer_free(&section);
+    mo_buffer_free(&renamed_wire);
+    mo_buffer_free(&moved_wire);
+    mo_buffer_free(&wire);
+}
+
 static void test_limits_and_caches(void) {
     struct mo_arena arena;
     mo_arena_init(&arena, 8 << 20);
@@ -1916,6 +1988,7 @@ int main(void) {
     test_literal_boundaries();
     test_utf8();
     test_filename_table();
+    test_program_checksum();
     test_limits_and_caches();
     test_large_tables();
     test_large_names();

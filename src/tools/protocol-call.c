@@ -10,8 +10,7 @@ bool mo_protocol_catalog(struct mo_protocol_server *s) {
     struct mo_protocol_descriptor descriptor;
     if (!mo_protocol_descriptor(s->protocol, heap, s->image, s->service_index, &descriptor))
         return false;
-    uint64_t key =
-        mo_image_bytecode(s->image)->header.checksum ^ ((uint64_t)s->service_index << 32);
+    uint64_t key = mo_image_key(s->image, s->service_index);
     char hex[16];
     const char digits[] = "0123456789abcdef";
     for (unsigned i = 0; i < 16; i++)

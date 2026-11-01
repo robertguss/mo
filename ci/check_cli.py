@@ -1411,6 +1411,11 @@ end
 SERVE_HALTING = (SERVE_COUNTER.replace("tools add, read", "tools add, read, halt") +
                  '\n## Always stops.\nfn halt(_state: Int, _now: Time) : Text\n'
                  '  stop "halted on purpose"\nend\n')
+SERVE_EDITS = (("(state + amount, state + amount)", "(state + amount, state * amount)"),
+               ("state Int = 0", "state Int = 1"),
+               ("## Reads the count.", "## Reads the total."),
+               ("## Reads the count.", "\n## Reads the count."))
+SERVE_TOOL_PAGE = 32
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -1553,6 +1558,16 @@ def serve_structured(reply):
     return json.loads(body)["result"]["structuredContent"]
 
 
+def serve_spellings(folder, counter):
+    for name in ("sub", "linked", "copied"):
+        (folder / name).mkdir()
+    (folder / "linked" / counter).symlink_to(folder / counter)
+    (folder / "folder-link").symlink_to(folder, target_is_directory=True)
+    shutil.copy(folder / counter, folder / "copied")
+    return ("./counter.mo", folder / counter, "sub/../counter.mo", "linked/counter.mo",
+            "folder-link/counter.mo", "copied/counter.mo", folder / "copied" / counter)
+
+
 def serve_guide():
     guide = (root / "docs/agent-guide.md").read_text(encoding="utf-8")
     for sentence in (
@@ -1597,8 +1612,9 @@ def serve_guide():
             "A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409.",
             "`service.sqlite` is readable only by its owner.",
             "- 70: it died any other way",
-            "`counter.mo` and `./counter.mo` are the same spelling",
-            "An absolute path or `sub/../counter.mo` is a different spelling"):
+            "`counter.mo`, `./counter.mo`, an absolute path, `sub/../counter.mo`, a symlinked folder "
+            "and a copy of the folder all recover the same `DIR`.",
+            "Other comment and whitespace edits may recover or be refused."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
 
 
@@ -1701,12 +1717,18 @@ def serve_command(binary):
             blocked.close()
             assert served.finish(0, signal.SIGINT) == SERVE_SIGNALLED
 
-        with serving("./counter.mo") as served:
-            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
-            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
-        errors = refused(folder / counter)
-        assert b"written by a different program" in errors, errors
-        assert serve_events(errors) == [b"mo serve: failure: service: " + SAVED_REFUSED], errors
+        for spelling in serve_spellings(folder, counter):
+            with serving(spelling) as served:
+                assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}, spelling
+                assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        edited = folder / "edited"
+        edited.mkdir()
+        for before, after in SERVE_EDITS:
+            assert before in SERVE_HALTING, before
+            (edited / counter).write_text(SERVE_HALTING.replace(before, after))
+            errors = refused(edited / counter)
+            assert b"written by a different program; recovery refused" in errors, errors
+            assert serve_events(errors) == [b"mo serve: failure: service: " + SAVED_REFUSED], errors
         elsewhere = folder / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / counter).write_text(SERVE_HALTING)
@@ -1717,6 +1739,59 @@ def serve_command(binary):
         finally:
             served.close()
             outputs.append(served.line + served.errors())
+
+        tree = folder / "tree"
+        (tree / "shop").mkdir(parents=True)
+        (tree / "shop" / "account.mo").write_text(
+            "module Shop.Account\nexpose show\n\nfn show(value: Int) : Text\n"
+            "  value.to_text\nend\n")
+        (tree / "app.mo").write_text(
+            SERVE_COUNTER.replace("module Counter", "module App\nuse Shop.Account")
+            .replace("state.to_text", "Account.show(state)")
+            .replace("## Reads the count.", "# note one\n## Reads the count."))
+        modules = folder / "modules-state"
+        modules.mkdir()
+        served = Served(binary, "app.mo", modules, env, tree)
+        try:
+            assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        finally:
+            served.close()
+            outputs.append(served.line + served.errors())
+        with serving(tree / "app.mo", modules) as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        (tree / "app.mo").write_text((tree / "app.mo").read_text().replace("# note one", "# note two"))
+        with serving(tree / "app.mo", modules) as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+
+        pages = folder / "pages"
+        pages.mkdir()
+        names = [f"t{i}" for i in range(SERVE_TOOL_PAGE + 1)]
+        (pages / "paged.mo").write_text(
+            'module Paged\n\nservice\n  state Int = 0\n  tools ' + ", ".join(names) +
+            '\n  token from env "COUNTER_TOKEN"\nend\n' + "".join(
+                f"\n## Reads the count.\nfn {name}(state: Int, _now: Time) : Text\n"
+                "  state.to_text\nend\n" for name in names))
+        paged_state = folder / "paged-state"
+        paged_state.mkdir()
+        served = Served(binary, "paged.mo", paged_state, env, pages)
+        try:
+            status, body = served.post(SERVE_LIST, token)
+            assert status == 200, body
+            cursor = json.loads(body)["result"]["nextCursor"]
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        finally:
+            served.close()
+            outputs.append(served.line + served.errors())
+        with serving(pages / "paged.mo", paged_state) as served:
+            status, body = served.post(json.dumps(
+                {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"cursor": cursor}}),
+                token)
+            assert status == 200, body
+            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:], body
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
 
         with serving() as served:
             for attempt in range(15):
@@ -1828,7 +1903,8 @@ def serve_command(binary):
         with serving(path, state) as served:
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "1"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
-        errors = refused(path.name, state)
+        path.write_text(path.read_text().replace("## Reads the count.", "## Reads the total."))
+        errors = refused(path, state)
         assert serve_events(errors) == [b"mo serve: failure: service: " + SAVED_REFUSED], errors
         path, state = timed("Failing", "1.millisecond", "_state", 'stop "tick failed"')
         with serving(path, state) as served:

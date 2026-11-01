@@ -4,6 +4,7 @@ struct mo_image {
     struct mo_arena arena;
     const struct mo_bytecode *file;
     const uint32_t *code_offsets;
+    uint64_t program_checksum;
     struct mo_types types;
     struct mo_verification verified;
     void *runtime;
@@ -19,8 +20,9 @@ struct mo_image *mo_bytecode_load_site(const uint8_t *bytes, size_t length,
     const uint32_t *offsets = NULL;
     struct mo_types types;
     struct mo_verification verified;
-    struct mo_bytecode *file =
-        mo_bytecode_decode_info(&arena, bytes, length, &offsets, &types, site, error_out);
+    uint64_t program_checksum = 0;
+    struct mo_bytecode *file = mo_bytecode_decode_info(&arena, bytes, length, &offsets, &types,
+                                                       &program_checksum, site, error_out);
     if (file == NULL ||
         !mo_bytecode_verify(file, &types, offsets, length, &arena, &verified, site, error_out)) {
         mo_arena_free(&arena);
@@ -35,6 +37,7 @@ struct mo_image *mo_bytecode_load_site(const uint8_t *bytes, size_t length,
     *image = (struct mo_image){.arena = arena,
                                .file = file,
                                .code_offsets = offsets,
+                               .program_checksum = program_checksum,
                                .types = types,
                                .verified = verified};
     return image;
@@ -47,6 +50,11 @@ struct mo_image *mo_load(const uint8_t *bytes, size_t length, struct mo_load_err
 const struct mo_bytecode *mo_image_bytecode(const struct mo_image *image) {
     MO_ASSERT(image != NULL);
     return image->file;
+}
+
+uint64_t mo_image_key(const struct mo_image *image, uint32_t service) {
+    MO_ASSERT(image != NULL && service < image->file->service_count);
+    return image->program_checksum ^ ((uint64_t)service << 32);
 }
 
 const struct mo_types *mo_image_types(const struct mo_image *image) {

@@ -67,8 +67,8 @@ static void fuzz_restore(enum mo_store_record_kind kind, const uint8_t *data, si
     struct mo_service_loop *loop = NULL;
     MO_ASSERT(mo_service_open(image, 0, &hooks, store, &loop) == MO_SERVICE_OK);
     mo_service_free(loop);
-    struct mo_store_record record = {kind, kind == MO_STORE_STATE ? 0 : 1,
-                                     mo_image_bytecode(image)->header.checksum, data, size};
+    struct mo_store_record record = {kind, kind == MO_STORE_STATE ? 0 : 1, mo_image_key(image, 0),
+                                     data, size};
     /* Use the real writer to produce a valid frame checksum. This drives the
      * VM message decoder, not just the host envelope rejection path. */
     MO_ASSERT(mo_store_call(store, kind == MO_STORE_STATE ? MO_STORE_SNAPSHOT : MO_STORE_APPEND,

@@ -140,6 +140,7 @@ static bool same_reader(const struct reader *a, const struct reader *b) {
            a->names.items == b->names.items && a->names.pointers == b->names.pointers &&
            a->names.canonical == b->names.canonical && a->names.count == b->names.count &&
            a->bytes == b->bytes && a->length == b->length && a->offset == b->offset &&
+           a->files_start == b->files_start && a->files_end == b->files_end &&
            a->field == b->field && a->code_positions == b->code_positions &&
            a->debug_positions == b->debug_positions && a->file == b->file && a->types == b->types &&
            a->layouts == b->layouts && a->error == b->error && a->failed == b->failed;
@@ -446,6 +447,10 @@ void model_sections(struct reader *r) {
     if (r->failed) {
         return;
     }
+    r->files_start = nondet_size();
+    r->files_end = nondet_size();
+    __CPROVER_assume(old.offset <= r->files_start && r->files_start <= r->files_end &&
+                     r->files_end <= r->offset);
     uint32_t count = nondet_u32();
     __CPROVER_assume(count <= MOST_ENTRIES);
     struct mo_type *types = count == 0 ? NULL : new_table(count, sizeof *types);
@@ -952,6 +957,9 @@ void harness_sections(void) {
                          (TYPES(r) && cases_bounded(r) && r->file->function_count <= MOST_ENTRIES &&
                           TABLE(r->code_positions, r->file->function_count, 4)),
                      "sections: bounded types and a code position for each function");
+    __CPROVER_assert(r->failed || (old.offset <= r->files_start && r->files_start <= r->files_end &&
+                                   r->files_end <= r->offset),
+                     "sections: the files section lies within what was read");
     __CPROVER_assert(r->bytes == old.bytes && r->length == old.length && r->error == old.error &&
                          r->arena == old.arena && r->file == old.file,
                      "sections: same input and objects");
@@ -966,12 +974,13 @@ void harness_decode(void) {
     mo_arena_init(&arena, mo_bytecode_work_budget(length));
     const uint32_t *code_offsets = NULL;
     struct mo_types types_out;
+    uint64_t program_checksum;
     struct mo_bytecode_error_site site;
     struct mo_load_error error;
     bool details = nondet_bool();
-    struct mo_bytecode *file =
-        mo_bytecode_decode_info(&arena, bytes, length, details ? &code_offsets : NULL,
-                                details ? &types_out : NULL, details ? &site : NULL, &error);
+    struct mo_bytecode *file = mo_bytecode_decode_info(
+        &arena, bytes, length, details ? &code_offsets : NULL, details ? &types_out : NULL,
+        details ? &program_checksum : NULL, details ? &site : NULL, &error);
     __CPROVER_assert(file != NULL || error.reason != NULL, "a refusal has a reason");
     __CPROVER_assert(file != NULL || error.offset <= length, "a refusal points inside the input");
     reached_end();
