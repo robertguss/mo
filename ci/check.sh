@@ -10,7 +10,7 @@
 # With no arguments every check runs. Arguments pick groups of checks; together the groups are
 # every check:
 #   gcc clang   build and run the unit tests with that compiler
-#   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer
+#   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer, built by $CC if set, otherwise clang, otherwise gcc
 #   fuzz        every fuzz target briefly
 #   drivers     black-box drivers of the built executables
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
@@ -138,7 +138,9 @@ fi
 if want sanitize; then
 
 step "Tests under AddressSanitizer and UndefinedBehaviorSanitizer"
-if have clang; then
+if [[ -n "${CC:-}" ]]; then
+	if have "${CC%% *}"; then make --no-print-directory sanitize CC="$CC"; else missing "$CC is not installed"; fi
+elif have clang; then
 	make --no-print-directory sanitize CC=clang
 elif have gcc; then
 	make --no-print-directory sanitize CC=gcc
