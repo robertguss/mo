@@ -1411,6 +1411,40 @@ end
 SERVE_HALTING = (SERVE_COUNTER.replace("tools add, read", "tools add, read, halt") +
                  '\n## Always stops.\nfn halt(_state: Int, _now: Time) : Text\n'
                  '  stop "halted on purpose"\nend\n')
+SERVE_OVERLOADED = """module Overloaded
+
+struct Count
+  value: Int
+end
+
+struct Spare
+  value: Int
+end
+
+service
+  state Count = Count(value: 0)
+  tools halt
+  every 1.hour tick
+  token from env "COUNTER_TOKEN"
+end
+
+## Always stops.
+fn halt(_state: Count, _now: Time) : Text
+  stop "tool failed"
+end
+
+fn halt(spare: Spare) : Int
+  spare.value
+end
+
+fn tick(_state: Count, _now: Time) : Count
+  stop "tick failed"
+end
+
+fn tick(spare: Spare) : Int
+  spare.value
+end
+"""
 SERVE_SIGNALLED = b"mo serve: stop: a signal asked the service to stop\n"
 SERVE_INITIALIZE = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{'
                     '"protocolVersion":"2025-11-25","capabilities":{},'
@@ -1521,10 +1555,14 @@ def serve_guide():
             "An `Int` argument is a JSON string",
             "mo serve: failure: NAME: REASON\nmo serve: restart: N of M: REASON\n"
             "mo serve: stop: REASON\n",
-            "It is the word `service` when no tool or timer is responsible",
+            "`NAME` is the word `service` when no tool or timer is responsible",
             "`3 of 3` is followed by the stop line",
-            "A failed save while the service runs is a `stop` line with no `failure` line.",
-            "The lines have no timestamps because journald adds them.",
+            "A saved message that replay refuses names its tool or timer.",
+            "A store that will not open is E1409 with no `failure` line.",
+            "A store failure while the service runs is a `stop` line with no `failure` line.",
+            "The lines have no timestamps.",
+            "`^mo serve: failure:`",
+            "`journalctl -o cat`",
             "This format is stable. Changing it is a breaking change.",
             "The token never appears in output, logs or errors.",
             "- 0: SIGTERM or SIGINT stopped it. It closes its port, so a new connection is refused, "
@@ -1766,6 +1804,8 @@ def serve_command(binary):
         with serving(path, state) as served:
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "1"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        errors = refused(path.name, state)
+        assert serve_events(errors) == [b"mo serve: failure: service: " + SAVED_REFUSED], errors
         path, state = timed("Failing", "1.millisecond", "_state", 'stop "tick failed"')
         with serving(path, state) as served:
             errors = served.finish(69)
@@ -1774,6 +1814,17 @@ def serve_command(binary):
         errors = refused(path, state)
         assert serve_events(errors) == [b"mo serve: failure: tick: service handler failed"], errors
         assert b"bug: overflow: Duration" in errors, errors
+
+        overloaded = folder / "overloaded.mo"
+        overloaded.write_text(SERVE_OVERLOADED)
+        state = folder / "overloaded-state"
+        state.mkdir()
+        with serving(overloaded, state) as served:
+            assert serve_structured(served.post(SERVE_HALT, token))["error"]["code"] == "handler_failed"
+            errors = served.finish(0, signal.SIGTERM)
+        assert serve_events(errors) == [b"mo serve: failure: tick: service handler failed",
+                                        b"mo serve: failure: halt: service handler failed",
+                                        SERVE_SIGNALLED.rstrip()], errors
 
         plain = folder / "plain.mo"
         plain.write_text("module Plain\nuse Aaa\n\nfn main(console: Console)\n"

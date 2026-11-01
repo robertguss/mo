@@ -44,6 +44,7 @@ struct observation {
     unsigned clock_calls, advance_on;
     struct mo_heap *heap;
     unsigned replies, failures, restarts, stops;
+    uint32_t restart;
     enum mo_service_status status;
     bool updated, timer;
     uint32_t handler;
@@ -129,6 +130,7 @@ static void event(const struct mo_service_event *e, void *context) {
         break;
     case MO_SERVICE_RESTART:
         o->restarts++;
+        o->restart = e->restart;
         break;
     case MO_SERVICE_STOP:
         o->stops++;
@@ -324,6 +326,7 @@ static void supervisor(void) {
         CHECK(mo_service_send(s, 0, &n, 1, 88) == MO_SERVICE_OK);
         CHECK(mo_service_step(s));
         CHECK(o.restarts == 3 && o.failures == 15);
+        CHECK(o.restart == 3 - outside);
         CHECK(mo_service_running(s) == (outside != 0));
         if (outside == 0) {
             CHECK(o.stops == 1 && o.status == MO_SERVICE_DOWN && o.id == 88);

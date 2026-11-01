@@ -570,16 +570,22 @@ mo serve: restart: N of M: REASON
 mo serve: stop: REASON
 ```
 
-`NAME` is `mo_service_event.handler`, the bare tool or timer name. That covers a
-handler that fails in replay, and a timer's interval reports as its timer. When
+`NAME` is `mo_service_event.handler`, the bare tool or timer name, with the
+module and any `@Receiver` overload suffix of the bytecode function name cut
+off. A record that replay refuses names its handler, whether the handler failed
+or the record was damaged, and a timer's interval reports as its timer. When
 `handler` is empty, because the start value or the store or saved data failed
-at startup, `NAME` is `service`, which `mo check` refuses as a tool or timer name (E0007).
+at startup, `NAME` is `service`, which `mo check` refuses as a tool or timer
+name (E0007). A store that will not open is E1409 and fires no event.
 `N` is `mo_service_event.restart`, the restart's count in the ten-minute window,
 and `M` is `MO_LIMIT_SERVICE_RESTARTS`. `REASON` is `mo_service_status_text`
 unchanged. `function` stays a startup-only field, because `simulation.c` reads it
 as a startup failure. A runtime store failure is a `stop:` line with no `failure:`
-line. A signal stop and a listener failure write a `stop:` line too. journald adds
-the timestamps. This format is stable, and a later change is a breaking change.
+line. A signal stop and a listener failure write a `stop:` line too. Replay
+discards the defect, so a replay failure has no report. Report values are
+indented and escape newlines, so an event line always starts its own line and
+`^mo serve: failure:` finds only events. journald adds the timestamps. This
+format is stable, and a later change is a breaking change.
 
 Signal handlers go in before the listener and store open, so a signal during
 startup lets the first commit finish. A signal sets a flag, and a 200 ms tick

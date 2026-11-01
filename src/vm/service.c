@@ -77,8 +77,8 @@ static struct mo_service_time sample_clock(struct mo_service_loop *s) {
     return time;
 }
 
-/* The source names tools and timers bare, in the module whose name qualifies
- * the bytecode function. A timer's interval thunk reports as its timer. */
+/* The source names tools and timers bare; a bytecode function name adds its
+ * module and, when overloaded, `@Receiver`. An interval thunk reports as its timer. */
 static struct mo_bytecode_string handler_name(const struct mo_service_loop *s, uint32_t function) {
     const struct mo_bytecode_service *service = s->descriptor;
     if (function == MO_NO_INDEX || function == service->start)
@@ -89,11 +89,13 @@ static struct mo_bytecode_string handler_name(const struct mo_service_loop *s, u
             break;
         }
     const struct mo_bytecode *file = s->process->file;
+    MO_ASSERT(function < file->function_count);
     struct mo_bytecode_string name = file->strings[file->functions[function].name];
-    uint32_t start = name.length;
-    while (start != 0 && name.bytes[start - 1] != '.')
-        start--;
-    return (struct mo_bytecode_string){name.length - start, name.bytes + start};
+    uint32_t start = 0, end = 0;
+    while (end != name.length && name.bytes[end] != '@')
+        if (name.bytes[end++] == '.')
+            start = end;
+    return (struct mo_bytecode_string){end - start, name.bytes + start};
 }
 
 static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind,

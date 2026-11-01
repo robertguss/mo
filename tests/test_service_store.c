@@ -784,8 +784,41 @@ static void wrong_state_checksum(void) {
     CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID);
     check_recovery_heap = false;
     CHECK(s == NULL && o.replies == replies && o.failures == failures + 1);
+    CHECK(named(o.handler, "add"));
     CHECK(recovery_heap_checks == 1);
     mo_service_free(s);
+    mo_store_close(store);
+    mo_buffer_free(&saved.bytes);
+    mo_image_free(image);
+}
+
+static void replayed_timer_is_named(void) {
+    struct mo_image *image = compile("module Main\nservice\nstate Int = 0\ntools read\n"
+                                     "every 1.minute tick\ntoken from env \"TOKEN\"\nend\n"
+                                     "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+                                     "fn tick(state: Int, _now: Time) : Int\nstate + 1\nend\n");
+    struct saved_record saved = {.kind = MO_STORE_LOG};
+    mo_buffer_init(&saved.bytes, MO_LIMIT_SAVED_BYTES);
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    CHECK(mo_service_step(s));
+    MO_ASSERT(mo_store_call(store, MO_STORE_LOAD, NULL, copy_record, &saved) == MO_STORE_OK);
+    mo_service_free(s);
+    mo_store_close(store);
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    s = open_service(image, store, &o);
+    mo_service_free(s);
+    MO_ASSERT(saved.bytes.length > 17);
+    saved.bytes.bytes[17] ^= 1;
+    struct mo_store_record record = {MO_STORE_LOG, 1, mo_image_bytecode(image)->header.checksum,
+                                     saved.bytes.bytes, saved.bytes.length};
+    MO_ASSERT(mo_store_call(store, MO_STORE_APPEND, &record, NULL, NULL) == MO_STORE_OK);
+    struct mo_service_hooks hooks = {clock_now, reply, event, &o};
+    s = NULL;
+    CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID && s == NULL);
+    CHECK(named(o.handler, "tick"));
     mo_store_close(store);
     mo_buffer_free(&saved.bytes);
     mo_image_free(image);
@@ -1439,6 +1472,7 @@ static void run(void *unused) {
     state_limit();
     replay_limit();
     wrong_state_checksum();
+    replayed_timer_is_named();
     foreign_image(image, path);
     hostile_database(image, path);
     invalid_payloads(image);
