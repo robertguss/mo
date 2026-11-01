@@ -328,11 +328,16 @@ static void events_reach_the_sink(void) {
         MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_RESTART,
         MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE,
         MO_SERVICE_FAILURE, MO_SERVICE_RESTART, MO_SERVICE_STOP};
+    static const uint32_t restarts[sizeof expected / sizeof *expected] = {
+        [5] = 1, [11] = 2, [17] = 3};
     CHECK(log.count == sizeof expected / sizeof *expected);
     for (size_t i = 0; i < log.count && i < sizeof expected / sizeof *expected; i++) {
         CHECK(log.events[i].kind == expected[i]);
         CHECK(log.events[i].reason == MO_SERVICE_DEFECT);
         CHECK((log.events[i].defect != NULL) == (expected[i] == MO_SERVICE_FAILURE));
+        CHECK(expected[i] == MO_SERVICE_FAILURE ? named(log.events[i].handler, "fail")
+                                                : log.events[i].handler.bytes == NULL);
+        CHECK(log.events[i].restart == restarts[i]);
     }
     finish(&f);
 }

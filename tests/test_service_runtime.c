@@ -44,9 +44,11 @@ struct observation {
     unsigned clock_calls, advance_on;
     struct mo_heap *heap;
     unsigned replies, failures, restarts, stops;
+    uint32_t restart;
     enum mo_service_status status;
     bool updated, timer;
     uint32_t handler;
+    struct mo_bytecode_string failed;
     uint64_t id;
     int64_t value;
     char text[256], reason[128], events[64];
@@ -112,8 +114,10 @@ static void reply(const struct mo_service_response *r, void *context) {
 static void event(const struct mo_service_event *e, void *context) {
     struct observation *o = context;
     allocation_countdown = 0;
-    if (e->kind == MO_SERVICE_FAILURE)
+    if (e->kind == MO_SERVICE_FAILURE) {
         inspect_defect(o, e->defect);
+        o->failed = e->handler;
+    }
     CHECK(e->reason != MO_SERVICE_OK);
     MO_ASSERT(o->event_count + 1 < sizeof o->events);
     o->events[o->event_count++] = e->kind == MO_SERVICE_FAILURE   ? 'F'
@@ -126,6 +130,7 @@ static void event(const struct mo_service_event *e, void *context) {
         break;
     case MO_SERVICE_RESTART:
         o->restarts++;
+        o->restart = e->restart;
         break;
     case MO_SERVICE_STOP:
         o->stops++;
@@ -321,6 +326,7 @@ static void supervisor(void) {
         CHECK(mo_service_send(s, 0, &n, 1, 88) == MO_SERVICE_OK);
         CHECK(mo_service_step(s));
         CHECK(o.restarts == 3 && o.failures == 15);
+        CHECK(o.restart == 3 - outside);
         CHECK(mo_service_running(s) == (outside != 0));
         if (outside == 0) {
             CHECK(o.stops == 1 && o.status == MO_SERVICE_DOWN && o.id == 88);
@@ -512,6 +518,7 @@ static void interval_values(void) {
         struct mo_service_hooks hooks = {clock_now, reply, event, &o};
         struct mo_service_loop *s = NULL;
         CHECK(mo_service_new(image, 0, &hooks, &s) == expected[trial]);
+        CHECK(expected[trial] == MO_SERVICE_OK || named(o.failed, "second"));
         CHECK(o.replies == 0 && o.restarts == 0);
         if (expected[trial] == MO_SERVICE_OK) {
             MO_ASSERT(s != NULL);
