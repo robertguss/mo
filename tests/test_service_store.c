@@ -820,6 +820,15 @@ static void replayed_timer_is_named(void) {
     CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID && s == NULL);
     CHECK(named(o.handler, "tick"));
     mo_store_close(store);
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    s = open_service(image, store, &o);
+    mo_service_free(s);
+    saved.bytes.bytes[0] = 2;
+    MO_ASSERT(mo_store_call(store, MO_STORE_APPEND, &record, NULL, NULL) == MO_STORE_OK);
+    s = NULL;
+    CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID && s == NULL);
+    CHECK(o.handler.bytes == NULL);
+    mo_store_close(store);
     mo_buffer_free(&saved.bytes);
     mo_image_free(image);
 }

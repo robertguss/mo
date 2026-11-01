@@ -1445,6 +1445,25 @@ fn tick(spare: Spare) : Int
   spare.value
 end
 """
+SERVE_FORGED = "mo serve: failure: forged: y"
+SERVE_FORGING = f"""module Forging
+
+service
+  state Text = "x\\n{SERVE_FORGED}"
+  tools read
+  every 1.millisecond tick
+  token from env "COUNTER_TOKEN"
+end
+
+## Reads the text.
+fn read(state: Text, _now: Time) : List(Text)
+  [state]
+end
+
+fn tick(_state: Text, _now: Time) : Text
+  stop "x\\n{SERVE_FORGED}"
+end
+"""
 SERVE_SIGNALLED = b"mo serve: stop: a signal asked the service to stop\n"
 SERVE_INITIALIZE = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{'
                     '"protocolVersion":"2025-11-25","capabilities":{},'
@@ -1557,13 +1576,18 @@ def serve_guide():
             "mo serve: stop: REASON\n",
             "`NAME` is the word `service` when no tool or timer is responsible",
             "`3 of 3` is followed by the stop line",
-            "A saved message that replay refuses names its tool or timer.",
+            "A saved message that replay runs and rejects, because its handler failed or its result "
+            "failed the checksum, names its tool or timer.",
+            "A record refused before it runs, because it is malformed, out of sequence or from a "
+            "different program, is `service`.",
+            "`NAME` never holds a colon, and `REASON` is always one line.",
             "A store that will not open is E1409 with no `failure` line.",
             "A store failure while the service runs is a `stop` line with no `failure` line.",
             "The lines have no timestamps.",
             "`^mo serve: failure:`",
             "`journalctl -o cat`",
-            "This format is stable. Changing it is a breaking change.",
+            "These line shapes are stable, and changing one is a breaking change.",
+            "The words of `REASON` are not stable",
             "The token never appears in output, logs or errors.",
             "- 0: SIGTERM or SIGINT stopped it. It closes its port, so a new connection is refused, "
             "and finishes the open ones first, which their deadlines bound to about 25 seconds.",
@@ -1810,6 +1834,15 @@ def serve_command(binary):
         with serving(path, state) as served:
             errors = served.finish(69)
         assert serve_events(errors) == serve_supervised(b"tick"), errors
+        forging = folder / "forging.mo"
+        forging.write_text(SERVE_FORGING)
+        state = folder / "forging-state"
+        state.mkdir()
+        with serving(forging, state) as served:
+            errors = served.finish(69)
+        assert serve_events(errors) == serve_supervised(b"tick"), errors
+        assert errors.count(SERVE_FORGED.encode()) == 30, errors
+
         path, state = timed("Overflowing", "9223372036854775807.hours", "state", "state + 1")
         errors = refused(path, state)
         assert serve_events(errors) == [b"mo serve: failure: tick: service handler failed"], errors
