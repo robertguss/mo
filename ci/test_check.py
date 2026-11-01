@@ -30,7 +30,8 @@ if name == "python3":
 hidden = name == "check_tools.py" and "--no-hidden" not in args
 timed = name == "check_check_time.py"
 kind = "hidden" if hidden else "timing" if timed else "parallel"
-record = {"pid": os.getpid(), "name": name, "args": args, "kind": kind}
+record = {"pid": os.getpid(), "name": name, "args": args, "kind": kind,
+          "bytecode": os.environ.get("PYTHONDONTWRITEBYTECODE")}
 def event(phase):
     with open(os.environ["EVENTS"], "a") as output:
         output.write(json.dumps(dict(record, phase=phase)) + "\n")
@@ -103,6 +104,31 @@ class Scheduling(unittest.TestCase):
         for failure in ("parallel", "hidden", "timing"):
             with self.subTest(failure=failure):
                 self.run_driver(["gcc/debug", "clang/debug", "clang/sanitize"], failure)
+
+    def test_static_runs_planner_without_bytecode(self):
+        with tempfile.TemporaryDirectory(prefix="mo-check-static-") as temporary:
+            root = pathlib.Path(temporary)
+            (root / "ci").mkdir()
+            shutil.copyfile(ROOT / "ci/check.sh", root / "ci/check.sh")
+            commands = root / "commands"
+            commands.mkdir()
+            for name in ("make", "python3", "gcc", "clang", "bison", "clang-format", "clang-tidy"):
+                path = commands / name
+                path.write_text(f"#!{sys.executable}\n" + COMMAND)
+                path.chmod(0o755)
+            events = root / "events"
+            environment = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}",
+                               CI="1", EVENTS=str(events), FAIL="")
+            environment.pop("PYTHONDONTWRITEBYTECODE", None)
+            result = subprocess.run(["bash", "ci/check.sh", "static"], cwd=root,
+                                    env=environment, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            records = [json.loads(line) for line in events.read_text().splitlines()]
+            planner = [record for record in records
+                       if record["name"] == "test_plan.py" and record["phase"] == "begin"]
+            self.assertEqual(len(planner), 1)
+            self.assertEqual(planner[0]["args"], [])
+            self.assertEqual(planner[0]["bytecode"], "1")
 
 
 if __name__ == "__main__":

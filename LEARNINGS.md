@@ -166,3 +166,6 @@
 - The shell runner checks clang-format presence, not its version. Repository
   formatting requires exactly 14.0.6. libFuzzer availability needs a compile
   and link probe; a clang executable alone does not establish it.
+- The drivers and Lean prebuild compiler probes are optional. Missing both
+  compilers does not itself skip those groups when their executables already
+  exist. Missing build outputs are distinct from missing-tool gates.

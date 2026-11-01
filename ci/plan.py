@@ -84,7 +84,7 @@ def missing_tools(groups):
 
     for context, affected, calls in TOOL_CALLS:
         affected = set(affected).intersection(groups)
-        if not affected:
+        if not affected or context in ("build", "build:lean"):
             continue
         if context == "lean":
             homes = {"ELAN_HOME": environment.get("ELAN_HOME", ""),
@@ -97,7 +97,7 @@ def missing_tools(groups):
                     break
         tools = list(dict.fromkeys(calls))
         available = {tool: shutil.which(tool, path=environment.get("PATH", "")) for tool in tools}
-        if context in ("build", "build:lean", "sanitize"):
+        if context == "sanitize":
             require("clang or gcc", any(available.values()), affected)
         elif context == "static:grammar":
             require(tools[0], bool(available[tools[0]]), affected)

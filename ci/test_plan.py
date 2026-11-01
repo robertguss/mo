@@ -430,24 +430,48 @@ class Tools(Repository):
                             self.assertNotIn("skipped:", self.run_shell(group))
                     text = self.cli()
                     self.assertEqual(text.returncode, 1)
-                    self.assertIn("missing:", text.stdout)
+                    for label, groups in missing.items():
+                        self.assertIn(f"missing: {label} ({', '.join(groups)})\n", text.stdout)
                     self.assertIn(report["command"], text.stdout.splitlines()[-1])
+                    self.assertTrue(text.stdout.splitlines()[-1].endswith(
+                        f"tool-gated skips: {', '.join(expected)}."))
                 finally:
                     self.tool(self.bin / tool)
 
-    def test_no_compiler_and_no_built_outputs(self):
+    def test_required_compilers_without_built_outputs(self):
         self.all_groups()
         (self.bin / "gcc").unlink()
         (self.bin / "clang").unlink()
         report = self.report(status=1)
         self.assertEqual(report["missing_tools"], {
             "clang": ["clang", "fuzz"],
-            "clang or gcc": ["sanitize", "drivers", "lean", "static"],
+            "clang or gcc": ["sanitize", "static"],
             "gcc": ["gcc"],
         })
         for group in ("sanitize", "drivers", "lean", "static"):
             with self.subTest(group=group):
-                self.assertIn("skipped:", self.run_shell(group))
+                output = self.run_shell(group)
+                self.assertIn("skipped:", output)
+                if group in ("drivers", "lean"):
+                    missing = ("no mo command executable is built" if group == "drivers" else
+                               "no primitive test executable is built")
+                    self.assertIn(f"skipped: {missing}", output)
+
+    def test_existing_drivers_need_no_optional_build_compilers(self):
+        self.all_groups()
+        self.run_shell("drivers", "lean")
+        runner = self.directory / "runner"
+        shutil.copytree(runner / "build", self.root / "build")
+        (self.root / ".git/info/exclude").write_text("build/\n")
+        (self.bin / "gcc").unlink()
+        (self.bin / "clang").unlink()
+        report = self.report(status=1)
+        self.assertNotIn("drivers", report["skipped_groups"])
+        self.assertNotIn("lean", report["skipped_groups"])
+        result = subprocess.run([BASH, "ci/check.sh", "drivers", "lean"], cwd=runner,
+                                env=self.environment, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("skipped:", result.stdout)
 
     def test_format_version_exact_and_fuzzer_compile_only(self):
         self.write("fuzz/new.c")
