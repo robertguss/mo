@@ -233,6 +233,13 @@ void mo_listener_close(struct mo_listener *listener) {
     mo_host_wipe(&arena, sizeof arena);
 }
 
+void mo_listener_stop_accepting(struct mo_listener *listener) {
+    MO_ASSERT(listener != NULL);
+    if (listener->fd >= 0)
+        (void)close(listener->fd);
+    listener->fd = -1;
+}
+
 uint16_t mo_listener_port(const struct mo_listener *listener) {
     MO_ASSERT(listener != NULL);
     return listener->port;

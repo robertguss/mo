@@ -32,7 +32,7 @@ static void run(void *context) {
     MO_ASSERT(mo_listener_fake("MO_FUZZ_MCP_TOKEN", &listener) == MO_LISTENER_OK);
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     const char *authorities[] = {"localhost"};
-    MO_ASSERT(mo_protocol_server_new(image, 0, store, listener, authorities, 1, &server) ==
+    MO_ASSERT(mo_protocol_server_new(image, 0, store, listener, authorities, 1, NULL, &server) ==
               MO_PROTOCOL_SERVER_OK);
     uint8_t out[MO_LIMIT_MCP_RESPONSE_BYTES + 1024];
     uint8_t control = input->bytes[0];

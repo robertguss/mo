@@ -1378,7 +1378,9 @@ reports the program's errors, `mo run FILE [ARGS...]` runs it with the
 arguments after the file's name, and `mo test FILE` checks its examples,
 promises and tests. `mo emit FILE -o OUT` checks the program as `mo check` does
 and writes its bytecode to `OUT`; `-o` is required, and a library module has no
-main to emit (E0079). `mo format` and `mo fix` rewrite the files they are given.
+main to emit (E0079). `mo serve FILE --port N --data DIR` runs the service `FILE`
+declares (section 11.5) over MCP on 127.0.0.1, with its saved state in the
+folder `DIR`, which must exist. `mo format` and `mo fix` rewrite the files they are given.
 `mo guide` needs no file. It prints a short guide for agents writing Mo,
 matched to the installed version: how to work with the `mo` command, a small
 complete program with its tests, and when a task is done. `mo guide
@@ -1386,7 +1388,9 @@ complete program with its tests, and when a task is done. `mo guide
 `mo` exits with status 0 when everything passed, 1 when the program has errors
 or an example, promise or test fails, and 2 for a mistake in the command
 itself. Once the program runs, `mo run` exits with the program's own status
-(section 11.2), or 70 after a bug (section 13.2).
+(section 11.2), or 70 after a bug (section 13.2). `mo serve` exits with 0 after
+SIGTERM or SIGINT, 1 when it cannot start the service, 69 when repeated failures
+stop the service, and 70 when it dies any other way.
 
 `mo test` runs every example, promise and test unless it's told which. Each has
 a full name: its function's name, or a test's module's, then its kind and a

@@ -31,15 +31,35 @@ struct fixture_server {
     uint64_t tick_us;
 };
 
-static struct fixture_server start_source(const char *text) {
+struct event_log {
+    struct mo_service_event events[32];
+    size_t count;
+    struct mo_protocol_server **server;
+    bool connected;
+};
+
+static void note_event(const struct mo_service_event *event, void *context) {
+    struct event_log *log = context;
+    MO_ASSERT(log->count < sizeof log->events / sizeof *log->events);
+    log->events[log->count++] = *event;
+    log->connected = mo_protocol_server_connected(*log->server);
+}
+
+static struct fixture_server start_events(const char *text, struct event_log *log) {
     struct fixture_server f = {.image = compile(text)};
     CHECK(setenv("MO_TEST_MCP_TOKEN", "McpSecretCanary42", 1) == 0);
     MO_ASSERT(mo_listener_fake("MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
     MO_ASSERT(mo_store_open(NULL, &f.store) == MO_STORE_OK);
     const char *authorities[] = {"localhost"};
-    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &f.server) ==
-              MO_PROTOCOL_SERVER_OK);
+    const struct mo_protocol_events events = {note_event, log};
+    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1,
+                                     log == NULL ? NULL : &events,
+                                     &f.server) == MO_PROTOCOL_SERVER_OK);
     return f;
+}
+
+static struct fixture_server start_source(const char *text) {
+    return start_events(text, NULL);
 }
 
 static struct fixture_server start(void) {
@@ -291,6 +311,79 @@ static void stopped(void) {
     finish(&f);
 }
 
+static void events_reach_the_sink(void) {
+    struct event_log log = {.count = 0};
+    struct fixture_server f = start_events(source, &log);
+    log.server = &f.server;
+    char out[4096];
+    CHECK(log.count == 0);
+    for (unsigned i = 0; i < 15; i++) {
+        MO_ASSERT(mo_listener_fake_advance(f.listener, 100000) == MO_LISTENER_OK);
+        tool_request(&f, "fail", "{}", "1", out, sizeof out);
+        tool_error(out, "handler_failed", "none", "1");
+    }
+    static const enum mo_service_event_kind expected[] = {
+        MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE,
+        MO_SERVICE_FAILURE, MO_SERVICE_RESTART, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE,
+        MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_RESTART,
+        MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE, MO_SERVICE_FAILURE,
+        MO_SERVICE_FAILURE, MO_SERVICE_RESTART, MO_SERVICE_STOP};
+    CHECK(log.count == sizeof expected / sizeof *expected);
+    for (size_t i = 0; i < log.count && i < sizeof expected / sizeof *expected; i++) {
+        CHECK(log.events[i].kind == expected[i]);
+        CHECK(log.events[i].reason == MO_SERVICE_DEFECT);
+        CHECK((log.events[i].defect != NULL) == (expected[i] == MO_SERVICE_FAILURE));
+    }
+    finish(&f);
+}
+
+static void connected(void) {
+    struct event_log log = {.count = 0};
+    struct fixture_server f = start_events(source, &log);
+    log.server = &f.server;
+    CHECK(!mo_protocol_server_connected(f.server));
+    struct mo_buffer input;
+    input_request(&input,
+                  "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
+                  "\"params\":{\"name\":\"fail\"}}",
+                  auth);
+    char out[4096];
+    struct mo_listener_fake_peer peer = {.input = input.bytes,
+                                         .input_size = input.length - 1,
+                                         .output = (uint8_t *)out,
+                                         .output_capacity = sizeof out,
+                                         .readable = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &peer) == MO_LISTENER_OK);
+    for (unsigned i = 0; i < 8; i++)
+        poll_server(&f);
+    CHECK(peer.input_offset == input.length - 1 && log.count == 0);
+    CHECK(mo_protocol_server_connected(f.server));
+    mo_protocol_server_stop_accepting(f.server);
+    char late_out[64];
+    struct mo_listener_fake_peer late = {.output = (uint8_t *)late_out,
+                                         .output_capacity = sizeof late_out,
+                                         .readable = true,
+                                         .writable = true};
+    MO_ASSERT(mo_listener_fake_connect(f.listener, &late) == MO_LISTENER_OK);
+    peer.input_size = input.length;
+    for (unsigned i = 0; i < 8; i++)
+        poll_server(&f);
+    CHECK(log.count == 1 && log.connected);
+    CHECK(peer.output_size == 0 && mo_protocol_server_connected(f.server));
+    peer.writable = true;
+    for (unsigned i = 0; i < 8 && !peer.half_closed; i++)
+        poll_server(&f);
+    CHECK(peer.half_closed && !peer.closed);
+    CHECK(mo_protocol_server_connected(f.server));
+    peer.eof = true;
+    for (unsigned i = 0; i < 8 && !peer.closed; i++)
+        poll_server(&f);
+    CHECK(peer.closed && !mo_protocol_server_connected(f.server));
+    CHECK(!late.closed && late.output_size == 0);
+    mo_buffer_free(&input);
+    finish(&f);
+}
+
 static void response_limit(void) {
     struct fixture_server f = start();
     char out[4096], id[6 * 128 + 3];
@@ -535,7 +628,7 @@ static void rejection_paths(void) {
     CHECK(strstr(out, "\"code\":-32700") != NULL);
     struct mo_protocol_server *invalid = NULL;
     const char *authorities[] = {NULL};
-    CHECK(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &invalid) ==
+    CHECK(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, NULL, &invalid) ==
           MO_PROTOCOL_SERVER_CONFIG);
     CHECK(invalid == NULL);
     finish(&f);
@@ -578,6 +671,8 @@ static void run(void *context) {
     small_body_reads();
     rate();
     stopped();
+    events_reach_the_sink();
+    connected();
     response_limit();
     busy();
 }

@@ -378,6 +378,7 @@ static inline struct mo_limits mo_limits_default(void) {
  * Exhaustion refuses the check with E1405, not a conclusion about the promise.
  * This compiler work bound never limits the user's running main. */
 #define MO_CLI_ANCHOR_INSTRUCTIONS (16 << 20)
+#define MO_CLI_SERVE_TICK_US UINT64_C(200000)
 
 /* Observation inventory/selection and image binding, not Mo execution limits.
  * Result records use MO_CLI_DIAGNOSTIC_SIZE and never truncate fields. */

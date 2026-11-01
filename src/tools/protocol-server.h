@@ -79,6 +79,7 @@ struct mo_protocol_server {
     struct mo_service_loop *service;
     struct mo_heap *service_heap;
     struct mo_listener *listener;
+    struct mo_protocol_events events;
     struct mo_listener_time now;
     struct mo_process *catalog_process;
     struct mo_scratch catalog_scratch;
@@ -92,7 +93,7 @@ struct mo_protocol_server {
     struct protocol_bytes errors[506];
     struct protocol_connection connections[MO_LIMIT_MCP_CONNECTIONS];
     struct mo_protocol_metrics metrics;
-    bool io_failed;
+    bool io_failed, closing;
 };
 
 MO_MUST_USE const struct mo_bytecode_function *

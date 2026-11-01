@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """Black-box CLI contracts and goldens, with Python's real JSON parser."""
+import contextlib
 import errno
+import http.client
 import json
 import locale
 import os
 import pathlib
 import resource
+import select
+import shutil
+import signal
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 root = pathlib.Path(__file__).resolve().parent.parent
 
@@ -1381,6 +1388,381 @@ def service_refusals(binary):
         for name in ('TOKEN', '_TOKEN_2', 'T0', '_'):
             path.write_text(source.replace('"TOKEN"', json.dumps(name)))
             run(binary, ['check', str(path)], 0)
+
+
+SERVE_COUNTER = """module Counter
+
+service
+  state Int = 0
+  tools add, read
+  token from env "COUNTER_TOKEN"
+end
+
+## Adds an amount to the count.
+fn add(state: Int, _now: Time, amount: Int) : (Int, Int)
+  (state + amount, state + amount)
+end
+
+## Reads the count.
+fn read(state: Int, _now: Time) : Text
+  state.to_text
+end
+"""
+SERVE_HALTING = (SERVE_COUNTER.replace("tools add, read", "tools add, read, halt") +
+                 '\n## Always stops.\nfn halt(_state: Int, _now: Time) : Text\n'
+                 '  stop "halted on purpose"\nend\n')
+SERVE_SIGNALLED = b"mo serve: stop: a signal asked the service to stop\n"
+SERVE_INITIALIZE = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{'
+                    '"protocolVersion":"2025-11-25","capabilities":{},'
+                    '"clientInfo":{"name":"demo","version":"1"}}}')
+SERVE_INITIALIZED = '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+SERVE_LIST = '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+SERVE_ADD = ('{"jsonrpc":"2.0","id":3,"method":"tools/call",'
+             '"params":{"name":"add","arguments":{"amount":"5"}}}')
+SERVE_READ = '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read"}}'
+SERVE_HALT = '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"halt"}}'
+
+
+class Served:
+    def __init__(self, binary, source, data, env, folder, port="0"):
+        self.stderr = tempfile.NamedTemporaryFile(dir=folder, prefix="stderr-", delete=False)
+        self.outputs = pathlib.Path(self.stderr.name)
+        self.process = subprocess.Popen(
+            [str(binary), "serve", str(source), "--port", port, "--data", str(data)],
+            env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0,
+            umask=0o022)
+        line = b""
+        limit = time.monotonic() + 30
+        while not line.endswith(b"\n"):
+            ready = select.select([self.process.stdout], [], [], limit - time.monotonic())[0]
+            assert ready, ("mo serve did not announce its port in time", line)
+            chunk = self.process.stdout.read(1)
+            if not chunk:
+                break
+            line += chunk
+        self.line = line
+        self.port = None
+        if line:
+            prefix, suffix = b"mo serve: listening on http://127.0.0.1:", b"/mcp\n"
+            assert line.startswith(prefix) and line.endswith(suffix), line
+            self.port = int(line[len(prefix):-len(suffix)])
+
+    def post(self, body, token, headers=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
+        sent = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                "MCP-Protocol-Version": "2025-11-25"}
+        connection.request("POST", "/mcp", body, {**sent, **(headers or {})})
+        response = connection.getresponse()
+        data = response.read()
+        connection.close()
+        return response.status, data
+
+    def finish(self, status, stop=None):
+        if stop is not None:
+            self.process.send_signal(stop)
+        assert self.process.wait(timeout=30) == status, (self.process.returncode, self.errors())
+        rest = self.process.stdout.read()
+        assert not rest, rest
+        return self.errors()
+
+    def errors(self):
+        return self.outputs.read_bytes()
+
+    def close(self):
+        if self.process.poll() is None:
+            self.process.kill()
+            self.process.wait(timeout=30)
+        self.process.stdout.close()
+        self.stderr.close()
+
+
+STORE_FAILED = b"service store failed; reopen it to see whether the last change was saved"
+
+
+def serve_structured(reply):
+    status, body = reply
+    assert status == 200, reply
+    return json.loads(body)["result"]["structuredContent"]
+
+
+def serve_guide():
+    guide = (root / "docs/agent-guide.md").read_text(encoding="utf-8")
+    for sentence in (
+            "`mo serve FILE --port N --data DIR` runs the service that the module in `FILE` "
+            "declares.",
+            "`DIR` exists. `mo serve` never creates it",
+            "Saved state goes in `DIR/service.sqlite`.",
+            "Only one `mo serve` can use a `DIR` at a time.",
+            "A missing or invalid token is E1409, and the message names the variable.",
+            "`mo serve` listens on 127.0.0.1 only.",
+            "mo serve: listening on http://127.0.0.1:PORT/mcp",
+            "Any other well-formed `Host` gets status 421, and a malformed or missing one gets 400.",
+            SERVE_COUNTER,
+            "A missing or wrong token gets status 401.",
+            "-H 'Content-Type: application/json'",
+            "-H 'MCP-Protocol-Version: 2025-11-25'",
+            f"-d '{SERVE_INITIALIZE}'",
+            SERVE_INITIALIZED, SERVE_LIST, SERVE_ADD, SERVE_READ,
+            "An `Int` argument is a JSON string",
+            "`mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`",
+            "- 0: SIGTERM or SIGINT stopped it. It closes its port, so a new connection is refused, "
+            "and finishes the open ones first, which their deadlines bound to about 25 seconds.",
+            "An empty `service.sqlite` never held data, so delete it and start again.",
+            "- 69: supervision (D308) stopped the service.",
+            "It stays down until a person starts it, as Recover from a stop says.",
+            "A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409.",
+            "`service.sqlite` is readable only by its owner.",
+            "- 70: it died any other way",
+            "`counter.mo` and `./counter.mo` are the same spelling",
+            "An absolute path or `sub/../counter.mo` is a different spelling"):
+        assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
+
+
+def serve_command(binary):
+    serve_guide()
+    token = "McpServeCanary42"
+    with tempfile.TemporaryDirectory(prefix="mo-serve-") as directory:
+        folder = pathlib.Path(directory)
+        data = folder / "state"
+        data.mkdir()
+        counter = "counter.mo"
+        (folder / counter).write_text(SERVE_HALTING)
+        env = {**os.environ, "COUNTER_TOKEN": token}
+        outputs = []
+
+        @contextlib.contextmanager
+        def serving(source=counter, folder_for_data=data, port="0", environment=env):
+            served = Served(binary, source, folder_for_data, environment, folder, port)
+            try:
+                yield served
+            finally:
+                served.close()
+                outputs.append(served.line + served.errors())
+
+        def refused(source=counter, folder_for_data=data, port="0", environment=env):
+            with serving(source, folder_for_data, port, environment) as served:
+                assert not served.line, served.line
+                errors = served.finish(1)
+                assert b"error E1409:" in errors, errors
+                return errors
+
+        with serving() as served:
+            status, body = served.post(SERVE_INITIALIZE, token)
+            assert status == 200 and json.loads(body)["result"]["protocolVersion"] == "2025-11-25"
+            assert served.post(SERVE_INITIALIZED, token)[0] == 202
+            status, body = served.post(SERVE_LIST, token)
+            tools = json.loads(body)["result"]["tools"]
+            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"]
+            assert all(tool["inputSchema"]["type"] == "object" for tool in tools), tools
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
+            assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
+            status, body = served.post(SERVE_READ, "WrongCanary42")
+            assert status == 401 and token.encode() not in body, (status, body)
+            assert served.post(SERVE_READ, token, {"Host": "elsewhere.example"})[0] == 421
+            named = {"Host": f"localhost:{served.port}"}
+            assert serve_structured(served.post(SERVE_READ, token, named)) == {"value": "5"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        assert (data / "service.sqlite").is_file()
+        for path in data.iterdir():
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
+
+        spare = folder / "spare"
+        spare.mkdir()
+        with serving(counter, spare) as served:
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        shutil.rmtree(spare)
+        spare.mkdir()
+
+        with serving() as served:
+            body = SERVE_ADD.encode()
+            connection = socket.create_connection(("127.0.0.1", served.port), timeout=30)
+            connection.sendall(
+                b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nAuthorization: Bearer %s\r\n"
+                b"Content-Type: application/json\r\nMCP-Protocol-Version: 2025-11-25\r\n"
+                b"Expect: 100-continue\r\nContent-Length: %d\r\n\r\n"
+                % (served.port, token.encode(), len(body)))
+            interim = b""
+            while not interim.endswith(b"\r\n\r\n"):
+                interim += connection.recv(1)
+            assert interim.startswith(b"HTTP/1.1 100 "), interim
+            served.process.send_signal(signal.SIGTERM)
+            time.sleep(0.4)
+            assert served.process.poll() is None, "mo serve left before its open client finished"
+            started = time.monotonic()
+            with contextlib.suppress(ConnectionRefusedError):
+                socket.create_connection(("127.0.0.1", served.port), timeout=30).close()
+                raise AssertionError("a stopping mo serve accepted a connection")
+            assert time.monotonic() - started < 1, "a stopping mo serve left a client waiting"
+            connection.sendall(body)
+            reply = b""
+            while chunk := connection.recv(65536):
+                reply += chunk
+            connection.close()
+            assert reply.startswith(b"HTTP/1.1 200 ") and b'"value":"10"' in reply, reply
+            assert served.finish(0) == SERVE_SIGNALLED
+
+        with serving() as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
+            errors = refused()
+            expected = b"error E1409: mo serve could not open saved state at %s/service.sqlite: %s" % (
+                str(data).encode(), STORE_FAILED)
+            assert errors.startswith(expected), errors
+            blocked = socket.socket()
+            blocked.bind(("127.0.0.1", 0))
+            blocked.listen(1)
+            taken = str(blocked.getsockname()[1])
+            errors = refused(counter, spare, taken)
+            assert b"could not listen on port " + taken.encode() + b": Address already in use" in errors
+            blocked.close()
+            assert served.finish(0, signal.SIGINT) == SERVE_SIGNALLED
+
+        with serving("./counter.mo") as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        errors = refused(folder / counter)
+        assert b"written by a different program" in errors, errors
+        elsewhere = folder / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / counter).write_text(SERVE_HALTING)
+        served = Served(binary, counter, data, env, elsewhere)
+        try:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        finally:
+            served.close()
+            outputs.append(served.line + served.errors())
+
+        with serving() as served:
+            for attempt in range(15):
+                status, body = served.post(SERVE_HALT, token)
+                assert status == 200, (attempt, status, body)
+                error = json.loads(body)["result"]["structuredContent"]["error"]
+                assert error["code"] == "handler_failed", (attempt, body)
+            errors = served.finish(69)
+        assert not errors.endswith(SERVE_SIGNALLED), errors
+        assert errors.count(b"mo serve: failure: ") == 15, errors
+        assert errors.count(b"mo serve: restart: ") == 3, errors
+        assert errors.count(b"mo serve: stop: ") == 1, errors
+        assert errors.count(b"halted on purpose") == 15, errors
+
+        fixed = folder / "fixed.mo"
+        fixed.write_text(SERVE_HALTING.replace("module Counter", "module Fixed")
+                         .replace('stop "halted on purpose"', '"fine"'))
+        errors = refused(fixed)
+        assert b"written by a different program" in errors, errors
+        renewed = folder / "renewed"
+        renewed.mkdir()
+        with serving(fixed, renewed) as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
+            assert serve_structured(served.post(SERVE_HALT, token)) == {"value": "fine"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+
+        with serving() as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
+            shutil.rmtree(data)
+            error = serve_structured(served.post(SERVE_ADD, token))["error"]
+            assert (error["code"], error["effect"]) == ("store_failed", "unknown"), error
+            errors = served.finish(70)
+        assert errors.count(b"mo serve: stop: ") == 1, errors
+        assert b"mo serve: failure: " not in errors, errors
+
+        errors = refused(counter, data)
+        assert b"can't use the data folder" in errors and b"state: No such file" in errors, errors
+        assert not data.exists(), "mo serve must not create its data folder"
+        data.mkdir()
+        errors = refused(counter, counter)
+        assert b"Not a directory" in errors, errors
+
+        missing = {key: value for key, value in env.items() if key != "COUNTER_TOKEN"}
+        errors = refused(environment=missing)
+        assert b"environment variable COUNTER_TOKEN" in errors, errors
+        invalid = "Not a valid canary"
+        errors = refused(environment={**env, "COUNTER_TOKEN": invalid})
+        assert b"environment variable COUNTER_TOKEN" in errors, errors
+        assert invalid.encode() not in errors, errors
+
+        crash = folder / "crash.mo"
+        crash.write_text(SERVE_COUNTER.replace("module Counter", "module Crash")
+                         .replace("state Int = 0", 'state Int = stop "start refused"'))
+        fresh = folder / "fresh"
+        fresh.mkdir()
+        errors = refused(crash, fresh)
+        assert b"mo serve: failure: service handler failed" in errors, errors
+        assert b"start refused" in errors, errors
+        assert (b"error E1409: mo serve could not start the service: "
+                b"service handler failed") in errors, errors
+
+        constant = folder / "constant.mo"
+        constant.write_text(SERVE_COUNTER.replace("module Counter", "module Constant")
+                            .replace("service\n", 'limit = (999.to_byte or stop "constant failed").to_int\n\nservice\n', 1)
+                            .replace("  state.to_text\n", "  (state + limit).to_text\n"))
+        served = Served(binary, constant, fresh, env, folder)
+        try:
+            assert not served.line, served.line
+            errors = served.finish(70)
+            assert b"constant failed" in errors and b"E1409" not in errors, errors
+        finally:
+            served.close()
+            outputs.append(served.line + served.errors())
+
+        with open("/dev/full", "wb") as full:
+            result = subprocess.run([str(binary), "serve", counter, "--port", "0", "--data",
+                                     str(fresh)], env=env, stdout=full, stderr=subprocess.PIPE,
+                                    cwd=folder, timeout=30)
+        assert result.returncode == 1 and b"E1409" in result.stderr, result
+        assert b"could not write its listening line" in result.stderr, result
+
+        (folder / "aaa.mo").write_text('module Aaa\nexpose peek\n\nservice\n  state Int = 7\n'
+                                       '  tools peek\n  token from env "MO_SERVE_OTHER_TOKEN"\n'
+                                       'end\n\n## Peeks.\nfn peek(state: Int, _now: Time) : Text\n'
+                                       '  state.to_text\nend\n')
+        entry = folder / "zzz.mo"
+        entry.write_text('module Zzz\nuse Aaa\n\nservice\n  state Int = 3\n  tools look\n'
+                         '  token from env "COUNTER_TOKEN"\nend\n\n## Looks.\n'
+                         'fn look(state: Int, now: Time) : Text\n'
+                         '  "#{state}#{Aaa.peek(1, now)}"\nend\n')
+        imported = folder / "imported"
+        imported.mkdir()
+        with serving(entry, imported) as served:
+            status, body = served.post(SERVE_LIST, token)
+            tools = json.loads(body)["result"]["tools"]
+            assert status == 200 and [tool["name"] for tool in tools] == ["look"], body
+            look = SERVE_READ.replace('"read"', '"look"')
+            assert serve_structured(served.post(look, token)) == {"value": "31"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        def timed(name, every, parameter, body):
+            source = (SERVE_COUNTER.replace("module Counter", f"module {name}")
+                      .replace("  token from", f"  every {every} tick\n  token from"))
+            path = folder / f"{name.lower()}.mo"
+            path.write_text(source + f"\nfn tick({parameter}: Int, _now: Time) : Int\n  {body}\nend\n")
+            state = folder / f"{name.lower()}-state"
+            state.mkdir()
+            return path, state
+
+        path, state = timed("Ticking", "1.hour", "state", "state + 1")
+        with serving(path, state) as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "1"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        path, state = timed("Failing", "1.millisecond", "_state", 'stop "tick failed"')
+        with serving(path, state) as served:
+            errors = served.finish(69)
+        assert errors.count(b"mo serve: failure: ") == 15, errors
+        assert errors.count(b"mo serve: restart: ") == 3, errors
+        assert errors.count(b"mo serve: stop: ") == 1, errors
+
+        plain = folder / "plain.mo"
+        plain.write_text("module Plain\nuse Aaa\n\nfn main(console: Console)\n"
+                         "  now = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"valid time\"\n"
+                         "  console.print(Aaa.peek(1, now))\nend\n")
+        errors = refused(plain, imported)
+        assert b"this module has no service to start" in errors, errors
+
+        for output in outputs:
+            assert token.encode() not in output, output
+        for path in folder.rglob("*"):
+            if path.is_file():
+                assert token.encode() not in path.read_bytes(), path
 
 
 def imported_constants(binary):
@@ -3115,6 +3497,8 @@ flags = {
     "--max-heap": (["1GiB"], {"run", "test"}),
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
+    "--port": (["0"], {"serve"}),
+    "--data": (["state"], {"serve"}),
     "--emit=core": ([], {"check"}),
     "--emit=bytecode": ([], {"check"}),
 }
@@ -3142,7 +3526,7 @@ def guide_claims(binary):
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide` and `mo emit`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit` and `mo serve`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -3153,7 +3537,7 @@ def guide_claims(binary):
          "compile, use that instead.",
          "Deleting a required spec, promise or capability to silence a diagnostic leaves the "
          "task undone.")
-    says("This build checks, formats and fixes `service ... end` blocks (reference 11.5).",
+    says("This build checks, formats, fixes and serves `service ... end` blocks (reference 11.5).",
          "`mo check --emit=bytecode FILE` prints the program's bytecode as indexed text, with a "
          "`services` section holding one descriptor for each module that declares a service, "
          "including imported modules.",
@@ -3478,6 +3862,7 @@ def check(binary):
     guide_claims(binary)
     service_commands(binary)
     service_refusals(binary)
+    serve_command(binary)
     emit_command(binary)
     runner(binary)
     lower_source_fixtures(binary)
@@ -3585,9 +3970,18 @@ def check(binary):
                  ["check", good, good], ["test", good, good], ["check", "--bad", good],
                  ["check", "--emit=bad", good], ["check", "--emit", "core", good],
                  ["check", "--json", "--emit=core", good], ["check", "--version", good],
-                 ["check", "--json", "--bad", good]):
+                 ["check", "--json", "--bad", good], ["serve"], ["serve", good],
+                 ["serve", good, "--port", "0"], ["serve", good, "--data", "state"],
+                 ["serve", good, good, "--port", "0", "--data", "state"],
+                 ["serve", "--json", good, "--port", "0", "--data", "state"]):
         mistake(args)
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide or emit): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake(["serve", good, "--port", "65536", "--data", "state"],
+            'invalid port (expected a decimal integer from 0 to 65535): "--port" "65536"')
+    mistake(["serve", good, "--port", "0", "--data", "-x"],
+            'flag needs a nonempty value: "--data" "-x"')
+    mistake(["serve", good, "--data", "state"], 'serve needs --port N: "serve"')
+    mistake(["serve", good, "--port", "0"], 'serve needs --data DIR: "serve"')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit or serve): "bad\\x0a\\x09\\xc3\\xbf"')
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):
             args = [command, flag, *value, *([] if command == "guide" else [good])]
@@ -3600,7 +3994,8 @@ def check(binary):
         if value:
             for missing in ([], [""], ["--json"]):
                 suffix = ''.join(f' "{v}"' for v in missing)
-                mistake(["test", flag, *missing], f'flag needs a nonempty value: "{flag}"{suffix}')
+                command = "test" if "test" in allowed else "serve"
+                mistake([command, flag, *missing], f'flag needs a nonempty value: "{flag}"{suffix}')
     for flag in ("--max-stack", "--max-depth", "--max-heap", "--calls", "--seconds"):
         for value in ("0", "-1", "+1", " 1", "1 ", "1.5", "1KB", "1mib", "18446744073709551616"):
             mistake(["test", flag, value, good])

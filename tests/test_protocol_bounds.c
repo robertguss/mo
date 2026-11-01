@@ -35,7 +35,7 @@ static struct fx up(void) {
     MO_ASSERT(mo_listener_fake("MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
     MO_ASSERT(mo_store_open(NULL, &f.store) == MO_STORE_OK);
     const char *a[] = {"localhost"};
-    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, a, 1, &f.server) ==
+    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, a, 1, NULL, &f.server) ==
               MO_PROTOCOL_SERVER_OK);
     return f;
 }

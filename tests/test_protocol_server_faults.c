@@ -156,14 +156,14 @@ static void reserved_fallback(void) {
     const char *authorities[] = {"localhost"};
     for (size_t i = 0; i < 8; i += 7) {
         resize_after = first + i + 1;
-        CHECK(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &f.server) ==
-              MO_PROTOCOL_SERVER_MEMORY);
+        CHECK(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, NULL,
+                                     &f.server) == MO_PROTOCOL_SERVER_MEMORY);
         CHECK(f.server == NULL);
         CHECK(resize_after == 0);
     }
     CHECK(resize_failures == 2);
-    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &f.server) ==
-              MO_PROTOCOL_SERVER_OK);
+    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, NULL,
+                                     &f.server) == MO_PROTOCOL_SERVER_OK);
     char out[4096];
     tool_request(&f, "read", "{}", "1", out, sizeof out);
     CHECK(strstr(out, "\"structuredContent\":{\"value\":\"0\"}") != NULL);
@@ -230,10 +230,26 @@ static void store_failure(void) {
     mo_protocol_server_free(f.server);
     f.server = NULL;
     const char *authorities[] = {"localhost"};
-    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &f.server) ==
-              MO_PROTOCOL_SERVER_OK);
+    MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, NULL,
+                                     &f.server) == MO_PROTOCOL_SERVER_OK);
     tool_request(&f, "read", "{}", "5", out, sizeof out);
     CHECK(strstr(out, "\"structuredContent\":{\"value\":\"7\"}") != NULL);
+    finish(&f);
+}
+
+static void store_stop_event(void) {
+    struct event_log log = {.count = 0};
+    struct fixture_server f = start_events(source, &log);
+    log.server = &f.server;
+    char out[4096];
+    fail_append = true;
+    tool_request(&f, "add", "{\"amount\":\"5\"}", "1", out, sizeof out);
+    tool_error(out, "store_failed", "unknown", "1");
+    fail_append = false;
+    CHECK(log.count == 1);
+    CHECK(log.events[0].kind == MO_SERVICE_STOP);
+    CHECK(log.events[0].reason == MO_SERVICE_STORE);
+    CHECK(log.events[0].defect == NULL);
     finish(&f);
 }
 
@@ -369,6 +385,7 @@ static void run_faults(void *context) {
     exhausted_fallback();
     saved_copy_memory();
     store_failure();
+    store_stop_event();
 }
 
 int main(void) {

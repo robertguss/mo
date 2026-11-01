@@ -5,6 +5,7 @@
 #include "heap/heap.h"
 
 struct mo_listener;
+struct mo_service_event;
 struct mo_store;
 struct mo_protocol_server;
 
@@ -22,13 +23,21 @@ struct mo_protocol_metrics {
     size_t request_memory, preauth_memory, native_memory, concurrent_memory, catalog_memory;
 };
 
+struct mo_protocol_events {
+    void (*event)(const struct mo_service_event *event, void *context);
+    void *context;
+};
+
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_new(const struct mo_image *service, uint32_t index, struct mo_store *store,
                        struct mo_listener *listener, const char *const *authorities,
-                       size_t authority_count, struct mo_protocol_server **out);
+                       size_t authority_count, const struct mo_protocol_events *events,
+                       struct mo_protocol_server **out);
 void mo_protocol_server_free(struct mo_protocol_server *server);
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_poll(struct mo_protocol_server *server, uint64_t until_us);
+void mo_protocol_server_stop_accepting(struct mo_protocol_server *server);
+MO_MUST_USE bool mo_protocol_server_connected(const struct mo_protocol_server *server);
 MO_MUST_USE struct mo_protocol_metrics
 mo_protocol_server_metrics(const struct mo_protocol_server *server);
 

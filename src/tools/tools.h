@@ -17,8 +17,11 @@ enum mo_command {
     MO_COMMAND_FIX,
     MO_COMMAND_GUIDE,
     MO_COMMAND_EMIT,
+    MO_COMMAND_SERVE,
     MO_COMMAND_VERSION,
 };
+
+#define MO_EXIT_SERVICE_STOPPED 69
 
 enum mo_emit { MO_EMIT_NONE, MO_EMIT_CORE, MO_EMIT_BYTECODE };
 
@@ -30,6 +33,8 @@ struct mo_cli {
     uint32_t calls, seconds;
     const char *module;
     const char *output; /* emit's -o file */
+    uint16_t port;
+    const char *data;
     const char *only[MO_CLI_ARGUMENTS];
     uint32_t only_count;
     const char *const *files; /* borrowed argv slice; use mo_cli_file to skip -- */
