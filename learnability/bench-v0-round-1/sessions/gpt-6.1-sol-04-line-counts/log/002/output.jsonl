@@ -1,3 +1,0 @@
-{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
-{"record":"result","name":"LineCounts.test.1","kind":"test","span":{"file":"line-counts.mo","file_bytes":"6c696e652d636f756e74732e6d6f","start":1850,"end":2112,"line":68,"column":1,"end_line":73,"end_column":4},"outcome":"passed","microseconds":192}
-{"record":"totals","errors":0,"dropped":0,"passed":1,"failed":0,"stopped":0,"status":0}

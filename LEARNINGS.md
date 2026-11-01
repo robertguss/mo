@@ -63,8 +63,8 @@
   experimental header ceiling was lowered accordingly, retaining the 1M
   instruction budget. D329's matrix then lowered it to 1 KiB. Bytewise
   pre-authentication there took 482,877 instructions and 75,862 bytes, inside
-  the 2x thresholds of 500,000 and 524,288
-  (`docs/status/mo-160-part-2-round-e.md`).
+  the 2x thresholds of 500,000 and 524,288 (the MO-160 part 2 round E report, in
+  PR #262's history).
 - Source structs lower to one-case choices, not `MO_TYPE_RECORD`. A nested
   choice payload can require a boxed wrapper. Bridge code must validate the
   actual types and case shapes rather than assume C record layouts.

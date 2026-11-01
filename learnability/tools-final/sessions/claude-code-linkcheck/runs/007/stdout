@@ -1,7 +1,0 @@
-README.md:3: docs/old.md: no such file
-README.md:5: #nope: no such heading
-README.md:5: ../x.md: leaves the folder
-README.md:12: docs/gone.md: no such file
-README.md:13: docs/pic one.png: no such file
-README.md:14: docs/guide.md#nothere: no such heading
-6 broken links

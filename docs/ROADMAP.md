@@ -17,21 +17,40 @@ step for anything a Mo user would notice.
 
 Phases 0 to 2 are finished, and Phase 3 is the current phase.
 
-## Where plans and progress live
+## Now
 
-Robert's Notion hub, [Mo v2](https://www.notion.so/3f5700320c4581e0aa31cbdff9f114ff),
-is the only place for plans, tasks and status:
+Phase 3, Services. Ten of its thirteen build tasks have merged: the `service`
+block, its bytecode descriptor, the in-process runtime, SQLite saving and
+recovery, simulation in tests, MCP over HTTP, and `mo serve`. The phase is done
+when the last item below passes. The PR that does an item ticks it here.
 
-- [Status](https://www.notion.so/3fd700320c45810ca58ddf73fb6fc8c2): where main
-  is, what each phase has delivered, open PRs and what is waiting for a decision.
-- [Mo Tasks](https://www.notion.so/657ad0b75b55427aa8310151d0468728): every
-  task, named `MO-NN` as in pull request titles.
-- [Roadmap](https://www.notion.so/3f6700320c4581c694b0fba5e8801c8b): each
-  phase's goal, plan and acceptance checklist.
+- [ ] The task-queue service: `services/task-queue/main.mo` from
+      `docs/design/services.md` section 5, with simulation tests and one
+      `drivers` check that runs it over loopback.
+- [ ] Deployment on an exe.dev VM: a systemd unit that restarts after a crash
+      but not after a deliberate stop (exit 69), a one-page runbook under
+      `docs/ops/`, the proxy route, the MCP client line for agent threads, and
+      a 48-hour idle check with no restart.
+- [ ] The week-long run: the queue is the task list, every agent thread leases
+      its task from it, at least 10 leases, a deliberate `kill -9` mid-week,
+      and no accepted job lost. Recorded in `docs/status/phase3-run.md`.
+- [ ] Only if it reproduces on the deployed queue: the poll loop spinning when
+      file descriptors run out.
 
-This repository keeps the designs (`docs/design/`, `docs/reference/`,
-`formal/`) and the evidence (tests, checks and each PR's description), not
-task lists or status.
+Waiting for Robert: nothing.
+
+This file is the task list and the status. The designs are in `docs/design/`,
+`docs/reference/` and `formal/`; the evidence is the tests, the checks and each
+PR's description. Robert's Notion page for Mo mirrors this section.
+
+## Later
+
+Parked until a phase needs them: generated function-valued inputs in
+`mo test`; simulation promise generators; supervisor event logging for the
+protocol server; smaller `mo fix` edits for service adapters; the checker crash
+on an interpolated `stop`; gcc sanitize, fuzz and a bounded arena proof in the
+nightly; running a `.bc` file that `mo emit` wrote (Phase 5); `mo test
+--strength` (Phase 6); Fil-C compatibility (Phase 7).
 
 ## Alongside every phase
 

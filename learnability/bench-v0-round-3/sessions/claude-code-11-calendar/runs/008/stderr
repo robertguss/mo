@@ -1,7 +1,0 @@
-error E0007: a value is an expression  calendar.mo:78:20
-
-  78 |   n.floor_div(k) + if n.floor_mod(k) == 0: 0 else: 1
-     |                    ^^
-
-Statements are separated by logical line breaks (reference 2.4).
-

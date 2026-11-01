@@ -1,7 +1,0 @@
-error E0045: a name clashes with a name always in scope  answers/linkcheck.mo:7:8
-
-  7 | struct Link
-    |        ^^^^ Link
-
-A clash between names is an error (reference 10.3); these names are always in scope (reference 10.5).
-

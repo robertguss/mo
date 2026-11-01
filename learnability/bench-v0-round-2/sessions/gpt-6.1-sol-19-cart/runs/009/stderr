@@ -1,7 +1,0 @@
-error E0007: a value is an expression  cart.mo:52:43
-
-  52 |   return Error(UnknownCode(code: code)) if
-     |                                           ^
-
-Statements are separated by logical line breaks (reference 2.4).
-

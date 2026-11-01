@@ -1,3 +1,5 @@
 /build/
 __pycache__/
 *.pyc
+# Session logs of the learnability rounds live in the evidence-learnability-2026-10 release.
+/learnability/*/sessions/
