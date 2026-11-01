@@ -38,7 +38,7 @@ static void log_line(FILE *errors, const char *kind, const char *text) {
     (void)fflush(errors);
 }
 
-/* `mo check` refuses `service` as a tool name, so this never reads as a real handler. */
+/* `mo check` refuses `service` as a tool or timer name, so it never reads as a handler. */
 static const struct mo_bytecode_string no_handler = {sizeof "service" - 1,
                                                      (const uint8_t *)"service"};
 

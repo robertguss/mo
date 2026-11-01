@@ -573,7 +573,7 @@ mo serve: stop: REASON
 `NAME` is `mo_service_event.handler`, the bare tool or timer name. That covers a
 handler that fails in replay, and a timer's interval reports as its timer. When
 `handler` is empty, because the start value or the store or saved data failed
-at startup, `NAME` is `service`, which `mo check` refuses as a tool name (E0007).
+at startup, `NAME` is `service`, which `mo check` refuses as a tool or timer name (E0007).
 `N` is `mo_service_event.restart`, the restart's count in the ten-minute window,
 and `M` is `MO_LIMIT_SERVICE_RESTARTS`. `REASON` is `mo_service_status_text`
 unchanged. `function` stays a startup-only field, because `simulation.c` reads it

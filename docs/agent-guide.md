@@ -216,7 +216,7 @@ mo serve: restart: N of M: REASON
 mo serve: stop: REASON
 ```
 
-`NAME` is the tool or timer that failed, as the source writes it, such as `halt` or `tick`. A bad interval names its timer. It is the word `service` when no tool or timer is responsible, as when the state's initial value fails, or the store or saved data fails at startup. `mo check` refuses `service` as a tool name, so the word never means a real handler. `N` is this restart's place among the restarts of the last ten minutes, and `M` is the limit of 3, so `3 of 3` is followed by the stop line. A failed save while the service runs is a `stop` line with no `failure` line. A failure that is a bug adds the report `mo run` would print after its line. The lines have no timestamps because journald adds them. This format is stable. Changing it is a breaking change. The token never appears in output, logs or errors.
+`NAME` is the tool or timer that failed, as the source writes it, such as `halt` or `tick`. A bad interval names its timer. It is the word `service` when no tool or timer is responsible, as when the state's initial value fails, or the store or saved data fails at startup. `mo check` refuses `service` as a tool or timer name, so the word never means a real handler. `N` is this restart's place among the restarts of the last ten minutes, and `M` is the limit of 3, so `3 of 3` is followed by the stop line. A failed save while the service runs is a `stop` line with no `failure` line. A failure that is a bug adds the report `mo run` would print after its line. The lines have no timestamps because journald adds them. This format is stable. Changing it is a breaking change. The token never appears in output, logs or errors.
 
 `mo serve` exits with one of these statuses:
 
