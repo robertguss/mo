@@ -334,7 +334,7 @@ collection operations. These are local probing and compaction proofs, not a proo
 
 ## Running it
 
-`.agents/setup` installs CBMC from the distribution (Ubuntu 24.04 ships 5.95.1), and CI runs it
+CBMC comes from the distribution (Ubuntu 24.04 ships 5.95.1), and CI runs it
 as the `cbmc` group of `ci/check.sh`. A failed proof prints its failing properties; the full log
 is `build/cbmc/<proof>.log`. Adding `--trace` to the `cbmc` command `prove.sh` runs, on
 `build/cbmc/<proof>.goto`, shows a counterexample. To cover larger inputs, set `MO_CBMC_INPUT`;

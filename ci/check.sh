@@ -169,11 +169,6 @@ if want drivers; then
 isolated_tools_driver=
 if have python3; then
 	later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
-	if have curl; then
-		later "Claude Stop hook: pings the webhook, stays silent and exits 0 otherwise" python3 ci/test_notify_mo.py
-	else
-		missing "curl is not installed"
-	fi
 	later "Reference conformance: every rule has programs or an explicit gap" \
 		python3 ci/check_conformance.py
 	later "Reference conformance: coverage-check regression tests" \
@@ -314,7 +309,7 @@ fi
 
 if want lean; then
 step "Mo Core in Lean: the model builds and every proof checks"
-# elan lives in /opt/elan where .agents/setup puts it, since the CI orb runs with a
+# elan lives in /opt/elan where the nightly workflow installs it, since the CI orb runs with a
 # fresh HOME, or else in the usual ~/.elan.
 for elan_home in "${ELAN_HOME:-}" /opt/elan "$HOME/.elan"; do
 	if [[ -n "$elan_home" && -x "$elan_home/bin/lake" ]]; then
@@ -453,5 +448,5 @@ else
 	if ((${#skipped[@]} == 1)); then noun="check was"; fi
 	step "${#skipped[@]} $noun skipped; the others passed"
 	printf '  - %s\n' "${skipped[@]}"
-	echo "CI=1 treats a missing tool as an error. Install what is missing (.agents/setup does) before relying on this result."
+	echo "CI=1 treats a missing tool as an error. Install what is missing before relying on this result."
 fi

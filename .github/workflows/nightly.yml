@@ -41,7 +41,13 @@ jobs:
           ln -s /usr/bin/clang-format-14 "$RUNNER_TEMP/mo-tools/clang-format"
           echo "$RUNNER_TEMP/mo-tools" >> "$GITHUB_PATH"
           /usr/bin/clang-format-14 --version | grep -F 'version 14.0.6'
-          bash .agents/setup lean
+          # Lean 4 through elan in /opt/elan (the version formal/lean-toolchain names).
+          export ELAN_HOME=/opt/elan
+          sudo mkdir -p "$ELAN_HOME"
+          sudo chown "$(id -u):$(id -g)" "$ELAN_HOME"
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh |
+            sh -s -- -y --no-modify-path --default-toolchain none
+          "$ELAN_HOME/bin/elan" toolchain install "$(cat formal/lean-toolchain)"
 
       - name: Run the checks
         run: |
