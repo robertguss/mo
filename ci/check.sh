@@ -7,6 +7,10 @@
 # was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an
 # error instead, so nothing is skipped silently.
 #
+# Output starts with `check.sh started: pid N`. A run with valid arguments ends in the line
+# `check.sh finished: pass` or `check.sh finished: fail`, and the fail marker comes after
+# `failed group: NAME`. ci/wait-for-results reads these lines; AGENTS.md shows how to use it.
+#
 # With no arguments every check runs. Arguments pick groups of checks; together the groups are
 # every check:
 #   gcc clang   build and run the unit tests with that compiler
@@ -18,6 +22,7 @@
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+echo "check.sh started: pid $$"
 
 all_groups=" gcc clang sanitize fuzz drivers lean static cbmc "
 groups="$*"
@@ -27,7 +32,10 @@ for group in $groups; do
 		exit 64
 	fi
 done
-want() { [[ -z "$groups" || " $groups " == *" $1 "* ]]; }
+# The group in force is the one the fail marker names. A failure stops the script, so a run
+# fails in exactly one group.
+group=
+want() { [[ -z "$groups" || " $groups " == *" $1 "* ]] && group=$1; }
 
 skipped=()
 
@@ -114,7 +122,18 @@ stop_later() {
 	done
 	if [[ -n "$later_dir" ]]; then rm -rf "$later_dir"; fi
 }
-trap stop_later EXIT
+# The marker can't use $?: a signal leaves it 0 here, so only the script's last line means pass.
+passed=
+finish() {
+	stop_later
+	if [[ -n "$passed" ]]; then
+		echo "check.sh finished: pass"
+	else
+		echo "failed group: $group"
+		echo "check.sh finished: fail"
+	fi
+}
+trap finish EXIT
 
 built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/
 	local driver
@@ -169,6 +188,8 @@ if want drivers; then
 isolated_tools_driver=
 if have python3; then
 	later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
+	later "Waiting on check results: running, passed, failed, killed and missing runs" \
+		python3 ci/test_wait_for_results.py
 	later "Reference conformance: every rule has programs or an explicit gap" \
 		python3 ci/check_conformance.py
 	later "Reference conformance: coverage-check regression tests" \
@@ -450,3 +471,4 @@ else
 	printf '  - %s\n' "${skipped[@]}"
 	echo "CI=1 treats a missing tool as an error. Install what is missing before relying on this result."
 fi
+passed=1

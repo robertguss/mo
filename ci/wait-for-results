@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Wait for a run of ci/check.sh whose output is going to FILE, and report how it ended. TIMEOUT is
+# whole seconds, 540 by default, and 0 checks once. ci/check.sh describes the lines this reads, and
+# AGENTS.md shows the loop to call this in.
+#
+# Exit status:
+#   0   the checks passed
+#   1   the checks failed, or the run stopped without a marker
+#   64  wrong usage
+#   66  FILE is missing or not a regular file (EX_NOINPUT)
+#   75  the run is still going at TIMEOUT (EX_TEMPFAIL)
+#
+# No set -e: 1 means the checks failed, so a script error must not exit with it.
+set -uo pipefail
+
+poll_seconds=15
+
+usage() {
+	echo "usage: ci/wait-for-results FILE [TIMEOUT]" >&2
+	exit 64
+}
+if (($# < 1 || $# > 2)); then usage; fi
+file=$1
+timeout=${2-540}
+if [[ ! "$timeout" =~ ^[0-9]+$ ]]; then usage; fi
+left=$((10#$timeout))
+
+while :; do
+	if [[ ! -f "$file" ]]; then
+		echo "wait-for-results: no results file at $file; start ci/check.sh with its output there first" >&2
+		exit 66
+	fi
+	pid=$(sed -n 's/^check\.sh started: pid \([0-9][0-9]*\)$/\1/p' "$file" 2>/dev/null | head -n 1)
+	# Taken before the last line, so that a run ending between the two reads isn't called dead.
+	alive=1
+	if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then alive=; fi
+	last=$(tail -n 1 "$file" 2>/dev/null)
+
+	if [[ "$last" == "check.sh finished: pass" ]]; then
+		sed -n '/skipped; the others passed$/,/^CI=1 treats/p' "$file"
+		echo "check.sh passed"
+		exit 0
+	fi
+	if [[ "$last" == "check.sh finished: fail" ]]; then
+		grep -E '^failed( group)?: ' "$file"
+		echo "check.sh failed"
+		exit 1
+	fi
+	if [[ -z "$alive" ]]; then
+		tail -n 5 "$file"
+		echo "check.sh pid $pid stopped without finishing"
+		exit 1
+	fi
+	if ((left <= 0)); then
+		echo "still running: $last"
+		exit 75
+	fi
+
+	nap=$((left < poll_seconds ? left : poll_seconds))
+	sleep "$nap"
+	left=$((left - nap))
+done
