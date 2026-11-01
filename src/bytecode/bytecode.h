@@ -450,8 +450,6 @@ struct mo_bytecode_debug {
  * which also owns the immortal constants/globals, their heap and initialization state. */
 struct mo_bytecode {
     struct mo_bytecode_header header;
-    uint64_t program_checksum; /* Set by decoding, never on disk: FNV-1a of what checksum covers,
-                                * less the files section, so source paths do not reach it. */
     uint32_t string_count;
     const struct mo_bytecode_string *strings;
     uint32_t type_count;

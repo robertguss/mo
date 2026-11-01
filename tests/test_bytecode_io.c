@@ -1272,16 +1272,18 @@ static void test_program_checksum(void) {
 
     struct mo_arena arena;
     mo_arena_init(&arena, (size_t)4 << 30);
-    const struct mo_bytecode *base = mo_bytecode_decode(&arena, wire.bytes, wire.length, &le);
-    const struct mo_bytecode *other =
-        mo_bytecode_decode(&arena, moved_wire.bytes, moved_wire.length, &le);
-    const struct mo_bytecode *code =
-        mo_bytecode_decode(&arena, renamed_wire.bytes, renamed_wire.length, &le);
+    uint64_t base_key = 0, other_key = 0, code_key = 0;
+    const struct mo_bytecode *base =
+        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, NULL, NULL, &base_key, NULL, &le);
+    const struct mo_bytecode *other = mo_bytecode_decode_info(
+        &arena, moved_wire.bytes, moved_wire.length, NULL, NULL, &other_key, NULL, &le);
+    const struct mo_bytecode *code = mo_bytecode_decode_info(
+        &arena, renamed_wire.bytes, renamed_wire.length, NULL, NULL, &code_key, NULL, &le);
     CHECK(base != NULL && other != NULL && code != NULL);
     if (base != NULL && other != NULL && code != NULL) {
         CHECK(base->header.checksum != other->header.checksum);
-        CHECK(base->program_checksum == other->program_checksum);
-        CHECK(base->program_checksum != code->program_checksum);
+        CHECK(base_key == other_key);
+        CHECK(base_key != code_key);
 
         put_word(&section, ARRAY_COUNT(files));
         for (uint32_t i = 0; i < ARRAY_COUNT(files); i++) {
@@ -1297,7 +1299,7 @@ static void test_program_checksum(void) {
                                   start - MO_BYTECODE_HEADER_SIZE);
         expected = fnv1a(expected, wire.bytes + start + section.length,
                          wire.length - start - section.length);
-        CHECK(base->program_checksum == expected);
+        CHECK(base_key == expected);
     }
     mo_arena_free(&arena);
     mo_buffer_free(&section);

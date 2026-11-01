@@ -560,7 +560,7 @@ static void sections(struct reader *r) {
 
 struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes,
                                             size_t length, const uint32_t **code_offsets,
-                                            struct mo_types *types_out,
+                                            struct mo_types *types_out, uint64_t *program_checksum,
                                             struct mo_bytecode_error_site *site,
                                             struct mo_load_error *error) {
     MO_ASSERT(arena != NULL && error != NULL && (bytes != NULL || length == 0));
@@ -619,10 +619,6 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
         mo_arena_free(&r.scratch);
         return NULL;
     }
-    MO_ASSERT(r.files_start <= r.files_end && r.files_end <= length);
-    r.file->program_checksum =
-        fnv1a(fnv1a(MO_BYTECODE_FNV_OFFSET, bytes, MO_BYTECODE_HEADER_SIZE, r.files_start), bytes,
-              r.files_end, length);
     struct mo_bytecode_read_info info = {
         .types = {.items = r.types, .count = r.file->type_count, .finished = true},
         .names = &r.names,
@@ -663,10 +659,16 @@ struct mo_bytecode *mo_bytecode_decode_info(struct mo_arena *arena, const uint8_
     if (types_out != NULL) {
         *types_out = view;
     }
+    if (program_checksum != NULL) {
+        MO_ASSERT(r.files_start <= r.files_end && r.files_end <= length);
+        *program_checksum =
+            fnv1a(fnv1a(MO_BYTECODE_FNV_OFFSET, bytes, MO_BYTECODE_HEADER_SIZE, r.files_start),
+                  bytes, r.files_end, length);
+    }
     return r.file;
 }
 
 struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes, size_t length,
                                        struct mo_load_error *error) {
-    return mo_bytecode_decode_info(arena, bytes, length, NULL, NULL, NULL, error);
+    return mo_bytecode_decode_info(arena, bytes, length, NULL, NULL, NULL, NULL, error);
 }

@@ -149,8 +149,8 @@ static bool same_reader(const struct reader *a, const struct reader *b) {
 static bool same_file(const struct mo_bytecode *a, const struct mo_bytecode *b) {
     return a->header.major == b->header.major && a->header.minor == b->header.minor &&
            a->header.flags == b->header.flags && a->header.checksum == b->header.checksum &&
-           a->program_checksum == b->program_checksum && a->string_count == b->string_count &&
-           a->strings == b->strings && a->type_count == b->type_count && a->types == b->types &&
+           a->string_count == b->string_count && a->strings == b->strings &&
+           a->type_count == b->type_count && a->types == b->types &&
            a->layout_count == b->layout_count && a->layouts == b->layouts &&
            a->constant_count == b->constant_count && a->constants == b->constants &&
            a->global_count == b->global_count && a->globals == b->globals &&
@@ -974,12 +974,13 @@ void harness_decode(void) {
     mo_arena_init(&arena, mo_bytecode_work_budget(length));
     const uint32_t *code_offsets = NULL;
     struct mo_types types_out;
+    uint64_t program_checksum;
     struct mo_bytecode_error_site site;
     struct mo_load_error error;
     bool details = nondet_bool();
-    struct mo_bytecode *file =
-        mo_bytecode_decode_info(&arena, bytes, length, details ? &code_offsets : NULL,
-                                details ? &types_out : NULL, details ? &site : NULL, &error);
+    struct mo_bytecode *file = mo_bytecode_decode_info(
+        &arena, bytes, length, details ? &code_offsets : NULL, details ? &types_out : NULL,
+        details ? &program_checksum : NULL, details ? &site : NULL, &error);
     __CPROVER_assert(file != NULL || error.reason != NULL, "a refusal has a reason");
     __CPROVER_assert(file != NULL || error.offset <= length, "a refusal points inside the input");
     reached_end();

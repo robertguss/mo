@@ -1880,8 +1880,8 @@ static void work_bound(void) {
         mo_arena_init(&arena, (size_t)64 << 20);
         mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
         CHECK(mo_bytecode_write(&t.file, &wire, &we));
-        const struct mo_bytecode *f =
-            mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, &le);
+        const struct mo_bytecode *f = mo_bytecode_decode_info(&arena, wire.bytes, wire.length,
+                                                              &offsets, &view, NULL, NULL, &le);
         CHECK(f != NULL);
         if (f != NULL) {
             struct mo_verification verified;
@@ -2336,7 +2336,7 @@ static void hostile_work(void) {
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     CHECK(mo_bytecode_encode(&t.file, &wire, &we));
     const struct mo_bytecode *f =
-        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, &le);
+        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, NULL, &le);
     MO_ASSERT(f != NULL);
     CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, NULL, &le));
     uint64_t work = 0;

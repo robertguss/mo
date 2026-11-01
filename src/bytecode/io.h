@@ -65,11 +65,14 @@ struct mo_bytecode_read_info {
 MO_MUST_USE struct mo_bytecode *mo_bytecode_decode(struct mo_arena *arena, const uint8_t *bytes,
                                                    size_t length, struct mo_load_error *error);
 
-/* As decode, retaining first-code-word wire positions in the caller's arena for verification. */
+/* As decode, retaining first-code-word wire positions in the caller's arena for verification.
+ * program_checksum, when non-NULL, receives FNV-1a of what the header checksum covers, less the
+ * files section, so source paths do not reach it. */
 MO_MUST_USE struct mo_bytecode *
 mo_bytecode_decode_info(struct mo_arena *arena, const uint8_t *bytes, size_t length,
                         const uint32_t **code_offsets, struct mo_types *types_out,
-                        struct mo_bytecode_error_site *site, struct mo_load_error *error);
+                        uint64_t *program_checksum, struct mo_bytecode_error_site *site,
+                        struct mo_load_error *error);
 
 MO_MUST_USE struct mo_image *mo_bytecode_load_site(const uint8_t *bytes, size_t length,
                                                    struct mo_bytecode_error_site *site,
