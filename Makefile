@@ -537,10 +537,13 @@ $(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_se
 
 # Only this test substitutes the resolver's native calls and lowers host read
 # limits. Heap builders and every other executable retain the production limits.
+# glibc's _FORTIFY_SOURCE wrappers for read, poll, open and readlinkat reach libc through aliases
+# and __*_chk names that no -D rename changes, and gcc may enable it by default, so units renaming
+# them undefine it.
 HOST_RESOLVER_SOURCES := src/host/path.c src/host/console.c src/host/real-files.c src/host/host.c
-HOST_RESOLVER_OPTIONS := -include tests/host_small_limits.h -Dreadlinkat=mo_host_resolver_readlink \
-	-Dsyscall=mo_host_resolver_syscall -Dopen=mo_host_resolver_open \
-	-Dsetrlimit=mo_host_resolver_setrlimit
+HOST_RESOLVER_OPTIONS := -U_FORTIFY_SOURCE -include tests/host_small_limits.h \
+	-Dreadlinkat=mo_host_resolver_readlink -Dsyscall=mo_host_resolver_syscall \
+	-Dopen=mo_host_resolver_open -Dsetrlimit=mo_host_resolver_setrlimit
 $(BUILD)/debug/host-resolver/%.o: src/%.c tests/host_small_limits.h Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(HOST_RESOLVER_OPTIONS) -c $< -o $@
@@ -558,7 +561,7 @@ $(BUILD)/sanitize/tests/test_host_resolver.test: $(BUILD)/sanitize/tests/test_ho
 # As above, substitute only the translation units owning native host calls.
 # Neither the ordinary host objects nor the fixture's heap use these wrappers.
 HOST_FAULT_SOURCES := src/host/host.c src/host/random.c src/host/console.c src/host/real-files.c
-HOST_FAULT_RENAMES := -Dclock_gettime=mo_host_fault_clock -Dgetentropy=mo_host_fault_entropy \
+HOST_FAULT_RENAMES := -U_FORTIFY_SOURCE -Dclock_gettime=mo_host_fault_clock -Dgetentropy=mo_host_fault_entropy \
 	-Dread=mo_host_fault_read -Dwrite=mo_host_fault_write -Dwritev=mo_host_fault_writev \
 	-Dpoll=mo_host_fault_poll -Dftruncate=mo_host_fault_truncate
 $(BUILD)/debug/host-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
