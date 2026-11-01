@@ -1477,6 +1477,21 @@ class Served:
 
 
 STORE_FAILED = b"service store failed; reopen it to see whether the last change was saved"
+SAVED_REFUSED = (b"saved service data is damaged or was written by a different program; "
+                 b"recovery refused")
+
+
+def serve_events(errors):
+    return [line for line in errors.split(b"\n") if line.startswith(b"mo serve: ")]
+
+
+def serve_supervised(name):
+    reason = b"service handler failed"
+    lines = []
+    for restart in (1, 2, 3):
+        lines += [b"mo serve: failure: %s: %s" % (name, reason)] * 5
+        lines.append(b"mo serve: restart: %d of 3: %s" % (restart, reason))
+    return lines + [b"mo serve: stop: " + reason]
 
 
 def serve_structured(reply):
@@ -1504,7 +1519,14 @@ def serve_guide():
             f"-d '{SERVE_INITIALIZE}'",
             SERVE_INITIALIZED, SERVE_LIST, SERVE_ADD, SERVE_READ,
             "An `Int` argument is a JSON string",
-            "`mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`",
+            "mo serve: failure: NAME: REASON\nmo serve: restart: N of M: REASON\n"
+            "mo serve: stop: REASON\n",
+            "It is the word `service` when no tool or timer is responsible",
+            "`3 of 3` is followed by the stop line",
+            "A failed save while the service runs is a `stop` line with no `failure` line.",
+            "The lines have no timestamps because journald adds them.",
+            "This format is stable. Changing it is a breaking change.",
+            "The token never appears in output, logs or errors.",
             "- 0: SIGTERM or SIGINT stopped it. It closes its port, so a new connection is refused, "
             "and finishes the open ones first, which their deadlines bound to about 25 seconds.",
             "An empty `service.sqlite` never held data, so delete it and start again.",
@@ -1622,6 +1644,7 @@ def serve_command(binary):
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         errors = refused(folder / counter)
         assert b"written by a different program" in errors, errors
+        assert serve_events(errors) == [b"mo serve: failure: service: " + SAVED_REFUSED], errors
         elsewhere = folder / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / counter).write_text(SERVE_HALTING)
@@ -1641,10 +1664,10 @@ def serve_command(binary):
                 assert error["code"] == "handler_failed", (attempt, body)
             errors = served.finish(69)
         assert not errors.endswith(SERVE_SIGNALLED), errors
-        assert errors.count(b"mo serve: failure: ") == 15, errors
-        assert errors.count(b"mo serve: restart: ") == 3, errors
-        assert errors.count(b"mo serve: stop: ") == 1, errors
+        assert serve_events(errors) == serve_supervised(b"halt"), errors
         assert errors.count(b"halted on purpose") == 15, errors
+        reported = b"mo serve: failure: halt: service handler failed\nbug: stop\n"
+        assert errors.count(reported) == 15, errors
 
         fixed = folder / "fixed.mo"
         fixed.write_text(SERVE_HALTING.replace("module Counter", "module Fixed")
@@ -1664,8 +1687,7 @@ def serve_command(binary):
             error = serve_structured(served.post(SERVE_ADD, token))["error"]
             assert (error["code"], error["effect"]) == ("store_failed", "unknown"), error
             errors = served.finish(70)
-        assert errors.count(b"mo serve: stop: ") == 1, errors
-        assert b"mo serve: failure: " not in errors, errors
+        assert serve_events(errors) == [b"mo serve: stop: " + STORE_FAILED], errors
 
         errors = refused(counter, data)
         assert b"can't use the data folder" in errors and b"state: No such file" in errors, errors
@@ -1688,7 +1710,7 @@ def serve_command(binary):
         fresh = folder / "fresh"
         fresh.mkdir()
         errors = refused(crash, fresh)
-        assert b"mo serve: failure: service handler failed" in errors, errors
+        assert serve_events(errors) == [b"mo serve: failure: service: service handler failed"], errors
         assert b"start refused" in errors, errors
         assert (b"error E1409: mo serve could not start the service: "
                 b"service handler failed") in errors, errors
@@ -1747,9 +1769,11 @@ def serve_command(binary):
         path, state = timed("Failing", "1.millisecond", "_state", 'stop "tick failed"')
         with serving(path, state) as served:
             errors = served.finish(69)
-        assert errors.count(b"mo serve: failure: ") == 15, errors
-        assert errors.count(b"mo serve: restart: ") == 3, errors
-        assert errors.count(b"mo serve: stop: ") == 1, errors
+        assert serve_events(errors) == serve_supervised(b"tick"), errors
+        path, state = timed("Overflowing", "9223372036854775807.hours", "state", "state + 1")
+        errors = refused(path, state)
+        assert serve_events(errors) == [b"mo serve: failure: tick: service handler failed"], errors
+        assert b"bug: overflow: Duration" in errors, errors
 
         plain = folder / "plain.mo"
         plain.write_text("module Plain\nuse Aaa\n\nfn main(console: Console)\n"

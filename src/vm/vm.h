@@ -177,6 +177,10 @@ struct mo_service_event {
     struct mo_service_time time;
     const struct mo_defect *defect;
     uint32_t function;
+    /* Bare tool or timer name; bytes NULL when none. Borrowed for the callback. */
+    struct mo_bytecode_string handler;
+    /* This restart's count in the window; 0 on other events. */
+    uint32_t restart;
 };
 struct mo_service_response {
     uint64_t id;

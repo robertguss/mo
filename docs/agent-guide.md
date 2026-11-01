@@ -208,7 +208,15 @@ Send the same headers with each of these bodies. The first gets status 202 and n
 
 An `Int` argument is a JSON string, as `tools/list` shows in each tool's `inputSchema`. A tool's reply is in `result.structuredContent`. A failed call has `isError` true and `structuredContent.error.code`, such as `handler_failed` or `store_failed`.
 
-`mo serve` writes one line to standard error for each failure, restart and stop: `mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`. A failure that is a bug adds the report `mo run` would print. The lines have no timestamps. The token never appears in output, logs or errors.
+`mo serve` writes one line to standard error for each failure, restart and stop, in exactly these formats:
+
+```text
+mo serve: failure: NAME: REASON
+mo serve: restart: N of M: REASON
+mo serve: stop: REASON
+```
+
+`NAME` is the tool or timer that failed, as the source writes it, such as `halt` or `tick`. A bad interval names its timer. It is the word `service` when no tool or timer is responsible, as when the state's initial value fails, or the store or saved data fails at startup. `mo check` refuses `service` as a tool name, so the word never means a real handler. `N` is this restart's place among the restarts of the last ten minutes, and `M` is the limit of 3, so `3 of 3` is followed by the stop line. A failed save while the service runs is a `stop` line with no `failure` line. A failure that is a bug adds the report `mo run` would print after its line. The lines have no timestamps because journald adds them. This format is stable. Changing it is a breaking change. The token never appears in output, logs or errors.
 
 `mo serve` exits with one of these statuses:
 
@@ -224,7 +232,7 @@ A process killed during its very first start can leave an empty `service.sqlite`
 
 ## Recover from a stop
 
-After status 69, read the `mo serve: failure:` lines and their reports to find the handler that failed. Then choose one of these:
+After status 69, grep standard error for `mo serve: failure:`. Each line names the tool or timer that failed. Then choose one of these:
 
 - Start the same program. Use the unchanged `FILE`, spelled the same way, and the same `DIR`. All saved state comes back. If callers still send the message that failed, stop them first, or the service stops again.
 - Run a fixed program. A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409. This build has no migration, and the old state can be read only by the old program. Start the old program on the old `DIR`, read what you need through its tools, and stop it. Then start the fixed program on a new, empty `DIR` and send that data to its tools. State that no tool returns stays behind, so keep the old source and the old `DIR`.

@@ -158,6 +158,7 @@ struct observations {
     enum mo_service_status status;
     struct mo_store *store;
     uint64_t sequence;
+    struct mo_bytecode_string handler;
 };
 static bool last_sequence(const struct mo_store_record *record, void *context) {
     *(uint64_t *)context = record->sequence;
@@ -184,6 +185,7 @@ static void event(const struct mo_service_event *e, void *context) {
     struct observations *o = context;
     o->failures += e->kind == MO_SERVICE_FAILURE ? 1u : 0u;
     o->stops += e->kind == MO_SERVICE_STOP ? 1u : 0u;
+    o->handler = e->handler;
 }
 
 static struct mo_service_loop *open_service(struct mo_image *image, struct mo_store *store,
@@ -824,6 +826,7 @@ static void replay_limit(void) {
         struct mo_service_hooks hooks = {clock_now, reply, event, &o};
         s = NULL;
         CHECK(mo_service_open(image, 0, &hooks, store, &s) == expected[tool] && s == NULL);
+        CHECK(named(o.handler, tool == 0 ? "spin" : "grow"));
         mo_store_close(store);
         mo_buffer_free(&saved.bytes);
     }
@@ -1039,6 +1042,7 @@ static void shared_result_bound(void) {
     CHECK(mo_service_send(s, 0, &list, 1, 9) == MO_SERVICE_OK);
     CHECK(mo_service_step(s));
     CHECK(o.status == MO_SERVICE_MEMORY && o.sequence == 0);
+    CHECK(named(o.handler, "spread"));
     CHECK(mo_list_size(mo_service_state(s)) == 0);
     mo_service_free(s);
     struct mo_service_hooks hooks = {clock_now, reply, event, &o};

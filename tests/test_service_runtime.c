@@ -47,6 +47,7 @@ struct observation {
     enum mo_service_status status;
     bool updated, timer;
     uint32_t handler;
+    struct mo_bytecode_string failed;
     uint64_t id;
     int64_t value;
     char text[256], reason[128], events[64];
@@ -112,8 +113,10 @@ static void reply(const struct mo_service_response *r, void *context) {
 static void event(const struct mo_service_event *e, void *context) {
     struct observation *o = context;
     allocation_countdown = 0;
-    if (e->kind == MO_SERVICE_FAILURE)
+    if (e->kind == MO_SERVICE_FAILURE) {
         inspect_defect(o, e->defect);
+        o->failed = e->handler;
+    }
     CHECK(e->reason != MO_SERVICE_OK);
     MO_ASSERT(o->event_count + 1 < sizeof o->events);
     o->events[o->event_count++] = e->kind == MO_SERVICE_FAILURE   ? 'F'
@@ -512,6 +515,7 @@ static void interval_values(void) {
         struct mo_service_hooks hooks = {clock_now, reply, event, &o};
         struct mo_service_loop *s = NULL;
         CHECK(mo_service_new(image, 0, &hooks, &s) == expected[trial]);
+        CHECK(expected[trial] == MO_SERVICE_OK || named(o.failed, "second"));
         CHECK(o.replies == 0 && o.restarts == 0);
         if (expected[trial] == MO_SERVICE_OK) {
             MO_ASSERT(s != NULL);
