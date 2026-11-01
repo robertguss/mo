@@ -10,7 +10,7 @@ Architecture section 11, "Testing strategy", defines the comparison contract.
 
 Environment on 2026-10-24: Linux x86-64, four available CPUs, Python 3.11.6,
 GCC 12.2.0 debug build (`-O0 -g`), and Lean 4.34.0 release executable.
-Lean was installed through `bash .agents/setup lean` in `/opt/elan`.
+Lean was installed through elan in `/opt/elan`.
 `make formal` built the model, checked its proofs, and passed `ci/test_mocore.sh`.
 
 The existing `ci/check_core_differential.py` runs 100 consecutive batches of
@@ -39,7 +39,6 @@ stops at the first failing batch and saves disagreeing Core programs.
 
 ```sh
 set -euo pipefail
-bash .agents/setup lean
 export ELAN_HOME=/opt/elan PATH=/opt/elan/bin:$PATH
 make formal
 make -j4 CC=gcc build/gcc/debug/tests/test_vm.test

@@ -8,15 +8,15 @@ After:
 
 ## Plan
 
-<!-- The plan from the plan-change skill: behaviour, contract, precedent, files, contracts crossed. -->
+<!-- The plan: behaviour, contract, precedent, files, contracts crossed. -->
 
 ## Tests
 
-<!-- From test-change: each behaviour, its test, and that you saw it fail before it passed. -->
+<!-- Each behaviour, its test, and that you saw it fail before it passed. -->
 
 ## Review
 
-<!-- From review-change: findings fixed, findings dropped and why, follow-ups. -->
+<!-- Findings fixed, findings dropped and why, follow-ups. -->
 
 ## Checks
 

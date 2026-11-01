@@ -65,8 +65,8 @@ takes. Add any crashing input to the target's corpus when you fix it.
 
 ## The CI orb itself
 
-- It needs the toolchain from `.agents/setup`; re-run that when it changes,
-  because under `CI=1` a missing tool fails the check.
+- It needs the full toolchain installed (see AGENTS.md, Commands); under `CI=1` a missing tool
+  fails the check.
 - Its own checkout stays on `main`; `git pull` before a run, so `run.sh` is
   current. Each run checks the pull request's code, not `main`'s.
 - Never archive its thread: the orb lives in it.

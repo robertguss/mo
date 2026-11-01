@@ -22,8 +22,9 @@ The documents that define correct behaviour, in order of authority:
 
 ## Commands
 
-Requires a C17 compiler, POSIX `make` and Python 3. `.agents/setup` installs the full toolchain
-(gcc, clang, libFuzzer, clang-format, clang-tidy, bison, CBMC, and Lean via elan in `/opt/elan`).
+Requires a C17 compiler, POSIX `make` and Python 3. The full toolchain is gcc, clang, libFuzzer,
+clang-format 14, clang-tidy, bison, CBMC, and Lean via elan (`/opt/elan` is where `ci/check.sh`
+looks first; the Lean version is named in `formal/lean-toolchain`).
 
 ```sh
 make                       # build build/<compiler>/debug/mo (CC=cc by default -> build/cc/)
@@ -148,19 +149,8 @@ Adding a library function typically touches its `check` signature (`src/check/si
 
 ## Workflow
 
-Start any MO task with the `ship-task` skill; it runs the others in order: `plan-change`, then
-`test-change`, then `review-change`, and `notion-sync` once the PR is open. Skills live in
-`.agents/skills/`. The PR template asks for each step's output. A one-line fix can keep its plan to
-a sentence; it still gets tests and a review.
-
-After a PR opens or merges, or after Robert makes a decision, run `notion-sync`.
+The PR template asks for the plan, the tests and the review. A one-line fix can keep its plan to a
+sentence; it still gets tests and a review.
 
 When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
-`docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level, using
-the `correct` skill.
-
-`.claude/settings.json` runs `.claude/hooks/notify-mo.sh` when a Claude Code thread in this repo
-stops, which POSTs a small JSON ping to Mo's webhook. The script sources
-`~/.config/mo/webhook.env`, which must be mode 600, for `MO_WEBHOOK_URL` and `MO_WEBHOOK_HEADER`
-(one full header line, so single-quote each value), and does nothing when either is missing.
-`.claude/hooks/notify-mo.sh --test` sends the same ping with `"test": true`.
+`docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level.

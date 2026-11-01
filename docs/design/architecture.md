@@ -2489,7 +2489,7 @@ Ubuntu 24.04 job shares the builds across groups, with a 120-minute timeout;
 an overlapping run leaves the active run alone, with at most one pending run
 retained (a newer request replaces the pending one). It installs clang 18 with
 `libclang-rt-18-dev`, clang-tidy 18, clang-format 14 (checked as 14.0.6) and
-Bison, then Lean through `.agents/setup lean` into `/opt/elan` with the version
+Bison, then Lean through elan into `/opt/elan` with the version
 from `formal/lean-toolchain`. Actions receive only
 read access to repository contents, and checkout does not retain credentials.
 
@@ -2502,7 +2502,7 @@ in any stage fail the group without skipping the remaining checks.
 No status check is required on main, preserving D270's PR flow. Before a PR,
 an agent runs `bash ci/check.sh gcc` locally and reports other groups run and
 not run. Fuzz and CBMC still run by hand. A missing tool is a named skip, not
-a pass; `CI=1` makes it fail. `.agents/setup` installs elan and CBMC for the
+a pass; `CI=1` makes it fail. elan and CBMC are needed for the
 local Lean build (`make formal`) and proofs. Robert approves merges. Nightly
 failures are visible in Actions; email delivery depends on the recipient's
 GitHub Actions notification settings, not on the workflow.
@@ -3375,8 +3375,8 @@ so a second declaration cannot drift from the API it describes.
 | Execution | [vm.h](../../src/vm/vm.h) | image initialization, processes, `mo_call`, `mo_call_controlled`, `mo_call_main` and defect rendering |
 | CLI integration | [tools.h](../../src/tools/tools.h) | command parsing, `mo_cli_execute`, diagnostic and defect output |
 
-The Makefile builds `src/<module>/*.c` per module. `.agents/setup` installs
-Lean 4.34.0 via elan and CBMC; `ci/check.sh` exposes their checks as the
+The Makefile builds `src/<module>/*.c` per module. Lean 4.34.0 (via elan)
+and CBMC are installed separately; `ci/check.sh` exposes their checks as the
 manually invoked `lean` and `cbmc` groups.
 
 ## 13. Open questions
