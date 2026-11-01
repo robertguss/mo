@@ -38,16 +38,16 @@ static void log_line(FILE *errors, const char *kind, const char *text) {
     (void)fflush(errors);
 }
 
-/* `mo check` refuses `service` as a tool or timer name, so it never reads as a handler. */
-static const struct mo_bytecode_string no_handler = {sizeof "service" - 1,
-                                                     (const uint8_t *)"service"};
+static const struct mo_bytecode_string service_word = {sizeof "service" - 1,
+                                                       (const uint8_t *)"service"};
 
 static void log_event(const struct mo_service_event *event, void *context) {
     struct serve_log *log = context;
     const char *text = mo_service_status_text(event->reason);
     switch (event->kind) {
     case MO_SERVICE_FAILURE: {
-        struct mo_bytecode_string name = event->handler.bytes == NULL ? no_handler : event->handler;
+        struct mo_bytecode_string name =
+            event->handler.bytes == NULL ? service_word : event->handler;
         log->failed = true;
         log->failure = event->reason;
         (void)fprintf(log->errors, "mo serve: failure: %.*s: %s\n", (int)name.length,
