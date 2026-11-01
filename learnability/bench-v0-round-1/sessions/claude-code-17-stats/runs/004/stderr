@@ -1,7 +1,0 @@
-error E0068: a choice arm is a catch-all  stats.mo:90:7
-
-  90 |       _: runs.append((value, 1))
-     |       ^ covers cases without naming them
-
-A whole arm over a choice type can't be _ or a name; list the cases (reference 7.2).
-

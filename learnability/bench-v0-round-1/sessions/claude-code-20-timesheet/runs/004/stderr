@@ -1,5 +1,0 @@
-error E1103: this body rule is not implemented by the staged checker  timesheet.mo:148:47
-
-  148 |         case earlier.find(fn(entry) overlaps?(entry.1, shift) end)
-      |                                               ^^^^^ this body rule is not implemented by the staged checker
-

@@ -1,5 +1,0 @@
-error E1150: this native call is not lowered yet  answers/notioncopy.mo:204:3
-
-  204 |   block.lines.map(fn(l) l.byte_count + 1 end).sum
-      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-

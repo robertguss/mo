@@ -1,7 +1,0 @@
-{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
-{"record":"result","name":"Linkcheck.test.1","kind":"test","span":{"file":"answers/linkcheck.mo","file_bytes":"616e73776572732f6c696e6b636865636b2e6d6f","start":11142,"end":11611,"line":418,"column":1,"end_line":427,"end_column":4},"outcome":"passed","microseconds":1457}
-{"record":"result","name":"Linkcheck.test.2","kind":"test","span":{"file":"answers/linkcheck.mo","file_bytes":"616e73776572732f6c696e6b636865636b2e6d6f","start":11613,"end":12370,"line":429,"column":1,"end_line":441,"end_column":4},"outcome":"passed","microseconds":2981}
-{"record":"result","name":"Linkcheck.test.3","kind":"test","span":{"file":"answers/linkcheck.mo","file_bytes":"616e73776572732f6c696e6b636865636b2e6d6f","start":12372,"end":13124,"line":443,"column":1,"end_line":461,"end_column":4},"outcome":"passed","microseconds":1557}
-{"record":"result","name":"Linkcheck.test.4","kind":"test","span":{"file":"answers/linkcheck.mo","file_bytes":"616e73776572732f6c696e6b636865636b2e6d6f","start":13126,"end":13507,"line":463,"column":1,"end_line":471,"end_column":4},"outcome":"passed","microseconds":84}
-{"record":"result","name":"Linkcheck.test.5","kind":"test","span":{"file":"answers/linkcheck.mo","file_bytes":"616e73776572732f6c696e6b636865636b2e6d6f","start":13509,"end":13911,"line":473,"column":1,"end_line":481,"end_column":4},"outcome":"passed","microseconds":1147}
-{"record":"totals","errors":0,"dropped":0,"passed":5,"failed":0,"stopped":0,"status":0}

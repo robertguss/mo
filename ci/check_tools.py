@@ -10,7 +10,9 @@ others (slower clang and sanitizer builds). Then each does its job here, as tool
 
   - linkcheck over every tracked Markdown file: no broken link;
   - tally over each recorded learnability round's session logs: the same table, byte for byte,
-    as the reference tally that learnability/retry.py runs;
+    as the reference tally that learnability/retry.py runs. The logs are the release asset
+    evidence-learnability-2026-10 (learnability/README.md says how to restore them); without
+    them this comparison is skipped with a note;
   - notioncopy on docs/reference/README.md: the same pieces, byte for byte, as the reference.
 """
 
@@ -83,7 +85,9 @@ def linkcheck(mo, failures):
 def tally(mo, failures):
     rounds = sorted(p for p in (ROOT / "learnability").glob("*/sessions") if p.is_dir())
     if not rounds:
-        failures.append("no learnability/*/sessions folders to tally")
+        print("tally: skipped, no learnability/*/sessions folders here (restore them from the "
+              "evidence-learnability-2026-10 release, see learnability/README.md)")
+        return
     for sessions in rounds:
         name = sessions.parent.relative_to(ROOT)
         with tempfile.TemporaryDirectory(prefix="mo-tally-") as work:

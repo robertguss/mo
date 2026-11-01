@@ -1,5 +1,0 @@
-error E1150: this native call is not lowered yet  col-sum.mo:35:12
-
-  35 |   cents = (total.abs + cent / 2) / cent
-     |            ^^^^^^^^^
-

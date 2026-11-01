@@ -1,3 +1,0 @@
-{"record":"version","format":"1.0","mo":"0.0.0","command":"check"}
-{"record":"diagnostic","code":"E0007","headline":"expected line break, found if","reason":"Use the declaration or statement's syntax and close its delimiters (reference 2.4).","section":"2.4","primary":{"file":"brackets.mo","file_bytes":"627261636b6574732e6d6f","start":3867,"end":3869,"line":133,"column":20,"end_line":133,"end_column":22,"label":null},"secondary":[],"fixes":[]}
-{"record":"totals","errors":1,"dropped":0,"status":1}

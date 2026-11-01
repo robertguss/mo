@@ -1,7 +1,0 @@
-error E0007: expected line break, found if  brackets.mo:133:20
-
-  133 |         status = 1 if outcome != Balanced
-      |                    ^^
-
-Use the declaration or statement's syntax and close its delimiters (reference 2.4).
-

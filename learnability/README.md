@@ -23,4 +23,13 @@ the first-retry numbers its report gives. Each session runs `mo` through the ses
 harness ([`harness/`](harness/README.md)), which keeps every run for `tally` and `notes.md`.
 
 Each round's folder keeps the exact prompts, every program as written, both
-graders' gradings, and `notes.md`, a log of how the round ran.
+graders' gradings, and `notes.md`, a log of how the round ran. The session logs
+themselves (`sessions/` under each Phase 2 round, 19,274 files) are not tracked:
+they are the `learnability-sessions-2026-10.tar.zst` asset of the
+[`evidence-learnability-2026-10`](https://github.com/robertguss/mo/releases/tag/evidence-learnability-2026-10)
+release, with its sha256 beside it. To restore them, so `ci/check_tools.py` can
+compare `tally` against `retry.py` on them, unpack it in the repository root:
+
+```sh
+tar -I zstd -xf learnability-sessions-2026-10.tar.zst
+```

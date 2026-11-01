@@ -1,7 +1,0 @@
-{"record":"version","format":"1.0","mo":"0.0.0","command":"test"}
-{"record":"result","name":"Ranges.test.1","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":2298,"end":2733,"line":94,"column":1,"end_line":104,"end_column":4},"outcome":"passed","microseconds":1054}
-{"record":"result","name":"Ranges.test.2","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":2735,"end":3676,"line":106,"column":1,"end_line":142,"end_column":4},"outcome":"passed","microseconds":1413}
-{"record":"result","name":"Ranges.test.3","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":3678,"end":4384,"line":144,"column":1,"end_line":166,"end_column":4},"outcome":"passed","microseconds":2974}
-{"record":"result","name":"Ranges.test.4","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":4386,"end":5025,"line":168,"column":1,"end_line":183,"end_column":4},"outcome":"passed","microseconds":700}
-{"record":"result","name":"Ranges.test.5","kind":"test","span":{"file":"ranges.mo","file_bytes":"72616e6765732e6d6f","start":5027,"end":5434,"line":185,"column":1,"end_line":199,"end_column":4},"outcome":"passed","microseconds":143}
-{"record":"totals","errors":0,"dropped":0,"passed":5,"failed":0,"stopped":0,"status":0}
