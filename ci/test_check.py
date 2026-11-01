@@ -105,5 +105,43 @@ class Scheduling(unittest.TestCase):
                 self.run_driver(["gcc/debug", "clang/debug", "clang/sanitize"], failure)
 
 
+class SanitizeCompiler(unittest.TestCase):
+    def run_group(self, compiler):
+        with tempfile.TemporaryDirectory(prefix="mo-check-sanitize-") as temporary:
+            root = pathlib.Path(temporary)
+            (root / "ci").mkdir()
+            shutil.copyfile(ROOT / "ci/check.sh", root / "ci/check.sh")
+            commands = root / "commands"
+            commands.mkdir()
+            calls = root / "calls"
+            calls.touch()
+            for name in ("make", "gcc", "clang"):
+                (commands / name).write_text('#!/bin/sh\necho "$*" >>"$CALLS"\n')
+                (commands / name).chmod(0o755)
+            environment = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}", CI="1",
+                               CALLS=str(calls))
+            environment.pop("CC", None)
+            if compiler is not None:
+                environment["CC"] = compiler
+            result = subprocess.run(["bash", "ci/check.sh", "sanitize"], cwd=root,
+                                    env=environment, capture_output=True, text=True, timeout=30)
+            return result.returncode, calls.read_text().splitlines()
+
+    def test_clang_is_the_default(self):
+        for compiler in (None, ""):
+            with self.subTest(compiler=compiler):
+                self.assertEqual(self.run_group(compiler),
+                                 (0, ["--no-print-directory sanitize CC=clang"]))
+
+    def test_cc_chooses_the_compiler(self):
+        for compiler in ("gcc", "clang", "gcc -m64"):
+            with self.subTest(compiler=compiler):
+                self.assertEqual(self.run_group(compiler),
+                                 (0, [f"--no-print-directory sanitize CC={compiler}"]))
+
+    def test_a_missing_cc_fails_instead_of_using_another_compiler(self):
+        self.assertEqual(self.run_group("mo-no-such-compiler"), (1, []))
+
+
 if __name__ == "__main__":
     unittest.main()
