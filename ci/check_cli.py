@@ -1429,7 +1429,8 @@ class Served:
         self.outputs = pathlib.Path(self.stderr.name)
         self.process = subprocess.Popen(
             [str(binary), "serve", str(source), "--port", port, "--data", str(data)],
-            env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0)
+            env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0,
+            umask=0o022)
         line = b""
         limit = time.monotonic() + 30
         while not line.endswith(b"\n"):
@@ -1504,11 +1505,13 @@ def serve_guide():
             SERVE_INITIALIZED, SERVE_LIST, SERVE_ADD, SERVE_READ,
             "An `Int` argument is a JSON string",
             "`mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`",
-            "- 0: SIGTERM or SIGINT stopped it. It accepts no new connections and finishes the "
-            "open ones first, which their deadlines bound to about 25 seconds.",
+            "- 0: SIGTERM or SIGINT stopped it. It closes its port, so a new connection is refused, "
+            "and finishes the open ones first, which their deadlines bound to about 25 seconds.",
             "An empty `service.sqlite` never held data, so delete it and start again.",
             "- 69: supervision (D308) stopped the service.",
-            "It stays down until a person fixes the cause and starts it.",
+            "It stays down until a person starts it, as Recover from a stop says.",
+            "A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409.",
+            "`service.sqlite` is readable only by its owner.",
             "- 70: it died any other way",
             "`counter.mo` and `./counter.mo` are the same spelling",
             "An absolute path or `sub/../counter.mo` is a different spelling"):
@@ -1561,6 +1564,8 @@ def serve_command(binary):
             assert serve_structured(served.post(SERVE_READ, token, named)) == {"value": "5"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         assert (data / "service.sqlite").is_file()
+        for path in data.iterdir():
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
 
         spare = folder / "spare"
         spare.mkdir()
@@ -1584,6 +1589,11 @@ def serve_command(binary):
             served.process.send_signal(signal.SIGTERM)
             time.sleep(0.4)
             assert served.process.poll() is None, "mo serve left before its open client finished"
+            started = time.monotonic()
+            with contextlib.suppress(ConnectionRefusedError):
+                socket.create_connection(("127.0.0.1", served.port), timeout=30).close()
+                raise AssertionError("a stopping mo serve accepted a connection")
+            assert time.monotonic() - started < 1, "a stopping mo serve left a client waiting"
             connection.sendall(body)
             reply = b""
             while chunk := connection.recv(65536):
@@ -1636,6 +1646,18 @@ def serve_command(binary):
         assert errors.count(b"mo serve: stop: ") == 1, errors
         assert errors.count(b"halted on purpose") == 15, errors
 
+        fixed = folder / "fixed.mo"
+        fixed.write_text(SERVE_HALTING.replace("module Counter", "module Fixed")
+                         .replace('stop "halted on purpose"', '"fine"'))
+        errors = refused(fixed)
+        assert b"written by a different program" in errors, errors
+        renewed = folder / "renewed"
+        renewed.mkdir()
+        with serving(fixed, renewed) as served:
+            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
+            assert serve_structured(served.post(SERVE_HALT, token)) == {"value": "fine"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+
         with serving() as served:
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
             shutil.rmtree(data)
@@ -1670,6 +1692,19 @@ def serve_command(binary):
         assert b"start refused" in errors, errors
         assert (b"error E1409: mo serve could not start the service: "
                 b"service handler failed") in errors, errors
+
+        constant = folder / "constant.mo"
+        constant.write_text(SERVE_COUNTER.replace("module Counter", "module Constant")
+                            .replace("service\n", 'limit = (999.to_byte or stop "constant failed").to_int\n\nservice\n', 1)
+                            .replace("  state.to_text\n", "  (state + limit).to_text\n"))
+        served = Served(binary, constant, fresh, env, folder)
+        try:
+            assert not served.line, served.line
+            errors = served.finish(70)
+            assert b"constant failed" in errors and b"E1409" not in errors, errors
+        finally:
+            served.close()
+            outputs.append(served.line + served.errors())
 
         with open("/dev/full", "wb") as full:
             result = subprocess.run([str(binary), "serve", counter, "--port", "0", "--data",

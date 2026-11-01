@@ -175,7 +175,9 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     char path[MO_CLI_ARGUMENT_SIZE + sizeof "/" DATA_FILE];
     int length = snprintf(path, sizeof path, "%s/" DATA_FILE, cli->data);
     MO_ASSERT(length > 0 && (size_t)length < sizeof path);
+    mode_t mask = umask(S_IRWXG | S_IRWXO);
     enum mo_store_status stored = mo_store_open(path, &store);
+    (void)umask(mask);
     if (stored != MO_STORE_OK) {
         refuse(diags, "mo serve could not open saved state at", path, mo_store_status_text(stored));
         goto done;

@@ -242,6 +242,7 @@ MO_MUST_USE enum mo_listener_status mo_listener_open(const struct mo_listener_co
 MO_MUST_USE enum mo_listener_status mo_listener_fake(const char *environment,
                                                      struct mo_listener **out);
 void mo_listener_close(struct mo_listener *listener);
+void mo_listener_stop_accepting(struct mo_listener *listener);
 MO_MUST_USE uint16_t mo_listener_port(const struct mo_listener *listener);
 MO_MUST_USE enum mo_listener_status mo_listener_call(struct mo_listener *listener,
                                                      enum mo_listener_operation operation,

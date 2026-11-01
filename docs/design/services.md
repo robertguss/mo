@@ -555,7 +555,8 @@ flags are only `--port` and `--data`. It binds 127.0.0.1 and allows the
 authorities `127.0.0.1:PORT` and `localhost:PORT`, using the bound port.
 
 `DIR` must exist and is never created, so a mistyped path cannot start an empty
-queue. The database is always `DIR/service.sqlite`. SQLite's exclusive lock
+queue. The database is always `DIR/service.sqlite`, created mode 0600 under a temporary
+umask, and SQLite gives its journal the same mode. SQLite's exclusive lock
 refuses a second server on the same `DIR`. Every startup refusal is E1409.
 
 The server constructor takes an event sink, because startup events fire inside
@@ -567,8 +568,9 @@ journald adds the timestamps.
 Signal handlers go in before the listener and store open, so a signal during
 startup lets the first commit finish. A signal sets a flag, and a 200 ms tick
 notices it, because the pipeline runs on its own thread and `poll` is not
-reliably interrupted. A signal or a stop event stops accepting, and the loop
-keeps polling until `mo_protocol_server_connected` is false. Open connections
+reliably interrupted. A signal or a stop event closes the listening socket, so
+a new or queued connection is refused at once, and the loop keeps polling until
+`mo_protocol_server_connected` is false. Open connections
 therefore finish, a stop's last client gets its reply, and a request already
 sent is not reset. Each connection stage has its own deadline, so this ends
 within about 25 seconds with no separate timer.

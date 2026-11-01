@@ -578,6 +578,7 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
 void mo_protocol_server_stop_accepting(struct mo_protocol_server *s) {
     MO_ASSERT(s != NULL);
     s->closing = true;
+    mo_listener_stop_accepting(s->listener);
 }
 
 bool mo_protocol_server_connected(const struct mo_protocol_server *s) {

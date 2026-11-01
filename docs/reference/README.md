@@ -1389,8 +1389,8 @@ complete program with its tests, and when a task is done. `mo guide
 or an example, promise or test fails, and 2 for a mistake in the command
 itself. Once the program runs, `mo run` exits with the program's own status
 (section 11.2), or 70 after a bug (section 13.2). `mo serve` exits with 0 after
-SIGTERM or SIGINT, 69 when repeated failures stop the service, and 70 when it
-dies any other way.
+SIGTERM or SIGINT, 1 when it cannot start the service, 69 when repeated failures
+stop the service, and 70 when it dies any other way.
 
 `mo test` runs every example, promise and test unless it's told which. Each has
 a full name: its function's name, or a test's module's, then its kind and a
