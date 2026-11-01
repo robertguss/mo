@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Every check robertguss/mo has, in order, except that the drivers and lean groups run their
-# checks side by side. GitHub's nightly workflow runs gcc clang sanitize drivers static lean
-# on main. For a pull request, run checks locally or ask the CI orb (ci/orb/README.md; D208, D214).
+# Every check robertguss/mo has, in order, except that the drivers, bench and lean groups run
+# their checks side by side. GitHub's nightly workflow runs gcc clang sanitize drivers static
+# lean bench on main with MO_ALL_DRIVERS=1. Before a pull request, run `bash ci/check.sh gcc`.
+#
+# The drivers, bench and lean groups drive built executables. By default they drive the first one
+# found (gcc debug, else clang debug, then the sanitize builds); MO_ALL_DRIVERS=1 drives every one
+# that is built, which is what the nightly run does.
 #
 # A check whose tool is missing is skipped with a note, and the summary at the end counts what
 # was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an
@@ -17,14 +21,15 @@
 #   sanitize    the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer, built by $CC if set, otherwise clang, otherwise gcc
 #   fuzz        every fuzz target briefly
 #   drivers     black-box drivers of the built executables
+#   bench       benchmark v0, the three Mo-written tools and the learnability protocol's calculators
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
-#   static      grammar, module dependencies, library map, fuzz seeds, frozen tool tasks, formatting, clang-tidy
+#   static      grammar, module dependencies, library map, fuzz seeds, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "check.sh started: pid $$"
 
-all_groups=" gcc clang sanitize fuzz drivers lean static cbmc "
+all_groups=" gcc clang sanitize fuzz drivers bench lean static cbmc "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -134,11 +139,15 @@ finish() {
 }
 trap finish EXIT
 
-built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/
+built() { # sets drivers to the built executables at $1 under build/<compiler>/<mode>/:
+	# the first one found, or every one when MO_ALL_DRIVERS=1
 	local driver
 	drivers=()
 	for driver in build/{gcc,clang}/{debug,sanitize}/"$1"; do
-		if [[ -x "$driver" ]]; then drivers+=("$driver"); fi
+		if [[ -x "$driver" ]]; then
+			drivers+=("$driver")
+			if [[ "${MO_ALL_DRIVERS:-}" != 1 ]]; then return; fi
+		fi
 	done
 }
 
@@ -167,24 +176,29 @@ else
 fi
 fi
 
-# Run alone, the drivers and lean groups build the executables they drive, as the
-# gcc, clang and sanitize groups would have. drivers alone drives only the debug builds, which
-# keeps it fast; with the sanitize group it also drives the sanitize builds that group made.
-if [[ -n "$groups" ]] && { enter drivers || enter lean; }; then
+# Run alone, the drivers, bench and lean groups build the executables they drive, as the
+# gcc, clang and sanitize groups would have: one compiler's debug build by default, every
+# compiler's when MO_ALL_DRIVERS=1 (and the sanitize build too for the lean group).
+if [[ -n "$groups" ]] && { enter drivers || enter bench || enter lean; }; then
 	step "Build the test executables the checks below drive"
-	if have gcc; then make --no-print-directory test-executables CC=gcc; fi
-	if have clang; then make --no-print-directory test-executables CC=clang; fi
-	if want lean; then
-		if have clang; then
-			make --no-print-directory sanitize-executables CC=clang
-		elif have gcc; then
-			make --no-print-directory sanitize-executables CC=gcc
+	if [[ "${MO_ALL_DRIVERS:-}" == 1 ]]; then
+		if have gcc; then make --no-print-directory test-executables CC=gcc; fi
+		if have clang; then make --no-print-directory test-executables CC=clang; fi
+		if want lean; then
+			if have clang; then
+				make --no-print-directory sanitize-executables CC=clang
+			elif have gcc; then
+				make --no-print-directory sanitize-executables CC=gcc
+			fi
 		fi
+	elif have gcc; then
+		make --no-print-directory test-executables CC=gcc
+	elif have clang; then
+		make --no-print-directory test-executables CC=clang
 	fi
 fi
 
 if enter drivers; then
-isolated_tools_driver=
 if have python3; then
 	later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
 	later "Waiting on check results: running, passed, failed, killed and missing runs" \
@@ -222,17 +236,6 @@ if have python3; then
 		for driver in "${drivers[@]}"; do
 			later "Every error code has a message test or reachability explanation ($driver)" \
 				python3 ci/check_errors.py "$driver"
-		done
-		later "The session-recording harness: a recorded session's log reads to tally's example table" \
-			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "${drivers[@]}"
-		for driver in "${drivers[@]}"; do
-			later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($driver)" \
-				python3 bench/v0/grade.py --check --mo "$driver"
-		done
-		isolated_tools_driver=${drivers[0]}
-		for driver in "${drivers[@]:1}"; do
-			later "The three tools: linkcheck, tally and notioncopy pass their tests and do their jobs here ($driver)" \
-				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" --no-hidden
 		done
 	else
 		missing "no mo command executable is built"
@@ -277,11 +280,6 @@ else
 fi
 report_status=0
 report || report_status=$?
-tools_status=0
-if [[ -n "$isolated_tools_driver" ]]; then
-	step "The three tools: tests, frozen tasks and repository checks ($isolated_tools_driver)"
-	PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$isolated_tools_driver" || tools_status=$?
-fi
 # Timed alone, after the checks that ran side by side, so their load does not inflate it.
 # It runs even when one of them failed.
 timed_driver=
@@ -297,7 +295,44 @@ elif have python3; then
 else
 	missing "python3 is not installed, so mo check is not timed"
 fi
-if ((report_status != 0 || tools_status != 0 || timing_status != 0)); then exit 1; fi
+if ((report_status != 0 || timing_status != 0)); then exit 1; fi
+fi
+
+if enter bench; then
+step "Benchmark v0, the three Mo-written tools and the learnability protocol"
+if have python3; then
+	built mo
+	if ((${#drivers[@]})); then
+		later "The session-recording harness: a recorded session's log reads to tally's example table" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/harness/test_session.py "${drivers[@]}"
+		for driver in "${drivers[@]}"; do
+			later "Benchmark v0: tasks frozen, references pass, broken solutions and start folders fail ($driver)" \
+				python3 bench/v0/grade.py --check --mo "$driver"
+		done
+		# The frozen tasks' time limits were set for one gcc debug build, so only the first
+		# executable runs the hidden tests, alone, after the checks that ran side by side.
+		for driver in "${drivers[@]:1}"; do
+			later "The three tools: linkcheck, tally and notioncopy pass their tests and do their jobs here ($driver)" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "$driver" --no-hidden
+		done
+		later "The three tools' frozen tasks: hashes match and each reference passes its hidden tests" \
+			python3 bench/tools/grade.py --check
+		later "The learnability protocol's Wilson and kappa calculator" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_wilson.py
+		later "The round report's first-retry numbers, from the reference tally" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_retry.py
+		report_status=0
+		report || report_status=$?
+		step "The three tools: tests, frozen tasks and repository checks (${drivers[0]})"
+		tools_status=0
+		PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "${drivers[0]}" || tools_status=$?
+		if ((report_status != 0 || tools_status != 0)); then exit 1; fi
+	else
+		missing "no mo command executable is built"
+	fi
+else
+	missing "python3 is not installed"
+fi
 fi
 
 if enter fuzz; then
@@ -421,15 +456,6 @@ make --no-print-directory library-map
 
 step "Every fuzz target has a committed corpus or a Makefile generated-seed branch"
 if have python3; then python3 ci/check_fuzz_seeds.py; else missing "python3 is not installed"; fi
-
-step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
-if have python3; then python3 bench/tools/grade.py --check; else missing "python3 is not installed"; fi
-
-step "The learnability protocol's Wilson and kappa calculator"
-if have python3; then PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_wilson.py; else missing "python3 is not installed"; fi
-
-step "The round report's first-retry numbers, from the reference tally"
-if have python3; then PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_retry.py; else missing "python3 is not installed"; fi
 
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi

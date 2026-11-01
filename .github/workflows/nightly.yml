@@ -24,6 +24,7 @@ jobs:
       CI: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       MO_CORE_DIFF_OUT: build/nightly-mismatches
+      MO_ALL_DRIVERS: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -53,7 +54,7 @@ jobs:
         run: |
           MAKEFLAGS="-j$(nproc) -Otarget"
           export MAKEFLAGS
-          bash ci/check.sh gcc clang sanitize drivers static lean
+          bash ci/check.sh gcc clang sanitize drivers static lean bench
 
       - name: Compare a fresh seed range
         env:

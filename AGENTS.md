@@ -7,8 +7,9 @@ Guidance for coding agents (Claude Code, Codex, Cursor and others) working in th
 
 Mo is a pre-release language and runtime for "living software", designed for agents first. The
 toolchain is one C17 program, `mo` (`check`, `run`, `test`, `format`, `fix`), that compiles a whole
-program from source to bytecode and runs it on its own VM. Decisions are cited as `D2xx` and work
-items as `MO-NN` (commit titles start with the ticket, e.g. `MO-83: add List.all? ...`).
+program from source to bytecode and runs it on its own VM. Commit and PR titles say what the
+change does. Older commits and documents cite decisions as `D2xx` and tasks as `MO-NN`; neither
+numbering continues, and a decision is written as the rule itself in the document it belongs to.
 
 The documents that define correct behaviour, in order of authority:
 
@@ -39,7 +40,7 @@ make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
 make cbmc                  # prove the bytecode reader, arena, verifier, primitives, path containment and resolution, refcounts, hash tables (needs CBMC)
-bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers lean static cbmc
+bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers bench lean static cbmc
 ci/wait-for-results FILE [TIMEOUT]  # wait for a detached ci/check.sh run (see Waiting on checks)
 ```
 
@@ -52,31 +53,31 @@ ci/wait-for-results FILE [TIMEOUT]  # wait for a detached ci/check.sh run (see W
 - The `drivers` group runs Python black-box checks against the built executables
   (`ci/check_cli.py` for CLI text/JSON goldens, `ci/check_golden.py`, `ci/check_unicode16.py`, …);
   the `lean` group builds Mo Core in Lean and compares the executables with it
-  (`ci/check_lower_source.py`, `ci/check_core_differential.py`, …). CLI behaviour changes usually
-  need an edit to `ci/check_cli.py` or the goldens under `tests/cli/`.
+  (`ci/check_lower_source.py`, `ci/check_core_differential.py`, …); the `bench` group runs
+  benchmark v0, the three Mo-written tools and the learnability calculators. CLI behaviour changes
+  usually need an edit to `ci/check_cli.py` or the goldens under `tests/cli/`. The groups that
+  drive built executables drive the first one found; `MO_ALL_DRIVERS=1` drives every one built.
 
 ## Checks and merging
 
-The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
-never on pull requests or pushes. It runs `gcc clang sanitize drivers static lean` with `CI=1`
-and an additional 1,000-program VM-vs-Lean batch with a fresh, printed seed range each UTC day.
-Failed runs appear in Actions; Robert must enable email notifications for failed workflows in
-his GitHub notification settings and be the scheduled workflow's notification recipient (its
-creator, latest cron editor, or person who re-enabled it). Manual-run notifications go to the
-person who dispatched the run.
+Before opening a PR, run `bash ci/check.sh gcc` (build and unit tests) and put its last line in
+the PR body. Say which other groups you ran, if any; do not run groups to be thorough, the nightly
+does that. A skip for a missing tool is not a pass; `CI=1` makes it fail instead. The one
+exception: after editing `docs/agent-guide.md`, `docs/reference/README.md` or
+`docs/design/library.md`, which the build embeds or checks, also run
+`bash ci/check.sh drivers static` once.
 
-`main` still requires no status check (only force-pushes are blocked). The Socket Security app
-may still post its own checks; none is required. Before opening a PR, run
-`bash ci/check.sh gcc` (build and unit tests)
-and report its result in the PR body, listing any check it skipped for a missing tool (a skip is
-not a pass; `CI=1` makes it fail instead). Run any other group the change reaches and say which
-groups you did not run: usually `clang` and `static` (formatting, module includes, library map)
-for C changes, `drivers` for CLI or golden changes, `static` for `prims.def` or `hostops.def`.
-The `cbmc` and `fuzz` groups still run only by hand. The
-build embeds or checks `docs/agent-guide.md`, `docs/reference/README.md` and
-`docs/design/library.md`, so after editing one, also run `bash ci/check.sh drivers static`. A PR
-merges when Robert says so. He lets agents merge docs-only PRs without review: PRs that change only
-Markdown files, other than those three. PRs are squash-merged.
+The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
+never on pull requests or pushes. It runs `gcc clang sanitize drivers static lean bench` with
+`CI=1` and `MO_ALL_DRIVERS=1`, plus a 1,000-program VM-vs-Lean batch with a fresh, printed seed
+range each UTC day. A red nightly is the next PR, before any feature. `cbmc` and long fuzz runs
+happen by hand at phase boundaries.
+
+`main` requires no status check (only force-pushes are blocked). A PR gets one review and merges
+when Robert says so; he lets agents merge docs-only PRs (Markdown only, other than the three
+files above) without review. PRs are squash-merged. Claims about what Mo guarantees get the
+Working Agreement's full treatment (predictions written first, an independent check, failures
+kept); ordinary building gets this section and nothing more.
 
 ### Waiting on checks
 
@@ -183,8 +184,8 @@ Adding a library function typically touches its `check` signature (`src/check/si
 
 ## Workflow
 
-The PR template asks for the plan, the tests and the review. A one-line fix can keep its plan to a
-sentence; it still gets tests and a review.
+The PR template asks what changes, which tests prove it, and what `bash ci/check.sh gcc` said.
+A one-line fix keeps each to a sentence; it still gets a test.
 
-When Robert or a reviewer corrects a mistake, fix it and add or bump its row in
-`docs/status/agent-mistakes.md` in the same PR. A row that recurs is fixed at a stronger level.
+`docs/status/agent-mistakes.md` is the ledger of mistake classes agents have repeated here. Read it
+before C work; it is reviewed at phase boundaries, not bumped in every PR.

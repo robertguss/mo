@@ -38,12 +38,18 @@ event("begin")
 time.sleep(0.2 if kind != "parallel" else 0.1)
 event("end")
 fail = os.environ.get("FAIL", "")
-sys.exit(1 if fail == kind and (kind != "parallel" or name == "check_cli.py") else 0)
+sys.exit(1 if fail == kind and (kind != "parallel" or name in ("check_cli.py", "grade.py")) else 0)
 '''
 
 
+THREE = ["gcc/debug", "clang/debug", "clang/sanitize"]
+
+
 class Scheduling(unittest.TestCase):
-    def run_driver(self, builds, failure=""):
+    """The drivers and bench groups: which built executables they drive, and that the hidden
+    tool tests and the timed check run alone, after the checks that ran side by side."""
+
+    def run_group(self, group, builds, failure="", all_drivers=True):
         with tempfile.TemporaryDirectory(prefix="mo-check-scheduling-") as temporary:
             root = pathlib.Path(temporary)
             (root / "ci").mkdir()
@@ -61,7 +67,10 @@ class Scheduling(unittest.TestCase):
             events = root / "events"
             environment = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}",
                                CI="1", EVENTS=str(events), FAIL=failure)
-            result = subprocess.run(["bash", "ci/check.sh", "drivers"], cwd=root,
+            environment.pop("MO_ALL_DRIVERS", None)
+            if all_drivers:
+                environment["MO_ALL_DRIVERS"] = "1"
+            result = subprocess.run(["bash", "ci/check.sh", group], cwd=root,
                                     env=environment, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 1 if failure else 0,
                              result.stdout + result.stderr)
@@ -70,6 +79,7 @@ class Scheduling(unittest.TestCase):
             hidden = []
             ordinary_tools = []
             timing = []
+            driven = set()
             for record in records:
                 if record["phase"] == "end":
                     del active[record["pid"]]
@@ -79,6 +89,7 @@ class Scheduling(unittest.TestCase):
                 self.assertTrue(all(kind == "parallel" for kind in active.values()),
                                 f"{record['name']} started during {active}")
                 active[record["pid"]] = record["kind"]
+                driven.update(arg for arg in record["args"] if arg.endswith("/mo"))
                 if record["kind"] == "hidden":
                     hidden.append(record["args"])
                 elif record["kind"] == "timing":
@@ -86,23 +97,41 @@ class Scheduling(unittest.TestCase):
                 elif record["name"] == "check_tools.py":
                     ordinary_tools.append(record["args"])
             self.assertFalse(active)
-            self.assertEqual(hidden, [[f"build/{builds[0]}/mo"]])
-            self.assertEqual(sorted(ordinary_tools),
-                             sorted([[f"build/{build}/mo", "--no-hidden"] for build in builds[1:]]))
-            self.assertEqual(timing, [[f"build/{builds[0]}/mo"]])
+            return hidden, sorted(ordinary_tools), timing, driven
 
-    def test_three_builds(self):
-        self.run_driver(["gcc/debug", "clang/debug", "clang/sanitize"])
+    def test_drivers_drives_every_build_and_times_the_first(self):
+        hidden, tools, timing, driven = self.run_group("drivers", THREE)
+        self.assertEqual((hidden, tools, timing), ([], [], [["build/gcc/debug/mo"]]))
+        self.assertEqual(driven, {f"build/{build}/mo" for build in THREE})
+
+    def test_bench_runs_the_hidden_tests_on_the_first_build_alone(self):
+        hidden, tools, timing, driven = self.run_group("bench", THREE)
+        self.assertEqual(hidden, [["build/gcc/debug/mo"]])
+        self.assertEqual(tools, sorted([f"build/{build}/mo", "--no-hidden"] for build in THREE[1:]))
+        self.assertEqual(timing, [])
+        self.assertEqual(driven, {f"build/{build}/mo" for build in THREE})
 
     def test_one_build(self):
         for build in ("gcc/debug", "clang/debug"):
             with self.subTest(build=build):
-                self.run_driver([build])
+                self.assertEqual(self.run_group("drivers", [build]),
+                                 ([], [], [[f"build/{build}/mo"]], {f"build/{build}/mo"}))
+                self.assertEqual(self.run_group("bench", [build]),
+                                 ([[f"build/{build}/mo"]], [], [], {f"build/{build}/mo"}))
+
+    def test_the_first_build_alone_unless_asked_for_all(self):
+        for group, expected in (("drivers", ([], [], [["build/gcc/debug/mo"]])),
+                                ("bench", ([["build/gcc/debug/mo"]], [], []))):
+            with self.subTest(group=group):
+                hidden, tools, timing, driven = self.run_group(group, THREE, all_drivers=False)
+                self.assertEqual((hidden, tools, timing), expected)
+                self.assertEqual(driven, {"build/gcc/debug/mo"})
 
     def test_failures_still_run_isolated_checks(self):
-        for failure in ("parallel", "hidden", "timing"):
-            with self.subTest(failure=failure):
-                self.run_driver(["gcc/debug", "clang/debug", "clang/sanitize"], failure)
+        for group, failure in (("drivers", "parallel"), ("drivers", "timing"),
+                               ("bench", "parallel"), ("bench", "hidden")):
+            with self.subTest(group=group, failure=failure):
+                self.run_group(group, THREE, failure)
 
 
 class SanitizeCompiler(unittest.TestCase):

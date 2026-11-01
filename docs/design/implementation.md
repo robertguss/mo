@@ -87,10 +87,9 @@ better error messages, and is tested against this grammar. See
 ## Checks and merging
 
 Before a pull request, `bash ci/check.sh gcc` builds and
-runs the unit tests. Nightly runs `gcc clang sanitize drivers static lean`;
+runs the unit tests. Nightly runs `gcc clang sanitize drivers static lean bench`;
 fuzz and CBMC run by hand. A pull request merges when Robert says so. The merge
-rule is in AGENTS.md "Checks and merging", and the evidence a PR records is in
-`ci/orb/README.md`.
+rule is in AGENTS.md "Checks and merging".
 
 ## Rust-era plans, replaced
 
