@@ -83,11 +83,12 @@ def linkcheck(mo, failures):
 
 
 def tally(mo, failures):
+    """Returns whether the comparison ran; without the session logs it is skipped with a note."""
     rounds = sorted(p for p in (ROOT / "learnability").glob("*/sessions") if p.is_dir())
     if not rounds:
         print("tally: skipped, no learnability/*/sessions folders here (restore them from the "
               "evidence-learnability-2026-10 release, see learnability/README.md)")
-        return
+        return False
     for sessions in rounds:
         name = sessions.parent.relative_to(ROOT)
         with tempfile.TemporaryDirectory(prefix="mo-tally-") as work:
@@ -104,6 +105,7 @@ def tally(mo, failures):
             failures.append(f"tally over {name} differs from the reference:\n"
                             f"tools/tally.mo ({mine.returncode}):\n{mine.stdout}{mine.stderr}"
                             f"reference ({theirs.returncode}):\n{theirs.stdout}{theirs.stderr}")
+    return True
 
 
 def pieces(folder):
@@ -135,13 +137,14 @@ def main(argv):
     failures = []
     tests(mo, failures, hidden=len(argv) == 1)
     linkcheck(mo, failures)
-    tally(mo, failures)
+    tallied = tally(mo, failures)
     notioncopy(mo, failures)
     if failures:
         for failure in failures:
             print(failure, file=sys.stderr)
         raise SystemExit(f"{len(failures)} tool checks failed")
-    print("the three tools pass their tests and do their jobs on this repository")
+    print("the three tools pass their tests and do their jobs on this repository"
+          + ("" if tallied else " (tally comparison skipped: no session logs)"))
 
 
 if __name__ == "__main__":
