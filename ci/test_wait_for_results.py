@@ -5,6 +5,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 
@@ -17,9 +18,7 @@ LIMIT_SECONDS = 60
 
 SUCCEED = "#!/bin/sh\nexit 0\n"
 FAILING = "#!/bin/sh\nexit 1\n"
-# Blocks while $HOLD exists rather than until a release file appears: removing the temporary
-# directory then frees a make that a killed check.sh left behind, however the test ended.
-BLOCKING = '''#!/bin/sh
+BLOCK_WHILE_HOLD_EXISTS = '''#!/bin/sh
 : >"$BLOCKED"
 while [ -e "$HOLD" ]; do sleep 0.02; done
 '''
@@ -28,6 +27,13 @@ echo "$1" >>"$SLEEPS"
 if [ "$(wc -l <"$SLEEPS")" -eq "${FINISH_ON_SLEEP:-0}" ]; then
     echo "check.sh finished: pass" >>"$RESULTS"
 fi
+'''
+
+
+TAIL_THEN_END_RUN = '''#!/bin/sh
+"$REAL_TAIL" "$@"
+echo "check.sh finished: pass" >>"$RESULTS"
+kill "$RUN"
 '''
 
 
@@ -69,7 +75,7 @@ class WaitForResults(unittest.TestCase):
         self.hold = self.root / "hold"
         blocked = self.root / "blocked"
         self.hold.touch()
-        self.fake(self.commands, "make", BLOCKING)
+        self.fake(self.commands, "make", BLOCK_WHILE_HOLD_EXISTS)
         process = self.start("gcc", HOLD=str(self.hold), BLOCKED=str(blocked))
         self.addCleanup(process.wait, timeout=LIMIT_SECONDS)
         self.addCleanup(self.hold.unlink, missing_ok=True)
@@ -79,7 +85,7 @@ class WaitForResults(unittest.TestCase):
             time.sleep(0.01)
         return process
 
-    def wait(self, *arguments, sleep_settings=None):
+    def wait(self, *arguments, sleep_settings=None, extra_path=None):
         environment = dict(os.environ)
         if sleep_settings is not None:
             sleeps = self.root / "sleep"
@@ -87,6 +93,8 @@ class WaitForResults(unittest.TestCase):
             self.fake(sleeps, "sleep", RECORDING_SLEEP)
             environment.update(sleep_settings, PATH=f"{sleeps}:{os.environ['PATH']}",
                                RESULTS=str(self.results))
+        if extra_path is not None:
+            environment["PATH"] = f"{extra_path}:{environment['PATH']}"
         return subprocess.run([WAITER, *arguments], env=environment, capture_output=True,
                               text=True, timeout=LIMIT_SECONDS)
 
@@ -166,6 +174,34 @@ class WaitForResults(unittest.TestCase):
     def test_empty_file_is_running(self):
         self.results.touch()
         self.assert_waited(75, "0")
+
+    def test_a_file_with_no_started_line_is_running_for_its_first_minute(self):
+        self.results.write_text("bash: ci/check.sh: No such file or directory\n")
+        self.assert_waited(75, "0")
+
+    def test_a_file_with_no_started_line_after_a_minute_is_a_failure(self):
+        for text in ("", "bash: ci/check.sh: No such file or directory\n"):
+            with self.subTest(text=text):
+                self.results.write_text(text)
+                old = time.time() - 120
+                os.utime(self.results, (old, old))
+                self.assert_waited(1, "0")
+
+    def test_a_run_ending_between_the_two_reads_is_not_called_dead(self):
+        run = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(run.kill)
+        reaper = threading.Thread(target=run.wait)
+        reaper.start()
+        self.addCleanup(reaper.join)
+        self.results.write_text(f"check.sh started: pid {run.pid}\noutput\n")
+        directory = self.root / "tail"
+        directory.mkdir()
+        self.fake(directory, "tail", TAIL_THEN_END_RUN)
+        sleeps = self.root / "sleeps"
+        settings = {"SLEEPS": str(sleeps), "RUN": str(run.pid),
+                    "REAL_TAIL": shutil.which("tail")}
+        result = self.wait(str(self.results), sleep_settings=settings, extra_path=directory)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_missing_or_irregular_file(self):
         for path in (self.results, self.root):

@@ -9,10 +9,6 @@
 #   64  wrong usage
 #   66  FILE is missing or not a regular file (EX_NOINPUT)
 #   75  the run is still going at TIMEOUT (EX_TEMPFAIL)
-#
-# No set -e: 1 means the checks failed, so a script error must not exit with it.
-set -uo pipefail
-
 poll_seconds=15
 
 usage() {
@@ -31,9 +27,12 @@ while :; do
 		exit 66
 	fi
 	pid=$(sed -n 's/^check\.sh started: pid \([0-9][0-9]*\)$/\1/p' "$file" 2>/dev/null | head -n 1)
-	# Taken before the last line, so that a run ending between the two reads isn't called dead.
 	alive=1
-	if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then alive=; fi
+	if [[ -n "$pid" ]]; then
+		kill -0 "$pid" 2>/dev/null || alive=
+	elif [[ -n "$(find "$file" -mmin +1)" ]]; then
+		alive=
+	fi
 	last=$(tail -n 1 "$file" 2>/dev/null)
 
 	if [[ "$last" == "check.sh finished: pass" ]]; then
@@ -48,7 +47,7 @@ while :; do
 	fi
 	if [[ -z "$alive" ]]; then
 		tail -n 5 "$file"
-		echo "check.sh pid $pid stopped without finishing"
+		echo "check.sh (pid ${pid:-never written}) stopped without finishing"
 		exit 1
 	fi
 	if ((left <= 0)); then

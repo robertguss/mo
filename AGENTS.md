@@ -86,10 +86,13 @@ while checks run.
 
 ```sh
 mkdir -p build
-nohup bash ci/check.sh gcc >build/check-results.txt 2>&1 &
+rm -f build/check-results.txt
+nohup timeout --kill-after=30 3600 bash ci/check.sh gcc >build/check-results.txt 2>&1 &
 ```
 
-Then, in a separate call:
+`rm -f` keeps an earlier run's marker out of this run's file. `timeout` ends a hung run, which then
+reads as failed, so raise its 3600 seconds for a longer run such as `cbmc`. Then, in a separate
+call:
 
 ```sh
 ci/wait-for-results build/check-results.txt
@@ -101,7 +104,7 @@ pass. `TIMEOUT` 0 checks once. Give the tool call a longer timeout than that, or
 | Exit | Meaning | What to do |
 | --- | --- | --- |
 | 0 | The checks passed. | Report the result. A pass with skips still prints what was skipped. |
-| 1 | The checks failed, or the run stopped without a marker. | Read what it printed and the results file. |
+| 1 | The checks failed, the run stopped without a marker, or a minute passed with no started line. | Read what it printed and the results file. |
 | 66 | The file is missing or not a regular file. | Start `ci/check.sh` first. |
 | 75 | The run is still going. | Call `ci/wait-for-results` again. |
 

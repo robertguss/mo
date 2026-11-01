@@ -32,10 +32,9 @@ for group in $groups; do
 		exit 64
 	fi
 done
-# The group in force is the one the fail marker names. A failure stops the script, so a run
-# fails in exactly one group.
-group=
-want() { [[ -z "$groups" || " $groups " == *" $1 "* ]] && group=$1; }
+want() { [[ -z "$groups" || " $groups " == *" $1 "* ]]; }
+entered_group=
+enter() { want "$1" && entered_group=$1; }
 
 skipped=()
 
@@ -129,7 +128,7 @@ finish() {
 	if [[ -n "$passed" ]]; then
 		echo "check.sh finished: pass"
 	else
-		echo "failed group: $group"
+		echo "failed group: $entered_group"
 		echo "check.sh finished: fail"
 	fi
 }
@@ -143,18 +142,18 @@ built() { # sets drivers to the built executables at $1 under build/<compiler>/<
 	done
 }
 
-if want gcc; then
+if enter gcc; then
 step "Build and test with gcc (warnings are errors)"
 if have gcc; then make --no-print-directory test CC=gcc; else missing "gcc is not installed"; fi
 
 fi
 
-if want clang; then
+if enter clang; then
 step "Build and test with clang (warnings are errors)"
 if have clang; then make --no-print-directory test CC=clang; else missing "clang is not installed"; fi
 fi
 
-if want sanitize; then
+if enter sanitize; then
 
 step "Tests under AddressSanitizer and UndefinedBehaviorSanitizer"
 if [[ -n "${CC:-}" ]]; then
@@ -171,7 +170,7 @@ fi
 # Run alone, the drivers and lean groups build the executables they drive, as the
 # gcc, clang and sanitize groups would have. drivers alone drives only the debug builds, which
 # keeps it fast; with the sanitize group it also drives the sanitize builds that group made.
-if [[ -n "$groups" ]] && { want drivers || want lean; }; then
+if [[ -n "$groups" ]] && { enter drivers || enter lean; }; then
 	step "Build the test executables the checks below drive"
 	if have gcc; then make --no-print-directory test-executables CC=gcc; fi
 	if have clang; then make --no-print-directory test-executables CC=clang; fi
@@ -184,7 +183,7 @@ if [[ -n "$groups" ]] && { want drivers || want lean; }; then
 	fi
 fi
 
-if want drivers; then
+if enter drivers; then
 isolated_tools_driver=
 if have python3; then
 	later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
@@ -301,7 +300,7 @@ fi
 if ((report_status != 0 || tools_status != 0 || timing_status != 0)); then exit 1; fi
 fi
 
-if want fuzz; then
+if enter fuzz; then
 step "Fuzz every target briefly"
 if ! have clang; then
 	missing "clang with libFuzzer is not installed"
@@ -312,7 +311,7 @@ else
 fi
 fi
 
-if want static; then
+if enter static; then
 step "The executable grammar: its tests, the examples and the reference's code parse"
 if have bison && (have clang || have gcc); then
 	if have clang; then make --no-print-directory grammar CC=clang; else make --no-print-directory grammar CC=gcc; fi
@@ -328,7 +327,7 @@ else
 fi
 fi
 
-if want lean; then
+if enter lean; then
 step "Mo Core in Lean: the model builds and every proof checks"
 # elan lives in /opt/elan where the nightly workflow installs it, since the CI orb runs with a
 # fresh HOME, or else in the usual ~/.elan.
@@ -413,7 +412,7 @@ else
 fi
 fi
 
-if want static; then
+if enter static; then
 step "Module dependencies: each module includes only what architecture section 2 allows"
 make --no-print-directory deps
 
@@ -439,7 +438,7 @@ step "Results of standard-library calls are used (clang-tidy)"
 if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tidy is not installed"; fi
 fi
 
-if want cbmc; then
+if enter cbmc; then
 step "CBMC: the bytecode reader on every small input, the arena, the verifier's transfer functions, the primitives' arithmetic and UTF-8, lexical path containment, path resolution, reference counts and hash tables (cbmc/README.md)"
 if have cbmc && have goto-cc && have goto-instrument; then
 	# The proofs and the check that every block they prove runs on some input take about
