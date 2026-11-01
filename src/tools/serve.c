@@ -38,17 +38,27 @@ static void log_line(FILE *errors, const char *kind, const char *text) {
     (void)fflush(errors);
 }
 
+static const struct mo_bytecode_string service_word = {sizeof "service" - 1,
+                                                       (const uint8_t *)"service"};
+
 static void log_event(const struct mo_service_event *event, void *context) {
     struct serve_log *log = context;
     const char *text = mo_service_status_text(event->reason);
     switch (event->kind) {
-    case MO_SERVICE_FAILURE:
+    case MO_SERVICE_FAILURE: {
+        struct mo_bytecode_string name =
+            event->handler.bytes == NULL ? service_word : event->handler;
         log->failed = true;
         log->failure = event->reason;
-        log_line(log->errors, "failure", text);
+        (void)fprintf(log->errors, "mo serve: failure: %.*s: %s\n", (int)name.length,
+                      (const char *)name.bytes, text);
+        (void)fflush(log->errors);
         break;
+    }
     case MO_SERVICE_RESTART:
-        log_line(log->errors, "restart", text);
+        (void)fprintf(log->errors, "mo serve: restart: %u of %d: %s\n", (unsigned)event->restart,
+                      MO_LIMIT_SERVICE_RESTARTS, text);
+        (void)fflush(log->errors);
         break;
     case MO_SERVICE_STOP:
         log->stopped = true;

@@ -349,8 +349,9 @@ embedding API is in `vm/vm.h`; there is no new module, bytecode form, primitive,
 capability operation, Mo API or CLI command. Core and Lean still evaluate ordinary
 functions. The embedding supplies a clock, a reply callback and an event callback.
 Callbacks are synchronous, bounded and non-reentrant. The event callback is the
-logging boundary and receives failure, restart and stop reasons, plus the VM defect
-while its frames are still available. The response contains the full handler result;
+logging boundary and receives failure, restart and stop reasons, the failing handler's
+bare name, the restart's count in its window, and the VM defect while its frames are
+still available. The response contains the full handler result;
 schema unwrapping and wire errors belong to MO-160.
 
 `mo_service_new` evaluates every interval with the VM and refuses zero or negative
@@ -560,10 +561,36 @@ umask, and SQLite gives its journal the same mode. SQLite's exclusive lock
 refuses a second server on the same `DIR`. Every startup refusal is E1409.
 
 The server constructor takes an event sink, because startup events fire inside
-`mo_service_open`. The sink writes one `mo serve: failure:`, `restart:` or
-`stop:` line to standard error, followed by the defect report when the event
-has one. A signal stop and a listener failure write a `stop:` line too.
-journald adds the timestamps.
+`mo_service_open`. The sink writes one line to standard error for each event,
+followed by the defect report when the event has one:
+
+```text
+mo serve: failure: NAME: REASON
+mo serve: restart: N of M: REASON
+mo serve: stop: REASON
+```
+
+`NAME` is `mo_service_event.handler`, the bare tool or timer name, with the
+module and any `@Receiver` overload suffix of the bytecode function name cut
+off. A record that replay runs and rejects, because its handler failed or its
+result failed the checksum, names its handler, and a timer's interval reports as
+its timer. A record refused before it runs (malformed, out of sequence, or from
+a different program) leaves `handler` empty. When `handler` is empty, because of
+that, or because the start value or the store failed at startup, `NAME` is
+`service`, which `mo check` refuses as a tool or timer name (E0007). `NAME` never
+holds a colon. A store that will not open is E1409 and fires no event.
+`N` is `mo_service_event.restart`, the restart's count in the ten-minute window,
+and `M` is `MO_LIMIT_SERVICE_RESTARTS`. On a service event `REASON` is
+`mo_service_status_text` unchanged. A signal stop and a listener failure have
+their own fixed text. `REASON` is always one line. `function` stays a startup-only field, because `simulation.c` reads it
+as a startup failure. A runtime store failure is a `stop:` line with no `failure:`
+line. Replay
+discards the defect, so a replay failure has no report. Report values are
+indented and escape newlines, so an event line always starts its own line and
+`^mo serve: failure:` finds only events. journald adds the timestamps. The line
+shapes are stable, and a later change to one is a breaking change. The words of
+`REASON` are not stable: a script branches on the line's kind, `NAME` and the
+exit status.
 
 Signal handlers go in before the listener and store open, so a signal during
 startup lets the first commit finish. A signal sets a flag, and a 200 ms tick

@@ -208,7 +208,15 @@ Send the same headers with each of these bodies. The first gets status 202 and n
 
 An `Int` argument is a JSON string, as `tools/list` shows in each tool's `inputSchema`. A tool's reply is in `result.structuredContent`. A failed call has `isError` true and `structuredContent.error.code`, such as `handler_failed` or `store_failed`.
 
-`mo serve` writes one line to standard error for each failure, restart and stop: `mo serve: failure: REASON`, `mo serve: restart: REASON` and `mo serve: stop: REASON`. A failure that is a bug adds the report `mo run` would print. The lines have no timestamps. The token never appears in output, logs or errors.
+`mo serve` writes one line to standard error for each failure, restart and stop, in exactly these formats:
+
+```text
+mo serve: failure: NAME: REASON
+mo serve: restart: N of M: REASON
+mo serve: stop: REASON
+```
+
+`NAME` is the tool or timer that failed, as the source writes it, such as `halt` or `tick`. A bad interval names its timer. A saved message that replay runs and rejects, because its handler failed or its result failed the checksum, names its tool or timer. A record refused before it runs, because it is malformed, out of sequence or from a different program, is `service`. `NAME` is the word `service` when no tool or timer is responsible, as when the state's initial value fails, or the store or saved data fails at startup. `mo check` refuses `service` as a tool or timer name, so the word never means a real handler. `NAME` never holds a colon, and `REASON` is always one line. A store that will not open is E1409 with no `failure` line. `N` is this restart's place among the restarts of the last ten minutes, and `M` is the limit of 3, so `3 of 3` is followed by the stop line. A store failure while the service runs is a `stop` line with no `failure` line. A failure that is a bug adds the report `mo run` would print after its line, except during replay. The report's values can quote these words, so anchor a search as `^mo serve: failure:`. Read journald with `journalctl -o cat`, so each line keeps its start. The lines have no timestamps. These line shapes are stable, and changing one is a breaking change. The words of `REASON` are not stable, so branch on the line's kind, on `NAME` and on the exit status. The token never appears in output, logs or errors.
 
 `mo serve` exits with one of these statuses:
 

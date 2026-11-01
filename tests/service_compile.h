@@ -6,6 +6,12 @@
 #include "program_fixture.h"
 #include "vm/vm.h"
 
+#include <string.h>
+
+static inline bool named(struct mo_bytecode_string name, const char *expected) {
+    return name.length == strlen(expected) && memcmp(name.bytes, expected, name.length) == 0;
+}
+
 static struct mo_image *compile(const char *source) {
     struct fixture f;
     init(&f, source);
