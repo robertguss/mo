@@ -119,7 +119,10 @@ def simulation(binary):
     tests = [r for r in records if r['record'] == 'result']
     assert all(r['outcome'] == 'passed' for r in tests), tests
     modules = collections.Counter(r['name'].split('.')[0] for r in tests)
-    assert modules == {'JobQueue': JOB_QUEUE_RESULTS, 'QueueTests': QUEUE_TEST_RESULTS}, modules
+    # Main, the queue's service, has no checks of its own besides its recovery check.
+    assert modules == {'JobQueue': JOB_QUEUE_RESULTS, 'QueueTests': QUEUE_TEST_RESULTS,
+                       'Main': 1}, modules
+    assert tests[-1]['name'] == 'Main.service.recovery' and tests[-1]['kind'] == 'recovery', tests
 
 
 def catalog(queue):

@@ -2313,6 +2313,21 @@ Exhausting the recording, edit-attempt or snapshot allowance preserves the confi
 and reports E1404. Reaching the subject-trial cap or deadline stops normally with the confirmed
 failure. None of these bounds claims that the result is minimal.
 
+**Recovery checks.** The same generator makes a service's recovery check
+(reference 12.5; the design is `services.md`, "Recovery check"). One input
+generator per tool, seeded by the check's full name `<Module>.service.recovery`,
+makes the tool's arguments, which tool signatures keep free of capabilities,
+function values and hidden types, so no builders or fakes take part. Values a
+reply returned are kept, one reply's together, and often replace generated
+arguments. `src/tools/recovery.c` makes the steps, runs each sequence through
+the simulated-service API in `vm/vm.h`, and compares each restart's recovered
+state with the state before its crash. A failing sequence shrinks by deleting
+steps, a crash with its restart, then by the input shrinker on each call's
+arguments, then by halving advances; each candidate reruns from a fresh store,
+within `MO_CLI_RECOVERY_SHRINK_RUNS` runs and the check's deadline. The shrunk
+sequence runs once more for its report, and must fail the same way, or the
+check reports E1404.
+
 ### 10.2 JSON output
 
 `mo check --json` and `mo test --json` write JSON Lines to standard output:
@@ -2332,10 +2347,11 @@ records may be added, and readers ignore what they don't know.
   span; `secondary`, a list of them; and `fixes`, the alternatives, each a
   `title` and its `edits`, applied together, each edit a `span` and the `text`
   that replaces it.
-- **`test`**, one per example, promise and test, written by `--list`: `name`,
-  `kind` and `span`, as in `result`.
-- **`result`**, one per example, promise and test run: `name`, its full name
-  (`bytecode.md` section 3.5); `kind`, `"example"`, `"promise"` or `"test"`;
+- **`test`**, one per example, promise, test and recovery check, written by
+  `--list`: `name`, `kind` and `span`, as in `result`.
+- **`result`**, one per example, promise, test and recovery check run: `name`,
+  its full name (`bytecode.md` section 3.5, or `<Module>.service.recovery`);
+  `kind`, `"example"`, `"promise"`, `"test"` or `"recovery"`;
   `span`; `outcome`, `"passed"`, `"failed"` or `"stopped"`; and
   `microseconds`, how long it took. A failed example, or a failed test whose
   `assert` compares with `==`, adds `left` and `right`, its two sides' values;
@@ -2351,6 +2367,13 @@ records may be added, and readers ignore what they don't know.
   For a promise, the `input` it stopped on, and `extreme`, when
   that input holds one of its type's extremes: the parameter's `name` and the
   extreme's `description`, such as `"Decimal's largest value"`.
+  A recovery check's `span` is its `service` block, and it adds `sequences`,
+  the sequences run, and `restarts`, the restarts compared, which depend on
+  machine speed unless `--calls` caps them. A failed one adds `steps`, `before`
+  and `after` or `refusal`, and `differ_at` when the two states print the same,
+  as `services.md` describes. A stopped one adds the start value's or
+  interval's `defect`: `reason`, optional `detail`, `span`, and empty `stack`
+  and `variables`, since the failure is copied out of the service.
 - **`totals`**, always last: `errors`, the diagnostics written, and
   `dropped`, those found past the limits a run keeps
   (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;

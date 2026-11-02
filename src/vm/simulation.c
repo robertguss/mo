@@ -18,6 +18,7 @@ struct mo_simulation {
     const struct mo_simulation_hooks *hooks;
     struct mo_heap *heap;
     struct mo_simulation_reply *reply;
+    uint64_t restarts; /* the supervisor's, a restart that stops included */
     bool replied, refused, delivered, stopped;
 };
 
@@ -43,6 +44,7 @@ static struct mo_service_time clock_now(void *context) {
 
 static void event(const struct mo_service_event *e, void *context) {
     struct mo_simulation *s = context;
+    s->restarts += e->kind == MO_SERVICE_RESTART;
     if (e->function != MO_NO_INDEX || e->reason == MO_SERVICE_STORE ||
         e->reason == MO_SERVICE_SAVED_INVALID)
         fail(s, e->function, e->time.now, e->reason, e->defect);
@@ -272,6 +274,11 @@ void mo_simulation_crash(struct mo_simulation *s) {
 bool mo_simulation_running(const struct mo_simulation *s) {
     MO_ASSERT(s != NULL);
     return s->loop != NULL && mo_service_running(s->loop);
+}
+
+uint64_t mo_simulation_restarts(const struct mo_simulation *s) {
+    MO_ASSERT(s != NULL);
+    return s->restarts;
 }
 
 bool mo_simulation_encode(struct mo_simulation *s, struct mo_buffer *out) {

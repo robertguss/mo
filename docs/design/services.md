@@ -607,13 +607,29 @@ shrinking stops at `add(1)`. The step forms are:
   when the supervisor acts, and `ServiceDown` when the service is down;
 - `advance 90s  2 timer firings`, with `, 1 failed` when a timer handler fails;
 - `crash`, and `restart` with `recovered the same state`, `recovered a different
-  state`, or `recovery refused the store:` and the reason.
+  state`, or `recovery refused the store:` and the reason;
+- outcomes the generator never causes print as `not admitted` (an argument or
+  message the service refused before any handler ran), `reply not copied`, and
+  `failed:` with the service's status.
 
-When the two states print the same but their bytes differ, as with a Map built
-in another order, the report adds the first differing byte offset of the saved
-encodings. When the start value or an interval fails at the first open, the
-check is reported as stopped, like a test that stops at a bug, with that
-failure's defect.
+After a refusal there is no state after the restart, so only the state before
+the crash is shown. When the two states print the same but their bytes differ,
+as with a Map built in another order or two NaNs, the report adds a last line,
+`the saved encodings first differ at byte N`. When the start value or an
+interval fails at the first open, the check is reported as stopped, like a test
+that stops at a bug, with that failure's defect and where it happened:
+
+```text
+stopped Main.service.recovery  counter.mo:3:1
+  bug: stop
+  detail: no start
+  in the start value  counter.mo:4:15
+```
+
+A failing timer interval reads `in the interval of timer Main.tick`. The rerun
+of a shrunk sequence that does not fail the same way, a checker that cannot
+start, and a deadline that ends before any restart is compared are E1404, with
+no result.
 
 **JSON.** A result's `kind` is `recovery`. It carries `sequences`, the
 sequences run, and `restarts`, the restarts compared, beside the usual name,
@@ -623,8 +639,12 @@ instead of `after` when recovery refused the store. A step's `action` is
 `send`, `advance`, `crash` or `restart`. A send has `tool`, `arguments` (texts),
 `outcome` (`replied`, `ToolFailed` or `ServiceDown`), `reply` when it replied,
 `committed`, and `supervisor` (`restarted` or `stopped`) when the supervisor
-acted. An advance has `by` and `firings`, and `failed_firings` when any
-failed. A restart has `recovered`: `same`, `different` or `refused`. The
+acted; the outcomes the generator never causes are `refused`, `reply_refused`
+and `failed`. An advance has `by`, a Duration's text such as `"90s"`, and
+`firings`, and `failed_firings` when any failed. A restart has `recovered`:
+`same`, `different` or `refused`. `differ_at` holds the byte offset when the
+two states print the same. A stopped check adds `defect`, as a stopped test
+does, with empty `stack` and `variables`. The
 counts depend on machine speed unless `--calls` caps them, so goldens set
 `--calls`. Commits replayed and snapshot crossings are not reported; the C
 tests that need them read the checker's counters. Readers skip unknown fields

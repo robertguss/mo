@@ -1131,6 +1131,94 @@ def promise_selection(binary):
         assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
 
 
+COUNTER = '''module Main
+
+service
+  state Int = 0
+  tools add, total
+  token from env "COUNTER_TOKEN"
+end
+
+struct Total
+  count: Int
+end
+
+fn add(state: Int, _now: Time, amount: Int) : (Int, Unit)
+  (state + amount, Unit)
+end
+
+fn total(state: Int, _now: Time) : Total
+  Total(count: state)
+end
+'''
+
+
+def recovery_checks(binary):
+    """Every service gets one recovery check, listed, selected, run and reported like the others
+    (reference 12.5 and 13.4). The failure report is tested in tests/test_recovery.c, and the
+    deadline that compares no restart in tests/test_deadline.c."""
+    queue = "services/task-queue/main.mo"
+    listed = run(binary, ["test", "--list", queue], 0).stdout.decode().splitlines()
+    assert listed[-1] == "Main.service.recovery" and "JobQueue.test.1" in listed, listed
+    assert len(listed) == len(set(listed)), listed
+    items = records(run(binary, ["test", "--list", "--json", "--in", "Main", queue], 0), "test")
+    assert [(r["name"], r["kind"]) for r in items[1:-1]] == [("Main.service.recovery", "recovery")]
+    span = items[1]["span"]
+    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 20), span
+    tests = "services/task-queue/queue-tests.mo"
+    listed = run(binary, ["test", "--list", "--in", "QueueTests", tests], 0).stdout.decode()
+    assert "QueueTests.test.1\n" in listed and "service" not in listed, listed
+    listed = run(binary, ["test", "--list", "--in", "Main", tests], 0).stdout
+    assert listed == b"Main.service.recovery\n", listed
+    # --only runs the one check; --calls caps its sequences, and JSON carries the counts.
+    items = records(run(binary, ["test", "--json", "--calls", "3", "--only",
+                                 "Main.service.recovery", queue], 0), "test")
+    assert len(items) == 3 and items[1]["kind"] == "recovery", items
+    result = items[1]
+    assert result["outcome"] == "passed" and result["sequences"] == 3, result
+    assert type(result["restarts"]) is int and result["restarts"] >= 3, result
+    assert "steps" not in result and "before" not in result, result
+    assert items[-1]["passed"] == 1 and items[-1]["status"] == 0, items
+
+    with tempfile.TemporaryDirectory(prefix="mo-recovery-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        # A service and nothing else is a program with one check to run, not a command mistake.
+        path.write_text(COUNTER)
+        expected = f"passed Main.service.recovery  {path}:3:1\n1 passed, 0 failed, 0 stopped\n"
+        first, second = (run(binary, ["test", str(path)], 0) for _ in range(2))
+        assert first.stdout == second.stdout == expected.encode() and not first.stderr, first
+        assert run(binary, ["test", "--list", str(path)], 0).stdout == b"Main.service.recovery\n"
+        items = records(run(binary, ["test", "--json", "--calls", "7", str(path)], 0), "test")
+        assert items[1]["sequences"] == 7 and items[1]["restarts"] >= 7, items
+        for selectors, message in (
+                (["--only", "Main.service.recover"],
+                 "--only does not name an example, promise, test or recovery check"),
+                (["--in", "Other"],
+                 "test selection matches no examples, promises, tests or recovery checks")):
+            result = run(binary, ["test", *selectors, str(path)], 2)
+            assert not result.stdout and result.stderr == f"{message}\n".encode(), result
+
+        # Beside a test, the check comes last; the test's own result keeps its shape.
+        path.write_text(COUNTER + 'test "adds"\n  now = Time.parse("2026-01-01T00:00:00Z") or stop "time"\n'
+                        '  assert add(1, now, 2) == (3, Unit)\nend\n')
+        items = records(run(binary, ["test", "--json", "--calls", "2", str(path)], 0), "test")
+        assert [(r["name"], r["kind"]) for r in items[1:-1]] == [
+            ("Main.test.1", "test"), ("Main.service.recovery", "recovery")], items
+        assert set(items[1]) == {"record", "name", "kind", "span", "outcome", "microseconds"}
+
+        # A start value that stops is the service's own failure: the check stops with it.
+        path.write_text(COUNTER.replace("state Int = 0", 'state Int = stop "no start"'))
+        result = run(binary, ["test", str(path)], 1)
+        assert result.stdout == (f"stopped Main.service.recovery  {path}:3:1\n"
+                                 "  bug: stop\n  detail: no start\n"
+                                 f"  in the start value  {path}:4:15\n"
+                                 "0 passed, 0 failed, 1 stopped\n").encode(), result
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        defect = items[1]["defect"]
+        assert items[1]["outcome"] == "stopped" and items[1]["restarts"] == 0, items
+        assert (defect["reason"], defect["detail"], defect["span"]["line"]) == ("stop", "no start", 4)
+
+
 def fix_command(binary):
     """`mo fix` applies every fix offered alone, checks again, and reports what is left (MO-48)."""
     with tempfile.TemporaryDirectory(prefix='mo-fix-') as directory:
@@ -1241,9 +1329,12 @@ def service_commands(binary):
             result = run(binary, [command, str(path)], 0, env=env)
             assert not result.stdout and not result.stderr, result
             assert path.read_text() == source
-        items = records(run(binary, ['test', '--json', str(path)], 0, env=env), 'test')
+        # Tests call the handlers as ordinary functions. Only the recovery check starts the
+        # service, so it alone meets the stopping start value; the token is never read.
+        items = records(run(binary, ['test', '--json', str(path)], 1, env=env), 'test')
         assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
-            ('Counter.test.1', 'passed')]
+            ('Counter.test.1', 'passed'), ('Counter.service.recovery', 'stopped')]
+        assert items[2]['defect']['detail'] == 'service initializer ran', items[2]
         result = run(binary, ['run', str(path)], 1, env=env)
         assert not result.stdout
         assert b'error E1408: mo run does not start services yet' in result.stderr
@@ -3759,7 +3850,8 @@ def guide_claims(binary):
          "still does not start a service (E1408).",
          "`mo check --emit=core FILE` shows the start value and timer intervals as ordinary "
          "functions but no service registration, so Core output alone cannot reconstruct a service.",
-         "`mo test` does not automatically start a service or read its token.",
+         "`mo test` never reads a service's token, and starts a service on its own only in the "
+         "service's recovery check, below.",
          "Tests and examples can explicitly start one with `Simulation.start(Module, at)`, "
          "send registered tools with `Simulation.send(handle, Module.tool, args...)`, "
          "advance its fake clock, and crash/restart through the real log and snapshot path "
@@ -3767,7 +3859,8 @@ def guide_claims(binary):
          "`send` returns the complete declared handler result inside another `Result`; "
          "an application `Error` is still inside `Ok`.",
          "Helpers may receive the handle.",
-         "Promise/generator support is deferred.",
+         "A promise whose inputs include a `Simulation` is E1400; promises over a service's "
+         "sequences of steps are deferred.",
          "Importing a service module does not start it.",
          "`mo fix` applies neither alternative.",
          "A `Result(State, E)` tool receives no fixes.",
@@ -3786,7 +3879,32 @@ def guide_claims(binary):
             'a service handler is generic',
             'A selected generic handler gets E0100, "a service handler is generic".')
     simulation = run(binary, ['test', 'tests/lower-source/service-simulation/main.mo'], 0)
-    assert not simulation.stderr and simulation.stdout.endswith(b"9 passed, 0 failed, 0 stopped\n")
+    assert not simulation.stderr and simulation.stdout.endswith(b"11 passed, 0 failed, 0 stopped\n")
+    refused = run(binary, ['test', 'tests/errors/e1400-simulation/main.mo'], 1)
+    assert b"error E1400: " in refused.stderr and b"promise" in refused.stderr, refused.stderr
+    says("`mo test` runs one recovery check for each service in the program, named after its "
+         "module, such as `Counter.service.recovery` (reference 12.5).",
+         "Its author writes nothing for it.",
+         "`--list` prints it after its module's other checks, and `--only` and `--in` select it.",
+         "It shares a promise's budget: `--seconds` bounds its time and `--calls` caps its "
+         "sequences.",
+         "For `counter.mo` under Run a service, `mo test counter.mo` prints "
+         "`passed Counter.service.recovery  counter.mo:3:1`, then `1 passed, 0 failed, 0 stopped`.",
+         "When the start value stops, the check stops with that bug.",
+         'When the deadline ends before the check compares a restart, `mo test` reports E1404, '
+         '"the deadline ended before the check compared a restart".',
+         "`mo test FILE` checks its examples, promises, tests and recovery checks.",
+         "1 when the program has errors or an example, promise, test or recovery check fails")
+    with tempfile.TemporaryDirectory(prefix="mo-guide-recovery-") as directory:
+        (pathlib.Path(directory) / "counter.mo").write_text(SERVE_COUNTER)
+        counter = subprocess.run([str(binary), "test", "counter.mo"], cwd=directory,
+                                 capture_output=True, timeout=30)
+        assert counter.returncode == 0 and not counter.stderr, counter
+        assert counter.stdout == (b"passed Counter.service.recovery  counter.mo:3:1\n"
+                                  b"1 passed, 0 failed, 0 stopped\n"), counter.stdout
+        listed = subprocess.run([str(binary), "test", "--list", "counter.mo"], cwd=directory,
+                                capture_output=True, timeout=30)
+        assert listed.stdout == b"Counter.service.recovery\n", listed
     with tempfile.TemporaryDirectory(prefix="mo-guide-") as directory:
         folder = pathlib.Path(directory)
         greet = folder / "greet.mo"
@@ -4096,6 +4214,7 @@ def check(binary):
     collection_promises(binary)
     composite_deadlines(binary)
     promise_selection(binary)
+    recovery_checks(binary)
     imported_constants(binary)
     fix_command(binary)
     items = records(run(faults, ["--json"], 1), "check")

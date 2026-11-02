@@ -951,8 +951,13 @@ def check_simulation_specs(driver, root, world):
     path.write_text(lowered.stdout)
     runs = simulation_results(driver.parent / 'mo', source)
     matched = boundary = 0
+    # Mo Core does not model services, so recovery checks have no Lean counterpart.
+    checks = [r['name'] for r in runs if r['kind'] == 'recovery']
+    assert checks == ['Main.service.recovery', 'Ticks.service.recovery'], checks
     for result in runs:
         assert result['outcome'] == 'passed', result
+        if result['kind'] == 'recovery':
+            continue
         actual = oracle(path, world, result['name'])
         if actual == ['stopped', 'Simulation is not modeled by mocore']:
             boundary += 1
@@ -961,7 +966,8 @@ def check_simulation_specs(driver, root, world):
             matched += 1
     assert (matched, boundary) == (1, 8), (matched, boundary)
     print(f'lower source simulation: {matched} runs matched; {boundary} reached '
-          'Simulation boundary runs excluded; 0 programs/functions excluded')
+          f'Simulation boundary runs excluded; {len(checks)} recovery checks excluded; '
+          '0 programs/functions excluded')
 
 
 def main():

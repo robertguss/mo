@@ -372,24 +372,34 @@ static uint32_t leaves(const struct mo_types *types, uint32_t type, struct mo_ce
     }
 }
 
-/* Keeps a reply's values for later arguments, as one group, evicting the oldest groups' values. */
-static void harvest(struct mo_recovery *r, uint32_t tool, enum mo_simulation_sent sent,
-                    const struct mo_simulation_reply *reply) {
-    uint32_t type = reply->type;
+struct mo_cell mo_recovery_reply(const struct mo_recovery *r, uint32_t tool,
+                                 enum mo_simulation_sent sent,
+                                 const struct mo_simulation_reply *reply, uint32_t *type) {
+    MO_ASSERT(tool < r->service->tool_count &&
+              (sent == MO_SENT_REPLIED || sent == MO_SENT_REJECTED));
+    *type = reply->type;
     struct mo_cell value = reply->reply;
     if (sent == MO_SENT_REPLIED && !r->service->tools[tool].read_only) {
         /* An update's result holds the new state then the reply, maybe inside Ok. */
-        const struct mo_type *t = &r->types->items[type];
+        const struct mo_type *t = &r->types->items[*type];
         if (t->kind == MO_TYPE_CHOICE) {
             MO_ASSERT(mo_cell_get_tag(value) == 0);
             value = mo_cell_get_payload(value);
-            type = t->cases[0].fields[0].type;
-            t = &r->types->items[type];
+            *type = t->cases[0].fields[0].type;
+            t = &r->types->items[*type];
         }
         MO_ASSERT(t->kind == MO_TYPE_TUPLE && t->parameter_count == 2);
         value = mo_value_field(value, 1);
-        type = t->parameters[1];
+        *type = t->parameters[1];
     }
+    return value;
+}
+
+/* Keeps a reply's values for later arguments, as one group, evicting the oldest groups' values. */
+static void harvest(struct mo_recovery *r, uint32_t tool, enum mo_simulation_sent sent,
+                    const struct mo_simulation_reply *reply) {
+    uint32_t type;
+    struct mo_cell value = mo_recovery_reply(r, tool, sent, reply, &type);
     struct pool_entry found[MO_CLI_RECOVERY_POOL];
     uint32_t count = leaves(r->types, type, value, found, MO_CLI_RECOVERY_POOL);
     if (count == 0)
@@ -529,6 +539,7 @@ struct trial {
     bool harvest;
     bool failed; /* failure holds the newest failure the service handed back */
     struct mo_recovery_failure failure;
+    uint32_t failed_firings;  /* timer handlers that failed during the current step */
     uint64_t committed, lost; /* this store's commits, and timer firings that committed nothing */
 };
 
@@ -543,8 +554,10 @@ static bool failed(const struct mo_simulation_failure *f, void *context) {
     struct trial *t = context;
     const struct mo_bytecode_service *service = t->recovery->service;
     t->failed = true;
-    t->failure =
-        (struct mo_recovery_failure){.status = f->status, .now = f->now, .function = f->function};
+    t->failure = (struct mo_recovery_failure){
+        .status = f->status, .now = f->now, .function = f->function, .span.file = MO_NO_INDEX};
+    if (f->defect != NULL)
+        t->failure.span = f->defect->span;
     if (f->defect != NULL && f->defect->reason != NULL)
         copy_text(t->failure.reason, sizeof t->failure.reason, f->defect->reason,
                   strlen(f->defect->reason));
@@ -557,7 +570,10 @@ static bool failed(const struct mo_simulation_failure *f, void *context) {
         t->failure.detail_length = length;
     }
     for (uint32_t i = 0; i < service->timer_count; i++)
-        t->lost += f->function == service->timers[i].function;
+        if (f->function == service->timers[i].function) {
+            t->lost++;
+            t->failed_firings++;
+        }
     /* Every failure is an ordinary step of the sequence, or ends it as an outcome. */
     return true;
 }
@@ -600,22 +616,31 @@ static enum mo_recovery_outcome run_step(struct trial *t, struct mo_recovery_ste
     struct mo_simulation_reply reply = {0};
     enum mo_recovery_outcome outcome = MO_RECOVERY_PASSED;
     bool replied = false, restarted = false;
+    t->failed_firings = 0;
     switch (step->kind) {
-    case MO_RECOVERY_SEND:
+    case MO_RECOVERY_SEND: {
+        bool running = mo_simulation_running(t->simulation);
+        uint64_t restarts = mo_simulation_restarts(t->simulation);
         step->sent = mo_simulation_send(t->simulation, &t->hooks, r->heap, step->tool,
                                         step->arguments, &reply);
         MO_ASSERT(step->sent != MO_SENT_STOPPED);
         step->status = reply.status;
         step->updated = reply.updated;
+        step->supervisor = running && !mo_simulation_running(t->simulation) ? MO_SUPERVISOR_STOPPED
+                           : mo_simulation_restarts(t->simulation) != restarts
+                               ? MO_SUPERVISOR_RESTARTED
+                               : MO_SUPERVISOR_NONE;
         t->committed += reply.updated;
         replied = step->sent == MO_SENT_REPLIED || step->sent == MO_SENT_REJECTED;
         break;
+    }
     case MO_RECOVERY_ADVANCE:
         step->outcome =
             mo_simulation_advance(t->simulation, &t->hooks, step->duration, &step->firings);
         MO_ASSERT(step->outcome != MO_SIMULATION_STOPPED);
         if (step->outcome == MO_SIMULATION_OK)
             t->committed += step->firings;
+        step->failed_firings = t->failed_firings;
         break;
     case MO_RECOVERY_CRASH:
         mo_buffer_clear(&out->before);
@@ -805,4 +830,186 @@ enum mo_recovery_outcome mo_recovery_replay(struct mo_recovery *r,
     }
     out->outcome = outcome;
     return outcome;
+}
+
+/* Shrinking. */
+
+struct shrink {
+    struct mo_recovery *recovery;
+    struct mo_recovery_sequence *best;
+    enum mo_recovery_outcome failure;
+    struct mo_deadline *deadline;
+    uint32_t runs;
+    bool ended; /* the budget or the deadline ran out, or memory did */
+};
+
+/* Copies from's steps into to, which is empty, leaving out the steps in [skip, end). false when
+ * an argument array cannot be allocated; to then holds the steps copied before it. */
+static bool copy_steps(struct mo_recovery *r, const struct mo_recovery_sequence *from,
+                       uint32_t skip, uint32_t end, struct mo_recovery_sequence *to) {
+    MO_ASSERT(to->count == 0);
+    for (uint32_t i = 0; i < from->count; i++) {
+        if (i >= skip && i < end)
+            continue;
+        const struct mo_recovery_step *step = &from->steps[i];
+        struct mo_recovery_step *copy = &to->steps[to->count];
+        *copy = (struct mo_recovery_step){
+            .kind = step->kind, .tool = step->tool, .duration = step->duration};
+        if (step->kind == MO_RECOVERY_SEND) {
+            const struct mo_bytecode_service_tool *tool = &r->service->tools[step->tool];
+            if (tool->argument_count != 0) {
+                copy->arguments =
+                    mo_arena_allocate_array(&to->arena, tool->argument_count,
+                                            sizeof *copy->arguments, _Alignof(struct mo_cell));
+                if (copy->arguments == NULL)
+                    return false;
+                for (uint32_t a = 0; a < tool->argument_count; a++)
+                    copy->arguments[a] =
+                        mo_value_dup(r->heap, tool->argument_types[a], step->arguments[a]);
+            }
+        }
+        to->count++;
+    }
+    return true;
+}
+
+/* Drops the steps from count on. */
+static void cut(struct mo_recovery *r, struct mo_recovery_sequence *sequence, uint32_t count) {
+    for (uint32_t i = count; i < sequence->count; i++) {
+        const struct mo_recovery_step *step = &sequence->steps[i];
+        if (step->kind != MO_RECOVERY_SEND)
+            continue;
+        const struct mo_bytecode_service_tool *tool = &r->service->tools[step->tool];
+        for (uint32_t a = 0; a < tool->argument_count; a++)
+            mo_value_drop(r->heap, tool->argument_types[a], step->arguments[a]);
+    }
+    sequence->count = count;
+}
+
+/* A copy of the best sequence without [skip, end), or false with candidate cleared. */
+static bool candidate_from(struct shrink *s, uint32_t skip, uint32_t end,
+                           struct mo_recovery_sequence *candidate) {
+    mo_recovery_sequence_init(candidate);
+    if (copy_steps(s->recovery, s->best, skip, end, candidate))
+        return true;
+    mo_recovery_sequence_clear(s->recovery, candidate);
+    s->ended = true;
+    return false;
+}
+
+/* Replays candidate when the budget allows. When it fails the same way, it becomes the best
+ * sequence, cut after its failing restart. Clears whichever loses. */
+static bool attempt(struct shrink *s, struct mo_recovery_sequence *candidate) {
+    struct mo_recovery *r = s->recovery;
+    bool fails = false;
+    if (s->runs == MO_CLI_RECOVERY_SHRINK_RUNS || !mo_deadline_running(s->deadline))
+        s->ended = true;
+    else {
+        s->runs++;
+        struct mo_recovery_result result;
+        fails = mo_recovery_replay(r, candidate, NULL, &result) == s->failure;
+        uint32_t step = result.step;
+        mo_recovery_result_free(r, &result);
+        if (fails) {
+            MO_ASSERT(step < candidate->count &&
+                      candidate->steps[step].kind == MO_RECOVERY_RESTART);
+            cut(r, candidate, step + 1);
+            struct mo_recovery_sequence old = *s->best;
+            *s->best = *candidate;
+            *candidate = old;
+        }
+    }
+    mo_recovery_sequence_clear(r, candidate);
+    return fails;
+}
+
+/* Steps a deletion removes together: a crash with its restart, or one step. */
+static uint32_t unit(const struct mo_recovery_sequence *sequence, uint32_t i) {
+    return sequence->steps[i].kind == MO_RECOVERY_CRASH ? 2 : 1;
+}
+
+/* Deletes runs of steps, halving their length down to one step or pair. */
+static bool delete_steps(struct shrink *s) {
+    bool progress = false;
+    for (uint32_t size = s->best->count / 2; size != 0 && !s->ended; size /= 2)
+        for (uint32_t i = 0; i < s->best->count && !s->ended;) {
+            uint32_t end = i;
+            while (end < s->best->count && end - i < size)
+                end += unit(s->best, end);
+            struct mo_recovery_sequence candidate;
+            if (!candidate_from(s, i, end, &candidate))
+                break;
+            if (attempt(s, &candidate))
+                progress = true;
+            else
+                i += unit(s->best, i);
+        }
+    return progress;
+}
+
+/* Simplifies each tool call's arguments with the input shrinker. */
+static bool shrink_arguments(struct shrink *s) {
+    struct mo_recovery *r = s->recovery;
+    bool progress = false;
+    for (uint32_t i = 0; i < s->best->count && !s->ended; i++) {
+        if (s->best->steps[i].kind != MO_RECOVERY_SEND)
+            continue;
+        uint32_t tool = s->best->steps[i].tool;
+        const struct mo_bytecode_service_tool *t = &r->service->tools[tool];
+        if (t->argument_count == 0)
+            continue;
+        struct mo_input_shrinker shrinker;
+        mo_input_shrink_init(&shrinker, &r->inputs[tool], MO_CLI_RECOVERY_SHRINK_RUNS);
+        while (!s->ended && i < s->best->count) {
+            struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
+            if (mo_input_shrink_next(&shrinker, s->best->steps[i].arguments, r->heap, arguments) !=
+                MO_INPUT_OK)
+                break;
+            struct mo_recovery_sequence candidate;
+            if (!candidate_from(s, s->best->count, s->best->count, &candidate)) {
+                for (uint32_t a = 0; a < t->argument_count; a++)
+                    mo_value_drop(r->heap, t->argument_types[a], arguments[a]);
+                break;
+            }
+            struct mo_cell *copied = candidate.steps[i].arguments;
+            for (uint32_t a = 0; a < t->argument_count; a++) {
+                mo_value_drop(r->heap, t->argument_types[a], copied[a]);
+                copied[a] = arguments[a];
+            }
+            bool fails = attempt(s, &candidate);
+            mo_input_shrink_feedback(&shrinker, fails);
+            progress |= fails;
+        }
+    }
+    return progress;
+}
+
+/* Halves each advance while the sequence still fails. */
+static bool shorten_advances(struct shrink *s) {
+    bool progress = false;
+    for (uint32_t i = 0; i < s->best->count && !s->ended; i++)
+        while (!s->ended && i < s->best->count && s->best->steps[i].kind == MO_RECOVERY_ADVANCE &&
+               s->best->steps[i].duration != 0) {
+            struct mo_recovery_sequence candidate;
+            if (!candidate_from(s, s->best->count, s->best->count, &candidate))
+                break;
+            candidate.steps[i].duration /= 2;
+            if (!attempt(s, &candidate))
+                break;
+            progress = true;
+        }
+    return progress;
+}
+
+uint32_t mo_recovery_shrink(struct mo_recovery *r, struct mo_recovery_sequence *sequence,
+                            enum mo_recovery_outcome failure, struct mo_deadline *deadline) {
+    MO_ASSERT(r != NULL && sequence != NULL && deadline != NULL);
+    MO_ASSERT(failure == MO_RECOVERY_MISMATCH || failure == MO_RECOVERY_REFUSED);
+    struct shrink s = {.recovery = r, .best = sequence, .failure = failure, .deadline = deadline};
+    for (bool progress = true; progress && !s.ended;) {
+        progress = delete_steps(&s);
+        progress |= shrink_arguments(&s);
+        progress |= shorten_advances(&s);
+    }
+    return s.runs;
 }

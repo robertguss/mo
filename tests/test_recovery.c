@@ -3,6 +3,7 @@
 #include "service_compile.h"
 #include "test.h"
 #include "tools/recovery.h"
+#include "tools/tests.h"
 
 /* A whole program from its entry file, with the toolchain's lib/ folder, as mo test compiles one.
  */
@@ -326,6 +327,7 @@ static void replay(void) {
 struct tally {
     uint64_t steps, sends, replied, rejected, tool_failed, down, refused, advances, restarts;
     uint64_t stops, compared_at_stop, compared_to_fixed, crossed;
+    uint64_t supervisor_restarts, supervisor_stops; /* as the steps recorded them */
     struct mo_buffer at_stop, fixed;
     bool stopped;
     uint32_t tools[4];
@@ -396,6 +398,8 @@ static void count(const struct mo_recovery_observation *o, void *context) {
         t->rejected += step->sent == MO_SENT_REJECTED;
         t->tool_failed += step->sent == MO_SENT_TOOL_FAILED;
         t->down += step->sent == MO_SENT_DOWN;
+        t->supervisor_restarts += step->supervisor == MO_SUPERVISOR_RESTARTED;
+        t->supervisor_stops += step->supervisor == MO_SUPERVISOR_STOPPED;
         t->refused += step->sent == MO_SENT_ARGUMENT || step->sent == MO_SENT_TOO_LARGE ||
                       step->sent == MO_SENT_REFUSED || step->sent == MO_SENT_REPLY_COPY ||
                       step->sent == MO_SENT_FAILED;
@@ -503,6 +507,8 @@ static void supervisor_stop(void) {
     struct mo_recovery_result result;
     CHECK(search(recovery, 400, 60, &hooks, &result) == MO_RECOVERY_PASSED);
     CHECK(t.tool_failed == t.sends - t.down && t.stops >= 5 && t.compared_at_stop == t.stops);
+    /* Each stop is a send's, and two restarts come before each stop's restart. */
+    CHECK(t.supervisor_stops == t.stops && t.supervisor_restarts >= 2 * t.stops);
     mo_recovery_result_free(recovery, &result);
     mo_recovery_free(recovery);
     tally_free(&t);
@@ -623,8 +629,338 @@ static void deterministic(void) {
     mo_image_free(image);
 }
 
+/* A failing timer handler is counted on the advance that fired it. */
+static void failed_firings(void) {
+    struct mo_image *image =
+        compile("module Main\nservice\nstate Int = 0\ntools read\n"
+                "every 1.minute tick\ntoken from env \"TOKEN\"\nend\n"
+                "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+                "fn tick(_state: Int, _now: Time) : Int\nstop \"tick\"\nend\n");
+    struct mo_recovery *recovery = checker(image, 0);
+    struct mo_recovery_sequence sequence;
+    mo_recovery_sequence_init(&sequence);
+    const struct mo_recovery_step steps[] = {{.kind = MO_RECOVERY_ADVANCE, .duration = 180000000},
+                                             {.kind = MO_RECOVERY_CRASH},
+                                             {.kind = MO_RECOVERY_RESTART}};
+    sequence.count = sizeof steps / sizeof steps[0];
+    memcpy(sequence.steps, steps, sizeof steps);
+    struct mo_recovery_result result;
+    CHECK(mo_recovery_replay(recovery, &sequence, NULL, &result) == MO_RECOVERY_PASSED);
+    CHECK(sequence.steps[0].firings == 3 && sequence.steps[0].failed_firings == 3);
+    mo_recovery_result_free(recovery, &result);
+    mo_recovery_sequence_clear(recovery, &sequence);
+    mo_recovery_free(recovery);
+    mo_image_free(image);
+}
+
+/* Shrinking a sequence that does not fail tries candidates within its run budget, keeps the
+ * sequence as it was and leaves nothing behind in the checker's heap. */
+static void shrink_keeps_passing(void) {
+    struct mo_image *image = compile(counter_service);
+    struct mo_recovery *recovery = checker(image, 0);
+    uint32_t add = tool_named(image, 0, "add");
+    struct mo_recovery_sequence sequence;
+    mo_recovery_sequence_init(&sequence);
+    struct mo_cell *n =
+        mo_arena_allocate_array(&sequence.arena, 2, sizeof *n, _Alignof(struct mo_cell));
+    MO_ASSERT(n != NULL);
+    n[0] = mo_cell_int(7);
+    n[1] = mo_cell_int(900);
+    const struct mo_recovery_step steps[] = {
+        {.kind = MO_RECOVERY_SEND, .tool = add, .arguments = &n[0]},
+        {.kind = MO_RECOVERY_ADVANCE, .duration = 90 * INT64_C(1000000)},
+        {.kind = MO_RECOVERY_CRASH},
+        {.kind = MO_RECOVERY_RESTART},
+        {.kind = MO_RECOVERY_SEND, .tool = add, .arguments = &n[1]},
+        {.kind = MO_RECOVERY_CRASH},
+        {.kind = MO_RECOVERY_RESTART}};
+    sequence.count = sizeof steps / sizeof steps[0];
+    memcpy(sequence.steps, steps, sizeof steps);
+    struct mo_deadline deadline;
+    MO_ASSERT(mo_deadline_start(&deadline, 600));
+    uint32_t runs = mo_recovery_shrink(recovery, &sequence, MO_RECOVERY_MISMATCH, &deadline);
+    CHECK(runs > sequence.count && runs <= MO_CLI_RECOVERY_SHRINK_RUNS);
+    CHECK(sequence.count == sizeof steps / sizeof steps[0]);
+    for (uint32_t i = 0; i < sequence.count; i++)
+        CHECK(sequence.steps[i].kind == steps[i].kind &&
+              sequence.steps[i].duration == steps[i].duration);
+    CHECK(mo_cell_get_int(sequence.steps[0].arguments[0]) == 7 &&
+          mo_cell_get_int(sequence.steps[4].arguments[0]) == 900);
+    mo_recovery_sequence_clear(recovery, &sequence);
+    mo_recovery_free(recovery);
+    mo_image_free(image);
+}
+
+/* An image of a fixture's program, which stays checked so its spans can be reported. */
+static struct mo_image *compile_fixture(struct fixture *f, const char *source) {
+    static const char *modules[] = {"Main"};
+    init(f, source);
+    MO_ASSERT(f->program != NULL && !mo_diags_any(&f->diags));
+    f->set.names = modules;
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_LOWER_WORK);
+    struct mo_services services;
+    struct mo_core *core =
+        mo_lower_services(&arena, f->program, &f->sources, &f->diags, NULL, &services);
+    MO_ASSERT(core != NULL && !mo_diags_any(&f->diags));
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    MO_ASSERT(mo_compile_services(core, &services, &wire, &f->diags));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    mo_buffer_free(&wire);
+    mo_arena_free(&arena);
+    return image;
+}
+
+/* Each step's reply, copied into the checker's heap as mo test keeps it for the report. */
+struct kept {
+    struct mo_recovery *recovery;
+    struct mo_cell values[MO_CLI_RECOVERY_STEPS];
+    uint32_t types[MO_CLI_RECOVERY_STEPS];
+};
+
+static void keep(const struct mo_recovery_observation *o, void *context) {
+    struct kept *k = context;
+    if (o->reply == NULL)
+        return;
+    uint32_t type;
+    struct mo_cell value =
+        mo_recovery_reply(k->recovery, o->step->tool, o->step->sent, o->reply, &type);
+    k->values[o->index] = mo_value_dup(mo_recovery_heap(k->recovery), type, value);
+    k->types[o->index] = type;
+}
+
+static void drop_kept(struct kept *k) {
+    for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
+        if (k->types[i] != MO_NO_INDEX)
+            mo_value_drop(mo_recovery_heap(k->recovery), k->types[i], k->values[i]);
+}
+
+static bool rendered(const struct mo_sources *sources, const struct mo_test_result *result,
+                     bool json, const char *expected) {
+    struct mo_buffer out;
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    bool ok = mo_render_test_result(sources, result, json, &out);
+    size_t length = strlen(expected);
+    /* JSON is compared from the outcome on, after the span's path bytes. */
+    const char *from = json ? "\"outcome\":" : "";
+    const uint8_t *at = out.bytes;
+    while (json && ok && (size_t)(at - out.bytes) + strlen(from) <= out.length &&
+           memcmp(at, from, strlen(from)) != 0)
+        at++;
+    size_t left = out.length - (size_t)(at - out.bytes);
+    ok = ok && left == length && memcmp(at, expected, length) == 0;
+    if (!ok)
+        (void)fprintf(stderr, "rendered %d:\n%.*s\nexpected:\n%s\n", ok, (int)out.length,
+                      (const char *)out.bytes, expected);
+    mo_buffer_free(&out);
+    return ok;
+}
+
+/* The design note's counter, whose recovery here is made to look as if it lost the newest log
+ * record: a failure's report numbers the steps, gives literal arguments, each step's outcome and
+ * both states. The runtime that really loses one is tested with the store loader's faults. */
+static void failure_report(void) {
+    struct fixture f;
+    struct mo_image *image = compile_fixture(
+        &f, "module Main\n\nservice\n  state Int = 0\n  tools add, total\n"
+            "  token from env \"COUNTER_TOKEN\"\nend\n\n"
+            "struct Total\n  count: Int\nend\n\n"
+            "fn add(state: Int, _now: Time, amount: Int) : (Int, Unit)\n"
+            "  (state + amount, Unit)\nend\n\n"
+            "fn total(state: Int, _now: Time) : Total\n  Total(count: state)\nend\n");
+    struct mo_recovery *recovery = checker(image, 0);
+    struct mo_heap *heap = mo_recovery_heap(recovery);
+    uint32_t state_type = mo_image_bytecode(image)->services[0].state_type;
+    struct mo_recovery_sequence sequence;
+    mo_recovery_sequence_init(&sequence);
+    struct mo_cell *amount =
+        mo_arena_allocate(&sequence.arena, sizeof *amount, _Alignof(struct mo_cell));
+    MO_ASSERT(amount != NULL);
+    *amount = mo_cell_int(1);
+    const struct mo_recovery_step steps[] = {
+        {.kind = MO_RECOVERY_SEND, .tool = tool_named(image, 0, "add"), .arguments = amount},
+        {.kind = MO_RECOVERY_SEND, .tool = tool_named(image, 0, "total")},
+        {.kind = MO_RECOVERY_ADVANCE, .duration = 1500000},
+        {.kind = MO_RECOVERY_CRASH},
+        {.kind = MO_RECOVERY_RESTART}};
+    sequence.count = sizeof steps / sizeof steps[0];
+    memcpy(sequence.steps, steps, sizeof steps);
+    struct kept kept = {.recovery = recovery};
+    for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
+        kept.types[i] = MO_NO_INDEX;
+    const struct mo_recovery_hooks hooks = {keep, &kept};
+    struct mo_recovery_result result;
+    CHECK(mo_recovery_replay(recovery, &sequence, &hooks, &result) == MO_RECOVERY_PASSED);
+    /* The recovered state reads 0, as if the add were lost. */
+    result.outcome = MO_RECOVERY_MISMATCH;
+    result.step = 4;
+    mo_buffer_clear(&result.after);
+    MO_ASSERT(mo_value_encode(heap, state_type, mo_cell_int(0), &result.after));
+    struct mo_recovery_report report = {.recovery = recovery,
+                                        .counts = {.sequences = 3, .restarts = 2},
+                                        .sequence = &sequence,
+                                        .result = &result,
+                                        .replies = kept.values,
+                                        .reply_types = kept.types};
+    const struct mo_observation observation = {.name = "Main.service.recovery",
+                                               .service = &f.program->services[0]};
+    struct mo_test_result test = {.observation = &observation,
+                                  .file = mo_image_bytecode(image),
+                                  .outcome = MO_FAILED,
+                                  .microseconds = 5,
+                                  .line.file = UINT32_MAX,
+                                  .recovery = &report};
+    CHECK(rendered(&f.sources, &test, false,
+                   "failed Main.service.recovery  main.mo:3:1\n"
+                   "  sequences: 3\n"
+                   "  1. add(1)  replied Unit, committed\n"
+                   "  2. total()  replied Total(count: 1)\n"
+                   "  3. advance 1.5s  0 timer firings\n"
+                   "  4. crash\n"
+                   "  5. restart  recovered a different state\n"
+                   "  state before step 4: 1\n"
+                   "  state after step 5: 0\n"));
+    CHECK(rendered(&f.sources, &test, true,
+                   "\"outcome\":\"failed\",\"microseconds\":5,\"sequences\":3,\"restarts\":2,"
+                   "\"steps\":[{\"action\":\"send\",\"tool\":\"add\",\"arguments\":[\"1\"],"
+                   "\"outcome\":\"replied\",\"reply\":\"Unit\",\"committed\":true},"
+                   "{\"action\":\"send\",\"tool\":\"total\",\"arguments\":[],"
+                   "\"outcome\":\"replied\",\"reply\":\"Total(count: 1)\",\"committed\":false},"
+                   "{\"action\":\"advance\",\"by\":\"1.5s\",\"firings\":0},"
+                   "{\"action\":\"crash\"},{\"action\":\"restart\",\"recovered\":\"different\"}],"
+                   "\"before\":\"1\",\"after\":\"0\"}\n"));
+
+    /* A handler failure the supervisor stopped on, and a refused recovery. */
+    mo_value_drop(heap, kept.types[1], kept.values[1]);
+    kept.types[1] = MO_NO_INDEX;
+    sequence.steps[1].sent = MO_SENT_TOOL_FAILED;
+    sequence.steps[1].supervisor = MO_SUPERVISOR_STOPPED;
+    sequence.steps[2].firings = 2;
+    sequence.steps[2].failed_firings = 1;
+    sequence.steps[4].outcome = MO_SIMULATION_DOWN;
+    result.outcome = MO_RECOVERY_REFUSED;
+    result.failure = (struct mo_recovery_failure){
+        .status = MO_SERVICE_SAVED_INVALID, .span.file = MO_NO_INDEX, .function = MO_NO_INDEX};
+    char expected[1024];
+    int written = snprintf(expected, sizeof expected,
+                           "failed Main.service.recovery  main.mo:3:1\n"
+                           "  sequences: 3\n"
+                           "  1. add(1)  replied Unit, committed\n"
+                           "  2. total()  ToolFailed, service stopped\n"
+                           "  3. advance 1.5s  2 timer firings, 1 failed\n"
+                           "  4. crash\n"
+                           "  5. restart  recovery refused the store: %s\n"
+                           "  state before step 4: 1\n",
+                           mo_service_status_text(MO_SERVICE_SAVED_INVALID));
+    MO_ASSERT(written > 0 && (size_t)written < sizeof expected);
+    CHECK(rendered(&f.sources, &test, false, expected));
+    written =
+        snprintf(expected, sizeof expected,
+                 "\"outcome\":\"failed\",\"microseconds\":5,\"sequences\":3,\"restarts\":2,"
+                 "\"steps\":[{\"action\":\"send\",\"tool\":\"add\",\"arguments\":[\"1\"],"
+                 "\"outcome\":\"replied\",\"reply\":\"Unit\",\"committed\":true},"
+                 "{\"action\":\"send\",\"tool\":\"total\",\"arguments\":[],"
+                 "\"outcome\":\"ToolFailed\",\"committed\":false,\"supervisor\":\"stopped\"},"
+                 "{\"action\":\"advance\",\"by\":\"1.5s\",\"firings\":2,\"failed_firings\":1},"
+                 "{\"action\":\"crash\"},{\"action\":\"restart\",\"recovered\":\"refused\"}],"
+                 "\"before\":\"1\",\"refusal\":\"%s\"}\n",
+                 mo_service_status_text(MO_SERVICE_SAVED_INVALID));
+    MO_ASSERT(written > 0 && (size_t)written < sizeof expected);
+    CHECK(rendered(&f.sources, &test, true, expected));
+
+    /* A pass shows no counts in text; JSON carries them. */
+    test.outcome = MO_RETURNED;
+    report.sequence = NULL;
+    CHECK(rendered(&f.sources, &test, false, "passed Main.service.recovery  main.mo:3:1\n"));
+    CHECK(rendered(&f.sources, &test, true,
+                   "\"outcome\":\"passed\",\"microseconds\":5,\"sequences\":3,"
+                   "\"restarts\":2}\n"));
+    drop_kept(&kept);
+    mo_recovery_result_free(recovery, &result);
+    mo_recovery_sequence_clear(recovery, &sequence);
+    mo_recovery_free(recovery);
+    mo_image_free(image);
+    free_fixture(&f);
+}
+
+/* States whose text is the same, as NaNs with different bits, also give the first byte that
+ * differs. */
+static void same_text(void) {
+    struct fixture f;
+    struct mo_image *image = compile_fixture(
+        &f, "module Main\nservice\nstate Float = 0.0\ntools read\ntoken from env \"T\"\nend\n"
+            "fn read(state: Float, _now: Time) : List(Float)\n[state]\nend\n");
+    struct mo_recovery *recovery = checker(image, 0);
+    struct mo_heap *heap = mo_recovery_heap(recovery);
+    uint32_t state_type = mo_image_bytecode(image)->services[0].state_type;
+    struct mo_recovery_sequence sequence;
+    mo_recovery_sequence_init(&sequence);
+    const struct mo_recovery_step steps[] = {{.kind = MO_RECOVERY_CRASH},
+                                             {.kind = MO_RECOVERY_RESTART}};
+    sequence.count = 2;
+    memcpy(sequence.steps, steps, sizeof steps);
+    struct mo_recovery_result result;
+    CHECK(mo_recovery_replay(recovery, &sequence, NULL, &result) == MO_RECOVERY_PASSED);
+    result.outcome = MO_RECOVERY_MISMATCH;
+    result.step = 1;
+    mo_buffer_clear(&result.before);
+    mo_buffer_clear(&result.after);
+    double one, other;
+    uint64_t bits = UINT64_C(0x7ff8000000000001);
+    memcpy(&one, &bits, sizeof one);
+    bits = UINT64_C(0x7ff8000000000002);
+    memcpy(&other, &bits, sizeof other);
+    MO_ASSERT(mo_value_encode(heap, state_type, mo_cell_float(one), &result.before) &&
+              mo_value_encode(heap, state_type, mo_cell_float(other), &result.after));
+    size_t at = 0;
+    while (result.before.bytes[at] == result.after.bytes[at])
+        at++;
+    uint32_t types[MO_CLI_RECOVERY_STEPS];
+    for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
+        types[i] = MO_NO_INDEX;
+    struct mo_recovery_report report = {.recovery = recovery,
+                                        .counts = {.sequences = 1},
+                                        .sequence = &sequence,
+                                        .result = &result,
+                                        .reply_types = types};
+    const struct mo_observation observation = {.name = "Main.service.recovery",
+                                               .service = &f.program->services[0]};
+    struct mo_test_result test = {.observation = &observation,
+                                  .file = mo_image_bytecode(image),
+                                  .outcome = MO_FAILED,
+                                  .line.file = UINT32_MAX,
+                                  .recovery = &report};
+    char expected[512];
+    int written = snprintf(expected, sizeof expected,
+                           "failed Main.service.recovery  main.mo:2:1\n"
+                           "  sequences: 1\n"
+                           "  1. crash\n"
+                           "  2. restart  recovered a different state\n"
+                           "  state before step 1: nan\n"
+                           "  state after step 2: nan\n"
+                           "  the saved encodings first differ at byte %zu\n",
+                           at);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof expected);
+    CHECK(rendered(&f.sources, &test, false, expected));
+    mo_recovery_result_free(recovery, &result);
+    mo_recovery_sequence_clear(recovery, &sequence);
+    mo_recovery_free(recovery);
+    mo_image_free(image);
+    free_fixture(&f);
+}
+
 static void run(void *unused) {
     (void)unused;
+    failed_firings();
+    shrink_keeps_passing();
+    failure_report();
+    same_text();
     comparison();
     replay();
     read_only();

@@ -17,6 +17,9 @@ enum mo_recovery_step_kind {
     MO_RECOVERY_RESTART
 };
 
+/* What the supervisor did after a SEND (D308). */
+enum mo_recovery_supervisor { MO_SUPERVISOR_NONE, MO_SUPERVISOR_RESTARTED, MO_SUPERVISOR_STOPPED };
+
 /* One step, and once it ran, what it did. */
 struct mo_recovery_step {
     enum mo_recovery_step_kind kind;
@@ -25,11 +28,13 @@ struct mo_recovery_step {
     struct mo_cell *arguments;
     int64_t duration; /* ADVANCE: microseconds */
     bool ran;
-    enum mo_simulation_sent sent;       /* SEND */
-    enum mo_service_status status;      /* SEND: the reply's status */
-    bool updated;                       /* SEND: the tool's update committed */
-    enum mo_simulation_outcome outcome; /* ADVANCE and RESTART */
-    uint64_t firings;                   /* ADVANCE: timer firings counted before any ran */
+    enum mo_simulation_sent sent;           /* SEND */
+    enum mo_service_status status;          /* SEND: the reply's status */
+    bool updated;                           /* SEND: the tool's update committed */
+    enum mo_recovery_supervisor supervisor; /* SEND */
+    enum mo_simulation_outcome outcome;     /* ADVANCE and RESTART */
+    uint64_t firings;                       /* ADVANCE: timer firings counted before any ran */
+    uint32_t failed_firings;                /* ADVANCE: firings whose timer handler failed */
 };
 
 /* Steps in order. Every crash is followed by its restart. Argument arrays come from arena. */
@@ -50,7 +55,8 @@ struct mo_recovery_failure {
     int64_t now;
     /* The start value, a timer's interval or handler, a replayed handler, or MO_NO_INDEX. */
     uint32_t function;
-    char reason[128]; /* the defect's reason, or empty; cut to fit */
+    struct mo_vm_span span; /* the defect's; file is MO_NO_INDEX when there is none */
+    char reason[128];       /* the defect's reason, or empty; cut to fit */
     char detail[MO_LIMIT_SIMULATION_REPORT];
     size_t detail_length; /* the defect's Text detail, cut to fit */
 };
@@ -128,6 +134,40 @@ MO_MUST_USE enum mo_recovery_outcome mo_recovery_replay(struct mo_recovery *reco
                                                         struct mo_recovery_sequence *sequence,
                                                         const struct mo_recovery_hooks *hooks,
                                                         struct mo_recovery_result *out);
+
+/* Shrinks sequence, which failed with failure (MISMATCH or REFUSED) at its last step: deletes
+ * steps, a crash always with its restart, then simplifies tool arguments with the input shrinker,
+ * then shortens advances, as long as any pass makes progress. Each candidate is replayed from a
+ * fresh store, and kept, cut after its failing restart, when it fails the same way. Arguments are
+ * literal values, so one an earlier reply supplied keeps its value when that step goes. At most
+ * MO_CLI_RECOVERY_SHRINK_RUNS replays, while deadline runs; returns how many ran. sequence's
+ * records of what each step did are stale afterwards; replay it to read them. */
+MO_MUST_USE uint32_t mo_recovery_shrink(struct mo_recovery *recovery,
+                                        struct mo_recovery_sequence *sequence,
+                                        enum mo_recovery_outcome failure,
+                                        struct mo_deadline *deadline);
+
+/* The part of a SEND's reply a report shows, borrowed from reply: an update's reply without its
+ * new state, or the whole result of a read-only tool or of a rejection. */
+MO_MUST_USE struct mo_cell mo_recovery_reply(const struct mo_recovery *recovery, uint32_t tool,
+                                             enum mo_simulation_sent sent,
+                                             const struct mo_simulation_reply *reply,
+                                             uint32_t *type);
+
+/* What mo test reports for one recovery check. */
+struct mo_recovery_report {
+    struct mo_recovery *recovery;
+    uint32_t service;                 /* its index in the image */
+    struct mo_recovery_counts counts; /* the search's, a failing sequence included */
+    /* A failure: the shrunk sequence and its last run, which failed at result->step. STOPPED:
+     * result holds the failure and sequence is NULL. */
+    const struct mo_recovery_sequence *sequence;
+    const struct mo_recovery_result *result;
+    /* Per step of sequence: the reply a SEND showed, of type reply_types[i], in the checker's
+     * heap; MO_NO_INDEX when it showed none. */
+    const struct mo_cell *replies;
+    const uint32_t *reply_types;
+};
 
 enum mo_recovery_compared { MO_RECOVERY_EQUAL, MO_RECOVERY_DIFFERENT, MO_RECOVERY_UNREADABLE };
 /* The oracle, after a restart: replaces after with the live state's saved encoding, and compares

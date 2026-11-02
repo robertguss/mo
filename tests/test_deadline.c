@@ -6,7 +6,9 @@
 
 #include <errno.h>
 #include <locale.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* Substitute only the POSIX clock edge, never VM outcomes or call ordering. */
 int mo_cli_deadline_clock(clockid_t clock, struct timespec *now);
@@ -14,6 +16,7 @@ static struct timespec instant;
 static bool unavailable;
 static long step;
 static time_t fail_at;
+static time_t jump; /* whole seconds each read moves the clock on */
 
 int mo_cli_deadline_clock(clockid_t clock, struct timespec *now) {
     MO_ASSERT(clock == CLOCK_MONOTONIC);
@@ -22,6 +25,7 @@ int mo_cli_deadline_clock(clockid_t clock, struct timespec *now) {
         return -1;
     }
     *now = instant;
+    instant.tv_sec += jump;
     instant.tv_nsec += step;
     if (instant.tv_nsec >= 1000000000) {
         instant.tv_sec++;
@@ -47,6 +51,47 @@ int main(int argc, char *argv[]) {
         }
         return mo_cli_execute(&cli, stdout, stderr);
     }
+    /* A recovery check whose deadline has passed by its first poll compared no restart: that is
+     * E1404, not a pass. */
+    char folder[] = "/tmp/mo-deadline-XXXXXX", path[64], output[64], errors[64];
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    MO_ASSERT(snprintf(path, sizeof path, "%s/main.mo", folder) > 0 &&
+              snprintf(output, sizeof output, "%s/out", folder) > 0 &&
+              snprintf(errors, sizeof errors, "%s/err", folder) > 0);
+    FILE *source = fopen(path, "w");
+    MO_ASSERT(source != NULL);
+    MO_ASSERT(
+        fputs("module Main\nservice\nstate Int = 0\ntools add\ntoken from env \"T\"\nend\n"
+              "fn add(state: Int, _now: Time, n: Int) : (Int, Unit)\n(state + n, Unit)\nend\n",
+              source) >= 0 &&
+        fclose(source) == 0);
+    instant = (struct timespec){17, 0};
+    jump = 3;
+    const char *arguments[] = {"mo", "test", path};
+    struct mo_cli cli;
+    const char *error;
+    MO_ASSERT(mo_cli_parse(3, arguments, &cli, &error));
+    FILE *out = fopen(output, "w+"), *err = fopen(errors, "w+");
+    MO_ASSERT(out != NULL && err != NULL);
+    CHECK(mo_cli_execute(&cli, out, err) == 1);
+    char text[4096] = "";
+    rewind(out);
+    CHECK(fread(text, 1, sizeof text - 1, out) == 0);
+    rewind(err);
+    size_t length = fread(text, 1, sizeof text - 1, err);
+    text[length] = '\0';
+    char expected[256];
+    MO_ASSERT(snprintf(expected, sizeof expected,
+                       "error E1404: the deadline ended before the check compared a restart  "
+                       "%s:2:1\n",
+                       path) > 0);
+    CHECK(strncmp(text, expected, strlen(expected)) == 0);
+    CHECK(strstr(text, "Main.service.recovery") != NULL && strstr(text, "passed") == NULL);
+    MO_ASSERT(fclose(out) == 0 && fclose(err) == 0);
+    MO_ASSERT(unlink(path) == 0 && unlink(output) == 0 && unlink(errors) == 0 &&
+              rmdir(folder) == 0);
+    jump = 0;
+
     instant = (struct timespec){7, 900000000};
     struct mo_deadline deadline;
     CHECK(mo_deadline_start(&deadline, 2));
