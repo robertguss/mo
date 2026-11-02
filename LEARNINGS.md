@@ -29,6 +29,24 @@
 - An SSH tunnel to a loopback `mo serve` must use the same local port number,
   or the client sends `Host: 127.0.0.1:OTHER` and gets 421.
 
+## The deployed queue
+
+- `mo serve` answers `tools/call` with no `initialize` first, so a one-request
+  curl is a health check.
+- systemd 255's `systemctl kill -s SIGKILL UNIT` errors about auxiliary
+  processes; `--kill-whom=main` kills the main process cleanly.
+- `NRestarts` counts only automatic restarts since the last start. A manual
+  `systemctl start` or `restart`, or a reboot, sets it back to 0, so an idle
+  check also compares the main PID and the boot list.
+- Reaching exit 69 takes 15 handler failures in quick succession: five within
+  a minute restart the service, and three restarts stop it.
+- `git` as an ordinary user refuses a root-owned clone ("dubious ownership");
+  read `/opt/mo/$SHA` with `sudo git`.
+- `aurora-but-gold`'s SSH key is not on Robert's exe.dev account, so it cannot
+  SSH to another exe.dev VM. Relay through the Mac, which can.
+- `pkill -f PATTERN` inside `ssh HOST '...'` also matches the remote shell,
+  whose command line contains the pattern, and kills it mid-command.
+
 ## The task-queue service
 
 - Whatever `submit` accepts, `lease` has to return. A reply carries a payload

@@ -46,7 +46,8 @@ made in the other by hand.
 
 It runs on one of Robert's exe.dev VMs (D258). The VM's disk is persistent (local NVMe, streamed
 to an off-machine backup), so the saved state survives restarts and updates, and the exe.dev
-proxy terminates TLS, so Mo needs no TLS of its own.
+proxy terminates TLS, so Mo needs no TLS of its own. `docs/ops/task-queue.md` is the runbook
+that installs and runs it, and `docs/status/phase3-run.md` records the deployment.
 
 ## 4. The service model
 
