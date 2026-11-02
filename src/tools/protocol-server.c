@@ -206,7 +206,6 @@ bool mo_protocol_request_process(struct mo_protocol_server *s, struct protocol_c
     if (c->process == NULL)
         return false;
     mo_process_confidential(c->process);
-    mo_process_account_stack(c->process);
     mo_scratch_init(&c->scratch, mo_process_heap(c->process));
     return true;
 }
@@ -373,7 +372,6 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
     if (s->catalog_process == NULL)
         goto fail;
     mo_process_confidential(s->catalog_process);
-    mo_process_account_stack(s->catalog_process);
     struct mo_heap *heap = mo_process_heap(s->catalog_process);
     mo_scratch_init(&s->catalog_scratch, heap);
     uint32_t list_type = mo_protocol_function(s, PF_AUTHORITY)->parameters[0].type;
