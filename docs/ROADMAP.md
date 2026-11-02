@@ -19,18 +19,21 @@ Phases 0 to 2 are finished, and Phase 3 is the current phase.
 
 ## Now
 
-Phase 3, Services. Ten of its thirteen build tasks have merged: the `service`
-block, its bytecode descriptor, the in-process runtime, SQLite saving and
-recovery, simulation in tests, MCP over HTTP, and `mo serve`. The phase is done
-when the last item below passes. The PR that does an item ticks it here.
+Phase 3, Services. Eleven of its thirteen build tasks have merged: the
+`service` block, its bytecode descriptor, the in-process runtime, SQLite saving
+and recovery, simulation in tests, MCP over HTTP, `mo serve`, and the task-queue
+service. The phase is done when the last item below passes. The PR that does an
+item ticks it here.
 
-- [ ] The task-queue service: `services/task-queue/main.mo` from
+- [x] The task-queue service: `services/task-queue/main.mo` from
       `docs/design/services.md` section 5, with simulation tests and one
       `drivers` check that runs it over loopback.
 - [ ] Deployment on an exe.dev VM: a systemd unit that restarts after a crash
       but not after a deliberate stop (exit 69), a one-page runbook under
       `docs/ops/`, the proxy route, the MCP client line for agent threads, and
-      a 48-hour idle check with no restart.
+      a 48-hour idle check with no restart. It runs a pinned build outside any
+      working checkout, because `mo` reads `lib/` from the path set at build
+      time and a changed `lib/` refuses the saved data.
 - [ ] The week-long run: the queue is the task list, every agent thread leases
       its task from it, at least 10 leases, a deliberate `kill -9` mid-week,
       and no accepted job lost. Recorded in `docs/status/phase3-run.md`.

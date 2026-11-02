@@ -11,7 +11,7 @@
 #                     prims.def and hostops.def, and names only their lines
 #   make tidy         check that results of standard-library calls are used (needs clang-tidy)
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
-#                     the grammar's own tests, examples/ and the reference's examples
+#                     the grammar's own tests, examples/, services/ and the reference's examples
 #   make formal       build Mo Core in Lean (formal/) and check every proof (needs elan)
 #   make cbmc         prove the bytecode reader, the arena, the verifier's transfer
 #                     functions, the primitives' arithmetic and UTF-8, lexical path
@@ -76,6 +76,7 @@ GRAMMAR_CHECK = $(1) --fragment grammar/tests/good/*.mo && \
 	$(1) --fragment --expect-error grammar/tests/bad/*.mo && \
 	$(1) --expect-error grammar/tests/bad-files/*.mo && \
 	$(1) examples/*.mo && \
+	$(1) services/task-queue/*.mo && \
 	$(1) docs/reference/README.md
 
 objects = $(patsubst %.c,$(1)/%.o,$(2))

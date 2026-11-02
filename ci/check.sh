@@ -221,6 +221,8 @@ if have python3; then
 				python3 ci/check_cli.py "$driver"
 			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
 				python3 ci/check_simulation.py "$driver"
+			later "Task queue: simulation tests and the real service over loopback ($driver)" \
+				python3 ci/check_task_queue.py "$driver"
 		done
 		for driver in "${drivers[@]}"; do
 			later "Reference examples: check every block and run complete programs ($driver)" \
