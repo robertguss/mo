@@ -19,12 +19,13 @@ Phases 0 to 2 are finished, and Phase 3 is the current phase.
 
 ## Now
 
-Phase 3, Services. Ten of its thirteen build tasks have merged: the `service`
-block, its bytecode descriptor, the in-process runtime, SQLite saving and
-recovery, simulation in tests, MCP over HTTP, and `mo serve`. The phase is done
-when the last item below passes. The PR that does an item ticks it here.
+Phase 3, Services. Eleven of its thirteen build tasks have merged: the
+`service` block, its bytecode descriptor, the in-process runtime, SQLite saving
+and recovery, simulation in tests, MCP over HTTP, `mo serve`, and the task-queue
+service. The phase is done when the last item below passes. The PR that does an
+item ticks it here.
 
-- [ ] The task-queue service: `services/task-queue/main.mo` from
+- [x] The task-queue service: `services/task-queue/main.mo` from
       `docs/design/services.md` section 5, with simulation tests and one
       `drivers` check that runs it over loopback.
 - [ ] Deployment on an exe.dev VM: a systemd unit that restarts after a crash

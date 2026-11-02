@@ -32,7 +32,7 @@ make                       # build build/<compiler>/debug/mo (CC=cc by default -
 make test CC=gcc           # build and run every unit test (each tests/test_*.c is its own program)
 make sanitize CC=clang     # the same tests under ASan + UBSan
 make -j8 build/gcc/debug/tests/test_check.test.run CC=gcc   # build and run ONE test file
-make grammar               # executable grammar (bison) over grammar/tests, examples/, the reference
+make grammar               # executable grammar (bison) over grammar/tests, examples/, services/, the reference
 make deps                  # module include rules (table at the top of ci/deps.sh)
 make library-map           # docs/design/library.md vs src/base/prims.def and hostops.def
 make format / format-check # clang-format; use clang-format 14.0.6, newer versions can differ
