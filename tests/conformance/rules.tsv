@@ -171,8 +171,14 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.4/2		e0050-simulation-dot,e0050-simulation-operation,e0055-simulation-value,e0055-simulation-start,e0055-simulation-send,e0055-simulation-advance,e0055-simulation-crash,e0055-simulation-restart,e0100-simulation-start,e0100-simulation-send			ci/check_simulation.py:main,tests/test_program.c:simulation_inputs,tests/test_service_store.c:simulation_persistence
 12.4/3					ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence
 12.4/4					ci/check_simulation.py:main,tests/test_program.c:simulation_inputs
-12.4/5		tst-simulation-admission			ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence,tests/test_service_store.c:simulation_admission
+12.4/5		tst-simulation-admission,e1400-simulation			ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence,tests/test_service_store.c:simulation_admission
 12.4/6	cap-console-fake,cap-files-fake	e0098-printed
+12.5/1				The recovery check is not built yet. Every service, its name and that the author writes nothing: ci/check_cli.py:recovery_checks and the service goldens' expected output will cover it.
+12.5/2				The recovery check is not built yet. Generated tool calls, advances, crashes and restarts, reused reply values and the final crash and restart: tests/test_recovery.c will cover it, including the task queue reaching a Dead job, a lease after expiry and an acknowledgement after a restart.
+12.5/3				The recovery check is not built yet. The comparison of encoded states before a crash and after recovery: tests/test_recovery.c will cover it, and tests/test_recovery_faults.c's runtime that drops the newest log record must fail it.
+12.5/4				The recovery check is not built yet. The outcome of each event: tests/test_recovery.c will cover the ordinary steps; tests/test_recovery_faults.c will cover the refusal, with a runtime that repeats a log record; ci/check_cli.py:recovery_checks will cover a start value that stops.
+12.5/5				The recovery check is not built yet. Listing, selection, the shared deadline, the sequence cap and E1404 without a compared restart: ci/check_cli.py:recovery_checks will cover it.
+12.5/6				The recovery check is not built yet. Shrinking, the rerun and the numbered report: tests/test_recovery_faults.c and ci/check_cli.py:recovery_checks will cover it.
 13.1/1	ref-evaluation			
 13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop		ci/check_cli.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random
 13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images

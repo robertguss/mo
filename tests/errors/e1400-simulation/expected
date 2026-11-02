@@ -1,0 +1,12 @@
+error E1400: this build cannot generate inputs for this promise  tests/errors/e1400-simulation/main.mo:14:3
+
+  14 |   promise "it gives n back"
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^
+  15 |     result == n
+     | ^^^^^^^^^^^^^^^
+     | ...
+  17 |     forbids _sim: Simulation.start(Main, t0), n: 1, result: 2
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  18 |   end
+     | ^^^^^ Main.echo.promise.1
+

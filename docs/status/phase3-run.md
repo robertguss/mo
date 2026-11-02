@@ -54,3 +54,42 @@ The 48-hour window started with `systemctl restart task-queue` at
 
 First `stats`, 2026-11-02 13:18:17 UTC: total 1, ready 0, leased 0, done 1,
 dead 0, limit 5000.
+
+## Predictions for the recovery checks
+
+Written on 2026-11-02, before the recovery check in `mo test` or the kill loop
+existed, so before any run of either. Results go in their own section when the
+checks run, and a prediction that turns out wrong stays here as written.
+
+- The task queue's recovery check, `Main.service.recovery` on
+  `services/task-queue/main.mo`, passes on the unmodified runtime on a gcc debug
+  build within the default 2 seconds, with at least one restart compared.
+- A runtime whose recovery drops the newest log record fails the comparison.
+  Its counterexample shrinks to three steps: a tool call that commits an
+  update, a crash, a restart. On the counter service that is `add(1)`, crash,
+  restart, with state 1 before the crash and 0 after it.
+- A runtime whose recovery repeats the newest log record fails because recovery
+  refuses the store at the restart, not because the states differ. Its
+  counterexample shrinks to the same three steps.
+- The kill loop finds no update whose reply the driver received missing after a
+  restart, and no update sent without a reply half-applied: each unanswered
+  `submit` is there once or not at all.
+- The short seeded kill loop in the `drivers` group finishes in under a minute.
+
+Guesses, held less firmly:
+
+- No service fixture in the repository fails the comparison: not
+  `tests/lower-source/service-simulation`, whose `defect` and `busy` tools make
+  the supervisor restart and stop it, not `tests/golden/tst-simulation-admission`,
+  and not `tests/service-simulation/task-queue.mo`.
+- `tests/golden/service-read-only`, whose start value is `stop`, reports its
+  recovery check as stopped, so its expected output and status change. That
+  golden says service initialization must not run during tests, so the change
+  needs a decision, not only new expectations.
+- The task queue's check runs between 20 and 500 sequences in 2 seconds on a
+  gcc debug build, and at least one sequence crosses the 100-commit snapshot
+  boundary through its one-minute timer.
+- Byte equality raises no false alarm where Mo `==` would agree, because replay
+  rebuilds Maps and Sets in the order the live run built them.
+- The long kill loop lands some kills mid-commit, leaving
+  `service.sqlite-journal` behind, in every run of 100 kills or more.
