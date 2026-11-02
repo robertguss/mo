@@ -2510,8 +2510,9 @@ local Lean build (`make formal`) and proofs. Robert approves merges. Nightly
 failures are visible in Actions; email delivery depends on the recipient's
 GitHub Actions notification settings, not on the workflow.
 
-The recorded hour-long fuzz runs cover 30 targets plus the large IO variant.
-CBMC covers the reader,
+The hour-long fuzz runs (MO-53, 18 Oct 2026) covered the 22 targets of the
+time plus the large-bytecode variant, 23 runs with no crash; targets added
+since have had only smoke runs. CBMC covers the reader,
 arena, verifier transfer functions, arithmetic and UTF-8, paths, reference
 count updates and hash probing within the bounds in `cbmc/README.md` (D274).
 These are bounded results, not proofs of the whole VM. One million generated
