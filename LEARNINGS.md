@@ -1,5 +1,28 @@
 # Learnings
 
+## The exe.dev proxy and MCP clients
+
+- exe.dev's proxy reaches a server listening on 127.0.0.1 only, from
+  127.0.0.1, so `mo serve` needs no wider listener behind it. It forwards
+  `Host: VM.exe.xyz` with no port, adds `X-Forwarded-For` (the client IP twice),
+  `X-Forwarded-Host` and `X-Forwarded-Proto: https`, and passes a public route's
+  `Authorization: Bearer` through byte for byte. Hence `--allow-host VM.exe.xyz`.
+- First request heads through the proxy, Authorization included with a
+  43-character token: curl 377 bytes, Claude Code 2.1.309 463, Codex 0.164.0
+  391. Each is well under the 1 KiB head limit.
+- Claude Code 2.1.309 first posts `server/discover` at protocol 2026-07-28 and
+  falls back to `initialize` when that is refused. It expands
+  `'Authorization: Bearer ${QUEUE_TOKEN}'` from its environment and stores the
+  reference, not the value. Codex sends its token from `bearer_token_env_var`.
+- `claude mcp list` connects to each server, which makes it a cheap health check.
+  `codex exec -c 'mcp_servers.NAME.url="..."'` tries a server without editing
+  `config.toml`.
+- Codex on `aurora-but-gold` is a bare `/usr/local/bin/codex` without its
+  `codex-code-mode-host` companion, so every tool call fails there before it
+  reaches an MCP server. The Homebrew cask on the Mac ships both.
+- An SSH tunnel to a loopback `mo serve` must use the same local port number,
+  or the client sends `Host: 127.0.0.1:OTHER` and gets 421.
+
 ## The task-queue service
 
 - Whatever `submit` accepts, `lease` has to return. A reply carries a payload

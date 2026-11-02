@@ -159,6 +159,10 @@ static void parse_serve(void) {
     CHECK(mo_cli_parse(7, happy, &cli, &error));
     CHECK(cli.command == MO_COMMAND_SERVE && cli.file_count == 1 && cli.port == 8080);
     CHECK(strcmp(mo_cli_file(&cli, 0), "main.mo") == 0 && strcmp(cli.data, "state") == 0);
+    CHECK(cli.allow_host == NULL);
+    const char *proxied[] = {"mo",     "serve", "main.mo",      "--allow-host",
+                             "q.example:8000", "--port", "1", "--data", "state"};
+    CHECK(mo_cli_parse(9, proxied, &cli, &error) && strcmp(cli.allow_host, "q.example:8000") == 0);
     const char *first[] = {"mo", "serve", "--data", "state", "--port", "0", "main.mo"};
     CHECK(mo_cli_parse(7, first, &cli, &error) && cli.port == 0);
     const char *highest[] = {"mo", "serve", "main.mo", "--port", "65535", "--data", "state"};
@@ -191,6 +195,14 @@ static void parse_serve(void) {
             "--data", "state");
     REFUSED("flag is not accepted by this command: \"--max-heap\"", "--max-heap", "1MiB", "main.mo",
             "--port", "1", "--data", "state");
+    REFUSED("flag may be given only once (except --only): \"--allow-host\"", "main.mo", "--port",
+            "1", "--data", "state", "--allow-host", "a", "--allow-host", "b");
+    REFUSED("flag needs a nonempty value: \"--allow-host\" \"-a\"", "main.mo", "--port", "1",
+            "--data", "state", "--allow-host", "-a");
+    REFUSED("flag needs a nonempty value: \"--allow-host\"", "main.mo", "--port", "1", "--data",
+            "state", "--allow-host");
+    const char *wrong_host[] = {"mo", "run", "--allow-host", "a", "main.mo"};
+    refused(5, wrong_host, "flag is not accepted by this command: \"--allow-host\"");
     const char *wrong_port[] = {"mo", "run", "--port", "1", "main.mo"};
     refused(5, wrong_port, "flag is not accepted by this command: \"--port\"");
     const char *wrong_data[] = {"mo", "emit", "--data", "state", "main.mo", "-o", "x"};

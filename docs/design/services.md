@@ -551,8 +551,11 @@ timers remain unaffected. Both checks follow E0101 across all services (D328).
 `mo serve FILE --port N --data DIR` (D331) runs the entry module's service. It
 compiles, initializes and checks anchors as `mo run` does, then
 `src/tools/serve.c` opens the listener and the store and polls the server. The
-flags are only `--port` and `--data`. It binds 127.0.0.1 and allows the
-authorities `127.0.0.1:PORT` and `localhost:PORT`, using the bound port.
+flags are `--port`, `--data` and `--allow-host NAME`. It binds 127.0.0.1 and
+allows the authorities `127.0.0.1:PORT` and `localhost:PORT`, using the bound
+port, plus `NAME` when given, for a proxy that forwards its public name.
+`HttpAuthority.check` refuses a malformed `NAME` as a configuration refusal.
+Authorities are not in the image key, so the flag never refuses saved data.
 
 `DIR` must exist and is never created, so a mistyped path cannot start an empty
 queue. The database is always `DIR/service.sqlite`, created mode 0600 under a temporary
