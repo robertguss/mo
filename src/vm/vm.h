@@ -50,7 +50,6 @@ MO_MUST_USE struct mo_process *mo_process_new(const struct mo_image *image,
                                               const struct mo_limits *limits);
 void mo_process_free(struct mo_process *process);
 void mo_process_confidential(struct mo_process *process);
-void mo_process_account_stack(struct mo_process *process);
 MO_MUST_USE size_t mo_process_memory_used(const struct mo_process *process);
 MO_MUST_USE size_t mo_process_memory_peak(const struct mo_process *process);
 MO_MUST_USE struct mo_heap *mo_process_heap(struct mo_process *process);

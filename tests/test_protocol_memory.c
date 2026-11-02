@@ -163,7 +163,6 @@ static unsigned headers(struct mo_image *image, uint32_t parse, unsigned fault, 
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
     mo_process_confidential(process);
-    mo_process_account_stack(process);
     mo_process_instruction_limit(process, budget);
     struct mo_heap *heap = mo_process_heap(process);
     const struct mo_bytecode_function *function = &mo_image_bytecode(image)->functions[parse];
@@ -205,7 +204,6 @@ static void request_budget(struct mo_image *image, uint32_t chunk) {
         struct mo_process *process = mo_process_new(image, &limits);
         MO_ASSERT(process != NULL);
         mo_process_confidential(process);
-        mo_process_account_stack(process);
         mo_process_instruction_limit(process, MO_LIMIT_MCP_HEADER_WORK);
         struct mo_heap *heap = mo_process_heap(process);
         struct mo_cell bytes[] = {mo_cell_byte('0'), mo_cell_byte('\r'), mo_cell_byte('\n')};
