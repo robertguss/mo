@@ -182,6 +182,8 @@ ssh $HOST 'sudo cat /etc/task-queue/env' | ssh CLIENT 'install -d -m 0700 ~/.con
 ```
 
 On a client whose shell is bash, put that last line in `~/.bashrc` instead.
+Every shell on the client, including an agent's, then holds the token, so never
+print the environment (`env`, `printenv`, `set`) in an agent session.
 Then start a new shell and add the server. Both lines name the variable, and
 the stored config keeps the name, not the value.
 
