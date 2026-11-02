@@ -22,75 +22,75 @@ To upgrade, see Upgrade below.
 
 ## Install
 
-1. The route. From a machine signed in to exe.dev, point the proxy at port 8000
-   and make the route public. Mo's token is the only gate.
+Step 1. The route. From a machine signed in to exe.dev, point the proxy at port 8000
+and make the route public. Mo's token is the only gate.
 
-   ```sh
-   ssh exe.dev share port VM 8000
-   ssh exe.dev share set-public VM
-   ```
+```sh
+ssh exe.dev share port VM 8000
+ssh exe.dev share set-public VM
+```
 
-2. The pinned tree, built in place. The build bakes in `/opt/mo/$SHA`, so it
-   must never move.
+Step 2. The pinned tree, built in place. The build bakes in `/opt/mo/$SHA`, so it
+must never move.
 
-   ```sh
-   sudo git clone --quiet https://github.com/robertguss/mo /opt/mo/$SHA
-   sudo git -C /opt/mo/$SHA checkout --quiet --detach $SHA
-   sudo make -C /opt/mo/$SHA -j"$(nproc)" CC=gcc build/gcc/debug/mo
-   sudo chown -R root:root /opt/mo/$SHA
-   sudo chmod -R a-w /opt/mo/$SHA
-   ```
+```sh
+sudo git clone --quiet https://github.com/robertguss/mo /opt/mo/$SHA
+sudo git -C /opt/mo/$SHA checkout --quiet --detach $SHA
+sudo make -C /opt/mo/$SHA -j"$(nproc)" CC=gcc build/gcc/debug/mo
+sudo chown -R root:root /opt/mo/$SHA
+sudo chmod -R a-w /opt/mo/$SHA
+```
 
-3. The user and the data folder. Create the folder once, by hand: `mo serve`
-   never creates one, so a missing folder stops the queue instead of starting
-   an empty one.
+Step 3. The user and the data folder. Create the folder once, by hand: `mo serve`
+never creates one, so a missing folder stops the queue instead of starting
+an empty one.
 
-   ```sh
-   sudo useradd --system --no-create-home --shell /usr/sbin/nologin taskqueue
-   sudo install -d -m 0700 -o taskqueue -g taskqueue /var/lib/task-queue
-   ```
+```sh
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin taskqueue
+sudo install -d -m 0700 -o taskqueue -g taskqueue /var/lib/task-queue
+```
 
-4. The token. It is generated straight into a root-only file and is never
-   printed, echoed, typed or pasted. An agent's transcript is a log, so a token
-   shown to an agent is a leaked token.
+Step 4. The token. It is generated straight into a root-only file and is never
+printed, echoed, typed or pasted. An agent's transcript is a log, so a token
+shown to an agent is a leaked token.
 
-   ```sh
-   sudo install -d -m 0700 -o root -g root /etc/task-queue
-   sudo sh -c 'umask 077; python3 -c "import secrets; print(\"QUEUE_TOKEN=\" + secrets.token_urlsafe(32))" > /etc/task-queue/env'
-   ```
+```sh
+sudo install -d -m 0700 -o root -g root /etc/task-queue
+sudo sh -c 'umask 077; python3 -c "import secrets; print(\"QUEUE_TOKEN=\" + secrets.token_urlsafe(32))" > /etc/task-queue/env'
+```
 
-5. The unit. systemd restarts the queue after a crash and leaves it down after
-   a supervised stop, a startup refusal or `systemctl stop`.
+Step 5. The unit. systemd restarts the queue after a crash and leaves it down after
+a supervised stop, a startup refusal or `systemctl stop`.
 
-   ```sh
-   sudo tee /etc/systemd/system/task-queue.service >/dev/null <<EOF
-   [Unit]
-   Description=Mo task queue
-   After=network.target
-   StartLimitIntervalSec=600
-   StartLimitBurst=5
+```sh
+sudo tee /etc/systemd/system/task-queue.service >/dev/null <<EOF
+[Unit]
+Description=Mo task queue
+After=network.target
+StartLimitIntervalSec=600
+StartLimitBurst=5
 
-   [Service]
-   User=taskqueue
-   Group=taskqueue
-   EnvironmentFile=/etc/task-queue/env
-   ExecStart=/opt/mo/$SHA/build/gcc/debug/mo serve /opt/mo/$SHA/services/task-queue/main.mo --port 8000 --data /var/lib/task-queue --allow-host $HOST
-   Restart=on-failure
-   RestartPreventExitStatus=1 2 69
-   RestartSec=5s
-   TimeoutStopSec=40s
-   ProtectSystem=strict
-   ReadWritePaths=/var/lib/task-queue
-   PrivateTmp=yes
-   ProtectHome=yes
-   NoNewPrivileges=yes
+[Service]
+User=taskqueue
+Group=taskqueue
+EnvironmentFile=/etc/task-queue/env
+ExecStart=/opt/mo/$SHA/build/gcc/debug/mo serve /opt/mo/$SHA/services/task-queue/main.mo --port 8000 --data /var/lib/task-queue --allow-host $HOST
+Restart=on-failure
+RestartPreventExitStatus=1 2 69
+RestartSec=5s
+TimeoutStopSec=40s
+ProtectSystem=strict
+ReadWritePaths=/var/lib/task-queue
+PrivateTmp=yes
+ProtectHome=yes
+NoNewPrivileges=yes
 
-   [Install]
-   WantedBy=multi-user.target
-   EOF
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now task-queue
-   ```
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload
+sudo systemctl enable --now task-queue
+```
 
 ## Run and check
 
@@ -117,7 +117,8 @@ printf 'Authorization: Bearer %s\n' "$QUEUE_TOKEN" |
 ```
 
 The token goes through `printf`, a shell builtin, so it never appears in a
-process list or in shell history. A wrong token gets status 401.
+process list or in shell history. A wrong token gets an empty reply; add
+`-w '%{http_code}\n'` to see its status, 401.
 
 ## When it stops
 
@@ -125,7 +126,8 @@ process list or in shell history. A wrong token gets status 401.
 | --- | --- | --- |
 | killed by a signal, or 70 | yes, after 5 s | Nothing. Saved data is intact. Do the after-outage check. |
 | 69 | no | Supervision stopped the service. Read the `failure:` lines, then follow the agent guide's Recover from a stop. |
-| 1 | no | E1409 or a program error; restarting cannot help. Read the journal. A missing or unreadable `/etc/task-queue/env` is E1409 naming `QUEUE_TOKEN`. |
+| 1 | no | E1409 or a program error; restarting cannot help. Read the journal. An env file without a valid `QUEUE_TOKEN` is E1409 naming it. |
+| systemd `Result=resources` | 5 tries, then stops | `/etc/task-queue/env` is missing or unreadable, so `mo` never ran. Restore the file, then `sudo systemctl reset-failed task-queue` and start it. |
 | 2 | no | A mistake in `ExecStart`. Fix the unit. |
 | 0 | no | Someone ran `systemctl stop`. Start it when they are done. |
 
@@ -148,8 +150,9 @@ for filter in Dead Leased; do
 done
 ```
 
-A Leased job whose lease outlived the outage returns to Ready by itself within a
-minute. A Dead job stays dead until someone resubmits its work.
+When a reply is a `response_limit` error, halve `limit`; when `next` is not
+`None`, pass its value as `after` for the next page. A Leased job whose lease
+outlived the outage returns to Ready by itself within a minute. A Dead job stays dead until someone resubmits its work.
 
 ## Why an idle queue still writes
 
@@ -178,6 +181,7 @@ ssh $HOST 'sudo cat /etc/task-queue/env' | ssh CLIENT 'install -d -m 0700 ~/.con
   echo "[ -r ~/.config/task-queue/env.sh ] && . ~/.config/task-queue/env.sh" >> ~/.zshenv'
 ```
 
+On a client whose shell is bash, put that last line in `~/.bashrc` instead.
 Then start a new shell and add the server. Both lines name the variable, and
 the stored config keeps the name, not the value.
 
@@ -194,8 +198,9 @@ call it, as with `-c 'mcp_servers.task-queue.tools.stats.approval_mode="approve"
 ## Rotate the token
 
 Generate a new token with Install step 4, `sudo systemctl restart task-queue`,
-then repeat the first client command on every client and start new shells.
-Threads that hold the old token get 401 until they restart.
+then on every client repeat the Clients section's first two commands, or the
+relay, without the line that edits `~/.zshenv`, and start new shells. Threads
+that hold the old token get 401 until they restart.
 
 ## Upgrade
 
@@ -273,6 +278,23 @@ and every job still listed):
 ```sh
 sudo systemctl kill --kill-whom=main -s SIGKILL task-queue; sleep 8
 systemctl show task-queue -p ActiveState -p NRestarts
+```
+
+A crash that exits 70, such as a failed save, with the queue's own restart
+settings (expect `ExecMainStatus=70` and `NRestarts=5`: systemd restarts it
+until the start limit, then leaves it failed):
+
+```sh
+sed -e 's|^Description=.*|Description=Mo task queue exit-70 drill|' \
+    -e 's|^ExecStart=.*|ExecStart=/bin/sh -c "exit 70"|' \
+    -e '/^\[Install\]/,$d' /etc/systemd/system/task-queue.service |
+  sudo tee /etc/systemd/system/task-queue-exit70.service >/dev/null
+sudo systemctl daemon-reload
+sudo systemctl start task-queue-exit70; sleep 40
+systemctl show task-queue-exit70 -p ActiveState -p Result -p NRestarts -p ExecMainStatus
+sudo systemctl reset-failed task-queue-exit70
+sudo rm /etc/systemd/system/task-queue-exit70.service
+sudo systemctl daemon-reload
 ```
 
 A deliberate stop (expect exit 0 and inactive, with no restart), then start it

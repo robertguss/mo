@@ -24,9 +24,11 @@ Deployed 2026-11-02 by following `docs/ops/task-queue.md` on the queue VM.
 | Drill | Observed |
 | --- | --- |
 | SIGKILL to the main process | Active again 5 s later under a new PID (1822 → 1876), `NRestarts` 0 → 1. Drill job 1, submitted before the kill, still listed. A second kill with the runbook's fixed command: 1876 → 1901, `NRestarts` 1 → 2 |
+| A copy of the unit whose `ExecStart` exits 70 (`task-queue-exit70`, removed after) | Restarted every 5 s: `NRestarts=5`, `ExecMainStatus=70`, then `failed` at the start limit. Added after review, because SIGKILL alone would also pass under `Restart=on-abnormal` |
 | Drill unit, `halt` called until the supervisor stopped it | 15 `failure: halt` lines, `restart: 1 of 3` to `3 of 3`, then `mo serve: stop: service handler failed`. Exit 69, unit `failed`, `NRestarts=0` |
 | Drill unit with no `QUEUE_TOKEN` | One start, `error E1409: mo serve could not read the token from environment variable QUEUE_TOKEN`, exit 1, unit `failed`, `NRestarts=0` |
 | `systemctl stop task-queue` | `mo serve: stop: a signal asked the service to stop`, exit 0, `inactive`, no restart. `systemctl start` brought back job 1 and reset `NRestarts` to 0 |
+| A copy of the unit pointed at a missing env file (`tq-envtest`, removed after) | `mo` never ran: `Result=resources`, `NRestarts=5`, then `failed` at the start limit. The real queue was untouched |
 | Reboot | New boot `7162c7a9`. The queue started at boot, at 13:16:58 UTC, the same second as the boot's first journal entry, and listed job 1 |
 | Health call through the public URL | `stats` answered |
 | Wrong token through the public URL | 401 |
