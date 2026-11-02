@@ -83,7 +83,7 @@ use JobQueue{Queue, Job, QueueError}
 
 service
   state Queue = JobQueue.empty
-  tools submit, lease, heartbeat, acknowledge, fail, list
+  tools submit, lease, heartbeat, acknowledge, fail, list, stats
   every 1.minute expire
   token from env "QUEUE_TOKEN"
 end
@@ -101,7 +101,10 @@ end
 `main.mo` differs from the first sketch of this section in three ways, because its surface freezes
 with its saved data:
 
-- `list` is a sixth tool, read-only and paged. It is the only way to see the queue, and after a
+- `stats` counts jobs in each state against the job limit without reading payloads, so a
+  coordinator can check the queue's health in one call. Adding it later would have meant a fresh
+  data folder.
+- `list` is read-only and paged. It is the only way to see the queue's jobs, and after a
   program change only state a tool returns can be carried over.
 - `submit` returns a `Result`. It refuses a payload over 2,048 bytes, which `lease` could otherwise
   fail to deliver inside the 32 KiB reply limit, and refuses past 5,000 jobs, before the saved

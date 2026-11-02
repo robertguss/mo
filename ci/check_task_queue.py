@@ -17,7 +17,7 @@ import time
 FOLDER = 'services/task-queue'
 TOKEN = 'TaskQueueCanary42'
 JOB_QUEUE_RESULTS = 23
-QUEUE_TEST_RESULTS = 22
+QUEUE_TEST_RESULTS = 23
 DESCRIPTION_LIMIT = 4096
 INT = {'type': 'string', 'pattern': '^-?[0-9]+$'}
 INITIALIZE = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
@@ -133,12 +133,13 @@ def catalog(queue):
         if cursor is None:
             break
     assert [tool['name'] for tool in tools] == ['submit', 'lease', 'heartbeat', 'acknowledge',
-                                                'fail', 'list'], tools
+                                                'fail', 'list', 'stats'], tools
     for tool in tools:
         assert 0 < len(tool['description']) <= DESCRIPTION_LIMIT, tool['name']
     schemas = {tool['name']: tool['inputSchema'] for tool in tools}
     lease = {'id': INT, 'attempt': INT}
     for name, properties in (('submit', {'payload': {'type': 'string'}}), ('lease', {}),
+                             ('stats', {}),
                              ('heartbeat', lease), ('acknowledge', lease), ('fail', lease)):
         schema = schemas[name]
         assert schema['type'] == 'object' and schema['additionalProperties'] is False, schema
@@ -172,6 +173,10 @@ def lifecycle(queue):
     assert queue.ok('acknowledge', id='1', attempt='1') is None
     assert queue.job('1') == {'id': '1', 'payload': 'write the runbook', 'attempts': '1',
                               'state': {'case': 'Done'}}
+    counted = queue.ok('stats')
+    assert sorted(counted) == ['dead', 'done', 'leased', 'limit', 'now', 'ready', 'total'], counted
+    assert {key: value for key, value in counted.items() if key != 'now'} == {
+        'total': '1', 'ready': '0', 'leased': '0', 'done': '1', 'dead': '0', 'limit': '5000'}, counted
     page = queue.ok('list', filter={'case': 'Done'}, after='0', limit='100')
     assert sorted(page) == ['jobs', 'next', 'now'] and page['next'] == {'case': 'None'}, page
     assert abs(parsed(page['now']) - datetime.datetime.now(datetime.timezone.utc)) < \

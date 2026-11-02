@@ -20,6 +20,10 @@
   set at build time, so a comment added to `lib/list.mo` in that checkout refuses
   a service's saved data at its next start, with the service and the binary
   unchanged.
+- At 5,000 jobs, four `List.count` passes with a closure each went over a
+  handler's 1,048,576-instruction budget and failed the call; one `for` loop over
+  the jobs fits. The full-queue simulation test is what catches this, so any new
+  handler that walks every job belongs in it.
 - `mo serve` has no fake clock. Lease expiry is proved in Simulation; the loopback
   check covers wire shapes, size limits and recovery after `kill -9`.
 

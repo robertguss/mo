@@ -1,7 +1,7 @@
 ## Simulation tests for the task queue. They live apart from the service so that
 ## editing a test cannot change the program that is served.
 module QueueTests
-use Main{JobFilter, Page, PageError, SubmitError}
+use Main{JobFilter, Page, PageError, Stats, SubmitError}
 use JobQueue{Job, QueueError}
 
 t0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"
@@ -24,6 +24,11 @@ end
 
 fn job(sim: Simulation, id: Int) : Job
   page(sim, AllJobs, id - 1, 1).jobs.first or stop "no such job"
+end
+
+fn stats(sim: Simulation) : Stats
+  return counted if Simulation.send(sim, Main.stats) is Ok(counted)
+  stop "stats was refused"
 end
 
 fn acknowledged?(sim: Simulation, job: Job) : Bool
@@ -227,6 +232,7 @@ test "each filter lists only its own jobs, and paging skips the rest"
   for (filter, size) in filters
     assert page(sim, filter, 0, 100).jobs.size == size
   end
+  assert stats(sim) == Stats(total: 5, ready: 2, leased: 1, done: 1, dead: 1, limit: 5000, now: t0)
   assert page(sim, Dead, 0, 100).jobs.map(fn(item) item.id end) == [dead]
   assert page(sim, Done, 0, 100).jobs.map(fn(item) item.id end) == [done]
   assert page(sim, Leased, 0, 100).jobs.map(fn(item) item.id end) == [leased]
@@ -337,4 +343,17 @@ test "a full queue refuses submit for good and everything else keeps working"
   Simulation.advance(sim, 30.minutes)
   assert job(sim, third.id).state == JobQueue.Ready
   assert page(sim, AllJobs, 4900, 100).jobs.size == 100
+  assert page(sim, Dead, 0, 100).jobs == []
+  assert stats(sim) ==
+    Stats(total: 5000, ready: 4999, leased: 0, done: 1, dead: 0, limit: 5000, now: t0 + 30.minutes)
+end
+
+test "stats counts a lease past its time as leased until the tick returns it"
+  sim = Simulation.start(Main, t0)
+  _id = submit(sim, "slow")
+  _taken = lease(sim)
+  assert stats(sim).leased == 1
+  Simulation.advance(sim, 30.minutes)
+  assert stats(sim) ==
+    Stats(total: 1, ready: 1, leased: 0, done: 0, dead: 0, limit: 5000, now: t0 + 30.minutes)
 end

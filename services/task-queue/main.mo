@@ -3,7 +3,7 @@
 ## meaning this program, job-queue.mo, lib/ or the compiler's output, refuses the
 ## saved data of a running queue.
 module Main
-expose JobFilter(..), Page(..), PageError(..), SubmitError(..)
+expose JobFilter(..), Page(..), PageError(..), Stats(..), SubmitError(..)
 use JobQueue{Queue, Job, QueueError}
 
 max_payload_bytes = 2048
@@ -14,7 +14,7 @@ full_advice = "This limit counts every job ever submitted and never falls, so re
 
 service
   state Queue = JobQueue.empty
-  tools submit, lease, heartbeat, acknowledge, fail, list
+  tools submit, lease, heartbeat, acknowledge, fail, list, stats
   every 1.minute expire
   token from env "QUEUE_TOKEN"
 end
@@ -39,6 +39,16 @@ end
 struct Page
   jobs: List(Job)
   next: Option(Int)
+  now: Time
+end
+
+struct Stats
+  total: Int
+  ready: Int
+  leased: Int
+  done: Int
+  dead: Int
+  limit: Int
   now: Time
 end
 
@@ -167,6 +177,7 @@ end
 ## on the last page; otherwise pass `next.value` as `after`. `now` is the service's
 ## clock, for reading each lease's `until`.
 ## To read one job, use filter {"case":"AllJobs"}, `after` id - 1 and `limit` 1.
+## To count jobs without reading payloads, use `stats`.
 ## response_limit: lower `limit` and call again. A limit of 1 always fits.
 ## BadPage: fix the arguments.
 ## Never pass a job's id and attempts from here to `heartbeat`, `acknowledge` or
@@ -186,6 +197,42 @@ fn list(queue: Queue, now: Time, filter: JobFilter, after: Int, limit: Int) : Re
   page = matching.take(limit)
   next = if matching.size > limit: page.last.map(fn(job) job.id end) else: None
   Ok(Page(jobs: page, next: next, now: now))
+end
+
+## Counts the jobs in each state, and changes nothing. Safe to retry, and cheap:
+## it returns no payloads. Every Int in the reply is a JSON string.
+## `total` counts every job ever submitted, including Done and Dead, because jobs
+## are never removed. `submit` refuses once `total` reaches `limit`, and that never
+## changes, so tell a person when `total` gets close to `limit`.
+## `leased` includes leases whose time has passed but that the one-minute expiry
+## tick has not returned yet. `now` is the service's clock.
+## A coordinator can call this at the start of each cycle, then list Dead jobs
+## with `list` when `dead` has grown.
+## Never repeat a call that got handler_failed, work_limit or memory_limit: it
+## can stop the service for everyone.
+fn stats(queue: Queue, now: Time) : Stats
+  var ready = 0
+  var leased = 0
+  var done = 0
+  var dead = 0
+  for job in JobQueue.jobs(queue)
+    case job.state
+      JobQueue.Ready: ready += 1
+      JobQueue.Leased(until: _): leased += 1
+      JobQueue.Done: done += 1
+      JobQueue.Dead: dead += 1
+    end
+  end
+  total = ready + leased + done + dead
+  Stats(
+    total: total,
+    ready: ready,
+    leased: leased,
+    done: done,
+    dead: dead,
+    limit: max_jobs,
+    now: now
+  )
 end
 
 fn expire(queue: Queue, now: Time) : Queue
