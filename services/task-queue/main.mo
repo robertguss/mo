@@ -67,7 +67,9 @@ end
 ## Leases the oldest ready task for 30 minutes and counts an attempt. Replies
 ## {"case":"None"} when nothing is ready, and nothing will notify you. To look
 ## without taking anything, use `list`. Do not call this in a tight loop.
-## {"case":"Some","value":job} gives you the job. Pass `job.id` as `id` and
+## {"case":"Some","value":job} gives you the job. A job is {"id","payload",
+## "attempts","state"}, and `state` is {"case":"Ready"}, {"case":"Leased","fields":
+## {"until":time}}, {"case":"Done"} or {"case":"Dead"}. Pass `job.id` as `id` and
 ## `job.attempts` as `attempt` to the other tools, and keep both somewhere that
 ## survives losing your context: no tool gives them back. The lease ends at
 ## `job.state.fields.until`. Call `heartbeat` about every 10 minutes.
@@ -79,12 +81,17 @@ end
 ## lease runs out and another worker repeats the task. Acknowledge at hand-off.
 ## Not safe to retry: after a lost reply the job stays held by nobody until the
 ## lease ends, and one attempt is spent.
+## A tool's own refusal is {"error":{"kind":"application","value":{"case":...}}}.
+## A runtime error is {"error":{"kind":"runtime","code":...,"message":...,
+## "effect":...}}, where `effect` says what this call did to the queue: none,
+## applied or unknown. It does not say whether a retry is safe.
 ## What to do about runtime errors, on every tool:
 ## - busy, rate_limited: wait, then retry.
 ## - invalid_arguments: fix the call; do not repeat it.
-## - handler_failed, work_limit, memory_limit: never repeat the call. Five of
-##   those in 60 seconds restart the service, and three restarts stop it for
-##   everyone until a person starts it.
+## - handler_failed, work_limit, memory_limit: never repeat the call, and tell a
+##   person. Five of those in 60 seconds restart the service, and three restarts
+##   stop it for everyone until a person starts it. With effect none, your lease
+##   still ends when it did, so keep working inside it.
 ## - store_failed, or no reply at all: the outcome is unknown, so treat it as a
 ##   lost reply for that tool.
 ## - stopped: the service is down until a person starts it. Stop calling and keep
@@ -152,13 +159,16 @@ end
 ## All three arguments are required. `filter` is {"case":"X"}, where X is AllJobs,
 ## Ready, Leased, Done or Dead. `after` is an id: jobs with larger ids are listed,
 ## so start at "0". `limit` is 1 to 100.
-## The reply has `jobs`, `next` and `now`. `next` is {"case":"None"} on the last
-## page; otherwise pass its value as `after`. `now` is the service's clock, for
-## reading each lease's `until`.
+## The reply has `jobs`, `next` and `now`. A job is {"id","payload","attempts",
+## "state"}, and `state` is {"case":"Ready"}, {"case":"Leased","fields":
+## {"until":time}}, {"case":"Done"} or {"case":"Dead"}. `next` is {"case":"None"}
+## on the last page; otherwise pass `next.value` as `after`. `now` is the service's
+## clock, for reading each lease's `until`.
 ## To read one job, use filter {"case":"AllJobs"}, `after` id - 1 and `limit` 1.
 ## response_limit: lower `limit` and call again. A limit of 1 always fits.
 ## BadPage: fix the arguments.
-## Do not use an id and attempt read here unless `lease` gave them to you.
+## Never pass a job's id and attempts from here to `heartbeat`, `acknowledge` or
+## `fail` unless `lease` gave that job to you.
 ## A dead job's only way back is `submit` with its payload, which makes a new job;
 ## name the old id in the new payload, because the dead record stays listed.
 ## Never repeat a call that got handler_failed, work_limit or memory_limit: it
