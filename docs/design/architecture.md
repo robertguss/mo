@@ -263,7 +263,7 @@ they still pass the parse, tree-equality and idempotence gates. No other referen
 blocks, examples or library samples are exempt.
 
 The drivers group also runs `ci/check_format.py` over every Git-tracked `.mo`
-file, including nested tests, goldens, benchmarks and learnability sessions.
+file, including nested tests, goldens and benchmarks.
 It applies the tree contract to every parseable input, then runs the real CLI
 twice on disposable copies. Refused inputs must remain unchanged; accepted
 inputs must be idempotent. Before and after formatting the whole corpus, checker
@@ -274,7 +274,9 @@ locations and bug-stack byte offsets are ignored; program stdout is byte-exact.
 Modules refused with E0079 have no main to run. Golden cases additionally use
 their recorded command, arguments and stdin, and the baseline must match the
 recorded exit status and stdout. A timeout or process signal fails the check.
-No tracked source is rewritten, including frozen tasks and sessions.
+No tracked source is rewritten, including frozen tasks. Session logs of the
+learnability rounds are in the evidence release, not in git
+(`learnability/README.md`).
 
 **The source tree contract.** `src/syntax/syntax.h` defines a tagged node
 with ordered children, an operator token, and half-open spans. Absent
@@ -2480,9 +2482,9 @@ To replay one: `MO_CORE_DIFF=1 MO_CORE_DIFF_SEED=<seed>`.
 - path resolution in the host: never resolves outside the folder;
 - the formatter: formatting twice gives the same text, and keeps the tree.
 
-`ci/check.sh` groups the checks as `gcc`, `clang`, `sanitize`, `drivers`,
-`lean`, `fuzz`, `static` and `cbmc`. `.github/workflows/nightly.yml` runs
-`gcc clang sanitize drivers static lean` with `CI=1` on main daily at 07:17 UTC
+The `ci/check.sh` groups, the pre-PR command, and the nightly list are in AGENTS.md
+"Checks and merging". `.github/workflows/nightly.yml` runs that nightly list with
+`CI=1` and `MO_ALL_DRIVERS=1` on main daily at 07:17 UTC
 and on manual dispatch (MO-152). It has no pull-request or push trigger, refuses
 dispatches on other branches, and checks the event's exact commit. A single
 Ubuntu 24.04 job shares the builds across groups, with a 120-minute timeout;
@@ -2493,8 +2495,9 @@ Bison, then Lean through elan into `/opt/elan` with the version
 from `formal/lean-toolchain`. Actions receive only
 read access to repository contents, and checkout does not retain credentials.
 
-The drivers group runs the first build's tool checks, including the frozen
-tasks, and the sample timing check separately from other checks.
+The drivers group runs the sample timing check separately from other checks.
+The bench group runs the first build's tool checks, including the frozen
+tasks, separately from other checks.
 Their wall-clock limits must not measure competition from other checks.
 Other builds run tool checks without the frozen tasks in parallel. Failures
 in any stage fail the group without skipping the remaining checks.
@@ -2507,8 +2510,8 @@ local Lean build (`make formal`) and proofs. Robert approves merges. Nightly
 failures are visible in Actions; email delivery depends on the recipient's
 GitHub Actions notification settings, not on the workflow.
 
-The recorded hour-long fuzz runs cover 22 sources and a large-bytecode variant,
-23 runs with no crash (`docs/status/v3-fuzz-log.md`). CBMC covers the reader,
+The recorded hour-long fuzz runs cover 30 targets plus the large IO variant.
+CBMC covers the reader,
 arena, verifier transfer functions, arithmetic and UTF-8, paths, reference
 count updates and hash probing within the bounds in `cbmc/README.md` (D274).
 These are bounded results, not proofs of the whole VM. One million generated
@@ -2519,7 +2522,7 @@ frozen; rounds 1 to 3 are in `learnability/bench-v0-round-N/` (#193, #210,
 Release command timings for the twelve samples and three workloads are recorded
 in `bench/performance/` (#185), not a new speed gate. The three real tools'
 final round passed 5 of 6 attempts (`learnability/tools-final/results.md`), and
-maintained copies in `tools/` run in the `drivers` group (MO-139).
+maintained copies in `tools/` run in the `bench` group (MO-139).
 
 ## 12. Phase 2's streams and their interfaces
 

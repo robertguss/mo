@@ -2,7 +2,7 @@
 
 linkcheck, notioncopy and tally were written in Mo by fresh agent sessions in the three tools'
 final learnability round ([#181](https://github.com/robertguss/mo/pull/181)). The copies here are
-maintained: they may change, and `ci/check_tools.py` (the `drivers` group of `ci/check.sh`) runs
+maintained: they may change, and `ci/check_tools.py` (the `bench` group of `ci/check.sh`) runs
 each one on this repository. The round's frozen programs, grades and logs stay unchanged in
 `learnability/tools-final/`, and the task texts and hidden tests in `bench/tools/`.
 
@@ -37,17 +37,18 @@ From the repository's root, with `mo` built:
 mo run tools/linkcheck.mo                                  # every Markdown link in the repository
 mo run tools/tally.mo LOGS                                 # a round's logs, from session.py collect
 mo run tools/notioncopy.mo docs/reference/README.md OUT    # the reference, in pieces for Notion
-python3 ci/check_tools.py build/gcc/debug/mo               # what the drivers group runs
+python3 ci/check_tools.py build/gcc/debug/mo               # what the bench group runs
 ```
 
 - **linkcheck** checks every relative link and heading anchor in the repository's Markdown. The
   check runs it over a copy of the tracked files (Markdown whole, the rest empty), so untracked
   files don't change the answer, and fails on any broken link. Fix the link, or the heading it
   names.
-- **tally** reports the first-retry numbers of a learnability round. The check collects each
-  `learnability/*/sessions/` folder with `learnability/harness/session.py collect` and requires
-  tally's table to match, byte for byte, the reference tally that `learnability/retry.py` uses
-  for a round's report. A new round's logs are checked as soon as they are committed.
+- **tally** reports the first-retry numbers of a learnability round. Session logs are in the
+  evidence release, not in git (`learnability/README.md`). When they are restored, the check
+  collects each `learnability/*/sessions/` folder with `learnability/harness/session.py collect`
+  and requires tally's table to match, byte for byte, the reference tally that
+  `learnability/retry.py` uses for a round's report.
 - **notioncopy** turns the Language Reference into the pieces that are pasted into its Notion
   copy, each under 12,000 bytes with its Adler-32 to confirm the paste. The check converts
   `docs/reference/README.md` and requires the same pieces and output as the reference
