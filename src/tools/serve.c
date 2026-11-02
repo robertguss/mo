@@ -198,10 +198,11 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     int second = snprintf(named, sizeof named, "localhost:%u", (unsigned)port);
     MO_ASSERT(first > 0 && (size_t)first < sizeof numeric);
     MO_ASSERT(second > 0 && (size_t)second < sizeof named);
-    const char *authorities[] = {numeric, named};
+    const char *authorities[] = {numeric, named, cli->allow_host};
+    size_t authority_count = cli->allow_host == NULL ? 2 : 3;
     const struct mo_protocol_events events = {log_event, &log};
-    enum mo_protocol_server_status built =
-        mo_protocol_server_new(image, service, store, listener, authorities, 2, &events, &server);
+    enum mo_protocol_server_status built = mo_protocol_server_new(
+        image, service, store, listener, authorities, authority_count, &events, &server);
     if (built != MO_PROTOCOL_SERVER_OK) {
         refuse(diags, "mo serve could not start the service", NULL, server_refusal(built, &log));
         goto done;

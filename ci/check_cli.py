@@ -1482,11 +1482,11 @@ SERVE_HALT = '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ha
 
 
 class Served:
-    def __init__(self, binary, source, data, env, folder, port="0"):
+    def __init__(self, binary, source, data, env, folder, port="0", extra=()):
         self.stderr = tempfile.NamedTemporaryFile(dir=folder, prefix="stderr-", delete=False)
         self.outputs = pathlib.Path(self.stderr.name)
         self.process = subprocess.Popen(
-            [str(binary), "serve", str(source), "--port", port, "--data", str(data)],
+            [str(binary), "serve", str(source), "--port", port, "--data", str(data), *extra],
             env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0,
             umask=0o022)
         line = b""
@@ -1571,8 +1571,11 @@ def serve_spellings(folder, counter):
 def serve_guide():
     guide = (root / "docs/agent-guide.md").read_text(encoding="utf-8")
     for sentence in (
-            "`mo serve FILE --port N --data DIR` runs the service that the module in `FILE` "
-            "declares.",
+            "`mo serve FILE --port N --data DIR [--allow-host NAME]` runs the service that the "
+            "module in `FILE` declares.",
+            "`--allow-host NAME` also accepts requests whose `Host` is `NAME`",
+            "A `NAME` without a port means port 80.",
+            "The flag never changes which saved data the program recovers.",
             "`DIR` exists. `mo serve` never creates it",
             "Saved state goes in `DIR/service.sqlite`.",
             "Only one `mo serve` can use a `DIR` at a time.",
@@ -1631,16 +1634,16 @@ def serve_command(binary):
         outputs = []
 
         @contextlib.contextmanager
-        def serving(source=counter, folder_for_data=data, port="0", environment=env):
-            served = Served(binary, source, folder_for_data, environment, folder, port)
+        def serving(source=counter, folder_for_data=data, port="0", environment=env, extra=()):
+            served = Served(binary, source, folder_for_data, environment, folder, port, extra)
             try:
                 yield served
             finally:
                 served.close()
                 outputs.append(served.line + served.errors())
 
-        def refused(source=counter, folder_for_data=data, port="0", environment=env):
-            with serving(source, folder_for_data, port, environment) as served:
+        def refused(source=counter, folder_for_data=data, port="0", environment=env, extra=()):
+            with serving(source, folder_for_data, port, environment, extra) as served:
                 assert not served.line, served.line
                 errors = served.finish(1)
                 assert b"error E1409:" in errors, errors
@@ -1673,6 +1676,30 @@ def serve_command(binary):
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         shutil.rmtree(spare)
         spare.mkdir()
+
+        proxied = folder / "proxied"
+        proxied.mkdir()
+        with serving(counter, proxied, extra=["--allow-host", "queue.example"]) as served:
+            added = served.post(SERVE_ADD, token, {"Host": "queue.example"})
+            assert serve_structured(added) == {"value": "5"}
+            for host in ("other.example", "queue.example:443"):
+                assert served.post(SERVE_READ, token, {"Host": host})[0] == 421, host
+            for host in (f"127.0.0.1:{served.port}", f"localhost:{served.port}"):
+                read = served.post(SERVE_READ, token, {"Host": host})
+                assert serve_structured(read) == {"value": "5"}, host
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        with serving(counter, proxied) as served:
+            assert served.post(SERVE_READ, token, {"Host": "queue.example"})[0] == 421
+            assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "10"}
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        with serving(counter, proxied, extra=["--allow-host", "queue.example:8000"]) as served:
+            read = served.post(SERVE_READ, token, {"Host": "queue.example:8000"})
+            assert serve_structured(read) == {"value": "10"}
+            assert served.post(SERVE_READ, token, {"Host": "queue.example"})[0] == 421
+            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        errors = refused(counter, proxied, extra=["--allow-host", "bad host"])
+        assert errors.startswith(b"error E1409: mo serve could not start the service: "
+                                 b"the server configuration was refused"), errors
 
         with serving() as served:
             body = SERVE_ADD.encode()
@@ -3683,6 +3710,7 @@ flags = {
     "--seconds": (["3"], {"test"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve"}),
+    "--allow-host": (["queue.example"], {"serve"}),
     "--emit=core": ([], {"check"}),
     "--emit=bytecode": ([], {"check"}),
 }
@@ -4165,6 +4193,9 @@ def check(binary):
             'flag needs a nonempty value: "--data" "-x"')
     mistake(["serve", good, "--data", "state"], 'serve needs --port N: "serve"')
     mistake(["serve", good, "--port", "0"], 'serve needs --data DIR: "serve"')
+    mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
+             "--allow-host", "b.example"],
+            'flag may be given only once (except --only): "--allow-host"')
     mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit or serve): "bad\\x0a\\x09\\xc3\\xbf"')
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):

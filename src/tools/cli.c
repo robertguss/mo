@@ -191,13 +191,13 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             const char *flag_names[] = {"--json",  "--list",      "--reference", "--only",
                                         "--in",    "--max-stack", "--max-depth", "--max-heap",
                                         "--calls", "--seconds",   "-o",          "--port",
-                                        "--data"};
-            for (flag = 0; flag < 13; flag++)
+                                        "--data",  "--allow-host"};
+            for (flag = 0; flag < 14; flag++)
                 if (strcmp(arg, flag_names[flag]) == 0)
                     break;
             if (strncmp(arg, "--emit=", 7) == 0)
-                flag = 13;
-            if (flag == 13 && strncmp(arg, "--emit=", 7) != 0)
+                flag = 14;
+            if (flag == 14 && strncmp(arg, "--emit=", 7) != 0)
                 return refuse(out, error, "unknown flag", arg, NULL);
             bool check = out->command == MO_COMMAND_CHECK;
             bool test = out->command == MO_COMMAND_TEST;
@@ -206,16 +206,16 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             bool allowed = (flag == 0 && (check || test)) || (flag == 1 && test) ||
                            (flag == 2 && out->command == MO_COMMAND_GUIDE) ||
                            ((flag == 3 || flag == 4 || flag == 8 || flag == 9) && test) ||
-                           (flag >= 5 && flag <= 7 && (run || test)) || (flag == 13 && check) ||
+                           (flag >= 5 && flag <= 7 && (run || test)) || (flag == 14 && check) ||
                            (flag == 10 && out->command == MO_COMMAND_EMIT) ||
-                           ((flag == 11 || flag == 12) && serve);
+                           (flag >= 11 && flag <= 13 && serve);
             if (!allowed)
                 return refuse(out, error, "flag is not accepted by this command", arg, NULL);
             uint32_t bit = UINT32_C(1) << flag;
             if (flag != 3 && (seen & bit) != 0)
                 return refuse(out, error, "flag may be given only once (except --only)", arg, NULL);
             seen |= bit;
-            value = flag >= 3 && flag <= 12;
+            value = flag >= 3 && flag <= 13;
             const char *operand = NULL;
             if (value) {
                 if (i + 1 == argc)
@@ -225,7 +225,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                 if (!option(out, error, operand, &count, &total))
                     return false;
                 if (operand[0] == '\0' || (operand[0] == '-' && (flag < 5 || flag == 10 ||
-                                                                 flag == 12 || operand[1] == '-')))
+                                                                 flag >= 12 || operand[1] == '-')))
                     return refuse(out, error, "flag needs a nonempty value", arg, operand);
             }
             uint64_t n = 0;
@@ -280,6 +280,9 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                 out->data = operand;
                 break;
             case 13:
+                out->allow_host = operand;
+                break;
+            case 14:
                 if (strcmp(arg + 7, "core") == 0)
                     out->emit = MO_EMIT_CORE;
                 else if (strcmp(arg + 7, "bytecode") == 0)
