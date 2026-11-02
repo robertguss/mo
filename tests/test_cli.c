@@ -160,8 +160,8 @@ static void parse_serve(void) {
     CHECK(cli.command == MO_COMMAND_SERVE && cli.file_count == 1 && cli.port == 8080);
     CHECK(strcmp(mo_cli_file(&cli, 0), "main.mo") == 0 && strcmp(cli.data, "state") == 0);
     CHECK(cli.allow_host == NULL);
-    const char *proxied[] = {"mo",     "serve", "main.mo",      "--allow-host",
-                             "q.example:8000", "--port", "1", "--data", "state"};
+    const char *proxied[] = {"mo",     "serve", "main.mo", "--allow-host", "q.example:8000",
+                             "--port", "1",     "--data",  "state"};
     CHECK(mo_cli_parse(9, proxied, &cli, &error) && strcmp(cli.allow_host, "q.example:8000") == 0);
     const char *first[] = {"mo", "serve", "--data", "state", "--port", "0", "main.mo"};
     CHECK(mo_cli_parse(7, first, &cli, &error) && cli.port == 0);
