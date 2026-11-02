@@ -555,7 +555,7 @@ a real `mo serve` while it writes.
 speed, so goldens stay stable:
 
 ```text
-passed Main.service.recovery  counter.mo:3:1
+passed Main.service.recovery  main.mo:3:1
 ```
 
 A failure lists the numbered steps with literal arguments and each step's
@@ -588,7 +588,7 @@ Against a runtime whose recovery skips the newest log record, an early
 sequence fails and shrinks to:
 
 ```text
-failed Main.service.recovery  counter.mo:3:1
+failed Main.service.recovery  main.mo:3:1
   sequences: 3
   1. add(1)  replied Unit, committed
   2. crash
@@ -620,10 +620,10 @@ interval fails at the first open, the check is reported as stopped, like a test
 that stops at a bug, with that failure's defect and where it happened:
 
 ```text
-stopped Main.service.recovery  counter.mo:3:1
+stopped Main.service.recovery  main.mo:3:1
   bug: stop
   detail: no start
-  in the start value  counter.mo:4:15
+  in the start value  main.mo:4:15
 ```
 
 A failing timer interval reads `in the interval of timer Main.tick`. The rerun

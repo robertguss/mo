@@ -175,10 +175,10 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.4/6	cap-console-fake,cap-files-fake	e0098-printed
 12.5/1	service-read-only				ci/check_cli.py:recovery_checks,ci/check_simulation.py:main,tests/test_recovery.c:two_services
 12.5/2					tests/test_recovery.c:task_queue,tests/test_recovery.c:replay,tests/test_recovery.c:read_only,tests/test_recovery.c:deterministic
-12.5/3				The negative control is not built yet: tests/test_recovery_faults.c's runtime that drops the newest log record must fail the comparison.	tests/test_recovery.c:comparison,tests/test_recovery.c:failure_report
-12.5/4		service-start-stops		The refusal is not reached yet: tests/test_recovery_faults.c will cover it, with a runtime that repeats a log record.	tests/test_recovery.c:failing_tool,tests/test_recovery.c:supervisor_stop,tests/test_recovery.c:failed_firings,tests/test_recovery.c:start_failure,ci/check_cli.py:recovery_checks
+12.5/3					tests/test_recovery.c:comparison,tests/test_recovery.c:failure_report,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
+12.5/4		service-start-stops			tests/test_recovery.c:failing_tool,tests/test_recovery.c:supervisor_stop,tests/test_recovery.c:failed_firings,tests/test_recovery.c:start_failure,ci/check_cli.py:recovery_checks,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
 12.5/5					ci/check_cli.py:recovery_checks,tests/test_deadline.c:main
-12.5/6				Shrinking a real failure and its rerun are not reached yet: tests/test_recovery_faults.c's faulty runtimes will cover them.	tests/test_recovery.c:failure_report,tests/test_recovery.c:same_text
+12.5/6					tests/test_recovery.c:failure_report,tests/test_recovery.c:same_text,tests/test_recovery_faults.c:shrunk_failure,tests/test_recovery_faults.c:check_command,tests/test_recovery_faults.c:check_unrepeatable
 13.1/1	ref-evaluation			
 13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop		ci/check_cli.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random
 13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images

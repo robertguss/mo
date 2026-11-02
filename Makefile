@@ -536,6 +536,19 @@ $(BUILD)/debug/tests/test_service_store.test: $(BUILD)/debug/tests/test_service_
 $(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_service_store.o $(call objects,$(BUILD)/sanitize,$(filter-out src/vm/service.c src/vm/simulation.c src/host/store.c,$(LIB_SOURCES))) $(BUILD)/sanitize/store-faults/service.o $(BUILD)/sanitize/store-faults/store.o $(BUILD)/sanitize/store-faults/simulation.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# The recovery check's negative control: only this test's service.c reaches the store through a
+# double that can drop or repeat the newest log record a load hands to recovery.
+$(BUILD)/debug/recovery-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_recovery_fault_call -c $< -o $@
+$(BUILD)/sanitize/recovery-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_recovery_fault_call -c $< -o $@
+$(BUILD)/debug/tests/test_recovery_faults.test: $(BUILD)/debug/tests/test_recovery_faults.o $(call objects,$(BUILD)/debug,$(filter-out src/vm/service.c,$(LIB_SOURCES))) $(BUILD)/debug/recovery-faults/service.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+$(BUILD)/sanitize/tests/test_recovery_faults.test: $(BUILD)/sanitize/tests/test_recovery_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/vm/service.c,$(LIB_SOURCES))) $(BUILD)/sanitize/recovery-faults/service.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 # Only this test substitutes the resolver's native calls and lowers host read
 # limits. Heap builders and every other executable retain the production limits.
 # glibc's _FORTIFY_SOURCE wrappers for read, poll, open and readlinkat reach libc through aliases
