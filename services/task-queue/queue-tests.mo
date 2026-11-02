@@ -169,6 +169,14 @@ test "a payload of exactly the limit is accepted and one byte more is refused"
   assert id == 1
 end
 
+test "the payload limit counts bytes, not characters"
+  sim = Simulation.start(Main, t0)
+  assert Simulation.send(sim, Main.submit, "é".repeat(1025)) ==
+    Ok(Error(PayloadTooLarge(limit: 2048, bytes: 2050)))
+  id = submit(sim, "é".repeat(1024))
+  assert job(sim, id).payload == "é".repeat(1024)
+end
+
 test "paging reads every job once, in order"
   sim = Simulation.start(Main, t0)
   for i in 1..26

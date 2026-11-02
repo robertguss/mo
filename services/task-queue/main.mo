@@ -1,6 +1,7 @@
 ## Mo's own task queue, served over MCP. Agents lease a task, check in while
-## working, and report it done or failed. Any change to this program or to
-## job-queue.mo refuses the saved data of a running queue.
+## working, and report it done or failed. A change to anything compiled in,
+## meaning this program, job-queue.mo, lib/ or the compiler's output, refuses the
+## saved data of a running queue.
 module Main
 expose JobFilter(..), Page(..), PageError(..), SubmitError(..)
 use JobQueue{Queue, Job, QueueError}
@@ -66,12 +67,12 @@ end
 
 ## Leases the oldest ready task for 30 minutes and counts an attempt. Replies
 ## {"case":"None"} when nothing is ready, and nothing will notify you. To look
-## without taking anything, use `list`. Do not call this in a tight loop.
+## without taking anything, use `list`. Wait a minute before calling this again.
 ## {"case":"Some","value":job} gives you the job. A job is {"id","payload",
 ## "attempts","state"}, and `state` is {"case":"Ready"}, {"case":"Leased","fields":
 ## {"until":time}}, {"case":"Done"} or {"case":"Dead"}. Pass `job.id` as `id` and
 ## `job.attempts` as `attempt` to the other tools, and keep both somewhere that
-## survives losing your context: no tool gives them back. The lease ends at
+## survives losing your context: no tool tells you which job is yours. The lease ends at
 ## `job.state.fields.until`. Call `heartbeat` about every 10 minutes.
 ## If `job.attempts` is above 1, an earlier attempt ran and may have left partial
 ## work, so check before starting. The third attempt that fails or expires makes
@@ -104,8 +105,8 @@ end
 
 ## Renews your lease for 30 minutes from now without counting an attempt. Call it
 ## about every 10 minutes while working, and before any step that may block for
-## over 20 minutes. `id` is `job.id` and `attempt` is `job.attempts`, both from
-## `lease`. Safe to retry.
+## over 20 minutes. `id` is `job.id` and `attempt` is `job.attempts`, both JSON
+## strings from `lease`. Safe to retry.
 ## NotLeased: read the job with `list`, using filter {"case":"AllJobs"}, `after`
 ## id - 1 and `limit` 1, then compare. Done with your attempt: your acknowledge
 ## landed, so that is success. Ready or Leased with your attempt: your lease ran
@@ -121,13 +122,14 @@ end
 
 ## Marks your leased job Done. A task ends at hand-off: acknowledge when your PR
 ## opens or your work is delivered, not after a person reviews it. `id` is
-## `job.id` and `attempt` is `job.attempts`, both from `lease`. Safe to retry.
+## `job.id` and `attempt` is `job.attempts`, both JSON strings from `lease`. Safe
+## to retry.
 ## NotLeased does not mean your work failed: read the job with `list`, using
 ## filter {"case":"AllJobs"}, `after` id - 1 and `limit` 1, then compare. Done
 ## with your attempt: your earlier acknowledge landed, so that is success. Ready
-## or Leased with your attempt: your lease ran out, so stop. Dead: stop and
-## report. More attempts than yours: a later attempt owns the job, so stop and do
-## not acknowledge.
+## or Leased with your attempt: your lease ran out, so stop and tell the
+## coordinator what you delivered. Dead: stop and report. More attempts than
+## yours: a later attempt owns the job, so stop and do not acknowledge.
 ## NoSuchJob: the id is wrong; do not retry.
 ## Never repeat a call that got handler_failed, work_limit or memory_limit: it
 ## can stop the service for everyone.
@@ -139,7 +141,7 @@ end
 ## Gives your leased job back when you cannot finish it. It goes back to Ready,
 ## or to Dead on its third attempt, and a Dead job is never retried. The queue
 ## may hand the same job to the next `lease`. `id` is `job.id` and `attempt` is
-## `job.attempts`, both from `lease`. Safe to retry.
+## `job.attempts`, both JSON strings from `lease`. Safe to retry.
 ## NotLeased: read the job with `list`, using filter {"case":"AllJobs"}, `after`
 ## id - 1 and `limit` 1, then compare. Done with your attempt: an earlier
 ## acknowledge landed. Ready or Leased with your attempt: your lease ran out or

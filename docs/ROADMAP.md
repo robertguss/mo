@@ -31,7 +31,9 @@ item ticks it here.
 - [ ] Deployment on an exe.dev VM: a systemd unit that restarts after a crash
       but not after a deliberate stop (exit 69), a one-page runbook under
       `docs/ops/`, the proxy route, the MCP client line for agent threads, and
-      a 48-hour idle check with no restart.
+      a 48-hour idle check with no restart. It runs a pinned build outside any
+      working checkout, because `mo` reads `lib/` from the path set at build
+      time and a changed `lib/` refuses the saved data.
 - [ ] The week-long run: the queue is the task list, every agent thread leases
       its task from it, at least 10 leases, a deliberate `kill -9` mid-week,
       and no accepted job lost. Recorded in `docs/status/phase3-run.md`.

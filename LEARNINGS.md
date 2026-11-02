@@ -16,6 +16,10 @@
 - Every update re-encodes the whole state. Filling the queue to 5,000 jobs of
   empty payloads takes about 90 seconds in the gcc debug build, so the suite's
   fill stays short-payload.
+- The image key covers library code too. `mo serve` reads `lib/` from the path
+  set at build time, so a comment added to `lib/list.mo` in that checkout refuses
+  a service's saved data at its next start, with the service and the binary
+  unchanged.
 - `mo serve` has no fake clock. Lease expiry is proved in Simulation; the loopback
   check covers wire shapes, size limits and recovery after `kill -9`.
 

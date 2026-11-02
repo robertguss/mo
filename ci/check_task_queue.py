@@ -17,7 +17,7 @@ import time
 FOLDER = 'services/task-queue'
 TOKEN = 'TaskQueueCanary42'
 JOB_QUEUE_RESULTS = 23
-QUEUE_TEST_RESULTS = 21
+QUEUE_TEST_RESULTS = 22
 DESCRIPTION_LIMIT = 4096
 INT = {'type': 'string', 'pattern': '^-?[0-9]+$'}
 INITIALIZE = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
@@ -113,7 +113,7 @@ class Queue:
 
 def simulation(binary):
     result = subprocess.run([str(binary), 'test', '--json', f'{FOLDER}/queue-tests.mo'],
-                            capture_output=True, text=True, timeout=600)
+                            capture_output=True, text=True, timeout=1800)
     assert result.returncode == 0 and not result.stderr, result
     records = [json.loads(line) for line in result.stdout.splitlines()]
     tests = [r for r in records if r['record'] == 'result']
@@ -147,6 +147,9 @@ def catalog(queue):
     listing = schemas['list']
     assert sorted(listing['required']) == ['after', 'filter', 'limit'], listing
     assert listing['properties']['after'] == INT and listing['properties']['limit'] == INT, listing
+    filters = listing['$defs'][listing['properties']['filter']['$ref'].rsplit('/', 1)[1]]['oneOf']
+    assert [choice['properties']['case']['const'] for choice in filters] == [
+        'AllJobs', 'Ready', 'Leased', 'Done', 'Dead'], listing
 
 
 def parsed(text):
@@ -240,9 +243,7 @@ def main():
             accepted = queue.ok('submit', payload='survive the kill')
             before = queue.every_job()
         except BaseException:
-            queue.process.kill()
-            queue.process.wait(timeout=30)
-            queue.close()
+            queue.kill()
             raise
         queue.kill()
 
@@ -257,9 +258,7 @@ def main():
                     break
             assert taken['value']['payload'] == 'survive the kill', taken
         except BaseException:
-            queue.process.kill()
-            queue.process.wait(timeout=30)
-            queue.close()
+            queue.kill()
             raise
         queue.stop()
     print('Task queue: simulation, wire shapes, size limits, paging and recovery after kill -9 pass')

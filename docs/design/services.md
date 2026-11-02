@@ -110,6 +110,12 @@ with its saved data:
 - Each description carries the whole protocol an agent needs, because `initialize` returns no
   instructions and inputs have no descriptions of their own.
 
+The freeze covers everything compiled in, not only these two files. `mo serve` recompiles at every
+start and reads `lib/` from the path set when `mo` was built, and the image key includes the debug
+spans of the library code a program uses. A comment added to `lib/list.mo` therefore refuses a
+queue's saved data at its next start, so a deployed queue runs a pinned build outside any working
+checkout.
+
 Every handler is a plain function. The cost is some repetition, since `queue` and `now` appear
 on every handler. A read-only tool such as `count` has the signature
 `fn count(queue: Queue, now: Time) : Int` and returns no replacement state. A timer handler takes
