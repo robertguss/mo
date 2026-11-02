@@ -16,7 +16,13 @@
   reference, not the value. Codex sends its token from `bearer_token_env_var`.
 - `claude mcp list` connects to each server, which makes it a cheap health check.
   `codex exec -c 'mcp_servers.NAME.url="..."'` tries a server without editing
-  `config.toml`.
+  `config.toml`. `codex exec` refuses an MCP tool call under
+  `approval_policy="never"` unless that tool is approved, as with
+  `-c 'mcp_servers.NAME.tools.stats.approval_mode="approve"'`.
+- On 2026-11-02 the Mac's Codex `config.toml` model (`gpt-6-astra`) started
+  failing with "not supported when using Codex with a ChatGPT account" a few
+  minutes after it had worked. `--ignore-user-config` falls back to the default
+  model and works; check this before blaming a server.
 - Codex on `aurora-but-gold` is a bare `/usr/local/bin/codex` without its
   `codex-code-mode-host` companion, so every tool call fails there before it
   reaches an MCP server. The Homebrew cask on the Mac ships both.
