@@ -1,5 +1,28 @@
 # Learnings
 
+## The task-queue service
+
+- Whatever `submit` accepts, `lease` has to return. A reply carries a payload
+  twice, the second copy escaped again, so a byte costs 2 to 13 bytes of the
+  32 KiB limit. Past that, `lease` commits and then fails with `response_limit`,
+  and the job goes Dead with no worker having seen it. 2,048 bytes fits whatever
+  the bytes are. A page holding that worst case can exceed the limit at `limit`
+  4, so clients halve `limit`, and 1 always fits.
+- Spec code is compiled into the served image and debug spans are in its key, so
+  a test inside a service's own file freezes with it. A sibling test entry with
+  `use Main` keeps tests out of the image. A service used across modules needs
+  `expose` for its wire types, and a `use` list names a choice type, not its
+  cases (E0044).
+- Every update re-encodes the whole state. Filling the queue to 5,000 jobs of
+  empty payloads takes about 90 seconds in the gcc debug build, so the suite's
+  fill stays short-payload.
+- The image key covers library code too. `mo serve` reads `lib/` from the path
+  set at build time, so a comment added to `lib/list.mo` in that checkout refuses
+  a service's saved data at its next start, with the service and the binary
+  unchanged.
+- `mo serve` has no fake clock. Lease expiry is proved in Simulation; the loopback
+  check covers wire shapes, size limits and recovery after `kill -9`.
+
 ## MO-182 image key
 
 - Debug file paths reach only the `files` section. Emitted bytecode for an

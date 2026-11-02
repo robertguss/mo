@@ -316,6 +316,7 @@ int main(int argc, char **argv) {
     check_source(path_source, path_expected);
     files("grammar/tests/good/*.mo", true, true, true);
     files("examples/*.mo", true, true, true);
+    files("services/task-queue/*.mo", true, true, true);
     files("lib/*.mo", false, true, true);
     files("fuzz/corpus/fuzz_syntax/*", false, false, false);
     reference();
