@@ -36,12 +36,17 @@ The queue never talks to Notion, so it needs no HTTP client or TLS.
 The queue's logic already exists as a pure module, `examples/job-queue.mo`: `submit`, `lease`,
 `heartbeat`, `acknowledge`, `fail` and `expire`, each taking a `Queue` and returning the new one (inside a
 `Result` where the operation can fail). Its header promises that no operation ever loses a job,
-and `lease` and `acknowledge` carry promises that say so. Phase 3 wraps that module as a service; it does not
-rewrite it.
+and `lease` and `acknowledge` carry promises that say so. The service wraps that logic without
+rewriting it. It owns a copy, `services/task-queue/job-queue.mo`, because `use` finds a module only
+under the entry's folder and a symlink out of that folder is refused (E1101). The copy adds one
+reader, `jobs`, because `Queue` is opaque. No check compares the two files: that would make every
+sample edit a change to the served program, which refuses its saved data. A logic fix in one is
+made in the other by hand.
 
 It runs on one of Robert's exe.dev VMs (D258). The VM's disk is persistent (local NVMe, streamed
 to an off-machine backup), so the saved state survives restarts and updates, and the exe.dev
-proxy terminates TLS, so Mo needs no TLS of its own.
+proxy terminates TLS, so Mo needs no TLS of its own. `docs/ops/task-queue.md` is the runbook
+that installs and runs it, and `docs/status/phase3-run.md` records the deployment.
 
 ## 4. The service model
 
@@ -69,55 +74,50 @@ The runtime passes each message's arrival time to the handler, so handlers stay 
 
 Handlers are ordinary functions, and one small `service` block in the module wires them up
 (D266, D301). The block names the state type and its start value, which functions are tools, the
-timers, and where the access token comes from. This sketch turns `examples/job-queue.mo` into the
-task-queue service. MO-155 adds the service block. The C service loop and SQLite
-store have landed; `mo serve` starts a service and `mo run` still does not (section 9).
+timers, and where the access token comes from. `services/task-queue/main.mo` is the task-queue
+service and the authority on its tools, limits and descriptions. This excerpt shows the shape:
 
 ```mo
-## Mo's own task queue. Agents lease a task, check in while working, and
-## report it done or failed.
-module TaskQueue
-use JobQueue
+module Main
+use JobQueue{Queue, Job, QueueError}
 
 service
   state Queue = JobQueue.empty
-  tools submit, lease, heartbeat, acknowledge, fail
+  tools submit, lease, heartbeat, acknowledge, fail, list, stats
   every 1.minute expire
   token from env "QUEUE_TOKEN"
 end
 
-## Adds a task to the queue and returns its id.
-fn submit(queue: Queue, now: Time, payload: Text) : (Queue, Int)
-  JobQueue.submit(queue, payload)
-end
-
-## Leases the oldest ready task for 30 minutes, or returns None.
+## Leases the oldest ready task for 30 minutes and counts an attempt. ...
 fn lease(queue: Queue, now: Time) : Result((Queue, Option(Job)), QueueError)
-  JobQueue.lease(queue, now, 30.minutes)
-end
-
-## Renews the current lease for 30 minutes from now.
-fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
-  after = try JobQueue.heartbeat(queue, now, id, attempt)
-  Ok((after, Unit))
-end
-
-## Marks the current lease as done.
-fn acknowledge(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
-  after = try JobQueue.acknowledge(queue, now, id, attempt)
-  Ok((after, Unit))
-end
-
-## Returns a failed lease to the queue, or marks its final attempt dead.
-fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
-  after = try JobQueue.fail(queue, now, id, attempt)
-  Ok((after, Unit))
+  JobQueue.lease(queue, now, lease_length)
 end
 
 fn expire(queue: Queue, now: Time) : Queue
   JobQueue.expire(queue, now)
 end
 ```
+
+`main.mo` differs from the first sketch of this section in three ways, because its surface freezes
+with its saved data:
+
+- `stats` counts jobs in each state against the job limit without reading payloads, so a
+  coordinator can check the queue's health in one call. Adding it later would have meant a fresh
+  data folder.
+- `list` is read-only and paged. It is the only way to see the queue's jobs, and after a
+  program change only state a tool returns can be carried over.
+- `submit` returns a `Result`. It refuses a payload over 2,048 bytes, which `lease` could otherwise
+  fail to deliver inside the 32 KiB reply limit, and refuses past 5,000 jobs, before the saved
+  state reaches the limit that stops every update. Jobs are never removed, so the second limit
+  never falls.
+- Each description carries the whole protocol an agent needs, because `initialize` returns no
+  instructions and inputs have no descriptions of their own.
+
+The freeze covers everything compiled in, not only these two files. `mo serve` recompiles at every
+start and reads `lib/` from the path set when `mo` was built, and the image key includes the debug
+spans of the library code a program uses. A comment added to `lib/list.mo` therefore refuses a
+queue's saved data at its next start, so a deployed queue runs a pinned build outside any working
+checkout.
 
 Every handler is a plain function. The cost is some repetition, since `queue` and `now` appear
 on every handler. A read-only tool such as `count` has the signature
@@ -551,8 +551,11 @@ timers remain unaffected. Both checks follow E0101 across all services (D328).
 `mo serve FILE --port N --data DIR` (D331) runs the entry module's service. It
 compiles, initializes and checks anchors as `mo run` does, then
 `src/tools/serve.c` opens the listener and the store and polls the server. The
-flags are only `--port` and `--data`. It binds 127.0.0.1 and allows the
-authorities `127.0.0.1:PORT` and `localhost:PORT`, using the bound port.
+flags are `--port`, `--data` and `--allow-host NAME`. It binds 127.0.0.1 and
+allows the authorities `127.0.0.1:PORT` and `localhost:PORT`, using the bound
+port, plus `NAME` when given, for a proxy that forwards its public name.
+`HttpAuthority.check` refuses a malformed `NAME` as a configuration refusal.
+Authorities are not in the image key, so the flag never refuses saved data.
 
 `DIR` must exist and is never created, so a mistyped path cannot start an empty
 queue. The database is always `DIR/service.sqlite`, created mode 0600 under a temporary

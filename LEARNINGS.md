@@ -1,5 +1,79 @@
 # Learnings
 
+## The exe.dev proxy and MCP clients
+
+- exe.dev's proxy reaches a server listening on 127.0.0.1 only, from
+  127.0.0.1, so `mo serve` needs no wider listener behind it. It forwards
+  `Host: VM.exe.xyz` with no port, adds `X-Forwarded-For` (the client IP twice),
+  `X-Forwarded-Host` and `X-Forwarded-Proto: https`, and passes a public route's
+  `Authorization: Bearer` through byte for byte. Hence `--allow-host VM.exe.xyz`.
+- First request heads through the proxy, Authorization included with a
+  43-character token: curl 377 bytes, Claude Code 2.1.309 463, Codex 0.164.0
+  391. Each is well under the 1 KiB head limit.
+- Claude Code 2.1.309 first posts `server/discover` at protocol 2026-07-28 and
+  falls back to `initialize` when that is refused. It expands
+  `'Authorization: Bearer ${QUEUE_TOKEN}'` from its environment and stores the
+  reference, not the value. Codex sends its token from `bearer_token_env_var`.
+- `claude mcp list` connects to each server, which makes it a cheap health check.
+  `codex exec -c 'mcp_servers.NAME.url="..."'` tries a server without editing
+  `config.toml`. `codex exec` refuses an MCP tool call under
+  `approval_policy="never"` unless that tool is approved, as with
+  `-c 'mcp_servers.NAME.tools.stats.approval_mode="approve"'`.
+- On 2026-11-02 the Mac's Codex `config.toml` model (`gpt-6-astra`) started
+  failing with "not supported when using Codex with a ChatGPT account" a few
+  minutes after it had worked. `--ignore-user-config` falls back to the default
+  model and works; check this before blaming a server.
+- Codex on `aurora-but-gold` is a bare `/usr/local/bin/codex` without its
+  `codex-code-mode-host` companion, so every tool call fails there before it
+  reaches an MCP server. The Homebrew cask on the Mac ships both.
+- An SSH tunnel to a loopback `mo serve` must use the same local port number,
+  or the client sends `Host: 127.0.0.1:OTHER` and gets 421.
+
+## The deployed queue
+
+- `mo serve` answers `tools/call` with no `initialize` first, so a one-request
+  curl is a health check.
+- systemd 255's `systemctl kill -s SIGKILL UNIT` errors about auxiliary
+  processes; `--kill-whom=main` kills the main process cleanly.
+- `NRestarts` counts only automatic restarts since the last start. A manual
+  `systemctl start` or `restart`, or a reboot, sets it back to 0, so an idle
+  check also compares the main PID and the boot list.
+- Reaching exit 69 takes 15 handler failures in quick succession: five within
+  a minute restart the service, and three restarts stop it.
+- `git` as an ordinary user refuses a root-owned clone ("dubious ownership");
+  read `/opt/mo/$SHA` with `sudo git`.
+- `aurora-but-gold`'s SSH key is not on Robert's exe.dev account, so it cannot
+  SSH to another exe.dev VM. Relay through the Mac, which can.
+- `pkill -f PATTERN` inside `ssh HOST '...'` also matches the remote shell,
+  whose command line contains the pattern, and kills it mid-command.
+
+## The task-queue service
+
+- Whatever `submit` accepts, `lease` has to return. A reply carries a payload
+  twice, the second copy escaped again, so a byte costs 2 to 13 bytes of the
+  32 KiB limit. Past that, `lease` commits and then fails with `response_limit`,
+  and the job goes Dead with no worker having seen it. 2,048 bytes fits whatever
+  the bytes are. A page holding that worst case can exceed the limit at `limit`
+  4, so clients halve `limit`, and 1 always fits.
+- Spec code is compiled into the served image and debug spans are in its key, so
+  a test inside a service's own file freezes with it. A sibling test entry with
+  `use Main` keeps tests out of the image. A service used across modules needs
+  `expose` for its wire types, and a `use` list names a choice type, not its
+  cases (E0044).
+- Every update re-encodes the whole state. Filling the queue to 5,000 jobs of
+  empty payloads takes about 90 seconds in the gcc debug build, so the suite's
+  fill stays short-payload.
+- The image key covers library code too. `mo serve` reads `lib/` from the path
+  set at build time, so a comment added to `lib/list.mo` in that checkout refuses
+  a service's saved data at its next start, with the service and the binary
+  unchanged.
+- At 5,000 jobs, four `List.count` passes with a closure each went over a
+  handler's 1,048,576-instruction budget and failed the call; one `for` loop over
+  the jobs fits. The full-queue simulation test is what catches this, so any new
+  handler that walks every job belongs in it.
+- `mo serve` has no fake clock. Lease expiry is proved in Simulation; the loopback
+  check covers wire shapes, size limits and recovery after `kill -9`.
+
 ## MO-182 image key
 
 - Debug file paths reach only the `files` section. Emitted bytecode for an
@@ -85,9 +159,9 @@
   confidential arenas; VM operand arrays and the process structure are wiped
   too. This does not suppress defect rendering: the adapter must still keep
   protocol defects out of rendering and variable visitors.
-- Confidential storage alone does not combine stack and heap limits. Call
-  `mo_process_account_stack` before execution to charge retained stack chunks
-  through the process heap, alongside native `mo_scratch` buffers. The process
+- `mo_process_confidential` also charges retained stack chunks through the
+  process heap, alongside native `mo_scratch` buffers, so a confidential stack
+  counts against `--max-heap` as well as `--max-stack`. The process
   memory counters include its native structure; instruction remaining is
   cumulative across calls until explicitly reset. A nearly full native scratch
   buffer plus a small scalar-returning Mo call distinguishes a charged stack from

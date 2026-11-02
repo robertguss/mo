@@ -1378,9 +1378,10 @@ reports the program's errors, `mo run FILE [ARGS...]` runs it with the
 arguments after the file's name, and `mo test FILE` checks its examples,
 promises and tests. `mo emit FILE -o OUT` checks the program as `mo check` does
 and writes its bytecode to `OUT`; `-o` is required, and a library module has no
-main to emit (E0079). `mo serve FILE --port N --data DIR` runs the service `FILE`
-declares (section 11.5) over MCP on 127.0.0.1, with its saved state in the
-folder `DIR`, which must exist. `mo format` and `mo fix` rewrite the files they are given.
+main to emit (E0079). `mo serve FILE --port N --data DIR [--allow-host NAME]`
+runs the service `FILE` declares (section 11.5) over MCP on 127.0.0.1, with its
+saved state in the folder `DIR`, which must exist; `--allow-host` also accepts
+requests that give `NAME` as their host, as a proxy in front of it does. `mo format` and `mo fix` rewrite the files they are given.
 `mo guide` needs no file. It prints a short guide for agents writing Mo,
 matched to the installed version: how to work with the `mo` command, a small
 complete program with its tests, and when a task is done. `mo guide

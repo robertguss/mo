@@ -35,6 +35,7 @@ struct mo_cli {
     const char *output; /* emit's -o file */
     uint16_t port;
     const char *data;
+    const char *allow_host;
     const char *only[MO_CLI_ARGUMENTS];
     uint32_t only_count;
     const char *const *files; /* borrowed argv slice; use mo_cli_file to skip -- */
