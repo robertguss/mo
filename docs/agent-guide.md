@@ -151,13 +151,13 @@ Section 13.4 names the selection flags and the limits.
 
 ## Run a service
 
-`mo serve FILE --port N --data DIR` runs the service that the module in `FILE` declares. Check three things first:
+`mo serve FILE --port N --data DIR [--allow-host NAME]` runs the service that the module in `FILE` declares. Check three things first:
 
 - `FILE` has a `service` block. Without one, `mo serve` refuses with E1409, "this module has no service to start". An imported service does not count.
 - `DIR` exists. `mo serve` never creates it, so a mistyped path cannot start an empty service. Saved state goes in `DIR/service.sqlite`. `service.sqlite` is readable only by its owner. Only one `mo serve` can use a `DIR` at a time.
 - The environment variable named by `token from env "NAME"` holds the access token. A token is 1 to 256 bytes of letters, digits and `-._~+/`, and may end in `=` padding. A missing or invalid token is E1409, and the message names the variable.
 
-`--port` takes 0 to 65535. Port 0 picks a free port. `mo serve` listens on 127.0.0.1 only. It takes no address flag.
+`--port` takes 0 to 65535. Port 0 picks a free port. `mo serve` listens on 127.0.0.1 only. It takes no address flag. `--allow-host NAME` also accepts requests whose `Host` is `NAME`, as a proxy in front of the server sends. A `NAME` without a port means port 80. A malformed `NAME` is E1409, "the server configuration was refused". The flag never changes which saved data the program recovers.
 
 The requests below call this service, saved as `counter.mo`:
 
@@ -187,7 +187,7 @@ When it is ready, it prints one line to standard output:
 mo serve: listening on http://127.0.0.1:PORT/mcp
 ```
 
-Send each request with `POST` to that URL. One connection carries one request. Use the host `127.0.0.1:PORT` or `localhost:PORT`. Any other well-formed `Host` gets status 421, and a malformed or missing one gets 400. A missing or wrong token gets status 401. Start with `initialize`:
+Send each request with `POST` to that URL. One connection carries one request. Use the host `127.0.0.1:PORT`, `localhost:PORT` or the `--allow-host` name. Any other well-formed `Host` gets status 421, and a malformed or missing one gets 400. A missing or wrong token gets status 401. Start with `initialize`:
 
 ```sh
 curl -s http://127.0.0.1:PORT/mcp \
