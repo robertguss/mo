@@ -14,13 +14,13 @@ C has no memory safety, and Mo's capability security is only as strong as the
 VM's integrity: a memory bug in the VM could let a program reach something it
 wasn't handed. These five conditions make up for that. Checks enforce them
 wherever there is code to check, not good intentions; `ci/check.sh` runs every
-check. Nightly runs `gcc clang sanitize drivers static lean` on main; fuzz and
-CBMC run by hand. The fast groups run before each pull request.
+check. Which groups run before a pull request, and which the nightly runs, are
+in AGENTS.md "Checks and merging".
 
 1. **Sanitizers in every test run.** Every test also runs under
    AddressSanitizer and UndefinedBehaviorSanitizer (`bash ci/check.sh sanitize`,
-   run by hand), so memory bugs fail loudly where they happen. ThreadSanitizer joins them in Phase 3, when concurrent
-   code arrives; there is none to check yet.
+   run by hand), so memory bugs fail loudly where they happen. ThreadSanitizer
+   is not a gate.
 2. **Fuzzing.** The parser, the bytecode loader, the VM and everything
    that reads outside input get fuzz targets in `fuzz/`, with seed inputs in
    `fuzz/corpus/<target>/`. `bash ci/check.sh fuzz` runs every target briefly;
@@ -87,15 +87,14 @@ better error messages, and is tested against this grammar. See
 ## Checks and merging
 
 Before a pull request, `bash ci/check.sh gcc` builds and
-runs the unit tests. Nightly runs `gcc clang sanitize drivers static lean bench`;
-fuzz and CBMC run by hand. A pull request merges when Robert says so. The merge
-rule is in AGENTS.md "Checks and merging".
+runs the unit tests. Nightly, fuzz and CBMC are in AGENTS.md "Checks and merging".
+A pull request merges when Robert says so.
 
 ## Rust-era plans, replaced
 
 | Planned with Rust | With C |
 | --- | --- |
-| Miri on the raw-memory core | AddressSanitizer and UndefinedBehaviorSanitizer on every test run, and ThreadSanitizer once there is concurrent code (Phase 3) |
+| Miri on the raw-memory core | AddressSanitizer and UndefinedBehaviorSanitizer on every test run; ThreadSanitizer is not a gate |
 | Kani proofs | CBMC, the engine underneath Kani, on small C functions |
 | Cranelift for machine code (Phase 7) | A C code generator such as MIR, or copy-and-patch as CPython does |
 | rustls | OpenSSL or BoringSSL, through the small trusted core |

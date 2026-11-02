@@ -11,7 +11,8 @@ How every Phase 2 measurement of fresh agent sessions writing Mo is run, graded 
 Phase 1's protocol (`round-1/`, `final/`) graded by reading, because there was no compiler.
 Phase 2 has the `mo` command, so the compiler and hidden tests decide, and model graders only
 check them. The rest of Phase 1's way of working stays: fresh sessions, one task each, two
-model families (D226), frozen texts, and every program and log kept in the repository.
+model families (D226), frozen texts, and every program kept in the repository.
+Session logs are in the evidence release (`learnability/README.md`), not in git.
 
 ## 1. Freezing a round
 
@@ -208,8 +209,9 @@ from the session with the most, and the rates without that session.
 ## 8. Reporting
 
 Each round's folder (as `final/` is for Phase 1) holds `freeze.md`, the prompt, every program as
-written, every session log, every grader's grading, the human check's grades, `notes.md` (how
-the round ran, and any session run again and why), and `results.md`, which gives, per family:
+written, every grader's grading, the human check's grades, `notes.md` (how
+the round ran, and any session run again and why), and `results.md`. Session logs are in the
+evidence release, not in git (`learnability/README.md`). `results.md` gives, per family:
 
 - pass counts, fail counts by step and toolchain gaps, by task kind and for held-out and other
   tasks apart, each with its Wilson interval, and each task's result;

@@ -42,8 +42,8 @@ files a capability reaches while a lookup runs (P8), and timing or other side ch
 | Differential test | the C VM against the Lean evaluator of Mo Core, `ci/check_core_differential.py` | `bash ci/check.sh lean` |
 
 Only the unit tests (`bash ci/check.sh gcc`) are a routine pre-PR check, plus `drivers` and
-`static` when a change reaches them (`AGENTS.md`, "Checks and merging"). Nightly runs
-`gcc clang sanitize drivers static lean`; fuzz and CBMC run by hand. A property whose only
+`static` when a change reaches them (`AGENTS.md`, "Checks and merging"). Nightly, fuzz and
+CBMC are in that same section. A property whose only
 evidence is a by-hand group is still backed, but nothing re-runs it for you.
 
 ## Pair assertions
@@ -303,9 +303,8 @@ These are not guaranteed today.
 4. **No operating-system confinement.** Nothing in `src` installs seccomp, pledge, Landlock or a
    similar filter. A bug in the C runtime is not contained by one. Capabilities are the only
    boundary the toolchain provides.
-5. **No concurrency checking.** There is no concurrent code yet, so no ThreadSanitizer run
-   (`implementation.md`, condition 1); property P7's process-wide signal handling and any future
-   threads need their own review.
+5. **No concurrency checking.** ThreadSanitizer is not a gate (`implementation.md`, condition 1);
+   property P7's process-wide signal handling and any future threads need their own review.
 6. **Concurrent changes to the filesystem** are outside P8.
 7. **Verified file, not verified compiler.** A compiler bug produces a program that the verifier
    accepts but that does not mean what its source says. That is a correctness bug, not a

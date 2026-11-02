@@ -93,7 +93,7 @@ come after this, on what the sessions wrote.
 
 ## Frozen means frozen
 
-CI's `drivers` group runs `grade.py --check` with every built `mo`: every `SHA256SUMS` must match
+CI's `bench` group runs `grade.py --check` with every built `mo`: every `SHA256SUMS` must match
 its files, every reference must pass, every broken solution must check and fail a hidden test,
 and every start folder must fail too, a fix task's at `mo check` and the others' at a hidden
 test, with a failing-test task's start failing its named test and no other. The `static` group

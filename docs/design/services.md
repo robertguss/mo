@@ -3,9 +3,8 @@
 Status: Design note (18 Oct 2026, task `MO-98`), updated for D301 to D308 in `MO-153`
 and the D310, D312 and D313 clarifications in `MO-155`. D256 to D267 were settled with Robert
 on 18 Oct 2026; section 9 records the decisions he made on 24 and 25 Oct 2026. This note
-describes the design. Which parts are built is tracked in Notion's
-[Status](https://www.notion.so/3fd700320c45810ca58ddf73fb6fc8c2) page and
-[Mo Tasks](https://www.notion.so/657ad0b75b55427aa8310151d0468728), not here.
+describes the design. Which parts are built is tracked in `docs/ROADMAP.md`,
+not here.
 
 ## 1. Purpose
 

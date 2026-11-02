@@ -130,7 +130,7 @@ $(BUILD)/debug/tests/test_lower.o $(BUILD)/sanitize/tests/test_lower.o \
 $(BUILD)/debug/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o \
 $(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
 
-# The test executables without running them, for ci/check.sh's drivers group.
+# The test executables without running them, for ci/check.sh's drivers, bench and lean groups.
 test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo
 sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 

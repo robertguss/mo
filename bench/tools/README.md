@@ -48,7 +48,7 @@ passes.
 
 ## Frozen means frozen
 
-CI (`ci/check.sh`, the `static` group) runs `grade.py --check`: every `SHA256SUMS` must match its
+CI (`ci/check.sh`, the `bench` group) runs `grade.py --check`: every `SHA256SUMS` must match its
 files, and every reference must pass every one of its tests. Once a session has seen a task
 text, neither the text nor its tests change. A change after that is a new decision, a new task
 text, and a fresh round, and `grade.py --freeze TOOL` writes the new hashes.
