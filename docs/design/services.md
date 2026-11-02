@@ -43,10 +43,10 @@ reader, `jobs`, because `Queue` is opaque. No check compares the two files: that
 sample edit a change to the served program, which refuses its saved data. A logic fix in one is
 made in the other by hand.
 
-It runs on one of Robert's exe.dev VMs (D258). The VM's disk is persistent (local NVMe, streamed
-to an off-machine backup), so the saved state survives restarts and updates, and the exe.dev
-proxy terminates TLS, so Mo needs no TLS of its own. `docs/ops/task-queue.md` is the runbook
-that installs and runs it, and `docs/status/phase3-run.md` records the deployment.
+The queue is exercised on the development machine by its simulation tests, its recovery check
+in `mo test` and the kill loop, which SIGKILLs a real `mo serve`. It was once deployed on an
+exe.dev VM (D258); that deployment was retired, and `docs/ops/task-queue.md` and
+`docs/status/phase3-run.md` record it.
 
 ## 4. The service model
 
@@ -302,10 +302,6 @@ shared `leased_job` check enforces the same rules for heartbeat, acknowledgement
 An unknown id returns `NoSuchJob`; a non-current lease returns `NotLeased`. Heartbeat uses
 checked time addition, like `lease`, and returns `BadLease(length: 30.minutes)` if the new expiry
 would exceed the year 9999. It leaves every other job, the attempt count and `next_id` unchanged.
-
-The exe.dev documentation describes persistent VMs that stop when their owner stops them and
-does not describe idle sleeping. Deployment requires a 48-hour idle check (MO-163), separate
-from the week-long run below (MO-164); unit tests satisfy neither.
 
 ### Fix follow-ups, not implemented in MO-155
 
@@ -864,6 +860,18 @@ budget under every delivery pattern.
 
 ## 10. Done means
 
-Mo's own agents take every task from the job queue for one week with no restart, and a deliberate
-crash in the middle of that week loses no accepted job (D260). This replaces the earlier finish
-line of 24 hours under synthetic load.
+Phase 3 is done when a service is shown never to lose committed state when its process dies:
+
+- every service's recovery check passes in `mo test`, the task queue's included;
+- the negative control, `tests/test_recovery_faults.c`, fails as designed: a recovery that drops
+  the newest log record fails the comparison, and one that repeats it is refused;
+- the short kill loop, `ci/check_kill_loop.py`, passes in the `drivers` group, and a long run by
+  hand is recorded in `docs/status/phase3-run.md`.
+
+The claim covers process death, not machine or power loss. All of it runs on the development
+machine, with no deployment and no wait.
+
+This replaces D260's finish line, a week in which Mo's own agents took every task from the deployed
+queue with one deliberate crash, which itself replaced 24 hours under synthetic load. The week was
+dropped because it was one sample of crash behaviour, mostly exercised systemd, SQLite, the proxy
+and the VM rather than Mo, and needed agents to take work from the queue that Robert starts himself.
