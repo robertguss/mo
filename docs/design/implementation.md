@@ -78,8 +78,8 @@ allows it. The rules are a table at the top of `ci/deps.sh`.
 
 `grammar/` holds Mo's grammar as a Bison file, with the lexer and the checks a
 grammar can't express. It is an instrument, not the compiler: it checks that
-the reference's examples, the programs in `examples/` and the learnability
-test's answers parse, and it proves the grammar unambiguous, because Bison
+the reference's examples, the programs in `examples/` and `services/`, and the
+learnability test's answers parse, and it proves the grammar unambiguous, because Bison
 refuses a grammar with any conflict. Phase 2's parser is hand-written, for
 better error messages, and is tested against this grammar. See
 `grammar/README.md`.

@@ -8,10 +8,9 @@ not here.
 
 ## 1. Purpose
 
-Mo's first niche is long-running services and agent infrastructure (D193). Phase 3 proves it by
-running a service that Mo's own agents depend on every day: a job queue, written in Mo, that the
-project's agents get their tasks from, over MCP (D256). The same service is the one the
-north-star demo later diagnoses and upgrades live.
+Mo's first niche is long-running services and agent infrastructure (D193). Phase 3 closed on
+recovery evidence for a job queue written in Mo and served over MCP. Daily use (D256) was
+dropped; the queue stays as the demo later phases diagnose and upgrade live.
 
 ## 2. Scope
 
@@ -533,9 +532,8 @@ check compared a restart. The named limits in `src/base/limits.h`:
 | `MO_CLI_RECOVERY_POOL` | 64 | reply values kept for reuse |
 | `MO_CLI_RECOVERY_SHRINK_RUNS` | 200 | additional sequence runs while shrinking, within the same deadline |
 
-If 2 seconds compares no restart of `services/task-queue/main.mo` on a gcc debug
-build, recovery checks get a larger default deadline of their own, and this
-section and reference 12.5 say so.
+On a gcc debug build, `mo test` compared 179 sequences and 572 restarts of
+`services/task-queue/main.mo` in about 2.0 s, so the 2-second default stands.
 
 **Shrinking.** A failing sequence shrinks in three passes: delete steps,
 keeping each crash with its restart; shrink tool arguments with the promise
