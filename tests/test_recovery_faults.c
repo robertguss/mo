@@ -165,6 +165,62 @@ static void directly(void *unused) {
     check_directly(2, MO_RECOVERY_REFUSED);
 }
 
+/* A counter that only a timer changes, and only from ten minutes after the checker's clock starts
+ * (2026-01-01T00:00:00Z), so a failing sequence needs a clock advance and shrinking has one to
+ * shorten. */
+static const char ticker[] = "module Main\n\nservice\n  state Int = 0\n  tools total\n"
+                             "  every 1.minute tick\n  token from env \"COUNTER_TOKEN\"\nend\n\n"
+                             "struct Total\n  count: Int\nend\n\n"
+                             "fn total(state: Int, _now: Time) : Total\n"
+                             "  Total(count: state)\nend\n\n"
+                             "fn tick(state: Int, now: Time) : Int\n"
+                             "  from = Time.parse(\"2026-01-01T00:10:00Z\") or stop \"time\"\n"
+                             "  if now >= from: state + 1 else: state\nend\n";
+
+/* Losing the ticker's newest log record fails the comparison, and shrinking halves the advance
+ * until halving again would leave no counting tick: one advance of at least ten minutes and
+ * under twenty, a crash and a restart, failing the same way each time they run again. */
+static void shrunk_advance(void *unused) {
+    (void)unused;
+    deliveries = 0;
+    held_loads = 0;
+    struct mo_image *image = compile(ticker);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_recovery *recovery = NULL;
+    MO_ASSERT(mo_recovery_new(image, 0, &limits, &recovery) == MO_INPUT_OK);
+    struct mo_deadline deadline;
+    MO_ASSERT(mo_deadline_start(&deadline, 600));
+    struct mo_recovery_result found;
+    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 200, &deadline, NULL, &found);
+    CHECK(outcome == MO_RECOVERY_MISMATCH);
+    if (outcome == MO_RECOVERY_MISMATCH) {
+        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, &deadline);
+        CHECK(runs > 0 && runs < MO_CLI_RECOVERY_SHRINK_RUNS);
+        const struct mo_recovery_step *steps = found.sequence.steps;
+        const int64_t minute = INT64_C(60000000);
+        bool shape = found.sequence.count == 3 && steps[0].kind == MO_RECOVERY_ADVANCE &&
+                     steps[1].kind == MO_RECOVERY_CRASH && steps[2].kind == MO_RECOVERY_RESTART;
+        CHECK(shape);
+        CHECK(shape && steps[0].duration >= 10 * minute && steps[0].duration < 20 * minute);
+        for (int round = 0; shape && round < 2; round++) {
+            struct mo_recovery_result rerun;
+            CHECK(mo_recovery_replay(recovery, &found.sequence, NULL, &rerun) ==
+                  MO_RECOVERY_MISMATCH);
+            CHECK(rerun.step == 2);
+            /* Only the ticks from ten minutes on counted, and recovery lost the newest one. */
+            int64_t counted = steps[0].duration / minute - 9;
+            CHECK(state_of(recovery, mo_image_bytecode(image)->services[0].state_type,
+                           &rerun.before) == counted);
+            CHECK(state_of(recovery, mo_image_bytecode(image)->services[0].state_type,
+                           &rerun.after) == counted - 1);
+            mo_recovery_result_free(recovery, &rerun);
+        }
+    }
+    mo_recovery_result_free(recovery, &found);
+    mo_recovery_free(recovery);
+    mo_image_free(image);
+}
+
 /* Every committed update changes this counter's state, so losing the newest one always shows. */
 static const char increment[] = "module Main\n\nservice\n  state Int = 0\n  tools add\n"
                                 "  token from env \"COUNTER_TOKEN\"\nend\n\n"
@@ -249,6 +305,7 @@ static void check_unrepeatable(void) {
 
 int main(void) {
     CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, directly, NULL) == 0);
+    CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, shrunk_advance, NULL) == 0);
     check_command(1, 0, "passed", "1 passed, 0 failed, 0 stopped\n");
     check_command(0, 1, "failed",
                   "  sequences: 3\n"
