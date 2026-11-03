@@ -53,8 +53,9 @@ void mo_recovery_sequence_init(struct mo_recovery_sequence *sequence) {
                                          MO_ARENA_CHUNK_HEADER + MO_ARENA_ALIGNMENT));
 }
 
-void mo_recovery_sequence_clear(struct mo_recovery *r, struct mo_recovery_sequence *sequence) {
-    for (uint32_t i = 0; i < sequence->count; i++) {
+/* Drops the steps from count on. */
+static void cut(struct mo_recovery *r, struct mo_recovery_sequence *sequence, uint32_t count) {
+    for (uint32_t i = count; i < sequence->count; i++) {
         const struct mo_recovery_step *step = &sequence->steps[i];
         if (step->kind != MO_RECOVERY_SEND)
             continue;
@@ -62,7 +63,11 @@ void mo_recovery_sequence_clear(struct mo_recovery *r, struct mo_recovery_sequen
         for (uint32_t a = 0; a < tool->argument_count; a++)
             mo_value_drop(r->heap, tool->argument_types[a], step->arguments[a]);
     }
-    sequence->count = 0;
+    sequence->count = count;
+}
+
+void mo_recovery_sequence_clear(struct mo_recovery *r, struct mo_recovery_sequence *sequence) {
+    cut(r, sequence, 0);
     mo_arena_free(&sequence->arena);
 }
 
@@ -124,7 +129,7 @@ enum mo_input_result mo_recovery_new(const struct mo_image *image, uint32_t inde
                               .service = service,
                               .types = mo_image_types(image),
                               .index = index};
-    static const char suffix[] = ".service.recovery";
+    static const char suffix[] = MO_RECOVERY_SUFFIX;
     const struct mo_bytecode_string *module = &file->strings[file->modules[service->module].name];
     size_t length = module->length + sizeof suffix - 1;
     r->name = mo_arena_allocate(&r->arena, length + 1, 1);
@@ -871,19 +876,6 @@ static bool copy_steps(struct mo_recovery *r, const struct mo_recovery_sequence 
         to->count++;
     }
     return true;
-}
-
-/* Drops the steps from count on. */
-static void cut(struct mo_recovery *r, struct mo_recovery_sequence *sequence, uint32_t count) {
-    for (uint32_t i = count; i < sequence->count; i++) {
-        const struct mo_recovery_step *step = &sequence->steps[i];
-        if (step->kind != MO_RECOVERY_SEND)
-            continue;
-        const struct mo_bytecode_service_tool *tool = &r->service->tools[step->tool];
-        for (uint32_t a = 0; a < tool->argument_count; a++)
-            mo_value_drop(r->heap, tool->argument_types[a], step->arguments[a]);
-    }
-    sequence->count = count;
 }
 
 /* A copy of the best sequence without [skip, end), or false with candidate cleared. */

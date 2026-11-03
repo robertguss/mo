@@ -10,6 +10,10 @@
 #include "tools/inputs.h"
 #include "vm/vm.h"
 
+/* A recovery check is named after its module plus this suffix; service is reserved, so no
+ * example, promise or test has the name. */
+#define MO_RECOVERY_SUFFIX ".service.recovery"
+
 enum mo_recovery_step_kind {
     MO_RECOVERY_SEND,
     MO_RECOVERY_ADVANCE,
@@ -17,7 +21,8 @@ enum mo_recovery_step_kind {
     MO_RECOVERY_RESTART
 };
 
-/* What the supervisor did after a SEND (D308). */
+/* What the supervisor did after a SEND: 5 failures within 60 seconds restart the service,
+ * and 3 restarts within 10 minutes stop it. */
 enum mo_recovery_supervisor { MO_SUPERVISOR_NONE, MO_SUPERVISOR_RESTARTED, MO_SUPERVISOR_STOPPED };
 
 /* One step, and once it ran, what it did. */

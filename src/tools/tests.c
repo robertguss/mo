@@ -68,7 +68,7 @@ static char *recovery_name(struct mo_arena *arena, const struct mo_program *prog
     struct mo_buffer buffer;
     mo_buffer_init(&buffer, *work < MO_CLI_DIAGNOSTIC_SIZE ? *work : MO_CLI_DIAGNOSTIC_SIZE);
     bool ok = mo_buffer_append_text(&buffer, program->set->names[service->module]) &&
-              mo_buffer_append_text(&buffer, ".service.recovery") &&
+              mo_buffer_append_text(&buffer, MO_RECOVERY_SUFFIX) &&
               mo_buffer_append_byte(&buffer, 0);
     *work -= buffer.length;
     char *result = ok ? mo_arena_copy(arena, buffer.bytes, buffer.length, 1) : NULL;
@@ -428,7 +428,7 @@ static bool test_recovery(const struct mo_cli *cli, struct mo_image *image,
     case MO_RECOVERY_REFUSED: {
         report.counts.sequences++;
         uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, &deadline);
-        (void)runs;
+        (void)runs; /* gcc ignores a (void) cast on a must-use result. */
         const struct mo_recovery_hooks hooks = {keep_reply, &replies};
         ran_again = true;
         if (mo_recovery_replay(recovery, &found.sequence, &hooks, &rerun) != outcome) {
