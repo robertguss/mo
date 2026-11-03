@@ -182,7 +182,12 @@ class Run:
     def start(self):
         # The constructor returns only after the listening line: a SIGKILL before a folder's
         # first one can leave a zero-byte service.sqlite that the store then refuses for good.
-        self.queue = KillableQueue(self.binary, self.folder)
+        try:
+            self.queue = KillableQueue(self.binary, self.folder)
+        except AssertionError as error:
+            # A server that does not come back after a kill is a finding, so --keep keeps its
+            # folder; the queue has already killed the process it started.
+            self.fail(f'mo serve did not start on {self.folder}: {error}')
         if not self.started:
             self.started, self.born = True, time.monotonic()
 

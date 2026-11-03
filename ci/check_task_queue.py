@@ -34,6 +34,15 @@ class Queue:
             [str(binary), 'serve', f'{FOLDER}/main.mo', '--port', '0', '--data', str(data)],
             env={**os.environ, 'QUEUE_TOKEN': TOKEN}, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, bufsize=0)
+        try:
+            self.port = self.listening()
+        except BaseException:
+            # A server that never says it is listening is still running; don't orphan it.
+            self.kill()
+            raise
+        self.next_id = 100
+
+    def listening(self):
         line = b''
         limit = time.monotonic() + 30
         while not line.endswith(b'\n'):
@@ -43,8 +52,7 @@ class Queue:
             line += chunk
         prefix, suffix = b'mo serve: listening on http://127.0.0.1:', b'/mcp\n'
         assert line.startswith(prefix) and line.endswith(suffix), line
-        self.port = int(line[len(prefix):-len(suffix)])
-        self.next_id = 100
+        return int(line[len(prefix):-len(suffix)])
 
     def post(self, body, token=TOKEN):
         connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=30)
