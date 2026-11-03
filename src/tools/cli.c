@@ -139,6 +139,46 @@ static bool port_number(const char *text, uint16_t *out) {
     return true;
 }
 
+enum {
+    FLAG_JSON,
+    FLAG_LIST,
+    FLAG_REFERENCE,
+    FLAG_ONLY,
+    FLAG_IN,
+    FLAG_MAX_STACK,
+    FLAG_MAX_DEPTH,
+    FLAG_MAX_HEAP,
+    FLAG_CALLS,
+    FLAG_SECONDS,
+    FLAG_OUTPUT,
+    FLAG_PORT,
+    FLAG_DATA,
+    FLAG_ALLOW_HOST,
+    FLAG_EMIT
+};
+
+static const struct {
+    const char *name;
+    bool takes_value;
+    unsigned commands;
+} flag_table[] = {
+    [FLAG_JSON] = {"--json", false, (1u << MO_COMMAND_CHECK) | (1u << MO_COMMAND_TEST)},
+    [FLAG_LIST] = {"--list", false, (1u << MO_COMMAND_TEST)},
+    [FLAG_REFERENCE] = {"--reference", false, (1u << MO_COMMAND_GUIDE)},
+    [FLAG_ONLY] = {"--only", true, (1u << MO_COMMAND_TEST)},
+    [FLAG_IN] = {"--in", true, (1u << MO_COMMAND_TEST)},
+    [FLAG_MAX_STACK] = {"--max-stack", true, (1u << MO_COMMAND_RUN) | (1u << MO_COMMAND_TEST)},
+    [FLAG_MAX_DEPTH] = {"--max-depth", true, (1u << MO_COMMAND_RUN) | (1u << MO_COMMAND_TEST)},
+    [FLAG_MAX_HEAP] = {"--max-heap", true, (1u << MO_COMMAND_RUN) | (1u << MO_COMMAND_TEST)},
+    [FLAG_CALLS] = {"--calls", true, (1u << MO_COMMAND_TEST)},
+    [FLAG_SECONDS] = {"--seconds", true, (1u << MO_COMMAND_TEST)},
+    [FLAG_OUTPUT] = {"-o", true, (1u << MO_COMMAND_EMIT)},
+    [FLAG_PORT] = {"--port", true, (1u << MO_COMMAND_SERVE)},
+    [FLAG_DATA] = {"--data", true, (1u << MO_COMMAND_SERVE)},
+    [FLAG_ALLOW_HOST] = {"--allow-host", true, (1u << MO_COMMAND_SERVE)},
+    [FLAG_EMIT] = {"--emit=", false, (1u << MO_COMMAND_CHECK)},
+};
+
 bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const char **error) {
     MO_ASSERT(out != NULL && error != NULL && argc >= 0);
     *out = (struct mo_cli){
@@ -188,34 +228,21 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                 return false;
             unsigned flag;
             bool value = false;
-            const char *flag_names[] = {"--json",  "--list",      "--reference", "--only",
-                                        "--in",    "--max-stack", "--max-depth", "--max-heap",
-                                        "--calls", "--seconds",   "-o",          "--port",
-                                        "--data",  "--allow-host"};
-            for (flag = 0; flag < 14; flag++)
-                if (strcmp(arg, flag_names[flag]) == 0)
+            unsigned flag_count = (unsigned)(sizeof(flag_table) / sizeof(flag_table[0]));
+            for (flag = 0; flag < flag_count; flag++)
+                if (strcmp(arg, flag_table[flag].name) == 0)
                     break;
             if (strncmp(arg, "--emit=", 7) == 0)
-                flag = 14;
-            if (flag == 14 && strncmp(arg, "--emit=", 7) != 0)
+                flag = FLAG_EMIT;
+            else if (flag == flag_count)
                 return refuse(out, error, "unknown flag", arg, NULL);
-            bool check = out->command == MO_COMMAND_CHECK;
-            bool test = out->command == MO_COMMAND_TEST;
-            bool run = out->command == MO_COMMAND_RUN;
-            bool serve = out->command == MO_COMMAND_SERVE;
-            bool allowed = (flag == 0 && (check || test)) || (flag == 1 && test) ||
-                           (flag == 2 && out->command == MO_COMMAND_GUIDE) ||
-                           ((flag == 3 || flag == 4 || flag == 8 || flag == 9) && test) ||
-                           (flag >= 5 && flag <= 7 && (run || test)) || (flag == 14 && check) ||
-                           (flag == 10 && out->command == MO_COMMAND_EMIT) ||
-                           (flag >= 11 && flag <= 13 && serve);
-            if (!allowed)
+            if ((flag_table[flag].commands & (1u << (unsigned)out->command)) == 0)
                 return refuse(out, error, "flag is not accepted by this command", arg, NULL);
             uint32_t bit = UINT32_C(1) << flag;
-            if (flag != 3 && (seen & bit) != 0)
+            if (flag != FLAG_ONLY && (seen & bit) != 0)
                 return refuse(out, error, "flag may be given only once (except --only)", arg, NULL);
             seen |= bit;
-            value = flag >= 3 && flag <= 13;
+            value = flag_table[flag].takes_value;
             const char *operand = NULL;
             if (value) {
                 if (i + 1 == argc)
@@ -224,65 +251,67 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                 MO_ASSERT(operand != NULL);
                 if (!option(out, error, operand, &count, &total))
                     return false;
-                if (operand[0] == '\0' || (operand[0] == '-' && (flag < 5 || flag == 10 ||
-                                                                 flag >= 12 || operand[1] == '-')))
+                if (operand[0] == '\0' ||
+                    (operand[0] == '-' && (flag < FLAG_MAX_STACK || flag == FLAG_OUTPUT ||
+                                           flag >= FLAG_DATA || operand[1] == '-')))
                     return refuse(out, error, "flag needs a nonempty value", arg, operand);
             }
             uint64_t n = 0;
-            if (flag >= 5 && flag <= 9 &&
-                !number(operand, flag == 5 || flag == 7,
-                        flag == 5 || flag == 7 ? SIZE_MAX : UINT32_MAX, &n))
+            if (flag >= FLAG_MAX_STACK && flag <= FLAG_SECONDS &&
+                !number(operand, flag == FLAG_MAX_STACK || flag == FLAG_MAX_HEAP,
+                        flag == FLAG_MAX_STACK || flag == FLAG_MAX_HEAP ? SIZE_MAX : UINT32_MAX,
+                        &n))
                 return refuse(out, error,
                               "invalid limit (expected a positive decimal integer; bytes "
                               "may use B, KiB, MiB or GiB)",
                               arg, operand);
             switch (flag) {
-            case 0:
+            case FLAG_JSON:
                 out->json = true;
                 break;
-            case 1:
+            case FLAG_LIST:
                 out->list = true;
                 break;
-            case 2:
+            case FLAG_REFERENCE:
                 out->reference = true;
                 break;
-            case 3:
+            case FLAG_ONLY:
                 out->only[out->only_count++] = operand;
                 break;
-            case 4:
+            case FLAG_IN:
                 out->module = operand;
                 break;
-            case 5:
+            case FLAG_MAX_STACK:
                 out->limits.stack_size = (size_t)n;
                 break;
-            case 6:
+            case FLAG_MAX_DEPTH:
                 out->limits.call_depth = (uint32_t)n;
                 break;
-            case 7:
+            case FLAG_MAX_HEAP:
                 out->limits.heap_size = (size_t)n;
                 break;
-            case 8:
+            case FLAG_CALLS:
                 out->calls = (uint32_t)n;
                 break;
-            case 9:
+            case FLAG_SECONDS:
                 out->seconds = (uint32_t)n;
                 break;
-            case 10:
+            case FLAG_OUTPUT:
                 out->output = operand;
                 break;
-            case 11:
+            case FLAG_PORT:
                 if (!port_number(operand, &out->port))
                     return refuse(out, error,
                                   "invalid port (expected a decimal integer from 0 to 65535)", arg,
                                   operand);
                 break;
-            case 12:
+            case FLAG_DATA:
                 out->data = operand;
                 break;
-            case 13:
+            case FLAG_ALLOW_HOST:
                 out->allow_host = operand;
                 break;
-            case 14:
+            case FLAG_EMIT:
                 if (strcmp(arg + 7, "core") == 0)
                     out->emit = MO_EMIT_CORE;
                 else if (strcmp(arg + 7, "bytecode") == 0)
@@ -316,9 +345,9 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
-    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << 11)) == 0)
+    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << FLAG_PORT)) == 0)
         return refuse(out, error, "serve needs --port N", command, NULL);
-    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << 12)) == 0)
+    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << FLAG_DATA)) == 0)
         return refuse(out, error, "serve needs --data DIR", command, NULL);
     if (out->json && out->emit != MO_EMIT_NONE)
         return refuse(out, error, "--json and --emit cannot be combined", "--json", "--emit");
