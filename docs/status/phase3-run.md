@@ -4,7 +4,7 @@
 `mo test` and the kill loop, both run on the development VM, and nothing
 depended on the deployed queue. The 48-hour idle check that started at
 2026-11-02 13:18 UTC was abandoned, not completed, and the week-long run never
-started. Teardown below says what was removed and what is left for Robert. The
+started. Teardown below says how it was removed. The
 rest of this file is the record as it was written, followed by the recovery
 evidence that replaced the run.
 
@@ -73,9 +73,12 @@ sourced it was removed.
 The queue's unit could not be stopped from `aurora-but-gold`: `ssh
 turnpike-ferret.exe.xyz` answered "VM not found", and `ssh exe.dev ls` from
 that key lists no VMs. The public route still answered an unauthenticated
-request with 401. Stopping and disabling `task-queue.service`, making the
-route private, deleting the VM, and removing the Codex entry and token file on
-Robert's Mac are Robert's steps, listed in `docs/ROADMAP.md`.
+request with 401.
+
+On 2026-11-03 Robert deleted the `turnpike-ferret` VM, which took the unit, the
+public route, the pinned build and the data folder with it. What remains is the
+Codex `task-queue` entry and the token file on his Mac, which point at a host
+that no longer exists.
 
 ## Predictions for the recovery checks
 

@@ -39,10 +39,8 @@ closed it. It closed on evidence, not on time: the results are in
 - Removed: the week-long run. Phase 3 closes on evidence, not on time, and
   Robert starts every agent thread himself, so no thread leases from the queue.
 
-Waiting for Robert: the retired deployment on `turnpike-ferret`. Stop and
-disable `task-queue.service` there (it could not be reached from the
-development VM), make the route private and delete the VM, and remove the
-Codex `task-queue` entry and the token file on his Mac.
+Waiting for Robert: removing the Codex `task-queue` entry and the token file on
+his Mac. The `turnpike-ferret` VM was deleted on 2026-11-03.
 
 This file is the task list and the status. The designs are in `docs/design/`,
 `docs/reference/` and `formal/`; the evidence is the tests, the checks and each

@@ -1846,8 +1846,8 @@ Tools render these refusals and suppress both artifacts; they do not treat
 them as invalid compiler Core or runtime bugs.
 
 **Source observation inventory.** `test --list` checks the whole source program,
-then lists its examples, promises and tests without lowering or loading an image.
-Initialization, main, anchors and observations never execute, even with accepted
+then lists its examples, promises, tests and recovery checks without lowering or
+loading an image. Initialization, main, anchors and observations never execute, even with accepted
 one-byte/one-call budgets. The inventory includes unused generic promise templates;
 it is not a scan of whichever concrete functions lowering happened to emit.
 Names use the source module/subject and original one-based kind ordinal (3.5 of
