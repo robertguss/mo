@@ -4,6 +4,7 @@
 
 #include "prim/prim.h"
 #include "tools/promises.h"
+#include "tools/recovery.h"
 #include "tools/run.h"
 #include "tools/tests.h"
 #include "vm/vm.h"
@@ -575,9 +576,9 @@ bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
         text(&w, "{\"record\":\"test\",\"name\":");
         json_string(&w, observation->name);
         text(&w, ",\"kind\":");
-        json_string(&w, mo_observation_kind(observation->source->kind));
+        json_string(&w, mo_observation_kind(observation));
         text(&w, ",\"span\":");
-        json_span(&w, sources, observation->source->syntax->span, NULL, false);
+        json_span(&w, sources, mo_observation_span(observation), NULL, false);
         text(&w, "}\n");
     } else {
         safe_text(&w, observation->name);
@@ -679,27 +680,39 @@ static void structural_literal(struct writer *w, const struct mo_buffer *raw, ui
     bytes(w, &delimiter, 1);
 }
 
-static void promise_value(struct writer *w, const struct mo_test_result *result, uint32_t type,
-                          struct mo_cell cell, bool json) {
-    struct mo_buffer raw, literal;
-    mo_buffer_init(&raw, 4096);
-    mo_buffer_init(&literal, 4096);
-    bool printed = mo_value_print(mo_process_heap(result->process), type, cell, &raw);
-    struct mo_buffer *value = &raw;
-    enum mo_type_kind kind = result->file->types[type].kind;
+/* A value's text form, a root Text or Char quoted as a literal, appended to out. */
+static bool value_literal(struct mo_heap *heap, const struct mo_bytecode *file, uint32_t type,
+                          struct mo_cell cell, struct mo_buffer *out) {
+    struct mo_buffer raw;
+    mo_buffer_init(&raw, out->limit);
+    bool printed = mo_value_print(heap, type, cell, &raw);
+    enum mo_type_kind kind = file->types[type].kind;
     if (printed && (kind == MO_TYPE_TEXT || kind == MO_TYPE_CHAR)) {
-        struct writer quoted = {.out = &literal, .ok = true};
+        struct writer quoted = {.out = out, .ok = true};
         structural_literal(&quoted, &raw, kind == MO_TYPE_TEXT ? '"' : '\'');
         printed = quoted.ok;
-        value = &literal;
-    }
-    w->ok = w->ok && printed;
-    if (json)
-        json_bytes(w, value->bytes, value->length);
-    else
-        safe_bytes(w, value->bytes, value->length);
-    mo_buffer_free(&literal);
+    } else if (printed)
+        printed = mo_buffer_append(out, raw.bytes, raw.length);
     mo_buffer_free(&raw);
+    return printed;
+}
+
+/* A value's literal, which must fit limit bytes. */
+static void value_text(struct writer *w, struct mo_heap *heap, const struct mo_bytecode *file,
+                       uint32_t type, struct mo_cell cell, size_t limit, bool json) {
+    struct mo_buffer literal;
+    mo_buffer_init(&literal, limit);
+    w->ok = w->ok && value_literal(heap, file, type, cell, &literal);
+    if (json)
+        json_bytes(w, literal.bytes, literal.length);
+    else
+        safe_bytes(w, literal.bytes, literal.length);
+    mo_buffer_free(&literal);
+}
+
+static void promise_value(struct writer *w, const struct mo_test_result *result, uint32_t type,
+                          struct mo_cell cell, bool json) {
+    value_text(w, mo_process_heap(result->process), result->file, type, cell, 4096, json);
 }
 
 static const char *extreme_description(const struct mo_input_extreme *extreme) {
@@ -911,6 +924,346 @@ static void stopped_result(struct writer *w, const struct mo_sources *sources,
         text(w, "]}");
 }
 
+/* Microseconds as Mo writes a Duration: whole seconds, any fraction, then s. */
+static void duration_text(struct writer *w, int64_t microseconds) {
+    MO_ASSERT(microseconds >= 0);
+    uint64_t us = (uint64_t)microseconds;
+    unsigned_number(w, us / 1000000);
+    uint64_t fraction = us % 1000000;
+    if (fraction != 0) {
+        char digits[6];
+        for (unsigned i = 6; i-- > 0; fraction /= 10)
+            digits[i] = (char)('0' + fraction % 10);
+        size_t length = 6;
+        while (digits[length - 1] == '0')
+            length--;
+        text(w, ".");
+        bytes(w, digits, length);
+    }
+    text(w, "s");
+}
+
+/* A failure the service handed back, as Simulation words one: what failed, then its reason and
+ * detail. */
+static void recovery_failure(struct writer *w, const struct mo_recovery_failure *failure,
+                             bool json) {
+    struct mo_buffer reason;
+    mo_buffer_init(&reason, MO_CLI_DIAGNOSTIC_SIZE);
+    bool ok = mo_buffer_append_text(&reason, mo_service_status_text(failure->status));
+    if (failure->reason[0] != '\0')
+        ok = ok && mo_buffer_append_text(&reason, ": ") &&
+             mo_buffer_append_text(&reason, failure->reason);
+    if (failure->detail_length != 0)
+        ok = ok && mo_buffer_append_text(&reason, ": ") &&
+             mo_buffer_append(&reason, failure->detail, failure->detail_length);
+    w->ok = w->ok && ok;
+    if (json)
+        json_bytes(w, reason.bytes, reason.length);
+    else
+        safe_bytes(w, reason.bytes, reason.length);
+    mo_buffer_free(&reason);
+}
+
+static void recovery_send(struct writer *w, const struct mo_test_result *result, uint32_t index,
+                          bool json) {
+    const struct mo_recovery_report *report = result->recovery;
+    const struct mo_bytecode *file = result->file;
+    const struct mo_recovery_step *step = &report->sequence->steps[index];
+    const struct mo_bytecode_service_tool *tool =
+        &file->services[report->service].tools[step->tool];
+    const struct mo_bytecode_string *name = &file->strings[tool->name];
+    struct mo_heap *heap = mo_recovery_heap(report->recovery);
+    if (json) {
+        text(w, "\"send\",\"tool\":");
+        json_bytes(w, name->bytes, name->length);
+        text(w, ",\"arguments\":[");
+    } else {
+        safe_bytes(w, name->bytes, name->length);
+        text(w, "(");
+    }
+    for (uint32_t a = 0; a < tool->argument_count; a++) {
+        if (a != 0)
+            text(w, json ? "," : ", ");
+        value_text(w, heap, file, tool->argument_types[a], step->arguments[a],
+                   MO_CLI_DIAGNOSTIC_SIZE, json);
+    }
+    const char *outcome = NULL;
+    bool reply = false;
+    switch (step->sent) {
+    case MO_SENT_REPLIED:
+    case MO_SENT_REJECTED:
+        outcome = "replied";
+        reply = true;
+        break;
+    case MO_SENT_TOOL_FAILED:
+        outcome = "ToolFailed";
+        break;
+    case MO_SENT_DOWN:
+        outcome = "ServiceDown";
+        break;
+    case MO_SENT_FAILED:
+        outcome = "failed";
+        break;
+    case MO_SENT_ARGUMENT:
+    case MO_SENT_TOO_LARGE:
+    case MO_SENT_REFUSED:
+        outcome = json ? "refused" : "not admitted";
+        break;
+    case MO_SENT_REPLY_COPY:
+        outcome = json ? "reply_refused" : "reply not copied";
+        break;
+    case MO_SENT_STOPPED:
+        MO_UNREACHABLE();
+    }
+    uint32_t type = report->reply_types[index];
+    MO_ASSERT(reply == (type != MO_NO_INDEX));
+    if (json) {
+        text(w, "],\"outcome\":");
+        json_string(w, outcome);
+        if (reply) {
+            text(w, ",\"reply\":");
+            value_text(w, heap, file, type, report->replies[index], MO_CLI_DIAGNOSTIC_SIZE, true);
+        }
+        text(w, step->updated ? ",\"committed\":true" : ",\"committed\":false");
+    } else {
+        text(w, ")  ");
+        text(w, outcome);
+        if (reply) {
+            text(w, " ");
+            value_text(w, heap, file, type, report->replies[index], MO_CLI_DIAGNOSTIC_SIZE, false);
+        }
+        if (step->sent == MO_SENT_FAILED) {
+            text(w, ": ");
+            safe_text(w, mo_service_status_text(step->status));
+        }
+        if (step->updated)
+            text(w, ", committed");
+    }
+    if (step->supervisor != MO_SUPERVISOR_NONE) {
+        bool stopped = step->supervisor == MO_SUPERVISOR_STOPPED;
+        text(w, json ? (stopped ? ",\"supervisor\":\"stopped\"" : ",\"supervisor\":\"restarted\"")
+                     : (stopped ? ", service stopped" : ", service restarted"));
+    }
+}
+
+static void recovery_advance(struct writer *w, const struct mo_recovery_step *step, bool json) {
+    text(w, json ? "\"advance\",\"by\":\"" : "advance ");
+    duration_text(w, step->duration);
+    const char *refused = step->outcome == MO_SIMULATION_TICKS
+                              ? "more firings fell due than MO_LIMIT_SIMULATION_TICKS; none ran"
+                          : step->outcome == MO_SIMULATION_DURATION
+                              ? "the clock would pass year 9999; nothing ran"
+                              : NULL;
+    MO_ASSERT(refused != NULL || step->outcome == MO_SIMULATION_OK);
+    if (json) {
+        text(w, "\",\"firings\":");
+        unsigned_number(w, step->firings);
+        if (step->failed_firings != 0) {
+            text(w, ",\"failed_firings\":");
+            unsigned_number(w, step->failed_firings);
+        }
+        if (refused != NULL) {
+            text(w, ",\"refused\":");
+            json_string(w, refused);
+        }
+        return;
+    }
+    text(w, "  ");
+    if (refused != NULL) {
+        text(w, refused);
+        return;
+    }
+    unsigned_number(w, step->firings);
+    text(w, step->firings == 1 ? " timer firing" : " timer firings");
+    if (step->failed_firings != 0) {
+        text(w, ", ");
+        unsigned_number(w, step->failed_firings);
+        text(w, " failed");
+    }
+}
+
+/* A state's saved encoding as text: decoded into the checker's heap, printed, then dropped. */
+static bool state_literal(const struct mo_test_result *result, const struct mo_buffer *saved,
+                          struct mo_buffer *out) {
+    const struct mo_recovery_report *report = result->recovery;
+    struct mo_heap *heap = mo_recovery_heap(report->recovery);
+    uint32_t type = result->file->services[report->service].state_type;
+    struct mo_cell value;
+    if (!mo_value_decode(heap, type, saved->bytes, saved->length, &value))
+        return false;
+    bool printed = value_literal(heap, result->file, type, value, out);
+    mo_value_drop(heap, type, value);
+    return printed;
+}
+
+/* The numbered steps of a failing sequence's last run, then both states at its failing restart. */
+static void recovery_failed(struct writer *w, const struct mo_test_result *result, bool json) {
+    const struct mo_recovery_report *report = result->recovery;
+    const struct mo_recovery_result *run = report->result;
+    const struct mo_recovery_sequence *sequence = report->sequence;
+    MO_ASSERT(run->step < sequence->count && run->step != 0);
+    if (json)
+        text(w, ",\"steps\":[");
+    for (uint32_t i = 0; w->ok && i < sequence->count; i++) {
+        const struct mo_recovery_step *step = &sequence->steps[i];
+        MO_ASSERT(step->ran);
+        if (json)
+            text(w, i == 0 ? "{\"action\":" : ",{\"action\":");
+        else {
+            text(w, "  ");
+            unsigned_number(w, i + 1);
+            text(w, ". ");
+        }
+        switch (step->kind) {
+        case MO_RECOVERY_SEND:
+            recovery_send(w, result, i, json);
+            break;
+        case MO_RECOVERY_ADVANCE:
+            recovery_advance(w, step, json);
+            break;
+        case MO_RECOVERY_CRASH:
+            text(w, json ? "\"crash\"" : "crash");
+            break;
+        case MO_RECOVERY_RESTART:
+            if (step->outcome == MO_SIMULATION_DOWN) {
+                MO_ASSERT(i == run->step && run->outcome == MO_RECOVERY_REFUSED);
+                text(w, json ? "\"restart\",\"recovered\":\"refused\""
+                             : "restart  recovery refused the store: ");
+                if (!json)
+                    recovery_failure(w, &run->failure, false);
+            } else if (i == run->step) {
+                MO_ASSERT(run->outcome == MO_RECOVERY_MISMATCH);
+                text(w, json ? "\"restart\",\"recovered\":\"different\""
+                             : "restart  recovered a different state");
+            } else
+                text(w, json ? "\"restart\",\"recovered\":\"same\""
+                             : "restart  recovered the same state");
+            break;
+        }
+        text(w, json ? "}" : "\n");
+    }
+    struct mo_buffer before, after;
+    mo_buffer_init(&before, MO_CLI_DIAGNOSTIC_SIZE);
+    mo_buffer_init(&after, MO_CLI_DIAGNOSTIC_SIZE);
+    w->ok = w->ok && state_literal(result, &run->before, &before);
+    bool mismatch = run->outcome == MO_RECOVERY_MISMATCH;
+    if (mismatch)
+        w->ok = w->ok && state_literal(result, &run->after, &after);
+    if (json) {
+        text(w, "],\"before\":");
+        json_bytes(w, before.bytes, before.length);
+        if (mismatch) {
+            text(w, ",\"after\":");
+            json_bytes(w, after.bytes, after.length);
+        } else {
+            text(w, ",\"refusal\":");
+            recovery_failure(w, &run->failure, true);
+        }
+    } else {
+        text(w, "  state before step ");
+        unsigned_number(w, run->step);
+        text(w, ": ");
+        safe_bytes(w, before.bytes, before.length);
+        text(w, "\n");
+        if (mismatch) {
+            text(w, "  state after step ");
+            unsigned_number(w, run->step + 1);
+            text(w, ": ");
+            safe_bytes(w, after.bytes, after.length);
+            text(w, "\n");
+        }
+    }
+    /* States that print the same differ in their saved bytes, such as a Map's order. */
+    if (mismatch && before.length == after.length &&
+        memcmp(before.bytes, after.bytes, before.length) == 0) {
+        size_t at = 0;
+        while (at < run->before.length && at < run->after.length &&
+               run->before.bytes[at] == run->after.bytes[at])
+            at++;
+        text(w, json ? ",\"differ_at\":" : "  the saved encodings first differ at byte ");
+        unsigned_number(w, at);
+        if (!json)
+            text(w, "\n");
+    }
+    mo_buffer_free(&after);
+    mo_buffer_free(&before);
+}
+
+/* The service's own failure at its first open, as a stopped test shows its bug. */
+static void recovery_stopped(struct writer *w, const struct mo_sources *sources,
+                             const struct mo_test_result *result, bool json) {
+    const struct mo_recovery_failure *failure = &result->recovery->result->failure;
+    const struct mo_bytecode *file = result->file;
+    const struct mo_bytecode_service *service = &file->services[result->recovery->service];
+    const char *reason =
+        failure->reason[0] != '\0' ? failure->reason : mo_service_status_text(failure->status);
+    struct mo_span span =
+        mo_runtime_span(file, sources, failure->span.file, failure->span.start, failure->span.end);
+    if (json) {
+        text(w, ",\"defect\":{\"reason\":");
+        json_string(w, reason);
+        if (failure->detail_length != 0) {
+            text(w, ",\"detail\":");
+            json_bytes(w, (const uint8_t *)failure->detail, failure->detail_length);
+        }
+        text(w, ",\"span\":");
+        json_span(w, sources, span, NULL, false);
+        text(w, ",\"stack\":[],\"variables\":[]}");
+        return;
+    }
+    text(w, "  bug: ");
+    safe_text(w, reason);
+    text(w, "\n");
+    if (failure->detail_length != 0) {
+        text(w, "  detail: ");
+        safe_bytes(w, (const uint8_t *)failure->detail, failure->detail_length);
+        text(w, "\n");
+    }
+    uint32_t timer = 0;
+    while (timer < service->timer_count && service->timers[timer].interval != failure->function)
+        timer++;
+    if (failure->function == service->start)
+        text(w, "  in the start value");
+    else if (timer < service->timer_count) {
+        const struct mo_bytecode_string *name =
+            &file->strings[file->functions[service->timers[timer].function].name];
+        text(w, "  in the interval of timer ");
+        safe_bytes(w, name->bytes, name->length);
+    } else
+        return;
+    if (failure->span.file != MO_NO_INDEX) {
+        text(w, "  ");
+        location(w, sources, span);
+    }
+    text(w, "\n");
+}
+
+static void recovery_result(struct writer *w, const struct mo_sources *sources,
+                            const struct mo_test_result *result, bool json) {
+    const struct mo_recovery_report *report = result->recovery;
+    if (json) {
+        text(w, ",\"sequences\":");
+        unsigned_number(w, report->counts.sequences);
+        text(w, ",\"restarts\":");
+        unsigned_number(w, report->counts.restarts);
+    }
+    switch (result->outcome) {
+    case MO_RETURNED:
+        break;
+    case MO_FAILED:
+        if (!json) {
+            text(w, "  sequences: ");
+            unsigned_number(w, report->counts.sequences);
+            text(w, "\n");
+        }
+        recovery_failed(w, result, json);
+        break;
+    case MO_STOPPED:
+        recovery_stopped(w, sources, result, json);
+        break;
+    }
+}
+
 bool mo_render_test_result(const struct mo_sources *sources, const struct mo_test_result *result,
                            bool json, struct mo_buffer *out) {
     MO_ASSERT(out->limit <= MO_CLI_DIAGNOSTIC_SIZE);
@@ -928,9 +1281,9 @@ bool mo_render_test_result(const struct mo_sources *sources, const struct mo_tes
         text(&w, "{\"record\":\"result\",\"name\":");
         json_string(&w, observation->name);
         text(&w, ",\"kind\":");
-        json_string(&w, mo_observation_kind(observation->source->kind));
+        json_string(&w, mo_observation_kind(observation));
         text(&w, ",\"span\":");
-        json_span(&w, sources, observation->source->syntax->span, NULL, false);
+        json_span(&w, sources, mo_observation_span(observation), NULL, false);
         text(&w, ",\"outcome\":");
         json_string(&w, outcome);
         text(&w, ",\"microseconds\":");
@@ -940,7 +1293,7 @@ bool mo_render_test_result(const struct mo_sources *sources, const struct mo_tes
         text(&w, " ");
         safe_text(&w, observation->name);
         text(&w, "  ");
-        location(&w, sources, observation->source->syntax->span);
+        location(&w, sources, mo_observation_span(observation));
         text(&w, "\n");
     }
     if (observation->instance != NULL) {
@@ -955,7 +1308,9 @@ bool mo_render_test_result(const struct mo_sources *sources, const struct mo_tes
     }
     if (result->promise != NULL)
         promise_result(&w, result, json);
-    if (result->outcome == MO_FAILED) {
+    if (result->recovery != NULL)
+        recovery_result(&w, sources, result, json);
+    else if (result->outcome == MO_FAILED) {
         equality_failure(&w, result->defect, json);
         if (observation->source->kind == MO_SPEC_TEST ||
             observation->source->kind == MO_SPEC_PROMISE) {

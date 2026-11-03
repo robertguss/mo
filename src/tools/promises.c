@@ -247,7 +247,7 @@ bool mo_promises_supported(const struct mo_program *program,
     for (uint32_t i = 0; i < selection->count; i++) {
         const struct mo_observation *observation = &selection->items[i];
         const struct mo_checked_spec *spec = observation->source;
-        if (spec->kind != MO_SPEC_PROMISE)
+        if (spec == NULL || spec->kind != MO_SPEC_PROMISE)
             continue;
         const struct mo_checked_function *subject = &program->functions[spec->subject];
         const struct mo_lowered_promise *instance = observation->instance;

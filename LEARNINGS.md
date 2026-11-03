@@ -47,6 +47,28 @@
 - `pkill -f PATTERN` inside `ssh HOST '...'` also matches the remote shell,
   whose command line contains the pattern, and kills it mid-command.
 
+## Recovery checks and the kill loop
+
+- A SIGKILL during a data folder's very first start can leave a zero-byte
+  `service.sqlite`. It holds no committed data, but every later start refuses
+  it with E1409 until someone removes it; the stop signal handlers cannot help
+  against SIGKILL. The kill loop never kills before the first `listening`
+  line, so it never makes one.
+- The store runs SQLite in exclusive locking mode, so
+  `service.sqlite-journal` always exists and SQLite zeroes its header at each
+  commit. A kill landed mid-commit only when the journal still starts with
+  SQLite's magic, `d9d505f920a163d7`.
+- SIGKILL leaves the page cache intact, so a kill loop proves recovery after
+  process death, not after machine or power loss.
+- A negative control whose fault repeats at every restart cannot catch a
+  checker that skips the final rerun's sameness check. `check_unrepeatable`
+  in `tests/test_recovery_faults.c` faults only the first restart.
+- `tests/service-simulation/` runs only with `examples/job-queue.mo` copied
+  beside it, as `ci/check_simulation.py` does.
+- From `aurora-but-gold`, `ssh exe.dev whoami` names Robert's email, yet
+  `ssh exe.dev ls` lists no VMs and `ssh turnpike-ferret.exe.xyz` answers "VM
+  not found". Commands on the queue VM go through the Mac.
+
 ## The task-queue service
 
 - Whatever `submit` accepts, `lease` has to return. A reply carries a payload

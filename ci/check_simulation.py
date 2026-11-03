@@ -44,7 +44,10 @@ def main():
                              capture_output=True, text=True, timeout=60)
     assert checked.returncode == 0 and not checked.stdout and not checked.stderr, checked
     passed = results(binary, 'tests/lower-source/service-simulation/main.mo')
-    assert len(passed) == 9 and all(r['outcome'] == 'passed' for r in passed), passed
+    assert len(passed) == 11 and all(r['outcome'] == 'passed' for r in passed), passed
+    # Each service, the imported Ticks included, gets one recovery check after the other checks.
+    assert [(r['name'], r['kind']) for r in passed[-2:]] == [
+        ('Main.service.recovery', 'recovery'), ('Ticks.service.recovery', 'recovery')], passed
     with tempfile.TemporaryDirectory(prefix='mo-simulation-') as directory:
         root = pathlib.Path(directory)
         path = root / 'main.mo'
@@ -102,8 +105,10 @@ end
 '''
         path.write_text(body)
         stopped = results(binary, path, 1)
-        assert len(stopped) == 13 and stopped[-1]['outcome'] == 'passed', stopped
-        for i, record in enumerate(stopped[:-1]):
+        assert len(stopped) == 14 and stopped[-2]['outcome'] == 'passed', stopped
+        assert stopped[-1]['name'] == 'Main.service.recovery', stopped
+        assert stopped[-1]['outcome'] == 'passed', stopped
+        for i, record in enumerate(stopped[:-2]):
             if i in (4, 9):
                 assert record['outcome'] == 'failed', record
                 continue
@@ -124,6 +129,15 @@ end
             assert stopped[0]['outcome'] == 'stopped', stopped
             expected = f'{prefix}: service handler failed: stop: {reason}'
             assert expected in str(stopped[0]), stopped
+            # A start value that stops stops the recovery check with the same failure; a timer
+            # handler that stops is one of the check's ordinary steps.
+            check = stopped[-1]
+            assert check['name'] == 'Main.service.recovery', stopped
+            if 'start value' in prefix:
+                assert check['outcome'] == 'stopped', check
+                assert (check['defect']['reason'], check['defect']['detail']) == ('stop', reason)
+            else:
+                assert check['outcome'] == 'passed', check
 
         path.write_text(SERVICE.replace('state + 1',
                         'if state == 1: stop "later" else: state + 1') + f'''

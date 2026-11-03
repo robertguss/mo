@@ -1,0 +1,5 @@
+stopped Main.service.recovery  tests/golden/service-start-stops/main.mo:3:1
+  bug: stop
+  detail: the start value stops before any restart
+  in the start value  tests/golden/service-start-stops/main.mo:4:21
+0 passed, 0 failed, 1 stopped

@@ -43,10 +43,10 @@ reader, `jobs`, because `Queue` is opaque. No check compares the two files: that
 sample edit a change to the served program, which refuses its saved data. A logic fix in one is
 made in the other by hand.
 
-It runs on one of Robert's exe.dev VMs (D258). The VM's disk is persistent (local NVMe, streamed
-to an off-machine backup), so the saved state survives restarts and updates, and the exe.dev
-proxy terminates TLS, so Mo needs no TLS of its own. `docs/ops/task-queue.md` is the runbook
-that installs and runs it, and `docs/status/phase3-run.md` records the deployment.
+The queue is exercised on the development machine by its simulation tests, its recovery check
+in `mo test` and the kill loop, which SIGKILLs a real `mo serve`. It was once deployed on an
+exe.dev VM (D258); that deployment was retired, and `docs/ops/task-queue.md` and
+`docs/status/phase3-run.md` record it.
 
 ## 4. The service model
 
@@ -303,10 +303,6 @@ An unknown id returns `NoSuchJob`; a non-current lease returns `NotLeased`. Hear
 checked time addition, like `lease`, and returns `BadLease(length: 30.minutes)` if the new expiry
 would exceed the year 9999. It leaves every other job, the attempt count and `next_id` unchanged.
 
-The exe.dev documentation describes persistent VMs that stop when their owner stops them and
-does not describe idle sleeping. Deployment requires a 48-hour idle check (MO-163), separate
-from the week-long run below (MO-164); unit tests satisfy neither.
-
 ### Fix follow-ups, not implemented in MO-155
 
 Robert's PR #231 review records these later improvements, tracked as MO-171:
@@ -436,8 +432,219 @@ rather than replace, MO-158's transaction and snapshot fault injection.
 
 The test-only TaskQueue fixture wraps the unchanged `examples/job-queue.mo`.
 Its submit/crash/restart/lease test exercises real recovery; ignoring an accepted
-reply and retrying after recovery produces two jobs. Promise generators, the
-MO-162 service, networking and deployment are outside this change.
+reply and retrying after recovery produces two jobs. The MO-162 service,
+networking and deployment are outside this change. Generated sequences against
+a service came later as the recovery check below; promises an author writes
+over a service's sequences remain deferred.
+
+### Recovery check
+
+`mo test` checks every service for one property of the runtime: a restart
+recovers exactly the state the service had committed. The author writes
+nothing for it and there is no new syntax. A promise about many steps is still
+a promise on the function that takes one step (reference 12.2), so the queue's
+own logic stays covered by its promises, and this check covers what no handler
+can see, the log and snapshots underneath. It drives the service through the
+simulated-service API in `vm/vm.h`, the same code `Simulation` wraps, so it
+tests what `Simulation` and `mo serve` run.
+
+**Name and selection.** Each service gets one check, `<Module>.service.recovery`,
+such as `Main.service.recovery`. `service` is reserved, so no example, promise
+or test can have that name. It is listed after every other check of its
+module and counts toward the passed, failed and stopped totals. `--list` prints
+it, and `--only` and `--in` select it. A program whose only check is a recovery
+check is not a command mistake.
+
+**Sequences.** A sequence is a list of steps, each one of:
+
+- a tool call, with arguments generated from the tool's parameter types by the
+  promise input generator. Tool signatures hold no capabilities, function values
+  or hidden types (E0103 to E0105), so no builders or fakes are needed, and
+  generated values stay inside the saved-value limits, so the generator never
+  causes an admission or copy refusal itself;
+- a clock advance: each timer's interval and its neighbours, durations that
+  cross whole multiples of an interval, and random durations, each under
+  `MO_LIMIT_SIMULATION_TICKS` firings;
+- a crash, always followed by a restart.
+
+After each successful reply, the reply's scalar and text leaves go into a pool
+keyed by type, copied out of the service heap because a crash frees it. Tool
+arguments often come from the pool. Values from one reply stay together and in
+order, so the `id` and `attempt` of one `lease` reply reach `acknowledge`
+together. Every sequence ends in a crash and restart, and most hold two or more,
+because some recovery bugs show only at the commit after a restart: sequence
+numbers, snapshot pruning, a due snapshot finished at open. Search is
+deterministic, seeded from the check's name, as promise inputs are.
+
+Some sequences cross the snapshot boundary (`MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES`,
+100 commits) before a crash; a long advance over a timer does it cheaply. A
+service without a timer cannot commit 100 times within
+`MO_CLI_RECOVERY_STEPS`, so its check never recovers from a snapshot. Snapshot
+recovery is exercised through services with timers, such as the task queue,
+and through `tests/test_service_store.c`.
+
+**The oracle.** Just before each crash, the checker encodes the live state with
+the saved-value codec. After `mo_simulation_open` recovers, and before the
+startup ticks drain, it encodes the recovered state and compares the bytes.
+Crashes fall only between steps, every commit passes through `saved_copy`, and
+the log stores the messages that replay runs again (`vm/service.c`, `persist`
+and `restore_record`). The live state at a crash is therefore the state an
+uninterrupted run reaches from the same committed updates and timer firings,
+and the comparison checks exactly that. Byte equality is stricter than Mo `==`:
+a Map or Set keeps its insertion order and a Float its bits. It is the standard
+replay's checksum already applies. Timers due while the service was down are
+not replayed, and a restart queues one startup tick per timer, as `mo serve`
+does; sampling before those ticks run keeps them from looking like a mismatch.
+
+A shadow run without crashes was rejected: timer schedules diverge after the
+first restart, and folding committed messages through the handlers would
+reimplement replay.
+
+**Outcomes.**
+
+| Event during a sequence | Outcome |
+| --- | --- |
+| The recovered state differs from the state before the crash | Fail |
+| Recovery refuses the store at any restart: saved state invalid, or replay over its work or memory limit | Fail |
+| A tool returns an application `Error`, or its handler fails (`ToolFailed`) | Ordinary step |
+| A timer handler fails | Ordinary step, counted by the supervisor as `mo serve` counts it |
+| The supervisor restarts or stops the service (D308) | Ordinary step. After a stop, the next step is a restart, compared against the state at the stop |
+| A tool call meets `ServiceDown` | Ordinary step |
+| The start value or an interval fails when the service first opens | Stopped, with the service's own failure, not a recovery failure |
+| The deadline ends before any restart was compared | E1404 |
+
+Replay already refuses a repeated log record: `restore_record` requires
+consecutive sequence numbers and checks each record's state checksum. A runtime
+that duplicated a committed update would fail through the refusal row, not the
+comparison. The checker inserts the restart that follows a stop itself; it is
+not a generated step.
+
+**Budget and limits.** The check shares a promise's deadline, `--seconds`, 2
+seconds by default, covering generation, every run and shrinking. `--calls`
+caps the number of sequences. Reaching either limit between sequences ends
+the search normally. A pass needs at least one compared
+restart; otherwise the result is E1404, saying the deadline ended before the
+check compared a restart. The named limits in `src/base/limits.h`:
+
+| Limit | Value | Meaning |
+| --- | --- | --- |
+| `MO_CLI_RECOVERY_STEPS` | 64 | steps in one sequence, a crash and its restart counting as two |
+| `MO_CLI_RECOVERY_RESTARTS` | 8 | restarts in one sequence |
+| `MO_CLI_RECOVERY_POOL` | 64 | reply values kept for reuse |
+| `MO_CLI_RECOVERY_SHRINK_RUNS` | 200 | additional sequence runs while shrinking, within the same deadline |
+
+If 2 seconds compares no restart of `services/task-queue/main.mo` on a gcc debug
+build, recovery checks get a larger default deadline of their own, and this
+section and reference 12.5 say so.
+
+**Shrinking.** A failing sequence shrinks in three passes: delete steps,
+keeping each crash with its restart; shrink tool arguments with the promise
+input shrinker; shorten advances. Each candidate runs from a fresh in-memory
+store. A pooled argument whose source step was deleted keeps its value as a
+literal, so every candidate is well formed. The shrunk sequence runs once more
+before it is reported and must fail the same way. Mid-commit crashes are out
+of reach here, since crashes fall between steps; `tests/test_service_store.c`
+injects them into transactions and snapshots, and `ci/check_kill_loop.py` kills
+a real `mo serve` while it writes.
+
+**Text report.** A pass is one line, with no counts that depend on machine
+speed, so goldens stay stable:
+
+```text
+passed Main.service.recovery  main.mo:3:1
+```
+
+A failure lists the numbered steps with literal arguments and each step's
+outcome, then both states at the failing restart. Values print in their text
+form, as a promise's inputs do. Take this counter:
+
+```mo
+module Main
+
+service
+  state Int = 0
+  tools add, total
+  token from env "COUNTER_TOKEN"
+end
+
+struct Total
+  count: Int
+end
+
+fn add(state: Int, _now: Time, amount: Int) : (Int, Unit)
+  (state + amount, Unit)
+end
+
+fn total(state: Int, _now: Time) : Total
+  Total(count: state)
+end
+```
+
+Against a runtime whose recovery skips the newest log record, an early
+sequence fails and shrinks to:
+
+```text
+failed Main.service.recovery  main.mo:3:1
+  sequences: 3
+  1. add(1)  replied Unit, committed
+  2. crash
+  3. restart  recovered a different state
+  state before step 2: 1
+  state after step 3: 0
+```
+
+`sequences` counts the sequences run, the failing one included, as a promise's
+`calls` does. `add(0)` would not fail, since dropping it changes nothing, so
+shrinking stops at `add(1)`. The step forms are:
+
+- `add(1)  replied Unit, committed`; `total()  replied Total(count: 1)`; an
+  application error, `replied Error(...)`, never commits;
+- `add(1)  ToolFailed`, followed by `, service restarted` or `, service stopped`
+  when the supervisor acts, and `ServiceDown` when the service is down;
+- `advance 90s  2 timer firings`, with `, 1 failed` when a timer handler fails;
+- `crash`, and `restart` with `recovered the same state`, `recovered a different
+  state`, or `recovery refused the store:` and the reason;
+- outcomes the generator never causes print as `not admitted` (an argument or
+  message the service refused before any handler ran), `reply not copied`, and
+  `failed:` with the service's status.
+
+After a refusal there is no state after the restart, so only the state before
+the crash is shown. When the two states print the same but their bytes differ,
+as with a Map built in another order or two NaNs, the report adds a last line,
+`the saved encodings first differ at byte N`. When the start value or an
+interval fails at the first open, the check is reported as stopped, like a test
+that stops at a bug, with that failure's defect and where it happened:
+
+```text
+stopped Main.service.recovery  main.mo:3:1
+  bug: stop
+  detail: no start
+  in the start value  main.mo:4:15
+```
+
+A failing timer interval reads `in the interval of timer Main.tick`. The rerun
+of a shrunk sequence that does not fail the same way, a checker that cannot
+start, and a deadline that ends before any restart is compared are E1404, with
+no result.
+
+**JSON.** A result's `kind` is `recovery`. It carries `sequences`, the
+sequences run, and `restarts`, the restarts compared, beside the usual name,
+span, outcome and microseconds. A failure adds `steps`, one object per numbered
+step in order, and `before` and `after`, the two states as text, or `refusal`
+instead of `after` when recovery refused the store. A step's `action` is
+`send`, `advance`, `crash` or `restart`. A send has `tool`, `arguments` (texts),
+`outcome` (`replied`, `ToolFailed` or `ServiceDown`), `reply` when it replied,
+`committed`, and `supervisor` (`restarted` or `stopped`) when the supervisor
+acted; the outcomes the generator never causes are `refused`, `reply_refused`
+and `failed`. An advance has `by`, a Duration's text such as `"90s"`, and
+`firings`, and `failed_firings` when any failed. A restart has `recovered`:
+`same`, `different` or `refused`. `differ_at` holds the byte offset when the
+two states print the same. A stopped check adds `defect`, as a stopped test
+does, with empty `stack` and `variables`. The
+counts depend on machine speed unless `--calls` caps them, so goldens set
+`--calls`. Commits replayed and snapshot crossings are not reported; the C
+tests that need them read the checker's counters. Readers skip unknown fields
+(architecture 10.2), so the new kind and fields need no format version change.
 
 ### MO-160 private request processing
 
@@ -653,6 +860,18 @@ budget under every delivery pattern.
 
 ## 10. Done means
 
-Mo's own agents take every task from the job queue for one week with no restart, and a deliberate
-crash in the middle of that week loses no accepted job (D260). This replaces the earlier finish
-line of 24 hours under synthetic load.
+Phase 3 is done when a service is shown never to lose committed state when its process dies:
+
+- every service's recovery check passes in `mo test`, the task queue's included;
+- the negative control, `tests/test_recovery_faults.c`, fails as designed: a recovery that drops
+  the newest log record fails the comparison, and one that repeats it is refused;
+- the short kill loop, `ci/check_kill_loop.py`, passes in the `drivers` group, and a long run by
+  hand is recorded in `docs/status/phase3-run.md`.
+
+The claim covers process death, not machine or power loss. All of it runs on the development
+machine, with no deployment and no wait.
+
+This replaces D260's finish line, a week in which Mo's own agents took every task from the deployed
+queue with one deliberate crash, which itself replaced 24 hours under synthetic load. The week was
+dropped because it was one sample of crash behaviour, mostly exercised systemd, SQLite, the proxy
+and the VM rather than Mo, and needed agents to take work from the queue that Robert starts himself.

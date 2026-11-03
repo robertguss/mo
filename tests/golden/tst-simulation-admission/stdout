@@ -3,4 +3,5 @@ stopped Main.test.1  tests/golden/tst-simulation-admission/main.mo:13:1
   at Main.test.1  tests/golden/tst-simulation-admission/main.mo:16:12
   large = <value unavailable>
   sim = <Simulation>
-0 passed, 0 failed, 1 stopped
+passed Main.service.recovery  tests/golden/tst-simulation-admission/main.mo:3:1
+1 passed, 0 failed, 1 stopped

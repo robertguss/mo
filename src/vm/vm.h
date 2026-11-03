@@ -234,4 +234,89 @@ MO_MUST_USE uint32_t mo_service_pending(const struct mo_service_loop *service);
 MO_MUST_USE bool mo_service_running(const struct mo_service_loop *service);
 MO_MUST_USE bool mo_service_next_deadline(const struct mo_service_loop *service, uint64_t *out);
 
+/* A simulated service: open, send, advance, crash and restart one service as the Simulation
+ * capability does, for that capability and for C callers that drive a service the same way. It
+ * owns a fresh in-memory store and a fake clock that only advance moves. */
+struct mo_simulation;
+struct mo_simulation_failure {
+    enum mo_service_status status;
+    int64_t now;
+    /* The start value, a timer's interval or handler, a replayed handler, or MO_NO_INDEX. */
+    uint32_t function;
+    const struct mo_defect *defect; /* NULL when there is none */
+};
+/* Borrowed for one call. failure sees each failure at open, failing timer handler and store
+ * failure as it happens; its view lasts only for that call. false ends the operation there and
+ * leaves later messages queued for the next one. */
+struct mo_simulation_hooks {
+    bool (*failure)(const struct mo_simulation_failure *failure, void *context);
+    void *context;
+};
+enum mo_simulation_outcome {
+    MO_SIMULATION_OK,
+    MO_SIMULATION_STOPPED,  /* failure returned false */
+    MO_SIMULATION_DOWN,     /* open failed and failure saw why; the service stays down */
+    MO_SIMULATION_RUNNING,  /* open needs a crashed or stopped service; nothing changed */
+    MO_SIMULATION_DURATION, /* advance needs a nonnegative duration ending by year 9999 */
+    MO_SIMULATION_TICKS     /* more firings due than MO_LIMIT_SIMULATION_TICKS; nothing ran */
+};
+enum mo_simulation_sent {
+    MO_SENT_REPLIED,     /* the tool returned; reply holds its whole result */
+    MO_SENT_REJECTED,    /* an updating tool returned an Error, held in reply; nothing committed */
+    MO_SENT_TOOL_FAILED, /* status says how the handler failed; nothing committed */
+    MO_SENT_DOWN,        /* the service is crashed or stopped; nothing was queued */
+    MO_SENT_FAILED,      /* the service answered with another status, such as a store failure */
+    MO_SENT_ARGUMENT,    /* copying argument in was refused; nothing was queued */
+    MO_SENT_TOO_LARGE,   /* the saved message, bytes long, exceeds MO_LIMIT_SAVED_BYTES */
+    MO_SENT_REFUSED,     /* the service refused admission; nothing was queued and no handler ran */
+    MO_SENT_REPLY_COPY,  /* copying the reply out was refused; the tool ran and updated says */
+    MO_SENT_STOPPED      /* failure returned false */
+};
+struct mo_simulation_reply {
+    enum mo_service_status status;
+    bool updated;         /* the tool's update committed */
+    uint32_t type;        /* the tool's complete result type */
+    struct mo_cell reply; /* REPLIED and REJECTED: owned by the caller's heap */
+    uint32_t argument;    /* ARGUMENT: the refused argument's index */
+    const char *refusal;  /* ARGUMENT and REPLY_COPY: the saved codec's reason */
+    uint64_t bytes;       /* TOO_LARGE */
+};
+/* Service index of an initialized image that outlives the simulation, on a fresh in-memory store,
+ * its clock at now, a valid Time. The service is not open yet. Only OK writes out. */
+MO_MUST_USE enum mo_store_status mo_simulation_new(const struct mo_image *image, uint32_t index,
+                                                   int64_t now, struct mo_simulation **out);
+void mo_simulation_free(struct mo_simulation *simulation);
+/* Opens the service on the simulation's store, recovering what it holds. Startup ticks stay
+ * queued, so the state can be read as recovery left it; drain runs them. */
+MO_MUST_USE enum mo_simulation_outcome mo_simulation_open(struct mo_simulation *simulation,
+                                                          const struct mo_simulation_hooks *hooks);
+/* Runs every queued message. */
+MO_MUST_USE enum mo_simulation_outcome mo_simulation_drain(struct mo_simulation *simulation,
+                                                           const struct mo_simulation_hooks *hooks);
+/* Drains, then sends tool its arguments: typed values from heap, a heap of the same image. They
+ * are copied in through the saved codec and the reply is copied back into heap. Runs the tool and
+ * whatever was queued behind it. */
+MO_MUST_USE enum mo_simulation_sent mo_simulation_send(struct mo_simulation *simulation,
+                                                       const struct mo_simulation_hooks *hooks,
+                                                       struct mo_heap *heap, uint32_t tool,
+                                                       const struct mo_cell *arguments,
+                                                       struct mo_simulation_reply *out);
+/* The firings due if the clock moved by `by`; needs nothing queued, as after a drain. false,
+ * writing nothing, when `by` is negative or ends after year 9999. */
+MO_MUST_USE bool mo_simulation_firings(const struct mo_simulation *simulation, int64_t by,
+                                       uint64_t *out);
+/* Drains, then moves the clock by `by`, stopping at each due deadline to run what fell due.
+ * Unless DURATION, firings receives the firings counted before any ran, or 0 if none were. */
+MO_MUST_USE enum mo_simulation_outcome
+mo_simulation_advance(struct mo_simulation *simulation, const struct mo_simulation_hooks *hooks,
+                      int64_t by, uint64_t *firings);
+/* Ends the service where it stands; the store keeps what it committed. */
+void mo_simulation_crash(struct mo_simulation *simulation);
+MO_MUST_USE bool mo_simulation_running(const struct mo_simulation *simulation);
+/* The supervisor's restarts so far, counting the one that stops the service. */
+MO_MUST_USE uint64_t mo_simulation_restarts(const struct mo_simulation *simulation);
+/* Appends the live state's saved encoding. false when the service is crashed or never opened, or
+ * the encoding fails. */
+MO_MUST_USE bool mo_simulation_encode(struct mo_simulation *simulation, struct mo_buffer *out);
+
 #endif

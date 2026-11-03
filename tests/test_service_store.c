@@ -6,6 +6,7 @@
 #include "test.h"
 #include "vm/vm.h"
 
+#include <inttypes.h>
 #include <sqlite3.h>
 #include <stdlib.h>
 #include <sys/wait.h>
@@ -1336,6 +1337,294 @@ static void simulation_persistence(void) {
     }
 }
 
+/* 2026-01-01T00:00:00Z, the start time every Simulation test here uses. */
+static const int64_t simulation_epoch = INT64_C(1767225600000000);
+enum { SECOND_US = 1000000, MINUTE_US = 60 * SECOND_US };
+
+struct api_failures {
+    bool keep_going;
+    unsigned count;
+    uint32_t function;
+    enum mo_service_status status;
+    bool boom; /* the defect was stop "boom" */
+};
+
+static bool api_failure(const struct mo_simulation_failure *f, void *context) {
+    struct api_failures *a = context;
+    a->count++;
+    a->function = f->function;
+    a->status = f->status;
+    size_t length = 0;
+    const uint8_t *detail = f->defect != NULL && f->defect->has_detail
+                                ? mo_value_data(f->defect->detail, &length)
+                                : NULL;
+    a->boom = f->defect != NULL && strcmp(f->defect->reason, "stop") == 0 && length == 4 &&
+              memcmp(detail, "boom", 4) == 0;
+    return a->keep_going;
+}
+
+/* Whether the simulation's live state encodes as Int n does. */
+static bool api_state_is(struct mo_simulation *s, struct mo_heap *heap, uint32_t type, int64_t n) {
+    struct mo_buffer live, expected;
+    mo_buffer_init(&live, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&expected, MO_LIMIT_SAVED_BYTES);
+    bool same =
+        mo_simulation_encode(s, &live) && mo_value_encode(heap, type, mo_cell_int(n), &expected) &&
+        live.length == expected.length && memcmp(live.bytes, expected.bytes, live.length) == 0;
+    mo_buffer_free(&expected);
+    mo_buffer_free(&live);
+    return same;
+}
+
+static const char api_service[] =
+    "module Main\nservice\nstate Int = 0\ntools add, read\nevery 1.minute tick\n"
+    "token from env \"TOKEN\"\nend\n"
+    "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n(state + n, state + n)\nend\n"
+    "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+    "fn tick(state: Int, _now: Time) : Int\nstate + 100\nend\n";
+
+/* One sequence, run by Simulation in Mo and through the C API. Each step's reply is the counter
+ * after it; the timer adds 100 at every startup and every minute. */
+static const struct api_step {
+    char kind; /* add, advance (seconds), crash, down (add while crashed), restart, query */
+    int64_t value, reply;
+} api_steps[] = {{'a', 1, 101}, {'v', 90, 0}, {'a', 2, 203}, {'c', 0, 0},
+                 {'d', 5, 0},   {'r', 0, 0},  {'q', 0, 303}, {'v', 30, 0},
+                 {'a', 3, 306}, {'c', 0, 0},  {'r', 0, 0},   {'q', 0, 406}};
+
+static void simulation_api_steps(void) {
+    char source[4096];
+    int used = snprintf(source, sizeof source,
+                        "%stest \"steps\"\nsim = Simulation.start(Main, "
+                        "Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n",
+                        api_service);
+    for (size_t i = 0; i < sizeof api_steps / sizeof api_steps[0]; i++) {
+        const struct api_step *step = &api_steps[i];
+        size_t room = sizeof source - (size_t)used;
+        int n = 0;
+        switch (step->kind) {
+        case 'a':
+            n = snprintf(source + used, room,
+                         "assert Simulation.send(sim, Main.add, %" PRId64 ") == Ok((%" PRId64
+                         ", %" PRId64 "))\n",
+                         step->value, step->reply, step->reply);
+            break;
+        case 'v':
+            n = snprintf(source + used, room, "Simulation.advance(sim, %" PRId64 ".seconds)\n",
+                         step->value);
+            break;
+        case 'c':
+            n = snprintf(source + used, room, "Simulation.crash(sim)\n");
+            break;
+        case 'd':
+            n = snprintf(source + used, room,
+                         "assert Simulation.send(sim, Main.add, %" PRId64
+                         ") == Error(ServiceDown)\n",
+                         step->value);
+            break;
+        case 'r':
+            n = snprintf(source + used, room, "Simulation.restart(sim)\n");
+            break;
+        case 'q':
+            n = snprintf(source + used, room,
+                         "assert Simulation.send(sim, Main.read) == Ok([%" PRId64 "])\n",
+                         step->reply);
+            break;
+        default:
+            MO_UNREACHABLE();
+        }
+        MO_ASSERT(n > 0 && (size_t)n < room);
+        used += n;
+    }
+    int tail = snprintf(source + used, sizeof source - (size_t)used, "end\n");
+    MO_ASSERT(tail == 4);
+    struct mo_image *image = compile(source);
+    simulation_run(image, NULL, 0);
+
+    uint32_t type = mo_image_bytecode(image)->services[0].state_type;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct api_failures failures = {0};
+    const struct mo_simulation_hooks hooks = {api_failure, &failures};
+    struct mo_simulation *s = NULL;
+    CHECK(mo_simulation_new(image, 0, simulation_epoch, &s) == MO_STORE_OK);
+    CHECK(mo_simulation_open(s, &hooks) == MO_SIMULATION_OK);
+    CHECK(api_state_is(s, heap, type, 0));
+    CHECK(mo_simulation_drain(s, &hooks) == MO_SIMULATION_OK);
+    CHECK(api_state_is(s, heap, type, 100));
+    CHECK(mo_simulation_open(s, &hooks) == MO_SIMULATION_RUNNING);
+    int64_t counter = 100;
+    unsigned restarts = 0;
+    for (size_t i = 0; i < sizeof api_steps / sizeof api_steps[0]; i++) {
+        const struct api_step *step = &api_steps[i];
+        struct mo_simulation_reply r;
+        struct mo_cell n = mo_cell_int(step->value), element;
+        uint64_t firings;
+        switch (step->kind) {
+        case 'a':
+            CHECK(mo_simulation_send(s, &hooks, heap, 0, &n, &r) == MO_SENT_REPLIED);
+            CHECK(r.status == MO_SERVICE_OK && r.updated);
+            CHECK(mo_cell_get_int(mo_value_field(r.reply, 0)) == step->reply);
+            CHECK(mo_cell_get_int(mo_value_field(r.reply, 1)) == step->reply);
+            mo_value_drop(heap, r.type, r.reply);
+            counter = step->reply;
+            break;
+        case 'v':
+            CHECK(mo_simulation_advance(s, &hooks, step->value * SECOND_US, &firings) ==
+                  MO_SIMULATION_OK);
+            counter += 100 * (int64_t)firings;
+            break;
+        case 'c':
+            CHECK(api_state_is(s, heap, type, counter));
+            mo_simulation_crash(s);
+            CHECK(!mo_simulation_running(s));
+            break;
+        case 'd':
+            CHECK(mo_simulation_send(s, &hooks, heap, 0, &n, &r) == MO_SENT_DOWN);
+            break;
+        case 'r':
+            CHECK(mo_simulation_open(s, &hooks) == MO_SIMULATION_OK);
+            /* Recovery restores the state the crash left, and the startup tick waits. */
+            CHECK(api_state_is(s, heap, type, counter));
+            CHECK(mo_simulation_drain(s, &hooks) == MO_SIMULATION_OK);
+            counter += 100;
+            CHECK(api_state_is(s, heap, type, counter));
+            restarts++;
+            break;
+        case 'q':
+            CHECK(mo_simulation_send(s, &hooks, heap, 1, NULL, &r) == MO_SENT_REPLIED);
+            CHECK(r.status == MO_SERVICE_OK && !r.updated);
+            CHECK(mo_list_size(r.reply) == 1 && mo_list_get(r.reply, 0, &element) &&
+                  mo_cell_get_int(element) == step->reply);
+            mo_value_drop(heap, r.type, r.reply);
+            CHECK(counter == step->reply);
+            break;
+        default:
+            MO_UNREACHABLE();
+        }
+    }
+    CHECK(restarts == 2 && failures.count == 0);
+    mo_simulation_free(s);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+static void simulation_api_recovery(void) {
+    struct mo_image *image = compile(api_service);
+    uint32_t type = mo_image_bytecode(image)->services[0].state_type;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    struct api_failures failures = {0};
+    const struct mo_simulation_hooks hooks = {api_failure, &failures};
+    struct mo_simulation *s = NULL;
+    CHECK(mo_simulation_new(image, 0, simulation_epoch, &s) == MO_STORE_OK);
+    CHECK(mo_simulation_open(s, &hooks) == MO_SIMULATION_OK);
+    CHECK(mo_simulation_drain(s, &hooks) == MO_SIMULATION_OK);
+    for (int64_t i = 1; i <= 3; i++) {
+        struct mo_cell n = mo_cell_int(i);
+        struct mo_simulation_reply r;
+        CHECK(mo_simulation_send(s, &hooks, heap, 0, &n, &r) == MO_SENT_REPLIED && r.updated);
+        mo_value_drop(heap, r.type, r.reply);
+    }
+    struct mo_buffer third, recovered;
+    mo_buffer_init(&third, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&recovered, MO_LIMIT_SAVED_BYTES);
+    CHECK(mo_simulation_encode(s, &third));
+    mo_simulation_crash(s);
+    CHECK(!mo_simulation_encode(s, &recovered) && recovered.length == 0);
+    CHECK(mo_simulation_open(s, &hooks) == MO_SIMULATION_OK);
+    CHECK(mo_simulation_encode(s, &recovered));
+    CHECK(recovered.length == third.length &&
+          memcmp(recovered.bytes, third.bytes, third.length) == 0);
+    CHECK(api_state_is(s, heap, type, 106));
+    CHECK(mo_simulation_drain(s, &hooks) == MO_SIMULATION_OK);
+    CHECK(api_state_is(s, heap, type, 206));
+    mo_buffer_free(&recovered);
+    mo_buffer_free(&third);
+
+    /* The firing count is the precount advance refuses on, before any handler runs. */
+    uint64_t firings = 0;
+    CHECK(mo_simulation_firings(s, 10000 * (int64_t)MINUTE_US, &firings) && firings == 10000);
+    CHECK(mo_simulation_firings(s, 10001 * (int64_t)MINUTE_US, &firings) && firings == 10001);
+    CHECK(!mo_simulation_firings(s, -1, &firings));
+    firings = 0;
+    CHECK(mo_simulation_advance(s, &hooks, 10001 * (int64_t)MINUTE_US, &firings) ==
+          MO_SIMULATION_TICKS);
+    CHECK(firings == 10001);
+    CHECK(api_state_is(s, heap, type, 206));
+    CHECK(mo_simulation_firings(s, 10001 * (int64_t)MINUTE_US, &firings) && firings == 10001);
+    CHECK(mo_simulation_advance(s, &hooks, -1, &firings) == MO_SIMULATION_DURATION);
+    CHECK(mo_simulation_advance(s, &hooks, MINUTE_US, &firings) == MO_SIMULATION_OK);
+    CHECK(firings == 1 && api_state_is(s, heap, type, 306));
+    CHECK(failures.count == 0);
+    mo_simulation_free(s);
+    mo_process_free(p);
+    mo_image_free(image);
+}
+
+static void simulation_api_failures(void) {
+    struct mo_image *image = compile(
+        "module Main\nservice\nstate Int = 0\ntools read\nevery 1.minute tick\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn tick(state: Int, _now: Time) : Int\nif state == 0: stop \"boom\" else: state\nend\n"
+        "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
+        "test \"startup failure\"\n"
+        "_sim = Simulation.start(Main, Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\")\n"
+        "end\n");
+    simulation_run(image,
+                   "Simulation handler Main.tick at 2026-01-01T00:00:00Z: service handler failed: "
+                   "stop: boom",
+                   0);
+    const struct mo_bytecode_service *service = &mo_image_bytecode(image)->services[0];
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *p = mo_process_new(image, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_heap *heap = mo_process_heap(p);
+    for (unsigned keep_going = 0; keep_going < 2; keep_going++) {
+        struct api_failures failures = {.keep_going = keep_going != 0};
+        const struct mo_simulation_hooks hooks = {api_failure, &failures};
+        struct mo_simulation *s = NULL;
+        CHECK(mo_simulation_new(image, 0, simulation_epoch, &s) == MO_STORE_OK);
+        CHECK(mo_simulation_open(s, &hooks) == MO_SIMULATION_OK && failures.count == 0);
+        CHECK(mo_simulation_drain(s, &hooks) ==
+              (keep_going ? MO_SIMULATION_OK : MO_SIMULATION_STOPPED));
+        CHECK(failures.count == 1 && failures.status == MO_SERVICE_DEFECT && failures.boom);
+        CHECK(failures.function == service->timers[0].function);
+        CHECK(mo_simulation_running(s) && api_state_is(s, heap, service->state_type, 0));
+        if (keep_going) {
+            /* A failed tick is one step; the next deadline runs the timer again. */
+            uint64_t firings;
+            CHECK(mo_simulation_advance(s, &hooks, MINUTE_US, &firings) == MO_SIMULATION_OK);
+            CHECK(firings == 1 && failures.count == 2);
+        }
+        mo_simulation_free(s);
+    }
+    mo_process_free(p);
+    mo_image_free(image);
+
+    image = compile("module Main\nservice\nstate Int = initial()\ntools read\n"
+                    "token from env \"TOKEN\"\nend\n"
+                    "fn initial() : Int\nstop \"boom\"\nend\n"
+                    "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n");
+    struct api_failures failures = {.keep_going = true};
+    const struct mo_simulation_hooks hooks = {api_failure, &failures};
+    struct mo_simulation *s = NULL;
+    CHECK(mo_simulation_new(image, 0, simulation_epoch, &s) == MO_STORE_OK);
+    CHECK(mo_simulation_open(s, &hooks) == MO_SIMULATION_DOWN);
+    CHECK(failures.count == 1 && failures.status == MO_SERVICE_DEFECT && failures.boom);
+    CHECK(failures.function == mo_image_bytecode(image)->services[0].start);
+    struct mo_buffer state;
+    mo_buffer_init(&state, MO_LIMIT_SAVED_BYTES);
+    CHECK(!mo_simulation_running(s) && !mo_simulation_encode(s, &state));
+    mo_buffer_free(&state);
+    mo_simulation_free(s);
+    mo_image_free(image);
+}
+
 static void simulation_load(const struct mo_bytecode *file, const char *refusal,
                             const char *runtime_reason) {
     struct mo_buffer wire;
@@ -1457,6 +1746,9 @@ static void run(void *unused) {
     simulation_admission();
     simulation_persistence();
     simulation_verifier();
+    simulation_api_recovery();
+    simulation_api_steps();
+    simulation_api_failures();
     allocator_bound();
     struct mo_image *image = compile(
         "module Main\nservice\nstate Int = 7\ntools add, read, reject, broken\n"

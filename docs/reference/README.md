@@ -1311,7 +1311,9 @@ nothing. Updating messages also obey the aggregate saved-message byte limit;
 an admission refusal reports that no handler ran and does not count toward the
 failure limit. Read-only messages are not saved. Copy-out failure names the
 executed tool and any committed update; it does not roll back or retry.
-Promise and generator support is deferred.
+A promise whose inputs include a `Simulation` is E1400: `mo test` generates
+steps against a service only in its recovery check (section 12.5), and
+promises that an author writes over a service's sequences are deferred.
 
 A capability is a handle on something outside the program, and a fake is a
 handle on something kept for the test. Every use of one fake sees the same
@@ -1328,6 +1330,49 @@ test "head prints the first line of each file"
   assert console.printed == ["one"]
 end
 ```
+
+### 12.5 Recovery checks
+
+`mo test` checks that every service in the program recovers what it
+committed. Each service gets one recovery check, named after its module, as in
+`Counter.service.recovery`; its author writes nothing for it.
+
+The check runs the service on an in-memory store, as `Simulation` does,
+through generated sequences of steps. A step calls a tool, advances the clock,
+or crashes the service and then restarts it. Tool arguments are generated from
+the tool's parameter types, as a promise's inputs are, and often reuse values
+an earlier reply returned, keeping the values of one reply together, so a
+sequence can acknowledge the job it leased. Every sequence ends with a crash
+and a restart. Crashes fall between steps, never inside a commit.
+
+After each restart, the recovered state must equal the state the service held
+just before the crash. The service commits each update before it replies, so
+that is the state an uninterrupted run reaches from the same committed updates
+and timer firings. Equal means the same saved encoding, which is stricter than
+`==`: a Map or Set keeps its order and a Float its bits. The state is compared
+before the restart's startup ticks run; timers that fell due while the service
+was down are not run.
+
+The check fails when a recovered state differs, or when recovery refuses the
+store. Application errors, `ToolFailed`, failing timer handlers, `ServiceDown`
+and the supervisor's restarts and stops are ordinary steps; after a stop, the
+next step is a restart, compared against the state at the stop. When the start
+value or an interval fails as the service first opens, the check stops with
+that failure.
+
+The check is listed and selected like any other (section 13.4) and has a
+promise's budget: `--seconds` bounds its time, 2 seconds by default, shrinking
+included, and `--calls` caps its sequences. A sequence has at most 64 steps and
+8 restarts. A pass needs at least one compared restart; if time runs out
+first, the result is E1404.
+
+A failing sequence is shrunk: steps are deleted, a crash always with its
+restart, then arguments are simplified and advances shortened, within 200
+additional sequence runs and the original deadline. The shrunk sequence runs
+once more before it is reported, and fails the same way. The report numbers
+the steps, a crash and its restart counting as two, and gives each tool call's
+arguments as literal values, each step's outcome, and the state before the
+crash beside the state recovery produced.
 
 ## 13. Running
 
@@ -1387,17 +1432,19 @@ matched to the installed version: how to work with the `mo` command, a small
 complete program with its tests, and when a task is done. `mo guide
 --reference` prints this reference.
 `mo` exits with status 0 when everything passed, 1 when the program has errors
-or an example, promise or test fails, and 2 for a mistake in the command
-itself. Once the program runs, `mo run` exits with the program's own status
+or an example, promise, test or recovery check fails, and 2 for a mistake in
+the command itself. Once the program runs, `mo run` exits with the program's own status
 (section 11.2), or 70 after a bug (section 13.2). `mo serve` exits with 0 after
 SIGTERM or SIGINT, 1 when it cannot start the service, 69 when repeated failures
 stop the service, and 70 when it dies any other way.
 
-`mo test` runs every example, promise and test unless it's told which. Each has
-a full name: its function's name, or a test's module's, then its kind and a
-number counted from 1 in source order, such as `Wc.count.example.3` for the
-third example of `Wc.count`, `Account.transfer.promise.1`, or `Wc.test.2` for
-the second test in `Wc`. `--only NAME` runs the one with that full name, and can be given more
+`mo test` runs every example, promise, test and recovery check unless it's told
+which. Each has a full name: its function's name, or a test's module's, then
+its kind and a number counted from 1 in source order, such as
+`Wc.count.example.3` for the third example of `Wc.count`,
+`Account.transfer.promise.1`, or `Wc.test.2` for the second test in `Wc`. A
+recovery check's full name is its service module's, then `service.recovery`
+(section 12.5). `--only NAME` runs the one with that full name, and can be given more
 than once; `--in MODULE` runs one module's, still checking the whole program;
 and `--list` prints the full names without running anything. A selection that
 matches nothing is a mistake in the command.

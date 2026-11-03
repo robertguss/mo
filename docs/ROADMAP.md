@@ -15,32 +15,32 @@ step for anything a Mo user would notice.
 | 7. Fast | Fast enough for serious services | v0.4 |
 | 8. Ecosystem | Others build and share | 1.0 |
 
-Phases 0 to 2 are finished, and Phase 3 is the current phase.
+Phases 0 to 3 are finished, and Phase 4 is the current phase.
 
 ## Now
 
-Phase 3, Services. Eleven of its thirteen build tasks have merged: the
-`service` block, its bytecode descriptor, the in-process runtime, SQLite saving
-and recovery, simulation in tests, MCP over HTTP, `mo serve`, and the task-queue
-service. The phase is done when the last item below passes. The PR that does an
-item ticks it here.
+Phase 4, Agents can see inside it. It begins with its design step.
+
+Phase 3, Services, is done. It built the `service` block, its bytecode
+descriptor, the in-process runtime, SQLite saving and recovery, simulation in
+tests, MCP over HTTP, `mo serve`, the task-queue service, and the checks that
+closed it. It closed on evidence, not on time: the results are in
+`docs/status/phase3-run.md`.
 
 - [x] The task-queue service: `services/task-queue/main.mo` from
       `docs/design/services.md` section 5, with simulation tests and one
       `drivers` check that runs it over loopback.
-- [ ] Deployment on an exe.dev VM: a systemd unit that restarts after a crash
-      but not after a deliberate stop (exit 69), a one-page runbook under
-      `docs/ops/`, the proxy route, the MCP client line for agent threads, and
-      a 48-hour idle check with no restart. It runs a pinned build outside any
-      working checkout, because `mo` reads `lib/` from the path set at build
-      time and a changed `lib/` refuses the saved data.
-- [ ] The week-long run: the queue is the task list, every agent thread leases
-      its task from it, at least 10 leases, a deliberate `kill -9` mid-week,
-      and no accepted job lost. Recorded in `docs/status/phase3-run.md`.
-- [ ] Only if it reproduces on the deployed queue: the poll loop spinning when
-      file descriptors run out.
+- [x] Crash recovery: every service's recovery check passes in `mo test`, the
+      task queue's included; the negative control fails as designed; the kill
+      loop passes in `drivers`, and a long run by hand is recorded.
+- Removed: deployment on an exe.dev VM with a 48-hour idle check. Phase 3
+  closes on the recovery check and the kill loop, so the deployment was
+  retired.
+- Removed: the week-long run. Phase 3 closes on evidence, not on time, and
+  Robert starts every agent thread himself, so no thread leases from the queue.
 
-Waiting for Robert: nothing.
+Waiting for Robert: removing the Codex `task-queue` entry and the token file on
+his Mac. The `turnpike-ferret` VM was deleted on 2026-11-03.
 
 This file is the task list and the status. The designs are in `docs/design/`,
 `docs/reference/` and `formal/`; the evidence is the tests, the checks and each
@@ -49,8 +49,9 @@ PR's description. Robert's Notion page for Mo mirrors this section.
 ## Later
 
 Parked until a phase needs them: generated function-valued inputs in
-`mo test`; simulation promise generators; supervisor event logging for the
-protocol server; smaller `mo fix` edits for service adapters; the checker crash
+`mo test`; supervisor event logging for the protocol server; the poll loop
+spinning when file descriptors run out, which did not reproduce in the kill
+loop; smaller `mo fix` edits for service adapters; the checker crash
 on an interpolated `stop`; gcc sanitize, fuzz and a bounded arena proof in the
 nightly; running a `.bc` file that `mo emit` wrote (Phase 5); `mo test
 --strength` (Phase 6); Fil-C compatibility (Phase 7).

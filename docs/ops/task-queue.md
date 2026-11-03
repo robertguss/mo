@@ -1,5 +1,12 @@
 # The task queue on exe.dev
 
+**Retired on 2026-11-02.** Phase 3 now closes on the recovery check in
+`mo test` and the kill loop, both run on the development VM, and nothing
+depended on the deployed queue on `turnpike-ferret`. Its 48-hour idle check,
+started at 2026-11-02 13:18 UTC, was abandoned, not completed.
+`docs/status/phase3-run.md` records the teardown. The rest of this runbook
+stays as the record of how the queue was deployed.
+
 Mo's task queue (`services/task-queue/main.mo`) runs under systemd on a
 dedicated exe.dev VM, from a pinned build, behind the VM's public HTTPS route.
 Agent threads reach it at `https://VM.exe.xyz/mcp` with a bearer token. The

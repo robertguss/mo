@@ -1,7 +1,7 @@
 module Main
 
 service
-  state List(Int) = stop "service initialization must not run during tests"
+  state List(Int) = []
   tools snapshots
   every 1.minute tick
   token from env "MO_SERVICE_TEST_TOKEN_NOT_READ"
