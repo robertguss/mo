@@ -45,7 +45,8 @@ def check(binary, folder, path):
 
 
 def test_output(output, folder):
-    return re.sub(rb"(?m)^((?:passed|failed|stopped|  at) [^\n]+  )(?:" +
+    return re.sub(rb"(?m)^((?:passed|failed|stopped|  at) [^\n]+  |"
+                  rb"  in the start value  |  in the interval of timer [^\n ]+  )(?:" +
                   re.escape(bytes(folder) + b"/") + rb")?([^\n]+\.mo):\d+:\d+$",
                   rb"\1\2:<position>", output)
 
