@@ -203,9 +203,8 @@ release is judged. The baseline is never replaced.
 
 ## 9. Predictions
 
-Written on 2026-11-04 by Claude, in the design step, before any pilot. At approval Robert chose
-to add his own beside these; they go here before the first pilot starts, and neither set is
-edited after.
+Written on 2026-11-04 by Claude, in the design step, before any pilot. They are the only
+predictions: Robert decided on 2026-11-04 not to add his own. They are not edited after.
 
 | Family | Baseline | Final | Why |
 | --- | --- | --- | --- |
