@@ -48,7 +48,6 @@ import fixture  # noqa: E402
 SECONDS = 240  # per command: the queue's own tests take about a minute on a debug build
 SESSION_FILES = ('main.mo', 'job-queue.mo', 'queue-tests.mo')
 BLOCK = re.compile(r'^(\s*)(test "|examples\s*$|promise ")')
-# What a report may not name: the code's own functions and files, and the instruments.
 LEAK_WORDS = re.compile(r'\b(handler|function|expire|release|checked|shown\?|leased_job|put|'
                         r'JobQueue|QueueTests|Main)\b|mo-|\.mo\b', re.IGNORECASE)
 ANSWER = re.compile(r'^\W*ANSWER:\s*(.*?)\W*$')
@@ -151,9 +150,8 @@ def defect(variant):
 
 
 def hidden_problems(variant, work, mo):
-    for name in ('hidden-tests.mo', 'fixture-steps.mo'):
-        source = variant / ('hidden' if name == 'hidden-tests.mo' else '') / name
-        target = work / name
+    for source in (variant / 'hidden' / 'hidden-tests.mo', variant / 'fixture-steps.mo'):
+        target = work / source.name
         if target.is_symlink() or target.exists():
             target.unlink()
         shutil.copyfile(source, target)
@@ -176,9 +174,6 @@ def grade_folder(variant, mo, folder, answer_problems=None):
             problems += failed
     problems += answer_problems or []
     return not problems, problems, notes
-
-
-# Answers
 
 
 def last_message(stream):
@@ -247,9 +242,6 @@ def answer_problems(variant, stream, key):
     return []
 
 
-# Freezing and checking
-
-
 def sums(variant):
     files = sorted(p for p in pathlib.Path(variant).rglob('*')
                    if p.is_file() and p.name != 'SHA256SUMS')
@@ -290,12 +282,21 @@ def format_problems(variant, mo):
     return problems
 
 
+def must_fail(variant, work, mo, what):
+    """A problem unless the hidden tests compile against work and at least one fails."""
+    compiled, failed = hidden_problems(variant, work, mo)
+    if compiled and failed:
+        return []
+    return [f'{what} must compile and fail a hidden test: '
+            + ('; '.join(failed) or 'every hidden test passed')]
+
+
 def check_variant(variant, mo, built):
     variant = pathlib.Path(variant)
     problems = [f'SHA256SUMS is stale for {name}' for name in stale(variant)]
     problems += report_problems(variant)
     problems += format_problems(variant, mo)
-    if fixture.render(fixture.load(variant)) != (variant / 'fixture-steps.mo').read_text():
+    if not fixture.rendered(variant):
         problems.append('fixture-steps.mo is not what fixture.json renders to')
     with tempfile.TemporaryDirectory() as temporary:
         start = pathlib.Path(temporary) / 'start'
@@ -309,10 +310,7 @@ def check_variant(variant, mo, built):
             _, failed = test_problems(work, mo, 'queue-tests.mo')
             problems += [f'its own tests: {line}' for line in failed]
             if defect(variant):
-                compiled, failed = hidden_problems(variant, work, mo)
-                if not compiled or not failed:
-                    problems.append('the unfixed variant must compile and fail a hidden test: '
-                                    + ('; '.join(failed) or 'every hidden test passed'))
+                problems += must_fail(variant, work, mo, 'the unfixed variant')
         if defect(variant):
             success, reasons, _ = grade_folder(variant, mo, variant / 'hidden' / 'reference')
             if not success:
@@ -320,10 +318,7 @@ def check_variant(variant, mo, built):
             with tempfile.TemporaryDirectory() as third:
                 work = pathlib.Path(third) / 'work'
                 prepared(variant, variant / 'hidden' / 'broken', work)
-                compiled, failed = hidden_problems(variant, work, mo)
-                if not compiled or not failed:
-                    problems.append('the broken fix must compile and fail a hidden test: '
-                                    + ('; '.join(failed) or 'every hidden test passed'))
+                problems += must_fail(variant, work, mo, 'the broken fix')
     if not defect(variant) and built is not None:
         folder = pathlib.Path(built) / variant.name
         os.environ.setdefault('GRADE_KEY_TOKEN', os.urandom(16).hex())
@@ -349,8 +344,9 @@ def main(args):
             for problem in problems:
                 print('     ' + problem.replace('\n', '\n     '))
             bad += bool(problems)
+        unkeyed = ', question keys not recomputed (no built folders given)'
         print(f'phase 4 variants: {len(variants) - bad} of {len(variants)} sound'
-              + ('' if built else ', question keys not recomputed (no built folders given)'))
+              + ('' if built is not None else unkeyed))
         return 0 if bad == 0 else 1
     if len(args) == 2 and args[0] == '--freeze':
         variant = pathlib.Path(args[1])
