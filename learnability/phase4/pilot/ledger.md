@@ -40,6 +40,12 @@ from each session's records:
 - The manifest's first assistant event is found for each client, and the grader reads each
   client's last message for its `ANSWER:` line.
 
+Both checked out on 4 Nov 2026: in pilots 1 and 2 the answer was read and graded, every tool
+call paired (2 of 2, 124 of 124), the first assistant event was found, and Codex's stream held
+no web search. Codex's five commands all came wrapped in `bash -lc`, and the host check read
+them without a false alarm; none addressed a host, so catching one inside the wrapping is still
+unseen.
+
 The host check reads the commands as written, so a script written to a file and then run is not
 checked. Robert reads each pilot's commands for that.
 
@@ -87,6 +93,7 @@ check together. Verdict is Robert's reading of the session. Minutes are the mani
 | # | Date | Variant | Client | Grade | Verdict | Minutes | Records | Changed |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 4 Nov 2026 | `shared-briefs` | Claude Code | success | Solved, by reading the start state instead of the service: it decoded the saved snapshot from the read-only data copy and confirmed with one `list` call. A sign that `shared-briefs` may be trivial as designed; judged after its third pilot. | 1.1 | 2 of 2 matched | nothing |
+| 2 | 4 Nov 2026 | `shared-briefs` | Codex | success | Solved, the intended way: paged through every job with `list` (122 calls) and counted. It took about a minute, so paging cost is no barrier. With pilot 1, a sign that `shared-briefs` is too easy for the baseline. | 1.1 | 124 of 124 matched | nothing |
 
 ## Changes
 
@@ -101,9 +108,9 @@ Solves and failures are counted since the variant's last change.
 | --- | --- | --- | --- | --- | --- | --- |
 | `expire-one-per-tick` | Wrong state | 0 | 0 | 0 | 0 | not piloted |
 | `expire-kills-third-attempt` | Wrong state | 0 | 0 | 0 | 0 | not piloted |
-| `shared-briefs` | Question, state | 1 | 0 | 1 | 0 | piloting |
+| `shared-briefs` | Question, state | 1 | 1 | 2 | 0 | calibrated by the rule, but too easy: hardening to be decided before the freeze |
 | `who-killed-the-job` | Question, history | 0 | 0 | 0 | 0 | not piloted |
 | `list-pasted-brief` | Failure, defect | 0 | 0 | 0 | 0 | not piloted |
 | `stats-quadratic` | Failure, work limit | 0 | 0 | 0 | 0 | not piloted |
 
-Pilot sessions used: 1 of 30.
+Pilot sessions used: 2 of 30.
