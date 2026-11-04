@@ -28,8 +28,59 @@ published and checked against it.
   hidden tests for a bug, the answer for a question. `grade.py --check` proves every variant
   sound: its reference fix passes, the variant and a broken fix each fail a hidden test,
   its report names no internals, and its hashes match.
+- `harness.py` runs one session end to end as a separate unix user, `mo-session`: it checks
+  the fixture, starts the service and the recording proxy, launches the client with the
+  prompt (`prompt.md`, the variant's report filled in), ends it at the time limit, collects
+  the records and grades them. `harness.py round` runs a round's seeded order one session
+  at a time.
+- `proxy.py` is the recording proxy between client and service. It writes every request and
+  response, with bodies, status and timing, and never the token. `proxy.py match` checks
+  that the proxy log and the client's own event stream hold the same tool calls, and
+  `proxy.py hosts` lists any host other than the loopback address a session's commands
+  addressed.
+- `scan.py` gates publication: it fails on any session token or provider credential, in any
+  encoding the transports use, in the files selected for publication, and on any file it
+  cannot read.
 - `testdata/variants/synthetic/` is a small queue with the served queue's tools and one
-  deliberate toy defect, unrelated to any scenario. `test_fixture.py` and `test_grade.py`
-  run on it, and `ci/check.sh bench` runs them; the six real variants are checked by hand
-  (`grade.py --check MO PRIVATE_ROOT BUILT`), since CI cannot read the private repository.
+  deliberate toy defect, unrelated to any scenario. `test_fixture.py`, `test_grade.py`,
+  `test_proxy.py` and `test_harness.py` run on it, the last with `testdata/stub_client.py`
+  standing in for both clients, and `ci/check.sh bench` runs them with `test_scan.py`; the six
+  real variants are checked by hand (`grade.py --check MO PRIVATE_ROOT BUILT`), since CI
+  cannot read the private repository. `test_harness.py` creates a session user of its own,
+  `mo-session-test`, and needs passwordless sudo.
+
+## Running sessions
+
+Sessions run as the unix user `mo-session`, which can read nothing under the operator's home:
+the home must be mode 0750 or 0700, and `harness.py setup` refuses to go on otherwise. The
+pinned binaries live outside it, under `/opt/mo-phase4/bin`, owned by root: `mo`, `claude`,
+and `codex` (a link into `/opt/mo-phase4/codex`, the copied standalone package). Since the
+session user cannot write them, neither client can update itself, and the harness also runs
+Claude Code with `DISABLE_AUTOUPDATER=1` and Codex with `check_for_update_on_startup=false`.
+`setup` records each binary's SHA-256 and version in `~/.mo-phase4-harness/binaries.json`,
+for the freeze. The harness's private state is in `~/.mo-phase4-harness` (mode 0700): the
+session tokens (`tokens`) and the clients' stored credentials (`secrets`), both for the
+scanner, and the snapshot of the session user's home that every session starts from.
+
+```sh
+H=learnability/phase4/harness.py
+python3 $H setup MO "$(command -v claude)" "$(command -v codex)"   # MO: the baseline binary
+sudo -u mo-session env -i HOME=/home/mo-session PATH=/opt/mo-phase4/bin:/usr/bin:/bin \
+    TERM=$TERM bash   # log in once, in a shell as the session user:
+#   claude   (log in, then /exit)
+#   codex login
+python3 $H setup MO "$(command -v claude)" "$(command -v codex)"   # again: snapshot the logins
+python3 $H build /opt/mo-phase4/bin/mo ~/mo-phase4-private ~/phase4-builds/ROUND
+python3 $H run ~/mo-phase4-private/variants/NAME ~/phase4-builds/ROUND/NAME claude OUT
+python3 $H order SEED NAME... > order.tsv
+python3 $H round order.tsv ~/mo-phase4-private ~/phase4-builds/ROUND OUT
+python3 learnability/phase4/scan.py ~/.mo-phase4-harness/tokens ~/.mo-phase4-harness/secrets \
+    -- FILES...
+```
+
+A session's records, in its OUT folder (mode 0700): `stream.jsonl` (the client's events),
+`proxy.jsonl`, `service.log`, `start-data/`, `task-queue/` (the working folder as the session
+left it), `prompt.txt`, `manifest.json` and `grade.json`. `harness.py reset` cleans up after a
+harness that did not finish. The harness's docstring says exactly what a session gets and
+what a run does, in order.
 - `preflight/` holds the experiments that sized the design; its README says what each found.
