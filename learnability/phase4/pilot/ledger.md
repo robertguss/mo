@@ -45,8 +45,8 @@ checked. Robert reads each pilot's commands for that.
 
 ## Setup
 
-- `mo`: built from `main` at `87948db24aa72c62fb5a05d72fbc1b1c6c2ad211`, the commit the tag
-  `phase4-baseline` names. It has no source change since Phase 3. TAG: not yet created.
+- `mo`: built from `main` at `87948db24aa72c62fb5a05d72fbc1b1c6c2ad211`, which the annotated
+  tag `phase4-baseline` names (pushed 4 Nov 2026). It has no source change since Phase 3.
   Exported with `git archive` to `/opt/mo-phase4/baseline` and built there with
   `make CC=gcc build/gcc/debug/mo` (gcc 13.3.0, Ubuntu 24.04) on 4 Nov 2026, so that its
   library path, `/opt/mo-phase4/baseline/lib`, can be read by the session user (see
