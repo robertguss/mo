@@ -336,8 +336,21 @@ if have python3; then
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_fixture.py "${drivers[@]}"
 		later "Phase 4 grading: hidden tests, answers and each variant's controls" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_grade.py "${drivers[@]}"
+		later "Phase 4 recording proxy: bodies, statuses, no token, and the record match" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_proxy.py "${drivers[@]}"
+		later "Phase 4 publication scanner: a token in any transport encoding is refused" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_scan.py
 		report_status=0
 		report || report_status=$?
+		# The session harness's tests time a killed session, so they too run alone. They run
+		# stub sessions as a user of their own, which needs passwordless sudo.
+		harness_status=0
+		if sudo -n true 2>/dev/null; then
+			step "Phase 4 session harness: stub sessions as their own user, killed, recorded and graded (${drivers[0]})"
+			PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_harness.py "${drivers[0]}" || harness_status=$?
+		else
+			missing "passwordless sudo is not available, so the Phase 4 session harness is not tested"
+		fi
 		# The frozen tasks' hidden tests have time limits, so they run alone, after the checks
 		# that ran side by side, and even when one of those failed.
 		step "The three tools' frozen tasks: hashes match and each reference passes its hidden tests"
@@ -346,7 +359,7 @@ if have python3; then
 		step "The three tools: tests, frozen tasks and repository checks (${drivers[0]})"
 		tools_status=0
 		PYTHONDONTWRITEBYTECODE=1 python3 ci/check_tools.py "${drivers[0]}" || tools_status=$?
-		if ((report_status != 0 || frozen_status != 0 || tools_status != 0)); then exit 1; fi
+		if ((report_status != 0 || harness_status != 0 || frozen_status != 0 || tools_status != 0)); then exit 1; fi
 	else
 		missing "no mo command executable is built"
 	fi
