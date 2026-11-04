@@ -24,7 +24,9 @@ session folder. MO is the `mo` that grades; for a session, the one the session u
 
 Grading copies the session's folder, then puts the variant's queue-tests.mo over the copy's, so
 an edit to the queue's tests counts for nothing. job-queue.mo keeps the session's code, since
-fixes go there, but its test, examples and promise blocks must be the variant's, unchanged. A
+fixes go there, and each of the variant's test, examples and promise blocks must still be there,
+in order, starting with its lines unchanged. A session may add lines at the end of a block and
+add blocks of its own, which can only add checks; a changed, dropped or inserted line fails. A
 program whose tools or wire types changed fails because the overlaid tests no longer compile;
 the compile error is the recorded reason.
 """
@@ -50,6 +52,8 @@ SESSION_FILES = ('main.mo', 'job-queue.mo', 'queue-tests.mo')
 BLOCK = re.compile(r'^(\s*)(test "|examples\s*$|promise ")')
 LEAK_WORDS = re.compile(r'\b(handler|function|expire|release|checked|shown\?|leased_job|put|'
                         r'JobQueue|QueueTests|Main)\b|mo-|\.mo\b', re.IGNORECASE)
+BLOCKS_CHANGED = ("job-queue.mo changes or drops a line of the variant's test, examples or "
+                  "promise blocks")
 ANSWER = re.compile(r'^\W*ANSWER:\s*(.*?)\W*$')
 
 
@@ -123,6 +127,17 @@ def blocks(text):
     return found
 
 
+def kept(variant_text, session_text):
+    """Whether each of the variant's blocks begins one of the session's, in order: added lines
+    at the end of a block and added blocks are allowed."""
+    want = [block.split('\n')[:-1] for block in blocks(variant_text)]
+    at = 0
+    for block in blocks(session_text):
+        if at < len(want) and block.split('\n')[:len(want[at])] == want[at]:
+            at += 1
+    return at == len(want)
+
+
 def service_block(text):
     """main.mo's service declaration, from its `service` line to the `end` that closes it."""
     lines = [line.rstrip() for line in text.splitlines()]
@@ -148,10 +163,9 @@ def prepared(variant, folder, work):
     session_queue = work / 'job-queue.mo'
     if not session_queue.is_file():
         problems.append('job-queue.mo is missing')
-    elif blocks(session_queue.read_text(errors='replace')) != \
-            blocks((variant / 'job-queue.mo').read_text()):
-        problems.append("job-queue.mo's test, examples or promise blocks differ from the "
-                        "variant's")
+    elif not kept((variant / 'job-queue.mo').read_text(),
+                  session_queue.read_text(errors='replace')):
+        problems.append(BLOCKS_CHANGED)
     session_main = work / 'main.mo'
     if not session_main.is_file():
         problems.append('main.mo is missing')
