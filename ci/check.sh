@@ -332,6 +332,10 @@ if have python3; then
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/test_retry.py
 		later "The Phase 4 evaluation's between-round comparison and its power" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_compare.py
+		later "Phase 4 scenario fixtures: a step list builds, renders, checks and keys" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_fixture.py "${drivers[@]}"
+		later "Phase 4 grading: hidden tests, answers and each variant's controls" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_grade.py "${drivers[@]}"
 		report_status=0
 		report || report_status=$?
 		# The frozen tasks' hidden tests have time limits, so they run alone, after the checks
