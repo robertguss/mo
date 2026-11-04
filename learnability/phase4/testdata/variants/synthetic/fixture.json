@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {"repeat": 4, "steps": [{"submit": "toy brief {n}"}]},
+    {"submit": "toy brief 1"},
+    {"lease": true}, {"fail": "lease"},
+    {"lease": true}, {"fail": "lease"},
+    {"lease": true}, {"fail": "lease"},
+    {"lease": true}, {"acknowledge": "lease"},
+    {"wait": 1},
+    {"expect": {"job": 1, "state": "Dead", "attempts": 3}}
+  ],
+  "check": [
+    {"job": 1, "state": "Dead", "attempts": 3},
+    {"call": "stats", "error": "handler_failed"},
+    {"stderr": "report"}
+  ],
+  "failing_tool": "stats"
+}
