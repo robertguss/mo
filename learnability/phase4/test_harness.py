@@ -66,7 +66,7 @@ def setUpModule():
 
     if subprocess.run(['id', USER], capture_output=True).returncode == 0:
         home = pathlib.Path(harness.Layout(user=USER).home())
-        harness.sudo('find', home, '-mindepth', '1', '-delete')  # no credentials yet
+        harness.sudo('find', home, '-mindepth', '1', '-delete')
     SETUP['before_login'] = harness_command('setup', MO, STUB, STUB)
     home = harness.Layout(user=USER).home()
     write_as_user(home / '.claude' / '.credentials.json', json.dumps(

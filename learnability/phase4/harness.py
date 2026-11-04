@@ -79,8 +79,8 @@ import fixture  # noqa: E402
 import grade  # noqa: E402
 import proxy  # noqa: E402
 
-SERVER = 'task-queue'
-CLIENTS = ('claude', 'codex')
+SERVER = proxy.SERVER
+CLIENTS = proxy.CLIENTS
 SESSIONS_PER_CLIENT = 3
 LIMIT = 3600
 GRACE = 10  # seconds between SIGTERM and SIGKILL at the limit
@@ -173,8 +173,6 @@ def append_secret(path, value):
         os.fsync(file.fileno())
 
 
-# Processes and the session user's leftovers.
-
 def processes(user):
     result = subprocess.run(['pgrep', '-U', user], capture_output=True, text=True, timeout=60)
     return result.stdout.split()
@@ -213,15 +211,13 @@ def reset(layout):
     with open(layout.snapshot, 'rb') as snapshot:
         sudo('tar', '-C', home, '-xpf', '-', stdin=snapshot)
     sudo('find', *LEFTOVERS, '-xdev', '-user', layout.user, '-delete', check=False)
-    for stale in layout.state.glob('session-*'):  # a harness that did not finish
-        shutil.rmtree(stale, ignore_errors=True)
+    for abandoned in layout.state.glob('session-*'):
+        shutil.rmtree(abandoned, ignore_errors=True)
     left = leftovers(layout.user)
     if left:
         raise HarnessError(f'files of {layout.user} survive deletion: {left[:5]}')
     return ended
 
-
-# Setup.
 
 def install_binary(source, target):
     source = pathlib.Path(source).resolve()
@@ -300,7 +296,7 @@ def setup(layout, mo, claude, codex):
     layout.state.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(layout.state, 0o700)
     private_file(layout.tokens)
-    (layout.binaries).write_text(json.dumps(record, indent=2) + '\n')
+    layout.binaries.write_text(json.dumps(record, indent=2) + '\n')
     print(json.dumps(record, indent=2))
     home = layout.home()
     missing = [name for name in CREDENTIALS
@@ -329,8 +325,6 @@ def setup(layout, mo, claude, codex):
     print(f'snapshot of {home} taken; {len(values)} stored credentials are in {layout.secrets}')
     return 0
 
-
-# A session.
 
 def stream_events(stream):
     try:
@@ -449,7 +443,7 @@ def run(layout, variant, built, client, out, binary=None, limit=LIMIT):
             for thing in reversed(running):
                 try:
                     thing.stop()
-                except Exception:  # already failing: stop what else still runs
+                except Exception:
                     pass
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -575,8 +569,6 @@ def graded(variant, built, out, mo):
     return 0 if verdict['success'] else 1
 
 
-# Rounds.
-
 def order(seed, variants):
     slots = [(v, c) for v in variants for c in CLIENTS for _ in range(SESSIONS_PER_CLIENT)]
     random.Random(seed).shuffle(slots)
@@ -646,8 +638,6 @@ def build(mo, root, out):
     return 0 if all(s == 0 for s in statuses) else 1
 
 
-# The command line.
-
 OPTIONS = {'--user': 'user', '--install': 'install', '--state': 'state', '--private': 'private'}
 RUN_OPTIONS = {'--binary': 'binary', '--limit': 'limit'}
 
@@ -680,7 +670,7 @@ def neutral_restart(args, positional, layout):
         json.dump(args, file)
     os.execv(sys.executable, [sys.executable, str(pathlib.Path(__file__).resolve()), 'run',
                               '--from', name])
-    return None  # not reached
+    raise AssertionError('os.execv returned')
 
 
 def main(args):

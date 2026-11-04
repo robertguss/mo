@@ -50,6 +50,8 @@ import threading
 import time
 import urllib.parse
 
+CLIENTS = ('claude', 'codex')
+SERVER = 'task-queue'
 HOP = ('connection', 'keep-alive', 'transfer-encoding', 'content-length', 'host',
        'proxy-connection', 'te', 'trailer', 'upgrade')
 
@@ -210,13 +212,7 @@ class Proxy:
 
 
 def entries(log):
-    found = []
-    for line in pathlib.Path(log).read_text(encoding='utf-8').splitlines():
-        try:
-            found.append(json.loads(line))
-        except ValueError:
-            continue
-    return found
+    return list(events(log))
 
 
 def log_calls(log):
@@ -285,14 +281,14 @@ def canonical(arguments):
     return json.dumps(arguments, sort_keys=True)
 
 
-def match(client, stream, log, server='task-queue'):
+def match(client, stream, log, server=SERVER):
     """Pairs the log's tools/call requests with the stream's tool calls."""
     logged, streamed = log_calls(log), stream_calls(client, stream, server)
     log_only, stream_only, exempt, pairs = [], [], [], 0
     for tool in sorted({c[1] for c in logged} | {c[1] for c in streamed}, key=str):
         left = [c for c in logged if c[1] == tool]
         right = [c for c in streamed if c[1] == tool]
-        for call in list(left):  # equal arguments first
+        for call in list(left):
             twin = next((r for r in right if canonical(r[2]) == canonical(call[2])), None)
             if twin is not None:
                 left.remove(call)
@@ -410,11 +406,11 @@ def serve(upstream, log, token_env):
 def main(args):
     if len(args) == 4 and args[0] == 'serve':
         return serve(args[1], args[2], args[3])
-    if len(args) in (4, 5) and args[0] == 'match' and args[1] in ('claude', 'codex'):
+    if len(args) in (4, 5) and args[0] == 'match' and args[1] in CLIENTS:
         result = match(args[1], args[2], args[3], *args[4:])
         print(json.dumps(result, indent=2))
         return 0 if result['match'] else 1
-    if len(args) == 3 and args[0] == 'hosts' and args[1] in ('claude', 'codex'):
+    if len(args) == 3 and args[0] == 'hosts' and args[1] in CLIENTS:
         found = hosts(args[1], args[2])
         print(json.dumps(found, indent=2))
         return 1 if found else 0
