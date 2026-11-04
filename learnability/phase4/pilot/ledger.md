@@ -63,7 +63,12 @@ checked. Robert reads each pilot's commands for that.
   - Codex CLI 0.166.0 (standalone, x86_64 musl), SHA-256
     `b8a11fedf24b2dfb59a70c9e52b030f9a508dcd49cd2dd0d41956f4c785156b8`.
 - Variants: `robertguss/mo-phase4-private` at `1331ded`.
-- Data folders: built with `harness.py build` into `~/phase4-builds/pilots-1`. BUILD: pending.
+- Data folders: built with `harness.py build` and the baseline `mo` into
+  `~/phase4-builds/pilots-1` on 4 Nov 2026; all six built, `expire-one-per-tick` in 32 minutes
+  for its lapse, the others in 1 to 3. `grade.py --check /opt/mo-phase4/bin/mo
+  ~/mo-phase4-private ~/phase4-builds/pilots-1` then passed for all six: each reference fix
+  passes, each defect variant and its broken fix fail a hidden test, both answer keys reproduce
+  from the built folders, and every `SHA256SUMS` is current.
 - Time limit: 3600 seconds.
 
 ## Sessions
