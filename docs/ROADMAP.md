@@ -25,7 +25,6 @@ independent baseline come next.
 - [x] The design step: `docs/design/introspection.md` and the evaluation
       protocol `learnability/phase4/protocol.md`, with the experiments they
       rest on in `learnability/phase4/preflight/`. Approved on 2026-11-04.
-      Before the first pilot: Robert's own predictions, beside Claude's.
 - [ ] Pilots and an independent baseline, before any Phase 4 instrument.
 - [ ] Operator tools on the MCP endpoint, and state export to a private file.
 - [ ] Failure records, kept apart from saved state.
