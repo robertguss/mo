@@ -113,7 +113,10 @@ def step_kind(step):
     return kinds[0]
 
 
-def validate_steps(steps, nested):
+def validate_steps(steps, nested, leased=False):
+    """leased: whether a lease the rendered module can name precedes these steps. It names a
+    lease made in a repeat only inside that repeat's body, so a settle there must follow the
+    body's own lease, or the body must make none and act on the one before it."""
     for step in steps:
         kind = step_kind(step)
         allowed = {kind, 'pad'} if kind == 'submit' else {kind, 'from', 'steps'} \
@@ -125,6 +128,10 @@ def validate_steps(steps, nested):
             raise FixtureError(f'submit takes a text and an optional byte count: {step!r}')
         if kind in SETTLE and step[kind] != 'lease':
             raise FixtureError(f'{kind} acts on "lease", the most recent lease: {step!r}')
+        if kind in SETTLE and not leased:
+            raise FixtureError(f'{kind} has no lease it can act on here: {step!r}')
+        if kind == 'lease':
+            leased = True
         if kind == 'wait' and (not isinstance(step['wait'], int) or step['wait'] <= 0):
             raise FixtureError(f'wait takes a positive whole number of seconds: {step!r}')
         if kind == 'expect':
@@ -135,7 +142,10 @@ def validate_steps(steps, nested):
             if not isinstance(step['repeat'], int) or step['repeat'] < 1 or \
                     not isinstance(step.get('from', 1), int):
                 raise FixtureError(f'repeat takes a positive count: {step!r}')
-            validate_steps(step.get('steps', []), nested=True)
+            body = step.get('steps', [])
+            leases = any(isinstance(s, dict) and 'lease' in s for s in body)
+            validate_steps(body, nested=True, leased=leased and not leases)
+            leased = leased and not leases
 
 
 def validate_assertion(assertion):
@@ -145,7 +155,8 @@ def validate_assertion(assertion):
         if set(assertion) != {'job', 'state', 'attempts'} or assertion['state'] not in STATES:
             raise FixtureError(f'a job assertion needs job, state and attempts: {assertion!r}')
     elif 'call' in assertion:
-        if assertion['call'] not in TOOLS or set(assertion) - {'call', 'arguments', 'error'}:
+        if assertion['call'] not in TOOLS or set(assertion) - {'call', 'arguments', 'error'} or \
+                not isinstance(assertion.get('error'), str) or not assertion['error']:
             raise FixtureError(f'a call assertion needs a tool and an error code: {assertion!r}')
     elif 'stderr' in assertion:
         if assertion['stderr'] not in ('report', 'failure_only') or len(assertion) != 1:
@@ -474,7 +485,9 @@ def submit_call(pad, step, counter):
     one_line = f'{pad}submit(sim, {text}{padding})'
     if len(one_line) <= 100:
         return [one_line]
-    argument = [f'{pad}  {text}'] + ([f'{pad}    {padding}'] if padding else [])
+    argument = [f'{pad}  {text}{padding}']
+    if padding and len(argument[0]) > 100:
+        argument = [f'{pad}  {text}', f'{pad}    {padding}']
     return [f'{pad}submit(', f'{pad}  sim,', *argument, f'{pad})']
 
 

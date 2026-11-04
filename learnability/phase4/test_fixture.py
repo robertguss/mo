@@ -81,6 +81,25 @@ class Rendering(unittest.TestCase):
                                     capture_output=True, text=True, timeout=120)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_long_calls_and_scoped_leases_render_as_mo_format_and_mo_check_accept(self):
+        long_text = 'Brief {n}: ' + 'rebuild the index and post the timings. ' * 3
+        with tempfile.TemporaryDirectory() as folder:
+            copy = variant_with(folder, steps=[
+                {'submit': 'x' * 70, 'pad': 200}, {'submit': 'y' * 120},
+                {'repeat': 2, 'steps': [{'submit': long_text, 'pad': 2000}]},
+                {'submit': 'z' * 95, 'pad': 2000},
+                {'lease': True}, {'repeat': 2, 'steps': [{'heartbeat': 'lease'}]},
+                {'repeat': 2, 'steps': [{'lease': True}, {'fail': 'lease'}]}])
+            self.assertEqual(tool('render', copy).returncode, 0)
+            rendered = (copy / 'fixture-steps.mo').read_text()
+            formatted = subprocess.run([MO, 'format', 'fixture-steps.mo'], cwd=copy,
+                                       capture_output=True, text=True, timeout=120)
+            self.assertEqual(formatted.returncode, 0, formatted.stderr)
+            self.assertEqual((copy / 'fixture-steps.mo').read_text(), rendered)
+            checked = subprocess.run([MO, 'check', 'fixture-steps.mo'], cwd=copy,
+                                     capture_output=True, text=True, timeout=120)
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+
     def test_a_wait_renders_as_the_formatter_writes_it(self):
         self.assertEqual([fixture.duration(s) for s in (1, 20, 60, 120, 1860)],
                          ['1.second', '20.seconds', '1.minute', '2.minutes', '31.minutes'])
@@ -88,7 +107,13 @@ class Rendering(unittest.TestCase):
     def test_a_malformed_fixture_is_refused_before_any_send(self):
         for steps in ([{'teleport': 1}], [{'lease': True, 'wait': 3}],
                       [{'acknowledge': 'job 3'}], [{'wait': -1}],
-                      [{'repeat': 2, 'steps': [{'repeat': 2, 'steps': []}]}]):
+                      [{'repeat': 2, 'steps': [{'repeat': 2, 'steps': []}]}],
+                      [{'expect': {'call': 'stats', 'error': None}}],
+                      [{'expect': {'call': 'acknowledge', 'arguments': {}}}],
+                      [{'acknowledge': 'lease'}],
+                      [{'repeat': 2, 'steps': [{'lease': True}]}, {'acknowledge': 'lease'}],
+                      [{'lease': True},
+                       {'repeat': 2, 'steps': [{'acknowledge': 'lease'}, {'lease': True}]}]):
             with tempfile.TemporaryDirectory() as folder:
                 copy = variant_with(folder, steps=steps)
                 out = pathlib.Path(folder) / 'out'

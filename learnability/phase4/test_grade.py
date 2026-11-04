@@ -135,8 +135,28 @@ class Grading(unittest.TestCase):
                                             .replace('fn stats(', 'fn counts('))
         status, verdict = self.graded(self.session(SYNTHETIC / 'hidden' / 'reference', rename))
         self.assertEqual(status, 1)
-        self.assertEqual(len(verdict['reasons']), 1)
-        self.assertIn('E0', verdict['reasons'][0])
+        self.assertEqual(verdict['reasons'][0],
+                         "main.mo's service declaration differs from the variant's")
+        self.assertTrue(any(' E0' in reason or reason.startswith('E0')
+                            for reason in verdict['reasons'][1:]), verdict['reasons'])
+
+    def test_a_changed_service_declaration_fails(self):
+        def slower_timer(folder):
+            text = (folder / 'main.mo').read_text()
+            (folder / 'main.mo').write_text(text.replace('every 1.minute expire',
+                                                         'every 7.minutes expire'))
+
+        def added_tool(folder):
+            text = (folder / 'main.mo').read_text()
+            (folder / 'main.mo').write_text(
+                text.replace('fail, list, stats', 'fail, list, stats, total') +
+                '\n## Counts every job.\nfn total(queue: Queue, _now: Time) : Int\n'
+                '  JobQueue.jobs(queue).size\nend\n')
+        for edit in (slower_timer, added_tool):
+            status, verdict = self.graded(self.session(SYNTHETIC / 'hidden' / 'reference', edit))
+            self.assertEqual(status, 1, edit.__name__)
+            self.assertEqual(verdict['reasons'],
+                             ["main.mo's service declaration differs from the variant's"])
 
     def test_an_edited_queue_tests_file_is_noted_and_not_used(self):
         def weaken(folder):
@@ -202,6 +222,16 @@ class Check(unittest.TestCase):
         for problem in ('SHA256SUMS is stale for report.md', "report.md names 'handler'",
                         "report.md names '.mo'"):
             self.assertIn(problem, result.stdout)
+
+    def test_an_empty_or_foreign_variants_folder_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            (root / 'variants').mkdir()
+            self.assertEqual(tool('--check', MO, root).returncode, 1)
+            (root / 'variants' / 'stray').mkdir()
+            result = tool('--check', MO, root)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('no fixture.json, so this is not a variant', result.stdout)
 
     def test_a_broken_fix_that_passes_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -123,6 +123,16 @@ def blocks(text):
     return found
 
 
+def service_block(text):
+    """main.mo's service declaration, from its `service` line to the `end` that closes it."""
+    lines = [line.rstrip() for line in text.splitlines()]
+    if 'service' not in lines:
+        return None
+    start = lines.index('service')
+    end = lines.index('end', start) if 'end' in lines[start:] else len(lines)
+    return lines[start:end + 1]
+
+
 def prepared(variant, folder, work):
     """Copies the session's folder to work with the variant's tests over it. Returns notes and
     problems."""
@@ -142,6 +152,12 @@ def prepared(variant, folder, work):
             blocks((variant / 'job-queue.mo').read_text()):
         problems.append("job-queue.mo's test, examples or promise blocks differ from the "
                         "variant's")
+    session_main = work / 'main.mo'
+    if not session_main.is_file():
+        problems.append('main.mo is missing')
+    elif service_block(session_main.read_text(errors='replace')) != \
+            service_block((variant / 'main.mo').read_text()):
+        problems.append("main.mo's service declaration differs from the variant's")
     return notes, problems
 
 
@@ -164,8 +180,7 @@ def grade_folder(variant, mo, folder, answer_problems=None):
     with tempfile.TemporaryDirectory() as temporary:
         work = pathlib.Path(temporary) / 'work'
         notes, problems = prepared(variant, pathlib.Path(folder), work)
-        if not problems:
-            problems += check_problems(work, mo)
+        problems += check_problems(work, mo)  # a changed tool's compile error is a reason too
         if not problems:
             _, failed = test_problems(work, mo, 'queue-tests.mo')
             problems += failed
@@ -285,7 +300,7 @@ def format_problems(variant, mo):
 def must_fail(variant, work, mo, what):
     """A problem unless the hidden tests compile against work and at least one fails."""
     compiled, failed = hidden_problems(variant, work, mo)
-    if compiled and failed:
+    if compiled and any(line.startswith('HiddenTests.') for line in failed):
         return []
     return [f'{what} must compile and fail a hidden test: '
             + ('; '.join(failed) or 'every hidden test passed')]
@@ -334,10 +349,18 @@ def main(args):
     if len(args) in (3, 4) and args[0] == '--check':
         mo = pathlib.Path(args[1]).resolve()
         variants = sorted(p for p in (pathlib.Path(args[2]) / 'variants').iterdir()
-                          if (p / 'fixture.json').exists())
+                          if p.is_dir())
+        if not variants:
+            print(f'no variants under {pathlib.Path(args[2]) / "variants"}', file=sys.stderr)
+            return 1
         built = args[3] if len(args) == 4 else None
+
+        def checked(variant):
+            if not (variant / 'fixture.json').exists():
+                return ['no fixture.json, so this is not a variant']
+            return check_variant(variant, mo, built)
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-            results = list(pool.map(lambda v: check_variant(v, mo, built), variants))
+            results = list(pool.map(checked, variants))
         bad = 0
         for variant, problems in zip(variants, results):
             print(f'{"ok  " if not problems else "FAIL"} {variant.name}')
