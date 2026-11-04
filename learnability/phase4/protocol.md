@@ -173,19 +173,25 @@ There is one primary comparison, so no multiplicity correction is applied to it.
 per-client rates are reported with their Wilson intervals (`learnability/wilson.py`) and are
 descriptive only.
 
-**Size.** Allocation is balanced, so the pooled comparison is not stratified. Its exact power
-(`compare.py --power`) for 36 sessions per round:
+**Size.** The comparison pools every session, but the families' true rates differ, so each
+round's successes are a sum of one binomial per family rather than one binomial. `compare.py
+--strata` computes the exact power for that sum; `compare.py --power` assumes one rate for every
+session. Both, for this protocol's allocation:
 
-| True baseline | True final | Power |
+| Sessions per round | Assumed true rates, baseline to final | Power |
 | --- | --- | --- |
-| 35% | 75% | 0.94 |
-| 35% | 65% | 0.72 |
-| 50% | 80% | 0.79 |
+| 36 | the section 9 predictions per family: 50% to 80%, 10% to 70%, 40% to 75% (`--strata 12:50%:80% 12:10%:70% 12:40%:75%`) | 0.96 |
+| 24 | the same predictions, 8 sessions per family | 0.88 |
+| 36 | 35% to 75% in every family | 0.94 |
+| 36 | 35% to 65% in every family | 0.72 |
+| 36 | 50% to 80% in every family | 0.79 |
+| 24 | 35% to 65% in every family | 0.59 |
 
-36 is the smallest balanced allocation (a multiple of 12) that gives at least 80% power for this
-protocol's predicted effect (section 9). Power is not monotone in the number of sessions for a
-discrete test, so the frozen number is fixed in advance and its exact power reported, rather than
-searched for after the fact.
+24 sessions (a multiple of 12, so every variant gets the same sessions from each client) already
+give more than 80% power if the predictions hold. This protocol proposes 36 as margin: if the
+true improvement is smaller than predicted, such as 35% to 65%, 36 keeps 0.72 where 24 would keep
+0.59. Power is not monotone in the number of sessions for a discrete test, so the frozen number is
+fixed in advance and its exact power reported, rather than searched for after the fact.
 
 **Room.** After the baseline, `compare.py --room K1 36 36` gives the fewest final successes that
 would show an improvement. With 36 sessions, a baseline of 32 or more successes leaves no room at

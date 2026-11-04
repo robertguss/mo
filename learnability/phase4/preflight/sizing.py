@@ -6,7 +6,7 @@
         each (default 2048, its limit), lease a tenth of them, then stop it
   python3 learnability/phase4/preflight/sizing.py MO grow [KIB_STEP]
         grow the boundary fixture's state by KIB_STEP KiB per call (default 1024) until the
-        runtime refuses to save the next state, then stop it
+        runtime refuses the next state, then stop it
 
 Both print one JSON object: the encoded snapshot and log sizes read from the stopped data
 folder, the database file size, the process's peak and final resident memory, the latency of
@@ -124,6 +124,11 @@ def store_sizes(data):
             'head_sequence': head, 'database_file_bytes': path.stat().st_size}
 
 
+def error_code(content, failed):
+    """A failed call's error code, or None when it succeeded."""
+    return content['error'].get('code', content['error'].get('kind')) if failed else None
+
+
 def fill_queue(server, jobs, payload_bytes):
     payload = 'q' * payload_bytes
     latencies = []
@@ -141,14 +146,15 @@ def fill_queue(server, jobs, payload_bytes):
         if failed:
             break
         leased += 1
-    _, _, stats_seconds, stats_bytes = server.call('stats')
-    _, _, list_seconds, list_bytes = server.call(
+    stats, stats_failed, stats_seconds, stats_bytes = server.call('stats')
+    listed, list_failed, list_seconds, list_bytes = server.call(
         'list', filter={'case': 'AllJobs'}, after='0', limit='10')
     return {'jobs_submitted': n + 1 if ended != 'filled' else jobs, 'jobs_leased': leased,
             'payload_bytes': payload_bytes, 'ended': ended,
             'last_update_seconds': latencies[-20:], 'stats_seconds': stats_seconds,
-            'stats_response_bytes': stats_bytes, 'list_10_seconds': list_seconds,
-            'list_10_response_bytes': list_bytes}
+            'stats_response_bytes': stats_bytes, 'stats_error': error_code(stats, stats_failed),
+            'list_10_seconds': list_seconds, 'list_10_response_bytes': list_bytes,
+            'list_10_error': error_code(listed, list_failed)}
 
 
 def grow_state(server, step):

@@ -11,7 +11,7 @@ in OUT/traffic.jsonl. Then it runs each named client once, non-interactively, ag
 proxy, asking it to call the three tools by wire name and report the names it sees. Each
 client's own event stream is saved as OUT/CLIENT.jsonl; OUT/summary.json joins them: the wire
 names listed, the model-visible names each client reported, and which wire tool each call
-reached. The token is a fixed canary; the clients read it from the environment.
+reached. The token is sizing.py's fixed canary; the clients read it from the environment.
 """
 
 import http.client
@@ -19,17 +19,17 @@ import http.server
 import json
 import os
 import pathlib
-import select
-import signal
+import re
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from sizing import TOKEN, Server  # noqa: E402
+
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parent.parent.parent
-TOKEN = 'Phase4ClientProbeCanary'
 OPERATOR_TOOLS = [
     {'name': 'mo-state', 'description': 'Operator view: the service state (probe stand-in).',
      'inputSchema': {'type': 'object', 'properties': {}, 'additionalProperties': False},
@@ -139,23 +139,6 @@ def proxy_handler(upstream_port, recorder):
     return Handler
 
 
-def start_server(binary, data):
-    process = subprocess.Popen(
-        [str(binary), 'serve', str(HERE / 'clients' / 'main.mo'), '--port', '0', '--data',
-         str(data)], env={**os.environ, 'PROBE_TOKEN': TOKEN}, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, bufsize=0)
-    line = b''
-    limit = time.monotonic() + 60
-    while not line.endswith(b'\n'):
-        if not select.select([process.stdout], [], [], limit - time.monotonic())[0]:
-            raise RuntimeError('mo serve did not start')
-        chunk = process.stdout.read(1)
-        if not chunk:
-            raise RuntimeError(process.stderr.read().decode())
-        line += chunk
-    return process, int(line.split(b':')[-1].split(b'/')[0])
-
-
 def version(command):
     return subprocess.run(command, capture_output=True, text=True, timeout=60).stdout.strip()
 
@@ -195,7 +178,11 @@ def run(command, workdir, out):
 
 
 def visible_names(client, path):
-    """The probe tool names a client's init event lists (Claude Code only) and its calls."""
+    """The probe tool names the model saw, and the calls the client made.
+
+    Claude Code's init event lists its tools. Codex's stream lists none, so for Codex the names
+    are the ones the model wrote in its final message, which the prompt asks it to list.
+    """
     names, calls = set(), []
     for line in pathlib.Path(path).read_text(encoding='utf-8').splitlines():
         try:
@@ -212,6 +199,10 @@ def visible_names(client, path):
             item = event.get('item') or {}
             if item.get('type') == 'mcp_tool_call' and event.get('type') == 'item.completed':
                 calls.append(f"{item.get('server')}/{item.get('tool')}")
+            if item.get('type') == 'agent_message' and event.get('type') == 'item.completed':
+                reported = set(re.findall(r'mcp__probe__[A-Za-z0-9_-]+', item.get('text', '')))
+                if reported:
+                    names = reported
     return sorted(names), calls
 
 
@@ -225,7 +216,8 @@ def main(args):
     with tempfile.TemporaryDirectory() as temporary:
         data = pathlib.Path(temporary) / 'data'
         data.mkdir()
-        process, upstream = start_server(binary, data)
+        server = Server(binary, HERE / 'clients' / 'main.mo', 'PROBE_TOKEN', data)
+        upstream = server.port
         proxy = http.server.ThreadingHTTPServer(('127.0.0.1', 0),
                                                 proxy_handler(upstream, recorder))
         thread = threading.Thread(target=proxy.serve_forever, daemon=True)
@@ -248,8 +240,7 @@ def main(args):
                                    'visible_names': names, 'calls': calls}
         finally:
             proxy.shutdown()
-            process.send_signal(signal.SIGTERM)
-            process.wait(timeout=60)
+            server.stop()
             recorder.close()
     traffic = [json.loads(line) for line in (out / 'traffic.jsonl').read_text().splitlines()]
     summary['wire_listed'] = next((t['listed'] for t in traffic if t.get('listed')), None)

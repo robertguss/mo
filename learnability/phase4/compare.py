@@ -11,6 +11,9 @@
   python3 learnability/phase4/compare.py --size P1 P2 POWER
         the fewest sessions per round whose exact power for true rates P1 and P2 is at least
         POWER, searching up to 400 sessions
+  python3 learnability/phase4/compare.py --strata N:P1:P2 [N:P1:P2...]
+        the exact power when each round pools strata of N sessions whose true rates are P1
+        in the baseline and P2 in the final round, such as one stratum per scenario family
   python3 learnability/phase4/compare.py --room K1 N1 N2
         whether a frozen baseline of K1/N1 leaves room for the verdict: the fewest final
         successes out of N2 that would give improved, or none
@@ -69,6 +72,33 @@ def power(p1, p2, n):
     return total
 
 
+def total_successes(strata, round_index):
+    """The distribution of one round's pooled successes over strata of (n, p1, p2)."""
+    total = [1.0]
+    for stratum in strata:
+        n, rate = stratum[0], stratum[1 + round_index]
+        part = binomial(n, rate)
+        total = [sum(total[i] * part[k - i] for i in range(len(total)) if 0 <= k - i <= n)
+                 for k in range(len(total) + n)]
+    return total
+
+
+def power_strata(strata):
+    """The exact probability of an improved verdict when each round pools the same strata,
+    given as (sessions, baseline rate, final rate), so families with different true rates
+    are summed rather than treated as one rate."""
+    if not strata or any(n <= 0 for n, _, _ in strata):
+        raise ValueError("need at least one stratum, each with sessions > 0")
+    n = sum(s[0] for s in strata)
+    first, second = total_successes(strata, 0), total_successes(strata, 1)
+    total = 0.0
+    for k1 in range(n + 1):
+        least = room(k1, n, n)
+        if least is not None:
+            total += first[k1] * sum(second[least:])
+    return total
+
+
 def room(k1, n1, n2):
     """The fewest final successes out of n2 giving an improved verdict over k1/n1, or None."""
     for k2 in range(n2 + 1):
@@ -105,6 +135,15 @@ def main(args):
         n = size(p1, p2, target)
         print(n if n is not None else f"more than {LARGEST_SIZE}")
         return 0
+    if len(args) >= 2 and args[0] == "--strata":
+        strata = []
+        for text in args[1:]:
+            parts = text.split(":")
+            if len(parts) != 3:
+                raise ValueError(f"a stratum is N:P1:P2, not {text}")
+            strata.append((count(parts[0]), parse_rate(parts[1]), parse_rate(parts[2])))
+        print(f"{power_strata(strata):.4f}")
+        return 0
     if len(args) == 4 and args[0] == "--room":
         k1, n1, n2 = count(args[1]), count(args[2]), count(args[3])
         if k1 > n1 or n1 == 0 or n2 == 0:
@@ -122,7 +161,7 @@ def main(args):
               f"[{100 * low:+.1f}, {100 * high:+.1f}]: {verdict}")
         return 0
     raise ValueError("usage: compare.py K1 N1 K2 N2 | --power P1 P2 N | --size P1 P2 POWER | "
-                     "--room K1 N1 N2")
+                     "--strata N:P1:P2... | --room K1 N1 N2")
 
 
 if __name__ == "__main__":

@@ -32,14 +32,19 @@ python3 learnability/phase4/preflight/sizing.py build/gcc/debug/mo grow 150   # 
 
 What the design takes from it:
 
-- Every legal state's encoding fits in `MO_LIMIT_SAVED_BYTES` (16 MiB), because the runtime refuses
-  to accept a state it cannot save. An export of a state is at most that plus its header, so pins
-  are sized from it. The task queue's own ceiling is 10 MiB.
+- Every legal state's encoding fits in `MO_LIMIT_SAVED_BYTES` (16 MiB), because the runtime passes
+  each new state through a saved copy and refuses one it cannot save (`docs/design/saved-state.md`,
+  "Encoded values"). That rests on the code: both growth runs were refused just past 16 MiB, with a
+  `memory_limit` reply, which the runtime gives for a heap exhaustion and for a failed saved copy
+  alike, so the replies do not say which check fired. An export of a state is at most that plus
+  its header, so pins are sized from it. The task queue's own ceiling is 10 MiB.
 - Today's process already peaks near 120 MiB resident at the largest state, before any Phase 4
   memory. The design's sizing adds the encoded current state, the pins and capture buffers on top.
 - Each update at a large state takes about 0.15 s, most of it the saved copy the runtime makes of
   every new state.
-- At the queue's limits, `list` with `limit` 10 returned a 390-byte reply: ten 2 KiB payloads do
+- At the queue's limits, `list` with `limit` 10 returned a 390-byte reply. The full run did not
+  keep its error code; a 20-job rerun (`sizing.py MO queue 20 2048`,
+  `results/sizing-queue-list.json`) returned `response_limit` in 388 bytes: ten 2 KiB payloads do
   not fit one reply, and the tool's own advice is to halve the limit. A state view of the same
   queue cannot fit one reply either, which is why the design truncates views and exports for the
   whole state.
@@ -109,7 +114,9 @@ python3 learnability/phase4/preflight/client_probe.py build/gcc/debug/mo OUT cod
 `count`, behind a recording proxy that adds two operator tools, `mo-state` and `mo-overview` (both
 with `readOnlyHint`), answers calls to them itself, and forwards everything else. Each client was
 asked to call `mo-state`, `mo_state` and `mo-overview` by their server names and report the names
-it saw. `results/clients*/traffic.jsonl` is the proxy's ordered record; `summary.json` joins it to
+it saw. Claude Code's names come from its own init event; Codex's stream lists no tools, so its
+names are the ones the model reported in its final message (`visible_names_source` in the
+summaries). `results/clients*/traffic.jsonl` is the proxy's ordered record; `summary.json` joins it to
 the clients' streams. The streams themselves are not committed: Claude Code's includes the local
 machine's hook output.
 

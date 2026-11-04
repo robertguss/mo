@@ -1,5 +1,5 @@
 ## A boundary fixture for export sizing: its state grows by whole KiB of text
-## until saving refuses the next state.
+## until the runtime refuses the next state.
 module Main
 
 service

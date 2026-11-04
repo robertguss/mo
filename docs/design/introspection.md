@@ -171,7 +171,7 @@ Four identities, each checked separately.
 
 | Identity | What it is | Today |
 | --- | --- | --- |
-| Artifact format | A magic and version on every export and record: `MOEX` 1 for exports, `MOFR` 1 for failure records | new |
+| Artifact format | A magic and version on every export (`MOEX` 1); failure records use the store's own `MOST` 1 frames with two new kinds, and their message payload carries its own format version | new |
 | Program | FNV-1a-64 of the checksum-covered bytecode without the `files` section | exists: `mo_image.program_checksum`, folded into the store's image key |
 | Runtime build | SHA-256 of the running `mo` executable's bytes, read once from `/proc/self/exe` at startup (or the platform's equivalent), plus a build label: `mo --version`, the compiler and its version, and the build configuration (`debug`, `release`, `sanitize`) | new; `mo --version` prints only `mo 0.0.0` today |
 | State schema | SHA-256 of the state type's saved schema bytes | new; the schema bytes themselves are already in every encoded value |
@@ -273,25 +273,32 @@ with its own seeds.
 
 ### 6.1 Storage
 
-The store gains one table, created by `mo_store_open` alongside the three it already checks, in
+The store gains two tables, created by `mo_store_open` alongside the three it already checks, in
 the same transaction:
 
 ```sql
 CREATE TABLE failure(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, first INTEGER NOT NULL,
-  state BLOB NOT NULL, message BLOB NOT NULL) STRICT;
+  message BLOB NOT NULL) STRICT;
+CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT;
 ```
 
 `user_version` stays 1, and the existing tables and their records are unchanged. The store's
 check is by table name (`src/host/store.c`, `table`), so a Phase 3 binary opening a Phase 4 store
-ignores the new table, and a Phase 4 binary opening a Phase 3 store creates it.
+ignores the new tables, and a Phase 4 binary opening a Phase 3 store creates them.
 
-A record is two framed blobs bound to one id, inserted with any evictions in one transaction:
+A record is two framed blobs bound to one id, in two rows inserted, with any evictions, in one
+transaction:
 
-- **state**: a `MOFR` 1 frame of kind 3 holding the encoded pre-call state;
-- **message**: a `MOFR` 1 frame of kind 4 holding the failure metadata below.
+- **state**: in `failure_state`, a frame of kind 3 holding the encoded pre-call state;
+- **message**: in `failure`, a frame of kind 4 holding the failure metadata below.
 
-Both frames use the store's envelope (magic, kind, sequence, image key, length, payload,
-FNV-1a-64), so the existing validation code reads them. The message payload, in order:
+They are separate rows because SQLite applies `SQLITE_LIMIT_LENGTH` to a whole row as well as to
+each value, and the store sets it to `MO_LIMIT_STORE_ROW`, 16 MiB plus 4,096 bytes
+(`src/host/store.c`, `mo_store_open`). One row holding a near-limit state and its message would
+pass that limit; a state row alone fits it exactly as a snapshot row does, and the message row is
+at most 1 MiB. Both frames are the store's own envelope, `MOST` 1, with kinds 3 and 4 beside the
+log's 1 and the snapshot's 2 (magic, kind, sequence, image key, length, payload, FNV-1a-64), so
+`mo_store_record_read` reads them by kind as it reads the others. The message payload, in order:
 
 1. format version (1); failure id; recovery sequence at the failure; arrival time;
 2. timer flag, handler table index, handler name;
@@ -360,7 +367,7 @@ the 64 MiB process budget; section 10 counts it.
 | Prepared value too large: state plus arguments plus metadata over `MO_LIMIT_FAILURE_RECORD_BYTES` | `record unavailable: too large to record` | continues |
 | Read-only arguments could not be encoded within the scratch limit | `record unavailable: arguments could not be encoded` | continues |
 | Context buffer or record buffer could not be allocated | `record unavailable: out of memory for the record` | continues |
-| The diagnostic transaction failed and rolled back cleanly (`SQLITE_FULL`, `SQLITE_TOOBIG`, an exhausted store budget, a constraint), and the connection still answers a read of `head` | `record unavailable: the store refused the record` | continues |
+| The diagnostic transaction failed and rolled back cleanly (`SQLITE_FULL`, `SQLITE_TOOBIG`, an exhausted store budget, a constraint), and the connection still answers a read of `head` | `record unavailable: the store refused the record` | continues. The store's existing failure mapping turns `SQLITE_TOOBIG` into `MO_STORE_CORRUPT`, which is right for reading saved data and wrong here: the record write classifies it as a clean refusal |
 | The rollback failed, the commit's outcome is unknown (`SQLITE_IOERR` during commit), the database is corrupt, or the connection cannot read `head` | none is claimed | stops under the existing store-failure policy (`MO_SERVICE_STORE`, exit 70) |
 
 The handler failure is counted once in every row. A capture refusal is never counted as a second
@@ -388,7 +395,7 @@ only that kind's latest, so a timer failing every minute rewrites one row and ne
 another kind's first failure. When a new kind arrives and either limit would be exceeded, the
 kind whose latest failure is oldest is evicted whole, latest then first, until the new record
 fits; the views count evicted kinds. A single record larger than the byte limit is refused as too
-large to record. Snapshots never touch the failure table, so a retained failure stays replayable
+large to record. Snapshots never touch the failure tables, so a retained failure stays replayable
 after any number of snapshots.
 
 ### 6.6 The event ring

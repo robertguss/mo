@@ -85,6 +85,37 @@ class Power(unittest.TestCase):
         self.assertIsNone(compare.size(0.5, 0.52, 0.99))
 
 
+class Strata(unittest.TestCase):
+    def test_one_rate_strata_match_pooled_power(self):
+        # Strata that share one rate are one binomial, so the power must not change.
+        pooled = compare.power(0.35, 0.75, 24)
+        split = compare.power_strata([(8, 0.35, 0.75), (8, 0.35, 0.75), (8, 0.35, 0.75)])
+        self.assertAlmostEqual(split, pooled, places=12)
+
+    def test_strata_are_summed_by_enumeration(self):
+        # Two strata of 3 with different rates, enumerated outcome by outcome.
+        strata = [(3, 0.2, 0.6), (3, 0.5, 0.9)]
+        def pmf(n, p, k):
+            return math.comb(n, k) * p ** k * (1 - p) ** (n - k)
+        expected = 0.0
+        for a1 in range(4):
+            for b1 in range(4):
+                for a2 in range(4):
+                    for b2 in range(4):
+                        weight = (pmf(3, 0.2, a1) * pmf(3, 0.5, b1) *
+                                  pmf(3, 0.6, a2) * pmf(3, 0.9, b2))
+                        if compare.difference(a1 + b1, 6, a2 + b2, 6)[1] > 0:
+                            expected += weight
+        self.assertAlmostEqual(compare.power_strata(strata), expected, places=12)
+
+    def test_strata_command(self):
+        result = run("--strata", "12:50%:80%", "12:10%:70%", "12:40%:75%")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = compare.power_strata([(12, 0.5, 0.8), (12, 0.1, 0.7), (12, 0.4, 0.75)])
+        self.assertEqual(result.stdout.strip(), f"{expected:.4f}")
+        self.assertEqual(run("--strata", "12:50%").returncode, 2)
+
+
 class Room(unittest.TestCase):
     def test_room_is_the_least_improving_count(self):
         least = compare.room(10, 20, 20)
