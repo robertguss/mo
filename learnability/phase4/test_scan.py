@@ -6,7 +6,10 @@ Run: python3 learnability/phase4/test_scan.py
 """
 
 import base64
+import bz2
+import io
 import json
+import lzma
 import os
 import pathlib
 import re
@@ -16,6 +19,8 @@ import sys
 import tempfile
 import unittest
 import urllib.parse
+import zipfile
+import zlib
 
 here = pathlib.Path(__file__).resolve().parent
 SCAN = here / "scan.py"
@@ -242,6 +247,14 @@ class Boundaries(Case):
         self.assertEqual(self.hits(result)["shifted.log"],
                          {(len(head), "raw", 1), (len(head) + len(secret) + 1, "escaped:raw", 1)})
 
+    def test_an_escaped_token_in_a_file_shorter_than_the_overlap_is_found_whole(self):
+        secret = token()
+        escaped = secret[:4] + url_all(secret[4:5]) + secret[5:]
+        path = self.write("short.log", b"k" * 40 + escaped + b"z" * 3)
+        result = self.scan(self.tokens(secret), "--", path)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn((40, "escaped:raw", 1), self.hits(result)["short.log"])
+
     def test_a_token_at_the_start_and_the_end_is_found(self):
         secret = token()
         path = self.write("edges.txt", secret + b"-" * 100 + secret)
@@ -271,12 +284,24 @@ class Refusals(Case):
         self.write("data.bin", b"\x1f\x8b\x08\x00" + b"\x00" * 100)
         self.write("frames.bin", b"\x28\xb5\x2f\xfd" + b"\x00" * 100)
         self.write("archive", b"\x00" * 257 + b"ustar\x0000" + b"\x00" * 300)
+        zipped = io.BytesIO()
+        with zipfile.ZipFile(zipped, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("log.txt", b"see " + token() + b"\n")
+        self.write("evidence.bin", zipped.getvalue())
+        self.write("object", zlib.compress(b"blob 47\x00" + token()))
+        self.write("packed.bin", lzma.compress(b"nothing"))
+        self.write("squeezed.bin", bz2.compress(b"nothing"))
+        others = ["bundle.zip", "notes.xz", "notes.bz2", "set.7z"]
+        for name in others:
+            self.write(name, "plain text that holds nothing\n")
         self.write("fine.txt", "fine\n")
         result = self.scan(tokens, "--", self.root / "publish")
         self.assertEqual(result.returncode, 1)
         refused = {pathlib.Path(p).name for p in self.refusals(result)}
-        self.assertEqual(refused, set(names) | {"state.db", "data.bin", "frames.bin", "archive"})
-        self.assertTrue(result.stdout.decode().endswith("scanned 1 files: 0 hits, 9 refused\n"))
+        self.assertEqual(refused, set(names) | set(others) | {
+            "state.db", "data.bin", "frames.bin", "archive", "evidence.bin", "object",
+            "packed.bin", "squeezed.bin"})
+        self.assertTrue(result.stdout.decode().endswith("scanned 1 files: 0 hits, 17 refused\n"))
 
     def test_what_cannot_be_read_is_refused_not_skipped(self):
         tokens = self.tokens(token())

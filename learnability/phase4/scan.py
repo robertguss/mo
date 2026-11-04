@@ -26,10 +26,10 @@ Files are read in 1 MiB chunks. Each view keeps the end of the previous chunk, o
 than the longest pattern, and the decoder holds back a possible escape cut by the chunk, so a
 token or an escape split between chunks is found. No file is skipped for its size, and no
 more than a chunk and its overlap is held at once. A file is refused, and not read, when its
-name ends in .sqlite, .gz, .zst or .tar or it starts with one of those formats' signatures,
-since such a file can hold a token the scanner cannot see; when it is neither a regular file
-nor a directory; when it or its directory cannot be read; and when its path holds a token, in
-which case the path is not printed.
+name ends in .sqlite, .gz, .zst, .tar, .zip, .xz, .bz2 or .7z or it starts with one of those
+formats' signatures or a zlib header, since such a file can hold a token the scanner cannot
+see; when it is neither a regular file nor a directory; when it or its directory cannot be
+read; and when its path holds a token, in which case the path is not printed.
 
 Output is one line per hit, `PATH:OFFSET ENCODING TOKEN`, and one per refusal,
 `PATH: refused: REASON`, then the count of files read: `scanned N files: clean`, or the counts
@@ -52,9 +52,15 @@ import sys
 CHUNK = 1 << 20
 PREFIX = 16
 CANARIES = {b"TaskQueueCanary42", b"Phase4SizingCanary", b"Phase4ClientProbeCanary"}
-REFUSED_SUFFIXES = (".sqlite", ".gz", ".zst", ".tar")
+REFUSED_SUFFIXES = (".sqlite", ".gz", ".zst", ".tar", ".zip", ".xz", ".bz2", ".7z")
 SIGNATURES = [(0, b"SQLite format 3\x00", "an SQLite database"), (0, b"\x1f\x8b", "gzip data"),
-              (0, b"\x28\xb5\x2f\xfd", "zstd data"), (257, b"ustar", "a tar archive")]
+              (0, b"\x28\xb5\x2f\xfd", "zstd data"), (257, b"ustar", "a tar archive"),
+              (0, b"PK\x03\x04", "a zip archive"), (0, b"PK\x05\x06", "a zip archive"),
+              (0, b"\xfd7zXZ\x00", "xz data"), (0, b"BZh", "bzip2 data"),
+              (0, b"7z\xbc\xaf\x27\x1c", "a 7z archive")]
+# zlib streams, git's loose objects among them, start with 0x78 and a second byte that makes
+# the pair a multiple of 31.
+ZLIB_SECOND = (0x01, 0x5E, 0x9C, 0xDA)
 
 # A surrogate pair, then one \u escape, a %xx escape and a two-character JSON escape. The
 # longest, the pair, is 12 bytes; the decoder holds back that many at a chunk's end.
@@ -151,7 +157,7 @@ class Escaped:
 
     def feed(self, chunk, final, keep):
         """Decode chunk after the last keep decoded bytes; returns where the new bytes start."""
-        kept = self.view[len(self.view) - keep:] if keep else b""
+        kept = self.view[max(0, len(self.view) - keep):] if keep else b""
         self.view_at += len(self.view) - len(kept)
         _, out_ends, _, in_ends = self.marks
         gone = bisect.bisect_right(out_ends, self.view_at)
@@ -206,7 +212,9 @@ def scan_file(path, table, keep):
                     for at, signature, what in SIGNATURES:
                         if chunk[at:at + len(signature)] == signature:
                             return f"{what}, not scanned inside"
-                kept = raw[len(raw) - keep:] if raw else b""
+                    if chunk[:1] == b"\x78" and chunk[1:2] and chunk[1] in ZLIB_SECOND:
+                        return "zlib data, not scanned inside"
+                kept = raw[max(0, len(raw) - keep):] if raw else b""
                 raw_at += len(raw) - len(kept)
                 raw = kept + chunk
                 for at, labels in search(table, raw, len(kept)):

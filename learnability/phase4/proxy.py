@@ -29,9 +29,9 @@ The Authorization header is forwarded unchanged and never written; a token that 
 anywhere else in a line is written as [token] and the line gets "redacted": true.
 
 The two records match when every tools/call in the log pairs with a tool call of that server in
-the client's stream, and the reverse. Neither client's stream carries the JSON-RPC id, so calls
-pair by tool, first those whose arguments are equal, then in order; an unpaired call is named
-by its JSON-RPC id (log) or its stream id. A call still in flight when the session ended, a
+the client's stream, and the reverse. Neither client's stream carries the JSON-RPC id, so a call
+pairs with one of the same tool and the same arguments; an unpaired call is named by its
+JSON-RPC id (log) or its stream id. A call still in flight when the session ended, a
 request with no response or a stream call with no result, is exempt. initialize, tools/list
 and notifications have no stream counterpart and are not paired.
 """
@@ -294,10 +294,9 @@ def match(client, stream, log, server=SERVER):
                 left.remove(call)
                 right.remove(twin)
                 pairs += 1
-        pairs += min(len(left), len(right))
-        for ident, _, _, answered in left[len(right):]:
+        for ident, _, _, answered in left:
             (log_only if answered else exempt).append({'log_id': ident, 'tool': tool})
-        for ident, _, _, answered in right[len(left):]:
+        for ident, _, _, answered in right:
             (stream_only if answered else exempt).append({'stream_id': ident, 'tool': tool})
     return {'match': not log_only and not stream_only, 'pairs': pairs, 'log_only': log_only,
             'stream_only': stream_only, 'exempt': exempt}
@@ -316,6 +315,12 @@ VALUED = {'-o', '-O', '-d', '-H', '-X', '-u', '-T', '-F', '-w', '-K', '-b', '-c'
           '-m', '-P', '-p', '-i', '-l', '--output', '--data', '--data-raw', '--header',
           '--request', '--user', '--config', '--output-document', '--max-time', '--port'}
 HOSTLIKE = re.compile(r'^(?:[A-Za-z0-9-]+\.)+[A-Za-z][A-Za-z0-9-]*$|^\d{1,3}(?:\.\d{1,3}){3}$')
+# A word ending in one of these names a host wherever it stands; the list leaves out every
+# ending a file name here can have (.mo, .md, .py, .sh, .json, .log, ...).
+DOMAINS = {'com', 'org', 'net', 'io', 'dev', 'ai', 'gov', 'edu', 'info', 'xyz', 'cloud', 'uk',
+           'eu', 'jp', 'cn', 'ru', 'fr'}
+SEPARATOR = re.compile(r'(\|\||&&|\$\(|[;|&()`])')
+SEPARATORS = {';', '|', '&', '&&', '||', '$(', '(', ')', '`'}
 
 
 def words(command):
@@ -326,31 +331,38 @@ def words(command):
 
 
 def named_hosts(command):
-    """The hosts a shell command addresses: in URLs, as user@host, as an IPv4 address, or as a
-    plain word after a command that takes a host."""
+    """The hosts a shell command addresses: in URLs, as user@host, as an IPv4 address, as a
+    word with a domain ending, or as a plain word after a command that takes a host, looking
+    inside quoted commands such as `bash -lc '...'` and `python3 -c "..."` too."""
     found = [m.group(1) for m in URL.finditer(command)]
     found += [m.group(1) for m in USER_AT.finditer(command)]
     found += [m.group(1) for m in IPV4.finditer(command)]
-    naming, skip = False, False
-    for word in words(command):
-        if word in (';', '|', '&', '&&', '||') or word.endswith(';'):
+    found += word_hosts(command, 0)
+    return [h.strip('[]').lower() if h.startswith('[') else h.lower() for h in found]
+
+
+def word_hosts(text, depth):
+    found, naming, skip = [], False, False
+    for word in words(SEPARATOR.sub(r' \1 ', text)):
+        if word in SEPARATORS:
             naming = False
-            continue
-        base = os.path.basename(word)
-        if base in NAMING:
-            naming, skip = True, False
-            continue
-        if not naming:
             continue
         if skip:
             skip = False
-        elif word in VALUED:
-            skip = True
-        elif not word.startswith('-') and '://' not in word:
-            host = word.split('@')[-1].split(':')[0].split('/')[0]
-            if HOSTLIKE.match(host):
-                found.append(host)
-    return [h.strip('[]').lower() if h.startswith('[') else h.lower() for h in found]
+            continue
+        if depth < 3 and re.search(r'\s', word):
+            found += word_hosts(word, depth + 1)
+            continue
+        if os.path.basename(word) in NAMING:
+            naming = True
+            continue
+        if word.startswith('-') or '://' in word:
+            skip = naming and word in VALUED
+            continue
+        host = word.split('@')[-1].split(':')[0].split('/')[0].strip(',\'"')
+        if HOSTLIKE.match(host) and (naming or host.rsplit('.', 1)[-1].lower() in DOMAINS):
+            found.append(host)
+    return found
 
 
 def commands(client, stream):

@@ -8,9 +8,12 @@ folder above its own (the install folder): {"mode": MODE, ...}.
   sleep      half-edit main.mo, start a child `sleep`, and sleep past any limit
   trip       call stats until the supervisor stops the service
   foreign    report a shell command addressing a host other than the loopback address
-  litter     leave a file in its home and under /tmp and a background process, then stop
+  litter     leave a file in its home, under /tmp and /run/lock, and a background process
   look       report, as JSON in its last message, which of "paths" it can read, whether the
              litter is still there, and whether it can write the start-data copy
+  refresh    replace its Claude Code login with "secret", as a client refreshing it would
+  unrecorded fix the defect, but report a tool call that never reached the proxy
+  silent     stop without a single assistant event
 """
 
 import http.client
@@ -123,14 +126,22 @@ def main():
         emit({'type': 'thread.started', 'thread_id': 'stub'})
     else:
         emit({'type': 'system', 'subtype': 'init', 'cwd': os.getcwd(), 'tools': []})
+    if mode == 'silent':
+        return 0
     say(f'Working on it ({mode}).')
     main_mo = pathlib.Path('main.mo')
-    if mode == 'fix':
+    if mode in ('fix', 'unrecorded'):
         call('stats')
         call('list', filter={'case': 'AllJobs'}, after='0', limit='2')
         text = main_mo.read_text()
         main_mo.write_text(text.replace(
             '  if dead > 0\n    stop "dead jobs are not counted yet"\n  end\n', ''))
+        if mode == 'unrecorded':
+            emit({'type': 'assistant', 'message': {'content': [
+                {'type': 'tool_use', 'id': 'toolu_lost', 'name': 'mcp__task-queue__stats',
+                 'input': {}}]}})
+            emit({'type': 'user', 'message': {'content': [
+                {'type': 'tool_result', 'tool_use_id': 'toolu_lost', 'content': '{}'}]}})
         say('Fixed: stats now counts dead jobs.')
     elif mode == 'sleep':
         with open(main_mo, 'a') as file:
@@ -150,9 +161,17 @@ def main():
     elif mode == 'litter':
         (pathlib.Path.home() / 'litter.txt').write_text('left behind\n')
         pathlib.Path('/tmp/stub-litter').write_text('left behind\n')
+        try:
+            pathlib.Path('/run/lock/stub-litter').write_text('left behind\n')
+        except OSError:
+            pass
         subprocess.Popen(['setsid', 'sleep', '600'], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         say('Done.')
+    elif mode == 'refresh':
+        login = pathlib.Path.home() / '.claude' / '.credentials.json'
+        login.write_text(json.dumps({'claudeAiOauth': {'accessToken': settings['secret']}}))
+        say('Logged in again.')
     elif mode == 'look':
         start = pathlib.Path(settings['start_data'])
         try:
@@ -165,6 +184,7 @@ def main():
         found = {'readable': {p: readable(p) for p in settings['paths']},
                  'home_litter': (pathlib.Path.home() / 'litter.txt').exists(),
                  'tmp_litter': os.path.exists('/tmp/stub-litter'),
+                 'lock_litter': os.path.exists('/run/lock/stub-litter'),
                  'sleepers': len(sleepers), 'work': sorted(os.listdir('.')),
                  'wrote_start_data': wrote, 'start_data': sorted(os.listdir(start))}
         say(json.dumps(found))

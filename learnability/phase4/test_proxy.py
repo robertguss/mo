@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import secrets
+import shlex
 import signal
 import subprocess
 import sys
@@ -275,6 +276,17 @@ class Match(unittest.TestCase):
         swapped = [self.CALLS[2], self.CALLS[1], self.CALLS[0]]
         self.assertTrue(proxy.match('claude', claude_stream(self.root, swapped), log)['match'])
 
+    def test_a_call_whose_arguments_differ_fails_on_both_sides(self):
+        log = self.logged(self.CALLS)
+        changed = [self.CALLS[0], self.CALLS[1], ('submit', {'payload': 'c'})]
+        for make, client, ident in ((claude_stream, 'claude', 'toolu_2'),
+                                    (codex_stream, 'codex', 'item_2')):
+            result = proxy.match(client, make(self.root, changed), log)
+            self.assertFalse(result['match'])
+            self.assertEqual((result['log_only'], result['stream_only']),
+                             ([{'log_id': 12, 'tool': 'submit'}],
+                              [{'stream_id': ident, 'tool': 'submit'}]))
+
     def test_an_extra_logged_call_fails_naming_its_id(self):
         log = self.logged(self.CALLS + [('stats', {})])
         for make, client in ((claude_stream, 'claude'), (codex_stream, 'codex')):
@@ -330,23 +342,33 @@ class Hosts(unittest.TestCase):
              'curl -s http://127.0.0.1:8123/mcp -H "Authorization: Bearer $QUEUE_TOKEN"',
              'curl -o out.json localhost:8123/mcp', 'wget -O page.html http://[::1]:80/',
              'python3 -c "import urllib.request; urllib.request.urlopen(\'http://localhost:1/\')"',
-             'git log -1 --format=%ae', 'ls ~/start-data && sqlite3 service.sqlite .tables']
+             'git log -1 --format=%ae', 'ls ~/start-data && sqlite3 service.sqlite .tables',
+             'python3 -c "import os.path; print(open(\'main.mo\').read())"',
+             'grep -n "service.log" README.md; mo test queue-tests.mo']
     FOREIGN = [('curl https://github.com/robertguss/mo', 'github.com'),
                ('wget example.org/x.tgz', 'example.org'),
                ('ssh robert@build.example.net uptime', 'build.example.net'),
                ('nc 10.0.0.7 22', '10.0.0.7'),
                ('python3 -c "import urllib.request as u; u.urlopen(\'https://pypi.org/\')"',
                 'pypi.org'),
-               ('curl -H "x: y" raw.githubusercontent.com/a/b', 'raw.githubusercontent.com')]
+               ('curl -H "x: y" raw.githubusercontent.com/a/b', 'raw.githubusercontent.com'),
+               ('python3 -c "import socket; socket.create_connection((\'example.net\', 443))"',
+                'example.net'),
+               ('cd /tmp&&curl files.example.io', 'files.example.io'),
+               ('x=$(wget -qO- example.dev/run)', 'example.dev'),
+               ('python3 fetch.py mirror.example.org', 'mirror.example.org')]
 
     def test_loopback_commands_name_no_host_and_others_are_named(self):
         with tempfile.TemporaryDirectory() as root:
             commands = self.LOCAL + [c for c, _ in self.FOREIGN]
-            for make, client in ((claude_stream, 'claude'), (codex_stream, 'codex')):
-                found = proxy.hosts(client, make(root, [], commands=commands))
+            wrapped = [f'/bin/bash -lc {shlex.quote(c)}' for c in commands]
+            for make, client, given in ((claude_stream, 'claude', commands),
+                                        (codex_stream, 'codex', commands),
+                                        (codex_stream, 'codex', wrapped)):
+                found = proxy.hosts(client, make(root, [], commands=given))
                 self.assertEqual([f['host'] for f in found], [h for _, h in self.FOREIGN],
                                  client)
-                self.assertEqual(found[0]['command'], self.FOREIGN[0][0])
+                self.assertEqual(found[0]['command'], given[len(self.LOCAL)])
 
     def test_web_tools_are_named(self):
         with tempfile.TemporaryDirectory() as root:

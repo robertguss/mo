@@ -6,8 +6,9 @@ user, behind the recording proxy, graded when it ends.
         create the session user if absent and install the pinned mo and both clients for it
         under INSTALL/bin, owned by root; refuse to go on while the operator's home grants
         others any access. Once both clients are logged in as the session user, snapshot its
-        home and copy the clients' stored credentials into STATE/secrets for the scanner;
-        until then, say how to log in and exit 1. Run it again after logging in.
+        home, list every folder anyone can write in, and copy the clients' stored credentials
+        into STATE/secrets for the scanner; until then, say how to log in and exit 1. Run it
+        again after logging in.
   python3 learnability/phase4/harness.py build MO ROOT OUT
         build every variant under ROOT/variants into OUT/NAME (fixture.py build), side by side
   python3 learnability/phase4/harness.py run VARIANT BUILT CLIENT OUT [--binary PATH]
@@ -22,8 +23,9 @@ user, behind the recording proxy, graded when it ends.
         print the round's order: each variant three times on each client, shuffled from SEED
   python3 learnability/phase4/harness.py round ORDER ROOT BUILT OUT
         run ORDER's sessions one at a time, ROOT/variants/NAME from BUILT/NAME into
-        OUT/NN-NAME-CLIENT, skipping every slot already graded; stop at a discarded session, so
-        that the repaired fixture's rerun takes the same slot
+        OUT/NN-NAME-CLIENT, skipping every slot already graded; stop at a discarded session
+        (exit 3) or one whose client never answered (exit 4, its folder moved to
+        OUT/unstarted), so that the rerun takes the same slot
   python3 learnability/phase4/harness.py reset
         end every process of the session user, restore its home and clear the session area,
         as after a session; for after a harness that did not finish
@@ -49,12 +51,14 @@ start the session's service on a second copy and place the third, read-only, as 
 start the proxy; launch the client. At the limit every process of the session user gets
 SIGTERM, and SIGKILL 10 seconds later; when the client ends sooner its leftovers get SIGKILL.
 Then the proxy and service stop, the working folder (without symlinks), the log and the data
-copy move into OUT, the session user's home is restored and its files under /tmp, /var/tmp,
-/dev/shm and /var/spool are deleted. OUT/manifest.json records each artifact's SHA-256, the exit
-statuses, whether the service stopped by itself, whether the client's first assistant event
-arrived, and any host other than the loopback address the client's commands addressed;
-OUT/grade.json the grade: grade.py's verdict, the record match, and those hosts. A session
-succeeds only when all three pass. The service is never restarted for the session.
+copy move into OUT, the session user's home is restored, keeping the clients' current logins
+(whose secrets join STATE/secrets), and its files in every folder anyone can write in are
+deleted. SIGTERM or SIGHUP to the harness still ends the session's processes.
+OUT/manifest.json records each artifact's SHA-256, the exit statuses, whether the service
+stopped by itself, whether the client's first assistant event arrived, and any host other than
+the loopback address the client's commands addressed; OUT/grade.json the grade: grade.py's
+verdict, the record match, and those hosts. A session succeeds only when all three pass. The
+service is never restarted for the session.
 """
 
 import concurrent.futures
@@ -62,11 +66,13 @@ import hashlib
 import json
 import os
 import pathlib
+import grp
 import pwd
 import random
 import re
 import secrets
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -147,12 +153,23 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def reachable_by_others(path):
-    """Whether a user with no relation to the owner can reach path: every folder above it, and
-    path itself when it is a folder, lets others search it."""
+def reachable_by(path, user):
+    """Whether user can reach path: every folder above it, and path itself when it is a folder,
+    lets user search it, by the owner's, the group's or others' bits as they apply to user."""
+    entry = pwd.getpwnam(user)
+    groups = {entry.pw_gid} | {g.gr_gid for g in grp.getgrall() if user in g.gr_mem}
     path = pathlib.Path(path).resolve()
     for folder in [*reversed(path.parents), path]:
-        if folder.is_dir() and not os.stat(folder).st_mode & stat.S_IXOTH:
+        if not folder.is_dir():
+            continue
+        status = os.stat(folder)
+        if status.st_uid == entry.pw_uid:
+            bit = stat.S_IXUSR
+        elif status.st_gid in groups:
+            bit = stat.S_IXGRP
+        else:
+            bit = stat.S_IXOTH
+        if not status.st_mode & bit:
             return False
     return True
 
@@ -193,27 +210,87 @@ def end_all(user):
     raise HarnessError(f'processes of {user} survive SIGKILL: {processes(user)}')
 
 
-def leftovers(user):
-    result = sudo('find', *LEFTOVERS, '-xdev', '-user', user, '-print', check=False)
+def leftover_roots(layout):
+    """The folders outside its home the session user can write in: the ones setup found, or
+    the usual ones before setup has run."""
+    path = layout.state / 'leftover-roots.json'
+    return json.loads(path.read_text()) if path.exists() else list(LEFTOVERS)
+
+
+def writable_folders():
+    """Every folder anyone can write in, on every local file system."""
+    mounts = []
+    with open('/proc/mounts', encoding='utf-8') as file:
+        for line in file:
+            target, kind = line.split()[1], line.split()[2]
+            if kind in ('ext4', 'xfs', 'btrfs', 'tmpfs', 'devtmpfs', 'mqueue', 'zfs'):
+                mounts.append(target.replace('\\040', ' '))
+    found = set(LEFTOVERS)
+    for mount in mounts:
+        result = sudo('find', mount, '-xdev', '-type', 'd', '-perm', '-0002', '-print',
+                      '-prune', check=False)
+        found.update(result.stdout.decode(errors='replace').split('\n')[:-1])
+    return sorted(p for p in found if os.path.isdir(p))
+
+
+def leftovers(layout):
+    result = sudo('find', *leftover_roots(layout), '-xdev', '-user', layout.user, '-print',
+                  check=False)
     return result.stdout.decode(errors='replace').split('\n')[:-1]
 
 
+def keep_credentials(layout):
+    """Adds every secret in the clients' stored credentials to STATE/secrets, and returns the
+    credential files that are still well-formed, so that a login the client refreshed during a
+    session outlives the restored home."""
+    home, kept = layout.home(), {}
+    known = set(layout.secrets.read_text().split()) if layout.secrets.exists() else set()
+    for name in CREDENTIALS:
+        result = sudo('cat', home / name, check=False)
+        if result.returncode != 0:
+            continue
+        text = result.stdout.decode(errors='replace')
+        for value in credential_values(text):
+            if value not in known:
+                append_secret(layout.secrets, value)
+                known.add(value)
+        try:
+            json.loads(text)
+            kept[name] = result.stdout
+        except ValueError:
+            pass
+    return kept
+
+
+def restore_credentials(layout, kept):
+    """Writes the kept credential files back, as the session user, readable by it alone."""
+    home = layout.home()
+    for name, data in kept.items():
+        sudo('-u', layout.user, 'mkdir', '-p', (home / name).parent)
+        subprocess.run(['sudo', '-n', '-u', layout.user, 'sh', '-c', 'umask 077; cat > "$1"',
+                        'sh', str(home / name)], input=data, check=True, capture_output=True,
+                       timeout=60)
+
+
 def reset(layout):
-    """Ends the session user's processes, restores its home from the snapshot and deletes its
-    files elsewhere, and empties the session area. Returns how many processes it ended."""
+    """Ends the session user's processes, restores its home from the snapshot with the clients'
+    current logins, deletes its files elsewhere, and empties the session area. Returns how many
+    processes it ended."""
     ended = end_all(layout.user)
     for path in (layout.work, layout.start_data, layout.service_log, layout.mcp_config):
         sudo('rm', '-rf', path)
     if not layout.snapshot.exists():
         raise HarnessError(f'no snapshot of {layout.user}\'s home in {layout.snapshot}: run setup')
+    kept = keep_credentials(layout)
     home = layout.home()
     sudo('find', home, '-mindepth', '1', '-delete')
     with open(layout.snapshot, 'rb') as snapshot:
         sudo('tar', '-C', home, '-xpf', '-', stdin=snapshot)
-    sudo('find', *LEFTOVERS, '-xdev', '-user', layout.user, '-delete', check=False)
+    restore_credentials(layout, kept)
+    sudo('find', *leftover_roots(layout), '-xdev', '-user', layout.user, '-delete', check=False)
     for abandoned in layout.state.glob('session-*'):
         shutil.rmtree(abandoned, ignore_errors=True)
-    left = leftovers(layout.user)
+    left = leftovers(layout)
     if left:
         raise HarnessError(f'files of {layout.user} survive deletion: {left[:5]}')
     return ended
@@ -309,20 +386,20 @@ def setup(layout, mo, claude, codex):
               f'  claude            # log in, then /exit\n'
               f'  codex login\n', file=sys.stderr)
         return 1
+    if reachable_by(layout.private, layout.user):
+        raise HarnessError(f'{layout.user} can reach {layout.private} through its groups')
     end_all(layout.user)
-    values = []
-    for name in CREDENTIALS:
-        values += credential_values(sudo('cat', home / name).stdout.decode(errors='replace'))
-    layout.secrets.unlink(missing_ok=True)
     private_file(layout.secrets)
-    for value in values:
-        append_secret(layout.secrets, value)
+    keep_credentials(layout)
+    roots = [f for f in writable_folders() if reachable_by(f, layout.user)]
+    (layout.state / 'leftover-roots.json').write_text(json.dumps(roots, indent=1) + '\n')
     snapshot = layout.snapshot.with_suffix('.partial')
     private_file(snapshot)
     with open(snapshot, 'wb') as file:
         sudo('tar', '-C', home, '-cpf', '-', '.', stdout=file)
     snapshot.replace(layout.snapshot)
-    print(f'snapshot of {home} taken; {len(values)} stored credentials are in {layout.secrets}')
+    count = len(layout.secrets.read_text().split())
+    print(f'snapshot of {home} taken; {count} stored credentials are in {layout.secrets}')
     return 0
 
 
@@ -413,11 +490,11 @@ def artifacts(out):
                                                                      'grade.json')}
 
 
-def check_private(*paths):
+def check_private(layout, *paths):
     for path in paths:
-        if reachable_by_others(path):
-            raise HarnessError(f'{path} can be reached by other users, the session user '
-                               'among them; keep it under a folder only you can search')
+        if reachable_by(path, layout.user):
+            raise HarnessError(f'{path} can be reached by {layout.user}; keep it under a '
+                               'folder only you can search')
 
 
 def run(layout, variant, built, client, out, binary=None, limit=LIMIT):
@@ -427,25 +504,33 @@ def run(layout, variant, built, client, out, binary=None, limit=LIMIT):
     binary = pathlib.Path(binary).resolve() if binary else layout.bin / client
     mo = layout.bin / 'mo'
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
-    check_private(variant, built, layout.state, out)
+    check_private(layout, variant, built, layout.state, out)
     token = secrets.token_urlsafe(32)
     append_secret(layout.tokens, token)
     fixed = fixture.load(variant)
     reset(layout)
     scratch = pathlib.Path(tempfile.mkdtemp(dir=layout.state, prefix='session-'))
     running = []  # what to stop if the session ends in an error
+    previous = {name: signal.signal(name, stopped) for name in (signal.SIGTERM, signal.SIGHUP)}
     try:
         return session(layout, variant, built, client, out, binary, limit, mo, token, fixed,
                        scratch, running)
     finally:
+        for name, handler in previous.items():
+            signal.signal(name, handler)
         if running:
-            signal_all(layout.user, 'KILL')
             for thing in reversed(running):
                 try:
                     thing.stop()
                 except Exception:
                     pass
+            end_all(layout.user)
         shutil.rmtree(scratch, ignore_errors=True)
+
+
+def stopped(number, _frame):
+    """Turns SIGTERM and SIGHUP into an exit that still runs the session's cleanup."""
+    raise SystemExit(f'harness: stopped by signal {number}')
 
 
 def session(layout, variant, built, client, out, binary, limit, mo, token, fixed, scratch,
@@ -456,13 +541,16 @@ def session(layout, variant, built, client, out, binary, limit, mo, token, fixed
         shutil.copyfile(source, program / source.name)
     check_copy = scratch / 'check'
     shutil.copytree(built / 'data', check_copy)
-    checking = fixture.Service(mo, program / 'main.mo', check_copy, token, scratch / 'check.log')
-    running.append(checking)
+    checking = None
     try:
+        checking = fixture.Service(mo, program / 'main.mo', check_copy, token,
+                                   scratch / 'check.log')
+        running.append(checking)
         fixture.check(fixed, fixture.Client(checking.url, token), scratch / 'check.log')
     except (fixture.CheckFailed, fixture.Refused) as error:
-        running.remove(checking)
-        checking.stop()
+        if checking is not None:
+            running.remove(checking)
+            checking.stop()
         (out / 'discarded.json').write_text(json.dumps(
             {'variant': variant.name, 'client': client, 'at': time.time(),
              'check_failed': str(error)}, indent=2) + '\n')
@@ -611,6 +699,14 @@ def round_(layout, order_file, root, built, out):
             print(f'slot {number} was discarded; repair its fixture, then run the round again',
                   file=sys.stderr)
             return 3
+        if not json.loads((folder / 'manifest.json').read_text())['first_assistant_event']:
+            unstarted = out / 'unstarted'
+            unstarted.mkdir(mode=0o700, exist_ok=True)
+            os.replace(folder, unstarted / f'{folder.name}-{int(time.time())}')
+            print(f'slot {number}: the client never answered, so the session did not see its '
+                  'task and is run again (protocol section 6); say why in notes.md, then run '
+                  'the round again', file=sys.stderr)
+            return 4
     return 0
 
 
@@ -696,7 +792,7 @@ def main(args):
         if command == ['reset'] and len(positional) == 1:
             print(f'ended {reset(layout)} processes of {layout.user}', file=sys.stderr)
             return 0
-    except (HarnessError, fixture.FixtureError) as error:
+    except (HarnessError, fixture.FixtureError, fixture.CheckFailed) as error:
         print(f'harness: {error}', file=sys.stderr)
         return 2
     print(__doc__.split('\n\n')[1], file=sys.stderr)

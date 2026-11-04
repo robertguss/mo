@@ -142,15 +142,20 @@ class Setup(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn('grants others access', result.stderr)
 
-    def test_only_folders_others_can_search_are_reachable(self):
+    def test_a_folder_is_reachable_by_its_others_or_its_group_bits(self):
         with tempfile.TemporaryDirectory() as folder:
             inner = pathlib.Path(folder) / 'a' / 'b'
             inner.mkdir(parents=True)
             os.chmod(folder, 0o755)
             os.chmod(inner.parent, 0o755)
-            self.assertTrue(harness.reachable_by_others(inner))
+            self.assertTrue(harness.reachable_by(inner, USER))
             os.chmod(inner.parent, 0o750)
-            self.assertFalse(harness.reachable_by_others(inner))
+            self.assertFalse(harness.reachable_by(inner, USER))
+            harness.sudo('chgrp', USER, inner.parent)
+            self.assertTrue(harness.reachable_by(inner, USER))
+            harness.sudo('chmod', '0700', inner.parent)
+            self.assertFalse(harness.reachable_by(inner, USER))
+            harness.sudo('chgrp', str(os.getgid()), inner.parent)
 
     def test_the_order_is_reproducible_and_balanced(self):
         names = [f'v{i}' for i in range(6)]
@@ -205,7 +210,8 @@ class Sessions(unittest.TestCase):
             self.assertNotIn('synthetic', prompt)
             self.assert_no_token(out, result.stdout, result.stderr)
             self.assertEqual(sorted(os.listdir(PRIVATE / 'state')),
-                             ['binaries.json', 'home.tar', 'secrets', 'tokens'])
+                             ['binaries.json', 'home.tar', 'leftover-roots.json', 'secrets',
+                              'tokens'])
             self.assert_session_user_idle()
 
     def test_the_limit_ends_the_whole_tree_and_the_half_edit_is_graded(self):
@@ -264,9 +270,9 @@ class Sessions(unittest.TestCase):
         found = json.loads(message)
         self.assertEqual(found['readable'], {
             **{str(p): False for p in private},
-            str(repository_file): harness.reachable_by_others(repository_file)})
-        self.assertEqual((found['home_litter'], found['tmp_litter'], found['sleepers']),
-                         (False, False, 0))
+            str(repository_file): harness.reachable_by(repository_file, USER)})
+        self.assertEqual((found['home_litter'], found['tmp_litter'], found['lock_litter'],
+                          found['sleepers']), (False, False, False, 0))
         self.assertEqual(found['work'], WORK_FILES)
         self.assertEqual((found['wrote_start_data'], found['start_data']),
                          (False, ['service.sqlite']))
@@ -280,14 +286,7 @@ class Sessions(unittest.TestCase):
             [sys.executable, str(here / 'harness.py'), 'run', ROOT / 'variants' / 'synthetic',
              BUILT / 'synthetic', 'claude', out, '--limit', '600', *LAYOUT],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            stream = out / 'stream.jsonl'
-            if stream.exists() and '"assistant"' in stream.read_text():
-                break
-            time.sleep(0.5)
-        else:
-            self.fail('the stub client never started')
+        self.wait_for_client(out)
         os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=60)
         self.assertEqual(len(tokens()), before + 1)
@@ -295,6 +294,75 @@ class Sessions(unittest.TestCase):
         reset = harness_command('reset')
         self.assertEqual(reset.returncode, 0, reset.stderr)
         self.assert_session_user_idle()
+
+    def test_a_service_that_cannot_start_discards_the_session(self):
+        broken = ROOT / 'variants' / 'unservable'
+        shutil.copytree(SYNTHETIC, broken)
+        (broken / 'main.mo').write_text('module Main\nnot a program\n')
+        shutil.copytree(BUILT / 'synthetic', BUILT / 'unservable')
+        try:
+            result, out = session('unservable', variant='unservable')
+        finally:
+            shutil.rmtree(broken)
+            shutil.rmtree(BUILT / 'unservable')
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertIn('mo serve exited', json.loads(
+            (out / 'discarded.json').read_text())['check_failed'])
+        self.assert_session_user_idle()
+
+    def test_a_tool_call_the_proxy_never_saw_fails_the_session(self):
+        result, out = session('unrecorded', mode='unrecorded')
+        self.assertEqual(result.returncode, 1, result.stderr)
+        graded = verdict(out)
+        self.assertEqual((graded['success'], graded['grader']['success']), (False, True))
+        self.assertFalse(graded['records']['match'])
+        self.assertEqual(graded['records']['stream_only'],
+                         [{'stream_id': 'toolu_lost', 'tool': 'stats'}])
+
+    def test_a_refreshed_login_is_kept_for_the_scanner_and_the_next_session(self):
+        secret = 'sk-stub-refreshed-' + os.urandom(12).hex()
+        result, _ = session('refresh', mode='refresh', secret=secret)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(secret, (PRIVATE / 'state' / 'secrets').read_text().split())
+        home = harness.Layout(user=USER).home()
+        login = harness.sudo('cat', home / '.claude' / '.credentials.json').stdout.decode()
+        self.assertIn(secret, login)
+
+    def test_a_harness_stopped_by_sigterm_ends_the_session(self):
+        stub_mode({'mode': 'sleep'})
+        out = PRIVATE / 'runs' / 'terminated'
+        process = subprocess.Popen(
+            [sys.executable, str(here / 'harness.py'), 'run', ROOT / 'variants' / 'synthetic',
+             BUILT / 'synthetic', 'claude', out, '--limit', '600', *LAYOUT],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.wait_for_client(out)
+        process.send_signal(signal.SIGTERM)
+        _, stderr = process.communicate(timeout=120)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn(b'stopped by signal', stderr)
+        self.assert_session_user_idle()
+
+    def wait_for_client(self, out):
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            stream = out / 'stream.jsonl'
+            if stream.exists() and '"assistant"' in stream.read_text():
+                return
+            time.sleep(0.5)
+        self.fail('the stub client never started')
+
+    def test_a_round_reruns_a_slot_whose_client_never_answered(self):
+        order = PRIVATE / 'silent-order.tsv'
+        order.write_text('1\tsynthetic\tclaude\n')
+        out = PRIVATE / 'silent-round'
+        stub_mode({'mode': 'silent'})
+        first = harness_command('round', order, ROOT, BUILT, out)
+        self.assertEqual(first.returncode, 4, first.stderr)
+        self.assertEqual(sorted(os.listdir(out)), ['unstarted'])
+        stub_mode({'mode': 'fix'})
+        second = harness_command('round', order, ROOT, BUILT, out)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertTrue(verdict(out / '01-synthetic-claude')['success'])
 
     def test_a_round_keeps_a_discarded_slot_for_the_repaired_fixture(self):
         order = PRIVATE / 'order.tsv'
