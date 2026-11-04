@@ -1648,8 +1648,12 @@ constant stack (reference 5.3); a callee with more registers grows that frame
 - **Introspection (Phase 4):** debug information maps every instruction to its
   span and every register to its source name, and every value has a
   structural text form, so a running process can be shown in source terms.
-  Every capability operation passes through one dispatch point, where Phase 4
-  adds recording for replay.
+  Service handlers are pure and hold no capability, so replaying one needs
+  only its saved state, arrival time and arguments, the program and the
+  runtime build; no capability operation is recorded. Every saved value
+  carries its own schema, so the operator views render any state from its
+  saved encoding without new bytecode tables. `docs/design/introspection.md`
+  is the design.
 - **Live upgrades (Phase 5):** the module table lists each module's exposed
   functions and types, and the type table gives what the upgrade checker
   compares. An instantiation of a generic function belongs to the module that

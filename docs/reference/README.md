@@ -1124,7 +1124,10 @@ fix can't update callers in other modules. Nor does a function whose name ends
 in `?`: it must return `Bool` (section 2.3), so neither adapter could keep its name.
 Every other result shape is a read-only reply,
 including `List(State)`, `Option(State)` and records containing state.
-Read-only messages are neither logged nor saved.
+Read-only messages are neither logged nor saved. Logged and saved mean the
+service's state and its recovery log: a record of a failed call kept for
+diagnosis (section 15) is neither, and keeping one never changes the state,
+the log or what recovery restores.
 
 Each `every` clause has a duration literal with a whole-number value of at
 least 1, such as `1.minute` or `30.seconds`, and a local handler with exactly
@@ -1140,8 +1143,8 @@ service. This build checks, tests, formats and fixes service modules, but
 `mo run` of a service entry module reports E1408, "mo run does not start
 services yet". Importing a service module does not start it.
 
-The private C embedding can expose a service through authenticated MCP over
-plain HTTP/1.1. It provides no new Mo function, capability or command. A tool's
+`mo serve` (section 13.4) exposes a service through authenticated MCP over
+plain HTTP/1.1. It provides no new Mo function or capability. A tool's
 `structuredContent` is an object with `value` on success or `error` on failure;
 one text-content block contains the same compact object. Runtime errors report
 an effect of `none`, `applied` or `unknown` on this call's service state. An effect
@@ -1707,11 +1710,11 @@ changes only when its `use` line does.
 
 ## 15. What comes later
 
-Processes, messages and supervision, and tool schemas derived from types
-(Phase 3); runtime introspection and replay (Phase 4); live upgrades
-(Phase 5); approving and locking promises (Phase 6); demanding that a function
-update its input in place (Phase 7); packages and user-defined abilities
-(Phase 8). None of them changes a rule in this reference.
+Runtime introspection and replay, including diagnostic records of failed
+calls (Phase 4); live upgrades (Phase 5); approving and locking promises
+(Phase 6); demanding that a function update its input in place (Phase 7);
+packages and user-defined abilities (Phase 8). None of them changes a rule in
+this reference.
 
 ## Appendix A. Errors
 
