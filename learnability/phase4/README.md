@@ -38,6 +38,8 @@ published and checked against it.
   that the proxy log and the client's own event stream hold the same tool calls, and
   `proxy.py hosts` lists any host other than the loopback address a session's commands
   addressed.
+- `publish.py` copies a session's manifest and grade for this repository, leaving out the
+  hidden tests' names and details.
 - `scan.py` gates publication: it fails on any session token or provider credential, in any
   encoding the transports use, in the files selected for publication, and on any file it
   cannot read.
@@ -62,14 +64,29 @@ for the freeze. The harness's private state is in `~/.mo-phase4-harness` (mode 0
 session tokens (`tokens`) and the clients' stored credentials (`secrets`), both for the
 scanner, and the snapshot of the session user's home that every session starts from.
 
+`mo` reads its library from the `lib/` folder of the tree it was built in, a path compiled into
+the binary, and an unreadable library folder is an error (E1102) for every `mo check`. A binary
+built under the operator's home therefore fails every check the session makes, so the baseline is
+built from an export of the tagged commit under `/opt/mo-phase4/baseline`, which is then made
+root's:
+
+```sh
+sudo install -d -m 0755 -o root -g root /opt/mo-phase4
+sudo install -d -m 0755 -o "$USER" -g "$USER" /opt/mo-phase4/baseline
+git archive phase4-baseline | tar -x -C /opt/mo-phase4/baseline
+(cd /opt/mo-phase4/baseline && make CC=gcc build/gcc/debug/mo)
+sudo chown -R root:root /opt/mo-phase4/baseline && sudo chmod -R go-w,a+rX /opt/mo-phase4/baseline
+MO=/opt/mo-phase4/baseline/build/gcc/debug/mo
+```
+
 ```sh
 H=learnability/phase4/harness.py
-python3 $H setup MO "$(command -v claude)" "$(command -v codex)"   # MO: the baseline binary
+python3 $H setup "$MO" "$(command -v claude)" "$(command -v codex)"
 sudo -u mo-session env -i HOME=/home/mo-session PATH=/opt/mo-phase4/bin:/usr/bin:/bin \
     TERM=$TERM bash   # log in once, in a shell as the session user:
 #   claude   (log in, then /exit)
 #   codex login
-python3 $H setup MO "$(command -v claude)" "$(command -v codex)"   # again: snapshot the logins
+python3 $H setup "$MO" "$(command -v claude)" "$(command -v codex)"   # again: snapshot the logins
 python3 $H build /opt/mo-phase4/bin/mo ~/mo-phase4-private ~/phase4-builds/ROUND
 python3 $H run ~/mo-phase4-private/variants/NAME ~/phase4-builds/ROUND/NAME claude OUT
 python3 $H order SEED NAME... > order.tsv
@@ -83,4 +100,10 @@ A session's records, in its OUT folder (mode 0700): `stream.jsonl` (the client's
 left it), `prompt.txt`, `manifest.json` and `grade.json`. `harness.py reset` cleans up after a
 harness that did not finish. The harness's docstring says exactly what a session gets and
 what a run does, in order.
+
+Only a session's `manifest.json` and `grade.json` are committed here, through `publish.py OUT
+DEST`, which replaces each failed hidden test's name and detail in the grade with one line, since
+the hidden tests stay private until the final round. The scanner reads DEST before the commit.
+The pilots' record, with the rule that decides when a variant is ready to freeze, is
+`pilot/ledger.md`.
 - `preflight/` holds the experiments that sized the design; its README says what each found.

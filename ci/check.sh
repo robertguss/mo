@@ -340,6 +340,8 @@ if have python3; then
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_proxy.py "${drivers[@]}"
 		later "Phase 4 publication scanner: a token in any transport encoding is refused" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_scan.py
+		later "Phase 4 published grades: the hidden tests' names and details are left out" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_publish.py
 		report_status=0
 		report || report_status=$?
 		# The session harness's tests time a killed session, so they too run alone. They run
