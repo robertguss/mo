@@ -1,0 +1,29 @@
+{
+  "step_kib": 150,
+  "accepted_calls": 109,
+  "held": {
+    "value": [
+      "109",
+      "16742400"
+    ]
+  },
+  "ended": "refused at call 110: {\"error\": {\"kind\": \"runtime\", \"code\": \"memory_limit\", \"message\": \"the call ran out of memory; service state is unchanged\", \"effect\": \"none\"}}",
+  "last_update_seconds": [
+    0.12743766797939315,
+    0.1247665699920617,
+    0.13577658601570874,
+    0.12642231601057574,
+    0.011845047993119806
+  ],
+  "size_seconds": 0.00992444803705439,
+  "snapshot_record_bytes": 15360473,
+  "log_records": 9,
+  "log_record_bytes_max": 93,
+  "log_record_bytes_total": 837,
+  "head_sequence": 109,
+  "database_file_bytes": 15400960,
+  "peak_resident_kib": 122752,
+  "final_resident_kib": 122752,
+  "exit_status": 0,
+  "stderr": "mo serve: failure: grow: service memory limit exceeded\nmo serve: stop: a signal asked the service to stop\n"
+}

@@ -1,0 +1,48 @@
+{
+  "killing_calls": [
+    [
+      "lease",
+      "Some"
+    ],
+    [
+      "fail",
+      "ok"
+    ],
+    [
+      "lease",
+      "Some"
+    ],
+    [
+      "fail",
+      "ok"
+    ],
+    [
+      "lease",
+      "Some"
+    ],
+    [
+      "fail",
+      "ok"
+    ]
+  ],
+  "updating_calls_total": 127,
+  "live_view_of_job": {
+    "id": "1",
+    "payload": "the job that dies",
+    "attempts": "3",
+    "state": {
+      "case": "Dead"
+    }
+  },
+  "snapshot_sequence": 100,
+  "log_tail_sequences": [
+    101,
+    128
+  ],
+  "tools_in_log_tail": [
+    "submit"
+  ],
+  "lease_or_fail_in_tail": false,
+  "exit_status": 0,
+  "stderr": "mo serve: stop: a signal asked the service to stop"
+}

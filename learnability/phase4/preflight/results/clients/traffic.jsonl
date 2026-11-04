@@ -1,0 +1,30 @@
+{"seq": 1, "at": 1793753388.8211937, "direction": "marker", "client": "codex-approve"}
+{"seq": 2, "at": 1793753389.0344708, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "initialize", "tool": null, "id": 0, "authorized": true}
+{"seq": 3, "at": 1793753389.0590174, "direction": "response", "status": 200, "answered_by": "server", "tool": null, "listed": null, "is_error": null, "bytes": 158}
+{"seq": 4, "at": 1793753389.060034, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "notifications/initialized", "tool": null, "id": null, "authorized": true}
+{"seq": 5, "at": 1793753389.0707433, "direction": "response", "status": 202, "answered_by": "server", "tool": null, "listed": null, "is_error": null, "bytes": 0}
+{"seq": 6, "at": 1793753389.071507, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/list", "tool": null, "id": 1, "authorized": true}
+{"seq": 7, "at": 1793753389.0933907, "direction": "response", "status": 200, "answered_by": "server", "tool": null, "listed": ["mo_state", "count", "mo-state", "mo-overview"], "is_error": null, "bytes": 2524}
+{"seq": 8, "at": 1793753406.3308465, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/call", "tool": "mo-state", "id": 2, "authorized": true}
+{"seq": 9, "at": 1793753406.3309124, "direction": "response", "status": 200, "answered_by": "proxy", "tool": "mo-state", "listed": null, "is_error": false, "bytes": 197}
+{"seq": 10, "at": 1793753406.3339505, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/call", "tool": "mo_state", "id": 3, "authorized": true}
+{"seq": 11, "at": 1793753406.3719609, "direction": "response", "status": 200, "answered_by": "server", "tool": "mo_state", "listed": null, "is_error": false, "bytes": 196}
+{"seq": 12, "at": 1793753406.4150312, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/call", "tool": "mo-overview", "id": 4, "authorized": true}
+{"seq": 13, "at": 1793753406.4151533, "direction": "response", "status": 200, "answered_by": "proxy", "tool": "mo-overview", "listed": null, "is_error": false, "bytes": 203}
+{"seq": 14, "at": 1793753410.5877585, "direction": "marker", "client": "claude"}
+{"seq": 15, "at": 1793753411.0018275, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "server/discover", "tool": null, "id": "server-discover-probe-1", "authorized": true}
+{"seq": 16, "at": 1793753411.046253, "direction": "response", "status": 400, "answered_by": "server", "tool": null, "listed": null, "is_error": null, "bytes": 157}
+{"seq": 17, "at": 1793753411.0508842, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "initialize", "tool": null, "id": 0, "authorized": true}
+{"seq": 18, "at": 1793753411.0752778, "direction": "response", "status": 200, "answered_by": "server", "tool": null, "listed": null, "is_error": null, "bytes": 158}
+{"seq": 19, "at": 1793753411.1182384, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "notifications/initialized", "tool": null, "id": null, "authorized": true}
+{"seq": 20, "at": 1793753411.1446931, "direction": "response", "status": 202, "answered_by": "server", "tool": null, "listed": null, "is_error": null, "bytes": 0}
+{"seq": 21, "at": 1793753411.145946, "direction": "request", "http": "GET", "path": "/mcp", "rpc": null, "tool": null, "id": null, "authorized": true}
+{"seq": 22, "at": 1793753411.1491961, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/list", "tool": null, "id": 1, "authorized": true}
+{"seq": 23, "at": 1793753411.1525955, "direction": "response", "status": 405, "answered_by": "server", "tool": null, "listed": null, "is_error": null, "bytes": 0}
+{"seq": 24, "at": 1793753411.1752172, "direction": "response", "status": 200, "answered_by": "server", "tool": null, "listed": ["mo_state", "count", "mo-state", "mo-overview"], "is_error": null, "bytes": 2524}
+{"seq": 25, "at": 1793753414.8301742, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/call", "tool": "mo-state", "id": 2, "authorized": true}
+{"seq": 26, "at": 1793753414.8303046, "direction": "response", "status": 200, "answered_by": "proxy", "tool": "mo-state", "listed": null, "is_error": false, "bytes": 197}
+{"seq": 27, "at": 1793753415.944739, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/call", "tool": "mo_state", "id": 3, "authorized": true}
+{"seq": 28, "at": 1793753415.9776542, "direction": "response", "status": 200, "answered_by": "server", "tool": "mo_state", "listed": null, "is_error": false, "bytes": 196}
+{"seq": 29, "at": 1793753417.032119, "direction": "request", "http": "POST", "path": "/mcp", "rpc": "tools/call", "tool": "mo-overview", "id": 4, "authorized": true}
+{"seq": 30, "at": 1793753417.0322413, "direction": "response", "status": 200, "answered_by": "proxy", "tool": "mo-overview", "listed": null, "is_error": false, "bytes": 203}
