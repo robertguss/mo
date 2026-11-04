@@ -83,9 +83,9 @@ MO=/opt/mo-phase4/baseline/build/gcc/debug/mo
 H=learnability/phase4/harness.py
 python3 $H setup "$MO" "$(command -v claude)" "$(command -v codex)"
 sudo -u mo-session env -i HOME=/home/mo-session PATH=/opt/mo-phase4/bin:/usr/bin:/bin \
-    TERM=$TERM bash   # log in once, in a shell as the session user:
-#   claude   (log in, then /exit)
-#   codex login
+    DISABLE_AUTOUPDATER=1 TERM=$TERM bash   # log in once, in a shell as the session user:
+#   claude                      (log in, then /exit)
+#   codex login --device-auth   (the plain login waits for a browser on this machine)
 python3 $H setup "$MO" "$(command -v claude)" "$(command -v codex)"   # again: snapshot the logins
 python3 $H build /opt/mo-phase4/bin/mo ~/mo-phase4-private ~/phase4-builds/ROUND
 python3 $H run ~/mo-phase4-private/variants/NAME ~/phase4-builds/ROUND/NAME claude OUT

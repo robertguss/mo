@@ -62,6 +62,11 @@ checked. Robert reads each pilot's commands for that.
     `eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0`.
   - Codex CLI 0.166.0 (standalone, x86_64 musl), SHA-256
     `b8a11fedf24b2dfb59a70c9e52b030f9a508dcd49cd2dd0d41956f4c785156b8`.
+- Logins: Robert logged both clients in as `mo-session` on 4 Nov 2026 (Claude Code with the
+  claude.ai subscription, Codex with ChatGPT through `--device-auth`). The login shell had no
+  `DISABLE_AUTOUPDATER=1`, so Claude Code installed 2.1.318 into the session user's home; that
+  copy was deleted and the snapshot taken again, so every session starts with the pinned
+  2.1.317 alone. The login steps now set the variable.
 - Variants: `robertguss/mo-phase4-private` at `1331ded`.
 - Data folders: built with `harness.py build` and the baseline `mo` into
   `~/phase4-builds/pilots-1` on 4 Nov 2026; all six built, `expire-one-per-tick` in 32 minutes

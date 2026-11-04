@@ -382,9 +382,9 @@ def setup(layout, mo, claude, codex):
         print(f'\n{layout.user} is not logged in to every client ({", ".join(missing)} is '
               f'missing). Log in once, then run setup again:\n'
               f'  sudo -u {layout.user} env -i HOME={home} PATH={layout.bin}:/usr/bin:/bin '
-              f'TERM=$TERM bash\n'
-              f'  claude            # log in, then /exit\n'
-              f'  codex login\n', file=sys.stderr)
+              f'DISABLE_AUTOUPDATER=1 TERM=$TERM bash\n'
+              f'  claude                 # log in, then /exit\n'
+              f'  codex login --device-auth\n', file=sys.stderr)
         return 1
     if reachable_by(layout.private, layout.user):
         raise HarnessError(f'{layout.user} can reach {layout.private} through its groups')
