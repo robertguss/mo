@@ -1,0 +1,52 @@
+{
+  "codex": {
+    "version": "codex-cli 0.166.0",
+    "command": [
+      "codex",
+      "exec",
+      "--json",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "-c",
+      "mcp_servers.probe.url=\"http://127.0.0.1:37385/mcp\"",
+      "-c",
+      "mcp_servers.probe.bearer_token_env_var=\"PROBE_TOKEN\"",
+      "-c",
+      "approval_policy=\"never\""
+    ],
+    "exit_status": 0,
+    "stderr_tail": "Reading additional input from stdin...\n",
+    "visible_names": [
+      "mcp__probe__count",
+      "mcp__probe__mo_overview",
+      "mcp__probe__mo_state_94338136a5cf",
+      "mcp__probe__mo_state_c5d0a7c9f588"
+    ],
+    "calls": [
+      "probe/mo-state",
+      "probe/mo_state",
+      "probe/mo-overview"
+    ],
+    "visible_names_source": "the model's final message; Codex's event stream does not list tools"
+  },
+  "wire_listed": [
+    "mo_state",
+    "count",
+    "mo-state",
+    "mo-overview"
+  ],
+  "wire_calls": [
+    [
+      8,
+      "mo-state",
+      true
+    ],
+    [
+      10,
+      "mo-overview",
+      true
+    ]
+  ]
+}

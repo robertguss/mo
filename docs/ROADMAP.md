@@ -21,6 +21,17 @@ Phases 0 to 3 are finished, and Phase 4 is the current phase.
 
 Phase 4, Agents can see inside it. It begins with its design step.
 
+- [ ] The design step: `docs/design/introspection.md` and the evaluation
+      protocol `learnability/phase4/protocol.md`, with the experiments they
+      rest on in `learnability/phase4/preflight/`. Proposed; waiting for
+      Robert's approval.
+- [ ] Pilots and an independent baseline, before any Phase 4 instrument.
+- [ ] Operator tools on the MCP endpoint, and state export to a private file.
+- [ ] Failure records, kept apart from saved state.
+- [ ] `mo replay`, `mo query` and `mo history`, with the fix check.
+- [ ] The final evaluation against the frozen baseline, then v0.1 if it
+      passes and Robert decides to release.
+
 Phase 3, Services, is done. It built the `service` block, its bytecode
 descriptor, the in-process runtime, SQLite saving and recovery, simulation in
 tests, MCP over HTTP, `mo serve`, the task-queue service, and the checks that

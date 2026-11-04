@@ -1,0 +1,105 @@
+{
+  "codex-approve": {
+    "version": "codex-cli 0.166.0",
+    "command": [
+      "codex",
+      "exec",
+      "--json",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "-c",
+      "mcp_servers.probe.url=\"http://127.0.0.1:36963/mcp\"",
+      "-c",
+      "mcp_servers.probe.bearer_token_env_var=\"PROBE_TOKEN\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "mcp_servers.probe.default_tools_approval_mode=\"approve\""
+    ],
+    "exit_status": 0,
+    "stderr_tail": "Reading additional input from stdin...\n",
+    "visible_names": [
+      "mcp__probe__count",
+      "mcp__probe__mo_overview",
+      "mcp__probe__mo_state_94338136a5cf",
+      "mcp__probe__mo_state_c5d0a7c9f588"
+    ],
+    "calls": [
+      "probe/mo-state",
+      "probe/mo_state",
+      "probe/mo-overview"
+    ],
+    "visible_names_source": "the model's final message; Codex's event stream does not list tools"
+  },
+  "claude": {
+    "version": "2.1.317 (Claude Code)",
+    "command": [
+      "claude",
+      "-p",
+      "PROMPT",
+      "--mcp-config",
+      "/tmp/tmprqh7arlj/claude/mcp.json",
+      "--strict-mcp-config",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--no-session-persistence",
+      "--allowedTools",
+      "mcp__probe__*"
+    ],
+    "exit_status": 0,
+    "stderr_tail": "",
+    "visible_names": [
+      "mcp__probe__count",
+      "mcp__probe__mo-overview",
+      "mcp__probe__mo-state",
+      "mcp__probe__mo_state"
+    ],
+    "calls": [
+      "ToolSearch",
+      "mcp__probe__mo-state",
+      "mcp__probe__mo_state",
+      "mcp__probe__mo-overview"
+    ]
+  },
+  "wire_listed": [
+    "mo_state",
+    "count",
+    "mo-state",
+    "mo-overview"
+  ],
+  "wire_calls": [
+    [
+      8,
+      "mo-state",
+      true
+    ],
+    [
+      10,
+      "mo_state",
+      true
+    ],
+    [
+      12,
+      "mo-overview",
+      true
+    ],
+    [
+      25,
+      "mo-state",
+      true
+    ],
+    [
+      27,
+      "mo_state",
+      true
+    ],
+    [
+      29,
+      "mo-overview",
+      true
+    ]
+  ]
+}

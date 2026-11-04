@@ -1,0 +1,669 @@
+# Introspection and replay: the Phase 4 design
+
+**Status: proposed, waiting for Robert's approval.** Nothing in this document is built yet. Every
+interface, format and limit below is a proposal until that approval is recorded in "Approval and
+changes" at the end. The phase plan is
+`docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`; this document holds the interfaces,
+budgets, models and experiment results it asks for. The evaluation protocol is
+`learnability/phase4/protocol.md`. The experiments this design rests on are in
+`learnability/phase4/preflight/`, with their results in its `README.md`.
+
+## 1. What Phase 4 promises
+
+An agent operating a running Mo service gets three instruments, each with a narrow promise.
+
+1. **Live views.** Built-in operator tools on the service's existing MCP endpoint show its state,
+   mailbox, timers, memory, supervisor events, retained failures and committed messages since the
+   last snapshot. A token holder can read them. They never change the service.
+2. **Offline queries.** The service exports bounded, identified bytes of its state, or of one
+   retained failure, to a private file. The agent runs a pure Mo function over that file on its
+   own side. The service never runs caller-written code.
+3. **Failure replay.** A handler failure that the supervisor counts leaves a diagnostic record
+   when capture succeeds, or an explicit "record unavailable" with a reason when it does not.
+   Offline, the agent replays the record against the original compiled program and runtime
+   build, reads the stack and variables, and checks a revised handler against the reconstructed
+   case.
+
+What none of them promises:
+
+- **Live memory.** A replay reconstructs the handler's logical inputs: its state, arrival time
+  and arguments, the program, the runtime, and the recorded limits. It does not reconstruct the
+  live heap's other occupants. Queued mailbox arguments share the handler's heap
+  (`src/vm/service.c`, `MO_LIMIT_SERVICE_MESSAGE_MEMORY`), so a handler can run out of memory
+  live and succeed offline under the same ceiling. Replay reports that as **not reproduced**.
+- **What a fix verdict covers.** A verified fix means the original failure reproduced offline
+  and a compatible revised handler then succeeded under the same reconstructed conditions. It
+  says nothing about live memory pressure or future workloads.
+- **History before the last snapshot.** The recovery log keeps at most the messages since the
+  last snapshot (section 9).
+
+## 2. Where the operating agent stands
+
+The live views need only the service's URL and token, so a client behind the exe.dev proxy can
+use them. Fetching an export, replaying and querying need more: the agent must run commands on
+the service's host, or on a machine holding the data folder, with the program's source and the
+runtime build that recorded it. A remote operator reaches the host over SSH, as the Phase 3
+runbook did (`docs/ops/task-queue.md`). No TLS client is added, and fetch refuses anything but
+loopback (section 5.3).
+
+The Phase 3 deployment host `turnpike-ferret` was deleted on 2026-11-03 (`docs/ROADMAP.md`), so
+there is no remote host to demonstrate access to. The evaluation therefore runs each service
+variant on the same machine as the agent session (`learnability/phase4/protocol.md`, "Where
+sessions run"). That machine meets the prerequisite by construction: the agent can read the
+source, run the pinned `mo`, and reach `127.0.0.1`. A remote, proxy-only deployment remains a
+documented limit: it gets the views and nothing else.
+
+## 3. Operator tools on the MCP endpoint
+
+### 3.1 Names, order and annotations
+
+| Wire name | Shows | Arguments |
+| --- | --- | --- |
+| `mo-overview` | Service name, program and build identities, uptime, running or stopped, mailbox count, timer count, memory used and peak, failure and restart counts in their windows, retained failure count, recovery sequence, last snapshot sequence | none |
+| `mo-state` | The current state, rendered from its saved encoding, truncated to fit one reply | `path` (optional, a list of field names and indexes to descend into) |
+| `mo-mailbox` | Each queued message: handler, timer or tool, arrival time, argument byte size; not argument values | none |
+| `mo-timers` | Each timer: name, interval, next due time, whether a tick is waiting | none |
+| `mo-memory` | Heap used, peak and limit; stack limit; encoded state bytes; pinned export bytes; diagnostic scratch peak | none |
+| `mo-supervisor` | The in-memory event ring: failures, restarts, stops and capture refusals, newest first | `after` (optional event number) |
+| `mo-failures` | Retained failure records: id, handler, kind key, arrival time, signature, state and message byte sizes; unavailable records with their reasons | `after` (optional record id) |
+| `mo-log` | Committed messages since the last snapshot: sequence, handler, arrival time, argument byte sizes; not argument values | `after` (optional sequence) |
+| `mo-export` | One page of a pinned export (section 5) | `kind`, `failure`, `export`, `offset` |
+
+Operator tools are listed after every author tool, in the order above, under the same catalog
+paging (`runtime/mcp.mo`). A hyphen cannot occur in an author tool's name, which the lexer limits
+to `[a-z0-9_]` (`src/syntax/lexer.c`), so the `mo-` prefix cannot collide on the wire.
+
+Clients may rename tools before a model sees them, and the design does not depend on spelling
+surviving. The client probe (`learnability/phase4/preflight/README.md`, "Client names and
+approvals") ran an author tool `mo_state` beside an operator tool `mo-state` through a recording
+proxy:
+
+- Codex 0.166.0 showed the model `mcp__probe__mo_state_94338136a5cf` and
+  `mcp__probe__mo_state_c5d0a7c9f588` for the two, and `mcp__probe__mo_overview` for
+  `mo-overview`, as its source says it would. Each call still reached the intended wire tool.
+- Claude Code 2.1.317 kept the hyphen: `mcp__probe__mo-state` beside `mcp__probe__mo_state`.
+- Codex ran the two tools carrying `readOnlyHint` without asking. With
+  `approval_policy="never"` it refused the unannotated author tool ("MCP tool call requires
+  approval, but approval policy is never"). With `mcp_servers.NAME.default_tools_approval_mode="approve"`
+  it ran all three.
+
+Every operator tool therefore carries `readOnlyHint: true` and `idempotentHint: true`, and
+`mo-export` also `openWorldHint: false`. Descriptions are at most 512 bytes each and say what the
+tool shows and its limits. Author tools gain no annotations in this phase: the existing
+`read_only` field of `McpType.Tool` is still not emitted, so an author's read-only tool is not
+silently given an approval-skipping hint. The evaluation configures client approval explicitly
+(`learnability/phase4/protocol.md`).
+
+### 3.2 Dispatch
+
+`McpRpc.validate` (`runtime/mcp-rpc.mo`) learns the operator names. A call to one is routed to a
+new native entry point instead of `mo_service_send`. It spends the token's rate allowance exactly
+as an author call does, so operator calls cannot flood the listener. Operator calls:
+
+- run only at service idle points, between `mo_service_step` calls, through new `vm.h`
+  accessors (failure and restart counts and windows, recovery and snapshot sequence, timers,
+  mailbox entries' handler, kind, arrival and byte sizes, the encoded current state, the event
+  ring, the failure store);
+- never enter the mailbox, the recovery log or supervisor accounting, and never call a Mo
+  handler;
+- answer when the mailbox is full. After a supervisor stop, `mo serve` closes its listener as
+  it does today, so a stopped service is read with `mo history` (section 9).
+
+JSON shaping is Mo code in a new `runtime/mcp-views.mo` beside the existing MCP runtime, following
+implementation condition 4: the C side hands it typed records and byte spans, and it builds the
+JSON value.
+
+### 3.3 Rendering state
+
+The existing MCP shapes cannot render every legal state. Shape reachability starts at tool
+arguments and results (`src/bytecode/service-reach.c`), so a service whose tools are all
+read-only has no shape for its state, and the converter asserts a shape exists
+(`src/tools/protocol-value.c`). Private state is legal, and E0105 deliberately skips it.
+
+The state view is rendered from the **saved encoding** instead. Every saved value carries its own
+complete schema: tags, nominal names (already qualified by module), case and field names
+(`docs/design/saved-state.md`, "Encoded values"). A schema-driven renderer in Mo turns those bytes
+into JSON:
+
+| Saved type | JSON |
+| --- | --- |
+| Unit, Bool | `null`, `true`/`false` |
+| Int, Byte, BigInt, Duration | a decimal string, as author tools render Int today; Duration as microseconds |
+| Float | a number, or the strings `"NaN"`, `"Infinity"`, `"-Infinity"` |
+| Decimal | a decimal string |
+| Char, Text | a string |
+| Time | an RFC 3339 UTC string, as author tools render Time |
+| Bytes | `{"base64": "..."}` |
+| Range | `{"start": "...", "end": "..."}` |
+| List, Set | an array |
+| Map | an array of `[key, value]` pairs, since keys need not be strings |
+| Tuple | an array |
+| Record | `{"type": "Module.Name", "fields": {...}}` |
+| Choice | `{"type": "Module.Name", "case": "Name", "fields": {...}}` |
+
+The bytecode format, the shape tables and the verifier are unchanged. The renderer reads only
+bytes the runtime itself encoded from a trusted descriptor, under the depth (128) and node
+(1,048,576) limits the codec already enforces. This also shows private state to token holders.
+That is intended: module privacy governs which source can name a representation, not what the
+service's operator can read, and the operator already holds the only credential.
+
+A view that would exceed the reply limit is truncated: the renderer stops at a byte budget, marks
+each cut collection with `{"truncated": N}` counting the elements left out, and the reply carries
+`"complete": false` and the advice to export. `path` lets an agent descend without exporting.
+
+### 3.4 Event lines
+
+The three stable `mo serve:` line shapes do not change (`docs/design/services.md`, "MO-161 mo
+serve"). After a `failure:` line, the indented report always ends with exactly one of:
+
+```text
+  record: 42
+  record unavailable: REASON
+```
+
+`REASON` is one line from a fixed set (section 6.4). A work-limit failure, which today has no
+report at all because a cancelled call fabricates no defect, gets a report consisting of its
+stack (section 6.2) and that line.
+
+## 4. Identities
+
+Four identities, each checked separately.
+
+| Identity | What it is | Today |
+| --- | --- | --- |
+| Artifact format | A magic and version on every export (`MOEX` 1); failure records use the store's own `MOST` 1 frames with two new kinds, and their message payload carries its own format version | new |
+| Program | FNV-1a-64 of the checksum-covered bytecode without the `files` section | exists: `mo_image.program_checksum`, folded into the store's image key |
+| Runtime build | SHA-256 of the running `mo` executable's bytes, read once from `/proc/self/exe` at startup (or the platform's equivalent), plus a build label: `mo --version`, the compiler and its version, and the build configuration (`debug`, `release`, `sanitize`) | new; `mo --version` prints only `mo 0.0.0` today |
+| State schema | SHA-256 of the state type's saved schema bytes | new; the schema bytes themselves are already in every encoded value |
+
+The build label is for people; only the digest decides. Hashing the executable is the honest
+reading of "the same runtime build": any change to the compiler, its flags or the embedded MCP
+runtime changes it. FNV-1a-64 stays the record checksum, as in the store, and detects accidental
+corruption. SHA-256 here detects that two identities differ; neither is a signature, and nothing
+in this phase claims authenticity. SHA-256 is a new primitive in `base/`, checked against the
+FIPS 180-4 examples and fuzzed against a reference implementation in the unit tests.
+
+**Keeping the original build.** v0.1 replays only on the build that recorded the failure. The
+operator keeps that `mo` executable, as the Phase 3 runbook already pins `/opt/mo/$SHA` per
+deployment. A replay on another build is refused with the recorded build label and digest, so the
+agent knows which executable to fetch. Records and stores written before Phase 4 carry no build
+identity: their failures were never recorded, and their state can be queried (state queries do not
+need the producer's build, section 7.4) but nothing can be replayed from them.
+
+## 5. Export
+
+### 5.1 Pins
+
+`mo-export` with `kind: "state"`, or `kind: "failure"` and a record id, creates a **pin** at the
+next idle point. A pin owns immutable bytes: the complete artifact (section 5.2). The service
+keeps the encoded current state in native memory already (section 6.3), so a state pin copies
+those bytes; it never runs the codec. A failure pin reads its record from the store.
+
+- Each pin has a 128-bit **export id** from the operating system's random source, independent of
+  the recovery sequence and unique across replacements and restarts. A replacement can carry the
+  same sequence as the pin it replaces; it never has the same id.
+- At most `MO_LIMIT_EXPORT_PINS` (2) pins exist, one per kind. A new export of a kind replaces
+  and releases that kind's pin.
+- A pin expires `MO_LIMIT_EXPORT_IDLE_US` (60 seconds) after its last page was read. A pin is
+  released after its last page is read, on replacement, expiry, or process exit. Pins are never
+  persisted, so a restart releases every pin.
+- Pin bytes are charged to `MO_LIMIT_EXPORT_BYTES`, a budget separate from the handler heap:
+  2 × (`MO_LIMIT_SAVED_BYTES` + 1 MiB of metadata). A pin that does not fit is refused with
+  `export_limit`, not allocated from the heap. Pins share no heap value with the service, so
+  handler allocation and in-place reuse are unaffected.
+- Progress is not guaranteed: another client can replace a pin mid-fetch. Fetch reports
+  `replaced` and the operator retries.
+
+### 5.2 The artifact
+
+All integers little-endian, as in the store.
+
+| Field | Bytes | Meaning |
+| --- | ---: | --- |
+| Magic and version | 5 | `MOEX` 1 |
+| Kind | 1 | 1 state, 2 failure |
+| Export id | 16 | Random, per pin |
+| Producer program | 8 | Program checksum |
+| Producer build | 32 | Runtime build digest |
+| Build label length, label | 4 + n | UTF-8, at most 256 bytes |
+| Service descriptor index | 4 | As in the image key |
+| Recovery sequence | 8 | Head sequence at pin time |
+| Created | 8 | UTC microseconds |
+| State schema | 32 | SHA-256 of the state schema bytes |
+| Body length | 4 | Exact |
+| Body | variable | Kind 1: one encoded state value (`MOSV`); kind 2: one failure record pair (section 6.1) |
+| Artifact digest | 32 | SHA-256 of every preceding byte |
+
+### 5.3 Pages and fetch
+
+A reply's compact content may use at most half of the 32 KiB reply limit, because it is sent
+twice (`runtime/mcp.mo`, `tool_reply`), and it is base64. A page therefore carries
+`MO_LIMIT_EXPORT_PAGE_BYTES` (8 KiB) of artifact bytes. Each page reply carries the export id,
+kind, artifact version, recovery sequence, offset, page length, total length and the page's
+FNV-1a-64; the final page also carries the artifact digest. A page of a released, replaced or
+expired pin is refused with `export_released`, and a page for an id that does not match the
+current pin with `export_replaced`; neither ever returns another pin's bytes.
+
+A 16 MiB state is 2,048 pages. At the token's rate limit of 20 calls a second that is about
+103 seconds, and the fetch tool says so before it starts.
+
+`mo fetch URL --export state|failure ID --out FILE --token-env NAME`:
+
+- accepts only `http://127.0.0.1:PORT/mcp`, `http://localhost:PORT/mcp` and `http://[::1]:PORT/mcp`;
+  refuses userinfo, other schemes, other hosts and non-numeric ports before reading the token;
+- resolves `localhost` itself, connects only to a loopback address, and checks the connected
+  peer address is loopback on every connection;
+- ignores proxy environment variables entirely and follows no redirect: any status other than
+  200 ends the fetch;
+- bounds the response head (1 KiB), body (`MO_LIMIT_MCP_RESPONSE_BYTES`), page count
+  (`total / page + 1`), total bytes (`MO_LIMIT_EXPORT_BYTES / 2`) and wall time
+  (`MO_LIMIT_FETCH_US`, 10 minutes);
+- writes to a temporary file created with `O_CREAT | O_EXCL | O_NOFOLLOW` and mode 0600 in
+  `FILE`'s folder, checks every page's metadata matches the first page, the coverage is exact
+  and the digest matches, then publishes it with `link` (which refuses an existing `FILE`) and
+  removes the temporary name; any failure removes the temporary file. An existing `FILE` or a
+  symlink is refused before connecting.
+
+Exit statuses follow `mo`'s: 0 published, 1 refused by the service or by a check, 2 a command
+mistake. Response parsing is Mo code (the existing `Http` and `Json` modules); sockets, files and
+the digest are C. A new fuzz target, `fuzz_fetch`, feeds response sequences through the reader
+with its own seeds.
+
+## 6. Failure records
+
+### 6.1 Storage
+
+The store gains two tables, created by `mo_store_open` alongside the three it already checks, in
+the same transaction:
+
+```sql
+CREATE TABLE failure(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, first INTEGER NOT NULL,
+  message BLOB NOT NULL) STRICT;
+CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT;
+```
+
+`user_version` stays 1, and the existing tables and their records are unchanged. The store's
+check is by table name (`src/host/store.c`, `table`), so a Phase 3 binary opening a Phase 4 store
+ignores the new tables, and a Phase 4 binary opening a Phase 3 store creates them.
+
+A record is two framed blobs bound to one id, in two rows inserted, with any evictions, in one
+transaction:
+
+- **state**: in `failure_state`, a frame of kind 3 holding the encoded pre-call state;
+- **message**: in `failure`, a frame of kind 4 holding the failure metadata below.
+
+They are separate rows because SQLite applies `SQLITE_LIMIT_LENGTH` to a whole row as well as to
+each value, and the store sets it to `MO_LIMIT_STORE_ROW`, 16 MiB plus 4,096 bytes
+(`src/host/store.c`, `mo_store_open`). One row holding a near-limit state and its message would
+pass that limit; a state row alone fits it exactly as a snapshot row does, and the message row is
+at most 1 MiB. Both frames are the store's own envelope, `MOST` 1, with kinds 3 and 4 beside the
+log's 1 and the snapshot's 2 (magic, kind, sequence, image key, length, payload, FNV-1a-64), so
+`mo_store_record_read` reads them by kind as it reads the others. The message payload, in order:
+
+1. format version (1); failure id; recovery sequence at the failure; arrival time;
+2. timer flag, handler table index, handler name;
+3. read-only flag;
+4. argument count and each argument as a length and encoded value, exactly as a log record;
+5. the structured signature (section 6.2);
+6. the recorded budgets: work, heap, stack and depth limits, and the saved-bytes limit;
+7. program checksum, runtime build digest and label, state schema digest;
+8. diagnostic context: up to 8 frames (function, file, span), up to 32 rendered top-frame
+   variables at up to 1 KiB each, each with an `available` or `truncated` flag, and a flag for
+   the whole context (`complete`, `truncated`, `unavailable`).
+
+Items 1 to 7 are the replay inputs and must be complete for a record to exist. Item 8 is
+context: replay regenerates the stack itself.
+
+### 6.2 Signatures
+
+| Class | Fields | Matches when |
+| --- | --- | --- |
+| `defect` | VM reason (a fixed string such as `integer overflow`, never the program's own `stop` text), function, file, span | class, reason, function and span are equal |
+| `work` | limit name and value | class and value are equal |
+| `memory` | which limit (`--max-heap`, `--max-stack`, `--max-depth`) and its value | class, name and value are equal |
+| `state_size` | the saved-bytes limit | the new state's saved copy failed again, under the same limit |
+
+The signature has its own version (1). Rendered report text is never compared. A generic
+"out of memory" from a different limit is a different outcome, not a match.
+
+The **kind key** groups records for retention: handler name, class, reason, and function and span
+for defects. It is stored as text in the `kind` column.
+
+### 6.3 Capture
+
+Order, at the point where `mo_service_step` sees a failed call today:
+
+1. **Context, before cleanup.** The frames are still live: the event hook already runs before
+   `finish_call` unwinds them (`src/vm/service.c`). For a defect, the existing defect frames are
+   used. For a work-limit cancellation, which fabricates no defect, the runtime walks the
+   process's live frames the same way. Frames and top-frame variables are rendered as text
+   into a buffer of at most `MO_LIMIT_FAILURE_CONTEXT_BYTES` (64 KiB, the defect report's size),
+   allocated outside the heap. This step allocates nothing on the heap, so it works when the
+   heap is exhausted.
+2. **Cleanup.** `finish_call` runs as today, releasing the handler's frames and garbage. The
+   pre-call arguments stay alive: the message still owns them.
+3. **Encoding.** The pre-call state's encoding is already in hand (below). Arguments of an
+   updating tool were encoded at admission; the runtime now keeps those bytes with the queued
+   message instead of discarding them. A read-only tool's arguments are encoded now, after
+   cleanup, with scratch charged to `MO_LIMIT_FAILURE_SCRATCH` (1 MiB), not the heap. Read-only
+   admission is unchanged: arguments that cannot be encoded make the record unavailable, not the
+   call refused.
+4. **Store.** The pair and any evictions go in one transaction. The record id is published only
+   after commit.
+5. **Supervisor and reply**, as today: the failure is counted once.
+
+**Keeping the current state encoded.** A store-backed service already passes every accepted
+state through encode and decode before publishing it (`docs/design/saved-state.md`, "Encoded
+values"). The runtime keeps the encoded bytes of the current state, in native memory outside the
+heap, until the next accepted state replaces them. This is what makes capture possible after a
+heap exhaustion, and it makes a state pin a copy. It costs up to 16 MiB of resident memory beside
+the 64 MiB process budget; section 10 counts it.
+
+### 6.4 When capture fails
+
+| Outcome | Record | Service |
+| --- | --- | --- |
+| Committed | `record: ID` | continues under the existing policy |
+| Prepared value too large: state plus arguments plus metadata over `MO_LIMIT_FAILURE_RECORD_BYTES` | `record unavailable: too large to record` | continues |
+| Read-only arguments could not be encoded within the scratch limit | `record unavailable: arguments could not be encoded` | continues |
+| Context buffer or record buffer could not be allocated | `record unavailable: out of memory for the record` | continues |
+| The diagnostic transaction failed and rolled back cleanly (`SQLITE_FULL`, `SQLITE_TOOBIG`, an exhausted store budget, a constraint), and the connection still answers a read of `head` | `record unavailable: the store refused the record` | continues. The store's existing failure mapping turns `SQLITE_TOOBIG` into `MO_STORE_CORRUPT`, which is right for reading saved data and wrong here: the record write classifies it as a clean refusal |
+| The rollback failed, the commit's outcome is unknown (`SQLITE_IOERR` during commit), the database is corrupt, or the connection cannot read `head` | none is claimed | stops under the existing store-failure policy (`MO_SERVICE_STORE`, exit 70) |
+
+The handler failure is counted once in every row. A capture refusal is never counted as a second
+handler failure, never retried, and appears in `mo-supervisor` and `mo-failures`. An application
+`Error` reply, an admission refusal (`BUSY`, a message too large to log) and a down service record
+nothing. A read-only call that fails gets a record like any other; its state and the recovery log
+are unchanged. The final failure that stops the service is captured before the stop event and
+the exit.
+
+`MO_LIMIT_FAILURE_RECORD_BYTES` is `MO_LIMIT_SAVED_BYTES` for the state plus 1 MiB for arguments
+and metadata. Under `mo serve`, every tool's arguments arrive in a request body of at most 16 KiB
+(`MO_LIMIT_MCP_BODY_BYTES`), so the 1 MiB only matters to embeddings. An updating message whose
+arguments use the whole saved-bytes allowance is legal, and its record is then too large: that is
+an explicit refusal, and message admission does not tighten to avoid it. A complete record can
+approach 17 MiB, so a record transaction writes up to about 34 MiB with its journal; the store
+budget (`MO_LIMIT_STORE_MEMORY`, 24 MiB per store) was sized from a 16 MiB record and must be
+measured again against this.
+
+### 6.5 Retention
+
+At most `MO_LIMIT_FAILURE_RECORDS` (64) records and `MO_LIMIT_FAILURE_STORE_BYTES` (64 MiB) are
+kept. Each kind key keeps at most two: its **first** record, kept as long as its kind is, and its
+**latest**, replaced by each newer failure of that kind. A new record of an existing kind replaces
+only that kind's latest, so a timer failing every minute rewrites one row and never evicts
+another kind's first failure. When a new kind arrives and either limit would be exceeded, the
+kind whose latest failure is oldest is evicted whole, latest then first, until the new record
+fits; the views count evicted kinds. A single record larger than the byte limit is refused as too
+large to record. Snapshots never touch the failure tables, so a retained failure stays replayable
+after any number of snapshots.
+
+### 6.6 The event ring
+
+`MO_LIMIT_SERVICE_EVENTS` (256) in-memory entries record failures (with their record id or
+refusal reason), restarts, stops and capture refusals, each with a time and a number. The ring
+is lost when the process exits; stopped history (section 9) shows only what is persisted.
+
+## 7. Offline commands
+
+### 7.1 Commands
+
+```text
+mo replay FILE --failure ID (--data DIR | --export ARTIFACT) [--json]
+mo replay FILE --failure ID (--data DIR | --export ARTIFACT) --fix REVISED [--json]
+mo query FILE FUNCTION --export ARTIFACT [--max-work N] [--max-heap N] [--json]
+mo query FILE FUNCTION (--data DIR | --export ARTIFACT) --failure ID [--json]
+mo history DIR [--json]
+```
+
+`FILE` is the program's main module, as for every `mo` command. `replay` compiles `FILE` and
+requires its program checksum to equal the record's, and refuses any other runtime build (section
+4). It decodes the record and runs the handler through the same controlled call the service uses,
+factored out of `src/vm/service.c`, with the recorded budgets, no timers, no mailbox and no
+store. It prints the original message, pre-call state, signature and the regenerated stack with
+top-frame variables, and marks fields unavailable or truncated.
+
+`--fix REVISED` first replays the original as above, then runs the handler of the same name from
+`REVISED` on the same inputs and budgets. An updating handler's new state must also pass the
+saved-copy size check. The verdict is:
+
+| Original | Revised | Verdict |
+| --- | --- | --- |
+| reproduced | succeeded, and an updating handler's state passed the size check | `verified` |
+| reproduced | failed or exceeded the recorded budget | `not_fixed` |
+| different outcome or not reproduced | succeeded | `unverified` (the revised run is reported as an observation) |
+| different outcome or not reproduced | failed | `unverified` |
+| refused | not run | `refused` |
+
+Both runs' outcomes and identities are reported together. A `verified` verdict is never
+produced without a reproduced original.
+
+`mo query FILE FUNCTION` runs a pure function of the program in `FILE`:
+
+- over a state export: `FUNCTION(state)`;
+- over a failure: `FUNCTION(state, time, arguments...)` in the handler's order.
+
+The result is printed in `mo`'s structural text form, or as JSON with `--json`. A query is not a
+handler, and only `replay --fix` gives a verdict.
+
+### 7.2 Query entry rules
+
+The entry is a function of `FILE`'s main module, or `Module.name` of a module the program uses.
+The checker refuses an entry whose parameters, result, or any value it captures contain a
+capability or a function, including inside records, choices, tuples and collections: the rule
+the checker already applies to service state and handler inputs (reference section 11.5,
+`src/check/services.c`), applied to the entry. The
+entry's first parameter must be the service's state type exactly. A failure query's remaining
+parameters must be `Time` and the handler's argument types, in order. Normal module privacy
+applies: a query outside the state's defining module uses its exposed accessors, and a query of a
+private representation lives in the defining module.
+
+The query prototype (`learnability/phase4/preflight/README.md`, "Queries from another program")
+showed the decoder already accepts this: a program that adds a pure function to `JobQueue`, and
+one that adds a `Query` module reading `JobQueue.jobs`, both decoded the task queue's saved state
+once the whole-program image key was taken out of the comparison, while renaming one state field
+was refused.
+
+### 7.3 Results and exit statuses
+
+`--json` writes one JSON object per line, like `mo test --json`: first `{"record":"version",
+"format":"1.0","mo":...}`, then one object per outcome (`original`, `revised`, `query`, `history`),
+then `{"record":"totals",...,"exit":N}`. Field names keep their meaning within a major version.
+History and the live views use the same object shapes for log entries, failures and events.
+
+Exit statuses: 0 when the requested result holds (`reproduced`; `verified`; a query that
+returned; history read); 1 when it does not (`different`, `not_reproduced`, `not_fixed`,
+`unverified`, or a refusal for incompatibility); 2 for a mistake in the command.
+
+### 7.4 Compatibility
+
+Each check is separate and runs before any value is decoded or any handler runs.
+
+| Command | Format | Program | Runtime build | State schema | Handler inputs |
+| --- | --- | --- | --- | --- | --- |
+| `fetch` | supported version, one export id, exact coverage, digest | recorded only | recorded only | recorded only | — |
+| `replay` | supported | must equal | must equal | must equal | must equal (same program) |
+| `replay --fix` | supported | original must equal | must equal | revised must equal | revised handler: same name, timer or tool, same argument types in order, same result shape class (timer, read-only, updating) |
+| `query` over state | supported | may differ | v0.1: must equal the producer's | must equal | — |
+| `query` over a failure | supported | may differ | must equal | must equal | entry parameters must equal state, `Time` and the arguments in order |
+| `history` | supported store | must equal to show values; otherwise metadata only | v0.1: must equal to show values | must equal to show values | — |
+
+A mismatch is refused with what differs and both values. Schema changes are refused and
+migration is Phase 5. A state query needs the producer's runtime build in v0.1 because nothing
+yet shows two builds encode identically; it does not need the producer's whole program, so added
+query functions are allowed.
+
+## 8. Limits for offline work
+
+`mo query` and `mo history` take `--max-stack`, `--max-depth` and `--max-heap` as `mo run` does,
+plus `--max-work`, defaulting to 1,073,741,824 instructions per run. Replay uses only the
+recorded budgets and takes none of these flags. Each is a named limit in `src/base/limits.h`.
+
+## 9. Reading a stopped data folder
+
+`mo history` and `mo replay --data` use a new reader in `host/store.c`, never `mo_service_open`,
+which can run timers and take snapshots.
+
+- It opens `DIR/service.sqlite` read-only. A running `mo serve` holds the database in exclusive
+  locking mode, so the open fails busy and the command refuses with "a running service owns
+  DIR".
+- A hot journal (a `-journal` file beside a database whose last write did not finish) needs a
+  write to roll back. The reader refuses with "recovery required" unless given `--recover`,
+  which opens read-write as the folder's owner and lets SQLite roll back. That rollback writes
+  database pages: the command is logically read-only, since it never changes application state
+  or the log, but it is not physically read-only, and it says so.
+- It holds the lock only while copying what it needs: the snapshot, the tail's metadata
+  (sequence, handler, time, argument sizes) and the failure records, bounded by
+  `MO_LIMIT_HISTORY_BYTES` (64 MiB) in total. Argument values are read only for the record being
+  replayed. Over the limit, it reports what it read and what it left.
+
+**History depth.** The history trace (`learnability/phase4/preflight/README.md`, "What survives a
+snapshot") killed one job with three lease and fail calls and then sent 120 more updates. The
+stopped folder held the current state, showing the job dead after three attempts, and a log tail
+of sequences 101 to 128 holding only `submit` calls: the calls that killed the job were gone. v0.1
+accepts that limit. The evaluation's failure scenarios rely on failure records, which snapshots
+never remove, and its wrong-reply scenarios rely on current state. An archive of every committed
+message would grow without bound (up to 16 MiB per message) and is not built in this phase.
+
+**Startup contention.** Today a reader holding the database makes `mo serve` fail at once with
+E1409 and exit 1, which the task-queue unit lists in `RestartPreventExitStatus`, so a stray
+`mo history` could keep a service down. `mo serve` will wait up to `MO_LIMIT_SERVE_STORE_WAIT_US`
+(10 seconds) for a lock held by another process, and then exit with 75 (`EX_TEMPFAIL`), a new
+status that service managers retry: the task-queue unit's `RestartPreventExitStatus=1 2 69`
+does not list it, so `Restart=on-failure` retries. This lands before the reader ships.
+
+## 10. Budgets
+
+| Limit | Value | Charged to |
+| --- | --- | --- |
+| `MO_LIMIT_EXPORT_PINS` | 2 | — |
+| `MO_LIMIT_EXPORT_BYTES` | 2 × (16 MiB + 1 MiB) | native memory, outside the heap |
+| `MO_LIMIT_EXPORT_PAGE_BYTES` | 8 KiB | each reply |
+| `MO_LIMIT_EXPORT_IDLE_US` | 60 s | — |
+| `MO_LIMIT_FETCH_US` | 10 min | the fetch command |
+| `MO_LIMIT_FAILURE_CONTEXT_BYTES` | 64 KiB | native, per capture |
+| `MO_LIMIT_FAILURE_SCRATCH` | 1 MiB | native, per capture |
+| `MO_LIMIT_FAILURE_RECORD_BYTES` | 16 MiB + 1 MiB | per record |
+| `MO_LIMIT_FAILURE_RECORDS` | 64 | the store |
+| `MO_LIMIT_FAILURE_STORE_BYTES` | 64 MiB | the store's disk |
+| `MO_LIMIT_SERVICE_EVENTS` | 256 | native |
+| `MO_LIMIT_HISTORY_BYTES` | 64 MiB | the reader |
+| `MO_LIMIT_SERVE_STORE_WAIT_US` | 10 s | startup |
+
+**Process sizing.** The service process is 64 MiB of stack and heap, 8 MiB of metadata and a
+24 MiB SQLite budget per store today. Phase 4 adds the encoded current state (up to 16 MiB), pins (up to
+34 MiB) and capture buffers (about 1 MiB). The sizing experiment measured today's runtime: an
+empty service peaked at 54 MiB resident; the growth fixture's largest accepted state, 16.0 MiB
+of text, peaked at 120 MiB resident with a 15.4 MiB snapshot record. The full task queue
+at its limits (5,000 jobs of 2,048 bytes) was a 10.0 MiB snapshot record and peaked at 108 MiB
+resident. A deployment should allow about 120 MiB per service for today's runtime and 50 MiB more
+for Phase 4. Measuring the implementation, with the heap and scratch peaks that `mo serve` cannot
+report today, replaces this estimate when the operator tools land.
+
+## 11. Verification
+
+Each property states its prediction before its check runs, gets the Working Agreement's
+independent check, and keeps its failures. A check that cannot run (a missing tool) is a skip,
+and a skip is not a pass.
+
+### 11.1 Lean
+
+Lean remains the semantic model. The existing theorems prove Core type safety and determinism;
+they do not cover lowering, the C runtime, or the service VM's instruction budget, which differs
+from Core fuel (`formal/README.md`, `formal/TEXT.md`). The new modules are `MoCore/Saved.lean`
+and `MoCore/Verdict.lean`, imported by `formal/MoCore.lean` so that `lake build MoCore`, which
+`make formal` runs, checks them.
+
+1. **Reconstruction preserves values.** An executable model of the saved schema and value
+   encoding for Core values: `encode : SchemaTy → Val → Option Bytes` and
+   `decode : SchemaTy → Bytes → Option Val`. Theorem: for every well-typed `v : ValTy τ`,
+   `encode τ v = some b → decode τ b = some v`, and `decode` refuses bytes whose schema differs
+   from `schema τ`. A failure's inputs, the tuple `(state, time, args)`, round-trip as a whole.
+   The C decoder is not proved: its contract is the hypothesis, and the C unit tests and the
+   saved-state fuzz target exercise the same cases (typed, malformed, cross-schema).
+2. **The verdict is sound.** `verdict : Outcome → Outcome → Verdict` over the statuses of section
+   7.1, against an independently written specification: `verdict o r = verified ↔
+   (reproduced o ∧ succeeded r ∧ sizeOk r)`. Corollary: `¬ reproduced o → verdict o r ≠ verified`,
+   for every `r`. A second theorem connects the model's evaluator: for a handler expression `h`
+   and inputs `i`, replaying `h` twice on `i` with the same fuel gives the same outcome, using
+   the existing `eval_deterministic`, so an offline reproduction is a property of the inputs and
+   not of the run.
+3. **Negative controls.** A copy of `verdict` that returns `verified` when the revised run
+   succeeds alone must fail the soundness theorem (kept as a `#guard` that the false statement
+   is refutable by a concrete counterexample), and a decoder that ignores the schema must fail
+   the refusal half of the round-trip theorem.
+
+No theorem may be discharged by `sorry`, `native_decide`, an `axiom` or a precondition that
+assumes its conclusion. The check is new: `ci/check.sh lean` will run `#print axioms` on each
+new theorem and fail on anything beyond `propext`, `Classical.choice` and `Quot.sound`. Today the
+repository only claims this; nothing checks it.
+
+### 11.2 TLA+
+
+Two small models, checked by TLC from the TLA+ tools (version pinned by SHA-256 when they land) in
+a new `models` group of `ci/check.sh`. TLC checks finite instances; a pass is not a proof of the C.
+
+**Export generations** (`models/Export.tla`). Variables: the service's sequence and state; the
+current pin per kind (id, sequence, bytes, released flag); each fetch's accepted id and pages; a
+restart counter. Actions: `Commit`, `CreatePin`, `ReadPage`, `Replace`, `Expire`, `Restart`,
+`FetchAccept`. Invariants:
+
+- `NoMixedGeneration`: every page a fetch accepted came from one pin id, and their bytes are that
+  pin's bytes;
+- `NoReleasedRead`: no page is served from a released pin.
+
+Configuration: two kinds collapsed to one, three sequence values, two restarts, pins with the same
+sequence allowed. Negative control: a variant whose `ReadPage` keys pins by sequence instead of id
+must violate `NoMixedGeneration`. Progress (`a fetch with no replacement and no expiry completes`)
+is checked only under weak fairness of `ReadPage` and with `Replace` and `Expire` disabled.
+
+**Failure capture** (`models/Capture.tla`). Variables: application state and log position;
+failure table; supervisor count; store health; a pending capture's phase. Actions: `Fail`,
+`Prepare`, `PrepareRefuse`, `Begin`, `Write`, `Commit`, `CommitUncertain`, `Rollback`,
+`RollbackFail`, `Crash`, `Recover`, `Evict`, `Count`. Invariants:
+
+- `PairComplete`: every published record id has both halves, from the same failure;
+- `RecoveryUntouched`: no capture action changes application state or log position;
+- `CountedOnce`: each failure increments the supervisor count exactly once, whatever the capture
+  outcome;
+- `NoUnsafeContinue`: after `RollbackFail` or `CommitUncertain` the service is stopped.
+
+SQLite's atomic commit is modelled as the `Commit` action, with `CommitUncertain` and `Crash`
+between `Write` and `Commit` as the failures it must survive; the model does not assume the
+property it checks. Negative controls: publishing the id at `Write`, and counting the failure in
+`Rollback` as well, must each violate an invariant. Each counterexample found while writing the
+models becomes a store or process test.
+
+### 11.3 C
+
+| Property | Evidence |
+| --- | --- |
+| The page reader and fetch bounds | `fuzz_fetch`; a CBMC harness over the page-metadata checks (offset, length, total and coverage arithmetic) with unwinding and reach checks |
+| Failure record framing | the existing envelope reader gains kinds 3 and 4; `fuzz_service_failure` (a third wrapper of `service_fuzz.h`); a CBMC harness for the message payload's length arithmetic |
+| Offline artifact reader | `fuzz_artifact`; CBMC over the `MOEX` header reader |
+| SHA-256 | FIPS 180-4 vectors, a long-message vector and a differential unit test |
+| Capture under faults | allocation fault injection by compile-time renaming in the capture translation unit; a fake store returning each SQLite failure class of section 6.4; process kill tests at each step of section 6.3 |
+| Exact budgets | the work-limit capture at exactly `MO_LIMIT_SERVICE_WORK`; the live-mailbox regression: a handler that fails with a full mailbox and succeeds offline is `not_reproduced`, and its unchanged handler is never `verified` |
+
+### 11.4 Safe-c
+
+Not pursued in this design step. Its practices (exact postconditions, independent property
+clients, negative controls, a mapping from model actions to C) are used above. No library is
+adopted.
+
+## 12. Open questions for approval
+
+1. The runtime build identity hashes the `mo` executable (section 4). The alternative, a digest
+   of selected build inputs, is cheaper to keep stable across rebuilds but easier to get wrong.
+2. Keeping the current state encoded costs up to 16 MiB resident per service (section 6.3). The
+   alternative, encoding at failure time, cannot capture after a heap exhaustion.
+3. `mo serve`'s new exit status 75 for lock contention (section 9).
+4. Retention of 64 records and 64 MiB, two per kind (section 6.5).
+5. History stays at the post-snapshot tail (section 9).
+6. The evaluation runs on the agent's own machine (section 2).
+
+## Approval and changes
+
+| Date | What | Who | Evidence |
+| --- | --- | --- | --- |
+| 2026-11-04 | First proposal | Claude (design step) | this file's first commit |
