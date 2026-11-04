@@ -1,8 +1,9 @@
 # The Phase 4 evaluation protocol
 
-**Status: proposed, waiting for Robert's approval, together with `docs/design/introspection.md`.**
-No pilot, baseline or final session has run. The predictions in section 9 were written before
-any of them.
+**Status: approved by Robert on 2026-11-04, together with `docs/design/introspection.md`.** No
+pilot, baseline or final session has run. The predictions in section 9 were written before any
+of them. What the pilots may still change, and what is frozen before the baseline, is in sections
+1 and 7.
 
 The question is whether the Phase 4 instruments (the operator views, export with offline query,
 and failure replay with fix checking) let fresh agents diagnose and fix a running Mo service's
@@ -86,8 +87,8 @@ Without the last column, Codex refuses every unannotated author tool under
 use the same approval settings.
 
 Earlier rounds ran as Amp threads. Amp is not installed on the probe machine, so its MCP naming,
-approvals and transcripts are unverified. This protocol proposes the native clients above; using
-Amp instead needs the same probe run through it first.
+approvals and transcripts are unverified. Robert chose the native clients above at approval;
+moving to Amp would need the same probe run through it first.
 
 **Recording.** Two records per session, used identically in both rounds:
 
@@ -188,7 +189,7 @@ session. Both, for this protocol's allocation:
 | 24 | 35% to 65% in every family | 0.59 |
 
 24 sessions (a multiple of 12, so every variant gets the same sessions from each client) already
-give more than 80% power if the predictions hold. This protocol proposes 36 as margin: if the
+give more than 80% power if the predictions hold. Robert chose 36, as margin: if the
 true improvement is smaller than predicted, such as 35% to 65%, 36 keeps 0.72 where 24 would keep
 0.59. Power is not monotone in the number of sessions for a discrete test, so the frozen number is
 fixed in advance and its exact power reported, rather than searched for after the fact.
@@ -202,8 +203,9 @@ release is judged. The baseline is never replaced.
 
 ## 9. Predictions
 
-Written on 2026-11-04 by Claude, in the design step, before any pilot. Robert may add his own
-before the pilots start; these are not edited after.
+Written on 2026-11-04 by Claude, in the design step, before any pilot. At approval Robert chose
+to add his own beside these; they go here before the first pilot starts, and neither set is
+edited after.
 
 | Family | Baseline | Final | Why |
 | --- | --- | --- | --- |

@@ -1,8 +1,9 @@
 # Introspection and replay: the Phase 4 design
 
-**Status: proposed, waiting for Robert's approval.** Nothing in this document is built yet. Every
-interface, format and limit below is a proposal until that approval is recorded in "Approval and
-changes" at the end. The phase plan is
+**Status: approved by Robert on 2026-11-04; nothing in it is built yet.** Section 12 records the
+decisions made at approval, and "Approval and changes" at the end records every later change. A
+change to an interface, format or limit here is made in this document, with its reason, before
+the code that depends on it lands. The phase plan is
 `docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`; this document holds the interfaces,
 budgets, models and experiment results it asks for. The evaluation protocol is
 `learnability/phase4/protocol.md`. The experiments this design rests on are in
@@ -651,19 +652,30 @@ Not pursued in this design step. Its practices (exact postconditions, independen
 clients, negative controls, a mapping from model actions to C) are used above. No library is
 adopted.
 
-## 12. Open questions for approval
+## 12. Decisions made at approval
 
-1. The runtime build identity hashes the `mo` executable (section 4). The alternative, a digest
-   of selected build inputs, is cheaper to keep stable across rebuilds but easier to get wrong.
-2. Keeping the current state encoded costs up to 16 MiB resident per service (section 6.3). The
-   alternative, encoding at failure time, cannot capture after a heap exhaustion.
-3. `mo serve`'s new exit status 75 for lock contention (section 9).
-4. Retention of 64 records and 64 MiB, two per kind (section 6.5).
-5. History stays at the post-snapshot tail (section 9).
-6. The evaluation runs on the agent's own machine (section 2).
+Robert accepted each of these on 2026-11-04, as written here.
+
+1. **The runtime build identity is the SHA-256 of the `mo` executable** (section 4), not a digest
+   of chosen build inputs. A list of inputs that misses one would let two different runtimes
+   claim to be the same, and a replay verdict would then be wrong without saying so; an exact
+   identity only ever asks for the original executable, which deployments already keep.
+2. **The runtime keeps the current state's encoding**, up to 16 MiB of native memory per service
+   (section 6.3), rather than encoding at failure time, because encoding needs heap scratch and
+   the failures most worth recording are heap exhaustions.
+3. **`mo serve` waits up to 10 seconds for a store lock another process holds, then exits 75**
+   (section 9), a status service managers retry, so a reader at the wrong moment cannot keep a
+   service down.
+4. **Retention is 64 records and 64 MiB, a first and a latest record per kind** (section 6.5), so
+   a repeating failure rewrites one row and never evicts another kind's first failure.
+5. **History is the log since the last snapshot** (section 9). An archive of every message waits
+   for evidence that agents need it; failure records already survive snapshots.
+6. **Evaluation sessions run on the service's own machine** (section 2). A proxy-only remote
+   operator gets the views alone, and that stays a documented limit of v0.1.
 
 ## Approval and changes
 
 | Date | What | Who | Evidence |
 | --- | --- | --- | --- |
-| 2026-11-04 | First proposal | Claude (design step) | this file's first commit |
+| 2026-11-04 | First proposal | Claude (design step) | this file's first commit, PR #288 |
+| 2026-11-04 | Approved, with the six decisions in section 12 as proposed | Robert | his "accept all" in the design-step session, after each decision was walked through; this row's commit |

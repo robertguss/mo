@@ -19,12 +19,13 @@ Phases 0 to 3 are finished, and Phase 4 is the current phase.
 
 ## Now
 
-Phase 4, Agents can see inside it. It begins with its design step.
+Phase 4, Agents can see inside it. Its design step is done; the pilots and the
+independent baseline come next.
 
-- [ ] The design step: `docs/design/introspection.md` and the evaluation
+- [x] The design step: `docs/design/introspection.md` and the evaluation
       protocol `learnability/phase4/protocol.md`, with the experiments they
-      rest on in `learnability/phase4/preflight/`. Proposed; waiting for
-      Robert's approval.
+      rest on in `learnability/phase4/preflight/`. Approved on 2026-11-04.
+      Before the first pilot: Robert's own predictions, beside Claude's.
 - [ ] Pilots and an independent baseline, before any Phase 4 instrument.
 - [ ] Operator tools on the MCP endpoint, and state export to a private file.
 - [ ] Failure records, kept apart from saved state.
