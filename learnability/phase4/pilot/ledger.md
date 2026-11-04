@@ -86,6 +86,7 @@ check together. Verdict is Robert's reading of the session. Minutes are the mani
 
 | # | Date | Variant | Client | Grade | Verdict | Minutes | Records | Changed |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 4 Nov 2026 | `shared-briefs` | Claude Code | success | Solved, by reading the start state instead of the service: it decoded the saved snapshot from the read-only data copy and confirmed with one `list` call. A sign that `shared-briefs` may be trivial as designed; judged after its third pilot. | 1.1 | 2 of 2 matched | nothing |
 
 ## Changes
 
@@ -100,9 +101,9 @@ Solves and failures are counted since the variant's last change.
 | --- | --- | --- | --- | --- | --- | --- |
 | `expire-one-per-tick` | Wrong state | 0 | 0 | 0 | 0 | not piloted |
 | `expire-kills-third-attempt` | Wrong state | 0 | 0 | 0 | 0 | not piloted |
-| `shared-briefs` | Question, state | 0 | 0 | 0 | 0 | not piloted |
+| `shared-briefs` | Question, state | 1 | 0 | 1 | 0 | piloting |
 | `who-killed-the-job` | Question, history | 0 | 0 | 0 | 0 | not piloted |
 | `list-pasted-brief` | Failure, defect | 0 | 0 | 0 | 0 | not piloted |
 | `stats-quadratic` | Failure, work limit | 0 | 0 | 0 | 0 | not piloted |
 
-Pilot sessions used: 0 of 30.
+Pilot sessions used: 1 of 30.
