@@ -21,7 +21,7 @@ execution: code
 
 ## Revision and Evidence Status
 
-This revision incorporates PA-1 through PA-9 from the [audit](2026-11-03-1704-feat-phase4-see-inside-plan.audit.md), the user's decisions on capture, replay, compatibility and evaluation, and the request for continued Lean proofs with TLA+ where useful. Requirements and acceptance examples below are the implementation contract; implementers do not need to assemble decisions from the audit conversation.
+This revision incorporates PA-1 through PA-9 from the audit (`2026-11-03-1704-feat-phase4-see-inside-plan.audit.md`, removed from the repository on 2026-11-04 and kept in git history), the user's decisions on capture, replay, compatibility and evaluation, and the request for continued Lean proofs with TLA+ where useful. Requirements and acceptance examples below are the implementation contract; implementers do not need to assemble decisions from the audit conversation.
 
 The original plan described several decisions as previously approved without linking the originating sessions. That provenance remains unverified; those labels are removed. The current discussion explicitly authorizes this consolidation and settles the changes recorded here. It does not establish historical approvals, external prototypes, measurements or completed proofs.
 
