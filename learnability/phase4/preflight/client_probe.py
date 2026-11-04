@@ -167,7 +167,6 @@ def run_codex(url, workdir, out, approve=False):
                '-c', 'mcp_servers.probe.bearer_token_env_var="PROBE_TOKEN"',
                '-c', 'approval_policy="never"']
     if approve:
-        # Approve this server's tools without asking, as an unattended session must.
         command += ['-c', 'mcp_servers.probe.default_tools_approval_mode="approve"']
     command.append(PROMPT)
     return command, version(['codex', '--version']), run(command, workdir, out)
@@ -241,7 +240,10 @@ def main(args):
                           'claude': run_claude}[client]
                 command, client_version, result = runner(url, workdir, out / f'{client}.jsonl')
                 names, calls = visible_names(client, out / f'{client}.jsonl')
-                shown = command[:-1] if client.startswith('codex') else command[:2] + ['PROMPT'] + command[3:]
+                if client.startswith('codex'):
+                    shown = command[:-1]
+                else:
+                    shown = command[:2] + ['PROMPT'] + command[3:]
                 summary[client] = {'version': client_version, 'command': shown, **result,
                                    'visible_names': names, 'calls': calls}
         finally:

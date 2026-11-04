@@ -32,13 +32,26 @@ TOKEN = 'Phase4SizingCanary'
 PROTOCOL = '2025-11-25'
 
 
+class Refused(Exception):
+    """mo serve exited before it was listening."""
+
+    def __init__(self, status, stderr):
+        super().__init__(f'exited {status}: {stderr}')
+        self.status, self.stderr = status, stderr
+
+
 class Server:
     def __init__(self, binary, program, token_env, data):
         self.process = subprocess.Popen(
             [str(binary), 'serve', str(program), '--port', '0', '--data', str(data)],
             env={**os.environ, token_env: TOKEN}, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, bufsize=0, cwd=ROOT)
-        self.port = self.listening()
+        try:
+            self.port = self.listening()
+        except RuntimeError:
+            self.process.kill()
+            self.process.wait(timeout=60)
+            raise
         self.next_id = 0
         self.peak_kib = 0
 
@@ -50,7 +63,11 @@ class Server:
                 raise RuntimeError(f'no listening line: {line!r}')
             chunk = self.process.stdout.read(1)
             if not chunk:
-                raise RuntimeError(f'exited: {self.process.stderr.read()!r}')
+                status = self.process.wait(timeout=60)
+                stderr = self.process.stderr.read().decode('utf-8', 'replace').strip()
+                self.process.stdout.close()
+                self.process.stderr.close()
+                raise Refused(status, stderr)
             line += chunk
         return int(line.split(b':')[-1].split(b'/')[0])
 

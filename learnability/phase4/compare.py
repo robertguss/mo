@@ -23,6 +23,7 @@ outcome, with no simulation. A rate is written as a fraction (0.35), a percentag
 ratio (7/20). The exit status is 0 for any result and 2 for a usage error.
 """
 
+import functools
 import math
 import pathlib
 import sys
@@ -31,13 +32,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import wilson  # noqa: E402
 
 LARGEST_SIZE = 400
+score = functools.lru_cache(maxsize=None)(wilson.wilson)
 
 
 def difference(k1, n1, k2, n2):
     """The difference K2/N2 - K1/N1 and its 95% Newcombe hybrid score interval."""
     p1, p2 = k1 / n1, k2 / n2
-    l1, u1 = wilson.wilson(k1, n1)
-    l2, u2 = wilson.wilson(k2, n2)
+    l1, u1 = score(k1, n1)
+    l2, u2 = score(k2, n2)
     d = p2 - p1
     low = d - math.sqrt((p2 - l2) ** 2 + (u1 - p1) ** 2)
     high = d + math.sqrt((u2 - p2) ** 2 + (p1 - l1) ** 2)
@@ -59,7 +61,6 @@ def power(p1, p2, n):
     if n <= 0:
         raise ValueError("need N > 0")
     first, second = binomial(n, p1), binomial(n, p2)
-    # For each baseline count, the verdict holds from some final count upward, so find it once.
     total = 0.0
     for k1 in range(n + 1):
         least = room(k1, n, n)

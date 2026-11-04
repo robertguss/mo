@@ -20,27 +20,24 @@ Variants:
   changed-schema   a field of the state's record type renamed: must be refused
   no-rewrite       private-query without the key rewrite: today's whole-program refusal
 
-Prints one JSON object with each variant's outcome. The token is a fixed canary.
+Prints one JSON object with each variant's outcome. The token is sizing.py's fixed canary.
 """
 
-import http.client
 import json
-import os
 import pathlib
-import select
 import shutil
-import signal
 import sqlite3
 import struct
 import subprocess
 import sys
 import tempfile
-import time
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from sizing import Refused, Server  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent.parent.parent
 SOURCE = ROOT / 'services' / 'task-queue'
-TOKEN = 'Phase4QueryCanary'
 JOBS = 105
 FNV_OFFSET = 14695981039346656037
 FNV_PRIME = 1099511628211
@@ -92,51 +89,16 @@ def rewrite(data, key):
     return len(rows)
 
 
-class Server:
-    def __init__(self, binary, folder, data):
-        self.process = subprocess.Popen(
-            [str(binary), 'serve', str(folder / 'main.mo'), '--port', '0', '--data', str(data)],
-            env={**os.environ, 'QUEUE_TOKEN': TOKEN}, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, bufsize=0)
-        self.port = None
-        self.refusal = None
-        line = b''
-        limit = time.monotonic() + 60
-        while not line.endswith(b'\n'):
-            ready = select.select([self.process.stdout], [], [], limit - time.monotonic())[0]
-            chunk = self.process.stdout.read(1) if ready else b''
-            if not chunk:
-                self.process.wait(timeout=60)
-                self.refusal = (self.process.returncode,
-                                self.process.stderr.read().decode('utf-8', 'replace').strip())
-                return
-            line += chunk
-        self.port = int(line.split(b':')[-1].split(b'/')[0])
-        self.next_id = 0
+def value(server, tool, **arguments):
+    """A successful tool call's value."""
+    content, failed, _, _ = server.call(tool, **arguments)
+    assert not failed, (tool, content)
+    return content['value']
 
-    def call(self, tool, **arguments):
-        self.next_id += 1
-        time.sleep(0.052)
-        connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=60)
-        connection.request('POST', '/mcp', json.dumps({
-            'jsonrpc': '2.0', 'id': self.next_id, 'method': 'tools/call',
-            'params': {'name': tool, 'arguments': arguments}}), {
-            'Authorization': f'Bearer {TOKEN}', 'Content-Type': 'application/json',
-            'MCP-Protocol-Version': '2025-11-25'})
-        response = connection.getresponse()
-        data = response.read()
-        connection.close()
-        assert response.status == 200, (response.status, data)
-        result = json.loads(data)['result']
-        assert not result['isError'], result
-        return result['structuredContent']['value']
 
-    def stop(self):
-        self.process.send_signal(signal.SIGTERM)
-        status = self.process.wait(timeout=60)
-        self.process.stdout.close()
-        self.process.stderr.close()
-        return status
+def stopped(server):
+    status, _, _ = server.stop()
+    return status
 
 
 def edit(folder, name, old, new):
@@ -186,7 +148,6 @@ def make_variant(base, name):
             f.write('\n## How many jobs are ready to lease.\n'
                     'fn ready(queue: Queue, _now: Time) : Int\n  Query.ready(queue)\nend\n')
     elif name == 'changed-schema':
-        # Renaming a field changes the saved schema and nothing else about the program.
         path = folder / 'job-queue.mo'
         text = path.read_text(encoding='utf-8')
         assert text.count('next_id') > 1
@@ -203,13 +164,12 @@ def main(args):
         shutil.copytree(SOURCE, original)
         saved = base / 'saved'
         saved.mkdir()
-        server = Server(binary, original, saved)
-        assert server.port, server.refusal
+        server = Server(binary, original / 'main.mo', 'QUEUE_TOKEN', saved)
         for n in range(JOBS):
-            server.call('submit', payload=f'job {n}')
-        server.call('lease')
-        before = server.call('stats')
-        assert server.stop() == 0
+            value(server, 'submit', payload=f'job {n}')
+        value(server, 'lease')
+        before = value(server, 'stats')
+        assert stopped(server) == 0
         results['original'] = {'stats': before, 'image_key': f'{image_key(saved):016x}'}
         for name in ('same', 'private-query', 'imported-query', 'changed-schema', 'no-rewrite'):
             folder = make_variant(base, name) if name != 'same' else original
@@ -220,25 +180,23 @@ def main(args):
                 continue
             fresh = base / f'{name}-fresh'
             fresh.mkdir()
-            probe = Server(binary, folder, fresh)
-            assert probe.port, probe.refusal
-            assert probe.stop() == 0
+            assert stopped(Server(binary, folder / 'main.mo', 'QUEUE_TOKEN', fresh)) == 0
             key = image_key(fresh)
             data = base / f'{name}-data'
             shutil.copytree(saved, data)
             rewritten = 0 if name == 'no-rewrite' else rewrite(data, key)
-            variant = Server(binary, folder, data)
             outcome = {'image_key': f'{key:016x}', 'records_rewritten': rewritten}
-            if variant.port is None:
-                outcome['loaded'] = False
-                outcome['exit_status'], outcome['refusal'] = variant.refusal
+            try:
+                variant = Server(binary, folder / 'main.mo', 'QUEUE_TOKEN', data)
+            except Refused as refusal:
+                outcome.update(loaded=False, exit_status=refusal.status, refusal=refusal.stderr)
             else:
                 outcome['loaded'] = True
-                outcome['stats'] = variant.call('stats')
+                outcome['stats'] = value(variant, 'stats')
                 outcome['stats_match'] = same_counts(outcome['stats'], before)
                 if name == 'imported-query':
-                    outcome['ready'] = variant.call('ready')
-                outcome['exit_status'] = variant.stop()
+                    outcome['ready'] = value(variant, 'ready')
+                outcome['exit_status'] = stopped(variant)
             results[name] = outcome
     print(json.dumps(results, indent=2))
     return 0
