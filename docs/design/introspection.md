@@ -5,8 +5,7 @@ decisions made at approval, and "Approval and changes" at the end records every 
 change to an interface, format or limit here is made in this document, with its reason, before
 the code that depends on it lands. The phase plan is
 `docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`; this document holds the interfaces,
-budgets, models and experiment results it asks for. The evaluation protocol is
-`learnability/phase4/protocol.md`. The experiments this design rests on are in
+budgets, models and experiment results it asks for. The original evaluation protocol is `learnability/phase4/protocol.md`; its historical-status notice and the phase plan’s R20–R24 govern the 2026-11-05 evaluation amendment. The experiments this design rests on are in
 `learnability/phase4/preflight/`, with their results in its `README.md`.
 
 ## 1. What Phase 4 promises
@@ -679,3 +678,54 @@ Robert accepted each of these on 2026-11-04, as written here.
 | --- | --- | --- | --- |
 | 2026-11-04 | First proposal | Claude (design step) | this file's first commit, PR #288 |
 | 2026-11-04 | Approved, with the six decisions in section 12 as proposed | Robert | his "accept all" in the design-step session, after each decision was walked through; this row's commit |
+
+| 2026-11-05 | Replace the mandatory old baseline prerequisite with pilot findings and prospective diagnostic evaluation; technical contracts remain in force | Robert’s direction, recorded by Codex | canonical phase plan’s dated amendment and `learnability/phase4/pilot/findings.md` |
+
+### Implementation staging and observation metadata
+
+The operator milestone first retains the current saved encoding and bounded native metadata, then exposes authenticated live views, then state export and private fetch. Failure-backed catalog entries and failure-kind export become available with U4’s capture/retention implementation. Earlier milestones omit unavailable capabilities from discovery and refuse direct requests through normal unsupported-action validation; they never return an ordinary empty success suggesting that capture is functioning. Views that reference a later capability must state its current availability.
+
+Mailbox argument byte size is the encoded length when available. For legal read-only arguments whose encoding cannot be obtained within the diagnostic bounds, return an explicit unavailable value and reason. Do not reject an otherwise legal call to satisfy a diagnostic size field, report a fabricated zero, or retain live argument values beyond their existing lifetime.
+
+The cached current-state encoding is an U3 foundation dependency even though its design is described in §6.3. Implementers must preserve initialization, recovery, failed-append and snapshot-failure behavior. Non-persistent service loops must not acquire new saved-codec admission requirements solely to support inspection; accessors report unavailable encoded state when that service mode cannot supply it. The operator/fetch workflow is verified on the served persistent service path.
+
+### Native observation foundation
+
+The native `vm.h` observation API is idle-only. It copies bounded scalar metadata and
+borrows the current encoded state until the next step or destruction; it allocates no
+scratch and retains no live values. A full mailbox is observable without admission.
+Supervisor timestamps are the retained accounting windows at `observed_elapsed`, the
+last clock sample, rather than a fresh clock read. Heap use/peak and stack capacity are
+reported separately. The fixed event ring retains numbers, kind, reason, time and handler
+function index, never transient defect pointers.
+
+Persistent loops retain the validated saved encoding in an independently owned buffer
+bounded by `MO_LIMIT_SAVED_BYTES`, plus one arena chunk header. The previous cache and
+candidate encoding coexist during update preparation; publication moves the candidate
+buffer and frees the previous cache. Existing codec scratch remains charged to the heap.
+A failed append or snapshot leaves the live state and cache unchanged. A successful append
+followed by snapshot failure advances the recovery sequence but stops the loop; reopening
+replays that committed update and obtains its encoding. The separate encoded-state sequence
+identifies the cached bytes even when they trail the recovery sequence. Snapshot sequence changes only
+when a snapshot succeeds. Nonpersistent loops do not acquire codec requirements and
+report encoded state unavailable.
+
+Mailbox argument sizes sum the saved argument payload lengths, excluding log framing.
+They are available for persistent updating calls and zero-argument calls. Otherwise the
+availability flag is false: the arguments were not encoded at admission. Observing them
+never encodes or retains additional values. Timers have zero argument bytes.
+
+The executable initializes runtime identity once at startup. Linux reads `/proc/self/exe`;
+macOS resolves the executable path. A failed read leaves identity unavailable without
+changing ordinary command behavior. Consumers must check availability. The build label
+includes Mo's version, compiler version and build configuration. `ci/check_sha256.py`
+compares the native digest against Python's SHA-256 for the executing test binary and
+110 deterministic boundary/random inputs; `test_sha256` also pins standard digest vectors.
+No authenticated operator entry point, artifact format or fetch command is introduced by
+these native interfaces.
+
+The debug build optimizes the SHA-256 arithmetic kernel while retaining debug settings
+for the rest of the toolchain. This keeps eager executable hashing within the existing
+sample `mo check` latency budget; the measured executable bytes still determine identity.
+The service-store fault harness separately refuses the recovery cache copy, checking a
+memory refusal, release of the decoded state and successful reopening afterward.

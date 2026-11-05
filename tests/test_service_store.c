@@ -13,7 +13,7 @@
 #include <unistd.h>
 
 static unsigned crash_point, log_steps, simulation_appends;
-static bool check_recovery_heap, refuse_store_allocation;
+static bool check_recovery_heap, refuse_store_allocation, refuse_cache_copy;
 static unsigned recovery_heap_checks;
 static struct {
     bool enabled, forward, refuse, refuse_case;
@@ -30,6 +30,8 @@ mo_store_fault_call(struct mo_store *store, enum mo_store_operation operation,
 int mo_store_fault_step(sqlite3_stmt *stmt);
 void mo_store_fault_process_free(struct mo_process *process);
 MO_MUST_USE void *mo_store_fault_allocate(struct mo_arena *arena, size_t size, size_t alignment);
+MO_MUST_USE bool mo_service_fault_buffer_append(struct mo_buffer *buffer, const void *bytes,
+                                                size_t length);
 MO_MUST_USE enum mo_service_status mo_simulation_observe_open(const struct mo_image *image,
                                                               uint32_t index,
                                                               const struct mo_service_hooks *hooks,
@@ -42,6 +44,10 @@ MO_MUST_USE enum mo_service_status mo_simulation_observe_send(struct mo_service_
 MO_MUST_USE bool mo_simulation_fault_case(struct mo_heap *heap, uint32_t type, uint32_t tag,
                                           const struct mo_cell *fields, uint32_t count,
                                           struct mo_cell *out);
+
+bool mo_service_fault_buffer_append(struct mo_buffer *buffer, const void *bytes, size_t length) {
+    return !refuse_cache_copy && mo_buffer_append(buffer, bytes, length);
+}
 
 void *mo_store_fault_allocate(struct mo_arena *arena, size_t size, size_t alignment) {
     return refuse_store_allocation ? NULL : mo_arena_allocate(arena, size, alignment);
@@ -225,21 +231,104 @@ static void check_inventory(struct mo_store *store, uint64_t snapshot, unsigned 
     CHECK(i.snapshot == snapshot && i.logs == logs && i.last == snapshot + logs);
 }
 
+static void check_encoding(struct mo_service_loop *service, struct mo_image *image) {
+    const uint8_t *bytes;
+    size_t length;
+    CHECK(mo_service_encoded_state(service, &bytes, &length));
+    struct mo_buffer expected;
+    mo_buffer_init(&expected, MO_LIMIT_SAVED_BYTES);
+    CHECK(mo_value_encode(mo_service_heap(service),
+                          mo_image_bytecode(image)->services[0].state_type,
+                          mo_service_state(service), &expected));
+    CHECK(length == expected.length);
+    CHECK(length == expected.length && memcmp(bytes, expected.bytes, length) == 0);
+    struct mo_service_observation view = mo_service_observe(service);
+    CHECK(view.encoded_bytes == length && view.encoded_capacity >= length);
+    CHECK(view.encoded_capacity <= MO_LIMIT_SAVED_BYTES);
+    mo_buffer_free(&expected);
+}
+
+static void readonly_mailbox_size(void) {
+    struct mo_image *image =
+        compile("module Main\nservice\nstate Int = 7\ntools read\n"
+                "token from env \"TOKEN\"\nend\n"
+                "fn read(_state: Int, _now: Time, n: Int) : Bool\nn > 0\nend\n");
+    struct mo_store *store = NULL;
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    struct mo_cell argument = mo_cell_int(42);
+    CHECK(mo_service_send(s, 0, &argument, 1, 1) == MO_SERVICE_OK);
+    struct mo_service_message_summary message;
+    CHECK(mo_service_mailbox_entry(s, 0, &message));
+    CHECK(!message.argument_bytes_available);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_image_free(image);
+}
+
+static void cache_copy_failure(void) {
+    struct mo_image *image = compile("module Main\nservice\nstate List(Int) = [7]\ntools read\n"
+                                     "token from env \"TOKEN\"\nend\n"
+                                     "fn read(_state: List(Int), _now: Time) : Bool\ntrue\nend\n");
+    struct mo_store *store = NULL;
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    mo_service_free(s);
+    struct mo_service_hooks hooks = {clock_now, reply, event, &o};
+    s = NULL;
+    unsigned checks = recovery_heap_checks;
+    check_recovery_heap = true;
+    refuse_cache_copy = true;
+    CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_MEMORY);
+    refuse_cache_copy = false;
+    check_recovery_heap = false;
+    CHECK(s == NULL && recovery_heap_checks == checks + 1);
+    recovery_heap_checks = checks;
+    s = open_service(image, store, &o);
+    check_encoding(s, image);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_image_free(image);
+}
+
 static void memory_store(struct mo_image *image) {
     struct mo_store *store = NULL;
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
+    struct mo_cell argument = mo_cell_int(0);
+    CHECK(mo_service_send(s, 0, &argument, 1, 2000) == MO_SERVICE_OK);
+    struct mo_service_message_summary message;
+    CHECK(mo_service_mailbox_entry(s, 0, &message));
+    struct mo_buffer argument_encoding;
+    mo_buffer_init(&argument_encoding, MO_LIMIT_SAVED_BYTES);
+    CHECK(mo_value_encode(mo_service_heap(s),
+                          mo_image_bytecode(image)->services[0].tools[0].argument_types[0],
+                          argument, &argument_encoding));
+    CHECK(message.argument_bytes_available && message.argument_bytes == argument_encoding.length &&
+          message.argument_bytes != 0);
+    mo_buffer_free(&argument_encoding);
+    /* Discard the queued observation fixture without committing a message. */
+    mo_service_free(s);
+    s = open_service(image, store, &o);
     for (unsigned i = 0; i < MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES + 3; i++)
         add(s, 11);
     CHECK(o.replies == MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES + 3 && o.status == MO_SERVICE_OK);
     check_inventory(store, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES, 3);
+    struct mo_service_observation view = mo_service_observe(s);
+    CHECK(view.sequence == 103 && view.snapshot_sequence == 100 && view.encoded_sequence == 103);
+
     for (unsigned i = 0; i < 20; i++) {
         CHECK(mo_service_send(s, 1 + i % 2, NULL, 0, i) == MO_SERVICE_OK);
         CHECK(mo_service_step(s));
     }
     check_inventory(store, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES, 3);
     CHECK(o.failures == 0 && o.stops == 0);
+    CHECK(mo_cell_get_int(mo_service_state(s)) ==
+          7 + 11 * (MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES + 3));
     for (unsigned i = 0; i < MO_LIMIT_SERVICE_FAILURES; i++) {
         CHECK(mo_service_send(s, 3, NULL, 0, i) == MO_SERVICE_OK);
         CHECK(mo_service_step(s));
@@ -266,6 +355,7 @@ static void crashes(struct mo_image *image, const char *path) {
         MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
         struct observations o = {0};
         struct mo_service_loop *s = open_service(image, store, &o);
+        check_encoding(s, image);
         unsigned before = point == 3 ? MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES - 1 : 1;
         for (unsigned i = 0; i < before; i++)
             add(s, 3);
@@ -318,6 +408,7 @@ static void corruption(struct mo_image *image, const char *path) {
         MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
         struct observations o = {0};
         struct mo_service_loop *s = open_service(image, store, &o);
+        check_encoding(s, image);
         add(s, 11);
         add(s, 13);
         mo_service_free(s);
@@ -341,6 +432,7 @@ static void uncertain_commit(struct mo_image *image) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     crash_point = 4;
     add(s, 11);
     crash_point = 0;
@@ -348,15 +440,19 @@ static void uncertain_commit(struct mo_image *image) {
     CHECK(strcmp(mo_service_status_text(o.status),
                  "service store failed; reopen it to see whether the last change was saved") == 0);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 7);
+    check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
+    check_encoding(s, image);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
     crash_point = 5;
     add(s, 5);
     crash_point = 0;
     CHECK(o.status == MO_SERVICE_STORE && !mo_service_running(s));
+    check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
+    check_encoding(s, image);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
     check_inventory(store, 0, 1);
     mo_service_free(s);
@@ -376,17 +472,29 @@ static void failed_snapshot(struct mo_image *image) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     for (unsigned i = 1; i < MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES; i++)
         add(s, 1);
     crash_point = 6;
     add(s, 1);
     crash_point = 0;
     CHECK(o.status == MO_SERVICE_STORE && !mo_service_running(s));
+    CHECK(mo_cell_get_int(mo_service_state(s)) == 6 + MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
     check_inventory(store, 0, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
+    struct mo_service_observation before_recovery = mo_service_observe(s);
+    CHECK(before_recovery.sequence == 100 && before_recovery.snapshot_sequence == 0 &&
+          before_recovery.encoded_sequence == 99);
+
+    check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
+    check_encoding(s, image);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 7 + MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
     check_inventory(store, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES, 0);
+    struct mo_service_observation recovered = mo_service_observe(s);
+    CHECK(recovered.sequence == 100 && recovered.snapshot_sequence == 100 &&
+          recovered.encoded_sequence == 100);
+
     mo_service_free(s);
     crash_point = 6;
     struct mo_service_hooks hooks = {clock_now, reply, event, &o};
@@ -473,6 +581,7 @@ static void message_limit(void) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     struct mo_heap *heap = mo_service_heap(s);
     uint32_t text = mo_image_bytecode(image)->services[0].tools[0].argument_types[0];
     /* Timer flag, handler, arrival, count and checksum, then a length per argument. */
@@ -495,8 +604,10 @@ static void message_limit(void) {
     CHECK(mo_service_step(s));
     CHECK(o.status == MO_SERVICE_OK && mo_service_running(s));
     CHECK(mo_cell_get_int(mo_service_state(s)) == (int64_t)room);
+    check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
+    check_encoding(s, image);
     CHECK(mo_cell_get_int(mo_service_state(s)) == (int64_t)room);
     mo_service_free(s);
     mo_store_close(store);
@@ -553,6 +664,7 @@ static void read_failures(struct mo_image *image) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     add(s, 1);
     add(s, 2);
     mo_service_free(s);
@@ -581,6 +693,7 @@ static void foreign_image(struct mo_image *image, const char *path) {
     MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     add(s, 11);
     mo_service_free(s);
     mo_store_close(store);
@@ -630,6 +743,7 @@ static void hostile_database(struct mo_image *image, const char *path) {
     CHECK(mo_store_open(path, &second) != MO_STORE_OK && second == NULL);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     add(s, 11);
     mo_service_free(s);
     mo_store_close(store);
@@ -694,6 +808,7 @@ static void invalid_payloads(struct mo_image *image) {
         MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
         struct observations o = {0};
         struct mo_service_loop *s = open_service(image, store, &o);
+        check_encoding(s, image);
         add(s, 11);
         MO_ASSERT(mo_store_call(store, MO_STORE_LOAD, NULL, copy_record, &saved) == MO_STORE_OK);
         mo_service_free(s);
@@ -760,10 +875,13 @@ static void wrong_state_checksum(void) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     add(s, 11);
     MO_ASSERT(mo_store_call(store, MO_STORE_LOAD, NULL, copy_record, &saved) == MO_STORE_OK);
+    check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
+    check_encoding(s, image);
     struct mo_cell element;
     CHECK(mo_list_size(mo_service_state(s)) == 3);
     MO_ASSERT(mo_list_get(mo_service_state(s), 2, &element));
@@ -804,6 +922,7 @@ static void replayed_timer_is_named(void) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     CHECK(mo_service_step(s));
     MO_ASSERT(mo_store_call(store, MO_STORE_LOAD, NULL, copy_record, &saved) == MO_STORE_OK);
     mo_service_free(s);
@@ -850,6 +969,7 @@ static void replay_limit(void) {
         MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
         struct observations o = {0};
         struct mo_service_loop *s = open_service(image, store, &o);
+        check_encoding(s, image);
         struct mo_cell n = mo_cell_int(3);
         CHECK(mo_service_send(s, tool, &n, 1, 0) == MO_SERVICE_OK);
         CHECK(mo_service_step(s));
@@ -885,6 +1005,7 @@ static void long_tail(struct mo_image *image) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     add(s, 0);
     MO_ASSERT(mo_store_call(store, MO_STORE_LOAD, NULL, copy_record, &saved) == MO_STORE_OK);
     mo_service_free(s);
@@ -922,6 +1043,7 @@ static void composite_recovery(void) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {.time = {123, 0}};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     CHECK(mo_service_step(s));
     struct mo_cell text;
     MO_ASSERT(mo_value_text(mo_service_heap(s), "alpha", 5, &text));
@@ -929,8 +1051,10 @@ static void composite_recovery(void) {
     o.time.now = 999;
     CHECK(mo_service_step(s));
     CHECK(mo_cell_get_time(mo_value_field(mo_cell_get_payload(mo_service_state(s)), 1)) == 123);
+    check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
+    check_encoding(s, image);
     struct mo_cell state = mo_cell_get_payload(mo_service_state(s));
     CHECK(mo_cell_get_time(mo_value_field(state, 1)) == 123);
     struct mo_cell list = mo_value_field(state, 0);
@@ -1020,6 +1144,7 @@ static void shared_recovery_bound(void) {
         MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
         struct observations o = {0};
         struct mo_service_loop *s = open_service(image, store, &o);
+        check_encoding(s, image);
         uint32_t type = mo_image_bytecode(image)->services[0].state_type;
         struct mo_heap *heap = mo_service_heap(s);
         struct mo_cell empty = mo_service_state(s);
@@ -1067,6 +1192,7 @@ static void shared_result_bound(void) {
     MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
+    check_encoding(s, image);
     uint32_t type = mo_image_bytecode(image)->services[0].tools[0].argument_types[0];
     struct mo_heap *heap = mo_service_heap(s);
     struct mo_cell text, list;
@@ -1757,6 +1883,8 @@ static void run(void *unused) {
         "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n"
         "fn reject(_state: Int, _now: Time) : Result((Int, Int), Text)\nError(\"no\")\nend\n"
         "fn broken(_state: Int, _now: Time) : (Int, Int)\nstop \"broken\"\nend\n");
+    cache_copy_failure();
+    readonly_mailbox_size();
     memory_store(image);
     char dir[] = "/tmp/mo-store-XXXXXX", path[256];
     MO_ASSERT(mkdtemp(dir) != NULL);

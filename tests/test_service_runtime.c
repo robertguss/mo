@@ -247,6 +247,23 @@ static void mailbox(void) {
     for (uint32_t i = 0; i < MO_LIMIT_SERVICE_MAILBOX; i++)
         CHECK(mo_service_send(s, 5, NULL, 0, i + 10) == MO_SERVICE_OK);
     CHECK(mo_service_pending(s) == MO_LIMIT_SERVICE_MAILBOX);
+    struct mo_service_observation before = mo_service_observe(s);
+    const uint8_t *encoded = (const uint8_t *)"unchanged";
+    size_t encoded_length = 1;
+    CHECK(!mo_service_encoded_state(s, &encoded, &encoded_length));
+    CHECK(encoded == NULL && encoded_length == 0);
+    for (uint32_t i = 0; i < MO_LIMIT_SERVICE_MAILBOX; i++) {
+        struct mo_service_message_summary message;
+        CHECK(mo_service_mailbox_entry(s, i, &message));
+        CHECK(!message.timer && message.argument_bytes_available && message.argument_bytes == 0);
+    }
+    struct mo_service_message_summary missing;
+    CHECK(!mo_service_mailbox_entry(s, MO_LIMIT_SERVICE_MAILBOX, &missing));
+    struct mo_service_observation after = mo_service_observe(s);
+    CHECK(before.pending == after.pending && before.failures == after.failures &&
+          before.restarts == after.restarts && before.sequence == after.sequence &&
+          before.heap_used == after.heap_used);
+
     unsigned calls = o.clock_calls;
     CHECK(mo_service_send(s, 5, NULL, 0, 999) == MO_SERVICE_BUSY);
     CHECK(o.clock_calls == calls && o.replies == 0 && o.failures == 0);
@@ -274,6 +291,11 @@ static void queued_arguments(void) {
     for (uint32_t i = 0; i < MO_LIMIT_SERVICE_MAILBOX; i++)
         CHECK(mo_service_send(s, i % 2, &text, 1, i) == MO_SERVICE_OK);
     mo_value_drop(o.heap, type, text);
+    for (uint32_t i = 0; i < 2; i++) {
+        struct mo_service_message_summary message;
+        CHECK(mo_service_mailbox_entry(s, i, &message));
+        CHECK(!message.argument_bytes_available);
+    }
     MO_ASSERT(mo_value_text(o.heap, "refused", 7, &text));
     CHECK(mo_service_send(s, 0, &text, 1, 999) == MO_SERVICE_BUSY);
     mo_value_drop(o.heap, type, text);
@@ -307,6 +329,16 @@ static void supervisor(void) {
         struct mo_service_loop *s = start(image, &o);
         fail_messages(s, 4);
         CHECK(o.restarts == 0);
+        struct mo_service_observation summary = mo_service_observe(s);
+        CHECK(summary.events == 4 && summary.failures == 4 && summary.restarts == 0);
+        for (uint32_t j = 0; j < 4; j++) {
+            struct mo_service_event_summary entry;
+            CHECK(mo_service_event_entry(s, j, &entry));
+            CHECK(entry.number == j + 1 && entry.kind == MO_SERVICE_FAILURE &&
+                  entry.reason == MO_SERVICE_DEFECT);
+        }
+        struct mo_service_event_summary missing;
+        CHECK(!mo_service_event_entry(s, 4, &missing));
         o.time.elapsed = MO_LIMIT_SERVICE_FAILURE_WINDOW_US - 1 + outside;
         fail_messages(s, 1);
         CHECK(o.restarts == (outside == 0 ? 1u : 0u));
@@ -346,6 +378,29 @@ static void supervisor(void) {
     mo_image_free(image);
 }
 
+static void event_ring(void) {
+    struct mo_image *image = compile(failure_source);
+    struct observation o = {0};
+    struct mo_service_loop *s = start(image, &o);
+    for (uint32_t i = 0; i < 260; i++) {
+        o.event_count = 0;
+        o.time.elapsed += MO_LIMIT_SERVICE_FAILURE_WINDOW_US;
+        fail_messages(s, 1);
+    }
+    struct mo_service_observation summary = mo_service_observe(s);
+    CHECK(summary.events == 256 && summary.failures == 1 && summary.restarts == 0);
+    for (uint32_t i = 0; i < 256; i++) {
+        struct mo_service_event_summary entry;
+        CHECK(mo_service_event_entry(s, i, &entry));
+        CHECK(entry.number == i + 5 && entry.kind == MO_SERVICE_FAILURE);
+        CHECK(entry.time.elapsed == (uint64_t)(i + 5) * MO_LIMIT_SERVICE_FAILURE_WINDOW_US);
+    }
+    struct mo_service_event_summary missing;
+    CHECK(!mo_service_event_entry(s, 256, &missing));
+    mo_service_free(s);
+    mo_image_free(image);
+}
+
 static void timers(void) {
     struct mo_image *image =
         compile("module Main\nservice\nstate Int = 0\ntools read, broken\n"
@@ -357,6 +412,14 @@ static void timers(void) {
     struct observation o = {0};
     struct mo_service_loop *s = start(image, &o);
     CHECK(mo_service_pending(s) == 2 && o.replies == 0);
+    struct mo_service_timer_summary timer;
+    CHECK(mo_service_timer_entry(s, 0, &timer));
+    CHECK(timer.waiting && timer.interval == 1000000 && timer.next == 1000000);
+    CHECK(!mo_service_timer_entry(s, 2, &timer));
+    struct mo_service_message_summary message;
+    CHECK(mo_service_mailbox_entry(s, 0, &message));
+    CHECK(message.timer && message.argument_bytes_available && message.argument_bytes == 0);
+
     CHECK(mo_service_step(s) && o.handler == 0 && o.value == 1);
     CHECK(mo_service_step(s) && o.handler == 1 && o.value == 12);
     o.time.elapsed = 999999;
@@ -790,6 +853,7 @@ static void run(void *unused) {
     mailbox();
     queued_arguments();
     supervisor();
+    event_ring();
     timers();
     many_timers();
     interval_values();

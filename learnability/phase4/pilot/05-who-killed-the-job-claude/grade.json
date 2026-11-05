@@ -1,0 +1,18 @@
+{
+  "variant": "who-killed-the-job",
+  "client": "claude",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": []
+  },
+  "records": {
+    "match": true,
+    "pairs": 1,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": []
+  },
+  "failed": []
+}

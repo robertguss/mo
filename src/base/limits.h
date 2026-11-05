@@ -315,6 +315,7 @@ struct mo_limits {
 /* D304/D308. Service calls share these fixed limits, including initialization.
  * Memory includes retained state and queued values; stack and heap partitions
  * together fit MESSAGE_MEMORY. Mailbox/timer metadata has a separate bound. */
+#define MO_LIMIT_SERVICE_EVENTS 256
 #define MO_LIMIT_SERVICE_MAILBOX 64
 #define MO_LIMIT_SERVICE_WORK (1 << 20)
 #define MO_LIMIT_SERVICE_MESSAGE_MEMORY (64 << 20)

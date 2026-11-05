@@ -10,14 +10,18 @@ execution: code
 
 # Phase 4, Agents Can See Inside It - Plan
 
+---
+
 ## Goal Capsule
 
-- **Objective:** An agent operating a running Mo service can inspect it, answer questions through an offline query over exported state, reproduce a recorded handler failure, and check a proposed fix against the reconstructed case. Fresh-agent evaluation supplies the evidence for releasing Mo v0.1.
-- **Execution:** Six ordered units: design and feasibility, pilots and independent baseline, operator tools and export, failure recording, offline commands, final evaluation and release. This is the single implementation plan. Each unit extends the phase design document with its detailed decisions and evidence; a second brainstorm or implementation plan is not a prerequisite.
+- **Objective:** An agent operating a running Mo service can inspect it, answer questions through an offline query over exported state, reproduce a recorded handler failure, and check a proposed fix against the reconstructed case. A prospectively declared diagnostic evaluation supplies the evidence for Robert’s v0.1 release decision.
+- **Execution:** Six milestones: design and feasibility, pilot findings, operator tools and export, failure recording, offline commands, final evaluation and release. The operator milestone is split into U3, U7, U8 and U9; existing unit IDs retain their meanings. This is the single implementation plan. Each unit extends the phase design document with its detailed decisions and evidence; a second brainstorm or implementation plan is not a prerequisite.
 - **Authority:** The language reference, architecture, implementation rules, services design and `AGENTS.md` govern implementation. This revision incorporates the audit and subsequent user decisions. New behavior is specified below; it is not claimed to exist already.
-- **Ready to start:** U1. Later units have explicit evidence gates. Unmeasured export size, client logging, model availability and history sufficiency remain investigations with owners, not verified dependencies.
-- **Stop and report:** If a required export cannot fit the agreed process budget; the intended agent cannot reach the host; comparable evaluation configurations cannot be frozen; the independent baseline leaves the predeclared comparison infeasible; a seeded reproducible failure cannot be replayed; or implementation requires a store-version or language-rule change beyond the clarification below. Resolve the failed gate in this plan and the design document before dependent work proceeds.
-- **Finishing:** Implementers open milestone PRs using the repository template and required check results. Robert approves the phase design, runs the evaluation sessions and decides the release. Repository review and merge rules remain those in `AGENTS.md`.
+- **Implementation entry:** U3 after the U2 pilot findings are recorded. The approved design and preflight evidence in `docs/design/introspection.md` and `learnability/phase4/preflight/README.md` govern its interfaces and budgets. Repeat measurements against the implementation; preflight results are not proof of code that does not yet exist.
+- **Stop and report:** If a required export cannot fit the agreed process budget; the intended agent cannot reach the host; the revised evaluation cannot be declared before scored collection (blocks U6, not U3–U5 and U7–U9); a seeded reproducible failure cannot be replayed; or implementation requires a store-version or language-rule change beyond the clarification below. Resolve the failed gate in this plan and the design document before dependent work proceeds.
+- **Finishing:** Implementers open milestone PRs using the repository template and required check results. Robert approves the phase design and evaluation contract, authorizes session execution and decides the release. Repository review and merge rules remain those in `AGENTS.md`.
+
+---
 
 ## Revision and Evidence Status
 
@@ -25,13 +29,25 @@ This revision incorporates PA-1 through PA-9 from the audit (`2026-11-03-1704-fe
 
 The original plan described several decisions as previously approved without linking the originating sessions. That provenance remains unverified; those labels are removed. The current discussion explicitly authorizes this consolidation and settles the changes recorded here. It does not establish historical approvals, external prototypes, measurements or completed proofs.
 
-The six-unit order and three product promises remain. Changes include best-effort diagnostic capture, narrower fix-verification claims, separate identity and schema checks, pilot/baseline separation, explicit preflight investigations, and formal-verification deliverables. Names such as `mo fetch`, `mo replay`, `mo query` and `mo history` remain working command names until U1 fixes their CLI contract.
+The three product promises remain. Changes include best-effort diagnostic capture, narrower fix-verification claims, separate identity and schema checks, pilot/baseline separation, explicit preflight investigations, and formal-verification deliverables. Names such as `mo fetch`, `mo replay`, `mo query` and `mo history` remain working command names until U1 fixes their CLI contract.
+
+### 2026-11-05 evaluation amendment
+
+The completed pilot campaign informs diagnostic tooling; it does not establish that the tools lack value. `learnability/phase4/pilot/findings.md` records the outcome and limits. The old mandatory independent-baseline-before-implementation gate is superseded: U2 closes on the pilot record and findings, and U3 can proceed under the approved technical design. The original protocol, including its section 9 predictions, remains unchanged below its new historical-status notice. No baseline was collected and no pilot is relabeled as one.
+
+The revised R20–R24 govern future evaluation. They preserve prospective criteria and honest comparison without requiring the old 36-session experiment. U6 cannot collect scored evidence or close the release gate until Robert approves the replacement diagnostic protocol. The architecture, authentication, limits, replay claims and formal-verification obligations remain in force.
+
+---
 
 ## Product Contract
 
-### Summary and Problem
+### Summary
 
-Phase 3 supplies a pure service runtime, stable event lines and defect reports. Phase 4 adds authenticated operator views, bounded exports, separately retained failure diagnostics, and offline commands. Evaluation determines what these instruments let fresh agents accomplish beyond the existing tools.
+Phase 3 supplies a pure service runtime, stable event lines and defect reports. Phase 4 adds authenticated operator views, bounded exports, separately retained failure diagnostics, and offline commands. The revised evaluation assesses diagnostic outcomes and the limits of those instruments.
+
+### Problem Frame
+
+The pilots exposed manual state and history decoding, repeated author-tool paging, and source/simulation workflows. All completed pilots succeeded with existing tools; their difficulty did not support a useful solve-rate improvement experiment. That outcome leaves the utility of supported inspection in harder incidents unmeasured.
 
 A pure handler's logical inputs are its state, arrival time and arguments. Reproducing execution also requires the original program, runtime semantics and relevant limits. Recording a heap ceiling does not reconstruct the live heap's occupants: the mailbox and other omitted allocations can make an offline execution succeed where the live execution failed. The phase reports that distinction and never turns an unreproduced original failure into a verified fix.
 
@@ -43,17 +59,18 @@ A pure handler's logical inputs are its state, arrival time and arguments. Repro
 - Diagnostics are separate from application state and the recovery log. A failed read-only call may create a diagnostic record, while its state and recovery position remain unchanged. U1 clarifies reference §11.5 to express this agreed interpretation.
 - Capture is best effort with explicit missing-record reporting. Continuation depends on ordinary persistence remaining safe; an unusable store follows the existing store-failure stop policy.
 - Fix verification means the original failure reproduced and a compatible revised handler succeeded in the reconstructed offline environment. It establishes that case, not fitness under omitted live memory pressure or all future workloads.
-- Pilots select and harden scenarios. A fresh baseline follows the freeze and is never selected for a conveniently low observed success rate.
+- **Build diagnostic instruments from the pilot findings.** (session-settled: user-directed — chosen over treating high pilot success as a reason to stop: the scenarios did not adequately exercise difficult diagnostics.) Governs R21, R24.
+- **Remove the old baseline as an implementation prerequisite.** (session-settled: user-approved — chosen over spending 36 more sessions on the same limited comparison: preserve the evidence and declare a new evaluation before scored collection.) Governs R1, R4, R20–R22.
 - Lean remains the primary semantic proof system. Small TLA+ models examine protocol ordering; CBMC and implementation tests examine critical C behavior. Each claim states its assumptions and implementation connection.
 
 ### Requirements
 
 **Phase shape**
 
-- R1. Execute U1 through U6 in order, advancing only when the preceding unit's Definition of Done is met.
+- R1. Execute the six milestones in order using the PR dependencies below; the operator milestone comprises U3, U7, U8 and U9. The superseded baseline gate does not block implementation.
 - R2. Maintain one phase design document, `docs/design/introspection.md`, extended with the decisions and evidence each unit produces.
 - R3. Use this document as the single implementation plan. Record detailed interfaces, formats, limits and experiments in the phase design document and link them from the relevant unit.
-- R4. U1 closes on approved design and successful preflights; U2 on the frozen independent baseline and its protocol gate; U3–U5 on their implementation and verification gates; U6 on evaluation and the release decision.
+- R4. U1 closes on approved design and preflights; U2 on preserved pilot records, validated grading and findings; the operator, capture and offline milestones on their implementation checks; U6 on its newly declared evaluation and Robert’s release decision.
 
 **The operator door**
 
@@ -81,11 +98,11 @@ A pure handler's logical inputs are its state, arrival time and arguments. Repro
 
 **The evaluation**
 
-- R20. U1 specifies the primary success measure, grading oracle, between-round comparison, predicted effect, uncertainty rule, session allocation and failure/missing-data rules. Derive sample size for that comparison. `learnability/wilson.py --size` may help choose single-rate interval widths; it is not a two-sample power calculation.
-- R21. Within U2, use pilots to select/harden scenarios, then freeze scenarios, prompts, grading, client modes, model versions/settings and session counts before collecting a fresh independent baseline using only existing instruments. Preserve pilots but exclude them from the final comparison. Do not harden and replace a frozen baseline because its observed rate is inconvenient.
-- R22. U6 repeats the frozen scenarios on the same supported model configurations and client modes with Phase 4 instruments available. Apply the predeclared comparison. A miss stays recorded and becomes further work; model unavailability invokes the frozen replacement/rebaseline policy rather than an undisclosed substitution.
-- R23. Keep seeded defects and work-budget failures in task-queue variants separate from the served program. Keep prompts, ordered transcripts, grading evidence and failures from every round. Memory-pressure cases are implementation regressions unless U1 establishes a reproducible evaluation case.
-- R24. Scenarios collectively exercise live views, a query author tools cannot answer, and failure replay. Instrument use is a separate coverage measure; it does not change the diagnosis/fix success denominator between rounds.
+- R20. Before U6 scored collection, Robert approves a separately named diagnostic protocol specifying questions, expected evidence, grading, session allocation, budgets, client/model configurations, missing-data rules and release thresholds. Development fixtures and native-client smoke runs are identified separately and cannot become scored evaluation observations retrospectively.
+- R21. Preserve all pilot attempts, calibration classifications and original predictions. The completed campaign closes U2 with findings; it is neither a measured baseline nor evidence of an instrument effect.
+- R22. U6 applies the replacement protocol without selecting or replacing inconvenient observations. A comparative improvement claim additionally requires a prospectively frozen independent baseline, equivalent grading, an appropriate comparison/sample-size calculation and a declared model-unavailability policy; without these, report demonstrated capability and limitations only.
+- R23. Keep seeded defects and work-budget failures in isolated variants separate from the served program. Keep prompts, ordered transcripts, grading evidence and failures from every round. Memory-pressure cases remain implementation regressions unless the new protocol establishes a reproducible evaluation case.
+- R24. The diagnostic suite must exercise live views, a question author tools cannot answer, retained failure replay and original-first fix checking. Use realistic state, call ordering and retention boundaries; do not manufacture difficulty through obfuscation or hiding source. Record instrument coverage separately from task correctness, and freeze the scoring rules before collecting the evaluation.
 
 **Release and verification**
 
@@ -99,12 +116,12 @@ A pure handler's logical inputs are its state, arrival time and arguments. Repro
 - **Operating agent:** Has the necessary source/compiled program, supported runtime build and token. Full export/offline operation requires local execution or host access such as SSH. This is a deployment prerequisite to demonstrate in U1, not an established fact about all remote agents.
 - **Service:** Runs locally or behind a proxy. Proxy-only clients may use authenticated views; loopback fetch requires access to the host. No TLS client is added in this phase.
 - **Evaluation agents:** Fresh sessions from at least two model families, with the frozen environment and only the round's permitted instruments.
-- **Robert:** Approves the design, runs the evaluation sessions and decides release.
+- **Robert:** Approves the design and revised evaluation contract, authorizes execution and decides release.
 
 - F1. **Live diagnosis:** Inspect views, export/query state, export a retained failure, replay the original, revise the handler, then request a fix check with both the original and revised program. A logical wrong reply is investigated through views/queries; it does not become a recorded runtime failure.
 - F2. **Stopped service:** Read persisted history and failures, replay the original, check the revision, then follow the existing fresh-folder procedure for starting changed code. A missing diagnostic remains unavailable; the CLI does not fabricate replay inputs.
 - F3. **New question:** Export state, write a pure function in the defining module or through its exposed interface, and query that snapshot. Normal source privacy remains in force.
-- F4. **Evaluation:** Run pilots, freeze, collect the independent baseline, implement instruments, run the final round, and apply the frozen grading/comparison rule with all failures retained.
+- F4. **Evaluation:** Preserve pilot findings, implement the diagnostic milestones, declare the replacement protocol under R20–R24, collect its fresh sessions and apply its gate with all failures retained.
 
 ### Acceptance Examples
 
@@ -120,7 +137,13 @@ A pure handler's logical inputs are its state, arrival time and arguments. Repro
 - AE10 (R7). Pages from two different export generations at the same log sequence cannot be assembled as one accepted export; restart, expiry and replacement invalidate stale requests.
 - AE11 (R6). A service with private nominal state, only a scalar read-only tool, and a timer supports state inspection/export without depending on the author-tool MCP shape closure.
 - AE12 (R11). A failed read-only call may create a diagnostic record while leaving state/recovery log unchanged. Exact-limit arguments and an exhausted live heap produce either a complete bounded record or an explicit capture refusal.
-- AE13 (R20–R24). Pilot observations do not enter the baseline denominator. Changing a frozen scenario starts a new declared experiment rather than overwriting the old baseline.
+- AE13 (R20–R24). Pilots and development smoke runs never enter a later evaluation denominator. Changing a frozen scored scenario starts a new declared experiment; any baseline already collected stays recorded.
+
+- AE14 (R6, R10, R24). An authenticated agent answers an independently specified state question in a synthetic service with private nominal state, a scalar author tool, a timer and a full mailbox. Bounded views identify truncation and do not invoke application handlers. Observations from different calls are not claimed to be one atomic snapshot.
+- AE15 (R7–R10). A multi-page fetch during commits produces one complete private artifact with the expected state and identities. Replacement, expiry, interruption or corruption yields no accepted final file; retry starts a new generation.
+- AE16 (R11–R13). A retained failure survives later commits and a snapshot with its original pre-call inputs intact. Timer repetition obeys first/latest retention; capture faults report unavailable context rather than a replayable-looking partial record.
+- AE17 (R16–R18, R24). A pure query answers an independently specified aggregate unavailable through author tools, using exposed accessors or the defining module. Added query code is accepted under schema compatibility; a changed schema or capability capture is refused.
+- AE18 (R17, R24). Stopped history supports an explanation from persisted evidence without starting timers. If the relevant successful message predates the snapshot, the output exposes the retention boundary; absence from the tail is not proof the message never ran.
 
 ### Scope Boundaries
 
@@ -128,27 +151,30 @@ Deferred: in-process arbitrary queries; replay of a successful committed message
 
 The three parked Phase 3 operational items are included only if a unit demonstrably needs them. Safe-c library adoption, a runtime rewrite, TLAPS and GenMC are not prerequisites for Phase 4. Verification techniques from safe-c inform the work below; any selected library pilot must have a narrow scope and explicit acceptance evidence.
 
+---
+
 ## Dependency and Decision Gates
 
-No external evidence pointers were supplied during the audit discussion for prior approvals, frozen model configurations, transcript completeness or remote host access. No maximum-export measurement, imported-query prototype or history-sufficiency result is assumed. The following work is assigned and must close before its dependent implementation or evaluation freezes.
-
+The approved design and preflight README record the U1 decisions and measurements. The table retains the obligations those experiments support; implementation must still repeat code-dependent measurements and enforce the specified contracts. Evaluation-only prerequisites now block U6 under R20–R22, not the diagnostic implementation.
 | Gate / audit entries | Owner and required evidence | Blocks |
 | --- | --- | --- |
 | Capture resources and transaction outcomes (L11, PA-2) | U1 designs byte/scratch accounting and clean-refusal vs unsafe-store classification; U4 verifies preparation, rollback, uncertain commit and write faults. | U4 implementation approval and completion |
 | Reader locks/restart (L15–L16) | U1 specifies lock scope, limits, recovery permissions and retryable busy behavior; U5 measures large retained datasets and tests restart races. No millisecond guarantee. | U5 completion |
-| Reproduction/compatibility (L18/L20/L38) | U1 fixes signatures, identity fields and callable contracts; U3–U5 enforce the command matrix and refusal cases. | Artifact freeze and U5 completion |
+| Reproduction/compatibility (L18/L20/L38) | U1 fixes signatures, identity fields and callable contracts; U3–U5 and U7–U9 enforce the command matrix and refusal cases. | Artifact freeze and U5 completion |
 | Read-only diagnostics (L21) | U1 clarifies reference §11.5; U4 proves application state/log remain unchanged through diagnostic capture. | U4 completion |
-| Client modes and logs (L28/L49) | U1 records exact client versions/modes and a demonstration of discovery, invocation and complete ordered call/result capture; U2 implements a recorder where needed. | U2 freeze |
-| Loopback fetch and pin identity (L29/L34) | U1 specifies destination validation, no redirects/proxies, page framing and fresh export ids; U3 tests the actual connection and replacement/restart behavior. | U3 completion |
-| Largest export and scratch (L33/L63b) | U1 measures the largest reachable task-queue state and boundary fixtures, recording encoded size, peak pin/scratch/process memory and live-heap effects; U3 repeats against the implementation. | U1 design approval; U3 completion |
+| Client modes and logs (L28/L49) | U1 records exact client versions/modes and a demonstration of discovery, invocation and complete ordered call/result capture; U2 implements a recorder where needed. | U6 protocol freeze |
+| Loopback fetch and pin identity (L29/L34) | U1 specifies destination validation, no redirects/proxies, page framing and fresh export ids; U8 tests pin identity and replacement/restart behavior; U9 tests the actual connection. | U8 and U9 completion |
+| Largest export and scratch (L33/L63b) | U1 measures the largest reachable task-queue state and boundary fixtures, recording encoded size, peak pin/scratch/process memory and live-heap effects; U3 accounts for cached bytes; U9 repeats full process/pin/scratch sizing against the implementation. | U1 design approval; U9 completion |
 | Imported query and privacy (L45 / old plan assumption) | U1 prototypes a query module using an exposed service state type and a private-state query in its defining module. Saved nominal names are already module-qualified; acceptance across compiled programs still needs a prototype. | U5 design/implementation |
 | History sufficiency (L67 / old plan assumption) | U1 runs diagnosis traces across a snapshot and decides whether the post-snapshot tail suffices. Record lost information and archive cost if needed. | Retention format freeze |
-| Frozen models/settings (L50) | U1 verifies supported immutable identifiers/settings or documents limits of version guarantees, checks availability, and freezes an explicit unavailability policy. No unsupported reproducibility claim. | U2 freeze and U6 comparison |
-| Statistics (L51b) | U1 specifies the between-round rule, effect/margin, allocation, uncertainty/power calculation and frozen-baseline ceiling policy. Record executable calculation and assumptions. | U2 freeze |
-| Baseline oracle (L52) | U1 designs an out-of-band grader using known fixture inputs and hidden correctness checks, usable before Phase 4 instrumentation. U2 validates it; U5/U6 cross-check the new fix checker against it. | U2 freeze and final grading |
+| Frozen models/settings (L50) | U1 verifies supported immutable identifiers/settings or documents limits of version guarantees, checks availability, and freezes an explicit unavailability policy. No unsupported reproducibility claim. | U6 protocol freeze and any comparison |
+| Evaluation design (L51b) | U6 declares diagnostic criteria under R20; a comparative claim additionally meets R22. Preserve the original calculation as evidence for the old protocol, not authorization for a new claim. | U6 scored collection |
+| Baseline oracle (L52) | U1 designs an out-of-band grader using known fixture inputs and hidden correctness checks, usable before Phase 4 instrumentation. U2 validates it; U5/U6 cross-check the new fix checker against it. | U2 grader validation and U6 grading |
 | Publication scan (L55) | U2 implements and tests an exact procedure over the chosen publication artifacts, including known tokens and their transport encodings. Phase 3's recorded search is not an existing reusable scanner. | Publishing any round artifacts |
 | Approval provenance (L62) | Preserve the audit's unverified historical provenance. Record U1 approval and subsequent scope decisions with actual artifact/session pointers when they occur. | Claims of approval, not starting authorized U1 work |
 | Host/build access (L66) | U1 demonstrates the intended agent can obtain the correct program/build and run loopback fetch or read a stopped owner-only folder. Proxy-only limitations are explicit. | Full workflow evaluation |
+
+---
 
 ## Planning Contract
 
@@ -162,7 +188,7 @@ Pin creation occurs at an idle safe point. Retained bytes, encoding scratch and 
 
 Fetch accepts only plain HTTP loopback destinations. Reject userinfo, unsupported schemes and non-loopback addresses before sending a token; resolve and constrain the actual socket peer, including every retry, to loopback. Disable redirects and environment/system proxies. Define strict URL, response/header/body, page-count, aggregate-byte and work bounds. Remote operators run the command on the service host.
 
-Create output privately with mode 0600, refuse an existing destination or symlink by default, and publish only a completely validated artifact. Remove incomplete private temporary files on failure. Do not overwrite an existing permissive file and rely on `umask` to fix its permissions. U3 introduces fuzz coverage for the HTTP/MCP/page readers; U5 adds the offline artifact-reader cases.
+Create output privately with mode 0600, refuse an existing destination or symlink by default, and publish only a completely validated artifact. Remove incomplete private temporary files on failure. Do not overwrite an existing permissive file and rely on `umask` to fix its permissions. U9 introduces fuzz coverage for the HTTP/MCP/page readers; U5 adds the offline artifact-reader cases.
 
 ### KTD2. Operator dispatch, complete state coverage and client names
 
@@ -170,7 +196,7 @@ Use one overview and focused view tools, with wire names beginning `mo-`, listed
 
 Dispatch before `mo_service_send` and read only at service idle points through `vm.h` accessors. Operator tools never join the mailbox or supervisor accounting. Use `readOnlyHint`/`idempotentHint` and bounded, useful descriptions. Keep JSON shaping in embedded Mo alongside the existing MCP runtime, following implementation condition 4.
 
-U1 selects and prototypes a complete state representation: either a separate bounded encoder driven by runtime/saved-schema metadata, or a coordinated extension of compiler shape reachability and every verifier/consumer. Existing MCP nominal shapes start from author-tool arguments/results and do not cover every legal service state. U3 must pass AE11 and keep language privacy unchanged. Oversized views return an explicitly truncated summary with an export reference.
+The approved design §3.3 selects a schema-driven embedded-Mo renderer over the saved encoding. Bytecode shape reachability and verifier formats remain unchanged. Existing MCP nominal shapes start from author-tool arguments/results and do not cover every legal service state. U7 must pass AE11 and keep language privacy unchanged. Oversized views return an explicitly truncated summary with an export reference.
 
 ### KTD3. Best-effort atomic failure capture
 
@@ -213,17 +239,13 @@ Use a versioned structured outcome signature. Match defect reason and original s
 
 Return explicit statuses for reproduction and verification, including `unverified` when the original did not reproduce. A successful revised run may still be reported as an observation in that case. Heap limits do not restore mailbox occupancy; there is no live-memory-fitness guarantee. U1 defines JSON and exit statuses using the existing line-oriented `mo test --json` conventions; history and view payloads share a schema.
 
-### KTD6. Pilots, frozen baseline, equivalent grading and publication
+### KTD6. Pilot evidence and prospective diagnostic evaluation
 
-Extend the existing harness to start isolated service variants and register them with the selected native MCP clients. U1 verifies exact supported client modes and ordered call/result/error capture. U2 adds a local recorder only where transcripts cannot supply complete evidence, and verifies streaming/error paths as well as successful calls. The same registration/recording setup is used in both measured rounds.
+Use the existing `learnability/phase4/` harness, independent grader, proxy recorder and publication scanner where their contracts fit the new protocol. Preserve the original baseline binary and protocol as historical evidence. U5 cross-checks fix verdicts against an independent oracle where their contracts overlap; replay success alone does not establish a correct application fix.
 
-U1 fixes an out-of-band baseline grader from known seeded pre-state, arrival time and arguments plus hidden scenario correctness checks. It must run before failure recording/query commands exist. Freeze its source, scoring rules and runtime policy; compile/evaluate each submitted fix under its session's pinned runtime without secretly giving the baseline a later binary. U5 checks the new fix verdict against this independent oracle where their contracts overlap. Mechanical replay success alone need not establish that the agent diagnosed and correctly fixed the application bug.
+R20–R24 own the replacement evaluation gate. Its definition belongs to U6 before scored sessions, while U3–U5 and U7–U9 use deterministic diagnostic fixtures and separately labeled client smoke evidence. The suite’s final scenarios, thresholds and any comparative allocation remain deferred to that protocol; they do not block U3.
 
-Within U2, pilots may change scenarios and grading under recorded predictions. Then freeze immutable model identifiers where supported, all observable settings, client versions/modes, prompts, fixtures, budgets, graders and sample allocation before a fresh baseline. Preserve all pilot attempts separately. If configurations cannot be held stable, apply the predeclared limitation or rebaseline policy; never call an alias immutable without evidence.
-
-U1 specifies the primary metric and analysis unit, stratification across scenarios/families, effect/margin, uncertainty and multiplicity treatment, session counts and whether point estimates suffice. Store the calculation inputs and runnable calculation. A frozen baseline at ceiling is recorded honestly; stop the claimed improvement experiment or begin a newly declared experiment with a new independent baseline under the predeclared policy. Never replace only the inconvenient observations.
-
-Before publication, scan the actual selected raw and rendered artifacts, metadata and supported encodings for known evaluation credentials. Test the scanner with seeded leaks; fail on unreadable/unsupported publication inputs. Keep unredacted originals private and preserve grading/reproducibility information in publishable copies. An expired token is still not publishable merely because it is expired. Phase 3's reported search is evidence of that run, not a reusable scanner implementation.
+Before publication, scan the actual selected artifacts and supported encodings for known evaluation credentials. Keep private originals, test the scanner with seeded leaks and fail on unreadable inputs. An expired token remains private. Pilot findings disclose evidence limits without copying private defects, fixtures, answer keys or reports into this repository.
 
 ### KTD7. One plan with milestone evidence
 
@@ -279,6 +301,8 @@ sequenceDiagram
   end
 ```
 
+---
+
 ## Verification Design
 
 ### Proof Boundaries
@@ -295,10 +319,10 @@ CBMC checks the C code reached by each harness under its stated assumptions and 
 | --- | --- | --- |
 | Typed reconstruction preserves the selected state and ordered arguments | Extend `formal/` with an executable reconstruction/schema model and meaningful preservation lemmas. Declare any assumed wire-decoder contract, then exercise the corresponding C decoder with typed, malformed and cross-schema cases. Do not present the conditional lemma as a proof of the C reader. | U1 defines theorem statements/assumptions; U5 implements and checks them. |
 | A fix verdict requires reproduced original failure plus successful compatible revision | Model the outcome relation and decision procedure in Lean; prove soundness against an independently stated verdict contract, including the unreproduced-original case. Compare representative supported C outcomes to the model. | U1 specifies; U5 delivers proofs and differential cases. |
-| Accepted exports never combine generations | Small TLA+ model of create, page, replace, expire, commit and restart; finite TLC configurations with at least same-sequence replacement and restart, plus C page-reader/state-machine regressions. | U1 defines actions/invariants; U3 delivers model/checks. |
+| Accepted exports never combine generations | Small TLA+ model of create, page, replace, expire, commit and restart; finite TLC configurations with at least same-sequence replacement and restart, plus C page-reader/state-machine regressions. | U1 defines actions/invariants; U8 delivers model/checks. |
 | A published failure is complete and diagnostics preserve application recovery state | Separate TLA+ model of preparation, transaction steps, refusal, crash/recovery, publication and eviction; include supervisor counting and unsafe-store stop. Turn relevant traces into store/fault/process tests. | U1 defines assumptions; U4 delivers model/checks. |
-| New C readers preserve memory/arithmetic bounds and enforce framing | Extend or add scoped CBMC harnesses for critical new parsing/length/index checks; fuzz all new outside-input paths. State bounds, modeled callees and uncovered properties. | U3 fetch/pages; U4 diagnostic records; U5 offline artifacts. |
-| Runtime-specific work/heap/storage behavior meets the contract | C unit tests, allocation/store fault injection, sanitizers and process crash/restart tests. Verify exact work-stop capture and cleanup; keep the live-mailbox/offline mismatch regression. | U3–U5 with their implementations. |
+| New C readers preserve memory/arithmetic bounds and enforce framing | Extend or add scoped CBMC harnesses for critical new parsing/length/index checks; fuzz all new outside-input paths. State bounds, modeled callees and uncovered properties. | U8 page framing; U9 fetch/pages; U4 diagnostic records; U5 offline artifacts. |
+| Runtime-specific work/heap/storage behavior meets the contract | C unit tests, allocation/store fault injection, sanitizers and process crash/restart tests. Verify exact work-stop capture and cleanup; keep the live-mailbox/offline mismatch regression. | U3–U5 and U7–U9 with their implementations. |
 
 New Lean modules must be included in the actual `lake build` targets and check entrypoints. Preserve the repository's no-`sorry` discipline and inspect theorem axioms; do not discharge a target property by adding it as an axiom or hiding it in a precondition. Pin TLC tooling/configurations and add a reproducible `models` check group to `ci/check.sh` when models land; this is a planned group, not one that already exists. Retain command/version/configuration logs, assumptions, counterexamples and relevant seeds. For progress claims, name fairness and no-expiry/no-replacement conditions.
 
@@ -314,71 +338,135 @@ Safe-c's [slice contract](https://github.com/robertguss/safe-c/blob/eebb98049e2c
 
 Keep Lean as the main semantic proof environment and existing CBMC as the default C proof tool. Consider Frama-C/WP only for a selected unmet C contract. TLAPS is useful if a protocol needs a proof for arbitrary model sizes beyond TLC's finite cases. GenMC becomes relevant when actual C11 concurrent/atomic algorithms are introduced; the Phase 4 service protocol work does not itself require replacing the scheduler. Rust/Verus or another runtime language remains a separate future decision.
 
+---
+
 ## Implementation Units
 
-Each unit may ship in multiple PRs. File lists identify integration areas; U1 records exact public signatures, formats, limits and working command names in the design document. No downstream unit treats a deferred gate as already proven.
+The following PR numbers are local to this phase plan, distinct from PR1–PR4 in the pilot subplan. Each PR contains a whole unit. File lists identify integration areas; U1 records exact public signatures, formats, limits and working command names in the design document. No downstream unit treats a deferred gate as already proven.
+
+### PR1: Design and feasibility
+
+Waits on: no earlier Phase 4 PR. The approved design and preflight artifacts already supply this milestone’s evidence.
 
 ### U1. Design, Feasibility and Verification Contracts
 
 - **Goal:** Settle user-visible behavior and demonstrate the prerequisites for implementing it and collecting comparable evidence.
 - **Covers:** R2–R4, R20, R24, R27–R28; KTD1–KTD7; every U1-owned dependency gate.
-- **Files:** `docs/design/introspection.md` (new), `learnability/phase4/protocol.md` (new), evidence fixtures/scripts under `learnability/phase4/` or a documented test location, `docs/reference/README.md` (§11.5/§15), `docs/design/architecture.md` (§9), `docs/ROADMAP.md`, `tests/conformance/reference.tsv`; planned formal/model artifact map.
+- **Files:** `docs/design/introspection.md`, `learnability/phase4/protocol.md`, evidence fixtures/scripts under `learnability/phase4/` or a documented test location, `docs/reference/README.md` (§11.5/§15), `docs/design/architecture.md` (§9), `docs/ROADMAP.md`, `tests/conformance/reference.tsv`; planned formal/model artifact map.
 - **Work:**
   1. Define tool and CLI contracts, artifact framing/identity, state-view representation, outcome/callable schemas, capture/retention budgets, transaction classification, history depth and reader/startup coordination.
   2. Run and retain the maximum-state/pin/scratch sizing experiment, imported/private-query prototype, snapshot-history diagnosis traces, and host/build-access demonstration. These are investigations; U1 is not documents-only. Keep prototype tooling out of evaluation agents' environments and pin their baseline binary to a revision without Phase 4 instruments.
   3. Demonstrate supported client modes, name normalization/collision behavior and ordered MCP call/result capture. Verify model configuration availability and specify what happens if an endpoint cannot preserve a version.
-  4. Specify the independent baseline oracle and between-round statistics, with runnable sample-size calculation, pilot/freeze rules and missing-session/ceiling policies. Write predictions before pilot or measured sessions.
+  4. Preserve the original independent oracle, calculation and pre-pilot predictions. The replacement evaluation contract is U6 work under R20–R22.
   5. Specify Lean theorems, protocol actions/invariants, C proof candidates, negative controls and model-to-code test mappings. Record the bounded safe-c assessment if pursued; do not add a dependency merely because it has proofs.
   6. Clarify the read-only diagnostic rule and stale roadmap/reference/architecture descriptions, and obtain Robert's design approval with an evidence pointer.
 - **Verification:** Every preflight has a command, versions, inputs and result or a recorded blocker. Imported-query work must preserve normal privacy. The sizing record includes scratch and process totals, not just encoded payload length. Embedded-doc/reference checks pass; experimental C receives the normal relevant build checks.
 - **Done:** Design and evaluation protocol approved; predictions recorded; U1-owned preflights closed or explicitly scope-resolved; later unit obligations and evidence locations are concrete.
 
-### U2. Pilots and Independent Baseline
+### PR2: Pilot findings
 
-- **Goal:** Establish a usable, frozen evaluation and an independent baseline before Phase 4 instruments exist.
+Waits on: PR1 design approval, needed before pilot execution. This group closes the historical pilot milestone; it does not authorize the old subplan’s PR4 baseline.
+
+### U2. Pilots and Diagnostic Findings
+
+- **Goal:** Preserve the campaign and identify diagnostic work supported by its evidence.
 - **Covers:** R20–R24; KTD6.
-- **Depends on:** U1 approval and client/model/access/statistics/oracle preflights.
-- **Files:** `learnability/harness/`, `learnability/phase4/variants/`, separate pilot records, `learnability/phase4-round-1/` (`freeze.md`, prompts, transcripts, gradings, results, notes), `docs/status/phase4-run.md`, publication scanner/tests.
-- **Work:**
-  1. Start isolated variants with known fixtures, private credentials and the pinned baseline `mo`. Record native MCP calls/results/errors beside existing CLI logs; validate recorder completeness where needed.
-  2. Validate the independent grader before using it. Pilot and harden scenarios, retaining every attempt outside the measured baseline.
-  3. Freeze scenarios, models/settings, clients, budgets, graders, analysis and sample counts. Collect fresh baseline sessions. Apply missing-artifact and no-selective-rerun rules.
-  4. Report the entire frozen baseline and intervals. If it cannot support the predeclared improvement comparison, apply the stop/new-experiment policy; never quietly harden and overwrite it.
-  5. Implement the publication-token scan over the actual artifact formats, with seeded leaks and failure handling; preserve private originals.
-- **Tests:** Seeded failures fire before sessions; calls and errors are ordered and complete; missing session artifacts receive the protocol's declared treatment; the publication scan rejects seeded raw/encoded leaks; the baseline grader needs no Phase 4 command.
-- **Done:** Pilots and independent baseline are separate; frozen protocol is applied without selection; baseline gate and publication checks pass; U6 configurations remain identified.
+- **Depends on:** U1 approval and validated harness, client access and grader.
+- **Files:** `learnability/phase4/pilot/ledger.md`, public grade/manifest records, `learnability/phase4/pilot/findings.md`, `learnability/phase4/protocol.md`, and the pilot subplan’s supersession notice.
+- **Approach:** Retain all 30 attempts, distinguish the operator interruption from graded completions, and retain uncalibrated classifications and report-revision limits. Document manual inspection patterns and the limitations of the old comparison. Preserve private originals and scanner evidence.
+- **Test expectation:** No new runtime behavior in the findings closure. Review counts and claims against the retained ledger/grades; retain the existing grader, record-match and publication-scan results.
+- **Verification:** The findings neither claim a measured baseline nor infer that easy scenarios invalidate diagnostic tools. Every public claim is supported without exposing private scenario contents.
 
-### U3. Operator Tools and Export Delivery
+### PR3: Native inspection foundation
 
-- **Goal:** Authenticated views and a bounded state export fetched to a private file.
-- **Covers:** R5–R10, R26, R28; KTD1–KTD2; AE1, AE3, AE10, AE11.
-- **Depends on:** U2 baseline gate; U1 state-encoding, identity and resource design.
-- **Files:** `src/tools/protocol*.c`/headers, `runtime/mcp*.mo` and a views module, `src/vm/vm.h`, `src/vm/service.c`, saved-codec/scratch integration, relevant compiler/bytecode readers if the shape closure changes, CLI command sources, `src/base/limits.h`, `tests/test_protocol_server.c`, `tests/test_service_runtime.c`, `ci/check_operator.py` (new), CLI goldens/guide checks, fetch/page fuzz targets, scoped CBMC harnesses, export TLA+ model and runner, `docs/design/sandbox-properties.md`, guide/design updates.
-- **Work:**
-  1. Add idle-only accessors and bounded event views, operator catalog/dispatch and complete state encoding. Preserve application scheduling and supervisor accounting.
-  2. Implement independent pin/scratch ownership, fresh generation ids, page validation, expiry/replacement and bounded rate control; repeat the sizing experiment against actual code.
-  3. Implement loopback-only fetch with redirects/proxies disabled, strict input/output bounds, safe destination handling and complete-file publication.
-  4. Deliver export TLA+ checks, C regressions from relevant traces, critical C proof harnesses and fuzzing as part of the reader's introduction.
-- **Tests:**
-  - Auth refusal; no state/log/count change; full-mailbox inspection; private state with scalar read-only tool and timer.
-  - Multi-page state round-trip while commits occur; two pins at the same sequence; stale/reordered/duplicate/missing/mismatched pages; replacement, expiry and restart; malformed/truncated/oversized HTTP/MCP input.
-  - Existing destination/symlink refusal; partial-file cleanup; mode 0600; wrong token produces no accepted artifact.
-  - Non-loopback resolution/peer refusal, redirect refusal, proxy-environment bypass, and no credential on refused paths.
-  - Peak pin/scratch/process accounting and no retained live-heap sharing affecting later handler execution.
-  - Both `mo_state` and `mo-state` discover and route correctly through each frozen native client; record wire and model-visible names and catalog size.
-- **Done:** Operator driver, goldens, named limits, guide, fuzz/CBMC scope and export model pass. Deliberately breaking generation checks is detected. Failure export uses this path once U4 provides records; U3 does not claim a failure export already exists.
+Waits on: PR2, merge order only. Implementation can begin using the completed local pilot findings and approved U1 design.
+
+### U3. Operator Tools and Export Foundation
+
+- **Goal:** Make bounded native observations and immutable current-state bytes available without changing handler behavior.
+- **Covers:** R5–R10, R21, R26, R28; KTD1–KTD2; AE3, AE11.
+- **Depends on:** U2 findings and the approved U1 state-encoding, identity and resource design.
+- **Files:** `src/vm/vm.h`, `src/vm/service.c`, `src/base/limits.h`, runtime-build identity and SHA-256 helpers, executable startup integration, `tests/test_service_runtime.c`, `tests/test_protocol_memory.c`, identity/digest unit tests, `docs/design/introspection.md`.
+- **Approach:**
+  1. Retain and replace the current saved encoding on initialization, recovery and accepted updates, under design §6.3 ownership. This is needed for U8 pin copies before U4 failure capture exists.
+  2. Create the shared SHA-256 helper and runtime-build identity calculation required by design §4; verify digest vectors and executable identity. U7 consumes these for overview and U8 reuses them for artifacts.
+  3. Add idle-only bounded accessors, snapshot sequence and event summaries through `vm.h`; tools never access private service structures directly.
+  4. Expose mailbox metadata without changing read-only admission rules to obtain encoded argument sizes. Follow the design’s bounded observation contract; represent unavailable sizes explicitly rather than reporting a fabricated zero.
+- **Execution note:** Add characterization coverage for successful and rejected updates before changing encoded-state ownership.
+- **Test scenarios:** Recovery and accepted updates replace cached bytes; refused updates do not publish candidate bytes. A full mailbox remains inspectable. Allocation failures preserve the existing failure policy. Inspection does not change state, recovery sequence or supervisor counts, and retains no live values into later handler execution.
+- **Test seam:** Service runtime tests cover ownership and scheduling; they do not establish MCP routing or socket/file safety.
+- **Verification:** Independent cache/scratch accounting is bounded, state bytes match the committed state, and no operator capability is exposed before its authenticated dispatch lands in U7.
+
+### PR4: Authenticated live views
+
+Waits on: PR3, needed before start because the views consume its accessors and saved-byte owner.
+
+### U7. Authenticated Live Views
+
+- **Goal:** Let an operating agent answer live state and runtime questions through supported observations.
+- **Covers:** R5–R10, R24, R26, R28; KTD2; AE1, AE3, AE11, AE14.
+- **Depends on:** U3.
+- **Files:** `src/tools/protocol*.c`/headers, `runtime/mcp.mo`, `runtime/mcp-rpc.mo`, `runtime/mcp-views.mo` (new), `Makefile`, embedded-runtime ABI checks, `tests/runtime/`, `tests/test_protocol_server.c`, `tests/test_protocol_memory.c`, `ci/check_operator.py` (new), guide/CLI checks.
+- **Approach:** Introduce a distinct validated operator action after existing authentication and shared rate checks, before author argument conversion and `mo_service_send`. Extend existing catalog paging and annotations. Render saved schemas in embedded Mo under design §3.3; do not extend bytecode shape tables. Wire the new module into embedding and ABI checks.
+- **Test scenarios:**
+  - Covers AE14: private nominal state, scalar author tool, timer and full mailbox expose bounded state/path, timer and mailbox observations without invoking a handler.
+  - Missing/wrong tokens and rate limits match author-tool behavior; refused calls leave application state/log/counts unchanged.
+  - Oversized collections report truncation; independent observations are not advertised as an atomic snapshot.
+  - Author `mo_state` and operator `mo-state` route correctly in both supported native clients, including normalized names and bounded catalog paging.
+- **Test seam:** Protocol tests exercise authentication through typed view rendering; actual native-client discovery/invocation supplies access evidence beyond deterministic drivers.
+- **Verification:** Guide descriptions identify host requirements and incompleteness. Failure-backed tools and state export are not advertised as working before U4 and U8 respectively; catalog exposure follows available capabilities at each merge.
+
+### PR5: Immutable state export
+
+Waits on: PR4, needed before start because export uses the authenticated operator route.
+
+### U8. State Export Producer
+
+- **Goal:** Export one identified state version while the service continues committing updates.
+- **Covers:** R7–R10, R26, R28; KTD1; AE10, AE15.
+- **Depends on:** U3, U7.
+- **Files:** protocol/export sources, shared artifact identity/digest helpers, `src/base/limits.h`, `tests/test_protocol_server.c`, `tests/test_protocol_memory.c`, export model/runner and C trace regressions, design/guide checks.
+- **Approach:** Own artifact framing and schema digests here, reusing U3’s runtime-build identity and SHA-256 helper; U9 and U5 consume these shared contracts. Copy cached bytes into independently budgeted pins. Implement design §5’s generation, page, expiry, replacement and completion rules with the model and negative controls.
+- **Test scenarios:**
+  - Covers AE10/AE15: all pages retain one generation and recovery sequence while later commits change current state.
+  - Two exports at the same sequence remain distinct; replacement, expiry, restart and final-page release refuse stale requests.
+  - Malformed offsets and page counts refuse safely; pins and temporary work respect independent limits without changing later handler heap reuse.
+- **Test seam:** Producer tests and the model establish generation isolation; U9 proves transport consumption and final-file publication.
+- **Verification:** Model invariants and deliberate generation-check breakage are detected. Digest/identity fixtures and pin accounting pass. Failure export remains a U4 integration obligation.
+
+### PR6: Fetch and complete operator workflow
+
+Waits on: PR5, needed before start because fetch consumes its exact artifact and page contract.
+
+### U9. Private Fetch and Operator Acceptance
+
+- **Goal:** Obtain a completely verified private artifact through a supported host-local command.
+- **Covers:** R7–R10, R24, R26, R28; KTD1; AE1, AE15.
+- **Depends on:** U8.
+- **Files:** CLI/fetch sources, embedded-Mo response parser, embedding/ABI rules, `ci/check_operator.py`, CLI goldens/guide checks, fetch/page fuzz targets/corpora, scoped CBMC harnesses, `docs/design/sandbox-properties.md`, design budget evidence.
+- **Approach:** Implement design §5.3’s bounded loopback fetch and safe publication using U8’s artifact helpers. Disable redirects/proxies and validate the actual peer before sending credentials. Introduce reader fuzzing and page-arithmetic proofs with the reader. Repeat process/pin/scratch sizing against the complete implementation.
+- **Test scenarios:**
+  - Covers AE15: multi-page fetch during commits yields one mode-0600 artifact with correct schema/program/build identities and the independently expected state.
+  - Non-loopback resolution/peer, redirects, proxy environment, malformed/truncated/oversized responses and wrong tokens never produce an accepted artifact or leak a credential to a refused peer.
+  - Existing destinations and symlinks are refused; cancellation, replacement, expiry or corrupt pages clean incomplete files. A retry starts a new export.
+- **Test seam:** The operator driver covers actual sockets and filesystem publication; native-client smoke demonstrates discoverability and a complete supported workflow, not general agent effectiveness.
+- **Verification:** Operator driver, goldens, guide, fuzz/CBMC scope and actual resource measurements pass. Document pin creation, page completion and file publication as different lifecycle events; idempotence annotations do not promise the same state on repeated creation.
+
+### PR7: Retained failure diagnostics
+
+Waits on: PR6, needed before start because capture integrates the verified export and view path.
 
 ### U4. Failure Capture and Retention
 
 - **Goal:** Complete retained diagnostics where capture succeeds, explicit refusals where it cannot, with safe persistence and unchanged application recovery behavior.
-- **Covers:** R11–R13, failure export in R7, R26, R28; KTD3; AE2, AE12.
-- **Depends on:** U3 export/view implementation and U1 capture/store classification.
+- **Covers:** R11–R13, failure export in R7, R26, R28; KTD3; AE2, AE12, AE16.
+- **Depends on:** U9 export/view milestone and U1 capture/store classification.
 - **Files:** `src/host/store.c`, `src/host/host.h`, `src/base/hostops.def`, `src/vm/service.c`, relevant inspection/process code, `src/heap/saved.c`, limits and reporting, store/runtime/recovery tests, fault-injection build rules, `ci/check_kill_loop.py`, failure-record fuzz target/corpus, capture TLA+ model, relevant CBMC harnesses, saved-state/sandbox/design/guide docs.
 - **Work:**
   1. Add the table and atomic record-pair/eviction operation without changing recovery tables or version. Implement and test clean refusal vs unsafe/uncertain store outcomes.
   2. Capture bounded outcome/stack context before normal cleanup, then encode state/message with explicit scratch and metadata limits. Do not change admission limits to conceal a capture failure.
   3. Report saved id or unavailable reason before supervisor/reply handling; preserve one count for the original failure and existing terminal persistence behavior.
-  4. Implement deterministic retention, final-stop capture and failure export. Keep diagnostics out of application state/recovery logging, including read-only-call failures.
+  4. Implement deterministic retention, final-stop capture, the retained-failure view and failure export; expose their catalog entries only with their working backing store. Keep diagnostics out of application state/recovery logging, including read-only-call failures.
   5. Deliver the capture model, trace regressions, fuzzing and relevant C proofs.
 - **Tests:**
   - Defects, work/memory/size limits, timer failures and read-only failures; application `Error` and admission refusal exclusions.
@@ -389,10 +477,14 @@ Each unit may ship in multiple PRs. File lists identify integration areas; U1 re
   - Frame capture precedes cleanup; cancellation releases resources and allows the expected subsequent service behavior.
 - **Done:** Capture/refusal cases, every recovery check, retained-failure export, kill-loop/fault tests, fuzz/proof scope and capture model pass. Diagnostic capture cost is measured for both records plus overhead.
 
+### PR8: Offline diagnosis
+
+Waits on: PR7, needed before start because offline failure commands consume its records.
+
 ### U5. Replay, Query, Fix Check and History
 
 - **Goal:** Offline commands implement the reconstruction and compatibility contract with explicit reproduction/verification results.
-- **Covers:** R14–R19, R26, R28; KTD4–KTD5; AE4–AE7, AE9.
+- **Covers:** R14–R19, R26, R28; KTD4–KTD5; AE4–AE7, AE9, AE17, AE18.
 - **Depends on:** U4 and the U1 imported-query, history and lock/startup decisions.
 - **Files:** CLI/execute/new command sources, `src/host/store.c`, controlled-call/inspection code in `src/vm/`, query-entry checking/lowering integration, `src/tools/render.c`, codes/errors, limits, artifact-reader fuzz corpus and scoped CBMC harnesses, runtime/CLI/recovery tests and drivers, `formal/` and differential fixtures/checks, guide/reference §13.4/conformance/design docs, service-manager documentation/configuration as needed.
 - **Work:**
@@ -411,18 +503,25 @@ Each unit may ship in multiple PRs. File lists identify integration areas; U1 re
   - Truncated/edited/oversized artifacts refuse safely; the fuzz target reaches the new path; proof and test negative controls detect relaxed compatibility/verdict checks.
 - **Done:** Command drivers/goldens, reference/guide/conformance, relevant Lean and CBMC checks, differential cases, fuzzing and boundary tests pass. Reproduced originals and revision outcomes are both reported; no broader live-memory claim is made.
 
+### PR9: Diagnostic evaluation and release evidence
+
+Waits on: PR8, needed before scored collection because the suite must cover all three instruments. Protocol design may begin earlier.
+
 ### U6. Final Evaluation and Release
 
-- **Goal:** Apply the frozen comparison, publish evidence and release only on the declared gate and release decision.
-- **Covers:** R22, R24–R28; KTD6; AE8, AE13.
-- **Depends on:** U5 and continued availability/declared compatibility of the frozen evaluation configurations.
-- **Files:** `learnability/phase4-round-2/`, `docs/status/phase4-run.md`, README, roadmap, guide, reference §15, conformance map and task-queue runbook.
-- **Work:**
-  1. Reuse the frozen harness, models/settings, client modes, prompts and grader. Expose the guide/catalog as the instructions for new instruments. Apply any unavailability policy before collecting replacement observations.
-  2. Record all rates, uncertainty and the predeclared between-round result. Report instrument coverage separately. Preserve failed predictions and incomplete sessions according to protocol.
-  3. Run the publication scan on both rounds and pilot artifacts selected for publication. Publish proof/model scope and actual check evidence without turning skips into passes.
-  4. On a passing evaluation and Robert's release decision, update promises/install/status, tick Phase 4, document operator credential and stopped-folder rules, and tag v0.1.
-- **Done:** The frozen comparison and coverage gates pass, publication checks pass, evidence and limits are documented, release docs agree, and the approved tag exists. A missed prediction leaves the phase open.
+- **Goal:** Assess diagnostic outcomes under a prospectively declared protocol and support an honest release decision.
+- **Covers:** R20, R22–R28; KTD6; AE8, AE13.
+- **Depends on:** U5 and Robert’s approval of the replacement protocol before scored collection.
+- **Files:** A separately named protocol and evidence directory under `learnability/phase4/`, `docs/status/phase4-run.md`, README, `docs/ROADMAP.md`, guide, reference §15, conformance map and task-queue runbook.
+- **Approach:**
+  1. Declare the new protocol under R20–R24. Identify development fixtures and smoke runs already observed; choose fresh diagnostic sessions and independent expected outcomes. Freeze release thresholds before scoring.
+  2. Collect every declared session, report correctness and instrument coverage separately, and retain misses. Make a comparative claim only with the additional prospective evidence in R22.
+  3. Scan the selected publication set and publish proof/model scope with actual check evidence. Do not turn missing checks or diagnostic refusals into passes.
+  4. Apply R25: update release documents and tag only after a passing declared gate and Robert’s explicit release/publication decision.
+- **Test scenarios:** Grading distinguishes a correct diagnosis from tool invocation alone, incomplete historical evidence from a supported causal answer, and a successful revised run from verified original-first reproduction. Missing sessions and model changes receive the declared treatment.
+- **Verification:** The new protocol is approved before collection, its gate is applied without selection, publication checks pass, and release claims match the observed scope. No old solve-rate prediction is retroactively rewritten as success.
+
+---
 
 ## Verification Contract
 
@@ -431,29 +530,36 @@ Each unit may ship in multiple PRs. File lists identify integration areas; U1 re
 | `bash ci/check.sh gcc` | Before every PR | Build/unit result; include its final line in the PR body. |
 | Clang build and relevant unit tests | C changes | Check compiler-specific diagnostics as required by `AGENTS.md`; do not infer this from GCC passing. |
 | `bash ci/check.sh drivers static` | Edits to embedded guide/reference/library map | Embedded docs, goldens, guide claims, conformance and static checks. |
-| `MO_ALL_DRIVERS=1 bash ci/check.sh sanitize drivers` | U3–U5 C/guide changes requiring sanitizer-backed drivers | Drives the sanitizer executable as well as discovered builds. `sanitize drivers` alone can select debug first and does not establish this evidence. |
+| `MO_ALL_DRIVERS=1 bash ci/check.sh sanitize drivers` | U3–U5 and U7–U9 C/guide changes requiring sanitizer-backed drivers | Drives the sanitizer executable as well as discovered builds. `sanitize drivers` alone can select debug first and does not establish this evidence. |
 | `make deps`, `make tidy`, `make format-check` | Relevant C PRs | Dependencies, checked results and clang-format 14 style. |
-| New-reader fuzz smoke, registered in `make fuzz-smoke` / `ci/check.sh fuzz` | U3, U4 and U5 when each reader lands | Fetch HTTP/MCP/pages, diagnostic records and offline artifacts; seeds and bounded runs are empirical evidence. |
+| New-reader fuzz smoke, registered in `make fuzz-smoke` / `ci/check.sh fuzz` | U7–U9, U4 and U5 when each reader lands | Fetch HTTP/MCP/pages, diagnostic records and offline artifacts; seeds and bounded runs are empirical evidence. |
 | Relevant CBMC harnesses plus reach checks | Critical new C readers/arithmetic and changes to existing proved components | Record input/unwinding bounds, assumptions and properties. Full boundary run follows repository policy. |
 | `bash ci/check.sh lean` | PRs changing the formal model or corresponding semantics | Build the proofs and run relevant C-vs-Lean checks before merge; record exclusions. |
 | Planned `bash ci/check.sh models` | Export/capture model and corresponding protocol changes | Pinned TLC configurations, invariants/progress assumptions and negative controls; group lands with models. |
 | Fault injection and long kill-loop run | U4, relevant U5 reader/recovery changes | Actual allocation/transaction/process behavior; record seeds/commands and keep failures. |
-| Frozen grading and statistical calculation | U2 and U6 | Independent baseline/final comparison; Wilson intervals describe individual rates, not by themselves improvement significance. |
+| Prospective diagnostic grading | U6 | R20–R24; comparative claims additionally require the R22 baseline and comparison calculation. |
 | Publication scan | Before any evaluation artifact publication | Known credential-leak checks over the actual publication set, tested with seeded failures. |
 | Nightly: `gcc clang sanitize drivers static lean bench`, `CI=1`, `MO_ALL_DRIVERS=1` | Daily at 07:17 UTC and manual dispatch | Existing workflow is not triggered after every merge. Do not substitute an assumed nightly result for required pre-merge evidence. |
 
 When a required tool is missing, report a skip locally and a failure under `CI=1`, following repository policy; neither closes a required evidence gate. Add model check documentation/CI integration when its runner lands. Follow `AGENTS.md` for detached long checks and wait for completion before ending the implementation turn.
 
+---
+
 ## Definition of Done
 
 - **U1:** Approved design/protocol, predictions, completed feasibility/client/access experiments, statistical calculation, identity/callable/transaction contracts and assigned verification artifacts. Remaining uncertainty is explicit and cannot silently pass a gate.
-- **U2:** Pilots retained separately, fresh independent baseline frozen and recorded, independent grading validated, complete traffic evidence and publication scan tested.
-- **U3:** Views/private-state fixture, loopback fetch and generation isolation, bounded memory accounting, native-client collision checks, new-reader fuzz/proof scope and export model pass.
+- **U2:** Pilot records and findings retained, calibration limits explicit, independent grading and record provenance validated, publication checks retained; no baseline claimed.
+- **U3:** Immutable current encoding, runtime identity and bounded idle metadata preserve handler behavior and ownership.
+- **U7:** Authenticated views and private-state diagnostic acceptance pass, with correct native-client routing.
+- **U8:** Artifact identities, generation isolation, pin bounds and export model pass.
+- **U9:** Loopback fetch, safe publication, end-to-end diagnostic acceptance, resource measurements and reader proof/fuzz checks pass.
 - **U4:** Complete-or-explicitly-unavailable capture, safe transaction classification, read-only nonmutation, retention and crash recovery, failure export, fuzz/proof scope and capture model pass.
 - **U5:** Command and compatibility cases pass, original-first fix verdict enforced, Lean proofs/differential cases delivered, exact VM resource and reader/startup behavior tested.
 - **U6:** Frozen evaluation meets its gate, coverage/publication checks pass, claims match evidence, release docs updated and Robert's approved v0.1 tag exists.
 
 Remove abandoned executable experiments before marking implementation PRs ready, while retaining experiment results, counterexamples and failed predictions as evidence. The audit remains a historical review of the original plan; it is not a second implementation checklist.
+
+---
 
 ## Sources and Audit Resolution Map
 
@@ -463,12 +569,12 @@ Repository sources: `docs/reference/README.md`, `docs/design/architecture.md`, `
 | --- | --- |
 | PA-1: offline memory/fix overclaim | R15/R19, AE9, KTD5 and U5 require original reproduction and narrow the verdict. |
 | PA-2: capture resource/transaction gaps | R11, AE2/AE12, KTD3 and U1/U4 budget preparation and classify persistence safety. |
-| PA-3: incomplete MCP state shapes | AE11, KTD2 and U1/U3 require complete state encoding and a private-state fixture. |
-| PA-4: client name normalization | KTD2 and U1/U3 test both normalized names and routing; no spelling guarantee. |
+| PA-3: incomplete MCP state shapes | AE11, KTD2 and U1/U3/U7 require complete state encoding and a private-state fixture. |
+| PA-4: client name normalization | KTD2 and U1/U7 test both normalized names and routing; no spelling guarantee. |
 | PA-5: check selection/nightly timing | Verification Contract uses `MO_ALL_DRIVERS=1` and the actual daily/manual schedule. |
-| PA-6: U3 reader fuzz gap | KTD1 and U3 introduce fetch/page fuzzing with the reader. |
-| PA-7: selected-baseline bias | R20–R24, AE13, KTD6 and U2 separate pilots from an independent frozen baseline. |
+| PA-6: U3 reader fuzz gap | KTD1 and U9 introduce fetch/page fuzzing with the reader. |
+| PA-7: selected-baseline bias | R20–R24, AE13 and KTD6 preserve pilots and prohibit retrospective selection; any future comparative claim requires its own prospective baseline. |
 | PA-8: cancellation-frame premise | KTD3/KTD5 and U4/U5 capture existing frames before cleanup. |
-| PA-9: missing formal work | R28, Verification Design and U1/U3/U4/U5 assign concrete Lean, TLA+ and C obligations. |
+| PA-9: missing formal work | R28, Verification Design and all implementation units assign concrete Lean, TLA+ and C obligations. |
 
-All remaining audit dependencies are assigned in the gate table. Implementation readiness means U1 can start with concrete outputs and stop conditions, not that its investigations have already succeeded.
+All remaining audit dependencies are assigned in the gate table. U3 is the implementation entry after pilot closure. The remaining evaluation-contract decision blocks U6 collection, not the diagnostic milestones.

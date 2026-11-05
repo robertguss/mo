@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "base/runtime-identity.h"
 #include "tools/tools.h"
 
 #include <locale.h>
@@ -7,6 +8,7 @@
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
+    mo_runtime_identity_init();
     /* Only character encoding follows the environment; numeric parsing does
      * not. An unavailable locale leaves POSIX's ASCII-safe C locale active. */
     (void)setlocale(LC_CTYPE, "");

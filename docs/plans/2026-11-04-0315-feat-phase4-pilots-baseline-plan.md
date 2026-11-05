@@ -10,6 +10,14 @@ execution: code
 
 # Phase 4 Pilots and Independent Baseline - Plan
 
+## Supersession on 2026-11-05
+
+This document is retained as the historical implementation contract for the pilot harness and campaign. PR1–PR2 supplied the harness and grading; PR3’s records and `learnability/phase4/pilot/findings.md` close the campaign at its cap. PR4 / U8 (the freeze and 36-session baseline) is superseded and must not be launched from this plan. No measured baseline was collected.
+
+The current execution authority is `docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`, R20–R24. It permits diagnostic implementation after the pilot findings and requires a new declared protocol before scored evaluation. The original predictions, calibration rules and outcome remain preserved; the historical requirements below are not current instructions to collect a baseline.
+
+---
+
 ## Goal Capsule
 
 - **Objective:** Before any Phase 4 instrument exists, fresh agent sessions have been measured diagnosing and fixing six seeded task-queue bugs with today's tools, on scenarios that pilots have shown to be solvable but not trivial, under a protocol frozen so that the final round can repeat it exactly.

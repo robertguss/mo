@@ -1,0 +1,33 @@
+{
+  "variant": "expire-one-per-tick",
+  "client": "claude",
+  "binary": "/opt/mo-phase4/bin/claude",
+  "binary_sha256": "eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0",
+  "mo_sha256": "af407b466acfe13cfe7438fff625aecd5507bba8998ef866cfc4b33a54342640",
+  "limit_seconds": 3600,
+  "started_at": null,
+  "seconds": 293.2,
+  "killed_at_limit": false,
+  "client_exit_status": null,
+  "leftover_processes_ended": null,
+  "service_exit_status": null,
+  "service_stopped_by_itself": null,
+  "first_assistant_event": true,
+  "check_copy_removed_before_launch": null,
+  "symlinks_removed": null,
+  "foreign_hosts": [],
+  "failed": [],
+  "command": null,
+  "artifacts": {
+    "client-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "prompt.txt": "f4df7d608bd598a69433cfc0703ee795f4ef1902c5a39adfb1cbaf197306c8d3",
+    "proxy.jsonl": "e6283cc0dd6c934a1bc40c9540e71fe581b3241e54f7c1dfa72da169aa677112",
+    "service.log": "c856456711515e441433f60df0c44619d386796b4a66007c6ed935edeb8e4bfd",
+    "start-data/service.sqlite": "306de63141dce0e74ea3aaa4009ebdcfc87a5bc074be15101505eb3496857ccb",
+    "stream.jsonl": "6f5bd38a5a4744af63a48744fce6a8d9c78d11e937a0c6edac7dd54a40a7a19d",
+    "task-queue/job-queue.mo": "33b31180ab15384982d52c278bfaaabc0ab27376e899bdf2452cbe286444b221",
+    "task-queue/main.mo": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+    "task-queue/queue-tests.mo": "60a7cbbf5d6c6ac6c2a97df1519e49a5c1770041e5a1c759a113efbcb9132bb6"
+  },
+  "recovered": "The harness ended with an error after the session, its cleanup and the move of its records, before writing this manifest (a refused-command event the host check could not read). Written afterwards from the records; seconds is the client's own duration_ms, and null fields were not recorded."
+}

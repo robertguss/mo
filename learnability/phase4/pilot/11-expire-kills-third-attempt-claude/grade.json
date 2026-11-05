@@ -1,0 +1,20 @@
+{
+  "variant": "expire-kills-third-attempt",
+  "client": "claude",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": [
+      "the session changed queue-tests.mo; the variant's copy was used"
+    ]
+  },
+  "records": {
+    "match": true,
+    "pairs": 0,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": []
+  },
+  "failed": []
+}
