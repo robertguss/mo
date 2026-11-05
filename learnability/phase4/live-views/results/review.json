@@ -1,0 +1,350 @@
+{
+  "status": "complete",
+  "verdict": "Ready with fixes",
+  "verdict_reason": "Correct the truncated map-entry representation (#1), then add recovery-log and exact catalog-boundary assertions (#2 and #3). All three P2 findings were confirmed; the latter two are coverage gaps, not observed runtime failures.",
+  "scope": {
+    "base": "HEAD",
+    "branch": "t3/authenticated-live-views",
+    "head_sha": "fe08791aa2e0d2c4834964c5980c979c28cb7004",
+    "pr_url": null,
+    "files_changed": 34
+  },
+  "intent": "Authenticated bounded live MCP views through schema-driven Mo rendering without handler admission or application mutation; preserve recovery/non-store behavior and bytecode shapes.",
+  "intent_confidence": "explicit",
+  "reviewers": [
+    "correctness",
+    "security",
+    "testing",
+    "performance",
+    "project-standards",
+    "api-contract",
+    "reliability",
+    "adversarial",
+    "maintainability",
+    "agent-native-reviewer"
+  ],
+  "findings": [
+    {
+      "#": 1,
+      "autofix_class": "manual",
+      "confidence": 100,
+      "evidence": [
+        "runtime/mcp-views.mo:571 --     if kind.tag == 16 and item.complete",
+        "runtime/mcp-views.mo:570,575,584 -- value initially equals item.value; it becomes Json.Array([value, second.value]) only when the key is complete, then array.append(value) appends either representation directly.",
+        "docs/design/introspection.md section 3.3 specifies Map as an array of [key, value] pairs and cut collections as {truncated: N} counting omitted elements; its live-view amendment distinguishes text/bytes omitted-byte counts.",
+        "Existing build/gcc/debug/mo reproduction with ci.check_cli.Served and scratch-only source: replace the operator fixture's map with Map(Text, Text) containing {\"x\".repeat(2000): \"three\", \"y\": \"four\"}. mo-state path [\"map\"] succeeds with state [{\"truncated\":2000},{\"truncated\":1}], complete false. Path [\"map\",0] returns the identical array, while [\"map\",0,1] returns \"three\" complete true. Thus a two-entry map appears to omit 2000 entries at its own collection level.",
+        "runtime/mcp-views.mo:570-584 initializes value to item.value and appends it unchanged when a map key is incomplete; only the complete-key branch wraps it in Json.Array([value, second.value]).",
+        "runtime/mcp-views.mo:scalar cuts Text with cut(size, budget), where size is the byte length; walk then excludes that current entry from its omitted = count - i - 1 map-entry count.",
+        "docs/design/introspection.md section 3.3 specifies Map as an array of [key, value] pairs, while the authenticated-live-views amendment distinguishes omitted collection counts from text/byte counts.",
+        "runtime/mcp-views.mo:saved_state's pair branch already returns Json.Array([key.value, value.value]) and substitutes cut(1, key.left) when the key is incomplete."
+      ],
+      "file": "runtime/mcp-views.mo",
+      "first_evidence": "runtime/mcp-views.mo:571 --     if kind.tag == 16 and item.complete",
+      "independent_reviewers": [
+        "adversarial",
+        "api-contract"
+      ],
+      "line": 571,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "adversarial",
+        "api-contract"
+      ],
+      "severity": "P2",
+      "suggested_fix": "In walk's map branch, always produce the pair wrapper. If item.complete is false, use a value-side cut marker without attempting to read item.next, matching saved_state's selected-pair handling; alternatively emit one collection marker for count - i remaining entries. Add an oversized-key map regression alongside the existing map-path HTTP checks.",
+      "title": "Preserve map entry shape when a key truncates",
+      "why_it_matters": "Inspecting a map with a key that exceeds the rendering budget emits its byte-count truncation marker directly into the map array, where the documented representation reserves objects of that shape for omitted collection elements. An operator cannot distinguish omitted map entries from a partially rendered key and loses the promised [key, value] entry structure. Preserve the pair wrapper when its key is cut, as the existing selected-pair path already does, or omit the entire entry with an accurate remaining-entry count.",
+      "validation_status": "confirmed",
+      "validation_reason": "For a saved map whose key exceeds the remaining rendering budget, new runtime/mcp-views.mo:474 returns a byte-count cut marker and lines 570-592 append it directly instead of a [key, value] pair, violating docs/design/introspection.md:139 and 749-751; the operator dispatch at line 202 reaches this renderer without a key-size guard, although incidence was not measured under the read-only review constraints.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 2,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "src/vm/service.c:353 --         s->log[s->log_count++] =",
+        "tests/test_service_store.c:324 --     CHECK(mo_service_log_entry(s, 0, &log_entry));",
+        "All mo_service_log_entry test references are tests/test_service_store.c:324-327, before memory_store reopens its committed tail at lines 348-355. uncertain_commit and failed_snapshot contain no log-entry assertions. ci/check_operator.py checks a single initial timer entry and never restarts its service.",
+        "docs/design/introspection.md: Authenticated live views requires recovery and successful append to populate metadata, successful snapshot to clear it, failed append to leave it unchanged, and successful append followed by failed snapshot to retain the committed entry."
+      ],
+      "file": "src/vm/service.c",
+      "first_evidence": "src/vm/service.c:353 --         s->log[s->log_count++] =",
+      "independent_reviewers": [
+        "testing"
+      ],
+      "line": 353,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Extend memory_store to compare log entries before and after reopening, including handler, arrival and argument_bytes. Extend uncertain_commit to assert refused appends preserve metadata and reopened committed appends appear; extend failed_snapshot to assert entry 100 remains before reopening and the successful recovery snapshot clears the log.",
+      "title": "Assert recovered and failed-write log metadata",
+      "why_it_matters": "A service can restart with correct application state but an empty or incorrect mo-log, and the current tests would still pass. The only new log-entry assertions inspect successful live commits; existing reopen, uncertain-append and failed-snapshot tests check state and durable sequence without checking the newly maintained metadata. Those paths determine whether operators see the committed tail and whether a failed snapshot incorrectly hides it.",
+      "validation_status": "confirmed",
+      "validation_reason": "The newly added recovery/append/snapshot metadata transitions in src/vm/service.c have no assertions after the reachable reopen, refused-append and failed-snapshot triggers already exercised in tests/test_service_store.c:435-501: all log accessor assertions are confined to live successful commits at lines 324-327, and ci/check_operator.py:113-116 checks only an initial timer entry; this confirms the stated coverage gap, not an observed metadata malfunction."
+    },
+    {
+      "#": 3,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "tests/runtime/mcp-rpc-check.mo:247 --   tight = Mcp.prepare(descriptor, key, 2048) or stop \"bounded catalog\"",
+        "tests/runtime/mcp-rpc-check.mo:275 --   require(Mcp.prepare(descriptor, key, 100) == None)",
+        "The supplied diff deletes the expected-envelope bound calculation, prepare(bound - 1) rejection, and exact page equality assertion. runtime/mcp.mo:prepare checks every single-entry page against response_bytes; its page_size arithmetic remains sensitive to exact equality."
+      ],
+      "file": "tests/runtime/mcp-rpc-check.mo",
+      "first_evidence": "tests/runtime/mcp-rpc-check.mo:247 --   tight = Mcp.prepare(descriptor, key, 2048) or stop \"bounded catalog\"",
+      "independent_reviewers": [
+        "testing"
+      ],
+      "line": 247,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Build the expected one-tool JSON-RPC envelopes with the maximum-length escaped ID and the appropriate nextCursor for each catalog entry; take their maximum serialized byte count. Assert Mcp.prepare succeeds at that bound and fails at bound - 1, and assert the maximal entry's page matches its expected envelope.",
+      "title": "Restore exact catalog byte-boundary coverage",
+      "why_it_matters": "The replacement test no longer detects an off-by-one refusal of a catalog that exactly fits its response budget. It accepts 2048 bytes and refuses 100 bytes, whereas the deleted test pinned acceptance at the exact serialized size and rejection one byte below it. Operator entries change the largest required page, so retain the new traversal test and derive the new exact minimum independently from serialized one-tool envelopes.",
+      "validation_status": "confirmed",
+      "validation_reason": "The reviewed diff removes the serialized-envelope exact-bound acceptance, bound-minus-one refusal and page-equality assertions from tests/runtime/mcp-rpc-check.mo, replacing them with 2048-byte acceptance and 100-byte refusal at lines 247 and 275; an exactly fitting single-entry page remains a reachable boundary in runtime/mcp.mo:45-51 and 78-93, so the stated regression in boundary coverage is established without asserting an existing runtime off-by-one defect."
+    }
+  ],
+  "actionable_findings": [
+    {
+      "#": 1,
+      "autofix_class": "manual",
+      "confidence": 100,
+      "evidence": [
+        "runtime/mcp-views.mo:571 --     if kind.tag == 16 and item.complete",
+        "runtime/mcp-views.mo:570,575,584 -- value initially equals item.value; it becomes Json.Array([value, second.value]) only when the key is complete, then array.append(value) appends either representation directly.",
+        "docs/design/introspection.md section 3.3 specifies Map as an array of [key, value] pairs and cut collections as {truncated: N} counting omitted elements; its live-view amendment distinguishes text/bytes omitted-byte counts.",
+        "Existing build/gcc/debug/mo reproduction with ci.check_cli.Served and scratch-only source: replace the operator fixture's map with Map(Text, Text) containing {\"x\".repeat(2000): \"three\", \"y\": \"four\"}. mo-state path [\"map\"] succeeds with state [{\"truncated\":2000},{\"truncated\":1}], complete false. Path [\"map\",0] returns the identical array, while [\"map\",0,1] returns \"three\" complete true. Thus a two-entry map appears to omit 2000 entries at its own collection level.",
+        "runtime/mcp-views.mo:570-584 initializes value to item.value and appends it unchanged when a map key is incomplete; only the complete-key branch wraps it in Json.Array([value, second.value]).",
+        "runtime/mcp-views.mo:scalar cuts Text with cut(size, budget), where size is the byte length; walk then excludes that current entry from its omitted = count - i - 1 map-entry count.",
+        "docs/design/introspection.md section 3.3 specifies Map as an array of [key, value] pairs, while the authenticated-live-views amendment distinguishes omitted collection counts from text/byte counts.",
+        "runtime/mcp-views.mo:saved_state's pair branch already returns Json.Array([key.value, value.value]) and substitutes cut(1, key.left) when the key is incomplete."
+      ],
+      "file": "runtime/mcp-views.mo",
+      "first_evidence": "runtime/mcp-views.mo:571 --     if kind.tag == 16 and item.complete",
+      "independent_reviewers": [
+        "adversarial",
+        "api-contract"
+      ],
+      "line": 571,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "adversarial",
+        "api-contract"
+      ],
+      "severity": "P2",
+      "suggested_fix": "In walk's map branch, always produce the pair wrapper. If item.complete is false, use a value-side cut marker without attempting to read item.next, matching saved_state's selected-pair handling; alternatively emit one collection marker for count - i remaining entries. Add an oversized-key map regression alongside the existing map-path HTTP checks.",
+      "title": "Preserve map entry shape when a key truncates",
+      "why_it_matters": "Inspecting a map with a key that exceeds the rendering budget emits its byte-count truncation marker directly into the map array, where the documented representation reserves objects of that shape for omitted collection elements. An operator cannot distinguish omitted map entries from a partially rendered key and loses the promised [key, value] entry structure. Preserve the pair wrapper when its key is cut, as the existing selected-pair path already does, or omit the entire entry with an accurate remaining-entry count.",
+      "validation_status": "confirmed",
+      "validation_reason": "For a saved map whose key exceeds the remaining rendering budget, new runtime/mcp-views.mo:474 returns a byte-count cut marker and lines 570-592 append it directly instead of a [key, value] pair, violating docs/design/introspection.md:139 and 749-751; the operator dispatch at line 202 reaches this renderer without a key-size guard, although incidence was not measured under the read-only review constraints.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 2,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "src/vm/service.c:353 --         s->log[s->log_count++] =",
+        "tests/test_service_store.c:324 --     CHECK(mo_service_log_entry(s, 0, &log_entry));",
+        "All mo_service_log_entry test references are tests/test_service_store.c:324-327, before memory_store reopens its committed tail at lines 348-355. uncertain_commit and failed_snapshot contain no log-entry assertions. ci/check_operator.py checks a single initial timer entry and never restarts its service.",
+        "docs/design/introspection.md: Authenticated live views requires recovery and successful append to populate metadata, successful snapshot to clear it, failed append to leave it unchanged, and successful append followed by failed snapshot to retain the committed entry."
+      ],
+      "file": "src/vm/service.c",
+      "first_evidence": "src/vm/service.c:353 --         s->log[s->log_count++] =",
+      "independent_reviewers": [
+        "testing"
+      ],
+      "line": 353,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Extend memory_store to compare log entries before and after reopening, including handler, arrival and argument_bytes. Extend uncertain_commit to assert refused appends preserve metadata and reopened committed appends appear; extend failed_snapshot to assert entry 100 remains before reopening and the successful recovery snapshot clears the log.",
+      "title": "Assert recovered and failed-write log metadata",
+      "why_it_matters": "A service can restart with correct application state but an empty or incorrect mo-log, and the current tests would still pass. The only new log-entry assertions inspect successful live commits; existing reopen, uncertain-append and failed-snapshot tests check state and durable sequence without checking the newly maintained metadata. Those paths determine whether operators see the committed tail and whether a failed snapshot incorrectly hides it.",
+      "validation_status": "confirmed",
+      "validation_reason": "The newly added recovery/append/snapshot metadata transitions in src/vm/service.c have no assertions after the reachable reopen, refused-append and failed-snapshot triggers already exercised in tests/test_service_store.c:435-501: all log accessor assertions are confined to live successful commits at lines 324-327, and ci/check_operator.py:113-116 checks only an initial timer entry; this confirms the stated coverage gap, not an observed metadata malfunction."
+    },
+    {
+      "#": 3,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "tests/runtime/mcp-rpc-check.mo:247 --   tight = Mcp.prepare(descriptor, key, 2048) or stop \"bounded catalog\"",
+        "tests/runtime/mcp-rpc-check.mo:275 --   require(Mcp.prepare(descriptor, key, 100) == None)",
+        "The supplied diff deletes the expected-envelope bound calculation, prepare(bound - 1) rejection, and exact page equality assertion. runtime/mcp.mo:prepare checks every single-entry page against response_bytes; its page_size arithmetic remains sensitive to exact equality."
+      ],
+      "file": "tests/runtime/mcp-rpc-check.mo",
+      "first_evidence": "tests/runtime/mcp-rpc-check.mo:247 --   tight = Mcp.prepare(descriptor, key, 2048) or stop \"bounded catalog\"",
+      "independent_reviewers": [
+        "testing"
+      ],
+      "line": 247,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Build the expected one-tool JSON-RPC envelopes with the maximum-length escaped ID and the appropriate nextCursor for each catalog entry; take their maximum serialized byte count. Assert Mcp.prepare succeeds at that bound and fails at bound - 1, and assert the maximal entry's page matches its expected envelope.",
+      "title": "Restore exact catalog byte-boundary coverage",
+      "why_it_matters": "The replacement test no longer detects an off-by-one refusal of a catalog that exactly fits its response budget. It accepts 2048 bytes and refuses 100 bytes, whereas the deleted test pinned acceptance at the exact serialized size and rejection one byte below it. Operator entries change the largest required page, so retain the new traversal test and derive the new exact minimum independently from serialized one-tool envelopes.",
+      "validation_status": "confirmed",
+      "validation_reason": "The reviewed diff removes the serialized-envelope exact-bound acceptance, bound-minus-one refusal and page-equality assertions from tests/runtime/mcp-rpc-check.mo, replacing them with 2048-byte acceptance and 100-byte refusal at lines 247 and 275; an exactly fitting single-entry page remains a reachable boundary in runtime/mcp.mo:45-51 and 78-93, so the stated regression in boundary coverage is established without asserting an existing runtime off-by-one defect."
+    }
+  ],
+  "triage_groups": [
+    {
+      "title": "Pin changed observation contracts",
+      "findings": [
+        2,
+        3
+      ],
+      "type": "apply-queue",
+      "context": "New log metadata and changed catalog sizing lack precise regression assertions.",
+      "preferred_resolution": "Extend existing store cases for #2 and restore exact catalog boundary checks for #3; these changes are independent.",
+      "why": "Both make existing suites discriminate contract regressions without introducing another harness."
+    }
+  ],
+  "pre_existing_findings": [],
+  "requirements_completeness": {
+    "plan": "docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md",
+    "source": "explicit",
+    "plan_group": "PR4",
+    "requirements": [
+      {
+        "id": "R5",
+        "status": "met",
+        "detail": "Seven built-in authenticated live tools share the existing MCP endpoint and catalog."
+      },
+      {
+        "id": "R6",
+        "status": "partially addressed",
+        "detail": "U7 live views are implemented; map truncation has finding #1 and recovered log assertions have finding #2. Retained failures are intentionally deferred."
+      },
+      {
+        "id": "R7",
+        "status": "not addressed",
+        "detail": "Intentionally outside PR4: export belongs to U8 and retained-failure work to U4."
+      },
+      {
+        "id": "R8",
+        "status": "met",
+        "detail": "U7 tools use existing authentication and rate checks; fetch peer validation is outside PR4."
+      },
+      {
+        "id": "R9",
+        "status": "met",
+        "detail": "The reviewed operator observations and checked-in client evidence exclude the runtime bearer token; author state remains author data."
+      },
+      {
+        "id": "R10",
+        "status": "met",
+        "detail": "Distinct operator dispatch avoids author admission; observations use bounded saved bytes and metadata. Export pin obligations are deferred."
+      },
+      {
+        "id": "R24",
+        "status": "met",
+        "detail": "U7 protocol/HTTP checks and recorded native-client collision/discovery evidence exist. These are development checks, not scored evaluation or later failure-replay evidence."
+      },
+      {
+        "id": "R26",
+        "status": "met",
+        "detail": "Agent guide and CLI claim checks accompany the live tools."
+      },
+      {
+        "id": "R28",
+        "status": "met",
+        "detail": "U7 implementation checks and bounded renderer fuzz evidence are recorded with explicit limits. No claim that this empirical evidence proves later units or universal resource bounds."
+      }
+    ],
+    "implementation_units": [
+      {
+        "id": "U7",
+        "status": "partially addressed",
+        "detail": "Authenticated live-view surface and its integration are present; address the three confirmed P2 findings. Export/fetch/failure units are intentionally excluded."
+      }
+    ],
+    "unrequested_behavior_rules": []
+  },
+  "learnings": [],
+  "agent_native_gaps": [],
+  "deployment_notes": [],
+  "residual_risks": [],
+  "testing_gaps": [
+    "The new saved-state renderer manually decodes IEEE-754 values, but ci/check_operator.py exercises only 1.5 and tests/runtime/mcp-views-check.mo exercises only Int. Add deterministic rendering checks for negative zero, minimum subnormal, maximum finite, NaN and both infinities to pin the promised Float representation independently of the crash-only fuzz oracle.",
+    "ci/check_operator.py constructs choice: Some(19) but omits choice from its expected-value assertions; add an exact nominal choice assertion and a path into its payload to cover the new choice-rendering branch."
+  ],
+  "coverage": {
+    "depth": "full",
+    "notes": [
+      "All new untracked files explicitly included by user scope; not staged.",
+      "Root AGENTS.md instruction fallback supplies standards.",
+      "GCC/Clang/sanitizer unit suites and functional drivers passed; startup timing failed 0.1020 seconds, isolated unchanged repeat passed 0.0982 seconds; static passed.",
+      "Simplification focused protocol/lower/operator and lint checks passed.",
+      "Plan completeness limited to PR4 U7; R7 export and later failure portions are explicitly deferred.",
+      "Cross-model pass not run: required T3 delegate lifecycle cannot provide this skill\u2019s in-turn collection after asynchronous next instruction; local adversarial pass completed instead.",
+      "One semantic duplicate merged; no confidence promotion from same-model agreement.",
+      "First evidence backfilled for 4 input findings; 0 quote-gate demotions; 0 confidence suppressions; 0 mode-aware demotions.",
+      "0 cross-model validator shortcuts: no independent cross-model artifact exists. All 3 actionable findings selected for one validator batch.",
+      "Recovery log coverage concern from reliability duplicates primary finding #2 and is not repeated in testing gaps.",
+      "One validator batch returned valid verdicts for all three findings: 3 confirmed, 0 rejected, 0 unresolved, 0 malformed, 0 failed, 0 shortcut-skipped.",
+      "Finding #1 is public-contract protected. Its validator confirmed the reachable code defect without measuring incidence; the originating reviewer separately recorded a scratch-only reproduction. Findings #2 and #3 establish missing regression coverage, not runtime malfunctions.",
+      "Stage 5c skipped: report-only mode; no project edits, builds, commits or publication performed by the report leaf.",
+      "Plan reverse check found no additional unrequested behavior rule in the reviewed U7 changes. Native-client evidence predates the documented stack-limit reporting addition."
+    ],
+    "validator": {
+      "outcome": "verdicts",
+      "confirmed": 3,
+      "rejected": 0,
+      "unresolved": 0,
+      "malformed": 0,
+      "failed": 0,
+      "shortcut_skipped": 0,
+      "protected_subject_reclassifications": 0,
+      "degraded_blockers": []
+    },
+    "first_evidence_backfilled": 4,
+    "quote_gate_demotions": 0,
+    "suppressed_by_confidence": {},
+    "mode_aware_demotions": 0,
+    "failed_reviewers": [],
+    "review_policy": {
+      "sources": [],
+      "removed": 0,
+      "regraded": 0,
+      "not_applied": []
+    },
+    "compound_packs": {
+      "roots": [],
+      "warnings": [],
+      "errors": []
+    }
+  },
+  "peer": {
+    "outcome": "in-process-fallback",
+    "coverage": "Cross-model pass not run: required T3 delegate lifecycle cannot provide this skill\u2019s in-turn collection after asynchronous next instruction; local adversarial pass completed instead."
+  },
+  "artifact_path": "/tmp/compound-engineering-1000/ce-code-review/u7-local-review",
+  "run_id": "u7-local-review"
+}

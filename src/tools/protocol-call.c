@@ -131,6 +131,25 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
         mo_protocol_fallback(s, c, PE_RATE, EFFECT_NONE);
         return;
     }
+    if (mo_cell_get_tag(c->action) == 2) {
+        struct mo_cell json, rendered;
+        if (!mo_protocol_view(s, c, &json)) {
+            mo_protocol_fallback(s, c, failure(c), EFFECT_NONE);
+            return;
+        }
+        struct mo_cell result[] = {mo_protocol_field(s->protocol, request_type, request, 0), json,
+                                   mo_cell_bool(false), mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES)};
+        bool ok = mo_protocol_invoke(s, c, PF_TOOL_REPLY, result, &rendered);
+        mo_protocol_drop(s, c, PF_VIEW, json);
+        if (!ok || mo_cell_get_tag(rendered) != 1) {
+            mo_protocol_fallback(s, c, PE_RESPONSE, EFFECT_NONE);
+            return;
+        }
+        struct mo_cell body = mo_protocol_field(
+            s->protocol, mo_protocol_function(s, PF_TOOL_REPLY)->result_type, rendered, 0);
+        respond(s, c, 200, body, EFFECT_NONE);
+        return;
+    }
     int64_t index = mo_cell_get_int(mo_value_field(fields, 1));
     MO_ASSERT(index >= 0 && (uint64_t)index < s->descriptor->tool_count);
     const struct mo_bytecode_service_tool *tool = &s->descriptor->tools[index];
@@ -243,7 +262,7 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
         mo_protocol_close(s, c);
         return;
     }
-    if (mo_cell_get_tag(c->action) == 1)
+    if (mo_cell_get_tag(c->action) != 0)
         call_tool(s, c);
     else {
         struct mo_cell fields = mo_cell_get_payload(c->action);

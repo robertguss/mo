@@ -231,6 +231,21 @@ static void check_inventory(struct mo_store *store, uint64_t snapshot, unsigned 
     CHECK(i.snapshot == snapshot && i.logs == logs && i.last == snapshot + logs);
 }
 
+static void check_add_log(struct mo_service_loop *service, uint64_t first, uint32_t count) {
+    struct mo_service_message_summary entry;
+    for (uint32_t i = 0; i < count; i++) {
+        bool found = mo_service_log_entry(service, i, &entry);
+        CHECK(found);
+        if (found) {
+            CHECK(entry.id == first + i && entry.handler == 0 && !entry.timer);
+            CHECK(entry.arrival == 0 && entry.argument_bytes_available);
+            /* MOSV header (9), Int schema (13), and signed payload (8). */
+            CHECK(entry.argument_bytes == 30);
+        }
+    }
+    CHECK(!mo_service_log_entry(service, count, &entry));
+}
+
 static void check_encoding(struct mo_service_loop *service, struct mo_image *image) {
     const uint8_t *bytes;
     size_t length;
@@ -320,6 +335,12 @@ static void memory_store(struct mo_image *image) {
     check_inventory(store, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES, 3);
     struct mo_service_observation view = mo_service_observe(s);
     CHECK(view.sequence == 103 && view.snapshot_sequence == 100 && view.encoded_sequence == 103);
+    struct mo_service_message_summary log_entry;
+    CHECK(mo_service_log_entry(s, 0, &log_entry));
+    CHECK(log_entry.id == 101 && log_entry.argument_bytes_available);
+    check_add_log(s, 101, 3);
+    CHECK(mo_service_log_entry(s, 2, &log_entry) && log_entry.id == 103);
+    CHECK(!mo_service_log_entry(s, 3, &log_entry));
 
     for (unsigned i = 0; i < 20; i++) {
         CHECK(mo_service_send(s, 1 + i % 2, NULL, 0, i) == MO_SERVICE_OK);
@@ -340,6 +361,7 @@ static void memory_store(struct mo_image *image) {
     o.replies = 0;
     s = open_service(image, store, &o);
     CHECK(o.replies == 0);
+    check_add_log(s, 101, 3);
     CHECK(mo_cell_get_int(mo_service_state(s)) ==
           7 + 11 * (MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES + 3));
     add(s, -19);
@@ -440,20 +462,24 @@ static void uncertain_commit(struct mo_image *image) {
     CHECK(strcmp(mo_service_status_text(o.status),
                  "service store failed; reopen it to see whether the last change was saved") == 0);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 7);
+    check_add_log(s, 1, 0);
     check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
     check_encoding(s, image);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+    check_add_log(s, 1, 1);
     crash_point = 5;
     add(s, 5);
     crash_point = 0;
     CHECK(o.status == MO_SERVICE_STORE && !mo_service_running(s));
+    check_add_log(s, 1, 1);
     check_encoding(s, image);
     mo_service_free(s);
     s = open_service(image, store, &o);
     check_encoding(s, image);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+    check_add_log(s, 1, 1);
     check_inventory(store, 0, 1);
     mo_service_free(s);
     crash_point = 7;
@@ -463,6 +489,7 @@ static void uncertain_commit(struct mo_image *image) {
     crash_point = 0;
     s = open_service(image, store, &o);
     CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+    check_add_log(s, 1, 1);
     mo_service_free(s);
     mo_store_close(store);
 }
@@ -484,6 +511,7 @@ static void failed_snapshot(struct mo_image *image) {
     struct mo_service_observation before_recovery = mo_service_observe(s);
     CHECK(before_recovery.sequence == 100 && before_recovery.snapshot_sequence == 0 &&
           before_recovery.encoded_sequence == 99);
+    check_add_log(s, 1, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
 
     check_encoding(s, image);
     mo_service_free(s);
@@ -494,6 +522,7 @@ static void failed_snapshot(struct mo_image *image) {
     struct mo_service_observation recovered = mo_service_observe(s);
     CHECK(recovered.sequence == 100 && recovered.snapshot_sequence == 100 &&
           recovered.encoded_sequence == 100);
+    check_add_log(s, 101, 0);
 
     mo_service_free(s);
     crash_point = 6;

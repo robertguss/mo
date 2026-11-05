@@ -729,3 +729,38 @@ for the rest of the toolchain. This keeps eager executable hashing within the ex
 sample `mo check` latency budget; the measured executable bytes still determine identity.
 The service-store fault harness separately refuses the recovery cache copy, checking a
 memory refusal, release of the decoded state and successful reopening afterward.
+
+### Authenticated live views
+
+The supported catalog now includes overview, state, mailbox, timers, memory, supervisor and
+post-snapshot log views. Authentication precedes validated operator dispatch; operator calls
+consume the same rate allowance as author calls before any inspection or author conversion.
+They never enter service admission. Export and retained-failure tools remain absent.
+
+`runtime/mcp-views.mo` renders the saved schema and payload without extending bytecode shape
+reachability. The native bridge copies typed metadata and saved bytes into the request process;
+no live service value is retained. Its extra saved-byte allowance is independently bounded by
+`MO_LIMIT_MCP_VIEW_MEMORY` (the ordinary 16 MiB request allowance plus 16 MiB of saved bytes).
+Native timer metadata is capped at `MO_LIMIT_MCP_VIEW_TIMERS` (256), with the omitted count
+included in the truncated response. Names beyond `MO_LIMIT_MCP_VIEW_NAME_BYTES` (512) are
+explicitly unavailable rather than copied without bound.
+Only a rate-admitted operator request gets that allowance; it is restored after rendering and
+the copied bytes are released before another service step. The renderer's conservative JSON
+budget is `MO_LIMIT_MCP_VIEW_BYTES` (6144 bytes), leaving room for MCP's duplicated textual and
+structured result. Cut collections report omitted counts, and cut text/bytes report omitted
+byte counts. A narrower path remains usable; export advice explicitly says export is unavailable.
+The memory view reports the high-water native scratch of completed inspection rendering calls,
+including their protocol work, rather than claiming an atomic measurement of the current call.
+
+The service keeps at most one snapshot interval of scalar log metadata. Existing validated
+recovery and successful append populate it; successful snapshot clears it. Failed append leaves
+it unchanged, while successful append followed by failed snapshot keeps the committed entry,
+matching the durable sequence rather than the older encoded-state sequence. No new store reader
+or record format is introduced.
+
+Protocol tests exercise private nominal state, scalar author-tool name collisions, full-mailbox
+inspection, shared rate limits and non-admission. The operator driver exercises actual loopback
+HTTP, saved scalar/container forms, path selection, explicit truncation and token refusals.
+The saved renderer has a registered fuzz target; the bytecode/shape ABI is unchanged and the
+embedded runtime ABI rejects reordered observation fields. These are implementation checks,
+not scored diagnostic evaluation observations.

@@ -8,6 +8,7 @@ use McpType
 enum Action
   Reply(status: Int, body: Text)
   Call(request: McpRpc.Request, tool: Int, arguments: Json.Json)
+  Operator(request: McpRpc.Request, view: Int, arguments: Json.Json)
 end
 
 fn receive(
@@ -64,6 +65,11 @@ fn receive(
         Some(value): Reply(status: 200, body: value.to_text)
         None: protocol_error(Some(request.id), -32603, "Internal error")
       end
+    McpRpc.Operator(view: index, arguments: arguments): Operator(
+      request: request,
+      view: index,
+      arguments: arguments
+    )
     McpRpc.Call(tool: index, arguments: arguments): Call(
       request: request,
       tool: index,

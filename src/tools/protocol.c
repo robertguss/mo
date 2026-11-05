@@ -74,6 +74,15 @@ enum abi_type {
     ABI_BODY_RESULT,
     ABI_ACTION,
     ABI_TEXT_PAIR,
+    ABI_NATIVE_BYTES,
+    ABI_VIEW_STATS,
+    ABI_VIEW_MESSAGE,
+    ABI_VIEW_MESSAGES,
+    ABI_VIEW_TIMER,
+    ABI_VIEW_TIMERS,
+    ABI_VIEW_EVENT,
+    ABI_VIEW_EVENTS,
+    ABI_VIEW_OBSERVATION,
     ABI_COUNT
 };
 
@@ -85,7 +94,7 @@ struct abi_field {
 struct abi_case {
     const char *name;
     uint32_t count;
-    struct abi_field fields[6];
+    struct abi_field fields[20];
 };
 
 static const struct abi_case span[] = {{"Span", 2, {{"start", ABI_INT}, {"size", ABI_INT}}}};
@@ -207,6 +216,7 @@ static const struct abi_case rpc_method[] = {
     {.name = "Ping"},
     {"ListTools", 1, {{"0", ABI_INT}}},
     {"Call", 2, {{"tool", ABI_INT}, {"arguments", ABI_JSON}}},
+    {"Operator", 2, {{"view", ABI_INT}, {"arguments", ABI_JSON}}},
 };
 static const struct abi_case catalog[] = {{"Catalog",
                                            4,
@@ -252,7 +262,61 @@ static const struct abi_case body_result[] = {{"Ok", 1, {{NULL, ABI_BODY_STEP}}}
                                               {"Error", 1, {{NULL, ABI_INT}}}};
 static const struct abi_case action[] = {
     {"Reply", 2, {{"status", ABI_INT}, {"body", ABI_TEXT}}},
-    {"Call", 3, {{"request", ABI_RPC_REQUEST}, {"tool", ABI_INT}, {"arguments", ABI_JSON}}}};
+    {"Call", 3, {{"request", ABI_RPC_REQUEST}, {"tool", ABI_INT}, {"arguments", ABI_JSON}}},
+    {"Operator", 3, {{"request", ABI_RPC_REQUEST}, {"view", ABI_INT}, {"arguments", ABI_JSON}}}};
+
+static const struct abi_case view_stats[] = {{"Stats",
+                                              18,
+                                              {{"sequence", ABI_INT},
+                                               {"snapshot", ABI_INT},
+                                               {"encoded_sequence", ABI_INT},
+                                               {"elapsed", ABI_TEXT},
+                                               {"heap_used", ABI_INT},
+                                               {"heap_peak", ABI_INT},
+                                               {"heap_limit", ABI_INT},
+                                               {"stack", ABI_INT},
+                                               {"encoded_bytes", ABI_INT},
+                                               {"scratch_peak", ABI_INT},
+                                               {"failures", ABI_INT},
+                                               {"restarts", ABI_INT},
+                                               {"running", ABI_BOOL},
+                                               {"persistent", ABI_BOOL},
+                                               {"failure_window", ABI_INT},
+                                               {"restart_window", ABI_INT},
+                                               {"timer_count", ABI_INT},
+                                               {"stack_limit", ABI_INT}}}};
+static const struct abi_case view_message[] = {{"Message",
+                                                6,
+                                                {{"handler", ABI_TEXT},
+                                                 {"timer", ABI_BOOL},
+                                                 {"arrival", ABI_INT},
+                                                 {"number", ABI_TEXT},
+                                                 {"argument_bytes", ABI_INT},
+                                                 {"size_available", ABI_BOOL}}}};
+static const struct abi_case view_timer[] = {
+    {"Timer",
+     4,
+     {{"name", ABI_TEXT}, {"interval", ABI_TEXT}, {"next", ABI_TEXT}, {"waiting", ABI_BOOL}}}};
+static const struct abi_case view_event[] = {{"Event",
+                                              6,
+                                              {{"number", ABI_TEXT},
+                                               {"kind", ABI_TEXT},
+                                               {"reason", ABI_TEXT},
+                                               {"handler", ABI_TEXT},
+                                               {"arrival", ABI_INT},
+                                               {"elapsed", ABI_TEXT}}}};
+static const struct abi_case view_observation[] = {{"Observation",
+                                                    10,
+                                                    {{"service_name", ABI_TEXT},
+                                                     {"program", ABI_TEXT},
+                                                     {"build", ABI_TEXT},
+                                                     {"build_label", ABI_TEXT},
+                                                     {"stats", ABI_VIEW_STATS},
+                                                     {"mailbox", ABI_VIEW_MESSAGES},
+                                                     {"timers", ABI_VIEW_TIMERS},
+                                                     {"events", ABI_VIEW_EVENTS},
+                                                     {"log", ABI_VIEW_MESSAGES},
+                                                     {"uptime", ABI_TEXT}}}};
 
 static const struct {
     enum mo_type_kind kind;
@@ -260,6 +324,15 @@ static const struct {
     uint32_t count;
     const struct abi_case *cases;
 } abi[] = {
+    [ABI_NATIVE_BYTES] = {.kind = MO_TYPE_BYTES},
+    [ABI_VIEW_STATS] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = view_stats},
+    [ABI_VIEW_MESSAGE] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = view_message},
+    [ABI_VIEW_TIMER] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = view_timer},
+    [ABI_VIEW_EVENT] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = view_event},
+    [ABI_VIEW_OBSERVATION] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = view_observation},
+    [ABI_VIEW_MESSAGES] = {.kind = MO_TYPE_LIST, .element = ABI_VIEW_MESSAGE},
+    [ABI_VIEW_TIMERS] = {.kind = MO_TYPE_LIST, .element = ABI_VIEW_TIMER},
+    [ABI_VIEW_EVENTS] = {.kind = MO_TYPE_LIST, .element = ABI_VIEW_EVENT},
     [ABI_INT] = {.kind = MO_TYPE_INT},
     [ABI_BOOL] = {.kind = MO_TYPE_BOOL},
     [ABI_BYTE] = {.kind = MO_TYPE_BYTE},
@@ -310,7 +383,7 @@ static const struct {
     [ABI_JSON_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = json_option},
     [ABI_RPC_REQUEST] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = rpc_request},
     [ABI_RPC_ENVELOPE] = {.kind = MO_TYPE_CHOICE, .count = 5, .cases = rpc_envelope},
-    [ABI_RPC_METHOD] = {.kind = MO_TYPE_CHOICE, .count = 6, .cases = rpc_method},
+    [ABI_RPC_METHOD] = {.kind = MO_TYPE_CHOICE, .count = 7, .cases = rpc_method},
     [ABI_CATALOG] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = catalog},
     [ABI_CATALOG_OPTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = catalog_option},
     [ABI_SPANS] = {.kind = MO_TYPE_LIST, .element = ABI_SPAN},
@@ -321,7 +394,7 @@ static const struct {
     [ABI_BODY_BOUNDS] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = body_bounds},
     [ABI_BODY_STEP] = {.kind = MO_TYPE_CHOICE, .count = 1, .cases = body_step},
     [ABI_BODY_RESULT] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = body_result},
-    [ABI_ACTION] = {.kind = MO_TYPE_CHOICE, .count = 2, .cases = action},
+    [ABI_ACTION] = {.kind = MO_TYPE_CHOICE, .count = 3, .cases = action},
     [ABI_TEXT_PAIR] = {.kind = MO_TYPE_TUPLE, .element = ABI_TEXT, .value = ABI_TEXT},
 };
 
@@ -380,6 +453,10 @@ static bool valid_abi(const struct mo_image *image) {
         {"HttpBody.fixed", 1, {ABI_INT}, ABI_BODY_STATE},
         {"HttpBody.chunked", 0, {0}, ABI_BODY_STATE},
         {"HttpBody.feed", 3, {ABI_BODY_STATE, ABI_BYTES, ABI_BODY_BOUNDS}, ABI_BODY_RESULT},
+        {"McpViews.render",
+         5,
+         {ABI_INT, ABI_JSON, ABI_VIEW_OBSERVATION, ABI_NATIVE_BYTES, ABI_INT},
+         ABI_JSON},
         {"Mcp.catalog", 1, {ABI_MCP_SERVICE}, ABI_JSON},
         {"Mcp.prepare", 3, {ABI_MCP_SERVICE, ABI_TEXT, ABI_INT}, ABI_CATALOG_OPTION},
         {"Mcp.page", 3, {ABI_CATALOG, ABI_INT, ABI_JSON}, ABI_JSON_OPTION},

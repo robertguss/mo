@@ -1,0 +1,175 @@
+{
+  "codex": {
+    "version": "codex-cli 0.166.0",
+    "command": [
+      "codex",
+      "exec",
+      "--model",
+      "gpt-6.1-sol",
+      "-c",
+      "model_reasoning_effort=\"xhigh\"",
+      "--json",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "-c",
+      "mcp_servers.probe.url=\"http://127.0.0.1:44937/mcp\"",
+      "-c",
+      "mcp_servers.probe.bearer_token_env_var=\"PROBE_TOKEN\"",
+      "-c",
+      "approval_policy=\"never\""
+    ],
+    "exit_status": 0,
+    "stderr_tail": "Reading additional input from stdin...\n",
+    "visible_names": [
+      "mcp__probe__count",
+      "mcp__probe__mo_log",
+      "mcp__probe__mo_mailbox",
+      "mcp__probe__mo_memory",
+      "mcp__probe__mo_overview",
+      "mcp__probe__mo_state_94338136a5cf",
+      "mcp__probe__mo_state_c5d0a7c9f588",
+      "mcp__probe__mo_supervisor",
+      "mcp__probe__mo_timers"
+    ],
+    "calls": [
+      "probe/mo-state",
+      "probe/mo_state",
+      "probe/mo-overview"
+    ]
+  },
+  "codex-approve": {
+    "version": "codex-cli 0.166.0",
+    "command": [
+      "codex",
+      "exec",
+      "--model",
+      "gpt-6.1-sol",
+      "-c",
+      "model_reasoning_effort=\"xhigh\"",
+      "--json",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "read-only",
+      "-c",
+      "mcp_servers.probe.url=\"http://127.0.0.1:44937/mcp\"",
+      "-c",
+      "mcp_servers.probe.bearer_token_env_var=\"PROBE_TOKEN\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "mcp_servers.probe.default_tools_approval_mode=\"approve\""
+    ],
+    "exit_status": 0,
+    "stderr_tail": "Reading additional input from stdin...\n",
+    "visible_names": [
+      "mcp__probe__count",
+      "mcp__probe__mo_log",
+      "mcp__probe__mo_mailbox",
+      "mcp__probe__mo_memory",
+      "mcp__probe__mo_overview",
+      "mcp__probe__mo_state_94338136a5cf",
+      "mcp__probe__mo_state_c5d0a7c9f588",
+      "mcp__probe__mo_supervisor",
+      "mcp__probe__mo_timers"
+    ],
+    "calls": [
+      "probe/mo-state",
+      "probe/mo_state",
+      "probe/mo-overview"
+    ]
+  },
+  "claude": {
+    "version": "2.1.318 (Claude Code)",
+    "command": [
+      "claude",
+      "--model",
+      "PROMPT",
+      "-p",
+      "An MCP server named probe is connected. Use only its tools and no other tool. Call each of these three tools exactly once, in this order, with no arguments: the tool whose server-side name is mo-state, then the tool whose server-side name is mo_state, then the tool whose server-side name is mo-overview. Then answer with two lists: every tool name from that server exactly as it appears to you, and the text each of the three calls returned.",
+      "--mcp-config",
+      "/tmp/tmplz4hk0px/claude/mcp.json",
+      "--strict-mcp-config",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--no-session-persistence",
+      "--allowedTools",
+      "mcp__probe__*"
+    ],
+    "exit_status": 0,
+    "stderr_tail": "",
+    "visible_names": [
+      "mcp__probe__count",
+      "mcp__probe__mo-log",
+      "mcp__probe__mo-mailbox",
+      "mcp__probe__mo-memory",
+      "mcp__probe__mo-overview",
+      "mcp__probe__mo-state",
+      "mcp__probe__mo-supervisor",
+      "mcp__probe__mo-timers",
+      "mcp__probe__mo_state"
+    ],
+    "calls": [
+      "ToolSearch",
+      "mcp__probe__mo-state",
+      "mcp__probe__mo_state",
+      "mcp__probe__mo-overview"
+    ]
+  },
+  "wire_listed": [
+    "mo_state",
+    "count",
+    "mo-overview",
+    "mo-state",
+    "mo-mailbox",
+    "mo-timers",
+    "mo-memory",
+    "mo-supervisor",
+    "mo-log"
+  ],
+  "wire_calls": [
+    [
+      8,
+      "mo-state",
+      true
+    ],
+    [
+      10,
+      "mo-overview",
+      true
+    ],
+    [
+      19,
+      "mo-state",
+      true
+    ],
+    [
+      21,
+      "mo_state",
+      true
+    ],
+    [
+      23,
+      "mo-overview",
+      true
+    ],
+    [
+      34,
+      "mo-state",
+      true
+    ],
+    [
+      36,
+      "mo_state",
+      true
+    ],
+    [
+      38,
+      "mo-overview",
+      true
+    ]
+  ]
+}

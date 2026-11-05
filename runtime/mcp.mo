@@ -4,6 +4,7 @@ use Json
 use McpRpc
 use McpSchema
 use McpType
+use McpViews
 
 struct Catalog
   tools: List(Json.Json)
@@ -24,7 +25,7 @@ fn catalog(descriptor: McpType.Service) : Json.Json
       })
     )
   end
-  Json.Object({"tools": Json.Array(tools)})
+  Json.Object({"tools": Json.Array(tools.concat(McpViews.catalog()))})
 end
 
 fn prepare(descriptor: McpType.Service, image_key: Text, response_bytes: Int) : Option(Catalog)

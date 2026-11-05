@@ -10,6 +10,7 @@ result,
 error,
 initialized
 use Json
+use McpViews
 
 struct Request
   id: Json.Json
@@ -33,6 +34,7 @@ enum Method
   Ping
   ListTools(Int)
   Call(tool: Int, arguments: Json.Json)
+  Operator(view: Int, arguments: Json.Json)
 end
 
 fn parse(text: Text, version: Option(Text)) : Envelope
@@ -144,7 +146,7 @@ fn validate(request: Request, tools: List(Text), image_key: Text) : Result(Metho
           parts.get(1) != Some(image_key)
         spelling = parts.get(0) or stop "MCP cursor index"
         index = spelling.to_int or -1
-        if index < 0 or index >= tools.size or index.to_text != spelling
+        if index < 0 or index >= tools.size + McpViews.names().size or index.to_text != spelling
           return Error("Invalid params: invalid cursor")
         end
         Ok(ListTools(index))
@@ -164,6 +166,13 @@ fn validate(request: Request, tools: List(Text), image_key: Text) : Result(Metho
     end
     for i in 0..tools.size
       return Ok(Call(tool: i, arguments: arguments)) if tools.get(i) == Some(tool_name)
+    end
+    for i in 0..McpViews.names().size
+      if McpViews.names().get(i) == Some(tool_name)
+        return if McpViews.valid(i, arguments): Ok(Operator(view: i, arguments: arguments)) else: Error(
+          "Invalid params: invalid view arguments"
+        )
+      end
     end
     Error("Invalid params: unknown tool")
   end
