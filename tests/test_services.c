@@ -772,7 +772,7 @@ static void descriptor_results(struct mo_image *service) {
     uint32_t json = file->functions[catalog].result_type;
     struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
     struct mo_cell tools = mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
-    CHECK(mo_list_size(tools) == 15);
+    CHECK(mo_list_size(tools) == 16);
     const char *expected[] = {"array",      "boolean", "boolean", "#/$defs/t0",
                               "#/$defs/t0", "array",   "boolean", "array"};
     for (uint32_t i = 0; i < 8; i++) {
@@ -821,7 +821,7 @@ static void descriptor_catalog(struct mo_image *service) {
         struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
         struct mo_cell tools =
             mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
-        CHECK(mo_list_size(tools) == 10);
+        CHECK(mo_list_size(tools) == 11);
         struct mo_cell entry, record;
         MO_ASSERT(mo_list_get(tools, 1, &entry) && mo_list_get(tools, 2, &record));
         const char *keys[] = {"inputSchema", "outputSchema"};

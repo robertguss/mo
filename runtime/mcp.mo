@@ -1,5 +1,13 @@
 module Mcp
-expose Catalog(..), success, application_error, tool_result, tool_reply, catalog, prepare, page
+expose Catalog(..),
+success,
+application_error,
+tool_result,
+tool_reply,
+operator_reply,
+catalog,
+prepare,
+page
 use Json
 use McpRpc
 use McpSchema
@@ -109,7 +117,15 @@ fn tool_content(value: Json.Json, failed: Bool) : Json.Json
 end
 
 fn tool_reply(id: Json.Json, value: Json.Json, failed: Bool, byte_limit: Int) : Option(Text)
-  content = tool_content(value, failed)
+  bounded_reply(id, tool_content(value, failed), failed, byte_limit)
+end
+
+## Operator refusals remain operator payloads, not author application errors.
+fn operator_reply(id: Json.Json, value: Json.Json, refused: Bool, byte_limit: Int) : Option(Text)
+  bounded_reply(id, tool_content(value, false), refused, byte_limit)
+end
+
+fn bounded_reply(id: Json.Json, content: Json.Json, failed: Bool, byte_limit: Int) : Option(Text)
   text = content.to_text
   return None if text.byte_count > byte_limit / 2
   body = McpRpc.result(id, rendered_tool_result(content, text, failed)).to_text

@@ -1,4 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
+#include "base/binary.h"
+#include "base/export.h"
 #include "base/stack.h"
 #include "base/store-memory.h"
 #include "bytecode/io.h"
@@ -512,6 +514,19 @@ static void failed_snapshot(struct mo_image *image) {
     CHECK(before_recovery.sequence == 100 && before_recovery.snapshot_sequence == 0 &&
           before_recovery.encoded_sequence == 99);
     check_add_log(s, 1, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
+    const uint8_t *saved;
+    size_t saved_size;
+    MO_ASSERT(mo_service_encoded_state(s, &saved, &saved_size));
+    struct mo_export_identity identity = {.kind = 1,
+                                          .label = "snapshot-failure",
+                                          .sequence = before_recovery.sequence,
+                                          .encoded_sequence = before_recovery.encoded_sequence};
+    struct mo_export_pin pin = {0};
+    MO_ASSERT(mo_export_create(&pin, &identity, saved, saved_size, 0));
+    struct mo_binary framing = {pin.bytes, pin.length, 70 + strlen(identity.label)};
+    uint64_t durable, encoded;
+    CHECK(mo_binary_uint(&framing, 8, &durable) && durable == 100);
+    CHECK(mo_binary_uint(&framing, 8, &encoded) && encoded == 99);
 
     check_encoding(s, image);
     mo_service_free(s);
@@ -523,6 +538,12 @@ static void failed_snapshot(struct mo_image *image) {
     CHECK(recovered.sequence == 100 && recovered.snapshot_sequence == 100 &&
           recovered.encoded_sequence == 100);
     check_add_log(s, 101, 0);
+    /* Recovery changes current encoding; the earlier exported bytes keep their provenance. */
+    CHECK(pin.sequence == 100 && pin.encoded_sequence == 99);
+    framing.position = 70 + strlen(identity.label);
+    CHECK(mo_binary_uint(&framing, 8, &durable) && durable == 100);
+    CHECK(mo_binary_uint(&framing, 8, &encoded) && encoded == 99);
+    mo_export_release(&pin);
 
     mo_service_free(s);
     crash_point = 6;

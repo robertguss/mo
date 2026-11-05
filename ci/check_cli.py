@@ -1507,7 +1507,7 @@ SERVE_EDITS = (("(state + amount, state + amount)", "(state + amount, state * am
                ("## Reads the count.", "## Reads the total."),
                ("## Reads the count.", "\n## Reads the count."))
 SERVE_TOOL_PAGE = 32
-SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log"]
+SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -3827,7 +3827,7 @@ def guide_claims(binary):
     # The live operator driver exercises these guide claims through the real endpoint.
     for name in SERVE_OPERATOR_NAMES:
         assert f"`{name}`" in guide
-    assert "State export, fetch, retained failure records and offline replay/query tools are not available yet." in guide
+    assert "Fetch, retained failure records and offline replay/query tools are not available yet." in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]

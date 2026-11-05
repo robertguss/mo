@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "../tests/service_compile.h"
+#include "base/runtime-identity.h"
 #include "base/stack.h"
 #include "tools/protocol.h"
 
@@ -17,6 +18,7 @@ struct input {
 static void run(void *context) {
     const struct input *input = context;
     if (image == NULL) {
+        mo_runtime_identity_init();
         MO_ASSERT(setenv("MO_FUZZ_MCP_TOKEN", "fuzz-token", 1) == 0);
         image = compile("module Main\nservice\nstate Int = 0\ntools add, read, reject\n"
                         "token from env \"MO_FUZZ_MCP_TOKEN\"\nend\n"

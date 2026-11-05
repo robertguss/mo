@@ -29,7 +29,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "check.sh started: pid $$"
 
-all_groups=" gcc clang sanitize fuzz drivers bench lean static cbmc "
+all_groups=" gcc clang sanitize fuzz drivers bench lean static cbmc models "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -220,6 +220,7 @@ if have python3; then
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
 				python3 ci/check_cli.py "$driver"
 			later "Authenticated operator views ($driver)" python3 ci/check_operator.py "$driver"
+			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
 			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
 				python3 ci/check_simulation.py "$driver"
 			later "Task queue: simulation tests and the real service over loopback ($driver)" \
@@ -520,6 +521,17 @@ if have cbmc && have goto-cc && have goto-instrument; then
 	((proofs_status == 0 && reach_status == 0))
 else
 	missing "cbmc is not installed"
+fi
+fi
+
+if enter models; then
+step "Finite export generation models and negative controls"
+model_status=0
+python3 ci/check_models.py || model_status=$?
+if ((model_status == 77)); then
+    missing "Java or pinned TLC jar is not installed (see models/README.md)"
+elif ((model_status != 0)); then
+    exit "$model_status"
 fi
 fi
 

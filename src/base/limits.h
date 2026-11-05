@@ -476,6 +476,17 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_MCP_CHUNKS 1024
 #define MO_LIMIT_MCP_TRAILER_BYTES (16 << 10)
 #define MO_LIMIT_MCP_TRAILER_FIELDS 64
+/* Export pins own copied bytes independently of handler and protocol heaps. */
+#define MO_LIMIT_EXPORT_PINS 2
+#define MO_LIMIT_EXPORT_BYTES (2 * (MO_LIMIT_SAVED_BYTES + 1024 * 1024))
+#define MO_LIMIT_EXPORT_PAGE_BYTES 8192
+#define MO_LIMIT_EXPORT_IDLE_US UINT64_C(60000000)
+#define MO_LIMIT_EXPORT_LABEL_BYTES 256
+/* Fixed MOEX v1 bytes, including both sequence fields and trailing SHA-256. */
+#define MO_EXPORT_FIXED_BYTES 162
+/* Native page copy and protocol rendering use the existing per-request allowance. */
+#define MO_LIMIT_EXPORT_SCRATCH MO_LIMIT_MCP_REQUEST_MEMORY
+
 /* Saved-byte copy for one idle operator call; released with its request. */
 #define MO_LIMIT_MCP_VIEW_MEMORY (MO_LIMIT_MCP_REQUEST_MEMORY + MO_LIMIT_SAVED_BYTES)
 #define MO_LIMIT_MCP_VIEW_BYTES 6144

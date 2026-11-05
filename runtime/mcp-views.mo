@@ -4,6 +4,8 @@ catalog,
 valid,
 offset,
 render,
+export_id,
+export_reply,
 Observation(..),
 Stats(..),
 Message(..),
@@ -30,6 +32,7 @@ struct Stats
   restart_window: Int
   timer_count: Int
   stack_limit: Int
+  pinned_export_bytes: Int
 end
 
 struct Message
@@ -71,7 +74,16 @@ struct Observation
 end
 
 fn names() : List(Text)
-  ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log"]
+  [
+    "mo-overview",
+    "mo-state",
+    "mo-mailbox",
+    "mo-timers",
+    "mo-memory",
+    "mo-supervisor",
+    "mo-log",
+    "mo-export"
+  ]
 end
 
 ## MO_LIMIT_SAVED_DEPTH; test_protocol_server pins the two together.
@@ -83,18 +95,19 @@ fn arguments_of(index: Int) : List(Text)
   if index == 1: ["path"] else if index == 2 or index == 3: ["offset"] else if index == 5: [
     "after",
     "before"
-  ] else if index == 6: ["after"] else: []
+  ] else if index == 6: ["after"] else if index == 7: ["kind", "export", "offset"] else: []
 end
 
 fn catalog() : List(Json.Json)
   descriptions = [
-    "Runtime identities, recovery position and live counters. Independent observations are not an atomic snapshot. Retained failure records and export are not available.",
-    "Current saved state, including private fields. Optional path contains field names or nonnegative indexes. Large views explicitly truncate; export is not yet available.",
+    "Runtime identities, recovery position and live counters. Independent observations are not an atomic snapshot. Retained failure records are not available. State export uses mo-export.",
+    "Current saved state, including private fields. Optional path contains field names or nonnegative indexes. Large views explicitly truncate; use mo-export for complete saved bytes.",
     "Queued handler names, arrival times and encoded argument sizes where available, never argument values. A truncated page names the next offset. Does not execute handlers.",
     "Timer names, intervals, next due elapsed times and waiting ticks. A truncated page names the next offset. Does not execute handlers.",
-    "Live heap use, peak and limit, stack capacity and encoded state bytes. Export pins and retained diagnostics are not yet available.",
+    "Live heap use, peak and limit, stack capacity and encoded state bytes. Includes native export pin bytes. Retained diagnostics are not yet available.",
     "Retained in-memory supervisor events, newest first, optionally after or before an event number. A truncated page names the next arguments. Events are lost on process exit; failure capture is not yet available.",
-    "Committed message metadata since the last snapshot, oldest first, optionally after a sequence. Older successful messages are not retained. Does not execute handlers."
+    "Committed message metadata since the last snapshot, oldest first, optionally after a sequence. Older successful messages are not retained. Does not execute handlers.",
+    "Export saved state as immutable MOEX v1 pages. Start with kind state; continue with returned export id and offset. Pages expire after 60 seconds idle or replacement. Final page releases the pin. Failure export and mo fetch are not yet available."
   ]
   tool_names = names()
   integer = Json.Object({"type": Json.String("integer"), "minimum": Json.int(0)})
@@ -110,6 +123,12 @@ fn catalog() : List(Json.Json)
           "items": Json.Object({
             "anyOf": Json.Array([Json.Object({"type": Json.String("string")}), integer])
           })
+        }) else if key == "kind": Json.Object({
+          "type": Json.String("string"),
+          "enum": Json.Array([Json.String("state")])
+        }) else if key == "export": Json.Object({
+          "type": Json.String("string"),
+          "pattern": Json.String("^[0-9a-f]{32}$")
         }) else: integer
       )
     end
@@ -120,12 +139,16 @@ fn catalog() : List(Json.Json)
         "inputSchema": Json.Object({
           "type": Json.String("object"),
           "properties": Json.Object(properties),
+          "required": Json.Array(if i == 7: [Json.String("kind")] else: []),
           "additionalProperties": Json.Boolean(false)
         }),
-        "annotations": Json.Object({
-          "readOnlyHint": Json.Boolean(true),
-          "idempotentHint": Json.Boolean(true)
-        })
+        "annotations": Json.Object(
+          if i == 7: {
+            "readOnlyHint": Json.Boolean(true),
+            "idempotentHint": Json.Boolean(true),
+            "openWorldHint": Json.Boolean(false)
+          } else: {"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)}
+        )
       })
     )
   end
@@ -167,9 +190,26 @@ fn valid(index: Int, arguments: Json.Json) : Bool
           Json.Null | Json.Boolean(_) | Json.Array(_) | Json.Object(_): return false
         end
       end
+    else if index == 7 and key == "kind"
+      return false if value != Json.String("state")
+    else if index == 7 and key == "export"
+      id = case value
+        Json.String(text): text
+        Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
+      end
+      return false if id.chars.size != 32
+      for char in id.chars
+        return false if not "0123456789abcdef".chars.contains?(char)
+      end
     else if whole(value) == None
       return false
     end
+  end
+  if index == 7
+    return false if fields.get("kind") != Some(Json.String("state"))
+    offset = argument(fields, "offset") or 0
+    return false if offset % 8192 != 0 or offset >= 17825792
+    return false if fields.get("export") == None and offset != 0
   end
   true
 end
@@ -228,7 +268,7 @@ fn render(index: Int, arguments: Json.Json, observation: Observation, saved: Byt
       "encoded_sequence": Json.String(stats.encoded_sequence.to_text),
       "retained_failures": Json.Null,
       "failure_capture_available": Json.Boolean(false),
-      "export_available": Json.Boolean(false),
+      "export_available": Json.Boolean(true),
       "observation": Json.String("independent calls are not an atomic snapshot")
     })
   else if index == 1
@@ -241,9 +281,9 @@ fn render(index: Int, arguments: Json.Json, observation: Observation, saved: Byt
       "stack_capacity": Json.String(stats.stack.to_text),
       "stack_limit": Json.String(stats.stack_limit.to_text),
       "encoded_state_bytes": Json.String(stats.encoded_bytes.to_text),
-      "pinned_export_bytes": Json.Null,
+      "pinned_export_bytes": Json.int(stats.pinned_export_bytes),
       "diagnostic_scratch_peak": Json.String(stats.scratch_peak.to_text),
-      "export_available": Json.Boolean(false)
+      "export_available": Json.Boolean(true)
     })
   end
   var items = []
@@ -849,9 +889,9 @@ fn state(saved: Bytes, path: Json.Json, budget: Int, sequence: Int) : Json.Json
       "state": value.value or Json.Null,
       "complete": Json.Boolean(value.complete),
       "encoded_sequence": Json.String(sequence.to_text),
-      "export_available": Json.Boolean(false),
+      "export_available": Json.Boolean(true),
       "advice": Json.String(
-        if value.complete: "independent observations are not an atomic snapshot" else: "follow a truncated part with a path; full export is not yet available"
+        if value.complete: "independent observations are not an atomic snapshot" else: "follow a truncated part with a path or use mo-export for complete saved bytes"
       )
     })
     None: Json.Object({
@@ -923,4 +963,60 @@ end
 fn handler_name(name: Text) : Text
   plain = name.split("@").first or ""
   plain.split(".").last or ""
+end
+
+fn export_id(arguments: Json.Json) : Text
+  case arguments
+    Json.Object(fields):
+      case fields.get("export")
+        Some(Json.String(value)): value
+        Some(_) | None: ""
+      end
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): ""
+  end
+end
+
+fn export_reply(error: Text, metadata: List(Text), bytes: Bytes) : Json.Json
+  if error != ""
+    return Json.Object({"error": Json.String(error), "state_effect": Json.String("none")})
+  end
+  alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".chars
+  var encoded = []
+  var at = 0
+  while at < bytes.size
+    a = (bytes.get(at) or stop "page byte").to_int
+    b = if at + 1 < bytes.size: (bytes.get(at + 1) or stop "page byte").to_int else: 0
+    c = if at + 2 < bytes.size: (bytes.get(at + 2) or stop "page byte").to_int else: 0
+    encoded = encoded.append(alphabet.get(a / 4) or stop "base64")
+    encoded = encoded.append(alphabet.get((a % 4) * 16 + b / 16) or stop "base64")
+    encoded = encoded.append(
+      if at + 1 < bytes.size: alphabet.get((b % 16) * 4 + c / 64) or stop "base64" else: '='
+    )
+    encoded = encoded.append(
+      if at + 2 < bytes.size: alphabet.get(c % 64) or stop "base64" else: '='
+    )
+    at += 3
+  end
+  id = metadata.get(0) or stop "export id"
+  offset = (metadata.get(3) or stop "offset").to_int or stop "offset"
+  digest = metadata.get(7) or stop "digest"
+  Json.Object({
+    "export": Json.String(id),
+    "kind": Json.String("state"),
+    "version": Json.int(1),
+    "sequence": Json.String(metadata.get(1) or stop "sequence"),
+    "encoded_sequence": Json.String(metadata.get(2) or stop "encoded sequence"),
+    "offset": Json.int(offset),
+    "length": Json.int(bytes.size),
+    "total": Json.int((metadata.get(4) or stop "total").to_int or stop "total"),
+    "pages": Json.int((metadata.get(5) or stop "pages").to_int or stop "pages"),
+    "checksum": Json.String(metadata.get(6) or stop "checksum"),
+    "digest": if digest == "": Json.Null else: Json.String(digest),
+    "base64": Json.String(Text.from_chars(encoded)),
+    "next": if digest != "": Json.Null else: Json.Object({
+      "kind": Json.String("state"),
+      "export": Json.String(id),
+      "offset": Json.int(offset + bytes.size)
+    })
+  })
 end

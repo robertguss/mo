@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "base/runtime-identity.h"
 #include "base/stack.h"
 #include "service_compile.h"
 #include "test.h"
@@ -280,6 +281,8 @@ static void rate(void) {
     tool_error(out, "rate_limited", "none", "2");
     tool_request(&f, "mo-state", "{}", "2", out, sizeof out);
     tool_error(out, "rate_limited", "none", "2");
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "2", out, sizeof out);
+    tool_error(out, "rate_limited", "none", "2");
     MO_ASSERT(mo_listener_fake_advance(f.listener, 49999) == MO_LISTENER_OK);
     tool_request(&f, "read", "{}", "3", out, sizeof out);
     tool_error(out, "rate_limited", "none", "3");
@@ -491,6 +494,9 @@ static void busy(void) {
     tool_request(&f, "mo-state", "{\"path\":[\"value\"]}", "1", view, sizeof view);
     CHECK(strstr(view, "\"complete\":true") != NULL);
     CHECK(strstr(view, "\"state\":") != NULL);
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "1", view, sizeof view);
+    CHECK(strstr(view, "\"kind\":\"state\"") != NULL);
+    CHECK(strstr(view, "\"base64\":") != NULL);
     CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
     f.tick_us = 0;
     for (unsigned i = 0; i < 2 * (MO_LIMIT_MCP_VIEW_TIMERS + 1); i++)
@@ -786,7 +792,172 @@ static void private_views(void) {
     finish(&f);
 }
 
+/* Export model traces: create/read, commit/read, same-sequence replacement,
+ * expiry, final release and restart. These go through authenticated native dispatch. */
+static void export_generations(void) {
+    const char text[] =
+        "module Main\nservice\n state Text = \"a\".repeat(20000)\n tools change, fail\n"
+        " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+        "fn change(_state: Text, _now: Time) : (Text, Int)\n"
+        " (\"b\".repeat(20000), 1)\nend\n"
+        "fn fail(_state: Text, _now: Time) : Int\n stop \"restart export fixture\"\nend\n";
+    struct fixture_server f = start_source(text);
+    f.tick_us = 100000;
+    char out[32768], first[33], second[33], args[160];
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "1", out, sizeof out);
+    const char *id = strstr(out, "\"export\":\"");
+    CHECK(id != NULL);
+    if (id == NULL) {
+        finish(&f);
+        return;
+    }
+    memcpy(first, id + 10, 32);
+    first[32] = 0;
+    CHECK(strstr(out, "\"length\":8192") != NULL);
+    CHECK(strstr(out, "\"isError\":false") != NULL);
+    CHECK(strstr(out, "\"sequence\":\"0\"") != NULL);
+    CHECK(strstr(out, "\"pages\":3") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
+    tool_request(&f, "change", "{}", "2", out, sizeof out);
+    int n = snprintf(args, sizeof args, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":8192}",
+                     first);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    tool_request(&f, "mo-export", args, "3", out, sizeof out);
+    CHECK(strstr(out, "\"sequence\":\"0\"") != NULL);
+    CHECK(strstr(out, "\"encoded_sequence\":\"0\"") != NULL);
+    CHECK(strstr(out, "YWFhYWFh") != NULL); /* copied old 'a' bytes, not current 'b' */
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "4", out, sizeof out);
+    id = strstr(out, "\"export\":\"");
+    MO_ASSERT(id != NULL);
+    memcpy(second, id + 10, 32);
+    second[32] = 0;
+    CHECK(strcmp(first, second) != 0);
+    tool_request(&f, "mo-export", args, "5", out, sizeof out);
+    CHECK(strstr(out, "export_replaced") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    memcpy(first, second, sizeof first);
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "6", out, sizeof out);
+    id = strstr(out, "\"export\":\"");
+    MO_ASSERT(id != NULL);
+    memcpy(second, id + 10, 32);
+    second[32] = 0;
+    CHECK(strcmp(first, second) != 0); /* no intervening commit */
+    n = snprintf(args, sizeof args, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":8192}",
+                 first);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    tool_request(&f, "mo-export", args, "7", out, sizeof out);
+    CHECK(strstr(out, "export_replaced") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    n = snprintf(args, sizeof args, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":16384}",
+                 second);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    tool_request(&f, "mo-export", args, "8", out, sizeof out);
+    CHECK(strstr(out, "\"next\":null") != NULL);
+    tool_request(&f, "mo-export", args, "9", out, sizeof out);
+    CHECK(strstr(out, "export_released") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    tool_request(&f, "mo-memory", "{}", "10", out, sizeof out);
+    CHECK(strstr(out, "\"pinned_export_bytes\":0") != NULL);
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "11", out, sizeof out);
+    id = strstr(out, "\"export\":\"");
+    MO_ASSERT(id != NULL);
+    memcpy(second, id + 10, 32);
+    second[32] = 0;
+    n = snprintf(args, sizeof args, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":8192}",
+                 second);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, MO_LIMIT_EXPORT_IDLE_US) == MO_LISTENER_OK);
+    tool_request(&f, "mo-export", args, "12", out, sizeof out);
+    CHECK(strstr(out, "export_released") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 1);
+    finish(&f);
+    f = start_source(text);
+    tool_request(&f, "mo-export", args, "13", out, sizeof out);
+    CHECK(strstr(out, "export_released") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    tool_request(&f, "mo-export", "{\"kind\":\"state\",\"offset\":1}", "14", out, sizeof out);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
+    tool_request(&f, "mo-export", "{\"kind\":\"failure\"}", "15", out, sizeof out);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
+    f.tick_us = 100000;
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "16", out, sizeof out);
+    id = strstr(out, "\"export\":\"");
+    MO_ASSERT(id != NULL);
+    memcpy(second, id + 10, 32);
+    second[32] = 0;
+    n = snprintf(args, sizeof args, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":8192}",
+                 second);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    for (unsigned i = 0; i < MO_LIMIT_SERVICE_FAILURES; i++) {
+        tool_request(&f, "fail", "{}", "17", out, sizeof out);
+        tool_error(out, "handler_failed", "none", "17");
+    }
+    tool_request(&f, "mo-export", args, "18", out, sizeof out);
+    CHECK(strstr(out, "export_released") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+
+    finish(&f);
+}
+
+static void export_expiry_refresh(void) {
+    const char text[] = "module Main\nservice\n state Text = \"a\".repeat(20000)\n tools count\n"
+                        " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+                        "fn count(state: Text, _now: Time) : Int\n state.byte_count\nend\n";
+    struct fixture_server f = start_source(text);
+    char out[32768], id[33], args[160], body[320];
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "1", out, sizeof out);
+    const char *field = strstr(out, "\"export\":\"");
+    MO_ASSERT(field != NULL);
+    memcpy(id, field + 10, 32);
+    id[32] = 0;
+    int n =
+        snprintf(args, sizeof args, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":8192}", id);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, MO_LIMIT_EXPORT_IDLE_US - 1) == MO_LISTENER_OK);
+    tool_request(&f, "mo-export", args, "2", out, sizeof out);
+    CHECK(strstr(out, "\"offset\":8192") != NULL);
+    CHECK(strstr(out, "\"length\":8192") != NULL);
+    CHECK(strstr(out, "\"isError\":false") != NULL);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, 1) == MO_LISTENER_OK);
+    tool_request(&f, "mo-memory", "{}", "3", out, sizeof out);
+    field = strstr(out, "\"pinned_export_bytes\":");
+    MO_ASSERT(field != NULL);
+    CHECK(strtoull(field + strlen("\"pinned_export_bytes\":"), NULL, 10) > 0);
+    /* One microsecond before the refreshed deadline, no refused read may refresh again. */
+    MO_ASSERT(mo_listener_fake_advance(f.listener, MO_LIMIT_EXPORT_IDLE_US - 2) == MO_LISTENER_OK);
+    n = snprintf(body, sizeof body, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":32768}", id);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof body);
+    tool_request(&f, "mo-export", body, "4", out, sizeof out);
+    CHECK(strstr(out, "invalid_offset") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    char wrong[33];
+    memcpy(wrong, id, sizeof wrong);
+    wrong[0] = wrong[0] == '0' ? '1' : '0';
+    n = snprintf(body, sizeof body, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":8192}",
+                 wrong);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof body);
+    tool_request(&f, "mo-export", body, "5", out, sizeof out);
+    CHECK(strstr(out, "export_replaced") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    n = snprintf(body, sizeof body,
+                 "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\","
+                 "\"params\":{\"name\":\"mo-export\",\"arguments\":%s}}",
+                 args);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof body);
+    request(&f, body, "Authorization: Bearer WrongExportCanary\r\n", out, sizeof out, 0);
+    CHECK(strstr(out, "HTTP/1.1 401") != NULL);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, 1) == MO_LISTENER_OK);
+    tool_request(&f, "mo-export", args, "7", out, sizeof out);
+    CHECK(strstr(out, "export_released") != NULL);
+    CHECK(strstr(out, "\"isError\":true") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
+    finish(&f);
+}
+
 static void run(void *context) {
+    export_expiry_refresh();
+    export_generations();
     operator_views();
     private_views();
     wire(context);
@@ -804,6 +975,7 @@ static void run(void *context) {
 }
 
 int main(void) {
+    mo_runtime_identity_init();
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, run, NULL) == 0);
     return mo_test_report("protocol_server");
 }

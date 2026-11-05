@@ -231,9 +231,10 @@ bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *
                               mo_cell_int((int64_t)MO_LIMIT_SERVICE_FAILURE_WINDOW_US),
                               mo_cell_int((int64_t)MO_LIMIT_SERVICE_RESTART_WINDOW_US),
                               mo_cell_int(observed.timers),
-                              mo_cell_int((int64_t)observed.stack_limit)};
+                              mo_cell_int((int64_t)observed.stack_limit),
+                              mo_cell_int((int64_t)s->state_export.arena.used)};
     if (built == 4 && number(&b, observed.observed_elapsed, &stats[3]) &&
-        record(&b, field_type(&b, type, 4), stats, 18, &fields[4]))
+        record(&b, field_type(&b, type, 4), stats, 19, &fields[4]))
         built++;
     if (built == 5 && messages(&b, field_type(&b, type, 5), false, &fields[5]))
         built++;

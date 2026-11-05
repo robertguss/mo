@@ -218,7 +218,7 @@ those bytes; it never runs the codec. A failure pin reads its record from the st
 - At most `MO_LIMIT_EXPORT_PINS` (2) pins exist, one per kind. A new export of a kind replaces
   and releases that kind's pin.
 - A pin expires `MO_LIMIT_EXPORT_IDLE_US` (60 seconds) after its last page was read. A pin is
-  released after its last page is read, on replacement, expiry, or process exit. Pins are never
+  released after its last page is read, on replacement, expiry, supervisor restart or process exit. Pins are never
   persisted, so a restart releases every pin.
 - Pin bytes are charged to `MO_LIMIT_EXPORT_BYTES`, a budget separate from the handler heap:
   2 × (`MO_LIMIT_SAVED_BYTES` + 1 MiB of metadata). A pin that does not fit is refused with
@@ -240,7 +240,8 @@ All integers little-endian, as in the store.
 | Producer build | 32 | Runtime build digest |
 | Build label length, label | 4 + n | UTF-8, at most 256 bytes |
 | Service descriptor index | 4 | As in the image key |
-| Recovery sequence | 8 | Head sequence at pin time |
+| Recovery sequence | 8 | Durable head sequence at pin time |
+| Encoded-state sequence | 8 | Sequence of the cached state bytes; may trail the durable head after snapshot failure |
 | Created | 8 | UTC microseconds |
 | State schema | 32 | SHA-256 of the state schema bytes |
 | Body length | 4 | Exact |
@@ -252,12 +253,13 @@ All integers little-endian, as in the store.
 A reply's compact content may use at most half of the 32 KiB reply limit, because it is sent
 twice (`runtime/mcp.mo`, `tool_reply`), and it is base64. A page therefore carries
 `MO_LIMIT_EXPORT_PAGE_BYTES` (8 KiB) of artifact bytes. Each page reply carries the export id,
-kind, artifact version, recovery sequence, offset, page length, total length and the page's
+kind, artifact version, recovery and encoded-state sequences, offset, page length, total length,
+page count and the page's
 FNV-1a-64; the final page also carries the artifact digest. A page of a released, replaced or
 expired pin is refused with `export_released`, and a page for an id that does not match the
 current pin with `export_replaced`; neither ever returns another pin's bytes.
 
-A 16 MiB state is 2,048 pages. At the token's rate limit of 20 calls a second that is about
+A 16 MiB saved state plus framing is 2,049 pages. At the token's rate limit of 20 calls a second that is about
 103 seconds, and the fetch tool says so before it starts.
 
 `mo fetch URL --export state|failure ID --out FILE --token-env NAME`:
@@ -753,7 +755,7 @@ memory refusal, release of the decoded state and successful reopening afterward.
 The supported catalog now includes overview, state, mailbox, timers, memory, supervisor and
 post-snapshot log views. Authentication precedes validated operator dispatch; operator calls
 consume the same rate allowance as author calls before any inspection or author conversion.
-They never enter service admission. Export and retained-failure tools remain absent.
+They never enter service admission. State export is now available; retained-failure tools remain absent.
 
 `runtime/mcp-views.mo` renders the saved schema and payload without extending bytecode shape
 reachability. The native bridge copies typed metadata and saved bytes into the request process;
@@ -767,8 +769,7 @@ Only a rate-admitted operator request gets that allowance; it is restored after 
 the copied bytes are released before another service step. The renderer's JSON
 budget is `MO_LIMIT_MCP_VIEW_BYTES` (6144 bytes), an upper bound on the rendered state that
 counts separators and leaves room for MCP's duplicated textual and structured result. Truncation
-follows section 3.3. A narrower path remains usable; export advice explicitly says export is
-unavailable. Overview uptime is the server's monotonic clock less its start, so it keeps
+follows section 3.3. A narrower path remains usable; export advice points to `mo-export`. Overview uptime is the server's monotonic clock less its start, so it keeps
 advancing while the service is stopped.
 The memory view reports the high-water native scratch of completed inspection rendering calls,
 including their protocol work, rather than claiming an atomic measurement of the current call.
@@ -785,3 +786,69 @@ HTTP, saved scalar/container forms, path selection, explicit truncation and toke
 The saved renderer has a registered fuzz target; the bytecode/shape ABI is unchanged and the
 embedded runtime ABI rejects reordered observation fields. These are implementation checks,
 not scored diagnostic evaluation observations.
+
+
+### Immutable state export producer
+
+U8 adds `mo-export` for state only. Failure-kind export remains unavailable until U4;
+`mo fetch` and final-file publication remain U9. JSON shaping, argument validation and
+base64 are embedded Mo; the native bridge copies cached MOSV bytes and serves bounded
+pages without encoding live values or altering bytecode shape tables.
+
+MOEX v1 has 162 fixed bytes including its trailing digest, plus the UTF-8 build label
+and exact MOSV body. Both sequence fields are unsigned little-endian 64-bit values.
+The UTC creation timestamp is signed 64-bit microseconds. The encoded-state sequence
+identifies the body; the durable sequence identifies the observed recovery head. In the
+snapshot-failure regression these are respectively 99 and 100, and recovery later
+produces encoding 100 without changing the earlier artifact. Schema SHA-256 covers
+exactly the schema span identified by MOSV's four-byte length, excluding magic, length
+and value bytes. The artifact digest covers the entire frame preceding its final 32 bytes.
+
+Start with `{"kind":"state"}`. Continuations require `kind`, a lowercase 32-hex-digit
+`export`, and an aligned `offset` (default zero). Unknown fields, failure kind, malformed
+IDs, negative/fractional/unaligned offsets, offsets at the aggregate bound and nonzero
+start offsets are invalid params. An aligned offset beyond the actual pin is an
+`invalid_offset` tool result. Page metadata uses decimal strings for both sequences;
+`offset`, `length`, `total` and `pages` are JSON integers. `checksum` is 16 lowercase hex
+digits of FNV-1a-64; `digest` is null except on the final page, where it is SHA-256 hex.
+`next` is the next call's arguments or null. Requests may reread aligned pages while
+the pin lives; reading its last page releases it even if earlier pages were skipped.
+
+Authentication and the shared rate gate precede native export work. Refusals have an
+`error` and `state_effect: "none"`; unavailable state/build/randomness is explicit.
+Export refusals set MCP `isError: true`; successful pages set it to false. Their
+structured payload remains under `value`, without classifying an operator refusal as
+an author application error. A successful new ID is drawn from OS entropy, checked against the current pin, and
+independent of sequences. Random uniqueness is probabilistic, not a mathematical
+cross-process uniqueness or authenticity guarantee. An absent pin yields
+`export_released`; a mismatched ID with a live pin yields `export_replaced`.
+
+State owns one confidential arena, bounded by half `MO_LIMIT_EXPORT_BYTES` including
+its chunk header. Replacement frees it before allocating another, so an allocation
+failure can release the old pin but cannot double its resident allowance. Expiry is
+checked during polling and before every export; its deadline participates in polling.
+The second kind's allowance is reserved for U4 and is not allocated. Copying and hashing
+use constant stack space beyond the pin. One page and its rendering stay inside
+`MO_LIMIT_EXPORT_SCRATCH` (the existing 16 MiB per-request budget), independent of the
+service heap, and no Mo reference survives the request. Pin bytes reported by
+`mo-memory` include allocator overhead. Full process sizing with the fetcher remains U9.
+
+Verification: `tests/test_export.c` covers literal page boundaries and a full 16 MiB
+MOSV copy; `test_protocol_server` covers generation traces, full mailbox and rate
+refusals; `test_protocol_memory` covers allocation failure, confidential release and
+pin creation with an exhausted live heap. `test_service_store` pins snapshot-failure
+provenance and existing recovery behavior. `ci/check_export.py` independently parses
+actual HTTP pages and verifies framing, every identity and digest, old bytes across
+commits, replacement, malformed arguments, auth and nonmutation. It is a producer test,
+not the future fetch command. `models/README.md` records finite TLC assumptions and
+negative controls; `cbmc/README.md` records bounded reader/arithmetic proof scope.
+`fuzz_export` exercises malformed MOSV schema spans and page arithmetic with exact
+acceptance oracles; the existing protocol-server fuzzer covers the embedded request path.
+
+Development observations: the new native test initially failed because the export API
+did not exist. GCC then rejected discarded must-use expiry results; embedded Mo rejected
+catch-all choice arms. Both were corrected. The initial Python fixture used unsupported
+text concatenation/size spellings and was corrected to interpolation/byte_count; its
+independent framing checks then passed. The TLA release control's initial specification
+error and correction are recorded with the model. A compiling C mutant bypassing the
+ID comparison failed both stale-generation assertions; the restored producer passed.

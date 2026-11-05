@@ -1,3 +1,4 @@
+#include "base/export.h"
 #include "base/limits.h"
 #include "host/host.h"
 #include "test.h"
@@ -249,6 +250,33 @@ static void request_budget(struct mo_image *image, uint32_t chunk) {
     }
 }
 
+static void export_storage(struct mo_image *image) {
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_heap *heap = mo_process_heap(process);
+    size_t used = mo_heap_used(heap), objects = mo_heap_objects(heap);
+    mo_heap_set_limit(heap, used); /* pin allocation still succeeds with no live heap allowance */
+    uint8_t saved[] = {'M', 'O', 'S', 'V', 1, 1, 0, 0, 0, 42, 73};
+    struct mo_export_identity id = {.kind = 1, .label = "memory"};
+    struct mo_export_pin pin = {0};
+    watching = true;
+    fail_after = 1;
+    CHECK(!mo_export_create(&pin, &id, saved, sizeof saved, 0));
+    CHECK(pin.bytes == NULL && pin.arena.used == 0);
+    fail_after = 0;
+    CHECK(mo_export_create(&pin, &id, saved, sizeof saved, 0));
+    CHECK(pin.bytes != NULL && pin.arena.used <= MO_LIMIT_EXPORT_BYTES / MO_LIMIT_EXPORT_PINS);
+    CHECK(mo_heap_used(heap) == used && mo_heap_objects(heap) == objects);
+    saved[10] = 99;
+    CHECK(pin.bytes[pin.length - 33] == 73);
+    mo_export_release(&pin); /* existing allocator observer checks confidential zeroing */
+    watching = false;
+    CHECK(mo_heap_used(heap) == used && mo_heap_objects(heap) == objects);
+    mo_heap_set_limit(heap, limits.heap_size);
+    mo_process_free(process);
+}
+
 int main(void) {
     struct mo_image *image = mo_protocol_build();
     MO_ASSERT(image != NULL);
@@ -265,6 +293,7 @@ int main(void) {
             chunk = i;
     }
     MO_ASSERT(parse != UINT32_MAX && chunk != UINT32_MAX);
+    export_storage(image);
     request_budget(image, chunk);
     scratch(image);
     unsigned count = headers(image, parse, 0, MO_LIMIT_MCP_HEADER_WORK);

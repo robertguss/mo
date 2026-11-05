@@ -10,7 +10,8 @@ static const char *const function_names[PF_COUNT] = {
     "HttpBody.chunked",       "HttpBody.feed",         "Mcp.prepare",
     "McpTransport.receive",   "McpValue.arguments",    "McpValue.encode",
     "Mcp.tool_reply",         "McpTransport.fallback", "McpTransport.http",
-    "McpTransport.http_head", "McpTransport.http100",  "McpViews.render"};
+    "McpTransport.http_head", "McpTransport.http100",  "McpViews.render",
+    "McpViews.export_id",     "McpViews.export_reply", "Mcp.operator_reply"};
 
 static uint64_t deadline(uint64_t now, uint64_t interval) {
     return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;
@@ -231,6 +232,8 @@ static void replied(const struct mo_service_response *reply, void *context) {
 
 static void event(const struct mo_service_event *value, void *context) {
     struct mo_protocol_server *s = context;
+    if (value->kind == MO_SERVICE_RESTART)
+        mo_export_release(&s->state_export);
     if (s->events.event != NULL)
         s->events.event(value, s->events.context);
 }
@@ -422,6 +425,7 @@ void mo_protocol_server_free(struct mo_protocol_server *s) {
         return;
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
         mo_protocol_close(s, &s->connections[i]);
+    mo_export_release(&s->state_export);
     mo_service_free(s->service);
     if (s->catalog_process != NULL) {
         mo_scratch_free(&s->catalog_scratch);
@@ -487,9 +491,16 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
                                                        uint64_t until_us) {
     MO_ASSERT(s != NULL);
     (void)clock_now(s);
+    bool expired = mo_export_expire(&s->state_export, s->now.monotonic_us);
+    (void)expired;
     if (s->io_failed)
         return MO_PROTOCOL_SERVER_IO;
     union mo_listener_request request = {.wait = {.until_us = until_us, .accept = !s->closing}};
+    if (s->state_export.bytes != NULL) {
+        uint64_t expires = deadline(s->state_export.touched, MO_LIMIT_EXPORT_IDLE_US);
+        if (expires < request.wait.until_us)
+            request.wait.until_us = expires;
+    }
     size_t slots[MO_LIMIT_MCP_CONNECTIONS];
     uint64_t next_service;
     if (mo_service_next_deadline(s->service, &next_service) && next_service < request.wait.until_us)

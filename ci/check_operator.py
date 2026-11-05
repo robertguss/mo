@@ -111,8 +111,11 @@ def private_state(rpc, call):
     tools = body["result"]["tools"]
     assert status == 200 and [tool["name"] for tool in tools] == ["mo_state", *NAMES]
     assert "annotations" not in tools[0]
-    assert all(t["annotations"] == {"readOnlyHint": True, "idempotentHint": True}
-               for t in tools[1:])
+    for tool in tools[1:]:
+        expected = {"readOnlyHint": True, "idempotentHint": True}
+        if tool["name"] == "mo-export":
+            expected["openWorldHint"] = False
+        assert tool["annotations"] == expected, tool
     before = call("mo-overview")
     assert before["runtime_identity"] and len(before["runtime_identity"]) == 64
     whole = call("mo-state")
@@ -138,7 +141,8 @@ def private_state(rpc, call):
     assert call("mo-state", path=["long_map", 1, 1])["state"] == "four"
     assert call("mo_state") == "777"
     for name in NAMES:
-        call(name)
+        if name != "mo-export":
+            call(name)
     for token in ["", "WrongOperatorCanary"]:
         status, _ = rpc("tools/call", {"name": "mo-state"}, token)
         assert status == 401
@@ -157,7 +161,7 @@ def private_state(rpc, call):
     assert 0 < sizes["stack_capacity"] <= sizes["stack_limit"], memory
     assert sizes["encoded_state_bytes"] > 100000 + 7000, memory
     assert sizes["diagnostic_scratch_peak"] > 0, memory
-    assert memory["pinned_export_bytes"] is None and memory["export_available"] is False
+    assert memory["pinned_export_bytes"] == 0 and memory["export_available"] is True
     timers = call("mo-timers")
     assert timers["complete"] and [t["name"] for t in timers["items"]] == ["tick"], timers
     assert timers["items"][0]["interval_us"] == "3600000000", timers
