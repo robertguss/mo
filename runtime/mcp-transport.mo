@@ -4,11 +4,12 @@ use Json
 use Mcp
 use McpRpc
 use McpType
+use McpViews
 
 enum Action
   Reply(status: Int, body: Text)
   Call(request: McpRpc.Request, tool: Int, arguments: Json.Json)
-  Operator(request: McpRpc.Request, view: Int, arguments: Json.Json)
+  Operator(request: McpRpc.Request, view: Int, arguments: Json.Json, offset: Int)
 end
 
 fn receive(
@@ -68,7 +69,8 @@ fn receive(
     McpRpc.Operator(view: index, arguments: arguments): Operator(
       request: request,
       view: index,
-      arguments: arguments
+      arguments: arguments,
+      offset: McpViews.offset(arguments)
     )
     McpRpc.Call(tool: index, arguments: arguments): Call(
       request: request,

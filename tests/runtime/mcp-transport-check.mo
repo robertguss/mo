@@ -333,7 +333,8 @@ fn call?(action: McpTransport.Action) : Bool
     McpTransport.Reply(status: _, body: _) | McpTransport.Operator(
       request: _,
       view: _,
-      arguments: _
+      arguments: _,
+      offset: _
     ): false
   end
 end

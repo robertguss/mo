@@ -92,12 +92,17 @@ fail:
     return false;
 }
 
-static bool timers(struct view_builder *b, uint32_t type, struct mo_cell *out) {
+/* One page of at most MO_LIMIT_MCP_VIEW_TIMERS timers, from the offset the transport parsed. */
+static bool timers(struct view_builder *b, uint32_t type, int64_t offset, struct mo_cell *out) {
     if (!mo_value_list(b->heap, type, NULL, 0, out))
         return false;
     uint32_t element = b->types->items[type].parameters[0];
-    for (uint32_t i = 0; i < b->server->descriptor->timer_count && i < MO_LIMIT_MCP_VIEW_TIMERS;
-         i++) {
+    uint32_t count = b->server->descriptor->timer_count;
+    MO_ASSERT(offset >= 0);
+    uint32_t first = (uint64_t)offset < count ? (uint32_t)offset : count;
+    uint32_t last =
+        count - first < MO_LIMIT_MCP_VIEW_TIMERS ? count : first + MO_LIMIT_MCP_VIEW_TIMERS;
+    for (uint32_t i = first; i < last; i++) {
         struct mo_service_timer_summary item;
         MO_ASSERT(mo_service_timer_entry(b->server->service, i, &item));
         struct mo_cell fields[4], value;
@@ -232,15 +237,16 @@ bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *
         built++;
     if (built == 5 && messages(&b, field_type(&b, type, 5), false, &fields[5]))
         built++;
-    if (built == 6 && timers(&b, field_type(&b, type, 6), &fields[6]))
+    struct mo_cell action = mo_cell_get_payload(c->action);
+    if (built == 6 &&
+        timers(&b, field_type(&b, type, 6), mo_cell_get_int(mo_value_field(action, 3)), &fields[6]))
         built++;
     if (built == 7 && events(&b, field_type(&b, type, 7), &fields[7]))
         built++;
     if (built == 8 && messages(&b, field_type(&b, type, 8), true, &fields[8]))
         built++;
-    uint64_t uptime =
-        observed.observed_elapsed >= s->started_at ? observed.observed_elapsed - s->started_at : 0;
-    if (built == 9 && number(&b, uptime, &fields[9]))
+    MO_ASSERT(s->now.monotonic_us >= s->started_at);
+    if (built == 9 && number(&b, s->now.monotonic_us - s->started_at, &fields[9]))
         built++;
     if (built != 10) {
         for (uint32_t i = 0; i < built; i++)
@@ -249,7 +255,6 @@ bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *
     }
     if (!record(&b, type, fields, 10, &observation))
         return false;
-    struct mo_cell action = mo_cell_get_payload(c->action);
     const uint8_t *bytes = NULL;
     size_t length = 0;
     if (mo_cell_get_int(mo_value_field(action, 1)) == 1 &&

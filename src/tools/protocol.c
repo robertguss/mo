@@ -263,7 +263,12 @@ static const struct abi_case body_result[] = {{"Ok", 1, {{NULL, ABI_BODY_STEP}}}
 static const struct abi_case action[] = {
     {"Reply", 2, {{"status", ABI_INT}, {"body", ABI_TEXT}}},
     {"Call", 3, {{"request", ABI_RPC_REQUEST}, {"tool", ABI_INT}, {"arguments", ABI_JSON}}},
-    {"Operator", 3, {{"request", ABI_RPC_REQUEST}, {"view", ABI_INT}, {"arguments", ABI_JSON}}}};
+    {"Operator",
+     4,
+     {{"request", ABI_RPC_REQUEST},
+      {"view", ABI_INT},
+      {"arguments", ABI_JSON},
+      {"offset", ABI_INT}}}};
 
 static const struct abi_case view_stats[] = {{"Stats",
                                               18,

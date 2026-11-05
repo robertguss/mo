@@ -1581,6 +1581,21 @@ class Served:
             [str(binary), "serve", str(source), "--port", port, "--data", str(data), *extra],
             env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0,
             umask=0o022)
+        try:
+            line = self.announcement()
+        except BaseException:
+            self.process.kill()
+            self.process.wait()
+            self.stderr.close()
+            raise
+        self.line = line
+        self.port = None
+        if line:
+            prefix, suffix = b"mo serve: listening on http://127.0.0.1:", b"/mcp\n"
+            assert line.startswith(prefix) and line.endswith(suffix), line
+            self.port = int(line[len(prefix):-len(suffix)])
+
+    def announcement(self):
         line = b""
         limit = time.monotonic() + 30
         while not line.endswith(b"\n"):
@@ -1590,12 +1605,7 @@ class Served:
             if not chunk:
                 break
             line += chunk
-        self.line = line
-        self.port = None
-        if line:
-            prefix, suffix = b"mo serve: listening on http://127.0.0.1:", b"/mcp\n"
-            assert line.startswith(prefix) and line.endswith(suffix), line
-            self.port = int(line[len(prefix):-len(suffix)])
+        return line
 
     def post(self, body, token, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
