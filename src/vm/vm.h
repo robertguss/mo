@@ -234,6 +234,47 @@ MO_MUST_USE uint32_t mo_service_pending(const struct mo_service_loop *service);
 MO_MUST_USE bool mo_service_running(const struct mo_service_loop *service);
 MO_MUST_USE bool mo_service_next_deadline(const struct mo_service_loop *service, uint64_t *out);
 
+/* Native observations are idle-only and allocate nothing. Encoded bytes are borrowed
+ * until the next step/free; copy them before running another handler. Nonpersistent
+ * services report no encoding. Mailbox sizes are unavailable when admission did not
+ * encode arguments; observation never imposes a new saved-codec requirement. */
+struct mo_service_observation {
+    uint64_t sequence, snapshot_sequence, encoded_sequence, observed_elapsed;
+    uint64_t failure_times[MO_LIMIT_SERVICE_FAILURES];
+    uint64_t restart_times[MO_LIMIT_SERVICE_RESTARTS];
+    size_t heap_used, heap_peak, stack_capacity, encoded_bytes, encoded_capacity;
+    uint32_t pending, failures, restarts, timers, events;
+    bool running, persistent;
+};
+struct mo_service_message_summary {
+    int64_t arrival;
+    uint64_t id;
+    size_t argument_bytes;
+    uint32_t handler;
+    bool timer, argument_bytes_available;
+};
+struct mo_service_timer_summary {
+    mo_u128 next;
+    uint64_t interval;
+    bool waiting;
+};
+struct mo_service_event_summary {
+    uint64_t number;
+    enum mo_service_event_kind kind;
+    enum mo_service_status reason;
+    struct mo_service_time time;
+    uint32_t function, restart;
+};
+MO_MUST_USE struct mo_service_observation mo_service_observe(const struct mo_service_loop *service);
+MO_MUST_USE bool mo_service_encoded_state(const struct mo_service_loop *service,
+                                          const uint8_t **bytes, size_t *length);
+MO_MUST_USE bool mo_service_mailbox_entry(const struct mo_service_loop *service, uint32_t index,
+                                          struct mo_service_message_summary *out);
+MO_MUST_USE bool mo_service_timer_entry(const struct mo_service_loop *service, uint32_t index,
+                                        struct mo_service_timer_summary *out);
+MO_MUST_USE bool mo_service_event_entry(const struct mo_service_loop *service, uint32_t index,
+                                        struct mo_service_event_summary *out);
+
 /* A simulated service: open, send, advance, crash and restart one service as the Simulation
  * capability does, for that capability and for C callers that drive a service the same way. It
  * owns a fresh in-memory store and a fake clock that only advance moves. */

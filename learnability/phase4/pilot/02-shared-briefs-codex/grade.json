@@ -1,0 +1,18 @@
+{
+  "variant": "shared-briefs",
+  "client": "codex",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": []
+  },
+  "records": {
+    "match": true,
+    "pairs": 124,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": []
+  },
+  "failed": []
+}

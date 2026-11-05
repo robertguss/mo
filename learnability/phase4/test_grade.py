@@ -183,8 +183,40 @@ class Grading(unittest.TestCase):
         status, verdict = self.graded(self.session(SYNTHETIC / 'hidden' / 'reference',
                                                    dropped_example))
         self.assertEqual(status, 1)
-        self.assertEqual(verdict['reasons'], ["job-queue.mo's test, examples or promise blocks "
-                                              "differ from the variant's"])
+        self.assertEqual(verdict['reasons'], [grade.BLOCKS_CHANGED])
+
+    def test_checks_added_to_job_queue_are_kept_and_changed_ones_fail(self):
+        def edit(old, replacement):
+            def apply(folder):
+                path = folder / 'job-queue.mo'
+                text = path.read_text()
+                self.assertIn(old, text)
+                path.write_text(text.replace(old, replacement, 1))
+            return apply
+        example = '    expire(empty, t0) == empty\n'
+        added = {
+            'an example at the end of the examples': edit(
+                example, example + '    expire(expire(empty, t0), t0) == empty\n'),
+            'examples of their own': edit(
+                'fn jobs(queue: Queue) : List(Job)\n',
+                'fn jobs(queue: Queue) : List(Job)\n  examples\n    jobs(empty) == []\n  end\n\n'),
+            'a test of its own': edit(
+                'test "a job given back three times is dead"',
+                'test "an empty queue has no jobs"\n  assert empty.jobs.size == 0\nend\n\n'
+                'test "a job given back three times is dead"')}
+        for name, change in added.items():
+            status, verdict = self.graded(self.session(SYNTHETIC / 'hidden' / 'reference',
+                                                       change))
+            self.assertEqual((status, verdict['reasons']), (0, []), name)
+        changed = {
+            'a changed example': edit(example, '    expire(empty, t0 + 1.second) == empty\n'),
+            'a line put inside a test': edit(
+                '    assert job.attempts == attempt\n',
+                '    assert job.attempts >= 0\n    assert job.attempts == attempt\n')}
+        for name, change in changed.items():
+            status, verdict = self.graded(self.session(SYNTHETIC / 'hidden' / 'reference',
+                                                       change))
+            self.assertEqual((status, verdict['reasons']), (1, [grade.BLOCKS_CHANGED]), name)
 
     def test_a_question_is_graded_on_its_answer_and_the_queues_tests(self):
         question = self.root / 'question'

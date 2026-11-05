@@ -370,6 +370,20 @@ class Hosts(unittest.TestCase):
                                  client)
                 self.assertEqual(found[0]['command'], given[len(self.LOCAL)])
 
+    def test_a_refused_command_does_not_stop_the_checks(self):
+        # Claude Code reports a shell command it refused as a system event whose message is
+        # text, not an object; a real pilot's stream held two.
+        refused = {'type': 'system', 'subtype': 'permission_denied', 'tool_name': 'Bash',
+                   'tool_use_id': 'toolu_x', 'decision_reason_type': 'other',
+                   'message': "Quoted text in this command can't be checked before it runs"}
+        with tempfile.TemporaryDirectory() as root:
+            stream = claude_stream(root, [('stats', {})], commands=['curl example.org'])
+            with open(stream, 'a') as file:
+                file.write(json.dumps(refused) + '\n')
+            self.assertEqual([f['host'] for f in proxy.hosts('claude', stream)], ['example.org'])
+            log = write_log(root, [(5, 'stats', {})])
+            self.assertTrue(proxy.match('claude', stream, log, 'task-queue')['match'])
+
     def test_web_tools_are_named(self):
         with tempfile.TemporaryDirectory() as root:
             path = pathlib.Path(root) / 'claude.jsonl'

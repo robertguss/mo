@@ -239,7 +239,8 @@ def events(stream):
 
 
 def content_blocks(event):
-    content = (event.get('message') or {}).get('content')
+    message = event.get('message')  # text, not an object, when Claude Code refused a command
+    content = message.get('content') if isinstance(message, dict) else None
     return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
 
 
