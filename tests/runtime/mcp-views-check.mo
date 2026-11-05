@@ -80,8 +80,8 @@ fn numbers(values: List(Json.Json), key: Text) : List(Text)
 end
 
 fn main() : Int
-  require(McpViews.names().size == 7)
-  require(not McpViews.names().contains?("mo-export"))
+  require(McpViews.names().size == 8)
+  require(McpViews.names().contains?("mo-export"))
   require(not McpViews.names().contains?("mo-failures"))
   require(
     McpViews.valid(1, Json.Object({"path": Json.Array([Json.String("private"), Json.int(2)])}))
@@ -102,6 +102,9 @@ fn main() : Int
   end
   require(McpViews.offset(Json.Object({"offset": Json.int(7)})) == 7)
   require(McpViews.offset(Json.Object({})) == 0)
+  require(McpViews.valid(7, Json.Object({"kind": Json.String("state")})))
+  require(not McpViews.valid(7, Json.Object({})))
+  require(not McpViews.valid(7, Json.Object({"kind": Json.String("failure")})))
   for tool in McpViews.catalog()
     fields = case tool
       Json.Object(value): value
@@ -110,7 +113,13 @@ fn main() : Int
     require(
       fields.get("annotations") ==
         Some(
-          Json.Object({"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)})
+          Json.Object(
+            if fields.get("name") == Some(Json.String("mo-export")): {
+              "readOnlyHint": Json.Boolean(true),
+              "idempotentHint": Json.Boolean(true),
+              "openWorldHint": Json.Boolean(false)
+            } else: {"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)}
+          )
         )
     )
     description = case fields.get("description")
@@ -137,7 +146,8 @@ fn main() : Int
     failure_window: 60000000,
     restart_window: 600000000,
     timer_count: 0,
-    stack_limit: 0
+    stack_limit: 0,
+    pinned_export_bytes: 0
   )
   observation = McpViews.Observation(
     service_name: "fixture",

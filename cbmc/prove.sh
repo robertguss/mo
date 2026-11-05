@@ -33,6 +33,8 @@ fi
 # at least d bytes, plus one for the loop's exit), "f.k:+" is n + 1 (a loop over bytes) and
 # "f.k:c" is c. The least input size lets every loop's body run.
 proofs=(
+	"mo_export_page_bounds||||export.c|"
+	"mo_export_schema|digest|harness_mo_export_schema.0:+,mo_binary_uint.0:5|10|export.c|--unwind 6"
 	"word|||"
 	"boolean|word||"
 	"allocate|||"

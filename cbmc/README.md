@@ -339,3 +339,16 @@ as the `cbmc` group of `ci/check.sh`. A failed proof prints its failing properti
 is `build/cbmc/<proof>.log`. Adding `--trace` to the `cbmc` command `prove.sh` runs, on
 `build/cbmc/<proof>.goto`, shows a counterexample. To cover larger inputs, set `MO_CBMC_INPUT`;
 the time grows with it.
+
+## Export producer framing and pages
+
+`bash cbmc/prove.sh mo_export_page_bounds mo_export_schema` and the same command
+with `--reach` run the actual producer helpers. Page bounds cover unconstrained
+`size_t` totals and offsets, exact acceptance, nonempty bounded spans, ceiling page
+counts and unchanged outputs on refusal. The MOSV schema span proof covers every
+input up to 32 bytes (default `MO_CBMC_INPUT`), including acceptance and rejection;
+it executes the real binary reader. SHA-256 is modeled by a span-checking callee,
+not proven here. Five unwinds cover the four-byte schema length; the initialization
+loop covers the full input. Reach checks require every helper block and harness end.
+Full-size artifacts, OS entropy, allocator failure, HTTP delivery and digests are
+covered by separate empirical tests, not this proof. MOEX artifact consumption is U5.

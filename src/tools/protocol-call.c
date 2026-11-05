@@ -133,20 +133,23 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
     }
     if (mo_cell_get_tag(c->action) == 2) {
         struct mo_cell json, rendered;
-        if (!mo_protocol_view(s, c, &json)) {
+        bool refused = false;
+        bool exporting = mo_cell_get_int(mo_value_field(fields, 1)) == 7;
+        if (!(exporting ? mo_protocol_export(s, c, &json, &refused)
+                        : mo_protocol_view(s, c, &json))) {
             mo_protocol_fallback(s, c, failure(c), EFFECT_NONE);
             return;
         }
         struct mo_cell result[] = {mo_protocol_field(s->protocol, request_type, request, 0), json,
-                                   mo_cell_bool(false), mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES)};
-        bool ok = mo_protocol_invoke(s, c, PF_TOOL_REPLY, result, &rendered);
+                                   mo_cell_bool(refused), mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES)};
+        bool ok = mo_protocol_invoke(s, c, PF_OPERATOR_REPLY, result, &rendered);
         mo_protocol_drop(s, c, PF_VIEW, json);
         if (!ok || mo_cell_get_tag(rendered) != 1) {
             mo_protocol_fallback(s, c, PE_RESPONSE, EFFECT_NONE);
             return;
         }
         struct mo_cell body = mo_protocol_field(
-            s->protocol, mo_protocol_function(s, PF_TOOL_REPLY)->result_type, rendered, 0);
+            s->protocol, mo_protocol_function(s, PF_OPERATOR_REPLY)->result_type, rendered, 0);
         respond(s, c, 200, body, EFFECT_NONE);
         return;
     }

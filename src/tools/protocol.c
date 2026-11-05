@@ -271,7 +271,7 @@ static const struct abi_case action[] = {
       {"offset", ABI_INT}}}};
 
 static const struct abi_case view_stats[] = {{"Stats",
-                                              18,
+                                              19,
                                               {{"sequence", ABI_INT},
                                                {"snapshot", ABI_INT},
                                                {"encoded_sequence", ABI_INT},
@@ -289,7 +289,8 @@ static const struct abi_case view_stats[] = {{"Stats",
                                                {"failure_window", ABI_INT},
                                                {"restart_window", ABI_INT},
                                                {"timer_count", ABI_INT},
-                                               {"stack_limit", ABI_INT}}}};
+                                               {"stack_limit", ABI_INT},
+                                               {"pinned_export_bytes", ABI_INT}}}};
 static const struct abi_case view_message[] = {{"Message",
                                                 6,
                                                 {{"handler", ABI_TEXT},
@@ -458,6 +459,8 @@ static bool valid_abi(const struct mo_image *image) {
         {"HttpBody.fixed", 1, {ABI_INT}, ABI_BODY_STATE},
         {"HttpBody.chunked", 0, {0}, ABI_BODY_STATE},
         {"HttpBody.feed", 3, {ABI_BODY_STATE, ABI_BYTES, ABI_BODY_BOUNDS}, ABI_BODY_RESULT},
+        {"McpViews.export_id", 1, {ABI_JSON}, ABI_TEXT},
+        {"McpViews.export_reply", 3, {ABI_TEXT, ABI_TEXTS, ABI_NATIVE_BYTES}, ABI_JSON},
         {"McpViews.render",
          5,
          {ABI_INT, ABI_JSON, ABI_VIEW_OBSERVATION, ABI_NATIVE_BYTES, ABI_INT},
@@ -468,6 +471,7 @@ static bool valid_abi(const struct mo_image *image) {
         {"Mcp.success", 1, {ABI_JSON}, ABI_JSON},
         {"Mcp.application_error", 1, {ABI_JSON}, ABI_JSON},
         {"Mcp.tool_reply", 4, {ABI_JSON, ABI_JSON, ABI_BOOL, ABI_INT}, ABI_TEXT_OPTION},
+        {"Mcp.operator_reply", 4, {ABI_JSON, ABI_JSON, ABI_BOOL, ABI_INT}, ABI_TEXT_OPTION},
         {"McpTransport.receive",
          5,
          {ABI_TEXT, ABI_TEXT_OPTION, ABI_MCP_SERVICE, ABI_CATALOG, ABI_TEXT},

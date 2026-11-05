@@ -146,7 +146,7 @@ def catalog(queue):
     assert [tool['name'] for tool in tools] == ['submit', 'lease', 'heartbeat', 'acknowledge',
                                                 'fail', 'list', 'stats', 'mo-overview', 'mo-state',
                                                 'mo-mailbox', 'mo-timers', 'mo-memory',
-                                                'mo-supervisor', 'mo-log'], tools
+                                                'mo-supervisor', 'mo-log', 'mo-export'], tools
     for tool in tools:
         assert 0 < len(tool['description']) <= DESCRIPTION_LIMIT, tool['name']
     schemas = {tool['name']: tool['inputSchema'] for tool in tools}
