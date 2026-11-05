@@ -476,6 +476,11 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_MCP_CHUNKS 1024
 #define MO_LIMIT_MCP_TRAILER_BYTES (16 << 10)
 #define MO_LIMIT_MCP_TRAILER_FIELDS 64
+/* Saved-byte copy for one idle operator call; released with its request. */
+#define MO_LIMIT_MCP_VIEW_MEMORY (MO_LIMIT_MCP_REQUEST_MEMORY + MO_LIMIT_SAVED_BYTES)
+#define MO_LIMIT_MCP_VIEW_BYTES 6144
+#define MO_LIMIT_MCP_VIEW_TIMERS 256
+#define MO_LIMIT_MCP_VIEW_NAME_BYTES 512
 #define MO_LIMIT_MCP_REQUEST_MEMORY (16 << 20)
 #define MO_LIMIT_MCP_CATALOG_MEMORY (64 << 20)
 #define MO_LIMIT_MCP_TYPE_NODES 4096

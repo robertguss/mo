@@ -184,7 +184,7 @@ fn methods()
     require(McpRpc.method(input, ["echo"], "0123456789abcdef") == expected)
   end
   for cursor in [
-    "2.0123456789abcdef",
+    "9.0123456789abcdef",
     "00.0123456789abcdef",
     "-0.0123456789abcdef",
     "+1.0123456789abcdef",
@@ -217,6 +217,15 @@ fn methods()
   )
 end
 
+fn expected_page(items: List(Json.Json), after: Int, total: Int, key: Text, id: Json.Json) : Json
+  .Json
+  var fields = {"tools": Json.Array(items)}
+  if after < total
+    fields = fields.set("nextCursor", Json.String("#{after}.#{key}"))
+  end
+  Json.Object({"jsonrpc": Json.String("2.0"), "id": id, "result": Json.Object(fields)})
+end
+
 fn pages()
   var tools = []
   for name in ["first", "other", "third"]
@@ -244,31 +253,56 @@ fn pages()
       })
   )
   id = Json.String("\u{0}".repeat(128))
-  first = wide.tools.get(0) or stop "first tool"
-  expected = Json.Object({
-    "jsonrpc": Json.String("2.0"),
-    "id": id,
-    "result": Json.Object({"tools": Json.Array([first]), "nextCursor": Json.String("1.#{key}")})
-  })
-  bound = expected.to_text.byte_count
-  tight = Mcp.prepare(descriptor, key, bound) or stop "tight catalog"
-  require(Mcp.prepare(descriptor, key, bound - 1) == None)
-  require(Mcp.page(tight, 0, id) == Some(expected))
-  for i in 0..3
-    output = Mcp.page(tight, i, id) or stop "one tool page"
-    tool = wide.tools.get(i) or stop "tool index"
-    var fields = {"tools": Json.Array([tool])}
-    if i < 2
-      fields = fields.set("nextCursor", Json.String("#{i + 1}.#{key}"))
+  var exact = 0
+  for i in 0..wide.tools.size
+    item = wide.tools.get(i) or stop "expected tool"
+    bytes = expected_page([item], i + 1, wide.tools.size, key, id).to_text.byte_count
+    if bytes > exact
+      exact = bytes
+    end
+  end
+  tight = Mcp.prepare(descriptor, key, exact) or stop "exact catalog"
+  require(Mcp.prepare(descriptor, key, exact - 1) == None)
+  var cursor = 0
+  var collected = []
+  while cursor < wide.tools.size
+    output = Mcp.page(tight, cursor, id) or stop "bounded page"
+    require(output.to_text.byte_count <= exact)
+    var expected_items = []
+    for i in cursor..wide.tools.size
+      candidate = expected_items.append(wide.tools.get(i) or stop "expected tool")
+      envelope = expected_page(candidate, i + 1, wide.tools.size, key, id)
+      break if envelope.to_text.byte_count > exact
+      expected_items = candidate
     end
     require(
       output ==
-        Json.Object({"jsonrpc": Json.String("2.0"), "id": id, "result": Json.Object(fields)})
+        expected_page(expected_items, cursor + expected_items.size, wide.tools.size, key, id)
     )
-    require(output.to_text.byte_count <= bound)
+    fields = case output
+      Json.Object(value): value
+      Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): stop "page object"
+    end
+    result = case fields.get("result")
+      Some(Json.Object(value)): value
+      None | Some(_): stop "page result"
+    end
+    items = case result.get("tools")
+      Some(Json.Array(value)): value
+      None | Some(_): stop "page tools"
+    end
+    require(not items.empty?)
+    collected = collected.concat(items)
+    cursor += items.size
+    require(
+      result.get("nextCursor") == (
+        if cursor < wide.tools.size: Some(Json.String("#{cursor}.#{key}")) else: None
+      )
+    )
   end
+  require(collected == wide.tools)
   require(Mcp.page(tight, -1, id) == None)
-  require(Mcp.page(tight, 3, id) == None)
+  require(Mcp.page(tight, wide.tools.size, id) == None)
   for bad in ["0123456789abcdeF", "0123456789abcdeg", "0123456789abcde", "0123456789abcdef0"]
     require(Mcp.prepare(descriptor, bad, 262144) == None)
   end

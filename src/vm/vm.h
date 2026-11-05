@@ -242,7 +242,7 @@ struct mo_service_observation {
     uint64_t sequence, snapshot_sequence, encoded_sequence, observed_elapsed;
     uint64_t failure_times[MO_LIMIT_SERVICE_FAILURES];
     uint64_t restart_times[MO_LIMIT_SERVICE_RESTARTS];
-    size_t heap_used, heap_peak, stack_capacity, encoded_bytes, encoded_capacity;
+    size_t heap_used, heap_peak, stack_capacity, stack_limit, encoded_bytes, encoded_capacity;
     uint32_t pending, failures, restarts, timers, events;
     bool running, persistent;
 };
@@ -274,6 +274,10 @@ MO_MUST_USE bool mo_service_timer_entry(const struct mo_service_loop *service, u
                                         struct mo_service_timer_summary *out);
 MO_MUST_USE bool mo_service_event_entry(const struct mo_service_loop *service, uint32_t index,
                                         struct mo_service_event_summary *out);
+
+/* Committed scalar metadata since the last snapshot, in sequence order. */
+MO_MUST_USE bool mo_service_log_entry(const struct mo_service_loop *service, uint32_t index,
+                                      struct mo_service_message_summary *out);
 
 /* A simulated service: open, send, advance, crash and restart one service as the Simulation
  * capability does, for that capability and for C callers that drive a service the same way. It

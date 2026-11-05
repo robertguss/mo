@@ -22,6 +22,7 @@ enum protocol_function {
     PF_HTTP,
     PF_HTTP_HEAD,
     PF_HTTP100,
+    PF_VIEW,
     PF_COUNT
 };
 
@@ -86,8 +87,8 @@ struct mo_protocol_server {
     struct mo_cell authorities, cached_descriptor, cached_catalog;
     uint32_t functions[PF_COUNT];
     uint32_t service_index;
-    uint64_t sequence, rate_at, rate_credit;
-    size_t next_slot, fallback_body_max;
+    uint64_t sequence, rate_at, rate_credit, started_at;
+    size_t next_slot, fallback_body_max, view_scratch_peak;
     struct protocol_fallback fallbacks[PE_COUNT][EFFECT_COUNT];
     struct protocol_bytes *fallback_headers;
     struct protocol_bytes errors[506];
@@ -124,5 +125,8 @@ void mo_protocol_complete(struct mo_protocol_server *server,
 MO_MUST_USE bool mo_protocol_catalog(struct mo_protocol_server *server);
 MO_MUST_USE bool mo_protocol_request_process(struct mo_protocol_server *server,
                                              struct protocol_connection *connection);
+
+MO_MUST_USE bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *c,
+                                  struct mo_cell *out);
 
 #endif

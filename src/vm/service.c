@@ -34,6 +34,8 @@ struct mo_service_loop {
     struct mo_store *store;
     uint64_t sequence, image_key, snapshot_sequence, encoded_sequence;
     struct mo_buffer current_encoding;
+    struct mo_service_message_summary log[MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES];
+    uint32_t log_count;
     struct mo_service_event_summary events[MO_LIMIT_SERVICE_EVENTS];
     uint64_t event_number;
     uint32_t event_head, event_count;
@@ -247,8 +249,10 @@ static void replace_encoding(struct mo_service_loop *s, struct mo_buffer *encode
 static bool snapshot(struct mo_service_loop *s, const uint8_t *bytes, size_t length) {
     struct mo_store_record record = {MO_STORE_STATE, s->sequence, s->image_key, bytes, length};
     bool ok = mo_store_call(s->store, MO_STORE_SNAPSHOT, &record, NULL, NULL) == MO_STORE_OK;
-    if (ok)
+    if (ok) {
         s->snapshot_sequence = s->sequence;
+        s->log_count = 0;
+    }
     return ok;
 }
 
@@ -307,8 +311,10 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
              mo_binary_read(&in, (size_t)length, &bytes) &&
              mo_value_decode(heap, tool->argument_types[built], bytes, (size_t)length,
                              &m.arguments[built]);
-        if (ok)
+        if (ok) {
+            m.argument_bytes += (size_t)length;
             built++;
+        }
     }
     ok = ok && in.position == in.length;
     if (ok) {
@@ -342,6 +348,16 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
     }
     for (uint32_t i = 0; i < built; i++)
         mo_value_drop(heap, tool->argument_types[i], m.arguments[i]);
+    if (ok) {
+        MO_ASSERT(s->log_count < MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
+        s->log[s->log_count++] =
+            (struct mo_service_message_summary){.arrival = m.arrival,
+                                                .id = record->sequence,
+                                                .argument_bytes = m.argument_bytes,
+                                                .handler = m.handler,
+                                                .timer = m.timer,
+                                                .argument_bytes_available = true};
+    }
     return ok;
 }
 
@@ -398,6 +414,14 @@ static bool persist(struct mo_service_loop *s, const struct service_message *m,
     mo_buffer_free(&bytes);
     if (ok) {
         s->sequence++;
+        MO_ASSERT(s->log_count < MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
+        s->log[s->log_count++] =
+            (struct mo_service_message_summary){.arrival = m->arrival,
+                                                .id = s->sequence,
+                                                .argument_bytes = m->argument_bytes,
+                                                .handler = m->handler,
+                                                .timer = m->timer,
+                                                .argument_bytes_available = true};
         if (s->sequence % MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES == 0)
             ok = snapshot(s, state->bytes, state->length);
     }
@@ -786,6 +810,7 @@ struct mo_service_observation mo_service_observe(const struct mo_service_loop *s
                                                  .heap_used = mo_heap_used(s->process->heap),
                                                  .heap_peak = mo_heap_peak(s->process->heap),
                                                  .stack_capacity = s->process->capacity,
+                                                 .stack_limit = s->process->limits.stack_size,
                                                  .encoded_bytes = s->current_encoding.length,
                                                  .encoded_capacity = s->current_encoding.capacity};
     observation.observed_elapsed = s->last_clock;
@@ -835,5 +860,14 @@ bool mo_service_event_entry(const struct mo_service_loop *s, uint32_t index,
     if (index >= s->event_count)
         return false;
     *out = s->events[(s->event_head + index) % MO_LIMIT_SERVICE_EVENTS];
+    return true;
+}
+
+bool mo_service_log_entry(const struct mo_service_loop *s, uint32_t index,
+                          struct mo_service_message_summary *out) {
+    MO_ASSERT(s != NULL && out != NULL);
+    if (index >= s->log_count)
+        return false;
+    *out = s->log[index];
     return true;
 }

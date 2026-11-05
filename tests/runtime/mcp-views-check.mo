@@ -1,0 +1,252 @@
+module McpViewsCheck
+use Json
+use McpViews
+
+fn require(ok: Bool)
+  if not ok
+    stop "operator view contract"
+  end
+end
+
+fn number(text: Text) : Json.Json
+  case Json.parse(text)
+    Ok(value): value
+    Error(_): stop "number fixture"
+  end
+end
+
+fn object(value: Json.Json) : Map(Text, Json.Json)
+  case value
+    Json.Object(fields): fields
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): stop "object"
+  end
+end
+
+fn items(value: Json.Json) : List(Json.Json)
+  case object(value).get("items") or stop "items"
+    Json.Array(values): values
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Object(_): stop "items array"
+  end
+end
+
+fn byte(n: Int) : Text
+  require(n >= 0 and n < 128)
+  (n.to_char or stop "byte").to_text
+end
+
+## Little-endian, every byte below 128 so a Text literal holds it.
+fn le(value: Int, width: Int) : Text
+  var out = ""
+  var rest = value
+  for _ in 0..width
+    out = "#{out}#{byte(rest % 256)}"
+    rest = rest / 256
+  end
+  out
+end
+
+## count copies of element under a List schema; every non-choice schema has one group.
+fn saved_list(child: Text, count: Int, element: Text) : Bytes
+  schema = "#{byte(14)}#{le(1, 4)}#{child}#{le(1, 4)}#{le(0, 4)}"
+  "MOSV#{byte(1)}#{le(schema.byte_count, 4)}#{schema}#{le(count, 4)}#{element.repeat(count)}".bytes
+end
+
+fn pages(index: Int, observation: McpViews.Observation, first: Json.Json) : List(Json.Json)
+  var arguments = first
+  var seen = []
+  for _ in 0..100
+    page = McpViews.render(index, arguments, observation, "".bytes, 6144)
+    require(page.to_text.byte_count <= 6144 + 512)
+    shown = items(page)
+    require(not shown.empty?)
+    seen = seen.concat(shown)
+    case object(page).get("next")
+      Some(next): arguments = next
+      None:
+        require(object(page).get("complete") == Some(Json.Boolean(true)))
+        return seen
+    end
+  end
+  stop "pages never ended"
+end
+
+fn numbers(values: List(Json.Json), key: Text) : List(Text)
+  values.map(
+    fn(value) case object(value).get(key)
+      Some(Json.String(text)): text
+      None | Some(_): stop "number field"
+    end end
+  )
+end
+
+fn main() : Int
+  require(McpViews.names().size == 7)
+  require(not McpViews.names().contains?("mo-export"))
+  require(not McpViews.names().contains?("mo-failures"))
+  require(
+    McpViews.valid(1, Json.Object({"path": Json.Array([Json.String("private"), Json.int(2)])}))
+  )
+  require(not McpViews.valid(1, Json.Object({"path": Json.Array([Json.int(-1)])})))
+  require(not McpViews.valid(1, Json.Object({"path": Json.Array([Json.Null])})))
+  require(not McpViews.valid(0, Json.Object({"after": Json.int(0)})))
+  require(not McpViews.valid(5, Json.Object({"after": Json.String("0")})))
+  require(McpViews.valid(5, Json.Object({"after": Json.int(0)})))
+  require(McpViews.valid(5, Json.Object({"after": Json.int(1), "before": Json.int(9)})))
+  require(McpViews.valid(2, Json.Object({"offset": Json.int(3)})))
+  require(McpViews.valid(3, Json.Object({"offset": Json.int(300)})))
+  require(not McpViews.valid(6, Json.Object({"before": Json.int(1)})))
+  require(not McpViews.valid(0, Json.Object({"offset": Json.int(1)})))
+  for spelling in ["-0", "1.0", "1e2", "-1"]
+    require(not McpViews.valid(2, Json.Object({"offset": number(spelling)})))
+    require(not McpViews.valid(1, Json.Object({"path": Json.Array([number(spelling)])})))
+  end
+  require(McpViews.offset(Json.Object({"offset": Json.int(7)})) == 7)
+  require(McpViews.offset(Json.Object({})) == 0)
+  for tool in McpViews.catalog()
+    fields = case tool
+      Json.Object(value): value
+      Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): stop "tool object"
+    end
+    require(
+      fields.get("annotations") ==
+        Some(
+          Json.Object({"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)})
+        )
+    )
+    description = case fields.get("description")
+      Some(Json.String(value)): value
+      None | Some(_): stop "description"
+    end
+    require(description.byte_count <= 512)
+  end
+  stats = McpViews.Stats(
+    sequence: 0,
+    snapshot: 0,
+    encoded_sequence: 0,
+    elapsed: "0",
+    heap_used: 0,
+    heap_peak: 0,
+    heap_limit: 0,
+    stack: 0,
+    encoded_bytes: 30,
+    scratch_peak: 0,
+    failures: 0,
+    restarts: 0,
+    running: true,
+    persistent: true,
+    failure_window: 60000000,
+    restart_window: 600000000,
+    timer_count: 0,
+    stack_limit: 0
+  )
+  observation = McpViews.Observation(
+    service_name: "fixture",
+    program: "0",
+    build: "",
+    build_label: "fixture",
+    stats: stats,
+    mailbox: [],
+    timers: [],
+    events: [],
+    log: [],
+    uptime: "0"
+  )
+  encoded = "MOSV\u{1}\u{d}\u{0}\u{0}\u{0}\u{3}\u{0}\u{0}\u{0}\u{0}\u{1}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}*\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}"
+  result = McpViews.render(1, Json.Object({}), observation, encoded.bytes, 6144)
+  fields = case result
+    Json.Object(value): value
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): stop "state object"
+  end
+  require(fields.get("state") == Some(Json.String("42")))
+  require(fields.get("complete") == Some(Json.Boolean(true)))
+  views(observation)
+  states(observation)
+  37
+end
+
+fn views(base: McpViews.Observation)
+  long = "h".repeat(120)
+  events = (1..61).to_list.map(
+    fn(i) McpViews.Event(
+      number: i.to_text,
+      kind: "failure",
+      reason: "service handler failed",
+      handler: long,
+      arrival: i,
+      elapsed: i.to_text
+    ) end
+  )
+  var observed = base
+  observed.events = events
+  newest = numbers(pages(5, observed, Json.Object({})), "number")
+  require(newest == (1..61).to_list.reverse.map(fn(i) i.to_text end))
+  window = numbers(pages(5, observed, Json.Object({"after": Json.int(10)})), "number")
+  require(window == (11..61).to_list.reverse.map(fn(i) i.to_text end))
+  messages = (1..101).to_list.map(
+    fn(i) McpViews.Message(
+      handler: long,
+      timer: false,
+      arrival: i,
+      number: i.to_text,
+      argument_bytes: 3,
+      size_available: true
+    ) end
+  )
+  var logs = base
+  logs.log = messages
+  logged = numbers(pages(6, logs, Json.Object({})), "sequence")
+  require(logged == (1..101).to_list.map(fn(i) i.to_text end))
+  var queued = base
+  queued.mailbox = messages.take(64)
+  mailbox = numbers(pages(2, queued, Json.Object({})), "sequence")
+  require(mailbox == (1..65).to_list.map(fn(i) i.to_text end))
+  timers = (0..256).to_list.map(
+    fn(i) McpViews.Timer(name: "t#{i}", interval: "1", next: "2", waiting: false) end
+  )
+  var copied = base
+  copied.stats.timer_count = 300
+  copied.timers = timers
+  page = McpViews.render(3, Json.Object({}), copied, "".bytes, 6144)
+  shown = items(page).size
+  require(shown > 0 and shown < 256)
+  require(object(page).get("truncated") == Some(Json.int(300 - shown)))
+  require(object(page).get("next") == Some(Json.Object({"offset": Json.int(shown)})))
+  require(items(page).all?(fn(item) object(item).get("truncated") == None end))
+end
+
+fn states(observation: McpViews.Observation)
+  text = "#{byte(10)}#{le(0, 4)}#{le(1, 4)}#{le(0, 4)}"
+  int = "#{byte(3)}#{le(0, 4)}#{le(1, 4)}#{le(0, 4)}"
+  count = 32639
+  empties = saved_list(text, count, le(0, 4))
+  whole = object(McpViews.render(1, Json.Object({}), observation, empties, 6144))
+  state = whole.get("state") or stop "state"
+  require(state.to_text.byte_count <= 6144)
+  shown = items(state).size
+  require(shown > 0 and object(state).get("truncated") == Some(Json.int(count - shown)))
+  require(whole.get("complete") == Some(Json.Boolean(false)))
+  last = Json.Object({"path": Json.Array([Json.int(count - 1)])})
+  found = object(McpViews.render(1, last, observation, empties, 6144))
+  require(
+    found.get("state") == Some(Json.String("")) and
+      found.get("complete") == Some(Json.Boolean(true))
+  )
+  past = Json.Object({"path": Json.Array([Json.int(count)])})
+  require(object(McpViews.render(1, past, observation, empties, 6144)).get("unavailable") != None)
+  var values = ""
+  for i in 0..count
+    values = "#{values}#{le(i % 128, 8)}"
+  end
+  schema = "#{byte(14)}#{le(1, 4)}#{int}#{le(1, 4)}#{le(0, 4)}"
+  ints = "MOSV#{byte(1)}#{le(schema.byte_count, 4)}#{schema}#{le(count, 4)}#{values}".bytes
+  found_int = object(McpViews.render(1, last, observation, ints, 6144))
+  require(found_int.get("state") == Some(Json.String(((count - 1) % 128).to_text)))
+  note = "n".repeat(1799)
+  long = saved_list(text, 2, "#{le(1799, 4)}#{note}")
+  rendered = object(McpViews.render(1, Json.Object({}), observation, long, 6144))
+  require(rendered.get("state") == Some(Json.Array([Json.String(note), Json.String(note)])))
+  big = saved_list(text, 2, "#{le(7000, 4)}#{"b".repeat(7000)}")
+  cut = object(McpViews.render(1, Json.Object({}), observation, big, 6144))
+  marker = Json.Object({"truncated_bytes": Json.int(7000)})
+  require(cut.get("state") == Some(Json.Array([marker, marker])))
+end

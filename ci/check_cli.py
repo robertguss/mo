@@ -1507,6 +1507,7 @@ SERVE_EDITS = (("(state + amount, state + amount)", "(state + amount, state * am
                ("## Reads the count.", "## Reads the total."),
                ("## Reads the count.", "\n## Reads the count."))
 SERVE_TOOL_PAGE = 32
+SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -1580,6 +1581,21 @@ class Served:
             [str(binary), "serve", str(source), "--port", port, "--data", str(data), *extra],
             env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0,
             umask=0o022)
+        try:
+            line = self.announcement()
+        except BaseException:
+            self.process.kill()
+            self.process.wait()
+            self.stderr.close()
+            raise
+        self.line = line
+        self.port = None
+        if line:
+            prefix, suffix = b"mo serve: listening on http://127.0.0.1:", b"/mcp\n"
+            assert line.startswith(prefix) and line.endswith(suffix), line
+            self.port = int(line[len(prefix):-len(suffix)])
+
+    def announcement(self):
         line = b""
         limit = time.monotonic() + 30
         while not line.endswith(b"\n"):
@@ -1589,12 +1605,7 @@ class Served:
             if not chunk:
                 break
             line += chunk
-        self.line = line
-        self.port = None
-        if line:
-            prefix, suffix = b"mo serve: listening on http://127.0.0.1:", b"/mcp\n"
-            assert line.startswith(prefix) and line.endswith(suffix), line
-            self.port = int(line[len(prefix):-len(suffix)])
+        return line
 
     def post(self, body, token, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
@@ -1746,7 +1757,7 @@ def serve_command(binary):
             assert served.post(SERVE_INITIALIZED, token)[0] == 202
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"]
+            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES
             assert all(tool["inputSchema"]["type"] == "object" for tool in tools), tools
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
             assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
@@ -1908,7 +1919,7 @@ def serve_command(binary):
                 {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"cursor": cursor}}),
                 token)
             assert status == 200, body
-            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:], body
+            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES, body
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
 
         with serving() as served:
@@ -2004,7 +2015,7 @@ def serve_command(binary):
         with serving(entry, imported) as served:
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["look"], body
+            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES, body
             look = SERVE_READ.replace('"read"', '"look"')
             assert serve_structured(served.post(look, token)) == {"value": "31"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
@@ -3813,6 +3824,10 @@ def guide_claims(binary):
     When one of these fails, the build changed: update docs/agent-guide.md to match, then this
     test. Never edit only the test."""
     guide = (root / "docs/agent-guide.md").read_text(encoding="utf-8")
+    # The live operator driver exercises these guide claims through the real endpoint.
+    for name in SERVE_OPERATOR_NAMES:
+        assert f"`{name}`" in guide
+    assert "State export, fetch, retained failure records and offline replay/query tools are not available yet." in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]
@@ -4521,5 +4536,6 @@ def check(binary):
     print(f"{binary}: CLI goldens, argument matrix and JSON validity passed")
 
 
-for executable in sys.argv[1:]:
-    check(pathlib.Path(executable).resolve())
+if __name__ == "__main__":
+    for executable in sys.argv[1:]:
+        check(pathlib.Path(executable).resolve())

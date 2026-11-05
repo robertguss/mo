@@ -278,6 +278,8 @@ static void rate(void) {
     CHECK(mo_protocol_server_metrics(f.server).admitted == 20);
     tool_request(&f, "read", "{}", "2", out, sizeof out);
     tool_error(out, "rate_limited", "none", "2");
+    tool_request(&f, "mo-state", "{}", "2", out, sizeof out);
+    tool_error(out, "rate_limited", "none", "2");
     MO_ASSERT(mo_listener_fake_advance(f.listener, 49999) == MO_LISTENER_OK);
     tool_request(&f, "read", "{}", "3", out, sizeof out);
     tool_error(out, "rate_limited", "none", "3");
@@ -408,17 +410,22 @@ static void response_limit(void) {
 static void busy(void) {
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_FILE_SIZE);
-    MO_ASSERT(mo_buffer_append_text(&text, "module Main\nservice\nstate Int = 0\ntools read\n"));
-    for (unsigned i = 0; i <= 64; i++) {
+    MO_ASSERT(mo_buffer_append_text(&text,
+                                    "module Main\nstruct Secret\n value: Int\nend\nservice\nstate "
+                                    "Secret = Secret(value: 0)\ntools read\n"));
+    for (unsigned i = 0; i <= MO_LIMIT_MCP_VIEW_TIMERS; i++) {
         MO_ASSERT(mo_buffer_append_text(&text, "every 1.second tick_") &&
                   mo_buffer_append_uint(&text, i) && mo_buffer_append_text(&text, "\n"));
     }
     MO_ASSERT(mo_buffer_append_text(
         &text, "token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
-               "fn read(state: Int, _now: Time) : Text\nstate.to_text\nend\n"));
-    for (unsigned i = 0; i <= 64; i++) {
-        MO_ASSERT(mo_buffer_append_text(&text, "fn tick_") && mo_buffer_append_uint(&text, i) &&
-                  mo_buffer_append_text(&text, "(state: Int, _now: Time) : Int\nstate + 1\nend\n"));
+               "fn read(state: Secret, _now: Time) : Text\nstate.value.to_text\nend\n"));
+    for (unsigned i = 0; i <= MO_LIMIT_MCP_VIEW_TIMERS; i++) {
+        MO_ASSERT(
+            mo_buffer_append_text(&text, "fn tick_") && mo_buffer_append_uint(&text, i) &&
+            mo_buffer_append_text(
+                &text,
+                "(state: Secret, _now: Time) : Secret\nSecret(value: state.value + 1)\nend\n"));
     }
     MO_ASSERT(mo_buffer_append_byte(&text, 0));
     struct fixture_server f = start_source((const char *)text.bytes);
@@ -450,8 +457,43 @@ static void busy(void) {
     }
     CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
     CHECK(mo_protocol_server_metrics(f.server).completed == 8);
+    char view[32768];
+    tool_request(&f, "mo-mailbox", "{}", "1", view, sizeof view);
+    CHECK(strstr(view, "\"complete\":false") != NULL);
+    CHECK(strstr(view, "\"truncated\":") != NULL);
+    CHECK(strstr(view, "\"isError\":false") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
+    tool_request(&f, "mo-timers", "{}", "1", view, sizeof view);
+    CHECK(strstr(view, "\"complete\":false") != NULL);
+    size_t included = 0;
+    const char *entry = view;
+    while ((entry = strstr(entry, "\"interval_us\":")) != NULL) {
+        included++;
+        entry++;
+    }
+    CHECK(included > 0 && included < MO_LIMIT_MCP_VIEW_TIMERS);
+    char omitted[64];
+    int written = snprintf(omitted, sizeof omitted, "\"truncated\":%zu",
+                           (size_t)MO_LIMIT_MCP_VIEW_TIMERS + 1 - included);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof omitted);
+    CHECK(strstr(view, omitted) != NULL);
+    written = snprintf(omitted, sizeof omitted, "\"next\":{\"offset\":%zu}", included);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof omitted);
+    CHECK(strstr(view, omitted) != NULL);
+    char arguments[64];
+    written = snprintf(arguments, sizeof arguments, "{\"offset\":%u}", MO_LIMIT_MCP_VIEW_TIMERS);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof arguments);
+    tool_request(&f, "mo-timers", arguments, "1", view, sizeof view);
+    written = snprintf(omitted, sizeof omitted, "\"name\":\"tick_%u\"", MO_LIMIT_MCP_VIEW_TIMERS);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof omitted);
+    CHECK(strstr(view, omitted) != NULL);
+    CHECK(strstr(view, "\"complete\":true") != NULL);
+    tool_request(&f, "mo-state", "{\"path\":[\"value\"]}", "1", view, sizeof view);
+    CHECK(strstr(view, "\"complete\":true") != NULL);
+    CHECK(strstr(view, "\"state\":") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
     f.tick_us = 0;
-    for (unsigned i = 0; i < 64; i++)
+    for (unsigned i = 0; i < 2 * (MO_LIMIT_MCP_VIEW_TIMERS + 1); i++)
         poll_server(&f);
     tool_request(&f, "read", "{}", "2", out[0], sizeof out[0]);
     CHECK(strstr(out[0], "\"structuredContent\":{\"value\":") != NULL);
@@ -667,7 +709,86 @@ static void result_updates(void) {
     finish(&f);
 }
 
+static uint64_t uptime(const char *out) {
+    const char *field = strstr(out, "\"uptime_us\":\"");
+    CHECK(field != NULL);
+    return field == NULL ? 0 : strtoull(field + strlen("\"uptime_us\":\""), NULL, 10);
+}
+
+static void operator_views(void) {
+    struct fixture_server f = start();
+    char out[32768];
+    request(&f, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", auth, out, sizeof out,
+            0);
+    char depth[32];
+    int written = snprintf(depth, sizeof depth, "\"maxItems\":%d", MO_LIMIT_SAVED_DEPTH);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof depth);
+    CHECK(strstr(out, depth) != NULL);
+    struct mo_protocol_metrics before = mo_protocol_server_metrics(f.server);
+    tool_request(&f, "mo-overview", "{}", "1", out, sizeof out);
+    CHECK(strstr(out, "\"recovery_sequence\":\"0\"") != NULL);
+    CHECK(strstr(out, "McpSecretCanary42") == NULL);
+    tool_request(&f, "mo-state", "{}", "2", out, sizeof out);
+    CHECK(strstr(out, "\"complete\":true") != NULL);
+    CHECK(strstr(out, "\"state\":\"0\"") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == before.admitted);
+    tool_request(&f, "fail", "{}", "3", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "3");
+    tool_request(&f, "fail", "{}", "4", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "4");
+    tool_request(&f, "mo-supervisor", "{}", "5", out, sizeof out);
+    const char *first = strstr(out, "\"number\":\"2\"");
+    const char *second = strstr(out, "\"number\":\"1\"");
+    CHECK(first != NULL && second != NULL && first < second);
+    CHECK(strstr(out, "never render this secret") == NULL);
+    tool_request(&f, "mo-supervisor", "{\"after\":1}", "6", out, sizeof out);
+    CHECK(strstr(out, "\"number\":\"2\"") != NULL);
+    CHECK(strstr(out, "\"number\":\"1\"") == NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == before.admitted + 2);
+    for (unsigned i = 2; i < MO_LIMIT_SERVICE_FAILURES * MO_LIMIT_SERVICE_RESTARTS; i++) {
+        tool_request(&f, "fail", "{}", "7", out, sizeof out);
+        CHECK(strstr(out, "\"isError\":true") != NULL);
+    }
+    tool_request(&f, "mo-overview", "{}", "8", out, sizeof out);
+    CHECK(strstr(out, "\"running\":false") != NULL);
+    uint64_t stopped = uptime(out);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, 7000000) == MO_LISTENER_OK);
+    tool_request(&f, "mo-overview", "{}", "9", out, sizeof out);
+    CHECK(uptime(out) >= stopped + 7000000);
+    finish(&f);
+}
+
+static void private_views(void) {
+    const char private_source[] =
+        "module Main\nstruct Secret\n answer: Int\n text: Text\n items: List(Int)\nend\n"
+        "service\n state Secret = Secret(answer: 42, text: \"private\", items: [7, 9])\n"
+        " tools mo_state\n every 1.hour tick\n token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+        "fn mo_state(_state: Secret, _now: Time) : Int\n 777\nend\n"
+        "fn tick(state: Secret, _now: Time) : Secret\n state\nend\n";
+    struct fixture_server f = start_source(private_source);
+    char out[32768];
+    tool_request(&f, "mo-state", "{}", "1", out, sizeof out);
+    CHECK(strstr(out, "\"type\":\"Main.Secret\"") != NULL);
+    CHECK(strstr(out, "\"answer\":\"42\"") != NULL);
+    CHECK(strstr(out, "\"items\":[\"7\",\"9\"]") != NULL);
+    tool_request(&f, "mo-state", "{\"path\":[\"items\",1]}", "2", out, sizeof out);
+    CHECK(strstr(out, "\"state\":\"9\"") != NULL);
+    tool_request(&f, "mo-state", "{\"path\":[-1]}", "3", out, sizeof out);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
+    tool_request(&f, "mo-export", "{}", "4", out, sizeof out);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
+    tool_request(&f, "mo-failures", "{}", "5", out, sizeof out);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
+    tool_request(&f, "mo_state", "{}", "6", out, sizeof out);
+    CHECK(strstr(out, "\"value\":\"777\"") != NULL);
+    CHECK(mo_protocol_server_metrics(f.server).admitted == 1);
+    finish(&f);
+}
+
 static void run(void *context) {
+    operator_views();
+    private_views();
     wire(context);
     literal_boundaries();
     service_hangup();

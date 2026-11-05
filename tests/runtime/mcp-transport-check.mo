@@ -107,7 +107,7 @@ fn methods()
       "{\"protocolVersion\":\"old\",\"capabilities\":{},\"clientInfo\":{\"name\":\"client\"}}",
       "Invalid params: initialize needs protocolVersion, capabilities and clientInfo"
     ),
-    ("tools/list", "{\"cursor\":\"1.0123456789abcdef\"}", "Invalid params: invalid cursor"),
+    ("tools/list", "{\"cursor\":\"8.0123456789abcdef\"}", "Invalid params: invalid cursor"),
     ("tools/call", "{}", "Invalid params: name must be a string"),
     ("tools/call", "{\"name\":4}", "Invalid params: name must be a string"),
     (
@@ -173,7 +173,7 @@ fn pages()
     shape = descriptor(count)
     catalog = Mcp.prepare(shape, key, 32768) or stop "page catalog"
     var fields = {"tools": Json.Array(catalog.tools.take(32))}
-    if count > 32
+    if catalog.tools.size > 32
       fields = fields.set("nextCursor", Json.String("32.#{key}"))
     end
     expected = McpRpc.result(id, Json.Object(fields))
@@ -189,19 +189,19 @@ fn pages()
         McpTransport.Reply(status: 200, body: expected.to_text),
       "list response"
     )
-    if count > 32
-      last = McpRpc.result(id, Json.Object({"tools": Json.Array(catalog.tools.drop(32))}))
+    if catalog.tools.size > 32
+      var remaining = {"tools": Json.Array(catalog.tools.drop(32).take(32))}
+      if catalog.tools.size > 64
+        remaining = remaining.set("nextCursor", Json.String("64.#{key}"))
+      end
+      last = McpRpc.result(id, Json.Object(remaining))
       require(Mcp.page(catalog, 32, id) == Some(last), "last page")
     end
   end
   empty = descriptor(0)
-  worst = Json.String("\u{0}".repeat(128))
-  expected = McpRpc.result(worst, Json.Object({"tools": Json.Array([])}))
-  bound = expected.to_text.byte_count
-  catalog = Mcp.prepare(empty, key, bound) or stop "empty catalog at bound"
-  require(Mcp.prepare(empty, key, bound - 1) == None, "empty catalog exceeds bound")
-  require(Mcp.page(catalog, 0, worst) == Some(expected), "empty tools")
-  require(Mcp.page(catalog, 1, id) == None, "empty page invalid start")
+  catalog = Mcp.prepare(empty, key, 32768) or stop "operator-only catalog"
+  require(catalog.tools.size == 7, "operator tools without author tools")
+  require(Mcp.page(catalog, 7, id) == None, "invalid start")
   broken = Mcp.Catalog(tools: [], sizes: [], image_key: key, response_bytes: 0)
   require(
     McpTransport.receive(
@@ -330,7 +330,12 @@ end
 fn call?(action: McpTransport.Action) : Bool
   case action
     McpTransport.Call(request: _, tool: index, arguments: _): index == 0
-    McpTransport.Reply(status: _, body: _): false
+    McpTransport.Reply(status: _, body: _) | McpTransport.Operator(
+      request: _,
+      view: _,
+      arguments: _,
+      offset: _
+    ): false
   end
 end
 

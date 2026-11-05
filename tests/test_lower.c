@@ -1908,20 +1908,23 @@ bool mo_protocol_bad_abi_sources(struct mo_sources *sources, const char *path, c
                                  size_t length, uint32_t *file_out,
                                  struct mo_source_error *error_out);
 static bool abi_drift_injected;
+static bool view_abi_drift;
 
 bool mo_protocol_bad_abi_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
                                  size_t length, uint32_t *file_out,
                                  struct mo_source_error *error_out) {
-    if (strcmp(path, "runtime/http.mo") != 0)
+    if (strcmp(path, view_abi_drift ? "runtime/mcp-views.mo" : "runtime/http.mo") != 0)
         return mo_sources_add_bytes(sources, path, bytes, length, file_out, error_out);
-    const char before[] = "  Incomplete\n  Malformed\n";
-    const char after[] = "  Malformed\n  Incomplete\n";
+    const char *before =
+        view_abi_drift ? "  heap_used: Int\n  heap_peak: Int\n" : "  Incomplete\n  Malformed\n";
+    const char *after =
+        view_abi_drift ? "  heap_peak: Int\n  heap_used: Int\n" : "  Malformed\n  Incomplete\n";
     struct mo_buffer changed;
     mo_buffer_init(&changed, MO_LIMIT_FILE_SIZE);
     MO_ASSERT(mo_buffer_append(&changed, bytes, length));
-    for (size_t i = 0; i + sizeof before - 1 <= length; i++) {
-        if (memcmp(changed.bytes + i, before, sizeof before - 1) == 0) {
-            memcpy(changed.bytes + i, after, sizeof after - 1);
+    for (size_t i = 0; i + strlen(before) <= length; i++) {
+        if (memcmp(changed.bytes + i, before, strlen(before)) == 0) {
+            memcpy(changed.bytes + i, after, strlen(after));
             abi_drift_injected = true;
             break;
         }
@@ -1962,6 +1965,11 @@ static void test_embedded_protocol(void *entry) {
         abi_drift_injected = false;
         image = mo_protocol_bad_abi_build();
         CHECK(abi_drift_injected && image == NULL);
+        view_abi_drift = true;
+        abi_drift_injected = false;
+        image = mo_protocol_bad_abi_build();
+        CHECK(abi_drift_injected && image == NULL);
+        view_abi_drift = false;
         if (image != NULL)
             mo_image_free(image);
     }
@@ -2362,6 +2370,8 @@ int main(int argc, char **argv) {
                                 "tests/runtime/mcp-rpc-check.mo") == 0);
         MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
                                 "tests/runtime/mcp-transport-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/mcp-views-check.mo") == 0);
     }
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);

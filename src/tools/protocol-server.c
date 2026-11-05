@@ -10,7 +10,7 @@ static const char *const function_names[PF_COUNT] = {
     "HttpBody.chunked",       "HttpBody.feed",         "Mcp.prepare",
     "McpTransport.receive",   "McpValue.arguments",    "McpValue.encode",
     "Mcp.tool_reply",         "McpTransport.fallback", "McpTransport.http",
-    "McpTransport.http_head", "McpTransport.http100"};
+    "McpTransport.http_head", "McpTransport.http100",  "McpViews.render"};
 
 static uint64_t deadline(uint64_t now, uint64_t interval) {
     return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;
@@ -409,6 +409,7 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
     }
     s->service_heap = mo_service_heap(s->service);
     s->rate_at = s->now.monotonic_us;
+    s->started_at = s->now.monotonic_us;
     *out = s;
     return MO_PROTOCOL_SERVER_OK;
 fail:
