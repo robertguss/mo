@@ -107,3 +107,5 @@ the hidden tests stay private until the final round. The scanner reads DEST befo
 The pilots' record, with the rule that decides when a variant is ready to freeze, is
 `pilot/ledger.md`.
 - `preflight/` holds the experiments that sized the design; its README says what each found.
+- `live-views/` holds the development evidence for the authenticated live views: client
+  routing, local checks and process sizing. Its README says what each run showed.

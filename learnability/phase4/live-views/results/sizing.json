@@ -1,25 +1,25 @@
 {
-  "binary_sha256": "9562b9fabb51005570ce2b2638fc39309d15819d10e03251d7db2eaabce33732",
-  "encoded_bytes": "16000629",
-  "response_bytes": 1418,
+  "binary_sha256": "e8b84e9fd5a6627407be6edb47769a2a6969c53b3216c1210f6741bfe792ac8c",
+  "encoded_bytes": "16000110",
+  "response_bytes": 636,
   "complete": false,
   "before_kib": {
-    "VmHWM": 127996,
-    "VmRSS": 112524
+    "VmHWM": 114220,
+    "VmRSS": 114220
   },
   "after_kib": {
-    "VmHWM": 127996,
-    "VmRSS": 113272
+    "VmHWM": 114364,
+    "VmRSS": 114364
   },
   "memory_view": {
-    "heap_used": "16001439",
-    "heap_peak": "32006870",
+    "heap_used": "16000264",
+    "heap_peak": "32004520",
     "heap_limit": "58718816",
-    "stack_capacity": "1024",
+    "stack_capacity": "256",
     "stack_limit": "8388608",
-    "encoded_state_bytes": "16000629",
+    "encoded_state_bytes": "16000110",
     "pinned_export_bytes": null,
-    "diagnostic_scratch_peak": "135168",
+    "diagnostic_scratch_peak": "139264",
     "export_available": false
   },
   "note": "One synthetic 16,000,000-byte Text run; process RSS includes compiler/runtime, not a universal bound."

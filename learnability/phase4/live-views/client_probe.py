@@ -48,7 +48,7 @@ def pinned_run(command, workdir, out):
     if command[0] == 'codex':
         command[2:2] = ['--model', 'gpt-6.1-sol', '-c', 'model_reasoning_effort="xhigh"']
     else:
-        command[1:1] = ['--model', 'claude-opus-5-5']
+        command[3:3] = ['--model', 'claude-opus-5-5']
     return original_run(command, workdir, out)
 
 

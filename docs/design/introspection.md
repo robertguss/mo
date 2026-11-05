@@ -61,16 +61,19 @@ documented limit: it gets the views and nothing else.
 | --- | --- | --- |
 | `mo-overview` | Service name, program and build identities, uptime, running or stopped, mailbox count, timer count, memory used and peak, failure and restart counts in their windows, retained failure count, recovery sequence, last snapshot sequence | none |
 | `mo-state` | The current state, rendered from its saved encoding, truncated to fit one reply | `path` (optional, a list of field names and indexes to descend into) |
-| `mo-mailbox` | Each queued message: handler, timer or tool, arrival time, argument byte size; not argument values | none |
-| `mo-timers` | Each timer: name, interval, next due time, whether a tick is waiting | none |
+| `mo-mailbox` | Each queued message: handler, timer or tool, arrival time, argument byte size; not argument values | `offset` (optional position in the queue) |
+| `mo-timers` | Each timer: name, interval, next due time, whether a tick is waiting | `offset` (optional timer position) |
 | `mo-memory` | Heap used, peak and limit; stack limit; encoded state bytes; pinned export bytes; diagnostic scratch peak | none |
-| `mo-supervisor` | The in-memory event ring: failures, restarts, stops and capture refusals, newest first | `after` (optional event number) |
+| `mo-supervisor` | The in-memory event ring: failures, restarts, stops and capture refusals, newest first | `after`, `before` (optional event numbers) |
 | `mo-failures` | Retained failure records: id, handler, kind key, arrival time, signature, state and message byte sizes; unavailable records with their reasons | `after` (optional record id) |
 | `mo-log` | Committed messages since the last snapshot: sequence, handler, arrival time, argument byte sizes; not argument values | `after` (optional sequence) |
 | `mo-export` | One page of a pinned export (section 5) | `kind`, `failure`, `export`, `offset` |
 
 Operator tools are listed after every author tool, in the order above, under the same catalog
-paging (`runtime/mcp.mo`). A hyphen cannot occur in an author tool's name, which the lexer limits
+paging (`runtime/mcp.mo`). A list view that does not fit one reply carries `"truncated": N`, the
+number of items left out, and `"next"`, the arguments that return the following page. An
+argument number must be written as a plain nonnegative integer, so `-0`, `1.0` and `1e2` are
+refused. A hyphen cannot occur in an author tool's name, which the lexer limits
 to `[a-z0-9_]` (`src/syntax/lexer.c`), so the `mo-` prefix cannot collide on the wire.
 
 Clients may rename tools before a model sees them, and the design does not depend on spelling
@@ -138,8 +141,11 @@ into JSON:
 | List, Set | an array |
 | Map | an array of `[key, value]` pairs, since keys need not be strings |
 | Tuple | an array |
-| Record | `{"type": "Module.Name", "fields": {...}}` |
-| Choice | `{"type": "Module.Name", "case": "Name", "fields": {...}}` |
+| Record, struct | `{"type": "Module.Name", "fields": {...}}` |
+| Choice | `{"type": "Module.Name", "case": "Name"}`, plus `"value"` for one unnamed payload or `"fields"` for named ones, as author tools render a choice |
+
+A struct is saved as a choice with one case named after its type, and the saved schema has no
+other mark of it, so the renderer treats such a choice as a struct.
 
 The bytecode format, the shape tables and the verifier are unchanged. The renderer reads only
 bytes the runtime itself encoded from a trusted descriptor, under the depth (128) and node
@@ -147,9 +153,16 @@ bytes the runtime itself encoded from a trusted descriptor, under the depth (128
 That is intended: module privacy governs which source can name a representation, not what the
 service's operator can read, and the operator already holds the only credential.
 
-A view that would exceed the reply limit is truncated: the renderer stops at a byte budget, marks
-each cut collection with `{"truncated": N}` counting the elements left out, and the reply carries
-`"complete": false` and the advice to export. `path` lets an agent descend without exporting.
+A view that would exceed the reply limit is truncated. The renderer counts every byte it writes,
+separators included, against a byte budget, and the reply carries `"complete": false`.
+
+- A cut list, set, map or tuple becomes `{"items": [...], "truncated": N}`, and a cut record or
+  choice gains `"truncated": N`. N counts the elements or fields left out.
+- A Text, Bytes or BigInt too large for what is left becomes `{"truncated_bytes": N}`, its
+  encoded size, and rendering continues with the values after it.
+
+`path` lets an agent descend into a truncated part without exporting. Following a path skips
+earlier values without rendering them, in one step when every element has the same encoded size.
 
 ### 3.4 Event lines
 
@@ -547,6 +560,10 @@ does not list it, so `Restart=on-failure` retries. This lands before the reader 
 | `MO_LIMIT_FAILURE_RECORDS` | 64 | the store |
 | `MO_LIMIT_FAILURE_STORE_BYTES` | 64 MiB | the store's disk |
 | `MO_LIMIT_SERVICE_EVENTS` | 256 | native |
+| `MO_LIMIT_MCP_VIEW_BYTES` | 6,144 bytes | each rendered view |
+| `MO_LIMIT_MCP_VIEW_MEMORY` | 16 MiB + 16 MiB | one operator request's heap |
+| `MO_LIMIT_MCP_VIEW_TIMERS` | 256 | timers copied for one page |
+| `MO_LIMIT_MCP_VIEW_NAME_BYTES` | 512 | each copied name |
 | `MO_LIMIT_HISTORY_BYTES` | 64 MiB | the reader |
 | `MO_LIMIT_SERVE_STORE_WAIT_US` | 10 s | startup |
 
@@ -557,8 +574,9 @@ empty service peaked at 54 MiB resident; the growth fixture's largest accepted s
 of text, peaked at 120 MiB resident with a 15.4 MiB snapshot record. The full task queue
 at its limits (5,000 jobs of 2,048 bytes) was a 10.0 MiB snapshot record and peaked at 108 MiB
 resident. A deployment should allow about 120 MiB per service for today's runtime and 50 MiB more
-for Phase 4. Measuring the implementation, with the heap and scratch peaks that `mo serve` cannot
-report today, replaces this estimate when the operator tools land.
+for Phase 4. With the operator tools, `learnability/phase4/live-views/sizing.py` measures one
+16,000,000-byte Text state; its result, with the heap and scratch peaks that `mo-memory` now
+reports, is in that folder's `results/sizing.json`.
 
 ## 11. Verification
 
@@ -741,14 +759,17 @@ They never enter service admission. Export and retained-failure tools remain abs
 reachability. The native bridge copies typed metadata and saved bytes into the request process;
 no live service value is retained. Its extra saved-byte allowance is independently bounded by
 `MO_LIMIT_MCP_VIEW_MEMORY` (the ordinary 16 MiB request allowance plus 16 MiB of saved bytes).
-Native timer metadata is capped at `MO_LIMIT_MCP_VIEW_TIMERS` (256), with the omitted count
-included in the truncated response. Names beyond `MO_LIMIT_MCP_VIEW_NAME_BYTES` (512) are
+Native timer metadata is copied one page of at most `MO_LIMIT_MCP_VIEW_TIMERS` (256) at a time,
+from the `offset` the transport parses into the operator action, and the omitted count includes
+timers outside that page. Names beyond `MO_LIMIT_MCP_VIEW_NAME_BYTES` (512) are
 explicitly unavailable rather than copied without bound.
 Only a rate-admitted operator request gets that allowance; it is restored after rendering and
-the copied bytes are released before another service step. The renderer's conservative JSON
-budget is `MO_LIMIT_MCP_VIEW_BYTES` (6144 bytes), leaving room for MCP's duplicated textual and
-structured result. Cut collections report omitted counts, and cut text/bytes report omitted
-byte counts. A narrower path remains usable; export advice explicitly says export is unavailable.
+the copied bytes are released before another service step. The renderer's JSON
+budget is `MO_LIMIT_MCP_VIEW_BYTES` (6144 bytes), an upper bound on the rendered state that
+counts separators and leaves room for MCP's duplicated textual and structured result. Truncation
+follows section 3.3. A narrower path remains usable; export advice explicitly says export is
+unavailable. Overview uptime is the server's monotonic clock less its start, so it keeps
+advancing while the service is stopped.
 The memory view reports the high-water native scratch of completed inspection rendering calls,
 including their protocol work, rather than claiming an atomic measurement of the current call.
 

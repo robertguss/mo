@@ -60,9 +60,10 @@ python3 ci/check_operator.py build/gcc/debug/mo
 The real HTTP driver passed for saved scalar/container forms, field/index/map-entry paths,
 private state, explicit truncation, token refusals, unavailable-tool refusals and unchanged
 recovery/supervisor positions. It also runs a 16,000,000-byte Text case, checking both a truncated
-whole-state response and an exact narrow path. [sizing.json](results/sizing.json) records one
-such process measurement: 16,000,629 encoded bytes, a 1,418-byte explicitly incomplete reply,
-and 127,996 KiB process high-water RSS. This includes compiler/runtime allocations and is a
+whole-state response and an exact narrow path. [sizing.py](sizing.py) writes
+[sizing.json](results/sizing.json), one such process measurement. Regenerated after the review
+fixes, it records 16,000,110 encoded bytes, a 636-byte explicitly incomplete reply, and
+114,364 KiB process high-water RSS. This includes compiler/runtime allocations and is a
 measurement of that fixture, not a universal memory bound or an atomic cross-call observation.
 The sizing executable SHA-256 is recorded in that file.
 
@@ -110,5 +111,25 @@ never-approval mode again refused the author call locally. Earlier evidence rema
 The initial full GCC run caught two stale catalog-count expectations, which were corrected.
 The new log tests initially confused request ID 123 with arrival time from the zero-valued
 fixture clock; correcting that expectation made the strengthened tests pass. Local logs remain
-in `build/u7-*.txt`, including failed runs. No check was left running, and no GitHub publication,
-push or merge was performed.
+in `build/u7-*.txt` on the machine that ran them, including failed runs; they were never
+committed. No check was left running, and at that point no GitHub publication, push or merge
+had been performed.
+
+## Corrections after code review
+
+A review of the published change found that this record and the renderer had defects. The
+fixes are in the same pull request; this section says what changed in the evidence.
+
+- The first `client_probe.py` inserted Claude's `--model claude-opus-5-5` before the prompt, so
+  preflight's masking replaced the model name instead of the prompt in the recorded command.
+  The run itself received both flags. The script now inserts them after the prompt, and the
+  Claude command in [summary.json](results/summary.json) and
+  [reviewed-summary.json](results/reviewed-summary.json) now shows the arguments that ran, in the
+  order the fixed script passes them. No client was rerun.
+- [sizing.json](results/sizing.json) is now produced by [sizing.py](sizing.py) from a committed
+  fixture, and was regenerated with the fixed renderer. Its numbers replace the earlier ones,
+  whose generator was not committed.
+- The renderer changes (path skipping, budget accounting, truncation shape, paging and choice
+  shape) are described in `docs/design/introspection.md`, "Authenticated live views". The
+  operator driver and `fuzz_mcp_views` seeds were extended for them. The traffic files above
+  describe the earlier executables and are kept as they were recorded.

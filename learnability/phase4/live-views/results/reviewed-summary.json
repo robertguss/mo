@@ -85,10 +85,10 @@
     "version": "2.1.318 (Claude Code)",
     "command": [
       "claude",
-      "--model",
-      "PROMPT",
       "-p",
-      "An MCP server named probe is connected. Use only its tools and no other tool. Call each of these three tools exactly once, in this order, with no arguments: the tool whose server-side name is mo-state, then the tool whose server-side name is mo_state, then the tool whose server-side name is mo-overview. Then answer with two lists: every tool name from that server exactly as it appears to you, and the text each of the three calls returned.",
+      "PROMPT",
+      "--model",
+      "claude-opus-5-5",
       "--mcp-config",
       "/tmp/tmplz4hk0px/claude/mcp.json",
       "--strict-mcp-config",
