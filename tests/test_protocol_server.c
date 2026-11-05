@@ -477,6 +477,17 @@ static void busy(void) {
                            (size_t)MO_LIMIT_MCP_VIEW_TIMERS + 1 - included);
     MO_ASSERT(written > 0 && (size_t)written < sizeof omitted);
     CHECK(strstr(view, omitted) != NULL);
+    written = snprintf(omitted, sizeof omitted, "\"next\":{\"offset\":%zu}", included);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof omitted);
+    CHECK(strstr(view, omitted) != NULL);
+    char arguments[64];
+    written = snprintf(arguments, sizeof arguments, "{\"offset\":%u}", MO_LIMIT_MCP_VIEW_TIMERS);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof arguments);
+    tool_request(&f, "mo-timers", arguments, "1", view, sizeof view);
+    written = snprintf(omitted, sizeof omitted, "\"name\":\"tick_%u\"", MO_LIMIT_MCP_VIEW_TIMERS);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof omitted);
+    CHECK(strstr(view, omitted) != NULL);
+    CHECK(strstr(view, "\"complete\":true") != NULL);
     tool_request(&f, "mo-state", "{\"path\":[\"value\"]}", "1", view, sizeof view);
     CHECK(strstr(view, "\"complete\":true") != NULL);
     CHECK(strstr(view, "\"state\":") != NULL);
@@ -698,9 +709,21 @@ static void result_updates(void) {
     finish(&f);
 }
 
+static uint64_t uptime(const char *out) {
+    const char *field = strstr(out, "\"uptime_us\":\"");
+    CHECK(field != NULL);
+    return field == NULL ? 0 : strtoull(field + strlen("\"uptime_us\":\""), NULL, 10);
+}
+
 static void operator_views(void) {
     struct fixture_server f = start();
     char out[32768];
+    request(&f, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", auth, out, sizeof out,
+            0);
+    char depth[32];
+    int written = snprintf(depth, sizeof depth, "\"maxItems\":%d", MO_LIMIT_SAVED_DEPTH);
+    MO_ASSERT(written > 0 && (size_t)written < sizeof depth);
+    CHECK(strstr(out, depth) != NULL);
     struct mo_protocol_metrics before = mo_protocol_server_metrics(f.server);
     tool_request(&f, "mo-overview", "{}", "1", out, sizeof out);
     CHECK(strstr(out, "\"recovery_sequence\":\"0\"") != NULL);
@@ -722,6 +745,16 @@ static void operator_views(void) {
     CHECK(strstr(out, "\"number\":\"2\"") != NULL);
     CHECK(strstr(out, "\"number\":\"1\"") == NULL);
     CHECK(mo_protocol_server_metrics(f.server).admitted == before.admitted + 2);
+    for (unsigned i = 2; i < MO_LIMIT_SERVICE_FAILURES * MO_LIMIT_SERVICE_RESTARTS; i++) {
+        tool_request(&f, "fail", "{}", "7", out, sizeof out);
+        CHECK(strstr(out, "\"isError\":true") != NULL);
+    }
+    tool_request(&f, "mo-overview", "{}", "8", out, sizeof out);
+    CHECK(strstr(out, "\"running\":false") != NULL);
+    uint64_t stopped = uptime(out);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, 7000000) == MO_LISTENER_OK);
+    tool_request(&f, "mo-overview", "{}", "9", out, sizeof out);
+    CHECK(uptime(out) >= stopped + 7000000);
     finish(&f);
 }
 
