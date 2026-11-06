@@ -37,6 +37,9 @@ import MoCore.Examples.JobQueue
 import MoCore.Examples.Kv
 import MoCore.Examples.NotesTool
 import MoCore.Examples.Inventory
+-- Offline diagnosis: the saved value round trip and the replay verdict
+import MoCore.Saved
+import MoCore.Verdict
 -- The text interchange contract and its round-trip checks
 import MoCore.Text.Run
 import MoCore.TextChecks

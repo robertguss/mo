@@ -138,6 +138,8 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Testing.lean` | `passes` for checking examples and tests, and `stops` for checking that an expression stops on a bug; lemmas turning a checked program into "never goes wrong" theorems. |
 | `MoCore/Builtins.lean` | Checks of built-in types, Unicode scalar boundaries, failure, programs and fakes; independent Blackman/Vigna random vectors, Lemire rejection/full-width intervals, Unicode16 interfaces and real/fake folder entries. |
 | `MoCore/Examples/*.lean` | The twelve samples of `examples/`, each in Core, with every example line and test of the sample as a `#guard`, and theorems that the program is well typed and never goes wrong. |
+| `MoCore/Saved.lean` | The saved value format of `docs/design/saved-state.md` as a model of its own: schemas with records apart from choices, names and type parameters; values with distinct set elements and map keys; the encoder and decoder; the round trip of a value and of a failure's replay inputs, the schema refusal, and the schema-blind decoder refuted. |
+| `MoCore/Verdict.lean` | Signatures, outcomes and the `mo replay --fix` verdict of `docs/design/introspection.md` 6.2 and 7.1: the matching relation and the verdict table as specifications, the functions the C code mirrors, their equality, and the revised-only verdict refuted. |
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
@@ -265,6 +267,41 @@ Everything below is fully proven: there is no `sorry` anywhere.
   (`JobQueue`), `search_never_wrong` (`NotesTool`), each for all well-typed
   arguments, and `parse_never_wrong` (`JsonQuery`) for every text.
 
+**Reconstruction preserves values** (`MoCore/Saved.lean`, design
+introspection.md 11.1). The model defines its own `Schema` from the saved-state tag table (tags 0
+to 18, with byte 255 for a type repeated in a schema), its own `Val`, and `Fits τ v`, the
+specification of a saveable value: its shape follows the schema, its leaves are valid, a set's
+elements and a map's keys are distinct, and every count fits its four-byte field.
+
+- `decode_encode`: `Fits τ v → decode τ (encode τ v) = some v`, for every schema whose bytes
+  fit the four-byte schema length, from `dec_enc`, the same for payloads followed by any bytes.
+- `decode_checks_schema : ChecksSchema decode`: `decode τ b = some v` only when the schema bytes
+  in `b` are `schemaBytes τ`; `decode_refuses_other_schema`: a value encoded under a schema with
+  other bytes is refused.
+- `decodeInputs_encodeInputs`: a failure's replay inputs, the pre-call state, the arrival time
+  and the arguments, round-trip as a whole through the state row and the message's input fields,
+  for arguments that fit their schemas and whose encodings fit the four-byte length before them.
+  This is what replay running on exactly the recorded inputs rests on.
+- Negative control: `decodeBlind_ignores_schema : ¬ ChecksSchema decodeBlind`. A decoder that
+  skips the schema comparison decodes a `Duration`'s encoding as an `Int` (also a `#guard`).
+
+**The replay verdict** (`MoCore/Verdict.lean`, introspection.md 6.2 and 7.1). `Matches`,
+`Reproduced`, `Succeeded`, `SizeOk` and `Table` are written from the design's tables as
+inductive relations, apart from the functions `signaturesMatch` and `verdict`.
+
+- `signaturesMatch_iff`: the matching function is the relation of 6.2 (a defect compares
+  reason, function and span; work its limit value; memory the limit's name and value; a state
+  size failure the same saved limit). `matches_equivalence`, `matches_same_class` and
+  `native_allocation_matches_only_itself` follow.
+- `verdict_verified_iff` (and `verdict_sound : Sound verdict`): `verdict s o r = .verified ↔
+  Reproduced s o ∧ Succeeded r ∧ SizeOk r`.
+- `verdict_not_verified_of_not_reproduced`: `¬ Reproduced s o → verdict s o r ≠ .verified`, for
+  every `r`.
+- `verdict_table`: `verdict s o r = v ↔ Table s o r v`, every row of 7.1's table.
+- Negative control: `verdictRevisedOnly_unsound : ¬ Sound verdictRevisedOnly`. A verdict that
+  says `verified` whenever the revised run succeeds is refuted by an original that returned
+  (also a `#guard`).
+
 Supporting lemmas include `Ty.eq_of_beq` and `Ty.beq_refl` (decidable
 equality of types), `EnvTy.lookup`, `EnvTy.bindParams`, `EnvTy.bindVars`,
 `ValsTy.getElem?`, and the value-typing inversions `valTy_*_iff`.
@@ -297,6 +334,16 @@ No theorem is left with `sorry`. What the proofs don't yet cover:
   regressions are checked by bits. Functional correctness is not proved.
   The VM's float text form is a trusted primitive, checked against Ryu
   (architecture 4.5).
+- **The C saved-value decoder and verdict.** `MoCore/Saved.lean` and `MoCore/Verdict.lean`
+  model them; the C code is not proved. Its contract is the models' statement, and the C unit
+  tests, the saved-state fuzz target and the verdict tests exercise the same cases. Nothing yet
+  compares the C and Lean encoders byte for byte.
+- **Saved leaves and recursive schemas.** The saved model takes a leaf's payload as the bytes
+  the format lays out (an `Int` is its eight bytes), with the format's validity rules; it does
+  not relate them to Core's numbers or text. It has no recursive schemas, which the format
+  writes with back-references to an enclosing type, and it does not prove that different
+  schemas have different bytes: the refusal theorem is about the bytes, which is what the C
+  decoder compares.
 - **Completeness of the checker** (that it accepts every well-typed
   expression) is not proven; it is sound, and accepts all twelve programs.
 - **Progress for programs that don't terminate**: the evaluator returns
@@ -326,3 +373,16 @@ in TRANSLATION.md's final sections.
 The proofs use only Lean's standard axioms, `propext`, `Classical.choice` and
 `Quot.sound` (`#print axioms type_safety` lists exactly these). There is no
 `sorry`, no `native_decide`, and no `axiom` declaration.
+
+For `MoCore/Saved.lean` and `MoCore/Verdict.lean` this is checked. Each theorem
+is followed by `#guard_msgs in #print axioms` with its axioms pinned, so
+`lake build MoCore` fails when a proof's axioms change, and
+`ci/check_lean_axioms.sh` (in `ci/check.sh lean`) checks that every theorem in
+those files has a pin, that the pins list nothing beyond the three, and that
+the files hold no `sorry`, `native_decide` or `axiom`. Its negative control
+plants a `sorry` in the proof of `verdict_verified_iff` in a copy of
+`Verdict.lean` and requires the copy to fail to compile, with `sorryAx` reported
+for that theorem and for `verdict_not_verified_of_not_reproduced`, which uses
+it, to fail the scan, and, with the pin edited to admit `sorryAx`, to fail the
+allowed-axioms scan. For the rest of the model the claim above is made, not
+checked.

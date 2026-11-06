@@ -414,6 +414,8 @@ if have lake; then
 	make --no-print-directory formal
 	step "Core text fixtures match the Lean reference printer"
 	sh ci/check_core_fixtures.sh
+	step "Offline-diagnosis theorems pin only the standard axioms; a planted sorry is caught"
+	sh ci/check_lean_axioms.sh
 	if have python3; then
 		# The comparisons below don't depend on each other, so they run side by side
 		# (`later`). check_primitives goes first: its work bounds have timeouts, and they
