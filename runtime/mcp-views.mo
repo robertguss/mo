@@ -86,16 +86,30 @@ fn names() : List(Text)
   ]
 end
 
+## Index of "mo-export" in names(); src/tools/protocol-call.c MO_OPERATOR_EXPORT_INDEX must match.
+fn export_index() : Int
+  7
+end
+
 ## MO_LIMIT_SAVED_DEPTH; test_protocol_server pins the two together.
 fn saved_depth() : Int
   128
+end
+
+## MO_LIMIT_EXPORT_PAGE_BYTES and MO_LIMIT_EXPORT_BYTES / MO_LIMIT_EXPORT_PINS (src/base/limits.h).
+fn export_page_bytes() : Int
+  8192
+end
+
+fn export_pin_bytes() : Int
+  17825792
 end
 
 fn arguments_of(index: Int) : List(Text)
   if index == 1: ["path"] else if index == 2 or index == 3: ["offset"] else if index == 5: [
     "after",
     "before"
-  ] else if index == 6: ["after"] else if index == 7: ["kind", "export", "offset"] else: []
+  ] else if index == 6: ["after"] else if index == export_index(): ["kind", "export", "offset"] else: []
 end
 
 fn catalog() : List(Json.Json)
@@ -139,11 +153,11 @@ fn catalog() : List(Json.Json)
         "inputSchema": Json.Object({
           "type": Json.String("object"),
           "properties": Json.Object(properties),
-          "required": Json.Array(if i == 7: [Json.String("kind")] else: []),
+          "required": Json.Array(if i == export_index(): [Json.String("kind")] else: []),
           "additionalProperties": Json.Boolean(false)
         }),
         "annotations": Json.Object(
-          if i == 7: {
+          if i == export_index(): {
             "readOnlyHint": Json.Boolean(true),
             "idempotentHint": Json.Boolean(true),
             "openWorldHint": Json.Boolean(false)
@@ -190,9 +204,9 @@ fn valid(index: Int, arguments: Json.Json) : Bool
           Json.Null | Json.Boolean(_) | Json.Array(_) | Json.Object(_): return false
         end
       end
-    else if index == 7 and key == "kind"
+    else if index == export_index() and key == "kind"
       return false if value != Json.String("state")
-    else if index == 7 and key == "export"
+    else if index == export_index() and key == "export"
       id = case value
         Json.String(text): text
         Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
@@ -205,10 +219,10 @@ fn valid(index: Int, arguments: Json.Json) : Bool
       return false
     end
   end
-  if index == 7
+  if index == export_index()
     return false if fields.get("kind") != Some(Json.String("state"))
     offset = argument(fields, "offset") or 0
-    return false if offset % 8192 != 0 or offset >= 17825792
+    return false if offset % export_page_bytes() != 0 or offset >= export_pin_bytes()
     return false if fields.get("export") == None and offset != 0
   end
   true
@@ -383,6 +397,27 @@ end
 
 fn octet(bytes: Bytes, at: Int) : Option(Int)
   bytes.get(at).map(fn(value) value.to_int end)
+end
+
+fn base64(bytes: Bytes, at: Int, size: Int) : Option(Text)
+  alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".chars
+  var encoded = []
+  var offset = 0
+  while offset < size
+    a = try octet(bytes, at + offset)
+    b = if offset + 1 < size: try octet(bytes, at + 1 + offset) else: 0
+    c = if offset + 2 < size: try octet(bytes, at + 2 + offset) else: 0
+    encoded = encoded.append(alphabet.get(a / 4) or stop "base64")
+    encoded = encoded.append(alphabet.get((a % 4) * 16 + b / 16) or stop "base64")
+    encoded = encoded.append(
+      if offset + 1 < size: alphabet.get((b % 16) * 4 + c / 64) or stop "base64" else: '='
+    )
+    encoded = encoded.append(
+      if offset + 2 < size: alphabet.get(c % 64) or stop "base64" else: '='
+    )
+    offset += 3
+  end
+  Some(Text.from_chars(encoded))
 end
 
 fn integer(bytes: Bytes, at: Int, width: Int) : Option(Int)
@@ -578,25 +613,7 @@ fn scalar(bytes: Bytes, at: Int, tag: Int, budget: Int) : Option(Rendered)
     if tag == 10
       value = Json.String(try text(bytes, at + 4, size))
     else
-      alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".chars
-      var encoded = []
-      var offset = 0
-      while offset < size
-        a = try octet(bytes, at + 4 + offset)
-        b = if offset + 1 < size: try octet(bytes, at + 5 + offset) else: 0
-        c = if offset + 2 < size: try octet(bytes, at + 6 + offset) else: 0
-        for index in [a / 4, (a % 4) * 16 + b / 16]
-          encoded = encoded.append(alphabet.get(index) or stop "base64")
-        end
-        encoded = encoded.append(
-          if offset + 1 < size: alphabet.get((b % 16) * 4 + c / 64) or stop "base64" else: '='
-        )
-        encoded = encoded.append(
-          if offset + 2 < size: alphabet.get(c % 64) or stop "base64" else: '='
-        )
-        offset += 3
-      end
-      value = Json.Object({"base64": Json.String(Text.from_chars(encoded))})
+      value = Json.Object({"base64": Json.String(try base64(bytes, at + 4, size))})
     end
   else if tag == 12
     sign = try octet(bytes, at)
@@ -980,23 +997,7 @@ fn export_reply(error: Text, metadata: List(Text), bytes: Bytes) : Json.Json
   if error != ""
     return Json.Object({"error": Json.String(error), "state_effect": Json.String("none")})
   end
-  alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".chars
-  var encoded = []
-  var at = 0
-  while at < bytes.size
-    a = (bytes.get(at) or stop "page byte").to_int
-    b = if at + 1 < bytes.size: (bytes.get(at + 1) or stop "page byte").to_int else: 0
-    c = if at + 2 < bytes.size: (bytes.get(at + 2) or stop "page byte").to_int else: 0
-    encoded = encoded.append(alphabet.get(a / 4) or stop "base64")
-    encoded = encoded.append(alphabet.get((a % 4) * 16 + b / 16) or stop "base64")
-    encoded = encoded.append(
-      if at + 1 < bytes.size: alphabet.get((b % 16) * 4 + c / 64) or stop "base64" else: '='
-    )
-    encoded = encoded.append(
-      if at + 2 < bytes.size: alphabet.get(c % 64) or stop "base64" else: '='
-    )
-    at += 3
-  end
+  encoded = base64(bytes, 0, bytes.size) or stop "page byte"
   id = metadata.get(0) or stop "export id"
   offset = (metadata.get(3) or stop "offset").to_int or stop "offset"
   digest = metadata.get(7) or stop "digest"
@@ -1012,7 +1013,7 @@ fn export_reply(error: Text, metadata: List(Text), bytes: Bytes) : Json.Json
     "pages": Json.int((metadata.get(5) or stop "pages").to_int or stop "pages"),
     "checksum": Json.String(metadata.get(6) or stop "checksum"),
     "digest": if digest == "": Json.Null else: Json.String(digest),
-    "base64": Json.String(Text.from_chars(encoded)),
+    "base64": Json.String(encoded),
     "next": if digest != "": Json.Null else: Json.Object({
       "kind": Json.String("state"),
       "export": Json.String(id),

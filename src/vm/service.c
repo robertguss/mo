@@ -814,8 +814,6 @@ struct mo_service_observation mo_service_observe(const struct mo_service_loop *s
                                                  .encoded_bytes = s->current_encoding.length,
                                                  .encoded_capacity = s->current_encoding.capacity};
     observation.observed_elapsed = s->last_clock;
-    memcpy(observation.failure_times, s->failures, sizeof s->failures);
-    memcpy(observation.restart_times, s->restarts, sizeof s->restarts);
     return observation;
 }
 

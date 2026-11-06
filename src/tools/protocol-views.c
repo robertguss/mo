@@ -152,6 +152,8 @@ static bool events(struct view_builder *b, uint32_t type, struct mo_cell *out) {
         case MO_SERVICE_STOP:
             kind = "stop";
             break;
+        default:
+            MO_UNREACHABLE();
         }
         struct mo_cell fields[6], value;
         uint32_t built = 0;

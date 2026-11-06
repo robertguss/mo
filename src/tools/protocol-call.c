@@ -5,6 +5,9 @@
 
 #include <string.h>
 
+/* Slot of "mo-export" in McpViews.names(); runtime/mcp-views.mo export_index() must match. */
+enum { MO_OPERATOR_EXPORT_INDEX = 7 };
+
 bool mo_protocol_catalog(struct mo_protocol_server *s) {
     struct mo_heap *heap = mo_process_heap(s->catalog_process);
     struct mo_protocol_descriptor descriptor;
@@ -134,7 +137,7 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
     if (mo_cell_get_tag(c->action) == 2) {
         struct mo_cell json, rendered;
         bool refused = false;
-        bool exporting = mo_cell_get_int(mo_value_field(fields, 1)) == 7;
+        bool exporting = mo_cell_get_int(mo_value_field(fields, 1)) == MO_OPERATOR_EXPORT_INDEX;
         if (!(exporting ? mo_protocol_export(s, c, &json, &refused)
                         : mo_protocol_view(s, c, &json))) {
             mo_protocol_fallback(s, c, failure(c), EFFECT_NONE);

@@ -240,8 +240,6 @@ MO_MUST_USE bool mo_service_next_deadline(const struct mo_service_loop *service,
  * encode arguments; observation never imposes a new saved-codec requirement. */
 struct mo_service_observation {
     uint64_t sequence, snapshot_sequence, encoded_sequence, observed_elapsed;
-    uint64_t failure_times[MO_LIMIT_SERVICE_FAILURES];
-    uint64_t restart_times[MO_LIMIT_SERVICE_RESTARTS];
     size_t heap_used, heap_peak, stack_capacity, stack_limit, encoded_bytes, encoded_capacity;
     uint32_t pending, failures, restarts, timers, events;
     bool running, persistent;
