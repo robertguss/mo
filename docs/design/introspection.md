@@ -349,7 +349,7 @@ context: replay regenerates the stack itself.
 | `defect` | VM reason (a fixed string such as `integer overflow`, never the program's own `stop` text), function, file, span | class, reason, function, file and span are equal |
 | `work` | limit name and value | class and value are equal |
 | `memory` | which limit (`--max-heap`, `--max-stack`, `--max-depth`) and its value | class, name and value are equal |
-| `state_size` | the saved-bytes limit | the new state's saved copy failed again, under the same limit |
+| `state_size` | which saved-copy limit (bytes, depth or nodes) and its value | the new state's saved copy failed again, under the same limit name and value |
 
 The signature has its own version (1). Rendered report text is never compared. A generic
 "out of memory" from a different limit is a different outcome, not a match.
