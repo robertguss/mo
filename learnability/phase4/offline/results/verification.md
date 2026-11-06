@@ -447,3 +447,39 @@ account for their slightly higher rate. Six gdb stack samples of a release rende
 `mo_vm_execute` under `mo_offline_render`: the time is the interpreter running
 `McpViews.offline_value`, at a constant cost per byte. Peak memory grows with the state, from 63 MB
 to 143 MB, within the renderer's 256 MiB heap.
+
+## Review fixes and final checks
+
+Code review (correctness, project standards, testing, maintainability, agent-native, security,
+reliability and API contract reviewers, plus an independent cross-model adversarial review on
+Codex) found no P0 or P1 defects and five confirmed P2/P3 ones, all fixed with a test that failed
+first:
+
+- `mo history`'s text form printed control characters in the snapshot raw; it now escapes them as
+  every other text value is escaped.
+- `--export` naming a FIFO hung and naming a directory reported a stale `errno`; both now refuse
+  promptly as "not a regular file".
+- A data folder whose stored failure state did not belong to its record was only caught at decode
+  (a query reported a false `--max-heap` stop); it is now refused as `format` before any decode, as
+  the export reader already did.
+- A failure query checked the handler before the build; the build is now checked first.
+- The text refusal for an artifact holding another failure labelled the requested id "retained
+  ids"; it now says "asked for".
+
+Tests were also added for the `--fix` refusals of REVISED, the live-memory note, and `--recover`
+on replay and query. The guide now lists every refusal check with its meaning and next action,
+and the JSON fields to parse.
+
+Final run, `MO_ALL_DRIVERS=1 bash ci/check.sh gcc clang sanitize drivers static lean bench fuzz`
+on a564ef26: every group passed except `bench`, where the one failure was the recording proxy's
+`test_a_tool_call_is_recorded_with_both_bodies_and_no_token`. It expects `tools/list` to show only
+the task queue's tools, but the operator tools (`mo-overview` and the others) have been listed
+since the live views landed on `main`; this work does not change the tool catalog. Every offline
+check in `bench` passed, `learnability/phase4/test_offline.py` included.
+
+CBMC on a564ef26, each proof followed by its reach check, all passing with every block reached:
+`export_page_matches`, `slice`, `mo_failure_argument_next`, `mo_log_record_walk` (13 s),
+`mo_export_page_bounds`, `mo_export_schema`, `mo_export_read` (74 s).
+
+Not run here: the six private variants' `--fix` matrix, because the private repository is not
+checked out on this machine.
