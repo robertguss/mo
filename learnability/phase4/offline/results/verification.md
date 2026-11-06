@@ -56,3 +56,35 @@ with no service. The new codes are E1410 to E1413; until `mo query` exists they 
   and letting a state query take extra parameters.
 - Green: `make test` under gcc and clang, `python3 ci/check_errors.py`, `make deps`, `make tidy`
   and `make format-check`.
+
+## Lean: saved-schema round trip and the verdict
+
+`formal/MoCore/Saved.lean` and `formal/MoCore/Verdict.lean`, checked by `make formal` and by
+`ci/check_lean_axioms.sh` in the `lean` group.
+
+- Saved: `decode_encode` (a fitting value round-trips), `decode_checks_schema` and
+  `decode_refuses_other_schema` (decode accepts only the expected schema bytes), and
+  `decodeInputs_encodeInputs` (state, arrival time and arguments round-trip as one tuple).
+- Verdict: `signaturesMatch_iff` (the matching function equals the design's matching relation),
+  `verdict_verified_iff` and `verdict_sound`, `verdict_not_verified_of_not_reproduced` (for every
+  revision), and `verdict_table` (every row of the design's verdict table). The C rows in
+  `tests/test_verdict.c` and `verdict_table` cover the same cells.
+- Negative controls: `verdictRevisedOnly_unsound` (a verdict accepting a successful revision alone
+  is not sound) and `decodeBlind_ignores_schema` (a decoder ignoring the schema fails the refusal
+  property), each with a `#guard` on its concrete counterexample.
+- Axioms: every theorem pins its `#print axioms` output with `#guard_msgs`; none depends on
+  anything beyond `propext`, `Classical.choice` and `Quot.sound`. A planted `sorry` in
+  `verdict_verified_iff` showed `sorryAx` there and in the three theorems using it, and every
+  guard failed. Removing a pin, admitting `sorryAx` in a pin, and a real `sorry` each made the
+  script exit 1.
+- Red during development: an unfinished `reproduced_iff` showed `[propext, sorryAx]` and its guard
+  failed the build.
+
+Disagreement found and resolved: the model first ignored the file when matching defects while the
+C matcher compared it. A span locates code only within its file, so the model, and design table
+6.2, now compare the file too (`make formal` and the axiom check pass after the change). Design
+6.2 also named one saved-bytes limit for `state_size`, while capture records three saved-copy
+limits; the table now says name and value, as both implementations match.
+
+Not modelled, and listed in `formal/README.md`: that different schemas have different bytes,
+recursive schemas, and a byte-for-byte comparison of the Lean and C encoders.
