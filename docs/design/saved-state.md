@@ -249,6 +249,8 @@ The `failure` and `failure_state` strict tables specified in
 transaction as the recovery tables. Recovery schemas and `user_version` are unchanged.
 Kinds 3 and 4 use the existing MOST envelope and bind pre-state and message bytes
 atomically to a retained id. The message has its own versioned, bounded payload reader.
-A clean resource refusal rolls back and verifies the connection can read `head`;
-a failed rollback or commit error poisons the handle and requires close/recovery.
+A clean resource refusal rolls back and verifies the connection can read `head`.
+Damaged diagnostic rows also produce a clean refusal. They never stop the service,
+and reading them reports `MO_STORE_CORRUPT`. A failed rollback or commit error poisons
+the handle and requires close/recovery.
 Record ids are published only after successful commit. Snapshots never prune diagnostics.
