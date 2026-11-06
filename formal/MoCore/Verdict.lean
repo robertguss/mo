@@ -68,10 +68,11 @@ inductive Verdict where
   Written from the design's tables, without reference to the functions below. -/
 
 /-- Design 6.2: when a replay's signature matches the recorded one. A defect compares class,
-    reason, function and span (not the file); work compares the limit's value; memory the
+    reason, function, file and span (a span locates code only within its file); work compares
+    the limit's value; memory the
     limit's name and value; a state-size failure the same saved limit. -/
 inductive Matches : Signature → Signature → Prop where
-  | defect : Matches (.defect reason function file span) (.defect reason function file' span)
+  | defect : Matches (.defect reason function file span) (.defect reason function file span)
   | work : Matches (.work name value) (.work name' value)
   | memory : Matches (.memory limit value) (.memory limit value)
   | stateSize : Matches (.stateSize limit value) (.stateSize limit value)
@@ -115,7 +116,7 @@ def Sound (f : Signature → Outcome → Outcome → Verdict) : Prop :=
 /-! ## The functions -/
 
 def signaturesMatch : Signature → Signature → Bool
-  | .defect r f _ s, .defect r' f' _ s' => r == r' && f == f' && s == s'
+  | .defect r f file s, .defect r' f' file' s' => r == r' && f == f' && file == file' && s == s'
   | .work _ v, .work _ v' => v == v'
   | .memory l v, .memory l' v' => l == l' && v == v'
   | .stateSize l v, .stateSize l' v' => l == l' && v == v'
@@ -150,7 +151,7 @@ theorem signaturesMatch_iff (a b : Signature) : signaturesMatch a b = true ↔ M
   · intro h
     cases a <;> cases b <;> simp [signaturesMatch] at h
     all_goals first
-      | (obtain ⟨⟨rfl, rfl⟩, rfl⟩ := h; exact .defect)
+      | (obtain ⟨⟨⟨rfl, rfl⟩, rfl⟩, rfl⟩ := h; exact .defect)
       | (subst h; exact .work)
       | (obtain ⟨rfl, rfl⟩ := h; first | exact .memory | exact .stateSize)
   · intro h
