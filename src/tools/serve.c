@@ -12,8 +12,6 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define DATA_FILE "service.sqlite"
-
 static atomic_bool signalled;
 
 static void note_signal(int number) {
@@ -78,10 +76,10 @@ static void log_event(const struct mo_service_event *event, void *context) {
 static void refuse(struct mo_diags *diags, const char *what, const char *subject,
                    const char *reason) {
     char message[MO_CLI_ARGUMENT_SIZE + 1024];
-    int written = subject == NULL
-                      ? snprintf(message, sizeof message, "%s: %s", what, reason)
-                      : snprintf(message, sizeof message, "%s %.*s: %s", what,
-                                 (int)(MO_CLI_ARGUMENT_SIZE + sizeof DATA_FILE), subject, reason);
+    int written = subject == NULL ? snprintf(message, sizeof message, "%s: %s", what, reason)
+                                  : snprintf(message, sizeof message, "%s %.*s: %s", what,
+                                             (int)(MO_CLI_ARGUMENT_SIZE + sizeof MO_DATA_FILE),
+                                             subject, reason);
     MO_ASSERT(written > 0);
     struct mo_diag diag = {.code = MO_CODE_TOOL_SERVICE_START,
                            .message = message,
@@ -186,8 +184,8 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
         refuse_listener(diags, opened, errno, (const char *)name.bytes, cli->port);
         goto done;
     }
-    char path[MO_CLI_ARGUMENT_SIZE + sizeof "/" DATA_FILE];
-    int length = snprintf(path, sizeof path, "%s/" DATA_FILE, cli->data);
+    char path[MO_CLI_ARGUMENT_SIZE + sizeof "/" MO_DATA_FILE];
+    int length = snprintf(path, sizeof path, "%s/" MO_DATA_FILE, cli->data);
     MO_ASSERT(length > 0 && (size_t)length < sizeof path);
     mode_t mask = umask(S_IRWXG | S_IRWXO);
     enum mo_store_status stored = mo_store_open_wait(path, &store);

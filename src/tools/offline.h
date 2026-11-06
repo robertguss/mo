@@ -23,22 +23,30 @@ void mo_offline_renderer_close(struct mo_offline_renderer *renderer);
 MO_MUST_USE bool mo_offline_render(struct mo_offline_renderer *renderer, const uint8_t *saved,
                                    size_t length, struct mo_buffer *out);
 
-/* DIR/service.sqlite in out; false when it would not fit. */
+/* DIR/MO_DATA_FILE in out; false when it would not fit. */
 MO_MUST_USE bool mo_offline_store_path(const char *folder, char *out, size_t size);
-/* Why a folder could not be read, for people and as a JSON code. */
-MO_MUST_USE const char *mo_offline_folder_text(enum mo_store_folder status);
+/* Why a folder could not be read, as a JSON code. */
 MO_MUST_USE const char *mo_offline_folder_code(enum mo_store_folder status);
 /* Appends what the status says about the folder, the folder shown terminal-safe. */
 MO_MUST_USE bool mo_offline_folder_message(struct mo_buffer *out, const char *folder,
                                            enum mo_store_folder status, uint64_t damaged_sequence);
 
-/* Why this build cannot replay a record, or NULL when it can: a record that does not name its
- * build (an all-zero digest), a build that cannot read its own identity, or another build. */
+/* Whether this build can replay what a build digest and label name, checked in this order: a
+ * record that does not name its build (an all-zero digest or no label), a build that cannot
+ * read its own identity, then another build. mine holds 32 bytes: this build's digest when the
+ * result is SAME or OTHER. */
+enum mo_offline_build {
+    MO_OFFLINE_BUILD_SAME,
+    MO_OFFLINE_BUILD_UNNAMED,
+    MO_OFFLINE_BUILD_UNKNOWN,
+    MO_OFFLINE_BUILD_OTHER
+};
+MO_MUST_USE enum mo_offline_build mo_offline_build(const uint8_t *build,
+                                                   struct mo_failure_slice label, uint8_t *mine);
+/* Why this build cannot replay a record, as mo history says it, or NULL when it can. */
 MO_MUST_USE const char *mo_offline_build_refusal(const struct mo_failure_record *record);
 /* The 32-byte digest as 64 lowercase hex digits. */
 MO_MUST_USE bool mo_offline_hex(struct mo_buffer *out, const uint8_t *bytes, size_t length);
-/* The class names the live failure view uses. */
-MO_MUST_USE const char *mo_offline_class(enum mo_signature_class class);
 /* A signature as the live failure view writes it:
  * {"version":1,"class":...,"reason":...,"limit":...,"value":...,"function":...,"file":...,
  * "start":...,"end":...}, with the numbers as strings. */

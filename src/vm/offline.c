@@ -31,8 +31,7 @@ static bool decode_inputs(struct mo_process *process, const struct mo_bytecode_s
                           const struct mo_failure_record *record, struct mo_cell *state_out,
                           struct mo_cell *arguments) {
     struct mo_heap *heap = mo_process_heap(process);
-    int64_t arrival;
-    memcpy(&arrival, &record->arrival, sizeof arrival);
+    int64_t arrival = mo_failure_arrival(record);
     if (arrival < MO_TIME_MIN_US || arrival > MO_TIME_MAX_US ||
         !mo_value_decode(heap, service->state_type, state, state_length, state_out))
         return false;
@@ -73,13 +72,11 @@ struct mo_offline_run mo_offline_call(const struct mo_image *image,
         run.refusal = "the recorded inputs could not be decoded";
         return run;
     }
-    int64_t arrival;
-    memcpy(&arrival, &record->arrival, sizeof arrival);
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
     struct mo_service_call call;
-    mo_service_call_handler(process, service, timer, handler, before, arrival, arguments, &encoded,
-                            &call);
+    mo_service_call_handler(process, service, timer, handler, before, mo_failure_arrival(record),
+                            arguments, &encoded, &call);
     if (call.returned)
         run.outcome.reply = reply_kind(mo_image_types(image), timer, call.type, call.value);
     if (call.status == MO_SERVICE_OK) {

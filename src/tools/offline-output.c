@@ -24,8 +24,10 @@ bool mo_offline_renderer_open(struct mo_offline_renderer *renderer) {
     for (uint32_t i = 0; i < file->function_count; i++) {
         const struct mo_bytecode_string *candidate = &file->strings[file->functions[i].name];
         if (candidate->length == sizeof name - 1 &&
-            memcmp(candidate->bytes, name, sizeof name - 1) == 0)
+            memcmp(candidate->bytes, name, sizeof name - 1) == 0) {
             renderer->function = i;
+            break;
+        }
     }
     /* The protocol build checks the function's ABI, so it is always present. */
     MO_ASSERT(renderer->function != MO_NO_INDEX);
@@ -75,7 +77,7 @@ bool mo_offline_render(struct mo_offline_renderer *renderer, const uint8_t *save
 
 bool mo_offline_store_path(const char *folder, char *out, size_t size) {
     size_t length = strnlen(folder, MO_LIMIT_PATH_SIZE + 1);
-    static const char file[] = "/service.sqlite";
+    static const char file[] = "/" MO_DATA_FILE;
     if (length > MO_LIMIT_PATH_SIZE || length + sizeof file > size)
         return false;
     memcpy(out, folder, length);
@@ -107,7 +109,7 @@ const char *mo_offline_folder_code(enum mo_store_folder status) {
     MO_UNREACHABLE();
 }
 
-const char *mo_offline_folder_text(enum mo_store_folder status) {
+static const char *folder_text(enum mo_store_folder status) {
     switch (status) {
     case MO_STORE_FOLDER_OK:
         return "read";
@@ -133,8 +135,7 @@ const char *mo_offline_folder_text(enum mo_store_folder status) {
 
 bool mo_offline_folder_message(struct mo_buffer *out, const char *folder,
                                enum mo_store_folder status, uint64_t damaged_sequence) {
-    bool ok = mo_buffer_append_text(out, mo_offline_folder_text(status)) &&
-              mo_buffer_append_byte(out, ' ') &&
+    bool ok = mo_buffer_append_text(out, folder_text(status)) && mo_buffer_append_byte(out, ' ') &&
               mo_render_terminal_text(out, folder, strnlen(folder, MO_LIMIT_PATH_SIZE));
     if (ok && status == MO_STORE_FOLDER_OWNED)
         ok = mo_buffer_append_text(out, "; nothing was read, and nothing waited for it");
@@ -150,16 +151,29 @@ bool mo_offline_folder_message(struct mo_buffer *out, const char *folder,
     return ok;
 }
 
-const char *mo_offline_build_refusal(const struct mo_failure_record *record) {
+enum mo_offline_build mo_offline_build(const uint8_t *build, struct mo_failure_slice label,
+                                       uint8_t *mine) {
     static const uint8_t zero[32];
-    if (memcmp(record->build, zero, sizeof zero) == 0 || record->label.length == 0)
-        return "the record does not identify the build that recorded it";
-    uint8_t mine[32];
+    if (memcmp(build, zero, sizeof zero) == 0 || label.length == 0)
+        return MO_OFFLINE_BUILD_UNNAMED;
     if (!mo_runtime_identity(mine))
+        return MO_OFFLINE_BUILD_UNKNOWN;
+    return memcmp(mine, build, 32) == 0 ? MO_OFFLINE_BUILD_SAME : MO_OFFLINE_BUILD_OTHER;
+}
+
+const char *mo_offline_build_refusal(const struct mo_failure_record *record) {
+    uint8_t mine[32];
+    switch (mo_offline_build(record->build, record->label, mine)) {
+    case MO_OFFLINE_BUILD_SAME:
+        return NULL;
+    case MO_OFFLINE_BUILD_UNNAMED:
+        return "the record does not identify the build that recorded it";
+    case MO_OFFLINE_BUILD_UNKNOWN:
         return "this build cannot read its own identity";
-    if (memcmp(mine, record->build, sizeof mine) != 0)
+    case MO_OFFLINE_BUILD_OTHER:
         return "recorded by another build";
-    return NULL;
+    }
+    MO_UNREACHABLE();
 }
 
 bool mo_offline_hex(struct mo_buffer *out, const uint8_t *bytes, size_t length) {
@@ -169,7 +183,8 @@ bool mo_offline_hex(struct mo_buffer *out, const uint8_t *bytes, size_t length) 
     return ok;
 }
 
-const char *mo_offline_class(enum mo_signature_class class) {
+/* The class names the live failure view uses. */
+static const char *class_name(enum mo_signature_class class) {
     switch (class) {
     case MO_SIGNATURE_DEFECT:
         return "defect";
@@ -192,7 +207,7 @@ bool mo_offline_signature_json(struct mo_buffer *out, uint8_t version,
                                const struct mo_signature *s) {
     return mo_buffer_append_text(out, "{\"version\":") && mo_buffer_append_uint(out, version) &&
            mo_buffer_append_text(out, ",\"class\":\"") &&
-           mo_buffer_append_text(out, mo_offline_class(s->class)) &&
+           mo_buffer_append_text(out, class_name(s->class)) &&
            mo_buffer_append_text(out, "\",\"reason\":") &&
            mo_render_json_text(out, s->reason.bytes, s->reason.length) &&
            mo_buffer_append_text(out, ",\"limit\":") &&
@@ -205,7 +220,7 @@ bool mo_offline_signature_json(struct mo_buffer *out, uint8_t version,
 }
 
 bool mo_offline_signature_text(struct mo_buffer *out, const struct mo_signature *s) {
-    bool ok = mo_buffer_append_text(out, mo_offline_class(s->class));
+    bool ok = mo_buffer_append_text(out, class_name(s->class));
     if (ok && s->reason.length != 0)
         ok = mo_buffer_append_text(out, " \"") &&
              mo_render_terminal_text(out, s->reason.bytes, s->reason.length) &&

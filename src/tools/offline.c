@@ -27,7 +27,7 @@ struct input {
     struct mo_failure_record record;
     const uint8_t *state;
     size_t state_length;
-    const uint8_t *schema, *build; /* 32 bytes each */
+    const uint8_t *schema, *build;
     struct mo_failure_slice label;
     /* From an artifact, the plain program checksum and the service; from a folder, the
      * record's image key, which folds the service in. */
@@ -77,7 +77,7 @@ static bool refuse(struct offline *o, const char *check, const char *message, co
         ok = mo_buffer_append_text(&o->refusal.recorded, recorded);
     if (ok && found != NULL)
         ok = mo_buffer_append_text(&o->refusal.found, found);
-    MO_ASSERT(ok); /* bounded static texts */
+    MO_ASSERT(ok);
     return false;
 }
 
@@ -92,10 +92,6 @@ static bool refuse_digest(struct offline *o, const char *check, const char *mess
     bool ok = hex_value(&o->refusal.recorded, recorded) && hex_value(&o->refusal.found, found);
     MO_ASSERT(ok);
     return false;
-}
-
-static bool append_safe(struct mo_buffer *out, const void *bytes, size_t length) {
-    return mo_render_terminal_text(out, bytes, length);
 }
 
 /* Writes the refusal: one line on stderr as text, or the outcome record as JSON. */
@@ -128,8 +124,6 @@ static bool refusal_json(struct mo_buffer *b, const struct refusal *r) {
                                  : mo_render_json_text(b, r->found.bytes, r->found.length)) &&
            mo_buffer_append_byte(b, '}');
 }
-
-/* ---- Reading the input ---- */
 
 /* The whole artifact, read into a confidential arena and bounded by MO_LIMIT_EXPORT_BYTES. */
 static bool read_artifact(struct offline *o, struct input *in) {
@@ -199,7 +193,7 @@ static bool read_artifact(struct offline *o, struct input *in) {
 }
 
 static bool read_folder(struct offline *o, struct input *in) {
-    char path[MO_LIMIT_PATH_SIZE + sizeof "/service.sqlite"];
+    char path[MO_LIMIT_PATH_SIZE + sizeof "/" MO_DATA_FILE];
     if (!mo_offline_store_path(o->cli->data, path, sizeof path))
         return refuse(o, "format", "the data folder's path is too long", NULL, NULL);
     enum mo_store_folder status =
@@ -257,30 +251,31 @@ static void input_free(struct input *in) {
     mo_arena_free(&in->arena);
 }
 
-/* ---- The checks ---- */
-
 static bool check_build(struct offline *o, const struct input *in) {
-    static const uint8_t zero[32];
     uint8_t mine[32];
-    if (memcmp(in->build, zero, sizeof zero) == 0 || in->label.length == 0)
+    switch (mo_offline_build(in->build, in->label, mine)) {
+    case MO_OFFLINE_BUILD_SAME:
+        return true;
+    case MO_OFFLINE_BUILD_UNNAMED:
         return refuse(o, "build",
                       "the record does not identify the build that recorded it, so no build can "
                       "replay it; it is evidence only",
                       NULL, NULL);
-    if (!mo_runtime_identity(mine))
+    case MO_OFFLINE_BUILD_UNKNOWN:
         return refuse(o, "build", "this build cannot read its own identity", NULL, NULL);
-    if (memcmp(mine, in->build, sizeof mine) == 0)
-        return true;
+    case MO_OFFLINE_BUILD_OTHER:
+        break;
+    }
     (void)refuse(o, "build",
                  "recorded by another build; run the mo that recorded it (sha256sum finds it among "
                  "the deployed executables)",
                  NULL, NULL);
     const char *label = mo_runtime_build_label();
-    bool ok = append_safe(&o->refusal.recorded, in->label.bytes, in->label.length) &&
+    bool ok = mo_render_terminal_text(&o->refusal.recorded, in->label.bytes, in->label.length) &&
               mo_buffer_append_text(&o->refusal.recorded, " (sha256 ") &&
               mo_offline_hex(&o->refusal.recorded, in->build, 32) &&
               mo_buffer_append_text(&o->refusal.recorded, ")") &&
-              append_safe(&o->refusal.found, label, strlen(label)) &&
+              mo_render_terminal_text(&o->refusal.found, label, strlen(label)) &&
               mo_buffer_append_text(&o->refusal.found, " (sha256 ") &&
               mo_offline_hex(&o->refusal.found, mine, 32) &&
               mo_buffer_append_text(&o->refusal.found, ")");
@@ -305,6 +300,15 @@ static bool check_program(struct offline *o, const struct input *in, const struc
     return false;
 }
 
+/* The service FILE's main module declares, or MO_NO_INDEX. */
+static uint32_t main_service(const struct mo_program *program) {
+    uint32_t service = MO_NO_INDEX;
+    for (uint32_t i = 0; i < program->service_count; i++)
+        if (program->services[i].module == 0)
+            service = i;
+    return service;
+}
+
 static struct mo_failure_slice handler_name(const struct mo_bytecode *file,
                                             const struct mo_bytecode_service *service, bool timer,
                                             uint32_t handler) {
@@ -314,15 +318,11 @@ static struct mo_failure_slice handler_name(const struct mo_bytecode *file,
     return mo_offline_bare_name(name->bytes, name->length);
 }
 
-static bool same_slice(struct mo_failure_slice a, struct mo_failure_slice b) {
-    return a.length == b.length && memcmp(a.bytes, b.bytes, a.length) == 0;
-}
-
 /* What a handler is: its name, whether a timer, a read-only or an updating tool, and how many
  * arguments it takes. */
 static bool describe(struct mo_buffer *out, struct mo_failure_slice name, bool timer,
                      bool read_only, uint32_t index, uint32_t arguments) {
-    return append_safe(out, name.bytes, name.length) &&
+    return mo_render_terminal_text(out, name.bytes, name.length) &&
            mo_buffer_append_text(out, timer       ? " (timer "
                                       : read_only ? " (read-only tool "
                                                   : " (updating tool ") &&
@@ -344,7 +344,7 @@ static bool check_handler(struct offline *o, const struct mo_failure_record *r,
         name = handler_name(file, service, timer, r->handler);
         read_only = !timer && service->tools[r->handler].read_only;
         arguments = timer ? 0 : service->tools[r->handler].argument_count;
-        same = same_slice(name, r->name) && read_only == (r->read_only != 0) &&
+        same = mo_failure_slice_equal(name, r->name) && read_only == (r->read_only != 0) &&
                arguments == r->argument_count;
     }
     if (same)
@@ -410,8 +410,6 @@ static bool check_budgets(struct offline *o, const struct mo_failure_record *r) 
     return false;
 }
 
-/* ---- Compiling the revision ---- */
-
 struct revision {
     struct mo_arena arena, lowered;
     struct mo_sources sources;
@@ -420,7 +418,6 @@ struct revision {
     struct mo_image *image;
     struct mo_process *process; /* for the revision's own type schemas */
     uint32_t service;
-    bool compiled;
 };
 
 static void revision_free(struct revision *r) {
@@ -449,9 +446,8 @@ static bool compile_revision(struct offline *o, struct revision *r) {
         mo_load_program(&r->arena, &r->sources, o->cli->revised, o->library, &r->diags);
     struct mo_program *program =
         set == NULL || mo_diags_any(&r->diags) ? NULL : mo_check(&r->arena, set, &r->diags);
-    for (uint32_t i = 0; program != NULL && i < program->service_count; i++)
-        if (program->services[i].module == 0)
-            r->service = i;
+    if (program != NULL)
+        r->service = main_service(program);
     struct mo_services services;
     struct mo_core *core =
         program == NULL || mo_diags_any(&r->diags)
@@ -481,7 +477,6 @@ static bool compile_revision(struct offline *o, struct revision *r) {
     r->process = mo_process_new(r->image, &service);
     if (r->process == NULL)
         return refuse(o, "revised_program", "out of memory for REVISED's checks", NULL, NULL);
-    r->compiled = true;
     return true;
 }
 
@@ -499,7 +494,7 @@ static bool check_revision(struct offline *o, const struct mo_failure_record *re
     uint32_t count = timer ? service->timer_count : service->tool_count;
     *handler = MO_NO_INDEX;
     for (uint32_t i = 0; i < count; i++)
-        if (same_slice(handler_name(file, service, timer, i), rec->name))
+        if (mo_failure_slice_equal(handler_name(file, service, timer, i), rec->name))
             *handler = i;
     if (*handler == MO_NO_INDEX) {
         (void)refuse(o, "revised_handler",
@@ -527,8 +522,6 @@ static bool check_revision(struct offline *o, const struct mo_failure_record *re
     return timer || check_arguments(o, heap, rec, service->tools[*handler].argument_types,
                                     arguments, "revised_handler");
 }
-
-/* ---- Output ---- */
 
 static bool put(struct offline *o, const char *text) {
     return mo_buffer_append_text(&o->out, text);
@@ -606,7 +599,7 @@ static bool value_text(struct offline *o, struct mo_heap *heap, uint32_t type, c
     mo_buffer_init(&printed, MO_LIMIT_OFFLINE_VALUE_BYTES);
     bool shown = mo_value_print_literal(heap, type, value, &printed);
     mo_value_drop(heap, type, value);
-    bool ok = shown ? append_safe(&o->out, printed.bytes, printed.length)
+    bool ok = shown ? mo_render_terminal_text(&o->out, printed.bytes, printed.length)
                     : put(o, "<unavailable: longer than MO_LIMIT_OFFLINE_VALUE_BYTES; --json "
                              "shows it truncated>");
     mo_buffer_free(&printed);
@@ -625,7 +618,7 @@ static bool context_text(struct offline *o, const char *label, enum mo_failure_c
         size_t end = at;
         while (end < length && text[end] != '\n')
             end++;
-        ok = put(o, "  ") && append_safe(&o->out, text + at, end - at) && put(o, "\n");
+        ok = put(o, "  ") && mo_render_terminal_text(&o->out, text + at, end - at) && put(o, "\n");
         at = end + 1;
     }
     return ok;
@@ -694,16 +687,15 @@ static void run_report_init(struct run_report *r) {
 static bool original_text(struct offline *o, const struct mo_failure_record *rec,
                           const struct input *in, struct mo_heap *heap,
                           const struct mo_bytecode_service *service) {
-    int64_t arrival;
-    memcpy(&arrival, &rec->arrival, sizeof arrival);
     bool timer = rec->timer != 0;
-    bool ok =
-        put(o, "replay of failure ") && mo_buffer_append_uint(&o->out, rec->id) && put(o, ": ") &&
-        describe(&o->out, rec->name, timer, rec->read_only != 0, rec->handler,
-                 rec->argument_count) &&
-        put(o, ", sequence ") && mo_buffer_append_uint(&o->out, rec->sequence) &&
-        put(o, ", arrival ") && mo_buffer_append_int(&o->out, arrival) && put(o, " us\nstate: ") &&
-        value_text(o, heap, service->state_type, in->state, in->state_length) && put(o, "\n");
+    bool ok = put(o, "replay of failure ") && mo_buffer_append_uint(&o->out, rec->id) &&
+              put(o, ": ") &&
+              describe(&o->out, rec->name, timer, rec->read_only != 0, rec->handler,
+                       rec->argument_count) &&
+              put(o, ", sequence ") && mo_buffer_append_uint(&o->out, rec->sequence) &&
+              put(o, ", arrival ") && mo_buffer_append_int(&o->out, mo_failure_arrival(rec)) &&
+              put(o, " us\nstate: ") &&
+              value_text(o, heap, service->state_type, in->state, in->state_length) && put(o, "\n");
     struct mo_failure_arguments walk = mo_failure_arguments(rec);
     struct mo_failure_slice bytes;
     for (uint32_t i = 0; ok && !timer && i < rec->argument_count; i++)
@@ -721,8 +713,6 @@ static bool original_text(struct offline *o, const struct mo_failure_record *rec
 
 static bool original_json(struct offline *o, const struct mo_failure_record *rec,
                           const struct input *in) {
-    int64_t arrival;
-    memcpy(&arrival, &rec->arrival, sizeof arrival);
     bool ok = put(o, "{\"record\":\"original\",\"failure\":\"") &&
               mo_buffer_append_uint(&o->out, rec->id) && put(o, "\",\"handler\":") &&
               mo_render_json_text(&o->out, rec->name.bytes, rec->name.length) &&
@@ -730,9 +720,9 @@ static bool original_json(struct offline *o, const struct mo_failure_record *rec
               put(o, rec->timer ? ",\"timer\":true" : ",\"timer\":false") &&
               put(o, rec->read_only ? ",\"read_only\":true" : ",\"read_only\":false") &&
               put(o, ",\"sequence\":\"") && mo_buffer_append_uint(&o->out, rec->sequence) &&
-              put(o, "\",\"arrival_us\":\"") && mo_buffer_append_int(&o->out, arrival) &&
-              put(o, "\",\"state\":") && value_json(o, in->state, in->state_length) &&
-              put(o, ",\"arguments\":[");
+              put(o, "\",\"arrival_us\":\"") &&
+              mo_buffer_append_int(&o->out, mo_failure_arrival(rec)) && put(o, "\",\"state\":") &&
+              value_json(o, in->state, in->state_length) && put(o, ",\"arguments\":[");
     struct mo_failure_arguments walk = mo_failure_arguments(rec);
     struct mo_failure_slice bytes;
     for (uint32_t i = 0; ok && i < rec->argument_count; i++)
@@ -746,8 +736,6 @@ static bool original_json(struct offline *o, const struct mo_failure_record *rec
            put(o, "\",\"context\":") &&
            mo_render_json_text(&o->out, rec->context.bytes, rec->context.length) && put(o, "}");
 }
-
-/* ---- Replay ---- */
 
 struct compiled {
     struct mo_image *image;
@@ -765,8 +753,6 @@ static int replay(struct offline *o, const struct compiled *program) {
     struct mo_limits limits = mo_service_limits();
     struct mo_process *process = NULL;
     uint32_t revised_handler = MO_NO_INDEX;
-    /* The fixed order: format, kind and integrity; build; program; handler; state schema;
-     * argument schemas; the revision; budgets. */
     bool ok = read_input(o, &in) && check_build(o, &in);
     if (ok && program->service == MO_NO_INDEX)
         ok = refuse(o, "program", "FILE's main module declares no service", NULL, NULL);
@@ -861,8 +847,6 @@ done:
     return status;
 }
 
-/* ---- Query ---- */
-
 struct query_work {
     uint64_t remaining;
 };
@@ -881,7 +865,7 @@ static bool result_output(struct offline *o, struct mo_heap *heap, uint32_t type
         struct mo_buffer printed;
         mo_buffer_init(&printed, MO_LIMIT_OFFLINE_VALUE_BYTES);
         bool shown = mo_value_print(heap, type, value, &printed);
-        bool ok = shown ? append_safe(&o->out, printed.bytes, printed.length)
+        bool ok = shown ? mo_render_terminal_text(&o->out, printed.bytes, printed.length)
                         : put(o, "<unavailable: longer than MO_LIMIT_OFFLINE_VALUE_BYTES; --json "
                                  "shows it truncated>");
         mo_buffer_free(&printed);
@@ -894,6 +878,16 @@ static bool result_output(struct offline *o, struct mo_heap *heap, uint32_t type
                   : put(o, "{\"value\":null,\"complete\":false}");
     mo_buffer_free(&saved);
     return ok;
+}
+
+/* A refused query: its record as JSON, or one line on stderr. */
+static bool write_query_refusal(struct offline *o) {
+    if (!o->cli->json)
+        return write_refusal_text(o);
+    return put(o, "{\"record\":\"query\",\"function\":") &&
+           mo_render_json_text(&o->out, o->cli->function, strlen(o->cli->function)) &&
+           put(o, ",\"outcome\":\"refused\",\"refusal\":") && refusal_json(&o->out, &o->refusal) &&
+           put(o, "}\n") && mo_offline_flush(o->output, &o->out);
 }
 
 static int stop_report(struct offline *o, struct mo_process *process, struct mo_defect *defect) {
@@ -944,14 +938,7 @@ static int query(struct offline *o, const struct compiled *program, uint32_t fun
     }
     int status = 1;
     if (!ok) {
-        bool written =
-            cli->json ? put(o, "{\"record\":\"query\",\"function\":") &&
-                            mo_render_json_text(&o->out, cli->function, strlen(cli->function)) &&
-                            put(o, ",\"outcome\":\"refused\",\"refusal\":") &&
-                            refusal_json(&o->out, &o->refusal) && put(o, "}\n") &&
-                            mo_offline_flush(o->output, &o->out)
-                      : write_refusal_text(o);
-        if (!written)
+        if (!write_query_refusal(o))
             (void)fprintf(o->errors, "%s: could not write the outcome\n", o->command);
         mo_process_free(process);
         return 1;
@@ -962,9 +949,7 @@ static int query(struct offline *o, const struct compiled *program, uint32_t fun
         mo_value_decode(heap, fn->parameters[0].type, in->state, in->state_length, &values[0]);
     decoded += inputs ? 1 : 0;
     if (inputs && in->has_record) {
-        int64_t arrival;
-        memcpy(&arrival, &in->record.arrival, sizeof arrival);
-        values[decoded++] = mo_cell_time(arrival);
+        values[decoded++] = mo_cell_time(mo_failure_arrival(&in->record));
         struct mo_failure_arguments walk = mo_failure_arguments(&in->record);
         struct mo_failure_slice bytes;
         for (uint32_t i = 2; inputs && i < fn->parameter_count; i++) {
@@ -1025,8 +1010,6 @@ static int query(struct offline *o, const struct compiled *program, uint32_t fun
     return status;
 }
 
-/* ---- The command ---- */
-
 /* The failure's handler in FILE's own service, by its recorded name and kind: a failure query's
  * program may differ from the one that recorded it. */
 static uint32_t query_handler(const struct mo_program *program, uint32_t service,
@@ -1037,7 +1020,7 @@ static uint32_t query_handler(const struct mo_program *program, uint32_t service
         uint32_t f = r->timer ? s->timers[i].function : s->tools[i].function;
         const struct mo_symbol *symbol = program->functions[f].signature->function;
         struct mo_failure_slice name = {(const uint8_t *)symbol->name, symbol->name_length};
-        if (same_slice(name, r->name))
+        if (mo_failure_slice_equal(name, r->name))
             return f;
     }
     return MO_NO_INDEX;
@@ -1055,10 +1038,7 @@ int mo_offline_program(const struct mo_cli *cli, struct mo_offline_pipeline *p) 
     struct input in = {0};
     mo_arena_init_confidential(&in.arena, MO_LIMIT_EXPORT_BYTES + 4096);
     const struct mo_program *program = p->program;
-    uint32_t service = MO_NO_INDEX;
-    for (uint32_t i = 0; i < program->service_count; i++)
-        if (program->services[i].module == 0)
-            service = i;
+    uint32_t service = main_service(program);
     /* Diagnostics set the exit status themselves. */
     int status = 0;
     struct mo_arena lowered;
@@ -1095,14 +1075,7 @@ int mo_offline_program(const struct mo_cli *cli, struct mo_offline_pipeline *p) 
                 if (cli->json && !mo_write_version(p->output, cli->command))
                     goto done;
                 *p->version = cli->json;
-                bool written = cli->json ? put(&o, "{\"record\":\"query\",\"function\":") &&
-                                               mo_render_json_text(&o.out, cli->function,
-                                                                   strlen(cli->function)) &&
-                                               put(&o, ",\"outcome\":\"refused\",\"refusal\":") &&
-                                               refusal_json(&o.out, &o.refusal) && put(&o, "}\n") &&
-                                               mo_offline_flush(p->output, &o.out)
-                                         : write_refusal_text(&o);
-                (void)written;
+                (void)write_query_refusal(&o);
                 goto done;
             }
         }
@@ -1153,24 +1126,19 @@ int mo_offline_program(const struct mo_cli *cli, struct mo_offline_pipeline *p) 
         status = 70;
         goto done;
     }
-    if (!mo_offline_renderer_open(&o.renderer)) {
-        (void)fprintf(p->errors, "%s: the value renderer is unavailable\n", o.command);
-        status = 1;
-        goto done;
+    /* Only JSON renders values through the renderer; text prints them itself. */
+    if (cli->json) {
+        if (!mo_offline_renderer_open(&o.renderer)) {
+            (void)fprintf(p->errors, "%s: the value renderer is unavailable\n", o.command);
+            status = 1;
+            goto done;
+        }
+        o.rendering = true;
     }
-    o.rendering = true;
     if (querying) {
-        /* Core and bytecode number functions alike. */
         MO_ASSERT(core_index < mo_image_bytecode(compiled.image)->function_count);
         if (cli->failure == 0 && !read_input(&o, &in)) {
-            bool written =
-                cli->json ? put(&o, "{\"record\":\"query\",\"function\":") &&
-                                mo_render_json_text(&o.out, cli->function, strlen(cli->function)) &&
-                                put(&o, ",\"outcome\":\"refused\",\"refusal\":") &&
-                                refusal_json(&o.out, &o.refusal) && put(&o, "}\n") &&
-                                mo_offline_flush(p->output, &o.out)
-                          : write_refusal_text(&o);
-            (void)written;
+            (void)write_query_refusal(&o);
             status = 1;
         } else
             status = query(&o, &compiled, core_index, &in);

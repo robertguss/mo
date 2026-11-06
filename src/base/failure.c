@@ -22,7 +22,6 @@ static bool slice(struct mo_binary *in, size_t maximum, bool text, struct mo_fai
     return true;
 }
 
-/* One argument: a length and an encoded value, exactly as a log record holds it. */
 static bool argument(struct mo_binary *in, struct mo_failure_slice *out) {
     struct mo_failure_slice value;
     if (!slice(in, MO_LIMIT_FAILURE_MESSAGE_BYTES, false, &value) || value.length < 9 ||
@@ -86,6 +85,16 @@ bool mo_failure_read(const uint8_t *bytes, size_t length, struct mo_failure_reco
     memcpy(r.schema, schema, 32);
     *out = r;
     return true;
+}
+
+bool mo_failure_slice_equal(struct mo_failure_slice a, struct mo_failure_slice b) {
+    return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
+}
+
+int64_t mo_failure_arrival(const struct mo_failure_record *record) {
+    int64_t arrival;
+    memcpy(&arrival, &record->arrival, sizeof arrival);
+    return arrival;
 }
 
 struct mo_failure_arguments mo_failure_arguments(const struct mo_failure_record *record) {

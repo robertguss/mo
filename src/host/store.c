@@ -107,7 +107,6 @@ static const struct store_table tables[] = {
     {"failure_state",
      "CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT"},
 };
-/* The tables from here on came with failure capture; an older store lacks them. */
 enum { FAILURE_TABLES = 3, TABLE_COUNT = sizeof tables / sizeof tables[0] };
 
 enum table_state { TABLE_FAILED, TABLE_ABSENT, TABLE_SAME, TABLE_DIFFERENT };
@@ -145,6 +144,32 @@ static bool table(struct mo_store *s, const struct store_table *t) {
     return state == TABLE_SAME || (state == TABLE_ABSENT && exec(s, t->sql));
 }
 
+static bool all_tables(struct mo_store *s) {
+    for (unsigned i = 0; i < TABLE_COUNT; i++)
+        if (!table(s, &tables[i]))
+            return false;
+    return true;
+}
+
+/* A store with no connection yet, in its own arena, or NULL with the claim released. */
+static struct mo_store *store_new(void) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_SERVICE_METADATA);
+    struct mo_store *s = mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_store));
+    if (s == NULL) {
+        release_store();
+        return NULL;
+    }
+    *s = (struct mo_store){.arena = arena};
+    return s;
+}
+
+static bool defensive(struct mo_store *s) {
+    return sqlite3_db_config(s->db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL) == SQLITE_OK &&
+           sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_TRIGGER, 0, NULL) == SQLITE_OK &&
+           sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_VIEW, 0, NULL) == SQLITE_OK;
+}
+
 _Static_assert(MO_LIMIT_SERVE_STORE_WAIT_US / 1000 <= INT_MAX, "the wait fits SQLite's timeout");
 
 static enum mo_store_status open_store(const char *path, bool wait, struct mo_store **out) {
@@ -159,14 +184,9 @@ static enum mo_store_status open_store(const char *path, bool wait, struct mo_st
         return MO_STORE_IO;
     if (!claim_store())
         return MO_STORE_HANDLES;
-    struct mo_arena arena;
-    mo_arena_init(&arena, MO_LIMIT_SERVICE_METADATA);
-    struct mo_store *s = mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_store));
-    if (s == NULL) {
-        release_store();
+    struct mo_store *s = store_new();
+    if (s == NULL)
         return MO_STORE_MEMORY;
-    }
-    *s = (struct mo_store){.arena = arena};
     int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
     if (sqlite3_open_v2(path == NULL ? ":memory:" : path, &s->db, flags, NULL) != SQLITE_OK) {
         mo_store_close(s);
@@ -179,14 +199,11 @@ static enum mo_store_status open_store(const char *path, bool wait, struct mo_st
         mo_store_close(s);
         return MO_STORE_IO;
     }
-    if (sqlite3_db_config(s->db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL) != SQLITE_OK ||
-        sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_TRIGGER, 0, NULL) != SQLITE_OK ||
-        sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_VIEW, 0, NULL) != SQLITE_OK ||
+    if (!defensive(s) ||
         !exec(s, "PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE;"
                  "PRAGMA synchronous=EXTRA; PRAGMA temp_store=MEMORY;" CACHE_PRAGMA
                  "PRAGMA locking_mode=EXCLUSIVE;BEGIN EXCLUSIVE") ||
-        !table(s, &tables[0]) || !table(s, &tables[1]) || !table(s, &tables[2]) ||
-        !table(s, &tables[3]) || !table(s, &tables[4]) || !exec(s, "COMMIT")) {
+        !all_tables(s) || !exec(s, "COMMIT")) {
         bool busy = (sqlite3_errcode(s->db) & 0xff) == SQLITE_BUSY;
         (void)exec(s, "ROLLBACK");
         mo_store_close(s);
@@ -934,14 +951,9 @@ static enum mo_store_folder reader_open(const char *path, bool write, struct mo_
         return MO_STORE_FOLDER_IO;
     if (!claim_store())
         return MO_STORE_FOLDER_HANDLES;
-    struct mo_arena arena;
-    mo_arena_init(&arena, MO_LIMIT_SERVICE_METADATA);
-    struct mo_store *s = mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_store));
-    if (s == NULL) {
-        release_store();
+    struct mo_store *s = store_new();
+    if (s == NULL)
         return MO_STORE_FOLDER_MEMORY;
-    }
-    *s = (struct mo_store){.arena = arena};
     int flags = (write ? SQLITE_OPEN_READWRITE : SQLITE_OPEN_READONLY) | SQLITE_OPEN_FULLMUTEX;
     int code = sqlite3_open_v2(path, &s->db, flags, NULL);
     if (code == SQLITE_OK)
@@ -952,9 +964,7 @@ static enum mo_store_folder reader_open(const char *path, bool write, struct mo_
     }
     (void)sqlite3_limit(s->db, SQLITE_LIMIT_LENGTH, MO_LIMIT_STORE_ROW);
     (void)sqlite3_limit(s->db, SQLITE_LIMIT_SQL_LENGTH, MO_LIMIT_STORE_SQL);
-    if (sqlite3_db_config(s->db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL) != SQLITE_OK ||
-        sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_TRIGGER, 0, NULL) != SQLITE_OK ||
-        sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_VIEW, 0, NULL) != SQLITE_OK) {
+    if (!defensive(s)) {
         mo_store_close(s);
         return MO_STORE_FOLDER_IO;
     }

@@ -27,6 +27,10 @@ struct mo_failure_record {
 };
 MO_MUST_USE bool mo_failure_read(const uint8_t *bytes, size_t length,
                                  struct mo_failure_record *out);
+/* Whether the two slices hold the same bytes; either may be empty with a NULL pointer. */
+MO_MUST_USE bool mo_failure_slice_equal(struct mo_failure_slice a, struct mo_failure_slice b);
+/* The record's arrival, a signed microsecond time kept in an unsigned field. */
+MO_MUST_USE int64_t mo_failure_arrival(const struct mo_failure_record *record);
 /* A walk over a record's arguments, in order. It trusts nothing about the record: the count and
  * the bytes must agree, and each argument must be a length-prefixed MOSV value. */
 struct mo_failure_arguments {

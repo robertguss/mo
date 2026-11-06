@@ -13,7 +13,7 @@ struct history_output {
     struct mo_buffer *out;
     struct mo_offline_renderer *renderer;
     const struct mo_store_history *h;
-    bool json, ok;
+    bool ok;
 };
 
 static void put(struct history_output *o, const char *text) {
@@ -95,10 +95,8 @@ static void failure_json(struct history_output *o, const struct mo_store_history
     }
     put(o, ",\"handler\":");
     put_json(o, r.name.bytes, r.name.length);
-    int64_t arrival;
-    memcpy(&arrival, &r.arrival, sizeof arrival);
     put(o, ",\"arrival\":\"");
-    o->ok = o->ok && mo_buffer_append_int(o->out, arrival);
+    o->ok = o->ok && mo_buffer_append_int(o->out, mo_failure_arrival(&r));
     put(o, "\",\"state_bytes\":");
     put_quoted(o, f->state_bytes);
     put(o, ",\"message_bytes\":");
@@ -267,7 +265,7 @@ static bool totals(struct mo_buffer *out, int status) {
 
 int mo_history(const struct mo_cli *cli, FILE *output, FILE *errors) {
     const char *folder = mo_cli_file(cli, 0);
-    char path[MO_LIMIT_PATH_SIZE + sizeof "/service.sqlite"];
+    char path[MO_LIMIT_PATH_SIZE + sizeof "/" MO_DATA_FILE];
     if (!mo_offline_store_path(folder, path, sizeof path)) {
         (void)fputs("mo history: the data folder's path is too long\n", errors);
         return 2;
@@ -304,15 +302,16 @@ int mo_history(const struct mo_cli *cli, FILE *output, FILE *errors) {
         mo_buffer_free(&out);
         return 1;
     }
-    struct mo_offline_renderer renderer;
-    if (!mo_offline_renderer_open(&renderer)) {
+    /* Only the snapshot's state is rendered. */
+    struct mo_offline_renderer renderer = {0};
+    if (history.has_snapshot && history.snapshot.bytes != NULL &&
+        !mo_offline_renderer_open(&renderer)) {
         mo_store_history_free(&history);
         mo_buffer_free(&out);
         (void)fputs("mo history: the value renderer is unavailable\n", errors);
         return 1;
     }
-    struct history_output o = {
-        .out = &out, .renderer = &renderer, .h = &history, .json = cli->json, .ok = true};
+    struct history_output o = {.out = &out, .renderer = &renderer, .h = &history, .ok = true};
     if (cli->json)
         history_json(&o, folder);
     else

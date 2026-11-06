@@ -28,6 +28,8 @@ enum mo_command {
 #define MO_EXIT_SERVICE_STOPPED 69
 /* EX_TEMPFAIL: another process held the store; a service manager retries. */
 #define MO_EXIT_STORE_BUSY 75
+/* The saved data's file inside a service's data folder. */
+#define MO_DATA_FILE "service.sqlite"
 
 enum mo_emit { MO_EMIT_NONE, MO_EMIT_CORE, MO_EMIT_BYTECODE };
 

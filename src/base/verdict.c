@@ -1,5 +1,4 @@
 #include "base/verdict.h"
-#include <string.h>
 
 struct mo_signature mo_signature_from_record(const struct mo_failure_record *record) {
     MO_ASSERT(record->class <= MO_SIGNATURE_STATE_SIZE);
@@ -13,22 +12,18 @@ struct mo_signature mo_signature_from_record(const struct mo_failure_record *rec
                                  .end = record->end};
 }
 
-static bool same_text(struct mo_failure_slice a, struct mo_failure_slice b) {
-    return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
-}
-
 bool mo_signature_match(const struct mo_signature *a, const struct mo_signature *b) {
     if (a->class != b->class)
         return false;
     switch (a->class) {
     case MO_SIGNATURE_DEFECT:
-        return same_text(a->reason, b->reason) && a->function == b->function &&
+        return mo_failure_slice_equal(a->reason, b->reason) && a->function == b->function &&
                a->file == b->file && a->start == b->start && a->end == b->end;
     case MO_SIGNATURE_WORK:
         return a->limit_value == b->limit_value;
     case MO_SIGNATURE_MEMORY:
     case MO_SIGNATURE_STATE_SIZE:
-        return same_text(a->limit, b->limit) && a->limit_value == b->limit_value;
+        return mo_failure_slice_equal(a->limit, b->limit) && a->limit_value == b->limit_value;
     }
     MO_UNREACHABLE();
 }

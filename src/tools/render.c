@@ -18,6 +18,13 @@ struct writer {
     bool utf8;
 };
 
+/* Whether the locale's codeset is UTF-8, so non-ASCII text can be shown as it is. */
+static bool locale_utf8(void) {
+    const char *codeset = nl_langinfo(CODESET);
+    return strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
+           strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0;
+}
+
 static void bytes(struct writer *w, const void *data, size_t length) {
     if (w->ok)
         w->ok = mo_buffer_append(w->out, data, length);
@@ -527,10 +534,7 @@ bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag
     MO_ASSERT(sources != NULL && d != NULL && out != NULL);
     MO_ASSERT(out->limit <= MO_CLI_DIAGNOSTIC_SIZE);
     mo_buffer_clear(out);
-    const char *codeset = nl_langinfo(CODESET);
-    bool utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
-                strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0;
-    struct writer w = {.out = out, .ok = true, .utf8 = utf8};
+    struct writer w = {.out = out, .ok = true, .utf8 = locale_utf8()};
     if (json)
         json_diag(&w, sources, d);
     else {
@@ -1268,11 +1272,7 @@ bool mo_render_test_result(const struct mo_sources *sources, const struct mo_tes
                            bool json, struct mo_buffer *out) {
     MO_ASSERT(out->limit <= MO_CLI_DIAGNOSTIC_SIZE);
     mo_buffer_clear(out);
-    const char *codeset = nl_langinfo(CODESET);
-    struct writer w = {.out = out,
-                       .ok = true,
-                       .utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
-                               strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0};
+    struct writer w = {.out = out, .ok = true, .utf8 = locale_utf8()};
     const struct mo_observation *observation = result->observation;
     const char *outcome = result->outcome == MO_RETURNED ? "passed"
                           : result->outcome == MO_FAILED ? "failed"
@@ -1355,11 +1355,7 @@ bool mo_write_defect(FILE *errors, const struct mo_process *process,
     mo_buffer_init(&raw, MO_LIMIT_DEFECT_TEXT_SIZE);
     mo_buffer_init(&shown, MO_CLI_DIAGNOSTIC_SIZE);
     bool complete = mo_render_defect(process, defect, &raw);
-    const char *codeset = nl_langinfo(CODESET);
-    struct writer w = {.out = &shown,
-                       .ok = true,
-                       .utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
-                               strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0};
+    struct writer w = {.out = &shown, .ok = true, .utf8 = locale_utf8()};
     text(&w, "bug: ");
     if (raw.length == 0) {
         safe_text(&w, defect->reason);
@@ -1410,7 +1406,7 @@ static const char *command_name(enum mo_command command) {
     case MO_COMMAND_FETCH:
         break;
     }
-    MO_UNREACHABLE(); /* no other command writes JSON */
+    MO_UNREACHABLE();
 }
 
 bool mo_write_version(FILE *output, enum mo_command command) {
@@ -1434,11 +1430,7 @@ bool mo_render_json_text(struct mo_buffer *out, const void *bytes, size_t length
 }
 
 bool mo_render_terminal_text(struct mo_buffer *out, const void *bytes, size_t length) {
-    const char *codeset = nl_langinfo(CODESET);
-    struct writer w = {.out = out,
-                       .ok = true,
-                       .utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
-                               strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0};
+    struct writer w = {.out = out, .ok = true, .utf8 = locale_utf8()};
     struct display_cursor c = {.bytes = bytes, .length = length};
     uint32_t cells = 0;
     while (w.ok && c.at < c.length) {
