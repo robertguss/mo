@@ -429,6 +429,8 @@ static int fix_files(const struct mo_cli *cli, FILE *output, FILE *errors) {
 }
 
 int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
+    if (cli->command == MO_COMMAND_FETCH)
+        return mo_fetch(cli, errors);
     if (cli->command == MO_COMMAND_VERSION) {
         bool ok = fprintf(output, "%s\n", mo_version_line()) >= 0 && fflush(output) == 0;
         if (!ok)

@@ -1,0 +1,14 @@
+{
+  "commands": [
+    {
+      "command": "/bin/zsh -lc '/home/exedev/.t3/worktrees/mo/feat-private-state-fetch/build/gcc/debug/mo fetch http://127.0.0.1:42665/mcp --export state --out /tmp/tmpsu65cxyd/codex/state.moex --token-env PROBE_TOKEN'",
+      "exit_code": 0,
+      "aggregated_output": "mo fetch: maximum state needs 2049 pages, about 103 seconds at 20 calls/second\n"
+    },
+    {
+      "command": "/bin/zsh -lc \"python3 - <<'PY'\nimport os\nimport stat\npath = '/tmp/tmpsu65cxyd/codex/state.moex'\nwith open(path, 'rb') as artifact:\n    mode = stat.S_IMODE(os.fstat(artifact.fileno()).st_mode)\n    magic = artifact.read(4)\nprint(f'file_mode={mode:04o}')\nprint('magic=' + (magic.decode('ascii') if magic == b'MOEX' else 'unexpected'))\nassert mode == 0o600\nassert magic == b'MOEX'\nPY\"",
+      "exit_code": 0,
+      "aggregated_output": "file_mode=0600\nmagic=MOEX\n"
+    }
+  ]
+}

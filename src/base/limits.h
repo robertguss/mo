@@ -477,6 +477,13 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_MCP_TRAILER_BYTES (16 << 10)
 #define MO_LIMIT_MCP_TRAILER_FIELDS 64
 /* Export pins own copied bytes independently of handler and protocol heaps. */
+#ifndef MO_LIMIT_FETCH_US
+#define MO_LIMIT_FETCH_US UINT64_C(600000000)
+#endif
+#define MO_LIMIT_FETCH_URL_BYTES 256
+#define MO_LIMIT_FETCH_RECEIVE_BYTES (MO_LIMIT_MCP_HEADER_BYTES + MO_LIMIT_MCP_RESPONSE_BYTES)
+#define MO_LIMIT_FETCH_PAGE_FIELDS 10
+#define MO_LIMIT_FETCH_FIELD_BYTES (4 * ((MO_LIMIT_EXPORT_PAGE_BYTES + 2) / 3) + 1)
 #define MO_LIMIT_EXPORT_PINS 2
 #define MO_LIMIT_EXPORT_BYTES (2 * (MO_LIMIT_SAVED_BYTES + 1024 * 1024))
 #define MO_LIMIT_EXPORT_PAGE_BYTES 8192

@@ -81,6 +81,11 @@ bool mo_protocol_invoke(struct mo_protocol_server *s, struct protocol_connection
             c->preauth_left -= used;
         mo_protocol_observe(s, c);
     }
+    if (c != NULL && (function == PF_EXPORT || function == PF_OPERATOR_REPLY)) {
+        size_t peak = mo_heap_scratch_peak(heap);
+        if (peak > s->view_scratch_peak)
+            s->view_scratch_peak = peak;
+    }
     return outcome == MO_RETURNED && !s->io_failed;
 }
 

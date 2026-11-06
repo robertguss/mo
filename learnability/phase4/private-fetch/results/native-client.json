@@ -1,0 +1,75 @@
+{
+  "codex": {
+    "version": "codex-cli 0.166.0",
+    "command": [
+      "codex",
+      "exec",
+      "--model",
+      "gpt-6.1-sol",
+      "-c",
+      "model_reasoning_effort=\"high\"",
+      "-c",
+      "sandbox_workspace_write.network_access=true",
+      "--json",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--sandbox",
+      "workspace-write",
+      "-c",
+      "mcp_servers.probe.url=\"http://127.0.0.1:42665/mcp\"",
+      "-c",
+      "mcp_servers.probe.bearer_token_env_var=\"PROBE_TOKEN\"",
+      "-c",
+      "approval_policy=\"never\"",
+      "-c",
+      "mcp_servers.probe.default_tools_approval_mode=\"approve\""
+    ],
+    "exit_status": 0,
+    "stderr_tail": "Reading additional input from stdin...\n",
+    "visible_names": [
+      "mcp__probe__count",
+      "mcp__probe__mo_export",
+      "mcp__probe__mo_log",
+      "mcp__probe__mo_mailbox",
+      "mcp__probe__mo_memory",
+      "mcp__probe__mo_overview",
+      "mcp__probe__mo_state_94338136a5cf",
+      "mcp__probe__mo_state_c5d0a7c9f588",
+      "mcp__probe__mo_supervisor",
+      "mcp__probe__mo_timers"
+    ],
+    "calls": [
+      "probe/mo-overview",
+      "probe/mo-export"
+    ]
+  },
+  "wire_listed": [
+    "mo_state",
+    "count",
+    "mo-overview",
+    "mo-state",
+    "mo-mailbox",
+    "mo-timers",
+    "mo-memory",
+    "mo-supervisor",
+    "mo-log",
+    "mo-export"
+  ],
+  "wire_calls": [
+    [
+      8,
+      "mo-overview",
+      true
+    ],
+    [
+      10,
+      "mo-export",
+      true
+    ],
+    [
+      12,
+      "mo-export",
+      true
+    ]
+  ]
+}

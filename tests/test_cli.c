@@ -152,6 +152,19 @@ static void refused(int argc, const char *const *argv, const char *expected) {
         refused((int)(sizeof argv / sizeof *argv), argv, expected);                                \
     } while (0)
 
+static void parse_fetch(void) {
+    const char *args[] = {"mo",         "fetch",       "http://localhost:8080/mcp",
+                          "--export",   "state",       "--out",
+                          "state.moex", "--token-env", "TOKEN"};
+    struct mo_cli cli;
+    const char *error;
+    CHECK(mo_cli_parse(9, args, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_FETCH && strcmp(cli.output, "state.moex") == 0);
+    CHECK(strcmp(cli.fetch_url, args[2]) == 0 && strcmp(cli.fetch_token, "TOKEN") == 0);
+    CHECK(!mo_cli_parse(8, args, &cli, &error));
+    CHECK(strcmp(error, "usage: mo fetch URL --export state --out FILE --token-env NAME") == 0);
+}
+
 static void parse_serve(void) {
     struct mo_cli cli;
     const char *error;
@@ -212,11 +225,13 @@ static void parse_serve(void) {
     const char *unknown[] = {"mo", "serve", "--emit", "main.mo"};
     refused(4, unknown, "unknown flag: \"--emit\"");
     const char *none[] = {"mo"};
-    refused(1, none, "expected a command: check, run, test, format, fix, guide, emit or serve");
+    refused(1, none,
+            "expected a command: check, run, test, format, fix, guide, emit, serve or fetch");
     const char *what[] = {"mo", "what"};
-    refused(2, what,
-            "unknown command (expected check, run, test, format, fix, guide, emit or serve): "
-            "\"what\"");
+    refused(
+        2, what,
+        "unknown command (expected check, run, test, format, fix, guide, emit, serve or fetch): "
+        "\"what\"");
 }
 
 static void limit_values(void) {
@@ -664,6 +679,7 @@ int main(int argc, char *argv[]) {
         return rendering(strcmp(argv[1], "--render-json") == 0, stdout) ? 0 : 1;
     parse_commands();
     parse_serve();
+    parse_fetch();
     limit_values();
     long_line();
     utf8_display();

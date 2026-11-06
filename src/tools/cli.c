@@ -145,9 +145,10 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         .limits = mo_limits_default(), .calls = 200, .seconds = 2, .file_separator = UINT32_MAX};
     *error = NULL;
     if (argc < 2)
-        return refuse(out, error,
-                      "expected a command: check, run, test, format, fix, guide, emit or serve",
-                      NULL, NULL);
+        return refuse(
+            out, error,
+            "expected a command: check, run, test, format, fix, guide, emit, serve or fetch", NULL,
+            NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];
     uint32_t count = 0;
@@ -161,6 +162,18 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         out->command = MO_COMMAND_VERSION;
         return argc == 2 || refuse(out, error, "--version takes no other arguments", argv[2], NULL);
     }
+    if (strcmp(command, "fetch") == 0) {
+        out->command = MO_COMMAND_FETCH;
+        if (argc != 9 || strcmp(argv[3], "--export") != 0 || strcmp(argv[4], "state") != 0 ||
+            strcmp(argv[5], "--out") != 0 || strcmp(argv[7], "--token-env") != 0)
+            return refuse(out, error,
+                          "usage: mo fetch URL --export state --out FILE --token-env NAME", NULL,
+                          NULL);
+        out->fetch_url = argv[2];
+        out->output = argv[6];
+        out->fetch_token = argv[8];
+        return true;
+    }
     const char *names[] = {"check", "run", "test", "format", "fix", "guide", "emit", "serve"};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
@@ -169,7 +182,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (c == sizeof(names) / sizeof(names[0]))
         return refuse(
             out, error,
-            "unknown command (expected check, run, test, format, fix, guide, emit or serve)",
+            "unknown command (expected check, run, test, format, fix, guide, emit, serve or fetch)",
             command, NULL);
     out->command = (enum mo_command)c;
     bool flags = true;

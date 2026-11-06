@@ -266,13 +266,18 @@ A 16 MiB saved state plus framing is 2,049 pages. At the token's rate limit of 2
 
 - accepts only `http://127.0.0.1:PORT/mcp`, `http://localhost:PORT/mcp` and `http://[::1]:PORT/mcp`;
   refuses userinfo, other schemes, other hosts and non-numeric ports before reading the token;
-- resolves `localhost` itself, connects only to a loopback address, and checks the connected
+- resolves `localhost` internally to numeric `127.0.0.1` and `::1` addresses without DNS/NSS,
+  connects only to a loopback address, and checks the connected
   peer address is loopback on every connection;
 - ignores proxy environment variables entirely and follows no redirect: any status other than
   200 ends the fetch;
 - bounds the response head (1 KiB), body (`MO_LIMIT_MCP_RESPONSE_BYTES`), page count
   (`total / page + 1`), total bytes (`MO_LIMIT_EXPORT_BYTES / 2`) and wall time
   (`MO_LIMIT_FETCH_US`, 10 minutes);
+- permits one lookahead request only after accepting the first page. It uses the accepted
+  generation and predetermined bounded offset, validates the new peer before credentials,
+  caps its socket receive buffer and still admits all responses in exact order. This overlaps
+  server rendering with client parsing; an aborted attempt closes the pending socket;
 - writes to a temporary file created with `O_CREAT | O_EXCL | O_NOFOLLOW` and mode 0600 in
   `FILE`'s folder, checks every page's metadata matches the first page, the coverage is exact
   and the digest matches, then publishes it with `link` (which refuses an existing `FILE`) and
@@ -580,6 +585,13 @@ for Phase 4. With the operator tools, `learnability/phase4/live-views/sizing.py`
 16,000,000-byte Text state; its result, with the heap and scratch peaks that `mo-memory` now
 reports, is in that folder's `results/sizing.json`.
 
+The completed U9 measurement below includes the fetch process. On the measured 8-vCPU Linux
+host, a full 16 MiB saved encoding used 132.7 MiB service RSS and 57.6 MiB fetch RSS at their
+separate high-water marks. Retain the service's approximately 170 MiB deployment allowance
+above and allow another 64 MiB for the ordinary fetch executable; these are deployment
+allowances informed by one fixture, not universal RSS limits. Sanitizer instrumentation is
+outside those deployment measurements. The U4 allowance remains reserved, not implemented.
+
 ## 11. Verification
 
 Each property states its prediction before its check runs, gets the Working Agreement's
@@ -831,7 +843,7 @@ The second kind's allowance is reserved for U4 and is not allocated. Copying and
 use constant stack space beyond the pin. One page and its rendering stay inside
 `MO_LIMIT_EXPORT_SCRATCH` (the existing 16 MiB per-request budget), independent of the
 service heap, and no Mo reference survives the request. Pin bytes reported by
-`mo-memory` include allocator overhead. Full process sizing with the fetcher remains U9.
+`mo-memory` include allocator overhead. Full process sizing with the fetcher is recorded in the private-fetch evidence below.
 
 Verification: `tests/test_export.c` covers literal page boundaries and a full 16 MiB
 MOSV copy; `test_protocol_server` covers generation traces, full mailbox and rate
@@ -839,8 +851,8 @@ refusals; `test_protocol_memory` covers allocation failure, confidential release
 pin creation with an exhausted live heap. `test_service_store` pins snapshot-failure
 provenance and existing recovery behavior. `ci/check_export.py` independently parses
 actual HTTP pages and verifies framing, every identity and digest, old bytes across
-commits, replacement, malformed arguments, auth and nonmutation. It is a producer test,
-not the future fetch command. `models/README.md` records finite TLC assumptions and
+commits, replacement, malformed arguments, auth and nonmutation. It tests the producer
+independently of the fetch command. `models/README.md` records finite TLC assumptions and
 negative controls; `cbmc/README.md` records bounded reader/arithmetic proof scope.
 `fuzz_export` exercises malformed MOSV schema spans and page arithmetic with exact
 acceptance oracles; the existing protocol-server fuzzer covers the embedded request path.
@@ -852,3 +864,75 @@ text concatenation/size spellings and was corrected to interpolation/byte_count;
 independent framing checks then passed. The TLA release control's initial specification
 error and correction are recorded with the model. A compiling C mutant bypassing the
 ID comparison failed both stale-generation assertions; the restored producer passed.
+
+### Private fetch implementation evidence
+
+The host-local command now creates a new state generation on each invocation, verifies exact
+page coverage, generation and both sequence fields, validates the complete MOEX framing and
+schema/artifact digests, and publishes through a non-overwriting hard link. Pin creation,
+final-page completion/release and local file publication remain distinct lifecycle events.
+Failure-kind export/capture remains unavailable.
+
+Development checks have exercised a 14-page private nominal state export with proxies configured,
+mode-0600 publication, existing destinations and symlinks, wrong credentials, malformed/truncated/
+oversized responses, redirects, corrupt metadata/checksums/base64 and signal cancellation. An
+independent socket relay also fetched a three-page 20,000-byte state during a commit: the first
+artifact contained exactly the prior state and the retry used a different generation containing
+the next committed state. This is development acceptance, not scored diagnostic evaluation.
+
+Three earlier authoritative check runs were intentionally stopped before further edits;
+their files remain `build/u9-check-results-{1,2,3}.txt`. They are interrupted runs, not passes.
+One observed failure was confidential response-buffer growth exhausting its allowance at 16 KiB;
+the fetcher now allocates the bounded response buffer once. The independent simplification pass
+also found undefined subtraction between identical string-literal occurrences, wire-type
+coercion, exact-umask permissions and publication/cleanup reporting issues, which were corrected.
+
+Final GCC, Clang and ASan/UBSan suites passed. Static checks and the pinned TLC model group
+passed without skips, including expected generation/release counterexamples. All-build drivers
+passed against GCC debug, Clang debug and Clang sanitizer, including CLI goldens/guide claims,
+operator views, producer exports, fetch, and formatter behavior. All 12 CLI timing samples
+remained below 0.1 seconds (largest best-of-five observation: 0.0983 seconds). A subsequent
+all-build fetch rerun passed stronger direct program/build/schema/sequence and exact-state
+assertions during commits, plus positive controls for all three supported loopback URL forms.
+Real idle expiry followed by a fresh-generation retry also passed.
+
+The stateful reader fuzz smoke completed 44 runs in 16 seconds under ASan/UBSan, with valid
+multi-page and changed-generation/sequence/coverage seeds; CLI fuzz completed 32,020 runs in
+11 seconds. These are bounded empirical runs. CBMC proved and reached every block of
+`export_page_matches`, `mo_export_page_bounds` and `mo_export_schema`. The new admission proof
+uses unconstrained metadata and 16-byte IDs with 17 unwinds; it covers generation, both
+sequences, count and coverage arithmetic, not crypto, transport, copying or file syscalls.
+
+The maximum fixture independently verified a 16,777,216-byte MOSV encoding in a 16,777,405-byte
+artifact across 2,049 pages, published mode 0600 in 532.07 seconds. The expected private nominal
+state uses the specified Choice constructor header, answer 42 and 16,767,505 repeated Text
+bytes. Service RSS high-water was 135,928 KiB; fetch RSS high-water was 58,972 KiB. Pin storage
+was 16,777,437 bytes including allocator overhead and zero after completion. Reported diagnostic
+scratch peaked at 88,222 bytes, independently of the pin and service heap. One pending socket
+requests a 33,792-byte receive buffer (this Linux host reports 67,584 bytes), beside one bounded
+wire buffer; fetch parser heap is limited to 16 MiB. Process measurements include parser and
+compiler costs. See `learnability/phase4/private-fetch/results/sizing-maximum.json`.
+
+Three serial attempts timed out near 600 seconds. Three later lookahead fetches exited 0, but
+their measurement oracle misread the nominal struct header; those harness runs are failures.
+The corrected oracle follows the saved-state specification and lowering, passed first on a
+small fixture, then passed the maximum fixture above. Failed logs and predictions are retained.
+
+The checked-in native-client smoke passed with Codex 0.166.0, GPT-6.1 Sol/high, explicit tool
+approval and shell network access. It discovered and called overview/export, ran the provided
+fetch command, then read mode 0600 and MOEX magic locally. This establishes prompted workflow
+support, not effectiveness. Pilot observations and prospective U6 gates are unchanged.
+
+Independent simplification and a completed ten-perspective local review found six issues;
+their fixes and verification are reconciled in
+`learnability/phase4/private-fetch/results/verification.md`. A fresh focused read-only follow-up
+found no new concrete defect in lookahead/deadline changes. Cross-provider review did not run
+because its tool lifecycle was incompatible; no cross-provider result is claimed.
+
+The deadline now starts at command entry and is armed before the first destination lookup.
+Numeric-only resolution avoids DNS/NSS; a monotonic POSIX timer interrupts blocking POSIX calls,
+including destination lookup and filesystem completion. Deadline checks surround publication and
+remove a late link. As with the runtime's other wall budgets, delivery/cleanup assumes the OS can
+schedule the process and interrupt a blocking syscall; uninterruptible kernel waits are outside
+that guarantee. Compiled two-second controls interrupt five-second lookup and fsync stalls;
+SIGTERM injected immediately after temporary creation verifies handler ordering and cleanup.
