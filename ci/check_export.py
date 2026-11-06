@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent MOEX/page checks through actual authenticated HTTP; not mo fetch (U9)."""
+"""Independent MOEX/page checks through actual authenticated HTTP."""
 import base64
 import hashlib
 import pathlib

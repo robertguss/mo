@@ -2,7 +2,8 @@
 # Runs the CBMC proofs in cbmc/ (make cbmc): the bytecode reader (reader.c), the arena (arena.c),
 # the bytecode verifier (verify.c), the primitives' arithmetic and UTF-8 (decimal.c, number.c,
 # text.c, unicode.c), lexical path containment (path.c), path resolution (resolve.c,
-# resolve-kernel.c), reference counts (refcount.c) and hash-table probing (table.c). Each proof
+# resolve-kernel.c), reference counts (refcount.c), hash-table probing (table.c) and export
+# pages/schema (export_page_matches, mo_export_page_bounds, mo_export_schema). Each proof
 # checks one function against its specification, with the functions it calls replaced by their
 # models (cbmc/README.md).
 #

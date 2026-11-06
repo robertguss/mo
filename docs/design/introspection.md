@@ -1,6 +1,6 @@
 # Introspection and replay: the Phase 4 design
 
-**Status: approved by Robert on 2026-11-04; nothing in it is built yet.** Section 12 records the
+**Status: approved by Robert on 2026-11-04; live operator views, immutable state export and `mo fetch` are built; `mo-failures` / failure capture, `replay` / `query` / `history` remain open.** Section 12 records the
 decisions made at approval, and "Approval and changes" at the end records every later change. A
 change to an interface, format or limit here is made in this document, with its reason, before
 the code that depends on it lands. The phase plan is
@@ -632,8 +632,8 @@ repository only claims this; nothing checks it.
 
 ### 11.2 TLA+
 
-Two small models, checked by TLC from the TLA+ tools (version pinned by SHA-256 when they land) in
-a new `models` group of `ci/check.sh`. TLC checks finite instances; a pass is not a proof of the C.
+Two small models, checked by TLC from the TLA+ tools (version pinned by SHA-256) in
+the `models` group of `ci/check.sh` (`ci/check_models.py`). TLC checks finite instances; a pass is not a proof of the C.
 
 **Export generations** (`models/Export.tla`). Variables: the service's sequence and state; the
 current pin per kind (id, sequence, bytes, released flag); each fetch's accepted id and pages; a
@@ -802,8 +802,8 @@ not scored diagnostic evaluation observations.
 
 ### Immutable state export producer
 
-U8 adds `mo-export` for state only. Failure-kind export remains unavailable until U4;
-`mo fetch` and final-file publication remain U9. JSON shaping, argument validation and
+U8 adds `mo-export` for state only. Failure-kind export remains unavailable until U4.
+U9 landed `mo fetch` and final-file publication. JSON shaping, argument validation and
 base64 are embedded Mo; the native bridge copies cached MOSV bytes and serves bounded
 pages without encoding live values or altering bytecode shape tables.
 

@@ -1,5 +1,7 @@
 # Phase 4 evaluation
 
+**Historical status:** `protocol.md` marks the 36-session baseline-then-final comparison historical; no baseline or final round was collected, and the harness documentation below is kept intact.
+
 The evaluation of Phase 4, "agents can see inside it", follows `protocol.md`: fresh agent
 sessions diagnose and fix seeded task-queue bugs, first with today's tools (the baseline),
 then with the Phase 4 instruments. The rounds are compared with `compare.py`.
@@ -109,3 +111,5 @@ The pilots' record, with the rule that decides when a variant is ready to freeze
 - `preflight/` holds the experiments that sized the design; its README says what each found.
 - `live-views/` holds the development evidence for the authenticated live views: client
   routing, local checks and process sizing. Its README says what each run showed.
+- `private-fetch/` holds the development evidence for `mo fetch`: client workflow, sizing
+  and verification. Its README says what each run showed.

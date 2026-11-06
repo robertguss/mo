@@ -37,6 +37,10 @@ The completed pilot campaign informs diagnostic tooling; it does not establish t
 
 The revised R20–R24 govern future evaluation. They preserve prospective criteria and honest comparison without requiring the old 36-session experiment. U6 cannot collect scored evidence or close the release gate until Robert approves the replacement diagnostic protocol. The architecture, authentication, limits, replay claims and formal-verification obligations remain in force.
 
+### 2026-11-06 operator milestone
+
+U3, U7, U8 and U9 landed in #294–#297: runtime identity and saved encoding, authenticated live views, immutable state export, and private `mo fetch`. U4 (failure records) is next. Failure capture, `replay` / `query` / `history` (U5) and evaluation/release (U6) remain open.
+
 ---
 
 ## Product Contract

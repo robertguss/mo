@@ -1,11 +1,12 @@
 # The executable grammar
 
 Mo's grammar, as a program: `mo-grammar` reads Mo source and says whether it
-parses. It checks three things:
+parses. `make grammar` walks:
 
-- every code example in the Language Reference (`docs/reference/README.md`);
+- the grammar's own tests in `grammar/tests`;
 - the sample programs in `examples/`;
-- in the learnability test, whether an agent's answer parses.
+- the task-queue service in `services/task-queue/`;
+- every code example in the Language Reference (`docs/reference/README.md`).
 
 It is an instrument, not the compiler. It checks syntax only: types, names in
 scope and whether a `case` covers every value are the compiler's.

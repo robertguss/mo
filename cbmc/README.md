@@ -7,9 +7,11 @@ verifier's transfer functions in `src/bytecode/verify.c` and `verify-instruction
 in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/base/decimal.c`,
 `src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)),
 lexical path containment and bounded resolution (`path.c`, `resolve.c` and `resolve-kernel.c`, in
-[The host paths](#the-host-paths)), and reference count updates (`refcount.c`, in
-[Reference count updates](#reference-count-updates)), plus hash-table probing (`table.c`, in
-[Hash-table probing](#hash-table-probing)).
+[The host paths](#the-host-paths)), reference count updates (`refcount.c`, in
+[Reference count updates](#reference-count-updates)), hash-table probing (`table.c`, in
+[Hash-table probing](#hash-table-probing)), and export page admission, page bounds and MOSV
+schema spans (`export_page_matches`, `mo_export_page_bounds`, `mo_export_schema`, in
+[Export producer framing and pages](#export-producer-framing-and-pages)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -365,5 +367,4 @@ and next offset; completed consumers reject further pages. Reach checks cover ev
 predicate block and the harness end. This proves metadata admission, not allocator
 ownership, SHA-256, socket delivery or filesystem publication; those have separate
 arena proofs and empirical unit/socket/fuzz checks. The consumer uses the same page
-bounds already proved above. Both commands passed in the private-fetch development
-run, with proof and reach logs retained under `build/u9-cbmc-consume*.txt`.
+bounds already proved above.
