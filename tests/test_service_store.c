@@ -1351,6 +1351,27 @@ static void damage_log(const char *path, uint64_t seq, size_t offset) {
     MO_ASSERT(sqlite3_blob_close(blob) == SQLITE_OK && sqlite3_close(db) == SQLITE_OK);
 }
 
+/* The runtime numbers failure records from 1. A record moved to id 0 or below is damage that
+ * every read refuses: the catalog reads ids above a cursor that starts at 0, so without the
+ * check the history would leave the record out and call the folder healthy. */
+static void history_nonpositive_failure(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    sqlite3 *db;
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    MO_ASSERT(sqlite3_exec(db,
+                           "UPDATE failure SET id=-3 WHERE id=3;"
+                           "UPDATE failure_state SET id=-3 WHERE id=3",
+                           NULL, NULL, NULL) == SQLITE_OK);
+    CHECK(sqlite3_close(db) == SQLITE_OK);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_DAMAGED);
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_DAMAGED);
+    CHECK(mo_store_history_pair(path, false, 2, &pair) == MO_STORE_FOLDER_DAMAGED);
+    CHECK(unlink(path) == 0);
+}
+
 static void history_damaged_log(struct mo_image *image, const char *path) {
     /* A byte of an argument, of the payload header, and of the frame's own header. */
     const size_t offsets[] = {26 + 25 + 4, 26 + 1, 7};
@@ -1461,6 +1482,7 @@ static void history_reader(const char *dir, const char *path) {
     history_before_capture(image, path);
     history_unreadable(image, dir, path);
     history_damaged_log(image, path);
+    history_nonpositive_failure(image, path);
     history_bound(path);
     history_killed(image, path);
     mo_image_free(image);

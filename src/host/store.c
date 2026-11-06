@@ -485,11 +485,12 @@ static int failure_pairs_complete(struct mo_store *s) {
         return step != SQLITE_ROW ? step : code;
     if (!valid)
         return FAILURE_DAMAGED;
-    /* Each table now has at most 64 rows; indexed equality probes bound this scan. */
+    /* Each table now has at most 64 rows; indexed equality probes bound this scan. Ids start
+     * at 1, and a read of ids after a cursor would pass over one below it. */
     code =
         sqlite3_prepare_v2(s->db,
                            "SELECT 1 FROM failure f LEFT JOIN failure_state s ON f.id=s.id WHERE "
-                           "s.id IS NULL LIMIT 1",
+                           "s.id IS NULL OR f.id<=0 LIMIT 1",
                            -1, &stmt, NULL);
     if (code != SQLITE_OK)
         return code;
