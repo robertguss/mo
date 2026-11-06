@@ -1111,3 +1111,22 @@ bytes of JSON, with a peak resident size of 144 MB against the renderer's
 build; rendering speed is not yet tuned. Text output for `mo replay` and `mo query` prints values
 with `mo_value_print` in the program's own types; `mo history` has no program, so its text form
 shows the same JSON rendering.
+
+**End to end, the grader, and the reader's budgets.** `ci/check_offline.py` follows the agent
+guide's offline how-to against a real service whose read-only tool, updating tool and timer each
+failed: each replays to `reproduced` from the stopped folder and from its fetched artifact,
+`mo history` matches an independent read-only SQLite reader of the log and the live
+`mo-failures` records, it refuses the folder at once while the service runs, and a reader holding
+the store for 3 seconds delays `mo serve` without making it exit 75. The kill loop runs
+`mo history` between every kill and restart and accepts only a read or "recovery required". On
+the synthetic variant, `learnability/phase4/test_offline.py` shows the fix check's one-way
+relation with the grader: the unchanged program is `not_fixed`, the reference fix `verified` and
+passing, and the broken fix `verified` but failing the hidden tests, the expected gap between "the
+failure is gone" and "the answer is right". The queued-mailbox memory failure stays proved at the
+VM level only (`offline_memory` in `tests/test_service_store.c`); a real service cannot fill its
+heap through the request limits. On the largest task-queue folder the reader holds its lock for
+0.05 s (`-O2`) to 0.07 s (`-O0`) with a 144 MB peak, and for 0.01 s on a tail of 99 near-limit
+rows. Rendering is linear in the state's size, about 8 s per MB at `-O2` and 20 s per MB at
+`-O0`, all of it the interpreter running `McpViews.offline_value`; the lock is released before
+rendering, so `mo serve` started beside a `mo history` of the 10.4 MB state listened within 2.3 s.
+The numbers and the commands are in `learnability/phase4/offline/results/verification.md`.

@@ -340,6 +340,8 @@ if have python3; then
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_fixture.py "${drivers[@]}"
 		later "Phase 4 grading: hidden tests, answers and each variant's controls" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_grade.py "${drivers[@]}"
+		later "Phase 4 fix check against the grader: a fix the grader passes is never not_fixed" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_offline.py "${drivers[@]}"
 		later "Phase 4 recording proxy: bodies, statuses, no token, and the record match" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_proxy.py "${drivers[@]}"
 		later "Phase 4 publication scanner: a token in any transport encoding is refused" \

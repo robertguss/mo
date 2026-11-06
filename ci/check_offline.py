@@ -12,11 +12,15 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 from check_cli import Served, records
 from check_operator import TOKEN, client
 
 root = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root / "learnability" / "phase4"))
+import fixture  # noqa: E402  the independent reader of a stopped store's log
 
 FAILING = '''module Main
 struct Box
@@ -559,6 +563,260 @@ def queries(binary, folder, data, artifacts):
     assert result.stdout == b"36\n", result.stdout
 
 
+GAUGE = '''module Main
+struct Gauge
+  armed: Bool
+  count: Int
+end
+service
+  state Gauge = Gauge(armed: false, count: 0)
+  tools peek, bump, arm, disarm
+  every 1.second tick
+  token from env "OPERATOR_TOKEN"
+end
+## Reads the count plus n, and fails past 3.
+fn peek(state: Gauge, _now: Time, n: Int) : Int
+  if n > 3
+    stop "peek failure"
+  end
+  state.count + n
+end
+## Adds n to the count, and fails past 3.
+fn bump(state: Gauge, _now: Time, n: Int) : (Gauge, Int)
+  if n > 3
+    stop "bump failure"
+  end
+  (Gauge(armed: state.armed, count: state.count + n), state.count + n)
+end
+## Makes the timer fail.
+fn arm(state: Gauge, _now: Time) : (Gauge, Bool)
+  (Gauge(armed: true, count: state.count), true)
+end
+## Stops the timer failing.
+fn disarm(state: Gauge, _now: Time) : (Gauge, Bool)
+  (Gauge(armed: false, count: state.count), true)
+end
+fn tick(state: Gauge, _now: Time) : Gauge
+  if state.armed
+    stop "tick failure"
+  end
+  state
+end
+'''
+GAUGE_QUERIES = '''
+fn count(state: Gauge) : Int
+  state.count
+end
+fn inputs(state: Gauge, _now: Time, n: Int) : Text
+  "#{state.count} #{n}"
+end
+'''
+READER_HOLD = 3.0  # seconds a reader keeps the store while mo serve starts; the wait is 10
+
+
+def hold_store(path, holding, seconds):
+    """A reader from Python's sqlite3: a shared lock on the store for `seconds`."""
+    db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, isolation_level=None)
+    try:
+        db.execute("BEGIN")
+        db.execute("SELECT count(*) FROM log").fetchone()
+        holding.set()
+        time.sleep(seconds)
+        db.execute("COMMIT")
+    finally:
+        db.close()
+
+
+def serve_gauge(binary, folder, artifacts):
+    """Serve GAUGE, make its read-only tool, its updating tool and its timer each fail, fetch
+    every failure and the state, and check that history refuses the live folder at once;
+    returns the data folder and the records mo-failures listed."""
+    data = folder / "data"
+    data.mkdir()
+    served = Served(binary, folder / "deployed" / "main.mo", data,
+                    {**os.environ, "OPERATOR_TOKEN": TOKEN}, folder)
+    try:
+        rpc, call = client(served)
+        for name, arguments, failed in (("bump", {"n": "2"}, False), ("peek", {"n": "5"}, True),
+                                        ("bump", {"n": "7"}, True), ("arm", {}, False)):
+            status, body = rpc("tools/call", {"name": name, "arguments": arguments})
+            assert status == 200 and body["result"]["isError"] is failed, (name, body)
+        # The timer ticks every second; disarm it once its first failure is retained, well
+        # before five failures in a minute would stop the service.
+        deadline = time.monotonic() + 20
+        while not any(r["handler"] == "tick" for r in call("mo-failures")["records"]):
+            assert time.monotonic() < deadline, "the armed timer never failed"
+            time.sleep(0.1)
+        call("disarm")
+        live = call("mo-failures")
+        assert live["next"] is None and not live["unavailable"], live
+        ids = {}
+        for record in live["records"]:
+            ids.setdefault(record["handler"], record["id"])
+        assert sorted(ids) == ["bump", "peek", "tick"], live
+        env = {**os.environ, "OPERATOR_TOKEN": TOKEN}
+        for selector, path in [(["failure", ids[h]], artifacts[h]) for h in ids] + \
+                              [(["state"], artifacts["state"])]:
+            result = subprocess.run(
+                [str(binary), "fetch", f"http://127.0.0.1:{served.port}/mcp", "--export",
+                 *selector, "--out", str(path), "--token-env", "OPERATOR_TOKEN"],
+                env=env, capture_output=True, timeout=300)
+            assert result.returncode == 0, result.stderr
+        # A running service owns its folder: history refuses at once and waits for nothing.
+        began = time.monotonic()
+        result = mo(binary, ["history", str(data)], 1)
+        assert time.monotonic() - began < 3, time.monotonic() - began
+        assert result.stderr == (f"mo history: a running service owns {data}; nothing was read, "
+                                 "and nothing waited for it\n").encode(), result.stderr
+        served.finish(0, signal.SIGTERM)
+    finally:
+        served.close()
+    return data, ids, live["records"]
+
+
+def serve_under_reader(binary, folder, data):
+    """A reader holding the store across a mo serve start delays it; the service starts once
+    the reader closes, inside the store wait, and recovers the same state."""
+    copy = folder / "held"
+    shutil.copytree(data, copy)
+    holding = threading.Event()
+    reader = threading.Thread(target=hold_store,
+                              args=(copy / "service.sqlite", holding, READER_HOLD))
+    reader.start()
+    assert holding.wait(timeout=30)
+    began = time.monotonic()
+    served = Served(binary, folder / "deployed" / "main.mo", copy,
+                    {**os.environ, "OPERATOR_TOKEN": TOKEN}, folder)
+    try:
+        waited = time.monotonic() - began
+        reader.join(timeout=30)
+        assert served.port, served.errors()
+        assert READER_HOLD - 0.5 < waited < 9, waited
+        rpc, _ = client(served)
+        _, body = rpc("tools/call", {"name": "peek", "arguments": {"n": "0"}})
+        assert body["result"]["structuredContent"] == {"value": "2"}, body
+        served.finish(0, signal.SIGTERM)
+    finally:
+        served.close()
+
+
+def gauge_history(binary, copy, live):
+    """History of the stopped folder, checked against fixture.py's independent reader of the
+    store and against what mo-failures listed while the service ran."""
+    snapshot, rows = fixture.log_records(copy)
+    digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+    items = records(mo(binary, ["history", "--json", str(copy)], 0), "history")
+    h = items[1]
+    assert h["folder"] == "ok" and not h["recovered"], h
+    assert h["snapshot"]["sequence"] == str(snapshot), (h["snapshot"], snapshot)
+    assert h["snapshot"]["later_messages"] == len(rows) == h["log_entries"], (h, rows)
+    assert h["snapshot"]["state"] == {"value": {"type": "Main.Gauge", "fields": {
+        "armed": False, "count": "0"}}, "complete": True}, h["snapshot"]
+    expected = [{"sequence": str(seq), "timer": tool == "expire",
+                 "handler_index": 0 if tool == "expire" else fixture.TOOLS.index(tool),
+                 "arrival_us": str(arrival), "argument_sizes": [str(len(a)) for a in arguments],
+                 "argument_bytes": str(sum(map(len, arguments)))}
+                for seq, tool, arrival, arguments in rows]
+    assert [{k: e[k] for k in expected[0]} for e in h["log"]] == expected, (h["log"], expected)
+    assert all(e["handler"] is None for e in h["log"]), h["log"]
+    # One updating bump, arm and disarm, and every tick that changed nothing: indexes 1, 2, 3.
+    assert [e["handler_index"] for e in expected if not e["timer"]] == [1, 2, 3], expected
+    assert [f["id"] for f in h["failures"]] == [r["id"] for r in live], (h["failures"], live)
+    for listed, record in zip(h["failures"], live):
+        assert {k: listed[k] for k in record} == record, (listed, record)
+        assert listed["build"] == digest and listed["replayable_here"], listed
+    text = mo(binary, ["history", str(copy)], 0).stdout.decode()
+    assert f"snapshot: as of sequence {snapshot}, {len(rows)} later messages not applied" in text
+    for seq, tool, arrival, arguments in rows:
+        kind = "timer 0" if tool == "expire" else f"tool {fixture.TOOLS.index(tool)}"
+        sizes = "0 arguments" if not arguments else f"1 argument ({len(arguments[0])} bytes)"
+        assert f"  {seq}: {kind} (name not recorded in the log), arrival {arrival} us, " \
+               f"{sizes}\n" in text, (seq, text)
+    assert "note: " + GONE in text and f"failures: {len(live)} retained\n" in text, text
+    # The guide finds the recording executable by its digest: sha256sum names this one.
+    found = subprocess.run(["sha256sum", str(binary)], capture_output=True, timeout=60, check=True)
+    assert found.stdout.split()[0].decode() == digest
+
+
+def acceptance(binary, folder):
+    """The guide's offline how-to, followed step by step, on a service whose read-only tool,
+    updating tool and timer each failed."""
+    folder.mkdir()
+    deployed = folder / "deployed"
+    deployed.mkdir()
+    file = deployed / "main.mo"
+    file.write_text(GAUGE)
+    artifacts = {name: folder / f"{name}.moex" for name in ("peek", "bump", "tick", "state")}
+    data, ids, live = serve_gauge(binary, folder, artifacts)
+    serve_under_reader(binary, folder, data)
+    # Copy the whole stopped data folder, then work on the copy.
+    copy = folder / "copied"
+    shutil.copytree(data, copy)
+    gauge_history(binary, copy, live)
+
+    # Each failure replays to reproduced, from the folder and from its fetched artifact.
+    recorded = {r["handler"]: r["signature"] for r in live}
+    kinds = {"peek": "read-only tool 0, 1 argument", "bump": "updating tool 1, 1 argument",
+             "tick": "timer 0, 0 arguments"}
+    for handler, failure in ids.items():
+        text = mo(binary, replay_args(file, copy, failure), 0).stdout.decode()
+        assert text.startswith(f"replay of failure {failure}: {handler} ({kinds[handler]}), "), text
+        assert text.endswith("outcome: reproduced\n"), text
+        for source in (["--data", str(copy)], ["--export", str(artifacts[handler])]):
+            items = records(mo(binary, ["replay", "--json", str(file), "--failure", failure,
+                                        *source], 0), "replay")
+            original = items[1]
+            assert original["outcome"] == "reproduced" and original["handler"] == handler, items
+            assert original["run"]["signature"] == recorded[handler], (original, recorded)
+            assert original["recorded"]["signature"] == recorded[handler], original
+
+    # Check a fix: copy the program's folder, edit the copy, add --fix COPY/main.mo.
+    fixed = folder / "fixed"
+    shutil.copytree(deployed, fixed)
+    source = GAUGE
+    for name in ("peek", "bump", "tick"):
+        source = source.replace(f'    stop "{name} failure"\n', "    return " + {
+            "peek": "0", "bump": "(Gauge(armed: state.armed, count: 3), 3)",
+            "tick": "state"}[name] + "\n")
+    (fixed / "main.mo").write_text(source)
+    revised = {"peek": "revised: succeeded, reply ok, state unchanged",
+               "bump": "revised: succeeded, reply ok, state changed",
+               "tick": "revised: succeeded, reply ok, state unchanged"}
+    for handler, failure in ids.items():
+        text = mo(binary, replay_args(file, copy, failure, "--fix", fixed / "main.mo"),
+                  0).stdout.decode()
+        assert text.endswith(f"outcome: reproduced\n{revised[handler]}\nverdict: verified\n"), text
+    unchanged = folder / "unchanged"
+    shutil.copytree(deployed, unchanged)
+    text = mo(binary, replay_args(file, copy, ids["tick"], "--fix", unchanged / "main.mo"),
+              1).stdout.decode()
+    assert text.endswith("verdict: not_fixed\n"), text
+
+    # Query: a program that adds functions, over the exported state and over a failure.
+    asking = folder / "asking"
+    shutil.copytree(deployed, asking)
+    (asking / "main.mo").write_text(GAUGE + GAUGE_QUERIES)
+    query = str(asking / "main.mo")
+    assert mo(binary, ["query", query, "count", "--export", str(artifacts["state"])],
+              0).stdout == b"2\n"
+    for source in (["--data", str(copy)], ["--export", str(artifacts["bump"])]):
+        result = mo(binary, ["query", query, "inputs", "--failure", ids["bump"], *source], 0)
+        assert result.stdout == b"2 7\n", result.stdout
+
+    # A folder it cannot read is refused with its own message.
+    if os.geteuid() != 0:
+        closed = folder / "closed"
+        shutil.copytree(data, closed)
+        closed.chmod(0)
+        try:
+            result = mo(binary, ["history", str(closed)], 1)
+            assert result.stderr == f"mo history: cannot read {closed}\n".encode(), result.stderr
+        finally:
+            closed.chmod(0o700)
+    # The original folder was only read.
+    assert (data / "service.sqlite").read_bytes() == (copy / "service.sqlite").read_bytes()
+
+
 # The agent guide's claims about these commands, each exercised above.
 GUIDE = [
     "shows the last snapshot \"as of sequence S, K later messages not applied\", the log tail's "
@@ -586,6 +844,12 @@ GUIDE = [
     "what differs with its recorded and found values, and exits 1.",  # refused
     "`--json` writes a version record, one record per outcome (`original`, `revised`, `query` or "
     "`history`), and a totals record whose `status` is the exit status.",
+    # The steps acceptance follows, in the guide's order.
+    "first copy the whole stopped data folder, including any `service.sqlite-journal` beside the "
+    "database.",
+    "`mo history` shows each record's build digest, and `sha256sum /opt/mo/*/mo` finds the "
+    "executable with that digest.",
+    "To check a fix, copy the program's folder, edit the copy, and add `--fix COPY/main.mo`.",
 ]
 
 
@@ -618,6 +882,7 @@ def check(binary):
         hot_journal(binary, folder, data)
         pre_capture(binary, folder, data)
         missing(binary, folder)
+        acceptance(binary, folder / "acceptance")
     print(f"{binary}: offline history, replay and query checks passed")
 
 

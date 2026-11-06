@@ -301,3 +301,149 @@ entry of a Run on the hand-written inputs. The prediction was that both stop the
   Core entry is `%entry`. The swap matched nothing and `mocore` refused the arguments as
   `invalidRun`. The script now requires exactly one entry to swap and the handler's `FunDecl` to
   exist.
+||||||| parent of f814a25a (Check the offline commands end to end, against the grader, and measure the reader)
+
+## Acceptance driver, grader cross-check and measurements
+
+Host: an exe.dev VM, 8 vCPUs of an AMD EPYC 9554P, 31 GiB of memory, Linux 6.12.113, gcc 13.3.0.
+"Debug" is `build/gcc/debug/mo` (`-O0 -g`, as `make` builds it). The Makefile has no release
+target, so "release" is the same sources built with `-O2`:
+`make CC=gcc BUILD=build/gcc-release 'DEBUG=-DMO_BUILD_CONFIGURATION=\"release\" -O2 -g -pthread' build/gcc-release/debug/mo`
+(its build label ends `; release`).
+
+### Acceptance driver
+
+`ci/check_offline.py` gained `acceptance`, which serves a program whose read-only tool (`peek`),
+updating tool (`bump`) and timer (`tick`, armed by one tool call and disarmed once its first
+failure is retained) each fail, then follows the agent guide's offline how-to in order:
+
+- every failure and the state are fetched with `mo fetch`; while the service runs, `mo history`
+  refuses with the owned message in under 3 s; after SIGTERM it reads;
+- a reader from Python's sqlite3 holds the store's shared lock for 3 s across a `mo serve` start
+  on a copy of the folder: the service starts after the reader closes and inside the 10-second
+  wait, and answers with the recovered state;
+- on a copy of the stopped folder, `mo history --json` equals `fixture.py`'s independent
+  `log_records` reader (opened `?mode=ro`) on the snapshot's sequence, the number of later
+  messages, and each tail entry's sequence, timer flag, handler index, arrival and argument
+  sizes; the text form prints the same lines; each failure's fields equal, name for name, the
+  record `mo-failures` listed while the service ran; `sha256sum` of the executable equals each
+  record's build digest;
+- the timer, read-only and updating failures each replay to `reproduced` from the folder and from
+  their fetched artifacts, the offline signature equal to the one `mo-failures` listed;
+- a fixed copy of the program's folder is `verified` for all three (the updating fix reports
+  "state changed"); the unchanged copy is `not_fixed` for the timer;
+- a query program that adds functions reads the exported state, and a failure's inputs from the
+  folder and from the artifact;
+- a folder it cannot read (`chmod 0`, skipped as root) is refused with its own message, and the
+  original data folder's bytes are unchanged.
+
+The guide sentences the scenario follows were added to the driver's claim list. Three runs:
+
+- first run, failed: the expected timer line was "revised: succeeded, state unchanged"; a timer's
+  revised outcome also prints "reply ok", as the design's revised outcome specifies. The
+  expectation was corrected, and the updating fix changed to one that changes the state, so the
+  "state changed" report is exercised too;
+- debug: `python3 ci/check_offline.py build/gcc/debug/mo` passed in 52 s (the scenario alone
+  16 s); clang sanitize build: the scenario passed in 22 s;
+- red: a build with `-DMO_LIMIT_SERVE_STORE_WAIT_US=UINT64_C(1)` fails the held-reader step,
+  `mo serve` exiting at once with "another process holds the service store ... stopped waiting".
+
+### The queued-mailbox memory failure, at the command level
+
+Not added. The claim holds as recorded above, with one correction: the replay of that failure is
+`offline_memory` in `tests/test_service_store.c`, not `tests/test_service_runtime.c` (which has
+`queued_arguments`, the live failure without a replay). `offline_memory` runs a real service loop:
+it queues a 1,024-character call and a text argument, fills the heap with a scratch allocation to
+exactly the room left minus the queued bytes, steps the loop to a live memory failure, then
+replays the retained record in a fresh process, where it succeeds and `mo_replay_classify` gives
+`MO_REPLAY_NOT_REPRODUCED`. The `--fix` cell (not reproduced gives `unverified`) is a row of
+`tests/test_verdict.c`.
+
+No cheap route through a real `mo serve` was found. The failure needs the service heap filled to
+within the queued arguments' bytes of the handler's need: a 64 MiB message heap against 16 KiB
+request bodies at 20 calls a second needs thousands of queued calls, which the mailbox limit and
+the rate limit refuse; a near-limit state leaves only a few queued bodies of margin, which would
+need the handler's allocation tuned to a heap boundary through a live service whose failures each
+count toward the supervisor's five a minute, and a second request reliably queued before the
+first handler starts, which depends on timing. The fresh offline process also lays its heap out
+differently, so such a run could not tell "not reproduced because of the queue" from other
+differences.
+
+### Kill loop
+
+`ci/check_kill_loop.py` runs `mo history --json` on the folder between every kill and the
+restart, and fails unless it exits 0 reading the folder or exits 1 with `recovery_required`.
+
+- Short run: `python3 ci/check_kill_loop.py build/gcc/debug/mo`: `kills=15 mid_commit=1
+  history_read=14 history_recovery=1 result=pass seconds=30` (26 s before the change).
+- Red: a build whose reader reports a hot journal as damaged fails at kill 15: "mo history after a
+  kill exited 1 with folder damaged".
+- Long run: `python3 ci/check_kill_loop.py build/gcc/debug/mo --seed 7 --kills 60`: `kills=60
+  mid_commit=8 history_read=52 history_recovery=8 calls=1217 result=pass seconds=128`. As
+  predicted, every kill left a folder the reader read or called recovery required.
+
+### Grader cross-check
+
+`learnability/phase4/test_offline.py`, in the `bench` group. It builds the synthetic variant's
+data folder with `fixture.py build`, takes the retained `stats` failure's id from `mo history`,
+and runs `mo replay --fix` and `grade.py session` on three session folders:
+
+| Candidate | `--fix` verdict | Grader |
+| --- | --- | --- |
+| unchanged program | `not_fixed` (exit 1) | fails |
+| `hidden/reference` | `verified` (exit 0) | passes |
+| `hidden/broken` | `verified` (exit 0) | fails: `HiddenTests.test.1 failed` |
+
+The last row is the expected one-way gap: the broken fix removes the `stop` and counts a dead job
+as done, so the failure is gone and the answer is wrong. The test asserts only that a fix the
+grader passes is never `not_fixed`, and says so. As predicted. It ran in 9 s on the debug build.
+
+- Red: a verdict that is always `verified` fails the unchanged row; a verdict that is always
+  `not_fixed` fails the reference row, the broken row and the one-way relation.
+
+### Measurements
+
+Commands: `python3 learnability/phase4/offline/measure.py build build/gcc-release/debug/mo
+build/measure` (the task queue filled with 2,048-byte jobs, stopped and copied at 300, 500, 1,000,
+2,000, 4,000 and 5,000 jobs; 500 leased in the last), `measure.py tail` (99 calls of an updating
+tool taking a 16,224-byte Text, the largest a 16 KiB body holds; a snapshot every 100 messages
+caps the tail at 99 rows of 16,313 bytes), then `measure.py reader MO FOLDER...` and
+`measure.py serve MO build/measure/jobs-5000 3` with each build. Raw output is in
+`measurements.txt`. Lock time is the span from the reader's first `fcntl` lock to its last
+unlock, from `strace -f -tt -e trace=fcntl`; peak memory is GNU time's maximum resident size;
+render time is the wall time of an untraced `mo history --json`.
+
+Reader lock and memory, as predicted (well under the 10-second serve wait):
+
+| Folder | Snapshot record | Lock, release | Lock, debug | Peak, release | Peak, debug |
+| --- | --- | --- | --- | --- | --- |
+| task queue, 5,000 jobs | 10,464,263 bytes | 0.052 s | 0.066 s | 143,244 KiB | 143,920 KiB |
+| tail of 99 near-limit rows | 64 bytes | 0.008 s | 0.012 s | 62,428 KiB | 63,280 KiB |
+
+Serve start under a reader:
+
+| Reader | Release | Debug |
+| --- | --- | --- |
+| Python sqlite3, shared lock held 3 s | listening after 4.04 s | listening after 4.89 s |
+| `mo history` started just before `mo serve` | listening after 1.04 s; history still rendering until 86.6 s | listening after 2.24 s; history until 212.6 s |
+
+The second row shows the reader holding the store only while it copies: the service recovers the
+10.4 MB state and listens while `mo history` goes on rendering without the lock.
+
+Render time against state size: linear in both builds, so the code was left alone.
+
+| Jobs | Snapshot record | Release | s/MB | Debug | s/MB |
+| --- | --- | --- | --- | --- | --- |
+| 300 | 625,867 | 5.03 s | 8.0 | 13.43 s | 21.5 |
+| 500 | 1,042,175 | 8.54 s | 8.2 | 21.06 s | 20.2 |
+| 1,000 | 2,086,083 | 16.40 s | 7.9 | 42.57 s | 20.4 |
+| 2,000 | 4,173,899 | 32.20 s | 7.7 | 87.75 s | 21.0 |
+| 4,000 | 8,349,531 | 70.96 s | 8.5 | 167.10 s | 20.0 |
+| 5,000 | 10,464,263 | 88.68 s | 8.5 | 209.33 s | 20.0 |
+
+Seconds per megabyte stay within 11 percent of each other across a 17-fold size range in each
+build; the release 4,000 and 5,000 runs shared the machine with other measurements, which may
+account for their slightly higher rate. Six gdb stack samples of a release render were all inside
+`mo_vm_execute` under `mo_offline_render`: the time is the interpreter running
+`McpViews.offline_value`, at a constant cost per byte. Peak memory grows with the state, from 63 MB
+to 143 MB, within the renderer's 256 MiB heap.

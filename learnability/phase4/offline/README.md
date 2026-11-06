@@ -9,3 +9,5 @@ This folder holds the evidence for Phase 4's offline commands: `mo replay` (with
   of those checks ran.
 - `results/verification.md` records each check's command, result and evidence file, and keeps
   failed attempts beside the passes.
+- `measure.py` measures the store reader behind `mo history` (its lock, memory and render time)
+  and a `mo serve` start under a reader; `results/measurements.txt` holds its raw output.
