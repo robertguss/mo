@@ -197,3 +197,25 @@ the first budget that differs from the build's own.
 
 The base outcome struct was renamed `mo_run_outcome`: its old tag collided with the VM's
 `enum mo_outcome`, so no file could include both headers.
+
+## CBMC: the log record walk
+
+`cbmc/log-record.c`, registered in `cbmc/prove.sh` as `mo_log_record_walk` at 37 bytes (the
+25-byte header plus three empty arguments, so the loop accepts several arguments and refuses a
+later length cut short). The reader callback may fail any read after writing arbitrary bytes, and
+must be asked for exactly the next expected range. An oracle computing the fixed offsets with
+64-bit sums decides acceptance exactly; on refusal every output field, all 254 sizes included,
+equals its value before the call.
+
+- `bash cbmc/prove.sh mo_log_record_walk`: proved, 0 of 381 properties failed, 9 to 11 s
+  (rerun on the integrated branch: 11 s). `--reach`: every block reached, 5 to 6 s.
+- Mutants, each failing the proof: a length bound relaxed by one (read-inside-payload, read-order,
+  pointer-bounds and unwinding assertions fail), and `offset != length` weakened to
+  `offset > length` (the exact-acceptance assertion fails).
+- Failed attempt kept: with CBMC's own `memcpy` and the walk's symbolic copy size the problem had
+  27 million variables; the 37-byte run was killed after more than 10 minutes and a 29-byte run hit
+  its 600 s timeout. A byte-loop `memcpy`, as `cbmc/resolve.c` uses, brought it to about 10 s.
+- The reach check now also accepts CBMC's "replacing function pointer by" message for the
+  unreachable branch it adds at a constant function-pointer call, still at most one let-off per
+  line. Not covered at this bound: the argument-count limit, since 37 bytes cannot hold enough
+  arguments to reach it; `tests/test_log_record.c` tests it.
