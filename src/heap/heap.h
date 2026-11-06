@@ -192,6 +192,13 @@ MO_MUST_USE enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *proc
                                                             struct mo_buffer *out);
 MO_MUST_USE bool mo_value_decode(struct mo_heap *process, uint32_t type, const uint8_t *bytes,
                                  size_t length, struct mo_cell *out);
+/* TYPE's saved schema, written without a value: exactly the schema bytes every encoding of a
+ * TYPE value carries, so schemas can be compared before anything is decoded. Refusal (a type
+ * with no saved form, the depth or size limit, memory) leaves out's length unchanged. */
+MO_MUST_USE bool mo_type_schema(struct mo_heap *process, uint32_t type, struct mo_buffer *out);
+/* SHA-256 of mo_type_schema's bytes, equal to mo_export_schema over any encoding of a TYPE
+ * value. Refusal leaves digest unchanged. */
+MO_MUST_USE bool mo_type_schema_digest(struct mo_heap *process, uint32_t type, uint8_t digest[32]);
 MO_MUST_USE bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type,
                                      struct mo_cell value, struct mo_cell *out,
                                      size_t *encoded_length, const char **failure);
