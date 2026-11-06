@@ -6,6 +6,7 @@
 #include "base/runtime-identity.h"
 #include "base/stack.h"
 #include "base/store-memory.h"
+#include "base/verdict.h"
 #include "bytecode/io.h"
 #include "service_compile.h"
 #include "test.h"
@@ -2724,6 +2725,261 @@ static void runtime_capture(void) {
     mo_image_free(image);
 }
 
+/* The newest retained failure, copied out of the store. */
+struct retained {
+    struct mo_buffer state, message;
+    struct mo_failure_record record;
+};
+static bool keep_newest(const struct mo_store_failure *f, void *context) {
+    struct retained *r = context;
+    mo_buffer_clear(&r->state);
+    mo_buffer_clear(&r->message);
+    MO_ASSERT(mo_buffer_append(&r->state, f->state.bytes, f->state.length) &&
+              mo_buffer_append(&r->message, f->message.bytes, f->message.length));
+    return true;
+}
+static void retained_failure(struct mo_service_loop *s, struct retained *r) {
+    mo_buffer_init(&r->state, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&r->message, MO_LIMIT_FAILURE_RECORD_BYTES);
+    MO_ASSERT(mo_service_failures(s, keep_newest, r) == MO_STORE_OK && r->message.length != 0);
+    MO_ASSERT(mo_failure_read(r->message.bytes, r->message.length, &r->record));
+}
+static void retained_free(struct retained *r) {
+    mo_buffer_free(&r->state);
+    mo_buffer_free(&r->message);
+}
+static struct mo_offline_run replay_retained(struct mo_image *image, const struct retained *r,
+                                             struct mo_buffer *context) {
+    mo_buffer_init(context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
+    return mo_offline_call(image, &mo_image_bytecode(image)->services[0], r->record.handler,
+                           r->state.bytes, r->state.length, &r->record, context);
+}
+
+static bool same_slice(struct mo_failure_slice a, const char *text) {
+    return a.length == strlen(text) && memcmp(a.bytes, text, a.length) == 0;
+}
+static bool same_slices(struct mo_failure_slice a, struct mo_failure_slice b) {
+    return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
+}
+/* The offline run computed the stored signature field by field and the stored context text. */
+static void check_reproduced(const struct mo_failure_record *r, const struct mo_offline_run *run,
+                             const struct mo_buffer *context) {
+    struct mo_signature stored = mo_signature_from_record(r);
+    const struct mo_signature *offline = &run->outcome.signature;
+    CHECK(offline->class == stored.class && same_slices(offline->reason, stored.reason) &&
+          same_slices(offline->limit, stored.limit) && offline->limit_value == stored.limit_value);
+    CHECK(offline->function == stored.function && offline->file == stored.file &&
+          offline->start == stored.start && offline->end == stored.end);
+    CHECK(run->context == (enum mo_failure_context)r->context_status);
+    CHECK(context->length == r->context.length &&
+          memcmp(context->bytes, r->context.bytes, context->length) == 0);
+    CHECK(mo_replay_classify(&stored, &run->outcome) == MO_REPLAY_REPRODUCED);
+}
+
+/* A `stop` in a read-only and in an updating tool replays to the same defect, with the context
+ * capture rendered, and leaves the state as it was; the same stop one line lower is a different
+ * failure. */
+static void offline_stop(void) {
+    const char *source =
+        "module Main\nservice\nstate Int = 7\ntools broken, update\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn broken(_state: Int, _now: Time, _n: Int) : Bool\nstop \"broken\"\nend\n"
+        "fn update(state: Int, _now: Time, n: Int) : (Int, Int)\n"
+        "after = state + n\n(after, stop \"update\")\nend\n";
+    const char *moved =
+        "module Main\nservice\nstate Int = 7\ntools broken, update\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn broken(_state: Int, _now: Time, _n: Int) : Bool\n\nstop \"broken\"\nend\n"
+        "fn update(state: Int, _now: Time, n: Int) : (Int, Int)\n"
+        "after = state + n\n\n(after, stop \"update\")\nend\n";
+    struct mo_image *image = compile(source), *other = compile(moved);
+    const struct mo_bytecode_service *service = &mo_image_bytecode(image)->services[0];
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {.time = {.now = INT64_C(1767225600000000), .elapsed = 5}};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    for (uint32_t tool = 0; tool < 2; tool++) {
+        struct mo_cell n = mo_cell_int(5);
+        CHECK(mo_service_send(s, tool, &n, 1, tool + 1) == MO_SERVICE_OK && mo_service_step(s));
+        CHECK(o.failures == tool + 1 && o.status == MO_SERVICE_DEFECT);
+        CHECK(o.sequence == 0 && mo_cell_get_int(mo_service_state(s)) == 7);
+        struct retained r;
+        retained_failure(s, &r);
+        CHECK(r.record.handler == tool && r.record.read_only == (tool == 0) && !r.record.timer);
+        struct mo_buffer context;
+        struct mo_offline_run run = replay_retained(image, &r, &context);
+        CHECK(run.outcome.status == MO_OUTCOME_DEFECT && run.refusal == NULL);
+        CHECK(run.outcome.signature.class == MO_SIGNATURE_DEFECT &&
+              same_slice(run.outcome.signature.reason, "stop"));
+        CHECK(run.outcome.signature.function == service->tools[tool].function &&
+              run.outcome.signature.file != MO_NO_INDEX);
+        CHECK(!run.outcome.state_changed);
+        check_reproduced(&r.record, &run, &context);
+        /* The record carries this build's budgets; one that differs is named with both values. */
+        struct mo_service_budget differs = {0};
+        CHECK(mo_service_budgets_match(&r.record, &differs) && differs.name == NULL);
+        struct mo_failure_record crafted = r.record;
+        crafted.heap++;
+        CHECK(!mo_service_budgets_match(&crafted, &differs) && strcmp(differs.name, "heap") == 0);
+        CHECK(differs.recorded == MO_LIMIT_SERVICE_MESSAGE_MEMORY - MO_DEFAULT_STACK_SIZE + 1 &&
+              differs.expected == MO_LIMIT_SERVICE_MESSAGE_MEMORY - MO_DEFAULT_STACK_SIZE);
+        crafted = r.record;
+        crafted.saved--;
+        CHECK(!mo_service_budgets_match(&crafted, &differs) &&
+              strcmp(differs.name, "saved bytes") == 0 && differs.expected == MO_LIMIT_SAVED_BYTES);
+        mo_buffer_free(&context);
+        struct mo_offline_run elsewhere = replay_retained(other, &r, &context);
+        CHECK(elsewhere.outcome.status == MO_OUTCOME_DEFECT);
+        struct mo_signature stored = mo_signature_from_record(&r.record);
+        CHECK(elsewhere.outcome.signature.start != stored.start);
+        CHECK(mo_replay_classify(&stored, &elsewhere.outcome) == MO_REPLAY_DIFFERENT);
+        mo_buffer_free(&context);
+        retained_free(&r);
+    }
+    struct inventory i = {0};
+    CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, count_record, &i) == MO_STORE_OK);
+    CHECK(i.logs == 0 && i.last == 0);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_image_free(other);
+    mo_image_free(image);
+}
+
+static bool scratch_fits(struct mo_heap *heap, size_t bytes) {
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, heap);
+    bool fits = mo_scratch_resize(&scratch, NULL, 0, bytes) != NULL;
+    mo_scratch_free(&scratch);
+    return fits;
+}
+static size_t heap_room(struct mo_heap *heap) {
+    size_t low = 0, high = MO_LIMIT_SERVICE_MESSAGE_MEMORY;
+    while (high - low > 1) {
+        size_t middle = low + (high - low) / 2;
+        if (scratch_fits(heap, middle))
+            low = middle;
+        else
+            high = middle;
+    }
+    return low;
+}
+/* A handler that ran out of heap only because the mailbox held a queued message's arguments
+ * succeeds offline, where nothing else is live: its failure is not reproduced. */
+static void offline_memory(void) {
+    struct mo_image *image = compile(
+        "module Main\nservice\nstate List(Int) = [3, 8]\ntools memory, echo\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn memory(_state: List(Int), _now: Time, n: Int) : Int\n\"x\".repeat(n).byte_count\nend\n"
+        "fn echo(_state: List(Int), _now: Time, text: Text) : Text\ntext\nend\n");
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    struct mo_heap *heap = mo_service_heap(s);
+    size_t used = mo_heap_used(heap), available = heap_room(heap);
+    struct mo_cell n = mo_cell_int(1024), text;
+    MO_ASSERT(mo_value_text(heap, "retained", 8, &text));
+    CHECK(mo_service_send(s, 0, &n, 1, 1) == MO_SERVICE_OK);
+    CHECK(mo_service_send(s, 1, &text, 1, 2) == MO_SERVICE_OK);
+    mo_value_drop(heap, mo_image_bytecode(image)->services[0].tools[1].argument_types[0], text);
+    size_t queued = mo_heap_used(heap) - used;
+    CHECK(queued != 0 && scratch_fits(heap, available - queued));
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, heap);
+    MO_ASSERT(mo_scratch_resize(&scratch, NULL, 0, available - queued) != NULL);
+    CHECK(mo_service_step(s) && o.status == MO_SERVICE_MEMORY && o.failures == 1);
+    mo_scratch_free(&scratch);
+    CHECK(mo_service_step(s) && o.status == MO_SERVICE_OK);
+    struct retained r;
+    retained_failure(s, &r);
+    CHECK(r.record.class == MO_SIGNATURE_MEMORY && r.record.handler == 0);
+    struct mo_buffer context;
+    struct mo_offline_run run = replay_retained(image, &r, &context);
+    CHECK(run.outcome.status == MO_OUTCOME_SUCCEEDED && run.refusal == NULL);
+    CHECK(run.outcome.reply == MO_REPLY_OK && !run.outcome.state_changed && context.length == 0);
+    struct mo_signature stored = mo_signature_from_record(&r.record);
+    CHECK(mo_replay_classify(&stored, &run.outcome) == MO_REPLAY_NOT_REPRODUCED);
+    mo_buffer_free(&context);
+    retained_free(&r);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_image_free(image);
+}
+
+/* An updating tool's and a timer's new state over the saved-bytes limit fails the size check
+ * offline as it did live. A revision whose new state fits succeeds and reports the change; one
+ * that returns an Error succeeds with an error reply and no change. */
+static void offline_state_size(void) {
+    char sources[2][512], fixed[2][512], rejected[512];
+    MO_ASSERT(snprintf(sources[0], sizeof sources[0],
+                       "module Main\nservice\nstate Text = \"\"\ntools grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn grow(_state: Text, _now: Time) : (Text, Int)\n"
+                       "(\"a\".repeat(%d), 0)\nend\n",
+                       MO_LIMIT_SAVED_BYTES) > 0);
+    MO_ASSERT(snprintf(sources[1], sizeof sources[1],
+                       "module Main\nservice\nstate Text = \"\"\ntools read\nevery 1.second grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn read(_state: Text, _now: Time) : Bool\ntrue\nend\n"
+                       "fn grow(_state: Text, _now: Time) : Text\n\"a\".repeat(%d)\nend\n",
+                       MO_LIMIT_SAVED_BYTES) > 0);
+    MO_ASSERT(snprintf(fixed[0], sizeof fixed[0],
+                       "module Main\nservice\nstate Text = \"\"\ntools grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn grow(_state: Text, _now: Time) : (Text, Int)\n(\"a\", 0)\nend\n") > 0);
+    MO_ASSERT(snprintf(fixed[1], sizeof fixed[1],
+                       "module Main\nservice\nstate Text = \"\"\ntools read\nevery 1.second grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn read(_state: Text, _now: Time) : Bool\ntrue\nend\n"
+                       "fn grow(_state: Text, _now: Time) : Text\n\"a\"\nend\n") > 0);
+    MO_ASSERT(snprintf(rejected, sizeof rejected,
+                       "module Main\nservice\nstate Text = \"\"\ntools grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn grow(_state: Text, _now: Time) : Result((Text, Int), Text)\n"
+                       "Error(\"no\")\nend\n") > 0);
+    for (unsigned timer = 0; timer < 2; timer++) {
+        struct mo_image *image = compile(sources[timer]);
+        struct mo_store *store = NULL;
+        CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+        struct observations o = {0};
+        struct mo_service_loop *s = open_service(image, store, &o);
+        if (!timer)
+            CHECK(mo_service_send(s, 0, NULL, 0, 1) == MO_SERVICE_OK);
+        CHECK(mo_service_step(s) && o.failures == 1 && o.status == MO_SERVICE_MEMORY);
+        size_t length = 1;
+        CHECK(mo_value_data(mo_service_state(s), &length) != NULL || length == 0);
+        CHECK(length == 0 && o.sequence == 0);
+        struct retained r;
+        retained_failure(s, &r);
+        CHECK(r.record.class == MO_SIGNATURE_STATE_SIZE && r.record.timer == timer);
+        struct mo_buffer context;
+        struct mo_offline_run run = replay_retained(image, &r, &context);
+        CHECK(run.outcome.status == MO_OUTCOME_STATE_SIZE && run.outcome.state_changed);
+        CHECK(same_slice(run.outcome.signature.limit, "MO_LIMIT_SAVED_BYTES") &&
+              run.outcome.signature.limit_value == MO_LIMIT_SAVED_BYTES);
+        check_reproduced(&r.record, &run, &context);
+        mo_buffer_free(&context);
+        struct mo_image *revised = compile(fixed[timer]);
+        run = replay_retained(revised, &r, &context);
+        CHECK(run.outcome.status == MO_OUTCOME_SUCCEEDED && run.outcome.reply == MO_REPLY_OK);
+        CHECK(run.outcome.state_changed && context.length == 0);
+        mo_buffer_free(&context);
+        mo_image_free(revised);
+        if (!timer) {
+            revised = compile(rejected);
+            run = replay_retained(revised, &r, &context);
+            CHECK(run.outcome.status == MO_OUTCOME_SUCCEEDED &&
+                  run.outcome.reply == MO_REPLY_ERROR && !run.outcome.state_changed);
+            mo_buffer_free(&context);
+            mo_image_free(revised);
+        }
+        retained_free(&r);
+        mo_service_free(s);
+        mo_store_close(store);
+        mo_image_free(image);
+    }
+}
+
 struct capture_check {
     unsigned count;
     uint8_t class;
@@ -3044,6 +3300,9 @@ static void run(void *unused) {
     damaged_diagnostics();
     long_kind();
     runtime_capture();
+    offline_stop();
+    offline_memory();
+    offline_state_size();
     resource_capture();
     runtime_store_faults();
     argument_capture_limits();
