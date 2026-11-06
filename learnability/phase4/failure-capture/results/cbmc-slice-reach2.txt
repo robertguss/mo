@@ -1,1 +1,0 @@
-reached every block of slice (0s)

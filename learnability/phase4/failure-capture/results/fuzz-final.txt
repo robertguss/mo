@@ -342,7 +342,7 @@ INFO: seed corpus: files: 2 min: 246b max: 255b total: 501b rss: 535Mb
 #292816	NEW    cov: 112 ft: 223 corp: 64/5599b lim: 2524 exec/s: 73204 rss: 535Mb L: 42/303 MS: 4 ChangeByte-ChangeByte-ChangeBit-PersAutoDict- DE: "\374\000\000\000\000\000\000\000"-
 #293278	NEW    cov: 113 ft: 224 corp: 65/5633b lim: 2524 exec/s: 73319 rss: 535Mb L: 34/303 MS: 2 ChangeByte-ChangeBinInt-
 #297184	REDUCE cov: 113 ft: 224 corp: 65/5631b lim: 2557 exec/s: 74296 rss: 535Mb L: 40/303 MS: 1 EraseBytes-
-	NEW_FUNC[1/1]: 0x56242b8d6178 in mo_binary_checksum /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/binary.c:32
+	NEW_FUNC[1/1]: 0x56242b8d6178 in mo_binary_checksum src/base/binary.c:32
 #302275	NEW    cov: 117 ft: 228 corp: 66/5665b lim: 2601 exec/s: 75568 rss: 535Mb L: 34/303 MS: 1 CopyPart-
 #319447	NEW    cov: 117 ft: 229 corp: 67/5715b lim: 2766 exec/s: 63889 rss: 535Mb L: 50/303 MS: 2 PersAutoDict-CMP- DE: "\377\377\377\377\377\377\377\377"-"\001\000\000\000\000\000\000\020"-
 #320609	REDUCE cov: 117 ft: 229 corp: 67/5714b lim: 2777 exec/s: 64121 rss: 535Mb L: 96/303 MS: 1 EraseBytes-

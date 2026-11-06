@@ -3,11 +3,11 @@ tests/test_service_store.c:1983: check failed: sqlite3_column_int(stmt, 0) == 2
 make: *** [Makefile:149: build/gcc/debug/tests/test_service_store.test.run] Error 1
 
 retention-red.txt
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:1990:(.text+0xecb0): undefined reference to `mo_store_capture'
-/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:1994:(.text+0xed8f): undefined reference to `mo_store_failures'
-/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:1999:(.text+0xeecd): undefined reference to `mo_store_capture'
-/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:2002:(.text+0xef58): undefined reference to `mo_store_failures'
-/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:2006:(.text+0xf039): undefined reference to `mo_store_capture'
+tests/test_service_store.c:1990:(.text+0xecb0): undefined reference to `mo_store_capture'
+/bin/ld: tests/test_service_store.c:1994:(.text+0xed8f): undefined reference to `mo_store_failures'
+/bin/ld: tests/test_service_store.c:1999:(.text+0xeecd): undefined reference to `mo_store_capture'
+/bin/ld: tests/test_service_store.c:2002:(.text+0xef58): undefined reference to `mo_store_failures'
+/bin/ld: tests/test_service_store.c:2006:(.text+0xf039): undefined reference to `mo_store_capture'
 collect2: error: ld returned 1 exit status
 make: *** [Makefile:553: build/gcc/debug/tests/test_service_store.test] Error 1
 

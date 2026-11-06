@@ -31,17 +31,17 @@ OK
 (2 s)
 
 ==> The mo command: text/JSON goldens, argument matrix and JSON validity (build/gcc/debug/mo)
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: real source check/run/emission, statuses, limits and defects passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: map literal context, order, captures, abilities and duplicate keys passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: real source anchor truth, stops, bounds and nonexecution passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: source constant initialization, generic anchors and refusal boundaries passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: exact filename-byte execution, bytecode and anchor locations passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: source inventory, exact selections and list nonexecution passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: escaped captures, snapshots, stopped spans and codec roundtrips passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: imported aliases, observation owners, stopped spans and unused-import preflight passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: imported generic keys, caller proofs, source observations, stops and ability preflight passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: imported constants, composite retained values and initializer/preflight boundaries passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: CLI goldens, argument matrix and JSON validity passed
+build/gcc/debug/mo: real source check/run/emission, statuses, limits and defects passed
+build/gcc/debug/mo: map literal context, order, captures, abilities and duplicate keys passed
+build/gcc/debug/mo: real source anchor truth, stops, bounds and nonexecution passed
+build/gcc/debug/mo: source constant initialization, generic anchors and refusal boundaries passed
+build/gcc/debug/mo: exact filename-byte execution, bytecode and anchor locations passed
+build/gcc/debug/mo: source inventory, exact selections and list nonexecution passed
+build/gcc/debug/mo: escaped captures, snapshots, stopped spans and codec roundtrips passed
+build/gcc/debug/mo: imported aliases, observation owners, stopped spans and unused-import preflight passed
+build/gcc/debug/mo: imported generic keys, caller proofs, source observations, stops and ability preflight passed
+build/gcc/debug/mo: imported constants, composite retained values and initializer/preflight boundaries passed
+build/gcc/debug/mo: CLI goldens, argument matrix and JSON validity passed
 (151 s)
 
 ==> Authenticated operator views (build/gcc/debug/mo)
@@ -69,17 +69,17 @@ kill loop: seed=1 kills=15 mid_commit=2 folders=1 calls=205 answered=195 refused
 (25 s)
 
 ==> The mo command: text/JSON goldens, argument matrix and JSON validity (build/clang/debug/mo)
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: real source check/run/emission, statuses, limits and defects passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: map literal context, order, captures, abilities and duplicate keys passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: real source anchor truth, stops, bounds and nonexecution passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: source constant initialization, generic anchors and refusal boundaries passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: exact filename-byte execution, bytecode and anchor locations passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: source inventory, exact selections and list nonexecution passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: escaped captures, snapshots, stopped spans and codec roundtrips passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: imported aliases, observation owners, stopped spans and unused-import preflight passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: imported generic keys, caller proofs, source observations, stops and ability preflight passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: imported constants, composite retained values and initializer/preflight boundaries passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: CLI goldens, argument matrix and JSON validity passed
+build/clang/debug/mo: real source check/run/emission, statuses, limits and defects passed
+build/clang/debug/mo: map literal context, order, captures, abilities and duplicate keys passed
+build/clang/debug/mo: real source anchor truth, stops, bounds and nonexecution passed
+build/clang/debug/mo: source constant initialization, generic anchors and refusal boundaries passed
+build/clang/debug/mo: exact filename-byte execution, bytecode and anchor locations passed
+build/clang/debug/mo: source inventory, exact selections and list nonexecution passed
+build/clang/debug/mo: escaped captures, snapshots, stopped spans and codec roundtrips passed
+build/clang/debug/mo: imported aliases, observation owners, stopped spans and unused-import preflight passed
+build/clang/debug/mo: imported generic keys, caller proofs, source observations, stops and ability preflight passed
+build/clang/debug/mo: imported constants, composite retained values and initializer/preflight boundaries passed
+build/clang/debug/mo: CLI goldens, argument matrix and JSON validity passed
 (162 s)
 
 ==> Authenticated operator views (build/clang/debug/mo)
@@ -814,35 +814,35 @@ Task queue: simulation, wire shapes, size limits, paging and recovery after kill
 (220 s)
 
 ==> The mo command: text/JSON goldens, argument matrix and JSON validity (build/clang/sanitize/mo)
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: real source check/run/emission, statuses, limits and defects passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: map literal context, order, captures, abilities and duplicate keys passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: real source anchor truth, stops, bounds and nonexecution passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: source constant initialization, generic anchors and refusal boundaries passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: exact filename-byte execution, bytecode and anchor locations passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: source inventory, exact selections and list nonexecution passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: escaped captures, snapshots, stopped spans and codec roundtrips passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: imported aliases, observation owners, stopped spans and unused-import preflight passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: imported generic keys, caller proofs, source observations, stops and ability preflight passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: imported constants, composite retained values and initializer/preflight boundaries passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: CLI goldens, argument matrix and JSON validity passed
+build/clang/sanitize/mo: real source check/run/emission, statuses, limits and defects passed
+build/clang/sanitize/mo: map literal context, order, captures, abilities and duplicate keys passed
+build/clang/sanitize/mo: real source anchor truth, stops, bounds and nonexecution passed
+build/clang/sanitize/mo: source constant initialization, generic anchors and refusal boundaries passed
+build/clang/sanitize/mo: exact filename-byte execution, bytecode and anchor locations passed
+build/clang/sanitize/mo: source inventory, exact selections and list nonexecution passed
+build/clang/sanitize/mo: escaped captures, snapshots, stopped spans and codec roundtrips passed
+build/clang/sanitize/mo: imported aliases, observation owners, stopped spans and unused-import preflight passed
+build/clang/sanitize/mo: imported generic keys, caller proofs, source observations, stops and ability preflight passed
+build/clang/sanitize/mo: imported constants, composite retained values and initializer/preflight boundaries passed
+build/clang/sanitize/mo: CLI goldens, argument matrix and JSON validity passed
 (367 s)
 
 ==> Every tracked Mo source: formatter idempotence, trees, check and execution (build/gcc/debug/mo)
 format corpus: 1102 accepted inputs checked
 test_format: all checks passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/gcc/debug/mo: 1265 tracked .mo files, 1089 formatted, 176 unchanged refusals, 399 run comparisons, 297 modules without main, 217 golden input comparisons
+build/gcc/debug/mo: 1265 tracked .mo files, 1089 formatted, 176 unchanged refusals, 399 run comparisons, 297 modules without main, 217 golden input comparisons
 (405 s)
 
 ==> Every tracked Mo source: formatter idempotence, trees, check and execution (build/clang/debug/mo)
 format corpus: 1102 accepted inputs checked
 test_format: all checks passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/debug/mo: 1265 tracked .mo files, 1089 formatted, 176 unchanged refusals, 399 run comparisons, 297 modules without main, 217 golden input comparisons
+build/clang/debug/mo: 1265 tracked .mo files, 1089 formatted, 176 unchanged refusals, 399 run comparisons, 297 modules without main, 217 golden input comparisons
 (436 s)
 
 ==> Every tracked Mo source: formatter idempotence, trees, check and execution (build/clang/sanitize/mo)
 format corpus: 1102 accepted inputs checked
 test_format: all checks passed
-/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/clang/sanitize/mo: 1265 tracked .mo files, 1089 formatted, 176 unchanged refusals, 399 run comparisons, 297 modules without main, 217 golden input comparisons
+build/clang/sanitize/mo: 1265 tracked .mo files, 1089 formatted, 176 unchanged refusals, 399 run comparisons, 297 modules without main, 217 golden input comparisons
 (1387 s)
 
 ==> mo check stays under 0.1 s on each sample (build/gcc/debug/mo)

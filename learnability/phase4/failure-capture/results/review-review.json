@@ -481,6 +481,6 @@
     "outcome": "in-process-fallback",
     "coverage": "Cross-provider review was not run: caller explicitly required local-only review; an independent local adversarial reviewer covered that lens."
   },
-  "artifact_path": "/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/failure-capture/review",
+  "artifact_path": "build/failure-capture/review",
   "run_id": "u4-review"
 }
