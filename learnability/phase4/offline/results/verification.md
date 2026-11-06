@@ -35,3 +35,24 @@ Two facts found here bear on later work. A failed size check is a `state_size` o
 separate flag, so the model's `sizeOk` is "the status is not `state_size`". The VM names two
 native limits, `native memory` (`src/vm/process.c`, `src/vm/execute.c`) and `native allocation`
 (capture, when no limit is named); exact matching keeps them apart.
+
+## Query entry check
+
+Tests: `query_entries` in `tests/test_check.c` and `test_source_query` in `tests/test_lower.c`,
+on a two-module program. Accepted: a bare name, `Main.name`, an overloaded `Store.tick` resolving
+to its `State` overload, an unexposed `Store.peek`, and failure queries for a tool and a timer.
+Command mistakes: an unknown module, an unknown function, a type name, and an imported rather than
+declared bare name. Refused with a code: two generic entries (one whose first parameter is a type
+parameter, which would otherwise hit the purity walk's assertion), a capability inside a parameter
+record, a function-typed parameter, functions inside a list result, a same-shape state type,
+extra parameters on a state query, swapped, missing and extra failure-query inputs, and a program
+with no service. The new codes are E1410 to E1413; until `mo query` exists they are pinned by
+`tests/errors/unit.tsv` against these unit tests.
+
+- Red: a stub that always refused failed 36 `test_check` checks; a stub lowering output returning
+  nothing failed 2 `test_lower` checks.
+- Mutants, each reverted, each failing the tests: ignoring argument order, taking the first
+  overload, using the service wording, checking generics after purity (aborts on the assertion),
+  and letting a state query take extra parameters.
+- Green: `make test` under gcc and clang, `python3 ci/check_errors.py`, `make deps`, `make tidy`
+  and `make format-check`.
