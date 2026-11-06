@@ -451,7 +451,11 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
         ok = fd >= 0 && fchmod(fd, 0600) == 0;
     }
     bool created = fd >= 0;
-    (void)fputs("mo fetch: maximum state needs 2049 pages, about 103 seconds at 20 calls/second\n",
+    (void)fputs(cli->fetch_failure != 0
+                    ? "mo fetch: maximum failure pair needs 2176 pages, about 109 seconds at 20 "
+                      "calls/second\n"
+                    : "mo fetch: maximum state needs 2049 pages, about 103 seconds at 20 "
+                      "calls/second\n",
                 errors);
     struct mo_export_consumer consumer = {0};
     enum mo_fetch_read_status status = MO_FETCH_REFUSED;
