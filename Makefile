@@ -623,6 +623,18 @@ $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_S
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)
 
+# fuzz_history checks the reader's history bound, which small inputs pass only when it is short.
+HISTORY_FUZZ_LIMITS := -DMO_LIMIT_HISTORY_BYTES=4096
+$(FUZZ_BUILD)/history/store.o: src/host/store.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(HISTORY_FUZZ_LIMITS) -c $< -o $@
+$(FUZZ_BUILD)/fuzz/fuzz_history.o: fuzz/fuzz_history.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(HISTORY_FUZZ_LIMITS) -c $< -o $@
+$(FUZZ_BUILD)/bin/fuzz_history: $(FUZZ_BUILD)/fuzz/fuzz_history.o $(call objects,$(FUZZ_BUILD),$(filter-out src/host/store.c,$(LIB_SOURCES))) $(FUZZ_BUILD)/history/store.o
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)
+
 $(FUZZ_BUILD)/bin/fuzz_grammar: $(FUZZ_BUILD)/fuzz/fuzz_grammar.o $(call grammar_objects,$(FUZZ_BUILD))
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@
