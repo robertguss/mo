@@ -116,3 +116,51 @@ each change it.
   proved, since a minimal kind-2 artifact exceeds the bound; fuzzing and unit tests cover them.
 - Green: `make test` under gcc and clang, sanitize builds of the four affected tests, `make deps`,
   `make format-check`, `make tidy`, `ci/check_fuzz_seeds.py`.
+
+## Store lock wait and exit 75
+
+Tests: `tests/test_service_store.c`, built with a 1-second wait. A store held for 0.3 s by a
+second serve or a reader opens after the wait and recovers state 18. A store held past the wait
+gives the busy status three times in a row with the file's bytes unchanged, and the next open after
+release recovers. The open without the wait refuses at once, and an empty or garbage store fails at
+once. The CLI driver's second `mo serve` on a live folder now exits 75 after the real wait
+(9.5 to 25 s observed) with the line naming a second serve or a reader, store bytes unchanged.
+
+- Red: mutants with no busy timeout and with busy mapped to IO each fail these tests.
+- Green: `make test` under gcc and clang; `python3 ci/check_cli.py build/gcc/debug/mo` (guide claims
+  for the E1409 line and the new exit 75 line included); `make deps`, `make format-check`,
+  `make tidy`.
+
+## Log record layout and the read-only reader
+
+Characterization first: on the layout moved to base, before any reader code, `test_recovery` and
+`test_service_store` passed; `ci/check_kill_loop.py` passed short and with `--seed 7 --kills 60`
+(6 kills mid-commit); a binary built before the move and one built after each recovered the
+other's data folder. `tests/test_log_record.c` pins hand-written layout bytes, the walk's refusals
+and writer-then-walk round trips; five walk mutants are caught. `fuzz_log_record` ran 1.06 and
+0.85 million inputs with no failure.
+
+Reader tests (they failed to link before the reader existed):
+
+- a stopped folder's snapshot, tail entries and failures equal what the service wrote;
+- a folder another process holds is owned, and refusal is immediate;
+- a writer killed after its pages reached the database leaves a hot journal: recovery required,
+  and with recovery the journal rolls back and the store reopens on the earlier state;
+- a service killed while idle leaves a `-journal` file that is not hot and reads normally;
+- a store without failure tables reads as no records and gains no table;
+- an unreadable file, an unenterable folder (real `chmod`) and injected `CANTOPEN` and `PERM` are
+  unreadable; a missing file is no saved data and none is created; a garbage file is damaged;
+- a damaged log row is refused naming its sequence;
+- a shortened 64 KiB history bound reports what was read and left;
+- a reader killed mid-copy leaves no lock;
+- without recovery, the database file's bytes never change.
+
+Eleven reader mutants are caught, among them always opening read-write, skipping the checksum,
+ignoring the bound, ignoring recovery, and not classifying busy or rollback codes. Kill loop with
+`--seed 11 --kills 40` passes.
+
+Prediction that did not hold as written: "a real process killed mid-transaction is recovery
+required" holds only once database pages were written. In exclusive locking mode a write killed
+before any page reaches the database leaves a zeroed journal header, which SQLite correctly treats
+as not hot, since the database is intact. The test kills a writer whose 1 MiB append overflows the
+page cache.
