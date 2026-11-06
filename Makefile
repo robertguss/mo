@@ -531,9 +531,9 @@ $(BUILD)/debug/tests/test_service_runtime.test: $(BUILD)/debug/tests/test_servic
 $(BUILD)/sanitize/tests/test_service_runtime.test: $(BUILD)/sanitize/tests/test_service_runtime.o $(call objects,$(BUILD)/sanitize,$(filter-out $(SERVICE_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/service-faults/%.o,$(SERVICE_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-# The store test shortens mo serve's store wait, and compiles the test with the same value
-# so it can check it.
-STORE_TEST_LIMITS := -DMO_LIMIT_SERVE_STORE_WAIT_US=UINT64_C\(1000000\)
+# The store test shortens mo serve's store wait and the folder reader's retained bytes, and
+# compiles the test with the same values so it can check them.
+STORE_TEST_LIMITS := -DMO_LIMIT_SERVE_STORE_WAIT_US=UINT64_C\(1000000\) -DMO_LIMIT_HISTORY_BYTES=65536
 $(BUILD)/debug/tests/test_service_store.o: tests/test_service_store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(STORE_TEST_LIMITS) -c $< -o $@

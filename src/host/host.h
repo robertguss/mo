@@ -193,6 +193,80 @@ MO_MUST_USE bool mo_store_failure_export(struct mo_store *store, uint64_t id,
 MO_MUST_USE enum mo_store_status mo_store_failure_stats(struct mo_store *store, uint32_t *count,
                                                         uint64_t *evicted);
 
+/* Reading a stopped service's store without starting the service. The file is opened
+ * read-only and never created, no lock is waited for, and everything is copied in one read
+ * transaction whose lock ends before the call returns. The status is classified by SQLite's
+ * result code, never by which files lie beside the database. With recover, a store whose
+ * journal needs a rollback is opened read-write, still never created, so SQLite rolls it
+ * back: that writes database pages, though no record changes. */
+enum mo_store_folder {
+    MO_STORE_FOLDER_OK,
+    MO_STORE_FOLDER_MISSING,    /* no file, so no saved data */
+    MO_STORE_FOLDER_OWNED,      /* another process, such as a running service, holds it */
+    MO_STORE_FOLDER_RECOVERY,   /* an unfinished write left a journal to roll back */
+    MO_STORE_FOLDER_UNREADABLE, /* the user may not read it */
+    MO_STORE_FOLDER_DAMAGED,    /* not a service store, or a record failed its check */
+    MO_STORE_FOLDER_IO,
+    MO_STORE_FOLDER_MEMORY,
+    MO_STORE_FOLDER_HANDLES
+};
+/* A log record's metadata: argument_bytes has argument_count lengths. The handler is an
+ * index; the log does not record its name. */
+struct mo_store_history_entry {
+    uint64_t sequence;
+    int64_t arrival;
+    uint32_t handler, argument_count;
+    bool timer;
+    const uint32_t *argument_bytes;
+};
+/* A failure record without its state: the message's frame fields and copied payload. */
+struct mo_store_history_failure {
+    uint64_t id;
+    const char *kind;
+    bool first;
+    size_t state_bytes;
+    struct mo_store_record message;
+};
+/* What was copied is bounded by MO_LIMIT_HISTORY_BYTES, in this order: the snapshot, the log
+ * entries, the failures. Past the bound nothing more is copied, and left_bytes counts what
+ * was not; every log row is still checked. A snapshot that was not copied has NULL bytes. */
+struct mo_store_history {
+    struct mo_arena arena;
+    bool recovered;      /* opened read-write and rolled a journal back */
+    bool failure_tables; /* false for a store from before failure capture */
+    bool has_snapshot;   /* false only for a store a first start never finished */
+    struct mo_store_record snapshot;
+    uint64_t head;             /* the last committed sequence */
+    uint64_t damaged_sequence; /* the log row that failed its check, or 0 */
+    const struct mo_store_history_entry *entries;
+    uint32_t entry_count, log_count;
+    const struct mo_store_history_failure *failures;
+    uint32_t failure_count, failure_total;
+    uint64_t retained_bytes, left_bytes;
+};
+/* Only OK leaves out to free; on another status out holds only recovered and
+ * damaged_sequence. */
+MO_MUST_USE enum mo_store_folder mo_store_history_read(const char *path, bool recover,
+                                                       struct mo_store_history *out);
+void mo_store_history_free(struct mo_store_history *history);
+
+/* One failure record's state and message for replay, both checked and copied. When the
+ * folder holds no record with that id, found is false and retained lists the ids it holds:
+ * ids are never reused within a folder, so a gap is a replaced or evicted record. */
+struct mo_store_history_pair {
+    struct mo_arena arena;
+    bool recovered, failure_tables, found;
+    uint64_t id;
+    const char *kind;
+    bool first;
+    struct mo_store_record state, message;
+    uint64_t retained[MO_LIMIT_FAILURE_RECORDS];
+    uint32_t retained_count;
+};
+MO_MUST_USE enum mo_store_folder mo_store_history_pair(const char *path, bool recover, uint64_t id,
+                                                       struct mo_store_history_pair *out);
+void mo_store_history_pair_free(struct mo_store_history_pair *pair);
+
 struct mo_bearer {
     uint8_t bytes[MO_LIMIT_MCP_TOKEN_BYTES];
     size_t length;

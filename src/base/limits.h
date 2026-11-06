@@ -363,6 +363,11 @@ struct mo_limits {
 #ifndef MO_LIMIT_SERVE_STORE_WAIT_US
 #define MO_LIMIT_SERVE_STORE_WAIT_US UINT64_C(10000000)
 #endif
+/* What a reader of a stopped data folder retains in total: the snapshot, the log
+ * tail's metadata and the failure records. A test build shortens it. */
+#ifndef MO_LIMIT_HISTORY_BYTES
+#define MO_LIMIT_HISTORY_BYTES (64 << 20)
+#endif
 
 static inline struct mo_limits mo_limits_default(void) {
     return (struct mo_limits){

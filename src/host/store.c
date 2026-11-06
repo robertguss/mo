@@ -1,5 +1,6 @@
 #include "host/host.h"
 
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <sqlite3.h>
@@ -8,6 +9,7 @@
 
 #include "base/binary.h"
 #include "base/failure.h"
+#include "base/log-record.h"
 #include "base/store-memory.h"
 #include "base/utf8.h"
 
@@ -91,21 +93,56 @@ static bool exec(struct mo_store *s, const char *sql) {
     return sqlite3_exec(s->db, sql, NULL, NULL, NULL) == SQLITE_OK;
 }
 
-static bool table(struct mo_store *s, const char *name, const char *sql) {
+struct store_table {
+    const char *name, *sql;
+};
+static const struct store_table tables[] = {
+    {"head", "CREATE TABLE head(id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL)"
+             " STRICT"},
+    {"snapshot", "CREATE TABLE snapshot(id INTEGER PRIMARY KEY CHECK(id=1), record BLOB NOT NULL)"
+                 " STRICT"},
+    {"log", "CREATE TABLE log(seq INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT"},
+    {"failure", "CREATE TABLE failure(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, first INTEGER "
+                "NOT NULL, message BLOB NOT NULL) STRICT"},
+    {"failure_state",
+     "CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT"},
+};
+/* The tables from here on came with failure capture; an older store lacks them. */
+enum { FAILURE_TABLES = 3, TABLE_COUNT = sizeof tables / sizeof tables[0] };
+
+enum table_state { TABLE_FAILED, TABLE_ABSENT, TABLE_SAME, TABLE_DIFFERENT };
+
+/* Whether the table exists as the runtime creates it. FAILED leaves SQLite's code in code. */
+static enum table_state table_state(struct mo_store *s, const struct store_table *t, int *code) {
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db, "SELECT sql FROM sqlite_schema WHERE name=?1", -1, &stmt, NULL) !=
-        SQLITE_OK)
-        return false;
-    bool ok = sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC) == SQLITE_OK;
-    int step = ok ? sqlite3_step(stmt) : SQLITE_ERROR;
+    *code =
+        sqlite3_prepare_v2(s->db, "SELECT sql FROM sqlite_schema WHERE name=?1", -1, &stmt, NULL);
+    if (*code != SQLITE_OK)
+        return TABLE_FAILED;
+    *code = sqlite3_bind_text(stmt, 1, t->name, -1, SQLITE_STATIC);
+    int step = *code == SQLITE_OK ? sqlite3_step(stmt) : *code;
+    enum table_state state = TABLE_FAILED;
     if (step == SQLITE_ROW) {
         const unsigned char *stored = sqlite3_column_text(stmt, 0);
-        ok = stored != NULL && strcmp((const char *)stored, sql) == 0 &&
-             sqlite3_step(stmt) == SQLITE_DONE;
-    } else
-        ok = step == SQLITE_DONE;
-    ok = sqlite3_finalize(stmt) == SQLITE_OK && ok;
-    return ok && (step != SQLITE_DONE || exec(s, sql));
+        bool same = stored != NULL && strcmp((const char *)stored, t->sql) == 0;
+        step = same ? sqlite3_step(stmt) : SQLITE_DONE;
+        state = step != SQLITE_DONE ? TABLE_FAILED : same ? TABLE_SAME : TABLE_DIFFERENT;
+    } else if (step == SQLITE_DONE)
+        state = TABLE_ABSENT;
+    int finalized = sqlite3_finalize(stmt);
+    if (state == TABLE_FAILED)
+        *code = step;
+    else if (finalized != SQLITE_OK) {
+        state = TABLE_FAILED;
+        *code = finalized;
+    }
+    return state;
+}
+
+static bool table(struct mo_store *s, const struct store_table *t) {
+    int code;
+    enum table_state state = table_state(s, t, &code);
+    return state == TABLE_SAME || (state == TABLE_ABSENT && exec(s, t->sql));
 }
 
 _Static_assert(MO_LIMIT_SERVE_STORE_WAIT_US / 1000 <= INT_MAX, "the wait fits SQLite's timeout");
@@ -148,20 +185,8 @@ static enum mo_store_status open_store(const char *path, bool wait, struct mo_st
         !exec(s, "PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE;"
                  "PRAGMA synchronous=EXTRA; PRAGMA temp_store=MEMORY;" CACHE_PRAGMA
                  "PRAGMA locking_mode=EXCLUSIVE;BEGIN EXCLUSIVE") ||
-        !table(s, "head",
-               "CREATE TABLE head(id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL)"
-               " STRICT") ||
-        !table(s, "snapshot",
-               "CREATE TABLE snapshot(id INTEGER PRIMARY KEY CHECK(id=1), record BLOB NOT NULL)"
-               " STRICT") ||
-        !table(s, "log",
-               "CREATE TABLE log(seq INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT") ||
-        !table(s, "failure",
-               "CREATE TABLE failure(id INTEGER PRIMARY KEY, kind TEXT NOT NULL, first INTEGER "
-               "NOT NULL, message BLOB NOT NULL) STRICT") ||
-        !table(s, "failure_state",
-               "CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT") ||
-        !exec(s, "COMMIT")) {
+        !table(s, &tables[0]) || !table(s, &tables[1]) || !table(s, &tables[2]) ||
+        !table(s, &tables[3]) || !table(s, &tables[4]) || !exec(s, "COMMIT")) {
         bool busy = (sqlite3_errcode(s->db) & 0xff) == SQLITE_BUSY;
         (void)exec(s, "ROLLBACK");
         mo_store_close(s);
@@ -273,8 +298,16 @@ static enum mo_store_status current_head(struct mo_store *s, uint64_t *head, boo
     return finish(stmt, result);
 }
 
-static enum mo_store_status
-load(struct mo_store *s, bool (*consume)(const struct mo_store_record *, void *), void *context) {
+/* The head and the snapshot, checked against the version and each other. */
+struct saved_head {
+    uint64_t head, sequence, image;
+    bool empty;
+};
+
+/* An empty store has no snapshot, so no callback. A refusing callback is CORRUPT. */
+static enum mo_store_status load_snapshot(struct mo_store *s, struct saved_head *h,
+                                          bool (*consume)(const struct mo_store_record *, void *),
+                                          void *context) {
     sqlite3_stmt *stmt = NULL;
     int code = sqlite3_prepare_v2(s->db, "PRAGMA user_version", -1, &stmt, NULL);
     if (code != SQLITE_OK)
@@ -286,9 +319,8 @@ load(struct mo_store *s, bool (*consume)(const struct mo_store_record *, void *)
         return result;
     if (version < 0 || version > 1)
         return MO_STORE_CORRUPT;
-    uint64_t head = 0, sequence = 0, image = 0;
-    bool empty = false;
-    result = current_head(s, &head, &empty);
+    *h = (struct saved_head){0};
+    result = current_head(s, &h->head, &h->empty);
     if (result != MO_STORE_OK)
         return result;
     code = sqlite3_prepare_v2(s->db, "SELECT record FROM snapshot WHERE id=1", -1, &stmt, NULL);
@@ -298,30 +330,46 @@ load(struct mo_store *s, bool (*consume)(const struct mo_store_record *, void *)
     struct mo_store_record record;
     if (step != SQLITE_ROW && step != SQLITE_DONE)
         result = failure(step);
-    else if (empty || step == SQLITE_DONE)
-        result = empty && step == SQLITE_DONE && version == 0 ? MO_STORE_OK : MO_STORE_CORRUPT;
+    else if (h->empty || step == SQLITE_DONE)
+        result = h->empty && step == SQLITE_DONE && version == 0 ? MO_STORE_OK : MO_STORE_CORRUPT;
     else if (version != 1)
         result = MO_STORE_CORRUPT;
     else if ((result = row(stmt, 0, MO_STORE_STATE, &record)) == MO_STORE_OK) {
-        sequence = record.sequence;
-        image = record.image;
-        if (sequence > head || head - sequence > MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES ||
+        h->sequence = record.sequence;
+        h->image = record.image;
+        if (h->sequence > h->head || h->head - h->sequence > MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES ||
             !consume(&record, context))
             result = MO_STORE_CORRUPT;
     }
-    result = finish(stmt, result);
+    return finish(stmt, result);
+}
+
+/* The log row in stmt's first column is the one after sequence, within the head. */
+static bool next_log_row(const struct saved_head *h, sqlite3_stmt *stmt, uint64_t sequence) {
+    bool integer = sqlite3_column_type(stmt, 0) == SQLITE_INTEGER;
+    sqlite3_int64 n = sqlite3_column_int64(stmt, 0);
+    return !h->empty && sequence < h->head && integer && n > 0 && (uint64_t)n == sequence + 1;
+}
+
+static enum mo_store_status
+load(struct mo_store *s, bool (*consume)(const struct mo_store_record *, void *), void *context) {
+    struct saved_head h;
+    enum mo_store_status result = load_snapshot(s, &h, consume, context);
     if (result != MO_STORE_OK)
         return result;
-    code = sqlite3_prepare_v2(s->db, "SELECT seq,record FROM log ORDER BY seq", -1, &stmt, NULL);
+    uint64_t sequence = h.sequence;
+    sqlite3_stmt *stmt = NULL;
+    int code =
+        sqlite3_prepare_v2(s->db, "SELECT seq,record FROM log ORDER BY seq", -1, &stmt, NULL);
     if (code != SQLITE_OK)
         return failure(code);
+    int step;
+    struct mo_store_record record;
     while (result == MO_STORE_OK && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
-        bool integer = sqlite3_column_type(stmt, 0) == SQLITE_INTEGER;
-        sqlite3_int64 n = sqlite3_column_int64(stmt, 0);
-        if (empty || sequence >= head || !integer || n <= 0 || (uint64_t)n != sequence + 1)
+        if (!next_log_row(&h, stmt, sequence))
             result = MO_STORE_CORRUPT;
         else if ((result = row(stmt, 1, MO_STORE_LOG, &record)) == MO_STORE_OK &&
-                 (record.sequence != (uint64_t)n || record.image != image ||
+                 (record.sequence != sequence + 1 || record.image != h.image ||
                   !consume(&record, context)))
             result = MO_STORE_CORRUPT;
         else
@@ -330,7 +378,7 @@ load(struct mo_store *s, bool (*consume)(const struct mo_store_record *, void *)
     if (result == MO_STORE_OK && step != SQLITE_DONE)
         result = failure(step);
     result = finish(stmt, result);
-    return result == MO_STORE_OK && sequence != head ? MO_STORE_CORRUPT : result;
+    return result == MO_STORE_OK && sequence != h.head ? MO_STORE_CORRUPT : result;
 }
 
 static int write_blob_code(struct mo_store *s, const char *sql, uint64_t seq,
@@ -852,4 +900,459 @@ enum mo_store_status mo_store_failure_stats(struct mo_store *s, uint32_t *count,
         *evicted = s->evicted_kinds;
     }
     return result;
+}
+
+/* Reading a stopped folder. Every lock the reader takes is SQLite's shared lock for one read
+ * transaction, so a process killed mid-read leaves none behind. */
+
+static enum mo_store_folder folder_code(int code) {
+    if (code == SQLITE_READONLY_ROLLBACK)
+        return MO_STORE_FOLDER_RECOVERY;
+    code &= 0xff;
+    if (code == SQLITE_BUSY)
+        return MO_STORE_FOLDER_OWNED;
+    if (code == SQLITE_CANTOPEN || code == SQLITE_PERM)
+        return MO_STORE_FOLDER_UNREADABLE;
+    if (code == SQLITE_CORRUPT || code == SQLITE_NOTADB)
+        return MO_STORE_FOLDER_DAMAGED;
+    return code == SQLITE_NOMEM ? MO_STORE_FOLDER_MEMORY : MO_STORE_FOLDER_IO;
+}
+
+/* Once the read lock is held, only a stored value or a resource can fail. */
+static enum mo_store_folder folder_status(enum mo_store_status status) {
+    if (status == MO_STORE_OK)
+        return MO_STORE_FOLDER_OK;
+    if (status == MO_STORE_CORRUPT)
+        return MO_STORE_FOLDER_DAMAGED;
+    return status == MO_STORE_MEMORY ? MO_STORE_FOLDER_MEMORY : MO_STORE_FOLDER_IO;
+}
+
+/* No CREATE, no journal or locking pragmas and no busy timeout. */
+static enum mo_store_folder reader_open(const char *path, bool write, struct mo_store **out) {
+    if (pthread_once(&once, initialize) != 0 || initialized != SQLITE_OK)
+        return MO_STORE_FOLDER_IO;
+    if (!claim_store())
+        return MO_STORE_FOLDER_HANDLES;
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_SERVICE_METADATA);
+    struct mo_store *s = mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_store));
+    if (s == NULL) {
+        release_store();
+        return MO_STORE_FOLDER_MEMORY;
+    }
+    *s = (struct mo_store){.arena = arena};
+    int flags = (write ? SQLITE_OPEN_READWRITE : SQLITE_OPEN_READONLY) | SQLITE_OPEN_FULLMUTEX;
+    int code = sqlite3_open_v2(path, &s->db, flags, NULL);
+    if (code == SQLITE_OK)
+        code = sqlite3_extended_result_codes(s->db, 1);
+    if (code != SQLITE_OK) {
+        mo_store_close(s);
+        return folder_code(code);
+    }
+    (void)sqlite3_limit(s->db, SQLITE_LIMIT_LENGTH, MO_LIMIT_STORE_ROW);
+    (void)sqlite3_limit(s->db, SQLITE_LIMIT_SQL_LENGTH, MO_LIMIT_STORE_SQL);
+    if (sqlite3_db_config(s->db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL) != SQLITE_OK ||
+        sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_TRIGGER, 0, NULL) != SQLITE_OK ||
+        sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_VIEW, 0, NULL) != SQLITE_OK) {
+        mo_store_close(s);
+        return MO_STORE_FOLDER_IO;
+    }
+    /* Setting the cache size reads the file, so it can be the first read. */
+    code = sqlite3_exec(s->db, "PRAGMA trusted_schema=OFF;" CACHE_PRAGMA "BEGIN", NULL, NULL, NULL);
+    if (code != SQLITE_OK) {
+        mo_store_close(s);
+        return folder_code(code);
+    }
+    *out = s;
+    return MO_STORE_FOLDER_OK;
+}
+
+/* The first read takes the lock, so its code is the one that classifies the folder. The
+ * check never creates a table. */
+static enum mo_store_folder reader_tables(struct mo_store *s, bool *failure_tables) {
+    enum table_state states[TABLE_COUNT];
+    for (unsigned i = 0; i < TABLE_COUNT; i++) {
+        int code = SQLITE_OK;
+        states[i] = table_state(s, &tables[i], &code);
+        if (states[i] == TABLE_FAILED)
+            return folder_code(code);
+        if (i < FAILURE_TABLES && states[i] != TABLE_SAME)
+            return MO_STORE_FOLDER_DAMAGED;
+    }
+    for (unsigned i = FAILURE_TABLES; i < TABLE_COUNT; i++)
+        if (states[i] != states[FAILURE_TABLES] ||
+            (states[i] != TABLE_SAME && states[i] != TABLE_ABSENT))
+            return MO_STORE_FOLDER_DAMAGED;
+    *failure_tables = states[FAILURE_TABLES] == TABLE_SAME;
+    return MO_STORE_FOLDER_OK;
+}
+
+typedef enum mo_store_folder (*folder_body)(struct mo_store *s, bool failure_tables, void *context);
+
+static enum mo_store_folder read_once(const char *path, bool write, folder_body body, void *context,
+                                      bool *began) {
+    struct mo_store *s = NULL;
+    bool failure_tables = false;
+    enum mo_store_folder status = reader_open(path, write, &s);
+    if (status == MO_STORE_FOLDER_OK)
+        status = reader_tables(s, &failure_tables);
+    *began = status == MO_STORE_FOLDER_OK;
+    if (status == MO_STORE_FOLDER_OK)
+        status = body(s, failure_tables, context);
+    if (s != NULL) {
+        bool ended = exec(s, status == MO_STORE_FOLDER_OK ? "COMMIT" : "ROLLBACK");
+        if (status == MO_STORE_FOLDER_OK && !ended)
+            status = MO_STORE_FOLDER_IO;
+        mo_store_close(s);
+    }
+    return status;
+}
+
+static enum mo_store_folder read_folder(const char *path, bool recover, bool *recovered,
+                                        folder_body body, void *context) {
+    MO_ASSERT(path != NULL);
+    *recovered = false;
+    struct stat info;
+    if (stat(path, &info) != 0)
+        return errno == ENOENT ? MO_STORE_FOLDER_MISSING : MO_STORE_FOLDER_UNREADABLE;
+    bool began = false;
+    enum mo_store_folder status = read_once(path, false, body, context, &began);
+    if (status == MO_STORE_FOLDER_RECOVERY && recover) {
+        MO_ASSERT(!began);
+        status = read_once(path, true, body, context, &began);
+        *recovered = began;
+    }
+    return status;
+}
+
+/* Log rows are checked in pieces of this size, so a whole row is never held. */
+enum { HISTORY_CHUNK_BYTES = 64 << 10 };
+/* What the copy may take beyond its retained bytes: its tables, its checking buffer, and the
+ * chunks the arena leaves partly used. */
+#define HISTORY_ARENA_BYTES ((size_t)2 * MO_LIMIT_HISTORY_BYTES + (size_t)(4 << 20))
+
+struct history_copy {
+    struct mo_store_history *out;
+    struct mo_store_history_entry *entries;
+    struct mo_store_history_failure *failures;
+    uint8_t *chunk;
+    uint64_t last_id;
+    uint32_t page;
+    bool full, memory;
+};
+
+/* Bytes are copied in order until the first that would pass the bound; after that every
+ * byte is left. */
+static bool retain(struct history_copy *c, uint64_t bytes) {
+    struct mo_store_history *h = c->out;
+    if (!c->full && bytes <= MO_LIMIT_HISTORY_BYTES - h->retained_bytes) {
+        h->retained_bytes += bytes;
+        return true;
+    }
+    c->full = true;
+    h->left_bytes += bytes;
+    return false;
+}
+
+static const uint8_t *copy_bytes(struct mo_arena *arena, const uint8_t *bytes, size_t length) {
+    uint8_t *copy = mo_arena_allocate(arena, length, 1);
+    if (copy != NULL && length != 0)
+        memcpy(copy, bytes, length);
+    return copy;
+}
+
+static bool copy_snapshot(const struct mo_store_record *r, void *context) {
+    struct history_copy *c = context;
+    struct mo_store_history *h = c->out;
+    h->has_snapshot = true;
+    h->snapshot = *r;
+    h->snapshot.bytes = NULL;
+    if (retain(c, r->length)) {
+        h->snapshot.bytes = copy_bytes(&h->arena, r->bytes, r->length);
+        c->memory = h->snapshot.bytes == NULL;
+    }
+    return !c->memory;
+}
+
+static uint64_t checksum_more(uint64_t sum, const uint8_t *bytes, size_t length) {
+    for (size_t i = 0; i < length; i++)
+        sum = (sum ^ bytes[i]) * MO_FNV_PRIME;
+    return sum;
+}
+
+struct log_blob {
+    sqlite3_blob *blob;
+    int code;
+};
+static bool read_log_payload(void *context, size_t offset, uint8_t *out, size_t count) {
+    struct log_blob *b = context;
+    MO_ASSERT(offset <= MO_LIMIT_SAVED_BYTES && count <= MO_LIMIT_SAVED_BYTES);
+    b->code = sqlite3_blob_read(b->blob, out, (int)count, (int)(FRAME_HEADER_BYTES + offset));
+    return b->code == SQLITE_OK;
+}
+
+/* One log row of length bytes: its frame, then its checksum over every byte, read in fixed
+ * pieces, then its payload's metadata. */
+static enum mo_store_status stream_log(struct mo_store *s, uint64_t sequence, size_t length,
+                                       uint64_t image, uint8_t *chunk,
+                                       struct mo_log_record_metadata *out) {
+    MO_ASSERT(length >= MO_STORE_FRAME_BYTES && length <= MO_LIMIT_STORE_ROW);
+    sqlite3_blob *blob = NULL;
+    int code = sqlite3_blob_open(s->db, "main", "log", "record", (sqlite3_int64)sequence, 0, &blob);
+    if (code != SQLITE_OK) {
+        MO_ASSERT(sqlite3_blob_close(blob) == SQLITE_OK);
+        return failure(code);
+    }
+    enum mo_store_status result = MO_STORE_OK;
+    uint8_t header[FRAME_HEADER_BYTES], tail[FRAME_CHECKSUM_BYTES];
+    uint64_t seq = 0, frame_image = 0, payload = 0, expected = 0;
+    struct mo_binary in = {header, sizeof header, 6};
+    if (sqlite3_blob_bytes(blob) < 0 || (size_t)sqlite3_blob_bytes(blob) != length)
+        result = MO_STORE_CORRUPT;
+    else if ((code = sqlite3_blob_read(blob, header, sizeof header, 0)) != SQLITE_OK)
+        result = failure(code);
+    else if (memcmp(header, "MOST\1", 5) != 0 || header[5] != MO_STORE_LOG ||
+             !mo_binary_uint(&in, 8, &seq) || !mo_binary_uint(&in, 8, &frame_image) ||
+             !mo_binary_uint(&in, 4, &payload) || seq != sequence || frame_image != image ||
+             payload != length - MO_STORE_FRAME_BYTES)
+        result = MO_STORE_CORRUPT;
+    uint64_t sum = checksum_more(MO_FNV_OFFSET, header, sizeof header);
+    size_t end = length - FRAME_CHECKSUM_BYTES;
+    for (size_t at = sizeof header; result == MO_STORE_OK && at < end;) {
+        size_t n = end - at < HISTORY_CHUNK_BYTES ? end - at : HISTORY_CHUNK_BYTES;
+        code = sqlite3_blob_read(blob, chunk, (int)n, (int)at);
+        if (code != SQLITE_OK)
+            result = failure(code);
+        sum = checksum_more(sum, chunk, n);
+        at += n;
+    }
+    struct mo_binary checksum = {tail, sizeof tail, 0};
+    if (result == MO_STORE_OK &&
+        (code = sqlite3_blob_read(blob, tail, sizeof tail, (int)end)) != SQLITE_OK)
+        result = failure(code);
+    else if (result == MO_STORE_OK &&
+             (!mo_binary_uint(&checksum, FRAME_CHECKSUM_BYTES, &expected) || expected != sum))
+        result = MO_STORE_CORRUPT;
+    struct log_blob reader = {blob, SQLITE_OK};
+    if (result == MO_STORE_OK &&
+        !mo_log_record_walk((size_t)payload, read_log_payload, &reader, out))
+        result = reader.code != SQLITE_OK ? failure(reader.code) : MO_STORE_CORRUPT;
+    code = sqlite3_blob_close(blob);
+    return result == MO_STORE_OK && code != SQLITE_OK ? failure(code) : result;
+}
+
+static enum mo_store_status copy_log(struct mo_store *s, const struct saved_head *head,
+                                     struct history_copy *c) {
+    struct mo_store_history *h = c->out;
+    sqlite3_stmt *stmt = NULL;
+    int code = sqlite3_prepare_v2(s->db,
+                                  "SELECT seq,length(record),typeof(record)='blob' FROM log "
+                                  "ORDER BY seq",
+                                  -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return failure(code);
+    enum mo_store_status result = MO_STORE_OK;
+    uint64_t sequence = head->sequence;
+    int step;
+    while (result == MO_STORE_OK && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        sqlite3_int64 length = sqlite3_column_int64(stmt, 1);
+        if (!next_log_row(head, stmt, sequence) || sqlite3_column_int(stmt, 2) != 1 ||
+            length < MO_STORE_FRAME_BYTES || length > MO_LIMIT_SAVED_BYTES + MO_STORE_FRAME_BYTES) {
+            sqlite3_int64 n = sqlite3_column_int64(stmt, 0);
+            h->damaged_sequence = n > 0 ? (uint64_t)n : 0;
+            result = MO_STORE_CORRUPT;
+            break;
+        }
+        sequence++;
+        struct mo_log_record_metadata m;
+        result = stream_log(s, sequence, (size_t)length, head->image, c->chunk, &m);
+        if (result == MO_STORE_CORRUPT)
+            h->damaged_sequence = sequence;
+        if (result != MO_STORE_OK)
+            break;
+        MO_ASSERT(h->log_count < MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
+        h->log_count++;
+        size_t sizes = m.header.count * sizeof m.argument_bytes[0];
+        if (!retain(c, sizeof(struct mo_store_history_entry) + sizes))
+            continue;
+        uint32_t *argument_bytes = mo_arena_allocate(&h->arena, sizes, _Alignof(uint32_t));
+        if (argument_bytes == NULL) {
+            c->memory = true;
+            result = MO_STORE_MEMORY;
+            break;
+        }
+        memcpy(argument_bytes, m.argument_bytes, sizes);
+        c->entries[h->entry_count++] =
+            (struct mo_store_history_entry){.sequence = sequence,
+                                            .arrival = m.header.arrival,
+                                            .handler = m.header.handler,
+                                            .argument_count = m.header.count,
+                                            .timer = m.header.timer,
+                                            .argument_bytes = argument_bytes};
+    }
+    if (result == MO_STORE_OK && step != SQLITE_DONE)
+        result = failure(step);
+    result = finish(stmt, result);
+    return result == MO_STORE_OK && sequence != head->head ? MO_STORE_CORRUPT : result;
+}
+
+static bool copy_failure_metadata(const struct mo_store_failure *f, void *context) {
+    struct history_copy *c = context;
+    struct mo_store_history *h = c->out;
+    c->page++;
+    c->last_id = f->id;
+    MO_ASSERT(h->failure_total < MO_LIMIT_FAILURE_RECORDS);
+    h->failure_total++;
+    size_t kind = strlen(f->kind) + 1;
+    if (!retain(c, sizeof(struct mo_store_history_failure) + kind + f->message.length))
+        return true;
+    const char *copied = (const char *)copy_bytes(&h->arena, (const uint8_t *)f->kind, kind);
+    const uint8_t *message = copy_bytes(&h->arena, f->message.bytes, f->message.length);
+    if (copied == NULL || message == NULL) {
+        c->memory = true;
+        return false;
+    }
+    struct mo_store_history_failure *x = &c->failures[h->failure_count++];
+    *x = (struct mo_store_history_failure){.id = f->id,
+                                           .kind = copied,
+                                           .first = f->first,
+                                           .state_bytes = f->state.length,
+                                           .message = f->message};
+    x->message.bytes = message;
+    return true;
+}
+
+static enum mo_store_folder history_body(struct mo_store *s, bool failure_tables, void *context) {
+    struct history_copy *c = context;
+    struct mo_store_history *h = c->out;
+    h->failure_tables = failure_tables;
+    struct saved_head head;
+    enum mo_store_status status = load_snapshot(s, &head, copy_snapshot, c);
+    if (status == MO_STORE_CORRUPT && c->memory)
+        status = MO_STORE_MEMORY;
+    if (status != MO_STORE_OK)
+        return folder_status(status);
+    h->head = head.head;
+    status = copy_log(s, &head, c);
+    for (c->last_id = 0; status == MO_STORE_OK && failure_tables;) {
+        c->page = 0;
+        status = failure_read(s, c->last_id, 0, true, copy_failure_metadata, c);
+        if (c->page < MO_LIMIT_FAILURE_VIEW_RECORDS)
+            break;
+    }
+    return folder_status(status);
+}
+
+enum mo_store_folder mo_store_history_read(const char *path, bool recover,
+                                           struct mo_store_history *out) {
+    *out = (struct mo_store_history){0};
+    mo_arena_init(&out->arena, HISTORY_ARENA_BYTES);
+    struct history_copy c = {.out = out};
+    c.entries = mo_arena_allocate_array(&out->arena, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES,
+                                        sizeof *c.entries, _Alignof(struct mo_store_history_entry));
+    c.failures = mo_arena_allocate_array(&out->arena, MO_LIMIT_FAILURE_RECORDS, sizeof *c.failures,
+                                         _Alignof(struct mo_store_history_failure));
+    c.chunk = mo_arena_allocate(&out->arena, HISTORY_CHUNK_BYTES, 1);
+    bool recovered = false;
+    enum mo_store_folder status = c.entries == NULL || c.failures == NULL || c.chunk == NULL
+                                      ? MO_STORE_FOLDER_MEMORY
+                                      : read_folder(path, recover, &recovered, history_body, &c);
+    out->entries = c.entries;
+    out->failures = c.failures;
+    out->recovered = recovered;
+    if (status != MO_STORE_FOLDER_OK) {
+        uint64_t damaged = out->damaged_sequence;
+        mo_arena_free(&out->arena);
+        *out = (struct mo_store_history){
+            .recovered = recovered, .damaged_sequence = damaged, .arena = out->arena};
+    }
+    return status;
+}
+
+void mo_store_history_free(struct mo_store_history *history) {
+    mo_arena_free(&history->arena);
+}
+
+struct pair_copy {
+    struct mo_store_history_pair *out;
+    bool memory;
+};
+
+static bool copy_pair(const struct mo_store_failure *f, void *context) {
+    struct pair_copy *c = context;
+    struct mo_store_history_pair *p = c->out;
+    const char *kind = mo_arena_copy_text(&p->arena, f->kind);
+    const uint8_t *state = copy_bytes(&p->arena, f->state.bytes, f->state.length);
+    const uint8_t *message = copy_bytes(&p->arena, f->message.bytes, f->message.length);
+    if (kind == NULL || state == NULL || message == NULL) {
+        c->memory = true;
+        return false;
+    }
+    p->found = true;
+    p->kind = kind;
+    p->first = f->first;
+    p->state = f->state;
+    p->state.bytes = state;
+    p->message = f->message;
+    p->message.bytes = message;
+    return true;
+}
+
+static enum mo_store_status retained_ids(struct mo_store *s, struct mo_store_history_pair *p) {
+    sqlite3_stmt *stmt = NULL;
+    int code = sqlite3_prepare_v2(
+        s->db, "SELECT id FROM failure ORDER BY id LIMIT " TEXT_OF(MO_LIMIT_FAILURE_RECORDS) "+1",
+        -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return failure(code);
+    enum mo_store_status result = MO_STORE_OK;
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        sqlite3_int64 id = sqlite3_column_int64(stmt, 0);
+        if (p->retained_count == MO_LIMIT_FAILURE_RECORDS || id <= 0) {
+            result = MO_STORE_CORRUPT;
+            break;
+        }
+        p->retained[p->retained_count++] = (uint64_t)id;
+    }
+    if (result == MO_STORE_OK && step != SQLITE_DONE)
+        result = failure(step);
+    return finish(stmt, result);
+}
+
+static enum mo_store_folder pair_body(struct mo_store *s, bool failure_tables, void *context) {
+    struct pair_copy *c = context;
+    struct mo_store_history_pair *p = c->out;
+    p->failure_tables = failure_tables;
+    if (!failure_tables)
+        return MO_STORE_FOLDER_OK;
+    enum mo_store_status status = MO_STORE_OK;
+    if (p->id != 0 && p->id <= INT64_MAX) {
+        status = mo_store_failure_get(s, p->id, copy_pair, c);
+        if (status == MO_STORE_MEMORY && !c->memory)
+            status = MO_STORE_CORRUPT;
+    }
+    if (status == MO_STORE_OK && !p->found)
+        status = retained_ids(s, p);
+    return folder_status(status);
+}
+
+enum mo_store_folder mo_store_history_pair(const char *path, bool recover, uint64_t id,
+                                           struct mo_store_history_pair *out) {
+    *out = (struct mo_store_history_pair){.id = id};
+    mo_arena_init(&out->arena, 2 * (size_t)MO_LIMIT_FAILURE_RECORD_BYTES);
+    struct pair_copy c = {.out = out};
+    bool recovered = false;
+    enum mo_store_folder status = read_folder(path, recover, &recovered, pair_body, &c);
+    out->recovered = recovered;
+    if (status != MO_STORE_FOLDER_OK) {
+        mo_arena_free(&out->arena);
+        *out =
+            (struct mo_store_history_pair){.id = id, .recovered = recovered, .arena = out->arena};
+    }
+    return status;
+}
+
+void mo_store_history_pair_free(struct mo_store_history_pair *pair) {
+    mo_arena_free(&pair->arena);
 }
