@@ -245,3 +245,27 @@ equals its value before the call.
   JSON, which sizes `MO_LIMIT_OFFLINE_VALUE_BYTES` at 16 MiB, with a 144 MB peak; `mo history` on it
   took 220 s in the `-O0` debug build. The store is closed before rendering, so the time never holds
   the lock.
+
+## Fuzzing the whole history reader
+
+`fuzz/fuzz_history.c` builds one store file per input, starting from an empty store made by
+`mo_store_open`, then adds a snapshot, log rows and failure rows as well-formed frames with fuzzed
+payloads or raw blobs, and may flip bytes, move sequences and ids, drop state rows, or change the
+head and `user_version`. A model in the fuzzer predicts each read's status and damaged sequence
+exactly, and for a successful read every entry, the snapshot, each failure, the retained ids, and
+the retained and left byte counts; the file's bytes must be unchanged after both reads. It is built
+with a 4 KiB history bound so small inputs reach the limit, the way the store unit test shortens
+it. Nine seeds.
+
+- Found: a failure record with an id of zero or below made the history read succeed while
+  silently leaving the record out, and the pair read answer OK or damaged depending on the id
+  asked for. The catalog reads ids above a cursor starting at 0, and the by-id lookup never sees
+  other rows. Fixed with one clause in the shared failure-pair check in `src/host/store.c`, so
+  every failure read, including the running service's failure view, now refuses such a store as
+  damaged. The runtime never writes such ids, so only damaged files are affected.
+  `history_nonpositive_failure` in `tests/test_service_store.c` failed before the fix (the history
+  read and the pair read for id 1 both returned OK), as did the fuzzer's `nonpositive-id` seed.
+- Runs: `make fuzz-smoke FUZZ_SECONDS=5` over all 38 targets with no artifacts (`fuzz_history`
+  1,718 executions); `fuzz_history` alone for 180 s, 34,383 executions, peak 461 MB, no crash, leak
+  or leftover folder. Green: `make test` under gcc, `test_service_store` under clang debug and
+  sanitize, `make format-check`, `make deps`, `make tidy`, `ci/check_fuzz_seeds.py`.
