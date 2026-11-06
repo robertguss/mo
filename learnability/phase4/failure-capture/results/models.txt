@@ -1,0 +1,1 @@
+missing Java or pinned TLC jar; place https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar at /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/models/tla2tools.jar; SHA-256 e20447644bfabd29d6bd0fc2c0eb1473fb301c1a0e4dfe1961938ce5a191edbf

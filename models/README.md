@@ -36,3 +36,11 @@ unparenthesized TLA disjunction in the history-bit assignment, leaving a success
 variable unspecified. The runner rejected that error instead of treating any nonzero
 exit as a detected invariant. Parenthesizing the expression yields the required
 `NoReleasedRead` counterexample. The initial trace is retained in the local build logs.
+
+`Capture.tla` models preparation, atomic pair commit, clean rollback, uncertain
+commit/rollback failure, process crash/recovery, eviction and exactly-once counting.
+The two-failure finite instance checks complete published pairs, unchanged recovery
+state, counting and terminal unsafe outcomes. Negative controls publish before
+commit or count again on rollback; each must produce its named counterexample.
+SQLite atomic commit is a modeling assumption, checked separately at process-kill
+boundaries in `test_service_store`; this is not a power-loss proof.

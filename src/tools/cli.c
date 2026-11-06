@@ -164,14 +164,32 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     }
     if (strcmp(command, "fetch") == 0) {
         out->command = MO_COMMAND_FETCH;
-        if (argc != 9 || strcmp(argv[3], "--export") != 0 || strcmp(argv[4], "state") != 0 ||
-            strcmp(argv[5], "--out") != 0 || strcmp(argv[7], "--token-env") != 0)
-            return refuse(out, error,
-                          "usage: mo fetch URL --export state --out FILE --token-env NAME", NULL,
-                          NULL);
+        bool failure = argc == 10 && strcmp(argv[4], "failure") == 0;
+        int shift = failure ? 1 : 0;
+        if ((!failure && argc != 9) || strcmp(argv[3], "--export") != 0 ||
+            (!failure && strcmp(argv[4], "state") != 0) || strcmp(argv[5 + shift], "--out") != 0 ||
+            strcmp(argv[7 + shift], "--token-env") != 0)
+            return refuse(
+                out, error,
+                "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME", NULL,
+                NULL);
+        if (failure) {
+            uint64_t id = 0;
+            const char *p = argv[5];
+            if (*p == 0)
+                return refuse(out, error, "failure id must be positive", NULL, NULL);
+            for (; *p != 0; p++) {
+                if (*p < '0' || *p > '9' || id > ((uint64_t)INT64_MAX - (unsigned)(*p - '0')) / 10)
+                    return refuse(out, error, "failure id must be positive", NULL, NULL);
+                id = id * 10 + (unsigned)(*p - '0');
+            }
+            if (id == 0)
+                return refuse(out, error, "failure id must be positive", NULL, NULL);
+            out->fetch_failure = id;
+        }
         out->fetch_url = argv[2];
-        out->output = argv[6];
-        out->fetch_token = argv[8];
+        out->output = argv[6 + shift];
+        out->fetch_token = argv[8 + shift];
         return true;
     }
     const char *names[] = {"check", "run", "test", "format", "fix", "guide", "emit", "serve"};

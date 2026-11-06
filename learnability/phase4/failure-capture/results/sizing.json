@@ -1,0 +1,9 @@
+{
+  "state_bytes": 16777216,
+  "message_bytes": 1048064,
+  "pair_frame_bytes": 17825348,
+  "three_transactions_seconds": 0.536139,
+  "baseline_rss_kib": 21592,
+  "peak_rss_kib": 56644,
+  "sqlite_file_bytes": 35708928
+}

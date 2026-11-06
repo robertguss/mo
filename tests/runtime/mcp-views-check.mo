@@ -80,9 +80,70 @@ fn numbers(values: List(Json.Json), key: Text) : List(Text)
 end
 
 fn main() : Int
-  require(McpViews.names().size == 8)
+  failure = [
+    "1",
+    "broken:0:stop",
+    "broken",
+    "-1",
+    "10",
+    "200",
+    "1",
+    "defect",
+    "stop",
+    "",
+    "0",
+    "4",
+    "0",
+    "9",
+    "14"
+  ]
+  omitted = ["-1", "3", "", "", "", "", "", "", "", "", "", "", "", "", ""]
+  failures = object(McpViews.failure_reply(Json.Object({}), failure.concat(omitted)))
+  require(failures.get("truncated") == Some(Json.int(3)))
+  require(failures.get("next") == Some(Json.Object({"after": Json.int(1)})))
+  work = [
+    "2",
+    "spin:1:work",
+    "spin",
+    "0",
+    "10",
+    "200",
+    "1",
+    "work",
+    "work limit",
+    "MO_LIMIT_SERVICE_WORK",
+    "1048576",
+    "0",
+    "0",
+    "0",
+    "0"
+  ]
+  work_page = object(McpViews.failure_reply(Json.Object({}), work))
+  case work_page.get("records")
+    Some(Json.Array(rows)):
+      row = object(rows.first or stop "work record")
+      signature = object(row.get("signature") or stop "signature")
+      require(signature.get("class") == Some(Json.String("work")))
+      require(signature.get("limit") == Some(Json.String("MO_LIMIT_SERVICE_WORK")))
+      require(signature.get("value") == Some(Json.String("1048576")))
+    Some(_) | None: stop "records"
+  end
+  complete_failures = object(McpViews.failure_reply(Json.Object({}), failure))
+  require(complete_failures.get("truncated") == Some(Json.int(0)))
+  require(complete_failures.get("next") == Some(Json.Null))
+  page = object(
+    McpViews.export_reply(
+      "",
+      ["0123456789abcdef0123456789abcdef", "0", "0", "0", "2", "2", "0", "", "failure", "7"],
+      "".bytes
+    )
+  )
+  next = page.get("next") or stop "next page"
+  require(McpViews.valid(7, next))
+  require(McpViews.failure_id(next) == 7)
+  require(McpViews.names().size == 9)
   require(McpViews.names().contains?("mo-export"))
-  require(not McpViews.names().contains?("mo-failures"))
+  require(McpViews.names().contains?("mo-failures"))
   require(
     McpViews.valid(1, Json.Object({"path": Json.Array([Json.String("private"), Json.int(2)])}))
   )
@@ -147,7 +208,9 @@ fn main() : Int
     restart_window: 600000000,
     timer_count: 0,
     stack_limit: 0,
-    pinned_export_bytes: 0
+    pinned_export_bytes: 0,
+    retained_failures: 0,
+    evicted_kinds: "0"
   )
   observation = McpViews.Observation(
     service_name: "fixture",
@@ -183,7 +246,9 @@ fn views(base: McpViews.Observation)
       reason: "service handler failed",
       handler: long,
       arrival: i,
-      elapsed: i.to_text
+      elapsed: i.to_text,
+      record: "0",
+      unavailable: ""
     ) end
   )
   var observed = base

@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/learnability/phase4/failure-capture/smoke.py", line 56, in <module>
+    sock = socket.create_connection(('127.0.0.1',port),timeout=.2)
+  File "/home/exedev/.local/share/mise/installs/python/3.14.7/lib/python3.14/socket.py", line 874, in create_connection
+    raise exceptions[0]
+  File "/home/exedev/.local/share/mise/installs/python/3.14.7/lib/python3.14/socket.py", line 859, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/learnability/phase4/failure-capture/smoke.py", line 60, in <module>
+    assert proc.poll() is None
+           ^^^^^^^^^^^^^^^^^^^
+AssertionError

@@ -536,13 +536,13 @@ $(BUILD)/debug/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -Dmo_buffer_append=mo_service_fault_buffer_append -c $< -o $@
 $(BUILD)/debug/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dsqlite3_step=mo_store_fault_step -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) -Dsqlite3_step=mo_store_fault_step -Dsqlite3_exec=mo_store_fault_exec -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
 $(BUILD)/sanitize/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -Dmo_buffer_append=mo_service_fault_buffer_append -c $< -o $@
 $(BUILD)/sanitize/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -Dsqlite3_exec=mo_store_fault_exec -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
 $(BUILD)/debug/store-faults/simulation.o: src/vm/simulation.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_service_open=mo_simulation_observe_open -Dmo_service_send=mo_simulation_observe_send -Dmo_value_case=mo_simulation_fault_case -c $< -o $@

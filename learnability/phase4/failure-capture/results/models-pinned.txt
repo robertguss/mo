@@ -1,0 +1,7 @@
+Capture: passed
+CaptureBadPublish: expected PairComplete counterexample detected
+CaptureBadCount: expected CountedOnce counterexample detected
+Export: passed
+ExportProgress: passed
+ExportBadGeneration: expected NoMixedGeneration counterexample detected
+ExportBadRelease: expected NoReleasedRead counterexample detected

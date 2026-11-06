@@ -1,0 +1,320 @@
+check.sh started: pid 1604050
+
+==> The executable grammar: its tests, the examples and the reference's code parse
+bison -Wall -Werror --header=build/grammar/mo.tab.h -o build/grammar/mo.tab.c grammar/mo.y
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -Igrammar -Ibuild/grammar -c grammar/lexer.c -o build/clang/debug/grammar/lexer.o
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -Igrammar -Ibuild/grammar -c grammar/main.c -o build/clang/debug/grammar/main.o
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -Igrammar -Ibuild/grammar -c grammar/ast.c -o build/clang/debug/grammar/ast.o
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Werror -MMD -MP -Wno-unused-but-set-variable -include src/base/limits.h '-DYYMAXDEPTH=(4 * MO_LIMIT_FILE_SIZE)' -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -Igrammar -Ibuild/grammar -c build/grammar/mo.tab.c -o build/clang/debug/grammar/mo.tab.o
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Igrammar -Ibuild/grammar -c grammar/main.c -o build/clang/sanitize/grammar/main.o
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Igrammar -Ibuild/grammar -c grammar/lexer.c -o build/clang/sanitize/grammar/lexer.o
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Werror -MMD -MP -Wno-unused-but-set-variable -include src/base/limits.h '-DYYMAXDEPTH=(4 * MO_LIMIT_FILE_SIZE)' -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Igrammar -Ibuild/grammar -c build/grammar/mo.tab.c -o build/clang/sanitize/grammar/mo.tab.o
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Igrammar -Ibuild/grammar -c grammar/ast.c -o build/clang/sanitize/grammar/ast.o
+clang -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread build/clang/debug/grammar/main.o build/clang/debug/grammar/lexer.o build/clang/debug/grammar/ast.o build/clang/debug/grammar/mo.tab.o build/clang/debug/src/base/arena.o build/clang/debug/src/base/base.o build/clang/debug/src/base/binary.o build/clang/debug/src/base/buffer.o build/clang/debug/src/base/capabilities.o build/clang/debug/src/base/codes.o build/clang/debug/src/base/decimal.o build/clang/debug/src/base/diag.o build/clang/debug/src/base/export.o build/clang/debug/src/base/failure.o build/clang/debug/src/base/hash.o build/clang/debug/src/base/path.o build/clang/debug/src/base/runtime-identity.o build/clang/debug/src/base/sha256.o build/clang/debug/src/base/stack.o build/clang/debug/src/base/store-memory.o build/clang/debug/src/base/utf8.o -o build/clang/debug/mo-grammar
+clang -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all build/clang/sanitize/grammar/main.o build/clang/sanitize/grammar/lexer.o build/clang/sanitize/grammar/ast.o build/clang/sanitize/grammar/mo.tab.o build/clang/sanitize/src/base/arena.o build/clang/sanitize/src/base/base.o build/clang/sanitize/src/base/binary.o build/clang/sanitize/src/base/buffer.o build/clang/sanitize/src/base/capabilities.o build/clang/sanitize/src/base/codes.o build/clang/sanitize/src/base/decimal.o build/clang/sanitize/src/base/diag.o build/clang/sanitize/src/base/export.o build/clang/sanitize/src/base/failure.o build/clang/sanitize/src/base/hash.o build/clang/sanitize/src/base/path.o build/clang/sanitize/src/base/runtime-identity.o build/clang/sanitize/src/base/sha256.o build/clang/sanitize/src/base/stack.o build/clang/sanitize/src/base/store-memory.o build/clang/sanitize/src/base/utf8.o -o build/clang/sanitize/mo-grammar
+mo-grammar: 9 files: all parse
+mo-grammar: 87 files: all fail as expected
+mo-grammar: 3 files: all fail as expected
+mo-grammar: 12 files: all parse
+mo-grammar: 3 files: all parse
+mo-grammar: 48 code blocks: all parse
+mo-grammar: 64 files: all parse
+
+==> Module dependencies: each module includes only what architecture section 2 allows
+sh ci/test_deps.sh
+test_deps: all checks passed
+sh ci/deps.sh src
+ci/deps.sh: every include in src follows architecture section 2 (226 files, 482 includes of Mo headers)
+
+==> The library map: docs/design/library.md has a row for every primitive and host operation
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c ci/module_path.c -o build/cc/debug/ci/module_path.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/arena.c -o build/cc/debug/src/base/arena.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/base.c -o build/cc/debug/src/base/base.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/buffer.c -o build/cc/debug/src/base/buffer.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/binary.c -o build/cc/debug/src/base/binary.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/capabilities.c -o build/cc/debug/src/base/capabilities.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/codes.c -o build/cc/debug/src/base/codes.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/decimal.c -o build/cc/debug/src/base/decimal.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/diag.c -o build/cc/debug/src/base/diag.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/export.c -o build/cc/debug/src/base/export.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/failure.c -o build/cc/debug/src/base/failure.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/hash.c -o build/cc/debug/src/base/hash.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/path.c -o build/cc/debug/src/base/path.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/runtime-identity.c -o build/cc/debug/src/base/runtime-identity.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -O2 -c src/base/sha256.c -o build/cc/debug/src/base/sha256.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/stack.c -o build/cc/debug/src/base/stack.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/store-memory.c -o build/cc/debug/src/base/store-memory.o
+cc -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/base/utf8.c -o build/cc/debug/src/base/utf8.o
+cc -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread build/cc/debug/ci/module_path.o build/cc/debug/src/base/arena.o build/cc/debug/src/base/base.o build/cc/debug/src/base/binary.o build/cc/debug/src/base/buffer.o build/cc/debug/src/base/capabilities.o build/cc/debug/src/base/codes.o build/cc/debug/src/base/decimal.o build/cc/debug/src/base/diag.o build/cc/debug/src/base/export.o build/cc/debug/src/base/failure.o build/cc/debug/src/base/hash.o build/cc/debug/src/base/path.o build/cc/debug/src/base/runtime-identity.o build/cc/debug/src/base/sha256.o build/cc/debug/src/base/stack.o build/cc/debug/src/base/store-memory.o build/cc/debug/src/base/utf8.o -o build/cc/debug/module-path
+MO_MODULE_PATH="/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/cc/debug/module-path" sh ci/test_library_map.sh
+test_library_map: all checks passed
+MO_MODULE_PATH="/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/build/cc/debug/module-path" sh ci/library_map.sh
+ci/library_map.sh: ./docs/design/library.md has a row for each of the 162 primitives and 38 host operations (306 rows)
+Core library map: 160 runtime primitives have routes in both codecs; arithmetic instructions covered; 2 explicit text-form helpers remain unmodeled
+
+==> Every fuzz target has a committed corpus or a Makefile generated-seed branch
+
+==> Formatting
+clang-format --dry-run --Werror src/base/arena.c src/base/base.c src/base/binary.c src/base/buffer.c src/base/capabilities.c src/base/codes.c src/base/decimal.c src/base/diag.c src/base/export.c src/base/failure.c src/base/hash.c src/base/path.c src/base/runtime-identity.c src/base/sha256.c src/base/stack.c src/base/store-memory.c src/base/utf8.c src/bytecode/assemble.c src/bytecode/disassemble.c src/bytecode/image.c src/bytecode/indexed.c src/bytecode/names.c src/bytecode/read.c src/bytecode/service-reach.c src/bytecode/shorthand-finish.c src/bytecode/shorthand-function.c src/bytecode/shorthand-type.c src/bytecode/shorthand.c src/bytecode/signature.c src/bytecode/text-index.c src/bytecode/text-scalar.c src/bytecode/validate.c src/bytecode/verify-instruction.c src/bytecode/verify-program.c src/bytecode/verify.c src/bytecode/write.c src/check/abilities.c src/check/bodies.c src/check/captures.c src/check/constants.c src/check/load.c src/check/map_keys.c src/check/modules.c src/check/patterns.c src/check/program.c src/check/recursion.c src/check/service-fixes.c src/check/services.c src/check/signatures.c src/codegen/bigint.c src/codegen/compile.c src/codegen/control.c src/codegen/index.c src/codegen/operations.c src/codegen/registers.c src/core/check.c src/core/metadata.c src/core/text.c src/heap/abilities.c src/heap/bigint.c src/heap/cell.c src/heap/float.c src/heap/generic.c src/heap/hash.c src/heap/heap.c src/heap/host.c src/heap/print.c src/heap/reuse.c src/heap/saved.c src/heap/table.c src/heap/types.c src/heap/value.c src/host/console.c src/host/credentials.c src/host/fake-files.c src/host/files.c src/host/host.c src/host/listener.c src/host/path.c src/host/random.c src/host/real-files.c src/host/store.c src/host/types.c src/lower/abilities.c src/lower/constants.c src/lower/expressions.c src/lower/lower.c src/lower/metadata.c src/lower/scalar.c src/lower/specs.c src/lower/types.c src/prim/bigint.c src/prim/collections.c src/prim/number.c src/prim/parse.c src/prim/prim.c src/prim/text.c src/prim/time.c src/prim/unicode.c src/syntax/comments.c src/syntax/format-doc.c src/syntax/format.c src/syntax/lexer.c src/syntax/parser.c src/tools/builders.c src/tools/cli.c src/tools/deadline.c src/tools/execute.c src/tools/fakes.c src/tools/fetch.c src/tools/fix.c src/tools/format.c src/tools/inputs-build.c src/tools/inputs-prepare.c src/tools/inputs-scalars.c src/tools/inputs-shrink.c src/tools/inputs.c src/tools/main.c src/tools/promises.c src/tools/protocol-call.c src/tools/protocol-descriptor.c src/tools/protocol-export.c src/tools/protocol-request.c src/tools/protocol-scalar.c src/tools/protocol-server.c src/tools/protocol-value.c src/tools/protocol-views.c src/tools/protocol.c src/tools/recovery.c src/tools/render.c src/tools/run.c src/tools/serve.c src/tools/tests.c src/vm/defect.c src/vm/execute.c src/vm/image.c src/vm/number.c src/vm/process.c src/vm/service.c src/vm/simulation.c src/base/arena.h src/base/base.h src/base/binary.h src/base/buffer.h src/base/capabilities.h src/base/codes.h src/base/decimal.h src/base/diag.h src/base/export.h src/base/failure.h src/base/hash.h src/base/hostops.h src/base/limits.h src/base/path.h src/base/prims.h src/base/runtime-identity.h src/base/service.h src/base/sha256.h src/base/simops.h src/base/stack.h src/base/store-memory.h src/base/utf8.h src/bytecode/assemble.h src/bytecode/bytecode.h src/bytecode/io.h src/bytecode/names.h src/bytecode/shorthand.h src/bytecode/signature.h src/bytecode/text-index.h src/bytecode/text.h src/bytecode/verify-program.h src/bytecode/verify.h src/check/abilities.h src/check/check.h src/check/checked.h src/check/data.h src/check/internal.h src/check/map_keys.h src/check/native.h src/check/patterns.h src/check/service-fixes.h src/check/signatures.h src/codegen/bigint.h src/codegen/codegen.h src/codegen/control.h src/codegen/index.h src/codegen/operations.h src/codegen/registers.h src/core/core.h src/heap/heap.h src/heap/internal.h src/heap/types.h src/host/files.h src/host/host.h src/host/internal.h src/lower/internal.h src/lower/lower.h src/lower/scalar.h src/prim/internal.h src/prim/prim.h src/prim/unicode16-data.h src/syntax/format-doc.h src/syntax/format.h src/syntax/internal.h src/syntax/syntax.h src/tools/builders.h src/tools/deadline.h src/tools/fakes.h src/tools/fix.h src/tools/format.h src/tools/inputs-internal.h src/tools/inputs.h src/tools/promises.h src/tools/protocol-server.h src/tools/protocol.h src/tools/recovery.h src/tools/run.h src/tools/tests.h src/tools/tools.h src/vm/internal.h src/vm/vm.h src/core/ops.def src/core/text_schema.def tests/host_rename_stress.c tests/test_arena.c tests/test_buffer.c tests/test_bytecode_io.c tests/test_bytecode_text.c tests/test_bytecode_verify.c tests/test_check.c tests/test_check_bodies.c tests/test_cli.c tests/test_cli_faults.c tests/test_codegen.c tests/test_codes.c tests/test_compiler_faults.c tests/test_core_check.c tests/test_core_print.c tests/test_core_text.c tests/test_deadline.c tests/test_diag.c tests/test_export.c tests/test_failure_sizing.c tests/test_fakes.c tests/test_fetch_deadline.c tests/test_fetch_peer.c tests/test_fix.c tests/test_format.c tests/test_heap.c tests/test_host.c tests/test_host_faults.c tests/test_host_resolver.c tests/test_inputs.c tests/test_limits.c tests/test_listener.c tests/test_listener_faults.c tests/test_lower.c tests/test_opcodes.c tests/test_path.c tests/test_prim.c tests/test_program.c tests/test_program_allocation_0.c tests/test_program_allocation_1.c tests/test_program_allocation_2.c tests/test_program_allocation_3.c tests/test_program_allocation_4.c tests/test_program_allocation_5.c tests/test_protocol_bounds.c tests/test_protocol_composites.c tests/test_protocol_memory.c tests/test_protocol_server.c tests/test_protocol_server_faults.c tests/test_protocol_values.c tests/test_recovery.c tests/test_recovery_faults.c tests/test_saved_state.c tests/test_service_runtime.c tests/test_service_store.c tests/test_services.c tests/test_sha256.c tests/test_sources.c tests/test_stack.c tests/test_syntax.c tests/test_syntax_corpus.c tests/test_tables.c tests/test_types.c tests/test_unicode16.c tests/test_utf8.c tests/test_vm.c tests/test_vm_faults.c tests/bytecode_text.h tests/core_depth.h tests/format-contract.h tests/heap_fixture.h tests/host_fixture.h tests/host_small_limits.h tests/input_values.h tests/listener_faults.h tests/lower_fixture.h tests/prim_fixture.h tests/prim_oracle.h tests/program_allocation.h tests/program_fixture.h tests/runtime_entry.h tests/service_compile.h tests/test.h tests/vm_run.h fuzz/fuzz_bodies.c fuzz/fuzz_bytecode_io.c fuzz/fuzz_bytecode_text.c fuzz/fuzz_bytecode_verify.c fuzz/fuzz_check.c fuzz/fuzz_cli.c fuzz/fuzz_codegen.c fuzz/fuzz_core_check.c fuzz/fuzz_core_text.c fuzz/fuzz_export.c fuzz/fuzz_fetch.c fuzz/fuzz_format.c fuzz/fuzz_grammar.c fuzz/fuzz_heap.c fuzz/fuzz_host.c fuzz/fuzz_host_real.c fuzz/fuzz_http.c fuzz/fuzz_inputs.c fuzz/fuzz_lower.c fuzz/fuzz_mcp_number.c fuzz/fuzz_mcp_rpc.c fuzz/fuzz_mcp_value.c fuzz/fuzz_mcp_views.c fuzz/fuzz_prim.c fuzz/fuzz_program.c fuzz/fuzz_protocol_server.c fuzz/fuzz_saved_state.c fuzz/fuzz_service_failure.c fuzz/fuzz_service_log.c fuzz/fuzz_service_snapshot.c fuzz/fuzz_sources.c fuzz/fuzz_syntax.c fuzz/fuzz_types.c fuzz/fuzz_vm.c fuzz/service_fuzz.h fuzz/service_restore.h fuzz/store_record.h grammar/ast.c grammar/lexer.c grammar/main.c grammar/ast.h grammar/lexer.h ci/lower_source.c ci/module_path.c cbmc/arena.c cbmc/decimal.c cbmc/export-consume.c cbmc/export.c cbmc/failure.c cbmc/number.c cbmc/path.c cbmc/reader.c cbmc/refcount.c cbmc/resolve-kernel.c cbmc/resolve.c cbmc/table.c cbmc/text.c cbmc/unicode.c cbmc/verify.c
+
+==> Results of standard-library calls are used (clang-tidy)
+clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='^(src|tests|fuzz|grammar)/' \
+	src/base/arena.c src/base/base.c src/base/binary.c src/base/buffer.c src/base/capabilities.c src/base/codes.c src/base/decimal.c src/base/diag.c src/base/export.c src/base/failure.c src/base/hash.c src/base/path.c src/base/runtime-identity.c src/base/sha256.c src/base/stack.c src/base/store-memory.c src/base/utf8.c src/bytecode/assemble.c src/bytecode/disassemble.c src/bytecode/image.c src/bytecode/indexed.c src/bytecode/names.c src/bytecode/read.c src/bytecode/service-reach.c src/bytecode/shorthand-finish.c src/bytecode/shorthand-function.c src/bytecode/shorthand-type.c src/bytecode/shorthand.c src/bytecode/signature.c src/bytecode/text-index.c src/bytecode/text-scalar.c src/bytecode/validate.c src/bytecode/verify-instruction.c src/bytecode/verify-program.c src/bytecode/verify.c src/bytecode/write.c src/check/abilities.c src/check/bodies.c src/check/captures.c src/check/constants.c src/check/load.c src/check/map_keys.c src/check/modules.c src/check/patterns.c src/check/program.c src/check/recursion.c src/check/service-fixes.c src/check/services.c src/check/signatures.c src/codegen/bigint.c src/codegen/compile.c src/codegen/control.c src/codegen/index.c src/codegen/operations.c src/codegen/registers.c src/core/check.c src/core/metadata.c src/core/text.c src/heap/abilities.c src/heap/bigint.c src/heap/cell.c src/heap/float.c src/heap/generic.c src/heap/hash.c src/heap/heap.c src/heap/host.c src/heap/print.c src/heap/reuse.c src/heap/saved.c src/heap/table.c src/heap/types.c src/heap/value.c src/host/console.c src/host/credentials.c src/host/fake-files.c src/host/files.c src/host/host.c src/host/listener.c src/host/path.c src/host/random.c src/host/real-files.c src/host/store.c src/host/types.c src/lower/abilities.c src/lower/constants.c src/lower/expressions.c src/lower/lower.c src/lower/metadata.c src/lower/scalar.c src/lower/specs.c src/lower/types.c src/prim/bigint.c src/prim/collections.c src/prim/number.c src/prim/parse.c src/prim/prim.c src/prim/text.c src/prim/time.c src/prim/unicode.c src/syntax/comments.c src/syntax/format-doc.c src/syntax/format.c src/syntax/lexer.c src/syntax/parser.c src/tools/builders.c src/tools/cli.c src/tools/deadline.c src/tools/execute.c src/tools/fakes.c src/tools/fetch.c src/tools/fix.c src/tools/format.c src/tools/inputs-build.c src/tools/inputs-prepare.c src/tools/inputs-scalars.c src/tools/inputs-shrink.c src/tools/inputs.c src/tools/main.c src/tools/promises.c src/tools/protocol-call.c src/tools/protocol-descriptor.c src/tools/protocol-export.c src/tools/protocol-request.c src/tools/protocol-scalar.c src/tools/protocol-server.c src/tools/protocol-value.c src/tools/protocol-views.c src/tools/protocol.c src/tools/recovery.c src/tools/render.c src/tools/run.c src/tools/serve.c src/tools/tests.c src/vm/defect.c src/vm/execute.c src/vm/image.c src/vm/number.c src/vm/process.c src/vm/service.c src/vm/simulation.c tests/host_rename_stress.c tests/test_arena.c tests/test_buffer.c tests/test_bytecode_io.c tests/test_bytecode_text.c tests/test_bytecode_verify.c tests/test_check.c tests/test_check_bodies.c tests/test_cli.c tests/test_cli_faults.c tests/test_codegen.c tests/test_codes.c tests/test_compiler_faults.c tests/test_core_check.c tests/test_core_print.c tests/test_core_text.c tests/test_deadline.c tests/test_diag.c tests/test_export.c tests/test_failure_sizing.c tests/test_fakes.c tests/test_fetch_deadline.c tests/test_fetch_peer.c tests/test_fix.c tests/test_format.c tests/test_heap.c tests/test_host.c tests/test_host_faults.c tests/test_host_resolver.c tests/test_inputs.c tests/test_limits.c tests/test_listener.c tests/test_listener_faults.c tests/test_lower.c tests/test_opcodes.c tests/test_path.c tests/test_prim.c tests/test_program.c tests/test_program_allocation_0.c tests/test_program_allocation_1.c tests/test_program_allocation_2.c tests/test_program_allocation_3.c tests/test_program_allocation_4.c tests/test_program_allocation_5.c tests/test_protocol_bounds.c tests/test_protocol_composites.c tests/test_protocol_memory.c tests/test_protocol_server.c tests/test_protocol_server_faults.c tests/test_protocol_values.c tests/test_recovery.c tests/test_recovery_faults.c tests/test_saved_state.c tests/test_service_runtime.c tests/test_service_store.c tests/test_services.c tests/test_sha256.c tests/test_sources.c tests/test_stack.c tests/test_syntax.c tests/test_syntax_corpus.c tests/test_tables.c tests/test_types.c tests/test_unicode16.c tests/test_utf8.c tests/test_vm.c tests/test_vm_faults.c fuzz/fuzz_bodies.c fuzz/fuzz_bytecode_io.c fuzz/fuzz_bytecode_text.c fuzz/fuzz_bytecode_verify.c fuzz/fuzz_check.c fuzz/fuzz_cli.c fuzz/fuzz_codegen.c fuzz/fuzz_core_check.c fuzz/fuzz_core_text.c fuzz/fuzz_export.c fuzz/fuzz_fetch.c fuzz/fuzz_format.c fuzz/fuzz_grammar.c fuzz/fuzz_heap.c fuzz/fuzz_host.c fuzz/fuzz_host_real.c fuzz/fuzz_http.c fuzz/fuzz_inputs.c fuzz/fuzz_lower.c fuzz/fuzz_mcp_number.c fuzz/fuzz_mcp_rpc.c fuzz/fuzz_mcp_value.c fuzz/fuzz_mcp_views.c fuzz/fuzz_prim.c fuzz/fuzz_program.c fuzz/fuzz_protocol_server.c fuzz/fuzz_saved_state.c fuzz/fuzz_service_failure.c fuzz/fuzz_service_log.c fuzz/fuzz_service_snapshot.c fuzz/fuzz_sources.c fuzz/fuzz_syntax.c fuzz/fuzz_types.c fuzz/fuzz_vm.c grammar/ast.c grammar/lexer.c grammar/main.c ci/lower_source.c ci/module_path.c -- -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -Igrammar -Ibuild/grammar
+[1/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/arena.c.
+[2/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/base.c.
+[3/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/binary.c.
+[4/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/buffer.c.
+[5/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/capabilities.c.
+[6/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/codes.c.
+[7/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/decimal.c.
+[8/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/diag.c.
+[9/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/export.c.
+[10/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/failure.c.
+[11/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/hash.c.
+[12/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/path.c.
+[13/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/runtime-identity.c.
+[14/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/sha256.c.
+[15/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/stack.c.
+[16/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/store-memory.c.
+[17/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/base/utf8.c.
+[18/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/assemble.c.
+[19/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/disassemble.c.
+[20/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/image.c.
+[21/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/indexed.c.
+[22/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/names.c.
+[23/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/read.c.
+[24/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/service-reach.c.
+[25/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/shorthand-finish.c.
+[26/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/shorthand-function.c.
+[27/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/shorthand-type.c.
+[28/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/shorthand.c.
+[29/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/signature.c.
+[30/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/text-index.c.
+[31/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/text-scalar.c.
+[32/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/validate.c.
+[33/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/verify-instruction.c.
+[34/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/verify-program.c.
+[35/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/verify.c.
+[36/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/bytecode/write.c.
+[37/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/abilities.c.
+[38/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/bodies.c.
+[39/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/captures.c.
+[40/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/constants.c.
+[41/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/load.c.
+[42/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/map_keys.c.
+[43/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/modules.c.
+[44/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/patterns.c.
+[45/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/program.c.
+[46/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/recursion.c.
+[47/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/service-fixes.c.
+[48/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/services.c.
+[49/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/check/signatures.c.
+[50/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/codegen/bigint.c.
+[51/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/codegen/compile.c.
+[52/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/codegen/control.c.
+[53/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/codegen/index.c.
+[54/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/codegen/operations.c.
+[55/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/codegen/registers.c.
+[56/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/core/check.c.
+[57/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/core/metadata.c.
+[58/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/core/text.c.
+[59/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/abilities.c.
+[60/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/bigint.c.
+[61/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/cell.c.
+[62/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/float.c.
+[63/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/generic.c.
+[64/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/hash.c.
+[65/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/heap.c.
+[66/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/host.c.
+[67/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/print.c.
+[68/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/reuse.c.
+[69/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/saved.c.
+[70/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/table.c.
+[71/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/types.c.
+[72/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/heap/value.c.
+[73/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/console.c.
+[74/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/credentials.c.
+[75/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/fake-files.c.
+[76/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/files.c.
+[77/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/host.c.
+[78/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/listener.c.
+[79/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/path.c.
+[80/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/random.c.
+[81/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/real-files.c.
+[82/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/store.c.
+[83/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/host/types.c.
+[84/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/abilities.c.
+[85/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/constants.c.
+[86/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/expressions.c.
+[87/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/lower.c.
+[88/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/metadata.c.
+[89/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/scalar.c.
+[90/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/specs.c.
+[91/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/lower/types.c.
+[92/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/bigint.c.
+[93/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/collections.c.
+[94/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/number.c.
+[95/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/parse.c.
+[96/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/prim.c.
+[97/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/text.c.
+[98/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/time.c.
+[99/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/prim/unicode.c.
+[100/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/syntax/comments.c.
+[101/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/syntax/format-doc.c.
+[102/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/syntax/format.c.
+[103/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/syntax/lexer.c.
+[104/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/syntax/parser.c.
+[105/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/builders.c.
+[106/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/cli.c.
+[107/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/deadline.c.
+[108/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/execute.c.
+[109/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/fakes.c.
+[110/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/fetch.c.
+[111/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/fix.c.
+[112/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/format.c.
+[113/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/inputs-build.c.
+[114/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/inputs-prepare.c.
+[115/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/inputs-scalars.c.
+[116/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/inputs-shrink.c.
+[117/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/inputs.c.
+[118/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/main.c.
+[119/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/promises.c.
+[120/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-call.c.
+[121/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-descriptor.c.
+[122/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-export.c.
+[123/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-request.c.
+[124/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-scalar.c.
+[125/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-server.c.
+[126/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-value.c.
+[127/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol-views.c.
+[128/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/protocol.c.
+[129/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/recovery.c.
+[130/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/render.c.
+[131/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/run.c.
+[132/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/serve.c.
+[133/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/tools/tests.c.
+[134/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/vm/defect.c.
+[135/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/vm/execute.c.
+[136/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/vm/image.c.
+[137/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/vm/number.c.
+[138/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/vm/process.c.
+[139/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/vm/service.c.
+[140/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/src/vm/simulation.c.
+[141/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/host_rename_stress.c.
+[142/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_arena.c.
+[143/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_buffer.c.
+[144/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_bytecode_io.c.
+[145/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_bytecode_text.c.
+[146/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_bytecode_verify.c.
+[147/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_check.c.
+[148/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_check_bodies.c.
+[149/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_cli.c.
+[150/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_cli_faults.c.
+[151/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_codegen.c.
+[152/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_codes.c.
+[153/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_compiler_faults.c.
+[154/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_core_check.c.
+[155/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_core_print.c.
+[156/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_core_text.c.
+[157/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_deadline.c.
+[158/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_diag.c.
+[159/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_export.c.
+[160/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_failure_sizing.c.
+[161/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_fakes.c.
+[162/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_fetch_deadline.c.
+[163/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_fetch_peer.c.
+[164/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_fix.c.
+[165/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_format.c.
+[166/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_heap.c.
+[167/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_host.c.
+[168/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_host_faults.c.
+[169/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_host_resolver.c.
+[170/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_inputs.c.
+[171/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_limits.c.
+[172/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_listener.c.
+[173/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_listener_faults.c.
+[174/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_lower.c.
+[175/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_opcodes.c.
+[176/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_path.c.
+[177/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_prim.c.
+[178/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_program.c.
+[179/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_program_allocation_0.c.
+[180/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_program_allocation_1.c.
+[181/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_program_allocation_2.c.
+[182/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_program_allocation_3.c.
+[183/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_program_allocation_4.c.
+[184/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_program_allocation_5.c.
+[185/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_protocol_bounds.c.
+[186/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_protocol_composites.c.
+[187/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_protocol_memory.c.
+[188/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_protocol_server.c.
+[189/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_protocol_server_faults.c.
+[190/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_protocol_values.c.
+[191/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_recovery.c.
+[192/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_recovery_faults.c.
+[193/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_saved_state.c.
+[194/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_runtime.c.
+[195/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c.
+[196/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_services.c.
+[197/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_sha256.c.
+[198/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_sources.c.
+[199/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_stack.c.
+[200/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_syntax.c.
+[201/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_syntax_corpus.c.
+[202/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_tables.c.
+[203/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_types.c.
+[204/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_unicode16.c.
+[205/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_utf8.c.
+[206/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_vm.c.
+[207/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_vm_faults.c.
+[208/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_bodies.c.
+[209/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_bytecode_io.c.
+[210/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_bytecode_text.c.
+[211/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_bytecode_verify.c.
+[212/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_check.c.
+[213/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_cli.c.
+[214/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_codegen.c.
+[215/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_core_check.c.
+[216/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_core_text.c.
+[217/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_export.c.
+[218/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_fetch.c.
+[219/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_format.c.
+[220/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_grammar.c.
+[221/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_heap.c.
+[222/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_host.c.
+[223/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_host_real.c.
+[224/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_http.c.
+[225/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_inputs.c.
+[226/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_lower.c.
+[227/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_mcp_number.c.
+[228/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_mcp_rpc.c.
+[229/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_mcp_value.c.
+[230/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_mcp_views.c.
+[231/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_prim.c.
+[232/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_program.c.
+[233/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_protocol_server.c.
+[234/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_saved_state.c.
+[235/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_service_failure.c.
+[236/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_service_log.c.
+[237/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_service_snapshot.c.
+[238/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_sources.c.
+[239/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_syntax.c.
+[240/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_types.c.
+[241/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/fuzz/fuzz_vm.c.
+[242/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/grammar/ast.c.
+[243/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/grammar/lexer.c.
+[244/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/grammar/main.c.
+[245/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/ci/lower_source.c.
+[246/246] Processing file /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/ci/module_path.c.
+
+==> Finite export generation models and negative controls
+Capture: passed
+CaptureBadPublish: expected PairComplete counterexample detected
+CaptureBadCount: expected CountedOnce counterexample detected
+Export: passed
+ExportProgress: passed
+ExportBadGeneration: expected NoMixedGeneration counterexample detected
+ExportBadRelease: expected NoReleasedRead counterexample detected
+
+==> All checks in static models passed
+check.sh finished: pass

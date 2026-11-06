@@ -25,6 +25,9 @@ enum protocol_function {
     PF_HTTP100,
     PF_VIEW,
     PF_EXPORT_ID,
+    PF_FAILURE_ID,
+    PF_FAILURE_AFTER,
+    PF_FAILURE_VIEW,
     PF_EXPORT,
     PF_OPERATOR_REPLY,
     PF_COUNT
@@ -78,7 +81,7 @@ struct protocol_connection {
 
 struct mo_protocol_server {
     struct mo_arena arena;
-    struct mo_export_pin state_export;
+    struct mo_export_pin state_export, failure_export;
     struct mo_image *protocol;
     const struct mo_image *image;
     const struct mo_bytecode_service *descriptor;
@@ -134,6 +137,8 @@ MO_MUST_USE bool mo_protocol_request_process(struct mo_protocol_server *server,
 MO_MUST_USE bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *c,
                                   struct mo_cell *out);
 
+MO_MUST_USE bool mo_protocol_failures(struct mo_protocol_server *s, struct protocol_connection *c,
+                                      struct mo_cell *out);
 MO_MUST_USE bool mo_protocol_export(struct mo_protocol_server *s, struct protocol_connection *c,
                                     struct mo_cell *out, bool *refused);
 

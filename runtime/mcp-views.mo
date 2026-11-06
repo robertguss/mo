@@ -5,6 +5,9 @@ valid,
 offset,
 render,
 export_id,
+failure_id,
+failure_after,
+failure_reply,
 export_reply,
 Observation(..),
 Stats(..),
@@ -33,6 +36,8 @@ struct Stats
   timer_count: Int
   stack_limit: Int
   pinned_export_bytes: Int
+  retained_failures: Int
+  evicted_kinds: Text
 end
 
 struct Message
@@ -58,6 +63,8 @@ struct Event
   handler: Text
   arrival: Int
   elapsed: Text
+  record: Text
+  unavailable: Text
 end
 
 struct Observation
@@ -82,7 +89,8 @@ fn names() : List(Text)
     "mo-memory",
     "mo-supervisor",
     "mo-log",
-    "mo-export"
+    "mo-export",
+    "mo-failures"
   ]
 end
 
@@ -95,19 +103,21 @@ fn arguments_of(index: Int) : List(Text)
   if index == 1: ["path"] else if index == 2 or index == 3: ["offset"] else if index == 5: [
     "after",
     "before"
-  ] else if index == 6: ["after"] else if index == 7: ["kind", "export", "offset"] else: []
+  ] else if index == 6: ["after"] else if index == 7: ["kind", "failure", "export", "offset"] else if index ==
+    8: ["after"] else: []
 end
 
 fn catalog() : List(Json.Json)
   descriptions = [
-    "Runtime identities, recovery position and live counters. Independent observations are not an atomic snapshot. Retained failure records are not available. State export uses mo-export.",
+    "Runtime identities, recovery position and live counters. Independent observations are not an atomic snapshot. Retained failure records are available from mo-failures. State export uses mo-export.",
     "Current saved state, including private fields. Optional path contains field names or nonnegative indexes. Large views explicitly truncate; use mo-export for complete saved bytes.",
     "Queued handler names, arrival times and encoded argument sizes where available, never argument values. A truncated page names the next offset. Does not execute handlers.",
     "Timer names, intervals, next due elapsed times and waiting ticks. A truncated page names the next offset. Does not execute handlers.",
-    "Live heap use, peak and limit, stack capacity and encoded state bytes. Includes native export pin bytes. Retained diagnostics are not yet available.",
-    "Retained in-memory supervisor events, newest first, optionally after or before an event number. A truncated page names the next arguments. Events are lost on process exit; failure capture is not yet available.",
+    "Live heap use, peak and limit, stack capacity and encoded state bytes. Includes native export pin bytes. Retained diagnostics use separate bounded native storage.",
+    "Retained in-memory supervisor events, newest first, optionally after or before an event number. A truncated page names the next arguments. Events are lost on process exit; capture refusals include an explicit reason.",
     "Committed message metadata since the last snapshot, oldest first, optionally after a sequence. Older successful messages are not retained. Does not execute handlers.",
-    "Export saved state as immutable MOEX v1 pages. Start with kind state; continue with returned export id and offset. Pages expire after 60 seconds idle or replacement. Final page releases the pin. Use mo fetch on the service host to obtain a verified private state artifact. Failure export is not yet available."
+    "Export saved state as immutable MOEX v1 pages. Start with kind state; continue with returned export id and offset. Pages expire after 60 seconds idle or replacement. Final page releases the pin. Use mo fetch on the service host to obtain a verified private state artifact. Failure export selects a retained record id.",
+    "Retained failure records, oldest first; after selects a later page. Capture refusals remain in mo-supervisor."
   ]
   tool_names = names()
   integer = Json.Object({"type": Json.String("integer"), "minimum": Json.int(0)})
@@ -125,7 +135,7 @@ fn catalog() : List(Json.Json)
           })
         }) else if key == "kind": Json.Object({
           "type": Json.String("string"),
-          "enum": Json.Array([Json.String("state")])
+          "enum": Json.Array([Json.String("state"), Json.String("failure")])
         }) else if key == "export": Json.Object({
           "type": Json.String("string"),
           "pattern": Json.String("^[0-9a-f]{32}$")
@@ -191,7 +201,7 @@ fn valid(index: Int, arguments: Json.Json) : Bool
         end
       end
     else if index == 7 and key == "kind"
-      return false if value != Json.String("state")
+      return false if value != Json.String("state") and value != Json.String("failure")
     else if index == 7 and key == "export"
       id = case value
         Json.String(text): text
@@ -206,7 +216,13 @@ fn valid(index: Int, arguments: Json.Json) : Bool
     end
   end
   if index == 7
-    return false if fields.get("kind") != Some(Json.String("state"))
+    return false if fields.get("kind") != Some(Json.String("state")) and
+      fields.get("kind") != Some(Json.String("failure"))
+    if fields.get("kind") == Some(Json.String("failure"))
+      return false if (argument(fields, "failure") or 0) <= 0
+    else
+      return false if fields.get("failure") != None
+    end
     offset = argument(fields, "offset") or 0
     return false if offset % 8192 != 0 or offset >= 17825792
     return false if fields.get("export") == None and offset != 0
@@ -266,8 +282,11 @@ fn render(index: Int, arguments: Json.Json, observation: Observation, saved: Byt
       "recovery_sequence": Json.String(stats.sequence.to_text),
       "snapshot_sequence": Json.String(stats.snapshot.to_text),
       "encoded_sequence": Json.String(stats.encoded_sequence.to_text),
-      "retained_failures": Json.Null,
-      "failure_capture_available": Json.Boolean(false),
+      "retained_failures": if stats.retained_failures < 0: Json.Null else: Json.int(
+        stats.retained_failures
+      ),
+      "evicted_kinds_since_open": Json.String(stats.evicted_kinds),
+      "failure_capture_available": Json.Boolean(stats.persistent),
       "export_available": Json.Boolean(true),
       "observation": Json.String("independent calls are not an atomic snapshot")
     })
@@ -309,7 +328,11 @@ fn render(index: Int, arguments: Json.Json, observation: Observation, saved: Byt
         "reason": Json.String(item.reason),
         "handler": Json.String(handler_name(item.handler)),
         "arrival_us": Json.String(item.arrival.to_text),
-        "elapsed_us": Json.String(item.elapsed)
+        "elapsed_us": Json.String(item.elapsed),
+        "record": if item.record == "0": Json.Null else: Json.String(item.record),
+        "record_unavailable": if item.unavailable == "": Json.Null else: Json.String(
+          item.unavailable
+        )
       }) end
     )
   else
@@ -1000,9 +1023,22 @@ fn export_reply(error: Text, metadata: List(Text), bytes: Bytes) : Json.Json
   id = metadata.get(0) or stop "export id"
   offset = (metadata.get(3) or stop "offset").to_int or stop "offset"
   digest = metadata.get(7) or stop "digest"
+  var next = {
+    "kind": Json.String(metadata.get(8) or "state"),
+    "export": Json.String(id),
+    "offset": Json.int(offset + bytes.size)
+  }
+  if metadata.get(8) == Some("failure")
+    next = next.set(
+      "failure",
+      Json.int((metadata.get(9) or stop "failure id").to_int or stop "failure id")
+    )
+  end
   Json.Object({
     "export": Json.String(id),
-    "kind": Json.String("state"),
+    "kind": Json.String(metadata.get(8) or "state"),
+    "failure": if metadata.get(8) == Some("failure"): Json.int((metadata.get(9) or "0").to_int or 0) else: Json
+      .Null,
     "version": Json.int(1),
     "sequence": Json.String(metadata.get(1) or stop "sequence"),
     "encoded_sequence": Json.String(metadata.get(2) or stop "encoded sequence"),
@@ -1013,10 +1049,85 @@ fn export_reply(error: Text, metadata: List(Text), bytes: Bytes) : Json.Json
     "checksum": Json.String(metadata.get(6) or stop "checksum"),
     "digest": if digest == "": Json.Null else: Json.String(digest),
     "base64": Json.String(Text.from_chars(encoded)),
-    "next": if digest != "": Json.Null else: Json.Object({
-      "kind": Json.String("state"),
-      "export": Json.String(id),
-      "offset": Json.int(offset + bytes.size)
-    })
+    "next": if digest != "": Json.Null else: Json.Object(next)
+  })
+end
+
+fn failure_id(arguments: Json.Json) : Int
+  case arguments
+    Json.Object(fields): argument(fields, "failure") or 0
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): 0
+  end
+end
+
+fn failure_after(arguments: Json.Json) : Int
+  case arguments
+    Json.Object(fields): argument(fields, "after") or 0
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): 0
+  end
+end
+
+fn failure_reply(arguments: Json.Json, metadata: List(Text)) : Json.Json
+  after = failure_after(arguments)
+  var rows = []
+  var unavailable = []
+  var unavailable_count = 0
+  var i = 0
+  var last = after
+  var omitted = 0
+  var used = 1024
+  while i + 14 < metadata.size
+    id = (metadata.get(i) or "0").to_int or 0
+    if id == -1
+      omitted += (metadata.get(i + 1) or "0").to_int or 0
+    end
+    if id == 0
+      unavailable_count += 1
+    end
+    if id == 0 and after == 0 and unavailable.size < 8
+      unavailable = unavailable.append(
+        Json.Object({
+          "reason": Json.String(metadata.get(i + 1) or ""),
+          "arrival": Json.String(metadata.get(i + 3) or "")
+        })
+      )
+    end
+    if id > after
+      row = Json.Object({
+        "id": Json.String(id.to_text),
+        "kind": Json.String(metadata.get(i + 1) or ""),
+        "handler": Json.String(metadata.get(i + 2) or ""),
+        "arrival": Json.String(metadata.get(i + 3) or ""),
+        "state_bytes": Json.String(metadata.get(i + 4) or ""),
+        "message_bytes": Json.String(metadata.get(i + 5) or ""),
+        "signature": Json.Object({
+          "version": Json.int((metadata.get(i + 6) or "0").to_int or 0),
+          "class": Json.String(metadata.get(i + 7) or ""),
+          "reason": Json.String(metadata.get(i + 8) or ""),
+          "limit": Json.String(metadata.get(i + 9) or ""),
+          "value": Json.String(metadata.get(i + 10) or ""),
+          "function": Json.String(metadata.get(i + 11) or ""),
+          "file": Json.String(metadata.get(i + 12) or ""),
+          "start": Json.String(metadata.get(i + 13) or ""),
+          "end": Json.String(metadata.get(i + 14) or "")
+        })
+      })
+      size = row.to_text.byte_count + 1
+      if omitted == 0 and used + size <= 6144
+        rows = rows.append(row)
+        last = id
+        used += size
+      else
+        omitted += 1
+      end
+    end
+    i += 15
+  end
+  Json.Object({
+    "records": Json.Array(rows),
+    "unavailable": Json.Array(unavailable),
+    "unavailable_omitted": Json.int(unavailable_count - unavailable.size),
+    "truncated": Json.int(omitted),
+    "next": if omitted > 0: Json.Object({"after": Json.int(last)}) else: Json.Null
   })
 end

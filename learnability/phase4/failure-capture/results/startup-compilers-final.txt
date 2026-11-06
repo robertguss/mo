@@ -1,0 +1,296 @@
+check.sh started: pid 1606942
+
+==> Build and test with gcc (warnings are errors)
+test_buffer: all checks passed
+test_cli_faults: all checks passed
+test_cli: all checks passed
+test_codes: all checks passed
+test_compiler_faults: all checks passed
+test_arena: all checks passed
+test_core_print: all checks passed
+verifier work: 65 registers, 261 words, 8839 steps
+verifier work: 129 registers, 517 words, 34055 steps
+verifier work: 257 registers, 1029 words, 133639 steps
+unused-choice regression: 65535 registers, 524005 words, 851541 steps
+bytecode verifier: all checks passed
+promise deadline: all checks passed
+test_diag: all checks passed
+bytecode text: all checks passed
+check bodies: all checks passed
+test_fakes: all checks passed
+export: all checks passed
+test_core_text: all checks passed
+test_fix: all checks passed
+{"state_bytes":16777216,"message_bytes":1048064,"pair_frame_bytes":17825348,"three_transactions_seconds":0.686780,"baseline_rss_kib":21460,"peak_rss_kib":56600,"sqlite_file_bytes":35708928}
+failure sizing: all checks passed
+format corpus: 130 accepted inputs checked
+test_format: all checks passed
+fetch peer: all checks passed
+host faults: all checks passed
+host resolver limits and races: all checks passed
+promise inputs: all checks passed
+test_limits: all checks passed
+listener: all checks passed
+Core long-name checking: 0.029 CPU seconds
+test_core_check: all checks passed
+host hostile links (default): 0.137 s; depth 500, 40 links, 790 parent pairs per link
+host hostile links (portable): 0.141 s; depth 500, 40 links, 790 parent pairs per link
+host: all checks passed
+test_opcodes: all checks passed
+module paths: all checks passed
+Compiled VM uncons (0 elements): 0.000003 s
+Compiled VM uncons (31 elements): 0.000079 s
+primitives: all checks passed
+test_codegen: all checks passed
+heap: all checks passed
+fetch deadline: all checks passed
+program: all checks passed
+bytecode repeated-name refusal: 0.075 CPU seconds
+bytecode collision round trip: 0.108 CPU seconds
+test_bytecode_io: all checks passed
+listener_faults: all checks passed
+constant sources: 22 public load/check controls
+generic import sources: 17 public load/check controls
+import sources: 42 public load/check controls
+capture sources: 39 public load/check controls
+check import scaling: 1 importers, 3362848 checking arena bytes
+check import scaling: 32 importers, 7557152 checking arena bytes
+check import scaling: 128 importers, 22212640 checking arena bytes
+check: all checks passed
+program allocation: all checks passed
+protocol composites: all checks passed
+protocol memory: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+protocol scalar values: all checks passed
+recovery faults: all checks passed
+saved state: all checks passed
+service runtime: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+sha256: all checks passed
+service descriptors: all checks passed
+stack: all checks passed
+test_sources: all checks passed
+syntax corpus: 159 inputs checked
+test_syntax_corpus: all checks passed
+test_tables: all checks passed
+test_types: all checks passed
+protocol_server_faults: all checks passed
+utf-8: all checks passed
+Unicode16: all checks passed
+vm faults: all checks passed
+protocol_bounds: all checks passed
+vm: all checks passed
+syntax performance 0: 2000002 bytes, 0.013 CPU seconds
+syntax performance 1: 7803020 bytes, 1.463 CPU seconds
+syntax performance 2: 2006009 bytes, 0.206 CPU seconds
+test_syntax: all checks passed
+service store: all checks passed
+recovery: all checks passed
+protocol_server: all checks passed
+lower: all checks passed
+python3 ci/check_sha256.py build/gcc/debug/tests/test_sha256.test
+sha256: executable identity and 110 reference comparisons passed
+
+==> Build and test with clang (warnings are errors)
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -Dmain=mo_test_runtime_main -include tests/runtime_entry.h -c src/tools/main.c -o build/clang/debug/runtime-main.o
+test_buffer: all checks passed
+test_cli_faults: all checks passed
+test_arena: all checks passed
+test_codes: all checks passed
+test_compiler_faults: all checks passed
+test_cli: all checks passed
+test_core_print: all checks passed
+verifier work: 65 registers, 261 words, 8839 steps
+verifier work: 129 registers, 517 words, 34055 steps
+verifier work: 257 registers, 1029 words, 133639 steps
+unused-choice regression: 65535 registers, 524005 words, 851541 steps
+bytecode verifier: all checks passed
+promise deadline: all checks passed
+check bodies: all checks passed
+bytecode text: all checks passed
+export: all checks passed
+test_fakes: all checks passed
+test_diag: all checks passed
+test_core_text: all checks passed
+{"state_bytes":16777216,"message_bytes":1048064,"pair_frame_bytes":17825348,"three_transactions_seconds":0.636704,"baseline_rss_kib":21304,"peak_rss_kib":56368,"sqlite_file_bytes":35708928}
+failure sizing: all checks passed
+test_fix: all checks passed
+format corpus: 130 accepted inputs checked
+test_format: all checks passed
+fetch peer: all checks passed
+host faults: all checks passed
+host resolver limits and races: all checks passed
+promise inputs: all checks passed
+test_limits: all checks passed
+listener: all checks passed
+host hostile links (default): 0.161 s; depth 500, 40 links, 790 parent pairs per link
+host hostile links (portable): 0.142 s; depth 500, 40 links, 790 parent pairs per link
+host: all checks passed
+Core long-name checking: 0.031 CPU seconds
+test_core_check: all checks passed
+test_opcodes: all checks passed
+module paths: all checks passed
+Compiled VM uncons (0 elements): 0.000003 s
+Compiled VM uncons (31 elements): 0.000069 s
+primitives: all checks passed
+test_codegen: all checks passed
+heap: all checks passed
+fetch deadline: all checks passed
+program: all checks passed
+bytecode repeated-name refusal: 0.083 CPU seconds
+bytecode collision round trip: 0.085 CPU seconds
+test_bytecode_io: all checks passed
+listener_faults: all checks passed
+constant sources: 22 public load/check controls
+generic import sources: 17 public load/check controls
+import sources: 42 public load/check controls
+capture sources: 39 public load/check controls
+check import scaling: 1 importers, 3362848 checking arena bytes
+check import scaling: 32 importers, 7557152 checking arena bytes
+check import scaling: 128 importers, 22212640 checking arena bytes
+check: all checks passed
+program allocation: all checks passed
+protocol composites: all checks passed
+protocol memory: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+protocol scalar values: all checks passed
+recovery faults: all checks passed
+saved state: all checks passed
+service runtime: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c tests/test_sha256.c -o build/clang/debug/tests/test_sha256.o
+test_sources: all checks passed
+stack: all checks passed
+service descriptors: all checks passed
+syntax corpus: 159 inputs checked
+test_syntax_corpus: all checks passed
+test_tables: all checks passed
+test_types: all checks passed
+protocol_bounds: all checks passed
+utf-8: all checks passed
+Unicode16: all checks passed
+vm faults: all checks passed
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread -c src/tools/main.c -o build/clang/debug/src/tools/main.o
+clang -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread build/clang/debug/tests/test_sha256.o build/clang/debug/src/base/arena.o build/clang/debug/src/base/base.o build/clang/debug/src/base/binary.o build/clang/debug/src/base/buffer.o build/clang/debug/src/base/capabilities.o build/clang/debug/src/base/codes.o build/clang/debug/src/base/decimal.o build/clang/debug/src/base/diag.o build/clang/debug/src/base/export.o build/clang/debug/src/base/failure.o build/clang/debug/src/base/hash.o build/clang/debug/src/base/path.o build/clang/debug/src/base/runtime-identity.o build/clang/debug/src/base/sha256.o build/clang/debug/src/base/stack.o build/clang/debug/src/base/store-memory.o build/clang/debug/src/base/utf8.o build/clang/debug/src/bytecode/assemble.o build/clang/debug/src/bytecode/disassemble.o build/clang/debug/src/bytecode/image.o build/clang/debug/src/bytecode/indexed.o build/clang/debug/src/bytecode/names.o build/clang/debug/src/bytecode/read.o build/clang/debug/src/bytecode/service-reach.o build/clang/debug/src/bytecode/shorthand-finish.o build/clang/debug/src/bytecode/shorthand-function.o build/clang/debug/src/bytecode/shorthand-type.o build/clang/debug/src/bytecode/shorthand.o build/clang/debug/src/bytecode/signature.o build/clang/debug/src/bytecode/text-index.o build/clang/debug/src/bytecode/text-scalar.o build/clang/debug/src/bytecode/validate.o build/clang/debug/src/bytecode/verify-instruction.o build/clang/debug/src/bytecode/verify-program.o build/clang/debug/src/bytecode/verify.o build/clang/debug/src/bytecode/write.o build/clang/debug/src/check/abilities.o build/clang/debug/src/check/bodies.o build/clang/debug/src/check/captures.o build/clang/debug/src/check/constants.o build/clang/debug/src/check/load.o build/clang/debug/src/check/map_keys.o build/clang/debug/src/check/modules.o build/clang/debug/src/check/patterns.o build/clang/debug/src/check/program.o build/clang/debug/src/check/recursion.o build/clang/debug/src/check/service-fixes.o build/clang/debug/src/check/services.o build/clang/debug/src/check/signatures.o build/clang/debug/src/codegen/bigint.o build/clang/debug/src/codegen/compile.o build/clang/debug/src/codegen/control.o build/clang/debug/src/codegen/index.o build/clang/debug/src/codegen/operations.o build/clang/debug/src/codegen/registers.o build/clang/debug/src/core/check.o build/clang/debug/src/core/metadata.o build/clang/debug/src/core/text.o build/clang/debug/src/heap/abilities.o build/clang/debug/src/heap/bigint.o build/clang/debug/src/heap/cell.o build/clang/debug/src/heap/float.o build/clang/debug/src/heap/generic.o build/clang/debug/src/heap/hash.o build/clang/debug/src/heap/heap.o build/clang/debug/src/heap/host.o build/clang/debug/src/heap/print.o build/clang/debug/src/heap/reuse.o build/clang/debug/src/heap/saved.o build/clang/debug/src/heap/table.o build/clang/debug/src/heap/types.o build/clang/debug/src/heap/value.o build/clang/debug/src/host/console.o build/clang/debug/src/host/credentials.o build/clang/debug/src/host/fake-files.o build/clang/debug/src/host/files.o build/clang/debug/src/host/host.o build/clang/debug/src/host/listener.o build/clang/debug/src/host/path.o build/clang/debug/src/host/random.o build/clang/debug/src/host/real-files.o build/clang/debug/src/host/store.o build/clang/debug/src/host/types.o build/clang/debug/src/lower/abilities.o build/clang/debug/src/lower/constants.o build/clang/debug/src/lower/expressions.o build/clang/debug/src/lower/lower.o build/clang/debug/src/lower/metadata.o build/clang/debug/src/lower/scalar.o build/clang/debug/src/lower/specs.o build/clang/debug/src/lower/types.o build/clang/debug/src/prim/bigint.o build/clang/debug/src/prim/collections.o build/clang/debug/src/prim/number.o build/clang/debug/src/prim/parse.o build/clang/debug/src/prim/prim.o build/clang/debug/src/prim/text.o build/clang/debug/src/prim/time.o build/clang/debug/src/prim/unicode.o build/clang/debug/src/syntax/comments.o build/clang/debug/src/syntax/format-doc.o build/clang/debug/src/syntax/format.o build/clang/debug/src/syntax/lexer.o build/clang/debug/src/syntax/parser.o build/clang/debug/src/tools/builders.o build/clang/debug/src/tools/cli.o build/clang/debug/src/tools/deadline.o build/clang/debug/src/tools/execute.o build/clang/debug/src/tools/fakes.o build/clang/debug/src/tools/fetch.o build/clang/debug/src/tools/fix.o build/clang/debug/src/tools/format.o build/clang/debug/src/tools/inputs-build.o build/clang/debug/src/tools/inputs-prepare.o build/clang/debug/src/tools/inputs-scalars.o build/clang/debug/src/tools/inputs-shrink.o build/clang/debug/src/tools/inputs.o build/clang/debug/src/tools/promises.o build/clang/debug/src/tools/protocol-call.o build/clang/debug/src/tools/protocol-descriptor.o build/clang/debug/src/tools/protocol-export.o build/clang/debug/src/tools/protocol-request.o build/clang/debug/src/tools/protocol-scalar.o build/clang/debug/src/tools/protocol-server.o build/clang/debug/src/tools/protocol-value.o build/clang/debug/src/tools/protocol-views.o build/clang/debug/src/tools/protocol.o build/clang/debug/src/tools/recovery.o build/clang/debug/src/tools/render.o build/clang/debug/src/tools/run.o build/clang/debug/src/tools/serve.o build/clang/debug/src/tools/tests.o build/clang/debug/src/vm/defect.o build/clang/debug/src/vm/execute.o build/clang/debug/src/vm/image.o build/clang/debug/src/vm/number.o build/clang/debug/src/vm/process.o build/clang/debug/src/vm/service.o build/clang/debug/src/vm/simulation.o build/clang/debug/vendor/sqlite/sqlite3.o build/clang/debug/runtime-main.o -o build/clang/debug/tests/test_sha256.test -lm
+clang -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g -pthread build/clang/debug/src/base/arena.o build/clang/debug/src/base/base.o build/clang/debug/src/base/binary.o build/clang/debug/src/base/buffer.o build/clang/debug/src/base/capabilities.o build/clang/debug/src/base/codes.o build/clang/debug/src/base/decimal.o build/clang/debug/src/base/diag.o build/clang/debug/src/base/export.o build/clang/debug/src/base/failure.o build/clang/debug/src/base/hash.o build/clang/debug/src/base/path.o build/clang/debug/src/base/runtime-identity.o build/clang/debug/src/base/sha256.o build/clang/debug/src/base/stack.o build/clang/debug/src/base/store-memory.o build/clang/debug/src/base/utf8.o build/clang/debug/src/bytecode/assemble.o build/clang/debug/src/bytecode/disassemble.o build/clang/debug/src/bytecode/image.o build/clang/debug/src/bytecode/indexed.o build/clang/debug/src/bytecode/names.o build/clang/debug/src/bytecode/read.o build/clang/debug/src/bytecode/service-reach.o build/clang/debug/src/bytecode/shorthand-finish.o build/clang/debug/src/bytecode/shorthand-function.o build/clang/debug/src/bytecode/shorthand-type.o build/clang/debug/src/bytecode/shorthand.o build/clang/debug/src/bytecode/signature.o build/clang/debug/src/bytecode/text-index.o build/clang/debug/src/bytecode/text-scalar.o build/clang/debug/src/bytecode/validate.o build/clang/debug/src/bytecode/verify-instruction.o build/clang/debug/src/bytecode/verify-program.o build/clang/debug/src/bytecode/verify.o build/clang/debug/src/bytecode/write.o build/clang/debug/src/check/abilities.o build/clang/debug/src/check/bodies.o build/clang/debug/src/check/captures.o build/clang/debug/src/check/constants.o build/clang/debug/src/check/load.o build/clang/debug/src/check/map_keys.o build/clang/debug/src/check/modules.o build/clang/debug/src/check/patterns.o build/clang/debug/src/check/program.o build/clang/debug/src/check/recursion.o build/clang/debug/src/check/service-fixes.o build/clang/debug/src/check/services.o build/clang/debug/src/check/signatures.o build/clang/debug/src/codegen/bigint.o build/clang/debug/src/codegen/compile.o build/clang/debug/src/codegen/control.o build/clang/debug/src/codegen/index.o build/clang/debug/src/codegen/operations.o build/clang/debug/src/codegen/registers.o build/clang/debug/src/core/check.o build/clang/debug/src/core/metadata.o build/clang/debug/src/core/text.o build/clang/debug/src/heap/abilities.o build/clang/debug/src/heap/bigint.o build/clang/debug/src/heap/cell.o build/clang/debug/src/heap/float.o build/clang/debug/src/heap/generic.o build/clang/debug/src/heap/hash.o build/clang/debug/src/heap/heap.o build/clang/debug/src/heap/host.o build/clang/debug/src/heap/print.o build/clang/debug/src/heap/reuse.o build/clang/debug/src/heap/saved.o build/clang/debug/src/heap/table.o build/clang/debug/src/heap/types.o build/clang/debug/src/heap/value.o build/clang/debug/src/host/console.o build/clang/debug/src/host/credentials.o build/clang/debug/src/host/fake-files.o build/clang/debug/src/host/files.o build/clang/debug/src/host/host.o build/clang/debug/src/host/listener.o build/clang/debug/src/host/path.o build/clang/debug/src/host/random.o build/clang/debug/src/host/real-files.o build/clang/debug/src/host/store.o build/clang/debug/src/host/types.o build/clang/debug/src/lower/abilities.o build/clang/debug/src/lower/constants.o build/clang/debug/src/lower/expressions.o build/clang/debug/src/lower/lower.o build/clang/debug/src/lower/metadata.o build/clang/debug/src/lower/scalar.o build/clang/debug/src/lower/specs.o build/clang/debug/src/lower/types.o build/clang/debug/src/prim/bigint.o build/clang/debug/src/prim/collections.o build/clang/debug/src/prim/number.o build/clang/debug/src/prim/parse.o build/clang/debug/src/prim/prim.o build/clang/debug/src/prim/text.o build/clang/debug/src/prim/time.o build/clang/debug/src/prim/unicode.o build/clang/debug/src/syntax/comments.o build/clang/debug/src/syntax/format-doc.o build/clang/debug/src/syntax/format.o build/clang/debug/src/syntax/lexer.o build/clang/debug/src/syntax/parser.o build/clang/debug/src/tools/builders.o build/clang/debug/src/tools/cli.o build/clang/debug/src/tools/deadline.o build/clang/debug/src/tools/execute.o build/clang/debug/src/tools/fakes.o build/clang/debug/src/tools/fetch.o build/clang/debug/src/tools/fix.o build/clang/debug/src/tools/format.o build/clang/debug/src/tools/inputs-build.o build/clang/debug/src/tools/inputs-prepare.o build/clang/debug/src/tools/inputs-scalars.o build/clang/debug/src/tools/inputs-shrink.o build/clang/debug/src/tools/inputs.o build/clang/debug/src/tools/promises.o build/clang/debug/src/tools/protocol-call.o build/clang/debug/src/tools/protocol-descriptor.o build/clang/debug/src/tools/protocol-export.o build/clang/debug/src/tools/protocol-request.o build/clang/debug/src/tools/protocol-scalar.o build/clang/debug/src/tools/protocol-server.o build/clang/debug/src/tools/protocol-value.o build/clang/debug/src/tools/protocol-views.o build/clang/debug/src/tools/protocol.o build/clang/debug/src/tools/recovery.o build/clang/debug/src/tools/render.o build/clang/debug/src/tools/run.o build/clang/debug/src/tools/serve.o build/clang/debug/src/tools/tests.o build/clang/debug/src/vm/defect.o build/clang/debug/src/vm/execute.o build/clang/debug/src/vm/image.o build/clang/debug/src/vm/number.o build/clang/debug/src/vm/process.o build/clang/debug/src/vm/service.o build/clang/debug/src/vm/simulation.o build/clang/debug/vendor/sqlite/sqlite3.o build/clang/debug/src/tools/main.o -o build/clang/debug/mo -lm
+sha256: all checks passed
+service store: all checks passed
+vm: all checks passed
+protocol_server_faults: all checks passed
+recovery: all checks passed
+syntax performance 0: 2000002 bytes, 0.024 CPU seconds
+syntax performance 1: 7803020 bytes, 2.082 CPU seconds
+syntax performance 2: 2006009 bytes, 0.291 CPU seconds
+test_syntax: all checks passed
+lower: all checks passed
+protocol_server: all checks passed
+python3 ci/check_sha256.py build/clang/debug/tests/test_sha256.test
+sha256: executable identity and 110 reference comparisons passed
+
+==> Tests under AddressSanitizer and UndefinedBehaviorSanitizer
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -Dmain=mo_test_runtime_main -include tests/runtime_entry.h -c src/tools/main.c -o build/clang/sanitize/runtime-main.o
+test_buffer: all checks passed
+test_arena: all checks passed
+test_cli_faults: all checks passed
+test_codes: all checks passed
+test_compiler_faults: all checks passed
+test_cli: all checks passed
+test_core_print: all checks passed
+verifier work: 65 registers, 261 words, 8839 steps
+verifier work: 129 registers, 517 words, 34055 steps
+verifier work: 257 registers, 1029 words, 133639 steps
+unused-choice regression: 65535 registers, 524005 words, 851541 steps
+bytecode verifier: all checks passed
+promise deadline: all checks passed
+bytecode text: all checks passed
+export: all checks passed
+test_core_text: all checks passed
+test_diag: all checks passed
+test_fakes: all checks passed
+{"state_bytes":16777216,"message_bytes":1048064,"pair_frame_bytes":17825348,"three_transactions_seconds":0.634903,"baseline_rss_kib":36812,"peak_rss_kib":159308,"sqlite_file_bytes":35708928}
+failure sizing: all checks passed
+test_fix: all checks passed
+fetch peer: all checks passed
+format corpus: 130 accepted inputs checked
+test_format: all checks passed
+check bodies: all checks passed
+host faults: all checks passed
+host resolver limits and races: all checks passed
+promise inputs: all checks passed
+test_limits: all checks passed
+listener: all checks passed
+host hostile links (default): 0.133 s; depth 500, 40 links, 790 parent pairs per link
+host hostile links (portable): 0.142 s; depth 500, 40 links, 790 parent pairs per link
+host: all checks passed
+Core long-name checking: 0.063 CPU seconds
+test_core_check: all checks passed
+test_opcodes: all checks passed
+module paths: all checks passed
+heap: all checks passed
+Compiled VM uncons (0 elements): 0.000013 s
+Compiled VM uncons (31 elements): 0.000091 s
+primitives: all checks passed
+test_codegen: all checks passed
+fetch deadline: all checks passed
+bytecode repeated-name refusal: 0.048 CPU seconds
+bytecode collision round trip: 0.074 CPU seconds
+test_bytecode_io: all checks passed
+listener_faults: all checks passed
+program: all checks passed
+constant sources: 22 public load/check controls
+generic import sources: 17 public load/check controls
+import sources: 42 public load/check controls
+capture sources: 39 public load/check controls
+check import scaling: 1 importers, 3362848 checking arena bytes
+check import scaling: 32 importers, 7557152 checking arena bytes
+check import scaling: 128 importers, 22212640 checking arena bytes
+check: all checks passed
+protocol_bounds: all checks passed
+protocol composites: all checks passed
+protocol memory: all checks passed
+lower: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+protocol scalar values: all checks passed
+protocol_server: all checks passed
+program allocation: all checks passed
+saved state: all checks passed
+service runtime: all checks passed
+recovery faults: all checks passed
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -c tests/test_sha256.c -o build/clang/sanitize/tests/test_sha256.o
+test_sources: all checks passed
+stack: all checks passed
+protocol_server_faults: all checks passed
+syntax corpus: 159 inputs checked
+test_syntax_corpus: all checks passed
+test_tables: all checks passed
+service descriptors: all checks passed
+test_types: all checks passed
+utf-8: all checks passed
+program allocation: all checks passed
+vm faults: all checks passed
+clang -std=c17 -Isrc -Ibuild/generated -Ivendor/sqlite -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion -Wswitch-enum -Wimplicit-fallthrough -Wstrict-prototypes -Wmissing-prototypes -Wvla -Wformat=2 -Wcast-qual -Wundef -Wnull-dereference -pthread -MMD -MP -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all -c src/tools/main.c -o build/clang/sanitize/src/tools/main.o
+clang -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all build/clang/sanitize/tests/test_sha256.o build/clang/sanitize/src/base/arena.o build/clang/sanitize/src/base/base.o build/clang/sanitize/src/base/binary.o build/clang/sanitize/src/base/buffer.o build/clang/sanitize/src/base/capabilities.o build/clang/sanitize/src/base/codes.o build/clang/sanitize/src/base/decimal.o build/clang/sanitize/src/base/diag.o build/clang/sanitize/src/base/export.o build/clang/sanitize/src/base/failure.o build/clang/sanitize/src/base/hash.o build/clang/sanitize/src/base/path.o build/clang/sanitize/src/base/runtime-identity.o build/clang/sanitize/src/base/sha256.o build/clang/sanitize/src/base/stack.o build/clang/sanitize/src/base/store-memory.o build/clang/sanitize/src/base/utf8.o build/clang/sanitize/src/bytecode/assemble.o build/clang/sanitize/src/bytecode/disassemble.o build/clang/sanitize/src/bytecode/image.o build/clang/sanitize/src/bytecode/indexed.o build/clang/sanitize/src/bytecode/names.o build/clang/sanitize/src/bytecode/read.o build/clang/sanitize/src/bytecode/service-reach.o build/clang/sanitize/src/bytecode/shorthand-finish.o build/clang/sanitize/src/bytecode/shorthand-function.o build/clang/sanitize/src/bytecode/shorthand-type.o build/clang/sanitize/src/bytecode/shorthand.o build/clang/sanitize/src/bytecode/signature.o build/clang/sanitize/src/bytecode/text-index.o build/clang/sanitize/src/bytecode/text-scalar.o build/clang/sanitize/src/bytecode/validate.o build/clang/sanitize/src/bytecode/verify-instruction.o build/clang/sanitize/src/bytecode/verify-program.o build/clang/sanitize/src/bytecode/verify.o build/clang/sanitize/src/bytecode/write.o build/clang/sanitize/src/check/abilities.o build/clang/sanitize/src/check/bodies.o build/clang/sanitize/src/check/captures.o build/clang/sanitize/src/check/constants.o build/clang/sanitize/src/check/load.o build/clang/sanitize/src/check/map_keys.o build/clang/sanitize/src/check/modules.o build/clang/sanitize/src/check/patterns.o build/clang/sanitize/src/check/program.o build/clang/sanitize/src/check/recursion.o build/clang/sanitize/src/check/service-fixes.o build/clang/sanitize/src/check/services.o build/clang/sanitize/src/check/signatures.o build/clang/sanitize/src/codegen/bigint.o build/clang/sanitize/src/codegen/compile.o build/clang/sanitize/src/codegen/control.o build/clang/sanitize/src/codegen/index.o build/clang/sanitize/src/codegen/operations.o build/clang/sanitize/src/codegen/registers.o build/clang/sanitize/src/core/check.o build/clang/sanitize/src/core/metadata.o build/clang/sanitize/src/core/text.o build/clang/sanitize/src/heap/abilities.o build/clang/sanitize/src/heap/bigint.o build/clang/sanitize/src/heap/cell.o build/clang/sanitize/src/heap/float.o build/clang/sanitize/src/heap/generic.o build/clang/sanitize/src/heap/hash.o build/clang/sanitize/src/heap/heap.o build/clang/sanitize/src/heap/host.o build/clang/sanitize/src/heap/print.o build/clang/sanitize/src/heap/reuse.o build/clang/sanitize/src/heap/saved.o build/clang/sanitize/src/heap/table.o build/clang/sanitize/src/heap/types.o build/clang/sanitize/src/heap/value.o build/clang/sanitize/src/host/console.o build/clang/sanitize/src/host/credentials.o build/clang/sanitize/src/host/fake-files.o build/clang/sanitize/src/host/files.o build/clang/sanitize/src/host/host.o build/clang/sanitize/src/host/listener.o build/clang/sanitize/src/host/path.o build/clang/sanitize/src/host/random.o build/clang/sanitize/src/host/real-files.o build/clang/sanitize/src/host/store.o build/clang/sanitize/src/host/types.o build/clang/sanitize/src/lower/abilities.o build/clang/sanitize/src/lower/constants.o build/clang/sanitize/src/lower/expressions.o build/clang/sanitize/src/lower/lower.o build/clang/sanitize/src/lower/metadata.o build/clang/sanitize/src/lower/scalar.o build/clang/sanitize/src/lower/specs.o build/clang/sanitize/src/lower/types.o build/clang/sanitize/src/prim/bigint.o build/clang/sanitize/src/prim/collections.o build/clang/sanitize/src/prim/number.o build/clang/sanitize/src/prim/parse.o build/clang/sanitize/src/prim/prim.o build/clang/sanitize/src/prim/text.o build/clang/sanitize/src/prim/time.o build/clang/sanitize/src/prim/unicode.o build/clang/sanitize/src/syntax/comments.o build/clang/sanitize/src/syntax/format-doc.o build/clang/sanitize/src/syntax/format.o build/clang/sanitize/src/syntax/lexer.o build/clang/sanitize/src/syntax/parser.o build/clang/sanitize/src/tools/builders.o build/clang/sanitize/src/tools/cli.o build/clang/sanitize/src/tools/deadline.o build/clang/sanitize/src/tools/execute.o build/clang/sanitize/src/tools/fakes.o build/clang/sanitize/src/tools/fetch.o build/clang/sanitize/src/tools/fix.o build/clang/sanitize/src/tools/format.o build/clang/sanitize/src/tools/inputs-build.o build/clang/sanitize/src/tools/inputs-prepare.o build/clang/sanitize/src/tools/inputs-scalars.o build/clang/sanitize/src/tools/inputs-shrink.o build/clang/sanitize/src/tools/inputs.o build/clang/sanitize/src/tools/promises.o build/clang/sanitize/src/tools/protocol-call.o build/clang/sanitize/src/tools/protocol-descriptor.o build/clang/sanitize/src/tools/protocol-export.o build/clang/sanitize/src/tools/protocol-request.o build/clang/sanitize/src/tools/protocol-scalar.o build/clang/sanitize/src/tools/protocol-server.o build/clang/sanitize/src/tools/protocol-value.o build/clang/sanitize/src/tools/protocol-views.o build/clang/sanitize/src/tools/protocol.o build/clang/sanitize/src/tools/recovery.o build/clang/sanitize/src/tools/render.o build/clang/sanitize/src/tools/run.o build/clang/sanitize/src/tools/serve.o build/clang/sanitize/src/tools/tests.o build/clang/sanitize/src/vm/defect.o build/clang/sanitize/src/vm/execute.o build/clang/sanitize/src/vm/image.o build/clang/sanitize/src/vm/number.o build/clang/sanitize/src/vm/process.o build/clang/sanitize/src/vm/service.o build/clang/sanitize/src/vm/simulation.o build/clang/sanitize/vendor/sqlite/sqlite3.o build/clang/sanitize/runtime-main.o -o build/clang/sanitize/tests/test_sha256.test -lm
+clang -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g -pthread -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all build/clang/sanitize/src/base/arena.o build/clang/sanitize/src/base/base.o build/clang/sanitize/src/base/binary.o build/clang/sanitize/src/base/buffer.o build/clang/sanitize/src/base/capabilities.o build/clang/sanitize/src/base/codes.o build/clang/sanitize/src/base/decimal.o build/clang/sanitize/src/base/diag.o build/clang/sanitize/src/base/export.o build/clang/sanitize/src/base/failure.o build/clang/sanitize/src/base/hash.o build/clang/sanitize/src/base/path.o build/clang/sanitize/src/base/runtime-identity.o build/clang/sanitize/src/base/sha256.o build/clang/sanitize/src/base/stack.o build/clang/sanitize/src/base/store-memory.o build/clang/sanitize/src/base/utf8.o build/clang/sanitize/src/bytecode/assemble.o build/clang/sanitize/src/bytecode/disassemble.o build/clang/sanitize/src/bytecode/image.o build/clang/sanitize/src/bytecode/indexed.o build/clang/sanitize/src/bytecode/names.o build/clang/sanitize/src/bytecode/read.o build/clang/sanitize/src/bytecode/service-reach.o build/clang/sanitize/src/bytecode/shorthand-finish.o build/clang/sanitize/src/bytecode/shorthand-function.o build/clang/sanitize/src/bytecode/shorthand-type.o build/clang/sanitize/src/bytecode/shorthand.o build/clang/sanitize/src/bytecode/signature.o build/clang/sanitize/src/bytecode/text-index.o build/clang/sanitize/src/bytecode/text-scalar.o build/clang/sanitize/src/bytecode/validate.o build/clang/sanitize/src/bytecode/verify-instruction.o build/clang/sanitize/src/bytecode/verify-program.o build/clang/sanitize/src/bytecode/verify.o build/clang/sanitize/src/bytecode/write.o build/clang/sanitize/src/check/abilities.o build/clang/sanitize/src/check/bodies.o build/clang/sanitize/src/check/captures.o build/clang/sanitize/src/check/constants.o build/clang/sanitize/src/check/load.o build/clang/sanitize/src/check/map_keys.o build/clang/sanitize/src/check/modules.o build/clang/sanitize/src/check/patterns.o build/clang/sanitize/src/check/program.o build/clang/sanitize/src/check/recursion.o build/clang/sanitize/src/check/service-fixes.o build/clang/sanitize/src/check/services.o build/clang/sanitize/src/check/signatures.o build/clang/sanitize/src/codegen/bigint.o build/clang/sanitize/src/codegen/compile.o build/clang/sanitize/src/codegen/control.o build/clang/sanitize/src/codegen/index.o build/clang/sanitize/src/codegen/operations.o build/clang/sanitize/src/codegen/registers.o build/clang/sanitize/src/core/check.o build/clang/sanitize/src/core/metadata.o build/clang/sanitize/src/core/text.o build/clang/sanitize/src/heap/abilities.o build/clang/sanitize/src/heap/bigint.o build/clang/sanitize/src/heap/cell.o build/clang/sanitize/src/heap/float.o build/clang/sanitize/src/heap/generic.o build/clang/sanitize/src/heap/hash.o build/clang/sanitize/src/heap/heap.o build/clang/sanitize/src/heap/host.o build/clang/sanitize/src/heap/print.o build/clang/sanitize/src/heap/reuse.o build/clang/sanitize/src/heap/saved.o build/clang/sanitize/src/heap/table.o build/clang/sanitize/src/heap/types.o build/clang/sanitize/src/heap/value.o build/clang/sanitize/src/host/console.o build/clang/sanitize/src/host/credentials.o build/clang/sanitize/src/host/fake-files.o build/clang/sanitize/src/host/files.o build/clang/sanitize/src/host/host.o build/clang/sanitize/src/host/listener.o build/clang/sanitize/src/host/path.o build/clang/sanitize/src/host/random.o build/clang/sanitize/src/host/real-files.o build/clang/sanitize/src/host/store.o build/clang/sanitize/src/host/types.o build/clang/sanitize/src/lower/abilities.o build/clang/sanitize/src/lower/constants.o build/clang/sanitize/src/lower/expressions.o build/clang/sanitize/src/lower/lower.o build/clang/sanitize/src/lower/metadata.o build/clang/sanitize/src/lower/scalar.o build/clang/sanitize/src/lower/specs.o build/clang/sanitize/src/lower/types.o build/clang/sanitize/src/prim/bigint.o build/clang/sanitize/src/prim/collections.o build/clang/sanitize/src/prim/number.o build/clang/sanitize/src/prim/parse.o build/clang/sanitize/src/prim/prim.o build/clang/sanitize/src/prim/text.o build/clang/sanitize/src/prim/time.o build/clang/sanitize/src/prim/unicode.o build/clang/sanitize/src/syntax/comments.o build/clang/sanitize/src/syntax/format-doc.o build/clang/sanitize/src/syntax/format.o build/clang/sanitize/src/syntax/lexer.o build/clang/sanitize/src/syntax/parser.o build/clang/sanitize/src/tools/builders.o build/clang/sanitize/src/tools/cli.o build/clang/sanitize/src/tools/deadline.o build/clang/sanitize/src/tools/execute.o build/clang/sanitize/src/tools/fakes.o build/clang/sanitize/src/tools/fetch.o build/clang/sanitize/src/tools/fix.o build/clang/sanitize/src/tools/format.o build/clang/sanitize/src/tools/inputs-build.o build/clang/sanitize/src/tools/inputs-prepare.o build/clang/sanitize/src/tools/inputs-scalars.o build/clang/sanitize/src/tools/inputs-shrink.o build/clang/sanitize/src/tools/inputs.o build/clang/sanitize/src/tools/promises.o build/clang/sanitize/src/tools/protocol-call.o build/clang/sanitize/src/tools/protocol-descriptor.o build/clang/sanitize/src/tools/protocol-export.o build/clang/sanitize/src/tools/protocol-request.o build/clang/sanitize/src/tools/protocol-scalar.o build/clang/sanitize/src/tools/protocol-server.o build/clang/sanitize/src/tools/protocol-value.o build/clang/sanitize/src/tools/protocol-views.o build/clang/sanitize/src/tools/protocol.o build/clang/sanitize/src/tools/recovery.o build/clang/sanitize/src/tools/render.o build/clang/sanitize/src/tools/run.o build/clang/sanitize/src/tools/serve.o build/clang/sanitize/src/tools/tests.o build/clang/sanitize/src/vm/defect.o build/clang/sanitize/src/vm/execute.o build/clang/sanitize/src/vm/image.o build/clang/sanitize/src/vm/number.o build/clang/sanitize/src/vm/process.o build/clang/sanitize/src/vm/service.o build/clang/sanitize/src/vm/simulation.o build/clang/sanitize/vendor/sqlite/sqlite3.o build/clang/sanitize/src/tools/main.o -o build/clang/sanitize/mo -lm
+Unicode16: all checks passed
+sha256: all checks passed
+vm: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+syntax performance 0: 2000002 bytes, 0.023 CPU seconds
+syntax performance 1: 7803020 bytes, 2.103 CPU seconds
+syntax performance 2: 2006009 bytes, 0.249 CPU seconds
+test_syntax: all checks passed
+service store: all checks passed
+recovery: all checks passed
+python3 ci/check_sha256.py build/clang/sanitize/tests/test_sha256.test
+sha256: executable identity and 110 reference comparisons passed
+
+==> All checks in gcc clang sanitize passed
+check.sh finished: pass

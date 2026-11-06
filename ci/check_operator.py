@@ -143,10 +143,13 @@ def private_state(rpc, call):
     for name in NAMES:
         if name != "mo-export":
             call(name)
+    retained = call("mo-failures")
+    assert retained["records"] == [] and retained["truncated"] == 0, retained
+    assert retained["next"] is None and retained["unavailable"] == [], retained
     for token in ["", "WrongOperatorCanary"]:
         status, _ = rpc("tools/call", {"name": "mo-state"}, token)
         assert status == 401
-    for name in ["mo-export", "mo-failures"]:
+    for name in ["mo-export"]:
         status, body = rpc("tools/call", {"name": name})
         assert status == 200 and body["error"]["code"] == -32602
     for name, arguments in [("mo-state", {"path": [-0.0]}), ("mo-log", {"after": 1.0}),

@@ -162,7 +162,8 @@ static void parse_fetch(void) {
     CHECK(cli.command == MO_COMMAND_FETCH && strcmp(cli.output, "state.moex") == 0);
     CHECK(strcmp(cli.fetch_url, args[2]) == 0 && strcmp(cli.fetch_token, "TOKEN") == 0);
     CHECK(!mo_cli_parse(8, args, &cli, &error));
-    CHECK(strcmp(error, "usage: mo fetch URL --export state --out FILE --token-env NAME") == 0);
+    CHECK(strcmp(error,
+                 "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
 }
 
 static void parse_serve(void) {

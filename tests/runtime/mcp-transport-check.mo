@@ -107,7 +107,7 @@ fn methods()
       "{\"protocolVersion\":\"old\",\"capabilities\":{},\"clientInfo\":{\"name\":\"client\"}}",
       "Invalid params: initialize needs protocolVersion, capabilities and clientInfo"
     ),
-    ("tools/list", "{\"cursor\":\"9.0123456789abcdef\"}", "Invalid params: invalid cursor"),
+    ("tools/list", "{\"cursor\":\"10.0123456789abcdef\"}", "Invalid params: invalid cursor"),
     ("tools/call", "{}", "Invalid params: name must be a string"),
     ("tools/call", "{\"name\":4}", "Invalid params: name must be a string"),
     (
@@ -200,8 +200,8 @@ fn pages()
   end
   empty = descriptor(0)
   catalog = Mcp.prepare(empty, key, 32768) or stop "operator-only catalog"
-  require(catalog.tools.size == 8, "operator tools without author tools")
-  require(Mcp.page(catalog, 8, id) == None, "invalid start")
+  require(catalog.tools.size == 9, "operator tools without author tools")
+  require(Mcp.page(catalog, 9, id) == None, "invalid start")
   broken = Mcp.Catalog(tools: [], sizes: [], image_key: key, response_bytes: 0)
   require(
     McpTransport.receive(

@@ -69,6 +69,10 @@ static void log_event(const struct mo_service_event *event, void *context) {
     if (event->defect != NULL &&
         !mo_write_defect(log->errors, event->defect->process, event->defect))
         (void)fputs("mo: could not write the defect report\n", log->errors);
+    if (event->kind == MO_SERVICE_FAILURE && event->record_id != 0)
+        (void)fprintf(log->errors, "  record: %llu\n", (unsigned long long)event->record_id);
+    else if (event->kind == MO_SERVICE_FAILURE && event->record_unavailable != NULL)
+        (void)fprintf(log->errors, "  record unavailable: %s\n", event->record_unavailable);
 }
 
 static void refuse(struct mo_diags *diags, const char *what, const char *subject,

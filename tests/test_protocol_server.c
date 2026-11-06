@@ -784,7 +784,7 @@ static void private_views(void) {
     tool_request(&f, "mo-export", "{}", "4", out, sizeof out);
     CHECK(strstr(out, "\"code\":-32602") != NULL);
     tool_request(&f, "mo-failures", "{}", "5", out, sizeof out);
-    CHECK(strstr(out, "\"code\":-32602") != NULL);
+    CHECK(strstr(out, "\"records\":[]") != NULL);
     CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
     tool_request(&f, "mo_state", "{}", "6", out, sizeof out);
     CHECK(strstr(out, "\"value\":\"777\"") != NULL);

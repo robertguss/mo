@@ -34,6 +34,7 @@ fi
 # "f.k:c" is c. The least input size lets every loop's body run.
 proofs=(
 	"export_page_matches||harness_export_page_matches.0:17,memcmp.0:17||export-consume.c|--unwind 17"
+	"slice||harness_slice.0:+,mo_binary_uint.0:5|12|failure.c|--unwind 6"
 	"mo_export_page_bounds||||export.c|"
 	"mo_export_schema|digest|harness_mo_export_schema.0:+,mo_binary_uint.0:5|10|export.c|--unwind 6"
 	"word|||"

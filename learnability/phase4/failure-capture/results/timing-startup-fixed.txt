@@ -1,0 +1,14 @@
+mo check, best of 5 runs, limit 0.100 s (build/gcc/debug/mo)
+  account.mo        0.0507 s
+  expenses.mo       0.0302 s
+  find.mo           0.0292 s
+  greet.mo          0.0273 s
+  inventory.mo      0.0309 s
+  job-queue.mo      0.0746 s
+  json-query.mo     0.0329 s
+  kv.mo             0.0616 s
+  notes-tool.mo     0.0476 s
+  rate-limit.mo     0.0503 s
+  todo.mo           0.0568 s
+  wc.mo             0.0273 s
+all 12 samples within 0.1 s

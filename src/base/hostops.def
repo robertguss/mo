@@ -95,6 +95,20 @@ STOREOP(APPEND)
 STOREOP(SNAPSHOT)
 #undef STOREOP
 
+/* Separate typed runtime-only diagnostic capability operations. They never
+ * advance head, touch snapshot/log or change user_version. The pair-writing
+ * API has a three-way committed/refused/unsafe result, unlike recovery writes. */
+#ifndef FAILUREOP
+#define FAILUREOP(id, function)
+#endif
+FAILUREOP(CAPTURE, mo_store_capture)
+FAILUREOP(LIST, mo_store_failures)
+FAILUREOP(CATALOG, mo_store_failure_catalog)
+FAILUREOP(GET, mo_store_failure_get)
+FAILUREOP(EXPORT, mo_store_failure_export)
+FAILUREOP(STATS, mo_store_failure_stats)
+#undef FAILUREOP
+
 #ifndef SIMOP
 #define SIMOP(id, module, name, spec_only)
 #endif

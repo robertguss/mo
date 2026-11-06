@@ -1,0 +1,124 @@
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 7
+  _now = 2026-11-06T03:45:29.100761Z
+  _n = 0
+  record: 1
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.427578Z
+  _n = 0
+  record: 2
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.502988Z
+  _n = 0
+  record: 3
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.583334Z
+  _n = 0
+  record: 4
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.657662Z
+  _n = 0
+  record: 5
+mo serve: restart: 1 of 3: service handler failed
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.733123Z
+  _n = 0
+  record: 6
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.809408Z
+  _n = 0
+  record: 7
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.885402Z
+  _n = 0
+  record: 8
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:38.961054Z
+  _n = 0
+  record: 9
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:39.049061Z
+  _n = 0
+  record: 10
+mo serve: restart: 2 of 3: service handler failed
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:39.125129Z
+  _n = 0
+  record: 11
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:39.213722Z
+  _n = 0
+  record: 12
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:39.290246Z
+  _n = 0
+  record: 13
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:39.382799Z
+  _n = 0
+  record: 14
+mo serve: failure: broken: service handler failed
+bug: stop
+  at Main.broken (/tmp/tmpjc2uzcth/main.mo:143..163)
+  detail: capture smoke
+  _state = 108
+  _now = 2026-11-06T03:45:39.470401Z
+  _n = 0
+  record: 15
+mo serve: restart: 3 of 3: service handler failed
+mo serve: stop: service handler failed

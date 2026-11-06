@@ -1,0 +1,1 @@
+operator: private state, scalar types, paths, truncation, paging, routing and nonmutation passed

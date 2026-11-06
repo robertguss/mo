@@ -172,6 +172,20 @@ MO_MUST_USE bool mo_value_print(struct mo_heap *process, uint32_t type, struct m
  * contains native pointers, layouts, capabilities or function values. */
 MO_MUST_USE bool mo_value_encode(struct mo_heap *process, uint32_t type, struct mo_cell value,
                                  struct mo_buffer *out);
+/* Bounded native scratch, no heap allocation; refusal preserves output length. */
+enum mo_saved_status {
+    MO_SAVED_OK,
+    MO_SAVED_TOO_LARGE,
+    MO_SAVED_DEPTH,
+    MO_SAVED_NODES,
+    MO_SAVED_MEMORY
+};
+MO_MUST_USE enum mo_saved_status mo_value_encode_status(struct mo_heap *heap, uint32_t type,
+                                                        struct mo_cell value,
+                                                        struct mo_buffer *out);
+MO_MUST_USE enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *process, uint32_t type,
+                                                            struct mo_cell value,
+                                                            struct mo_buffer *out);
 MO_MUST_USE bool mo_value_decode(struct mo_heap *process, uint32_t type, const uint8_t *bytes,
                                  size_t length, struct mo_cell *out);
 MO_MUST_USE bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type,

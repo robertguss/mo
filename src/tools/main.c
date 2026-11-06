@@ -8,7 +8,6 @@
 #include <stdio.h>
 
 int main(int argc, char *argv[]) {
-    mo_runtime_identity_init();
     /* Only character encoding follows the environment; numeric parsing does
      * not. An unavailable locale leaves POSIX's ASCII-safe C locale active. */
     (void)setlocale(LC_CTYPE, "");
@@ -18,6 +17,8 @@ int main(int argc, char *argv[]) {
         (void)fprintf(stderr, "%s\n", error);
         return 2;
     }
+    if (cli.command != MO_COMMAND_CHECK)
+        mo_runtime_identity_init();
     /* Broken output is an ordinary tool failure, not exit 141 from SIGPIPE. */
     if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
         (void)fputs("mo: could not configure output handling\n", stderr);

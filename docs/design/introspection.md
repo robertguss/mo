@@ -747,7 +747,8 @@ They are available for persistent updating calls and zero-argument calls. Otherw
 availability flag is false: the arguments were not encoded at admission. Observing them
 never encodes or retains additional values. Timers have zero argument bytes.
 
-The executable initializes runtime identity once at startup. Linux reads `/proc/self/exe`;
+The executable initializes runtime identity once before command execution, except for
+`mo check`, which does not consume runtime identity. Linux reads `/proc/self/exe`;
 macOS resolves the executable path. A failed read leaves identity unavailable without
 changing ordinary command behavior. Consumers must check availability. The build label
 includes Mo's version, compiler version and build configuration. `ci/check_sha256.py`
@@ -757,8 +758,9 @@ No authenticated operator entry point, artifact format or fetch command is intro
 these native interfaces.
 
 The debug build optimizes the SHA-256 arithmetic kernel while retaining debug settings
-for the rest of the toolchain. This keeps eager executable hashing within the existing
-sample `mo check` latency budget; the measured executable bytes still determine identity.
+for the rest of the toolchain. `mo check` skips executable hashing to preserve its
+0.1-second sample latency budget; commands that consume identity still hash the measured
+executable bytes before execution.
 The service-store fault harness separately refuses the recovery cache copy, checking a
 memory refusal, release of the decoded state and successful reopening afterward.
 
@@ -936,3 +938,44 @@ remove a late link. As with the runtime's other wall budgets, delivery/cleanup a
 schedule the process and interrupt a blocking syscall; uninterruptible kernel waits are outside
 that guarantee. Compiled two-second controls interrupt five-second lookup and fsync stalls;
 SIGTERM injected immediately after temporary creation verifies handler ordering and cleanup.
+
+## Retained diagnostic implementation
+
+The runtime captures from live frames before normal cleanup and uses a dedicated
+native-only saved encoder for arguments. This refines section 6.3: no encoding
+scratch is charged to an exhausted handler heap, and no mailbox retains a second
+copy of potentially 64 times 16 MiB of admitted arguments. Existing synchronous
+defect hooks still see valid live frames. Normal cleanup runs once after reporting
+and reply; no frame survives into another execution. The encoder shares the saved
+schema/value walkers, bounds its native schema scratch to 1 MiB, and rolls back
+partial output on refusal. Exact-limit admission remains unchanged.
+
+Message metadata is at most 1 MiB. A named 512-byte reserve within the combined
+17 MiB capture budget covers both MOST envelopes, pair lengths, and the maximum
+MOEX header/label, so every captured pair can fit its export pin. Context walks at
+most eight frames and visits at most 32 variables with 1 KiB render budgets and a
+separate one-million-unit inspection budget; unavailable values are explicit.
+The version-1 message payload uses little-endian integers: one-byte version,
+8-byte id/sequence/arrival, one-byte timer, 4-byte handler, length-prefixed UTF-8
+name, one-byte read-only flag, 4-byte count and length-prefixed MOSV arguments;
+one-byte signature version/class, length-prefixed reason/limit and its 8-byte exact value, four 4-byte
+location fields, five 8-byte budgets, 8-byte service-adjusted program identity,
+32-byte build digest, length-prefixed label, 32-byte schema digest, one-byte
+context status and length-prefixed context text. Class values are defect=0,
+work=1, memory=2, state-size=3; context status is complete=0, truncated=1,
+unavailable=2. Each textual variable line states availability. Record id is bound
+inside the message before the same transaction commits both rows.
+
+Failure exports allocate their final confidential pin directly from borrowed
+SQLite payloads, without an intermediate complete pair buffer. State and failure
+pins remain independent and refresh only after a successful page. Evicted-kind
+counts describe the current open handle, not durable history. Repeated-kind growth
+that cannot fit without evicting another kind is explicitly refused.
+
+Development evidence and limitations are recorded in
+[the failure capture results](../../learnability/phase4/failure-capture/results/verification.md).
+
+The retained-failure catalog reads at most eight message records after its cursor and only
+state lengths, charging message bytes to the request work budget. It reports the exact
+remaining record count. Pin creation performs an indexed id lookup and validates that one
+complete pair; it does not checksum unrelated retained state blobs.

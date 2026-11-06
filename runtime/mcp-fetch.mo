@@ -83,7 +83,10 @@ fn read(wire: Text) : List(Text)
     Json.Object(entries): entries
     Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
   end
-  return [] if page_fields.get("kind") != Some(Json.String("state")) or
+  return [] if (
+    page_fields.get("kind") != Some(Json.String("state")) and
+      page_fields.get("kind") != Some(Json.String("failure"))
+  ) or
     page_fields.get("version") != Some(Json.int(1))
   for key in ["export", "sequence", "encoded_sequence", "checksum", "base64"]
     case page_fields.get(key)
@@ -109,12 +112,17 @@ fn read(wire: Text) : List(Text)
     return [] if next != Json.Null
   else
     return [] if page_fields.get("digest") != Some(Json.Null)
-    return [] if next !=
-      Json.Object({
-        "kind": Json.String("state"),
-        "export": Json.String(text(page, "export")),
-        "offset": Json.int(offset + size)
-      })
+    var expected = {
+      "kind": page_fields.get("kind") or Json.Null,
+      "export": Json.String(text(page, "export")),
+      "offset": Json.int(offset + size)
+    }
+    if page_fields.get("kind") == Some(Json.String("failure"))
+      failure = text(page, "failure").to_int or 0
+      return [] if failure <= 0
+      expected = expected.set("failure", Json.int(failure))
+    end
+    return [] if next != Json.Object(expected)
   end
   [
     text(page, "export"),

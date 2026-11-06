@@ -1,0 +1,2579 @@
+[
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "mo-failures",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":{\"records\":[{\"id\":\"1\",\"kind\":\"broken:0:stop::0:0:143:163\",\"handler\":\"broken\",\"arrival\":\"1793936729100761\",\"state_bytes\":\"30\",\"message_bytes\":\"393\"}],\"unavailable\":[],\"unavailable_omitted\":0,\"truncated\":false,\"next\":null}}"
+          }
+        ],
+        "structuredContent": {
+          "value": {
+            "records": [
+              {
+                "id": "1",
+                "kind": "broken:0:stop::0:0:143:163",
+                "handler": "broken",
+                "arrival": "1793936729100761",
+                "state_bytes": "30",
+                "message_bytes": "393"
+              }
+            ],
+            "unavailable": [],
+            "unavailable_omitted": 0,
+            "truncated": false,
+            "next": null
+          }
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "add",
+    "arguments": {},
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"value\":true}"
+          }
+        ],
+        "structuredContent": {
+          "value": true
+        },
+        "isError": false
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  },
+  {
+    "tool": "broken",
+    "arguments": {
+      "_n": "0"
+    },
+    "status": 200,
+    "response": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"error\":{\"kind\":\"runtime\",\"code\":\"handler_failed\",\"message\":\"the tool handler failed; service state is unchanged\",\"effect\":\"none\"}}"
+          }
+        ],
+        "structuredContent": {
+          "error": {
+            "kind": "runtime",
+            "code": "handler_failed",
+            "message": "the tool handler failed; service state is unchanged",
+            "effect": "none"
+          }
+        },
+        "isError": true
+      }
+    }
+  }
+]

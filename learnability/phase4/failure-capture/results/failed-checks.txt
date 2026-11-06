@@ -1,0 +1,43 @@
+tables-red.txt
+tests/test_service_store.c:1983: check failed: sqlite3_column_int(stmt, 0) == 2
+make: *** [Makefile:149: build/gcc/debug/tests/test_service_store.test.run] Error 1
+
+retention-red.txt
+/home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:1990:(.text+0xecb0): undefined reference to `mo_store_capture'
+/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:1994:(.text+0xed8f): undefined reference to `mo_store_failures'
+/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:1999:(.text+0xeecd): undefined reference to `mo_store_capture'
+/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:2002:(.text+0xef58): undefined reference to `mo_store_failures'
+/bin/ld: /home/exedev/.t3/worktrees/mo/feat-failure-capture-retention/tests/test_service_store.c:2006:(.text+0xf039): undefined reference to `mo_store_capture'
+collect2: error: ld returned 1 exit status
+make: *** [Makefile:553: build/gcc/debug/tests/test_service_store.test] Error 1
+
+rollback.txt
+tests/test_service_store.c:2008: check failed: mo_store_capture(store, "refused", &state, &message, &id) == MO_STORE_CAPTURE_REFUSED
+make: *** [Makefile:149: build/gcc/debug/tests/test_service_store.test.run] Error 1
+
+integration-build-gcc.txt
+src/tools/protocol-server.c:240:5: error: this ‘if’ clause does not guard... [-Werror=misleading-indentation]
+make: *** [Makefile:294: build/gcc/debug/src/tools/protocol-server.o] Error 1
+
+runtime-integration.txt
+mo: internal error: image != NULL (src/bytecode/image.c:102)
+
+runtime-integration2.txt
+mo: internal error: f.program != NULL && !mo_diags_any(&f.diags) (tests/service_compile.h:18)
+tests/test_protocol_server.c:787: check failed: strstr(out, "\"code\":-32602") != NULL
+make: *** [Makefile:149: build/gcc/debug/tests/test_protocol_server.test.run] Error 1
+
+runtime-integration3.txt
+mo: internal error: f.program != NULL && !mo_diags_any(&f.diags) (tests/service_compile.h:18)
+
+counts.txt
+src/tools/protocol-views.c:240:102: error: operand of ‘?:’ changes signedness from ‘int’ to ‘uint32_t’ {aka ‘unsigned int’} due to unsignedness of other operand [-Werror=sign-compare]
+src/tools/protocol-views.c:240:100: error: unsigned conversion from ‘int’ to ‘uint32_t’ {aka ‘unsigned int’} changes value from ‘-1’ to ‘4294967295’ [-Werror=sign-conversion]
+make: *** [Makefile:293: build/gcc/debug/src/tools/protocol-views.o] Error 1
+src/tools/protocol.c:293:114: error: excess elements in array initializer [-Werror]
+make: *** [Makefile:293: build/gcc/debug/src/tools/protocol.o] Error 1
+
+sizing-fuzz-build.txt
+src/base/hostops.def:41:2: error: #error "Define HOSTOP(id, module, name, signature, params, bugs, spec_only) before including base/hostops.def."
+src/base/hostops.def:45:7: error: expected ‘,’ or ‘}’ before ‘(’ token
+make: *** [Makefile:293: build/gcc/debug/tests/test_failure_sizing.o] Error 1

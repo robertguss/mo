@@ -1,0 +1,8 @@
+FAILED slice: some blocks never run; see build/cbmc/slice.reach.log
+[slice.coverage.9] file src/base/failure.c line 18 function slice block 9 (lines src/base/failure.c:slice:18): FAILED
+[slice.coverage.10] file src/base/failure.c line 18 function slice block 10 (lines src/base/failure.c:slice:18): FAILED
+[slice.coverage.11] file src/base/failure.c line 18 function slice block 11 (lines src/base/failure.c:slice:18): FAILED
+[slice.coverage.12] file src/base/failure.c line 18 function slice block 12 (lines src/base/failure.c:slice:18): FAILED
+[slice.coverage.13] file src/base/failure.c line 18 function slice block 13 (lines src/base/failure.c:slice:18): FAILED
+[slice.coverage.14] file src/base/failure.c line 18 function slice block 14 (lines src/base/failure.c:slice:18): FAILED
+error: 1 CBMC proof(s) failed: slice
