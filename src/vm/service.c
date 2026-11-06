@@ -5,6 +5,7 @@
 #include "base/binary.h"
 #include "base/export.h"
 #include "base/failure.h"
+#include "base/log-record.h"
 #include "base/runtime-identity.h"
 
 struct service_message {
@@ -48,17 +49,6 @@ struct mo_service_loop {
     bool capture_unsafe;
     enum mo_saved_status saved_status;
     bool running;
-};
-
-enum {
-    LOG_TIMER_WIDTH = 1,
-    LOG_HANDLER_WIDTH = 4,
-    LOG_ARRIVAL_WIDTH = 8,
-    LOG_COUNT_WIDTH = 4,
-    LOG_CHECKSUM_WIDTH = 8,
-    LOG_ARGUMENT_LENGTH_WIDTH = 4,
-    MESSAGE_HEADER_BYTES = LOG_TIMER_WIDTH + LOG_HANDLER_WIDTH + LOG_ARRIVAL_WIDTH +
-                           LOG_COUNT_WIDTH + LOG_CHECKSUM_WIDTH
 };
 
 const char *mo_service_status_text(enum mo_service_status status) {
@@ -302,33 +292,28 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
         return true;
     }
     struct mo_binary in = {record->bytes, record->length, 0};
-    uint64_t timer, handler, arrival, count, expected;
+    struct mo_log_record_header header;
     if (!r->found || record->sequence != r->sequence + 1 ||
-        !mo_binary_uint(&in, LOG_TIMER_WIDTH, &timer) || timer > 1 ||
-        !mo_binary_uint(&in, LOG_HANDLER_WIDTH, &handler) ||
-        !mo_binary_uint(&in, LOG_ARRIVAL_WIDTH, &arrival) ||
-        !mo_binary_uint(&in, LOG_COUNT_WIDTH, &count) ||
-        !mo_binary_uint(&in, LOG_CHECKSUM_WIDTH, &expected))
+        !mo_log_record_header_read(&in, &header))
         return false;
-    struct service_message m = {.handler = (uint32_t)handler, .timer = timer != 0};
-    memcpy(&m.arrival, &arrival, LOG_ARRIVAL_WIDTH);
+    uint64_t expected = header.state_checksum;
+    struct service_message m = {
+        .arrival = header.arrival, .handler = header.handler, .timer = header.timer};
     if (m.arrival < MO_TIME_MIN_US || m.arrival > MO_TIME_MAX_US ||
-        handler >= (m.timer ? s->descriptor->timer_count : s->descriptor->tool_count))
+        m.handler >= (m.timer ? s->descriptor->timer_count : s->descriptor->tool_count))
         return false;
-    const struct mo_bytecode_service_tool *tool = m.timer ? NULL : &s->descriptor->tools[handler];
-    if (count != (m.timer ? 0 : tool->argument_count) || (!m.timer && tool->read_only))
+    const struct mo_bytecode_service_tool *tool = m.timer ? NULL : &s->descriptor->tools[m.handler];
+    if (header.count != (m.timer ? 0 : tool->argument_count) || (!m.timer && tool->read_only))
         return false;
     uint32_t built = 0;
     bool ok = true;
-    while (ok && built < count) {
-        uint64_t length;
+    while (ok && built < header.count) {
+        size_t length;
         const uint8_t *bytes;
-        ok = mo_binary_uint(&in, LOG_ARGUMENT_LENGTH_WIDTH, &length) &&
-             mo_binary_read(&in, (size_t)length, &bytes) &&
-             mo_value_decode(heap, tool->argument_types[built], bytes, (size_t)length,
-                             &m.arguments[built]);
+        ok = mo_log_record_argument_read(&in, &bytes, &length) &&
+             mo_value_decode(heap, tool->argument_types[built], bytes, length, &m.arguments[built]);
         if (ok) {
-            m.argument_bytes += (size_t)length;
+            m.argument_bytes += length;
             built++;
         }
     }
@@ -408,18 +393,18 @@ static bool persist(struct mo_service_loop *s, const struct service_message *m,
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
     mo_buffer_init(&value, MO_LIMIT_SAVED_BYTES);
     uint32_t count = m->timer ? 0 : s->descriptor->tools[m->handler].argument_count;
-    bool ok = mo_binary_write(&bytes, m->timer ? 1 : 0, LOG_TIMER_WIDTH) &&
-              mo_binary_write(&bytes, m->handler, LOG_HANDLER_WIDTH) &&
-              mo_binary_write(&bytes, (uint64_t)m->arrival, LOG_ARRIVAL_WIDTH) &&
-              mo_binary_write(&bytes, count, LOG_COUNT_WIDTH) &&
-              mo_binary_write(&bytes, mo_binary_checksum(state->bytes, state->length),
-                              LOG_CHECKSUM_WIDTH);
+    struct mo_log_record_header header = {.state_checksum =
+                                              mo_binary_checksum(state->bytes, state->length),
+                                          .arrival = m->arrival,
+                                          .handler = m->handler,
+                                          .count = count,
+                                          .timer = m->timer};
+    bool ok = mo_log_record_header_write(&bytes, &header);
     for (uint32_t i = 0; ok && i < count; i++) {
         mo_buffer_clear(&value);
         ok = mo_value_encode(s->process->heap, s->descriptor->tools[m->handler].argument_types[i],
                              m->arguments[i], &value) &&
-             mo_binary_write(&bytes, value.length, LOG_ARGUMENT_LENGTH_WIDTH) &&
-             mo_buffer_append(&bytes, value.bytes, value.length);
+             mo_log_record_argument_write(&bytes, value.bytes, value.length);
     }
     if (ok) {
         struct mo_store_record record = {MO_STORE_LOG, s->sequence + 1, s->image_key, bytes.bytes,
@@ -669,13 +654,13 @@ enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
     struct service_message message = {.arrival = time.now, .handler = tool, .id = id};
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
-    size_t payload = MESSAGE_HEADER_BYTES;
+    size_t payload = MO_LOG_RECORD_HEADER_BYTES;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t type = handler->argument_types[i];
         if (handler->read_only)
             message.arguments[i] = mo_value_dup(s->process->heap, type, arguments[i]);
         else if (!saved_copy(s, type, arguments[i], &message.arguments[i], &encoded) ||
-                 (payload += LOG_ARGUMENT_LENGTH_WIDTH + encoded.length) > MO_LIMIT_SAVED_BYTES) {
+                 (payload += MO_LOG_RECORD_LENGTH_BYTES + encoded.length) > MO_LIMIT_SAVED_BYTES) {
             uint32_t built = payload > MO_LIMIT_SAVED_BYTES ? i + 1 : i;
             for (uint32_t j = 0; j < built; j++)
                 mo_value_drop(s->process->heap, handler->argument_types[j], message.arguments[j]);
@@ -686,7 +671,7 @@ enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
     message.argument_bytes_available = count == 0 || (s->store != NULL && !handler->read_only);
     message.argument_bytes =
         message.argument_bytes_available
-            ? payload - MESSAGE_HEADER_BYTES - count * LOG_ARGUMENT_LENGTH_WIDTH
+            ? payload - MO_LOG_RECORD_HEADER_BYTES - count * MO_LOG_RECORD_LENGTH_BYTES
             : 0;
     *append(s) = message;
     mo_buffer_free(&encoded);
