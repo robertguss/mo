@@ -269,3 +269,35 @@ it. Nine seeds.
   1,718 executions); `fuzz_history` alone for 180 s, 34,383 executions, peak 461 MB, no crash, leak
   or leftover folder. Green: `make test` under gcc, `test_service_store` under clang debug and
   sanitize, `make format-check`, `make deps`, `make tidy`, `ci/check_fuzz_seeds.py`.
+||||||| parent of 0eeaec27 (Compare defect replays with Lean's evaluator)
+
+## Defect replays against Lean
+
+`ci/check_offline_core.py`, in the `lean` group, with fixtures under `tests/offline-core/`. Each
+fixture is a service program and one handler's inputs written by hand as Core text: a read-only
+tool that stops, an updating tool whose new count overflows `Int`, and a read-only tool that
+divides by zero. The C side serves the program, makes the failing MCP call, stops the service and
+runs `mo replay --json`; the Lean side runs the handler's Core from `mo check --emit=core` as the
+entry of a Run on the hand-written inputs. The prediction was that both stop the same way.
+
+- Result: all three agree, for the gcc and the clang debug build (`python3
+  ci/check_offline_core.py build/gcc/debug/mo build/clang/debug/mo`, exit 0, 12 s). The reasons are
+  `stop`, `overflow: Int` and `dividing by zero`. Lean also gives the fixture's own stop message,
+  `more than the room left`, which a replay signature does not carry. With the passing arguments
+  Lean returns `true`, the new `Counter` pair and `400`, and a copy of each record holding those
+  arguments replays as `not_reproduced`.
+- Excluded by name, in the script's output: `work` (Lean's fuel bounds depth, not VM
+  instructions), `memory` (Lean has no heap, stack or depth limit) and `state_size` (Lean has no
+  saved encoding).
+- Not compared: the location. Lean's stop carries no span, so spans are compared only by
+  `mo replay`, recorded against offline. Nor is the arrival time: the handlers do not read it, and
+  the service records the wall clock.
+- Red: the check passed on its first run, since the behaviour already held, so mutants stood in.
+  Each made the script exit 1: a wrong hand-written state (Lean returned `true`), the VM's
+  division reason renamed to `division by zero` (the C reason differed), stops mapped to their
+  message instead of `stop`, and a passing record that kept its failing arguments (the replay
+  reproduced).
+- Failed attempt kept: the first Run swapped the entry name `Main.%entry`, but a service program's
+  Core entry is `%entry`. The swap matched nothing and `mocore` refused the arguments as
+  `invalidRun`. The script now requires exactly one entry to swap and the handler's `FunDecl` to
+  exist.

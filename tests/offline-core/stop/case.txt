@@ -1,0 +1,9 @@
+# A read-only tool that stops when its argument is more than the room its state leaves.
+handler: halt
+call: {"n": "8"}
+state: (con "Tally" ((int 10) (int 3)))
+arrival: (time 1767225600000000)
+arguments: (int 8)
+stop: (stop "more than the room left")
+passing: (int 7)
+returns: true

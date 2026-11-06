@@ -479,6 +479,13 @@ if have lake; then
 		else
 			missing "no host test executable is built"
 		fi
+		built mo
+		if ((${#drivers[@]})); then
+			later "Defect replays: mo replay and Lean stop the same way on hand-written handler inputs" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_offline_core.py "${drivers[@]}"
+		else
+			missing "no mo executable is built"
+		fi
 		report
 	else
 		missing "python3 is not installed"
