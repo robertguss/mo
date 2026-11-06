@@ -277,7 +277,15 @@
     X(1407, TOOL_FIX_IO, NULL)                                                                     \
     /* Running a service is not implemented in this build. */                                      \
     X(1408, TOOL_SERVICE_UNAVAILABLE, NULL)                                                        \
-    X(1409, TOOL_SERVICE_START, NULL)
+    X(1409, TOOL_SERVICE_START, NULL)                                                              \
+    /* A query's function is generic. */                                                           \
+    X(1410, QUERY_GENERIC, NULL)                                                                   \
+    /* A query's function takes or returns a value holding a capability or function. */            \
+    X(1411, QUERY_CAPABILITY, NULL)                                                                \
+    /* A query's function does not take the main service's state type first, or there is none. */  \
+    X(1412, QUERY_STATE, NULL)                                                                     \
+    /* A query's function takes more than the state, or not the failure's time and arguments. */   \
+    X(1413, QUERY_INPUTS, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

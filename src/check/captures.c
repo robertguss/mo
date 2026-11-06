@@ -275,7 +275,7 @@ bool mo_check_capture_arguments(struct mo_arena *arena, const struct mo_program 
 
 bool mo_check_service_purity(struct mo_arena *arena, const struct mo_program *program,
                              const struct mo_source_type *type, struct mo_span span,
-                             struct mo_diags *diags) {
+                             enum mo_purity_rule rule, struct mo_diags *diags) {
     struct captures p = {.arena = arena,
                          .program = program,
                          .signatures = program->signatures,
@@ -287,8 +287,13 @@ bool mo_check_service_purity(struct mo_arena *arena, const struct mo_program *pr
     if (!stored(&p, type, &parameters, &capability, 0))
         return false;
     MO_ASSERT(parameters == 0);
-    return !capability ||
-           report(&p, MO_CODE_SERVICE_CAPABILITY, "a service value holds a capability or function",
+    if (!capability)
+        return true;
+    if (rule == MO_PURITY_QUERY)
+        return report(&p, MO_CODE_QUERY_CAPABILITY, "a query value holds a capability or function",
+                      "A query's parameters and result cannot contain capabilities or functions, "
+                      "even inside records, choices, tuples or collections.");
+    return report(&p, MO_CODE_SERVICE_CAPABILITY, "a service value holds a capability or function",
                   "Service state, tool inputs and tool results cannot contain capabilities or "
                   "functions (reference 11.5).");
 }

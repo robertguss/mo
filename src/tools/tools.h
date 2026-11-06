@@ -20,9 +20,16 @@ enum mo_command {
     MO_COMMAND_SERVE,
     MO_COMMAND_VERSION,
     MO_COMMAND_FETCH,
+    MO_COMMAND_REPLAY,
+    MO_COMMAND_QUERY,
+    MO_COMMAND_HISTORY,
 };
 
 #define MO_EXIT_SERVICE_STOPPED 69
+/* EX_TEMPFAIL: another process held the store; a service manager retries. */
+#define MO_EXIT_STORE_BUSY 75
+/* The saved data's file inside a service's data folder. */
+#define MO_DATA_FILE "service.sqlite"
 
 enum mo_emit { MO_EMIT_NONE, MO_EMIT_CORE, MO_EMIT_BYTECODE };
 
@@ -39,6 +46,12 @@ struct mo_cli {
     uint16_t port;
     const char *data;
     const char *allow_host;
+    /* replay, query and history: a retained failure's id (0 when not given), an artifact, a
+     * revised program, a journal rollback, query's function and its work limit. */
+    uint64_t failure;
+    const char *artifact, *revised, *function;
+    bool recover;
+    uint64_t max_work;
     const char *only[MO_CLI_ARGUMENTS];
     uint32_t only_count;
     const char *const *files; /* borrowed argv slice; use mo_cli_file to skip -- */
@@ -66,12 +79,19 @@ MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const st
                                       bool json, struct mo_buffer *out);
 struct mo_test_totals {
     uint32_t passed, failed, stopped;
+    /* An offline command's own result status, which the totals report when no diagnostic
+     * or failed test already makes it 1. */
+    int status;
 };
 /* Writes and flushes each complete record. Sorts diagnostics in place. Returns
  * 0 on success, 1 on diagnostics/drops/output failure. Text goes to errors,
  * JSON exclusively to output. JSON's version must have been written first.
  * Optional test totals also determine status; NULL means no observations ran. */
 MO_MUST_USE bool mo_write_version(FILE *output, enum mo_command command);
+/* Append bytes as one JSON string literal, or as text safe for a terminal in which only '\n'
+ * passes unescaped. */
+MO_MUST_USE bool mo_render_json_text(struct mo_buffer *out, const void *bytes, size_t length);
+MO_MUST_USE bool mo_render_terminal_text(struct mo_buffer *out, const void *bytes, size_t length);
 MO_MUST_USE int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command command,
                                      const struct mo_sources *sources, struct mo_diags *diags,
                                      const struct mo_test_totals *totals);

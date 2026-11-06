@@ -469,6 +469,7 @@ static bool valid_abi(const struct mo_image *image) {
         {"McpViews.failure_after", 1, {ABI_JSON}, ABI_INT},
         {"McpViews.failure_reply", 2, {ABI_JSON, ABI_TEXTS}, ABI_JSON},
         {"McpViews.export_reply", 3, {ABI_TEXT, ABI_TEXTS, ABI_NATIVE_BYTES}, ABI_JSON},
+        {"McpViews.offline_value", 2, {ABI_NATIVE_BYTES, ABI_INT}, ABI_TEXT},
         {"McpViews.render",
          5,
          {ABI_INT, ABI_JSON, ABI_VIEW_OBSERVATION, ABI_NATIVE_BYTES, ABI_INT},

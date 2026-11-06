@@ -1,3 +1,4 @@
+#include "base/export.h"
 #include "heap_fixture.h"
 #include "test.h"
 
@@ -9,6 +10,17 @@ static void roundtrip(struct mo_heap *heap, uint32_t type, struct mo_cell origin
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
     MO_ASSERT(mo_value_encode(heap, type, original, &bytes));
     CHECK(bytes.length > 9 && bytes.bytes[9] == tag);
+    /* The type alone gives the schema bytes and digest the value's encoding carries. */
+    struct mo_buffer schema;
+    mo_buffer_init(&schema, MO_LIMIT_SAVED_BYTES);
+    CHECK(mo_type_schema(heap, type, &schema));
+    uint32_t shape = (uint32_t)bytes.bytes[5] | (uint32_t)bytes.bytes[6] << 8 |
+                     (uint32_t)bytes.bytes[7] << 16 | (uint32_t)bytes.bytes[8] << 24;
+    CHECK(schema.length == shape && memcmp(schema.bytes, bytes.bytes + 9, shape) == 0);
+    mo_buffer_free(&schema);
+    uint8_t encoded[32], typed[32];
+    CHECK(mo_export_schema(bytes.bytes, bytes.length, encoded));
+    CHECK(mo_type_schema_digest(heap, type, typed) && memcmp(encoded, typed, 32) == 0);
     size_t used = mo_heap_used(heap);
     struct mo_cell value;
     bool decoded = mo_value_decode(heap, type, bytes.bytes, bytes.length, &value);
@@ -98,6 +110,13 @@ static void values(struct heap_fixture *f, struct mo_heap *heap) {
     mo_value_drop(heap, f->node, node);
     MO_ASSERT(mo_value_list(heap, f->no_equal_list, NULL, 0, &node));
     CHECK(!mo_value_encode(heap, f->no_equal_list, node, &bytes));
+    /* A list of functions has no saved form: the list's own schema bytes are taken back. */
+    MO_ASSERT(mo_buffer_append(&bytes, "kept", 4));
+    CHECK(!mo_type_schema(heap, f->no_equal_list, &bytes));
+    CHECK(bytes.length == 4 && memcmp(bytes.bytes, "kept", 4) == 0);
+    uint8_t untouched[32] = {7};
+    CHECK(!mo_type_schema_digest(heap, f->no_equal_list, untouched) && untouched[0] == 7);
+    bytes.length = 0;
     mo_value_drop(heap, f->no_equal_list, node);
     mo_buffer_free(&bytes);
     uint8_t magnitude[] = {0, 2, 7};

@@ -1,0 +1,4 @@
+{main}
+peek
+--export
+tests/errors/e1411-function/missing.moex

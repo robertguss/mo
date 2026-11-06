@@ -2,9 +2,10 @@
 # Runs the CBMC proofs in cbmc/ (make cbmc): the bytecode reader (reader.c), the arena (arena.c),
 # the bytecode verifier (verify.c), the primitives' arithmetic and UTF-8 (decimal.c, number.c,
 # text.c, unicode.c), lexical path containment (path.c), path resolution (resolve.c,
-# resolve-kernel.c), reference counts (refcount.c) and hash-table probing (table.c). Each proof
-# checks one function against its specification, with the functions it calls replaced by their
-# models (cbmc/README.md).
+# resolve-kernel.c), reference counts (refcount.c), hash-table probing (table.c), and the
+# export and failure-record readers (export.c, export-consume.c, artifact.c, failure.c), and the
+# service log record walk (log-record.c). Each proof checks one function against its
+# specification, with the functions it calls replaced by their models (cbmc/README.md).
 #
 #   bash cbmc/prove.sh [proof...]           with no names, every proof
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved
@@ -35,8 +36,11 @@ fi
 proofs=(
 	"export_page_matches||harness_export_page_matches.0:17,memcmp.0:17||export-consume.c|--unwind 17"
 	"slice||harness_slice.0:+,mo_binary_uint.0:5|12|failure.c|--unwind 6"
+	"mo_failure_argument_next||harness_mo_failure_argument_next.0:+,mo_binary_uint.0:5|13|failure.c|--unwind 6"
+	"mo_log_record_walk||harness_mo_log_record_walk.0:+,harness_mo_log_record_walk.1:/4,harness_mo_log_record_walk.2:255,harness_mo_log_record_walk.3:/4,harness_mo_log_record_walk.4:255,mo_log_record_walk.0:/4,mo_binary_uint.0:9|37|log-record.c|--unwind 26"
 	"mo_export_page_bounds||||export.c|"
 	"mo_export_schema|digest|harness_mo_export_schema.0:+,mo_binary_uint.0:5|10|export.c|--unwind 6"
+	"mo_export_read|digest mo_utf8_valid mo_export_schema failure_body|harness_mo_export_read.0:+,mo_binary_uint.0:9,little_endian.0:9|172|artifact.c|--unwind 33"
 	"word|||"
 	"boolean|word||"
 	"allocate|||"
@@ -137,6 +141,12 @@ proved_function() {
 	lookup) echo 'mo_verify_layout_lookup|layout_order' ;;
 	step) echo 'step|access|mo_verify_parameter_modes|refuse|charge' ;;
 	normalize) echo mo_host_normalize ;;
+	# The artifact reader's walk includes its kind dispatch; the kind-2 body is modeled.
+	mo_export_read) echo 'mo_export_read|export_body' ;;
+	# The walk covers the argument reader it shares with mo_failure_read.
+	mo_failure_argument_next) echo 'mo_failure_argument_next|argument' ;;
+	# The log record walk covers the header reader it calls.
+	mo_log_record_walk) echo 'mo_log_record_walk|mo_log_record_header_read' ;;
 	# A primitive proof covers the helpers its function calls that no other proof covers.
 	text_scalar | unicode_scalar) echo scalar ;;
 	text_encode | unicode_encode) echo encode ;;
@@ -270,11 +280,14 @@ run() {
 			fi
 			# Nor can a call through a function pointer reach a target the harness never gives
 			# it: CBMC adds that branch when it resolves the pointer, and closes it with
-			# assume(false). One such branch per line is let off, no more.
+			# assume(false). One such branch per line is let off, no more. CBMC says it aborted
+			# the branch, or, when the pointer is a constant symex resolves first, only that it
+			# replaced the pointer there.
 			if [[ "$goal" =~ \ file\ ([^ ]+)\ line\ ([0-9]+)\ function\ ([^ ]+)\  ]]; then
 				site="${BASH_REMATCH[1]} line ${BASH_REMATCH[2]} function ${BASH_REMATCH[3]}"
 				if [[ "$pointer_sites" != *"|$site|"* ]] &&
-					grep -qF "at file $site thread 0: dereferenced function pointer must be" "$log"; then
+					grep -qF -e "at file $site thread 0: dereferenced function pointer must be" \
+						-e "file $site: replacing function pointer by" "$log"; then
 					pointer_sites+="|$site|"
 					continue
 				fi

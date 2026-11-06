@@ -12,6 +12,7 @@
 #include "tools/embedded.h"
 #include "tools/fix.h"
 #include "tools/format.h"
+#include "tools/offline.h"
 #include "tools/promises.h"
 #include "tools/run.h"
 #include "tools/tests.h"
@@ -135,6 +136,20 @@ static void execute_pipeline(void *argument) {
             .message = "this module has no service to start"};
         bool added = mo_diags_add(diags, &diag);
         (void)added;
+        return;
+    }
+    if (cli->command == MO_COMMAND_REPLAY || cli->command == MO_COMMAND_QUERY) {
+        struct mo_offline_pipeline offline = {.arena = arena,
+                                              .program = program,
+                                              .sources = sources,
+                                              .diags = diags,
+                                              .library = library,
+                                              .output = work->output,
+                                              .errors = work->errors,
+                                              .version = &work->version,
+                                              .mistake = &work->mistake};
+        work->status = mo_offline_program(cli, &offline);
+        work->totals.status = work->status;
         return;
     }
     if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_EMIT) &&
@@ -431,6 +446,8 @@ static int fix_files(const struct mo_cli *cli, FILE *output, FILE *errors) {
 int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     if (cli->command == MO_COMMAND_FETCH)
         return mo_fetch(cli, errors);
+    if (cli->command == MO_COMMAND_HISTORY)
+        return mo_history(cli, output, errors);
     if (cli->command == MO_COMMAND_VERSION) {
         bool ok = fprintf(output, "%s\n", mo_version_line()) >= 0 && fflush(output) == 0;
         if (!ok)
@@ -458,7 +475,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     }
     if (cli->command == MO_COMMAND_FIX)
         return fix_files(cli, output, errors);
-    bool version = cli->json && cli->command != MO_COMMAND_TEST;
+    /* Test and query write their version record once their selection is checked. */
+    bool version = cli->json && cli->command != MO_COMMAND_TEST && cli->command != MO_COMMAND_QUERY;
     if (version && !mo_write_version(output, cli->command)) {
         (void)fputs("mo: could not write version record\n", errors);
         return 1;

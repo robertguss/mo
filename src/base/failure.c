@@ -22,6 +22,15 @@ static bool slice(struct mo_binary *in, size_t maximum, bool text, struct mo_fai
     return true;
 }
 
+static bool argument(struct mo_binary *in, struct mo_failure_slice *out) {
+    struct mo_failure_slice value;
+    if (!slice(in, MO_LIMIT_FAILURE_MESSAGE_BYTES, false, &value) || value.length < 9 ||
+        memcmp(value.bytes, "MOSV\1", 5) != 0)
+        return false;
+    *out = value;
+    return true;
+}
+
 bool mo_failure_read(const uint8_t *bytes, size_t length, struct mo_failure_record *out) {
     if (length > MO_LIMIT_FAILURE_MESSAGE_BYTES || length == 0 || bytes[0] != MO_FAILURE_VERSION)
         return false;
@@ -37,9 +46,8 @@ bool mo_failure_read(const uint8_t *bytes, size_t length, struct mo_failure_reco
         return false;
     size_t arguments = in.position;
     for (uint64_t i = 0; i < count; i++) {
-        struct mo_failure_slice argument;
-        if (!slice(&in, MO_LIMIT_FAILURE_MESSAGE_BYTES, false, &argument) || argument.length < 9 ||
-            memcmp(argument.bytes, "MOSV\1", 5) != 0)
+        struct mo_failure_slice value;
+        if (!argument(&in, &value))
             return false;
     }
     int64_t arrival;
@@ -77,4 +85,31 @@ bool mo_failure_read(const uint8_t *bytes, size_t length, struct mo_failure_reco
     memcpy(r.schema, schema, 32);
     *out = r;
     return true;
+}
+
+bool mo_failure_slice_equal(struct mo_failure_slice a, struct mo_failure_slice b) {
+    return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
+}
+
+int64_t mo_failure_arrival(const struct mo_failure_record *record) {
+    int64_t arrival;
+    memcpy(&arrival, &record->arrival, sizeof arrival);
+    return arrival;
+}
+
+struct mo_failure_arguments mo_failure_arguments(const struct mo_failure_record *record) {
+    return (struct mo_failure_arguments){record->arguments, 0, record->argument_count};
+}
+
+enum mo_failure_argument mo_failure_argument_next(struct mo_failure_arguments *walk,
+                                                  struct mo_failure_slice *out) {
+    MO_ASSERT(walk->position <= walk->bytes.length);
+    struct mo_binary in = {walk->bytes.bytes, walk->bytes.length, walk->position};
+    if (walk->remaining == 0)
+        return in.position == in.length ? MO_FAILURE_ARGUMENTS_END : MO_FAILURE_ARGUMENTS_DAMAGED;
+    if (!argument(&in, out))
+        return MO_FAILURE_ARGUMENTS_DAMAGED;
+    walk->position = in.position;
+    walk->remaining--;
+    return MO_FAILURE_ARGUMENT;
 }

@@ -2,18 +2,23 @@
 #include "base/binary.h"
 #include "base/export.h"
 #include "base/failure.h"
+#include "base/log-record.h"
 #include "base/runtime-identity.h"
 #include "base/stack.h"
 #include "base/store-memory.h"
+#include "base/verdict.h"
 #include "bytecode/io.h"
 #include "service_compile.h"
 #include "test.h"
 #include "vm/vm.h"
 
+#include <errno.h>
 #include <inttypes.h>
 #include <sqlite3.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static unsigned crash_point, log_steps, simulation_appends;
@@ -157,7 +162,19 @@ int mo_store_fault_exec(sqlite3 *db, const char *sql,
     return result;
 }
 
+/* A reader's first read of the schema returns this code instead, and a reader whose log
+ * walk starts exits as a killed process would. */
+static int reader_code;
+static bool reader_killed;
+
 int mo_store_fault_step(sqlite3_stmt *stmt) {
+    if (reader_code != 0 && strstr(sqlite3_sql(stmt), "FROM sqlite_schema") != NULL)
+        return reader_code;
+    if (reader_killed && strstr(sqlite3_sql(stmt), "length(record)") != NULL)
+        _exit(80);
+    if (crash_point == 30 && strstr(sqlite3_sql(stmt), "INSERT INTO log") != NULL &&
+        sqlite3_step(stmt) == SQLITE_DONE)
+        _exit(81);
     if (crash_point >= 21 && crash_point <= 27 &&
         strstr(sqlite3_sql(stmt), "INSERT INTO failure_state") != NULL) {
         static const int codes[] = {SQLITE_TOOBIG, SQLITE_NOMEM, SQLITE_CONSTRAINT, SQLITE_CORRUPT,
@@ -820,6 +837,655 @@ static void foreign_image(struct mo_image *image, const char *path) {
     mo_store_close(store);
     mo_image_free(other);
     CHECK(unlink(path) == 0);
+}
+
+static uint64_t elapsed_us(const struct timespec *start) {
+    struct timespec now;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    int64_t us = (int64_t)(now.tv_sec - start->tv_sec) * 1000000 +
+                 (int64_t)(now.tv_nsec - start->tv_nsec) / 1000;
+    MO_ASSERT(us >= 0);
+    return (uint64_t)us;
+}
+
+static size_t file_bytes(const char *path, unsigned char *out, size_t capacity) {
+    FILE *file = fopen(path, "rb");
+    MO_ASSERT(file != NULL);
+    size_t length = fread(out, 1, capacity, file);
+    MO_ASSERT(length < capacity && fclose(file) == 0);
+    return length;
+}
+
+/* A child process holds the store at path as a second mo serve does (exclusive, through
+ * mo_store_open) or as a reader does (a shared read transaction). It lets go after
+ * hold_us, or, when hold_us is zero, when the parent closes *release. */
+static pid_t hold_store(const char *path, bool reader, unsigned hold_us, int *release) {
+    int ready[2], hold[2];
+    MO_ASSERT(pipe(ready) == 0 && pipe(hold) == 0);
+    pid_t pid = fork();
+    MO_ASSERT(pid >= 0);
+    if (pid == 0) {
+        MO_ASSERT(close(ready[0]) == 0 && close(hold[1]) == 0);
+        struct mo_store *store = NULL;
+        sqlite3 *db = NULL;
+        if (reader ? sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK ||
+                         sqlite3_exec(db, "BEGIN; SELECT count(*) FROM log", NULL, NULL, NULL) !=
+                             SQLITE_OK
+                   : mo_store_open(path, &store) != MO_STORE_OK)
+            _exit(1);
+        char byte = 'r';
+        if (write(ready[1], &byte, 1) != 1)
+            _exit(2);
+        struct timespec pause = {hold_us / 1000000, (long)(hold_us % 1000000) * 1000};
+        if (hold_us != 0)
+            MO_ASSERT(nanosleep(&pause, NULL) == 0);
+        else if (read(hold[0], &byte, 1) != 0)
+            _exit(3);
+        if (reader)
+            MO_ASSERT(sqlite3_close(db) == SQLITE_OK);
+        else
+            mo_store_close(store);
+        _exit(0);
+    }
+    MO_ASSERT(close(ready[1]) == 0 && close(hold[0]) == 0);
+    char byte = 0;
+    MO_ASSERT(read(ready[0], &byte, 1) == 1 && byte == 'r');
+    MO_ASSERT(close(ready[0]) == 0);
+    if (release != NULL)
+        *release = hold[1];
+    else
+        MO_ASSERT(close(hold[1]) == 0);
+    return pid;
+}
+
+static void child_done(pid_t pid) {
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+/* mo serve's open waits for a store another process holds, and gives up with BUSY when the
+ * holder outlasts the wait. This build shortens the wait to one second. */
+static void store_wait(struct mo_image *image, const char *path) {
+    CHECK(MO_LIMIT_SERVE_STORE_WAIT_US == 1000000); /* the Makefile shortens the wait */
+    CHECK(strcmp(mo_store_status_text(MO_STORE_BUSY),
+                 "another process holds the service store, such as a second mo serve or a "
+                 "reader of its data folder") == 0);
+    struct mo_store *store = NULL;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    add(s, 11);
+    mo_service_free(s);
+    mo_store_close(store);
+    for (unsigned reader = 0; reader <= 1; reader++) {
+        pid_t pid = hold_store(path, reader != 0, 300000, NULL);
+        struct timespec start;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        store = NULL;
+        CHECK(mo_store_open_wait(path, &store) == MO_STORE_OK);
+        uint64_t waited = elapsed_us(&start);
+        CHECK(waited >= 200000 && waited < MO_LIMIT_SERVE_STORE_WAIT_US);
+        if (store == NULL)
+            continue;
+        s = open_service(image, store, &o);
+        CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+        mo_service_free(s);
+        mo_store_close(store);
+        child_done(pid);
+    }
+    static unsigned char before[1 << 16], after[1 << 16];
+    size_t length = file_bytes(path, before, sizeof before);
+    for (unsigned reader = 0; reader <= 1; reader++) {
+        int release = -1;
+        pid_t pid = hold_store(path, reader != 0, 0, &release);
+        for (unsigned attempt = 0; attempt < 3; attempt++) {
+            struct timespec start;
+            MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+            store = NULL;
+            CHECK(mo_store_open_wait(path, &store) == MO_STORE_BUSY && store == NULL);
+            uint64_t waited = elapsed_us(&start);
+            CHECK(waited >= MO_LIMIT_SERVE_STORE_WAIT_US * 9 / 10 &&
+                  waited < 3 * MO_LIMIT_SERVE_STORE_WAIT_US);
+            CHECK(file_bytes(path, after, sizeof after) == length &&
+                  memcmp(before, after, length) == 0);
+        }
+        /* Without the wait a held store is refused at once. */
+        struct timespec start;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        CHECK(mo_store_open(path, &store) == MO_STORE_BUSY && store == NULL);
+        CHECK(elapsed_us(&start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+        MO_ASSERT(close(release) == 0);
+        child_done(pid);
+        MO_ASSERT(mo_store_open_wait(path, &store) == MO_STORE_OK);
+        s = open_service(image, store, &o);
+        CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+        mo_service_free(s);
+        mo_store_close(store);
+    }
+    /* A damaged store is never waited for. */
+    static const char garbage[4096] = "this is not a SQLite database";
+    const char *contents[] = {"", garbage};
+    size_t sizes[] = {0, sizeof garbage};
+    for (unsigned i = 0; i < 2; i++) {
+        FILE *file = fopen(path, "wb");
+        MO_ASSERT(file != NULL && fwrite(contents[i], 1, sizes[i], file) == sizes[i] &&
+                  fclose(file) == 0);
+        struct timespec start;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        store = NULL;
+        enum mo_store_status status = mo_store_open_wait(path, &store);
+        CHECK(status == (i == 0 ? MO_STORE_CORRUPT : MO_STORE_IO) && store == NULL);
+        CHECK(elapsed_us(&start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+    }
+    CHECK(unlink(path) == 0);
+}
+
+static const char history_source[] =
+    "module Main\nservice\nstate Int = 7\ntools add, pair, broken\nevery 1.minute tick\n"
+    "token from env \"TOKEN\"\nend\n"
+    "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n(state + n, state + n)\nend\n"
+    "fn pair(state: Int, _now: Time, _a: Text, b: Int) : (Int, Int)\n(state + b, state)\nend\n"
+    "fn broken(_state: Int, _now: Time) : (Int, Int)\nstop \"broken\"\nend\n"
+    "fn tick(state: Int, _now: Time) : Int\nstate + 1\nend\n";
+
+enum { HISTORY_T0 = 1767225600 };
+static int64_t history_time(unsigned step) {
+    return (int64_t)HISTORY_T0 * 1000000 + (int64_t)step * 1000;
+}
+
+static size_t encoded_size(struct mo_heap *heap, uint32_t type, struct mo_cell value) {
+    struct mo_buffer bytes;
+    mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
+    MO_ASSERT(mo_value_encode(heap, type, value, &bytes));
+    size_t length = bytes.length;
+    mo_buffer_free(&bytes);
+    return length;
+}
+
+struct history_fixture {
+    size_t add_bytes, text_bytes, int_bytes;
+    uint8_t snapshot[64];
+    size_t snapshot_length;
+};
+
+/* A service that ran a tick, add(11), pair("hello", 2) and three failing calls, then
+ * stopped. Failure ids 1 and 3 remain: a repeated kind keeps its first and its latest. */
+static void history_folder(struct mo_image *image, const char *path, struct history_fixture *f) {
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct observations o = {.time = {.now = history_time(0)}};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    const uint8_t *saved = NULL;
+    MO_ASSERT(mo_service_encoded_state(s, &saved, &f->snapshot_length));
+    MO_ASSERT(f->snapshot_length <= sizeof f->snapshot);
+    memcpy(f->snapshot, saved, f->snapshot_length);
+    CHECK(mo_service_step(s));
+    const struct mo_bytecode_service *d = &mo_image_bytecode(image)->services[0];
+    struct mo_heap *heap = mo_service_heap(s);
+    o.time.now = history_time(1);
+    struct mo_cell n = mo_cell_int(11);
+    f->add_bytes = encoded_size(heap, d->tools[0].argument_types[0], n);
+    CHECK(mo_service_send(s, 0, &n, 1, 1) == MO_SERVICE_OK && mo_service_step(s));
+    o.time.now = history_time(2);
+    struct mo_cell pair[2];
+    MO_ASSERT(mo_value_text(heap, "hello", 5, &pair[0]));
+    pair[1] = mo_cell_int(2);
+    f->text_bytes = encoded_size(heap, d->tools[1].argument_types[0], pair[0]);
+    f->int_bytes = encoded_size(heap, d->tools[1].argument_types[1], pair[1]);
+    CHECK(mo_service_send(s, 1, pair, 2, 2) == MO_SERVICE_OK && mo_service_step(s));
+    mo_value_drop(heap, d->tools[1].argument_types[0], pair[0]);
+    for (unsigned i = 0; i < 3; i++) {
+        o.time.now = history_time(3 + i);
+        CHECK(mo_service_send(s, 2, NULL, 0, 3 + i) == MO_SERVICE_OK && mo_service_step(s));
+    }
+    CHECK(o.failures == 3 && mo_cell_get_int(mo_service_state(s)) == 7 + 1 + 11 + 2);
+    mo_service_free(s);
+    mo_store_close(store);
+}
+
+struct failure_copy {
+    uint64_t ids[4];
+    char kinds[4][64];
+    bool first[4];
+    size_t state_bytes[4], message_bytes[4];
+    unsigned count;
+};
+static bool copy_failure(const struct mo_store_failure *f, void *context) {
+    struct failure_copy *c = context;
+    MO_ASSERT(c->count < 4 && strlen(f->kind) < sizeof c->kinds[0]);
+    c->ids[c->count] = f->id;
+    strcpy(c->kinds[c->count], f->kind);
+    c->first[c->count] = f->first;
+    c->state_bytes[c->count] = f->state.length;
+    c->message_bytes[c->count] = f->message.length;
+    c->count++;
+    return true;
+}
+/* The failures as the read-write store reports them. */
+static struct failure_copy stored_failures(const char *path) {
+    struct failure_copy c = {0};
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    CHECK(mo_store_failures(store, copy_failure, &c) == MO_STORE_OK);
+    mo_store_close(store);
+    return c;
+}
+
+static unsigned char history_before[4 << 20], history_after[4 << 20];
+static size_t history_length;
+static void remember_bytes(const char *path) {
+    history_length = file_bytes(path, history_before, sizeof history_before);
+}
+static bool bytes_unchanged(const char *path) {
+    return file_bytes(path, history_after, sizeof history_after) == history_length &&
+           memcmp(history_before, history_after, history_length) == 0;
+}
+
+static void history_stopped(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    struct failure_copy stored = stored_failures(path);
+    CHECK(stored.count == 2 && stored.ids[0] == 1 && stored.ids[1] == 3);
+    remember_bytes(path);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    CHECK(bytes_unchanged(path));
+    CHECK(!h.recovered && h.failure_tables && h.has_snapshot && h.damaged_sequence == 0);
+    CHECK(h.snapshot.kind == MO_STORE_STATE && h.snapshot.sequence == 0 &&
+          h.snapshot.image == mo_image_key(image, 0));
+    CHECK(h.snapshot.bytes != NULL && h.snapshot.length == f.snapshot_length &&
+          memcmp(h.snapshot.bytes, f.snapshot, f.snapshot_length) == 0);
+    CHECK(h.head == 3 && h.log_count == 3 && h.entry_count == 3);
+    if (h.entry_count == 3) {
+        const struct mo_store_history_entry *e = h.entries;
+        CHECK(e[0].sequence == 1 && e[0].timer && e[0].handler == 0 && e[0].argument_count == 0 &&
+              e[0].arrival == history_time(0));
+        CHECK(e[1].sequence == 2 && !e[1].timer && e[1].handler == 0 &&
+              e[1].arrival == history_time(1) && e[1].argument_count == 1 &&
+              e[1].argument_bytes[0] == f.add_bytes);
+        CHECK(e[2].sequence == 3 && !e[2].timer && e[2].handler == 1 &&
+              e[2].arrival == history_time(2) && e[2].argument_count == 2 &&
+              e[2].argument_bytes[0] == f.text_bytes && e[2].argument_bytes[1] == f.int_bytes);
+    }
+    CHECK(h.failure_total == 2 && h.failure_count == 2);
+    for (unsigned i = 0; i < 2 && i < h.failure_count; i++) {
+        const struct mo_store_history_failure *x = &h.failures[i];
+        CHECK(x->id == stored.ids[i] && strcmp(x->kind, stored.kinds[i]) == 0 &&
+              x->first == stored.first[i] && x->state_bytes == stored.state_bytes[i]);
+        CHECK(x->message.kind == MO_STORE_FAILURE_MESSAGE &&
+              x->message.length == stored.message_bytes[i] &&
+              x->message.image == mo_image_key(image, 0));
+        struct mo_failure_record record;
+        CHECK(mo_failure_read(x->message.bytes, x->message.length, &record) && record.id == x->id &&
+              record.handler == 2 && !record.timer);
+    }
+    CHECK(h.left_bytes == 0 && h.retained_bytes > 0 && h.retained_bytes <= MO_LIMIT_HISTORY_BYTES);
+    mo_store_history_free(&h);
+
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 3, &pair) == MO_STORE_FOLDER_OK);
+    CHECK(pair.found && pair.failure_tables && pair.id == 3 && !pair.first &&
+          strcmp(pair.kind, stored.kinds[1]) == 0);
+    CHECK(pair.state.kind == MO_STORE_FAILURE_STATE && pair.state.length == stored.state_bytes[1]);
+    CHECK(pair.message.length == stored.message_bytes[1]);
+    struct mo_cell state;
+    const struct mo_bytecode_service *d = &mo_image_bytecode(image)->services[0];
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct observations o = {.time = {.now = history_time(9)}};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    CHECK(mo_cell_get_int(mo_service_state(s)) == 21);
+    CHECK(mo_value_decode(mo_service_heap(s), d->state_type, pair.state.bytes, pair.state.length,
+                          &state) &&
+          mo_cell_get_int(state) == 21);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_store_history_pair_free(&pair);
+    remember_bytes(path);
+    /* An evicted id reports the ids the folder holds. */
+    CHECK(mo_store_history_pair(path, false, 2, &pair) == MO_STORE_FOLDER_OK);
+    CHECK(!pair.found && pair.retained_count == 2 && pair.retained[0] == 1 &&
+          pair.retained[1] == 3);
+    mo_store_history_pair_free(&pair);
+    CHECK(bytes_unchanged(path));
+}
+
+static void history_owned(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    int release = -1;
+    pid_t pid = hold_store(path, false, 0, &release);
+    struct timespec start;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OWNED);
+    CHECK(mo_store_history_read(path, true, &h) == MO_STORE_FOLDER_OWNED);
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_OWNED);
+    CHECK(elapsed_us(&start) < 250000);
+    MO_ASSERT(close(release) == 0);
+    child_done(pid);
+    /* Two readers share the folder. */
+    pid = hold_store(path, true, 0, &release);
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    mo_store_history_free(&h);
+    MO_ASSERT(close(release) == 0);
+    child_done(pid);
+    CHECK(unlink(path) == 0);
+}
+
+static bool journal_exists(const char *path) {
+    char journal[300];
+    MO_ASSERT(snprintf(journal, sizeof journal, "%s-journal", path) > 0);
+    return access(journal, F_OK) == 0;
+}
+
+/* A process killed in the middle of a write that has reached the database file leaves a hot
+ * journal. A one-mebibyte record overflows the store's page cache, so SQLite syncs the journal
+ * and writes pages before the write is killed. */
+static void history_hot_journal(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    pid_t pid = fork();
+    MO_ASSERT(pid >= 0);
+    if (pid == 0) {
+        struct mo_store *store;
+        MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+        static uint8_t large[1 << 20];
+        struct mo_store_record r = {MO_STORE_LOG, 4, mo_image_key(image, 0), large, sizeof large};
+        crash_point = 30;
+        enum mo_store_status unreached = mo_store_call(store, MO_STORE_APPEND, &r, NULL, NULL);
+        _exit(unreached == MO_STORE_OK ? 99 : 98);
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 81);
+    CHECK(journal_exists(path));
+    remember_bytes(path);
+    struct mo_store_history h = {0};
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_RECOVERY);
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_RECOVERY);
+    CHECK(bytes_unchanged(path) && journal_exists(path));
+    CHECK(mo_store_history_read(path, true, &h) == MO_STORE_FOLDER_OK);
+    CHECK(h.recovered && h.failure_total == 2 && h.failures[1].id == 3 && h.head == 3 &&
+          h.log_count == 3);
+    mo_store_history_free(&h);
+    /* Rolled back: a reader no longer needs to recover, and the store opens at once. */
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK && !h.recovered);
+    mo_store_history_free(&h);
+    struct failure_copy stored = stored_failures(path);
+    CHECK(stored.count == 2 && stored.ids[1] == 3);
+    struct mo_store *store;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    struct observations o = {.time = {.now = history_time(9)}};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    CHECK(mo_cell_get_int(mo_service_state(s)) == 21);
+    mo_service_free(s);
+    mo_store_close(store);
+    CHECK(unlink(path) == 0);
+}
+
+/* A service killed while idle leaves a journal beside the database that is not hot. */
+static void history_idle_kill(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    pid_t pid = fork();
+    MO_ASSERT(pid >= 0);
+    if (pid == 0) {
+        struct mo_store *store;
+        MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+        struct observations o = {.time = {.now = history_time(9)}};
+        struct mo_service_loop *s = open_service(image, store, &o);
+        struct mo_cell n = mo_cell_int(5);
+        CHECK(mo_service_send(s, 0, &n, 1, 9) == MO_SERVICE_OK && mo_service_step(s) &&
+              mo_service_step(s));
+        _exit(0);
+    }
+    child_done(pid);
+    CHECK(journal_exists(path));
+    remember_bytes(path);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    CHECK(!h.recovered && h.head == 5 && h.entry_count == 5 && h.entries[3].timer &&
+          h.entries[4].argument_count == 1);
+    mo_store_history_free(&h);
+    CHECK(bytes_unchanged(path));
+    CHECK(unlink(path) == 0);
+}
+
+static void history_before_capture(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    sqlite3 *db;
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    MO_ASSERT(sqlite3_exec(db, "DROP TABLE failure; DROP TABLE failure_state", NULL, NULL, NULL) ==
+              SQLITE_OK);
+    CHECK(sqlite3_close(db) == SQLITE_OK);
+    remember_bytes(path);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    CHECK(!h.failure_tables && h.failure_total == 0 && h.failure_count == 0 && h.head == 3 &&
+          h.entry_count == 3);
+    mo_store_history_free(&h);
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_OK);
+    CHECK(!pair.found && !pair.failure_tables && pair.retained_count == 0);
+    mo_store_history_pair_free(&pair);
+    CHECK(bytes_unchanged(path));
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    sqlite3_stmt *stmt;
+    MO_ASSERT(sqlite3_prepare_v2(db, "SELECT count(*) FROM sqlite_schema WHERE name LIKE 'fail%'",
+                                 -1, &stmt, NULL) == SQLITE_OK);
+    CHECK(sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == 0);
+    CHECK(sqlite3_finalize(stmt) == SQLITE_OK && sqlite3_close(db) == SQLITE_OK);
+    /* Only one of the two failure tables is a damaged store. */
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    MO_ASSERT(sqlite3_exec(db,
+                           "CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT "
+                           "NULL) STRICT",
+                           NULL, NULL, NULL) == SQLITE_OK);
+    CHECK(sqlite3_close(db) == SQLITE_OK);
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_DAMAGED);
+    CHECK(unlink(path) == 0);
+}
+
+static void history_unreadable(struct mo_image *image, const char *dir, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    struct mo_store_history h;
+    struct mo_store_history_pair pair;
+    if (geteuid() != 0) {
+        CHECK(chmod(path, 0) == 0);
+        CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_UNREADABLE);
+        CHECK(mo_store_history_read(path, true, &h) == MO_STORE_FOLDER_UNREADABLE);
+        CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_UNREADABLE);
+        CHECK(chmod(path, 0600) == 0);
+        CHECK(chmod(dir, 0) == 0);
+        CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_UNREADABLE);
+        CHECK(chmod(dir, 0700) == 0);
+    }
+    /* The classification follows SQLite's result code wherever the first read meets it. */
+    const int codes[] = {SQLITE_CANTOPEN, SQLITE_PERM,   SQLITE_BUSY,  SQLITE_READONLY_ROLLBACK,
+                         SQLITE_CORRUPT,  SQLITE_NOTADB, SQLITE_IOERR, SQLITE_NOMEM};
+    const enum mo_store_folder expected[] = {MO_STORE_FOLDER_UNREADABLE, MO_STORE_FOLDER_UNREADABLE,
+                                             MO_STORE_FOLDER_OWNED,      MO_STORE_FOLDER_RECOVERY,
+                                             MO_STORE_FOLDER_DAMAGED,    MO_STORE_FOLDER_DAMAGED,
+                                             MO_STORE_FOLDER_IO,         MO_STORE_FOLDER_MEMORY};
+    remember_bytes(path);
+    for (unsigned i = 0; i < sizeof codes / sizeof codes[0]; i++) {
+        reader_code = codes[i];
+        CHECK(mo_store_history_read(path, false, &h) == expected[i]);
+        CHECK(mo_store_history_pair(path, false, 1, &pair) == expected[i]);
+        reader_code = 0;
+    }
+    CHECK(bytes_unchanged(path));
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    mo_store_history_free(&h);
+    CHECK(unlink(path) == 0);
+    /* No file is no saved data, and the reader creates none. */
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_MISSING);
+    CHECK(mo_store_history_read(path, true, &h) == MO_STORE_FOLDER_MISSING);
+    CHECK(mo_store_history_pair(path, true, 1, &pair) == MO_STORE_FOLDER_MISSING);
+    struct stat info;
+    CHECK(stat(path, &info) != 0 && errno == ENOENT);
+    /* A file that is not a SQLite database is damaged. */
+    FILE *file = fopen(path, "wb");
+    static const char garbage[4096] = "not a store";
+    MO_ASSERT(file != NULL && fwrite(garbage, 1, sizeof garbage, file) == sizeof garbage &&
+              fclose(file) == 0);
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_DAMAGED);
+    CHECK(unlink(path) == 0);
+}
+
+/* Rewrites one byte of the log row at seq, as damage on disk would. */
+static void damage_log(const char *path, uint64_t seq, size_t offset) {
+    sqlite3 *db;
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    sqlite3_blob *blob;
+    MO_ASSERT(sqlite3_blob_open(db, "main", "log", "record", (sqlite3_int64)seq, 1, &blob) ==
+              SQLITE_OK);
+    uint8_t byte;
+    MO_ASSERT(sqlite3_blob_read(blob, &byte, 1, (int)offset) == SQLITE_OK);
+    byte ^= 0x40;
+    MO_ASSERT(sqlite3_blob_write(blob, &byte, 1, (int)offset) == SQLITE_OK);
+    MO_ASSERT(sqlite3_blob_close(blob) == SQLITE_OK && sqlite3_close(db) == SQLITE_OK);
+}
+
+/* The runtime numbers failure records from 1. A record moved to id 0 or below is damage that
+ * every read refuses: the catalog reads ids above a cursor that starts at 0, so without the
+ * check the history would leave the record out and call the folder healthy. */
+static void history_nonpositive_failure(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    sqlite3 *db;
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    MO_ASSERT(sqlite3_exec(db,
+                           "UPDATE failure SET id=-3 WHERE id=3;"
+                           "UPDATE failure_state SET id=-3 WHERE id=3",
+                           NULL, NULL, NULL) == SQLITE_OK);
+    CHECK(sqlite3_close(db) == SQLITE_OK);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_DAMAGED);
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_DAMAGED);
+    CHECK(mo_store_history_pair(path, false, 2, &pair) == MO_STORE_FOLDER_DAMAGED);
+    CHECK(unlink(path) == 0);
+}
+
+static void history_damaged_log(struct mo_image *image, const char *path) {
+    /* A byte of an argument, of the payload header, and of the frame's own header. */
+    const size_t offsets[] = {26 + 25 + 4, 26 + 1, 7};
+    for (unsigned i = 0; i < 3; i++) {
+        struct history_fixture f;
+        history_folder(image, path, &f);
+        damage_log(path, 2, offsets[i]);
+        struct mo_store_history h = {0};
+        CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_DAMAGED);
+        CHECK(h.damaged_sequence == 2);
+        CHECK(unlink(path) == 0);
+    }
+}
+
+/* Writes a store directly: a snapshot of snapshot_bytes, three log records each with one
+ * argument of argument_bytes, and failures with message_bytes payloads. */
+static void history_sized(const char *path, size_t snapshot_bytes, size_t argument_bytes,
+                          unsigned failures, size_t message_bytes) {
+    static uint8_t filler[1 << 17];
+    memset(filler, 0x2a, sizeof filler);
+    MO_ASSERT(snapshot_bytes <= sizeof filler && argument_bytes <= sizeof filler &&
+              message_bytes <= sizeof filler);
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct mo_store_record r = {MO_STORE_STATE, 0, 5, filler, snapshot_bytes};
+    CHECK(mo_store_call(store, MO_STORE_SNAPSHOT, &r, NULL, NULL) == MO_STORE_OK);
+    struct mo_buffer payload;
+    mo_buffer_init(&payload, MO_LIMIT_SAVED_BYTES);
+    for (uint64_t seq = 1; seq <= 3; seq++) {
+        mo_buffer_clear(&payload);
+        struct mo_log_record_header header = {.arrival = 1, .count = 1};
+        CHECK(mo_log_record_header_write(&payload, &header) &&
+              mo_log_record_argument_write(&payload, filler, argument_bytes));
+        r = (struct mo_store_record){MO_STORE_LOG, seq, 5, payload.bytes, payload.length};
+        CHECK(mo_store_call(store, MO_STORE_APPEND, &r, NULL, NULL) == MO_STORE_OK);
+    }
+    mo_buffer_free(&payload);
+    for (unsigned i = 0; i < failures; i++) {
+        char kind[16];
+        MO_ASSERT(snprintf(kind, sizeof kind, "kind-%u", i) > 0);
+        struct mo_store_record state = {MO_STORE_FAILURE_STATE, 3, 5, filler, 1};
+        struct mo_store_record message = {MO_STORE_FAILURE_MESSAGE, 3, 5, filler, message_bytes};
+        uint64_t id = 0;
+        CHECK(mo_store_capture(store, kind, &state, &message, &id) == MO_STORE_CAPTURE_OK);
+    }
+    mo_store_close(store);
+}
+
+static void history_bound(const char *path) {
+    CHECK(MO_LIMIT_HISTORY_BYTES == 65536); /* the Makefile shortens the bound */
+    /* The snapshot and the tail fit; the second 20 KB failure message does not. */
+    history_sized(path, 30000, 20000, 3, 20000);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    CHECK(h.snapshot.bytes != NULL && h.snapshot.length == 30000);
+    CHECK(h.entry_count == 3 && h.log_count == 3 && h.entries[2].argument_bytes[0] == 20000);
+    CHECK(h.failure_total == 3 && h.failure_count == 1 && h.failures[0].message.length == 20000);
+    CHECK(h.retained_bytes <= MO_LIMIT_HISTORY_BYTES && h.retained_bytes > 50000);
+    CHECK(h.left_bytes >= 2 * 20000 && h.left_bytes < 2 * 20000 + 1024);
+    mo_store_history_free(&h);
+    CHECK(unlink(path) == 0);
+    /* A snapshot over the bound is left, and nothing after it is copied, but every log row
+     * is still checked. */
+    history_sized(path, 70000, 10, 1, 10);
+    damage_log(path, 3, 26 + 25 + 4);
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_DAMAGED &&
+          h.damaged_sequence == 3);
+    CHECK(unlink(path) == 0);
+    history_sized(path, 70000, 10, 1, 10);
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    CHECK(h.has_snapshot && h.snapshot.bytes == NULL && h.snapshot.length == 70000);
+    CHECK(h.entry_count == 0 && h.log_count == 3 && h.failure_count == 0 && h.failure_total == 1);
+    CHECK(h.left_bytes >= 70000 + 10 && h.retained_bytes == 0);
+    mo_store_history_free(&h);
+    CHECK(unlink(path) == 0);
+}
+
+/* A reader killed while it copies leaves no lock behind. */
+static void history_killed(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    pid_t pid = fork();
+    MO_ASSERT(pid >= 0);
+    if (pid == 0) {
+        reader_killed = true;
+        struct mo_store_history h;
+        enum mo_store_folder unreached = mo_store_history_read(path, false, &h);
+        _exit(unreached == MO_STORE_FOLDER_OK ? 99 : 98);
+    }
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 80);
+    struct timespec start;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    CHECK(elapsed_us(&start) < 250000);
+    mo_store_close(store);
+    CHECK(unlink(path) == 0);
+}
+
+static void history_reader(const char *dir, const char *path) {
+    struct mo_image *image = compile(history_source);
+    history_stopped(image, path);
+    CHECK(unlink(path) == 0);
+    history_owned(image, path);
+    history_hot_journal(image, path);
+    history_idle_kill(image, path);
+    history_before_capture(image, path);
+    history_unreadable(image, dir, path);
+    history_damaged_log(image, path);
+    history_nonpositive_failure(image, path);
+    history_bound(path);
+    history_killed(image, path);
+    mo_image_free(image);
 }
 
 static void hostile_database(struct mo_image *image, const char *path) {
@@ -2081,6 +2747,261 @@ static void runtime_capture(void) {
     mo_image_free(image);
 }
 
+/* The newest retained failure, copied out of the store. */
+struct retained {
+    struct mo_buffer state, message;
+    struct mo_failure_record record;
+};
+static bool keep_newest(const struct mo_store_failure *f, void *context) {
+    struct retained *r = context;
+    mo_buffer_clear(&r->state);
+    mo_buffer_clear(&r->message);
+    MO_ASSERT(mo_buffer_append(&r->state, f->state.bytes, f->state.length) &&
+              mo_buffer_append(&r->message, f->message.bytes, f->message.length));
+    return true;
+}
+static void retained_failure(struct mo_service_loop *s, struct retained *r) {
+    mo_buffer_init(&r->state, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&r->message, MO_LIMIT_FAILURE_RECORD_BYTES);
+    MO_ASSERT(mo_service_failures(s, keep_newest, r) == MO_STORE_OK && r->message.length != 0);
+    MO_ASSERT(mo_failure_read(r->message.bytes, r->message.length, &r->record));
+}
+static void retained_free(struct retained *r) {
+    mo_buffer_free(&r->state);
+    mo_buffer_free(&r->message);
+}
+static struct mo_offline_run replay_retained(struct mo_image *image, const struct retained *r,
+                                             struct mo_buffer *context) {
+    mo_buffer_init(context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
+    return mo_offline_call(image, &mo_image_bytecode(image)->services[0], r->record.handler,
+                           r->state.bytes, r->state.length, &r->record, context);
+}
+
+static bool same_slice(struct mo_failure_slice a, const char *text) {
+    return a.length == strlen(text) && memcmp(a.bytes, text, a.length) == 0;
+}
+static bool same_slices(struct mo_failure_slice a, struct mo_failure_slice b) {
+    return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
+}
+/* The offline run computed the stored signature field by field and the stored context text. */
+static void check_reproduced(const struct mo_failure_record *r, const struct mo_offline_run *run,
+                             const struct mo_buffer *context) {
+    struct mo_signature stored = mo_signature_from_record(r);
+    const struct mo_signature *offline = &run->outcome.signature;
+    CHECK(offline->class == stored.class && same_slices(offline->reason, stored.reason) &&
+          same_slices(offline->limit, stored.limit) && offline->limit_value == stored.limit_value);
+    CHECK(offline->function == stored.function && offline->file == stored.file &&
+          offline->start == stored.start && offline->end == stored.end);
+    CHECK(run->context == (enum mo_failure_context)r->context_status);
+    CHECK(context->length == r->context.length &&
+          memcmp(context->bytes, r->context.bytes, context->length) == 0);
+    CHECK(mo_replay_classify(&stored, &run->outcome) == MO_REPLAY_REPRODUCED);
+}
+
+/* A `stop` in a read-only and in an updating tool replays to the same defect, with the context
+ * capture rendered, and leaves the state as it was; the same stop one line lower is a different
+ * failure. */
+static void offline_stop(void) {
+    const char *source =
+        "module Main\nservice\nstate Int = 7\ntools broken, update\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn broken(_state: Int, _now: Time, _n: Int) : Bool\nstop \"broken\"\nend\n"
+        "fn update(state: Int, _now: Time, n: Int) : (Int, Int)\n"
+        "after = state + n\n(after, stop \"update\")\nend\n";
+    const char *moved =
+        "module Main\nservice\nstate Int = 7\ntools broken, update\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn broken(_state: Int, _now: Time, _n: Int) : Bool\n\nstop \"broken\"\nend\n"
+        "fn update(state: Int, _now: Time, n: Int) : (Int, Int)\n"
+        "after = state + n\n\n(after, stop \"update\")\nend\n";
+    struct mo_image *image = compile(source), *other = compile(moved);
+    const struct mo_bytecode_service *service = &mo_image_bytecode(image)->services[0];
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {.time = {.now = INT64_C(1767225600000000), .elapsed = 5}};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    for (uint32_t tool = 0; tool < 2; tool++) {
+        struct mo_cell n = mo_cell_int(5);
+        CHECK(mo_service_send(s, tool, &n, 1, tool + 1) == MO_SERVICE_OK && mo_service_step(s));
+        CHECK(o.failures == tool + 1 && o.status == MO_SERVICE_DEFECT);
+        CHECK(o.sequence == 0 && mo_cell_get_int(mo_service_state(s)) == 7);
+        struct retained r;
+        retained_failure(s, &r);
+        CHECK(r.record.handler == tool && r.record.read_only == (tool == 0) && !r.record.timer);
+        struct mo_buffer context;
+        struct mo_offline_run run = replay_retained(image, &r, &context);
+        CHECK(run.outcome.status == MO_OUTCOME_DEFECT && run.refusal == NULL);
+        CHECK(run.outcome.signature.class == MO_SIGNATURE_DEFECT &&
+              same_slice(run.outcome.signature.reason, "stop"));
+        CHECK(run.outcome.signature.function == service->tools[tool].function &&
+              run.outcome.signature.file != MO_NO_INDEX);
+        CHECK(!run.outcome.state_changed);
+        check_reproduced(&r.record, &run, &context);
+        /* The record carries this build's budgets; one that differs is named with both values. */
+        struct mo_service_budget differs = {0};
+        CHECK(mo_service_budgets_match(&r.record, &differs) && differs.name == NULL);
+        struct mo_failure_record crafted = r.record;
+        crafted.heap++;
+        CHECK(!mo_service_budgets_match(&crafted, &differs) && strcmp(differs.name, "heap") == 0);
+        CHECK(differs.recorded == MO_LIMIT_SERVICE_MESSAGE_MEMORY - MO_DEFAULT_STACK_SIZE + 1 &&
+              differs.expected == MO_LIMIT_SERVICE_MESSAGE_MEMORY - MO_DEFAULT_STACK_SIZE);
+        crafted = r.record;
+        crafted.saved--;
+        CHECK(!mo_service_budgets_match(&crafted, &differs) &&
+              strcmp(differs.name, "saved bytes") == 0 && differs.expected == MO_LIMIT_SAVED_BYTES);
+        mo_buffer_free(&context);
+        struct mo_offline_run elsewhere = replay_retained(other, &r, &context);
+        CHECK(elsewhere.outcome.status == MO_OUTCOME_DEFECT);
+        struct mo_signature stored = mo_signature_from_record(&r.record);
+        CHECK(elsewhere.outcome.signature.start != stored.start);
+        CHECK(mo_replay_classify(&stored, &elsewhere.outcome) == MO_REPLAY_DIFFERENT);
+        mo_buffer_free(&context);
+        retained_free(&r);
+    }
+    struct inventory i = {0};
+    CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, count_record, &i) == MO_STORE_OK);
+    CHECK(i.logs == 0 && i.last == 0);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_image_free(other);
+    mo_image_free(image);
+}
+
+static bool scratch_fits(struct mo_heap *heap, size_t bytes) {
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, heap);
+    bool fits = mo_scratch_resize(&scratch, NULL, 0, bytes) != NULL;
+    mo_scratch_free(&scratch);
+    return fits;
+}
+static size_t heap_room(struct mo_heap *heap) {
+    size_t low = 0, high = MO_LIMIT_SERVICE_MESSAGE_MEMORY;
+    while (high - low > 1) {
+        size_t middle = low + (high - low) / 2;
+        if (scratch_fits(heap, middle))
+            low = middle;
+        else
+            high = middle;
+    }
+    return low;
+}
+/* A handler that ran out of heap only because the mailbox held a queued message's arguments
+ * succeeds offline, where nothing else is live: its failure is not reproduced. */
+static void offline_memory(void) {
+    struct mo_image *image = compile(
+        "module Main\nservice\nstate List(Int) = [3, 8]\ntools memory, echo\n"
+        "token from env \"TOKEN\"\nend\n"
+        "fn memory(_state: List(Int), _now: Time, n: Int) : Int\n\"x\".repeat(n).byte_count\nend\n"
+        "fn echo(_state: List(Int), _now: Time, text: Text) : Text\ntext\nend\n");
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    struct mo_heap *heap = mo_service_heap(s);
+    size_t used = mo_heap_used(heap), available = heap_room(heap);
+    struct mo_cell n = mo_cell_int(1024), text;
+    MO_ASSERT(mo_value_text(heap, "retained", 8, &text));
+    CHECK(mo_service_send(s, 0, &n, 1, 1) == MO_SERVICE_OK);
+    CHECK(mo_service_send(s, 1, &text, 1, 2) == MO_SERVICE_OK);
+    mo_value_drop(heap, mo_image_bytecode(image)->services[0].tools[1].argument_types[0], text);
+    size_t queued = mo_heap_used(heap) - used;
+    CHECK(queued != 0 && scratch_fits(heap, available - queued));
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, heap);
+    MO_ASSERT(mo_scratch_resize(&scratch, NULL, 0, available - queued) != NULL);
+    CHECK(mo_service_step(s) && o.status == MO_SERVICE_MEMORY && o.failures == 1);
+    mo_scratch_free(&scratch);
+    CHECK(mo_service_step(s) && o.status == MO_SERVICE_OK);
+    struct retained r;
+    retained_failure(s, &r);
+    CHECK(r.record.class == MO_SIGNATURE_MEMORY && r.record.handler == 0);
+    struct mo_buffer context;
+    struct mo_offline_run run = replay_retained(image, &r, &context);
+    CHECK(run.outcome.status == MO_OUTCOME_SUCCEEDED && run.refusal == NULL);
+    CHECK(run.outcome.reply == MO_REPLY_OK && !run.outcome.state_changed && context.length == 0);
+    struct mo_signature stored = mo_signature_from_record(&r.record);
+    CHECK(mo_replay_classify(&stored, &run.outcome) == MO_REPLAY_NOT_REPRODUCED);
+    mo_buffer_free(&context);
+    retained_free(&r);
+    mo_service_free(s);
+    mo_store_close(store);
+    mo_image_free(image);
+}
+
+/* An updating tool's and a timer's new state over the saved-bytes limit fails the size check
+ * offline as it did live. A revision whose new state fits succeeds and reports the change; one
+ * that returns an Error succeeds with an error reply and no change. */
+static void offline_state_size(void) {
+    char sources[2][512], fixed[2][512], rejected[512];
+    MO_ASSERT(snprintf(sources[0], sizeof sources[0],
+                       "module Main\nservice\nstate Text = \"\"\ntools grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn grow(_state: Text, _now: Time) : (Text, Int)\n"
+                       "(\"a\".repeat(%d), 0)\nend\n",
+                       MO_LIMIT_SAVED_BYTES) > 0);
+    MO_ASSERT(snprintf(sources[1], sizeof sources[1],
+                       "module Main\nservice\nstate Text = \"\"\ntools read\nevery 1.second grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn read(_state: Text, _now: Time) : Bool\ntrue\nend\n"
+                       "fn grow(_state: Text, _now: Time) : Text\n\"a\".repeat(%d)\nend\n",
+                       MO_LIMIT_SAVED_BYTES) > 0);
+    MO_ASSERT(snprintf(fixed[0], sizeof fixed[0],
+                       "module Main\nservice\nstate Text = \"\"\ntools grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn grow(_state: Text, _now: Time) : (Text, Int)\n(\"a\", 0)\nend\n") > 0);
+    MO_ASSERT(snprintf(fixed[1], sizeof fixed[1],
+                       "module Main\nservice\nstate Text = \"\"\ntools read\nevery 1.second grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn read(_state: Text, _now: Time) : Bool\ntrue\nend\n"
+                       "fn grow(_state: Text, _now: Time) : Text\n\"a\"\nend\n") > 0);
+    MO_ASSERT(snprintf(rejected, sizeof rejected,
+                       "module Main\nservice\nstate Text = \"\"\ntools grow\n"
+                       "token from env \"TOKEN\"\nend\n"
+                       "fn grow(_state: Text, _now: Time) : Result((Text, Int), Text)\n"
+                       "Error(\"no\")\nend\n") > 0);
+    for (unsigned timer = 0; timer < 2; timer++) {
+        struct mo_image *image = compile(sources[timer]);
+        struct mo_store *store = NULL;
+        CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+        struct observations o = {0};
+        struct mo_service_loop *s = open_service(image, store, &o);
+        if (!timer)
+            CHECK(mo_service_send(s, 0, NULL, 0, 1) == MO_SERVICE_OK);
+        CHECK(mo_service_step(s) && o.failures == 1 && o.status == MO_SERVICE_MEMORY);
+        size_t length = 1;
+        CHECK(mo_value_data(mo_service_state(s), &length) != NULL || length == 0);
+        CHECK(length == 0 && o.sequence == 0);
+        struct retained r;
+        retained_failure(s, &r);
+        CHECK(r.record.class == MO_SIGNATURE_STATE_SIZE && r.record.timer == timer);
+        struct mo_buffer context;
+        struct mo_offline_run run = replay_retained(image, &r, &context);
+        CHECK(run.outcome.status == MO_OUTCOME_STATE_SIZE && run.outcome.state_changed);
+        CHECK(same_slice(run.outcome.signature.limit, "MO_LIMIT_SAVED_BYTES") &&
+              run.outcome.signature.limit_value == MO_LIMIT_SAVED_BYTES);
+        check_reproduced(&r.record, &run, &context);
+        mo_buffer_free(&context);
+        struct mo_image *revised = compile(fixed[timer]);
+        run = replay_retained(revised, &r, &context);
+        CHECK(run.outcome.status == MO_OUTCOME_SUCCEEDED && run.outcome.reply == MO_REPLY_OK);
+        CHECK(run.outcome.state_changed && context.length == 0);
+        mo_buffer_free(&context);
+        mo_image_free(revised);
+        if (!timer) {
+            revised = compile(rejected);
+            run = replay_retained(revised, &r, &context);
+            CHECK(run.outcome.status == MO_OUTCOME_SUCCEEDED &&
+                  run.outcome.reply == MO_REPLY_ERROR && !run.outcome.state_changed);
+            mo_buffer_free(&context);
+            mo_image_free(revised);
+        }
+        retained_free(&r);
+        mo_service_free(s);
+        mo_store_close(store);
+        mo_image_free(image);
+    }
+}
+
 struct capture_check {
     unsigned count;
     uint8_t class;
@@ -2401,6 +3322,9 @@ static void run(void *unused) {
     damaged_diagnostics();
     long_kind();
     runtime_capture();
+    offline_stop();
+    offline_memory();
+    offline_state_size();
     resource_capture();
     runtime_store_faults();
     argument_capture_limits();
@@ -2439,6 +3363,8 @@ static void run(void *unused) {
     replayed_timer_is_named();
     foreign_image(image, path);
     hostile_database(image, path);
+    store_wait(image, path);
+    history_reader(dir, path);
     invalid_payloads(image);
     composite_recovery();
     shared_recovery_bound();

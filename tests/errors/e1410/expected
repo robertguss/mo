@@ -1,0 +1,5 @@
+error E1410: a query's function is generic  tests/errors/e1410/main.mo:13:4
+
+  13 | fn size(items: List(T)) : Int
+     |    ^^^^ a query's function is generic
+

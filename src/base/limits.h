@@ -358,6 +358,25 @@ struct mo_limits {
 #define MO_LIMIT_STORE_SQL 4096
 /* One SQLite row: a framed payload plus SQLite's record header. */
 #define MO_LIMIT_STORE_ROW (MO_LIMIT_SAVED_BYTES + 4096)
+/* mo serve waits this long for a store another process holds, then exits so that a
+ * service manager retries it. A test build shortens it. */
+#ifndef MO_LIMIT_SERVE_STORE_WAIT_US
+#define MO_LIMIT_SERVE_STORE_WAIT_US UINT64_C(10000000)
+#endif
+/* What a reader of a stopped data folder retains in total: the snapshot, the log
+ * tail's metadata and the failure records. A test build shortens it. */
+#ifndef MO_LIMIT_HISTORY_BYTES
+#define MO_LIMIT_HISTORY_BYTES (64 << 20)
+#endif
+/* What the offline commands render of one value as JSON before marking the rest truncated,
+ * counted as the live views count it. The task queue's largest state, 5000 jobs with
+ * 2048-byte payloads, renders whole within it (see the offline commands' evidence in the
+ * introspection design). */
+#define MO_LIMIT_OFFLINE_VALUE_BYTES (16 << 20)
+/* The heap of the process that renders one such value. */
+#define MO_LIMIT_OFFLINE_RENDER_MEMORY ((size_t)256 << 20)
+/* The instructions one mo query run may execute unless --max-work says otherwise. */
+#define MO_LIMIT_QUERY_WORK UINT64_C(1073741824)
 
 static inline struct mo_limits mo_limits_default(void) {
     return (struct mo_limits){

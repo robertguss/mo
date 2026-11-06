@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "base/binary.h"
+#include "base/sha256.h"
 
 struct saved_output {
     struct mo_buffer *bytes;
@@ -516,5 +517,29 @@ bool mo_value_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, 
     }
     if (ok)
         *out = value;
+    return ok;
+}
+
+bool mo_type_schema(struct mo_heap *heap, uint32_t type, struct mo_buffer *out) {
+    MO_ASSERT(type < heap->types->count);
+    size_t start = out->length;
+    struct saved_output output = {out, NULL};
+    bool ok = write_schema(heap, type, &output);
+    if (!ok)
+        out->length = start;
+    return ok;
+}
+
+bool mo_type_schema_digest(struct mo_heap *heap, uint32_t type, uint8_t digest[32]) {
+    struct mo_buffer bytes;
+    mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
+    bool ok = mo_type_schema(heap, type, &bytes);
+    if (ok) {
+        struct mo_sha256 hash;
+        mo_sha256_init(&hash);
+        mo_sha256_update(&hash, bytes.bytes, bytes.length);
+        mo_sha256_finish(&hash, digest);
+    }
+    mo_buffer_free(&bytes);
     return ok;
 }

@@ -58,8 +58,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     MO_ASSERT(parsed || error != NULL);
     /* Exercise successful command prefixes too, not only unknown commands. */
     if (argc > 1) {
-        const char *commands[] = {"check", "run",   "test",      "format", "fix",
-                                  "guide", "serve", "--version", "fetch"};
+        const char *commands[] = {"check", "run",       "test",  "format", "fix",   "guide",
+                                  "serve", "--version", "fetch", "replay", "query", "history"};
         argv[1] = commands[size == 0 ? 0 : data[0] % (sizeof commands / sizeof *commands)];
         parsed = mo_cli_parse(argc, argv, &cli, &error);
         MO_ASSERT(parsed || error != NULL);

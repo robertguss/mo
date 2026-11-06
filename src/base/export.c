@@ -61,36 +61,49 @@ static bool failure_frame(struct mo_binary *in, uint8_t kind, const uint8_t **pa
     *size = (size_t)n;
     return true;
 }
-static bool export_schema(uint8_t kind, const uint8_t *body, size_t length, uint8_t schema[32],
-                          struct mo_failure_record *failure) {
-    if (kind == 1)
-        return mo_export_schema(body, length, schema);
-    if (kind != 2)
-        return false;
+/* Kind 2's body: the pre-call state and the failure message, bound to one sequence and image
+ * key, with the message's state schema equal to the state's own. */
+static bool failure_body(const uint8_t *body, size_t length, uint8_t schema[32],
+                         struct mo_export_artifact *out) {
     struct mo_binary in = {body, length, 0};
-    const uint8_t *state, *message;
-    size_t state_size, message_size;
-    uint64_t seq, seq2, program, program2;
+    struct mo_failure_slice state, message;
+    uint64_t sequence, sequence2, program, program2;
     struct mo_failure_record record;
-    bool ok = failure_frame(&in, 3, &state, &state_size, &seq, &program) &&
-              failure_frame(&in, 4, &message, &message_size, &seq2, &program2) &&
-              in.position == length && seq == seq2 && program == program2 &&
-              mo_failure_read(message, message_size, &record) && record.sequence == seq &&
-              record.program == program && mo_export_schema(state, state_size, schema) &&
-              memcmp(schema, record.schema, 32) == 0;
-    if (ok && failure != NULL)
-        *failure = record;
-    return ok;
+    if (!failure_frame(&in, 3, &state.bytes, &state.length, &sequence, &program) ||
+        !failure_frame(&in, 4, &message.bytes, &message.length, &sequence2, &program2) ||
+        in.position != length || sequence != sequence2 || program != program2 ||
+        !mo_failure_read(message.bytes, message.length, &record) || record.sequence != sequence ||
+        record.program != program || !mo_export_schema(state.bytes, state.length, schema) ||
+        memcmp(schema, record.schema, 32) != 0)
+        return false;
+    out->state = state;
+    out->message = message;
+    out->failure = record;
+    return true;
+}
+/* Sets schema to the digest of the body's state schema and out's spans and record. */
+static bool export_body(uint8_t kind, const uint8_t *body, size_t length, uint8_t schema[32],
+                        struct mo_export_artifact *out) {
+    if (kind == 2)
+        return failure_body(body, length, schema, out);
+    MO_ASSERT(kind == 1);
+    if (!mo_export_schema(body, length, schema))
+        return false;
+    out->state = (struct mo_failure_slice){body, length};
+    out->message = (struct mo_failure_slice){NULL, 0};
+    out->failure = (struct mo_failure_record){0};
+    return true;
 }
 
 static bool create(struct mo_export_pin *pin, const struct mo_export_identity *id,
                    const uint8_t *saved, size_t length, const uint8_t *message,
                    size_t message_length, uint64_t now) {
     uint8_t schema[32];
+    struct mo_export_artifact body;
     size_t label = strlen(id->label);
     if ((id->kind != 1 && id->kind != 2) || label > MO_LIMIT_EXPORT_LABEL_BYTES ||
         !mo_utf8_valid((const uint8_t *)id->label, label) ||
-        !(message == NULL ? export_schema(id->kind, saved, length, schema, NULL)
+        !(message == NULL ? export_body(id->kind, saved, length, schema, &body)
                           : mo_export_schema(saved, length, schema)))
         return false;
     if (message != NULL && (id->kind != 2 || message_length > MO_LIMIT_FAILURE_MESSAGE_BYTES))
@@ -184,7 +197,14 @@ bool mo_export_expire(struct mo_export_pin *pin, uint64_t now) {
     return true;
 }
 
-bool mo_export_verify(const uint8_t *bytes, size_t length, struct mo_export_identity *out) {
+static uint64_t little_endian(const uint8_t *bytes, unsigned width) {
+    uint64_t value = 0;
+    for (unsigned i = 0; i < width; i++)
+        value |= (uint64_t)bytes[i] << (8 * i);
+    return value;
+}
+
+bool mo_export_read(const uint8_t *bytes, size_t length, struct mo_export_artifact *out) {
     if (length < MO_EXPORT_FIXED_BYTES || length > MO_LIMIT_EXPORT_BYTES / MO_LIMIT_EXPORT_PINS ||
         (memcmp(bytes, "MOEX\1", 5) != 0 || (bytes[5] != 1 && bytes[5] != 2)))
         return false;
@@ -192,37 +212,44 @@ bool mo_export_verify(const uint8_t *bytes, size_t length, struct mo_export_iden
     digest(bytes, length - 32, actual);
     if (memcmp(actual, bytes + length - 32, 32) != 0)
         return false;
-    struct mo_binary in = {bytes, length - 32, 6};
-    struct mo_export_identity id = {.kind = bytes[5]};
-    struct mo_failure_record failure = {0};
-    const uint8_t *value, *schema, *saved;
-    uint64_t label, service, created, size;
-    if (!mo_binary_read(&in, 16, &value))
-        return false;
-    memcpy(id.id, value, 16);
-    if (!mo_binary_uint(&in, 8, &id.program) || !mo_binary_read(&in, 32, &value))
-        return false;
-    memcpy(id.build, value, 32);
-    if (!mo_binary_uint(&in, 4, &label) || label > MO_LIMIT_EXPORT_LABEL_BYTES ||
-        !mo_binary_read(&in, (size_t)label, &value) || !mo_utf8_valid(value, (size_t)label) ||
-        !mo_binary_uint(&in, 4, &service) || !mo_binary_uint(&in, 8, &id.sequence) ||
-        !mo_binary_uint(&in, 8, &id.encoded_sequence) || !mo_binary_uint(&in, 8, &created) ||
-        !mo_binary_read(&in, 32, &schema) || !mo_binary_uint(&in, 4, &size) ||
-        !mo_binary_read(&in, (size_t)size, &saved) || in.position != in.length ||
-        !export_schema(id.kind, saved, (size_t)size, actual, &failure) ||
+    struct mo_export_artifact a = {.identity.kind = bytes[5]};
+    struct mo_export_identity *id = &a.identity;
+    /* The fixed 66-byte prefix is present: length >= MO_EXPORT_FIXED_BYTES. */
+    memcpy(id->id, bytes + 6, 16);
+    id->program = little_endian(bytes + 22, 8);
+    memcpy(id->build, bytes + 30, 32);
+    uint64_t label = little_endian(bytes + 62, 4), service, created, size;
+    struct mo_binary in = {bytes, length - 32, 66};
+    const uint8_t *label_bytes, *schema, *saved;
+    if (label > MO_LIMIT_EXPORT_LABEL_BYTES || !mo_binary_read(&in, (size_t)label, &label_bytes) ||
+        !mo_utf8_valid(label_bytes, (size_t)label) || !mo_binary_uint(&in, 4, &service) ||
+        !mo_binary_uint(&in, 8, &id->sequence) || !mo_binary_uint(&in, 8, &id->encoded_sequence) ||
+        !mo_binary_uint(&in, 8, &created) || !mo_binary_read(&in, 32, &schema) ||
+        !mo_binary_uint(&in, 4, &size) || !mo_binary_read(&in, (size_t)size, &saved) ||
+        in.position != in.length || !export_body(id->kind, saved, (size_t)size, actual, &a) ||
         memcmp(actual, schema, 32) != 0)
         return false;
-    id.service = (uint32_t)service;
-    if (id.kind == 2) {
-        if (failure.program != (id.program ^ ((uint64_t)id.service << 32)) ||
-            failure.sequence != id.sequence || id.encoded_sequence != id.sequence ||
-            memcmp(failure.build, id.build, 32) != 0)
+    a.label = (struct mo_failure_slice){label_bytes, (size_t)label};
+    id->service = (uint32_t)service;
+    if (id->kind == 2) {
+        if (a.failure.program != (id->program ^ ((uint64_t)id->service << 32)) ||
+            a.failure.sequence != id->sequence || id->encoded_sequence != id->sequence ||
+            memcmp(a.failure.build, id->build, 32) != 0)
             return false;
-        id.failure_id = failure.id;
+        id->failure_id = a.failure.id;
     }
     /* created is a signed wire timestamp; preserve its bit representation. */
-    memcpy(&id.created, &created, sizeof created);
-    *out = id;
+    memcpy(&id->created, &created, sizeof created);
+    memcpy(a.schema, schema, 32);
+    *out = a;
+    return true;
+}
+
+bool mo_export_verify(const uint8_t *bytes, size_t length, struct mo_export_identity *out) {
+    struct mo_export_artifact artifact;
+    if (!mo_export_read(bytes, length, &artifact))
+        return false;
+    *out = artifact.identity;
     return true;
 }
 

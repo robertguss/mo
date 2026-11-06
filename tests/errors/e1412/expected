@@ -1,0 +1,5 @@
+error E1412: a query's function does not take the service state first  tests/errors/e1412/main.mo:13:4
+
+  13 | fn double(text: Text) : Text
+     |    ^^^^^^ a query's function does not take the service state first
+

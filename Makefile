@@ -531,18 +531,27 @@ $(BUILD)/debug/tests/test_service_runtime.test: $(BUILD)/debug/tests/test_servic
 $(BUILD)/sanitize/tests/test_service_runtime.test: $(BUILD)/sanitize/tests/test_service_runtime.o $(call objects,$(BUILD)/sanitize,$(filter-out $(SERVICE_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/service-faults/%.o,$(SERVICE_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# The store test shortens mo serve's store wait and the folder reader's retained bytes, and
+# compiles the test with the same values so it can check them.
+STORE_TEST_LIMITS := -DMO_LIMIT_SERVE_STORE_WAIT_US=UINT64_C\(1000000\) -DMO_LIMIT_HISTORY_BYTES=65536
+$(BUILD)/debug/tests/test_service_store.o: tests/test_service_store.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(STORE_TEST_LIMITS) -c $< -o $@
+$(BUILD)/sanitize/tests/test_service_store.o: tests/test_service_store.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(STORE_TEST_LIMITS) -c $< -o $@
 $(BUILD)/debug/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -Dmo_buffer_append=mo_service_fault_buffer_append -c $< -o $@
 $(BUILD)/debug/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dsqlite3_step=mo_store_fault_step -Dsqlite3_exec=mo_store_fault_exec -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) $(STORE_TEST_LIMITS) -Dsqlite3_step=mo_store_fault_step -Dsqlite3_exec=mo_store_fault_exec -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
 $(BUILD)/sanitize/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -Dmo_buffer_append=mo_service_fault_buffer_append -c $< -o $@
 $(BUILD)/sanitize/store-faults/store.o: src/host/store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dsqlite3_step=mo_store_fault_step -Dsqlite3_exec=mo_store_fault_exec -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) $(STORE_TEST_LIMITS) -Dsqlite3_step=mo_store_fault_step -Dsqlite3_exec=mo_store_fault_exec -Dmo_arena_allocate=mo_store_fault_allocate -c $< -o $@
 $(BUILD)/debug/store-faults/simulation.o: src/vm/simulation.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_service_open=mo_simulation_observe_open -Dmo_service_send=mo_simulation_observe_send -Dmo_value_case=mo_simulation_fault_case -c $< -o $@
@@ -611,6 +620,18 @@ $(BUILD)/sanitize/tests/test_host_faults.test: $(BUILD)/sanitize/tests/test_host
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 $(FUZZ_BUILD)/bin/%: $(FUZZ_BUILD)/fuzz/%.o $(call objects,$(FUZZ_BUILD),$(LIB_SOURCES))
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)
+
+# fuzz_history checks the reader's history bound, which small inputs pass only when it is short.
+HISTORY_FUZZ_LIMITS := -DMO_LIMIT_HISTORY_BYTES=4096
+$(FUZZ_BUILD)/history/store.o: src/host/store.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(HISTORY_FUZZ_LIMITS) -c $< -o $@
+$(FUZZ_BUILD)/fuzz/fuzz_history.o: fuzz/fuzz_history.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(FUZZ_CC) $(COMMON) $(FUZZ) $(HISTORY_FUZZ_LIMITS) -c $< -o $@
+$(FUZZ_BUILD)/bin/fuzz_history: $(FUZZ_BUILD)/fuzz/fuzz_history.o $(call objects,$(FUZZ_BUILD),$(filter-out src/host/store.c,$(LIB_SOURCES))) $(FUZZ_BUILD)/history/store.o
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(FUZZ) $^ -o $@ $(LDLIBS)
 

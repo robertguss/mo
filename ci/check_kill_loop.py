@@ -9,6 +9,9 @@ then reconciles the jobs with a model built only from replies:
 - the one update sent without a reply applied in full or not at all;
 - nothing is in the queue that was never sent.
 
+Between each kill and the restart it runs `mo history` on the folder, which must either read it
+or report that recovery is required: a kill leaves no folder the reader cannot classify.
+
 A reply's runtime error says what the call did through its `effect`: `none` is not applied
 (rate_limited, busy and invalid_arguments among them), `applied` is applied, and `unknown`
 counts like a lost reply. A connection that is refused, reset or closed before the reply is a
@@ -25,6 +28,7 @@ import pathlib
 import random
 import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
@@ -161,6 +165,8 @@ class Run:
         self.refused = 0
         self.unknown = 0
         self.latencies = [0.03]
+        self.history_read = 0
+        self.history_recovery = 0
 
     def fail(self, message):
         raise Mismatch(message)
@@ -203,6 +209,21 @@ class Run:
             with journal.open('rb') as file:
                 if file.read(len(JOURNAL_MAGIC)) == JOURNAL_MAGIC:
                     self.mid_commit += 1
+        self.history()
+
+    def history(self):
+        """mo history on the killed folder: a normal read or "recovery required", nothing else."""
+        result = subprocess.run([str(self.binary), 'history', '--json', str(self.folder)],
+                                capture_output=True, timeout=300, check=False)
+        lines = result.stdout.decode('utf-8', 'replace').splitlines()
+        folder = json.loads(lines[1]).get('folder') if len(lines) > 2 else None
+        if (result.returncode, folder) == (0, 'ok'):
+            self.history_read += 1
+        elif (result.returncode, folder) == (1, 'recovery_required'):
+            self.history_recovery += 1
+        else:
+            self.fail(f'mo history after a kill exited {result.returncode} with folder {folder}: '
+                      f'{result.stdout[-500:]!r} {result.stderr[-500:]!r}')
 
     # Calls.
 
@@ -417,7 +438,8 @@ def main():
         else:
             shutil.rmtree(root, ignore_errors=True)
     print(f'kill loop: seed={run.seed} kills={run.killed} mid_commit={run.mid_commit} '
-          f'folders={run.folders} calls={run.calls} answered={run.answered} '
+          f'folders={run.folders} history_read={run.history_read} '
+          f'history_recovery={run.history_recovery} calls={run.calls} answered={run.answered} '
           f'refused={run.refused} unknown={run.unknown} '
           f'result={"fail" if failure else "pass"} seconds={time.monotonic() - began:.0f}')
     if failure is not None:

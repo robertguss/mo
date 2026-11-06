@@ -1,0 +1,40 @@
+# Raw output of learnability/phase4/offline/measure.py, 2026-11-06.
+# Host: exe.dev VM, 8 vCPUs of an AMD EPYC 9554P, 31 GiB, Linux 6.12.113, gcc 13.3.0.
+# debug = build/gcc/debug/mo (-O0 -g); release = build/gcc-release/debug/mo (-O2 -g, see verification.md).
+
+## measure.py build build/gcc-release/debug/mo build/measure
+{"folder": "build/measure/jobs-300", "jobs": 300, "snapshot_sequence": 300, "snapshot_record_bytes": 625867, "log_rows": 1, "log_row_bytes_max": 2137, "database_file_bytes": 1470464}
+{"folder": "build/measure/jobs-500", "jobs": 500, "snapshot_sequence": 500, "snapshot_record_bytes": 1042175, "log_rows": 2, "log_row_bytes_max": 2137, "database_file_bytes": 2306048}
+{"folder": "build/measure/jobs-1000", "jobs": 1000, "snapshot_sequence": 1000, "snapshot_record_bytes": 2086083, "log_rows": 3, "log_row_bytes_max": 2137, "database_file_bytes": 4395008}
+{"folder": "build/measure/jobs-2000", "jobs": 2000, "snapshot_sequence": 2000, "snapshot_record_bytes": 4173899, "log_rows": 5, "log_row_bytes_max": 2137, "database_file_bytes": 8577024}
+{"folder": "build/measure/jobs-4000", "jobs": 4000, "snapshot_sequence": 4000, "snapshot_record_bytes": 8349531, "log_rows": 9, "log_row_bytes_max": 2137, "database_file_bytes": 16936960}
+{"folder": "build/measure/jobs-5000", "jobs": 5000, "snapshot_sequence": 5500, "snapshot_record_bytes": 10464263, "log_rows": 12, "log_row_bytes_max": 59, "database_file_bytes": 21114880}
+
+## measure.py tail build/gcc-release/debug/mo build/measure
+{"folder": "build/measure/tail", "text_bytes": 16224, "snapshot_sequence": 0, "snapshot_record_bytes": 64, "log_rows": 99, "log_row_bytes_max": 16313, "database_file_bytes": 1646592}
+
+## measure.py reader build/gcc-release/debug/mo build/measure/jobs-{300,500,1000,2000,4000,5000}
+{"folder": "build/measure/jobs-300", "status": 0, "snapshot_sequence": 300, "snapshot_record_bytes": 625867, "log_rows": 1, "log_row_bytes_max": 2137, "database_file_bytes": 1470464, "lock_seconds": 0.0035, "lock_operations": 8, "peak_resident_kib": 62888, "traced_wall_seconds": 5.13, "wall_seconds": 5.03, "plain_status": 0, "output_bytes": 653087}
+{"folder": "build/measure/jobs-500", "status": 0, "snapshot_sequence": 500, "snapshot_record_bytes": 1042175, "log_rows": 2, "log_row_bytes_max": 2137, "database_file_bytes": 2306048, "lock_seconds": 0.0082, "lock_operations": 8, "peak_resident_kib": 63424, "traced_wall_seconds": 8.35, "wall_seconds": 8.54, "plain_status": 0, "output_bytes": 1087486}
+{"folder": "build/measure/jobs-1000", "status": 0, "snapshot_sequence": 1000, "snapshot_record_bytes": 2086083, "log_rows": 3, "log_row_bytes_max": 2137, "database_file_bytes": 4395008, "lock_seconds": 0.0128, "lock_operations": 8, "peak_resident_kib": 64524, "traced_wall_seconds": 17.61, "wall_seconds": 16.4, "plain_status": 0, "output_bytes": 2176489}
+{"folder": "build/measure/jobs-2000", "status": 0, "snapshot_sequence": 2000, "snapshot_record_bytes": 4173899, "log_rows": 5, "log_row_bytes_max": 2137, "database_file_bytes": 8577024, "lock_seconds": 0.024, "lock_operations": 8, "peak_resident_kib": 85112, "traced_wall_seconds": 34.36, "wall_seconds": 32.2, "plain_status": 0, "output_bytes": 4356478}
+{"folder": "build/measure/jobs-4000", "status": 0, "snapshot_sequence": 4000, "snapshot_record_bytes": 8349531, "log_rows": 9, "log_row_bytes_max": 2137, "database_file_bytes": 16936960, "lock_seconds": 0.0398, "lock_operations": 8, "peak_resident_kib": 130740, "traced_wall_seconds": 70.06, "wall_seconds": 70.96, "plain_status": 0, "output_bytes": 8716462}
+{"folder": "build/measure/jobs-5000", "status": 0, "snapshot_sequence": 5500, "snapshot_record_bytes": 10464263, "log_rows": 12, "log_row_bytes_max": 59, "database_file_bytes": 21114880, "lock_seconds": 0.0516, "lock_operations": 8, "peak_resident_kib": 143244, "traced_wall_seconds": 85.43, "wall_seconds": 88.68, "plain_status": 0, "output_bytes": 10944897}
+
+## measure.py reader build/gcc/debug/mo build/measure/jobs-{300,500,1000,2000,4000,5000}
+{"folder": "build/measure/jobs-300", "status": 0, "snapshot_sequence": 300, "snapshot_record_bytes": 625867, "log_rows": 1, "log_row_bytes_max": 2137, "database_file_bytes": 1470464, "lock_seconds": 0.0066, "lock_operations": 8, "peak_resident_kib": 63716, "traced_wall_seconds": 13.19, "wall_seconds": 13.43, "plain_status": 0, "output_bytes": 653087}
+{"folder": "build/measure/jobs-500", "status": 0, "snapshot_sequence": 500, "snapshot_record_bytes": 1042175, "log_rows": 2, "log_row_bytes_max": 2137, "database_file_bytes": 2306048, "lock_seconds": 0.0099, "lock_operations": 8, "peak_resident_kib": 64228, "traced_wall_seconds": 22.07, "wall_seconds": 21.06, "plain_status": 0, "output_bytes": 1087486}
+{"folder": "build/measure/jobs-1000", "status": 0, "snapshot_sequence": 1000, "snapshot_record_bytes": 2086083, "log_rows": 3, "log_row_bytes_max": 2137, "database_file_bytes": 4395008, "lock_seconds": 0.014, "lock_operations": 8, "peak_resident_kib": 65364, "traced_wall_seconds": 44.47, "wall_seconds": 42.57, "plain_status": 0, "output_bytes": 2176489}
+{"folder": "build/measure/jobs-2000", "status": 0, "snapshot_sequence": 2000, "snapshot_record_bytes": 4173899, "log_rows": 5, "log_row_bytes_max": 2137, "database_file_bytes": 8577024, "lock_seconds": 0.0272, "lock_operations": 8, "peak_resident_kib": 85844, "traced_wall_seconds": 84.61, "wall_seconds": 87.75, "plain_status": 0, "output_bytes": 4356478}
+{"folder": "build/measure/jobs-4000", "status": 0, "snapshot_sequence": 4000, "snapshot_record_bytes": 8349531, "log_rows": 9, "log_row_bytes_max": 2137, "database_file_bytes": 16936960, "lock_seconds": 0.0727, "lock_operations": 8, "peak_resident_kib": 131688, "traced_wall_seconds": 171.69, "wall_seconds": 167.1, "plain_status": 0, "output_bytes": 8716462}
+{"folder": "build/measure/jobs-5000", "status": 0, "snapshot_sequence": 5500, "snapshot_record_bytes": 10464263, "log_rows": 12, "log_row_bytes_max": 59, "database_file_bytes": 21114880, "lock_seconds": 0.0658, "lock_operations": 8, "peak_resident_kib": 143920, "traced_wall_seconds": 209.35, "wall_seconds": 209.33, "plain_status": 0, "output_bytes": 10944897}
+
+## measure.py reader MO build/measure/tail (release, then debug)
+{"folder": "build/measure/tail", "status": 0, "snapshot_sequence": 0, "snapshot_record_bytes": 64, "log_rows": 99, "log_row_bytes_max": 16313, "database_file_bytes": 1646592, "lock_seconds": 0.0078, "lock_operations": 8, "peak_resident_kib": 62428, "traced_wall_seconds": 0.28, "wall_seconds": 0.24, "plain_status": 0, "output_bytes": 18448}
+{"folder": "build/measure/tail", "status": 0, "snapshot_sequence": 0, "snapshot_record_bytes": 64, "log_rows": 99, "log_row_bytes_max": 16313, "database_file_bytes": 1646592, "lock_seconds": 0.0117, "lock_operations": 8, "peak_resident_kib": 63280, "traced_wall_seconds": 0.46, "wall_seconds": 0.43, "plain_status": 0, "output_bytes": 18448}
+
+## measure.py serve MO build/measure/jobs-5000 3 (release, then debug)
+{"folder": "build/measure/jobs-5000", "reader": "python sqlite3, shared lock held 3.0 s", "listened": true, "serve_seconds_to_listen": 4.037, "reader_released_after_seconds": 3.0, "serve_status": 0, "serve_stderr": ""}
+{"folder": "build/measure/jobs-5000", "reader": "mo history started just before mo serve", "listened": true, "serve_seconds_to_listen": 1.035, "reader_released_after_seconds": 86.606, "serve_status": 0, "serve_stderr": ""}
+{"folder": "build/measure/jobs-5000", "reader": "python sqlite3, shared lock held 3.0 s", "listened": true, "serve_seconds_to_listen": 4.887, "reader_released_after_seconds": 3.001, "serve_status": 0, "serve_stderr": ""}
+{"folder": "build/measure/jobs-5000", "reader": "mo history started just before mo serve", "listened": true, "serve_seconds_to_listen": 2.238, "reader_released_after_seconds": 212.626, "serve_status": 0, "serve_stderr": ""}

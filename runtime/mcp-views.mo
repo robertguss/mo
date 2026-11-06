@@ -1,5 +1,6 @@
 module McpViews
 expose names,
+offline_value,
 catalog,
 valid,
 offset,
@@ -947,6 +948,19 @@ fn saved_state(saved: Bytes, path: Json.Json, budget: Int) : Option(Rendered)
     budget,
     0
   )
+end
+
+## A whole saved value for the offline commands, which have no program: its JSON text, then
+## whether it is complete, as `{"value":...,"complete":...}`. Past budget bytes a value is marked
+## truncated, as the live views mark it. Empty when the bytes are not a saved value.
+fn offline_value(saved: Bytes, budget: Int) : Text
+  case saved_state(saved, Json.Array([]), budget)
+    Some(rendered): Json.Object({
+      "value": rendered.value or Json.Null,
+      "complete": Json.Boolean(rendered.complete and rendered.value is Some(_))
+    }).to_text
+    None: ""
+  end
 end
 
 fn field_type(field: (Text, Int)) : Int

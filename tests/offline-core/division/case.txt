@@ -1,0 +1,9 @@
+# A read-only tool that divides by the shares its argument leaves, none when every share left.
+handler: share
+call: {"left": "4"}
+state: (con "Ledger" ((int 1200) (int 4)))
+arrival: (time 1767225600000000)
+arguments: (int 4)
+stop: (divByZero)
+passing: (int 1)
+returns: 400

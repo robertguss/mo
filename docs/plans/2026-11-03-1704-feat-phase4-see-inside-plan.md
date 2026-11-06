@@ -483,6 +483,7 @@ Waits on: PR7, needed before start because offline failure commands consume its 
 
 ### U5. Replay, Query, Fix Check and History
 
+- **Detailed plan:** `docs/plans/2026-11-06-1220-feat-phase4-offline-diagnosis-plan.md`.
 - **Goal:** Offline commands implement the reconstruction and compatibility contract with explicit reproduction/verification results.
 - **Covers:** R14–R19, R26, R28; KTD4–KTD5; AE4–AE7, AE9, AE17, AE18.
 - **Depends on:** U4 and the U1 imported-query, history and lock/startup decisions.

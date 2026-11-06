@@ -1,9 +1,14 @@
+#include "base/binary.h"
+#include "base/failure.h"
+#include "base/runtime-identity.h"
 #include "base/stack.h"
+#include "base/verdict.h"
 #include "service_compile.h"
 #include "test.h"
 #include "vm/vm.h"
 
 #include <errno.h>
+#include <inttypes.h>
 
 static unsigned allocation_countdown;
 static bool allocation_failed;
@@ -657,7 +662,10 @@ static void memory_boundary(void) {
     mo_image_free(image);
 }
 
-static void work_boundary(void) {
+/* The work handler, hand-written so that the work budget's boundary falls on a known instruction:
+ * trial 0 returns on the last instruction the budget allows, trial 1 needs one more, and trial 2
+ * one more decrement. */
+static struct mo_image *work_image(unsigned trial, uint32_t *handler) {
     struct mo_image *original =
         compile("module Main\nservice\n"
                 "state (Int, Int) = (7, 9)\ntools work\ntoken from env \"TOKEN\"\nend\n"
@@ -701,74 +709,85 @@ static void work_boundary(void) {
     struct mo_bytecode changed = *file;
     changed.functions = functions;
     changed.debug = debug;
+    /* Eight setup instructions, four per decrement, then EQ/BRANCH/FREE/RET.
+     * The extra CLEAR puts RET one past the limit. Another decrement instead
+     * cancels with a nonempty reuse token still owned by the frame. */
+    uint32_t code[] = {MO_OP_DROP,
+                       0,
+                       MO_OP_CONST,
+                       3,
+                       one,
+                       MO_OP_CONST,
+                       4,
+                       zero,
+                       MO_OP_CONSTRUCT | (2u << 16),
+                       6,
+                       layout,
+                       3,
+                       4,
+                       MO_OP_RESET,
+                       7,
+                       6,
+                       MO_OP_CLEAR,
+                       6,
+                       MO_OP_CLEAR,
+                       6,
+                       MO_OP_EQ_INT,
+                       5,
+                       4,
+                       4,
+                       MO_OP_EQ_INT,
+                       5,
+                       2,
+                       4,
+                       MO_OP_BRANCH,
+                       5,
+                       38,
+                       32,
+                       MO_OP_SUB_INT,
+                       2,
+                       2,
+                       3,
+                       MO_OP_JUMP,
+                       24,
+                       MO_OP_FREE_TOKEN,
+                       7,
+                       MO_OP_CLEAR,
+                       6,
+                       MO_OP_RET,
+                       5};
+    functions[target].code = code;
+    functions[target].code_count = 44;
+    if (trial != 1) {
+        code[40] = MO_OP_RET;
+        code[41] = 5;
+        functions[target].code_count = 42;
+    }
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_write_error write_error;
+    bool written = mo_bytecode_write(&changed, &wire, &write_error);
+    if (!written)
+        CHECK(fprintf(stderr, "boundary bytecode: %s\n", write_error.reason) > 0);
+    MO_ASSERT(written);
+    struct mo_load_error load_error;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    mo_buffer_free(&wire);
+    mo_arena_free(&arena);
+    mo_image_free(original);
+    *handler = target;
+    return image;
+}
+
+static void work_boundary(void) {
     for (unsigned trial = 0; trial < 3; trial++) {
-        /* Eight setup instructions, four per decrement, then EQ/BRANCH/FREE/RET.
-         * The extra CLEAR puts RET one past the limit. Another decrement instead
-         * cancels with a nonempty reuse token still owned by the frame. */
-        uint32_t code[] = {MO_OP_DROP,
-                           0,
-                           MO_OP_CONST,
-                           3,
-                           one,
-                           MO_OP_CONST,
-                           4,
-                           zero,
-                           MO_OP_CONSTRUCT | (2u << 16),
-                           6,
-                           layout,
-                           3,
-                           4,
-                           MO_OP_RESET,
-                           7,
-                           6,
-                           MO_OP_CLEAR,
-                           6,
-                           MO_OP_CLEAR,
-                           6,
-                           MO_OP_EQ_INT,
-                           5,
-                           4,
-                           4,
-                           MO_OP_EQ_INT,
-                           5,
-                           2,
-                           4,
-                           MO_OP_BRANCH,
-                           5,
-                           38,
-                           32,
-                           MO_OP_SUB_INT,
-                           2,
-                           2,
-                           3,
-                           MO_OP_JUMP,
-                           24,
-                           MO_OP_FREE_TOKEN,
-                           7,
-                           MO_OP_CLEAR,
-                           6,
-                           MO_OP_RET,
-                           5};
-        functions[target].code = code;
-        functions[target].code_count = 44;
-        if (trial != 1) {
-            code[40] = MO_OP_RET;
-            code[41] = 5;
-            functions[target].code_count = 42;
-        }
-        struct mo_buffer wire;
-        mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
-        struct mo_write_error write_error;
-        bool written = mo_bytecode_write(&changed, &wire, &write_error);
-        if (!written)
-            CHECK(fprintf(stderr, "boundary bytecode: %s\n", write_error.reason) > 0);
-        MO_ASSERT(written);
-        struct mo_load_error load_error;
-        struct mo_image *image = mo_load(wire.bytes, wire.length, &load_error);
-        MO_ASSERT(image != NULL);
-        struct mo_limits limits = mo_limits_default();
-        struct mo_defect defect;
-        MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+        uint32_t target;
+        struct mo_image *image = work_image(trial, &target);
+        (void)target;
         struct observation o = {0};
         struct mo_service_loop *s = start(image, &o);
         size_t used = mo_heap_used(o.heap), objects = mo_heap_objects(o.heap);
@@ -784,10 +803,185 @@ static void work_boundary(void) {
         CHECK(mo_cell_get_int(mo_value_field(mo_service_state(s), 0)) == 7);
         mo_service_free(s);
         mo_image_free(image);
-        mo_buffer_free(&wire);
     }
-    mo_arena_free(&arena);
-    mo_image_free(original);
+}
+
+/* The newest retained failure, copied out of the store. */
+struct retained {
+    struct mo_buffer state, message;
+    struct mo_failure_record record;
+};
+static bool keep_newest(const struct mo_store_failure *f, void *context) {
+    struct retained *r = context;
+    mo_buffer_clear(&r->state);
+    mo_buffer_clear(&r->message);
+    MO_ASSERT(mo_buffer_append(&r->state, f->state.bytes, f->state.length) &&
+              mo_buffer_append(&r->message, f->message.bytes, f->message.length));
+    return true;
+}
+static void retained_failure(struct mo_service_loop *s, struct retained *r) {
+    mo_buffer_init(&r->state, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&r->message, MO_LIMIT_FAILURE_RECORD_BYTES);
+    MO_ASSERT(mo_service_failures(s, keep_newest, r) == MO_STORE_OK && r->message.length != 0);
+    MO_ASSERT(mo_failure_read(r->message.bytes, r->message.length, &r->record));
+}
+static void retained_free(struct retained *r) {
+    mo_buffer_free(&r->state);
+    mo_buffer_free(&r->message);
+}
+
+static bool same_slice(struct mo_failure_slice a, struct mo_failure_slice b) {
+    return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
+}
+
+/* The offline run computed the stored signature field by field and the stored context text. */
+static void check_reproduced(const struct mo_failure_record *r, const struct mo_offline_run *run,
+                             const struct mo_buffer *context) {
+    struct mo_signature stored = mo_signature_from_record(r);
+    const struct mo_signature *offline = &run->outcome.signature;
+    CHECK(offline->class == stored.class && same_slice(offline->reason, stored.reason) &&
+          same_slice(offline->limit, stored.limit) && offline->limit_value == stored.limit_value);
+    CHECK(offline->function == stored.function && offline->file == stored.file &&
+          offline->start == stored.start && offline->end == stored.end);
+    CHECK(run->context == (enum mo_failure_context)r->context_status);
+    CHECK(context->length == r->context.length &&
+          memcmp(context->bytes, r->context.bytes, context->length) == 0);
+    CHECK(mo_replay_classify(&stored, &run->outcome) == MO_REPLAY_REPRODUCED);
+}
+
+/* The shared call stops at the poll the service stops at, on a process of its own, and a
+ * cancelled call's frames are reachable; replaying the recorded cancellation names them too. */
+static void offline_work_boundary(void) {
+    for (unsigned trial = 0; trial < 3; trial++) {
+        uint32_t target;
+        struct mo_image *image = work_image(trial, &target);
+        const struct mo_bytecode_service *service = &mo_image_bytecode(image)->services[0];
+        struct mo_store *store = NULL;
+        MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+        struct observation o = {0};
+        struct mo_service_hooks hooks = {clock_now, reply, event, &o};
+        struct mo_service_loop *s = NULL;
+        MO_ASSERT(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_OK);
+        o.heap = mo_service_heap(s);
+        const uint8_t *saved = NULL;
+        size_t saved_length = 0;
+        MO_ASSERT(mo_service_encoded_state(s, &saved, &saved_length));
+        struct mo_cell n = mo_cell_int((MO_LIMIT_SERVICE_WORK - 12) / 4 + (trial == 2 ? 1 : 0));
+
+        struct mo_limits limits = mo_service_limits();
+        struct mo_process *p = mo_process_new(image, &limits);
+        MO_ASSERT(p != NULL);
+        struct mo_cell state;
+        MO_ASSERT(
+            mo_value_decode(mo_process_heap(p), service->state_type, saved, saved_length, &state));
+        struct mo_service_call call;
+        mo_service_call_handler(p, service, false, 0, state, 0, &n, NULL, &call);
+        CHECK(call.status == (trial == 0 ? MO_SERVICE_OK : MO_SERVICE_WORK));
+        CHECK(call.returned == (trial == 0) && call.function == target);
+        struct mo_frame_walk walk = mo_process_frames(p);
+        struct mo_defect_frame frame = {0};
+        if (trial != 0) {
+            CHECK(mo_process_frame_next(&walk, &frame) && frame.function == target);
+            CHECK(frame.previous == NULL);
+        }
+        CHECK(!mo_process_frame_next(&walk, &frame));
+        mo_process_free(p);
+
+        CHECK(mo_service_send(s, 0, &n, 1, 1) == MO_SERVICE_OK && mo_service_step(s));
+        CHECK(o.status == (trial == 0 ? MO_SERVICE_OK : MO_SERVICE_WORK));
+        if (trial != 0) {
+            struct retained r;
+            retained_failure(s, &r);
+            CHECK(r.record.class == MO_SIGNATURE_WORK && r.record.function == target);
+            struct mo_buffer context;
+            mo_buffer_init(&context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
+            struct mo_offline_run run =
+                mo_offline_call(image, service, r.record.handler, r.state.bytes, r.state.length,
+                                &r.record, &context);
+            CHECK(run.outcome.status == MO_OUTCOME_WORK);
+            check_reproduced(&r.record, &run, &context);
+            char line[64];
+            int written = snprintf(line, sizeof line, "frame %" PRIu32 " file ", target);
+            MO_ASSERT(written > 0 && (size_t)written < sizeof line);
+            CHECK(context.length > (size_t)written &&
+                  memcmp(context.bytes, line, (size_t)written) == 0);
+            mo_buffer_free(&context);
+            retained_free(&r);
+        }
+        mo_service_free(s);
+        mo_store_close(store);
+        mo_image_free(image);
+    }
+}
+
+/* Allocation refused anywhere in an offline run, in the process, its heap or the shared call,
+ * ends it as the service would: memory exhausted, or refused before the handler ran. */
+static void offline_faults(void) {
+    struct mo_image *image = compile(failure_source);
+    const struct mo_bytecode_service *service = &mo_image_bytecode(image)->services[0];
+    struct observation o = {0};
+    struct mo_service_loop *s = start(image, &o);
+    struct mo_buffer state, argument, arguments;
+    mo_buffer_init(&state, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&argument, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&arguments, MO_LIMIT_SAVED_BYTES);
+    MO_ASSERT(mo_value_encode(o.heap, service->state_type, mo_service_state(s), &state));
+    MO_ASSERT(
+        mo_value_encode(o.heap, service->tools[0].argument_types[0], mo_cell_int(17), &argument));
+    MO_ASSERT(mo_binary_write(&arguments, argument.length, 4) &&
+              mo_buffer_append(&arguments, argument.bytes, argument.length));
+    mo_service_free(s);
+    /* Arguments that do not fit the handler refuse the run: one too few, then one too many. */
+    for (uint32_t count = 0; count < 2; count++) {
+        struct mo_buffer context, extra;
+        mo_buffer_init(&context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
+        mo_buffer_init(&extra, MO_LIMIT_SAVED_BYTES);
+        MO_ASSERT(mo_buffer_append(&extra, arguments.bytes, arguments.length) &&
+                  mo_buffer_append(&extra, arguments.bytes, arguments.length));
+        struct mo_failure_record wrong = {.arguments = {extra.bytes, count * extra.length},
+                                          .argument_count = count * 2};
+        struct mo_offline_run run =
+            mo_offline_call(image, service, 0, state.bytes, state.length, &wrong, &context);
+        CHECK(run.outcome.status == MO_OUTCOME_REFUSED && run.refusal != NULL);
+        CHECK(context.length == 0);
+        mo_buffer_free(&extra);
+        mo_buffer_free(&context);
+    }
+    struct mo_failure_record record = {.arguments = {arguments.bytes, arguments.length},
+                                       .argument_count = 1};
+    unsigned refused = 0, memory = 0, faulted = 0;
+    for (unsigned nth = 1; nth < 64; nth++) {
+        struct mo_buffer context;
+        mo_buffer_init(&context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
+        allocation_countdown = nth;
+        allocation_failed = false;
+        struct mo_offline_run run =
+            mo_offline_call(image, service, 0, state.bytes, state.length, &record, &context);
+        allocation_countdown = 0;
+        mo_buffer_free(&context);
+        if (!allocation_failed) {
+            CHECK(run.outcome.status == MO_OUTCOME_SUCCEEDED && run.refusal == NULL);
+            CHECK(run.outcome.reply == MO_REPLY_OK && run.outcome.state_changed);
+            break;
+        }
+        faulted++;
+        /* List growth retries a refused slack allocation at exact size. */
+        if (run.outcome.status == MO_OUTCOME_SUCCEEDED)
+            continue;
+        if (run.outcome.status == MO_OUTCOME_REFUSED) {
+            refused++;
+            CHECK(run.refusal != NULL);
+        } else {
+            memory++;
+            CHECK(run.outcome.status == MO_OUTCOME_MEMORY &&
+                  run.outcome.signature.class == MO_SIGNATURE_MEMORY);
+        }
+    }
+    CHECK(refused != 0 && memory != 0 && faulted < 63);
+    mo_buffer_free(&state);
+    mo_buffer_free(&argument);
+    mo_buffer_free(&arguments);
+    mo_image_free(image);
 }
 
 static void faults(void) {
@@ -860,6 +1054,9 @@ static void run(void *unused) {
     memory_boundary();
     work_boundary();
     faults();
+    mo_runtime_identity_init();
+    offline_work_boundary();
+    offline_faults();
 }
 
 int main(void) {

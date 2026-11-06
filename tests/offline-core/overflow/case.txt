@@ -1,0 +1,9 @@
+# An updating tool whose new count passes the largest Int.
+handler: bump
+call: {"times": "2"}
+state: (con "Counter" ((int 9223372036854775000) (int 800)))
+arrival: (time 1767225600000000)
+arguments: (int 2)
+stop: (overflow "Int")
+passing: (int 1)
+returns: (Counter(count: 9223372036854775800, step: 800), 9223372036854775800)

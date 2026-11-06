@@ -41,4 +41,12 @@ mo_lower_services(struct mo_arena *arena, const struct mo_program *program,
                   const struct mo_sources *sources, struct mo_diags *diags,
                   struct mo_lowered_promises *promises, struct mo_services *services);
 
+/* mo_lower_services, without promises, that also sets *index to the Core function index of
+ * program.functions[function], which must be non-generic: a function mo_check_query_entry
+ * accepted. index is UINT32_MAX on refusal. */
+MO_MUST_USE struct mo_core *mo_lower_query(struct mo_arena *arena, const struct mo_program *program,
+                                           const struct mo_sources *sources, struct mo_diags *diags,
+                                           uint32_t function, struct mo_services *services,
+                                           uint32_t *index);
+
 #endif

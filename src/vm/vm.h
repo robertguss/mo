@@ -3,6 +3,7 @@
 #define MO_VM_H
 
 #include "base/export.h"
+#include "base/verdict.h"
 #include "bytecode/bytecode.h"
 #include "heap/heap.h"
 #include "host/host.h"
@@ -303,6 +304,83 @@ MO_MUST_USE bool mo_service_pin_failure(const struct mo_service_loop *service, u
 /* Committed scalar metadata since the last snapshot, in sequence order. */
 MO_MUST_USE bool mo_service_log_entry(const struct mo_service_loop *service, uint32_t index,
                                       struct mo_service_message_summary *out);
+
+/* The limits a service's handler process runs under, and so the budgets a failure record
+ * carries: MO_LIMIT_SERVICE_WORK instructions per call, these heap, stack and depth limits, and
+ * MO_LIMIT_SAVED_BYTES for a new state's saved copy. */
+MO_MUST_USE struct mo_limits mo_service_limits(void);
+/* Replay runs only under this build's budgets, never under budgets read from a record. A record
+ * whose budgets differ is damaged or crafted: false names the first that differs, with the
+ * record's value and this build's. */
+struct mo_service_budget {
+    const char *name;
+    uint64_t recorded, expected;
+};
+MO_MUST_USE bool mo_service_budgets_match(const struct mo_failure_record *record,
+                                          struct mo_service_budget *differs);
+
+/* One handler call made exactly as a service makes it, shared by the service loop, recovery and
+ * offline replay. */
+struct mo_service_call {
+    /* OK when the handler returned and any new state was copied; otherwise MEMORY, WORK or
+     * DEFECT. A handler that returned a new state whose saved copy failed is MEMORY. */
+    enum mo_service_status status;
+    /* The handler returned: value is its owned complete result, of type `type`. */
+    bool returned;
+    /* An updating tool's Ok or a timer's new state was copied: `state` owns the copy. */
+    bool updated;
+    /* Why the saved copy failed, or MO_SAVED_OK. */
+    enum mo_saved_status saved;
+    uint32_t function, type;
+    struct mo_cell value, state;
+    struct mo_defect defect;
+};
+/* Runs a tool, or a timer when `timer`, of `service` in the process's image on the state, the
+ * arrival time and the tool's arguments, under MO_LIMIT_SERVICE_WORK. The state and arguments
+ * are borrowed and must outlive the call's frames. A new state is copied through the saved codec
+ * into `encoded`, as a store-backed service does, or shared when `encoded` is NULL. The frames
+ * stay live for mo_service_context and mo_process_frames until the process is cleaned up. */
+void mo_service_call_handler(struct mo_process *process, const struct mo_bytecode_service *service,
+                             bool timer, uint32_t handler, struct mo_cell state, int64_t arrival,
+                             const struct mo_cell *arguments, struct mo_buffer *encoded,
+                             struct mo_service_call *call);
+/* The signature of a failed call, as capture records it and replay compares it. Its text is the
+ * VM's static reason and limit names, which outlive the process. */
+MO_MUST_USE struct mo_signature mo_service_signature(const struct mo_service_call *call);
+/* Renders a failed call's live frames, top first, then its top frame's variables, as capture
+ * records them, into out (MO_LIMIT_FAILURE_CONTEXT_BYTES). Run it before the process is cleaned
+ * up. Values print in the process's heap, so a full heap leaves some unavailable. */
+MO_MUST_USE enum mo_failure_context mo_service_context(struct mo_process *process,
+                                                       const struct mo_defect *defect,
+                                                       struct mo_buffer *out);
+/* A walk over a process's live frames, top first: those of a call stopped by a defect or
+ * cancelled by its work limit, before cleanup. A cancelled call has no defect frames, so this is
+ * the only way to reach them. Each frame's `previous` is NULL. */
+struct mo_frame_walk {
+    const struct mo_process *process;
+    size_t offset;
+};
+MO_MUST_USE struct mo_frame_walk mo_process_frames(const struct mo_process *process);
+MO_MUST_USE bool mo_process_frame_next(struct mo_frame_walk *walk, struct mo_defect_frame *out);
+
+/* One handler run offline on a failure record's inputs, in its own fresh process under the
+ * service limits, with no timers, mailbox or store. The new state of an updating tool or a timer
+ * passes the saved-copy size check as it does live. */
+struct mo_offline_run {
+    struct mo_run_outcome outcome;
+    /* A refused run never started: the process could not be made or the inputs did not decode. */
+    const char *refusal;
+    /* A failed run's context status; the text is in the caller's buffer. */
+    enum mo_failure_context context;
+};
+/* The image is initialized; `service` is one of its descriptors and `handler` a tool, or a timer
+ * when the record's timer flag is set, of that service (the record's own handler for replay).
+ * `state` is the pre-call state's saved bytes; the record supplies the arrival time and the
+ * argument bytes. A failed run's context text is appended to `context`. */
+MO_MUST_USE struct mo_offline_run
+mo_offline_call(const struct mo_image *image, const struct mo_bytecode_service *service,
+                uint32_t handler, const uint8_t *state, size_t state_length,
+                const struct mo_failure_record *record, struct mo_buffer *context);
 
 /* A simulated service: open, send, advance, crash and restart one service as the Simulation
  * capability does, for that capability and for C callers that drive a service the same way. It

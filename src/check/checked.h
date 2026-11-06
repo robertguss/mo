@@ -58,9 +58,13 @@ MO_MUST_USE bool mo_prepare_services(struct mo_arena *arena, struct mo_program *
                                      struct mo_diags *diags);
 MO_MUST_USE bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
                                    struct mo_constant_context *constants, struct mo_diags *diags);
+/* Which rule a value holding a capability or function breaks: a service's (reference 11.5) or a
+ * query's (design introspection 7.2). Each has its own code and wording. */
+enum mo_purity_rule { MO_PURITY_SERVICE, MO_PURITY_QUERY };
+/* type must be closed: refuse type parameters first. */
 MO_MUST_USE bool mo_check_service_purity(struct mo_arena *arena, const struct mo_program *program,
                                          const struct mo_source_type *type, struct mo_span span,
-                                         struct mo_diags *diags);
+                                         enum mo_purity_rule rule, struct mo_diags *diags);
 
 MO_MUST_USE bool mo_check_recursion(struct mo_arena *arena, const struct mo_program *program,
                                     struct mo_diags *diags);

@@ -1,6 +1,7 @@
 #ifndef MO_EXPORT_H
 #define MO_EXPORT_H
 #include "base/arena.h"
+#include "base/failure.h"
 #include "base/limits.h"
 #include <stdint.h>
 
@@ -49,7 +50,22 @@ MO_MUST_USE bool mo_export_create_failure(struct mo_export_pin *pin,
                                           const uint8_t *state, size_t state_length,
                                           const uint8_t *message, size_t message_length,
                                           uint64_t now);
-/* Validates complete framing, schema identity and trailing digest. Label is not borrowed. */
+/* One artifact read from outside input. Every span borrows the input. identity.label stays
+ * NULL, since the label is not NUL-terminated; label holds it. schema is the header's state
+ * schema digest. Kind 1: state is the MOSV body, message is empty and failure is zero.
+ * Kind 2: state and message are the payloads of the body's two MOST frames, and failure is
+ * the message parsed by mo_failure_read. */
+struct mo_export_artifact {
+    struct mo_export_identity identity;
+    struct mo_failure_slice label, state, message;
+    uint8_t schema[32];
+    struct mo_failure_record failure;
+};
+/* Validates the format, kind, every frame, the schema identity and the trailing digest before
+ * publishing anything. Refusal leaves out unchanged. */
+MO_MUST_USE bool mo_export_read(const uint8_t *bytes, size_t length,
+                                struct mo_export_artifact *out);
+/* mo_export_read, keeping only the identity. Label is not borrowed. */
 MO_MUST_USE bool mo_export_verify(const uint8_t *bytes, size_t length,
                                   struct mo_export_identity *identity);
 void mo_export_release(struct mo_export_pin *pin);

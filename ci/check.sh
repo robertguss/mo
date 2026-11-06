@@ -221,6 +221,7 @@ if have python3; then
 				python3 ci/check_cli.py "$driver"
 			later "Authenticated operator views ($driver)" python3 ci/check_operator.py "$driver"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
+			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
 			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
 				python3 ci/check_simulation.py "$driver"
@@ -339,6 +340,8 @@ if have python3; then
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_fixture.py "${drivers[@]}"
 		later "Phase 4 grading: hidden tests, answers and each variant's controls" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_grade.py "${drivers[@]}"
+		later "Phase 4 fix check against the grader: a fix the grader passes is never not_fixed" \
+			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_offline.py "${drivers[@]}"
 		later "Phase 4 recording proxy: bodies, statuses, no token, and the record match" \
 			env PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase4/test_proxy.py "${drivers[@]}"
 		later "Phase 4 publication scanner: a token in any transport encoding is refused" \
@@ -414,6 +417,8 @@ if have lake; then
 	make --no-print-directory formal
 	step "Core text fixtures match the Lean reference printer"
 	sh ci/check_core_fixtures.sh
+	step "Offline-diagnosis theorems pin only the standard axioms; a planted sorry is caught"
+	sh ci/check_lean_axioms.sh
 	if have python3; then
 		# The comparisons below don't depend on each other, so they run side by side
 		# (`later`). check_primitives goes first: its work bounds have timeouts, and they
@@ -475,6 +480,13 @@ if have lake; then
 				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_host.py "${drivers[@]}"
 		else
 			missing "no host test executable is built"
+		fi
+		built mo
+		if ((${#drivers[@]})); then
+			later "Defect replays: mo replay and Lean stop the same way on hand-written handler inputs" \
+				env PYTHONDONTWRITEBYTECODE=1 python3 ci/check_offline_core.py "${drivers[@]}"
+		else
+			missing "no mo executable is built"
 		fi
 		report
 	else
