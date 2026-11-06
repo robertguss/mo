@@ -219,3 +219,29 @@ equals its value before the call.
   unreachable branch it adds at a constant function-pointer call, still at most one let-off per
   line. Not covered at this bound: the argument-count limit, since 37 bytes cannot hold enough
   arguments to reach it; `tests/test_log_record.c` tests it.
+
+## The commands: mo replay, mo replay --fix, mo query, mo history
+
+- Flag table rebuilt as one row per flag, characterized first: a dump of `mo_cli_parse` over
+  959,727 generated argument lists is byte-identical before and after.
+- Refusals: the checks run in the fixed order before anything is decoded; each names the check and
+  both values and exits 1. A record with no build identity has its own reason, and `mo history`
+  lists it as not replayable. `mo query` takes `--max-work`, `--max-heap`, `--max-stack` and
+  `--max-depth`; each stop names its limit and exits 70. JSON totals carry `status` equal to the
+  exit status. E1410 to E1413 moved from `tests/errors/unit.tsv` to `tests/errors` cases.
+- Red runs seen before fixes: a fix adding a state field failed because the revision's schema was
+  computed in FILE's heap (the revision now gets its own process); the history JSON test failed
+  because refusals also went to stderr; two guide claims failed on the worker's own guide edits.
+- Mutants: seven of `src/tools/offline.c` (budgets, argument schema, handler, verdict, build,
+  revised shape, program) each fail `ci/check_offline.py`; two parser mutants each fail
+  `tests/test_cli.c`.
+- Green on the integrated branch: `bash ci/check.sh gcc drivers static` passed, including
+  `ci/check_offline.py`, `ci/check_cli.py` with the guide claims, `ci/check_errors.py` and the
+  conformance check.
+- Not exercised at the command level: the queued-mailbox memory failure that does not reproduce.
+  A real `mo serve` cannot fill the mailbox through MCP (20 calls a second, 16 KiB bodies), so that
+  outcome is proved at the VM level only.
+- Measured: the task queue's largest state (10,461,125 saved bytes) renders to 10,922,848 bytes of
+  JSON, which sizes `MO_LIMIT_OFFLINE_VALUE_BYTES` at 16 MiB, with a 144 MB peak; `mo history` on it
+  took 220 s in the `-O0` debug build. The store is closed before rendering, so the time never holds
+  the lock.
