@@ -24,7 +24,12 @@ def main():
     shutil.copyfile(ROOT / "models/Export.tla", out / "Export.tla")
     shutil.copyfile(ROOT / "models/Capture.tla", out / "Capture.tla")
     for config, violation in [("Capture", None), ("CaptureBadPublish", "PairComplete"),
-                              ("CaptureBadCount", "CountedOnce"), ("Export", None), ("ExportProgress", None),
+                              ("CaptureBadCount", "CountedOnce"),
+                              ("CaptureBadRecovery", "RecoveryUntouched"),
+                              ("CaptureBadUnsafe", "NoUnsafeContinue"),
+                              ("CaptureBadRetention", "Retention"),
+                              ("CaptureBadRepeat", "RepeatKeepsOthers"),
+                              ("Export", None), ("ExportProgress", None),
                               ("ExportBadGeneration", "NoMixedGeneration"),
                               ("ExportBadRelease", "NoReleasedRead")]:
         command = ["java", "-XX:+UseParallelGC", "-Xmx512m", "-cp", str(jar.resolve()),
