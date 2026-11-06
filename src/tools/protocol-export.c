@@ -85,7 +85,6 @@ bool mo_protocol_export(struct mo_protocol_server *s, struct protocol_connection
             (pin->bytes != NULL && memcmp(id.id, pin->id, sizeof id.id) == 0))
             error = "identity_unavailable";
         else if (failure_id != 0) {
-            mo_export_release(pin);
             if (!mo_service_pin_failure(s->service, failure_id, pin, &id, s->now.monotonic_us))
                 error = "failure_unavailable";
         } else if (!mo_service_encoded_state(s->service, &saved, &saved_size))
@@ -166,12 +165,29 @@ struct failure_view {
     uint32_t list;
     struct mo_cell *values;
 };
+/* An unavailable row: id 0, the reason, then the arrival time or "". */
+static bool unavailable_row(struct failure_view *v, const char *reason, const char *arrival) {
+    bool ok = add_number(v->server, v->heap, v->list, v->values, 0) &&
+              add_text(v->server, v->heap, v->list, v->values, reason) &&
+              add_text(v->server, v->heap, v->list, v->values, "") &&
+              add_text(v->server, v->heap, v->list, v->values, arrival) &&
+              add_number(v->server, v->heap, v->list, v->values, 0) &&
+              add_number(v->server, v->heap, v->list, v->values, 0);
+    for (unsigned j = 6; ok && j < 15; j++)
+        ok = add_text(v->server, v->heap, v->list, v->values, "");
+    return ok;
+}
+/* false only for resource refusal; a row that does not decode is reported unavailable. */
 static bool failure_view_row(const struct mo_store_failure *f, void *context) {
     struct failure_view *v = context;
     struct mo_failure_record record;
-    if (!mo_protocol_charge(v->connection, f->message.length + strlen(f->kind)) ||
-        !mo_failure_read(f->message.bytes, f->message.length, &record) || record.id != f->id)
+    if (!mo_protocol_charge(v->connection, f->message.length + strlen(f->kind)))
         return false;
+    if (!mo_failure_read(f->message.bytes, f->message.length, &record) || record.id != f->id) {
+        char reason[48];
+        int length = snprintf(reason, sizeof reason, "record %" PRIu64 " unreadable", f->id);
+        return length > 0 && (size_t)length < sizeof reason && unavailable_row(v, reason, "");
+    }
     char name[MO_LIMIT_FAILURE_KIND_BYTES + 1];
     memcpy(name, record.name.bytes, record.name.length);
     name[record.name.length] = 0;
@@ -224,13 +240,10 @@ bool mo_protocol_failures(struct mo_protocol_server *s, struct protocol_connecti
             break;
         if (event.record_unavailable == NULL)
             continue;
-        ok = add_number(s, heap, v.list, v.values, 0) &&
-             add_text(s, heap, v.list, v.values, event.record_unavailable) &&
-             add_text(s, heap, v.list, v.values, "") &&
-             add_signed(s, heap, v.list, v.values, event.time.now) &&
-             add_number(s, heap, v.list, v.values, 0) && add_number(s, heap, v.list, v.values, 0);
-        for (unsigned j = 6; ok && j < 15; j++)
-            ok = add_text(s, heap, v.list, v.values, "");
+        char arrival[21];
+        int length = snprintf(arrival, sizeof arrival, "%" PRId64, event.time.now);
+        ok = length > 0 && (size_t)length < sizeof arrival &&
+             unavailable_row(&v, event.record_unavailable, arrival);
     }
     ok = ok && mo_protocol_invoke(s, c, PF_FAILURE_VIEW, args, out);
     mo_value_drop(heap, fn->parameters[1].type, args[1]);

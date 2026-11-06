@@ -1156,6 +1156,8 @@ static bool pin_failure(const struct mo_store_failure *record, void *context) {
     p->identity.program = metadata.program ^ ((uint64_t)p->identity.service << 32);
     p->identity.sequence = record->state.sequence;
     p->identity.encoded_sequence = record->state.sequence;
+    /* One failure pin at a time: release the old one only once its replacement is found. */
+    mo_export_release(p->pin);
     p->found =
         mo_export_create_failure(p->pin, &p->identity, record->state.bytes, record->state.length,
                                  record->message.bytes, record->message.length, p->now);
@@ -1165,10 +1167,7 @@ bool mo_service_pin_failure(const struct mo_service_loop *s, uint64_t failure,
                             struct mo_export_pin *pin, const struct mo_export_identity *identity,
                             uint64_t now) {
     struct failure_pin context = {failure, now, pin, *identity, false};
-    bool ok = s->store != NULL &&
-              mo_store_failure_get(s->store, failure, pin_failure, &context) == MO_STORE_OK &&
-              context.found;
-    if (!ok)
-        mo_export_release(pin);
-    return ok;
+    return s->store != NULL &&
+           mo_store_failure_get(s->store, failure, pin_failure, &context) == MO_STORE_OK &&
+           context.found;
 }

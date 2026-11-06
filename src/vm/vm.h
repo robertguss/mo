@@ -294,6 +294,8 @@ mo_service_failure_catalog(const struct mo_service_loop *service, uint64_t after
 MO_MUST_USE bool mo_service_failure_export(const struct mo_service_loop *service, uint64_t id,
                                            struct mo_buffer *out);
 
+/* Replaces *pin only once the record is found and decodes; a missing or unreadable
+ * record leaves it unchanged. A failed copy after that leaves it released. */
 MO_MUST_USE bool mo_service_pin_failure(const struct mo_service_loop *service, uint64_t failure,
                                         struct mo_export_pin *pin,
                                         const struct mo_export_identity *identity, uint64_t now);
