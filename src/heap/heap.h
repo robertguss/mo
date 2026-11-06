@@ -165,6 +165,10 @@ MO_MUST_USE bool mo_value_compare(struct mo_heap *process, uint32_t type, struct
  * must use a fixed fallback rather than stop when printing runs out of room. */
 MO_MUST_USE bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
                                 struct mo_buffer *out);
+/* As mo_value_print, but a root Text or Char is quoted and escaped as nested ones
+ * are, so the output holds no NUL, newline or other control byte. */
+MO_MUST_USE bool mo_value_print_literal(struct mo_heap *process, uint32_t type,
+                                        struct mo_cell value, struct mo_buffer *out);
 /* Stable saved-value format in docs/design/saved-state.md. Encode borrows a
  * valid typed value. Decode treats every byte as untrusted, including its
  * schema, and publishes one owned value only after consuming the entire input.

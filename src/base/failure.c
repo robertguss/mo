@@ -23,12 +23,12 @@ static bool slice(struct mo_binary *in, size_t maximum, bool text, struct mo_fai
 }
 
 bool mo_failure_read(const uint8_t *bytes, size_t length, struct mo_failure_record *out) {
-    if (length > MO_LIMIT_FAILURE_MESSAGE_BYTES || length == 0 || bytes[0] != 1)
+    if (length > MO_LIMIT_FAILURE_MESSAGE_BYTES || length == 0 || bytes[0] != MO_FAILURE_VERSION)
         return false;
-    struct mo_binary in = {bytes, length, 1};
+    struct mo_binary in = {bytes, length, MO_FAILURE_ID_OFFSET};
     struct mo_failure_record r = {0};
     uint64_t timer, handler, readonly, count, version, class, function, file, start, end, status;
-    if (!integer(&in, 8, INT64_MAX, &r.id) || r.id == 0 ||
+    if (!integer(&in, MO_FAILURE_ID_BYTES, INT64_MAX, &r.id) || r.id == 0 ||
         !integer(&in, 8, INT64_MAX, &r.sequence) || !mo_binary_uint(&in, 8, &r.arrival) ||
         !integer(&in, 1, 1, &timer) || !mo_binary_uint(&in, 4, &handler) ||
         !slice(&in, MO_LIMIT_FAILURE_KIND_BYTES, true, &r.name) || r.name.length == 0 ||
@@ -58,7 +58,8 @@ bool mo_failure_read(const uint8_t *bytes, size_t length, struct mo_failure_reco
         !mo_binary_uint(&in, 8, &r.depth) || !mo_binary_uint(&in, 8, &r.saved) ||
         !mo_binary_uint(&in, 8, &r.program) || !mo_binary_read(&in, 32, &build) ||
         !slice(&in, MO_LIMIT_EXPORT_LABEL_BYTES, true, &r.label) ||
-        !mo_binary_read(&in, 32, &schema) || !integer(&in, 1, 2, &status) ||
+        !mo_binary_read(&in, 32, &schema) ||
+        !integer(&in, 1, MO_FAILURE_CONTEXT_UNAVAILABLE, &status) ||
         !slice(&in, MO_LIMIT_FAILURE_CONTEXT_BYTES, true, &r.context) || in.position != length)
         return false;
     r.timer = (uint8_t)timer;

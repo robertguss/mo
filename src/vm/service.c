@@ -745,8 +745,8 @@ static bool capture_variable(const struct mo_defect_variable *v, void *context) 
     if (v->frame != c->top)
         return false;
     struct mo_buffer value;
-    mo_buffer_init(&value, 1024);
-    bool rendered = mo_value_print(c->heap, v->type, v->value, &value);
+    mo_buffer_init(&value, MO_LIMIT_FAILURE_VALUE_BYTES);
+    bool rendered = mo_value_print_literal(c->heap, v->type, v->value, &value);
     bool ok = mo_buffer_append_text(c->context, "variable ") &&
               mo_buffer_append(c->context, v->name, v->name_length) &&
               mo_buffer_append_text(c->context, rendered ? " available: " : " unavailable: ") &&
@@ -755,6 +755,15 @@ static bool capture_variable(const struct mo_defect_variable *v, void *context) 
     c->unavailable = c->unavailable || !rendered;
     mo_buffer_free(&value);
     return ok;
+}
+
+/* The store binds the id; the payload must decode once it does. */
+static bool capture_readable(struct mo_buffer *message) {
+    struct mo_failure_record record;
+    message->bytes[MO_FAILURE_ID_OFFSET] = 1;
+    bool readable = mo_failure_read(message->bytes, message->length, &record);
+    message->bytes[MO_FAILURE_ID_OFFSET] = 0;
+    return readable;
 }
 
 static void capture_failure(struct mo_service_loop *s, const struct service_message *m,
@@ -770,7 +779,8 @@ static void capture_failure(struct mo_service_loop *s, const struct service_mess
     struct mo_buffer metadata, context, kind;
     mo_buffer_init(&metadata, MO_LIMIT_FAILURE_MESSAGE_BYTES);
     mo_buffer_init(&context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
-    mo_buffer_init(&kind, MO_LIMIT_FAILURE_KIND_BYTES);
+    /* An over-long kind still fits here, so its refusal names the kind, not memory. */
+    mo_buffer_init(&kind, MO_LIMIT_FAILURE_MESSAGE_BYTES);
     uint32_t function = message_function(s, m);
     struct mo_bytecode_string name = handler_name(s, function);
     uint32_t count = m->timer ? 0 : s->descriptor->tools[m->handler].argument_count;
@@ -799,11 +809,11 @@ static void capture_failure(struct mo_service_loop *s, const struct service_mess
     struct mo_vm_span span =
         defect->reason == NULL ? (struct mo_vm_span){.file = MO_NO_INDEX} : defect->span;
     uint32_t location = defect->frames == NULL ? function : defect->frames->function;
-    uint8_t context_status = 0;
+    enum mo_failure_context context_status = MO_FAILURE_CONTEXT_COMPLETE;
     /* Walk live frames before normal cleanup, including cancelled calls. */
     size_t offset = s->process->depth == 0 ? SIZE_MAX : s->process->top;
     unsigned frames = 0;
-    while (offset != SIZE_MAX && frames < 8) {
+    while (offset != SIZE_MAX && frames < MO_LIMIT_FAILURE_FRAMES) {
         const struct mo_vm_frame *f = (const struct mo_vm_frame *)(s->process->stack + offset);
         struct mo_vm_span at = mo_vm_span(s->process->file, f->function, f->pc);
         bool ok =
@@ -814,25 +824,28 @@ static void capture_failure(struct mo_service_loop *s, const struct service_mess
             mo_buffer_append_uint(&context, at.start) && mo_buffer_append_text(&context, "..") &&
             mo_buffer_append_uint(&context, at.end) && mo_buffer_append_byte(&context, '\n');
         if (!ok) {
-            context_status = 2;
+            context_status = MO_FAILURE_CONTEXT_UNAVAILABLE;
             break;
         }
         offset = f->previous;
         frames++;
     }
-    if (offset != SIZE_MAX && context_status != 2)
-        context_status = 1;
+    bool truncated = offset != SIZE_MAX;
     if (defect->frames != NULL && defect->process != NULL) {
         struct captured_variables variables = {&context, s->process->heap, defect->frames, false};
-        enum mo_defect_variables_result visited = mo_visit_defect_variables(
-            s->process, defect, 32, MO_LIMIT_FAILURE_CONTEXT_WORK, capture_variable, &variables);
-        if (visited != MO_DEFECT_VARIABLES_COMPLETE || variables.unavailable)
-            context_status = 1;
-    } else {
-        bool noted = mo_buffer_append_text(&context, "variables unavailable\n");
-        context_status = noted ? 1 : 2;
-    }
-    bool ok = mo_binary_write(&metadata, 1, 1) && mo_binary_write(&metadata, 0, 8) &&
+        enum mo_defect_variables_result visited =
+            mo_visit_defect_variables(s->process, defect, MO_LIMIT_FAILURE_VARIABLES,
+                                      MO_LIMIT_FAILURE_CONTEXT_WORK, capture_variable, &variables);
+        truncated = truncated || visited != MO_DEFECT_VARIABLES_COMPLETE || variables.unavailable;
+    } else if (!mo_buffer_append_text(&context, "variables unavailable\n"))
+        context_status = MO_FAILURE_CONTEXT_UNAVAILABLE;
+    else
+        truncated = true;
+    /* Unavailable is never downgraded to truncated. */
+    if (truncated && context_status == MO_FAILURE_CONTEXT_COMPLETE)
+        context_status = MO_FAILURE_CONTEXT_TRUNCATED;
+    bool ok = mo_binary_write(&metadata, MO_FAILURE_VERSION, 1) &&
+              mo_binary_write(&metadata, 0, MO_FAILURE_ID_BYTES) &&
               mo_binary_write(&metadata, s->sequence, 8) &&
               mo_binary_write(&metadata, (uint64_t)m->arrival, 8) &&
               mo_binary_write(&metadata, m->timer, 1) &&
@@ -882,7 +895,8 @@ static void capture_failure(struct mo_service_loop *s, const struct service_mess
          mo_binary_write(&metadata, MO_LIMIT_SAVED_BYTES, 8) &&
          mo_binary_write(&metadata, s->image_key, 8) && mo_buffer_append(&metadata, build, 32) &&
          capture_string(&metadata, mo_runtime_build_label()) &&
-         mo_buffer_append(&metadata, schema, 32) && mo_binary_write(&metadata, context_status, 1) &&
+         mo_buffer_append(&metadata, schema, 32) &&
+         mo_binary_write(&metadata, (uint64_t)context_status, 1) &&
          mo_failure_text(&metadata, context.bytes, context.length);
     ok = ok && mo_buffer_append(&kind, name.bytes, name.length) &&
          mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, class) &&
@@ -894,9 +908,17 @@ static void capture_failure(struct mo_service_loop *s, const struct service_mess
              mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, span.start) &&
              mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, span.end);
     ok = ok && mo_buffer_append_byte(&kind, 0);
+    if (ok && kind.length - 1 > MO_LIMIT_FAILURE_KIND_BYTES) {
+        s->capture_refusal = "failure kind too long";
+        ok = false;
+    }
     if (ok && metadata.length > MO_LIMIT_FAILURE_RECORD_BYTES - MO_LIMIT_FAILURE_ENVELOPE_BYTES -
                                     s->current_encoding.length) {
         s->capture_refusal = "too large to record";
+        ok = false;
+    }
+    if (ok && !capture_readable(&metadata)) {
+        s->capture_refusal = "record failed validation";
         ok = false;
     }
     if (ok) {

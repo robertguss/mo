@@ -4,6 +4,15 @@
 
 /* The payload is versioned independently of the MOST envelope. Slices borrow
  * the complete input, and are published only after a bounded full parse. */
+#define MO_FAILURE_VERSION 1
+/* The store binds the record id into these payload bytes after choosing it. */
+#define MO_FAILURE_ID_OFFSET 1
+#define MO_FAILURE_ID_BYTES 8
+enum mo_failure_context {
+    MO_FAILURE_CONTEXT_COMPLETE,
+    MO_FAILURE_CONTEXT_TRUNCATED,
+    MO_FAILURE_CONTEXT_UNAVAILABLE
+};
 struct mo_failure_slice {
     const uint8_t *bytes;
     size_t length;
