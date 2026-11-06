@@ -285,8 +285,10 @@ fn render(index: Int, arguments: Json.Json, observation: Observation, saved: Byt
       "retained_failures": if stats.retained_failures < 0: Json.Null else: Json.int(
         stats.retained_failures
       ),
-      "evicted_kinds_since_open": Json.String(stats.evicted_kinds),
-      "failure_capture_available": Json.Boolean(stats.persistent),
+      "evicted_kinds_since_open": if stats.retained_failures < 0: Json.Null else: Json.String(
+        stats.evicted_kinds
+      ),
+      "failure_capture_available": Json.Boolean(stats.persistent and stats.retained_failures >= 0),
       "export_available": Json.Boolean(true),
       "observation": Json.String("independent calls are not an atomic snapshot")
     })

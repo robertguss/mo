@@ -234,7 +234,25 @@ fn main() : Int
   require(fields.get("complete") == Some(Json.Boolean(true)))
   views(observation)
   states(observation)
+  overviews(observation)
   37
+end
+
+fn overviews(base: McpViews.Observation)
+  open = object(McpViews.render(0, Json.Object({}), base, "".bytes, 6144))
+  require(open.get("retained_failures") == Some(Json.int(0)))
+  require(open.get("evicted_kinds_since_open") == Some(Json.String("0")))
+  require(open.get("failure_capture_available") == Some(Json.Boolean(true)))
+  var unread = base
+  unread.stats.retained_failures = -1
+  refused = object(McpViews.render(0, Json.Object({}), unread, "".bytes, 6144))
+  require(refused.get("retained_failures") == Some(Json.Null))
+  require(refused.get("evicted_kinds_since_open") == Some(Json.Null))
+  require(refused.get("failure_capture_available") == Some(Json.Boolean(false)))
+  var memory = base
+  memory.stats.persistent = false
+  transient = object(McpViews.render(0, Json.Object({}), memory, "".bytes, 6144))
+  require(transient.get("failure_capture_available") == Some(Json.Boolean(false)))
 end
 
 fn views(base: McpViews.Observation)
