@@ -92,7 +92,11 @@ class Live(unittest.TestCase):
         rpc(self.proxy.url, {'jsonrpc': '2.0', 'id': 0, 'method': 'initialize', 'params': {
             'protocolVersion': fixture.PROTOCOL, 'capabilities': {},
             'clientInfo': {'name': 'test', 'version': '1'}}}, self.token)
-        rpc(self.proxy.url, {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}, self.token)
+        listing = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}
+        upstream_status, upstream = rpc(self.service.url, listing, self.token)
+        listed_status, listed_reply = rpc(self.proxy.url, listing, self.token)
+        self.assertEqual(upstream_status, 200)
+        self.assertEqual((listed_status, listed_reply), (upstream_status, upstream))
         status, reply = rpc(self.proxy.url, call(2, 'submit', payload='brief one'), self.token)
         self.assertEqual((status, reply['result']['isError']), (200, False))
         request, response = self.logged()[-2:]
@@ -105,7 +109,13 @@ class Live(unittest.TestCase):
         self.assertEqual(response['body'], reply)
         self.assertGreaterEqual(response['elapsed'], 0)
         listed = [e['listed'] for e in self.logged() if e.get('listed')]
-        self.assertEqual(listed, [fixture.TOOLS])
+        # Record the complete upstream listing, including authenticated operator tools.
+        names = [tool['name'] for tool in upstream['result']['tools']]
+        self.assertEqual([name for name in names if not name.startswith('mo-')], fixture.TOOLS)
+        self.assertIn('mo-overview', names)
+        self.assertEqual(listed, [names])
+        listing_response = next(e for e in self.logged() if e.get('listed'))
+        self.assertEqual(listing_response['body'], upstream)
         self.assert_no_token()
 
     def test_the_probes_summary_fields_are_in_the_new_log(self):
