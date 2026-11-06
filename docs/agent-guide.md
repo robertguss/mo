@@ -333,7 +333,40 @@ default 1073741824, and `--max-heap`, `--max-stack` and `--max-depth` as `mo run
 that stops on one exits 70 with a report that names the limit. The result prints as structural
 text, or as JSON with `--json`.
 
+`--recover` on `mo replay` and `mo query` means what it means on `mo history`: run as the
+folder's owner, it rolls back a journal left by an unfinished write, which writes database pages
+but changes no record. It goes with `--data DIR`, never with `--export`.
+
 A refusal prints one `mo replay: refused: CHECK: ...` line, or `mo query: refused:`, naming what
-differs with its recorded and found values, and exits 1. `--json` writes a version record, one
-record per outcome (`original`, `revised`, `query` or `history`), and a totals record whose
-`status` is the exit status.
+differs with its recorded and found values, and exits 1. No handler or query function runs
+before every check passes. The checks run in a fixed order: the input, its build, the program and its
+handler, the types, then a fix and the budgets; only the first that fails is named. `mo query`
+does not check the program. `CHECK` names are stable; the words after them are not, so branch
+on `CHECK`.
+
+| `CHECK` | What differs | What to do |
+| --- | --- | --- |
+| `format` | The artifact or record cannot be read, is not a regular file, or its state does not belong to its message | Fetch the artifact again, or copy the stopped folder again |
+| `kind` | A state export given with `--failure`, or a failure without it | Fetch the other kind, or add or drop `--failure ID` |
+| `folder` | The data folder cannot be read, as `mo history` would say | Read its message; `--recover` for a journal |
+| `failure` | No record with that ID: the folder lists the IDs it keeps, an artifact holds another | Pick a listed ID from `mo history DIR` |
+| `build` | Another `mo` build recorded it, or the record names no build | Run the `mo` whose digest `sha256sum` matches |
+| `program` | `FILE` is not the untouched deployed source, or declares no service | Use the deployed `/opt/mo/$SHA` tree |
+| `handler` | `FILE`'s service has no handler of the recorded name, kind and arguments; for `mo query`, also no service | Use the deployed source, or keep the handler in `FILE` |
+| `run` | No memory for the checks | Free memory and run again |
+| `state_schema` | `FILE`'s state type differs from the recorded state's | Keep the deployed state type in `FILE` |
+| `argument_schema` | A handler or query argument's type differs from the recorded one | Match the handler's argument types |
+| `revised_program` | `REVISED` does not compile (its diagnostics come first) or declares no service | Fix it until `mo check REVISED` passes |
+| `revised_state_schema` | The fix changes the state type | Keep the state type |
+| `revised_handler` | The fix renames the handler or changes its kind, result shape class or arguments | Keep the handler's name and shape |
+| `budgets` | The record's budgets differ from this build's, so it is damaged or crafted | Copy or fetch the record again |
+
+Parse `--json`, not text: a text refusal goes to stderr, and `--json` writes every record to
+stdout. `--json` writes a version record, one record per outcome (`original`, `revised`, `query`
+or `history`), and a totals record whose `status` is the exit status. The fields to branch on are
+`outcome` on `original` (`reproduced`, `different`, `not_reproduced`, `refused`) and on `query`
+(`returned`, `refused`, `stopped`, with `limit` naming the limit); `verdict` on `revised`;
+`refusal.check`, `refusal.recorded` and `refusal.found` on a refused check; `run.status` and
+`note` on `original`, where `note` is non-null only when a memory failure did not recur; and, on
+`history`, `folder` (`ok`, or why not, as `owned` or `recovery_required`), each failure's `id`
+and `replayable_here`.

@@ -42,6 +42,9 @@ fn add(state: Box, _now: Time) : (Box, Bool)
   (Box(label: state.label, count: state.count + 1), true)
 end
 '''
+# A saved Text value "5", and its schema: a value no Box or Int decodes from.
+TEXT_SCHEMA = struct.pack("<BIII", 10, 0, 1, 0)
+TEXT_SAVED = b"MOSV\1" + struct.pack("<I", 13) + TEXT_SCHEMA + struct.pack("<I", 1) + b"5"
 GONE = "messages before the snapshot are gone, so a message absent from the log tail may still have run"
 
 
@@ -139,8 +142,25 @@ def edit_record(source, folder, name, failure, change):
     return copy
 
 
-def mo(binary, args, status):
-    result = subprocess.run([str(binary), *args], cwd=root, capture_output=True, timeout=120)
+def edit_state(source, folder, name, failure, payload):
+    """A copy of the data folder whose failure's pre-call state holds another payload, framed
+    again with the message's sequence and image and a right checksum, so only the binding of the
+    state to its record can refuse it."""
+    copy = folder / name
+    shutil.copytree(source, copy)
+    db = sqlite3.connect(copy / "service.sqlite")
+    (frame,) = db.execute("SELECT record FROM failure_state WHERE id=?", (failure,)).fetchone()
+    assert frame[:5] == b"MOST\1" and frame[5] == 3
+    rebuilt = frame[:22] + len(payload).to_bytes(4, "little") + payload
+    rebuilt += fnv(rebuilt).to_bytes(8, "little")
+    db.execute("UPDATE failure_state SET record=? WHERE id=?", (rebuilt, failure))
+    db.commit()
+    db.close()
+    return copy
+
+
+def mo(binary, args, status, timeout=120):
+    result = subprocess.run([str(binary), *args], cwd=root, capture_output=True, timeout=timeout)
     assert result.returncode == status, (args, result.returncode, result.stdout[-2000:],
                                          result.stderr[-2000:])
     return result
@@ -219,6 +239,32 @@ def history(binary, folder):
     return data
 
 
+CONTROLS = r'''module Main
+service
+  state Text = "a\u{9B}b\u{202E}c\u{7F}"
+  tools get
+  token from env "OPERATOR_TOKEN"
+end
+fn get(state: Text, _now: Time) : Int
+  state.char_count
+end
+'''
+
+
+def history_controls(binary, folder):
+    """The text form escapes the snapshot's C1, bidi and DEL controls as every other value it
+    prints is escaped; --json keeps them as JSON strings."""
+    folder.mkdir()
+    data = serve(binary, folder, CONTROLS, [])
+    text = mo(binary, ["history", str(data)], 0).stdout
+    for raw in ("\u009b", "\u202e", "\u007f"):
+        assert raw.encode() not in text, text
+    state = next(line for line in text.decode().splitlines() if line.startswith("state ("))
+    assert '"a\\u{09b}b\\u{202e}c\\x7f"' in state, state
+    h = records(mo(binary, ["history", "--json", str(data)], 0), "history")[1]
+    assert h["snapshot"]["state"] == {"value": "a\u009bb\u202ec\u007f", "complete": True}, h
+
+
 def owned(binary, folder, data):
     """A running service holds its store, so history refuses at once without waiting."""
     served = Served(binary, folder / "main.mo", data, {**os.environ, "OPERATOR_TOKEN": TOKEN},
@@ -248,15 +294,28 @@ os._exit(0)
 '''
 
 
-def hot_journal(binary, folder, data):
-    """A write killed after it reached the database leaves a journal that needs a rollback."""
-    copy = folder / "hot"
+def hot_copy(folder, data, name):
+    copy = folder / name
     shutil.copytree(data, copy)
     path = copy / "service.sqlite"
     before = path.read_bytes()
     subprocess.run([sys.executable, "-I", "-c", HOT, str(path)], check=True, timeout=60)
     assert (copy / "service.sqlite-journal").stat().st_size > 0
     assert path.read_bytes() != before
+    return copy
+
+
+def hot_journal(binary, folder, data):
+    """A write killed after it reached the database leaves a journal that needs a rollback;
+    replay and query take --recover as history does."""
+    for command in ("replay", "query"):
+        held = hot_copy(folder, data, f"hot-{command}")
+        args = (replay_args(folder / "main.mo", held) if command == "replay" else
+                ["query", str(folder / "query" / "main.mo"), "inputs", "--data", str(held),
+                 "--failure", "1"])
+        refused(binary, args, "folder", f"recovery required in {held}", "--recover")
+        assert mo(binary, [*args, "--recover"], 0).stdout, command
+    copy = hot_copy(folder, data, "hot")
     result = mo(binary, ["history", str(copy)], 1)
     assert result.stderr.startswith(f"mo history: recovery required in {copy}: ".encode()), result
     assert b"--recover" in result.stderr and not result.stdout, result
@@ -305,17 +364,17 @@ def replay_args(file, data, failure="1", *extra):
     return ["replay", str(file), "--failure", failure, "--data", str(data), *extra]
 
 
-def refused(binary, args, check, *pieces):
+def refused(binary, args, check, *pieces, timeout=120):
     """A refusal: exit 1, nothing on stdout, one stderr line naming the check, and, as JSON, the
     outcome record alone."""
     command = args[0]
-    result = mo(binary, args, 1)
+    result = mo(binary, args, 1, timeout)
     assert not result.stdout, result.stdout
     line = result.stderr.decode()
     assert line.startswith(f"mo {command}: refused: {check}: ") and line.count("\n") == 1, line
     for piece in pieces:
         assert piece in line, (piece, line)
-    items = records(mo(binary, [command, "--json", *args[1:]], 1), command)
+    items = records(mo(binary, [command, "--json", *args[1:]], 1, timeout), command)
     record = items[1]
     assert record["outcome" if "outcome" in record else "verdict"] == "refused", items
     assert record["refusal"]["check"] == check and "run" not in record, record
@@ -364,8 +423,17 @@ def replays(binary, folder, data, artifacts):
                             str(artifacts["state"])], "kind", "holds an exported state")
     assert kind["recorded"] == "state" and kind["found"] == "failure", kind
     other = refused(binary, ["replay", str(file), "--failure", "2", "--export",
-                             str(artifacts["failure 1"])], "failure")
+                             str(artifacts["failure 1"])], "failure", "; recorded 1; asked for 2\n")
     assert other["recorded"] == "1" and other["found"] == "2", other
+    # An artifact path that is not a regular file is refused at once with that reason: a FIFO
+    # is never opened for a blocking read.
+    fifo = folder / "artifact.fifo"
+    os.mkfifo(fifo)
+    for path in (folder, fifo):
+        unread = refused(binary, ["replay", str(file), "--failure", "1", "--export", str(path)],
+                         "format", "the artifact cannot be read; found not a regular file",
+                         timeout=10)
+        assert unread["found"] == "not a regular file", unread
     broken = folder / "broken.moex"
     broken.write_bytes(artifacts["failure 1"].read_bytes()[:-1])
     refused(binary, ["replay", str(file), "--failure", "1", "--export", str(broken)], "format")
@@ -390,20 +458,46 @@ def replays(binary, folder, data, artifacts):
     handler = refused(binary, replay_args(file, renamed), "handler")
     assert handler["recorded"] == "broke (read-only tool 0, 1 argument)", handler
     assert handler["found"] == "broken (read-only tool 0, 1 argument)", handler
+    # A record whose schema is not its state's is damaged, as an artifact's would be; a state
+    # and record that agree on another type reach the state type check.
     schema = edit_record(data, folder, "schema", 1, lambda f: f.update(schema=bytes(32)))
-    state = refused(binary, replay_args(file, schema), "state_schema")
-    assert state["recorded"] == "00" * 32 and len(state["found"]) == 64, state
-    text_argument = b"MOSV\1" + struct.pack("<I", 13) + struct.pack("<BIII", 10, 0, 1, 0) + \
-        struct.pack("<I", 1) + b"5"
-    retyped = edit_record(data, folder, "retyped", 1,
-                          lambda f: f.update(arguments=[text_argument]))
+    refused(binary, replay_args(file, schema), "format", "does not belong to its message")
+    restated = edit_record(edit_state(data, folder, "restated-state", 1, TEXT_SAVED), folder,
+                           "restated", 1,
+                           lambda f: f.update(schema=hashlib.sha256(TEXT_SCHEMA).digest()))
+    state = refused(binary, replay_args(file, restated), "state_schema")
+    assert state["recorded"] == hashlib.sha256(TEXT_SCHEMA).hexdigest(), state
+    assert len(state["found"]) == 64 and state["found"] != state["recorded"], state
+    retyped = edit_record(data, folder, "retyped", 1, lambda f: f.update(arguments=[TEXT_SAVED]))
     argument = refused(binary, replay_args(file, retyped), "argument_schema", "argument 1")
-    assert argument["recorded"] == hashlib.sha256(struct.pack("<BIII", 10, 0, 1, 0)).hexdigest()
+    assert argument["recorded"] == hashlib.sha256(TEXT_SCHEMA).hexdigest()
     budgets = edit_record(data, folder, "budgets", 1, lambda f: f.update(work=f["work"] + 1))
     budget = refused(binary, replay_args(file, budgets), "budgets", "damaged or crafted")
     assert budget["recorded"] == "work = 1048577" and budget["found"] == "work = 1048576", budget
-    evicted = refused(binary, replay_args(file, data, "3"), "failure", "replaced or evicted")
+    evicted = refused(binary, replay_args(file, data, "3"), "failure", "replaced or evicted",
+                      "; retained ids 1, 2\n")
     assert evicted["found"] == "1, 2", evicted
+    # A pre-call state framed for this message but of another schema is refused as damaged
+    # before anything decodes it.
+    foreign = edit_state(data, folder, "foreign-state", 1, TEXT_SAVED)
+    refused(binary, replay_args(file, foreign), "format", "does not belong to its message")
+
+    # A succeeding handler does not reproduce; only a recorded memory failure gets the note
+    # that live heap occupants are not reconstructed.
+    for name, signature, note in (("memory", 2, True), ("defect", 0, False)):
+        succeeds = edit_record(data, folder, f"succeeds-{name}", 1, lambda f, c=signature: f.update(
+            {"handler": 1, "name": b"add", "read_only": 0, "arguments": [], "class": c}))
+        text = mo(binary, replay_args(file, succeeds), 1).stdout.decode()
+        assert ("offline: succeeded, reply ok, state changed\n"
+                "outcome: not_reproduced\n") in text, text
+        assert text.endswith("note: live heap occupants, such as arguments queued in the mailbox, "
+                             "are not reconstructed offline, so a memory failure that depended on "
+                             "them does not recur\n") == note, text
+        original = records(mo(binary, ["replay", "--json", *replay_args(file, succeeds)[1:]], 1),
+                           "replay")[1]
+        assert original["outcome"] == "not_reproduced", original
+        assert (original["note"] is not None) == note, original
+        assert original["note"] is None or original["note"].startswith("live heap occupants")
 
     # The fix check: a fixed handler is verified, the unchanged one is not_fixed, and a fix of
     # an original that did not reproduce is unverified.
@@ -437,6 +531,42 @@ def replays(binary, folder, data, artifacts):
                     "shape differs")
     assert shape["recorded"] == "broken (read-only tool 0, 1 argument)", shape
     assert shape["found"] == "broken (updating tool 0, 1 argument)", shape
+    # A revision that does not compile is refused after its own diagnostics, before the original
+    # runs.
+    uncompiled = program(folder, "uncompiled",
+                         FAILING.replace("state.count + 1", "state.count + true"))
+    for json_form in (False, True):
+        args = replay_args(file, data, "1", "--fix", uncompiled)
+        result = mo(binary, [args[0], *(["--json"] if json_form else []), *args[1:]], 1)
+        errors = result.stderr.decode()
+        assert "error E0053: " in errors and errors.endswith(
+            "" if json_form else "mo replay: refused: revised_program: REVISED does not compile; "
+            "mo check REVISED shows why\n"), errors
+        if json_form:
+            items = [json.loads(line) for line in result.stdout.decode().splitlines()]
+            assert [i["record"] for i in items] == ["version", "original", "revised",
+                                                    "totals"], items
+            assert items[1]["outcome"] == "refused" and "run" not in items[1], items
+            assert items[1]["refusal"]["check"] == "revised_program", items
+        else:
+            assert not result.stdout, result.stdout
+    serviceless = program(folder, "serviceless", FAILING.replace(
+        'service\n  state Box = Box(label: "seed", count: 0)\n  tools broken, add\n'
+        '  token from env "OPERATOR_TOKEN"\nend\n', ""))
+    refused(binary, replay_args(file, data, "1", "--fix", serviceless), "revised_program",
+            "REVISED's main module declares no service")
+    unnamed_fix = program(folder, "unnamed-fix", FAILING.replace("tools broken, add",
+                                                                 "tools broke, add")
+                          .replace("fn broken(", "fn broke("))
+    missing_handler = refused(binary, replay_args(file, data, "1", "--fix", unnamed_fix),
+                              "revised_handler", "has no tool of the recorded handler's name")
+    assert missing_handler["recorded"] == "broken (read-only tool 0, 1 argument)", missing_handler
+    assert missing_handler["found"] == "none", missing_handler
+    retyped_fix = program(folder, "retyped-fix", FAILING.replace(
+        "n: Int) : Bool", "n: Text) : Bool").replace("if n > state.count",
+                                                     "if n.char_count > state.count"))
+    refused(binary, replay_args(file, data, "1", "--fix", retyped_fix), "revised_handler",
+            "argument 1's type differs from the recorded one")
 
 
 SPIN = '''module Main
@@ -540,6 +670,22 @@ def queries(binary, folder, data, artifacts):
     assert b"E1413" in result.stderr and not result.stdout, result
     refused(binary, ["query", file, "label", "--export", str(artifacts["failure 1"])], "kind",
             "holds a failure")
+    fifo = folder / "query.fifo"
+    os.mkfifo(fifo)
+    refused(binary, ["query", file, "label", "--export", str(fifo)], "format",
+            "not a regular file", timeout=10)
+    # The build is checked right after the input is read, before FILE's handler is looked up.
+    foreign = edit_record(data, folder, "foreign-build", 1,
+                          lambda f: f.update(build=bytes(31) + b"\1"))
+    lacking = program(folder, "lacking",
+                      (FAILING + QUERIES).replace("tools broken, add", "tools add"))
+    refused(binary, ["query", lacking, "inputs", "--data", str(foreign), "--failure", "1"], "build",
+            "recorded by another build")
+    # A failure whose state is not the record's is refused before any decode, never reported
+    # as a --max-heap stop.
+    foreign_state = edit_state(data, folder, "foreign-query-state", 1, TEXT_SAVED)
+    refused(binary, ["query", file, "inputs", "--data", str(foreign_state), "--failure", "1"],
+            "format", "does not belong to its message")
     result = mo(binary, ["query", file, "nothing", *state], 2)
     assert result.stderr == b"mo query: no function of that name in that module\n", result
     assert not result.stdout and not mo(binary, ["query", "--json", file, "nothing", *state],
@@ -844,6 +990,11 @@ GUIDE = [
     "what differs with its recorded and found values, and exits 1.",  # refused
     "`--json` writes a version record, one record per outcome (`original`, `revised`, `query` or "
     "`history`), and a totals record whose `status` is the exit status.",
+    "only the first that fails is named.",  # queries: build before handler
+    "`CHECK` names are stable; the words after them are not, so branch on `CHECK`.",  # refused
+    "a text refusal goes to stderr, and `--json` writes every record to stdout.",  # refused
+    "`--recover` on `mo replay` and `mo query` means what it means on `mo history`",  # hot_journal
+    "`note` is non-null only when a memory failure did not recur",  # replays: succeeds-memory
     # The steps acceptance follows, in the guide's order.
     "first copy the whole stopped data folder, including any `service.sqlite-journal` beside the "
     "database.",
@@ -865,6 +1016,7 @@ def check(binary):
         folder = pathlib.Path(directory)
         data = history(binary, folder)
         owned(binary, folder, data)
+        history_controls(binary, folder / "controls")
         artifact_folder = folder / "fetched"
         artifact_folder.mkdir()
         artifacts = {"failure 1": artifact_folder / "failure-1.moex",

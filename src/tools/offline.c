@@ -36,9 +36,10 @@ struct input {
     bool image_key;
 };
 
-/* One refusal: the check that failed, what differs, and the recorded and found values. */
+/* One refusal: the check that failed, what differs, and the recorded and found values. The
+ * text form names the found value with found_label, or "found". */
 struct refusal {
-    const char *check;
+    const char *check, *found_label;
     struct mo_buffer message, recorded, found;
 };
 
@@ -56,6 +57,7 @@ struct offline {
 
 static void refusal_init(struct refusal *r) {
     r->check = NULL;
+    r->found_label = NULL;
     mo_buffer_init(&r->message, MO_CLI_DIAGNOSTIC_SIZE);
     mo_buffer_init(&r->recorded, MO_CLI_DIAGNOSTIC_SIZE);
     mo_buffer_init(&r->found, MO_CLI_DIAGNOSTIC_SIZE);
@@ -105,9 +107,9 @@ static bool write_refusal_text(struct offline *o) {
         ok = mo_buffer_append_text(b, "; recorded ") &&
              mo_buffer_append(b, r->recorded.bytes, r->recorded.length);
     if (ok && r->found.length != 0)
-        ok = mo_buffer_append_text(b, strcmp(r->check, "failure") == 0 ? "; retained ids "
-                                                                       : "; found ") &&
-             mo_buffer_append(b, r->found.bytes, r->found.length);
+        ok = mo_buffer_append_text(b, "; ") &&
+             mo_buffer_append_text(b, r->found_label == NULL ? "found" : r->found_label) &&
+             mo_buffer_append_byte(b, ' ') && mo_buffer_append(b, r->found.bytes, r->found.length);
     return ok && mo_buffer_append_byte(b, '\n') && mo_offline_flush(o->errors, b);
 }
 
@@ -128,14 +130,21 @@ static bool refusal_json(struct mo_buffer *b, const struct refusal *r) {
 /* The whole artifact, read into a confidential arena and bounded by MO_LIMIT_EXPORT_BYTES. */
 static bool read_artifact(struct offline *o, struct input *in) {
     const char *path = o->cli->artifact;
-    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY);
+    /* O_NONBLOCK keeps a FIFO from blocking the open, so the regular-file check refuses it; a
+     * regular file's reads ignore the flag. */
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+    int reason = fd < 0 ? errno : 0;
     struct stat st;
-    if (fd < 0 || fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-        int reason = fd < 0 || errno != 0 ? errno : EINVAL;
+    bool regular = false;
+    if (fd >= 0 && fstat(fd, &st) != 0)
+        reason = errno;
+    else if (fd >= 0)
+        regular = S_ISREG(st.st_mode);
+    if (!regular) {
         if (fd >= 0)
             (void)close(fd);
         return refuse(o, "format", "the artifact cannot be read", NULL,
-                      strerror(reason != 0 ? reason : EINVAL));
+                      reason == 0 ? "not a regular file" : strerror(reason));
     }
     if (st.st_size < 0 || (uint64_t)st.st_size > MO_LIMIT_EXPORT_BYTES) {
         (void)close(fd);
@@ -175,7 +184,9 @@ static bool read_artifact(struct offline *o, struct input *in) {
         int a = snprintf(recorded, sizeof recorded, "%llu", (unsigned long long)id->failure_id);
         int b = snprintf(wanted, sizeof wanted, "%llu", (unsigned long long)o->cli->failure);
         MO_ASSERT(a > 0 && b > 0);
-        return refuse(o, "failure", "the artifact holds another failure", recorded, wanted);
+        (void)refuse(o, "failure", "the artifact holds another failure", recorded, wanted);
+        o->refusal.found_label = "asked for";
+        return false;
     }
     in->state = in->artifact.state.bytes;
     in->state_length = in->artifact.state.length;
@@ -218,6 +229,7 @@ static bool read_folder(struct offline *o, struct input *in) {
                      "the folder holds no failure record with that id; ids are never reused, so "
                      "a missing one was replaced or evicted",
                      NULL, NULL);
+        o->refusal.found_label = "retained ids";
         bool ok = true;
         for (uint32_t i = 0; ok && i < in->pair.retained_count; i++)
             ok = (i == 0 || mo_buffer_append_text(&o->refusal.found, ", ")) &&
@@ -230,6 +242,15 @@ static bool read_folder(struct offline *o, struct input *in) {
     if (!mo_failure_read(in->pair.message.bytes, in->pair.message.length, &in->record) ||
         in->record.id != o->cli->failure)
         return refuse(o, "format", "the failure record's message does not decode", NULL, NULL);
+    /* The state is bound to its record as an artifact's is (failure_body in base/export.c). */
+    uint8_t schema[32];
+    if (in->pair.message.sequence != in->record.sequence ||
+        in->pair.message.image != in->record.program ||
+        !mo_export_schema(in->pair.state.bytes, in->pair.state.length, schema) ||
+        memcmp(schema, in->record.schema, 32) != 0)
+        return refuse(o, "format",
+                      "the failure record's pre-call state does not belong to its message", NULL,
+                      NULL);
     in->has_record = true;
     in->state = in->pair.state.bytes;
     in->state_length = in->pair.state.length;
@@ -924,8 +945,9 @@ static int query(struct offline *o, const struct compiled *program, uint32_t fun
         return stop_report(o, NULL, &defect);
     }
     struct mo_heap *heap = mo_process_heap(process);
-    /* Format and kind were checked when the input was read; then the build, the state
-     * schema and, over a failure, each argument's schema. */
+    /* Format and kind were checked when the input was read, and a failure's build before its
+     * handler was looked up; then a state's build, the state schema and, over a failure, each
+     * argument's schema. */
     bool ok =
         check_build(o, in) && check_schema(o, heap, service->state_type, in->schema, "state_schema",
                                            "FILE's state type differs from the exported state's");
@@ -1055,7 +1077,7 @@ int mo_offline_program(const struct mo_cli *cli, struct mo_offline_pipeline *p) 
         enum mo_query_input input = cli->failure == 0 ? MO_QUERY_STATE : MO_QUERY_FAILURE;
         if (input == MO_QUERY_FAILURE) {
             bool read =
-                read_input(&o, &in) &&
+                read_input(&o, &in) && check_build(&o, &in) &&
                 (service != MO_NO_INDEX ||
                  refuse(&o, "handler", "FILE's main module declares no service", NULL, NULL));
             if (read) {

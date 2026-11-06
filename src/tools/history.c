@@ -213,9 +213,16 @@ static void history_text(struct history_output *o, const char *folder) {
         put(o, " saved bytes): ");
         if (h->snapshot.bytes == NULL)
             put(o, "not copied: over the history bound");
-        else
-            o->ok = o->ok &&
-                    mo_offline_render(o->renderer, h->snapshot.bytes, h->snapshot.length, o->out);
+        else {
+            /* The renderer escapes only what JSON must; the terminal escapes the rest. */
+            struct mo_buffer rendered;
+            mo_buffer_init(&rendered, 2 * (size_t)MO_LIMIT_OFFLINE_VALUE_BYTES);
+            o->ok =
+                o->ok &&
+                mo_offline_render(o->renderer, h->snapshot.bytes, h->snapshot.length, &rendered) &&
+                mo_render_terminal_text(o->out, rendered.bytes, rendered.length);
+            mo_buffer_free(&rendered);
+        }
         put(o, "\n");
     }
     put(o, "log tail: ");
@@ -277,7 +284,9 @@ int mo_history(const struct mo_cli *cli, FILE *output, FILE *errors) {
     struct mo_store_history history;
     enum mo_store_folder status = mo_store_history_read(path, cli->recover, &history);
     struct mo_buffer out;
-    mo_buffer_init(&out, MO_LIMIT_HISTORY_BYTES + 2 * (size_t)MO_LIMIT_OFFLINE_VALUE_BYTES);
+    /* The rendered snapshot takes at most twice MO_LIMIT_OFFLINE_VALUE_BYTES, and the text
+     * form's terminal escapes write at most four bytes for each of those bytes. */
+    mo_buffer_init(&out, MO_LIMIT_HISTORY_BYTES + 8 * (size_t)MO_LIMIT_OFFLINE_VALUE_BYTES);
     bool ok = true;
     if (status != MO_STORE_FOLDER_OK) {
         struct mo_buffer message;
