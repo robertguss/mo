@@ -1,6 +1,5 @@
 #include "base/runtime-identity.h"
 #include "base/sha256.h"
-#include "runtime_entry.h"
 #include "test.h"
 #include <string.h>
 
@@ -24,10 +23,6 @@ int main(int argc, char **argv) {
     if (argc == 2) {
         uint8_t digest[32];
         if (strcmp(argv[1], "identity") == 0) {
-            CHECK(!mo_runtime_identity(digest));
-            char command[] = "mo", version[] = "--version";
-            char *arguments[] = {command, version, NULL};
-            CHECK(mo_test_runtime_main(2, arguments) == 0);
             CHECK(mo_runtime_identity(digest));
             mo_runtime_identity_init();
             CHECK(strstr(mo_runtime_build_label(), "mo ") != NULL);

@@ -186,7 +186,7 @@ Four identities, each checked separately.
 | --- | --- | --- |
 | Artifact format | A magic and version on every export (`MOEX` 1); failure records use the store's own `MOST` 1 frames with two new kinds, and their message payload carries its own format version | new |
 | Program | FNV-1a-64 of the checksum-covered bytecode without the `files` section | exists: `mo_image.program_checksum`, folded into the store's image key |
-| Runtime build | SHA-256 of the running `mo` executable's bytes, read once from `/proc/self/exe` at startup (or the platform's equivalent), plus a build label: `mo --version`, the compiler and its version, and the build configuration (`debug`, `release`, `sanitize`) | new; `mo --version` prints only `mo 0.0.0` today |
+| Runtime build | SHA-256 of the running `mo` executable's bytes, read once from `/proc/self/exe` when identity is first requested (or the platform's equivalent), plus a build label: `mo --version`, the compiler and its version, and the build configuration (`debug`, `release`, `sanitize`) | new; `mo --version` prints only `mo 0.0.0` today |
 | State schema | SHA-256 of the state type's saved schema bytes | new; the schema bytes themselves are already in every encoded value |
 
 The build label is for people; only the digest decides. Hashing the executable is the honest
@@ -747,18 +747,16 @@ They are available for persistent updating calls and zero-argument calls. Otherw
 availability flag is false: the arguments were not encoded at admission. Observing them
 never encodes or retains additional values. Timers have zero argument bytes.
 
-The executable initializes runtime identity once at startup. Linux reads `/proc/self/exe`;
-macOS resolves the executable path. A failed read leaves identity unavailable without
-changing ordinary command behavior. Consumers must check availability. The build label
-includes Mo's version, compiler version and build configuration. `ci/check_sha256.py`
-compares the native digest against Python's SHA-256 for the executing test binary and
-110 deterministic boundary/random inputs; `test_sha256` also pins standard digest vectors.
+Runtime identity is hashed once, when a live view or state export first reads it. Linux
+reads `/proc/self/exe`; macOS resolves the executable path. A failed read leaves identity
+unavailable without changing ordinary command behavior. Consumers must check availability.
+The build label includes Mo's version, compiler version and build configuration.
+`ci/check_sha256.py` compares the native digest against Python's SHA-256 for the executing
+test binary and 110 deterministic boundary/random inputs; `test_sha256` also pins standard
+digest vectors.
 No authenticated operator entry point, artifact format or fetch command is introduced by
 these native interfaces.
 
-The debug build optimizes the SHA-256 arithmetic kernel while retaining debug settings
-for the rest of the toolchain. This keeps eager executable hashing within the existing
-sample `mo check` latency budget; the measured executable bytes still determine identity.
 The service-store fault harness separately refuses the recovery cache copy, checking a
 memory refusal, release of the decoded state and successful reopening afterward.
 

@@ -46,6 +46,7 @@ void mo_runtime_identity_init(void) {
 }
 bool mo_runtime_identity(uint8_t digest[32]) {
     MO_ASSERT(digest != NULL);
+    mo_runtime_identity_init();
     if (!available)
         return false;
     memcpy(digest, executable_digest, sizeof executable_digest);

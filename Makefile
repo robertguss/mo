@@ -45,7 +45,7 @@ FUZZ := -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=fuzzer,address,unde
 LDLIBS += -lm
 
 # Each directory in src/ is a module (architecture section 2), and every C file in it is built.
-# The library excludes the command entry point; the startup test links a renamed copy.
+# The library excludes the command entry point.
 MAIN_SOURCE := src/tools/main.c
 LIB_SOURCES := $(filter-out $(MAIN_SOURCE),$(sort $(wildcard src/*/*.c)))
 LIB_SOURCES += vendor/sqlite/sqlite3.c
@@ -285,10 +285,6 @@ clean:
 # Object files also depend on this Makefile, so a change to the flags rebuilds them, and on the
 # list of C files in src/, so adding or removing one rebuilds everything, and no program keeps a
 # file that is gone. They come after the source file because $< is the first prerequisite.
-# Hashing the executable runs even for short commands. Keep this fixed arithmetic
-# kernel optimized in debug builds so startup meets the command latency budget.
-$(BUILD)/debug/src/base/sha256.o: DEBUG += -O2
-
 $(BUILD)/debug/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -c $< -o $@
@@ -331,18 +327,6 @@ $(BUILD)/debug/tests/%.test: $(BUILD)/debug/tests/%.o $(call objects,$(BUILD)/de
 
 $(BUILD)/sanitize/tests/%.test: $(BUILD)/sanitize/tests/%.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
-
-# Exercise the real executable startup without a second process.
-$(BUILD)/debug/runtime-main.o: src/tools/main.c tests/runtime_entry.h Makefile
-	@mkdir -p $(@D)
-	$(CC) $(COMMON) $(DEBUG) -Dmain=mo_test_runtime_main -include tests/runtime_entry.h -c $< -o $@
-
-$(BUILD)/sanitize/runtime-main.o: src/tools/main.c tests/runtime_entry.h Makefile
-	@mkdir -p $(@D)
-	$(CC) $(COMMON) $(SANITIZE) -Dmain=mo_test_runtime_main -include tests/runtime_entry.h -c $< -o $@
-
-$(BUILD)/debug/tests/test_sha256.test: $(BUILD)/debug/runtime-main.o
-$(BUILD)/sanitize/tests/test_sha256.test: $(BUILD)/sanitize/runtime-main.o
 
 # Only the compiler-fault test substitutes these two module boundaries.
 COMPILER_FAULT_SOURCES := src/core/check.c src/codegen/compile.c
