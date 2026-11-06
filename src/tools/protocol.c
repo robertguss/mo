@@ -94,7 +94,7 @@ struct abi_field {
 struct abi_case {
     const char *name;
     uint32_t count;
-    struct abi_field fields[20];
+    struct abi_field fields[24];
 };
 
 static const struct abi_case span[] = {{"Span", 2, {{"start", ABI_INT}, {"size", ABI_INT}}}};
@@ -271,7 +271,7 @@ static const struct abi_case action[] = {
       {"offset", ABI_INT}}}};
 
 static const struct abi_case view_stats[] = {{"Stats",
-                                              19,
+                                              21,
                                               {{"sequence", ABI_INT},
                                                {"snapshot", ABI_INT},
                                                {"encoded_sequence", ABI_INT},
@@ -290,7 +290,9 @@ static const struct abi_case view_stats[] = {{"Stats",
                                                {"restart_window", ABI_INT},
                                                {"timer_count", ABI_INT},
                                                {"stack_limit", ABI_INT},
-                                               {"pinned_export_bytes", ABI_INT}}}};
+                                               {"pinned_export_bytes", ABI_INT},
+                                               {"retained_failures", ABI_INT},
+                                               {"evicted_kinds", ABI_TEXT}}}};
 static const struct abi_case view_message[] = {{"Message",
                                                 6,
                                                 {{"handler", ABI_TEXT},
@@ -304,13 +306,15 @@ static const struct abi_case view_timer[] = {
      4,
      {{"name", ABI_TEXT}, {"interval", ABI_TEXT}, {"next", ABI_TEXT}, {"waiting", ABI_BOOL}}}};
 static const struct abi_case view_event[] = {{"Event",
-                                              6,
+                                              8,
                                               {{"number", ABI_TEXT},
                                                {"kind", ABI_TEXT},
                                                {"reason", ABI_TEXT},
                                                {"handler", ABI_TEXT},
                                                {"arrival", ABI_INT},
-                                               {"elapsed", ABI_TEXT}}}};
+                                               {"elapsed", ABI_TEXT},
+                                               {"record", ABI_TEXT},
+                                               {"unavailable", ABI_TEXT}}}};
 static const struct abi_case view_observation[] = {{"Observation",
                                                     10,
                                                     {{"service_name", ABI_TEXT},
@@ -461,6 +465,9 @@ static bool valid_abi(const struct mo_image *image) {
         {"HttpBody.feed", 3, {ABI_BODY_STATE, ABI_BYTES, ABI_BODY_BOUNDS}, ABI_BODY_RESULT},
         {"McpFetch.read", 1, {ABI_TEXT}, ABI_TEXTS},
         {"McpViews.export_id", 1, {ABI_JSON}, ABI_TEXT},
+        {"McpViews.failure_id", 1, {ABI_JSON}, ABI_INT},
+        {"McpViews.failure_after", 1, {ABI_JSON}, ABI_INT},
+        {"McpViews.failure_reply", 2, {ABI_JSON, ABI_TEXTS}, ABI_JSON},
         {"McpViews.export_reply", 3, {ABI_TEXT, ABI_TEXTS, ABI_NATIVE_BYTES}, ABI_JSON},
         {"McpViews.render",
          5,

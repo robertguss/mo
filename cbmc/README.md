@@ -367,3 +367,12 @@ ownership, SHA-256, socket delivery or filesystem publication; those have separa
 arena proofs and empirical unit/socket/fuzz checks. The consumer uses the same page
 bounds already proved above. Both commands passed in the private-fetch development
 run, with proof and reach logs retained under `build/u9-cbmc-consume*.txt`.
+
+## Diagnostic payload slices
+
+`bash cbmc/prove.sh slice` and `--reach slice` check the actual failure payload's
+length-prefixed slice reader over up to 32 bytes, arbitrary valid starting cursor
+and size limit. They prove bounded accepted spans and unchanged output on refusal.
+UTF-8 is an unconstrained callee result in this arithmetic harness; complete
+payload validation is covered by `fuzz_service_failure`, not claimed as a complete
+CBMC proof. Every slice block must be reachable, including both text branches.

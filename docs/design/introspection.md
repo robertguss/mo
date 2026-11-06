@@ -260,7 +260,8 @@ expired pin is refused with `export_released`, and a page for an id that does no
 current pin with `export_replaced`; neither ever returns another pin's bytes.
 
 A 16 MiB saved state plus framing is 2,049 pages. At the token's rate limit of 20 calls a second that is about
-103 seconds, and the fetch tool says so before it starts.
+103 seconds, and the fetch tool says so before it starts. A failure pin is at most
+`MO_LIMIT_EXPORT_BYTES / MO_LIMIT_EXPORT_PINS` (17 MiB), which is 2,176 pages, about 109 seconds.
 
 `mo fetch URL --export state|failure ID --out FILE --token-env NAME`:
 
@@ -326,10 +327,15 @@ log's 1 and the snapshot's 2 (magic, kind, sequence, image key, length, payload,
 4. argument count and each argument as a length and encoded value, exactly as a log record;
 5. the structured signature (section 6.2);
 6. the recorded budgets: work, heap, stack and depth limits, and the saved-bytes limit;
-7. program checksum, runtime build digest and label, state schema digest;
-8. diagnostic context: up to 8 frames (function, file, span), up to 32 rendered top-frame
-   variables at up to 1 KiB each, each with an `available` or `truncated` flag, and a flag for
-   the whole context (`complete`, `truncated`, `unavailable`).
+7. the store image key (the program checksum with the service index folded in, as in every
+   `MOST` frame), runtime build digest and label, state schema digest;
+8. diagnostic context: up to `MO_LIMIT_FAILURE_FRAMES` (8) frames (function, file, span), up to
+   `MO_LIMIT_FAILURE_VARIABLES` (32) top-frame variables, and a flag for the whole context
+   (`complete`, `truncated`, `unavailable`). Each variable is marked
+   `available` with its rendered value or `unavailable` without one. A value whose rendering
+   exceeds `MO_LIMIT_FAILURE_VALUE_BYTES` (1 KiB) is `unavailable`, never cut short, and marks the
+   context `truncated`. Every value, top-level or nested, is quoted and escaped the same way, so
+   no value puts a raw NUL or newline into the context.
 
 Items 1 to 7 are the replay inputs and must be complete for a record to exist. Item 8 is
 context: replay regenerates the stack itself.
@@ -358,8 +364,11 @@ Order, at the point where `mo_service_step` sees a failed call today:
    used. For a work-limit cancellation, which fabricates no defect, the runtime walks the
    process's live frames the same way. Frames and top-frame variables are rendered as text
    into a buffer of at most `MO_LIMIT_FAILURE_CONTEXT_BYTES` (64 KiB, the defect report's size),
-   allocated outside the heap. This step allocates nothing on the heap, so it works when the
-   heap is exhausted.
+   allocated outside the heap. Frame lines need no heap, but rendering a variable's value can.
+   `mo_value_print_literal` takes scratch from the handler heap for values nested more than 16
+   levels deep, and BigInt text is built there too. After a heap exhaustion such a value comes
+   out `unavailable` and the context is `truncated`. The frames and the replay inputs are
+   unaffected.
 2. **Cleanup.** `finish_call` runs as today, releasing the handler's frames and garbage. The
    pre-call arguments stay alive: the message still owns them.
 3. **Encoding.** The pre-call state's encoding is already in hand (below). Arguments of an
@@ -384,11 +393,17 @@ the 64 MiB process budget; section 10 counts it.
 | Outcome | Record | Service |
 | --- | --- | --- |
 | Committed | `record: ID` | continues under the existing policy |
-| Prepared value too large: state plus arguments plus metadata over `MO_LIMIT_FAILURE_RECORD_BYTES` | `record unavailable: too large to record` | continues |
+| The service has no store, or no encoded current state | `record unavailable: persistent state unavailable` | continues |
+| Prepared value too large: state plus arguments plus metadata over `MO_LIMIT_FAILURE_RECORD_BYTES` less the 512-byte envelope reserve | `record unavailable: too large to record` | continues |
+| The kind key is longer than `MO_LIMIT_FAILURE_KIND_BYTES` (1,024 bytes) | `record unavailable: failure kind too long` | continues |
 | Read-only arguments could not be encoded within the scratch limit | `record unavailable: arguments could not be encoded` | continues |
 | Context buffer or record buffer could not be allocated | `record unavailable: out of memory for the record` | continues |
-| The diagnostic transaction failed and rolled back cleanly (`SQLITE_FULL`, `SQLITE_TOOBIG`, an exhausted store budget, a constraint), and the connection still answers a read of `head` | `record unavailable: the store refused the record` | continues. The store's existing failure mapping turns `SQLITE_TOOBIG` into `MO_STORE_CORRUPT`, which is right for reading saved data and wrong here: the record write classifies it as a clean refusal |
-| The rollback failed, the commit's outcome is unknown (`SQLITE_IOERR` during commit), the database is corrupt, or the connection cannot read `head` | none is claimed | stops under the existing store-failure policy (`MO_SERVICE_STORE`, exit 70) |
+| The runtime build digest or the state schema digest could not be computed | `record unavailable: runtime identity unavailable` | continues |
+| The built message does not decode with the message reader (`mo_failure_read`) | `record unavailable: record failed validation` | continues. Nothing is written |
+| Retention has no room: a repeat of an existing kind fits only by evicting another kind (section 6.5) | `record unavailable: the store refused the record` | continues |
+| The stored diagnostic rows are damaged: a record missing one of its two rows, a kind that is empty, longer than 1,024 bytes or not UTF-8, a `first` flag other than 0 or 1, or more than 64 pairs | `record unavailable: diagnostic records damaged` | continues. Listing and exporting those rows still report `corrupt` |
+| The diagnostic transaction failed and rolled back cleanly (`SQLITE_FULL`, `SQLITE_TOOBIG`, `SQLITE_NOMEM`, `SQLITE_CONSTRAINT`, `SQLITE_BUSY`, `SQLITE_LOCKED`), and the connection still answers a read of `head` | `record unavailable: the store refused the record` | continues. The store's existing failure mapping turns `SQLITE_TOOBIG` into `MO_STORE_CORRUPT`, which is right for reading saved data and wrong here: the record write classifies it as a clean refusal |
+| `COMMIT` returned an error, so the pair may or may not be durable; the rollback failed; any other SQLite error, such as `SQLITE_CORRUPT` or `SQLITE_IOERR`; or the connection cannot read `head` | `record unavailable: store outcome uncertain`. The reply names no record id; after a failed `COMMIT`, a later reopen can still find the pair | stops under the existing store-failure policy (`MO_SERVICE_STORE`, exit 70) |
 
 The handler failure is counted once in every row. A capture refusal is never counted as a second
 handler failure, never retried, and appears in `mo-supervisor` and `mo-failures`. An application
@@ -403,20 +418,33 @@ and metadata. Under `mo serve`, every tool's arguments arrive in a request body 
 arguments use the whole saved-bytes allowance is legal, and its record is then too large: that is
 an explicit refusal, and message admission does not tighten to avoid it. A complete record can
 approach 17 MiB, so a record transaction writes up to about 34 MiB with its journal; the store
-budget (`MO_LIMIT_STORE_MEMORY`, 24 MiB per store) was sized from a 16 MiB record and must be
-measured again against this.
+budget (`MO_LIMIT_STORE_MEMORY`, 24 MiB per store) was sized from a 16 MiB record.
+`test_failure_sizing` measures it: three transactions of a maximal pair (first, latest, then a
+replacement latest; 17,825,348 framed bytes each) all commit within that budget. The process
+peaked at 56,644 KiB of RSS from a 21,592 KiB baseline, including native input and frame
+buffers, and the database file held the two retained pairs in 35,708,928 bytes
+([`sizing.json`](../../learnability/phase4/failure-capture/results/sizing.json), one VM and
+debug build).
 
 ### 6.5 Retention
 
-At most `MO_LIMIT_FAILURE_RECORDS` (64) records and `MO_LIMIT_FAILURE_STORE_BYTES` (64 MiB) are
-kept. Each kind key keeps at most two: its **first** record, kept as long as its kind is, and its
-**latest**, replaced by each newer failure of that kind. A new record of an existing kind replaces
-only that kind's latest, so a timer failing every minute rewrites one row and never evicts
-another kind's first failure. When a new kind arrives and either limit would be exceeded, the
-kind whose latest failure is oldest is evicted whole, latest then first, until the new record
-fits; the views count evicted kinds. A single record larger than the byte limit is refused as too
-large to record. Snapshots never touch the failure tables, so a retained failure stays replayable
-after any number of snapshots.
+At most `MO_LIMIT_FAILURE_RECORDS` (64) records and `MO_LIMIT_FAILURE_STORE_BYTES` (64 MiB of
+framed rows) are kept. Each kind key keeps at most two records: its **first**, kept as long as
+its kind is, and its **latest**.
+
+A new failure of an existing kind deletes that kind's previous latest, if it has one, and takes
+its place. It never evicts another kind. If the new record still does not fit, the capture is
+refused as `the store refused the record`, the transaction rolls back and the previous latest
+stays. A repeat fails to fit when its kind had only a first record and 64 records are already
+kept, or when it is larger than the bytes left. So once 64 kinds each hold only a first record,
+every repeat is refused until a new kind's arrival evicts one of them. A timer that keeps failing
+with room to spare rewrites its one latest row.
+
+When a new kind arrives and either limit would be exceeded, the kind whose latest record is
+oldest is evicted whole, first and latest together. Eviction repeats until the new record fits.
+The views count evicted kinds for the current open store handle. A single record larger than the
+byte limit is refused as too large to record. Snapshots never touch the failure tables, so a
+retained failure stays replayable after any number of snapshots.
 
 ### 6.6 The event ring
 
@@ -649,21 +677,32 @@ sequence allowed. Negative control: a variant whose `ReadPage` keys pins by sequ
 must violate `NoMixedGeneration`. Progress (`a fetch with no replacement and no expiry completes`)
 is checked only under weak fairness of `ReadPage` and with `Replace` and `Expire` disabled.
 
-**Failure capture** (`models/Capture.tla`). Variables: application state and log position;
-failure table; supervisor count; store health; a pending capture's phase. Actions: `Fail`,
-`Prepare`, `PrepareRefuse`, `Begin`, `Write`, `Commit`, `CommitUncertain`, `Rollback`,
-`RollbackFail`, `Crash`, `Recover`, `Evict`, `Count`. Invariants:
+**Failure capture** (`models/Capture.tla`). Variables: application state and log position, with
+their values at the failure; the retained records (id, kind, first flag) and their two halves;
+published ids; supervisor count; store health; a pending capture's phase, rows and deletions.
+Actions: `Apply`, `Snapshot`, `Fail`, `Prepare`, `PrepareRefuse`, `Retain`, `Evict`,
+`RetainRefuse`, `Write`, `Commit`, `CommitUncertain`, `Rollback`, `RollbackFail`, `Crash`,
+`Recover`, `Count`, `Reopen`. `Apply` and `Snapshot` are the successful handlers that change
+application state and the log, so `RecoveryUntouched` constrains the capture actions.
+Invariants:
 
-- `PairComplete`: every published record id has both halves, from the same failure;
-- `RecoveryUntouched`: no capture action changes application state or log position;
+- `PairComplete`: every published or retained record id has both halves;
+- `RecoveryUntouched`: from `Fail` until the service is idle again, application state and log
+  position keep their values at the failure;
 - `CountedOnce`: each failure increments the supervisor count exactly once, whatever the capture
   outcome;
-- `NoUnsafeContinue`: after `RollbackFail` or `CommitUncertain` the service is stopped.
+- `NoUnsafeContinue`: after `RollbackFail` or `CommitUncertain` the service is stopped until
+  `Reopen`;
+- `Retention`: at most the record cap, and each kind holds one first record and at most two;
+- `RepeatKeepsOthers`: a repeat of a kind never deletes another kind's record.
 
-SQLite's atomic commit is modelled as the `Commit` action, with `CommitUncertain` and `Crash`
-between `Write` and `Commit` as the failures it must survive; the model does not assume the
-property it checks. Negative controls: publishing the id at `Write`, and counting the failure in
-`Rollback` as well, must each violate an invariant. Each counterexample found while writing the
+SQLite's atomic commit is modelled as the `Commit` action, with `CommitUncertain` (the
+transaction may or may not be durable, and no id is published) and `Crash` between `Write` and
+`Count` as the failures it must survive; the model does not assume the property it checks. The
+byte cap is not modelled. Each invariant has a negative control that must violate it: publishing
+the id at `Write`, counting the failure in `Rollback` as well, advancing the log in `Commit`,
+continuing after an uncertain outcome, inserting a new kind without eviction, and evicting
+another kind for a repeat (`models/README.md`). Each counterexample found while writing the
 models becomes a store or process test.
 
 ### 11.3 C
@@ -747,7 +786,8 @@ They are available for persistent updating calls and zero-argument calls. Otherw
 availability flag is false: the arguments were not encoded at admission. Observing them
 never encodes or retains additional values. Timers have zero argument bytes.
 
-The executable initializes runtime identity once at startup. Linux reads `/proc/self/exe`;
+The executable initializes runtime identity once before command execution, except for
+`mo check`, which does not consume runtime identity. Linux reads `/proc/self/exe`;
 macOS resolves the executable path. A failed read leaves identity unavailable without
 changing ordinary command behavior. Consumers must check availability. The build label
 includes Mo's version, compiler version and build configuration. `ci/check_sha256.py`
@@ -757,8 +797,9 @@ No authenticated operator entry point, artifact format or fetch command is intro
 these native interfaces.
 
 The debug build optimizes the SHA-256 arithmetic kernel while retaining debug settings
-for the rest of the toolchain. This keeps eager executable hashing within the existing
-sample `mo check` latency budget; the measured executable bytes still determine identity.
+for the rest of the toolchain. `mo check` skips executable hashing to preserve its
+0.1-second sample latency budget; commands that consume identity still hash the measured
+executable bytes before execution.
 The service-store fault harness separately refuses the recovery cache copy, checking a
 memory refusal, release of the decoded state and successful reopening afterward.
 
@@ -936,3 +977,62 @@ remove a late link. As with the runtime's other wall budgets, delivery/cleanup a
 schedule the process and interrupt a blocking syscall; uninterruptible kernel waits are outside
 that guarantee. Compiled two-second controls interrupt five-second lookup and fsync stalls;
 SIGTERM injected immediately after temporary creation verifies handler ordering and cleanup.
+
+## Retained diagnostic implementation
+
+The runtime captures from live frames before normal cleanup and uses a dedicated
+native-only saved encoder for arguments. This refines section 6.3: no encoding
+scratch is charged to an exhausted handler heap, and no mailbox retains a second
+copy of potentially 64 times 16 MiB of admitted arguments. Existing synchronous
+defect hooks still see valid live frames. Normal cleanup runs once after reporting
+and reply; no frame survives into another execution. The encoder shares the saved
+schema/value walkers, bounds its native schema scratch to 1 MiB, and rolls back
+partial output on refusal. Exact-limit admission remains unchanged.
+
+Message metadata is at most 1 MiB. A named 512-byte reserve within the combined
+17 MiB capture budget covers both MOST envelopes, pair lengths, and the maximum
+MOEX header/label, so every captured pair can fit its export pin. Context walks at
+most eight frames and visits at most 32 variables, with a separate one-million-unit
+inspection budget. Each variable line states `available` with the value or
+`unavailable` without it; a rendering longer than `MO_LIMIT_FAILURE_VALUE_BYTES`
+(1 KiB) is `unavailable`, not truncated. Top-level values are quoted and escaped
+exactly as nested values are, so the context never holds a raw NUL or newline taken
+from a value.
+
+The version-1 message payload uses little-endian integers: one-byte version,
+8-byte id/sequence/arrival, one-byte timer, 4-byte handler, length-prefixed UTF-8
+name, one-byte read-only flag, 4-byte count and length-prefixed MOSV arguments;
+one-byte signature version/class, length-prefixed reason/limit and its 8-byte exact value, four 4-byte
+location fields, five 8-byte budgets, the 8-byte store image key, 32-byte build digest,
+length-prefixed label, 32-byte schema digest, one-byte context status and
+length-prefixed context text. The image key is the value every `MOST` frame header
+carries: the program checksum XOR the service index shifted left 32 bits
+(`mo_image_key`). A failure export XORs the service index back out, so its producer
+program field is the plain program checksum, as in a state export. Class values are
+defect=0, work=1, memory=2, state-size=3; context status is complete=0, truncated=1,
+unavailable=2. Record id is bound inside the message before the same transaction
+commits both rows. Before storing, the runtime decodes the message it built with
+`mo_failure_read`; a message that does not decode is refused (section 6.4) and
+nothing is written.
+
+Failure exports allocate their final confidential pin directly from borrowed
+SQLite payloads, without an intermediate complete pair buffer. State and failure
+pins remain independent and refresh only after a successful page. A request for a
+failure id that is not retained is refused and leaves the current failure export
+in place; only a successful new failure pin replaces it. Evicted-kind counts
+describe the current open handle, not durable history. Repeated-kind growth that
+cannot fit without evicting another kind is explicitly refused (section 6.5).
+
+Damaged diagnostic rows (a record missing one of its rows, a kind of the wrong
+length or not UTF-8, a `first` flag other than 0 or 1, more than 64 pairs) make a
+new capture a clean refusal, so they no longer stop the service. Listing and
+exporting those rows still report `corrupt`.
+
+The retained-failure catalog reads at most eight message records after its cursor and only
+state lengths, charging message bytes to the request work budget. It reports the exact
+remaining record count. A stored message that does not decode is skipped, and the rest of
+the page still renders. Pin creation performs an indexed id lookup and validates that one
+complete pair; it does not checksum unrelated retained state blobs.
+
+Development evidence and limitations are recorded in
+[the failure capture results](../../learnability/phase4/failure-capture/README.md).

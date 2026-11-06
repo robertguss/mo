@@ -784,7 +784,7 @@ static void private_views(void) {
     tool_request(&f, "mo-export", "{}", "4", out, sizeof out);
     CHECK(strstr(out, "\"code\":-32602") != NULL);
     tool_request(&f, "mo-failures", "{}", "5", out, sizeof out);
-    CHECK(strstr(out, "\"code\":-32602") != NULL);
+    CHECK(strstr(out, "\"records\":[]") != NULL);
     CHECK(mo_protocol_server_metrics(f.server).admitted == 0);
     tool_request(&f, "mo_state", "{}", "6", out, sizeof out);
     CHECK(strstr(out, "\"value\":\"777\"") != NULL);
@@ -955,7 +955,81 @@ static void export_expiry_refresh(void) {
     finish(&f);
 }
 
+static void export_id(const char *out, char id[33]) {
+    const char *at = strstr(out, "\"export\":\"");
+    CHECK(at != NULL);
+    memcpy(id, at == NULL ? "" : at + 10, at == NULL ? 1 : 32);
+    id[at == NULL ? 0 : 32] = 0;
+}
+
+/* Text arguments with NUL or newline still produce readable, pinnable records. */
+static void failure_text_arguments(void) {
+    struct fixture_server f = start_source(
+        "module Main\nservice\n state Int = 0\n tools echo\n"
+        " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+        "fn echo(_state: Int, _now: Time, _text: Text) : Bool\n stop \"echo fixture\"\nend\n");
+    char out[32768];
+    tool_request(&f, "echo", "{\"_text\":\"a\\u0000b\"}", "1", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "1");
+    tool_request(&f, "echo", "{\"_text\":\"x\\nframe 99 file 0 span 0..0\"}", "2", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "2");
+    tool_request(&f, "mo-failures", "{}", "3", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL);
+    CHECK(strstr(out, "\"records\":[{\"id\":\"1\"") != NULL);
+    CHECK(strstr(out, "{\"id\":\"2\"") != NULL);
+    CHECK(strstr(out, "\"unavailable\":[]") != NULL);
+    tool_request(&f, "mo-export", "{\"kind\":\"failure\",\"failure\":1}", "4", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL && strstr(out, "\"export\":\"") != NULL);
+    finish(&f);
+}
+
+/* A stored row whose message does not decode is reported unavailable; the view still answers. */
+static void failure_view_unreadable(void) {
+    struct fixture_server f = start();
+    const uint8_t a = 42, b = 43;
+    struct mo_store_record state = {MO_STORE_FAILURE_STATE, 0, 1, &a, 1};
+    struct mo_store_record message = {MO_STORE_FAILURE_MESSAGE, 0, 1, &b, 1};
+    uint64_t id = 0;
+    CHECK(mo_store_capture(f.store, "junk", &state, &message, &id) == MO_STORE_CAPTURE_OK);
+    CHECK(id == 1);
+    char out[32768];
+    tool_request(&f, "fail", "{}", "1", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "1");
+    tool_request(&f, "mo-failures", "{}", "2", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL);
+    CHECK(strstr(out, "\"records\":[{\"id\":\"2\"") != NULL);
+    CHECK(strstr(out, "{\"id\":\"1\"") == NULL);
+    CHECK(strstr(out, "\"reason\":\"record 1 unreadable\"") != NULL);
+    finish(&f);
+}
+
+/* Asking for a failure that does not exist leaves the live failure export readable. */
+static void failure_export_bad_id(void) {
+    struct fixture_server f =
+        start_source("module Main\nservice\n state Text = \"a\".repeat(20000)\n tools fail\n"
+                     " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+                     "fn fail(_state: Text, _now: Time) : Int\n stop \"export fixture\"\nend\n");
+    char out[32768], id[33], args[192];
+    tool_request(&f, "fail", "{}", "1", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "1");
+    tool_request(&f, "mo-export", "{\"kind\":\"failure\",\"failure\":1}", "2", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL && strstr(out, "\"pages\":3") != NULL);
+    export_id(out, id);
+    tool_request(&f, "mo-export", "{\"kind\":\"failure\",\"failure\":99}", "3", out, sizeof out);
+    CHECK(strstr(out, "failure_unavailable") != NULL);
+    int n = snprintf(args, sizeof args,
+                     "{\"kind\":\"failure\",\"failure\":1,\"export\":\"%s\",\"offset\":8192}", id);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    tool_request(&f, "mo-export", args, "4", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL);
+    CHECK(strstr(out, "export_released") == NULL);
+    finish(&f);
+}
+
 static void run(void *context) {
+    failure_text_arguments();
+    failure_view_unreadable();
+    failure_export_bad_id();
     export_expiry_refresh();
     export_generations();
     operator_views();

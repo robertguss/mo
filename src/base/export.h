@@ -9,7 +9,7 @@ struct mo_export_identity {
     uint8_t kind, id[16], build[32];
     const char *label;
     uint32_t service;
-    uint64_t program, sequence, encoded_sequence;
+    uint64_t program, sequence, encoded_sequence, failure_id;
     int64_t created;
 };
 struct mo_export_pin {
@@ -17,7 +17,7 @@ struct mo_export_pin {
     uint8_t *bytes;
     size_t length;
     uint8_t id[16], digest[32];
-    uint64_t sequence, encoded_sequence, touched;
+    uint64_t sequence, encoded_sequence, touched, failure_id;
 };
 struct mo_export_page {
     uint8_t id[16], digest[32], bytes[MO_LIMIT_EXPORT_PAGE_BYTES];
@@ -27,7 +27,8 @@ struct mo_export_page {
 };
 struct mo_export_consumer {
     uint8_t *bytes, id[16];
-    uint64_t sequence, encoded_sequence;
+    uint64_t sequence, encoded_sequence, failure_id;
+    uint8_t kind;
     size_t offset, total;
     bool complete;
 };
@@ -43,6 +44,11 @@ MO_MUST_USE bool mo_export_page_bounds(size_t total, size_t offset, size_t *leng
 MO_MUST_USE bool mo_export_create(struct mo_export_pin *pin,
                                   const struct mo_export_identity *identity, const uint8_t *saved,
                                   size_t length, uint64_t now);
+MO_MUST_USE bool mo_export_create_failure(struct mo_export_pin *pin,
+                                          const struct mo_export_identity *identity,
+                                          const uint8_t *state, size_t state_length,
+                                          const uint8_t *message, size_t message_length,
+                                          uint64_t now);
 /* Validates complete framing, schema identity and trailing digest. Label is not borrowed. */
 MO_MUST_USE bool mo_export_verify(const uint8_t *bytes, size_t length,
                                   struct mo_export_identity *identity);

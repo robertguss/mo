@@ -153,7 +153,7 @@ static bool events(struct view_builder *b, uint32_t type, struct mo_cell *out) {
             kind = "stop";
             break;
         }
-        struct mo_cell fields[6], value;
+        struct mo_cell fields[8], value;
         uint32_t built = 0;
         if (number(b, item.number, &fields[built]))
             built++;
@@ -169,12 +169,17 @@ static bool events(struct view_builder *b, uint32_t type, struct mo_cell *out) {
             fields[built++] = mo_cell_int(item.time.now);
         if (built == 5 && number(b, item.time.elapsed, &fields[built]))
             built++;
-        if (built != 6) {
+        if (built == 6 && number(b, item.record_id, &fields[built]))
+            built++;
+        if (built == 7 &&
+            text(b, item.record_unavailable == NULL ? "" : item.record_unavailable, &fields[built]))
+            built++;
+        if (built != 8) {
             for (uint32_t j = 0; j < built; j++)
                 mo_value_drop(b->heap, field_type(b, element, j), fields[j]);
             goto fail;
         }
-        if (!record(b, element, fields, 6, &value))
+        if (!record(b, element, fields, 8, &value))
             goto fail;
         bool ok = mo_list_append(b->heap, type, out, value);
         mo_value_drop(b->heap, element, value);
@@ -214,28 +219,34 @@ bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *
         built++;
     if (built == 3 && text(&b, mo_runtime_build_label(), &fields[3]))
         built++;
-    struct mo_cell stats[] = {mo_cell_int((int64_t)observed.sequence),
-                              mo_cell_int((int64_t)observed.snapshot_sequence),
-                              mo_cell_int((int64_t)observed.encoded_sequence),
-                              mo_cell_unit(),
-                              mo_cell_int((int64_t)observed.heap_used),
-                              mo_cell_int((int64_t)observed.heap_peak),
-                              mo_cell_int((int64_t)mo_heap_limit(s->service_heap)),
-                              mo_cell_int((int64_t)observed.stack_capacity),
-                              mo_cell_int((int64_t)observed.encoded_bytes),
-                              mo_cell_int((int64_t)s->view_scratch_peak),
-                              mo_cell_int(observed.failures),
-                              mo_cell_int(observed.restarts),
-                              mo_cell_bool(observed.running),
-                              mo_cell_bool(observed.persistent),
-                              mo_cell_int((int64_t)MO_LIMIT_SERVICE_FAILURE_WINDOW_US),
-                              mo_cell_int((int64_t)MO_LIMIT_SERVICE_RESTART_WINDOW_US),
-                              mo_cell_int(observed.timers),
-                              mo_cell_int((int64_t)observed.stack_limit),
-                              mo_cell_int((int64_t)s->state_export.arena.used)};
-    if (built == 4 && number(&b, observed.observed_elapsed, &stats[3]) &&
-        record(&b, field_type(&b, type, 4), stats, 19, &fields[4]))
-        built++;
+    struct mo_cell stats[] = {
+        mo_cell_int((int64_t)observed.sequence),
+        mo_cell_int((int64_t)observed.snapshot_sequence),
+        mo_cell_int((int64_t)observed.encoded_sequence),
+        mo_cell_unit(),
+        mo_cell_int((int64_t)observed.heap_used),
+        mo_cell_int((int64_t)observed.heap_peak),
+        mo_cell_int((int64_t)mo_heap_limit(s->service_heap)),
+        mo_cell_int((int64_t)observed.stack_capacity),
+        mo_cell_int((int64_t)observed.encoded_bytes),
+        mo_cell_int((int64_t)s->view_scratch_peak),
+        mo_cell_int(observed.failures),
+        mo_cell_int(observed.restarts),
+        mo_cell_bool(observed.running),
+        mo_cell_bool(observed.persistent),
+        mo_cell_int((int64_t)MO_LIMIT_SERVICE_FAILURE_WINDOW_US),
+        mo_cell_int((int64_t)MO_LIMIT_SERVICE_RESTART_WINDOW_US),
+        mo_cell_int(observed.timers),
+        mo_cell_int((int64_t)observed.stack_limit),
+        mo_cell_int((int64_t)(s->state_export.arena.used + s->failure_export.arena.used)),
+        mo_cell_int(observed.retained_available ? (int64_t)observed.retained_failures : -1),
+        mo_cell_unit()};
+    if (built == 4 && number(&b, observed.observed_elapsed, &stats[3])) {
+        if (!number(&b, observed.evicted_kinds, &stats[20]))
+            mo_value_drop(b.heap, field_type(&b, field_type(&b, type, 4), 3), stats[3]);
+        else if (record(&b, field_type(&b, type, 4), stats, 21, &fields[4]))
+            built++;
+    }
     if (built == 5 && messages(&b, field_type(&b, type, 5), false, &fields[5]))
         built++;
     struct mo_cell action = mo_cell_get_payload(c->action);

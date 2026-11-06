@@ -421,6 +421,57 @@ bool mo_value_encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
     return encode_value(heap, type, value, out, &failure);
 }
 
+static enum mo_saved_status saved_status(bool ok, const char *failure) {
+    if (ok)
+        return MO_SAVED_OK;
+    if (failure == NULL || strcmp(failure, "allocation") == 0)
+        return MO_SAVED_MEMORY;
+    if (strcmp(failure, "MO_LIMIT_SAVED_DEPTH (128)") == 0)
+        return MO_SAVED_DEPTH;
+    if (strcmp(failure, "MO_LIMIT_SAVED_NODES (1048576)") == 0)
+        return MO_SAVED_NODES;
+    return MO_SAVED_TOO_LARGE;
+}
+
+/* Diagnostic encoding never borrows the exhausted application's scratch budget.
+ * The caller's bounded output is rolled back on refusal. */
+enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *heap, uint32_t type,
+                                                struct mo_cell value, struct mo_buffer *out) {
+    MO_ASSERT(type < heap->types->count);
+    struct mo_arena scratch;
+    mo_arena_init(&scratch, MO_LIMIT_FAILURE_SCRATCH);
+    uint32_t *seen =
+        mo_arena_allocate_array(&scratch, heap->types->count, sizeof *seen, _Alignof(uint32_t));
+    size_t start = out->length;
+    struct saved_output output = {out, NULL};
+    bool ok = seen != NULL && saved_append(&output, "MOSV\1", 5) && saved_uint(&output, 0, 4);
+    size_t schema_start = out->length;
+    if (ok) {
+        for (uint32_t i = 0; i < heap->types->count; i++)
+            seen[i] = MO_NO_INDEX;
+        struct schema_writer writer = {heap->types, &output, seen, 0};
+        ok = schema(&writer, type, 0);
+    }
+    if (ok) {
+        size_t length = out->length - schema_start;
+        for (unsigned i = 0; i < 4; i++)
+            out->bytes[start + 5 + i] = (uint8_t)(length >> (8 * i));
+        uint32_t nodes = 0;
+        ok = encode(heap, type, value, &output, 0, &nodes);
+    }
+    if (!ok)
+        out->length = start;
+    mo_arena_free(&scratch);
+    return saved_status(ok, output.failure);
+}
+
+enum mo_saved_status mo_value_encode_status(struct mo_heap *heap, uint32_t type,
+                                            struct mo_cell value, struct mo_buffer *out) {
+    const char *failure;
+    bool ok = encode_value(heap, type, value, out, &failure);
+    return saved_status(ok, failure);
+}
+
 bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type,
                          struct mo_cell value, struct mo_cell *out, size_t *encoded_length,
                          const char **failure) {

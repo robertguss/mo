@@ -113,7 +113,12 @@ enum mo_store_operation {
 #define STOREOP(id) MO_STORE_##id,
 #include "base/hostops.def"
 };
-enum mo_store_record_kind { MO_STORE_LOG = 1, MO_STORE_STATE = 2 };
+enum mo_store_record_kind {
+    MO_STORE_LOG = 1,
+    MO_STORE_STATE = 2,
+    MO_STORE_FAILURE_STATE = 3,
+    MO_STORE_FAILURE_MESSAGE = 4
+};
 /* A payload holds at most MO_LIMIT_SAVED_BYTES; its frame adds this envelope. */
 #define MO_STORE_FRAME_BYTES 34
 struct mo_store_record {
@@ -138,6 +143,50 @@ MO_MUST_USE enum mo_store_status
 mo_store_call(struct mo_store *store, enum mo_store_operation operation,
               const struct mo_store_record *record,
               bool (*consume)(const struct mo_store_record *record, void *context), void *context);
+
+/* Diagnostic writes publish an id only after commit. REFUSED means rollback and
+ * a subsequent recovery-head read succeeded; DAMAGED is REFUSED because stored
+ * diagnostic rows failed validation; UNSAFE requires closing the store. */
+enum mo_store_capture_status {
+    MO_STORE_CAPTURE_OK,
+    MO_STORE_CAPTURE_REFUSED,
+    MO_STORE_CAPTURE_DAMAGED,
+    MO_STORE_CAPTURE_UNSAFE
+};
+enum mo_store_failure_operation {
+#define HOSTOP(id, module, name, signature, params, bugs, spec_only)
+#define FAILUREOP(id, function) MO_STORE_FAILURE_##id,
+#include "base/hostops.def"
+};
+struct mo_store_failure {
+    uint64_t id;
+    const char *kind;
+    bool first;
+    struct mo_store_record state, message;
+};
+MO_MUST_USE enum mo_store_capture_status mo_store_capture(struct mo_store *store, const char *kind,
+                                                          const struct mo_store_record *state,
+                                                          const struct mo_store_record *message,
+                                                          uint64_t *id);
+MO_MUST_USE enum mo_store_status
+mo_store_failures(struct mo_store *store, bool (*consume)(const struct mo_store_failure *, void *),
+                  void *context);
+
+/* Catalog visits at most VIEW_RECORDS messages after the cursor, without reading state
+ * blobs. The state field supplies length only. Get verifies exactly the selected pair. */
+MO_MUST_USE enum mo_store_status
+mo_store_failure_catalog(struct mo_store *store, uint64_t after,
+                         bool (*consume)(const struct mo_store_failure *, void *), void *context,
+                         uint32_t *omitted);
+MO_MUST_USE enum mo_store_status
+mo_store_failure_get(struct mo_store *store, uint64_t id,
+                     bool (*consume)(const struct mo_store_failure *, void *), void *context);
+
+MO_MUST_USE bool mo_store_failure_export(struct mo_store *store, uint64_t id,
+                                         struct mo_buffer *out);
+
+MO_MUST_USE enum mo_store_status mo_store_failure_stats(struct mo_store *store, uint32_t *count,
+                                                        uint64_t *evicted);
 
 struct mo_bearer {
     uint8_t bytes[MO_LIMIT_MCP_TOKEN_BYTES];

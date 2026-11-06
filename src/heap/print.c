@@ -231,8 +231,8 @@ struct print_frame {
     bool entered, emitted;
 };
 
-bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
-                    struct mo_buffer *out) {
+static MO_MUST_USE bool print(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                              bool literal, struct mo_buffer *out) {
     MO_ASSERT(process != NULL && type < process->types->count && out != NULL);
     size_t before = out->length, capacity = 16, depth = 1;
     struct mo_scratch scratch;
@@ -250,7 +250,7 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
         if (!f->entered) {
             f->entered = true;
             if (!compound) {
-                ok = scalar_text(process, kind, f->value, depth != 1, out);
+                ok = scalar_text(process, kind, f->value, literal || depth != 1, out);
                 depth--;
                 continue;
             }
@@ -332,4 +332,14 @@ bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value
         out->length = before;
     }
     return ok;
+}
+
+bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                    struct mo_buffer *out) {
+    return print(process, type, value, false, out);
+}
+
+bool mo_value_print_literal(struct mo_heap *process, uint32_t type, struct mo_cell value,
+                            struct mo_buffer *out) {
+    return print(process, type, value, true, out);
 }

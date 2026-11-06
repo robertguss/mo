@@ -165,6 +165,10 @@ MO_MUST_USE bool mo_value_compare(struct mo_heap *process, uint32_t type, struct
  * must use a fixed fallback rather than stop when printing runs out of room. */
 MO_MUST_USE bool mo_value_print(struct mo_heap *process, uint32_t type, struct mo_cell value,
                                 struct mo_buffer *out);
+/* As mo_value_print, but a root Text or Char is quoted and escaped as nested ones
+ * are, so the output holds no NUL, newline or other control byte. */
+MO_MUST_USE bool mo_value_print_literal(struct mo_heap *process, uint32_t type,
+                                        struct mo_cell value, struct mo_buffer *out);
 /* Stable saved-value format in docs/design/saved-state.md. Encode borrows a
  * valid typed value. Decode treats every byte as untrusted, including its
  * schema, and publishes one owned value only after consuming the entire input.
@@ -172,6 +176,20 @@ MO_MUST_USE bool mo_value_print(struct mo_heap *process, uint32_t type, struct m
  * contains native pointers, layouts, capabilities or function values. */
 MO_MUST_USE bool mo_value_encode(struct mo_heap *process, uint32_t type, struct mo_cell value,
                                  struct mo_buffer *out);
+/* Bounded native scratch, no heap allocation; refusal preserves output length. */
+enum mo_saved_status {
+    MO_SAVED_OK,
+    MO_SAVED_TOO_LARGE,
+    MO_SAVED_DEPTH,
+    MO_SAVED_NODES,
+    MO_SAVED_MEMORY
+};
+MO_MUST_USE enum mo_saved_status mo_value_encode_status(struct mo_heap *heap, uint32_t type,
+                                                        struct mo_cell value,
+                                                        struct mo_buffer *out);
+MO_MUST_USE enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *process, uint32_t type,
+                                                            struct mo_cell value,
+                                                            struct mo_buffer *out);
 MO_MUST_USE bool mo_value_decode(struct mo_heap *process, uint32_t type, const uint8_t *bytes,
                                  size_t length, struct mo_cell *out);
 MO_MUST_USE bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type,

@@ -136,7 +136,8 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
         bool refused = false;
         bool exporting = mo_cell_get_int(mo_value_field(fields, 1)) == 7;
         if (!(exporting ? mo_protocol_export(s, c, &json, &refused)
-                        : mo_protocol_view(s, c, &json))) {
+              : mo_cell_get_int(mo_value_field(fields, 1)) == 8 ? mo_protocol_failures(s, c, &json)
+                                                                : mo_protocol_view(s, c, &json))) {
             mo_protocol_fallback(s, c, failure(c), EFFECT_NONE);
             return;
         }

@@ -1,0 +1,486 @@
+{
+  "status": "complete",
+  "verdict": "Not ready",
+  "verdict_reason": "Fix multi-page failure fetch first, then complete the catalog contract, guide and refusal-class regressions. This completes the review, not U4 implementation or verification.",
+  "scope": {
+    "base": "4549594c9154fd00b6dd64c06f40618bb1e10bd3",
+    "branch": "feat/failure-capture-retention",
+    "head_sha": "4549594c9154fd00b6dd64c06f40618bb1e10bd3",
+    "pr_url": null,
+    "files_changed": 36,
+    "untracked_source_included": true
+  },
+  "intent": "Implement retained failure diagnostics with atomic paired records, deterministic bounded retention, complete-or-explicitly-unavailable capture, safe store outcome classification, exactly-once supervision, retained views and private failure export/fetch. Preserve U9 private state and fetch invariants; no U5/U6.",
+  "intent_confidence": "explicit",
+  "reviewers": [
+    "correctness",
+    "adversarial",
+    "security",
+    "testing",
+    "project-standards",
+    "performance",
+    "api-contract",
+    "reliability",
+    "maintainability",
+    "agent-native"
+  ],
+  "findings": [
+    {
+      "#": 1,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "runtime/mcp-fetch.mo:114 --         \"kind\": Json.String(\"state\"),",
+        "runtime/mcp-views.mo:1021-1022 -- Failure export adds the failure selector to next, whose kind comes from metadata."
+      ],
+      "file": "runtime/mcp-fetch.mo",
+      "first_evidence": "runtime/mcp-fetch.mo:114 --         \"kind\": Json.String(\"state\"),",
+      "independent_reviewers": [
+        "api-contract"
+      ],
+      "line": 114,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "api-contract"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Validate failure continuations with kind=failure and the failure id; add a multi-page failure fetch regression.",
+      "title": "Accept failure selectors in fetch continuation validation",
+      "why_it_matters": "Multi-page failure fetch rejects the server continuation because its reader still requires kind=state.",
+      "validation_status": "confirmed",
+      "validation_reason": "For any multi-page failure export, current runtime/mcp-views.mo:1019-1022 emits next.kind=failure with a failure id while runtime/mcp-fetch.mo:112-117 requires exactly kind=state without that id, so the native fetch path rejects the page at src/tools/fetch.c:489; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 2,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "docs/agent-guide.md:280-281 -- file are separate events. Repeated creation may observe different state. Failure capture and / failure-kind export remain unavailable."
+      ],
+      "file": "docs/agent-guide.md",
+      "first_evidence": "docs/agent-guide.md:280-281 -- file are separate events. Repeated creation may observe different state. Failure capture and / failure-kind export remain unavailable.",
+      "independent_reviewers": [
+        "agent-native"
+      ],
+      "line": 280,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": false,
+      "reviewers": [
+        "agent-native"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Document --export failure ID and retain only the U5 offline limitation.",
+      "title": "Remove obsolete failure-unavailability claim from agent guide",
+      "why_it_matters": "The dedicated fetch guide denies failure capture/export although the same guide now advertises them.",
+      "validation_status": "confirmed",
+      "validation_reason": "Current docs/agent-guide.md:280-281 still denies failure capture/export although its newly changed line27 advertises both, giving agents contradictory capability instructions whenever they read the dedicated fetch section; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 3,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "runtime/mcp-views.mo:1089 --   Json.Object({\"records\": Json.Array(rows), \"unavailable\": Json.Array(unavailable), \"unavailable_omitted\": Json.int(unavailable_count - unavailable.size), \"truncated\": Json.Boolean(more),",
+        "docs/design/introspection.md:73 -- A list view that does not fit one reply carries truncated: N, the number of items left out; docs/agent-guide.md repeats this contract."
+      ],
+      "file": "runtime/mcp-views.mo",
+      "first_evidence": "runtime/mcp-views.mo:1089 --   Json.Object({\"records\": Json.Array(rows), \"unavailable\": Json.Array(unavailable), \"unavailable_omitted\": Json.int(unavailable_count - unavailable.size), \"truncated\": Json.Boolean(more),",
+      "independent_reviewers": [
+        "api-contract"
+      ],
+      "line": 1089,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "api-contract"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Count omitted records and return Json.int(omitted_count); test complete and paginated views.",
+      "title": "Return numeric omitted counts from retained failure pages",
+      "why_it_matters": "Failure list pages return a boolean instead of the documented numeric omitted count.",
+      "validation_status": "confirmed",
+      "validation_reason": "Current runtime/mcp-views.mo:1089 returns Json.Boolean(more) for every failure list response whereas docs/design/introspection.md:73-74 and the changed agent guide require the numeric omitted count, so complete and truncated pages violate the documented output contract; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 4,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "runtime/mcp-views.mo:1076 --         \"message_bytes\": Json.String(metadata.get(i + 5) or \"\")",
+        "src/tools/protocol-export.c:failure_view_row reads mo_failure_record but passes only six metadata fields, ending at message.length."
+      ],
+      "file": "runtime/mcp-views.mo",
+      "first_evidence": "runtime/mcp-views.mo:1076 --         \"message_bytes\": Json.String(metadata.get(i + 5) or \"\")",
+      "independent_reviewers": [
+        "api-contract"
+      ],
+      "line": 1076,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "api-contract"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Expose versioned class, reason, limit name/value and defect location from parsed record metadata.",
+      "title": "Expose structured signatures in retained failure views",
+      "why_it_matters": "Failure rows omit the promised structured signature; kind alone omits recorded resource-limit values.",
+      "validation_status": "confirmed",
+      "validation_reason": "For every retained failure row, src/tools/protocol-export.c:177-182 supplies only six fields and runtime/mcp-views.mo:1070-1076 exposes no signature, despite docs/design/introspection.md:68 explicitly promising one and the kind key not carrying all recorded resource-limit values; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 5,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "src/tools/protocol-export.c:192 --     bool ok = mo_service_failures(s->service, failure_view_row, &v) == MO_STORE_OK;",
+        "src/host/store.c:642 --                                   \"SELECT f.id,f.kind,f.first,s.record,f.message FROM failure f \""
+      ],
+      "file": "src/tools/protocol-export.c",
+      "first_evidence": "src/tools/protocol-export.c:192 --     bool ok = mo_service_failures(s->service, failure_view_row, &v) == MO_STORE_OK;",
+      "independent_reviewers": [
+        "performance"
+      ],
+      "line": 192,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "performance"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Use bounded metadata-only catalog queries and indexed id lookup; charge metadata work and validate only the selected export pair.",
+      "title": "Avoid full payload scans for failure metadata and lookup",
+      "why_it_matters": "Every catalog page and single-id pin scans/checksums unrelated retained payloads, up to64MiB, without request work charging.",
+      "validation_status": "confirmed",
+      "validation_reason": "A retained catalog near its allowed64MiB bound causes src/tools/protocol-export.c:192 to iterate all state/message blobs via store.c:642-660 and checksum each before the after filter at mcp-views.mo:1069, with no catalog work charge, while service.c:1130 repeats that full scan for a single pin id; latency incidence was not measured.",
+      "protected_subject": null
+    },
+    {
+      "#": 6,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "tests/test_service_store.c:163 --         return SQLITE_FULL;",
+        "tests/test_service_store.c:161-162 -- the only injected capture insertion error is guarded by crash_point == 13 || crash_point == 15 and INSERT INTO failure_state."
+      ],
+      "file": "tests/test_service_store.c",
+      "first_evidence": "tests/test_service_store.c:163 --         return SQLITE_FULL;",
+      "independent_reviewers": [
+        "testing"
+      ],
+      "line": 163,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Add table-driven TOOBIG/NOMEM/CONSTRAINT/CORRUPT/IOERR and failed-head-probe faults; verify ids, pair integrity, continuation or terminal behavior.",
+      "title": "Exercise diagnostic refusal classes and failed head probes",
+      "why_it_matters": "FULL is tested, but other clean refusal classes and failed post-rollback head probes can regress without detection.",
+      "validation_status": "confirmed",
+      "validation_reason": "Current diagnostic fault injection at tests/test_service_store.c:160-167 covers only FULL (including automatic rollback), leaving TOOBIG/NOMEM/CONSTRAINT versus CORRUPT/IOERR and successful-rollback/failed-head-probe branches of store.c:469-474 untested although introspection.md:677 requires each failure class; the existing head faults at lines183-190 exercise recovery paths rather than a diagnostic refusal health probe.",
+      "protected_subject": null
+    }
+  ],
+  "actionable_findings": [
+    {
+      "#": 1,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "runtime/mcp-fetch.mo:114 --         \"kind\": Json.String(\"state\"),",
+        "runtime/mcp-views.mo:1021-1022 -- Failure export adds the failure selector to next, whose kind comes from metadata."
+      ],
+      "file": "runtime/mcp-fetch.mo",
+      "first_evidence": "runtime/mcp-fetch.mo:114 --         \"kind\": Json.String(\"state\"),",
+      "independent_reviewers": [
+        "api-contract"
+      ],
+      "line": 114,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "api-contract"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Validate failure continuations with kind=failure and the failure id; add a multi-page failure fetch regression.",
+      "title": "Accept failure selectors in fetch continuation validation",
+      "why_it_matters": "Multi-page failure fetch rejects the server continuation because its reader still requires kind=state.",
+      "validation_status": "confirmed",
+      "validation_reason": "For any multi-page failure export, current runtime/mcp-views.mo:1019-1022 emits next.kind=failure with a failure id while runtime/mcp-fetch.mo:112-117 requires exactly kind=state without that id, so the native fetch path rejects the page at src/tools/fetch.c:489; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 2,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "docs/agent-guide.md:280-281 -- file are separate events. Repeated creation may observe different state. Failure capture and / failure-kind export remain unavailable."
+      ],
+      "file": "docs/agent-guide.md",
+      "first_evidence": "docs/agent-guide.md:280-281 -- file are separate events. Repeated creation may observe different state. Failure capture and / failure-kind export remain unavailable.",
+      "independent_reviewers": [
+        "agent-native"
+      ],
+      "line": 280,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": false,
+      "reviewers": [
+        "agent-native"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Document --export failure ID and retain only the U5 offline limitation.",
+      "title": "Remove obsolete failure-unavailability claim from agent guide",
+      "why_it_matters": "The dedicated fetch guide denies failure capture/export although the same guide now advertises them.",
+      "validation_status": "confirmed",
+      "validation_reason": "Current docs/agent-guide.md:280-281 still denies failure capture/export although its newly changed line27 advertises both, giving agents contradictory capability instructions whenever they read the dedicated fetch section; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 3,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "runtime/mcp-views.mo:1089 --   Json.Object({\"records\": Json.Array(rows), \"unavailable\": Json.Array(unavailable), \"unavailable_omitted\": Json.int(unavailable_count - unavailable.size), \"truncated\": Json.Boolean(more),",
+        "docs/design/introspection.md:73 -- A list view that does not fit one reply carries truncated: N, the number of items left out; docs/agent-guide.md repeats this contract."
+      ],
+      "file": "runtime/mcp-views.mo",
+      "first_evidence": "runtime/mcp-views.mo:1089 --   Json.Object({\"records\": Json.Array(rows), \"unavailable\": Json.Array(unavailable), \"unavailable_omitted\": Json.int(unavailable_count - unavailable.size), \"truncated\": Json.Boolean(more),",
+      "independent_reviewers": [
+        "api-contract"
+      ],
+      "line": 1089,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "api-contract"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Count omitted records and return Json.int(omitted_count); test complete and paginated views.",
+      "title": "Return numeric omitted counts from retained failure pages",
+      "why_it_matters": "Failure list pages return a boolean instead of the documented numeric omitted count.",
+      "validation_status": "confirmed",
+      "validation_reason": "Current runtime/mcp-views.mo:1089 returns Json.Boolean(more) for every failure list response whereas docs/design/introspection.md:73-74 and the changed agent guide require the numeric omitted count, so complete and truncated pages violate the documented output contract; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 4,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "runtime/mcp-views.mo:1076 --         \"message_bytes\": Json.String(metadata.get(i + 5) or \"\")",
+        "src/tools/protocol-export.c:failure_view_row reads mo_failure_record but passes only six metadata fields, ending at message.length."
+      ],
+      "file": "runtime/mcp-views.mo",
+      "first_evidence": "runtime/mcp-views.mo:1076 --         \"message_bytes\": Json.String(metadata.get(i + 5) or \"\")",
+      "independent_reviewers": [
+        "api-contract"
+      ],
+      "line": 1076,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "api-contract"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Expose versioned class, reason, limit name/value and defect location from parsed record metadata.",
+      "title": "Expose structured signatures in retained failure views",
+      "why_it_matters": "Failure rows omit the promised structured signature; kind alone omits recorded resource-limit values.",
+      "validation_status": "confirmed",
+      "validation_reason": "For every retained failure row, src/tools/protocol-export.c:177-182 supplies only six fields and runtime/mcp-views.mo:1070-1076 exposes no signature, despite docs/design/introspection.md:68 explicitly promising one and the kind key not carrying all recorded resource-limit values; incidence was not measured.",
+      "protected_subject": "public-contract"
+    },
+    {
+      "#": 5,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "src/tools/protocol-export.c:192 --     bool ok = mo_service_failures(s->service, failure_view_row, &v) == MO_STORE_OK;",
+        "src/host/store.c:642 --                                   \"SELECT f.id,f.kind,f.first,s.record,f.message FROM failure f \""
+      ],
+      "file": "src/tools/protocol-export.c",
+      "first_evidence": "src/tools/protocol-export.c:192 --     bool ok = mo_service_failures(s->service, failure_view_row, &v) == MO_STORE_OK;",
+      "independent_reviewers": [
+        "performance"
+      ],
+      "line": 192,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "performance"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Use bounded metadata-only catalog queries and indexed id lookup; charge metadata work and validate only the selected export pair.",
+      "title": "Avoid full payload scans for failure metadata and lookup",
+      "why_it_matters": "Every catalog page and single-id pin scans/checksums unrelated retained payloads, up to64MiB, without request work charging.",
+      "validation_status": "confirmed",
+      "validation_reason": "A retained catalog near its allowed64MiB bound causes src/tools/protocol-export.c:192 to iterate all state/message blobs via store.c:642-660 and checksum each before the after filter at mcp-views.mo:1069, with no catalog work charge, while service.c:1130 repeats that full scan for a single pin id; latency incidence was not measured.",
+      "protected_subject": null
+    },
+    {
+      "#": 6,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "tests/test_service_store.c:163 --         return SQLITE_FULL;",
+        "tests/test_service_store.c:161-162 -- the only injected capture insertion error is guarded by crash_point == 13 || crash_point == 15 and INSERT INTO failure_state."
+      ],
+      "file": "tests/test_service_store.c",
+      "first_evidence": "tests/test_service_store.c:163 --         return SQLITE_FULL;",
+      "independent_reviewers": [
+        "testing"
+      ],
+      "line": 163,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Add table-driven TOOBIG/NOMEM/CONSTRAINT/CORRUPT/IOERR and failed-head-probe faults; verify ids, pair integrity, continuation or terminal behavior.",
+      "title": "Exercise diagnostic refusal classes and failed head probes",
+      "why_it_matters": "FULL is tested, but other clean refusal classes and failed post-rollback head probes can regress without detection.",
+      "validation_status": "confirmed",
+      "validation_reason": "Current diagnostic fault injection at tests/test_service_store.c:160-167 covers only FULL (including automatic rollback), leaving TOOBIG/NOMEM/CONSTRAINT versus CORRUPT/IOERR and successful-rollback/failed-head-probe branches of store.c:469-474 untested although introspection.md:677 requires each failure class; the existing head faults at lines183-190 exercise recovery paths rather than a diagnostic refusal health probe.",
+      "protected_subject": null
+    }
+  ],
+  "triage_groups": [
+    {
+      "title": "Retained failure catalog contract",
+      "findings": [
+        3,
+        4,
+        5
+      ],
+      "type": "apply-queue",
+      "context": "Catalog scans full payloads and omits promised signature/count semantics.",
+      "preferred_resolution": "Add bounded catalog metadata access, pass structured signatures, and report numeric omitted counts together.",
+      "why": "One metadata path supplies all three corrections."
+    }
+  ],
+  "pre_existing_findings": [],
+  "requirements_completeness": {
+    "plan": "docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md",
+    "group": "PR7/U4",
+    "requirements": [
+      {
+        "id": "R7",
+        "status": "partially addressed",
+        "detail": "Failure export exists; multi-page native fetch remains broken (#1)."
+      },
+      {
+        "id": "R11",
+        "status": "met in implementation",
+        "detail": "Capture, explicit refusal, atomic outcome classification and exactly-once handling present; refusal-class coverage remains incomplete (#6)."
+      },
+      {
+        "id": "R12",
+        "status": "partially addressed",
+        "detail": "Views/reporting exist; list counts/signatures and bounded catalog work need #3-5."
+      },
+      {
+        "id": "R13",
+        "status": "met in implementation",
+        "detail": "Count/byte retention and pair transactions present; byte-limit eviction coverage remains a testing gap."
+      },
+      {
+        "id": "R26",
+        "status": "partially addressed",
+        "detail": "Guide updated but dedicated fetch instructions contradict the feature (#2)."
+      },
+      {
+        "id": "R28",
+        "status": "partially addressed",
+        "detail": "Models/fuzz/scoped proof artifacts exist; final authoritative checks remain parent-owned and are not certified by this review."
+      },
+      {
+        "id": "U4",
+        "status": "partially addressed",
+        "detail": "Core implementation is present; six confirmed findings and final verification prevent completion."
+      }
+    ],
+    "unrequested_behavior_rules": []
+  },
+  "learnings": [],
+  "agent_native_gaps": [
+    "Embedded guide incorrectly denies implemented failure capture and export; included as a primary finding."
+  ],
+  "deployment_notes": [],
+  "residual_risks": [
+    "Capture model checks publication/counting under whole-pair atomicity abstraction; concrete SQLite crash boundaries rely on process tests. CBMC proves bounded slice arithmetic, not whole-record or SQLite behavior."
+  ],
+  "testing_gaps": [
+    "Retention tests use one-byte records, while sizing writes only one kind twice retained. Add a distinct-kind scenario that reaches the 64 MiB byte cap before 64 records, verifying whole-kind oldest-latest eviction and that an existing kind cannot evict another kind's first record to grow its latest.",
+    "The retained-context test asserts only context.length != 0; work/heap tests inspect class and configured budgets. A missing frame walk would still leave 'variables unavailable' text and satisfy these checks. Assert an expected live frame/span and top-frame variable for a defect, plus a live frame for cancellation and successful subsequent service work after cleanup."
+  ],
+  "coverage": {
+    "depth": "full",
+    "notes": [
+      "AGENTS.md is the instruction-file fallback criteria for all paths; no CODING_STANDARDS.md or REVIEW.md was found.",
+      "New untracked U4 files explicitly included by caller scope; list in untracked.txt.",
+      "Parent fixed original missing continuation failure selector, unsigned timestamp display, distinct saved-codec limit names, automatic-rollback handling, and resource-kind grouping during review. Validate against current source and do not repeat resolved findings.",
+      "Parent knows remaining fetch continuation, catalog scans, numeric omitted counts, structured signature and stale guide issues; fixes pending authoritative builds.",
+      "No builds or tests run by reviewers; parent owns authoritative verification.",
+      "Plan group explicitly PR7/U4 only; no whole-plan completeness check.",
+      "Cross-provider review was not run: caller explicitly required local-only review; an independent local adversarial reviewer covered that lens.",
+      "Five original findings were fixed by the parent during review and verified by current-source inspection; they are recorded in resolved_during_review, not the apply queue.",
+      "One maintainability line-count finding was rejected because no project limit or concrete harmful consequence was established.",
+      "Twelve missing first_evidence values were backfilled from full reviewer artifact evidence before mechanics; no confidence promotions occurred."
+    ],
+    "validation": {
+      "confirmed": 6,
+      "rejected": 0,
+      "unresolved": 0,
+      "malformed": 0,
+      "failed": 0,
+      "shortcut_skipped": 0,
+      "batch_outcome": "verdicts received within bound"
+    },
+    "resolved_during_review": {
+      "Include failure selector in export continuation": "runtime/mcp-views.mo:1019-1022 constructs next with kind and adds the selected failure id.",
+      "Preserve the actual saved-codec limit in signatures": "src/heap/saved.c:424-433 returns distinct depth/node statuses; src/vm/service.c:782-788 records their distinct names. Focused regressions reported by caller; no new execution in review.",
+      "Render failure arrival times as signed timestamps": "src/tools/protocol-export.c:175-180 recovers signed arrival and calls add_signed; line202 calls add_signed for refusals.",
+      "A SQLite automatic rollback stops an otherwise usable service": "src/host/store.c:466 accepts already-autocommit rollback, retaining allowed error classification and head health probe at472-475.",
+      "One resource-failing handler creates new retention kinds at each allocation site": "src/vm/service.c:884-888 adds location only for defect class0."
+    },
+    "rejected_findings": {
+      "Capture implementation pushes service.c beyond the review size limit": "Rejected: crossing a persona line-count threshold alone does not establish a consequential maintainability defect or benefit worth adding a new internal interface. AGENTS.md sets no 1000-line requirement. Current capture helper is cohesive; no concrete coupling bug was demonstrated."
+    },
+    "first_evidence_backfilled": 12,
+    "quote_gate_demotions": 0,
+    "suppressed_by_confidence": {},
+    "mode_aware_demotions": 0,
+    "failed_reviewers": [],
+    "review_policy": {
+      "sources": [],
+      "removed": 0,
+      "regraded": 0,
+      "not_applied": []
+    },
+    "execution": "Read-only source inspection; no reviewer builds or tests."
+  },
+  "peer": {
+    "outcome": "in-process-fallback",
+    "coverage": "Cross-provider review was not run: caller explicitly required local-only review; an independent local adversarial reviewer covered that lens."
+  },
+  "artifact_path": "build/failure-capture/review",
+  "run_id": "u4-review"
+}

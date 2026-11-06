@@ -1,0 +1,12 @@
+{
+  "resolved_during_review": {
+    "Include failure selector in export continuation": "runtime/mcp-views.mo:1019-1022 constructs next with kind and adds the selected failure id.",
+    "Preserve the actual saved-codec limit in signatures": "src/heap/saved.c:424-433 returns distinct depth/node statuses; src/vm/service.c:782-788 records their distinct names. Focused regressions reported by caller; no new execution in review.",
+    "Render failure arrival times as signed timestamps": "src/tools/protocol-export.c:175-180 recovers signed arrival and calls add_signed; line202 calls add_signed for refusals.",
+    "A SQLite automatic rollback stops an otherwise usable service": "src/host/store.c:466 accepts already-autocommit rollback, retaining allowed error classification and head health probe at472-475.",
+    "One resource-failing handler creates new retention kinds at each allocation site": "src/vm/service.c:884-888 adds location only for defect class0."
+  },
+  "rejected": {
+    "Capture implementation pushes service.c beyond the review size limit": "Rejected: crossing a persona line-count threshold alone does not establish a consequential maintainability defect or benefit worth adding a new internal interface. AGENTS.md sets no 1000-line requirement. Current capture helper is cohesive; no concrete coupling bug was demonstrated."
+  }
+}

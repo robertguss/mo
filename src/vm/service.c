@@ -3,6 +3,9 @@
 #include <string.h>
 
 #include "base/binary.h"
+#include "base/export.h"
+#include "base/failure.h"
+#include "base/runtime-identity.h"
 
 struct service_message {
     struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS - 2];
@@ -40,6 +43,10 @@ struct mo_service_loop {
     uint64_t event_number;
     uint32_t event_head, event_count;
     uint32_t head, count, failure_count, restart_count;
+    uint64_t capture_id;
+    const char *capture_refusal;
+    bool capture_unsafe;
+    enum mo_saved_status saved_status;
     bool running;
 };
 
@@ -117,17 +124,24 @@ static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind
                                      .function = MO_NO_INDEX,
                                      .handler = handler_name(s, handler),
                                      .restart = restart};
+    if (kind == MO_SERVICE_FAILURE) {
+        event.record_id = s->capture_id;
+        event.record_unavailable = s->capture_refusal;
+    }
     uint32_t slot = (s->event_head + s->event_count) % MO_LIMIT_SERVICE_EVENTS;
     if (s->event_count == MO_LIMIT_SERVICE_EVENTS)
         s->event_head = (s->event_head + 1) % MO_LIMIT_SERVICE_EVENTS;
     else
         s->event_count++;
-    s->events[slot] = (struct mo_service_event_summary){.number = ++s->event_number,
-                                                        .kind = kind,
-                                                        .reason = reason,
-                                                        .time = time,
-                                                        .function = handler,
-                                                        .restart = restart};
+    s->events[slot] =
+        (struct mo_service_event_summary){.number = ++s->event_number,
+                                          .kind = kind,
+                                          .reason = reason,
+                                          .time = time,
+                                          .function = handler,
+                                          .restart = restart,
+                                          .record_id = event.record_id,
+                                          .record_unavailable = event.record_unavailable};
     s->hooks.event(&event, s->hooks.context);
 }
 
@@ -234,7 +248,9 @@ static bool saved_copy(struct mo_service_loop *s, uint32_t type, struct mo_cell 
         return true;
     }
     mo_buffer_clear(encoded);
-    return mo_value_encode(s->process->heap, type, value, encoded) &&
+    enum mo_saved_status status = mo_value_encode_status(s->process->heap, type, value, encoded);
+    s->saved_status = status;
+    return status == MO_SAVED_OK &&
            mo_value_decode(s->process->heap, type, encoded->bytes, encoded->length, out);
 }
 
@@ -714,6 +730,215 @@ static void drain(struct mo_service_loop *s, bool keep) {
         s->head = (head + old_count) % MO_LIMIT_SERVICE_MAILBOX;
 }
 
+static bool capture_string(struct mo_buffer *out, const char *text) {
+    return mo_failure_text(out, text, strlen(text));
+}
+
+struct captured_variables {
+    struct mo_buffer *context;
+    struct mo_heap *heap;
+    const struct mo_defect_frame *top;
+    bool unavailable;
+};
+static bool capture_variable(const struct mo_defect_variable *v, void *context) {
+    struct captured_variables *c = context;
+    if (v->frame != c->top)
+        return false;
+    struct mo_buffer value;
+    mo_buffer_init(&value, MO_LIMIT_FAILURE_VALUE_BYTES);
+    bool rendered = mo_value_print_literal(c->heap, v->type, v->value, &value);
+    bool ok = mo_buffer_append_text(c->context, "variable ") &&
+              mo_buffer_append(c->context, v->name, v->name_length) &&
+              mo_buffer_append_text(c->context, rendered ? " available: " : " unavailable: ") &&
+              (!rendered || mo_buffer_append(c->context, value.bytes, value.length)) &&
+              mo_buffer_append_byte(c->context, '\n');
+    c->unavailable = c->unavailable || !rendered;
+    mo_buffer_free(&value);
+    return ok;
+}
+
+/* The store binds the id; the payload must decode once it does. */
+static bool capture_readable(struct mo_buffer *message) {
+    struct mo_failure_record record;
+    message->bytes[MO_FAILURE_ID_OFFSET] = 1;
+    bool readable = mo_failure_read(message->bytes, message->length, &record);
+    message->bytes[MO_FAILURE_ID_OFFSET] = 0;
+    return readable;
+}
+
+static void capture_failure(struct mo_service_loop *s, const struct service_message *m,
+                            enum mo_service_status status, const struct mo_defect *defect,
+                            bool state_size) {
+    s->capture_id = 0;
+    s->capture_unsafe = false;
+    s->capture_refusal = "out of memory for the record";
+    if (s->store == NULL || s->current_encoding.length == 0) {
+        s->capture_refusal = "persistent state unavailable";
+        return;
+    }
+    struct mo_buffer metadata, context, kind;
+    mo_buffer_init(&metadata, MO_LIMIT_FAILURE_MESSAGE_BYTES);
+    mo_buffer_init(&context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
+    /* An over-long kind still fits here, so its refusal names the kind, not memory. */
+    mo_buffer_init(&kind, MO_LIMIT_FAILURE_MESSAGE_BYTES);
+    uint32_t function = message_function(s, m);
+    struct mo_bytecode_string name = handler_name(s, function);
+    uint32_t count = m->timer ? 0 : s->descriptor->tools[m->handler].argument_count;
+    bool readonly = !m->timer && s->descriptor->tools[m->handler].read_only;
+    const char *reason = state_size                  ? "saved state size"
+                         : status == MO_SERVICE_WORK ? "work limit"
+                         : defect->reason == NULL    ? "native memory"
+                                                     : defect->reason;
+    const char *saved_limit = s->saved_status == MO_SAVED_DEPTH   ? "MO_LIMIT_SAVED_DEPTH"
+                              : s->saved_status == MO_SAVED_NODES ? "MO_LIMIT_SAVED_NODES"
+                                                                  : "MO_LIMIT_SAVED_BYTES";
+    const char *limit = state_size                  ? saved_limit
+                        : status == MO_SERVICE_WORK ? "MO_LIMIT_SERVICE_WORK"
+                        : defect->limit_name == NULL
+                            ? (status == MO_SERVICE_MEMORY ? "native allocation" : "")
+                            : defect->limit_name;
+    uint64_t limit_value = state_size ? (s->saved_status == MO_SAVED_DEPTH   ? MO_LIMIT_SAVED_DEPTH
+                                         : s->saved_status == MO_SAVED_NODES ? MO_LIMIT_SAVED_NODES
+                                                                             : MO_LIMIT_SAVED_BYTES)
+                           : status == MO_SERVICE_WORK ? MO_LIMIT_SERVICE_WORK
+                                                       : defect->limit;
+    uint8_t class = state_size                                                    ? 3
+                    : status == MO_SERVICE_WORK                                   ? 1
+                    : (status == MO_SERVICE_MEMORY || defect->limit_name != NULL) ? 2
+                                                                                  : 0;
+    struct mo_vm_span span =
+        defect->reason == NULL ? (struct mo_vm_span){.file = MO_NO_INDEX} : defect->span;
+    uint32_t location = defect->frames == NULL ? function : defect->frames->function;
+    enum mo_failure_context context_status = MO_FAILURE_CONTEXT_COMPLETE;
+    /* Walk live frames before normal cleanup, including cancelled calls. */
+    size_t offset = s->process->depth == 0 ? SIZE_MAX : s->process->top;
+    unsigned frames = 0;
+    while (offset != SIZE_MAX && frames < MO_LIMIT_FAILURE_FRAMES) {
+        const struct mo_vm_frame *f = (const struct mo_vm_frame *)(s->process->stack + offset);
+        struct mo_vm_span at = mo_vm_span(s->process->file, f->function, f->pc);
+        bool ok =
+            mo_buffer_append_text(&context, "frame ") &&
+            mo_buffer_append_uint(&context, f->function) &&
+            mo_buffer_append_text(&context, " file ") && mo_buffer_append_uint(&context, at.file) &&
+            mo_buffer_append_text(&context, " span ") &&
+            mo_buffer_append_uint(&context, at.start) && mo_buffer_append_text(&context, "..") &&
+            mo_buffer_append_uint(&context, at.end) && mo_buffer_append_byte(&context, '\n');
+        if (!ok) {
+            context_status = MO_FAILURE_CONTEXT_UNAVAILABLE;
+            break;
+        }
+        offset = f->previous;
+        frames++;
+    }
+    bool truncated = offset != SIZE_MAX;
+    if (defect->frames != NULL && defect->process != NULL) {
+        struct captured_variables variables = {&context, s->process->heap, defect->frames, false};
+        enum mo_defect_variables_result visited =
+            mo_visit_defect_variables(s->process, defect, MO_LIMIT_FAILURE_VARIABLES,
+                                      MO_LIMIT_FAILURE_CONTEXT_WORK, capture_variable, &variables);
+        truncated = truncated || visited != MO_DEFECT_VARIABLES_COMPLETE || variables.unavailable;
+    } else if (!mo_buffer_append_text(&context, "variables unavailable\n"))
+        context_status = MO_FAILURE_CONTEXT_UNAVAILABLE;
+    else
+        truncated = true;
+    /* Unavailable is never downgraded to truncated. */
+    if (truncated && context_status == MO_FAILURE_CONTEXT_COMPLETE)
+        context_status = MO_FAILURE_CONTEXT_TRUNCATED;
+    bool ok = mo_binary_write(&metadata, MO_FAILURE_VERSION, 1) &&
+              mo_binary_write(&metadata, 0, MO_FAILURE_ID_BYTES) &&
+              mo_binary_write(&metadata, s->sequence, 8) &&
+              mo_binary_write(&metadata, (uint64_t)m->arrival, 8) &&
+              mo_binary_write(&metadata, m->timer, 1) &&
+              mo_binary_write(&metadata, m->handler, 4) &&
+              mo_failure_text(&metadata, name.bytes, name.length) &&
+              mo_binary_write(&metadata, readonly, 1) && mo_binary_write(&metadata, count, 4);
+    for (uint32_t i = 0; ok && i < count; i++) {
+        size_t at = metadata.length;
+        ok = mo_binary_write(&metadata, 0, 4);
+        size_t start = metadata.length;
+        if (ok) {
+            enum mo_saved_status encoded = mo_value_encode_diagnostic(
+                s->process->heap, s->descriptor->tools[m->handler].argument_types[i],
+                m->arguments[i], &metadata);
+            if (encoded != MO_SAVED_OK) {
+                s->capture_refusal = encoded == MO_SAVED_MEMORY ? "out of memory for the record"
+                                     : readonly                 ? "arguments could not be encoded"
+                                                                : "too large to record";
+                ok = false;
+            }
+        }
+        if (ok)
+            for (unsigned j = 0; j < 4; j++)
+                metadata.bytes[at + j] = (uint8_t)((metadata.length - start) >> (8 * j));
+    }
+    size_t tail = 10 + 4 + strlen(reason) + 4 + strlen(limit) + 16 + 48 + 32 + 4 +
+                  strlen(mo_runtime_build_label()) + 32 + 1 + 4 + context.length;
+    if (ok && tail > metadata.limit - metadata.length) {
+        s->capture_refusal = "too large to record";
+        ok = false;
+    }
+    uint8_t build[32], schema[32];
+    if (ok && (!mo_runtime_identity(build) ||
+               !mo_export_schema(s->current_encoding.bytes, s->current_encoding.length, schema))) {
+        s->capture_refusal = "runtime identity unavailable";
+        ok = false;
+    }
+    ok = ok && mo_binary_write(&metadata, 1, 1) && mo_binary_write(&metadata, class, 1) &&
+         capture_string(&metadata, reason) && capture_string(&metadata, limit) &&
+         mo_binary_write(&metadata, limit_value, 8) && mo_binary_write(&metadata, location, 4) &&
+         mo_binary_write(&metadata, span.file, 4) && mo_binary_write(&metadata, span.start, 4) &&
+         mo_binary_write(&metadata, span.end, 4) &&
+         mo_binary_write(&metadata, MO_LIMIT_SERVICE_WORK, 8) &&
+         mo_binary_write(&metadata, s->process->limits.heap_size, 8) &&
+         mo_binary_write(&metadata, s->process->limits.stack_size, 8) &&
+         mo_binary_write(&metadata, s->process->limits.call_depth, 8) &&
+         mo_binary_write(&metadata, MO_LIMIT_SAVED_BYTES, 8) &&
+         mo_binary_write(&metadata, s->image_key, 8) && mo_buffer_append(&metadata, build, 32) &&
+         capture_string(&metadata, mo_runtime_build_label()) &&
+         mo_buffer_append(&metadata, schema, 32) &&
+         mo_binary_write(&metadata, (uint64_t)context_status, 1) &&
+         mo_failure_text(&metadata, context.bytes, context.length);
+    ok = ok && mo_buffer_append(&kind, name.bytes, name.length) &&
+         mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, class) &&
+         mo_buffer_append_byte(&kind, ':') && mo_buffer_append_text(&kind, reason) &&
+         mo_buffer_append_byte(&kind, ':') && mo_buffer_append_text(&kind, limit);
+    if (ok && class == 0)
+        ok = mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, location) &&
+             mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, span.file) &&
+             mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, span.start) &&
+             mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, span.end);
+    ok = ok && mo_buffer_append_byte(&kind, 0);
+    if (ok && kind.length - 1 > MO_LIMIT_FAILURE_KIND_BYTES) {
+        s->capture_refusal = "failure kind too long";
+        ok = false;
+    }
+    if (ok && metadata.length > MO_LIMIT_FAILURE_RECORD_BYTES - MO_LIMIT_FAILURE_ENVELOPE_BYTES -
+                                    s->current_encoding.length) {
+        s->capture_refusal = "too large to record";
+        ok = false;
+    }
+    if (ok && !capture_readable(&metadata)) {
+        s->capture_refusal = "record failed validation";
+        ok = false;
+    }
+    if (ok) {
+        struct mo_store_record state = {MO_STORE_FAILURE_STATE, s->sequence, s->image_key,
+                                        s->current_encoding.bytes, s->current_encoding.length};
+        struct mo_store_record message = {MO_STORE_FAILURE_MESSAGE, s->sequence, s->image_key,
+                                          metadata.bytes, metadata.length};
+        enum mo_store_capture_status result =
+            mo_store_capture(s->store, (const char *)kind.bytes, &state, &message, &s->capture_id);
+        s->capture_refusal = result == MO_STORE_CAPTURE_OK        ? NULL
+                             : result == MO_STORE_CAPTURE_DAMAGED ? "diagnostic records damaged"
+                             : result == MO_STORE_CAPTURE_UNSAFE  ? "store outcome uncertain"
+                                                                  : "the store refused the record";
+        s->capture_unsafe = result == MO_STORE_CAPTURE_UNSAFE;
+    }
+    mo_buffer_free(&metadata);
+    mo_buffer_free(&context);
+    mo_buffer_free(&kind);
+}
+
 static void supervise(struct mo_service_loop *s, enum mo_service_status reason,
                       struct mo_service_time time) {
     s->failure_count =
@@ -748,6 +973,9 @@ bool mo_service_step(struct mo_service_loop *s) {
     struct mo_service_response reply;
     call_message(s, &message, s->state, &reply, &defect);
     bool returned = reply.status == MO_SERVICE_OK;
+    s->capture_id = 0;
+    s->capture_refusal = NULL;
+    s->capture_unsafe = false;
     uint32_t handler = message_function(s, &message);
     struct mo_service_time time = sample_clock(s);
     if (reply.status == MO_SERVICE_OK) {
@@ -758,6 +986,8 @@ bool mo_service_step(struct mo_service_loop *s) {
         if (reply.updated && !saved_copy(s, s->descriptor->state_type, state, &state, &encoded)) {
             reply.status = MO_SERVICE_MEMORY;
             reply.updated = false;
+            capture_failure(s, &message, reply.status, &defect,
+                            s->saved_status != MO_SAVED_OK && s->saved_status != MO_SAVED_MEMORY);
             log_event(s, MO_SERVICE_FAILURE, reply.status, time, NULL, handler, 0);
         } else if (reply.updated && !persist(s, &message, &encoded)) {
             mo_value_drop(s->process->heap, s->descriptor->state_type, state);
@@ -775,8 +1005,13 @@ bool mo_service_step(struct mo_service_loop *s) {
             s->state = state;
         }
     } else {
+        capture_failure(s, &message, reply.status, &defect, false);
         reply.defect = defect.reason == NULL ? NULL : &defect;
         log_event(s, MO_SERVICE_FAILURE, reply.status, time, reply.defect, handler, 0);
+    }
+    if (s->capture_unsafe) {
+        s->running = false;
+        log_event(s, MO_SERVICE_STOP, MO_SERVICE_STORE, time, NULL, MO_NO_INDEX, 0);
     }
     struct mo_cell result = reply.value;
     if (returned && reply.status != MO_SERVICE_OK)
@@ -786,8 +1021,13 @@ bool mo_service_step(struct mo_service_loop *s) {
         mo_value_drop(s->process->heap, reply.type, result);
     finish_call(s->process);
     drop_message(s, &message);
-    if (!returned || reply.status == MO_SERVICE_MEMORY)
-        supervise(s, reply.status, time);
+    if (!returned || reply.status == MO_SERVICE_MEMORY) {
+        if (s->capture_unsafe)
+            s->failure_count = record(s->failures, s->failure_count, time.elapsed,
+                                      MO_LIMIT_SERVICE_FAILURE_WINDOW_US);
+        else
+            supervise(s, reply.status, time);
+    }
     if (!s->running)
         drain(s, false);
     if (s->running)
@@ -814,6 +1054,9 @@ struct mo_service_observation mo_service_observe(const struct mo_service_loop *s
                                                  .encoded_bytes = s->current_encoding.length,
                                                  .encoded_capacity = s->current_encoding.capacity};
     observation.observed_elapsed = s->last_clock;
+    observation.retained_available =
+        s->store != NULL && mo_store_failure_stats(s->store, &observation.retained_failures,
+                                                   &observation.evicted_kinds) == MO_STORE_OK;
     memcpy(observation.failure_times, s->failures, sizeof s->failures);
     memcpy(observation.restart_times, s->restarts, sizeof s->restarts);
     return observation;
@@ -870,4 +1113,61 @@ bool mo_service_log_entry(const struct mo_service_loop *s, uint32_t index,
         return false;
     *out = s->log[index];
     return true;
+}
+
+enum mo_store_status mo_service_failures(const struct mo_service_loop *s,
+                                         bool (*consume)(const struct mo_store_failure *, void *),
+                                         void *context) {
+    return s->store == NULL ? MO_STORE_IO : mo_store_failures(s->store, consume, context);
+}
+
+enum mo_store_status mo_service_failure_catalog(const struct mo_service_loop *s, uint64_t after,
+                                                bool (*consume)(const struct mo_store_failure *,
+                                                                void *),
+                                                void *context, uint32_t *omitted) {
+    return s->store == NULL ? MO_STORE_IO
+                            : mo_store_failure_catalog(s->store, after, consume, context, omitted);
+}
+
+bool mo_service_failure_export(const struct mo_service_loop *s, uint64_t id,
+                               struct mo_buffer *out) {
+    return s->store != NULL && mo_store_failure_export(s->store, id, out);
+}
+
+struct failure_pin {
+    uint64_t failure, now;
+    struct mo_export_pin *pin;
+    struct mo_export_identity identity;
+    bool found;
+};
+static bool pin_failure(const struct mo_store_failure *record, void *context) {
+    struct failure_pin *p = context;
+    if (record->id != p->failure)
+        return true;
+    struct mo_failure_record metadata;
+    if (!mo_failure_read(record->message.bytes, record->message.length, &metadata) ||
+        metadata.id != record->id)
+        return false;
+    char label[MO_LIMIT_EXPORT_LABEL_BYTES + 1];
+    memcpy(label, metadata.label.bytes, metadata.label.length);
+    label[metadata.label.length] = 0;
+    p->identity.label = label;
+    memcpy(p->identity.build, metadata.build, 32);
+    p->identity.program = metadata.program ^ ((uint64_t)p->identity.service << 32);
+    p->identity.sequence = record->state.sequence;
+    p->identity.encoded_sequence = record->state.sequence;
+    /* One failure pin at a time: release the old one only once its replacement is found. */
+    mo_export_release(p->pin);
+    p->found =
+        mo_export_create_failure(p->pin, &p->identity, record->state.bytes, record->state.length,
+                                 record->message.bytes, record->message.length, p->now);
+    return p->found;
+}
+bool mo_service_pin_failure(const struct mo_service_loop *s, uint64_t failure,
+                            struct mo_export_pin *pin, const struct mo_export_identity *identity,
+                            uint64_t now) {
+    struct failure_pin context = {failure, now, pin, *identity, false};
+    return s->store != NULL &&
+           mo_store_failure_get(s->store, failure, pin_failure, &context) == MO_STORE_OK &&
+           context.found;
 }

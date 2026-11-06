@@ -1,0 +1,1 @@
+kill loop: seed=20261106 kills=100 mid_commit=16 folders=1 calls=1669 answered=1591 refused=20 unknown=78 result=pass seconds=197

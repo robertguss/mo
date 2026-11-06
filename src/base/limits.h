@@ -329,6 +329,24 @@ struct mo_limits {
 
 /* Durable records and bounded value/schema walks, independent of native layout. */
 #define MO_LIMIT_SAVED_BYTES (16 << 20)
+
+/* Diagnostic storage is independent of application admission and recovery. */
+#define MO_LIMIT_FAILURE_MESSAGE_BYTES (1 << 20)
+#define MO_LIMIT_FAILURE_RECORD_BYTES (MO_LIMIT_SAVED_BYTES + MO_LIMIT_FAILURE_MESSAGE_BYTES)
+/* Two MOST frames, pair lengths, maximum MOEX header and label. */
+#define MO_LIMIT_FAILURE_ENVELOPE_BYTES 512
+#define MO_LIMIT_FAILURE_VIEW_RECORDS 8
+#define MO_LIMIT_FAILURE_RECORDS 64
+#define MO_LIMIT_FAILURE_STORE_BYTES (64 << 20)
+#define MO_LIMIT_FAILURE_KIND_BYTES 1024
+#define MO_LIMIT_FAILURE_CONTEXT_BYTES (64 << 10)
+#define MO_LIMIT_FAILURE_CONTEXT_WORK (1 << 20)
+/* Context walks at most this many live frames and top-frame variables, and a
+ * variable whose rendered value needs more bytes is marked unavailable. */
+#define MO_LIMIT_FAILURE_FRAMES 8
+#define MO_LIMIT_FAILURE_VARIABLES 32
+#define MO_LIMIT_FAILURE_VALUE_BYTES 1024
+#define MO_LIMIT_FAILURE_SCRATCH (1 << 20)
 #define MO_LIMIT_SAVED_DEPTH 128
 #define MO_LIMIT_SAVED_NODES (1 << 20)
 #define MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES 100

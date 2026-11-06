@@ -52,7 +52,7 @@ deletion. The parent directory must already exist. Durability depends on the
 filesystem and device honoring synchronization. No power-loss test or remote
 backup guarantee is implied by the process-crash tests.
 
-The database contains three strict tables:
+The recovery database contains three strict tables:
 
 ```sql
 CREATE TABLE head(id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER NOT NULL) STRICT;
@@ -87,8 +87,7 @@ already covers the head writes nothing.
 
 For each successful state-changing handler, the runtime encodes the message,
 commits it, and takes a snapshot when due before publishing state or replying.
-Read-only replies, application `Error` replies and failed handlers write
-nothing. A write failure stops the service with `MO_SERVICE_STORE`; it does
+Read-only successful replies and application `Error` replies write nothing. Failed handlers may write a separate diagnostic pair, including read-only failures; they never advance the recovery head or write the recovery log. A write failure stops the service with `MO_SERVICE_STORE`; it does
 not increment D308's handler-failure counter. The commit outcome can be
 uncertain. Reopening recovers any committed message, so callers cannot assume
 that retrying the same request is idempotent. Request deduplication is not
@@ -242,3 +241,16 @@ reply, and during an uncommitted snapshot, a rolled-back append, a failed due
 snapshot, payloads at the size limit, shared values that would expand past the
 heap on recovery, and Map and Set recovery through a freshly loaded image. Fuzz targets cover raw and
 checksum-repaired frames, full service recovery and typed value payloads.
+
+## Retained diagnostics
+
+The `failure` and `failure_state` strict tables specified in
+[introspection](introspection.md#6-failure-records) are created in the same open
+transaction as the recovery tables. Recovery schemas and `user_version` are unchanged.
+Kinds 3 and 4 use the existing MOST envelope and bind pre-state and message bytes
+atomically to a retained id. The message has its own versioned, bounded payload reader.
+A clean resource refusal rolls back and verifies the connection can read `head`.
+Damaged diagnostic rows also produce a clean refusal. They never stop the service,
+and reading them reports `MO_STORE_CORRUPT`. A failed rollback or commit error poisons
+the handle and requires close/recovery.
+Record ids are published only after successful commit. Snapshots never prune diagnostics.

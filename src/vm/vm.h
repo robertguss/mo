@@ -2,6 +2,7 @@
 #ifndef MO_VM_H
 #define MO_VM_H
 
+#include "base/export.h"
 #include "bytecode/bytecode.h"
 #include "heap/heap.h"
 #include "host/host.h"
@@ -180,6 +181,8 @@ struct mo_service_event {
     struct mo_bytecode_string handler;
     /* This restart's count in the window; 0 on other events. */
     uint32_t restart;
+    uint64_t record_id;
+    const char *record_unavailable;
 };
 struct mo_service_response {
     uint64_t id;
@@ -244,7 +247,9 @@ struct mo_service_observation {
     uint64_t restart_times[MO_LIMIT_SERVICE_RESTARTS];
     size_t heap_used, heap_peak, stack_capacity, stack_limit, encoded_bytes, encoded_capacity;
     uint32_t pending, failures, restarts, timers, events;
-    bool running, persistent;
+    bool running, persistent, retained_available;
+    uint32_t retained_failures;
+    uint64_t evicted_kinds;
 };
 struct mo_service_message_summary {
     int64_t arrival;
@@ -264,6 +269,8 @@ struct mo_service_event_summary {
     enum mo_service_status reason;
     struct mo_service_time time;
     uint32_t function, restart;
+    uint64_t record_id;
+    const char *record_unavailable;
 };
 MO_MUST_USE struct mo_service_observation mo_service_observe(const struct mo_service_loop *service);
 MO_MUST_USE bool mo_service_encoded_state(const struct mo_service_loop *service,
@@ -274,6 +281,24 @@ MO_MUST_USE bool mo_service_timer_entry(const struct mo_service_loop *service, u
                                         struct mo_service_timer_summary *out);
 MO_MUST_USE bool mo_service_event_entry(const struct mo_service_loop *service, uint32_t index,
                                         struct mo_service_event_summary *out);
+
+MO_MUST_USE enum mo_store_status
+mo_service_failures(const struct mo_service_loop *service,
+                    bool (*consume)(const struct mo_store_failure *, void *), void *context);
+
+MO_MUST_USE enum mo_store_status
+mo_service_failure_catalog(const struct mo_service_loop *service, uint64_t after,
+                           bool (*consume)(const struct mo_store_failure *, void *), void *context,
+                           uint32_t *omitted);
+
+MO_MUST_USE bool mo_service_failure_export(const struct mo_service_loop *service, uint64_t id,
+                                           struct mo_buffer *out);
+
+/* Replaces *pin only once the record is found and decodes; a missing or unreadable
+ * record leaves it unchanged. A failed copy after that leaves it released. */
+MO_MUST_USE bool mo_service_pin_failure(const struct mo_service_loop *service, uint64_t failure,
+                                        struct mo_export_pin *pin,
+                                        const struct mo_export_identity *identity, uint64_t now);
 
 /* Committed scalar metadata since the last snapshot, in sequence order. */
 MO_MUST_USE bool mo_service_log_entry(const struct mo_service_loop *service, uint32_t index,

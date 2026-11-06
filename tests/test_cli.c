@@ -162,7 +162,34 @@ static void parse_fetch(void) {
     CHECK(cli.command == MO_COMMAND_FETCH && strcmp(cli.output, "state.moex") == 0);
     CHECK(strcmp(cli.fetch_url, args[2]) == 0 && strcmp(cli.fetch_token, "TOKEN") == 0);
     CHECK(!mo_cli_parse(8, args, &cli, &error));
-    CHECK(strcmp(error, "usage: mo fetch URL --export state --out FILE --token-env NAME") == 0);
+    CHECK(strcmp(error,
+                 "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
+    CHECK(mo_cli_parse(9, args, &cli, &error) && cli.fetch_failure == 0);
+    const char *failure[] = {"mo",           "fetch",        "http://localhost:8080/mcp",
+                             "--export",     "failure",      "42",
+                             "--out",        "failure.moex", "--token-env",
+                             "FAILURE_TOKEN"};
+    CHECK(mo_cli_parse(10, failure, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_FETCH && cli.fetch_failure == 42);
+    CHECK(strcmp(cli.fetch_url, failure[2]) == 0 && strcmp(cli.output, "failure.moex") == 0);
+    CHECK(strcmp(cli.fetch_token, "FAILURE_TOKEN") == 0);
+    failure[5] = "9223372036854775807";
+    CHECK(mo_cli_parse(10, failure, &cli, &error) && cli.fetch_failure == INT64_MAX);
+    const char *refused_ids[] = {
+        "", "0", "000", "4x", "-1", "+1", "9223372036854775808", "18446744073709551616"};
+    for (size_t i = 0; i < sizeof refused_ids / sizeof *refused_ids; i++) {
+        failure[5] = refused_ids[i];
+        CHECK(!mo_cli_parse(10, failure, &cli, &error));
+        CHECK(strcmp(error, "failure id must be positive") == 0);
+    }
+    failure[5] = "42";
+    CHECK(!mo_cli_parse(9, failure, &cli, &error));
+    CHECK(strcmp(error,
+                 "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
+    failure[4] = "state";
+    CHECK(!mo_cli_parse(10, failure, &cli, &error));
+    CHECK(strcmp(error,
+                 "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
 }
 
 static void parse_serve(void) {

@@ -33,6 +33,7 @@ struct mo_cli {
     struct mo_limits limits;
     uint32_t calls, seconds;
     const char *fetch_url, *fetch_token;
+    uint64_t fetch_failure;
     const char *module;
     const char *output; /* emit's -o file */
     uint16_t port;

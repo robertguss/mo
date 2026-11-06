@@ -49,6 +49,11 @@ int main(int argc, char **argv) {
         return mo_test_failures != 0;
     }
 
+    char command[] = "mo", check[] = "check", source[] = "examples/greet.mo";
+    char *check_arguments[] = {command, check, source, NULL};
+    CHECK(mo_test_runtime_main(3, check_arguments) == 0);
+    uint8_t unused_digest[32];
+    CHECK(!mo_runtime_identity(unused_digest));
     vector("", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     vector("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     vector("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",

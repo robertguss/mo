@@ -22,13 +22,20 @@ def main():
     out = ROOT / "build/models"
     out.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / "models/Export.tla", out / "Export.tla")
-    for config, violation in [("Export", None), ("ExportProgress", None),
+    shutil.copyfile(ROOT / "models/Capture.tla", out / "Capture.tla")
+    for config, violation in [("Capture", None), ("CaptureBadPublish", "PairComplete"),
+                              ("CaptureBadCount", "CountedOnce"),
+                              ("CaptureBadRecovery", "RecoveryUntouched"),
+                              ("CaptureBadUnsafe", "NoUnsafeContinue"),
+                              ("CaptureBadRetention", "Retention"),
+                              ("CaptureBadRepeat", "RepeatKeepsOthers"),
+                              ("Export", None), ("ExportProgress", None),
                               ("ExportBadGeneration", "NoMixedGeneration"),
                               ("ExportBadRelease", "NoReleasedRead")]:
         command = ["java", "-XX:+UseParallelGC", "-Xmx512m", "-cp", str(jar.resolve()),
                    "tlc2.TLC", "-workers", "1", "-seed", "1", "-metadir", str(out / config),
                    "-config", str(ROOT / "models" / (config + ".cfg")),
-                   str(out / "Export.tla")]
+                   str(out / ("Capture.tla" if config.startswith("Capture") else "Export.tla"))]
         result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, timeout=120)
         (out / (config + ".log")).write_bytes(result.stdout)

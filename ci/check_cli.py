@@ -1507,7 +1507,7 @@ SERVE_EDITS = (("(state + amount, state + amount)", "(state + amount, state * am
                ("## Reads the count.", "## Reads the total."),
                ("## Reads the count.", "\n## Reads the count."))
 SERVE_TOOL_PAGE = 32
-SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export"]
+SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export", "mo-failures"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -3827,7 +3827,8 @@ def guide_claims(binary):
     # The live operator driver exercises these guide claims through the real endpoint.
     for name in SERVE_OPERATOR_NAMES:
         assert f"`{name}`" in guide
-    assert "Fetch is available on the service host. Retained failure records and offline replay/query tools are not available yet." in guide
+    assert "Offline replay/query tools are not available yet." in guide
+    assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]
@@ -4325,9 +4326,12 @@ def check(binary):
             'invalid port (expected a decimal integer from 0 to 65535): "--port" "65536"')
     mistake(["serve", good, "--port", "0", "--data", "-x"],
             'flag needs a nonempty value: "--data" "-x"')
-    mistake(["fetch"], 'usage: mo fetch URL --export state --out FILE --token-env NAME')
+    mistake(["fetch"], 'usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME')
     mistake(["fetch", "http://localhost:80/mcp", "--export", "failure", "--out", "unused", "--token-env", "TOKEN"],
-            'usage: mo fetch URL --export state --out FILE --token-env NAME')
+            'usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME')
+    for failure_id in ["0", "", "x1", "9223372036854775808"]:
+        mistake(["fetch", "http://localhost:80/mcp", "--export", "failure", failure_id, "--out",
+                 "unused", "--token-env", "TOKEN"], "failure id must be positive")
     mistake(["serve", good, "--data", "state"], 'serve needs --port N: "serve"')
     mistake(["serve", good, "--port", "0"], 'serve needs --data DIR: "serve"')
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",

@@ -328,6 +328,7 @@ enum mo_fetch_read_status mo_fetch_read(struct mo_image *image, uint32_t functio
 }
 
 struct fetch_endpoint {
+    uint64_t failure;
     const char *host, *port, *token;
     uint64_t end, last_sent;
 };
@@ -343,17 +344,25 @@ static int request_page(struct fetch_endpoint *endpoint, const char *id, size_t 
         return -1;
     char body[512], request[2048];
     int n;
+    char selector[96];
+    if (endpoint->failure == 0)
+        n = snprintf(selector, sizeof selector, "\"kind\":\"state\"");
+    else
+        n = snprintf(selector, sizeof selector, "\"kind\":\"failure\",\"failure\":%llu",
+                     (unsigned long long)endpoint->failure);
+    if (n <= 0 || (size_t)n >= sizeof selector)
+        return -1;
     if (offset == 0)
-        n = snprintf(
-            body, sizeof body,
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/"
-            "call\",\"params\":{\"name\":\"mo-export\",\"arguments\":{\"kind\":\"state\"}}}");
+        n = snprintf(body, sizeof body,
+                     "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/"
+                     "call\",\"params\":{\"name\":\"mo-export\",\"arguments\":{%s}}}",
+                     selector);
     else
         n = snprintf(body, sizeof body,
                      "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/"
-                     "call\",\"params\":{\"name\":\"mo-export\",\"arguments\":{\"kind\":\"state\","
-                     "\"export\":\"%s\",\"offset\":%zu}}}",
-                     id, offset);
+                     "call\",\"params\":{\"name\":\"mo-export\",\"arguments\":{%s,\"export\":\"%"
+                     "s\",\"offset\":%zu}}}",
+                     selector, id, offset);
     if (n <= 0 || (size_t)n >= sizeof body)
         return -1;
     int fd = connect_local(endpoint->host, endpoint->port, endpoint->end);
@@ -442,12 +451,17 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
         ok = fd >= 0 && fchmod(fd, 0600) == 0;
     }
     bool created = fd >= 0;
-    (void)fputs("mo fetch: maximum state needs 2049 pages, about 103 seconds at 20 calls/second\n",
+    (void)fputs(cli->fetch_failure != 0
+                    ? "mo fetch: maximum failure pair needs 2176 pages, about 109 seconds at 20 "
+                      "calls/second\n"
+                    : "mo fetch: maximum state needs 2049 pages, about 103 seconds at 20 "
+                      "calls/second\n",
                 errors);
     struct mo_export_consumer consumer = {0};
     enum mo_fetch_read_status status = MO_FETCH_REFUSED;
     char export_id[33] = "";
-    struct fetch_endpoint endpoint = {.host = host, .port = port, .token = token, .end = end};
+    struct fetch_endpoint endpoint = {
+        .failure = cli->fetch_failure, .host = host, .port = port, .token = token, .end = end};
     int pending = -1;
     while (ok && !cancelled && now() < end) {
         int socket_fd =
@@ -491,6 +505,8 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
     if (pending >= 0)
         (void)close(pending);
     ok = ok && consumer.complete && !cancelled && now() < end;
+    ok = ok && consumer.kind == (cli->fetch_failure == 0 ? 1 : 2) &&
+         consumer.failure_id == cli->fetch_failure;
     size_t written = 0;
     while (ok && written < consumer.total) {
         if (cancelled || now() >= end) {
