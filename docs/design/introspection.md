@@ -200,8 +200,10 @@ FIPS 180-4 examples and fuzzed against a reference implementation in the unit te
 operator keeps that `mo` executable, as the Phase 3 runbook already pins `/opt/mo/$SHA` per
 deployment. A replay on another build is refused with the recorded build label and digest, so the
 agent knows which executable to fetch. Records and stores written before Phase 4 carry no build
-identity: their failures were never recorded, and their state can be queried (state queries do not
-need the producer's build, section 7.4) but nothing can be replayed from them.
+identity: their failures were never recorded, their state can be read by `mo history`, and a state
+query needs an export from a Phase 4 build (section 7.4). Nothing can be replayed from them. Replay
+also needs the recording executable to contain `mo replay`, so records captured by a build that
+predates the offline commands are evidence only: `mo history` lists them as not replayable here.
 
 ## 5. Export
 
@@ -471,13 +473,26 @@ factored out of `src/vm/service.c`, with the recorded budgets, no timers, no mai
 store. It prints the original message, pre-call state, signature and the regenerated stack with
 top-frame variables, and marks fields unavailable or truncated.
 
+The recorded budgets are compared with the recording build's own limits (the service work limit,
+the service process's heap, stack and depth limits, and the saved-bytes limit) and a record whose
+budgets differ is refused. Replay requires the same build, so a differing budget means a damaged or
+crafted record; replay never runs with budgets read from the file. `FILE` must be the untouched
+source that recorded the failure: any byte change in any module, a comment or `mo format`
+included, changes the program identity, and the refusal says so.
+
 `--fix REVISED` first replays the original as above, then runs the handler of the same name from
-`REVISED` on the same inputs and budgets. An updating handler's new state must also pass the
-saved-copy size check. The verdict is:
+`REVISED` on the same inputs and budgets. `REVISED` is a main module whose sibling modules resolve
+from its own folder. Every compatibility check of section 7.4, for both programs, runs before
+either handler runs, so a revision that changes the state type is refused before the original
+replays; `mo replay` without `--fix` still shows whether the original reproduces. The new state of
+an updating tool, and of a timer, whose result is the new state, must also pass the saved-copy size
+check. An `Error` reply is a success: live, it records nothing and is not a handler failure. The
+revised outcome reports its reply kind (`ok` or `error`) and whether the state changed, so
+`verified` is not read as "now does the work". The verdict is:
 
 | Original | Revised | Verdict |
 | --- | --- | --- |
-| reproduced | succeeded, and an updating handler's state passed the size check | `verified` |
+| reproduced | succeeded, and an updating tool's or timer's state passed the size check | `verified` |
 | reproduced | failed or exceeded the recorded budget | `not_fixed` |
 | different outcome or not reproduced | succeeded | `unverified` (the revised run is reported as an observation) |
 | different outcome or not reproduced | failed | `unverified` |
@@ -496,15 +511,19 @@ handler, and only `replay --fix` gives a verdict.
 
 ### 7.2 Query entry rules
 
-The entry is a function of `FILE`'s main module, or `Module.name` of a module the program uses.
-The checker refuses an entry whose parameters, result, or any value it captures contain a
-capability or a function, including inside records, choices, tuples and collections: the rule
-the checker already applies to service state and handler inputs (reference section 11.5,
-`src/check/services.c`), applied to the entry. The
-entry's first parameter must be the service's state type exactly. A failure query's remaining
-parameters must be `Time` and the handler's argument types, in order. Normal module privacy
-applies: a query outside the state's defining module uses its exposed accessors, and a query of a
-private representation lives in the defining module.
+The entry is a non-generic top-level function of `FILE`'s main module, or `Module.name` of a
+module the program uses, whether or not that module exposes it: choosing an entry is an operator
+action like `mo test --only`, and module privacy already governs the entry's body. A generic entry
+is refused, since lowering keeps only the instances a program uses. The name is resolved through
+the checker's symbols, so an overloaded name selects the overload whose first parameter is the state
+type. The checker refuses an entry whose parameters or result contain a capability or a function,
+including inside records, choices, tuples and collections: the rule the checker already applies to
+service state and handler inputs (reference section 11.5, `src/check/services.c`), applied to the
+entry. A named top-level function captures nothing, so its parameters and result are the whole
+check. The entry's first parameter must be the state type of `FILE`'s main service exactly. A
+failure query's remaining parameters must be `Time` and the handler's argument types, in order.
+Normal module privacy applies: a query outside the state's defining module uses its exposed
+accessors, and a query of a private representation lives in the defining module.
 
 The query prototype (`learnability/phase4/preflight/README.md`, "Queries from another program")
 showed the decoder already accepts this: a program that adds a pure function to `JobQueue`, and
@@ -515,13 +534,19 @@ was refused.
 ### 7.3 Results and exit statuses
 
 `--json` writes one JSON object per line, like `mo test --json`: first `{"record":"version",
-"format":"1.0","mo":...}`, then one object per outcome (`original`, `revised`, `query`, `history`),
-then `{"record":"totals",...,"exit":N}`. Field names keep their meaning within a major version.
-History and the live views use the same object shapes for log entries, failures and events.
+"format":"1.0","mo":...,"command":...}`, then one object per outcome (`original`, `revised`,
+`query`, `history`), then `{"record":"totals",...,"status":N}`. The totals record keeps `mo test
+--json`'s `status` field for the exit status. Field names keep their meaning within a major version.
+Values in JSON are rendered from the saved schema alone, by the same embedded renderer as the live
+views. History and the live views use the same field names for log entries, failures and events,
+with one exception: a log row stores only its handler's index and timer flag, and `mo history`
+reads no program, so a tail entry's `handler` is null, `handler_index` carries the index, and the
+text form says the name is not recorded in the log.
 
 Exit statuses: 0 when the requested result holds (`reproduced`; `verified`; a query that
 returned; history read); 1 when it does not (`different`, `not_reproduced`, `not_fixed`,
-`unverified`, or a refusal for incompatibility); 2 for a mistake in the command.
+`unverified`, or a refusal); 2 for a mistake in the command; 70 when a query's own function stops,
+with the report `mo run` prints for a bug (reference section 13.2).
 
 ### 7.4 Compatibility
 
@@ -534,7 +559,18 @@ Each check is separate and runs before any value is decoded or any handler runs.
 | `replay --fix` | supported | original must equal | must equal | revised must equal | revised handler: same name, timer or tool, same argument types in order, same result shape class (timer, read-only, updating) |
 | `query` over state | supported | may differ | v0.1: must equal the producer's | must equal | — |
 | `query` over a failure | supported | may differ | must equal | must equal | entry parameters must equal state, `Time` and the arguments in order |
-| `history` | supported store | must equal to show values; otherwise metadata only | v0.1: must equal to show values | must equal to show values | — |
+| `history` | supported store | not read | shown per failure record | shown, not checked | — |
+
+`mo history` takes no program. It renders values from the saved schema alone, so it needs no
+runtime types. Snapshots and log rows carry no build identity, so the snapshot is shown with
+"producer build not recorded"; each failure record shows its own build label and digest and whether
+this build can replay it.
+
+The checks run in a fixed order: format, kind and integrity; runtime build; program identity; the
+handler descriptor; the state schema; each argument's schema; for `--fix`, the revision's schema
+and handler shape; and the recorded budgets. Each command runs the rows its line of the table
+names: a state query checks format, build and state schema, and a failure query also checks each
+argument's schema against the entry's trailing parameters, but neither checks the program.
 
 A mismatch is refused with what differs and both values. Schema changes are refused and
 migration is Phase 5. A state query needs the producer's runtime build in v0.1 because nothing
@@ -543,27 +579,41 @@ query functions are allowed.
 
 ## 8. Limits for offline work
 
-`mo query` and `mo history` take `--max-stack`, `--max-depth` and `--max-heap` as `mo run` does,
-plus `--max-work`, defaulting to 1,073,741,824 instructions per run. Replay uses only the
-recorded budgets and takes none of these flags. Each is a named limit in `src/base/limits.h`.
+`mo query` takes `--max-stack`, `--max-depth` and `--max-heap` as `mo run` does, plus
+`--max-work`, defaulting to `MO_LIMIT_QUERY_WORK` (1,073,741,824 instructions per run). Work is
+counted through the controlled call the service uses, so a query that runs out stops with a report
+naming `--max-work`. `mo history` runs no Mo code and takes none of them; its copy is bounded by
+`MO_LIMIT_HISTORY_BYTES` (section 9). Replay uses only the recorded budgets and takes none of these
+flags. Each is a named limit in `src/base/limits.h`.
 
 ## 9. Reading a stopped data folder
 
 `mo history` and `mo replay --data` use a new reader in `host/store.c`, never `mo_service_open`,
 which can run timers and take snapshots.
 
-- It opens `DIR/service.sqlite` read-only. A running `mo serve` holds the database in exclusive
-  locking mode, so the open fails busy and the command refuses with "a running service owns
-  DIR".
-- A hot journal (a `-journal` file beside a database whose last write did not finish) needs a
-  write to roll back. The reader refuses with "recovery required" unless given `--recover`,
-  which opens read-write as the folder's owner and lets SQLite roll back. That rollback writes
-  database pages: the command is logically read-only, since it never changes application state
-  or the log, but it is not physically read-only, and it says so.
-- It holds the lock only while copying what it needs: the snapshot, the tail's metadata
-  (sequence, handler, time, argument sizes) and the failure records, bounded by
-  `MO_LIMIT_HISTORY_BYTES` (64 MiB) in total. Argument values are read only for the record being
-  replayed. Over the limit, it reports what it read and what it left.
+- It opens `DIR/service.sqlite` read-only, never creates it, and never waits for a lock. It
+  classifies the folder by SQLite's result code, never by whether a `-journal` file exists: a
+  `-journal` file stays beside the database while a service runs and after a service killed while
+  idle, and neither is hot. A running `mo serve` holds the database in exclusive locking mode, so
+  the read fails `SQLITE_BUSY` and the command refuses with "a running service owns DIR". A file the
+  user cannot read refuses with "cannot read DIR", never as missing or damaged; a missing file is
+  "no saved data in DIR". A store without the failure tables predates failure capture and holds no
+  failure records; nothing is created. Each refusal exits 1.
+- A hot journal (left by a write that did not finish) needs a write to roll back; a read-only read
+  then fails `SQLITE_READONLY_ROLLBACK`. The reader refuses with "recovery required" unless given
+  `--recover`, which opens read-write as the folder's owner and lets SQLite roll back. That
+  rollback writes database pages: the command is logically read-only, since it never changes
+  application state or the log, but it is not physically read-only, and it says so.
+- It holds the lock only while copying what it needs, in one read transaction: the snapshot, the
+  tail's metadata (sequence, handler index, timer flag, time, argument sizes) and the failure
+  records. Log rows are streamed so their checksums cover every byte while only metadata is kept.
+  Retained bytes are bounded by `MO_LIMIT_HISTORY_BYTES` (64 MiB) in total. Argument values are
+  read only for the record being replayed. Over the limit, it reports what it read and what it
+  left.
+- The snapshot is the state as of its sequence, not the current state: the text says how many
+  later messages were not applied. There is no offline current state and no state query over a
+  stopped folder; reconstructing the current state means re-running the tail through the handlers,
+  which is recovery.
 
 **History depth.** The history trace (`learnability/phase4/preflight/README.md`, "What survives a
 snapshot") killed one job with three lease and fail calls and then sent 120 more updates. The
@@ -644,10 +694,11 @@ and `MoCore/Verdict.lean`, imported by `formal/MoCore.lean` so that `lake build 
 2. **The verdict is sound.** `verdict : Outcome → Outcome → Verdict` over the statuses of section
    7.1, against an independently written specification: `verdict o r = verified ↔
    (reproduced o ∧ succeeded r ∧ sizeOk r)`. Corollary: `¬ reproduced o → verdict o r ≠ verified`,
-   for every `r`. A second theorem connects the model's evaluator: for a handler expression `h`
-   and inputs `i`, replaying `h` twice on `i` with the same fuel gives the same outcome, using
-   the existing `eval_deterministic`, so an offline reproduction is a property of the inputs and
-   not of the run.
+   for every `r`. The matching relation of section 6.2 is modelled and proved as well. The earlier
+   corollary that replaying twice gives the same outcome is dropped: the existing
+   `eval_deterministic` is `h₁ ▸ h₂` and says nothing about replay. What it was meant to show, that
+   replay runs on exactly the recorded inputs, is carried by the round trip of the input tuple in
+   item 1.
 3. **Negative controls.** A copy of `verdict` that returns `verified` when the revised run
    succeeds alone must fail the soundness theorem (kept as a `#guard` that the false statement
    is refutable by a concrete counterexample), and a decoder that ignores the schema must fail
@@ -751,6 +802,13 @@ Robert accepted each of these on 2026-11-04, as written here.
 | 2026-11-04 | Approved, with the six decisions in section 12 as proposed | Robert | his "accept all" in the design-step session, after each decision was walked through; this row's commit |
 
 | 2026-11-05 | Replace the mandatory old baseline prerequisite with pilot findings and prospective diagnostic evaluation; technical contracts remain in force | Robert’s direction, recorded by Codex | canonical phase plan’s dated amendment and `learnability/phase4/pilot/findings.md` |
+| 2026-11-06 | §7.3: totals keep `status`; JSON values use the saved-schema renderer; a query whose function stops exits 70; history tail entries carry the handler index, not a name | Robert, approving the offline diagnosis plan's scoping | `docs/plans/2026-11-06-1220-feat-phase4-offline-diagnosis-plan.md` |
+| 2026-11-06 | §7.4 and §9: history takes no program and shows per-record build identity; checks run in a fixed order per command; the reader classifies by SQLite result code, never waits, and names unreadable, missing and pre-capture stores | Robert, approving the offline diagnosis plan's scoping | the same plan |
+| 2026-11-06 | §4: pre-Phase-4 state is read by history, state queries need a Phase 4 export, and records from builds without `mo replay` are evidence only | Robert, approving the offline diagnosis plan's scoping | the same plan |
+| 2026-11-06 | §7.1: budgets are compared with the build's constants; both programs are checked before anything runs; timers get the size check; an `Error` reply is a success reported by kind | Robert, approving the offline diagnosis plan's scoping | the same plan |
+| 2026-11-06 | §7.2: the state type is that of FILE's main service; generic entries are refused; entries are selectable whether exposed or not; the capture clause is dropped | Robert, approving the offline diagnosis plan's scoping | the same plan |
+| 2026-11-06 | §8: `--max-work` counts through the controlled call, default `MO_LIMIT_QUERY_WORK`; history takes no Mo limits | Robert, approving the offline diagnosis plan's scoping | the same plan |
+| 2026-11-06 | §11.1: the replay-twice corollary is dropped; the input tuple's round trip carries its intent | Robert, approving the offline diagnosis plan's scoping | the same plan |
 
 ### Implementation staging and observation metadata
 
@@ -1036,3 +1094,9 @@ complete pair; it does not checksum unrelated retained state blobs.
 
 Development evidence and limitations are recorded in
 [the failure capture results](../../learnability/phase4/failure-capture/README.md).
+
+## Offline commands implementation evidence
+
+Predictions for each check are in `learnability/phase4/offline/results/predictions.md`, written
+before the checks ran. Results, measurements and failed attempts are added here and in that folder
+as the offline commands land.
