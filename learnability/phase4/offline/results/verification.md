@@ -88,3 +88,31 @@ limits; the table now says name and value, as both implementations match.
 
 Not modelled, and listed in `formal/README.md`: that different schemas have different bytes,
 recursive schemas, and a byte-for-byte comparison of the Lean and C encoders.
+
+## Artifact reader, argument walk and type schema digest
+
+Tests: `tests/test_artifact.c` (new) and `tests/test_saved_state.c`. Kind-1 and kind-2 artifacts
+come from a real running service with a failing tool taking `Int` and `Text`; the reader returns
+the same identity as `mo_export_verify`, spans equal to the stored bytes, a state that decodes to
+the live state, and arguments 5 and "five" in order. Every strict prefix, every single flipped
+bit, resealed payload and checksum changes, a changed schema length and an extra byte before the
+digest are refused with the output unchanged. The task queue's state type digest equals
+`mo_export_schema` over its encoded state; a renamed field, an added field and a reordered choice
+each change it.
+
+- Red: stub functions failed every reader and digest check; `fuzz_fetch` on a new kind-2 seed
+  failed its kind-1-only assertion before the fix.
+- Mutants, each failing: no check that the body ends at the digest (first caught only by CBMC; an
+  extra-byte unit test was then added and fails too), ending the walk whenever the count is spent,
+  not decrementing the count, no rollback in the schema writer, a digest one byte short, and
+  swapped kind-2 spans.
+- Fuzz: `make fuzz-smoke FUZZ_SECONDS=5` for `fuzz_artifact`, `fuzz_fetch` and `fuzz_export`;
+  `fuzz_artifact` for 180 s (3.55 million runs) with no crash. The first smoke run found a bug in
+  the fuzz oracle (an empty label's span), kept as the `empty-label` seed.
+- CBMC, recorded in `cbmc/README.md`: `mo_export_read` up to 172 bytes, 1,851 properties, 87 to
+  101 s, every block reached; `mo_failure_argument_next` up to 32 bytes, 281 properties, every
+  block reached. The first reach check showed the fixed 66-byte prefix could never be refused after
+  the length check, so the reader now reads it at fixed offsets. Kind-2 frames are modelled, not
+  proved, since a minimal kind-2 artifact exceeds the bound; fuzzing and unit tests cover them.
+- Green: `make test` under gcc and clang, sanitize builds of the four affected tests, `make deps`,
+  `make format-check`, `make tidy`, `ci/check_fuzz_seeds.py`.
