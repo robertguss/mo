@@ -1,0 +1,4 @@
+{main}
+size
+--export
+tests/errors/e1410/missing.moex

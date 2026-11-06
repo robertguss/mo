@@ -3812,21 +3812,26 @@ def source_stack(binary, folder):
 
 
 flags = {
-    "--json": ([], {"check", "test"}),
+    "--json": ([], {"check", "test", "replay", "query", "history"}),
     "--list": ([], {"test"}),
     "--reference": ([], {"guide"}),
     "--only": (["Main.test.1"], {"test"}),
     "--in": (["Main"], {"test"}),
-    "--max-stack": (["1MiB"], {"run", "test"}),
-    "--max-depth": (["100"], {"run", "test"}),
-    "--max-heap": (["1GiB"], {"run", "test"}),
+    "--max-stack": (["1MiB"], {"run", "test", "query"}),
+    "--max-depth": (["100"], {"run", "test", "query"}),
+    "--max-heap": (["1GiB"], {"run", "test", "query"}),
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
     "--port": (["0"], {"serve"}),
-    "--data": (["state"], {"serve"}),
+    "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
     "--emit=core": ([], {"check"}),
     "--emit=bytecode": ([], {"check"}),
+    "--failure": (["1"], {"replay", "query"}),
+    "--export": (["failure.moex"], {"replay", "query"}),
+    "--fix": (["revised/main.mo"], {"replay"}),
+    "--recover": ([], {"replay", "query", "history"}),
+    "--max-work": (["1000"], {"query"}),
 }
 
 
@@ -3839,7 +3844,10 @@ def guide_claims(binary):
     # The live operator driver exercises these guide claims through the real endpoint.
     for name in SERVE_OPERATOR_NAMES:
         assert f"`{name}`" in guide
-    assert "Offline replay/query tools are not available yet." in guide
+    # ci/check_offline.py exercises the offline commands' claims against real data folders.
+    assert ("On the service host, `mo history`, `mo replay` and `mo query` read a stopped data "
+            "folder or an artifact without starting the service, as Diagnose a failure offline "
+            "says.") in guide
     assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
@@ -3857,7 +3865,22 @@ def guide_claims(binary):
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve` and `mo fetch`.",
+    says("`mo replay`, `mo query` and `mo history` exit 0 when the requested result holds, 1 when "
+         "it does not or a check refused, and 2 for a mistake in the command")
+    assert ("The function is not generic (E1410), holds no capability or function in its "
+            "parameters or result (E1411), takes the main service's state type first (E1412) and "
+            "then exactly the inputs above (E1413).") in " ".join(guide.split())
+    with tempfile.TemporaryDirectory() as empty:
+        result = run(binary, ["history", empty], 1)
+        assert result.stderr == f"mo history: no saved data in {empty}\n".encode(), result
+    for code, function in (("1410", "size"), ("1411", "peek"), ("1412", "double"), ("1413", "plus")):
+        result = run(binary, ["query", f"tests/errors/e{code}/main.mo", function, "--export",
+                              "tests/errors/missing.moex"], 1)
+        assert result.stderr.startswith(f"error E{code}: ".encode()) and not result.stdout, result
+    result = run(binary, ["query", "tests/errors/e1413/main.mo", "nothing", "--export",
+                          "tests/errors/missing.moex"], 2)
+    assert result.stderr == b"mo query: no function of that name in that module\n", result
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo replay`, `mo query` and `mo history`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -4349,7 +4372,35 @@ def check(binary):
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve or fetch): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, replay, query or history): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, replay, query or history')
+    for args, message in (
+            (["replay", good, "--data", "state"], 'replay needs --failure ID: "replay"'),
+            (["replay", good, "--failure", "1"],
+             'give exactly one of --data DIR and --export ARTIFACT: "replay"'),
+            (["replay", good, "--failure", "1", "--data", "d", "--export", "a"],
+             'give exactly one of --data DIR and --export ARTIFACT: "replay"'),
+            (["replay", good, "--failure", "0", "--data", "d"],
+             'failure id must be positive: "--failure" "0"'),
+            (["replay", good, "--failure", "1", "--export", "a", "--recover"],
+             '--recover reads a data folder, not --export: "--recover"'),
+            (["replay", good, "--failure", "1", "--failure", "1", "--data", "d"],
+             'flag may be given only once (except --only): "--failure"'),
+            (["query", good, "--export", "a"], 'query needs a file and a function: "query"'),
+            (["query", good, "f", "g", "--export", "a"],
+             'query takes exactly one file and one function: "g"'),
+            (["query", good, "f", "--data", "d"],
+             'a query over a data folder needs --failure ID: "query"'),
+            (["query", good, "f", "--export", "a", "--fix", "r.mo"],
+             'flag is not accepted by this command: "--fix"'),
+            (["query", good, "f", "--export", "a", "--max-work", "0"],
+             'invalid limit (expected a positive decimal integer; bytes may use B, KiB, MiB or GiB): "--max-work" "0"'),
+            (["history"], 'history needs a data folder: "history"'),
+            (["history", "a", "b"], 'history takes exactly one data folder: "b"'),
+            (["history", "--max-work", "1", "d"], 'flag is not accepted by this command: "--max-work"'),
+            (["replay", "--max-heap", "1MiB", good, "--failure", "1", "--data", "d"],
+             'flag is not accepted by this command: "--max-heap"')):
+        mistake(args, message)
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):
             args = [command, flag, *value, *([] if command == "guide" else [good])]
@@ -4362,7 +4413,8 @@ def check(binary):
         if value:
             for missing in ([], [""], ["--json"]):
                 suffix = ''.join(f' "{v}"' for v in missing)
-                command = "test" if "test" in allowed else "serve"
+                command = next(c for c in ("test", "serve", "replay", "query", "history")
+                               if c in allowed)
                 mistake([command, flag, *missing], f'flag needs a nonempty value: "{flag}"{suffix}')
     for flag in ("--max-stack", "--max-depth", "--max-heap", "--calls", "--seconds"):
         for value in ("0", "-1", "+1", " 1", "1 ", "1.5", "1KB", "1mib", "18446744073709551616"):

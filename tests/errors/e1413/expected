@@ -1,0 +1,5 @@
+error E1413: a state query's function takes more than the state  tests/errors/e1413/main.mo:13:4
+
+  13 | fn plus(state: Int, amount: Int) : Int
+     |    ^^^^ a state query's function takes more than the state
+

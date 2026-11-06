@@ -1,0 +1,4 @@
+{main}
+plus
+--export
+tests/errors/e1413/missing.moex

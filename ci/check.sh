@@ -221,6 +221,7 @@ if have python3; then
 				python3 ci/check_cli.py "$driver"
 			later "Authenticated operator views ($driver)" python3 ci/check_operator.py "$driver"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
+			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
 			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
 				python3 ci/check_simulation.py "$driver"

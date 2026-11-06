@@ -253,12 +253,130 @@ static void parse_serve(void) {
     refused(4, unknown, "unknown flag: \"--emit\"");
     const char *none[] = {"mo"};
     refused(1, none,
-            "expected a command: check, run, test, format, fix, guide, emit, serve or fetch");
+            "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, replay, "
+            "query or history");
     const char *what[] = {"mo", "what"};
-    refused(
-        2, what,
-        "unknown command (expected check, run, test, format, fix, guide, emit, serve or fetch): "
-        "\"what\"");
+    refused(2, what,
+            "unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, "
+            "replay, "
+            "query or history): \"what\"");
+}
+
+#define OFFLINE(expected, ...)                                                                     \
+    do {                                                                                           \
+        const char *argv[] = {"mo", __VA_ARGS__};                                                  \
+        refused((int)(sizeof argv / sizeof *argv), argv, expected);                                \
+    } while (0)
+
+static void parse_offline(void) {
+    struct mo_cli cli;
+    const char *error;
+    const char *replay[] = {"mo", "replay", "main.mo", "--failure", "7", "--data", "state"};
+    CHECK(mo_cli_parse(7, replay, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_REPLAY && cli.failure == 7 && strcmp(cli.data, "state") == 0);
+    CHECK(cli.artifact == NULL && cli.revised == NULL && !cli.recover && !cli.json);
+    CHECK(cli.file_count == 1 && strcmp(mo_cli_file(&cli, 0), "main.mo") == 0);
+    const char *fix[] = {"mo",           "replay",   "--json", "main.mo",   "--fix",
+                         "next/main.mo", "--export", "f.moex", "--failure", "9223372036854775807"};
+    CHECK(mo_cli_parse(10, fix, &cli, &error));
+    CHECK(cli.json && strcmp(cli.revised, "next/main.mo") == 0 && cli.failure == INT64_MAX);
+    CHECK(strcmp(cli.artifact, "f.moex") == 0 && cli.data == NULL);
+    const char *recover[] = {"mo", "replay", "main.mo", "--failure",
+                             "1",  "--data", "d",       "--recover"};
+    CHECK(mo_cli_parse(8, recover, &cli, &error) && cli.recover);
+    const char *state[] = {"mo", "query", "main.mo", "Main.count", "--export", "s.moex"};
+    CHECK(mo_cli_parse(6, state, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_QUERY && strcmp(cli.function, "Main.count") == 0);
+    CHECK(cli.failure == 0 && strcmp(cli.artifact, "s.moex") == 0);
+    CHECK(cli.max_work == MO_LIMIT_QUERY_WORK && cli.limits.heap_size == MO_DEFAULT_HEAP_SIZE);
+    const char *limited[] = {"mo",          "query", "--max-work",  "18446744073709551615",
+                             "--max-heap",  "2MiB",  "--max-stack", "64KiB",
+                             "--max-depth", "9",     "main.mo",     "count",
+                             "--data",      "d",     "--failure",   "3",
+                             "--json"};
+    CHECK(mo_cli_parse(17, limited, &cli, &error));
+    CHECK(cli.max_work == UINT64_MAX && cli.limits.heap_size == 2u << 20);
+    CHECK(cli.limits.stack_size == 64u << 10 && cli.limits.call_depth == 9);
+    CHECK(cli.failure == 3 && strcmp(cli.data, "d") == 0 && cli.json);
+    CHECK(strcmp(mo_cli_file(&cli, 0), "main.mo") == 0 && strcmp(cli.function, "count") == 0);
+    const char *history[] = {"mo", "history", "state", "--recover", "--json"};
+    CHECK(mo_cli_parse(5, history, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_HISTORY && cli.recover && cli.json);
+    CHECK(cli.file_count == 1 && strcmp(mo_cli_file(&cli, 0), "state") == 0);
+
+    OFFLINE("replay needs --failure ID: \"replay\"", "replay", "main.mo", "--data", "d");
+    OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"replay\"", "replay", "main.mo",
+            "--failure", "1");
+    OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"replay\"", "replay", "main.mo",
+            "--failure", "1", "--data", "d", "--export", "a");
+    OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"query\"", "query", "main.mo",
+            "f");
+    OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"query\"", "query", "main.mo",
+            "f", "--data", "d", "--export", "a", "--failure", "1");
+    OFFLINE("a query over a data folder needs --failure ID: \"query\"", "query", "main.mo", "f",
+            "--data", "d");
+    OFFLINE("--recover reads a data folder, not --export: \"--recover\"", "replay", "main.mo",
+            "--failure", "1", "--export", "a", "--recover");
+    OFFLINE("--recover reads a data folder, not --export: \"--recover\"", "query", "main.mo", "f",
+            "--export", "a", "--recover");
+    OFFLINE("flag is not accepted by this command: \"--fix\"", "query", "main.mo", "f", "--fix",
+            "r.mo", "--export", "a");
+    OFFLINE("query needs a file and a function: \"query\"", "query", "main.mo", "--export", "a");
+    OFFLINE("query takes exactly one file and one function: \"g\"", "query", "main.mo", "f", "g",
+            "--export", "a");
+    OFFLINE("command takes exactly one file: \"b.mo\"", "replay", "a.mo", "b.mo", "--failure", "1",
+            "--data", "d");
+    OFFLINE("command needs a file: \"replay\"", "replay", "--failure", "1", "--data", "d");
+    OFFLINE("history needs a data folder: \"history\"", "history", "--json");
+    OFFLINE("history takes exactly one data folder: \"b\"", "history", "a", "b");
+    OFFLINE("flag may be given only once (except --only): \"--failure\"", "replay", "main.mo",
+            "--failure", "1", "--failure", "2", "--data", "d");
+    OFFLINE("flag may be given only once (except --only): \"--export\"", "query", "main.mo", "f",
+            "--export", "a", "--export", "b");
+    OFFLINE("flag may be given only once (except --only): \"--max-work\"", "query", "main.mo", "f",
+            "--export", "a", "--max-work", "1", "--max-work", "2");
+    OFFLINE("flag may be given only once (except --only): \"--recover\"", "history", "d",
+            "--recover", "--recover");
+    OFFLINE("flag needs a nonempty value: \"--fix\" \"-r.mo\"", "replay", "main.mo", "--failure",
+            "1", "--data", "d", "--fix", "-r.mo");
+    OFFLINE("flag needs a nonempty value: \"--export\"", "query", "main.mo", "f", "--export");
+    const char *ids[] = {"0", "000", "4x", "-1", "+1", "9223372036854775808"};
+    for (size_t i = 0; i < sizeof ids / sizeof *ids; i++) {
+        const char *argv[] = {"mo", "replay", "main.mo", "--data", "d", "--failure", ids[i]};
+        struct mo_buffer expected;
+        mo_buffer_init(&expected, 256);
+        CHECK(mo_buffer_append_text(&expected, "failure id must be positive: \"--failure\" \"") &&
+              mo_buffer_append_text(&expected, ids[i]) && mo_buffer_append_text(&expected, "\"") &&
+              mo_buffer_append_byte(&expected, 0));
+        refused(7, argv, (const char *)expected.bytes);
+        mo_buffer_free(&expected);
+    }
+    OFFLINE("invalid limit (expected a positive decimal integer; bytes may use B, KiB, MiB or "
+            "GiB): \"--max-work\" \"1KiB\"",
+            "query", "main.mo", "f", "--export", "a", "--max-work", "1KiB");
+    OFFLINE("invalid limit (expected a positive decimal integer; bytes may use B, KiB, MiB or "
+            "GiB): \"--max-work\" \"0\"",
+            "query", "main.mo", "f", "--export", "a", "--max-work", "0");
+    /* Each new flag on a command that does not take it. */
+    const char *elsewhere[][3] = {{"run", "--failure", "1"},       {"history", "--failure", "1"},
+                                  {"serve", "--export", "a"},      {"history", "--export", "a"},
+                                  {"test", "--fix", "a"},          {"history", "--fix", "a"},
+                                  {"check", "--recover", NULL},    {"serve", "--recover", NULL},
+                                  {"run", "--max-work", "1"},      {"replay", "--max-work", "1"},
+                                  {"history", "--max-work", "1"},  {"replay", "--max-heap", "1"},
+                                  {"history", "--max-stack", "1"}, {"replay", "--max-depth", "1"},
+                                  {"history", "--data", "d"},      {"run", "--json", NULL}};
+    for (size_t i = 0; i < sizeof elsewhere / sizeof *elsewhere; i++) {
+        const char *argv[] = {"mo", elsewhere[i][0], elsewhere[i][1], elsewhere[i][2], "x"};
+        int argc = elsewhere[i][2] == NULL ? 3 : 4;
+        struct mo_buffer expected;
+        mo_buffer_init(&expected, 256);
+        CHECK(mo_buffer_append_text(&expected, "flag is not accepted by this command: \"") &&
+              mo_buffer_append_text(&expected, elsewhere[i][1]) &&
+              mo_buffer_append_text(&expected, "\"") && mo_buffer_append_byte(&expected, 0));
+        refused(argc, argv, (const char *)expected.bytes);
+        mo_buffer_free(&expected);
+    }
 }
 
 static void limit_values(void) {
@@ -707,6 +825,7 @@ int main(int argc, char *argv[]) {
     parse_commands();
     parse_serve();
     parse_fetch();
+    parse_offline();
     limit_values();
     long_line();
     utf8_display();

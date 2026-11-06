@@ -1460,9 +1460,35 @@ past one is a bug whose report names the limit (section 13.2). A call in tail
 position takes its caller's place on the stack and doesn't count toward the
 depth (section 5.3). A program can't set its own limits.
 
-`mo check --json` and `mo test --json` write one JSON object per line to
-standard output: first the format's version, then one for each error and for
-each example, promise and test run, and last the totals and the exit status.
+`mo history DIR` shows what a stopped service's data folder holds, without
+starting the service or running any of its code: the last snapshot of its
+state and the sequence it was taken at, the messages logged after it by
+sequence, handler, arrival time and argument sizes, and each retained failure
+record with the build that recorded it. It never waits for the folder and
+refuses one a running service owns; `--recover` lets it first roll back a write
+that a stopped service left unfinished. `mo replay FILE --failure ID (--data
+DIR | --export ARTIFACT)` runs a retained failure's handler again on the state,
+arrival time and arguments it recorded, and reports whether the same failure
+was `reproduced`. `FILE` must be the unchanged program that recorded the
+failure, and the `mo` that replays it the one that recorded it. `--fix
+REVISED` then runs the handler of the same name in the program `REVISED` on
+the same inputs, and its verdict is `verified` only when the original failure
+reproduced and the revision succeeded. `mo query FILE FUNCTION` runs a
+function of the program over an exported state (`--export ARTIFACT`) or over a
+retained failure's inputs (`--failure ID` with `--data DIR` or `--export
+ARTIFACT`). The function takes the state type of `FILE`'s service, then for a
+failure `Time` and the handler's arguments in order, and its parameters and
+result hold no capability or function. A query takes `mo run`'s limits and
+`--max-work`, the instructions it may run, by default 1,073,741,824. Each of
+these commands refuses an input it cannot use before anything runs, naming
+what differs. They exit 0 when the result they report holds, 1 when it does
+not or they refuse, and 2 for a mistake in the command; `mo query` exits 70
+when its function stops with a bug (section 13.2).
+
+`mo check --json`, `mo test --json`, and `--json` on `mo replay`, `mo query`
+and `mo history` write one JSON object per line to standard output: first the
+format's version, then one for each error and for each example, promise and
+test run or each outcome reported, and last the totals and the exit status.
 Within a major version of the format, every field keeps its name, type and
 meaning, and an error's code keeps its meaning; new fields and new kinds of
 object may be added, so a reader skips what it doesn't know. A message's
@@ -1711,11 +1737,10 @@ changes only when its `use` line does.
 
 ## 15. What comes later
 
-Runtime introspection and replay, including diagnostic records of failed
-calls (Phase 4); live upgrades (Phase 5); approving and locking promises
-(Phase 6); demanding that a function update its input in place (Phase 7);
-packages and user-defined abilities (Phase 8). None of them changes a rule in
-this reference.
+Live upgrades, including migrating saved state to a changed type (Phase 5);
+approving and locking promises (Phase 6); demanding that a function update its
+input in place (Phase 7); packages and user-defined abilities (Phase 8). None
+of them changes a rule in this reference.
 
 ## Appendix A. Errors
 

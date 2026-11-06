@@ -1388,19 +1388,72 @@ bool mo_write_defect(FILE *errors, const struct mo_process *process,
     return ok;
 }
 
+static const char *command_name(enum mo_command command) {
+    switch (command) {
+    case MO_COMMAND_CHECK:
+        return "check";
+    case MO_COMMAND_TEST:
+        return "test";
+    case MO_COMMAND_REPLAY:
+        return "replay";
+    case MO_COMMAND_QUERY:
+        return "query";
+    case MO_COMMAND_HISTORY:
+        return "history";
+    case MO_COMMAND_RUN:
+    case MO_COMMAND_FORMAT:
+    case MO_COMMAND_FIX:
+    case MO_COMMAND_GUIDE:
+    case MO_COMMAND_EMIT:
+    case MO_COMMAND_SERVE:
+    case MO_COMMAND_VERSION:
+    case MO_COMMAND_FETCH:
+        break;
+    }
+    MO_UNREACHABLE(); /* no other command writes JSON */
+}
+
 bool mo_write_version(FILE *output, enum mo_command command) {
-    MO_ASSERT(command == MO_COMMAND_CHECK || command == MO_COMMAND_TEST);
     struct mo_buffer buffer;
     mo_buffer_init(&buffer, MO_CLI_DIAGNOSTIC_SIZE);
     struct writer w = {.out = &buffer, .ok = true};
     text(&w, "{\"record\":\"version\",\"format\":\"1.0\",\"mo\":");
     json_string(&w, mo_version());
     text(&w, ",\"command\":");
-    json_string(&w, command == MO_COMMAND_CHECK ? "check" : "test");
+    json_string(&w, command_name(command));
     text(&w, "}\n");
     bool ok = w.ok && write_buffer(output, &buffer);
     mo_buffer_free(&buffer);
     return ok;
+}
+
+bool mo_render_json_text(struct mo_buffer *out, const void *bytes, size_t length) {
+    struct writer w = {.out = out, .ok = true};
+    json_bytes(&w, bytes, length);
+    return w.ok;
+}
+
+bool mo_render_terminal_text(struct mo_buffer *out, const void *bytes, size_t length) {
+    const char *codeset = nl_langinfo(CODESET);
+    struct writer w = {.out = out,
+                       .ok = true,
+                       .utf8 = strcmp(codeset, "UTF-8") == 0 || strcmp(codeset, "UTF8") == 0 ||
+                               strcmp(codeset, "utf-8") == 0 || strcmp(codeset, "utf8") == 0};
+    struct display_cursor c = {.bytes = bytes, .length = length};
+    uint32_t cells = 0;
+    while (w.ok && c.at < c.length) {
+        if (c.bytes[c.at] == '\n') {
+            text(&w, "\n");
+            c.at++;
+            cells = 0;
+            continue;
+        }
+        struct display_piece p = inspect(&c, cells, w.utf8);
+        write_piece(&w, c.bytes + c.at, p);
+        cells += p.width;
+        c.at += p.used;
+    }
+    return w.ok;
 }
 
 int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command command,
@@ -1425,6 +1478,8 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     int status =
         mo_diags_any(diags) || dropped != 0 || !ok || counts.failed != 0 || counts.stopped != 0 ? 1
                                                                                                 : 0;
+    if (status == 0)
+        status = counts.status;
     mo_buffer_clear(&buffer);
     struct writer w = {.out = &buffer, .ok = true};
     if (json) {

@@ -368,6 +368,15 @@ struct mo_limits {
 #ifndef MO_LIMIT_HISTORY_BYTES
 #define MO_LIMIT_HISTORY_BYTES (64 << 20)
 #endif
+/* What the offline commands render of one value as JSON before marking the rest truncated,
+ * counted as the live views count it. The task queue's largest state, 5000 jobs with
+ * 2048-byte payloads, renders whole within it (see the offline commands' evidence in the
+ * introspection design). */
+#define MO_LIMIT_OFFLINE_VALUE_BYTES (16 << 20)
+/* The heap of the process that renders one such value. */
+#define MO_LIMIT_OFFLINE_RENDER_MEMORY ((size_t)256 << 20)
+/* The instructions one mo query run may execute unless --max-work says otherwise. */
+#define MO_LIMIT_QUERY_WORK UINT64_C(1073741824)
 
 static inline struct mo_limits mo_limits_default(void) {
     return (struct mo_limits){

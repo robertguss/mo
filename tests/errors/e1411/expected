@@ -1,0 +1,5 @@
+error E1411: a query value holds a capability or function  tests/errors/e1411/main.mo:18:4
+
+  18 | fn peek(state: Int, holder: Holder) : Int
+     |    ^^^^ a query value holds a capability or function
+

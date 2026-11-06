@@ -6,7 +6,7 @@ This page is the procedure for a finished Mo program. Correct Mo is Language Ref
 
 The language headings below use the present tense of the reference.
 
-This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve` and `mo fetch`. The program below checks with no errors, runs, and passes its examples and its test.
+This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo replay`, `mo query` and `mo history`. The program below checks with no errors, runs, and passes its examples and its test.
 
 `mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks again, and prints the errors that are left, as `mo check` does. It rewrites only the files it is given.
 
@@ -24,7 +24,7 @@ Service tool names cannot end in `?` (E0106). Tool arguments after State and Tim
 
 `mo serve` connects a service to MCP clients over authenticated plain HTTP/1.1. HTTP policy, JSON-RPC validation and wire values run in embedded Mo; native code owns sockets, credentials and service dispatch. The transport's byte, node, work and memory ceilings are internal bounds, not language configuration. `mo run` still refuses a service entry module, and Simulation still provides no networking.
 
-Authenticated MCP discovery lists author tools followed by `mo-overview`, `mo-state`, `mo-mailbox`, `mo-timers`, `mo-memory`, `mo-supervisor`, `mo-log`, `mo-export` and `mo-failures`. The same token grants access to private state. These read-only operator views share the author-call rate limit and do not invoke handlers or enter the mailbox, recovery log or supervisor counts. `mo-state` accepts an optional `path` array of field names and indexes; bounded output marks truncation and `complete: false`, and a value too large to show becomes `{"truncated_bytes": N}` while the values after it still render. A list view that does not fit one reply reports `truncated`, the number of items left out, and `next`, the arguments for the following page: `mo-mailbox` and `mo-timers` take `offset`, `mo-supervisor` takes `after` and `before`, and `mo-log` takes `after`. Separate observations are not one atomic snapshot. `mo-log` retains committed message metadata only since the last snapshot; in-memory supervisor events disappear when the process exits. Live views need the endpoint URL and token, not shell access to the host. `mo-export` with `{"kind":"state"}` starts an immutable MOEX v1 state export; use the returned `next` arguments to read subsequent base64 pages. Each page identifies its export, durable recovery sequence and encoded-state sequence (which can differ after a snapshot failure). The final page releases the pin. A new export replaces the previous state export; 60 seconds without a page expires it. Refused generations never return another export’s bytes. Pins use native memory outside the handler heap. Fetch is available on the service host. `mo-failures` lists retained handler failures and current capture refusals; `after` selects the next record page. A handler failure reports `record: ID` or an explicit `record unavailable` reason before its reply. Application `Error` replies and admission refusals are excluded. Captures preserve pre-call state, arguments, arrival time, budgets, identity and bounded stack context; read-only failures never enter the recovery log. Retention keeps first/latest per kind, up to 64 records and 64 MiB of framed records. A repeating kind replaces its own latest record and never evicts another kind, so a repeat that does not fit is refused. A new kind evicts, as a whole, the kind whose latest record is oldest. Records survive snapshots. `mo-export` accepts `{"kind":"failure","failure":ID}` and has an independent failure pin. Run `mo fetch URL --export failure ID --out failure.moex --token-env NAME` for a verified private artifact. Offline replay/query tools are not available yet.
+Authenticated MCP discovery lists author tools followed by `mo-overview`, `mo-state`, `mo-mailbox`, `mo-timers`, `mo-memory`, `mo-supervisor`, `mo-log`, `mo-export` and `mo-failures`. The same token grants access to private state. These read-only operator views share the author-call rate limit and do not invoke handlers or enter the mailbox, recovery log or supervisor counts. `mo-state` accepts an optional `path` array of field names and indexes; bounded output marks truncation and `complete: false`, and a value too large to show becomes `{"truncated_bytes": N}` while the values after it still render. A list view that does not fit one reply reports `truncated`, the number of items left out, and `next`, the arguments for the following page: `mo-mailbox` and `mo-timers` take `offset`, `mo-supervisor` takes `after` and `before`, and `mo-log` takes `after`. Separate observations are not one atomic snapshot. `mo-log` retains committed message metadata only since the last snapshot; in-memory supervisor events disappear when the process exits. Live views need the endpoint URL and token, not shell access to the host. `mo-export` with `{"kind":"state"}` starts an immutable MOEX v1 state export; use the returned `next` arguments to read subsequent base64 pages. Each page identifies its export, durable recovery sequence and encoded-state sequence (which can differ after a snapshot failure). The final page releases the pin. A new export replaces the previous state export; 60 seconds without a page expires it. Refused generations never return another export’s bytes. Pins use native memory outside the handler heap. Fetch is available on the service host. `mo-failures` lists retained handler failures and current capture refusals; `after` selects the next record page. A handler failure reports `record: ID` or an explicit `record unavailable` reason before its reply. Application `Error` replies and admission refusals are excluded. Captures preserve pre-call state, arguments, arrival time, budgets, identity and bounded stack context; read-only failures never enter the recovery log. Retention keeps first/latest per kind, up to 64 records and 64 MiB of framed records. A repeating kind replaces its own latest record and never evicts another kind, so a repeat that does not fit is refused. A new kind evicts, as a whole, the kind whose latest record is oldest. Records survive snapshots. `mo-export` accepts `{"kind":"failure","failure":ID}` and has an independent failure pin. Run `mo fetch URL --export failure ID --out failure.moex --token-env NAME` for a verified private artifact. On the service host, `mo history`, `mo replay` and `mo query` read a stopped data folder or an artifact without starting the service, as Diagnose a failure offline says.
 
 A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this constant's call dependencies are not implemented". It reports E1150 for a form it checks but cannot compile yet, such as a constant's function value that reads a later constant. The headline is "this constant's deferred function needs globals not yet initialized". E1103 and E1150 mean this toolchain has not implemented that form. `mo run` and `mo test` report the same code for the same form.
 
@@ -149,7 +149,7 @@ because it does not infer types (reference 3.9).
 
 `mo guide` needs no file. It prints this page. `mo guide --reference` prints the reference.
 
-`mo` exits with status 0 when everything passed, 1 when the program has errors or an example, promise, test or recovery check fails, and 2 for a mistake in the command itself. Once the program runs, `mo run` exits with the program's own status, or 70 after a bug. Section 11.2 states the program's own status. Section 13.2 states that bug. `mo serve` has more statuses, listed under Run a service.
+`mo` exits with status 0 when everything passed, 1 when the program has errors or an example, promise, test or recovery check fails, and 2 for a mistake in the command itself. Once the program runs, `mo run` exits with the program's own status, or 70 after a bug. Section 11.2 states the program's own status. Section 13.2 states that bug. `mo serve` has more statuses, listed under Run a service. `mo replay`, `mo query` and `mo history` exit 0 when the requested result holds, 1 when it does not or a check refused, and 2 for a mistake in the command; `mo query` exits 70 when its function stops, with the report `mo run` prints.
 
 Section 13.4 names the selection flags and the limits.
 
@@ -282,3 +282,58 @@ Pin creation, reading the final page (which releases the pin), and publishing th
 file are separate events. Repeated creation may observe different state. Use `mo-failures` to
 list retained diagnostics and `--export failure ID` to fetch a retained failure pair with the same
 verification and private-file publication rules.
+
+### Diagnose a failure offline
+
+These commands run on the service host and start no service. Run them as the service's user, or
+first copy the whole stopped data folder, including any `service.sqlite-journal` beside the
+database. Never copy `service.sqlite` alone.
+
+`mo history DIR` shows what a stopped data folder holds, and runs no Mo code and no timer. It
+shows the last snapshot "as of sequence S, K later messages not applied", the log tail's
+sequence, handler index, arrival and argument sizes, and each retained failure with its build and
+whether this build can replay it. The log keeps a handler's index, not its name, so a tail entry
+says "name not recorded in the log". Messages before the snapshot are gone, so a message missing
+from the tail may still have run. A store from before failure capture says "this store predates
+failure capture". `mo history` refuses at once, with its own message, a folder a running service
+owns, a folder it cannot read, and a folder with no saved data. A journal left by an unfinished
+write needs a rollback: run it again as the folder's owner with `--recover`, which writes
+database pages but changes no record.
+
+`mo replay FILE --failure ID --data DIR` runs the failed handler again on its recorded state,
+arrival time and arguments; `--export failure.moex` reads a fetched artifact instead of `DIR`. It
+prints the original message, the pre-call state, the recorded and offline signatures and the
+regenerated stack with the top frame's variables. `FILE` must be the untouched source the service
+ran, so use the deployed `/opt/mo/$SHA` tree: any byte change, a comment or `mo format` included,
+changes the program identity and is refused. Replay also needs the `mo` executable that recorded
+the failure: `mo history` shows each record's build digest, and `sha256sum /opt/mo/*/mo` finds the
+executable with that digest. Records from a build without `mo replay` cannot be replayed. The
+outcome is `reproduced` (exit 0), or `different`, `not_reproduced` or `refused` (exit 1). A memory
+failure that depended on arguments queued in the mailbox does not recur offline, and the outcome
+says so.
+
+To check a fix, copy the program's folder, edit the copy, and add `--fix COPY/main.mo`. Both
+programs are checked before anything runs, so a fix that changes the state type, or the handler's
+name, kind, arguments or result shape, is refused. The original replays first, then the revised
+handler runs on the same inputs and budgets. The verdict is `verified` (exit 0) only when the
+original reproduced and the revision succeeded within the recorded budgets; otherwise it is
+`not_fixed`, `unverified` or `refused` (exit 1). `verified` says the failure is gone, not that the
+revision does the right work: the revised outcome shows its reply kind and whether the state
+changed.
+
+`mo query FILE FUNCTION --export state.moex` runs a function of yours over an exported state:
+`FUNCTION(state)`. `mo query FILE FUNCTION --failure ID --data DIR` (or `--export failure.moex`)
+runs it over a failure's inputs: `FUNCTION(state, time, arguments...)` in the handler's order.
+`FUNCTION` is a function of `FILE`'s main module, or `Module.name`, exposed or not. `FILE` may add
+functions or modules to the deployed program, but the state type must not change, and the input
+must come from this `mo` build. The function is not generic (E1410), holds no capability or
+function in its parameters or result (E1411), takes the main service's state type first (E1412)
+and then exactly the inputs above (E1413). A query runs under `--max-work N` instructions, by
+default 1073741824, and `--max-heap`, `--max-stack` and `--max-depth` as `mo run` does; a query
+that stops on one exits 70 with a report that names the limit. The result prints as structural
+text, or as JSON with `--json`.
+
+A refusal prints one `mo replay: refused: CHECK: ...` line, or `mo query: refused:`, naming what
+differs with its recorded and found values, and exits 1. `--json` writes a version record, one
+record per outcome (`original`, `revised`, `query` or `history`), and a totals record whose
+`status` is the exit status.

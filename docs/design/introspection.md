@@ -1100,3 +1100,14 @@ Development evidence and limitations are recorded in
 Predictions for each check are in `learnability/phase4/offline/results/predictions.md`, written
 before the checks ran. Results, measurements and failed attempts are added here and in that folder
 as the offline commands land.
+
+**Offline value rendering.** JSON values in `mo replay`, `mo query` and `mo history` come from
+`McpViews.offline_value`, the live views' saved-schema renderer without a path, with a budget of
+`MO_LIMIT_OFFLINE_VALUE_BYTES` (16 MiB) counted as the live views count it. The budget is sized
+from the task queue's largest state: 5,000 jobs with 2,048-byte payloads (100 of them leased),
+10,461,125 saved bytes, rendered whole (`complete: true`) by `mo history --json` to 10,922,848
+bytes of JSON, with a peak resident size of 144 MB against the renderer's
+`MO_LIMIT_OFFLINE_RENDER_MEMORY` heap of 256 MiB. That render took 220 seconds in a `-O0` debug
+build; rendering speed is not yet tuned. Text output for `mo replay` and `mo query` prints values
+with `mo_value_print` in the program's own types; `mo history` has no program, so its text form
+shows the same JSON rendering.
