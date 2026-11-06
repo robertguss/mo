@@ -121,7 +121,7 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
-PROTOCOL_SOURCES := runtime/http.mo runtime/http-authority.mo runtime/http-policy.mo runtime/http-body.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo runtime/mcp-transport.mo runtime/mcp-views.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
+PROTOCOL_SOURCES := runtime/mcp-fetch.mo runtime/http.mo runtime/http-authority.mo runtime/http-policy.mo runtime/http-body.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo runtime/mcp-transport.mo runtime/mcp-views.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
 build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCES) Makefile
 	python3 ci/embed_protocol.py $@ $(PROTOCOL_SOURCES)
 	@touch $@
@@ -671,3 +671,32 @@ $(FUZZ_BUILD)/grammar/mo.tab.o: $(GRAMMAR_GENERATED)/mo.tab.c Makefile
 .SECONDARY:
 
 -include $(shell find build -name '*.d' 2>/dev/null)
+
+# Credential admission tests substitute only the fetcher's POSIX boundary.
+FETCH_PEER_RENAMES := -Dgetaddrinfo=mo_fetch_fault_resolve -Dfreeaddrinfo=mo_fetch_fault_free \
+	-Dconnect=mo_fetch_fault_connect -Dgetpeername=mo_fetch_fault_peer -Dsend=mo_fetch_fault_send -Dopen=mo_fetch_fault_open
+$(BUILD)/debug/fetch-peer/fetch.o: src/tools/fetch.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(FETCH_PEER_RENAMES) -c $< -o $@
+$(BUILD)/sanitize/fetch-peer/fetch.o: src/tools/fetch.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(FETCH_PEER_RENAMES) -c $< -o $@
+$(BUILD)/debug/tests/test_fetch_peer.test: $(BUILD)/debug/tests/test_fetch_peer.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/fetch.c,$(LIB_SOURCES))) $(BUILD)/debug/fetch-peer/fetch.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+$(BUILD)/sanitize/tests/test_fetch_peer.test: $(BUILD)/sanitize/tests/test_fetch_peer.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/fetch.c,$(LIB_SOURCES))) $(BUILD)/sanitize/fetch-peer/fetch.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+# A short compiled deadline must interrupt a five-second filesystem completion stall.
+FETCH_DEADLINE_RENAMES := -DMO_LIMIT_FETCH_US=UINT64_C\(2000000\) \
+	-Dsocket=mo_fetch_deadline_socket -Dconnect=mo_fetch_deadline_connect \
+	-Dgetpeername=mo_fetch_deadline_peer -Dsend=mo_fetch_deadline_send -Dfsync=mo_fetch_deadline_sync -Dlstat=mo_fetch_deadline_lookup
+$(BUILD)/debug/fetch-deadline/fetch.o: src/tools/fetch.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) $(FETCH_DEADLINE_RENAMES) -c $< -o $@
+$(BUILD)/sanitize/fetch-deadline/fetch.o: src/tools/fetch.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) $(FETCH_DEADLINE_RENAMES) -c $< -o $@
+$(BUILD)/debug/tests/test_fetch_deadline.test: $(BUILD)/debug/tests/test_fetch_deadline.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/fetch.c,$(LIB_SOURCES))) $(BUILD)/debug/fetch-deadline/fetch.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+$(BUILD)/sanitize/tests/test_fetch_deadline.test: $(BUILD)/sanitize/tests/test_fetch_deadline.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/fetch.c,$(LIB_SOURCES))) $(BUILD)/sanitize/fetch-deadline/fetch.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)

@@ -1,0 +1,43 @@
+{
+  "binary_sha256": "c7f2337e0476955063425ad8e2cf0732ae56bb99333cdec628ef081a022a38c0",
+  "fixture_large_text_bytes": 16767505,
+  "measurement": "one active memory observation",
+  "service_before_KiB": {
+    "VmHWM": 119540,
+    "VmRSS": 119540
+  },
+  "memory_during": {
+    "heap_used": "16778586",
+    "heap_peak": "33564940",
+    "heap_limit": "58718816",
+    "stack_capacity": "1024",
+    "stack_limit": "8388608",
+    "encoded_state_bytes": "16777216",
+    "pinned_export_bytes": 16777437,
+    "diagnostic_scratch_peak": "88210",
+    "export_available": true
+  },
+  "fetch_status": 0,
+  "service_after_KiB": {
+    "VmHWM": 135928,
+    "VmRSS": 135928
+  },
+  "memory_after": {
+    "heap_used": "16778586",
+    "heap_peak": "33564940",
+    "heap_limit": "58718816",
+    "stack_capacity": "1024",
+    "stack_limit": "8388608",
+    "encoded_state_bytes": "16777216",
+    "pinned_export_bytes": 0,
+    "diagnostic_scratch_peak": "88222",
+    "export_available": true
+  },
+  "fetch_max_RSS_KiB": 58972,
+  "elapsed_seconds": 532.07,
+  "incomplete_files": [],
+  "artifact_bytes": 16777405,
+  "saved_bytes": 16777216,
+  "pages": 2049,
+  "artifact_sha256": "782d3f44bd47927c22d2fc91540dc6ef686a8cf09f4ccc24b17dcb15a7c451b4"
+}

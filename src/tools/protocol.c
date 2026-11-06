@@ -459,6 +459,7 @@ static bool valid_abi(const struct mo_image *image) {
         {"HttpBody.fixed", 1, {ABI_INT}, ABI_BODY_STATE},
         {"HttpBody.chunked", 0, {0}, ABI_BODY_STATE},
         {"HttpBody.feed", 3, {ABI_BODY_STATE, ABI_BYTES, ABI_BODY_BOUNDS}, ABI_BODY_RESULT},
+        {"McpFetch.read", 1, {ABI_TEXT}, ABI_TEXTS},
         {"McpViews.export_id", 1, {ABI_JSON}, ABI_TEXT},
         {"McpViews.export_reply", 3, {ABI_TEXT, ABI_TEXTS, ABI_NATIVE_BYTES}, ABI_JSON},
         {"McpViews.render",

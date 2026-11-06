@@ -6,7 +6,7 @@ This page is the procedure for a finished Mo program. Correct Mo is Language Ref
 
 The language headings below use the present tense of the reference.
 
-This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit` and `mo serve`. The program below checks with no errors, runs, and passes its examples and its test.
+This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve` and `mo fetch`. The program below checks with no errors, runs, and passes its examples and its test.
 
 `mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks again, and prints the errors that are left, as `mo check` does. It rewrites only the files it is given.
 
@@ -24,7 +24,7 @@ Service tool names cannot end in `?` (E0106). Tool arguments after State and Tim
 
 `mo serve` connects a service to MCP clients over authenticated plain HTTP/1.1. HTTP policy, JSON-RPC validation and wire values run in embedded Mo; native code owns sockets, credentials and service dispatch. The transport's byte, node, work and memory ceilings are internal bounds, not language configuration. `mo run` still refuses a service entry module, and Simulation still provides no networking.
 
-Authenticated MCP discovery lists author tools followed by `mo-overview`, `mo-state`, `mo-mailbox`, `mo-timers`, `mo-memory`, `mo-supervisor`, `mo-log` and `mo-export`. The same token grants access to private state. These read-only operator views share the author-call rate limit and do not invoke handlers or enter the mailbox, recovery log or supervisor counts. `mo-state` accepts an optional `path` array of field names and indexes; bounded output marks truncation and `complete: false`, and a value too large to show becomes `{"truncated_bytes": N}` while the values after it still render. A list view that does not fit one reply reports `truncated`, the number of items left out, and `next`, the arguments for the following page: `mo-mailbox` and `mo-timers` take `offset`, `mo-supervisor` takes `after` and `before`, and `mo-log` takes `after`. Separate observations are not one atomic snapshot. `mo-log` retains committed message metadata only since the last snapshot; in-memory supervisor events disappear when the process exits. Live views need the endpoint URL and token, not shell access to the host. `mo-export` with `{"kind":"state"}` starts an immutable MOEX v1 state export; use the returned `next` arguments to read subsequent base64 pages. Each page identifies its export, durable recovery sequence and encoded-state sequence (which can differ after a snapshot failure). The final page releases the pin. A new export replaces the previous state export; 60 seconds without a page expires it. Refused generations never return another export’s bytes. Pins use native memory outside the handler heap. Fetch, retained failure records and offline replay/query tools are not available yet.
+Authenticated MCP discovery lists author tools followed by `mo-overview`, `mo-state`, `mo-mailbox`, `mo-timers`, `mo-memory`, `mo-supervisor`, `mo-log` and `mo-export`. The same token grants access to private state. These read-only operator views share the author-call rate limit and do not invoke handlers or enter the mailbox, recovery log or supervisor counts. `mo-state` accepts an optional `path` array of field names and indexes; bounded output marks truncation and `complete: false`, and a value too large to show becomes `{"truncated_bytes": N}` while the values after it still render. A list view that does not fit one reply reports `truncated`, the number of items left out, and `next`, the arguments for the following page: `mo-mailbox` and `mo-timers` take `offset`, `mo-supervisor` takes `after` and `before`, and `mo-log` takes `after`. Separate observations are not one atomic snapshot. `mo-log` retains committed message metadata only since the last snapshot; in-memory supervisor events disappear when the process exits. Live views need the endpoint URL and token, not shell access to the host. `mo-export` with `{"kind":"state"}` starts an immutable MOEX v1 state export; use the returned `next` arguments to read subsequent base64 pages. Each page identifies its export, durable recovery sequence and encoded-state sequence (which can differ after a snapshot failure). The final page releases the pin. A new export replaces the previous state export; 60 seconds without a page expires it. Refused generations never return another export’s bytes. Pins use native memory outside the handler heap. Fetch is available on the service host. Retained failure records and offline replay/query tools are not available yet.
 
 A few forms the reference requires are still unfinished. `mo check` reports E1103 for a form the checker has not implemented, with a headline that says so, such as "this constant's call dependencies are not implemented". It reports E1150 for a form it checks but cannot compile yet, such as a constant's function value that reads a later constant. The headline is "this constant's deferred function needs globals not yet initialized". E1103 and E1150 mean this toolchain has not implemented that form. `mo run` and `mo test` report the same code for the same form.
 
@@ -267,3 +267,15 @@ E1408 is also an expected build limitation when `mo run` targets a service entry
 Where the reference says nothing, do not add a rule, and do not fill that silence from the architecture or from `formal/TRANSLATION.md`.
 
 Section 12 shows the form of a spec. When the task is a program, read section 11.2 for `main`'s result and the program's exit status.
+
+### Fetch a private state artifact on the service host
+
+Run `mo fetch http://127.0.0.1:8080/mcp --export state --out state.moex --token-env SERVICE_TOKEN`
+on the host running the persistent service. The destination must not exist (including a symlink).
+The command accepts plain HTTP loopback URLs only, ignores proxies and refuses redirects.
+It verifies one complete export generation and publishes a mode-0600 artifact. A failed or
+interrupted attempt removes its temporary file; retry creates a new generation. The largest
+state requires 2049 pages, about 103 seconds at the service's call rate limit.
+Pin creation, reading the final page (which releases the pin), and publishing the verified local
+file are separate events. Repeated creation may observe different state. Failure capture and
+failure-kind export remain unavailable.

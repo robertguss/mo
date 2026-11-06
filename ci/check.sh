@@ -220,6 +220,7 @@ if have python3; then
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
 				python3 ci/check_cli.py "$driver"
 			later "Authenticated operator views ($driver)" python3 ci/check_operator.py "$driver"
+			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
 			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
 				python3 ci/check_simulation.py "$driver"

@@ -19,6 +19,7 @@ enum mo_command {
     MO_COMMAND_EMIT,
     MO_COMMAND_SERVE,
     MO_COMMAND_VERSION,
+    MO_COMMAND_FETCH,
 };
 
 #define MO_EXIT_SERVICE_STOPPED 69
@@ -31,6 +32,7 @@ struct mo_cli {
     bool json, list, reference;
     struct mo_limits limits;
     uint32_t calls, seconds;
+    const char *fetch_url, *fetch_token;
     const char *module;
     const char *output; /* emit's -o file */
     uint16_t port;
@@ -78,6 +80,14 @@ struct mo_defect;
  * process/image until returning, including initialization reports with NULL process. */
 MO_MUST_USE bool mo_write_defect(FILE *errors, const struct mo_process *process,
                                  const struct mo_defect *defect);
+struct mo_image;
+struct mo_export_page;
+enum mo_fetch_read_status { MO_FETCH_PAGE, MO_FETCH_REFUSED, MO_FETCH_REPLACED, MO_FETCH_RELEASED };
+/* Bounded embedded HTTP/MCP reader; refuses malformed page encodings. */
+MO_MUST_USE enum mo_fetch_read_status mo_fetch_read(struct mo_image *image, uint32_t function,
+                                                    const struct mo_buffer *wire,
+                                                    struct mo_export_page *out);
+MO_MUST_USE int mo_fetch(const struct mo_cli *cli, FILE *errors);
 /* Whole checking and the certified lowering/runtime pipeline run inside one
  * explicit source-stack call. Owns no borrowed data after returning. */
 MO_MUST_USE int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors);

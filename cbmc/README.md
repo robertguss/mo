@@ -351,4 +351,19 @@ it executes the real binary reader. SHA-256 is modeled by a span-checking callee
 not proven here. Five unwinds cover the four-byte schema length; the initialization
 loop covers the full input. Reach checks require every helper block and harness end.
 Full-size artifacts, OS entropy, allocator failure, HTTP delivery and digests are
-covered by separate empirical tests, not this proof. MOEX artifact consumption is U5.
+covered by separate empirical tests, not this proof. Private fetch also consumes complete MOEX framing and digests, covered by its unit/socket/fuzz checks. Offline command compatibility remains separate.
+
+### Export consumer page admission
+
+`bash cbmc/prove.sh export_page_matches` and its `--reach` counterpart execute the
+actual shared consumer predicate with unconstrained `size_t` metadata, both 64-bit
+sequences, completion flags and independent 16-byte identities. Seventeen unwinds
+cover identity initialization and comparison. Acceptance requires nonempty bounded
+spans, overflow-free exact coverage, the exact ceiling page count and completion
+only at the final byte. Continuations preserve generation, both sequences, total
+and next offset; completed consumers reject further pages. Reach checks cover every
+predicate block and the harness end. This proves metadata admission, not allocator
+ownership, SHA-256, socket delivery or filesystem publication; those have separate
+arena proofs and empirical unit/socket/fuzz checks. The consumer uses the same page
+bounds already proved above. Both commands passed in the private-fetch development
+run, with proof and reach logs retained under `build/u9-cbmc-consume*.txt`.

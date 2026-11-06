@@ -319,3 +319,26 @@ These are not guaranteed today.
 A change that adds or removes an instruction, a limit, a capability operation, a fuzz target or a
 proof updates the property it affects. The facts here are checkable: the pair-assertion table
 names functions in `src`, the evidence rows name files in `tests/`, `fuzz/` and `cbmc/`.
+
+## Private host-local state fetch
+
+The fetch command restricts URL syntax before reading the named credential environment variable.
+It resolves the selected host and rejects any non-loopback result, then checks the connected peer
+before formatting or transmitting Authorization on each page. Direct POSIX sockets bypass proxy
+configuration; the embedded response reader accepts only HTTP 200 with bounded explicit length,
+JSON content type and a successful MCP envelope. It never follows Location.
+
+The reader bounds page arithmetic through the producer's shared `mo_export_page_bounds` helper.
+Generation, both sequence fields, exact coverage, page checksums, complete artifact framing,
+embedded schema digest and trailing SHA-256 must agree before publication. These checks detect
+inconsistency; they are not cryptographic authentication of a malicious local service.
+
+An exclusive no-follow mode-0600 temporary file and non-overwriting hard-link publication protect
+the destination. Signal cancellation and ordinary failure remove the temporary name. A machine
+crash or SIGKILL can leave an unpublished private temporary name; cleanup cannot execute then.
+The monotonic deadline starts at entry, arms before destination lookup and remains active through
+filesystem completion/publication. Numeric-only resolution avoids DNS/NSS. Its signal interrupts
+interruptible POSIX calls; uninterruptible kernel waits and scheduler starvation remain OS
+assumptions. Successive page starts are paced at the service call rate. VM parser
+work and heap have separate limits. Actual coverage and measurement results belong to the phase
+introspection design evidence; finite page arithmetic proofs do not prove socket or file syscalls.

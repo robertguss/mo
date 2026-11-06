@@ -3827,7 +3827,7 @@ def guide_claims(binary):
     # The live operator driver exercises these guide claims through the real endpoint.
     for name in SERVE_OPERATOR_NAMES:
         assert f"`{name}`" in guide
-    assert "Fetch, retained failure records and offline replay/query tools are not available yet." in guide
+    assert "Fetch is available on the service host. Retained failure records and offline replay/query tools are not available yet." in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]
@@ -3844,7 +3844,7 @@ def guide_claims(binary):
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit` and `mo serve`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve` and `mo fetch`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -4325,12 +4325,15 @@ def check(binary):
             'invalid port (expected a decimal integer from 0 to 65535): "--port" "65536"')
     mistake(["serve", good, "--port", "0", "--data", "-x"],
             'flag needs a nonempty value: "--data" "-x"')
+    mistake(["fetch"], 'usage: mo fetch URL --export state --out FILE --token-env NAME')
+    mistake(["fetch", "http://localhost:80/mcp", "--export", "failure", "--out", "unused", "--token-env", "TOKEN"],
+            'usage: mo fetch URL --export state --out FILE --token-env NAME')
     mistake(["serve", good, "--data", "state"], 'serve needs --port N: "serve"')
     mistake(["serve", good, "--port", "0"], 'serve needs --data DIR: "serve"')
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit or serve): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve or fetch): "bad\\x0a\\x09\\xc3\\xbf"')
     for flag, (value, allowed) in flags.items():
         for command in ("check", "run", "test", "format", "fix", "guide"):
             args = [command, flag, *value, *([] if command == "guide" else [good])]
