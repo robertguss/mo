@@ -164,3 +164,36 @@ required" holds only once database pages were written. In exclusive locking mode
 before any page reaches the database leaves a zeroed journal header, which SQLite correctly treats
 as not hot, since the database is intact. The test kills a writer whose 1 MiB append overflows the
 page cache.
+
+## The offline call, shared with capture
+
+`mo_service_call_handler` now carries the call, the new-state step, the saved copy and the
+work-limit poll for every caller; `restore_record` and `mo_service_step` use it. Capture and replay
+share `mo_service_signature` and `mo_service_context`. `mo_offline_call` runs one handler on a
+record's inputs in a fresh process under the service limits, and `mo_service_budgets_match` names
+the first budget that differs from the build's own.
+
+- Characterization: before any edit, `make test CC=gcc` and the kill loop passed; after the lift,
+  before any new test, the service runtime, service store, recovery, recovery-fault and verdict
+  tests passed unchanged.
+- New tests, in `tests/test_service_runtime.c` and `tests/test_service_store.c`: a captured `stop`
+  in a read-only and in an updating tool replays with a signature equal field by field and context
+  text equal byte for byte, `reproduced`, state and log unchanged, and the same stop one line lower
+  is `different`; the work limit at the exact boundary is OK on trial 0 and cancelled on trials 1
+  and 2, as live, with the same frames and context; the full-mailbox memory setup fails live and
+  succeeds offline, `not_reproduced`; state-size failures of an updating tool and a timer replay as
+  `state_size`, and a fixed revision succeeds while one returning `Error` succeeds with an error
+  reply and the state unchanged; the budget check; injected allocation faults end as a refusal or a
+  memory failure; too few or too many arguments are refused.
+- Red: every new test passed on its first run, since the behaviour already held after the lift, so
+  mutants of the production code stood in. Each failed its test: skipping the saved copy, "state
+  changed" always false, ignoring `Error` replies, dropping variables from the context, the frame
+  walk reporting the wrong function, a shrunk offline heap, ignoring the arrival time, a +2 poll
+  formula, leaving the heap out of the budget check, and removing the trailing-argument check (it
+  survived until a mismatched-argument test was added). A process leak on the refusal path is
+  caught by LeakSanitizer.
+- Green: `make test` under gcc and clang, the clang sanitizer build of the six affected tests,
+  `make format-check`, `make deps`, `make tidy`, the kill loop.
+
+The base outcome struct was renamed `mo_run_outcome`: its old tag collided with the VM's
+`enum mo_outcome`, so no file could include both headers.
