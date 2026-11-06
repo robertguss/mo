@@ -6,7 +6,9 @@
 #include <sys/stat.h>
 
 #include "base/binary.h"
+#include "base/failure.h"
 #include "base/store-memory.h"
+#include "base/utf8.h"
 
 #define TEXT_OF(n) DIGITS_OF(n)
 #define DIGITS_OF(n) #n
@@ -185,6 +187,11 @@ bool mo_store_record_read(enum mo_store_record_kind kind, const uint8_t *bytes, 
     *out = (struct mo_store_record){kind, seq, image, data, (size_t)payload};
     return true;
 }
+
+/* "MOST\1", kind, sequence, image and payload length; then payload and checksum. */
+enum { FRAME_HEADER_BYTES = 5 + 1 + 8 + 8 + 4, FRAME_CHECKSUM_BYTES = 8 };
+_Static_assert(FRAME_HEADER_BYTES + FRAME_CHECKSUM_BYTES == MO_STORE_FRAME_BYTES,
+               "frame layout matches its envelope");
 
 static bool frame(const struct mo_store_record *r, struct mo_buffer *out) {
     if (r->length > MO_LIMIT_SAVED_BYTES || r->sequence > INT64_MAX)
@@ -376,40 +383,60 @@ struct failure_row {
     char kind[MO_LIMIT_FAILURE_KIND_BYTES + 1];
 };
 
-static bool failure_pairs_complete(struct mo_store *s) {
+/* Not a SQLite code: diagnostic rows read cleanly but failed validation. */
+enum { FAILURE_DAMAGED = -1 };
+
+static bool failure_kind_valid(const unsigned char *kind, int length) {
+    return kind != NULL && length > 0 && length <= MO_LIMIT_FAILURE_KIND_BYTES &&
+           memchr(kind, 0, (size_t)length) == NULL && mo_utf8_valid(kind, (size_t)length);
+}
+
+/* SQLITE_OK, a SQLite error, or FAILURE_DAMAGED. */
+static int failure_pairs_complete(struct mo_store *s) {
     sqlite3_stmt *stmt = NULL;
     const char *sql = "SELECT (SELECT count(*) FROM (SELECT id FROM failure LIMIT " TEXT_OF(
         MO_LIMIT_FAILURE_RECORDS) "+1)),"
                                   "(SELECT count(*) FROM (SELECT id FROM failure_state "
                                   "LIMIT " TEXT_OF(MO_LIMIT_FAILURE_RECORDS) "+1))";
-    if (sqlite3_prepare_v2(s->db, sql, -1, &stmt, NULL) != SQLITE_OK)
-        return false;
-    bool ok = sqlite3_step(stmt) == SQLITE_ROW;
-    if (ok) {
+    int code = sqlite3_prepare_v2(s->db, sql, -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return code;
+    int step = sqlite3_step(stmt);
+    bool valid = false;
+    if (step == SQLITE_ROW) {
         sqlite3_int64 n = sqlite3_column_int64(stmt, 0);
-        ok = n <= MO_LIMIT_FAILURE_RECORDS && n == sqlite3_column_int64(stmt, 1);
+        valid = n <= MO_LIMIT_FAILURE_RECORDS && n == sqlite3_column_int64(stmt, 1);
     }
-    ok = sqlite3_finalize(stmt) == SQLITE_OK && ok;
-    if (!ok)
-        return false;
+    code = sqlite3_finalize(stmt);
+    if (step != SQLITE_ROW || code != SQLITE_OK)
+        return step != SQLITE_ROW ? step : code;
+    if (!valid)
+        return FAILURE_DAMAGED;
     /* Each table now has at most 64 rows; indexed equality probes bound this scan. */
-    if (sqlite3_prepare_v2(s->db,
+    code =
+        sqlite3_prepare_v2(s->db,
                            "SELECT 1 FROM failure f LEFT JOIN failure_state s ON f.id=s.id WHERE "
                            "s.id IS NULL LIMIT 1",
-                           -1, &stmt, NULL) != SQLITE_OK)
-        return false;
-    ok = sqlite3_step(stmt) == SQLITE_DONE;
-    return sqlite3_finalize(stmt) == SQLITE_OK && ok;
+                           -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return code;
+    step = sqlite3_step(stmt);
+    code = sqlite3_finalize(stmt);
+    if (step == SQLITE_ROW)
+        return code == SQLITE_OK ? FAILURE_DAMAGED : code;
+    return step != SQLITE_DONE ? step : code;
 }
 
-static bool failure_rows(struct mo_store *s, const char *kind, struct failure_row *rows,
-                         uint32_t *count, size_t *total) {
+/* SQLITE_OK, a SQLite error, or FAILURE_DAMAGED. */
+static int failure_rows(struct mo_store *s, const char *kind, struct failure_row *rows,
+                        uint32_t *count, size_t *total) {
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db,
-                           "SELECT f.id,f.kind,f.first,length(f.message)+length(s.record) "
-                           "FROM failure f JOIN failure_state s ON f.id=s.id ORDER BY f.id",
-                           -1, &stmt, NULL) != SQLITE_OK)
-        return false;
+    int code = sqlite3_prepare_v2(s->db,
+                                  "SELECT f.id,f.kind,f.first,length(f.message)+length(s.record) "
+                                  "FROM failure f JOIN failure_state s ON f.id=s.id ORDER BY f.id",
+                                  -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return code;
     bool ok = true;
     int step;
     *count = 0;
@@ -420,10 +447,8 @@ static bool failure_rows(struct mo_store *s, const char *kind, struct failure_ro
         sqlite3_int64 id = sqlite3_column_int64(stmt, 0);
         sqlite3_int64 bytes = sqlite3_column_int64(stmt, 3);
         int first = sqlite3_column_int(stmt, 2);
-        if (*count == MO_LIMIT_FAILURE_RECORDS || id <= 0 || length <= 0 ||
-            length > MO_LIMIT_FAILURE_KIND_BYTES || text == NULL ||
-            memchr(text, 0, (size_t)length) != NULL || bytes <= 0 ||
-            bytes > MO_LIMIT_FAILURE_STORE_BYTES || (first != 0 && first != 1) ||
+        if (*count == MO_LIMIT_FAILURE_RECORDS || id <= 0 || !failure_kind_valid(text, length) ||
+            bytes <= 0 || bytes > MO_LIMIT_FAILURE_STORE_BYTES || (first != 0 && first != 1) ||
             (size_t)bytes > MO_LIMIT_FAILURE_STORE_BYTES - *total) {
             ok = false;
             break;
@@ -435,8 +460,10 @@ static bool failure_rows(struct mo_store *s, const char *kind, struct failure_ro
         r->same = strcmp(r->kind, kind) == 0;
         *total += r->bytes;
     }
-    ok = ok && step == SQLITE_DONE;
-    return sqlite3_finalize(stmt) == SQLITE_OK && ok;
+    code = sqlite3_finalize(stmt);
+    if (!ok)
+        return code == SQLITE_OK ? FAILURE_DAMAGED : code;
+    return step != SQLITE_DONE ? step : code;
 }
 
 static int delete_failure(struct mo_store *s, uint64_t id) {
@@ -466,13 +493,29 @@ static enum mo_store_capture_status capture_refusal(struct mo_store *s, int code
     bool rolled_back = sqlite3_get_autocommit(s->db) != 0 || exec(s, "ROLLBACK");
     uint64_t head = 0;
     bool empty = false;
+    bool damaged = code == FAILURE_DAMAGED;
     code &= 0xff;
-    bool recoverable = code == SQLITE_FULL || code == SQLITE_TOOBIG || code == SQLITE_NOMEM ||
-                       code == SQLITE_CONSTRAINT || code == SQLITE_BUSY || code == SQLITE_LOCKED;
-    return rolled_back && sqlite3_get_autocommit(s->db) != 0 && recoverable &&
-                   current_head(s, &head, &empty) == MO_STORE_OK
-               ? MO_STORE_CAPTURE_REFUSED
-               : MO_STORE_CAPTURE_UNSAFE;
+    bool recoverable = damaged || code == SQLITE_FULL || code == SQLITE_TOOBIG ||
+                       code == SQLITE_NOMEM || code == SQLITE_CONSTRAINT || code == SQLITE_BUSY ||
+                       code == SQLITE_LOCKED;
+    if (!rolled_back || sqlite3_get_autocommit(s->db) == 0 || !recoverable ||
+        current_head(s, &head, &empty) != MO_STORE_OK)
+        return MO_STORE_CAPTURE_UNSAFE;
+    return damaged ? MO_STORE_CAPTURE_DAMAGED : MO_STORE_CAPTURE_REFUSED;
+}
+
+/* The version-1 payload carries its own id, bound to the row id chosen here. */
+static void bind_failure_message_id(struct mo_buffer *frame, uint64_t id) {
+    uint8_t *payload = frame->bytes + FRAME_HEADER_BYTES;
+    if (frame->length < MO_STORE_FRAME_BYTES + MO_FAILURE_ID_OFFSET + MO_FAILURE_ID_BYTES ||
+        payload[0] != MO_FAILURE_VERSION)
+        return;
+    for (unsigned i = 0; i < MO_FAILURE_ID_BYTES; i++)
+        payload[MO_FAILURE_ID_OFFSET + i] = (uint8_t)(id >> (8 * i));
+    size_t checked = frame->length - FRAME_CHECKSUM_BYTES;
+    uint64_t sum = mo_binary_checksum(frame->bytes, checked);
+    for (unsigned i = 0; i < FRAME_CHECKSUM_BYTES; i++)
+        frame->bytes[checked + i] = (uint8_t)(sum >> (8 * i));
 }
 
 enum mo_store_capture_status mo_store_capture(struct mo_store *s, const char *kind,
@@ -516,19 +559,15 @@ enum mo_store_capture_status mo_store_capture(struct mo_store *s, const char *ki
     }
     uint32_t count = 0;
     size_t total = 0;
-    if (!failure_pairs_complete(s) || !failure_rows(s, kind, rows, &count, &total)) {
-        result = capture_refusal(s, sqlite3_errcode(s->db));
+    int checked = failure_pairs_complete(s);
+    if (checked == SQLITE_OK)
+        checked = failure_rows(s, kind, rows, &count, &total);
+    if (checked != SQLITE_OK) {
+        result = capture_refusal(s, checked);
         goto done;
     }
     uint64_t next = count == 0 ? 1 : rows[count - 1].id + 1;
-    /* Bind a versioned message payload's embedded id to both committed rows. */
-    if (message->length >= 9 && message->bytes[0] == 1) {
-        for (unsigned i = 0; i < 8; i++)
-            message_frame.bytes[26 + 1 + i] = (uint8_t)(next >> (8 * i));
-        uint64_t sum = mo_binary_checksum(message_frame.bytes, message_frame.length - 8);
-        for (unsigned i = 0; i < 8; i++)
-            message_frame.bytes[message_frame.length - 8 + i] = (uint8_t)(sum >> (8 * i));
-    }
+    bind_failure_message_id(&message_frame, next);
     if (next > INT64_MAX) {
         result = capture_refusal(s, SQLITE_FULL);
         goto done;
@@ -636,8 +675,9 @@ static enum mo_store_status failure_read(struct mo_store *s, uint64_t after, uin
     MO_ASSERT(s != NULL && consume != NULL);
     if (s->unsafe)
         return MO_STORE_IO;
-    if (!failure_pairs_complete(s))
-        return MO_STORE_CORRUPT;
+    int pairs = failure_pairs_complete(s);
+    if (pairs != SQLITE_OK)
+        return pairs == FAILURE_DAMAGED ? MO_STORE_CORRUPT : failure(pairs);
     sqlite3_stmt *stmt = NULL;
     const char *sql =
         metadata
@@ -662,9 +702,8 @@ static enum mo_store_status failure_read(struct mo_store *s, uint64_t after, uin
         const unsigned char *kind = sqlite3_column_text(stmt, 1);
         int length = sqlite3_column_bytes(stmt, 1);
         int first = sqlite3_column_int(stmt, 2);
-        if (++count > MO_LIMIT_FAILURE_RECORDS || row_id <= 0 || kind == NULL || length <= 0 ||
-            length > MO_LIMIT_FAILURE_KIND_BYTES || memchr(kind, 0, (size_t)length) != NULL ||
-            (first != 0 && first != 1) ||
+        if (++count > MO_LIMIT_FAILURE_RECORDS || row_id <= 0 ||
+            !failure_kind_valid(kind, length) || (first != 0 && first != 1) ||
             (!metadata && row(stmt, 3, MO_STORE_FAILURE_STATE, &f.state) != MO_STORE_OK) ||
             row(stmt, 4, MO_STORE_FAILURE_MESSAGE, &f.message) != MO_STORE_OK ||
             (!metadata &&

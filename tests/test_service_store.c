@@ -2350,7 +2350,7 @@ static void damaged_diagnostics(void) {
         id = 999;
         enum mo_store_capture_status captured =
             mo_store_capture(store, "next", &state, &message, &id);
-        CHECK(captured != MO_STORE_CAPTURE_OK && captured != MO_STORE_CAPTURE_UNSAFE);
+        CHECK(captured == MO_STORE_CAPTURE_DAMAGED);
         CHECK(id == 999);
         struct mo_store_record log = {MO_STORE_LOG, 1, 1, &b, 1};
         CHECK(mo_store_call(store, MO_STORE_APPEND, &log, NULL, NULL) == MO_STORE_OK);

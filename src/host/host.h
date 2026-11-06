@@ -145,10 +145,12 @@ mo_store_call(struct mo_store *store, enum mo_store_operation operation,
               bool (*consume)(const struct mo_store_record *record, void *context), void *context);
 
 /* Diagnostic writes publish an id only after commit. REFUSED means rollback and
- * a subsequent recovery-head read succeeded; UNSAFE requires closing the store. */
+ * a subsequent recovery-head read succeeded; DAMAGED is REFUSED because stored
+ * diagnostic rows failed validation; UNSAFE requires closing the store. */
 enum mo_store_capture_status {
     MO_STORE_CAPTURE_OK,
     MO_STORE_CAPTURE_REFUSED,
+    MO_STORE_CAPTURE_DAMAGED,
     MO_STORE_CAPTURE_UNSAFE
 };
 enum mo_store_failure_operation {

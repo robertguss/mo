@@ -928,10 +928,11 @@ static void capture_failure(struct mo_service_loop *s, const struct service_mess
                                           metadata.bytes, metadata.length};
         enum mo_store_capture_status result =
             mo_store_capture(s->store, (const char *)kind.bytes, &state, &message, &s->capture_id);
-        s->capture_refusal = result == MO_STORE_CAPTURE_OK ? NULL : "the store refused the record";
+        s->capture_refusal = result == MO_STORE_CAPTURE_OK        ? NULL
+                             : result == MO_STORE_CAPTURE_DAMAGED ? "diagnostic records damaged"
+                             : result == MO_STORE_CAPTURE_UNSAFE  ? "store outcome uncertain"
+                                                                  : "the store refused the record";
         s->capture_unsafe = result == MO_STORE_CAPTURE_UNSAFE;
-        if (s->capture_unsafe)
-            s->capture_refusal = "store outcome uncertain";
     }
     mo_buffer_free(&metadata);
     mo_buffer_free(&context);
