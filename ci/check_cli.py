@@ -4329,6 +4329,9 @@ def check(binary):
     mistake(["fetch"], 'usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME')
     mistake(["fetch", "http://localhost:80/mcp", "--export", "failure", "--out", "unused", "--token-env", "TOKEN"],
             'usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME')
+    for failure_id in ["0", "", "x1", "9223372036854775808"]:
+        mistake(["fetch", "http://localhost:80/mcp", "--export", "failure", failure_id, "--out",
+                 "unused", "--token-env", "TOKEN"], "failure id must be positive")
     mistake(["serve", good, "--data", "state"], 'serve needs --port N: "serve"')
     mistake(["serve", good, "--port", "0"], 'serve needs --data DIR: "serve"')
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",

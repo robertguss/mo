@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """Authenticated live views against a real persistent service, without author inspection tools."""
+import base64
+import hashlib
 import json
 import os
 import pathlib
 import signal
+import struct
 import sys
 import tempfile
 import time
 
-from check_cli import SERVE_OPERATOR_NAMES as NAMES, Served
+from check_cli import SERVE_OPERATOR_NAMES as NAMES, Served, serve_events, serve_supervised
 
 TOKEN = "OperatorViewCanary"
 VIEW_BYTES = 6144
@@ -72,6 +75,43 @@ end
 '''
 
 
+FAILING = '''module Main
+service
+  state Text = "x".repeat(20000)
+  tools broken, add
+  token from env "OPERATOR_TOKEN"
+end
+fn broken(_state: Text, _now: Time, _n: Int) : Bool
+  stop "operator failure"
+end
+fn add(state: Text, _now: Time) : (Text, Bool)
+  ("#{state}x", true)
+end
+'''
+
+
+def client(served):
+    assert served.port, served.errors()
+
+    def rpc(method, params, token=TOKEN):
+        time.sleep(0.055)
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+        status, raw = served.post(body, token)
+        assert TOKEN.encode() not in raw
+        return status, json.loads(raw) if raw else None
+
+    def call(name, **arguments):
+        status, body = rpc("tools/call", {"name": name, "arguments": arguments})
+        assert status == 200 and not body["result"]["isError"], (name, body)
+        value = body["result"]["structuredContent"]["value"]
+        if name == "mo-state" and "state" in value:
+            rendered = json.dumps(value["state"], ensure_ascii=False, separators=(",", ":"))
+            assert len(rendered.encode()) <= VIEW_BYTES, (arguments, len(rendered))
+        return value
+
+    return rpc, call
+
+
 def serving(binary, source, check):
     with tempfile.TemporaryDirectory(prefix="mo-operator-") as directory:
         folder = pathlib.Path(directory)
@@ -81,26 +121,143 @@ def serving(binary, source, check):
         data.mkdir()
         served = Served(binary, path, data, {**os.environ, "OPERATOR_TOKEN": TOKEN}, folder)
         try:
-            assert served.port, served.errors()
+            check(*client(served))
+            assert served.finish(0, signal.SIGTERM) == STOPPED
+        finally:
+            served.close()
 
-            def rpc(method, params, token=TOKEN):
-                time.sleep(0.055)
-                body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method,
-                                   "params": params})
-                status, raw = served.post(body, token)
-                assert TOKEN.encode() not in raw
-                return status, json.loads(raw) if raw else None
 
-            def call(name, **arguments):
-                status, body = rpc("tools/call", {"name": name, "arguments": arguments})
-                assert status == 200 and not body["result"]["isError"], (name, body)
-                value = body["result"]["structuredContent"]["value"]
-                if name == "mo-state" and "state" in value:
-                    rendered = json.dumps(value["state"], ensure_ascii=False, separators=(",", ":"))
-                    assert len(rendered.encode()) <= VIEW_BYTES, (arguments, len(rendered))
-                return value
+def exported(call, page, check=None):
+    """Read every page after `page`, checking each page's metadata; return the artifact bytes."""
+    from check_export import fnv
 
-            check(rpc, call)
+    first, data = page, bytearray()
+    while True:
+        for key in ["export", "kind", "failure", "version", "sequence", "encoded_sequence",
+                    "total", "pages"]:
+            assert page[key] == first[key], (key, first, page)
+        raw = base64.b64decode(page["base64"], validate=True)
+        assert page["offset"] == len(data) and len(raw) == page["length"], page
+        assert fnv(raw) == page["checksum"], page
+        data.extend(raw)
+        if page["next"] is None:
+            break
+        assert page["digest"] is None, page
+        expected = {"kind": first["kind"], "export": first["export"], "offset": len(data)}
+        if first["kind"] == "failure":
+            expected["failure"] = first["failure"]
+        assert page["next"] == expected, page
+        if check is not None:
+            check(page)
+        page = call("mo-export", **page["next"])
+    assert len(data) == first["total"] and first["pages"] == -(-len(data) // 8192)
+    assert hashlib.sha256(data[:-32]).digest() == data[-32:] and data[-32:].hex() == page["digest"]
+    assert data[:6] == b"MOEX\1" + (b"\2" if first["kind"] == "failure" else b"\1")
+    assert data[6:22].hex() == first["export"]
+    return bytes(data)
+
+
+def body(artifact):
+    at = 66 + struct.unpack_from("<I", artifact, 62)[0]
+    size = struct.unpack_from("<I", artifact, at + 60)[0]
+    assert len(artifact) == at + 64 + size + 32, (len(artifact), size)
+    return artifact[at + 64:-32]
+
+
+def failure_records(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-operator-failures-") as directory:
+        folder = pathlib.Path(directory)
+        path = folder / "main.mo"
+        path.write_text(FAILING, encoding="utf-8")
+        data = folder / "data"
+        data.mkdir()
+        env = {**os.environ, "OPERATOR_TOKEN": TOKEN}
+        served = Served(binary, path, data, env, folder)
+        try:
+            rpc, call = client(served)
+
+            def broken(n):
+                status, reply = rpc("tools/call", {"name": "broken", "arguments": {"_n": str(n)}})
+                assert status == 200 and reply["result"]["isError"] is True, reply
+                error = reply["result"]["structuredContent"]["error"]
+                assert error["code"] == "handler_failed" and error["effect"] == "none", reply
+
+            def refused(**arguments):
+                status, reply = rpc("tools/call", {"name": "mo-export", "arguments": arguments})
+                assert status == 200 and reply["result"]["isError"] is True, reply
+                return reply["result"]["structuredContent"]["value"]
+
+            opened = call("mo-overview")
+            assert opened["retained_failures"] == 0 and opened["failure_capture_available"] is True
+            assert opened["evicted_kinds_since_open"] == "0", opened
+            broken(7)
+            broken(8)
+            listed = call("mo-failures")
+            assert listed["truncated"] == 0 and listed["next"] is None, listed
+            assert listed["unavailable"] == [] and listed["unavailable_omitted"] == 0, listed
+            records = listed["records"]
+            assert [record["id"] for record in records] == ["1", "2"], listed
+            for record in records:
+                assert record["handler"] == "broken" and record["kind"] == records[0]["kind"]
+                assert record["kind"].startswith("broken:0:stop:"), record
+                signature = record["signature"]
+                assert signature["version"] == 1 and signature["class"] == "defect", record
+                assert signature["reason"] == "stop" and signature["limit"] == "", record
+                assert record["state_bytes"] == records[0]["state_bytes"], records
+            assert 20000 < int(records[0]["state_bytes"]) < 20100, records
+            assert int(records[0]["arrival"]) < int(records[1]["arrival"]), records
+            assert call("mo-failures", after=1)["records"] == records[1:]
+            assert call("mo-failures", after=2)["records"] == []
+            overview = call("mo-overview")
+            assert overview["retained_failures"] == 2 and overview["failures"] == 2, overview
+            events = call("mo-supervisor")["items"]
+            assert [(e["kind"], e["handler"], e["record"], e["record_unavailable"])
+                    for e in events] == [("failure", "broken", "2", None),
+                                         ("failure", "broken", "1", None)], events
+
+            assert refused(kind="failure", failure=3) == {"error": "failure_unavailable",
+                                                          "state_effect": "none"}
+            first = call("mo-export", kind="failure", failure=1)
+            assert first["kind"] == "failure" and first["failure"] == 1, first
+            assert first["offset"] == 0 and first["length"] == 8192 and first["pages"] == 3, first
+            assert first["sequence"] == first["encoded_sequence"] == "0", first
+            assert call("mo-memory")["pinned_export_bytes"] >= first["total"]
+
+            def switch(page):
+                assert refused(**{**page["next"], "failure": 2}) == {
+                    "error": "export_replaced", "state_effect": "none"}
+
+            artifact = exported(call, first, switch)
+            assert call("mo-memory")["pinned_export_bytes"] == 0
+            pair = body(artifact)
+            assert b"x" * 20000 in pair and b"broken" in pair
+            assert struct.unpack_from("<Q", artifact, 22)[0] == int(opened["program_identity"])
+
+            for _ in range(100):
+                call("add")
+            snapshot = call("mo-overview")
+            assert snapshot["recovery_sequence"] == snapshot["snapshot_sequence"] == "100", snapshot
+            assert call("mo-failures")["records"] == records
+            for n in range(13):
+                broken(n)
+            errors = served.finish(69)
+        finally:
+            served.close()
+        assert serve_events(errors) == serve_supervised(b"broken"), errors
+        lines = [line for line in errors.split(b"\n") if line.startswith(b"  record")]
+        assert lines == [b"  record: %d" % i for i in range(1, 16)], lines
+
+        served = Served(binary, path, data, env, folder)
+        try:
+            _, call = client(served)
+            kept = call("mo-failures")["records"]
+            assert [record["id"] for record in kept] == ["1", "15"] and kept[0] == records[0], kept
+            assert int(kept[1]["state_bytes"]) == int(records[0]["state_bytes"]) + 100, kept
+            assert kept[1]["kind"] == records[0]["kind"], kept
+            reopened = call("mo-overview")
+            assert reopened["retained_failures"] == 2 and reopened["recovery_sequence"] == "100"
+            latest = exported(call, call("mo-export", kind="failure", failure=15))
+            assert b"x" * 20100 in body(latest)
             assert served.finish(0, signal.SIGTERM) == STOPPED
         finally:
             served.close()
@@ -210,8 +367,9 @@ def run(binary):
     serving(binary, SOURCE, private_state)
     serving(binary, WIDE, wide_state)
     serving(binary, SOURCE.replace("repeat(100000)", "repeat(16000000)"), huge_state)
-    print("operator: private state, scalar types, paths, truncation, paging, routing and "
-          "nonmutation passed")
+    failure_records(binary)
+    print("operator: private state, scalar types, paths, truncation, paging, routing, "
+          "nonmutation and retained failures passed")
 
 
 if __name__ == "__main__":

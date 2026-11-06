@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 from check_cli import Served
-from check_operator import SOURCE, TOKEN
+from check_operator import FAILING, SOURCE, TOKEN, body, client, exported
 from check_export import SOURCE as COMMIT_SOURCE
 
 
@@ -184,8 +184,57 @@ def lifecycle(binary, mode):
             service.close()
 
 
+def failure(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-fetch-failure-") as directory:
+        root = pathlib.Path(directory)
+        (root / "main.mo").write_text(FAILING)
+        (root / "data").mkdir()
+        env = {**os.environ, "OPERATOR_TOKEN": TOKEN}
+        service = Served(binary, root / "main.mo", root / "data", env, root)
+        try:
+            rpc, call = client(service)
+            status, reply = rpc("tools/call", {"name": "broken", "arguments": {"_n": "7"}})
+            assert status == 200 and reply["result"]["isError"] is True, reply
+            overview = call("mo-overview")
+            assert overview["retained_failures"] == 1, overview
+
+            def fetch(target, *selector):
+                time.sleep(0.055)
+                result = subprocess.run([str(binary), "fetch", f"http://127.0.0.1:{service.port}/mcp",
+                    "--export", *selector, "--out", str(target), "--token-env", "OPERATOR_TOKEN"],
+                    env=env, capture_output=True, umask=0o777, timeout=30)
+                assert TOKEN.encode() not in result.stdout + result.stderr
+                assert not list(root.glob("*.mo-fetch-*"))
+                return result
+
+            missing = fetch(root / "missing", "failure", "2")
+            assert missing.returncode == 1 and not (root / "missing").exists(), missing.stderr
+            target = root / "failure.moex"
+            result = fetch(target, "failure", "1")
+            assert result.returncode == 0 and not result.stdout, result.stderr
+            assert target.stat().st_mode & 0o777 == 0o600
+            artifact = target.read_bytes()
+            assert artifact[:6] == b"MOEX\1\2"
+            assert hashlib.sha256(artifact[:-32]).digest() == artifact[-32:]
+            assert struct.unpack_from("<Q", artifact, 22)[0] == int(overview["program_identity"])
+            assert artifact[30:62] == hashlib.sha256(binary.read_bytes()).digest()
+            label = struct.unpack_from("<I", artifact, 62)[0]
+            assert artifact[66:66 + label].decode() == overview["runtime_build"]
+            assert struct.unpack_from("<IQQ", artifact, 66 + label) == (0, 0, 0)
+            direct = exported(call, call("mo-export", kind="failure", failure=1))
+            assert direct[6:22] != artifact[6:22] and body(direct) == body(artifact)
+            assert b"x" * 20000 in body(artifact)
+            assert fetch(target, "failure", "1").returncode == 1 and target.read_bytes() == artifact
+            state = root / "state.moex"
+            assert fetch(state, "state").returncode == 0 and state.read_bytes()[:6] == b"MOEX\1\1"
+            assert service.finish(0, signal.SIGTERM)
+        finally:
+            service.close()
+
+
 def run(binary):
     binary = pathlib.Path(binary).resolve()
+    failure(binary)
     with tempfile.TemporaryDirectory(prefix="mo-fetch-") as directory:
         root = pathlib.Path(directory)
         source = root / "main.mo"
@@ -351,7 +400,7 @@ def run(binary):
     commits(binary)
     for mode in ["replace", "release", "cancel", "corrupt", "corrupt-digest"]:
         lifecycle(binary, mode)
-    print("fetch: private artifact, exact state during commits, identities/digests, lifecycle, proxy bypass and refusals passed")
+    print("fetch: private state and failure artifacts, exact state during commits, identities/digests, lifecycle, proxy bypass and refusals passed")
 
 
 if __name__ == "__main__":
