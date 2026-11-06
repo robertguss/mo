@@ -9,9 +9,11 @@ in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/
 lexical path containment and bounded resolution (`path.c`, `resolve.c` and `resolve-kernel.c`, in
 [The host paths](#the-host-paths)), and reference count updates (`refcount.c`, in
 [Reference count updates](#reference-count-updates)), hash-table probing (`table.c`, in
-[Hash-table probing](#hash-table-probing)), and the export and failure-record readers in
+[Hash-table probing](#hash-table-probing)), the export and failure-record readers in
 `src/base/export.c` and `failure.c` (`export.c`, `export-consume.c`, `artifact.c` and
-`failure.c`, from [Export producer framing and pages](#export-producer-framing-and-pages) on).
+`failure.c`, from [Export producer framing and pages](#export-producer-framing-and-pages) on),
+and the walk over a service log record in `src/base/log-record.c` (`log-record.c`, in
+[Service log record walk](#service-log-record-walk)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -76,7 +78,8 @@ body, or an assumption that rules out the paths that matter. Two checks catch th
   harness. The only blocks allowed to stay unreached are the failure branches of `MO_ASSERT`
   and `MO_UNREACHABLE` (and adjacent closing braces), which the proofs show never
   run; the branch CBMC adds to a call through a function pointer for a target the harness never
-  gives it (the verifier's replay visitor), which it closes with `assume(false)`; and the lines
+  gives it (the verifier's replay visitor, the log record walk's reader), which it closes with
+  `assume(false)`; and the lines
   `unreachable_lines` in `prove.sh` names for a proof, each with its reason:
   `display_width`'s width overflow checks need a span of more than 2^63 bytes; the portable
   resolver cannot begin a step on a separator after its caller and previous step removed them.
@@ -415,3 +418,28 @@ At 172 bytes a label holds at most 10 bytes, so longer labels, full-size artifac
 kind-2 frames and record are not covered here. `fuzz_artifact`, whose oracle also reads fixed
 offsets, and `tests/test_artifact.c`, over records captured from a running service, cover them;
 `fuzz_service_failure` covers `mo_failure_read` on its own.
+
+## Service log record walk
+
+`bash cbmc/prove.sh mo_log_record_walk` and its `--reach` counterpart run the actual
+`mo_log_record_walk`, with the header reader it calls, on every payload of up to 37 bytes: the
+25-byte header and three empty arguments, so the loop accepts several arguments and refuses a
+later length cut short. The reader callback copies from the harness's bytes and may fail any
+read, after writing arbitrary bytes over its output. It asserts that each read is inside the
+payload and is exactly the next one the oracle expects: the header at offset 0, then each
+argument's 4-byte length, never an argument's bytes. The oracle reads the layout from its fixed
+offsets with 64-bit sums rather than the walk's subtractions, and requires acceptance exactly
+when the payload holds the header, the timer flag is 0 or 1, the count is at most
+`MO_LOG_RECORD_ARGUMENTS`, each argument's length and bytes fit, the last argument ends at the
+payload's end, and no read failed. On acceptance every header field comes from its offset and
+each argument's size from its length prefix; a refusal leaves every field of the output, all
+254 argument sizes included, as it was. `memcpy` is a byte loop in the harness: CBMC's own, with
+the walk's symbolic size, flattens the whole 1,016-byte size table and ran for over ten minutes
+without finishing. The proof has 381 properties and took 9 to 11 seconds; the reach check took 5
+seconds and reaches every block of `mo_log_record_walk` and `mo_log_record_header_read`, apart
+from the branch CBMC adds to each call through the reader pointer. Accepting an argument one
+byte longer than what is left, or bytes after the last argument, fails the proof.
+
+At 37 bytes a count above `MO_LOG_RECORD_ARGUMENTS` would be refused for want of bytes even
+without the limit, so the limit itself, longer records and the writer are covered by
+`tests/test_log_record.c` and `fuzz_log_record`, not here.
