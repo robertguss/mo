@@ -358,6 +358,11 @@ struct mo_limits {
 #define MO_LIMIT_STORE_SQL 4096
 /* One SQLite row: a framed payload plus SQLite's record header. */
 #define MO_LIMIT_STORE_ROW (MO_LIMIT_SAVED_BYTES + 4096)
+/* mo serve waits this long for a store another process holds, then exits so that a
+ * service manager retries it. A test build shortens it. */
+#ifndef MO_LIMIT_SERVE_STORE_WAIT_US
+#define MO_LIMIT_SERVE_STORE_WAIT_US UINT64_C(10000000)
+#endif
 
 static inline struct mo_limits mo_limits_default(void) {
     return (struct mo_limits){

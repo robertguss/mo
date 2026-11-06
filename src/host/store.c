@@ -1,5 +1,6 @@
 #include "host/host.h"
 
+#include <limits.h>
 #include <pthread.h>
 #include <sqlite3.h>
 #include <string.h>
@@ -44,6 +45,9 @@ const char *mo_store_status_text(enum mo_store_status status) {
     case MO_STORE_HANDLES:
         return "too many open service stores; close one of the " TEXT_OF(
             MO_LIMIT_STORES) " open stores";
+    case MO_STORE_BUSY:
+        return "another process holds the service store, such as a second mo serve or a reader "
+               "of its data folder";
     }
     MO_UNREACHABLE();
 }
@@ -104,7 +108,9 @@ static bool table(struct mo_store *s, const char *name, const char *sql) {
     return ok && (step != SQLITE_DONE || exec(s, sql));
 }
 
-enum mo_store_status mo_store_open(const char *path, struct mo_store **out) {
+_Static_assert(MO_LIMIT_SERVE_STORE_WAIT_US / 1000 <= INT_MAX, "the wait fits SQLite's timeout");
+
+static enum mo_store_status open_store(const char *path, bool wait, struct mo_store **out) {
     struct stat info;
     if (path != NULL && path[0] == '\0')
         return MO_STORE_EMPTY_PATH;
@@ -131,6 +137,11 @@ enum mo_store_status mo_store_open(const char *path, struct mo_store **out) {
     }
     (void)sqlite3_limit(s->db, SQLITE_LIMIT_LENGTH, MO_LIMIT_STORE_ROW);
     (void)sqlite3_limit(s->db, SQLITE_LIMIT_SQL_LENGTH, MO_LIMIT_STORE_SQL);
+    if (wait &&
+        sqlite3_busy_timeout(s->db, (int)(MO_LIMIT_SERVE_STORE_WAIT_US / 1000)) != SQLITE_OK) {
+        mo_store_close(s);
+        return MO_STORE_IO;
+    }
     if (sqlite3_db_config(s->db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL) != SQLITE_OK ||
         sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_TRIGGER, 0, NULL) != SQLITE_OK ||
         sqlite3_db_config(s->db, SQLITE_DBCONFIG_ENABLE_VIEW, 0, NULL) != SQLITE_OK ||
@@ -151,12 +162,26 @@ enum mo_store_status mo_store_open(const char *path, struct mo_store **out) {
         !table(s, "failure_state",
                "CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT") ||
         !exec(s, "COMMIT")) {
+        bool busy = (sqlite3_errcode(s->db) & 0xff) == SQLITE_BUSY;
         (void)exec(s, "ROLLBACK");
+        mo_store_close(s);
+        return busy ? MO_STORE_BUSY : MO_STORE_IO;
+    }
+    /* The open holds the store's lock until close, so nothing after it waits. */
+    if (wait && sqlite3_busy_timeout(s->db, 0) != SQLITE_OK) {
         mo_store_close(s);
         return MO_STORE_IO;
     }
     *out = s;
     return MO_STORE_OK;
+}
+
+enum mo_store_status mo_store_open(const char *path, struct mo_store **out) {
+    return open_store(path, false, out);
+}
+
+enum mo_store_status mo_store_open_wait(const char *path, struct mo_store **out) {
+    return open_store(path, true, out);
 }
 
 void mo_store_close(struct mo_store *s) {

@@ -1637,6 +1637,8 @@ class Served:
 
 
 STORE_FAILED = b"service store failed; reopen it to see whether the last change was saved"
+STORE_BUSY = (b"another process holds the service store, such as a second mo serve or a reader "
+              b"of its data folder; stopped waiting")
 SAVED_REFUSED = (b"saved service data is damaged or was written by a different program; "
                  b"recovery refused")
 
@@ -1702,6 +1704,8 @@ def serve_guide():
             "different program, is `service`.",
             "`NAME` never holds a colon, and `REASON` is always one line.",
             "A store that will not open is E1409 with no `failure` line.",
+            "A store another process holds, such as a second `mo serve` or a reader of `DIR`, is "
+            "not E1409: `mo serve` waits up to 10 seconds for it",
             "A store failure while the service runs is a `stop` line with no `failure` line.",
             "The lines have no timestamps.",
             "`^mo serve: failure:`",
@@ -1717,6 +1721,7 @@ def serve_guide():
             "A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409.",
             "`service.sqlite` is readable only by its owner.",
             "- 70: it died any other way",
+            "- 75: another process held the store for the whole wait.",
             "`counter.mo`, `./counter.mo`, an absolute path, `sub/../counter.mo`, a symlinked folder "
             "and a copy of the folder all recover the same `DIR`.",
             "Other comment and whitespace edits may recover or be refused."):
@@ -1833,10 +1838,17 @@ def serve_command(binary):
 
         with serving() as served:
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "10"}
-            errors = refused()
-            expected = b"error E1409: mo serve could not open saved state at %s/service.sqlite: %s" % (
-                str(data).encode(), STORE_FAILED)
-            assert errors.startswith(expected), errors
+            saved = (data / "service.sqlite").read_bytes()
+            started = time.monotonic()
+            with serving() as second:
+                assert not second.line, second.line
+                errors = second.finish(75)
+            waited = time.monotonic() - started
+            assert 9.5 <= waited < 25, waited
+            expected = b"mo serve: could not open saved state at %s/service.sqlite: %s\n" % (
+                str(data).encode(), STORE_BUSY)
+            assert errors == expected, errors
+            assert (data / "service.sqlite").read_bytes() == saved
             blocked = socket.socket()
             blocked.bind(("127.0.0.1", 0))
             blocked.listen(1)

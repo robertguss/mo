@@ -14,6 +14,7 @@
 #include <sqlite3.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static unsigned crash_point, log_steps, simulation_appends;
@@ -819,6 +820,147 @@ static void foreign_image(struct mo_image *image, const char *path) {
     mo_service_free(s);
     mo_store_close(store);
     mo_image_free(other);
+    CHECK(unlink(path) == 0);
+}
+
+static uint64_t elapsed_us(const struct timespec *start) {
+    struct timespec now;
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    int64_t us = (int64_t)(now.tv_sec - start->tv_sec) * 1000000 +
+                 (int64_t)(now.tv_nsec - start->tv_nsec) / 1000;
+    MO_ASSERT(us >= 0);
+    return (uint64_t)us;
+}
+
+static size_t file_bytes(const char *path, unsigned char *out, size_t capacity) {
+    FILE *file = fopen(path, "rb");
+    MO_ASSERT(file != NULL);
+    size_t length = fread(out, 1, capacity, file);
+    MO_ASSERT(length < capacity && fclose(file) == 0);
+    return length;
+}
+
+/* A child process holds the store at path as a second mo serve does (exclusive, through
+ * mo_store_open) or as a reader does (a shared read transaction). It lets go after
+ * hold_us, or, when hold_us is zero, when the parent closes *release. */
+static pid_t hold_store(const char *path, bool reader, unsigned hold_us, int *release) {
+    int ready[2], hold[2];
+    MO_ASSERT(pipe(ready) == 0 && pipe(hold) == 0);
+    pid_t pid = fork();
+    MO_ASSERT(pid >= 0);
+    if (pid == 0) {
+        MO_ASSERT(close(ready[0]) == 0 && close(hold[1]) == 0);
+        struct mo_store *store = NULL;
+        sqlite3 *db = NULL;
+        if (reader ? sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL) != SQLITE_OK ||
+                         sqlite3_exec(db, "BEGIN; SELECT count(*) FROM log", NULL, NULL, NULL) !=
+                             SQLITE_OK
+                   : mo_store_open(path, &store) != MO_STORE_OK)
+            _exit(1);
+        char byte = 'r';
+        if (write(ready[1], &byte, 1) != 1)
+            _exit(2);
+        struct timespec pause = {hold_us / 1000000, (long)(hold_us % 1000000) * 1000};
+        if (hold_us != 0)
+            MO_ASSERT(nanosleep(&pause, NULL) == 0);
+        else if (read(hold[0], &byte, 1) != 0)
+            _exit(3);
+        if (reader)
+            MO_ASSERT(sqlite3_close(db) == SQLITE_OK);
+        else
+            mo_store_close(store);
+        _exit(0);
+    }
+    MO_ASSERT(close(ready[1]) == 0 && close(hold[0]) == 0);
+    char byte = 0;
+    MO_ASSERT(read(ready[0], &byte, 1) == 1 && byte == 'r');
+    MO_ASSERT(close(ready[0]) == 0);
+    if (release != NULL)
+        *release = hold[1];
+    else
+        MO_ASSERT(close(hold[1]) == 0);
+    return pid;
+}
+
+static void child_done(pid_t pid) {
+    int status;
+    CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+/* mo serve's open waits for a store another process holds, and gives up with BUSY when the
+ * holder outlasts the wait. This build shortens the wait to one second. */
+static void store_wait(struct mo_image *image, const char *path) {
+    CHECK(MO_LIMIT_SERVE_STORE_WAIT_US == 1000000); /* the Makefile shortens the wait */
+    CHECK(strcmp(mo_store_status_text(MO_STORE_BUSY),
+                 "another process holds the service store, such as a second mo serve or a "
+                 "reader of its data folder") == 0);
+    struct mo_store *store = NULL;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *s = open_service(image, store, &o);
+    add(s, 11);
+    mo_service_free(s);
+    mo_store_close(store);
+    for (unsigned reader = 0; reader <= 1; reader++) {
+        pid_t pid = hold_store(path, reader != 0, 300000, NULL);
+        struct timespec start;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        store = NULL;
+        CHECK(mo_store_open_wait(path, &store) == MO_STORE_OK);
+        uint64_t waited = elapsed_us(&start);
+        CHECK(waited >= 200000 && waited < MO_LIMIT_SERVE_STORE_WAIT_US);
+        if (store == NULL)
+            continue;
+        s = open_service(image, store, &o);
+        CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+        mo_service_free(s);
+        mo_store_close(store);
+        child_done(pid);
+    }
+    static unsigned char before[1 << 16], after[1 << 16];
+    size_t length = file_bytes(path, before, sizeof before);
+    for (unsigned reader = 0; reader <= 1; reader++) {
+        int release = -1;
+        pid_t pid = hold_store(path, reader != 0, 0, &release);
+        for (unsigned attempt = 0; attempt < 3; attempt++) {
+            struct timespec start;
+            MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+            store = NULL;
+            CHECK(mo_store_open_wait(path, &store) == MO_STORE_BUSY && store == NULL);
+            uint64_t waited = elapsed_us(&start);
+            CHECK(waited >= MO_LIMIT_SERVE_STORE_WAIT_US * 9 / 10 &&
+                  waited < 3 * MO_LIMIT_SERVE_STORE_WAIT_US);
+            CHECK(file_bytes(path, after, sizeof after) == length &&
+                  memcmp(before, after, length) == 0);
+        }
+        /* Without the wait a held store is refused at once. */
+        struct timespec start;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        CHECK(mo_store_open(path, &store) == MO_STORE_BUSY && store == NULL);
+        CHECK(elapsed_us(&start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+        MO_ASSERT(close(release) == 0);
+        child_done(pid);
+        MO_ASSERT(mo_store_open_wait(path, &store) == MO_STORE_OK);
+        s = open_service(image, store, &o);
+        CHECK(mo_cell_get_int(mo_service_state(s)) == 18);
+        mo_service_free(s);
+        mo_store_close(store);
+    }
+    /* A damaged store is never waited for. */
+    static const char garbage[4096] = "this is not a SQLite database";
+    const char *contents[] = {"", garbage};
+    size_t sizes[] = {0, sizeof garbage};
+    for (unsigned i = 0; i < 2; i++) {
+        FILE *file = fopen(path, "wb");
+        MO_ASSERT(file != NULL && fwrite(contents[i], 1, sizes[i], file) == sizes[i] &&
+                  fclose(file) == 0);
+        struct timespec start;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        store = NULL;
+        enum mo_store_status status = mo_store_open_wait(path, &store);
+        CHECK(status == (i == 0 ? MO_STORE_CORRUPT : MO_STORE_IO) && store == NULL);
+        CHECK(elapsed_us(&start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+    }
     CHECK(unlink(path) == 0);
 }
 
@@ -2439,6 +2581,7 @@ static void run(void *unused) {
     replayed_timer_is_named();
     foreign_image(image, path);
     hostile_database(image, path);
+    store_wait(image, path);
     invalid_payloads(image);
     composite_recovery();
     shared_recovery_bound();

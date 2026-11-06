@@ -132,6 +132,7 @@ process list or in shell history. A wrong token gets an empty reply; add
 | Exit | Restarted? | What to do |
 | --- | --- | --- |
 | killed by a signal, or 70 | yes, after 5 s | Nothing. Saved data is intact. Do the after-outage check. |
+| 75 | yes, after 5 s | Another process, such as a second `mo serve` or a reader of the data folder, held `service.sqlite` for the whole 10-second wait. Nothing changed. Stop the other process. |
 | 69 | no | Supervision stopped the service. Read the `failure:` lines, then follow the agent guide's Recover from a stop. |
 | 1 | no | E1409 or a program error; restarting cannot help. Read the journal. An env file without a valid `QUEUE_TOKEN` is E1409 naming it. |
 | systemd `Result=resources` | 5 tries, then stops | `/etc/task-queue/env` is missing or unreadable, so `mo` never ran. Restore the file, then `sudo systemctl reset-failed task-queue` and start it. |
@@ -139,7 +140,9 @@ process list or in shell history. A wrong token gets an empty reply; add
 | 0 | no | Someone ran `systemctl stop`. Start it when they are done. |
 
 Five starts within ten minutes stop systemd from trying (`start-limit-hit`);
-`sudo systemctl reset-failed task-queue` clears it.
+`sudo systemctl reset-failed task-queue` clears it. Each exit 75 is a start, so a
+store held for more than about a minute (five 10-second waits, 5 s apart) reaches
+the limit too.
 
 An empty `/var/lib/task-queue/service.sqlite` comes only from a kill during
 the very first start. It never held data: delete it and start again. Never

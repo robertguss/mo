@@ -190,8 +190,16 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     int length = snprintf(path, sizeof path, "%s/" DATA_FILE, cli->data);
     MO_ASSERT(length > 0 && (size_t)length < sizeof path);
     mode_t mask = umask(S_IRWXG | S_IRWXO);
-    enum mo_store_status stored = mo_store_open(path, &store);
+    enum mo_store_status stored = mo_store_open_wait(path, &store);
     (void)umask(mask);
+    if (stored == MO_STORE_BUSY) {
+        /* Not E1409, which exits 1 and stops a service manager: the holder is temporary. */
+        (void)fprintf(errors, "mo serve: could not open saved state at %s: %s; stopped waiting\n",
+                      path, mo_store_status_text(stored));
+        (void)fflush(errors);
+        status = MO_EXIT_STORE_BUSY;
+        goto done;
+    }
     if (stored != MO_STORE_OK) {
         refuse(diags, "mo serve could not open saved state at", path, mo_store_status_text(stored));
         goto done;

@@ -105,7 +105,8 @@ enum mo_store_status {
     MO_STORE_MEMORY,
     MO_STORE_EMPTY_PATH,
     MO_STORE_MEMORY_PATH,
-    MO_STORE_HANDLES
+    MO_STORE_HANDLES,
+    MO_STORE_BUSY
 };
 MO_MUST_USE const char *mo_store_status_text(enum mo_store_status status);
 enum mo_store_operation {
@@ -132,6 +133,10 @@ struct mo_store_record {
 MO_MUST_USE bool mo_store_record_read(enum mo_store_record_kind kind, const uint8_t *bytes,
                                       size_t length, struct mo_store_record *out);
 MO_MUST_USE enum mo_store_status mo_store_open(const char *path, struct mo_store **out);
+/* The same, but a store another connection holds is waited for, up to
+ * MO_LIMIT_SERVE_STORE_WAIT_US, before the open returns BUSY. Without the wait a
+ * held store is BUSY at once. Only taking the lock waits; nothing after it does. */
+MO_MUST_USE enum mo_store_status mo_store_open_wait(const char *path, struct mo_store **out);
 void mo_store_close(struct mo_store *store);
 /* LOAD streams a snapshot then consecutive log records in one read transaction.
  * The callback stages results privately; publish only after LOAD succeeds.
