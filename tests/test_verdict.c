@@ -45,23 +45,23 @@ static struct mo_signature state_size(const char *limit, uint64_t value) {
     return limited(MO_SIGNATURE_STATE_SIZE, "saved state size", limit, value, 3, 0);
 }
 
-static struct mo_outcome failed(struct mo_signature s) {
+static struct mo_run_outcome failed(struct mo_signature s) {
     static const enum mo_outcome_status status[] = {MO_OUTCOME_DEFECT, MO_OUTCOME_WORK,
                                                     MO_OUTCOME_MEMORY, MO_OUTCOME_STATE_SIZE};
-    return (struct mo_outcome){.status = status[s.class], .signature = s};
+    return (struct mo_run_outcome){.status = status[s.class], .signature = s};
 }
-static struct mo_outcome succeeded(enum mo_reply_kind reply, bool changed) {
-    return (struct mo_outcome){
+static struct mo_run_outcome succeeded(enum mo_reply_kind reply, bool changed) {
+    return (struct mo_run_outcome){
         .status = MO_OUTCOME_SUCCEEDED, .reply = reply, .state_changed = changed};
 }
-static struct mo_outcome refused(void) {
-    return (struct mo_outcome){.status = MO_OUTCOME_REFUSED};
+static struct mo_run_outcome refused(void) {
+    return (struct mo_run_outcome){.status = MO_OUTCOME_REFUSED};
 }
 
 struct classify_case {
     const char *row;
     struct mo_signature recorded;
-    struct mo_outcome offline;
+    struct mo_run_outcome offline;
     enum mo_replay_class expected;
 };
 
@@ -149,23 +149,23 @@ static void symmetry(void) {
 struct verdict_case {
     const char *row;
     enum mo_replay_class original;
-    struct mo_outcome revised;
+    struct mo_run_outcome revised;
     enum mo_verdict expected;
 };
 
 /* Section 7.1's verdict table: every original classification against every way the revision can
  * end. The row names quote the design table's Original and Revised columns. */
 static void verdicts(void) {
-    struct mo_outcome revised_failures[] = {
+    struct mo_run_outcome revised_failures[] = {
         failed(defect("integer overflow", 7, 1, 10, 20)),
         failed(work(500, 7, 10)),
         failed(memory("--max-heap", 4096, 7, 10)),
         /* The handler returned, but the new state failed the saved-copy size check. */
         failed(state_size("MO_LIMIT_SAVED_BYTES", 1048576)),
     };
-    struct mo_outcome ok = succeeded(MO_REPLY_OK, true);
-    struct mo_outcome error = succeeded(MO_REPLY_ERROR, false);
-    struct mo_outcome unchanged = succeeded(MO_REPLY_OK, false);
+    struct mo_run_outcome ok = succeeded(MO_REPLY_OK, true);
+    struct mo_run_outcome error = succeeded(MO_REPLY_ERROR, false);
+    struct mo_run_outcome unchanged = succeeded(MO_REPLY_OK, false);
     const struct verdict_case cases[] = {
         {"reproduced | succeeded with an Ok reply", MO_REPLAY_REPRODUCED, ok, MO_VERDICT_VERIFIED},
         {"reproduced | succeeded with an Ok reply, state unchanged", MO_REPLAY_REPRODUCED,
@@ -226,19 +226,19 @@ static void acceptance(void) {
     /* Heap exhausted live by queued arguments; offline the handler succeeds. The unchanged handler
      * as the fix succeeds too, and the verdict is unverified. */
     struct mo_signature heap = memory("--max-heap", 67108864, 7, 10);
-    struct mo_outcome offline = succeeded(MO_REPLY_OK, true);
+    struct mo_run_outcome offline = succeeded(MO_REPLY_OK, true);
     enum mo_replay_class original = mo_replay_classify(&heap, &offline);
     CHECK(original == MO_REPLAY_NOT_REPRODUCED);
     CHECK(mo_verdict(original, &offline) == MO_VERDICT_UNVERIFIED);
     /* A work-limit failure that reproduces, with a revision that still exceeds the budget. */
     struct mo_signature budget = work(1000000, 7, 10);
-    struct mo_outcome again = failed(work(1000000, 7, 10));
-    struct mo_outcome still = failed(work(1000000, 8, 30));
+    struct mo_run_outcome again = failed(work(1000000, 7, 10));
+    struct mo_run_outcome still = failed(work(1000000, 8, 30));
     original = mo_replay_classify(&budget, &again);
     CHECK(original == MO_REPLAY_REPRODUCED);
     CHECK(mo_verdict(original, &still) == MO_VERDICT_NOT_FIXED);
     /* A revision that changes the state type is refused before the original runs. */
-    struct mo_outcome before = refused();
+    struct mo_run_outcome before = refused();
     original = mo_replay_classify(&budget, &before);
     CHECK(original == MO_REPLAY_REFUSED);
     CHECK(mo_verdict(original, &before) == MO_VERDICT_REFUSED);

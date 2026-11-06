@@ -48,7 +48,7 @@ static bool failed(enum mo_outcome_status status) {
 }
 
 /* The signature's class is the one its failure status names. */
-static void check_outcome(const struct mo_outcome *o) {
+static void check_outcome(const struct mo_run_outcome *o) {
     enum mo_signature_class c = o->signature.class;
     MO_ASSERT(!failed(o->status) || (o->status == MO_OUTCOME_DEFECT && c == MO_SIGNATURE_DEFECT) ||
               (o->status == MO_OUTCOME_WORK && c == MO_SIGNATURE_WORK) ||
@@ -57,7 +57,7 @@ static void check_outcome(const struct mo_outcome *o) {
 }
 
 enum mo_replay_class mo_replay_classify(const struct mo_signature *recorded,
-                                        const struct mo_outcome *offline) {
+                                        const struct mo_run_outcome *offline) {
     check_outcome(offline);
     if (offline->status == MO_OUTCOME_REFUSED)
         return MO_REPLAY_REFUSED;
@@ -67,7 +67,7 @@ enum mo_replay_class mo_replay_classify(const struct mo_signature *recorded,
                                                              : MO_REPLAY_DIFFERENT;
 }
 
-enum mo_verdict mo_verdict(enum mo_replay_class original, const struct mo_outcome *revised) {
+enum mo_verdict mo_verdict(enum mo_replay_class original, const struct mo_run_outcome *revised) {
     check_outcome(revised);
     if (original == MO_REPLAY_REFUSED || revised->status == MO_OUTCOME_REFUSED)
         return MO_VERDICT_REFUSED;

@@ -46,7 +46,7 @@ enum mo_outcome_status {
 enum mo_reply_kind { MO_REPLY_OK, MO_REPLY_ERROR };
 /* `signature` holds for the four failure statuses, with the class the status names. `reply` and
  * `state_changed` hold when the handler returned: succeeded or state size. */
-struct mo_outcome {
+struct mo_run_outcome {
     enum mo_outcome_status status;
     struct mo_signature signature;
     enum mo_reply_kind reply;
@@ -62,7 +62,7 @@ enum mo_replay_class {
 /* Compares an offline run with the recorded failure's signature: the same failure reproduced, a
  * different failure, a run that succeeded, or a run refused before it started. */
 MO_MUST_USE enum mo_replay_class mo_replay_classify(const struct mo_signature *recorded,
-                                                    const struct mo_outcome *offline);
+                                                    const struct mo_run_outcome *offline);
 
 enum mo_verdict {
     MO_VERDICT_VERIFIED,
@@ -75,5 +75,5 @@ enum mo_verdict {
  * failed; `unverified` for a different or unreproduced original whatever the revision did;
  * `refused` when either run was refused. */
 MO_MUST_USE enum mo_verdict mo_verdict(enum mo_replay_class original,
-                                       const struct mo_outcome *revised);
+                                       const struct mo_run_outcome *revised);
 #endif
