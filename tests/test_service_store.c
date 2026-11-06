@@ -1965,14 +1965,41 @@ static void simulation_verifier(void) {
     mo_image_free(image);
 }
 
+struct captured {
+    unsigned count;
+    struct mo_heap *heap;
+    uint32_t state_type, argument_type;
+    uint64_t program;
+    int64_t arrival;
+};
 static bool captured_runtime(const struct mo_store_failure *f, void *context) {
-    unsigned *count = context;
+    struct captured *c = context;
     struct mo_failure_record r;
     CHECK(mo_failure_read(f->message.bytes, f->message.length, &r));
     if (!mo_failure_read(f->message.bytes, f->message.length, &r))
         return false;
     CHECK(r.id == f->id && r.sequence == 0 && r.read_only);
     CHECK(r.argument_count == 1 && r.class == 0 && r.signature_version == 1);
+    CHECK(r.name.length == strlen("broken") && memcmp(r.name.bytes, "broken", r.name.length) == 0);
+    int64_t arrival;
+    memcpy(&arrival, &r.arrival, sizeof arrival);
+    CHECK(arrival == c->arrival && !r.timer && r.program == c->program);
+    uint8_t build[32];
+    CHECK(mo_runtime_identity(build) && memcmp(r.build, build, 32) == 0);
+    const char *label = mo_runtime_build_label();
+    CHECK(r.label.length == strlen(label) && memcmp(r.label.bytes, label, r.label.length) == 0);
+    struct mo_cell state;
+    CHECK(mo_value_decode(c->heap, c->state_type, f->state.bytes, f->state.length, &state));
+    CHECK(mo_cell_get_int(state) == 7);
+    struct mo_binary in = {r.arguments.bytes, r.arguments.length, 0};
+    uint64_t length = 0;
+    const uint8_t *argument = NULL;
+    CHECK(mo_binary_uint(&in, 4, &length) && mo_binary_read(&in, (size_t)length, &argument) &&
+          in.position == r.arguments.length);
+    struct mo_cell value = mo_cell_int(-1);
+    CHECK(argument != NULL &&
+          mo_value_decode(c->heap, c->argument_type, argument, (size_t)length, &value));
+    CHECK(mo_cell_get_int(value) == 0);
     struct mo_buffer context_text;
     mo_buffer_init(&context_text, MO_LIMIT_FAILURE_CONTEXT_BYTES + 1);
     CHECK(mo_buffer_append(&context_text, r.context.bytes, r.context.length));
@@ -1981,7 +2008,7 @@ static bool captured_runtime(const struct mo_store_failure *f, void *context) {
     CHECK(strstr((const char *)context_text.bytes, " span ") != NULL);
     CHECK(strstr((const char *)context_text.bytes, "variable _n available: 0") != NULL);
     mo_buffer_free(&context_text);
-    (*count)++;
+    c->count++;
     return true;
 }
 static void runtime_capture(void) {
@@ -1992,16 +2019,39 @@ static void runtime_capture(void) {
                 "fn broken(_state: Int, _now: Time, _n: Int) : Bool\nstop \"broken\"\nend\n");
     struct mo_store *store = NULL;
     CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
-    struct observations o = {0};
+    struct observations o = {.time = {.now = INT64_C(1767225600000000), .elapsed = 5}};
     struct mo_service_loop *service = open_service(image, store, &o);
     struct mo_cell zero = mo_cell_int(0);
     CHECK(mo_service_send(service, 0, &zero, 1, 1) == MO_SERVICE_OK);
+    o.time.now += 9;
     CHECK(mo_service_step(service));
     CHECK(o.failures == 1 && o.sequence == 0);
     CHECK(mo_cell_get_int(mo_service_state(service)) == 7);
-    unsigned count = 0;
-    CHECK(mo_service_failures(service, captured_runtime, &count) == MO_STORE_OK);
-    CHECK(count == 1);
+    const struct mo_bytecode_service *descriptor = &mo_image_bytecode(image)->services[0];
+    struct captured c = {.heap = mo_service_heap(service),
+                         .state_type = descriptor->state_type,
+                         .argument_type = descriptor->tools[0].argument_types[0],
+                         .program = mo_image_key(image, 0),
+                         .arrival = INT64_C(1767225600000000)};
+    CHECK(mo_service_failures(service, captured_runtime, &c) == MO_STORE_OK);
+    CHECK(c.count == 1);
+    const uint8_t *saved = NULL;
+    size_t saved_length = 0;
+    CHECK(mo_service_encoded_state(service, &saved, &saved_length));
+    struct mo_store_record snapshot = {MO_STORE_STATE, 0, mo_image_key(image, 0), saved,
+                                       saved_length};
+    CHECK(mo_store_call(store, MO_STORE_SNAPSHOT, &snapshot, NULL, NULL) == MO_STORE_OK);
+    CHECK(mo_service_failures(service, captured_runtime, &c) == MO_STORE_OK);
+    CHECK(c.count == 2);
+    struct mo_export_identity pinned = {.kind = 2, .label = "test", .id = {1}};
+    CHECK(mo_runtime_identity(pinned.build));
+    struct mo_export_pin live = {0};
+    CHECK(mo_service_pin_failure(service, 1, &live, &pinned, 0));
+    CHECK(live.bytes != NULL && live.failure_id == 1 && live.id[0] == 1);
+    pinned.id[0] = 2;
+    CHECK(!mo_service_pin_failure(service, 99, &live, &pinned, 0));
+    CHECK(live.bytes != NULL && live.failure_id == 1 && live.id[0] == 1);
+    mo_export_release(&live);
     struct mo_buffer body;
     mo_buffer_init(&body, MO_LIMIT_FAILURE_RECORD_BYTES);
     CHECK(mo_service_failure_export(service, 1, &body));
@@ -2074,7 +2124,9 @@ static void runtime_store_faults(void) {
         CHECK(o.stops == (safe ? 0u : 1u));
         struct mo_service_event_summary event;
         CHECK(mo_service_event_entry(service, 0, &event));
-        CHECK(event.record_id == 0 && event.record_unavailable != NULL);
+        CHECK(event.record_id == 0 && event.record_unavailable != NULL &&
+              strcmp(event.record_unavailable,
+                     safe ? "the store refused the record" : "store outcome uncertain") == 0);
         mo_service_free(service);
         mo_store_close(store);
     }
@@ -2152,7 +2204,202 @@ static void argument_capture_limits(void) {
     }
 }
 
+struct text_capture {
+    unsigned count, readable;
+    const char *expected[2];
+};
+static bool text_capture_row(const struct mo_store_failure *f, void *context) {
+    struct text_capture *t = context;
+    t->count++;
+    struct mo_failure_record r;
+    bool readable = mo_failure_read(f->message.bytes, f->message.length, &r);
+    CHECK(readable);
+    if (!readable || f->id == 0 || f->id > 2)
+        return true;
+    t->readable++;
+    char context_text[MO_LIMIT_FAILURE_CONTEXT_BYTES + 1];
+    memcpy(context_text, r.context.bytes, r.context.length);
+    context_text[r.context.length] = 0;
+    CHECK(strstr(context_text, t->expected[f->id - 1]) != NULL);
+    for (char *line = context_text; *line != 0;) {
+        char *end = strchr(line, '\n');
+        CHECK(end != NULL);
+        if (end == NULL)
+            break;
+        *end = 0;
+        CHECK(strncmp(line, "frame ", 6) == 0 || strncmp(line, "variable ", 9) == 0);
+        CHECK(strcmp(line, "frame 99 file 0 span 0..0") != 0);
+        line = end + 1;
+    }
+    return true;
+}
+/* Text values print as escaped literals, so they cannot add NUL or forge context lines. */
+static void text_context(void) {
+    struct mo_image *image =
+        compile("module Main\nservice\nstate Int = 7\ntools broken\ntoken from env \"TOKEN\"\nend\n"
+                "fn broken(_state: Int, _now: Time, _text: Text) : Bool\nstop \"broken\"\nend\n");
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *service = open_service(image, store, &o);
+    struct mo_heap *heap = mo_service_heap(service);
+    uint32_t type = mo_image_bytecode(image)->services[0].tools[0].argument_types[0];
+    const char forged[] = "x\nframe 99 file 0 span 0..0";
+    const struct {
+        const char *bytes;
+        size_t length;
+    } texts[] = {{"a\0b", 3}, {forged, sizeof forged - 1}};
+    for (unsigned i = 0; i < 2; i++) {
+        struct mo_cell argument;
+        CHECK(mo_value_text(heap, texts[i].bytes, texts[i].length, &argument));
+        CHECK(mo_service_send(service, 0, &argument, 1, i + 1) == MO_SERVICE_OK);
+        mo_value_drop(heap, type, argument);
+        CHECK(mo_service_step(service));
+        struct mo_service_event_summary event;
+        CHECK(mo_service_event_entry(service, i, &event));
+        CHECK(event.record_id == i + 1 && event.record_unavailable == NULL);
+    }
+    CHECK(o.failures == 2 && mo_service_running(service));
+    struct text_capture t = {.expected = {"variable _text available: \"a\\u{0}b\"\n",
+                                          "variable _text available: \"x\\nframe 99 file 0 span "
+                                          "0..0\"\n"}};
+    CHECK(mo_service_failures(service, text_capture_row, &t) == MO_STORE_OK);
+    CHECK(t.count == 2 && t.readable == 2);
+    struct mo_export_identity identity = {.kind = 2, .label = "test", .id = {1}};
+    CHECK(mo_runtime_identity(identity.build));
+    struct mo_export_pin pin = {0};
+    CHECK(mo_service_pin_failure(service, 1, &pin, &identity, 0));
+    mo_export_release(&pin);
+    mo_service_free(service);
+    mo_store_close(store);
+    mo_image_free(image);
+}
+
+static void tamper(const char *path, const char *sql) {
+    sqlite3 *db = NULL;
+    CHECK(sqlite3_open(path, &db) == SQLITE_OK);
+    CHECK(sqlite3_exec(db, sql, NULL, NULL, NULL) == SQLITE_OK);
+    CHECK(sqlite3_close(db) == SQLITE_OK);
+}
+static bool count_failures(const struct mo_store_failure *f, void *context) {
+    (void)f;
+    (*(unsigned *)context)++;
+    return true;
+}
+/* Diagnostic rows that fail validation refuse new captures; they never close the store. */
+static void damaged_service(const char *path, const char *sql) {
+    struct mo_image *image = compile(
+        "module Main\nservice\nstate Int = 7\ntools add, broken\ntoken from env \"TOKEN\"\nend\n"
+        "fn add(state: Int, _now: Time, n: Int) : (Int, Int)\n(state + n, state + n)\nend\n"
+        "fn broken(_state: Int, _now: Time) : Bool\nstop \"broken\"\nend\n");
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *service = open_service(image, store, &o);
+    CHECK(mo_service_send(service, 1, NULL, 0, 1) == MO_SERVICE_OK);
+    CHECK(mo_service_step(service));
+    mo_service_free(service);
+    mo_store_close(store);
+    tamper(path, sql);
+    for (unsigned restart = 0; restart < 2; restart++) {
+        CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+        o = (struct observations){0};
+        service = open_service(image, store, &o);
+        CHECK(mo_service_send(service, 1, NULL, 0, 2) == MO_SERVICE_OK);
+        CHECK(mo_service_step(service));
+        struct mo_service_event_summary event;
+        CHECK(mo_service_event_entry(service, 0, &event));
+        CHECK(event.record_id == 0 && event.record_unavailable != NULL &&
+              strcmp(event.record_unavailable, "diagnostic records damaged") == 0);
+        CHECK(mo_service_running(service) && o.stops == 0);
+        add(service, 1);
+        CHECK(o.status == MO_SERVICE_OK && o.sequence == restart + 1);
+        mo_service_free(service);
+        mo_store_close(store);
+    }
+    mo_image_free(image);
+}
+static void damaged_diagnostics(void) {
+    const char *cases[] = {
+        "DELETE FROM failure_state WHERE id=1",
+        "UPDATE failure SET kind=substr(hex(zeroblob(1025)),1,1025) WHERE id=1",
+        "UPDATE failure SET first=2 WHERE id=1",
+        "WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<65) "
+        "INSERT INTO failure SELECT i,'k'||i,1,(SELECT message FROM failure WHERE id=1) FROM n;"
+        "WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<65) "
+        "INSERT INTO failure_state SELECT i,(SELECT record FROM failure_state WHERE id=1) FROM n",
+        "UPDATE failure SET kind=CAST(X'FF41' AS TEXT) WHERE id=1"};
+    for (size_t i = 0; i < sizeof cases / sizeof *cases; i++) {
+        char path[] = "/tmp/mo-damaged-diagnostics-XXXXXX";
+        int fd = mkstemp(path);
+        CHECK(fd >= 0 && close(fd) == 0 && unlink(path) == 0);
+        struct mo_store *store = NULL;
+        CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+        const uint8_t a = 42, b = 43;
+        struct mo_store_record snapshot = {MO_STORE_STATE, 0, 1, &a, 1};
+        CHECK(mo_store_call(store, MO_STORE_SNAPSHOT, &snapshot, NULL, NULL) == MO_STORE_OK);
+        struct mo_store_record state = {MO_STORE_FAILURE_STATE, 0, 1, &a, 1};
+        struct mo_store_record message = {MO_STORE_FAILURE_MESSAGE, 0, 1, &b, 1};
+        uint64_t id = 0;
+        CHECK(mo_store_capture(store, "seed", &state, &message, &id) == MO_STORE_CAPTURE_OK);
+        mo_store_close(store);
+        tamper(path, cases[i]);
+        CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+        unsigned count = 0;
+        CHECK(mo_store_failures(store, count_failures, &count) == MO_STORE_CORRUPT);
+        id = 999;
+        enum mo_store_capture_status captured =
+            mo_store_capture(store, "next", &state, &message, &id);
+        CHECK(captured != MO_STORE_CAPTURE_OK && captured != MO_STORE_CAPTURE_UNSAFE);
+        CHECK(id == 999);
+        struct mo_store_record log = {MO_STORE_LOG, 1, 1, &b, 1};
+        CHECK(mo_store_call(store, MO_STORE_APPEND, &log, NULL, NULL) == MO_STORE_OK);
+        uint32_t retained = 0;
+        uint64_t evicted = 0;
+        CHECK(mo_store_failure_stats(store, &retained, &evicted) != MO_STORE_IO);
+        mo_store_close(store);
+        CHECK(unlink(path) == 0);
+        MO_ASSERT(snprintf(path, sizeof path, "%s", "/tmp/mo-damaged-diagnostics-XXXXXX") > 0);
+        fd = mkstemp(path);
+        CHECK(fd >= 0 && close(fd) == 0 && unlink(path) == 0);
+        damaged_service(path, cases[i]);
+        CHECK(unlink(path) == 0);
+    }
+}
+
+/* A handler name that pushes the kind key past its limit names that reason. */
+static void long_kind(void) {
+    char name[MO_LIMIT_FAILURE_KIND_BYTES + 1];
+    memset(name, 'k', sizeof name - 1);
+    name[sizeof name - 1] = 0;
+    char source[4 * MO_LIMIT_FAILURE_KIND_BYTES];
+    int n = snprintf(source, sizeof source,
+                     "module Main\nservice\nstate Int = 7\ntools %s\ntoken from env \"TOKEN\"\n"
+                     "end\nfn %s(_state: Int, _now: Time) : Bool\nstop \"broken\"\nend\n",
+                     name, name);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof source);
+    struct mo_image *image = compile(source);
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    struct observations o = {0};
+    struct mo_service_loop *service = open_service(image, store, &o);
+    CHECK(mo_service_send(service, 0, NULL, 0, 1) == MO_SERVICE_OK);
+    CHECK(mo_service_step(service));
+    struct mo_service_event_summary event;
+    CHECK(mo_service_event_entry(service, 0, &event));
+    CHECK(event.record_id == 0 && event.record_unavailable != NULL &&
+          strcmp(event.record_unavailable, "failure kind too long") == 0);
+    CHECK(mo_service_running(service));
+    mo_service_free(service);
+    mo_store_close(store);
+    mo_image_free(image);
+}
+
 static void run(void *unused) {
+    mo_runtime_identity_init();
+    text_context();
+    damaged_diagnostics();
+    long_kind();
     runtime_capture();
     resource_capture();
     runtime_store_faults();
@@ -2202,8 +2449,9 @@ static void run(void *unused) {
 }
 
 struct failure_inventory {
-    unsigned count, first;
-    uint64_t newest;
+    unsigned count, first, timer;
+    uint64_t newest, oldest;
+    bool kinds[70];
 };
 static bool failure_inventory(const struct mo_store_failure *f, void *context) {
     struct failure_inventory *v = context;
@@ -2215,6 +2463,12 @@ static bool failure_inventory(const struct mo_store_failure *f, void *context) {
     CHECK(f->message.length == 1 && f->message.bytes[0] == 43);
     v->count++;
     v->first += f->first ? 1u : 0u;
+    v->timer += strcmp(f->kind, "timer") == 0 ? 1u : 0u;
+    unsigned n = 0;
+    if (sscanf(f->kind, "kind-%u", &n) == 1 && n < sizeof v->kinds)
+        v->kinds[n] = true;
+    if (v->oldest == 0)
+        v->oldest = f->id;
     v->newest = f->id;
     return true;
 }
@@ -2243,6 +2497,14 @@ static void diagnostic_retention(void) {
     v = (struct failure_inventory){0};
     CHECK(mo_store_failures(store, failure_inventory, &v) == MO_STORE_OK);
     CHECK(v.count == 64 && v.first == 64 && v.newest == 170);
+    /* The victim is the kind whose latest record is oldest: timer (latest 100), then kind-0..5. */
+    CHECK(v.timer == 0 && v.oldest == 107);
+    for (unsigned n = 0; n < 70; n++)
+        CHECK(v.kinds[n] == (n >= 6));
+    uint32_t retained = 0;
+    uint64_t evicted = 0;
+    CHECK(mo_store_failure_stats(store, &retained, &evicted) == MO_STORE_OK);
+    CHECK(retained == 64 && evicted == 7);
     crash_point = 13;
     id = 999;
     CHECK(mo_store_capture(store, "refused", &state, &message, &id) == MO_STORE_CAPTURE_REFUSED);
