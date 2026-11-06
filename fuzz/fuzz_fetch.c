@@ -91,6 +91,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct mo_export_identity identity;
     bool artifact = mo_export_verify(data, size, &identity);
     if (artifact)
-        MO_ASSERT(identity.kind == 1 && size >= MO_EXPORT_FIXED_BYTES);
+        MO_ASSERT((identity.kind == 1 || identity.kind == 2) && size >= MO_EXPORT_FIXED_BYTES);
     return 0;
 }

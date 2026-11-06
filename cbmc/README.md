@@ -8,8 +8,10 @@ in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/
 `src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)),
 lexical path containment and bounded resolution (`path.c`, `resolve.c` and `resolve-kernel.c`, in
 [The host paths](#the-host-paths)), and reference count updates (`refcount.c`, in
-[Reference count updates](#reference-count-updates)), plus hash-table probing (`table.c`, in
-[Hash-table probing](#hash-table-probing)).
+[Reference count updates](#reference-count-updates)), hash-table probing (`table.c`, in
+[Hash-table probing](#hash-table-probing)), and the export and failure-record readers in
+`src/base/export.c` and `failure.c` (`export.c`, `export-consume.c`, `artifact.c` and
+`failure.c`, from [Export producer framing and pages](#export-producer-framing-and-pages) on).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -376,3 +378,40 @@ and size limit. They prove bounded accepted spans and unchanged output on refusa
 UTF-8 is an unconstrained callee result in this arithmetic harness; complete
 payload validation is covered by `fuzz_service_failure`, not claimed as a complete
 CBMC proof. Every slice block must be reachable, including both text branches.
+
+`bash cbmc/prove.sh mo_failure_argument_next` and its `--reach` counterpart check the walk over a
+record's arguments, with the argument reader it shares with `mo_failure_read`. The walk's bytes
+are any input of up to 32 bytes (13 bytes is the least that holds one argument), its position
+any point inside them and its remaining count any `uint32_t`. The oracle reads the 4-byte length
+and the `MOSV` 1 prefix itself: the walk yields an argument exactly when the count is not spent
+and a length of at least 9 bytes, followed by that many bytes starting `MOSV` 1, fits; it ends
+exactly when the count and the bytes run out together, and is damaged otherwise. An argument is
+the span after its length and advances the walk past exactly that span; the end and a refusal
+leave the walk and the output unchanged. 281 properties, under a second; every block of the walk
+and the argument reader is reached. A walk that ends whenever the count is spent, wherever its
+position, fails the proof.
+
+## Offline artifact reader
+
+`bash cbmc/prove.sh mo_export_read` and its `--reach` counterpart run the actual `MOEX` header
+walk of `mo_export_read`, with its kind dispatch, on every input of up to 172 bytes: the
+fixed 162 bytes plus the 10-byte least `MOSV` body, so a kind-1 artifact with an empty label
+is accepted. SHA-256, UTF-8 validation, the `MOSV` schema span (`mo_export_schema`, proved
+above) and the kind-2 body (`failure_body`) are replaced by models. Each model checks the span
+it is given (the digest covers every byte before the trailing 32, the label follows its length,
+the body ends where the digest starts) and returns an unconstrained result that the oracle reads.
+The oracle parses the format from its fixed offsets, not from the reader's cursor, and requires
+acceptance exactly when the magic, kind, digest, label length and UTF-8, the body's exact end,
+the body's result and the header's schema digest all hold, and for kind 2 when the record's
+program, sequence and build agree with the header. On acceptance every identity field, the label
+span, the header schema, the kind-1 state span and the kind-2 record id come from their offsets;
+a refusal leaves the output unchanged. An empty span may point anywhere, since
+`mo_binary_read` returns the input's start for it, so only nonempty spans are located. The proof
+has 1,851 properties and took 87 to 101 seconds; the reach check took 21 seconds and reaches
+every block of `mo_export_read` and `export_body`. Dropping the check that the body ends at the
+digest fails both the proof and `tests/test_artifact.c`.
+
+At 172 bytes a label holds at most 10 bytes, so longer labels, full-size artifacts and the
+kind-2 frames and record are not covered here. `fuzz_artifact`, whose oracle also reads fixed
+offsets, and `tests/test_artifact.c`, over records captured from a running service, cover them;
+`fuzz_service_failure` covers `mo_failure_read` on its own.
