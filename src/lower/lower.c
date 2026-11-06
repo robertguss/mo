@@ -246,7 +246,7 @@ static uint32_t service_value(struct lowering *p, uint32_t module, const char *s
     return f->index;
 }
 
-static uint32_t service_handler(struct lowering *p, uint32_t index) {
+static uint32_t core_function(struct lowering *p, uint32_t index) {
     const struct mo_symbol *symbol = p->program->functions[index].signature->function;
     return lower_instance(p, symbol, (struct mo_type_arguments){0}, NULL, 0, NULL, symbol->module,
                           0)
@@ -305,7 +305,7 @@ static struct mo_services services(struct lowering *p) {
                 .name = lower_copy(p, (const char *)tool->name->text,
                                    tool->name->span.end - tool->name->span.start)
                             .bytes,
-                .function = service_handler(p, tool->function),
+                .function = core_function(p, tool->function),
                 .read_only = tool->reply == MO_SERVICE_READ_ONLY,
                 .description = service_description(p, fn->signature->function->declaration),
                 .argument_count = argument_count,
@@ -320,7 +320,7 @@ static struct mo_services services(struct lowering *p) {
             const struct mo_checked_service_timer *timer = &source->timers[j];
             p->span = timer->syntax->span;
             timers[j] = (struct mo_service_timer){
-                .function = service_handler(p, timer->function),
+                .function = core_function(p, timer->function),
                 .interval = service_value(p, source->module, ".%service.interval.", j + 1,
                                           &duration, &timer->interval)};
         }
@@ -331,7 +331,8 @@ static struct mo_services services(struct lowering *p) {
 static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *program,
                              const struct mo_sources *sources, struct mo_diags *diags,
                              struct mo_lowered_promises *promises,
-                             struct mo_services *service_output) {
+                             struct mo_services *service_output, uint32_t query,
+                             uint32_t *query_index) {
     MO_ASSERT(arena != NULL && program != NULL && sources != NULL && diags != NULL);
     struct lowering *p = mo_arena_allocate(arena, sizeof *p, _Alignof(struct lowering));
     if (p == NULL) {
@@ -373,6 +374,12 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
         if (f->signature->type->parameters == 0)
             (void)lower_instance(p, f->signature->function, (struct mo_type_arguments){0}, NULL, 0,
                                  NULL, f->signature->function->module, 0);
+    }
+    uint32_t query_function = UINT32_MAX;
+    if (query != UINT32_MAX) {
+        MO_ASSERT(query < program->function_count &&
+                  program->functions[query].signature->type->parameters == 0);
+        query_function = core_function(p, query);
     }
     for (struct instance *f = p->functions; f != NULL; f = f->next)
         if (f->source != NULL)
@@ -451,19 +458,21 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
     }
     if (service_output != NULL)
         *service_output = service_data;
+    if (query_index != NULL)
+        *query_index = query_function;
     return result;
 }
 
 struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
                          const struct mo_sources *sources, struct mo_diags *diags) {
-    return lower(arena, program, sources, diags, NULL, NULL);
+    return lower(arena, program, sources, diags, NULL, NULL, UINT32_MAX, NULL);
 }
 
 struct mo_core *mo_lower_for_tests(struct mo_arena *arena, const struct mo_program *program,
                                    const struct mo_sources *sources, struct mo_diags *diags,
                                    struct mo_lowered_promises *promises) {
     MO_ASSERT(promises != NULL);
-    return lower(arena, program, sources, diags, promises, NULL);
+    return lower(arena, program, sources, diags, promises, NULL, UINT32_MAX, NULL);
 }
 
 struct mo_core *mo_lower_services(struct mo_arena *arena, const struct mo_program *program,
@@ -472,5 +481,14 @@ struct mo_core *mo_lower_services(struct mo_arena *arena, const struct mo_progra
                                   struct mo_services *service_output) {
     MO_ASSERT(service_output != NULL);
     *service_output = (struct mo_services){0};
-    return lower(arena, program, sources, diags, promises, service_output);
+    return lower(arena, program, sources, diags, promises, service_output, UINT32_MAX, NULL);
+}
+
+struct mo_core *mo_lower_query(struct mo_arena *arena, const struct mo_program *program,
+                               const struct mo_sources *sources, struct mo_diags *diags,
+                               uint32_t function, struct mo_services *services, uint32_t *index) {
+    MO_ASSERT(services != NULL && index != NULL);
+    *services = (struct mo_services){0};
+    *index = UINT32_MAX;
+    return lower(arena, program, sources, diags, NULL, services, function, index);
 }

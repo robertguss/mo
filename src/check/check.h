@@ -645,4 +645,38 @@ struct mo_program {
 MO_MUST_USE struct mo_program *mo_check(struct mo_arena *arena, const struct mo_module_set *set,
                                         struct mo_diags *diags);
 
+/* What a query's function is given: an exported state, or a retained failure's state, time and
+ * handler arguments. */
+enum mo_query_input {
+    MO_QUERY_STATE,   /* function(state) */
+    MO_QUERY_FAILURE, /* function(state, time, arguments...) in the handler's order */
+};
+
+enum mo_query_entry {
+    MO_QUERY_ENTRY_ACCEPTED,
+    MO_QUERY_ENTRY_REFUSED,     /* with a diagnostic */
+    MO_QUERY_ENTRY_NO_MODULE,   /* a command mistake: no diagnostic */
+    MO_QUERY_ENTRY_NO_FUNCTION, /* a command mistake: no diagnostic */
+};
+
+/* Selects and checks the function `mo query` runs (design introspection 7.2) in a program mo_check
+ * accepted. name is the function as written, length bytes, not NUL-terminated: a function declared
+ * in the main module, or Module.name for any module of program.set, exposed or not. A module
+ * outside the set is NO_MODULE; a name the module declares no function by is NO_FUNCTION. Names
+ * resolve through the module's symbols, so an overloaded name selects the overload whose first
+ * parameter is the state type of the main module's service.
+ *
+ * The function is refused (REFUSED, with one diagnostic) unless the main module has a service and
+ * the function is non-generic, holds no capability or function in any parameter or its result,
+ * and takes exactly that state type first. MO_QUERY_STATE takes nothing else. MO_QUERY_FAILURE then
+ * takes exactly the types of handler's remaining parameters, Time and its arguments, in order;
+ * handler is the index in program.functions of a tool or timer of that service, and UINT32_MAX for
+ * MO_QUERY_STATE. On acceptance *function is the function's index in program.functions, which
+ * mo_lower_query maps to its Core function. Uses the explicit source-stage stack. */
+MO_MUST_USE enum mo_query_entry mo_check_query_entry(struct mo_arena *arena,
+                                                     const struct mo_program *program,
+                                                     const uint8_t *name, size_t length,
+                                                     enum mo_query_input input, uint32_t handler,
+                                                     struct mo_diags *diags, uint32_t *function);
+
 #endif

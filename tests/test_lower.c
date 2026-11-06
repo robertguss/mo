@@ -2220,6 +2220,65 @@ static void test_source_captures(void *unused) {
     mo_arena_free(&output);
 }
 
+/* A query's function, here one nothing calls, maps to its own Core function, even an overload
+ * whose Core name carries its receiver. */
+static void test_source_query(void *unused) {
+    (void)unused;
+    static const char text[] =
+        "module Main\nservice\n  state State = State(total: 0)\n  tools read\n"
+        "  token from env \"TOKEN\"\nend\n"
+        "struct State\ntotal: Int\nend\nstruct Count\nvalue: Int\nend\n"
+        "fn read(state: State, _now: Time) : Int\nstate.total\nend\n"
+        "fn tick(count: Count) : Int\ncount.value\nend\n"
+        "fn tick(state: State) : Int\nstate.total + 1\nend\n"
+        "fn total(state: State) : Int\nstate.total\nend\n";
+    static const struct {
+        const char *name, *core;
+    } cases[] = {{"tick", "Main.tick@State"}, {"total", "Main.total"}};
+    struct mo_arena input, output;
+    struct mo_sources sources;
+    struct mo_diags diags;
+    mo_arena_init(&input, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    uint32_t file;
+    struct mo_source_error error;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", (const uint8_t *)text, sizeof(text) - 1,
+                                   &file, &error));
+    struct mo_module_syntax *module = mo_parse(&input, &sources, file, &diags);
+    MO_ASSERT(module != NULL);
+    const char *name = "Main";
+    struct mo_module_set set = {
+        .count = 1, .modules = &module, .names = &name, .sources = &sources};
+    struct mo_program *program = mo_check(&input, &set, &diags);
+    MO_ASSERT(program != NULL && !mo_diags_any(&diags));
+    for (size_t c = 0; c < sizeof(cases) / sizeof(*cases); c++) {
+        uint32_t function;
+        MO_ASSERT(mo_check_query_entry(&input, program, (const uint8_t *)cases[c].name,
+                                       strlen(cases[c].name), MO_QUERY_STATE, UINT32_MAX, &diags,
+                                       &function) == MO_QUERY_ENTRY_ACCEPTED);
+        mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+        struct mo_services services;
+        uint32_t index = UINT32_MAX;
+        struct mo_core *core =
+            mo_lower_query(&output, program, &sources, &diags, function, &services, &index);
+        CHECK(core != NULL && !mo_diags_any(&diags));
+        if (core != NULL) {
+            MO_ASSERT(mo_core_check(core, &diags));
+            CHECK(services.count == 1);
+            CHECK(index < core->funs.count);
+            if (index < core->funs.count) {
+                mo_core_string found = core->funs.items[index].name;
+                CHECK(found.length == strlen(cases[c].core) &&
+                      memcmp(found.bytes, cases[c].core, found.length) == 0);
+            }
+        }
+        mo_arena_free(&output);
+    }
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+    mo_arena_free(&input);
+}
+
 static void test_source(void *unused) {
     (void)unused;
     struct mo_arena output;
@@ -2376,6 +2435,7 @@ int main(int argc, char **argv) {
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_query, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source, NULL) == 0);
     return mo_test_report("lower");
 }

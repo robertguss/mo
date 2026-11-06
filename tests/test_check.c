@@ -2453,6 +2453,153 @@ static void source_limits(void) {
     finish(&f);
 }
 
+static const char query_store[] = "module Store\nexpose State(..), Count(..), tick\n"
+                                  "struct State\ntotal: Int\nend\n"
+                                  "struct Count\nvalue: Int\nend\n"
+                                  "fn tick(count: Count) : Int\ncount.value\nend\n"
+                                  "fn tick(state: State) : Int\nstate.total\nend\n"
+                                  "fn peek(state: State) : Int\nstate.total\nend\n";
+
+static const char query_main[] =
+    "module Main\nuse Store{State}\n"
+    "service\n  state State = State(total: 0)\n  tools add\n  every 1.minute refresh\n"
+    "  token from env \"TOKEN\"\nend\n"
+    "struct Shadow\ntotal: Int\nend\n"
+    "struct Holder\nconsole: Console\nend\n"
+    "fn add(state: State, _now: Time, amount: Int, _label: Text) : (State, Int)\n"
+    "(State(total: state.total + amount), amount)\nend\n"
+    "fn refresh(state: State, _now: Time) : State\nstate\nend\n"
+    "fn total(state: State) : Int\nstate.total\nend\n"
+    "fn shadow(state: Shadow) : Int\nstate.total\nend\n"
+    "fn ident(value: A) : A\nvalue\nend\n"
+    "fn pair(state: State, _value: A) : Int\nstate.total\nend\n"
+    "fn holder(_state: State, _holder: Holder) : Int\n0\nend\n"
+    "fn call(_state: State, f: fn() : Int) : Int\nf()\nend\n"
+    "fn makers(_state: State) : List(fn() : Int)\n[]\nend\n"
+    "fn exact(state: State, _now: Time, amount: Int, _label: Text) : Int\n"
+    "state.total + amount\nend\n"
+    "fn swapped(_state: State, _now: Time, _label: Text, amount: Int) : Int\namount\nend\n"
+    "fn no_time(_state: State, amount: Int, _label: Text) : Int\namount\nend\n"
+    "fn extra(_state: State, _now: Time, amount: Int, _label: Text, _more: Int) : Int\n"
+    "amount\nend\n"
+    "fn later(state: State, _now: Time) : Int\nstate.total\nend\n";
+
+/* The status of one query entry check, and the code of the diagnostic it adds, or 0. */
+static enum mo_query_entry query(struct fixture *f, const struct mo_program *program,
+                                 const char *name, enum mo_query_input input, uint32_t handler,
+                                 uint32_t *function, uint16_t *code) {
+    uint32_t before = f->diags.count;
+    enum mo_query_entry status =
+        mo_check_query_entry(&f->arena, program, (const uint8_t *)name, strlen(name), input,
+                             handler, &f->diags, function);
+    CHECK(f->diags.count == before + (status == MO_QUERY_ENTRY_REFUSED ? 1U : 0U));
+    *code = f->diags.count > before ? f->diags.items[before].code : 0;
+    return status;
+}
+
+/* The function a query names: its name, module and first parameter's type name. */
+static void query_selects(struct fixture *f, const struct mo_program *program, const char *name,
+                          enum mo_query_input input, uint32_t handler, const char *function_name,
+                          uint32_t module, const char *first) {
+    uint32_t function = UINT32_MAX;
+    uint16_t code;
+    CHECK(query(f, program, name, input, handler, &function, &code) == MO_QUERY_ENTRY_ACCEPTED);
+    CHECK(function < program->function_count);
+    if (function >= program->function_count)
+        return;
+    const struct mo_function_signature *signature = program->functions[function].signature;
+    CHECK(strcmp(signature->function->name, function_name) == 0);
+    CHECK(signature->function->module == module);
+    CHECK(strcmp(signature->type->arguments[0]->name, first) == 0);
+}
+
+static void query_refuses(struct fixture *f, const struct mo_program *program, const char *name,
+                          enum mo_query_input input, uint32_t handler, uint16_t expected) {
+    uint32_t function = 0;
+    uint16_t code = 0;
+    CHECK(query(f, program, name, input, handler, &function, &code) == MO_QUERY_ENTRY_REFUSED);
+    CHECK(code == expected);
+    CHECK(function == UINT32_MAX);
+}
+
+static void query_entries(void) {
+    char folder[] = "/tmp/mo-query-XXXXXX";
+    MO_ASSERT(mkdtemp(folder) != NULL);
+    char main_path[128], store_path[128];
+    int n = snprintf(main_path, sizeof(main_path), "%s/main.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(main_path));
+    n = snprintf(store_path, sizeof(store_path), "%s/store.mo", folder);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof(store_path));
+    write_file(main_path, (const uint8_t *)query_main, sizeof(query_main) - 1);
+    write_file(store_path, (const uint8_t *)query_store, sizeof(query_store) - 1);
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, main_path, NULL, &f.diags);
+    MO_ASSERT(set != NULL && f.diags.count == 0);
+    struct mo_program *program = mo_check(&f.arena, set, &f.diags);
+    CHECK(program != NULL && f.diags.count == 0);
+    if (program != NULL) {
+        MO_ASSERT(program->service_count == 1 && program->services[0].module == 0);
+        MO_ASSERT(strcmp(set->names[1], "Store") == 0);
+        uint32_t add = program->services[0].tools[0].function;
+        uint32_t refresh = program->services[0].timers[0].function;
+        enum mo_query_input state = MO_QUERY_STATE, failure = MO_QUERY_FAILURE;
+        query_selects(&f, program, "total", state, UINT32_MAX, "total", 0, "State");
+        query_selects(&f, program, "Main.total", state, UINT32_MAX, "total", 0, "State");
+        /* An overloaded name selects the overload that takes the state, whatever the order. */
+        query_selects(&f, program, "Store.tick", state, UINT32_MAX, "tick", 1, "State");
+        /* Selection is an operator action: a function its module does not expose. */
+        query_selects(&f, program, "Store.peek", state, UINT32_MAX, "peek", 1, "State");
+        query_selects(&f, program, "exact", failure, add, "exact", 0, "State");
+        query_selects(&f, program, "later", failure, refresh, "later", 0, "State");
+
+        uint32_t function = 0;
+        uint16_t code = 1;
+        CHECK(query(&f, program, "Missing.peek", state, UINT32_MAX, &function, &code) ==
+              MO_QUERY_ENTRY_NO_MODULE);
+        CHECK(code == 0);
+        CHECK(query(&f, program, "Main.nothing", state, UINT32_MAX, &function, &code) ==
+              MO_QUERY_ENTRY_NO_FUNCTION);
+        CHECK(query(&f, program, "Shadow", state, UINT32_MAX, &function, &code) ==
+              MO_QUERY_ENTRY_NO_FUNCTION);
+        /* Main imports only State: tick is declared in Store, not Main. */
+        CHECK(query(&f, program, "tick", state, UINT32_MAX, &function, &code) ==
+              MO_QUERY_ENTRY_NO_FUNCTION);
+
+        /* Refused before the purity walk, which cannot walk a type parameter. */
+        query_refuses(&f, program, "ident", state, UINT32_MAX, MO_CODE_QUERY_GENERIC);
+        query_refuses(&f, program, "pair", state, UINT32_MAX, MO_CODE_QUERY_GENERIC);
+        query_refuses(&f, program, "holder", state, UINT32_MAX, MO_CODE_QUERY_CAPABILITY);
+        query_refuses(&f, program, "call", state, UINT32_MAX, MO_CODE_QUERY_CAPABILITY);
+        query_refuses(&f, program, "makers", state, UINT32_MAX, MO_CODE_QUERY_CAPABILITY);
+        const struct mo_diag *last = &f.diags.items[f.diags.count - 1];
+        CHECK(strcmp(last->message, "a query value holds a capability or function") == 0);
+        query_refuses(&f, program, "shadow", state, UINT32_MAX, MO_CODE_QUERY_STATE);
+        query_refuses(&f, program, "exact", state, UINT32_MAX, MO_CODE_QUERY_INPUTS);
+        query_refuses(&f, program, "total", failure, add, MO_CODE_QUERY_INPUTS);
+        query_refuses(&f, program, "swapped", failure, add, MO_CODE_QUERY_INPUTS);
+        query_refuses(&f, program, "no_time", failure, add, MO_CODE_QUERY_INPUTS);
+        query_refuses(&f, program, "extra", failure, add, MO_CODE_QUERY_INPUTS);
+        query_refuses(&f, program, "exact", failure, refresh, MO_CODE_QUERY_INPUTS);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(main_path) == 0 && unlink(store_path) == 0 && rmdir(folder) == 0);
+
+    /* A program without a service has no state to query. */
+    init(&f, MO_CLI_CHECK_SIZE);
+    static const char plain[] = "module Main\nfn total(value: Int) : Int\nvalue\nend\n";
+    struct mo_module_syntax *module =
+        parse_bytes(&f, "main.mo", (const uint8_t *)plain, sizeof(plain) - 1);
+    const char *name = "Main";
+    struct mo_module_set single = {
+        .count = 1, .modules = &module, .names = &name, .sources = &f.sources};
+    program = mo_check(&f.arena, &single, &f.diags);
+    CHECK(program != NULL && f.diags.count == 0);
+    if (program != NULL)
+        query_refuses(&f, program, "total", MO_QUERY_STATE, UINT32_MAX, MO_CODE_QUERY_STATE);
+    finish(&f);
+}
+
 static void run_tests(void *argument) {
     (void)argument;
     load_graph();
@@ -2487,6 +2634,7 @@ static void run_tests(void *argument) {
     import_limit();
     import_scaling();
     source_limits();
+    query_entries();
 }
 
 int main(void) {

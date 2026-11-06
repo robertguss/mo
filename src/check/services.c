@@ -21,7 +21,7 @@ struct visible_type {
 
 struct service_check {
     struct mo_arena *arena;
-    struct mo_program *program;
+    const struct mo_program *program;
     struct mo_diags *diags;
     struct mo_checked_service *service;
     struct mo_span span;
@@ -205,7 +205,8 @@ static MO_MUST_USE bool handler(struct service_check *p, const struct mo_syntax 
         return report(p, MO_CODE_SERVICE_HANDLER, "a timer handler has the wrong signature",
                       "A timer takes exactly (State, Time) and returns State (reference 11.5).");
     for (uint32_t i = 0; i < type->count; i++)
-        if (!mo_check_service_purity(p->arena, p->program, type->arguments[i], p->span, p->diags))
+        if (!mo_check_service_purity(p->arena, p->program, type->arguments[i], p->span,
+                                     MO_PURITY_SERVICE, p->diags))
             return false;
     uint32_t index = (uint32_t)(selected - p->program->signatures->items);
     *function = p->functions[index];
@@ -287,7 +288,8 @@ static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_s
                                            .work = &used};
     if (!mo_check_type_abilities(&abilities, service->state))
         return report(p, abilities.error, abilities.message, abilities.reason);
-    if (!mo_check_service_purity(p->arena, program, service->state, state->span, p->diags) ||
+    if (!mo_check_service_purity(p->arena, program, service->state, state->span, MO_PURITY_SERVICE,
+                                 p->diags) ||
         !token_source(p, token))
         return false;
     struct mo_checked_service_tool *checked_tools = allocate(
@@ -472,4 +474,137 @@ bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
         }
     }
     return true;
+}
+
+static MO_MUST_USE enum mo_query_entry refuse_query(struct service_check *p, uint16_t code,
+                                                    const char *message, const char *reason) {
+    bool reported = report(p, code, message, reason);
+    (void)reported;
+    return MO_QUERY_ENTRY_REFUSED;
+}
+
+/* The query inputs a selected, closed function must take: the state alone, or the handler's
+ * parameters, which start with the state. */
+static MO_MUST_USE enum mo_query_entry query_inputs(struct service_check *p,
+                                                    const struct mo_checked_service *service,
+                                                    const struct mo_source_type *type,
+                                                    enum mo_query_input input, uint32_t handler) {
+    if (input == MO_QUERY_STATE)
+        return type->count == 2
+                   ? MO_QUERY_ENTRY_ACCEPTED
+                   : refuse_query(p, MO_CODE_QUERY_INPUTS,
+                                  "a state query's function takes more than the state",
+                                  "A query over an exported state is given the state alone.");
+    MO_ASSERT(handler < p->program->function_count);
+    bool known = false;
+    for (uint32_t i = 0; i < service->tool_count; i++)
+        known = known || service->tools[i].function == handler;
+    for (uint32_t i = 0; i < service->timer_count; i++)
+        known = known || service->timers[i].function == handler;
+    MO_ASSERT(known);
+    const struct mo_source_type *expected = p->program->functions[handler].signature->type;
+    bool match = type->count == expected->count;
+    for (uint32_t i = 1; match && i + 1 < type->count; i++)
+        match = same(p, type->arguments[i], expected->arguments[i], 0);
+    if (p->failed)
+        return MO_QUERY_ENTRY_REFUSED;
+    return match ? MO_QUERY_ENTRY_ACCEPTED
+                 : refuse_query(p, MO_CODE_QUERY_INPUTS,
+                                "a failure query's function does not take the failure's inputs",
+                                "A query over a failure takes the state, then Time, then the "
+                                "handler's arguments, with the same types in the same order.");
+}
+
+enum mo_query_entry mo_check_query_entry(struct mo_arena *arena, const struct mo_program *program,
+                                         const uint8_t *name, size_t length,
+                                         enum mo_query_input input, uint32_t handler,
+                                         struct mo_diags *diags, uint32_t *function) {
+    MO_ASSERT(program != NULL && program->set != NULL && name != NULL && function != NULL);
+    MO_ASSERT((input == MO_QUERY_FAILURE) == (handler != UINT32_MAX));
+    *function = UINT32_MAX;
+    struct service_check p = {
+        .arena = arena, .program = program, .diags = diags, .span = program->set->modules[0]->span};
+    if (!work(&p, length))
+        return MO_QUERY_ENTRY_REFUSED;
+    size_t dot = length;
+    while (dot > 0 && name[dot - 1] != '.')
+        dot--;
+    uint32_t module = 0;
+    if (dot != 0) {
+        module = UINT32_MAX;
+        for (uint32_t i = 0; i < program->set->count; i++) {
+            if (!work(&p, dot))
+                return MO_QUERY_ENTRY_REFUSED;
+            const char *candidate = program->set->names[i];
+            if (strlen(candidate) == dot - 1 && memcmp(candidate, name, dot - 1) == 0)
+                module = i;
+        }
+        if (module == UINT32_MAX)
+            return MO_QUERY_ENTRY_NO_MODULE;
+    }
+    const struct mo_module_scope *scope = &program->interfaces->scopes[module];
+    const struct mo_symbol *group = mo_find_symbol(scope, name + dot, length - dot);
+    if (group == NULL || group->declaration->kind != MO_S_FN)
+        return MO_QUERY_ENTRY_NO_FUNCTION;
+    p.span = group->declaration->children[0]->span;
+    const struct mo_checked_service *service = NULL;
+    for (uint32_t i = 0; i < program->service_count; i++)
+        if (program->services[i].module == 0)
+            service = &program->services[i];
+    if (service == NULL)
+        return refuse_query(&p, MO_CODE_QUERY_STATE, "the program has no service to query",
+                            "A query reads the state of the main module's service, and this "
+                            "program's main module declares no service.");
+    const struct mo_function_signature *selected = NULL;
+    for (uint32_t i = 0; i < group->overload_count; i++) {
+        if (!work(&p, 1))
+            return MO_QUERY_ENTRY_REFUSED;
+        const struct mo_function_signature *candidate =
+            mo_function_signature_by_symbol(program->signatures, group + i);
+        MO_ASSERT(candidate != NULL);
+        if (candidate->type->count < 2 ||
+            !same(&p, candidate->type->arguments[0], service->state, 0))
+            continue;
+        MO_ASSERT(selected == NULL);
+        selected = candidate;
+    }
+    if (p.failed)
+        return MO_QUERY_ENTRY_REFUSED;
+    if (selected == NULL && group->overload_count == 1)
+        selected = mo_function_signature_by_symbol(program->signatures, group);
+    if (selected == NULL)
+        return refuse_query(&p, MO_CODE_QUERY_STATE,
+                            "no overload of the query's function takes the service state",
+                            "A query's function takes the state type of the main module's "
+                            "service as its first parameter.");
+    p.span = selected->function->declaration->children[0]->span;
+    const struct mo_source_type *type = selected->type;
+    if (type->parameters != 0)
+        return refuse_query(&p, MO_CODE_QUERY_GENERIC, "a query's function is generic",
+                            "A query runs a compiled function, and only the instances a program "
+                            "uses of a generic function are compiled. Query a function with "
+                            "concrete types that calls it.");
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!mo_check_service_purity(arena, program, type->arguments[i], p.span, MO_PURITY_QUERY,
+                                     diags))
+            return MO_QUERY_ENTRY_REFUSED;
+    bool state = type->count >= 2 && same(&p, type->arguments[0], service->state, 0);
+    if (p.failed)
+        return MO_QUERY_ENTRY_REFUSED;
+    if (!state)
+        return refuse_query(&p, MO_CODE_QUERY_STATE,
+                            "a query's function does not take the service state first",
+                            "A query's first parameter is exactly the state type of the main "
+                            "module's service.");
+    enum mo_query_entry status = query_inputs(&p, service, type, input, handler);
+    if (status != MO_QUERY_ENTRY_ACCEPTED)
+        return status;
+    for (uint32_t i = 0; i < program->function_count; i++) {
+        if (!work(&p, 1))
+            return MO_QUERY_ENTRY_REFUSED;
+        if (program->functions[i].signature == selected)
+            *function = i;
+    }
+    MO_ASSERT(*function != UINT32_MAX);
+    return MO_QUERY_ENTRY_ACCEPTED;
 }
