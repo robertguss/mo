@@ -219,6 +219,11 @@ class Sessions(unittest.TestCase):
             graded = verdict(out)
             self.assertEqual((graded['success'], graded['grader']['reasons']), (True, []))
             self.assertEqual((graded['records']['match'], graded['records']['pairs']), (True, 2))
+            self.assertEqual(graded['coverage'], {'operator_tools': [], 'commands': []})
+            self.assertEqual({k: graded['fix_check'][k] for k in
+                              ('original', 'verdict', 'violation', 'graded_correct')},
+                             {'original': 'reproduced', 'verdict': 'verified', 'violation': False,
+                              'graded_correct': True})
             self.assertEqual(seen['command'][0], str(INSTALL / 'bin' / client))
             self.assertIn('PROMPT', seen['command'])
             prompt = (out / 'prompt.txt').read_text()
@@ -365,6 +370,9 @@ class Sessions(unittest.TestCase):
             self.assertEqual((graded['records']['pairs'], graded['records']['log_only']),
                              (1, []))
             self.assertGreater(graded['records']['shell'], 0)
+            self.assertEqual(graded['coverage'], {
+                'operator_tools': ['mo-overview'],
+                'commands': ['fetch', 'history', 'replay', 'replay --fix']})
             reported = json.loads(harness.grade.last_message(out / 'stream.jsonl'))
             self.assertEqual(reported, {'fetch': 0, 'history': 0, 'replay': 0,
                                         'verdicts': ['verified'], 'wrote_deployed': False})

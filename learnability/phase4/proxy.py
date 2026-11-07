@@ -414,6 +414,27 @@ def hosts(client, stream):
     return found
 
 
+OFFLINE = re.compile(r'\bmo\s+(fetch|history|query|replay)\b')
+FIX = re.compile(r'\bmo\s+replay\b[^;&|\n]*\s--fix\b')
+
+
+def coverage(client, stream, server=SERVER):
+    """Which instruments the session used: the operator tools it called through its MCP client
+    (author tools and the export pages mo fetch reads are not among them), and the offline
+    commands its shell commands ran.
+    shortcut: a command run from a script the session wrote is not seen; read the stream when a
+    session's coverage looks short."""
+    tools = {tool for _, tool, _, answered in stream_calls(client, stream, server)
+             if answered and str(tool).startswith('mo-')}
+    used = set()
+    for what, text in commands(client, stream):
+        if what == 'command':
+            used.update(m.group(1) for m in OFFLINE.finditer(text))
+            if FIX.search(text):
+                used.add('replay --fix')
+    return {'operator_tools': sorted(tools), 'commands': sorted(used)}
+
+
 def serve(upstream, log, token_env):
     token = os.environ.get(token_env)
     if not token:

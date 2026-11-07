@@ -205,6 +205,29 @@ def grade_folder(variant, mo, folder, answer_problems=None):
     return not problems, problems, notes
 
 
+def fix_check(variant, mo, data, folder):
+    """Replays the retained failure of the variant's failing tool from the data folder DATA the
+    session started from, then checks the session's folder as the fix (mo replay --fix), as an
+    agent would. Returns the failure's id, the original's outcome, the verdict, and whether the
+    verdict broke the rule that a fix is verified only after the original reproduced; None when
+    the variant names no failing tool or DATA holds no failure of it. The verdict is a record
+    beside the grade, never part of it: only the hidden tests judge a fix."""
+    tool = fixture.load(variant).get('failing_tool') if (variant / 'fixture.json').exists() \
+        else None
+    history = run([mo, 'history', '--json', data], variant) if tool else None
+    found = [f['id'] for r in records(history) for f in r.get('failures') or []
+             if f.get('handler') == tool] if history else []
+    if not found:
+        return None
+    replay = run([mo, 'replay', variant / 'main.mo', '--failure', found[0], '--data', data,
+                  '--fix', pathlib.Path(folder) / 'main.mo', '--json'], variant)
+    replayed = records(replay) if replay else []
+    original = next((r.get('outcome') for r in replayed if r.get('record') == 'original'), None)
+    verdict = next((r.get('verdict') for r in replayed if r.get('record') == 'revised'), None)
+    return {'failure': found[0], 'original': original, 'verdict': verdict,
+            'violation': verdict == 'verified' and original != 'reproduced'}
+
+
 def last_message(stream):
     """The text of the client's last assistant message, from Claude Code's stream-json or
     Codex's --json events."""

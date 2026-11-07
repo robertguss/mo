@@ -59,7 +59,11 @@ deleted. SIGTERM or SIGHUP to the harness still ends the session's processes.
 OUT/manifest.json records each artifact's SHA-256, the exit statuses, whether the service
 stopped by itself, whether the client's first assistant event arrived, and any host other than
 the loopback address the client's commands addressed; OUT/grade.json the grade: grade.py's
-verdict, the record match, and those hosts. A session succeeds only when all three pass. The
+verdict, the record match, and those hosts. A session succeeds only when all three pass. Beside
+them, and never part of success, grade.json records the session's coverage (the operator tools
+and offline commands it used) and, for a defect variant, a fix check: mo replay --fix of the
+session's folder against the retained failure in start-data/, with its verdict, whether that
+verdict broke the original-first rule, and whether the grader judged the folder correct. The
 service is never restarted for the session.
 """
 
@@ -683,10 +687,14 @@ def graded(variant, built, out, mo):
         grade.answer_problems(variant, stream, built / 'key.json')
     success, reasons, notes = grade.grade_folder(variant, mo, out / 'task-queue', answers)
     records = proxy.match(manifest['client'], stream, out / 'proxy.jsonl', SERVER)
+    checked = grade.fix_check(variant, mo, out / 'start-data', out / 'task-queue') \
+        if grade.defect(variant) else None
     verdict = {'variant': variant.name, 'client': manifest['client'],
                'success': success and records['match'] and not manifest['failed'],
                'grader': {'success': success, 'reasons': reasons, 'notes': notes},
-               'records': records, 'failed': manifest['failed']}
+               'records': records, 'failed': manifest['failed'],
+               'coverage': proxy.coverage(manifest['client'], stream, SERVER),
+               'fix_check': checked and {**checked, 'graded_correct': success}}
     (out / 'grade.json').write_text(json.dumps(verdict, indent=2) + '\n')
     print(f'{"success" if verdict["success"] else "failure"}: {variant.name} on '
           f'{manifest["client"]}', file=sys.stderr)

@@ -362,6 +362,27 @@ class Match(unittest.TestCase):
         self.assertEqual((result['log_only'], result['shell']),
                          ([{'log_id': 13, 'tool': 'stats'}], 3))
 
+    def test_coverage_lists_operator_tools_and_offline_commands_apart_from_author_tools(self):
+        calls = [('stats', {}), ('mo-state', {'path': ['jobs']}), ('mo-overview', {})]
+        commands = ["bash -lc 'mo query main.mo count --export s.moex'",
+                    'mo history /opt/data && mo replay main.mo --failure 1 --data /opt/data',
+                    'mo check main.mo']
+        for make, client in ((claude_stream, 'claude'), (codex_stream, 'codex')):
+            stream = make(self.root, calls, commands=commands)
+            self.assertEqual(proxy.coverage(client, stream),
+                             {'operator_tools': ['mo-overview', 'mo-state'],
+                              'commands': ['history', 'query', 'replay']}, client)
+
+    def test_a_fetch_only_session_used_no_operator_tool(self):
+        stream = claude_stream(self.root, [('stats', {})], commands=[self.FETCH])
+        self.assertEqual(proxy.coverage('claude', stream),
+                         {'operator_tools': [], 'commands': ['fetch']})
+
+    def test_a_fix_check_is_named_apart_from_a_plain_replay(self):
+        stream = codex_stream(self.root, [], commands=[
+            'mo replay /d/main.mo --failure 2 --data /d/data --fix main.mo --json'])
+        self.assertEqual(proxy.coverage('codex', stream)['commands'], ['replay', 'replay --fix'])
+
     def test_the_command_exits_by_the_result(self):
         log = self.logged(self.CALLS)
         ok = subprocess.run([sys.executable, str(here / 'proxy.py'), 'match', 'codex',
