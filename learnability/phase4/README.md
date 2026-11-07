@@ -5,7 +5,18 @@ fresh agent sessions, on four private scenarios, use the Phase 4 instruments on 
 queue, and the results report what they did correctly and every miss. `protocol.md` is the
 original experiment, kept as a historical record; its baseline and comparison were never run.
 
-## The scenarios are private until the final round
+## Scored results and scenario history
+
+The [diagnostic results](evaluation/results.md) report 14 of 16 correct and a passing gate.
+All 16 slots ran once; both misses are preserved. The [run record](../../docs/status/phase4-run.md)
+states the limits and verification inventory. Robert’s release decision is still pending.
+
+The committed scenario history through `fda0ce0` is published in the
+[evidence archive](https://github.com/robertguss/mo/releases/tag/evidence-phase4-diagnostic-2026-11-07)
+as a restorable git fast-export stream, checked against the freeze. Uncommitted private
+changes remain private. The following describes how scenarios were isolated during collection.
+
+## Scenario isolation during collection
 
 A session can read this repository over the network. The scenario variants, whose
 difference from the served queue is the bug, would give it away, so they live in a private

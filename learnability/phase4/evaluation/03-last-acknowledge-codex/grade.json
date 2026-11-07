@@ -1,0 +1,30 @@
+{
+  "variant": "last-acknowledge",
+  "client": "codex",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": []
+  },
+  "records": {
+    "match": true,
+    "pairs": 5,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": [],
+    "shell": 0
+  },
+  "failed": [],
+  "coverage": {
+    "operator_tools": [
+      "mo-log",
+      "mo-overview",
+      "mo-state"
+    ],
+    "commands": [
+      "history"
+    ]
+  },
+  "fix_check": null
+}

@@ -10,6 +10,10 @@ execution: code
 
 # Phase 4, Agents Can See Inside It - Plan
 
+**Status, 2026-11-07:** implementation and diagnostic collection complete; gate passed with
+14 of 16 correct. Both misses are published in [the run record](../status/phase4-run.md).
+Phase 4 remains open pending Robert’s release decision and merge approval; no v0.1.0 tag.
+
 ---
 
 ## Goal Capsule

@@ -1,0 +1,37 @@
+{
+  "variant": "lease-past-its-time",
+  "client": "claude",
+  "success": false,
+  "grader": {
+    "success": false,
+    "reasons": [
+      "a hidden test failed (named in the private notes)"
+    ],
+    "notes": [
+      "the session changed queue-tests.mo; the variant's copy was used"
+    ]
+  },
+  "records": {
+    "match": true,
+    "pairs": 2,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": [],
+    "shell": 0
+  },
+  "failed": [],
+  "coverage": {
+    "operator_tools": [
+      "mo-failures",
+      "mo-timers"
+    ],
+    "commands": []
+  },
+  "fix_check": {
+    "failure": "1",
+    "original": "reproduced",
+    "verdict": "verified",
+    "violation": false,
+    "graded_correct": false
+  }
+}
