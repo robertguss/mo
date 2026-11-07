@@ -332,7 +332,56 @@ class Match(unittest.TestCase):
                 {'type': 'tool_use', 'id': 'y', 'name': 'Read', 'input': {}}]}}) + '\n')
         self.assertEqual(proxy.match('claude', stream, log),
                          {'match': True, 'pairs': 0, 'log_only': [], 'stream_only': [],
-                          'exempt': []})
+                          'exempt': [], 'shell': 0})
+
+    FETCHED = [('mo-export', {'kind': 'state'}),
+               ('mo-export', {'kind': 'state', 'export': 'e1', 'offset': 8192}),
+               ('mo-export', {'kind': 'state', 'export': 'e1', 'offset': 16384})]
+    FETCH = 'mo fetch http://127.0.0.1:4000/mcp --export state --out s.moex --token-env QUEUE_TOKEN'
+
+    def test_export_pages_a_fetch_command_read_count_as_the_shell(self):
+        log = self.logged(self.CALLS + self.FETCHED)
+        for make, client in ((claude_stream, 'claude'), (codex_stream, 'codex')):
+            stream = make(self.root, self.CALLS, commands=[f"bash -lc '{self.FETCH}'"])
+            result = proxy.match(client, stream, log)
+            self.assertEqual((result['match'], result['pairs'], result['shell'],
+                              result['log_only']), (True, 3, 3, []), client)
+
+    def test_export_pages_without_a_fetch_command_still_fail(self):
+        log = self.logged(self.CALLS + self.FETCHED)
+        result = proxy.match('claude', claude_stream(self.root, self.CALLS, commands=['mo help']),
+                             log)
+        self.assertFalse(result['match'])
+        self.assertEqual((len(result['log_only']), result['shell']), (3, 0))
+
+    def test_a_fetch_command_does_not_excuse_another_tool(self):
+        log = self.logged(self.CALLS + [('stats', {})] + self.FETCHED)
+        result = proxy.match('codex', codex_stream(self.root, self.CALLS, commands=[self.FETCH]),
+                             log)
+        self.assertFalse(result['match'])
+        self.assertEqual((result['log_only'], result['shell']),
+                         ([{'log_id': 13, 'tool': 'stats'}], 3))
+
+    def test_coverage_lists_operator_tools_and_offline_commands_apart_from_author_tools(self):
+        calls = [('stats', {}), ('mo-state', {'path': ['jobs']}), ('mo-overview', {})]
+        commands = ["bash -lc 'mo query main.mo count --export s.moex'",
+                    'mo history /opt/data && mo replay main.mo --failure 1 --data /opt/data',
+                    'mo check main.mo']
+        for make, client in ((claude_stream, 'claude'), (codex_stream, 'codex')):
+            stream = make(self.root, calls, commands=commands)
+            self.assertEqual(proxy.coverage(client, stream),
+                             {'operator_tools': ['mo-overview', 'mo-state'],
+                              'commands': ['history', 'query', 'replay']}, client)
+
+    def test_a_fetch_only_session_used_no_operator_tool(self):
+        stream = claude_stream(self.root, [('stats', {})], commands=[self.FETCH])
+        self.assertEqual(proxy.coverage('claude', stream),
+                         {'operator_tools': [], 'commands': ['fetch']})
+
+    def test_a_fix_check_is_named_apart_from_a_plain_replay(self):
+        stream = codex_stream(self.root, [], commands=[
+            'mo replay /d/main.mo --failure 2 --data /d/data --fix main.mo --json'])
+        self.assertEqual(proxy.coverage('codex', stream)['commands'], ['replay', 'replay --fix'])
 
     def test_the_command_exits_by_the_result(self):
         log = self.logged(self.CALLS)

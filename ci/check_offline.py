@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """mo history, mo replay and mo query against data folders a real mo serve wrote."""
 import datetime
+import glob
 import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import signal
 import sqlite3
@@ -234,7 +236,7 @@ def history(binary, folder):
         assert f["handler"] == "broken" and f["kind"].startswith("broken:0:stop:"), f
         assert f["signature"]["class"] == "defect" and f["signature"]["reason"] == "stop", f
         assert f["build"] == digest and f["replayable_here"] and f["not_replayable"] is None, f
-        assert f["build_label"].startswith("mo 0.0.0; "), f
+        assert f["build_label"].startswith("mo 0.1.0; "), f
     assert h["left_bytes"] == "0" and int(h["retained_bytes"]) > 0, h
     return data
 
@@ -1034,8 +1036,8 @@ GUIDE = [
     # The steps acceptance follows, in the guide's order.
     "first copy the whole stopped data folder, including any `service.sqlite-journal` beside the "
     "database.",
-    "`mo history` shows each record's build digest, and `sha256sum /opt/mo/*/mo` finds the "
-    "executable with that digest.",
+    "`mo history` shows each record's build digest, and `sha256sum /opt/mo/*/build/gcc/debug/mo` "
+    "finds the executable with that digest.",
     "To check a fix, copy the program's folder, edit the copy, and add `--fix COPY/main.mo`.",
 ]
 
@@ -1044,6 +1046,13 @@ def guide(binary):
     text = " ".join(mo(binary, ["guide"], 0).stdout.decode().split())
     for sentence in GUIDE:
         assert sentence in text, f"docs/agent-guide.md no longer says: {sentence}"
+    # The digest search must find an executable where docs/ops/task-queue.md installs it.
+    pattern = re.search(r"`sha256sum (/opt/mo/\S+)`", text).group(1)
+    with tempfile.TemporaryDirectory(prefix="mo-guide-") as root:
+        executable = pathlib.Path(root + "/opt/mo/0123abcd/build/gcc/debug/mo")
+        executable.parent.mkdir(parents=True)
+        executable.touch()
+        assert glob.glob(root + pattern) == [str(executable)], pattern
 
 
 def check(binary):

@@ -158,14 +158,30 @@ class Setup(unittest.TestCase):
             harness.sudo('chgrp', str(os.getgid()), inner.parent)
 
     def test_the_order_is_reproducible_and_balanced(self):
-        names = [f'v{i}' for i in range(6)]
-        first = harness.order('20261104', names)
-        self.assertEqual(first, harness.order('20261104', names))
-        self.assertNotEqual(first, harness.order('20261105', names))
-        self.assertEqual(len(first), 36)
+        names = [f'v{i}' for i in range(4)]
+        first = harness.order('20261107', names)
+        self.assertEqual(first, harness.order('20261107', names))
+        self.assertNotEqual(first, harness.order('20261108', names))
+        self.assertEqual(len(first), 16)
         for name in names:
             for client in harness.CLIENTS:
-                self.assertEqual(first.count((name, client)), 3)
+                self.assertEqual(first.count((name, client)), 2)
+
+    def test_setup_for_another_mo_keeps_the_earlier_record(self):
+        state = PRIVATE / 'state'
+        earlier = json.loads((state / 'binaries.json').read_text())
+        try:
+            other = harness_command('setup', STUB, STUB, STUB)
+            self.assertEqual(other.returncode, 0, other.stderr)
+            record = json.loads((state / 'binaries.json').read_text())
+            self.assertEqual(record['mo']['sha256'], harness.sha256(STUB))
+            self.assertIn({k: earlier[k] for k in ('mo', 'claude', 'codex')}, record['previous'])
+        finally:
+            again = harness_command('setup', MO, STUB, STUB)
+        self.assertEqual(again.returncode, 0, again.stderr)
+        record = json.loads((state / 'binaries.json').read_text())
+        self.assertEqual(record['mo']['sha256'], harness.sha256(MO))
+        self.assertEqual([p['mo']['sha256'] for p in record['previous']], [harness.sha256(STUB)])
 
 
 class Sessions(unittest.TestCase):
@@ -203,6 +219,11 @@ class Sessions(unittest.TestCase):
             graded = verdict(out)
             self.assertEqual((graded['success'], graded['grader']['reasons']), (True, []))
             self.assertEqual((graded['records']['match'], graded['records']['pairs']), (True, 2))
+            self.assertEqual(graded['coverage'], {'operator_tools': [], 'commands': []})
+            self.assertEqual({k: graded['fix_check'][k] for k in
+                              ('original', 'verdict', 'violation', 'graded_correct')},
+                             {'original': 'reproduced', 'verdict': 'verified', 'violation': False,
+                              'graded_correct': True})
             self.assertEqual(seen['command'][0], str(INSTALL / 'bin' / client))
             self.assertIn('PROMPT', seen['command'])
             prompt = (out / 'prompt.txt').read_text()
@@ -309,6 +330,64 @@ class Sessions(unittest.TestCase):
         self.assertIn('mo serve exited', json.loads(
             (out / 'discarded.json').read_text())['check_failed'])
         self.assert_session_user_idle()
+
+    def test_a_session_can_fetch_read_history_and_check_a_fix_against_the_deployed_source(self):
+        # mo reads its library from the tree it was built in, so replay as the session user
+        # needs an mo built where that user can read, as the evaluation's candidate is.
+        tree = pathlib.Path(tempfile.mkdtemp(prefix='phase4-harness-tree-'))
+        try:
+            os.chmod(tree, 0o755)
+            listed = subprocess.run(['git', '-C', str(here.parents[1]), 'ls-files', '-z'],
+                                    capture_output=True, check=True).stdout
+            for name in listed.decode().split('\0')[:-1]:
+                source = here.parents[1] / name
+                if source.is_file():
+                    (tree / name).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, tree / name)
+            subprocess.run(['make', '-s', '-C', str(tree), f'-j{os.cpu_count()}', 'CC=gcc',
+                            'build/gcc/debug/mo'], check=True, capture_output=True, timeout=1800)
+            candidate = tree / 'build' / 'gcc' / 'debug' / 'mo'
+            self.assertEqual(harness_command('setup', candidate, STUB, STUB).returncode, 0)
+            root, built = PRIVATE / 'root-candidate', PRIVATE / 'built-candidate'
+            shutil.copytree(SYNTHETIC, root / 'variants' / 'synthetic')
+            made = harness_command('build', candidate, root, built)
+            self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+            self.instruments(built)
+        finally:
+            self.assertEqual(harness_command('setup', MO, STUB, STUB).returncode, 0)
+            shutil.rmtree(tree, ignore_errors=True)
+
+    def instruments(self, built):
+        for client in harness.CLIENTS:
+            stub_mode({'mode': 'instruments', 'data': str(INSTALL / 'session' / 'start-data'),
+                       'deployed': str(INSTALL / 'session' / 'deployed')})
+            out = PRIVATE / 'runs' / f'instruments-{client}'
+            result = harness_command('run', ROOT / 'variants' / 'synthetic', built / 'synthetic',
+                                     client, out, '--limit', 120)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            graded = verdict(out)
+            self.assertTrue(graded['success'], graded)
+            self.assertEqual((graded['records']['pairs'], graded['records']['log_only']),
+                             (1, []))
+            self.assertGreater(graded['records']['shell'], 0)
+            self.assertEqual(graded['coverage'], {
+                'operator_tools': ['mo-overview'],
+                'commands': ['fetch', 'history', 'replay', 'replay --fix']})
+            reported = json.loads(harness.grade.last_message(out / 'stream.jsonl'))
+            self.assertEqual(reported, {'fetch': 0, 'history': 0, 'replay': 0,
+                                        'verdicts': ['verified'], 'wrote_deployed': False})
+            self.assertFalse((INSTALL / 'session' / 'deployed').exists())
+            self.assert_session_user_idle()
+
+    def test_a_round_built_by_another_mo_is_refused(self):
+        other = PRIVATE / 'built-elsewhere'
+        shutil.copytree(BUILT / 'synthetic', other / 'synthetic')
+        (other / 'round.json').write_text(json.dumps({'mo_sha256': '0' * 64}))
+        result = harness_command('run', ROOT / 'variants' / 'synthetic', other / 'synthetic',
+                                 'claude', PRIVATE / 'runs' / 'elsewhere')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('was built by another mo', result.stderr)
+        self.assertFalse((PRIVATE / 'runs' / 'elsewhere').exists())
 
     def test_a_tool_call_the_proxy_never_saw_fails_the_session(self):
         result, out = session('unrecorded', mode='unrecorded')

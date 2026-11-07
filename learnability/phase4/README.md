@@ -60,7 +60,9 @@ and `codex` (a link into `/opt/mo-phase4/codex`, the copied standalone package).
 session user cannot write them, neither client can update itself, and the harness also runs
 Claude Code with `DISABLE_AUTOUPDATER=1` and Codex with `check_for_update_on_startup=false`.
 `setup` records each binary's SHA-256 and version in `~/.mo-phase4-harness/binaries.json`,
-for the freeze. The harness's private state is in `~/.mo-phase4-harness` (mode 0700): the
+for the freeze; running it again with another `mo` keeps the earlier records under `previous`.
+`run` refuses a built folder whose `round.json` names another `mo` than the installed one, since
+`mo replay` needs the `mo` that recorded a fixture's failures. The harness's private state is in `~/.mo-phase4-harness` (mode 0700): the
 session tokens (`tokens`) and the clients' stored credentials (`secrets`), both for the
 scanner, and the snapshot of the session user's home that every session starts from.
 
@@ -68,7 +70,8 @@ scanner, and the snapshot of the session user's home that every session starts f
 the binary, and an unreadable library folder is an error (E1102) for every `mo check`. A binary
 built under the operator's home therefore fails every check the session makes, so the baseline is
 built from an export of the tagged commit under `/opt/mo-phase4/baseline`, which is then made
-root's:
+root's. An evaluation candidate is built the same way from its own commit, under
+`/opt/mo-phase4/candidate`:
 
 ```sh
 sudo install -d -m 0755 -o root -g root /opt/mo-phase4
@@ -107,5 +110,8 @@ the hidden tests stay private until the final round. The scanner reads DEST befo
 The pilots' record, with the rule that decides when a variant is ready to freeze, is
 `pilot/ledger.md`.
 - `preflight/` holds the experiments that sized the design; its README says what each found.
+- `smoke/` holds the native-client smoke on the evaluation candidate: one Claude Code and one
+  Codex session that used every instrument through the harness. It is development evidence,
+  never scored.
 - `live-views/` holds the development evidence for the authenticated live views: client
   routing, local checks and process sizing. Its README says what each run showed.

@@ -269,7 +269,6 @@ it. Nine seeds.
   1,718 executions); `fuzz_history` alone for 180 s, 34,383 executions, peak 461 MB, no crash, leak
   or leftover folder. Green: `make test` under gcc, `test_service_store` under clang debug and
   sanitize, `make format-check`, `make deps`, `make tidy`, `ci/check_fuzz_seeds.py`.
-||||||| parent of 0eeaec27 (Compare defect replays with Lean's evaluator)
 
 ## Defect replays against Lean
 
@@ -301,7 +300,6 @@ entry of a Run on the hand-written inputs. The prediction was that both stop the
   Core entry is `%entry`. The swap matched nothing and `mocore` refused the arguments as
   `invalidRun`. The script now requires exactly one entry to swap and the handler's `FunDecl` to
   exist.
-||||||| parent of f814a25a (Check the offline commands end to end, against the grader, and measure the reader)
 
 ## Acceptance driver, grader cross-check and measurements
 

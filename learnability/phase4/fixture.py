@@ -42,13 +42,18 @@ fixture.json is one object:
                                           the tool and arrival time, to the second, of the call
                                           that made job ID Dead, read from the log records after
                                           the last snapshot, which must leave ROWS rows free
+    {"rule": "last_call", "tool": TOOL, "margin": ROWS}
+                                          the arrival time, to the second, of the last TOOL
+                                          call in the log records after the last snapshot
+    {"rule": "waiting_payload_bytes"}     the bytes of every Ready or Leased job's payload
   "failing_tool": the tool the check calls to see the defect fire, when it fails outright
 
 An ASSERTION is one of
   {"job": ID, "state": "Ready" | "Leased" | "Done" | "Dead", "attempts": N}
   {"call": TOOL, "arguments": {...}, "error": CODE}   the call fails with runtime error CODE
   {"stderr": "report"}           the service's standard error holds a failure line and a report
-  {"stderr": "failure_only"}     it holds a failure line and no report after it
+  {"stderr": "failure_only"}     it holds a failure line and no report after it (the
+                                 record line that follows a failure is not a report)
 """
 
 import http.client
@@ -99,7 +104,8 @@ def load(variant):
     for assertion in fixture.get('check', []):
         validate_assertion(assertion)
     key = fixture.get('key')
-    if key is not None and key.get('rule') not in ('shared_payload_jobs', 'killing_call'):
+    if key is not None and key.get('rule') not in ('shared_payload_jobs', 'killing_call',
+                                                   'last_call', 'waiting_payload_bytes'):
         raise FixtureError(f'unknown key rule {key.get("rule")!r}')
     if fixture.get('failing_tool') not in (None, *TOOLS):
         raise FixtureError(f'unknown failing tool {fixture["failing_tool"]!r}')
@@ -331,7 +337,8 @@ def holds(client, assertion, stderr_text):
         if not failures:
             raise CheckFailed(f'standard error holds no failure line: {json.dumps(assertion)}')
         after = lines[failures[-1] + 1:failures[-1] + 2]
-        reported = bool(after) and not after[0].startswith('mo serve:')
+        # mo serve follows each failure with its record line, after any report
+        reported = bool(after) and not after[0].startswith(('mo serve:', '  record'))
         if reported != (assertion['stderr'] == 'report'):
             raise CheckFailed(f'standard error {"has" if reported else "has no"} report after '
                               f'its failure line: {json.dumps(assertion)}')
@@ -382,10 +389,7 @@ def rfc3339(microseconds):
 
 
 def killing_call(data, job_id, margin):
-    snapshot, records = log_records(data)
-    if len(records) + margin > 100:
-        raise CheckFailed(f'{len(records)} log rows follow the snapshot at {snapshot}, which '
-                          f'leaves fewer than {margin} free')
+    snapshot, records = after_snapshot(data, margin)
     fails = [(tool, arrival) for _, tool, arrival, args in records
              if tool == 'fail' and len(args) == 2 and encoded_int(args[0]) == job_id and
              encoded_int(args[1]) == 3]
@@ -395,6 +399,30 @@ def killing_call(data, job_id, margin):
     tool, arrival = fails[0]
     return {'answer': f'{tool} {rfc3339(arrival)}', 'snapshot': snapshot,
             'rows_after_snapshot': len(records)}
+
+
+def after_snapshot(data, margin):
+    snapshot, records = log_records(data)
+    if len(records) + margin > 100:
+        raise CheckFailed(f'{len(records)} log rows follow the snapshot at {snapshot}, which '
+                          f'leaves fewer than {margin} free')
+    return snapshot, records
+
+
+def last_call(data, tool, margin):
+    snapshot, records = after_snapshot(data, margin)
+    calls = [arrival for _, name, arrival, _ in records if name == tool]
+    if not calls:
+        raise CheckFailed(f'the log after the snapshot at {snapshot} holds no {tool} call')
+    return {'answer': rfc3339(calls[-1]), 'snapshot': snapshot,
+            'rows_after_snapshot': len(records)}
+
+
+def waiting_payload_bytes(client):
+    jobs = client.every_job()
+    waiting = [job for job in jobs if job['state']['case'] in ('Ready', 'Leased')]
+    return {'answer': str(sum(len(job['payload'].encode('utf-8')) for job in waiting)),
+            'jobs': len(jobs), 'waiting': len(waiting)}
 
 
 def shared_payload_jobs(client):
@@ -408,13 +436,20 @@ def shared_payload_jobs(client):
 
 def key_live(fixture, client):
     rule = (fixture.get('key') or {}).get('rule')
-    return shared_payload_jobs(client) if rule == 'shared_payload_jobs' else None
+    live = {'shared_payload_jobs': shared_payload_jobs,
+            'waiting_payload_bytes': waiting_payload_bytes}
+    return live[rule](client) if rule in live else None
+
+
+STOPPED_RULES = ('killing_call', 'last_call')  # read from the log, not from a running service
 
 
 def key_stopped(fixture, data):
     key = fixture.get('key') or {}
     if key.get('rule') == 'killing_call':
         return killing_call(data, key['job'], key.get('margin', 60))
+    if key.get('rule') == 'last_call':
+        return last_call(data, key['tool'], key.get('margin', 60))
     return None
 
 
@@ -585,7 +620,7 @@ def key_from(variant, mo, data, token_env):
     fixture = load(variant)
     if fixture.get('key') is None:
         raise FixtureError(f'{variant} is not a question')
-    if fixture['key']['rule'] == 'killing_call':
+    if fixture['key']['rule'] in STOPPED_RULES:
         return key_stopped(fixture, data)
     token = token_from(token_env)
     with tempfile.TemporaryDirectory() as temporary:

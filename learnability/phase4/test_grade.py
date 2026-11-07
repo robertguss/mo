@@ -89,6 +89,12 @@ class Answers(unittest.TestCase):
             self.assertNotEqual(grade.normalized(rule, given), key, given)
         self.assertEqual(grade.normalized('shared_payload_jobs', '15'), '15')
         self.assertIsNone(grade.normalized('shared_payload_jobs', 'about 15'))
+        self.assertEqual(grade.normalized('waiting_payload_bytes', '1234'), '1234')
+        self.assertIsNone(grade.normalized('waiting_payload_bytes', '1,234 bytes'))
+        when = grade.normalized('last_call', '2026-11-04T12:09:49Z')
+        self.assertEqual(grade.normalized('last_call', '2026-11-04T13:09:49.5+01:00'), when)
+        self.assertNotEqual(grade.normalized('last_call', '2026-11-04T12:09:48Z'), when)
+        self.assertIsNone(grade.normalized('last_call', '2026-11-04T12:09:49'))
 
 
 class Blocks(unittest.TestCase):
@@ -237,6 +243,50 @@ class Grading(unittest.TestCase):
         self.assertEqual(status, 2)
 
 
+class FixCheck(unittest.TestCase):
+    """mo replay --fix of a session's folder against the fixture's retained failure."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.folder = tempfile.TemporaryDirectory()
+        cls.root = pathlib.Path(cls.folder.name)
+        built = subprocess.run([sys.executable, str(here / 'fixture.py'), 'build', SYNTHETIC, MO,
+                                cls.root / 'built', 'BUILD_TOKEN'], capture_output=True,
+                               text=True, timeout=900, env={**os.environ, 'BUILD_TOKEN': 'b' * 32})
+        assert built.returncode == 0, built.stdout + built.stderr
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.folder.cleanup()
+
+    def test_the_reference_fix_is_verified_and_the_unfixed_folder_is_not(self):
+        data = self.root / 'built' / 'data'
+        record = grade.fix_check(SYNTHETIC, MO, data, SYNTHETIC / 'hidden' / 'reference')
+        self.assertEqual({k: record[k] for k in ('original', 'verdict', 'violation')},
+                         {'original': 'reproduced', 'verdict': 'verified', 'violation': False})
+        record = grade.fix_check(SYNTHETIC, MO, data, SYNTHETIC)
+        self.assertEqual((record['original'], record['verdict'], record['violation']),
+                         ('reproduced', 'not_fixed', False))
+
+    def test_verified_beside_an_unreproduced_original_is_a_violation(self):
+        fake = self.root / 'fake-mo'
+        fake.write_text("#!/bin/sh\nif [ \"$1\" = history ]; then\n"
+                        "echo '{\"record\":\"history\",\"failures\":"
+                        "[{\"id\":\"3\",\"handler\":\"stats\"}]}'\nelse\n"
+                        "echo '{\"record\":\"original\",\"outcome\":\"not_reproduced\"}'\n"
+                        "echo '{\"record\":\"revised\",\"verdict\":\"verified\"}'\nfi\n")
+        fake.chmod(0o755)
+        record = grade.fix_check(SYNTHETIC, fake, self.root, SYNTHETIC)
+        self.assertEqual(record, {'failure': '3', 'original': 'not_reproduced',
+                                  'verdict': 'verified', 'violation': True})
+
+    def test_a_question_variant_or_a_folder_without_its_failure_gets_no_fix_check(self):
+        fake = self.root / 'no-failures'
+        fake.write_text("#!/bin/sh\necho '{\"record\":\"history\",\"failures\":[]}'\n")
+        fake.chmod(0o755)
+        self.assertIsNone(grade.fix_check(SYNTHETIC, fake, self.root, SYNTHETIC))
+
+
 class Check(unittest.TestCase):
     def test_the_synthetic_variant_is_sound(self):
         result = tool('--check', MO, TESTDATA)
@@ -290,7 +340,7 @@ def main():
         MO = os.path.abspath(binary)
         print(f'phase 4 grader with {binary}', file=sys.stderr)
         suite = unittest.TestSuite()
-        for case in (Answers, Blocks, Grading, Check):
+        for case in (Answers, Blocks, Grading, FixCheck, Check):
             suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(case))
         ok = unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful() and ok
     return 0 if ok else 1
