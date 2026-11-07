@@ -898,6 +898,50 @@ static pid_t hold_store(const char *path, bool reader, unsigned hold_us, int *re
     return pid;
 }
 
+/* A first-start child: CREATE, exclusive BEGIN, one table. The database file stays
+ * zero bytes until COMMIT. Signals ready, then sleeps hold_us or waits on *release.
+ * commit true: COMMIT before close. commit false: ROLLBACK, so the file stays empty. */
+static pid_t hold_first_commit(const char *path, bool commit, unsigned hold_us, int *release) {
+    int ready[2], hold[2];
+    MO_ASSERT(pipe(ready) == 0 && pipe(hold) == 0);
+    pid_t pid = fork();
+    MO_ASSERT(pid >= 0);
+    if (pid == 0) {
+        MO_ASSERT(close(ready[0]) == 0 && close(hold[1]) == 0);
+        sqlite3 *db = NULL;
+        if (sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL) !=
+                SQLITE_OK ||
+            sqlite3_exec(db,
+                         "PRAGMA journal_mode=DELETE;PRAGMA locking_mode=EXCLUSIVE;"
+                         "BEGIN EXCLUSIVE;"
+                         "CREATE TABLE head(id INTEGER PRIMARY KEY CHECK(id=1), seq INTEGER "
+                         "NOT NULL) STRICT",
+                         NULL, NULL, NULL) != SQLITE_OK)
+            _exit(1);
+        char byte = 'r';
+        if (write(ready[1], &byte, 1) != 1)
+            _exit(2);
+        struct timespec pause = {hold_us / 1000000, (long)(hold_us % 1000000) * 1000};
+        if (hold_us != 0)
+            MO_ASSERT(nanosleep(&pause, NULL) == 0);
+        else if (read(hold[0], &byte, 1) != 0)
+            _exit(3);
+        if (sqlite3_exec(db, commit ? "COMMIT" : "ROLLBACK", NULL, NULL, NULL) != SQLITE_OK ||
+            sqlite3_close(db) != SQLITE_OK)
+            _exit(4);
+        _exit(0);
+    }
+    MO_ASSERT(close(ready[1]) == 0 && close(hold[0]) == 0);
+    char byte = 0;
+    MO_ASSERT(read(ready[0], &byte, 1) == 1 && byte == 'r');
+    MO_ASSERT(close(ready[0]) == 0);
+    if (release != NULL)
+        *release = hold[1];
+    else
+        MO_ASSERT(close(hold[1]) == 0);
+    return pid;
+}
+
 static void child_done(pid_t pid) {
     int status;
     CHECK(waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0);
@@ -911,6 +955,45 @@ static void store_wait(struct mo_image *image, const char *path) {
                  "another process holds the service store, such as a second mo serve or a "
                  "reader of its data folder") == 0);
     struct mo_store *store = NULL;
+    /* sqlite3_open in the first-start child needs the store allocator. */
+    MO_ASSERT(mo_store_open(NULL, &store) == MO_STORE_OK);
+    mo_store_close(store);
+    store = NULL;
+    {
+        int release_first = -1;
+        pid_t first = hold_first_commit(path, false, 0, &release_first);
+        struct stat held;
+        CHECK(stat(path, &held) == 0 && held.st_size == 0);
+        struct timespec first_start;
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &first_start) == 0);
+        CHECK(mo_store_open_wait(path, &store) == MO_STORE_BUSY && store == NULL);
+        uint64_t first_waited = elapsed_us(&first_start);
+        CHECK(first_waited >= MO_LIMIT_SERVE_STORE_WAIT_US * 9 / 10 &&
+              first_waited < 3 * MO_LIMIT_SERVE_STORE_WAIT_US);
+        CHECK(stat(path, &held) == 0 && held.st_size == 0);
+        MO_ASSERT(close(release_first) == 0);
+        child_done(first);
+        CHECK(stat(path, &held) == 0 && held.st_size == 0);
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &first_start) == 0);
+        CHECK(mo_store_open_wait(path, &store) == MO_STORE_CORRUPT && store == NULL);
+        CHECK(elapsed_us(&first_start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+        CHECK(stat(path, &held) == 0 && held.st_size == 0);
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &first_start) == 0);
+        CHECK(mo_store_open(path, &store) == MO_STORE_CORRUPT && store == NULL);
+        CHECK(elapsed_us(&first_start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+        CHECK(stat(path, &held) == 0 && held.st_size == 0);
+        CHECK(unlink(path) == 0);
+        first = hold_first_commit(path, true, 300000, NULL);
+        CHECK(stat(path, &held) == 0 && held.st_size == 0);
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &first_start) == 0);
+        CHECK(mo_store_open_wait(path, &store) == MO_STORE_OK && store != NULL);
+        first_waited = elapsed_us(&first_start);
+        CHECK(first_waited >= 200000 && first_waited < MO_LIMIT_SERVE_STORE_WAIT_US);
+        mo_store_close(store);
+        store = NULL;
+        child_done(first);
+        CHECK(unlink(path) == 0);
+    }
     MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
     struct observations o = {0};
     struct mo_service_loop *s = open_service(image, store, &o);
@@ -976,6 +1059,14 @@ static void store_wait(struct mo_image *image, const char *path) {
         enum mo_store_status status = mo_store_open_wait(path, &store);
         CHECK(status == (i == 0 ? MO_STORE_CORRUPT : MO_STORE_IO) && store == NULL);
         CHECK(elapsed_us(&start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+        if (i == 0) {
+            struct stat leftover;
+            CHECK(stat(path, &leftover) == 0 && leftover.st_size == 0);
+            MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+            CHECK(mo_store_open(path, &store) == MO_STORE_CORRUPT && store == NULL);
+            CHECK(elapsed_us(&start) < MO_LIMIT_SERVE_STORE_WAIT_US / 4);
+            CHECK(stat(path, &leftover) == 0 && leftover.st_size == 0);
+        }
     }
     CHECK(unlink(path) == 0);
 }

@@ -172,13 +172,22 @@ static bool defensive(struct mo_store *s) {
 
 _Static_assert(MO_LIMIT_SERVE_STORE_WAIT_US / 1000 <= INT_MAX, "the wait fits SQLite's timeout");
 
+static enum mo_store_status rollback_close(struct mo_store *s, enum mo_store_status status) {
+    (void)exec(s, "ROLLBACK");
+    mo_store_close(s);
+    return status;
+}
+
 static enum mo_store_status open_store(const char *path, bool wait, struct mo_store **out) {
     struct stat info;
     if (path != NULL && path[0] == '\0')
         return MO_STORE_EMPTY_PATH;
     if (path != NULL && strcmp(path, ":memory:") == 0)
         return MO_STORE_MEMORY_PATH;
-    if (path != NULL && stat(path, &info) == 0 && info.st_size == 0)
+    /* Leftover empty files are corrupt. SQLite keeps a first commit empty until COMMIT, so a
+     * waiter must take the lock before deciding. Without the wait, refuse at once. */
+    bool existed_empty = path != NULL && stat(path, &info) == 0 && info.st_size == 0;
+    if (existed_empty && !wait)
         return MO_STORE_CORRUPT;
     if (pthread_once(&once, initialize) != 0 || initialized != SQLITE_OK)
         return MO_STORE_IO;
@@ -202,12 +211,20 @@ static enum mo_store_status open_store(const char *path, bool wait, struct mo_st
     if (!defensive(s) ||
         !exec(s, "PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE;"
                  "PRAGMA synchronous=EXTRA; PRAGMA temp_store=MEMORY;" CACHE_PRAGMA
-                 "PRAGMA locking_mode=EXCLUSIVE;BEGIN EXCLUSIVE") ||
-        !all_tables(s) || !exec(s, "COMMIT")) {
+                 "PRAGMA locking_mode=EXCLUSIVE;BEGIN EXCLUSIVE")) {
         bool busy = (sqlite3_errcode(s->db) & 0xff) == SQLITE_BUSY;
-        (void)exec(s, "ROLLBACK");
-        mo_store_close(s);
-        return busy ? MO_STORE_BUSY : MO_STORE_IO;
+        return rollback_close(s, busy ? MO_STORE_BUSY : MO_STORE_IO);
+    }
+    if (existed_empty) {
+        MO_ASSERT(path != NULL);
+        if (stat(path, &info) != 0)
+            return rollback_close(s, MO_STORE_IO);
+        if (info.st_size == 0)
+            return rollback_close(s, MO_STORE_CORRUPT);
+    }
+    if (!all_tables(s) || !exec(s, "COMMIT")) {
+        bool busy = (sqlite3_errcode(s->db) & 0xff) == SQLITE_BUSY;
+        return rollback_close(s, busy ? MO_STORE_BUSY : MO_STORE_IO);
     }
     /* The open holds the store's lock until close, so nothing after it waits. */
     if (wait && sqlite3_busy_timeout(s->db, 0) != SQLITE_OK) {
