@@ -2444,6 +2444,7 @@ among them:
 | Compiler | every Core program the Core checker accepts compiles to bytecode the verifier accepts: a property run on every Core program above |
 | Verifier and loader | arbitrary and mutated files; disassembling then assembling gives the same bytes |
 | Library | `mo test` on the library's own examples, promises and tests; the trusted primitives against their oracles (4.5) |
+| Services | `mo test` recovery checks; `ci/check_task_queue.py` over loopback; `ci/check_kill_loop.py` SIGKILLs a real `mo serve` |
 | Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, lexical path containment, path resolution after normalize, hash-table probing, reference count updates |
 | The whole toolchain | a golden corpus of programs with their expected output and exit status, and Phase 2's agent benchmark |
 | The reference | `tests/conformance/rules.tsv`, which maps every reference block to golden programs, exact errors, other drivers, cost tests or an untestable reason, and fails on an unmapped or changed block; `sort`'s n log n cost is measured by counting VM instructions (`tests/test_lower.c`, D294) |

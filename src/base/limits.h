@@ -304,10 +304,9 @@ struct mo_limits {
 };
 
 /* The defaults of mo run's and mo test's --max-stack, --max-depth and --max-heap (reference 13.4,
- * D233), until Phase 3's budgets replace them. They are conservative: the stack a C program gets
- * from Linux by default, a call depth that a recursion over a large collection reaches and a
- * recursive walk of a tree doesn't, and a heap that fits on a small machine. A run that needs more
- * sets more with those flags. */
+ * D233). They are conservative: the stack a C program gets from Linux by default, a call depth
+ * that a recursion over a large collection reaches and a recursive walk of a tree doesn't, and a
+ * heap that fits on a small machine. A run that needs more sets more with those flags. */
 #define MO_DEFAULT_STACK_SIZE (8 << 20)
 #define MO_DEFAULT_CALL_DEPTH 10000
 #define MO_DEFAULT_HEAP_SIZE (1 << 30)
