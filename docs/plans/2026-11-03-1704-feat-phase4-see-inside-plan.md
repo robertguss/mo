@@ -10,6 +10,10 @@ execution: code
 
 # Phase 4, Agents Can See Inside It - Plan
 
+**Status, 2026-11-07:** implementation and diagnostic collection complete; gate passed with
+14 of 16 correct. Both misses are published in [the run record](../status/phase4-run.md).
+Robert approved v0.1.0 and the squash merge of PR #308 on 2026-11-07. Phase 4 is complete.
+
 ---
 
 ## Goal Capsule

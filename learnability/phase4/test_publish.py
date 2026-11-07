@@ -37,7 +37,10 @@ class Publish(unittest.TestCase):
         (self.out / 'grade.json').write_text(json.dumps(
             {'variant': 'synthetic', 'client': 'claude', 'success': False,
              'grader': {'success': False, 'reasons': REASONS, 'notes': ['a note']},
-             'records': {'match': True}, 'failed': []}))
+             'records': {'match': True}, 'failed': [],
+             'coverage': {'operator_tools': ['mo-state'], 'commands': ['replay --fix']},
+             'fix_check': {'failure': '1', 'original': 'reproduced', 'verdict': 'verified',
+                           'violation': False, 'graded_correct': False}}))
         (self.out / 'stream.jsonl').write_text('{}\n')
         (self.out / 'proxy.jsonl').write_text('{}\n')
 
@@ -57,6 +60,9 @@ class Publish(unittest.TestCase):
         self.assertNotIn('secret behaviour', text)
         self.assertNotIn('E0070', text)
         self.assertEqual(json.loads((dest / 'manifest.json').read_text()), self.manifest)
+        self.assertEqual(grade['coverage'],
+                         {'operator_tools': ['mo-state'], 'commands': ['replay --fix']})
+        self.assertEqual(grade['fix_check']['verdict'], 'verified')
 
     def test_only_the_manifest_and_the_grade_are_copied(self):
         dest = self.root / 'dest'

@@ -1,12 +1,14 @@
 # Mo
 
 **An open-source language and runtime for living software.** Humans state the
-intent, agents write the code, and agents can see inside the running system,
-diagnose it, and evolve it safely while it runs.
+intent, agents write the code, and agents can inspect and diagnose running services.
+Typed live upgrades are planned for a later phase.
 
-> **Status: pre-release, design phase.** Mo isn't usable yet, and nothing here
-> is stable. The repository is public so the work is visible, but it isn't
-> accepting contributions yet.
+> **Status: v0.1.0.** The toolchain builds and
+> runs services. The [Phase 4 diagnostic evaluation](docs/status/phase4-run.md)
+> passed its gate with 14 of 16 sessions correct, including two recorded misses.
+> This first release has a narrow scope; typed live upgrades are planned.
+> Contributions are not yet open.
 
 ## The idea
 
@@ -15,15 +17,16 @@ still built for human authors and human operators. Mo is designed for agents
 first:
 
 - **Intent lives in the language.** People state what a program must do, as
-  promises and example tables, and approve it. Agents write the
-  implementation, and the compiler won't let them quietly weaken an approved
-  promise.
+  promises and example tables. The toolchain checks programs and runs their
+  tests. The approval workflow for protected intent is planned for Phase 6.
 - **A runtime agents can operate.** Agents can look inside a running Mo
-  system: its processes, state, memory and history. They can run safe live
-  queries and replay failures exactly.
-- **Living software.** Running services evolve without restarts. State
-  migrations are type-checked, versions are checked for compatibility, and
-  upgrades are checked against the real state before anything changes.
+  service through authenticated, bounded operator views. Pure queries run
+  offline over exported state. Failure replay reconstructs a recorded case
+  with the original program and runtime build; it does not reproduce the
+  live heap or mailbox. A verified fix can still be wrong: independent tests
+  rejected two such fixes in the diagnostic evaluation.
+- **Living software, planned.** Phase 5 targets typed live upgrades and state
+  migration. The current toolchain does not provide them.
 
 Mo draws on Elixir and the BEAM (processes, supervision, hot code loading),
 Rust (safety plus control over memory and performance), Koka (effects and
@@ -60,11 +63,29 @@ bash ci/check.sh  # every check, run locally
 See [docs/design/implementation.md](docs/design/implementation.md) for the
 rules the implementation follows and how it is checked.
 
+## Install v0.1.0 from source
+
+Check out the release tag and build it in its permanent location. Its build inputs
+match the evaluated candidate recorded in [the freeze](learnability/phase4/freeze.json):
+
+```sh
+git clone https://github.com/robertguss/mo mo-v0.1
+cd mo-v0.1
+git checkout --detach v0.1.0
+make CC=gcc build/gcc/debug/mo
+./build/gcc/debug/mo --version
+./build/gcc/debug/mo guide
+```
+
+Keep the tree where it was built: the executable contains its `lib/` path.
+A local rebuild has its own identity; replay of an existing failure needs the
+exact executable that recorded it. For a service installation and keeping
+those builds, see the [task-queue runbook](docs/ops/task-queue.md).
+
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). The first public release, v0.1, is
-planned for when agents can build services in Mo and see inside them while
-they run.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0;
+Phase 5 targets typed live upgrades.
 
 ## Background
 

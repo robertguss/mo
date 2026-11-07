@@ -1,0 +1,41 @@
+{
+  "variant": "completions-from-staging",
+  "client": "codex",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": [
+      "the session changed queue-tests.mo; the variant's copy was used"
+    ]
+  },
+  "records": {
+    "match": true,
+    "pairs": 3,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": [],
+    "shell": 0
+  },
+  "failed": [],
+  "coverage": {
+    "operator_tools": [
+      "mo-failures",
+      "mo-overview",
+      "mo-supervisor"
+    ],
+    "commands": [
+      "history",
+      "query",
+      "replay",
+      "replay --fix"
+    ]
+  },
+  "fix_check": {
+    "failure": "1",
+    "original": "reproduced",
+    "verdict": "verified",
+    "violation": false,
+    "graded_correct": true
+  }
+}

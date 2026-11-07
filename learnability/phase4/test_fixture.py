@@ -123,6 +123,25 @@ class Rendering(unittest.TestCase):
                 self.assertFalse(out.exists(), steps)
 
 
+class StandardError(unittest.TestCase):
+    """The stderr assertion against the lines mo serve writes after a handler failure."""
+    FAILURE = 'mo serve: failure: stats: the handler stopped'
+
+    def holds(self, kind, *after):
+        fixture.holds(None, {'stderr': kind}, '\n'.join([self.FAILURE, *after]) + '\n')
+
+    def test_a_record_line_is_not_a_report(self):
+        for record in ('  record: 1', '  record unavailable: the store is full'):
+            self.holds('failure_only', record)
+            with self.assertRaises(fixture.CheckFailed):
+                self.holds('report', record)
+
+    def test_a_report_before_the_record_line_is_a_report(self):
+        self.holds('report', 'bug: the handler stopped', '  at main.mo:3:5', '  record: 1')
+        with self.assertRaises(fixture.CheckFailed):
+            self.holds('failure_only', 'bug: the handler stopped', '  record: 1')
+
+
 class Live(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -206,6 +225,36 @@ class Live(unittest.TestCase):
                       tool('key', tight, MO, out / 'data', 'FIXTOKEN', env=self.env).stderr)
 
 
+    def test_a_last_call_key_is_the_last_such_call_after_the_snapshot(self):
+        steps = [{'repeat': 3, 'steps': [{'submit': 'brief {n}'}]},
+                 {'lease': True}, {'acknowledge': 'lease'}, {'wait': 2},
+                 {'lease': True}, {'acknowledge': 'lease'}, {'lease': True}]
+        question = variant_with(self.root, steps=steps, check=[
+            {'job': 2, 'state': 'Done', 'attempts': 1}],
+            key={'rule': 'last_call', 'tool': 'acknowledge', 'margin': 60}, failing_tool=None)
+        result, out = self.build(question)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        key = json.loads((out / 'key.json').read_text())
+        _, records = fixture.log_records(out / 'data')
+        acks = [arrival for _, name, arrival, _ in records if name == 'acknowledge']
+        self.assertEqual(len(acks), 2)
+        self.assertEqual(key['answer'], fixture.rfc3339(acks[-1]))
+        again = tool('key', question, MO, out / 'data', 'FIXTOKEN', env=self.env)
+        self.assertEqual(json.loads(again.stdout)['answer'], key['answer'])
+
+    def test_a_waiting_bytes_key_sums_ready_and_leased_briefs_in_bytes(self):
+        steps = [{'submit': 'caf\u00e9'}, {'submit': 'done brief'}, {'submit': 'x', 'pad': 10},
+                 {'submit': 'r\u00e9sum\u00e9 \u2713'}, {'lease': True},
+                 {'acknowledge': 'lease'}, {'lease': True}]
+        question = variant_with(self.root, steps=steps, check=[
+            {'job': 1, 'state': 'Done', 'attempts': 1}],
+            key={'rule': 'waiting_payload_bytes'}, failing_tool=None)
+        result, out = self.build(question)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # job 1 (5 bytes) is Done; job 2 (10) Leased; job 3 (10) and job 4 (12) Ready
+        self.assertEqual(json.loads((out / 'key.json').read_text())['answer'], '32')
+
+
 def main():
     binaries = sys.argv[1:]
     if not binaries:
@@ -217,7 +266,7 @@ def main():
         MO = os.path.abspath(binary)
         print(f'phase 4 fixtures with {binary}', file=sys.stderr)
         suite = unittest.TestSuite()
-        for case in (Rendering, Live):
+        for case in (Rendering, StandardError, Live):
             suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(case))
         ok = unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful() and ok
     return 0 if ok else 1

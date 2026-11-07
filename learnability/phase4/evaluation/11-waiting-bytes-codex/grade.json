@@ -1,0 +1,31 @@
+{
+  "variant": "waiting-bytes",
+  "client": "codex",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": []
+  },
+  "records": {
+    "match": true,
+    "pairs": 3,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": [],
+    "shell": 91
+  },
+  "failed": [],
+  "coverage": {
+    "operator_tools": [
+      "mo-overview",
+      "mo-state"
+    ],
+    "commands": [
+      "fetch",
+      "history",
+      "query"
+    ]
+  },
+  "fix_check": null
+}

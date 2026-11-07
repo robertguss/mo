@@ -15,20 +15,21 @@ step for anything a Mo user would notice.
 | 7. Fast | Fast enough for serious services | v0.4 |
 | 8. Ecosystem | Others build and share | 1.0 |
 
-Phases 0 to 3 are finished, and Phase 4 is the current phase.
+Phases 0 to 4 are finished. Phase 5, typed live upgrades, is next.
 
 ## Now
 
-Phase 4, Agents can see inside it. Its design and pilot campaign are done; live inspection and state export come next. The pilot findings are in `learnability/phase4/pilot/findings.md`.
+Phase 4, Agents can see inside it. Operator views, state export, failure capture and offline diagnosis are implemented. The diagnostic evaluation passed its declared gate: 14 of 16 correct, including two timing-defect misses. Robert approved v0.1.0 and the squash merge of PR #308 on 2026-11-07. Results and limits are in [the run record](status/phase4-run.md).
 
 - [x] The design step: `docs/design/introspection.md` and the evaluation
       protocol `learnability/phase4/protocol.md`, with the experiments they
       rest on in `learnability/phase4/preflight/`. Approved on 2026-11-04.
 - [x] Pilot campaign and diagnostic findings. The old independent-baseline prerequisite was superseded on 2026-11-05; no baseline was collected.
-- [ ] Operator tools on the MCP endpoint, and state export to a private file.
-- [ ] Failure records, kept apart from saved state.
-- [ ] `mo replay`, `mo query` and `mo history`, with the fix check.
-- [ ] A prospectively declared diagnostic evaluation, then v0.1 if its gate passes and Robert decides to release. Comparative claims require a new independent baseline.
+- [x] Operator tools on the MCP endpoint, and state export to a private file.
+- [x] Failure records, kept apart from saved state.
+- [x] `mo replay`, `mo query` and `mo history`, with the fix check.
+- [x] A prospectively declared diagnostic evaluation: gate passed, all 16 sessions published with both misses. Comparative claims require a new independent baseline.
+- [x] Robert’s v0.1 release decision and merge approval. The release tag must match the evaluation freeze’s build inputs.
 
 Phase 3, Services, is done. It built the `service` block, its bytecode
 descriptor, the in-process runtime, SQLite saving and recovery, simulation in

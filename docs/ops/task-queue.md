@@ -326,3 +326,55 @@ sudo rm -rf /etc/systemd/system/task-queue-drill.service /etc/task-queue/drill.e
   /var/lib/task-queue-drill /opt/mo/drill
 sudo systemctl daemon-reload
 ```
+
+## Phase 4 operator workflow
+
+The deployment above remains retired. These commands describe diagnosis for a service
+installed with that layout using a Phase 4 build. Keep its exact `/opt/mo/$SHA` tree and
+executable for as long as its saved data or failure records may be needed.
+
+Authenticated MCP clients can call `mo-overview`, `mo-state`, `mo-mailbox`, `mo-timers`,
+`mo-memory`, `mo-supervisor`, `mo-log` and `mo-failures`. The service token also grants access
+to private state. Views are bounded and can be truncated; separate calls are not one atomic
+snapshot. Committed history covers only the tail since the last snapshot.
+
+Fetch on the service host over loopback, while the service runs. Read the token from its
+protected environment file; the command takes the variable’s name, not its value. Choose an
+output path that does not already exist:
+
+```sh
+sudo sh -c '. /etc/task-queue/env; export QUEUE_TOKEN
+  exec "$1" fetch http://127.0.0.1:8000/mcp --export state --out "$2" --token-env QUEUE_TOKEN' \
+  sh /opt/mo/$SHA/build/gcc/debug/mo /var/lib/task-queue-state.moex
+```
+
+The artifact is mode 0600. `mo fetch` accepts only HTTP loopback URLs, verifies the export,
+and does not use the public HTTPS proxy. For a retained failure, replace `--export state`
+with `--export failure ID`. Keep artifacts private.
+
+Stop the service before reading its data folder. Run as its owner. If copying data for
+analysis, copy the whole stopped folder, including any journal, never the database alone:
+
+```sh
+sudo systemctl stop task-queue
+sudo -u taskqueue /opt/mo/$SHA/build/gcc/debug/mo history /var/lib/task-queue
+sudo -u taskqueue /opt/mo/$SHA/build/gcc/debug/mo replay \
+  /opt/mo/$SHA/services/task-queue/main.mo --failure ID --data /var/lib/task-queue
+```
+
+Replace `ID` with a retained failure id. If history reports recovery required, its owner can
+run `history --recover /var/lib/task-queue`; this performs the journal rollback. Preserve the
+original source exactly, including comments. `mo history` prints the recording build digest;
+`sha256sum /opt/mo/*/build/gcc/debug/mo` finds the executable that matches it.
+
+To query exported state, copy the source to a private analysis folder and add a pure function
+that accepts the service state without changing its type. Run the recording executable as
+`mo query COPY/main.mo FUNCTION --export /var/lib/task-queue-state.moex`, with an account that
+can read the artifact. This runs offline and changes no live service state.
+
+To check a proposed fix, edit a separate copy and add `--fix COPY/main.mo` to the replay
+command. The original must reproduce before the revision can be `verified`. That verdict
+covers the reconstructed case, not application correctness or live memory pressure: both
+misses in the [diagnostic evaluation](../status/phase4-run.md) received `verified` but failed
+hidden correctness tests. Run the application’s tests before considering deployment.
+Restart the service when diagnosis of its stopped folder is finished.

@@ -1,0 +1,31 @@
+{
+  "variant": "last-acknowledge",
+  "client": "claude",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": []
+  },
+  "records": {
+    "match": true,
+    "pairs": 4,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": [],
+    "shell": 0
+  },
+  "failed": [],
+  "coverage": {
+    "operator_tools": [
+      "mo-log",
+      "mo-overview"
+    ],
+    "commands": [
+      "history",
+      "query",
+      "replay"
+    ]
+  },
+  "fix_check": null
+}

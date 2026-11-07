@@ -3,7 +3,7 @@
 #include <string.h>
 
 #ifndef MO_VERSION
-#define MO_VERSION "0.0.0"
+#define MO_VERSION "0.1.0"
 #endif
 
 static void error_text(struct mo_cli *out, size_t *at, const char *text) {

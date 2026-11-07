@@ -306,8 +306,9 @@ prints the original message, the pre-call state, the recorded and offline signat
 regenerated stack with the top frame's variables. `FILE` must be the untouched source the service
 ran, so use the deployed `/opt/mo/$SHA` tree: any byte change, a comment or `mo format` included,
 changes the program identity and is refused. Replay also needs the `mo` executable that recorded
-the failure: `mo history` shows each record's build digest, and `sha256sum /opt/mo/*/mo` finds the
-executable with that digest. Records from a build without `mo replay` cannot be replayed. The
+the failure: `mo history` shows each record's build digest, and
+`sha256sum /opt/mo/*/build/gcc/debug/mo` finds the executable with that digest. Records from a
+build without `mo replay` cannot be replayed. The
 outcome is `reproduced` (exit 0), or `different`, `not_reproduced` or `refused` (exit 1). A memory
 failure that depended on arguments queued in the mailbox does not recur offline, and the outcome
 says so.
