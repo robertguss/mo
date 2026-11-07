@@ -1,23 +1,29 @@
+#define _POSIX_C_SOURCE 200809L
 #include "base/export.h"
 #include "base/limits.h"
+#include "base/log-record.h"
 #include "host/host.h"
 #include "test.h"
 #include "tools/protocol.h"
 #include "vm/vm.h"
 
 #include <errno.h>
+#include <sqlite3.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static struct {
     void *address;
     size_t size;
 } allocations[256];
-static bool watching;
-static unsigned calls, released, fail_after;
+static bool watching, expect_zero = true;
+static unsigned calls, released, fail_after, canary_leftovers;
 static void *process_address;
 static size_t process_size;
 static unsigned processes_released, operand_wipes, nonzero_operands;
+static const uint8_t *canary;
+static size_t canary_size;
 
 void *mo_protocol_memory_malloc(size_t size);
 void *mo_protocol_memory_calloc(size_t count, size_t size);
@@ -77,6 +83,15 @@ void mo_protocol_memory_wipe(void *address, size_t size) {
     }
 }
 
+static bool holds_canary(const uint8_t *bytes, size_t size) {
+    if (canary == NULL || canary_size == 0 || size < canary_size)
+        return false;
+    for (size_t i = 0; i + canary_size <= size; i++)
+        if (memcmp(bytes + i, canary, canary_size) == 0)
+            return true;
+    return false;
+}
+
 void mo_protocol_memory_free(void *address) {
     if (address != NULL && address == process_address) {
         const uint8_t *bytes = address;
@@ -93,7 +108,10 @@ void mo_protocol_memory_free(void *address) {
             bool cleared = true;
             for (size_t j = 0; j < allocations[i].size; j++)
                 cleared = cleared && bytes[j] == 0;
-            CHECK(cleared);
+            if (holds_canary(bytes, allocations[i].size))
+                canary_leftovers++;
+            if (expect_zero)
+                CHECK(cleared);
             allocations[i].address = NULL;
             released++;
         }
@@ -277,6 +295,134 @@ static void export_storage(struct mo_image *image) {
     mo_process_free(process);
 }
 
+/* Larger than store_new's first chunk, so a reused ordinary 4096-byte allocation cannot
+ * hold a leftover copy of the payload. */
+enum { HOST_CANARY_BYTES = 5000 };
+static uint8_t host_canary[HOST_CANARY_BYTES];
+
+static void paint_canary(void) {
+    static const char mark[] = "CANARY-HOST-COPY-WIPE-47";
+    memcpy(host_canary, mark, sizeof mark - 1);
+    for (size_t i = sizeof mark - 1; i < HOST_CANARY_BYTES; i++)
+        host_canary[i] = (uint8_t)(0xA5 ^ (uint8_t)i);
+}
+
+static void watch_copies(void) {
+    expect_zero = false;
+    canary = host_canary;
+    canary_size = sizeof host_canary;
+    canary_leftovers = 0;
+    watching = true;
+}
+
+static void unwatch_copies(void) {
+    watching = false;
+    expect_zero = true;
+    canary = NULL;
+    canary_size = 0;
+    for (size_t i = 0; i < sizeof allocations / sizeof *allocations; i++)
+        CHECK(allocations[i].address == NULL);
+}
+
+static void fill_store(const char *path, bool with_log) {
+    struct mo_store *store;
+    MO_ASSERT(mo_store_open(path, &store) == MO_STORE_OK);
+    struct mo_store_record snapshot = {MO_STORE_STATE, 0, 5, host_canary, sizeof host_canary};
+    CHECK(mo_store_call(store, MO_STORE_SNAPSHOT, &snapshot, NULL, NULL) == MO_STORE_OK);
+    if (with_log) {
+        struct mo_buffer payload;
+        mo_buffer_init(&payload, 64);
+        struct mo_log_record_header header = {.arrival = 1, .timer = true};
+        CHECK(mo_log_record_header_write(&payload, &header));
+        struct mo_store_record log = {MO_STORE_LOG, 1, 5, payload.bytes, payload.length};
+        CHECK(mo_store_call(store, MO_STORE_APPEND, &log, NULL, NULL) == MO_STORE_OK);
+        mo_buffer_free(&payload);
+    }
+    struct mo_store_record state = {MO_STORE_FAILURE_STATE, 0, 5, host_canary, sizeof host_canary};
+    struct mo_store_record message = {MO_STORE_FAILURE_MESSAGE, 0, 5, host_canary,
+                                      sizeof host_canary};
+    uint64_t id = 0;
+    CHECK(mo_store_capture(store, "wipe", &state, &message, &id) == MO_STORE_CAPTURE_OK);
+    mo_store_close(store);
+}
+
+static void damage_log(const char *path) {
+    sqlite3 *db;
+    sqlite3_blob *blob;
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    MO_ASSERT(sqlite3_blob_open(db, "main", "log", "record", 1, 1, &blob) == SQLITE_OK);
+    int n = sqlite3_blob_bytes(blob);
+    uint8_t byte;
+    MO_ASSERT(n > 0 && sqlite3_blob_read(blob, &byte, 1, n - 1) == SQLITE_OK);
+    byte ^= 0x40;
+    MO_ASSERT(sqlite3_blob_write(blob, &byte, 1, n - 1) == SQLITE_OK);
+    MO_ASSERT(sqlite3_blob_close(blob) == SQLITE_OK && sqlite3_close(db) == SQLITE_OK);
+}
+
+/* Host copies of saved state/messages are confidential arenas: live canary, wiped before
+ * free. An ordinary arena is the negative control. Each init site is a separate free. */
+static void history_host_copies(void) {
+    paint_canary();
+    char dir[] = "/tmp/mo-history-wipe-XXXXXX", path[256];
+    MO_ASSERT(mkdtemp(dir) != NULL);
+    MO_ASSERT(snprintf(path, sizeof path, "%s/service.sqlite", dir) > 0);
+    fill_store(path, false);
+
+    watch_copies();
+    struct mo_store_history history;
+    CHECK(mo_store_history_read(path, false, &history) == MO_STORE_FOLDER_OK);
+    CHECK(history.snapshot.bytes != NULL && history.snapshot.length == sizeof host_canary &&
+          memcmp(history.snapshot.bytes, host_canary, sizeof host_canary) == 0);
+    canary_leftovers = 0;
+    mo_store_history_free(&history);
+    unsigned leftover = canary_leftovers;
+    unwatch_copies();
+    CHECK(leftover == 0);
+
+    watch_copies();
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_OK);
+    CHECK(pair.found && pair.state.bytes != NULL && pair.state.length == sizeof host_canary &&
+          memcmp(pair.state.bytes, host_canary, sizeof host_canary) == 0);
+    canary_leftovers = 0;
+    mo_store_history_pair_free(&pair);
+    leftover = canary_leftovers;
+    unwatch_copies();
+    CHECK(leftover == 0);
+
+    CHECK(unlink(path) == 0);
+    fill_store(path, true);
+    damage_log(path);
+    watch_copies();
+    CHECK(mo_store_history_read(path, false, &history) == MO_STORE_FOLDER_DAMAGED);
+    leftover = canary_leftovers;
+    unwatch_copies();
+    CHECK(leftover == 0);
+
+    FILE *file = fopen(path, "wb");
+    static const char garbage[64] = "not a store";
+    MO_ASSERT(file != NULL && fwrite(garbage, 1, sizeof garbage, file) == sizeof garbage &&
+              fclose(file) == 0);
+    watch_copies();
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_DAMAGED);
+    leftover = canary_leftovers;
+    unwatch_copies();
+    CHECK(leftover == 0);
+    CHECK(unlink(path) == 0 && rmdir(dir) == 0);
+
+    /* After the confidential frees, so an unwiped ordinary chunk cannot be reused. */
+    watch_copies();
+    struct mo_arena ordinary;
+    mo_arena_init(&ordinary, HOST_CANARY_BYTES + MO_ARENA_CHUNK_HEADER);
+    uint8_t *copy = mo_arena_copy(&ordinary, host_canary, sizeof host_canary, 1);
+    MO_ASSERT(copy != NULL);
+    CHECK(memcmp(copy, host_canary, sizeof host_canary) == 0);
+    mo_arena_free(&ordinary);
+    leftover = canary_leftovers;
+    unwatch_copies();
+    CHECK(leftover > 0);
+}
+
 int main(void) {
     struct mo_image *image = mo_protocol_build();
     MO_ASSERT(image != NULL);
@@ -294,6 +440,7 @@ int main(void) {
     }
     MO_ASSERT(parse != UINT32_MAX && chunk != UINT32_MAX);
     export_storage(image);
+    history_host_copies();
     request_budget(image, chunk);
     scratch(image);
     unsigned count = headers(image, parse, 0, MO_LIMIT_MCP_HEADER_WORK);
