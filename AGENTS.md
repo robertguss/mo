@@ -39,8 +39,8 @@ make format / format-check # clang-format; use clang-format 14.0.6, newer versio
 make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
-make cbmc                  # prove the bytecode reader, arena, verifier, primitives, path containment and resolution, refcounts, hash tables, export_page_matches, mo_export_page_bounds and mo_export_schema (needs CBMC)
-bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers bench lean static cbmc models
+make cbmc                  # prove the functions listed in cbmc/README.md (needs CBMC)
+bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers bench lean static cbmc models (hosted nightly omits fuzz, cbmc and models)
 ci/wait-for-results FILE [TIMEOUT]  # wait for a detached ci/check.sh run (see Waiting on checks)
 ```
 
@@ -70,7 +70,7 @@ exception: after editing `docs/agent-guide.md`, `docs/reference/README.md` or
 The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
 never on pull requests or pushes. It runs `gcc clang sanitize drivers static lean bench` with
 `CI=1` and `MO_ALL_DRIVERS=1`, plus a 1,000-program VM-vs-Lean batch with a fresh, printed seed
-range each UTC day. A red nightly is the next PR, before any feature. `cbmc` and long fuzz runs
+range each UTC day. A red nightly is the next PR, before any feature. `cbmc`, `models` and long fuzz runs
 happen by hand at phase boundaries.
 
 `main` requires no status check (only force-pushes are blocked). A PR gets one review and merges

@@ -24,8 +24,8 @@
 #   bench       benchmark v0, the three Mo-written tools and the learnability protocol's calculators
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, fuzz seeds, formatting, clang-tidy
-#   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts, hash tables and export pages/schema (cbmc/README.md)
-#   models      finite TLC export-generation models and negative controls (ci/check_models.py)
+#   cbmc        the CBMC proofs listed in cbmc/README.md
+#   models      finite TLC Capture and Export models and negative controls (models/README.md); not in hosted nightly
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "check.sh started: pid $$"
@@ -504,7 +504,7 @@ if have clang-tidy; then make --no-print-directory tidy; else missing "clang-tid
 fi
 
 if enter cbmc; then
-step "CBMC: the bytecode reader on every small input, the arena, the verifier's transfer functions, the primitives' arithmetic and UTF-8, lexical path containment, path resolution, reference counts, hash tables and export pages/schema (cbmc/README.md)"
+step "CBMC: the proofs listed in cbmc/README.md"
 if have cbmc && have goto-cc && have goto-instrument; then
 	# The proofs and the check that every block they prove runs on some input take about
 	# thirty and twenty-seven minutes one at a time (the verifier's step proof alone about
@@ -527,7 +527,7 @@ fi
 fi
 
 if enter models; then
-step "Finite export generation models and negative controls"
+step "Finite Capture and Export TLC models and negative controls (models/README.md)"
 model_status=0
 python3 ci/check_models.py || model_status=$?
 if ((model_status == 77)); then

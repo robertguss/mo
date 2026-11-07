@@ -19,15 +19,15 @@ Phases 0 to 3 are finished, and Phase 4 is the current phase.
 
 ## Now
 
-Phase 4, Agents can see inside it. Its design, pilot campaign, live operator views, state export and private fetch are done; failure records (U4) come next. The pilot findings are in `learnability/phase4/pilot/findings.md`.
+Phase 4, Agents can see inside it. Its design, pilot campaign, live operator views, state export, private fetch, failure records and offline replay/query/history are done; a declared diagnostic evaluation (U6) comes next. The pilot findings are in `learnability/phase4/pilot/findings.md`.
 
 - [x] The design step: `docs/design/introspection.md` and the evaluation
       protocol `learnability/phase4/protocol.md`, with the experiments they
       rest on in `learnability/phase4/preflight/`. Approved on 2026-11-04.
 - [x] Pilot campaign and diagnostic findings. The old independent-baseline prerequisite was superseded on 2026-11-05; no baseline was collected.
 - [x] Operator tools on the MCP endpoint, and state export to a private file.
-- [ ] Failure records, kept apart from saved state.
-- [ ] `mo replay`, `mo query` and `mo history`, with the fix check.
+- [x] Failure records, kept apart from saved state.
+- [x] `mo replay`, `mo query` and `mo history`, with the fix check.
 - [ ] A prospectively declared diagnostic evaluation, then v0.1 if its gate passes and Robert decides to release. Comparative claims require a new independent baseline.
 
 Phase 3, Services, is done. It built the `service` block, its bytecode

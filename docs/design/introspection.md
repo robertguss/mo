@@ -1,6 +1,6 @@
 # Introspection and replay: the Phase 4 design
 
-**Status: approved by Robert on 2026-11-04; live operator views, immutable state export and `mo fetch` are built; `mo-failures` / failure capture, `replay` / `query` / `history` remain open.** Section 12 records the
+**Status: approved by Robert on 2026-11-04; live operator views, immutable state export, `mo fetch`, failure capture (`mo-failures`) and offline `replay` / `query` / `history` are built; a declared diagnostic evaluation (U6) remains open.** Section 12 records the
 decisions made at approval, and "Approval and changes" at the end records every later change. A
 change to an interface, format or limit here is made in this document, with its reason, before
 the code that depends on it lands. The phase plan is
@@ -590,7 +590,7 @@ host, a full 16 MiB saved encoding used 132.7 MiB service RSS and 57.6 MiB fetch
 separate high-water marks. Retain the service's approximately 170 MiB deployment allowance
 above and allow another 64 MiB for the ordinary fetch executable; these are deployment
 allowances informed by one fixture, not universal RSS limits. Sanitizer instrumentation is
-outside those deployment measurements. The U4 allowance remains reserved, not implemented.
+outside those deployment measurements. U4 capture and U5 offline commands landed in #301 and #302; U6 evaluation is not implemented.
 
 ## 11. Verification
 
@@ -767,7 +767,7 @@ memory refusal, release of the decoded state and successful reopening afterward.
 The supported catalog now includes overview, state, mailbox, timers, memory, supervisor and
 post-snapshot log views. Authentication precedes validated operator dispatch; operator calls
 consume the same rate allowance as author calls before any inspection or author conversion.
-They never enter service admission. State export is now available; retained-failure tools remain absent.
+They never enter service admission. State export and retained-failure tools (`mo-failures`, failure-kind `mo-export`) are available.
 
 `runtime/mcp-views.mo` renders the saved schema and payload without extending bytecode shape
 reachability. The native bridge copies typed metadata and saved bytes into the request process;
@@ -802,8 +802,7 @@ not scored diagnostic evaluation observations.
 
 ### Immutable state export producer
 
-U8 adds `mo-export` for state only. Failure-kind export remains unavailable until U4.
-U9 landed `mo fetch` and final-file publication. JSON shaping, argument validation and
+U8 added `mo-export` for state; U4 added failure-kind export. U9 landed `mo fetch` and final-file publication. JSON shaping, argument validation and
 base64 are embedded Mo; the native bridge copies cached MOSV bytes and serves bounded
 pages without encoding live values or altering bytecode shape tables.
 

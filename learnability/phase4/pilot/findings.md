@@ -22,6 +22,8 @@ Failure replay and original-first revision checks should supply bounded evidence
 
 The [canonical phase plan](../../../docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md) proceeds from these findings to live inspection and state export, then retained failure diagnostics, then offline query/history/replay. Deterministic fixtures establish correctness and limits; native-client smoke runs establish discovery and usable access. Neither is retrospectively counted as a fresh-agent evaluation.
 
+**2026-11-07:** U3–U5 and U7–U9 have since landed (#294–#297, #301, #302). U6 declared evaluation remains open. The instruments were not available during these pilots.
+
 Before scored evaluation, a separately named diagnostic protocol must declare its questions, expected evidence, grading, allocation and release thresholds. Comparative improvement claims additionally need a prospective independent baseline and appropriate analysis. The old predictions and every unsuccessful or incomplete observation stay recorded. Release still depends on the new declared gate and Robert’s decision.
 
 Public findings contain no private defect descriptions, fixture contents, answer keys or reports. Public grade/manifest records and the ledger retain the available provenance; full transcripts and variant details stay in their private locations.

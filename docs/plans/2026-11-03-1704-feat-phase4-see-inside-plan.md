@@ -41,6 +41,10 @@ The revised R20–R24 govern future evaluation. They preserve prospective criter
 
 U3, U7, U8 and U9 landed in #294–#297: runtime identity and saved encoding, authenticated live views, immutable state export, and private `mo fetch`. U4 (failure records) is next. Failure capture, `replay` / `query` / `history` (U5) and evaluation/release (U6) remain open.
 
+### 2026-11-07 implementation milestone
+
+U3–U5 and U7–U9 landed in #294–#297 and #301–#302. U6 (a declared diagnostic evaluation, then v0.1 if its gate passes) is next. Evaluation is not done.
+
 ---
 
 ## Product Contract

@@ -113,3 +113,7 @@ The pilots' record, with the rule that decides when a variant is ready to freeze
   routing, local checks and process sizing. Its README says what each run showed.
 - `private-fetch/` holds the development evidence for `mo fetch`: client workflow, sizing
   and verification. Its README says what each run showed.
+- `failure-capture/` holds the development evidence for retained handler failures. Its README
+  says what each run showed.
+- `offline/` holds the development evidence for `mo replay`, `mo query` and `mo history`. Its
+  README says what each run showed.

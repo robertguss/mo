@@ -116,4 +116,6 @@ Native smoke used Codex 0.166.0, GPT-6.1 Sol/high, explicit tool approval and sh
 access. It observed discovery/routing and the supplied host-local workflow. It does not establish
 unaided diagnostic effectiveness. The pilot remains 30 attempts, 29 completed grades, pilot7
 interrupted, four uncalibrated variants and no independent baseline. Prospective evaluation
-approval still gates U6 collection. Failure capture/export remains U4 and is unavailable.
+approval still gates U6 collection.
+
+**2026-11-07:** U4 failure capture/export landed in #301; this U9 record is unchanged.
