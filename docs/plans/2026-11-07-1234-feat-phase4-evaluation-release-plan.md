@@ -230,7 +230,7 @@ The freeze sits between U5 and U7. Nothing upstream of it may change once Robert
 - **Files:** `learnability/phase4/smoke/README.md`, `learnability/phase4/smoke/results/` (manifests and grades only, scanned).
 - **Approach:** one session per client on the public synthetic variant, prompted to exercise each instrument, run as `mo-session` with the candidate. Label every record development smoke. Fix what fails in U2 or U3 and rerun, keeping every attempt.
 - **Test expectation:** none -- this unit produces evidence, not code. Its pass condition is the verification below.
-- **Verification:** for each client, the records show an operator tool call, `mo fetch`, `mo history`, `mo replay`, `mo replay --fix` and `mo query`, each completing, and `match` true. Any client that cannot is a stop condition.
+- **Verification:** for each client, the records show an operator tool call, `mo fetch`, `mo history`, `mo replay`, `mo replay --fix` and `mo query`, each completing, and `match` true. Any client that cannot is a stop condition. The client versions and SHA-256s the smoke used are the ones U6 freezes; if either client changes before the freeze, U4 runs again on the new one.
 
 ### U5. Four private scenarios
 
@@ -240,7 +240,7 @@ The freeze sits between U5 and U7. Nothing upstream of it may change once Robert
 - **Files:** private `robertguss/mo-phase4-private` `variants/<name>/` for each scenario. Public: the scenario families and shapes in the protocol only.
 - **Approach:** one scenario each for a live-state question, a query-only aggregate question, a stopped-folder retained failure, and a fix that must be checked original-first. Each is a task-queue incident with ordinary source access and no obfuscation (phase R24). The defect scenarios' failures are produced by the fixture's own `call` assertions, so the build leaves the retained record in DATA.
 - **Test scenarios:**
-  - `grade.py --check` passes for each: the reference fix passes, the variant and a broken fix each fail a hidden test, the report names no internals, and the hashes match.
+  - `grade.py --check` passes for each, by kind. For the two defect scenarios: the reference fix passes, and the variant and a broken fix each fail a hidden test. For the two question scenarios: the key recomputed from the built folder matches. For all four: the report names no internals, and the hashes match.
   - For each defect scenario, `mo history` on the built DATA lists the retained failure, and `mo replay` with DEPLOYED reports `reproduced`.
   - For each question scenario, the key computed by `fixture.py` matches the answer read through the intended instrument on the built service.
 - **Verification:** all four pass `--check` against the candidate. `SHA256SUMS` is committed privately.
@@ -255,7 +255,7 @@ The freeze sits between U5 and U7. Nothing upstream of it may change once Robert
   1. Write the protocol. It covers each R1 element, the R2 list of unscored evidence, scenario families and shapes, the seeded order from `harness.py order` with two sessions per scenario on each client (16 in all, KD2), and predictions written before collection.
   2. The missing-data rule follows the old protocol §6: rerun unstarted (exit 4) and discarded (exit 3) sessions; score everything else.
   3. Model unavailability stops collection with no substitution; resuming is a new declared experiment.
-  4. Record the freeze: build-input tree hashes, candidate and client SHA-256s and versions, models and settings, prompt hash, the SHA-256 of each harness and grading script (`learnability/phase4/*.py`, `learnability/wilson.py`), and private file hashes.
+  4. Record the freeze: build-input tree hashes, candidate and client SHA-256s and versions (the clients must be the ones U4 smoked), models and settings, prompt hash, the SHA-256 of each harness and grading script (`learnability/phase4/*.py`, `learnability/wilson.py`), and private file hashes.
 - **Test expectation:** none -- documentation and a record. Its correctness is checked by U7's freeze comparison and Robert's approval.
 - **Verification:** Robert's approval is recorded in the protocol with its date and a pointer to where he gave it. `freeze.json` matches the installed binaries and the branch's build-input hashes.
 
@@ -319,20 +319,3 @@ Long runs follow `AGENTS.md` "Waiting on checks". A skipped tool is reported as 
 - **U8:** documents match the evidence; either `v0.1.0` is tagged on a build-input-matching commit after Robert's decision, or Phase 4 is recorded as open with its shortfall.
 - **Global:** no build input changed after the freeze; no abandoned harness code is left in the diff; no pilot or smoke observation is counted as scored.
 
----
-
-## Deferred / Open Questions
-
-These are review items left for the author. They do not block implementation.
-
-### From 2026-11-07 review
-
-- **Question scenarios are given checks that only fit fix scenarios** — U5, Four private scenarios (P2, whole-doc-codex, confidence 75)
-
-  As written, the scenario soundness check asks every scenario for a reference fix, a broken fix and a failing hidden test. The two question scenarios are graded by answer keys and have no fix, so an implementer would either invent fix tasks for them or have to guess which checks to skip.
-  Change: make the soundness checks depend on the scenario's kind, with answer-key validation for the two question scenarios and reference-fix, broken-fix and hidden-test validation for the two defect scenarios.
-
-- **The smoke run can test a different client version from the one that is scored** — U4, Native-client smoke run (P2, whole-doc-codex, confidence 75)
-
-  The smoke run happens before the freeze, and the freeze pins whatever client versions are installed at that point. If Claude Code or Codex changes in between, the smoke evidence no longer covers the clients that are actually scored.
-  Change: have U6 freeze the client versions and hashes that U4 used, and rerun U4 if either client changed before the freeze.
