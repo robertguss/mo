@@ -43,7 +43,7 @@ def records(result, command):
     lines = result.stdout.decode("utf-8").splitlines()
     assert result.stdout.endswith(b"\n")
     items = [json.loads(line) for line in lines]
-    assert items[0] == {"record": "version", "format": "1.0", "mo": "0.0.0", "command": command}
+    assert items[0] == {"record": "version", "format": "1.0", "mo": "0.1.0", "command": command}
     assert items[-1]["record"] == "totals"
     assert items[-1]["status"] == result.returncode
     assert items[-1]["errors"] == sum(item["record"] == "diagnostic" for item in items)
@@ -4433,7 +4433,7 @@ def check(binary):
     run(binary, ["format", good, good], 0)
     run(binary, ["fix", good, good], 0)
     for version in ("--version", "-V"):
-        assert run(binary, [version], 0).stdout == b"mo 0.0.0\n"
+        assert run(binary, [version], 0).stdout == b"mo 0.1.0\n"
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
     try:
