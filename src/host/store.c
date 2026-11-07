@@ -208,10 +208,9 @@ static enum mo_store_status open_store(const char *path, bool wait, struct mo_st
         mo_store_close(s);
         return MO_STORE_IO;
     }
-    if (!defensive(s) ||
-        !exec(s, "PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE;"
-                 "PRAGMA synchronous=EXTRA; PRAGMA temp_store=MEMORY;" CACHE_PRAGMA
-                 "PRAGMA locking_mode=EXCLUSIVE;BEGIN EXCLUSIVE")) {
+    if (!defensive(s) || !exec(s, "PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE;"
+                                  "PRAGMA synchronous=EXTRA; PRAGMA temp_store=MEMORY;" CACHE_PRAGMA
+                                  "PRAGMA locking_mode=EXCLUSIVE;BEGIN EXCLUSIVE")) {
         bool busy = (sqlite3_errcode(s->db) & 0xff) == SQLITE_BUSY;
         return rollback_close(s, busy ? MO_STORE_BUSY : MO_STORE_IO);
     }
@@ -1184,9 +1183,8 @@ static enum mo_store_status stream_log(struct mo_store *s, uint64_t sequence, si
                                        uint64_t image, uint8_t *chunk,
                                        struct mo_log_record_metadata *out) {
     sqlite3_blob *blob = NULL;
-    enum mo_store_status result =
-        stream_most(s, "log", (sqlite3_int64)sequence, MO_STORE_LOG, length, sequence, image, chunk,
-                    &blob);
+    enum mo_store_status result = stream_most(s, "log", (sqlite3_int64)sequence, MO_STORE_LOG,
+                                              length, sequence, image, chunk, &blob);
     struct log_blob reader = {blob, SQLITE_OK};
     if (result == MO_STORE_OK &&
         !mo_log_record_walk(length - MO_STORE_FRAME_BYTES, read_log_payload, &reader, out))
@@ -1297,10 +1295,10 @@ static enum mo_store_folder history_body(struct mo_store *s, bool failure_tables
     for (uint32_t i = 0; status == MO_STORE_OK && i < h->failure_count; i++) {
         struct mo_store_history_failure *x = &c->failures[i];
         sqlite3_blob *blob = NULL;
-        enum mo_store_status frame = stream_most(
-            s, "failure_state", (sqlite3_int64)x->id, MO_STORE_FAILURE_STATE,
-            x->state_bytes + MO_STORE_FRAME_BYTES, x->message.sequence, x->message.image, c->chunk,
-            &blob);
+        enum mo_store_status frame =
+            stream_most(s, "failure_state", (sqlite3_int64)x->id, MO_STORE_FAILURE_STATE,
+                        x->state_bytes + MO_STORE_FRAME_BYTES, x->message.sequence,
+                        x->message.image, c->chunk, &blob);
         if (frame == MO_STORE_OK) {
             status = close_blob(blob, MO_STORE_OK);
             x->state_valid = status == MO_STORE_OK;

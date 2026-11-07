@@ -1036,10 +1036,9 @@ static uint64_t export_poll_wait(struct fixture_server *f, uint64_t until_us) {
 
 /* WAIT until_us is the pin idle deadline, not the caller's later bound. */
 static void export_idle_wait(void) {
-    const char text[] =
-        "module Main\nservice\n state Text = \"a\".repeat(20000)\n tools fail\n"
-        " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
-        "fn fail(_state: Text, _now: Time) : Int\n stop \"export fixture\"\nend\n";
+    const char text[] = "module Main\nservice\n state Text = \"a\".repeat(20000)\n tools fail\n"
+                        " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+                        "fn fail(_state: Text, _now: Time) : Int\n stop \"export fixture\"\nend\n";
     char out[32768];
     uint64_t idle = MO_LIMIT_EXPORT_IDLE_US, far = 2 * idle;
     struct fixture_server f = start_source(text);
