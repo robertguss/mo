@@ -1126,7 +1126,7 @@ Every other result shape is a read-only reply,
 including `List(State)`, `Option(State)` and records containing state.
 Read-only messages are neither logged nor saved. Logged and saved mean the
 service's state and its recovery log: a record of a failed call kept for
-diagnosis (section 15) is neither, and keeping one never changes the state,
+diagnosis (section 13.4) is neither, and keeping one never changes the state,
 the log or what recovery restores.
 
 Each `every` clause has a duration literal with a whole-number value of at
@@ -1429,7 +1429,13 @@ and writes its bytecode to `OUT`; `-o` is required, and a library module has no
 main to emit (E0079). `mo serve FILE --port N --data DIR [--allow-host NAME]`
 runs the service `FILE` declares (section 11.5) over MCP on 127.0.0.1, with its
 saved state in the folder `DIR`, which must exist; `--allow-host` also accepts
-requests that give `NAME` as their host, as a proxy in front of it does. `mo format` and `mo fix` rewrite the files they are given.
+requests that give `NAME` as their host, as a proxy in front of it does. The
+service also answers built-in operator tools, with the same token as its own
+tools, that show its state and retained failures without running its
+handlers. `mo fetch URL --export state|failure ID --out FILE --token-env NAME`,
+run on the same host, saves an export of the state or of one retained failure
+from a service on 127.0.0.1 to a new private file, reading the token from the
+environment variable `NAME`. `mo format` and `mo fix` rewrite the files they are given.
 `mo guide` needs no file. It prints a short guide for agents writing Mo,
 matched to the installed version: how to work with the `mo` command, a small
 complete program with its tests, and when a task is done. `mo guide
