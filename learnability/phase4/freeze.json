@@ -1,0 +1,280 @@
+{
+  "experiment": "phase4-diagnostic-20261107",
+  "recorded_at": "2026-11-07T18:19:10.446648+00:00",
+  "build_commit": "40ca1848b4cdfcc0513dc3bfc2fa67432bc9cf35",
+  "build_input_git_objects": {
+    "src": "1c51ca3781da4523f25c35ff33d304860882ce90",
+    "lib": "6b134db6485a35c90fe7f41f9801af25eac6219d",
+    "runtime": "fc8a7d96c1225813182ad491545182b655722a79",
+    "vendor": "358c9300dd8c9cd5ed1c1d8a2affdd962b8a2ff6",
+    "Makefile": "357425a5190d4b570dc040807d8a3a9694c0e7a1",
+    "ci/embed_docs.py": "69793586f16f237ab60b42cfd1b29d393b9f9665",
+    "ci/embed_protocol.py": "871aa5649b14fd3eed505db9ff4099cc704f6c1b",
+    "docs/agent-guide.md": "5b3b7ed0795f9b2e032d58f7411ff8d7f3a393eb",
+    "docs/reference/README.md": "afb831385621c01fb1ba3254c57717699479555b"
+  },
+  "candidate": {
+    "path": "/opt/mo-phase4/bin/mo",
+    "sha256": "7d4dae15db2aa9aa6dabb6134ca56e87abd5658eae00aba44fdb6624564f4ba6",
+    "version": "mo 0.1.0",
+    "build_path": "/opt/mo-phase4/candidate/build/gcc/debug/mo",
+    "build_command": "git archive HEAD | tar -x; make CC=gcc build/gcc/debug/mo",
+    "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+  },
+  "clients": {
+    "claude": {
+      "path": "/opt/mo-phase4/bin/claude",
+      "sha256": "eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0",
+      "version": "2.1.317 (Claude Code)",
+      "model": "claude-opus-5-5",
+      "command": [
+        "/opt/mo-phase4/bin/claude",
+        "-p",
+        "PROMPT",
+        "--model",
+        "claude-opus-5-5",
+        "--mcp-config",
+        "MCP_CONFIG",
+        "--strict-mcp-config",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--no-session-persistence",
+        "--permission-mode",
+        "acceptEdits",
+        "--allowedTools",
+        "Bash",
+        "mcp__task-queue__*",
+        "--disallowedTools",
+        "WebFetch",
+        "WebSearch"
+      ]
+    },
+    "codex": {
+      "path": "/opt/mo-phase4/bin/codex",
+      "sha256": "b8a11fedf24b2dfb59a70c9e52b030f9a508dcd49cd2dd0d41956f4c785156b8",
+      "version": "codex-cli 0.166.0",
+      "model": "gpt-6.1-sol",
+      "command": [
+        "/opt/mo-phase4/bin/codex",
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "-m",
+        "gpt-6.1-sol",
+        "-c",
+        "model_reasoning_effort=\"xhigh\"",
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        "sandbox_workspace_write.network_access=true",
+        "-c",
+        "web_search=\"disabled\"",
+        "-c",
+        "approval_policy=\"never\"",
+        "-c",
+        "check_for_update_on_startup=false",
+        "-c",
+        "mcp_servers.task-queue.url=\"SERVICE_URL\"",
+        "-c",
+        "mcp_servers.task-queue.bearer_token_env_var=\"QUEUE_TOKEN\"",
+        "-c",
+        "mcp_servers.task-queue.default_tools_approval_mode=\"approve\"",
+        "PROMPT"
+      ]
+    }
+  },
+  "settings": {
+    "codex_reasoning_effort": "xhigh",
+    "session_limit_seconds": 3600,
+    "monetary_cap": null,
+    "budget_authorization": "diagnostic-protocol.md sections 12 and 13",
+    "claude_environment": {
+      "DISABLE_AUTOUPDATER": "1"
+    },
+    "user": "mo-session",
+    "sequential": true
+  },
+  "public_file_sha256": {
+    "learnability/phase4/compare.py": "15dad9dd0b98bab08e7bac09567876497ba9ee41d877ced6c012ecd808cd3f73",
+    "learnability/phase4/fixture.py": "9970e626b228c3b4cb0dc3fa22ab5904ba71a2a84dcf2733793264e80881865d",
+    "learnability/phase4/grade.py": "ac28306bc6ba4deac3944ce1ba33a24db8eb5f2bd074a30fb23370f1fc96f33c",
+    "learnability/phase4/harness.py": "0039a4daa92ecf9d6477161c4159fa2f210cf57a8a69f5564bf62d04d8224021",
+    "learnability/phase4/proxy.py": "218eeb6dd23e98ce31a19fb06ba7ca21a0375d2e17f45948b28f8fe767e9f2c5",
+    "learnability/phase4/publish.py": "307c85390352bf19ebbb507fd2b493b1d520a07dbaf8a7133b77350e57c99b8c",
+    "learnability/phase4/scan.py": "7baafe25ca8b7a8f788a10ef3c0bb05b8af68f918cb4116da26468a22e68cbac",
+    "learnability/phase4/test_compare.py": "6bc111f09d39c95045a39e91e20c8b0f325426c3e37a18d02c37abe325093f87",
+    "learnability/phase4/test_fixture.py": "4cd37c161e5fca80f7ec64915d1a3536735daf43dce325586f7959c9aa039900",
+    "learnability/phase4/test_grade.py": "e0aac0cd31ab3cf81b0b74d3521966d63ccb2cfcc3bf2ea48b141b4b8e4dec38",
+    "learnability/phase4/test_harness.py": "c41b80bbf3b73b2ed1e2faf23afd4b3cd7a069e96140bed0b527594bafa2040f",
+    "learnability/phase4/test_offline.py": "3d8dbe565a52443ee829d46ec91063b6ae91d322bfd5327507288e559dcc70d9",
+    "learnability/phase4/test_proxy.py": "e41a94011e37e15320b4c38bb8eaa105b5aafcf47ceca176522e69dcb4c78e49",
+    "learnability/phase4/test_publish.py": "3dc89c81daa5e257e36aa239a87fee21e16805733b0c9f71d9ab7760253f26c2",
+    "learnability/phase4/test_scan.py": "0496e90135f383744fada1112795e747576f200f8fa1c553eac11360c2304bc0",
+    "learnability/wilson.py": "3aba4f4046bb4100db5ea6d2e1529101babb4acb1c049a232873f76292692e48",
+    "learnability/phase4/prompt.md": "532873c8bfeed4e0b57996338e854c9250291a206f05d60a21f07a1f30109606",
+    "learnability/phase4/diagnostic-protocol.md": "d50ff625192a13fcbc0fd0bb9760d355c86c887a85476fc010434d4e961f2f15"
+  },
+  "private_repository": {
+    "repository": "robertguss/mo-phase4-private",
+    "commit": "fda0ce0ee11408c8a71c72c8d4694ea4b6c88d71",
+    "selection": "git archive of only the four scored variants; pilot variants excluded",
+    "export_root": "/home/exedev/phase4-diagnostic-20261107/scenarios",
+    "file_sha256": {
+      "variants/completions-from-staging/SHA256SUMS": "ba446b7238c35ca2d1f103932489679894b583a8f65fc378bd995f653346ca5e",
+      "variants/completions-from-staging/fixture-steps.mo": "6562a1fc8c9ffc32790c83c92c4e242e2b67f2998d689247a392fb0955526c58",
+      "variants/completions-from-staging/fixture.json": "e3252a8a8164c18bfab90e368731f2a1da39c0961d360d6ae26784526769d70c",
+      "variants/completions-from-staging/hidden/broken/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/completions-from-staging/hidden/broken/main.mo": "9be20298bbf9a4d6e279825a8a7d15f65935c21b4bd9205d1796c2844222ead5",
+      "variants/completions-from-staging/hidden/broken/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/completions-from-staging/hidden/hidden-tests.mo": "1c754a442ad2de85d908aad93a64e3abcd2d642a66220749e49f787184c81a96",
+      "variants/completions-from-staging/hidden/reference/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/completions-from-staging/hidden/reference/main.mo": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+      "variants/completions-from-staging/hidden/reference/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/completions-from-staging/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/completions-from-staging/main.mo": "2cd5595ad91874a4c005c7d648232b6e593f329f79fc879beb697194a8cba3eb",
+      "variants/completions-from-staging/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/completions-from-staging/report.md": "119560ed043994acc2573e9267824fdeead99d62b14aa1dc816f86108828e3c9",
+      "variants/last-acknowledge/SHA256SUMS": "ea78181e083cb66e58e76b06e72174577fe3b26a08c22778a93891dd7d91eaaf",
+      "variants/last-acknowledge/fixture-steps.mo": "e036b5d1d0e53cc7c739f3487fe9dfc0f4ff49500643c003c678a7908e149cf2",
+      "variants/last-acknowledge/fixture.json": "d44d0f33d33f75833ae0e5f5c00432779e57236ed0478b77218ffe994db29e8c",
+      "variants/last-acknowledge/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/last-acknowledge/main.mo": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+      "variants/last-acknowledge/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/last-acknowledge/report.md": "a2200c096474963c2893f1ac6b37d4df364463519625d1e2972deea695819de6",
+      "variants/lease-past-its-time/SHA256SUMS": "39ef06b8d4c9cd74b1580c85276fddbec704a50444c0d4faf22331674a64cb1c",
+      "variants/lease-past-its-time/fixture-steps.mo": "d53eaf50c87a7a04ade3eb06bedb9fd8bfb8d50fdb67b573c29ba32bb57d61e9",
+      "variants/lease-past-its-time/fixture.json": "bf37ba71b2acaf1567f1c747a45759c51b8ea66618dafc6f69b2065ef7949c04",
+      "variants/lease-past-its-time/hidden/broken/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/lease-past-its-time/hidden/broken/main.mo": "89ca8b334797b30f94938d3397285891092905b66a3dc052a0ffa0d4437b80fd",
+      "variants/lease-past-its-time/hidden/broken/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/lease-past-its-time/hidden/hidden-tests.mo": "98782c6d3fddd02d070a6b14dca8fab2e8b79c8e3d8c481e84095e31b5cc4d03",
+      "variants/lease-past-its-time/hidden/reference/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/lease-past-its-time/hidden/reference/main.mo": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+      "variants/lease-past-its-time/hidden/reference/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/lease-past-its-time/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/lease-past-its-time/main.mo": "b6f60f1f24095455472ceb487df4d9b670e83e98891380b5654d23f7901816a1",
+      "variants/lease-past-its-time/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/lease-past-its-time/report.md": "f3eed8871a9587d0ebdaec4520004867cd06aef5b091a0fdf5903d85da4a4edc",
+      "variants/waiting-bytes/SHA256SUMS": "b357a7229a163425ce38f096d6dea7642afd81bc9723e91188a5cbe70c03e909",
+      "variants/waiting-bytes/fixture-steps.mo": "2f54bc460da5a84fc8b985d10f38619f3adde0f2e1d1e62538e8dfd3808f67d2",
+      "variants/waiting-bytes/fixture.json": "00c766800bfa3c427267f6cb5e562cd046d630b95935d24e81cf354fc3a58b04",
+      "variants/waiting-bytes/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+      "variants/waiting-bytes/main.mo": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+      "variants/waiting-bytes/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+      "variants/waiting-bytes/report.md": "da1880c8a291d1c395d981e7fc4e24f87a71a0a157bef2d7384f28b3fcee64f6"
+    }
+  },
+  "round": {
+    "path": "/home/exedev/phase4-diagnostic-20261107/built/round.json",
+    "sha256": "167a950dbfa1884c78a0e71f7a08dc9d976d43846761c5799c6c1228eea8e46d",
+    "contents": {
+      "mo_sha256": "7d4dae15db2aa9aa6dabb6134ca56e87abd5658eae00aba44fdb6624564f4ba6",
+      "built_at": 1794075324.3584423,
+      "variants": {
+        "completions-from-staging": 0,
+        "last-acknowledge": 0,
+        "lease-past-its-time": 0,
+        "waiting-bytes": 0
+      }
+    }
+  },
+  "order": {
+    "seed": 20261107,
+    "arguments": [
+      "last-acknowledge",
+      "waiting-bytes",
+      "completions-from-staging",
+      "lease-past-its-time"
+    ],
+    "tsv_sha256": "1914ebd5d7ec0f3b67ce822656f86ef844ff910f0617e8043c64bf6eae3320b9",
+    "slots": [
+      {
+        "slot": 1,
+        "variant": "completions-from-staging",
+        "client": "codex"
+      },
+      {
+        "slot": 2,
+        "variant": "completions-from-staging",
+        "client": "claude"
+      },
+      {
+        "slot": 3,
+        "variant": "last-acknowledge",
+        "client": "codex"
+      },
+      {
+        "slot": 4,
+        "variant": "lease-past-its-time",
+        "client": "codex"
+      },
+      {
+        "slot": 5,
+        "variant": "completions-from-staging",
+        "client": "claude"
+      },
+      {
+        "slot": 6,
+        "variant": "waiting-bytes",
+        "client": "claude"
+      },
+      {
+        "slot": 7,
+        "variant": "last-acknowledge",
+        "client": "codex"
+      },
+      {
+        "slot": 8,
+        "variant": "last-acknowledge",
+        "client": "claude"
+      },
+      {
+        "slot": 9,
+        "variant": "last-acknowledge",
+        "client": "claude"
+      },
+      {
+        "slot": 10,
+        "variant": "waiting-bytes",
+        "client": "claude"
+      },
+      {
+        "slot": 11,
+        "variant": "waiting-bytes",
+        "client": "codex"
+      },
+      {
+        "slot": 12,
+        "variant": "waiting-bytes",
+        "client": "codex"
+      },
+      {
+        "slot": 13,
+        "variant": "lease-past-its-time",
+        "client": "codex"
+      },
+      {
+        "slot": 14,
+        "variant": "completions-from-staging",
+        "client": "codex"
+      },
+      {
+        "slot": 15,
+        "variant": "lease-past-its-time",
+        "client": "claude"
+      },
+      {
+        "slot": 16,
+        "variant": "lease-past-its-time",
+        "client": "claude"
+      }
+    ]
+  },
+  "soundness": {
+    "command": "python3 learnability/phase4/grade.py --check /opt/mo-phase4/candidate/build/gcc/debug/mo /home/exedev/phase4-diagnostic-20261107/scenarios /home/exedev/phase4-diagnostic-20261107/built",
+    "exit_status": 0,
+    "log_sha256": "d875ff2dbc895d94d2801ba6ea2b5e6dade198011f216eab53c94ab969dd6816"
+  }
+}
