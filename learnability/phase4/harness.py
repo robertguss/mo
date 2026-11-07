@@ -94,6 +94,10 @@ import proxy  # noqa: E402
 SERVER = proxy.SERVER
 CLIENTS = proxy.CLIENTS
 SESSIONS_PER_CLIENT = 2
+# Each client's model, and Codex's reasoning effort, named on its command line, since neither
+# client reports a model the session user's own configuration chose.
+CLAUDE_MODEL = 'claude-opus-5-5'
+CODEX_MODEL, CODEX_EFFORT = 'gpt-6.1-sol', 'xhigh'
 LIMIT = 3600
 GRACE = 10  # seconds between SIGTERM and SIGKILL at the limit
 LEFTOVERS = ('/tmp', '/var/tmp', '/dev/shm', '/var/spool')
@@ -446,12 +450,14 @@ def first_assistant_event(client, stream):
 
 def client_command(client, binary, prompt, url, config):
     if client == 'claude':
-        return [str(binary), '-p', prompt, '--mcp-config', str(config), '--strict-mcp-config',
+        return [str(binary), '-p', prompt, '--model', CLAUDE_MODEL,
+                '--mcp-config', str(config), '--strict-mcp-config',
                 '--output-format', 'stream-json', '--verbose', '--no-session-persistence',
                 '--permission-mode', 'acceptEdits',
                 '--allowedTools', 'Bash', f'mcp__{SERVER}__*',
                 '--disallowedTools', 'WebFetch', 'WebSearch']
     return [str(binary), 'exec', '--json', '--ephemeral', '--skip-git-repo-check',
+            '-m', CODEX_MODEL, '-c', f'model_reasoning_effort="{CODEX_EFFORT}"',
             '--sandbox', 'workspace-write',
             '-c', 'sandbox_workspace_write.network_access=true',
             '-c', 'web_search="disabled"', '-c', 'approval_policy="never"',

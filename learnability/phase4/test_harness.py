@@ -167,6 +167,14 @@ class Setup(unittest.TestCase):
             for client in harness.CLIENTS:
                 self.assertEqual(first.count((name, client)), 2)
 
+    def test_each_client_is_given_its_model_and_effort_on_the_command_line(self):
+        claude = harness.client_command('claude', 'claude', 'PROMPT', 'http://x/mcp', 'c.json')
+        self.assertEqual(claude[claude.index('--model') + 1], 'claude-opus-5-5')
+        codex = harness.client_command('codex', 'codex', 'PROMPT', 'http://x/mcp', 'c.json')
+        self.assertEqual(codex[codex.index('-m') + 1], 'gpt-6.1-sol')
+        self.assertIn('model_reasoning_effort="xhigh"', codex)
+        self.assertEqual(codex[-1], 'PROMPT')
+
     def test_setup_for_another_mo_keeps_the_earlier_record(self):
         state = PRIVATE / 'state'
         earlier = json.loads((state / 'binaries.json').read_text())
