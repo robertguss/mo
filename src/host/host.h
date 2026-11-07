@@ -219,11 +219,12 @@ struct mo_store_history_entry {
     bool timer;
     const uint32_t *argument_bytes;
 };
-/* A failure record without its state: the message's frame fields and copied payload. */
+/* A failure record without its state: the message's frame fields and copied payload.
+ * state_valid is that row's MOST header and checksum, checked without retaining the blob. */
 struct mo_store_history_failure {
     uint64_t id;
     const char *kind;
-    bool first;
+    bool first, state_valid;
     size_t state_bytes;
     struct mo_store_record message;
 };

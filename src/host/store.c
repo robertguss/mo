@@ -1102,27 +1102,36 @@ static bool read_log_payload(void *context, size_t offset, uint8_t *out, size_t 
     return b->code == SQLITE_OK;
 }
 
-/* One log row of length bytes: its frame, then its checksum over every byte, read in fixed
- * pieces, then its payload's metadata. */
-static enum mo_store_status stream_log(struct mo_store *s, uint64_t sequence, size_t length,
-                                       uint64_t image, uint8_t *chunk,
-                                       struct mo_log_record_metadata *out) {
+static enum mo_store_status close_blob(sqlite3_blob *blob, enum mo_store_status result) {
+    int code = sqlite3_blob_close(blob);
+    return result == MO_STORE_OK && code != SQLITE_OK ? failure(code) : result;
+}
+
+/* Header, payload and checksum of one MOST blob, read in HISTORY_CHUNK_BYTES pieces so the
+ * payload is never held. On OK, *blob is left open for a payload walk; the caller closes it.
+ * Any other status closes it. */
+static enum mo_store_status stream_most(struct mo_store *s, const char *table, sqlite3_int64 rowid,
+                                        enum mo_store_record_kind kind, size_t length,
+                                        uint64_t sequence, uint64_t image, uint8_t *chunk,
+                                        sqlite3_blob **blob) {
+    MO_ASSERT(s != NULL && table != NULL && chunk != NULL && blob != NULL);
     MO_ASSERT(length >= MO_STORE_FRAME_BYTES && length <= MO_LIMIT_STORE_ROW);
-    sqlite3_blob *blob = NULL;
-    int code = sqlite3_blob_open(s->db, "main", "log", "record", (sqlite3_int64)sequence, 0, &blob);
+    *blob = NULL;
+    int code = sqlite3_blob_open(s->db, "main", table, "record", rowid, 0, blob);
     if (code != SQLITE_OK) {
-        MO_ASSERT(sqlite3_blob_close(blob) == SQLITE_OK);
+        MO_ASSERT(sqlite3_blob_close(*blob) == SQLITE_OK);
+        *blob = NULL;
         return failure(code);
     }
     enum mo_store_status result = MO_STORE_OK;
     uint8_t header[FRAME_HEADER_BYTES], tail[FRAME_CHECKSUM_BYTES];
     uint64_t seq = 0, frame_image = 0, payload = 0, expected = 0;
     struct mo_binary in = {header, sizeof header, 6};
-    if (sqlite3_blob_bytes(blob) < 0 || (size_t)sqlite3_blob_bytes(blob) != length)
+    if (sqlite3_blob_bytes(*blob) < 0 || (size_t)sqlite3_blob_bytes(*blob) != length)
         result = MO_STORE_CORRUPT;
-    else if ((code = sqlite3_blob_read(blob, header, sizeof header, 0)) != SQLITE_OK)
+    else if ((code = sqlite3_blob_read(*blob, header, sizeof header, 0)) != SQLITE_OK)
         result = failure(code);
-    else if (memcmp(header, "MOST\1", 5) != 0 || header[5] != MO_STORE_LOG ||
+    else if (memcmp(header, "MOST\1", 5) != 0 || header[5] != (uint8_t)kind ||
              !mo_binary_uint(&in, 8, &seq) || !mo_binary_uint(&in, 8, &frame_image) ||
              !mo_binary_uint(&in, 4, &payload) || seq != sequence || frame_image != image ||
              payload != length - MO_STORE_FRAME_BYTES)
@@ -1131,7 +1140,7 @@ static enum mo_store_status stream_log(struct mo_store *s, uint64_t sequence, si
     size_t end = length - FRAME_CHECKSUM_BYTES;
     for (size_t at = sizeof header; result == MO_STORE_OK && at < end;) {
         size_t n = end - at < HISTORY_CHUNK_BYTES ? end - at : HISTORY_CHUNK_BYTES;
-        code = sqlite3_blob_read(blob, chunk, (int)n, (int)at);
+        code = sqlite3_blob_read(*blob, chunk, (int)n, (int)at);
         if (code != SQLITE_OK)
             result = failure(code);
         sum = checksum_more(sum, chunk, n);
@@ -1139,17 +1148,33 @@ static enum mo_store_status stream_log(struct mo_store *s, uint64_t sequence, si
     }
     struct mo_binary checksum = {tail, sizeof tail, 0};
     if (result == MO_STORE_OK &&
-        (code = sqlite3_blob_read(blob, tail, sizeof tail, (int)end)) != SQLITE_OK)
+        (code = sqlite3_blob_read(*blob, tail, sizeof tail, (int)end)) != SQLITE_OK)
         result = failure(code);
     else if (result == MO_STORE_OK &&
              (!mo_binary_uint(&checksum, FRAME_CHECKSUM_BYTES, &expected) || expected != sum))
         result = MO_STORE_CORRUPT;
+    if (result != MO_STORE_OK) {
+        result = close_blob(*blob, result);
+        *blob = NULL;
+        return result;
+    }
+    return result;
+}
+
+/* One log row of length bytes: its frame, then its checksum over every byte, read in fixed
+ * pieces, then its payload's metadata. */
+static enum mo_store_status stream_log(struct mo_store *s, uint64_t sequence, size_t length,
+                                       uint64_t image, uint8_t *chunk,
+                                       struct mo_log_record_metadata *out) {
+    sqlite3_blob *blob = NULL;
+    enum mo_store_status result =
+        stream_most(s, "log", (sqlite3_int64)sequence, MO_STORE_LOG, length, sequence, image, chunk,
+                    &blob);
     struct log_blob reader = {blob, SQLITE_OK};
     if (result == MO_STORE_OK &&
-        !mo_log_record_walk((size_t)payload, read_log_payload, &reader, out))
+        !mo_log_record_walk(length - MO_STORE_FRAME_BYTES, read_log_payload, &reader, out))
         result = reader.code != SQLITE_OK ? failure(reader.code) : MO_STORE_CORRUPT;
-    code = sqlite3_blob_close(blob);
-    return result == MO_STORE_OK && code != SQLITE_OK ? failure(code) : result;
+    return close_blob(blob, result);
 }
 
 static enum mo_store_status copy_log(struct mo_store *s, const struct saved_head *head,
@@ -1227,6 +1252,7 @@ static bool copy_failure_metadata(const struct mo_store_failure *f, void *contex
     *x = (struct mo_store_history_failure){.id = f->id,
                                            .kind = copied,
                                            .first = f->first,
+                                           .state_valid = false,
                                            .state_bytes = f->state.length,
                                            .message = f->message};
     x->message.bytes = message;
@@ -1250,6 +1276,22 @@ static enum mo_store_folder history_body(struct mo_store *s, bool failure_tables
         status = failure_read(s, c->last_id, 0, true, copy_failure_metadata, c);
         if (c->page < MO_LIMIT_FAILURE_VIEW_RECORDS)
             break;
+    }
+    for (uint32_t i = 0; status == MO_STORE_OK && i < h->failure_count; i++) {
+        struct mo_store_history_failure *x = &c->failures[i];
+        sqlite3_blob *blob = NULL;
+        enum mo_store_status frame = stream_most(
+            s, "failure_state", (sqlite3_int64)x->id, MO_STORE_FAILURE_STATE,
+            x->state_bytes + MO_STORE_FRAME_BYTES, x->message.sequence, x->message.image, c->chunk,
+            &blob);
+        if (frame == MO_STORE_OK) {
+            status = close_blob(blob, MO_STORE_OK);
+            x->state_valid = status == MO_STORE_OK;
+        } else if (frame == MO_STORE_CORRUPT) {
+            x->state_valid = false;
+        } else {
+            status = frame;
+        }
     }
     return folder_status(status);
 }

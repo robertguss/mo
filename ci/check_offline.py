@@ -239,6 +239,42 @@ def history(binary, folder):
     return data
 
 
+def xor_state_checksum(source, folder, name, failure):
+    """A copy of DIR whose one failure_state frame has only its MOST checksum flipped."""
+    copy = folder / name
+    shutil.copytree(source, copy)
+    db = sqlite3.connect(copy / "service.sqlite")
+    (frame,) = db.execute("SELECT record FROM failure_state WHERE id=?", (failure,)).fetchone()
+    assert frame[:5] == b"MOST\1" and frame[5] == 3
+    blob = bytearray(frame)
+    blob[-1] ^= 0x40
+    db.execute("UPDATE failure_state SET record=? WHERE id=?", (bytes(blob), failure))
+    db.commit()
+    db.close()
+    return copy
+
+
+def history_corrupt_state(binary, folder, data):
+    """Checksum-only flip of one retained pre-call state: history still lists the sibling as
+    replayable here, and does not promise local replay of the damaged id."""
+    damaged = xor_state_checksum(data, folder, "checksum-state", 1)
+    file = folder / "main.mo"
+    text = mo(binary, ["history", str(damaged)], 0)
+    assert not text.stderr, text.stderr
+    body = text.stdout.decode()
+    assert "not replayable here: the record's pre-call state failed its check" in body, body
+    items = records(mo(binary, ["history", "--json", str(damaged)], 0), "history")
+    h = items[1]
+    assert h["folder"] == "ok", h
+    listed = [(f["id"], f["replayable_here"], f["not_replayable"]) for f in h["failures"]]
+    assert listed == [
+        ("1", False, "the record's pre-call state failed its check"),
+        ("2", True, None),
+    ], listed
+    mo(binary, replay_args(file, damaged, "2"), 0)
+    refused(binary, replay_args(file, damaged, "1"), "folder", "damaged")
+
+
 CONTROLS = r'''module Main
 service
   state Text = "a\u{9B}b\u{202E}c\u{7F}"
@@ -1015,6 +1051,7 @@ def check(binary):
     with tempfile.TemporaryDirectory(prefix="mo-offline-") as directory:
         folder = pathlib.Path(directory)
         data = history(binary, folder)
+        history_corrupt_state(binary, folder, data)
         owned(binary, folder, data)
         history_controls(binary, folder / "controls")
         artifact_folder = folder / "fetched"
