@@ -1,0 +1,41 @@
+{
+  "variant": "smoke",
+  "client": "claude",
+  "success": true,
+  "grader": {
+    "success": true,
+    "reasons": [],
+    "notes": [
+      "the session changed queue-tests.mo; the variant's copy was used"
+    ]
+  },
+  "records": {
+    "match": true,
+    "pairs": 2,
+    "log_only": [],
+    "stream_only": [],
+    "exempt": [],
+    "shell": 1
+  },
+  "failed": [],
+  "coverage": {
+    "operator_tools": [
+      "mo-overview",
+      "mo-state"
+    ],
+    "commands": [
+      "fetch",
+      "history",
+      "query",
+      "replay",
+      "replay --fix"
+    ]
+  },
+  "fix_check": {
+    "failure": "1",
+    "original": "reproduced",
+    "verdict": "verified",
+    "violation": false,
+    "graded_correct": true
+  }
+}
