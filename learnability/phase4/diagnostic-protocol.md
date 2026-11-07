@@ -1,6 +1,6 @@
 # The Phase 4 diagnostic evaluation protocol
 
-**Approved by Robert on 2026-11-07. Not yet frozen.** Collection starts only after `freeze.json` is recorded and Robert sets the spending cap in section 12. Any change after the first scored session starts a new, separately named experiment.
+**Approved by Robert on 2026-11-07. Not yet frozen.** Collection starts only after `freeze.json` is recorded and the budget decision in section 12 is recorded. Any change after the first scored session starts a new, separately named experiment.
 
 This protocol replaces the evaluation described in [protocol.md](protocol.md), which stays as the historical record of the original experiment and its predictions. It also supersedes an earlier draft of this file: written on 2026-11-05 on the unmerged branch `t3/draft-u6-diagnostic-protocol` (commit `a1fa3a96`), approved by Robert that day, and set aside by him on 2026-11-07. That draft proposed 24 sessions, independent human or model graders and a coverage gate. Robert chose 16 sessions, mechanical grading, and coverage reported but not gated. The plan for this work is [docs/plans/2026-11-07-1234-feat-phase4-evaluation-release-plan.md](../../docs/plans/2026-11-07-1234-feat-phase4-evaluation-release-plan.md).
 
@@ -130,8 +130,8 @@ After the round, the private repository's history is published, and its files ar
 
 ## 12. Budget
 
-**Spending cap: to be set by Robert.** 16 sessions of at most 60 minutes each, on the accounts the clients are logged in with. Reaching the cap stops collection, and the remaining slots are reported missing; no session is dropped because it was costly.
+**No monetary spending cap.** Robert authorized proceeding without a monetary cap on 2026-11-07 in the continuation conversation for this milestone: “amount doesnt matter just do it”. The allocation remains 16 sessions of at most 60 minutes each, on the accounts the clients are logged in with. No session is dropped because it was costly.
 
 ## 13. Approval
 
-Robert approved this protocol as drafted on 2026-11-07, in the Claude Code planning and implementation session for this milestone, with no change to sections 4, 5 or 8. He set no spending cap at approval, so section 12's cap is still to be set before the first scored session.
+Robert approved this protocol as drafted on 2026-11-07, in the Claude Code planning and implementation session for this milestone, with no change to sections 4, 5 or 8. In the continuation conversation on 2026-11-07, Robert authorized no monetary spending cap with “amount doesnt matter just do it”; section 12 records that decision. Collection still requires the recorded freeze and Robert’s authorization after reviewing it.
