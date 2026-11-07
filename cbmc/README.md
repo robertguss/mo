@@ -7,11 +7,13 @@ verifier's transfer functions in `src/bytecode/verify.c` and `verify-instruction
 in [The verifier](#the-verifier)), the primitives' arithmetic and UTF-8 in `src/base/decimal.c`,
 `src/prim/number.c`, `prim.c`, `text.c` and `unicode.c` (in [The primitives](#the-primitives)),
 lexical path containment and bounded resolution (`path.c`, `resolve.c` and `resolve-kernel.c`, in
-[The host paths](#the-host-paths)), reference count updates (`refcount.c`, in
+[The host paths](#the-host-paths)), and reference count updates (`refcount.c`, in
 [Reference count updates](#reference-count-updates)), hash-table probing (`table.c`, in
-[Hash-table probing](#hash-table-probing)), and export page admission, page bounds and MOSV
-schema spans (`export_page_matches`, `mo_export_page_bounds`, `mo_export_schema`, in
-[Export producer framing and pages](#export-producer-framing-and-pages)).
+[Hash-table probing](#hash-table-probing)), the export and failure-record readers in
+`src/base/export.c` and `failure.c` (`export.c`, `export-consume.c`, `artifact.c` and
+`failure.c`, from [Export producer framing and pages](#export-producer-framing-and-pages) on),
+and the walk over a service log record in `src/base/log-record.c` (`log-record.c`, in
+[Service log record walk](#service-log-record-walk)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -76,7 +78,8 @@ body, or an assumption that rules out the paths that matter. Two checks catch th
   harness. The only blocks allowed to stay unreached are the failure branches of `MO_ASSERT`
   and `MO_UNREACHABLE` (and adjacent closing braces), which the proofs show never
   run; the branch CBMC adds to a call through a function pointer for a target the harness never
-  gives it (the verifier's replay visitor), which it closes with `assume(false)`; and the lines
+  gives it (the verifier's replay visitor, the log record walk's reader), which it closes with
+  `assume(false)`; and the lines
   `unreachable_lines` in `prove.sh` names for a proof, each with its reason:
   `display_width`'s width overflow checks need a span of more than 2^63 bytes; the portable
   resolver cannot begin a step on a separator after its caller and previous step removed them.
@@ -367,4 +370,76 @@ and next offset; completed consumers reject further pages. Reach checks cover ev
 predicate block and the harness end. This proves metadata admission, not allocator
 ownership, SHA-256, socket delivery or filesystem publication; those have separate
 arena proofs and empirical unit/socket/fuzz checks. The consumer uses the same page
-bounds already proved above.
+bounds already proved above. Both commands passed in the private-fetch development
+run, with proof and reach logs retained under `build/u9-cbmc-consume*.txt`.
+
+## Diagnostic payload slices
+
+`bash cbmc/prove.sh slice` and `--reach slice` check the actual failure payload's
+length-prefixed slice reader over up to 32 bytes, arbitrary valid starting cursor
+and size limit. They prove bounded accepted spans and unchanged output on refusal.
+UTF-8 is an unconstrained callee result in this arithmetic harness; complete
+payload validation is covered by `fuzz_service_failure`, not claimed as a complete
+CBMC proof. Every slice block must be reachable, including both text branches.
+
+`bash cbmc/prove.sh mo_failure_argument_next` and its `--reach` counterpart check the walk over a
+record's arguments, with the argument reader it shares with `mo_failure_read`. The walk's bytes
+are any input of up to 32 bytes (13 bytes is the least that holds one argument), its position
+any point inside them and its remaining count any `uint32_t`. The oracle reads the 4-byte length
+and the `MOSV` 1 prefix itself: the walk yields an argument exactly when the count is not spent
+and a length of at least 9 bytes, followed by that many bytes starting `MOSV` 1, fits; it ends
+exactly when the count and the bytes run out together, and is damaged otherwise. An argument is
+the span after its length and advances the walk past exactly that span; the end and a refusal
+leave the walk and the output unchanged. 281 properties, under a second; every block of the walk
+and the argument reader is reached. A walk that ends whenever the count is spent, wherever its
+position, fails the proof.
+
+## Offline artifact reader
+
+`bash cbmc/prove.sh mo_export_read` and its `--reach` counterpart run the actual `MOEX` header
+walk of `mo_export_read`, with its kind dispatch, on every input of up to 172 bytes: the
+fixed 162 bytes plus the 10-byte least `MOSV` body, so a kind-1 artifact with an empty label
+is accepted. SHA-256, UTF-8 validation, the `MOSV` schema span (`mo_export_schema`, proved
+above) and the kind-2 body (`failure_body`) are replaced by models. Each model checks the span
+it is given (the digest covers every byte before the trailing 32, the label follows its length,
+the body ends where the digest starts) and returns an unconstrained result that the oracle reads.
+The oracle parses the format from its fixed offsets, not from the reader's cursor, and requires
+acceptance exactly when the magic, kind, digest, label length and UTF-8, the body's exact end,
+the body's result and the header's schema digest all hold, and for kind 2 when the record's
+program, sequence and build agree with the header. On acceptance every identity field, the label
+span, the header schema, the kind-1 state span and the kind-2 record id come from their offsets;
+a refusal leaves the output unchanged. An empty span may point anywhere, since
+`mo_binary_read` returns the input's start for it, so only nonempty spans are located. The proof
+has 1,851 properties and took 87 to 101 seconds; the reach check took 21 seconds and reaches
+every block of `mo_export_read` and `export_body`. Dropping the check that the body ends at the
+digest fails both the proof and `tests/test_artifact.c`.
+
+At 172 bytes a label holds at most 10 bytes, so longer labels, full-size artifacts and the
+kind-2 frames and record are not covered here. `fuzz_artifact`, whose oracle also reads fixed
+offsets, and `tests/test_artifact.c`, over records captured from a running service, cover them;
+`fuzz_service_failure` covers `mo_failure_read` on its own.
+
+## Service log record walk
+
+`bash cbmc/prove.sh mo_log_record_walk` and its `--reach` counterpart run the actual
+`mo_log_record_walk`, with the header reader it calls, on every payload of up to 37 bytes: the
+25-byte header and three empty arguments, so the loop accepts several arguments and refuses a
+later length cut short. The reader callback copies from the harness's bytes and may fail any
+read, after writing arbitrary bytes over its output. It asserts that each read is inside the
+payload and is exactly the next one the oracle expects: the header at offset 0, then each
+argument's 4-byte length, never an argument's bytes. The oracle reads the layout from its fixed
+offsets with 64-bit sums rather than the walk's subtractions, and requires acceptance exactly
+when the payload holds the header, the timer flag is 0 or 1, the count is at most
+`MO_LOG_RECORD_ARGUMENTS`, each argument's length and bytes fit, the last argument ends at the
+payload's end, and no read failed. On acceptance every header field comes from its offset and
+each argument's size from its length prefix; a refusal leaves every field of the output, all
+254 argument sizes included, as it was. `memcpy` is a byte loop in the harness: CBMC's own, with
+the walk's symbolic size, flattens the whole 1,016-byte size table and ran for over ten minutes
+without finishing. The proof has 381 properties and took 9 to 11 seconds; the reach check took 5
+seconds and reaches every block of `mo_log_record_walk` and `mo_log_record_header_read`, apart
+from the branch CBMC adds to each call through the reader pointer. Accepting an argument one
+byte longer than what is left, or bytes after the last argument, fails the proof.
+
+At 37 bytes a count above `MO_LOG_RECORD_ARGUMENTS` would be refused for want of bytes even
+without the limit, so the limit itself, longer records and the writer are covered by
+`tests/test_log_record.c` and `fuzz_log_record`, not here.
