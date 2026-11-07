@@ -1274,7 +1274,7 @@ static enum mo_store_folder history_body(struct mo_store *s, bool failure_tables
 enum mo_store_folder mo_store_history_read(const char *path, bool recover,
                                            struct mo_store_history *out) {
     *out = (struct mo_store_history){0};
-    mo_arena_init(&out->arena, HISTORY_ARENA_BYTES);
+    mo_arena_init_confidential(&out->arena, HISTORY_ARENA_BYTES);
     struct history_copy c = {.out = out};
     c.entries = mo_arena_allocate_array(&out->arena, MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES,
                                         sizeof *c.entries, _Alignof(struct mo_store_history_entry));
@@ -1368,7 +1368,7 @@ static enum mo_store_folder pair_body(struct mo_store *s, bool failure_tables, v
 enum mo_store_folder mo_store_history_pair(const char *path, bool recover, uint64_t id,
                                            struct mo_store_history_pair *out) {
     *out = (struct mo_store_history_pair){.id = id};
-    mo_arena_init(&out->arena, 2 * (size_t)MO_LIMIT_FAILURE_RECORD_BYTES);
+    mo_arena_init_confidential(&out->arena, 2 * (size_t)MO_LIMIT_FAILURE_RECORD_BYTES);
     struct pair_copy c = {.out = out};
     bool recovered = false;
     enum mo_store_folder status = read_folder(path, recover, &recovered, pair_body, &c);
