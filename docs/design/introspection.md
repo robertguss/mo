@@ -1,6 +1,6 @@
 # Introspection and replay: the Phase 4 design
 
-**Status: implemented; diagnostic gate passed on 2026-11-07 (14 of 16 correct). Release decision pending.**
+**Status: implemented; diagnostic gate passed on 2026-11-07 (14 of 16 correct). Robert approved v0.1.0 on 2026-11-07.**
 The [run record](../status/phase4-run.md) reports both misses and the limits of the evidence. Section 12 records the
 decisions made at approval, and "Approval and changes" at the end records every later change. A
 change to an interface, format or limit here is made in this document, with its reason, before

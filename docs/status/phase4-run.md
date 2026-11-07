@@ -1,7 +1,7 @@
 # Phase 4 run
 
-**Diagnostic gate passed on 2026-11-07: 14 of 16 correct. Phase 4 remains open pending
-Robert’s release decision. No v0.1.0 tag has been created.**
+**Diagnostic gate passed on 2026-11-07: 14 of 16 correct. Robert approved v0.1.0
+and the squash merge of PR #308 on 2026-11-07; Phase 4 is complete.**
 
 Codex was correct in 8 of 8 sessions, Claude Code in 6 of 8. Scenarios A, B and C each
 passed 4 of 4; scenario D passed 2 of 4. Both misses were Claude Code fixes that failed
@@ -93,3 +93,11 @@ Sources: [live views](../../learnability/phase4/live-views/README.md),
 [model assumptions](../../models/README.md), and [native smoke](../../learnability/phase4/smoke/README.md).
 The offline milestone's combined run retained a `bench` failure from a stale proxy catalog
 expectation; the evaluation harness work subsequently recorded passing `bench` checks in PR #308.
+
+## Release decision
+
+Robert answered “yes I approve” in this continuation conversation to the explicit
+request to release v0.1.0 and squash-merge PR #308. The release tag is created only
+after comparing every build-input Git object on the squash-merge commit with
+`freeze.json`. The candidate reports `mo 0.1.0`; the two evaluation misses remain
+part of the published record. This approval changes no frozen experiment input.

@@ -4,10 +4,11 @@
 intent, agents write the code, and agents can inspect and diagnose running services.
 Typed live upgrades are planned for a later phase.
 
-> **Status: v0.1 candidate; release decision pending.** The toolchain builds and
+> **Status: v0.1.0.** The toolchain builds and
 > runs services. The [Phase 4 diagnostic evaluation](docs/status/phase4-run.md)
 > passed its gate with 14 of 16 sessions correct, including two recorded misses.
-> Interfaces remain pre-release, and contributions are not yet open.
+> This first release has a narrow scope; typed live upgrades are planned.
+> Contributions are not yet open.
 
 ## The idea
 
@@ -62,15 +63,15 @@ bash ci/check.sh  # every check, run locally
 See [docs/design/implementation.md](docs/design/implementation.md) for the
 rules the implementation follows and how it is checked.
 
-## Install a candidate from source
+## Install v0.1.0 from source
 
-No `v0.1.0` tag has been released yet. To try the evaluated source, check out
-`40ca1848b4cdfcc0513dc3bfc2fa67432bc9cf35` and build it in its permanent location:
+Check out the release tag and build it in its permanent location. Its build inputs
+match the evaluated candidate recorded in [the freeze](learnability/phase4/freeze.json):
 
 ```sh
-git clone https://github.com/robertguss/mo mo-candidate
-cd mo-candidate
-git checkout --detach 40ca1848b4cdfcc0513dc3bfc2fa67432bc9cf35
+git clone https://github.com/robertguss/mo mo-v0.1
+cd mo-v0.1
+git checkout --detach v0.1.0
 make CC=gcc build/gcc/debug/mo
 ./build/gcc/debug/mo --version
 ./build/gcc/debug/mo guide
@@ -83,9 +84,8 @@ those builds, see the [task-queue runbook](docs/ops/task-queue.md).
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). The first public release, v0.1, is
-planned for when agents can build services in Mo and see inside them while
-they run.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0;
+Phase 5 targets typed live upgrades.
 
 ## Background
 

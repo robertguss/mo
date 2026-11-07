@@ -1,6 +1,6 @@
 # Phase 4 diagnostic evaluation results
 
-**Gate: pass.** 14 of 16 sessions correct; release awaits Robert’s decision.
+**Gate: pass.** 14 of 16 sessions correct; Robert approved v0.1.0 on 2026-11-07.
 
 All 16 slots ran once on 2026-11-07, under the [frozen protocol](../diagnostic-protocol.md).
 No baseline was collected. This is evidence of capability on these four scenarios, not of
