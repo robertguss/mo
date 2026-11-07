@@ -29,7 +29,9 @@ The Authorization header is forwarded unchanged and never written; a token that 
 anywhere else in a line is written as [token] and the line gets "redacted": true.
 
 The two records match when every tools/call in the log pairs with a tool call of that server in
-the client's stream, and the reverse. Neither client's stream carries the JSON-RPC id, so a call
+the client's stream, and the reverse. `mo fetch` reads export pages with its own tools/call
+requests, which no stream holds: when the stream ran `mo fetch`, an unpaired mo-export call is
+counted as the shell's instead. Neither client's stream carries the JSON-RPC id, so a call
 pairs with one of the same tool and the same arguments; an unpaired call is named by its
 JSON-RPC id (log) or its stream id. A call still in flight when the session ended, a
 request with no response or a stream call with no result, is exempt. initialize, tools/list
@@ -282,10 +284,16 @@ def canonical(arguments):
     return json.dumps(arguments, sort_keys=True)
 
 
+FETCH = re.compile(r'\bmo\s+fetch\b')
+
+
 def match(client, stream, log, server=SERVER):
-    """Pairs the log's tools/call requests with the stream's tool calls."""
+    """Pairs the log's tools/call requests with the stream's tool calls. A logged mo-export call
+    with no stream twin counts as the shell's (`shell`) when the session ran `mo fetch`."""
     logged, streamed = log_calls(log), stream_calls(client, stream, server)
-    log_only, stream_only, exempt, pairs = [], [], [], 0
+    fetched = any(what == 'command' and FETCH.search(text)
+                  for what, text in commands(client, stream))
+    log_only, stream_only, exempt, pairs, shell = [], [], [], 0, 0
     for tool in sorted({c[1] for c in logged} | {c[1] for c in streamed}, key=str):
         left = [c for c in logged if c[1] == tool]
         right = [c for c in streamed if c[1] == tool]
@@ -296,11 +304,16 @@ def match(client, stream, log, server=SERVER):
                 right.remove(twin)
                 pairs += 1
         for ident, _, _, answered in left:
-            (log_only if answered else exempt).append({'log_id': ident, 'tool': tool})
+            # shortcut: any unpaired mo-export page counts as the fetch's, so a curl of
+            # mo-export beside a mo fetch would count too; both come from the shell either way.
+            if answered and fetched and tool == 'mo-export':
+                shell += 1
+            else:
+                (log_only if answered else exempt).append({'log_id': ident, 'tool': tool})
         for ident, _, _, answered in right:
             (stream_only if answered else exempt).append({'stream_id': ident, 'tool': tool})
     return {'match': not log_only and not stream_only, 'pairs': pairs, 'log_only': log_only,
-            'stream_only': stream_only, 'exempt': exempt}
+            'stream_only': stream_only, 'exempt': exempt, 'shell': shell}
 
 
 LOOPBACK = re.compile(r'^(127(\.\d{1,3}){3}|localhost|::1|\[::1\])$', re.IGNORECASE)

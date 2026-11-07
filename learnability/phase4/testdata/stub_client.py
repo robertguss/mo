@@ -14,6 +14,9 @@ folder above its own (the install folder): {"mode": MODE, ...}.
   refresh    replace its Claude Code login with "secret", as a client refreshing it would
   unrecorded fix the defect, but report a tool call that never reached the proxy
   silent     stop without a single assistant event
+  instruments  call mo-overview, fix the defect, then run mo fetch, mo history and
+             mo replay --fix as the prompt's folders allow, reporting each exit status
+             (and the replay's verdict) as JSON in its last message
 """
 
 import http.client
@@ -143,6 +146,33 @@ def main():
             emit({'type': 'user', 'message': {'content': [
                 {'type': 'tool_result', 'tool_use_id': 'toolu_lost', 'content': '{}'}]}})
         say('Fixed: stats now counts dead jobs.')
+    elif mode == 'instruments':
+        call('mo-overview')
+        text = main_mo.read_text()
+        main_mo.write_text(text.replace(
+            '  if dead > 0\n    stop "dead jobs are not counted yet"\n  end\n', ''))
+        data, deployed = settings['data'], settings['deployed']
+
+        def run(command):
+            shell(' '.join(command))
+            return subprocess.run(command, capture_output=True, text=True, timeout=300)
+        fetched = run(['mo', 'fetch', endpoint(), '--export', 'state', '--out', 'state.moex',
+                       '--token-env', 'QUEUE_TOKEN'])
+        history = run(['mo', 'history', '--json', data])
+        failures = [f['id'] for r in map(json.loads, history.stdout.splitlines())
+                    for f in r.get('failures', [])]
+        replay = run(['mo', 'replay', f'{deployed}/main.mo', '--failure', str(failures[0]),
+                      '--data', data, '--fix', 'main.mo', '--json'])
+        verdicts = [r.get('verdict') for r in map(json.loads, replay.stdout.splitlines())
+                    if 'verdict' in r]
+        try:
+            (pathlib.Path(deployed) / 'main.mo').write_text('changed')
+            wrote = True
+        except OSError:
+            wrote = False
+        say(json.dumps({'fetch': fetched.returncode, 'history': history.returncode,
+                        'replay': replay.returncode, 'verdicts': verdicts,
+                        'wrote_deployed': wrote}))
     elif mode == 'sleep':
         with open(main_mo, 'a') as file:
             file.write('\n## half-edited\nfn half(')

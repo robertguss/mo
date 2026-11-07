@@ -20,7 +20,7 @@ user, behind the recording proxy, graded when it ends.
         given. Exit 0 for a success, 1 for a failure, 3 when the fixture check failed and the
         session was discarded before any client started.
   python3 learnability/phase4/harness.py order SEED VARIANT...
-        print the round's order: each variant three times on each client, shuffled from SEED
+        print the round's order: each variant twice on each client, shuffled from SEED
   python3 learnability/phase4/harness.py round ORDER ROOT BUILT OUT
         run ORDER's sessions one at a time, ROOT/variants/NAME from BUILT/NAME into
         OUT/NN-NAME-CLIENT, skipping every slot already graded; stop at a discarded session
@@ -35,8 +35,9 @@ Every command takes --user NAME (mo-session), --install DIR (/opt/mo-phase4), --
 
 What a session gets. Its working folder, INSTALL/session/task-queue, holds the variant's three
 source files and nothing else. Beside it are the service's standard error log (service.log)
-and a read-only copy of the built data folder (start-data/), the bytes the service started
-from. The client runs as the session user with only HOME, USER, LOGNAME, SHELL, PATH (INSTALL/bin
+and read-only copies of the built data folder (start-data/), the bytes the service started
+from, and of the three source files as the service runs them (deployed/), which `mo replay`
+needs once the session has edited its own. The client runs as the session user with only HOME, USER, LOGNAME, SHELL, PATH (INSTALL/bin
 first), LANG, the session's token in QUEUE_TOKEN and its own no-self-update setting, and reaches
 the service through the proxy, as the MCP server task-queue. Everything else (the variants, the
 built folders, the state folder, the records) must be where others cannot reach, which `run`
@@ -47,7 +48,8 @@ never shows the session a variant's name.
 What a run does, in order: append a fresh token to STATE/tokens (the scanner's file); end every
 process of the session user and restore its home; run the fixture check against a service on a
 disposable copy of the built folder, called directly, and discard the session if it fails;
-start the session's service on a second copy and place the third, read-only, as start-data/;
+start the session's service on a second copy and place the third, read-only, as start-data/,
+beside deployed/;
 start the proxy; launch the client. At the limit every process of the session user gets
 SIGTERM, and SIGKILL 10 seconds later; when the client ends sooner its leftovers get SIGKILL.
 Then the proxy and service stop, the working folder (without symlinks), the log and the data
@@ -87,7 +89,7 @@ import proxy  # noqa: E402
 
 SERVER = proxy.SERVER
 CLIENTS = proxy.CLIENTS
-SESSIONS_PER_CLIENT = 3
+SESSIONS_PER_CLIENT = 2
 LIMIT = 3600
 GRACE = 10  # seconds between SIGTERM and SIGKILL at the limit
 LEFTOVERS = ('/tmp', '/var/tmp', '/dev/shm', '/var/spool')
@@ -113,6 +115,7 @@ class Layout:
         self.session = self.install / 'session'
         self.work = self.session / 'task-queue'
         self.start_data = self.session / 'start-data'
+        self.deployed = self.session / 'deployed'
         self.service_log = self.session / 'service.log'
         self.mcp_config = self.session / 'mcp.json'
         self.private = pathlib.Path(private or pathlib.Path.home())
@@ -277,7 +280,8 @@ def reset(layout):
     current logins, deletes its files elsewhere, and empties the session area. Returns how many
     processes it ended."""
     ended = end_all(layout.user)
-    for path in (layout.work, layout.start_data, layout.service_log, layout.mcp_config):
+    for path in (layout.work, layout.start_data, layout.deployed, layout.service_log,
+                 layout.mcp_config):
         sudo('rm', '-rf', path)
     if not layout.snapshot.exists():
         raise HarnessError(f'no snapshot of {layout.user}\'s home in {layout.snapshot}: run setup')
@@ -348,6 +352,22 @@ def credential_values(text):
     return found
 
 
+def earlier_binaries(layout, record):
+    """The records of every earlier setup whose mo differs from this one, so that installing a
+    new candidate keeps the baseline's."""
+    try:
+        old = json.loads(layout.binaries.read_text())
+    except (OSError, ValueError):
+        return []
+    earlier = old.pop('previous', []) + [old]
+    kept = []
+    for entry in earlier:
+        sha = entry.get('mo', {}).get('sha256')
+        if sha != record['mo']['sha256'] and sha not in [e['mo']['sha256'] for e in kept]:
+            kept.append(entry)
+    return kept
+
+
 def setup(layout, mo, claude, codex):
     if os.stat(layout.private).st_mode & 0o007:
         raise HarnessError(f'{layout.private} grants others access; make it 0750 or 0700 first')
@@ -373,6 +393,7 @@ def setup(layout, mo, claude, codex):
     layout.state.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(layout.state, 0o700)
     private_file(layout.tokens)
+    record['previous'] = earlier_binaries(layout, record)
     layout.binaries.write_text(json.dumps(record, indent=2) + '\n')
     print(json.dumps(record, indent=2))
     home = layout.home()
@@ -436,12 +457,13 @@ def client_command(client, binary, prompt, url, config):
             '-c', f'mcp_servers.{SERVER}.default_tools_approval_mode="approve"', prompt]
 
 
-def prompt_text(layout, variant, limit):
+def prompt_text(layout, variant, limit, url):
     report = (variant / 'report.md').read_text(encoding='utf-8').strip()
     close = DEFECT_CLOSE if grade.defect(variant) else QUESTION_CLOSE
     text = (HERE / 'prompt.md').read_text(encoding='utf-8')
     for name, value in (('WORK', layout.work), ('LOG', layout.service_log),
-                        ('DATA', layout.start_data), ('MINUTES', limit // 60 or 1),
+                        ('DATA', layout.start_data), ('DEPLOYED', layout.deployed),
+                        ('SERVICE_URL', url), ('MINUTES', limit // 60 or 1),
                         ('ANSWER_FORM', close), ('REPORT', report)):
         text = text.replace(name, str(value))
     return text.strip() + '\n'
@@ -503,6 +525,13 @@ def run(layout, variant, built, client, out, binary=None, limit=LIMIT):
         raise HarnessError(f'the client is claude or codex, not {client!r}')
     binary = pathlib.Path(binary).resolve() if binary else layout.bin / client
     mo = layout.bin / 'mo'
+    try:
+        builder = json.loads((built.parent / 'round.json').read_text())['mo_sha256']
+    except (OSError, ValueError, KeyError) as error:
+        raise HarnessError(f'{built.parent}/round.json does not say which mo built it') from error
+    if builder != sha256(mo):
+        raise HarnessError(f'{built} was built by another mo ({builder[:12]}), not the installed '
+                           f'{sha256(mo)[:12]}; replay needs the mo that recorded its failures')
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
     check_private(layout, variant, built, layout.state, out)
     token = secrets.token_urlsafe(32)
@@ -566,6 +595,11 @@ def session(layout, variant, built, client, out, binary, limit, mo, token, fixed
     running.append(service)
     os.chmod(layout.service_log, 0o644)
     place_read_only(built / 'data', layout.start_data)
+    deployed = scratch / 'deployed'  # the untouched source, which replay needs
+    deployed.mkdir()
+    for name in grade.SESSION_FILES:
+        shutil.copyfile(variant / name, deployed / name)
+    place_read_only(deployed, layout.deployed)
     record = proxy.Proxy(service.url, out / 'proxy.jsonl', token)
     running.append(record)
     layout.work.mkdir(mode=0o755)
@@ -577,7 +611,7 @@ def session(layout, variant, built, client, out, binary, limit, mo, token, fixed
         'type': 'http', 'url': record.url,
         'headers': {'Authorization': 'Bearer ${QUEUE_TOKEN}'}}}}, indent=2) + '\n')
     os.chmod(layout.mcp_config, 0o644)
-    prompt = prompt_text(layout, variant, limit)
+    prompt = prompt_text(layout, variant, limit, record.url)
     (out / 'prompt.txt').write_text(prompt)
     command = client_command(client, binary, prompt, record.url, layout.mcp_config)
     home = layout.home()
@@ -619,6 +653,8 @@ def session(layout, variant, built, client, out, binary, limit, mo, token, fixed
     shutil.move(str(layout.service_log), str(out / 'service.log'))
     writable_tree(layout.start_data)
     shutil.move(str(layout.start_data), str(out / 'start-data'))
+    writable_tree(layout.deployed)
+    shutil.rmtree(layout.deployed)
     reset(layout)
 
     foreign = proxy.hosts(client, stream)

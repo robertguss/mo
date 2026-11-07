@@ -123,6 +123,25 @@ class Rendering(unittest.TestCase):
                 self.assertFalse(out.exists(), steps)
 
 
+class StandardError(unittest.TestCase):
+    """The stderr assertion against the lines mo serve writes after a handler failure."""
+    FAILURE = 'mo serve: failure: stats: the handler stopped'
+
+    def holds(self, kind, *after):
+        fixture.holds(None, {'stderr': kind}, '\n'.join([self.FAILURE, *after]) + '\n')
+
+    def test_a_record_line_is_not_a_report(self):
+        for record in ('  record: 1', '  record unavailable: the store is full'):
+            self.holds('failure_only', record)
+            with self.assertRaises(fixture.CheckFailed):
+                self.holds('report', record)
+
+    def test_a_report_before_the_record_line_is_a_report(self):
+        self.holds('report', 'bug: the handler stopped', '  at main.mo:3:5', '  record: 1')
+        with self.assertRaises(fixture.CheckFailed):
+            self.holds('failure_only', 'bug: the handler stopped', '  record: 1')
+
+
 class Live(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
@@ -217,7 +236,7 @@ def main():
         MO = os.path.abspath(binary)
         print(f'phase 4 fixtures with {binary}', file=sys.stderr)
         suite = unittest.TestSuite()
-        for case in (Rendering, Live):
+        for case in (Rendering, StandardError, Live):
             suite.addTests(unittest.defaultTestLoader.loadTestsFromTestCase(case))
         ok = unittest.TextTestRunner(verbosity=1).run(suite).wasSuccessful() and ok
     return 0 if ok else 1

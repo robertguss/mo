@@ -48,7 +48,8 @@ An ASSERTION is one of
   {"job": ID, "state": "Ready" | "Leased" | "Done" | "Dead", "attempts": N}
   {"call": TOOL, "arguments": {...}, "error": CODE}   the call fails with runtime error CODE
   {"stderr": "report"}           the service's standard error holds a failure line and a report
-  {"stderr": "failure_only"}     it holds a failure line and no report after it
+  {"stderr": "failure_only"}     it holds a failure line and no report after it (the
+                                 record line that follows a failure is not a report)
 """
 
 import http.client
@@ -331,7 +332,8 @@ def holds(client, assertion, stderr_text):
         if not failures:
             raise CheckFailed(f'standard error holds no failure line: {json.dumps(assertion)}')
         after = lines[failures[-1] + 1:failures[-1] + 2]
-        reported = bool(after) and not after[0].startswith('mo serve:')
+        # mo serve follows each failure with its record line, after any report
+        reported = bool(after) and not after[0].startswith(('mo serve:', '  record'))
         if reported != (assertion['stderr'] == 'report'):
             raise CheckFailed(f'standard error {"has" if reported else "has no"} report after '
                               f'its failure line: {json.dumps(assertion)}')
