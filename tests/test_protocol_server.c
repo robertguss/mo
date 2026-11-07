@@ -1026,10 +1026,54 @@ static void failure_export_bad_id(void) {
     finish(&f);
 }
 
+static uint64_t export_poll_wait(struct fixture_server *f, uint64_t until_us) {
+    CHECK(!mo_protocol_server_connected(f->server));
+    CHECK(mo_protocol_server_poll(f->server, until_us) == MO_PROTOCOL_SERVER_OK);
+    uint64_t waited = 0;
+    CHECK(mo_listener_fake_last_wait(f->listener, &waited) == MO_LISTENER_OK);
+    return waited;
+}
+
+/* WAIT until_us is the pin idle deadline, not the caller's later bound. */
+static void export_idle_wait(void) {
+    const char text[] =
+        "module Main\nservice\n state Text = \"a\".repeat(20000)\n tools fail\n"
+        " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+        "fn fail(_state: Text, _now: Time) : Int\n stop \"export fixture\"\nend\n";
+    char out[32768];
+    uint64_t idle = MO_LIMIT_EXPORT_IDLE_US, far = 2 * idle;
+    struct fixture_server f = start_source(text);
+    CHECK(export_poll_wait(&f, far) == far);
+    finish(&f);
+    f = start_source(text);
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "1", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL && strstr(out, "\"next\":null") == NULL);
+    CHECK(export_poll_wait(&f, far) == idle);
+    finish(&f);
+    f = start_source(text);
+    tool_request(&f, "fail", "{}", "1", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "1");
+    tool_request(&f, "mo-export", "{\"kind\":\"failure\",\"failure\":1}", "2", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL && strstr(out, "\"next\":null") == NULL);
+    CHECK(export_poll_wait(&f, far) == idle);
+    finish(&f);
+    f = start_source(text);
+    tool_request(&f, "fail", "{}", "1", out, sizeof out);
+    tool_error(out, "handler_failed", "none", "1");
+    tool_request(&f, "mo-export", "{\"kind\":\"failure\",\"failure\":1}", "2", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, 1) == MO_LISTENER_OK);
+    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "3", out, sizeof out);
+    CHECK(strstr(out, "\"isError\":false") != NULL && strstr(out, "\"next\":null") == NULL);
+    CHECK(export_poll_wait(&f, 1 + far) == idle);
+    finish(&f);
+}
+
 static void run(void *context) {
     failure_text_arguments();
     failure_view_unreadable();
     failure_export_bad_id();
+    export_idle_wait();
     export_expiry_refresh();
     export_generations();
     operator_views();

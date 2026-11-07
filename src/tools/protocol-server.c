@@ -512,6 +512,11 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
         if (expires < request.wait.until_us)
             request.wait.until_us = expires;
     }
+    if (s->failure_export.bytes != NULL) {
+        uint64_t expires = deadline(s->failure_export.touched, MO_LIMIT_EXPORT_IDLE_US);
+        if (expires < request.wait.until_us)
+            request.wait.until_us = expires;
+    }
     size_t slots[MO_LIMIT_MCP_CONNECTIONS];
     uint64_t next_service;
     if (mo_service_next_deadline(s->service, &next_service) && next_service < request.wait.until_us)

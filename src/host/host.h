@@ -380,5 +380,7 @@ MO_MUST_USE enum mo_listener_status mo_listener_fake_connect(struct mo_listener 
                                                              struct mo_listener_fake_peer *peer);
 MO_MUST_USE enum mo_listener_status mo_listener_fake_advance(struct mo_listener *listener,
                                                              uint64_t microseconds);
+MO_MUST_USE enum mo_listener_status mo_listener_fake_last_wait(const struct mo_listener *listener,
+                                                               uint64_t *until_us);
 
 #endif
