@@ -1,8 +1,9 @@
 # Phase 4 evaluation
 
-The evaluation of Phase 4, "agents can see inside it", follows `protocol.md`: fresh agent
-sessions diagnose and fix seeded task-queue bugs, first with today's tools (the baseline),
-then with the Phase 4 instruments. The rounds are compared with `compare.py`.
+The evaluation of Phase 4, "agents can see inside it", follows `diagnostic-protocol.md`: 16
+fresh agent sessions, on four private scenarios, use the Phase 4 instruments on a running task
+queue, and the results report what they did correctly and every miss. `protocol.md` is the
+original experiment, kept as a historical record; its baseline and comparison were never run.
 
 ## The scenarios are private until the final round
 

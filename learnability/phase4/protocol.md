@@ -2,7 +2,7 @@
 
 **Historical protocol, approved by Robert on 2026-11-04.** Its section 9 predictions were written before any sessions and remain unchanged. The pilot campaign ended at 30 attempts; see [pilot findings](pilot/findings.md). No baseline or final round was collected.
 
-**2026-11-05 amendment:** The mandatory baseline-before-implementation sequence below is superseded by R20–R24 of `docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`. This document preserves the original experiment and pilot rules; it does not authorize another 36-session round. A separately named diagnostic protocol must be approved before future scored collection. Pilots are not a measured baseline, and the original predictions are not rewritten to fit them.
+**2026-11-05 amendment:** The mandatory baseline-before-implementation sequence below is superseded by R20–R24 of `docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`. This document preserves the original experiment and pilot rules; it does not authorize another 36-session round. A separately named diagnostic protocol, [diagnostic-protocol.md](diagnostic-protocol.md), must be approved before future scored collection. Pilots are not a measured baseline, and the original predictions are not rewritten to fit them.
 
 The question is whether the Phase 4 instruments (the operator views, export with offline query,
 and failure replay with fix checking) let fresh agents diagnose and fix a running Mo service's
