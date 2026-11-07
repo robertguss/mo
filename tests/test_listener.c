@@ -215,6 +215,10 @@ static void fake_wait_and_limit(void) {
     union mo_listener_result result;
     CHECK(mo_listener_call(listener, MO_LISTENER_WAIT, &request, &result) == MO_LISTENER_OK);
     CHECK(result.wait.accept && result.wait.now.monotonic_us == 0);
+    uint64_t until = 0;
+    CHECK(mo_listener_fake_last_wait(NULL, &until) == MO_LISTENER_CONFIG);
+    CHECK(mo_listener_fake_last_wait(listener, NULL) == MO_LISTENER_CONFIG);
+    CHECK(mo_listener_fake_last_wait(listener, &until) == MO_LISTENER_OK && until == 5000);
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
         connections[i] = accept_peer(listener);
     CHECK(mo_listener_call(listener, MO_LISTENER_ACCEPT, NULL, &result) == MO_LISTENER_FULL);
@@ -237,6 +241,7 @@ static void fake_wait_and_limit(void) {
     request.wait.count = 1;
     request.wait.interests[0].events = 128;
     CHECK(mo_listener_call(listener, MO_LISTENER_WAIT, &request, &result) == MO_LISTENER_CONFIG);
+    CHECK(mo_listener_fake_last_wait(listener, &until) == MO_LISTENER_OK && until == 5000);
     CHECK(close_peer(listener, connections[0]) == MO_LISTENER_OK);
     request.wait.interests[0].events = MO_LISTENER_READABLE;
     CHECK(mo_listener_call(listener, MO_LISTENER_WAIT, &request, &result) == MO_LISTENER_STALE);
@@ -299,6 +304,8 @@ static void real_io(const char *address) {
         return;
     CHECK(mo_listener_port(listener) != 0);
     CHECK(mo_listener_fake_advance(listener, 1) == MO_LISTENER_CONFIG);
+    uint64_t until = 0;
+    CHECK(mo_listener_fake_last_wait(listener, &until) == MO_LISTENER_CONFIG);
     struct mo_listener_time first = now(listener);
     CHECK(first.monotonic_us > 0 && first.wall_us > 0);
     int client = client_socket(address, mo_listener_port(listener));

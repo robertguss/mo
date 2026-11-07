@@ -30,6 +30,7 @@ struct mo_listener {
     uint16_t port;
     bool fake;
     struct mo_listener_time time;
+    uint64_t last_wait_until_us;
     struct listener_slot slots[MO_LIMIT_MCP_CONNECTIONS];
 };
 
@@ -294,6 +295,14 @@ enum mo_listener_status mo_listener_fake_advance(struct mo_listener *listener,
     return MO_LISTENER_OK;
 }
 
+enum mo_listener_status mo_listener_fake_last_wait(const struct mo_listener *listener,
+                                                   uint64_t *until_us) {
+    if (listener == NULL || !listener->fake || until_us == NULL)
+        return MO_LISTENER_CONFIG;
+    *until_us = listener->last_wait_until_us;
+    return MO_LISTENER_OK;
+}
+
 static enum mo_listener_status sample_time(const struct mo_listener *listener,
                                            struct mo_listener_time *out) {
     if (listener->fake) {
@@ -432,6 +441,7 @@ static enum mo_listener_status wait_ready(struct mo_listener *listener,
         }
     }
     if (listener->fake) {
+        listener->last_wait_until_us = request->until_us;
         out->accept = accepting;
         out->now = listener->time;
         return MO_LISTENER_OK;
