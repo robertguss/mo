@@ -511,9 +511,12 @@ static void check_history(const struct model *m, const struct log_row *logs,
             continue;
         MO_ASSERT(failure_count < h->failure_count);
         const struct mo_store_history_failure *x = &h->failures[failure_count++];
+        struct mo_store_record state;
+        bool state_valid = frame_valid(MO_STORE_FAILURE_STATE, &s->record, &state) &&
+                           state.sequence == message.sequence && state.image == message.image;
         MO_ASSERT(
             x->id == (uint64_t)f->id && x->first == (f->first == 1) &&
-            strlen(x->kind) == f->kind.length &&
+            x->state_valid == state_valid && strlen(x->kind) == f->kind.length &&
             memcmp(x->kind, f->kind.bytes, f->kind.length) == 0 &&
             x->state_bytes == s->record.length - MO_STORE_FRAME_BYTES &&
             x->message.kind == MO_STORE_FAILURE_MESSAGE &&

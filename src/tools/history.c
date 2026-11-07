@@ -8,6 +8,7 @@ static const char gone[] = "messages before the snapshot are gone, so a message 
                            "log tail may still have run";
 static const char pre_capture[] = "this store predates failure capture, so it holds no failure "
                                   "records";
+static const char state_check[] = "the record's pre-call state failed its check";
 
 struct history_output {
     struct mo_buffer *out;
@@ -80,7 +81,13 @@ static void entry_text(struct history_output *o, const struct mo_store_history_e
 }
 
 /* A failure record, with the live failure view's field names, then its build and whether this
- * build can replay it. A record whose message does not decode is listed as unreadable. */
+ * build can replay it. A record whose message does not decode is listed as unreadable. A
+ * record whose pre-call state frame fails its check is listed, but not as replayable here. */
+static const char *replay_refusal(const struct mo_store_history_failure *f,
+                                  const struct mo_failure_record *r) {
+    return !f->state_valid ? state_check : mo_offline_build_refusal(r);
+}
+
 static void failure_json(struct history_output *o, const struct mo_store_history_failure *f) {
     struct mo_failure_record r;
     bool readable = mo_failure_read(f->message.bytes, f->message.length, &r) && r.id == f->id;
@@ -108,7 +115,7 @@ static void failure_json(struct history_output *o, const struct mo_store_history
     put_json(o, r.label.bytes, r.label.length);
     put(o, ",\"build\":\"");
     o->ok = o->ok && mo_offline_hex(o->out, r.build, sizeof r.build);
-    const char *refusal = mo_offline_build_refusal(&r);
+    const char *refusal = replay_refusal(f, &r);
     put(o, refusal == NULL ? "\",\"replayable_here\":true,\"not_replayable\":null}"
                            : "\",\"replayable_here\":false,\"not_replayable\":");
     if (refusal != NULL) {
@@ -134,7 +141,7 @@ static void failure_text(struct history_output *o, const struct mo_store_history
     put_safe(o, r.label.bytes, r.label.length);
     put(o, " (sha256 ");
     o->ok = o->ok && mo_offline_hex(o->out, r.build, sizeof r.build);
-    const char *refusal = mo_offline_build_refusal(&r);
+    const char *refusal = replay_refusal(f, &r);
     put(o, "); ");
     put(o, refusal == NULL ? "replayable here" : "not replayable here: ");
     put(o, refusal == NULL ? "" : refusal);

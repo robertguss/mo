@@ -1207,6 +1207,7 @@ static void history_stopped(struct mo_image *image, const char *path) {
               x->message.length == stored.message_bytes[i] &&
               x->message.image == mo_image_key(image, 0));
         struct mo_failure_record record;
+        CHECK(x->state_valid);
         CHECK(mo_failure_read(x->message.bytes, x->message.length, &record) && record.id == x->id &&
               record.handler == 2 && !record.timer);
     }
@@ -1477,6 +1478,65 @@ static void history_damaged_log(struct mo_image *image, const char *path) {
     }
 }
 
+/* Last byte of the MOST checksum, as accidental corruption of a retained state frame. */
+static void damage_checksum(const char *path, const char *table, uint64_t rowid) {
+    sqlite3 *db;
+    sqlite3_blob *blob;
+    MO_ASSERT(sqlite3_open(path, &db) == SQLITE_OK);
+    MO_ASSERT(sqlite3_blob_open(db, "main", table, "record", (sqlite3_int64)rowid, 1, &blob) ==
+              SQLITE_OK);
+    int n = sqlite3_blob_bytes(blob);
+    MO_ASSERT(n >= 8);
+    uint8_t byte;
+    MO_ASSERT(sqlite3_blob_read(blob, &byte, 1, n - 1) == SQLITE_OK);
+    byte ^= 0x40;
+    MO_ASSERT(sqlite3_blob_write(blob, &byte, 1, n - 1) == SQLITE_OK);
+    MO_ASSERT(sqlite3_blob_close(blob) == SQLITE_OK && sqlite3_close(db) == SQLITE_OK);
+}
+
+static bool catalog_rows(const struct mo_store_failure *f, void *context) {
+    CHECK(f->state.bytes == NULL);
+    (*(unsigned *)context)++;
+    return true;
+}
+
+static bool one_failure(const struct mo_store_failure *f, void *context) {
+    *(uint64_t *)context = f->id;
+    return true;
+}
+
+/* A checksum-only flip of one retained pre-call state: history still lists the folder and the
+ * sibling, but does not claim that id is replayable. Get of the damaged id is corrupt; the
+ * live catalog is still length-only and succeeds. */
+static void history_corrupt_state_checksum(struct mo_image *image, const char *path) {
+    struct history_fixture f;
+    history_folder(image, path, &f);
+    struct mo_store_history h;
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    CHECK(h.failure_count == 2 && h.failures[0].state_valid && h.failures[1].state_valid);
+    mo_store_history_free(&h);
+    damage_checksum(path, "failure_state", 1);
+    CHECK(mo_store_history_read(path, false, &h) == MO_STORE_FOLDER_OK);
+    CHECK(h.failure_count == 2 && h.failures[0].id == 1 && !h.failures[0].state_valid);
+    CHECK(h.failures[1].id == 3 && h.failures[1].state_valid);
+    mo_store_history_free(&h);
+    struct mo_store_history_pair pair;
+    CHECK(mo_store_history_pair(path, false, 1, &pair) == MO_STORE_FOLDER_DAMAGED);
+    CHECK(mo_store_history_pair(path, false, 3, &pair) == MO_STORE_FOLDER_OK && pair.found);
+    mo_store_history_pair_free(&pair);
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    unsigned count = 0;
+    uint32_t omitted = 999;
+    CHECK(mo_store_failure_catalog(store, 0, catalog_rows, &count, &omitted) == MO_STORE_OK);
+    CHECK(count == 2 && omitted == 0);
+    uint64_t id = 0;
+    CHECK(mo_store_failure_get(store, 1, one_failure, &id) == MO_STORE_CORRUPT);
+    CHECK(mo_store_failure_get(store, 3, one_failure, &id) == MO_STORE_OK && id == 3);
+    mo_store_close(store);
+    CHECK(unlink(path) == 0);
+}
+
 /* Writes a store directly: a snapshot of snapshot_bytes, three log records each with one
  * argument of argument_bytes, and failures with message_bytes payloads. */
 static void history_sized(const char *path, size_t snapshot_bytes, size_t argument_bytes,
@@ -1573,6 +1633,7 @@ static void history_reader(const char *dir, const char *path) {
     history_before_capture(image, path);
     history_unreadable(image, dir, path);
     history_damaged_log(image, path);
+    history_corrupt_state_checksum(image, path);
     history_nonpositive_failure(image, path);
     history_bound(path);
     history_killed(image, path);
