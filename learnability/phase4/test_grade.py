@@ -89,6 +89,12 @@ class Answers(unittest.TestCase):
             self.assertNotEqual(grade.normalized(rule, given), key, given)
         self.assertEqual(grade.normalized('shared_payload_jobs', '15'), '15')
         self.assertIsNone(grade.normalized('shared_payload_jobs', 'about 15'))
+        self.assertEqual(grade.normalized('waiting_payload_bytes', '1234'), '1234')
+        self.assertIsNone(grade.normalized('waiting_payload_bytes', '1,234 bytes'))
+        when = grade.normalized('last_call', '2026-11-04T12:09:49Z')
+        self.assertEqual(grade.normalized('last_call', '2026-11-04T13:09:49.5+01:00'), when)
+        self.assertNotEqual(grade.normalized('last_call', '2026-11-04T12:09:48Z'), when)
+        self.assertIsNone(grade.normalized('last_call', '2026-11-04T12:09:49'))
 
 
 class Blocks(unittest.TestCase):

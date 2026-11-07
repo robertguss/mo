@@ -267,20 +267,28 @@ def extracted(text):
     return values.pop() if len(values) == 1 else None
 
 
-def normalized(rule, value):
-    if rule == 'shared_payload_jobs':
-        return str(int(value)) if re.fullmatch(r'\d+', value) else None
-    parts = value.split()
-    if len(parts) != 2:
-        return None
+def instant(text):
+    """An RFC 3339 time with its offset, as UTC to the second, or None."""
     try:
-        when = datetime.datetime.fromisoformat(parts[1].replace('Z', '+00:00'))
+        when = datetime.datetime.fromisoformat(text.replace('Z', '+00:00'))
     except ValueError:
         return None
     if when.tzinfo is None:
         return None
-    when = when.astimezone(datetime.timezone.utc).replace(microsecond=0)
-    return f'{parts[0].strip("`").lower()} {when.strftime("%Y-%m-%dT%H:%M:%SZ")}'
+    return when.astimezone(datetime.timezone.utc).replace(microsecond=0).strftime(
+        '%Y-%m-%dT%H:%M:%SZ')
+
+
+def normalized(rule, value):
+    if rule in ('shared_payload_jobs', 'waiting_payload_bytes'):
+        return str(int(value)) if re.fullmatch(r'\d+', value) else None
+    if rule == 'last_call':
+        return instant(value.strip('`'))
+    parts = value.split()
+    if len(parts) != 2:
+        return None
+    when = instant(parts[1])
+    return None if when is None else f'{parts[0].strip("`").lower()} {when}'
 
 
 def answer_problems(variant, stream, key):
