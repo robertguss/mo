@@ -216,12 +216,47 @@ that hold the old token get 401 until they restart.
 
 ## Upgrade
 
-A new build is a new tree: run Install step 2 with the new `SHA`, change both
-paths in the unit, `sudo systemctl daemon-reload` and restart. If the new build
-refuses the data with E1409, its program changed. Point the unit back at the
-old tree, read the jobs you need through `list`, then follow Recover from a
-stop's fixed-program path with a new data folder. Keep the old tree and the old
-folder.
+The deployed queue above is retired. For a queue running an upgrade-capable build,
+use a checked restart on its host. Build the new pinned tree with Install step 2,
+keep the old executable and source, stop the unit, and copy the whole stopped
+folder (including any journal) before changing it.
+
+Check the candidate against the old source with the new executable:
+
+```sh
+/opt/mo/$SHA/build/gcc/debug/mo check NEW/main.mo --upgrade-from /var/lib/task-queue
+```
+
+If the state schema changes, add `--migrate Module.function`. The function takes
+one generated `UpgradeOld` state and returns the new state, without capabilities
+or type parameters. This command checks types; it does not run the migration
+against the saved queue.
+The stopped folder supplies the recorded source and generated declarations from
+any prior migration; the check leaves it unchanged. A standalone old source file
+can also be used as `--upgrade-from OLD/main.mo` when it needs no retained context.
+
+For the first start of the new version, set the unit's `ExecStart` to the new
+executable and candidate source with `--upgrade`, retaining its port, data folder,
+allowed host and environment file. Include `--migrate Module.function` if needed.
+Run `sudo systemctl daemon-reload` and start the unit. A successful checked restart
+validates the migrated state and commits it with the recorded program. A migration
+refusal leaves the previous program and state authoritative; inspect the refusal
+instead of repeatedly restarting the unit.
+
+After success, remove the source argument, `--upgrade` and `--migrate` from
+`ExecStart`, leaving `mo serve --data /var/lib/task-queue --port 8000` and the
+existing allowed-host option. Reload the unit. Later starts compile the recorded
+source and its retained generated declaration context; they do not rerun the
+migration. Keep `RestartPreventExitStatus=1 2 69` so compilation or migration
+refusals do not loop.
+
+An older folder with no program record is adopted on an exact image match.
+`--adopt` permits a different image only through verified replay; a report of
+zero verified messages is not evidence that changed handlers preserve behavior.
+If checked restart cannot accept the candidate, use the agent guide's fresh-folder
+recovery procedure: export needed data through the old program's tools, start the
+new program on an empty folder and import through its tools. Keep the old tree
+and folder. Live swapping and streaming notifications are a later milestone.
 
 ## Drill
 

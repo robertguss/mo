@@ -220,6 +220,10 @@ if have python3; then
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
 				python3 ci/check_cli.py "$driver"
 			later "Authenticated operator views ($driver)" python3 ci/check_operator.py "$driver"
+			later "Typed upgrades and checked restart ($driver)" python3 ci/check_upgrades.py "$driver"
+			later "Recorded schema fallback ($driver)" python3 ci/check_upgrade_fallback.py "$driver"
+			later "Upgrade adoption replay ($driver)" python3 ci/check_upgrade_adoption.py "$driver"
+			later "Recorded-context upgrade checks ($driver)" python3 ci/check_upgrade_context.py "$driver"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
 			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"

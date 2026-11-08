@@ -137,7 +137,7 @@ static void serve_outcome(int *fault, int value, int status, const char *log) {
     MO_ASSERT(mo_diags_init(&diags));
     mode_t mask = umask(022);
     *fault = value;
-    CHECK(mo_serve_image(&cli, f.image, 0, output, errors, &diags) == status);
+    CHECK(mo_serve_image(&cli, f.image, 0, output, errors, &diags, NULL) == status);
     CHECK(umask(mask) == 022);
     CHECK(*fault == 0 && !mo_diags_any(&diags));
     char text[256] = {0};

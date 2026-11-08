@@ -2482,7 +2482,9 @@ static const char query_main[] =
     "fn no_time(_state: State, amount: Int, _label: Text) : Int\namount\nend\n"
     "fn extra(_state: State, _now: Time, amount: Int, _label: Text, _more: Int) : Int\n"
     "amount\nend\n"
-    "fn later(state: State, _now: Time) : Int\nstate.total\nend\n";
+    "fn later(state: State, _now: Time) : Int\nstate.total\nend\n"
+    "fn migrate(state: State) : State\nstate\nend\n"
+    "fn migrate_shadow(state: Shadow) : State\nState(total: state.total)\nend\n";
 
 /* The status of one query entry check, and the code of the diagnostic it adds, or 0. */
 static enum mo_query_entry query(struct fixture *f, const struct mo_program *program,
@@ -2565,6 +2567,21 @@ static void query_entries(void) {
         /* Main imports only State: tick is declared in Store, not Main. */
         CHECK(query(&f, program, "tick", state, UINT32_MAX, &function, &code) ==
               MO_QUERY_ENTRY_NO_FUNCTION);
+
+        uint32_t migration = UINT32_MAX;
+        CHECK(mo_check_migration_entry(&f.arena, program, (const uint8_t *)"migrate", 7,
+                                       program->services[0].state, &f.diags,
+                                       &migration) == MO_QUERY_ENTRY_ACCEPTED);
+        CHECK(migration < program->function_count);
+        const char *bad_migrations[] = {"ident", "holder", "call", "total", "refresh", "shadow"};
+        for (size_t i = 0; i < sizeof bad_migrations / sizeof *bad_migrations; i++) {
+            uint32_t before = f.diags.count;
+            CHECK(mo_check_migration_entry(&f.arena, program, (const uint8_t *)bad_migrations[i],
+                                           strlen(bad_migrations[i]), program->services[0].state,
+                                           &f.diags, &migration) == MO_QUERY_ENTRY_REFUSED);
+            CHECK(migration == UINT32_MAX && f.diags.count == before + 1);
+            CHECK(f.diags.items[before].code == MO_CODE_UPGRADE_MIGRATION_SIGNATURE);
+        }
 
         /* Refused before the purity walk, which cannot walk a type parameter. */
         query_refuses(&f, program, "ident", state, UINT32_MAX, MO_CODE_QUERY_GENERIC);

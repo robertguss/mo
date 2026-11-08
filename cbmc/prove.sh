@@ -34,6 +34,8 @@ fi
 # at least d bytes, plus one for the loop's exit), "f.k:+" is n + 1 (a loop over bytes) and
 # "f.k:c" is c. The least input size lets every loop's body run.
 proofs=(
+	"bundle_path|mo_utf8_valid component_is|harness_bundle_path.0:+,bundle_path.0:+,mo_binary_uint.0:5|18|bundle.c|--unwind 25"
+	"mo_bundle_read|mo_utf8_valid bundle_path compare|harness_mo_bundle_read.0:+,harness_mo_bundle_read.1:/8,mo_bundle_read.0:/8,bundle_path.0:+,mo_binary_uint.0:5|32|bundle.c|--unwind 33"
 	"export_page_matches||harness_export_page_matches.0:17,memcmp.0:17||export-consume.c|--unwind 17"
 	"slice||harness_slice.0:+,mo_binary_uint.0:5|12|failure.c|--unwind 6"
 	"mo_failure_argument_next||harness_mo_failure_argument_next.0:+,mo_binary_uint.0:5|13|failure.c|--unwind 6"

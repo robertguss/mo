@@ -285,7 +285,25 @@
     /* A query's function does not take the main service's state type first, or there is none. */  \
     X(1412, QUERY_STATE, NULL)                                                                     \
     /* A query's function takes more than the state, or not the failure's time and arguments. */   \
-    X(1413, QUERY_INPUTS, NULL)
+    X(1413, QUERY_INPUTS, NULL)                                                                    \
+    X(1414, UPGRADE_CREDENTIAL, NULL)                                                              \
+    X(1415, UPGRADE_BUSY, NULL)                                                                    \
+    X(1416, UPGRADE_STALE_BASE, NULL)                                                              \
+    X(1417, UPGRADE_BUNDLE_SIZE, NULL)                                                             \
+    X(1418, UPGRADE_BUNDLE_FORMAT, NULL)                                                           \
+    X(1419, UPGRADE_COMPILE_DIAGNOSTIC, NULL)                                                      \
+    X(1420, UPGRADE_COMPILE_BUDGET, NULL)                                                          \
+    X(1421, UPGRADE_MISSING_MIGRATION, NULL)                                                       \
+    X(1422, UPGRADE_MIGRATION_SIGNATURE, NULL)                                                     \
+    X(1423, UPGRADE_MIGRATION_TRAP, NULL)                                                          \
+    X(1424, UPGRADE_MIGRATION_BUDGET, NULL)                                                        \
+    X(1425, UPGRADE_INVALID_VALUE, NULL)                                                           \
+    X(1426, UPGRADE_CHANGED_ACCESS, NULL)                                                          \
+    X(1427, UPGRADE_TIMER_INTERVAL, NULL)                                                          \
+    X(1428, UPGRADE_BOUNDARY_DEADLINE, NULL)                                                       \
+    X(1429, UPGRADE_RECORDED_COMPILE, NULL)                                                        \
+    X(1430, UPGRADE_SOURCE_MISMATCH, NULL)                                                         \
+    X(1431, UPGRADE_AMBIGUOUS_PROGRAM, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

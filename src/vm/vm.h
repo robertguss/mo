@@ -182,6 +182,9 @@ struct mo_service_event {
     struct mo_bytecode_string handler;
     /* This restart's count in the window; 0 on other events. */
     uint32_t restart;
+    /* First rejected log sequence during startup replay; zero when unavailable
+     * or when this event is not a replay failure. Separate from capture IDs. */
+    uint64_t replay_sequence;
     uint64_t record_id;
     const char *record_unavailable;
 };
@@ -218,6 +221,14 @@ MO_MUST_USE enum mo_service_status mo_service_open(const struct mo_image *image,
                                                    const struct mo_service_hooks *hooks,
                                                    struct mo_store *store,
                                                    struct mo_service_loop **out);
+/* Checked-restart staging: restore using recorded_image, verify every replay checksum,
+ * and evaluate intervals without writing snapshots or logs. The returned loop is detached
+ * from the store. An empty store evaluates the start value but does not record it. */
+MO_MUST_USE enum mo_service_status mo_service_recover(const struct mo_image *image, uint32_t index,
+                                                      const struct mo_service_hooks *hooks,
+                                                      struct mo_store *store,
+                                                      uint64_t recorded_image,
+                                                      struct mo_service_loop **out);
 void mo_service_free(struct mo_service_loop *service);
 /* Arguments must be valid typed values from this heap or the image. Submission
  * retains values only on OK; durable updates copy them through the saved codec

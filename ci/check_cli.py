@@ -12,6 +12,7 @@ import select
 import shutil
 import signal
 import socket
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -1339,9 +1340,9 @@ def service_commands(binary):
         assert not result.stdout
         assert b'error E1408: mo run does not start services yet' in result.stderr
         emitted = folder / 'counter.bc'
-        result = run(binary, ['emit', str(path), '-o', str(emitted)], 1, env=env)
-        assert b'E0079' in result.stderr and b'E1408' not in result.stderr
-        assert not emitted.exists()
+        result = run(binary, ['emit', str(path), '-o', str(emitted)], 0, env=env)
+        assert not result.stdout and not result.stderr
+        assert emitted.read_bytes().startswith(b'MOBC')
         result = run(binary, ['check', '--emit=bytecode', str(path)], 0, env=env)
         assert b'\nservices\n  S0 ' in result.stdout and not result.stderr
         path.write_text(source + '\nfn main()\nend\n')
@@ -1715,16 +1716,13 @@ def serve_guide():
             "The token never appears in output, logs or errors.",
             "- 0: SIGTERM or SIGINT stopped it. It closes its port, so a new connection is refused, "
             "and finishes the open ones first, which their deadlines bound to about 25 seconds.",
-            "An empty `service.sqlite` never held data, so delete it and start again.",
             "- 69: supervision (D308) stopped the service.",
             "It stays down until a person starts it, as Recover from a stop says.",
-            "A fixed handler is a changed source, so `mo serve` refuses the old `DIR` with E1409.",
+            "any source-byte change, including comments, needs an explicit upgrade.",
             "`service.sqlite` is readable only by its owner.",
             "- 70: it died any other way",
             "- 75: another process held the store for the whole wait.",
-            "`counter.mo`, `./counter.mo`, an absolute path, `sub/../counter.mo`, a symlinked folder "
-            "and a copy of the folder all recover the same `DIR`.",
-            "Other comment and whitespace edits may recover or be refused."):
+            "Moving the same files does not change their source identity."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
 
 
@@ -1749,12 +1747,25 @@ def serve_command(binary):
                 served.close()
                 outputs.append(served.line + served.errors())
 
-        def refused(source=counter, folder_for_data=data, port="0", environment=env, extra=()):
+        def refused(source=counter, folder_for_data=data, port="0", environment=env, extra=(),
+                    code="E1409"):
             with serving(source, folder_for_data, port, environment, extra) as served:
                 assert not served.line, served.line
                 errors = served.finish(1)
-                assert b"error E1409:" in errors, errors
+                assert f"error {code}:".encode() in errors, errors
                 return errors
+
+        def source_refused(source, folder_for_data=data):
+            database = folder_for_data / "service.sqlite"
+            before = database.read_bytes()
+            with sqlite3.connect(database) as db:
+                digest = db.execute("SELECT source FROM program").fetchone()[0].hex()
+            errors = refused(source, folder_for_data, code="E1430")
+            assert errors == (f"error E1430: source differs from recorded digest {digest}; "
+                              "use --upgrade\n").encode(), errors
+            assert database.read_bytes() == before, "source refusal changed persistent state"
+            assert serve_events(errors) == [], errors
+            return errors
 
         with serving() as served:
             status, body = served.post(SERVE_INITIALIZE, token)
@@ -1867,9 +1878,7 @@ def serve_command(binary):
         for before, after in SERVE_EDITS:
             assert before in SERVE_HALTING, before
             (edited / counter).write_text(SERVE_HALTING.replace(before, after))
-            errors = refused(edited / counter)
-            assert b"written by a different program; recovery refused" in errors, errors
-            assert serve_events(errors) == [b"mo serve: failure: service: " + SAVED_REFUSED], errors
+            source_refused(edited / counter)
         elsewhere = folder / "elsewhere"
         elsewhere.mkdir()
         (elsewhere / counter).write_text(SERVE_HALTING)
@@ -1903,9 +1912,7 @@ def serve_command(binary):
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         (tree / "app.mo").write_text((tree / "app.mo").read_text().replace("# note one", "# note two"))
-        with serving(tree / "app.mo", modules) as served:
-            assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
-            assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+        source_refused(tree / "app.mo", modules)
 
         pages = folder / "pages"
         pages.mkdir()
@@ -1950,8 +1957,7 @@ def serve_command(binary):
         fixed = folder / "fixed.mo"
         fixed.write_text(SERVE_HALTING.replace("module Counter", "module Fixed")
                          .replace('stop "halted on purpose"', '"fine"'))
-        errors = refused(fixed)
-        assert b"written by a different program" in errors, errors
+        source_refused(fixed)
         renewed = folder / "renewed"
         renewed.mkdir()
         with serving(fixed, renewed) as served:
@@ -2045,8 +2051,7 @@ def serve_command(binary):
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "1"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
         path.write_text(path.read_text().replace("## Reads the count.", "## Reads the total."))
-        errors = refused(path, state)
-        assert serve_events(errors) == [b"mo serve: failure: service: " + SAVED_REFUSED], errors
+        source_refused(path, state)
         path, state = timed("Failing", "1.millisecond", "_state", 'stop "tick failed"')
         with serving(path, state) as served:
             errors = served.finish(69)
@@ -2080,7 +2085,9 @@ def serve_command(binary):
         plain.write_text("module Plain\nuse Aaa\n\nfn main(console: Console)\n"
                          "  now = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"valid time\"\n"
                          "  console.print(Aaa.peek(1, now))\nend\n")
-        errors = refused(plain, imported)
+        plain_state = folder / "plain-state"
+        plain_state.mkdir()
+        errors = refused(plain, plain_state)
         assert b"this module has no service to start" in errors, errors
 
         for output in outputs:
@@ -2980,6 +2987,12 @@ def runner(binary):
         result = run(binary, ["run", str(path)], 1)
         assert not result.stdout and b"E0079" in result.stderr
         assert b"the entry module has no main function" in result.stderr
+
+        service_image = path.parent / "service.bc"
+        emitted = run(binary, ["emit", "services/task-queue/main.mo",
+                               "-o", str(service_image)], 0)
+        assert not emitted.stdout and not emitted.stderr
+        assert service_image.read_bytes()[:4] == b"MOBC"
 
         for sample in ("examples/account.mo", "examples/job-queue.mo",
                        "examples/notes-tool.mo", "examples/rate-limit.mo"):
@@ -3896,7 +3909,7 @@ def guide_claims(binary):
          "`services` section holding one descriptor for each module that declares a service, "
          "including imported modules.",
          "It works on a module without `main`.",
-         "`mo emit FILE -o OUT` writes the same descriptors, but still needs a `main` (E0079).",
+         "`mo emit FILE -o OUT` writes the same descriptors and accepts a service without `main`.",
          "Neither command evaluates a service's start value or reads its token, and `mo run` "
          "still does not start a service (E1408).",
          "`mo check --emit=core FILE` shows the start value and timer intervals as ordinary "
@@ -3978,8 +3991,8 @@ def guide_claims(binary):
              "the files it is given.",
              "`mo format` and `mo fix` rewrite the files they are given.")
         says("`mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode "
-             "to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A library module "
-             "with no `main` is E0079, as for `mo run`, and a file that cannot be written is "
+             "to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A module "
+             "with neither `main` nor a service is E0079, as for `mo run`, and a file that cannot be written is "
              "E1404. This build has no command that runs a bytecode file; run the source with "
              "`mo run`.")
         unused = folder / "unused.mo"

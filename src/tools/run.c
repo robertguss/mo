@@ -230,7 +230,7 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
         goto done;
     }
     if (cli->command == MO_COMMAND_SERVE) {
-        status = mo_serve_image(cli, image, service, output, errors, diags);
+        status = mo_serve_image(cli, image, service, output, errors, diags, NULL);
         goto done;
     }
     errno = 0;

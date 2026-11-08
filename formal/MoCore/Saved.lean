@@ -783,4 +783,110 @@ info: 'MoCore.Saved.decodeBlind_ignores_schema' depends on axioms: [propext, Cla
 -/
 #guard_msgs in #print axioms decodeBlind_ignores_schema
 
+/-! ## Migration boundary
+
+The finite-schema model uses an explicit type-indexed table of nominal-name overrides.
+The caller supplies the type table; NULL entries in C correspond to `none`. As elsewhere
+in this file, recursive source declarations and resource accounting are outside this model.
+Activation below models the validation/commit boundary, not SQLite or the C validator.
+-/
+
+def savedName (types : List Schema) (names : List (Option String)) (t : Schema)
+    (original : String) : String :=
+  match types.idxOf? t with
+  | none => original
+  | some i => match names[i]? with
+    | some (some n) => n
+    | _ => original
+
+mutual
+def overrideNames (types : List Schema) (names : List (Option String)) : Schema → Schema
+  | .leaf l => .leaf l
+  | .tuple ts => .tuple (overrideAll types names ts)
+  | .list t => .list (overrideNames types names t)
+  | .set t => .set (overrideNames types names t)
+  | .map k v => .map (overrideNames types names k) (overrideNames types names v)
+  | .record n ps fs => .record (savedName types names (.record n ps fs) n)
+      (overrideAll types names ps) (overrideFields types names fs)
+  | .choice n ps cs => .choice (savedName types names (.choice n ps cs) n)
+      (overrideAll types names ps) (overrideCases types names cs)
+def overrideAll (types : List Schema) (names : List (Option String)) : List Schema → List Schema
+  | [] => []
+  | t :: ts => overrideNames types names t :: overrideAll types names ts
+def overrideFields (types : List Schema) (names : List (Option String)) :
+    List (String × Schema) → List (String × Schema)
+  | [] => []
+  | (n, t) :: fs => (n, overrideNames types names t) :: overrideFields types names fs
+def overrideCases (types : List Schema) (names : List (Option String)) :
+    List (String × Bool × List (String × Schema)) →
+    List (String × Bool × List (String × Schema))
+  | [] => []
+  | (n, unnamed, fs) :: cs =>
+      (n, unnamed, overrideFields types names fs) :: overrideCases types names cs
+end
+
+/-- Overrides change only the schema expected at the input boundary; the ordinary decoder
+    and its other-schema refusal theorem above remain unchanged. -/
+def decodeMigrationInput (types : List Schema) (names : List (Option String))
+    (t : Schema) (bytes : Bytes) : Option Val := decode (overrideNames types names t) bytes
+
+theorem migration_input_checks_schema (types : List Schema) (names : List (Option String))
+    (t : Schema) (bytes : Bytes) (v : Val)
+    (h : decodeMigrationInput types names t bytes = some v) :
+    ∃ payload, schemaOf bytes = some (schemaBytes (overrideNames types names t), payload) :=
+  decode_checks_schema _ _ _ h
+
+/--
+info: 'MoCore.Saved.migration_input_checks_schema' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms migration_input_checks_schema
+
+structure UpgradeStore where
+  program : Bytes
+  snapshot : Val
+  log : List Bytes
+  ordinal : Nat
+  deriving BEq, Repr
+
+/-- `candidate = none` includes a trap or exhausted budget. A successful migration still
+    requires validation against the new, unmodified state schema before any store change. -/
+noncomputable def activateMigration (old : UpgradeStore) (program : Bytes) (state : Schema)
+    (candidate : Option Val) : Option UpgradeStore := by
+  classical
+  exact candidate.bind fun value =>
+    if Fits state value then some ⟨program, value, [], old.ordinal + 1⟩ else none
+
+def afterMigration (old : UpgradeStore) (activation : Option UpgradeStore) : UpgradeStore :=
+  activation.getD old
+
+theorem migration_refusal_preserves_store (old : UpgradeStore) :
+    afterMigration old none = old := rfl
+
+/--
+info: 'MoCore.Saved.migration_refusal_preserves_store' does not depend on any axioms
+-/
+#guard_msgs in #print axioms migration_refusal_preserves_store
+
+theorem migration_accepted_validates (old : UpgradeStore) (program : Bytes) (state : Schema)
+    (candidate : Option Val) (next : UpgradeStore)
+    (h : activateMigration old program state candidate = some next) : Fits state next.snapshot := by
+  classical
+  cases candidate with
+  | none => simp [activateMigration] at h
+  | some v =>
+    simp only [activateMigration, Option.bind_some] at h
+    split at h
+    next valid => cases h; exact valid
+    next invalid => simp at h
+
+/--
+info: 'MoCore.Saved.migration_accepted_validates' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms migration_accepted_validates
+
+#guard overrideNames [.record "Old" [] []] [some "UpgradeOld.Old"] (.record "Old" [] []) ==
+  .record "UpgradeOld.Old" [] []
+#guard overrideNames [.record "Old" [] []] [some "UpgradeOld.Old"] (.record "Other" [] []) ==
+  .record "Other" [] []
+
 end MoCore.Saved

@@ -36,7 +36,7 @@ struct mo_service_loop {
     uint64_t restarts[MO_LIMIT_SERVICE_RESTARTS];
     uint64_t last_clock;
     struct mo_store *store;
-    uint64_t sequence, image_key, snapshot_sequence, encoded_sequence;
+    uint64_t sequence, image_key, restore_key, snapshot_sequence, encoded_sequence;
     struct mo_buffer current_encoding;
     struct mo_service_message_summary log[MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES];
     uint32_t log_count;
@@ -313,7 +313,7 @@ static bool snapshot(struct mo_service_loop *s, const uint8_t *bytes, size_t len
 struct recovery {
     struct mo_service_loop *service;
     struct mo_cell state;
-    uint64_t sequence, snapshot;
+    uint64_t sequence, snapshot, failed_sequence;
     enum mo_service_status limit;
     uint32_t failed_function;
     bool found;
@@ -323,7 +323,8 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
     struct recovery *r = context;
     struct mo_service_loop *s = r->service;
     struct mo_heap *heap = s->process->heap;
-    if (record->image != s->image_key)
+    r->failed_sequence = record->kind == MO_STORE_LOG ? record->sequence : 0;
+    if (record->image != s->restore_key)
         return false;
     if (record->kind == MO_STORE_STATE) {
         if (r->found || !mo_value_decode(heap, s->descriptor->state_type, record->bytes,
@@ -396,6 +397,7 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
     for (uint32_t i = 0; i < built; i++)
         mo_value_drop(heap, tool->argument_types[i], m.arguments[i]);
     if (ok) {
+        r->failed_sequence = 0;
         MO_ASSERT(s->log_count < MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
         s->log[s->log_count++] =
             (struct mo_service_message_summary){.arrival = m.arrival,
@@ -409,11 +411,13 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
 }
 
 static enum mo_service_status recover(struct mo_service_loop *s, bool *found, struct mo_cell *state,
-                                      bool *snapshot_due, uint32_t *failed_function) {
+                                      bool *snapshot_due, uint32_t *failed_function,
+                                      uint64_t *failed_sequence) {
     struct recovery r = {.service = s, .limit = MO_SERVICE_OK, .failed_function = MO_NO_INDEX};
     enum mo_store_status status = mo_store_call(s->store, MO_STORE_LOAD, NULL, restore_record, &r);
     if (status != MO_STORE_OK) {
         *failed_function = r.failed_function;
+        *failed_sequence = r.failed_sequence;
         if (r.found)
             mo_value_drop(s->process->heap, s->descriptor->state_type, r.state);
         if (r.limit != MO_SERVICE_OK)
@@ -523,9 +527,10 @@ enum mo_service_status mo_service_new(const struct mo_image *image, uint32_t ind
     return mo_service_open(image, index, hooks, NULL, out);
 }
 
-enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t index,
-                                       const struct mo_service_hooks *hooks, struct mo_store *store,
-                                       struct mo_service_loop **out) {
+static enum mo_service_status open_service(const struct mo_image *image, uint32_t index,
+                                           const struct mo_service_hooks *hooks,
+                                           struct mo_store *store, bool staging,
+                                           uint64_t restore_key, struct mo_service_loop **out) {
     MO_ASSERT(image != NULL && hooks != NULL && hooks->clock != NULL && hooks->reply != NULL &&
               hooks->event != NULL && out != NULL);
     const struct mo_bytecode *file = mo_image_bytecode(image);
@@ -536,10 +541,12 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
         mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_service_loop));
     if (s == NULL)
         return MO_SERVICE_MEMORY;
-    *s = (struct mo_service_loop){.descriptor = &file->services[index],
-                                  .hooks = *hooks,
-                                  .store = store,
-                                  .image_key = mo_image_key(image, index)};
+    *s =
+        (struct mo_service_loop){.descriptor = &file->services[index],
+                                 .hooks = *hooks,
+                                 .store = store,
+                                 .image_key = mo_image_key(image, index),
+                                 .restore_key = staging ? restore_key : mo_image_key(image, index)};
     mo_buffer_init(&s->current_encoding, MO_LIMIT_SAVED_BYTES);
     s->timers = mo_arena_allocate_array(&arena, s->descriptor->timer_count, sizeof *s->timers,
                                         _Alignof(struct service_timer));
@@ -574,10 +581,11 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     if (status == MO_SERVICE_OK)
         failed_function = MO_NO_INDEX;
     bool found = false, snapshot_due = false;
+    uint64_t failed_sequence = 0;
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
     if (status == MO_SERVICE_OK && store != NULL)
-        status = recover(s, &found, &s->state, &snapshot_due, &failed_function);
+        status = recover(s, &found, &s->state, &snapshot_due, &failed_function, &failed_sequence);
     if (status == MO_SERVICE_OK && !found) {
         failed_function = s->descriptor->start;
         status = invoke(s->process, s->descriptor->start, NULL, 0, &s->state, &defect);
@@ -593,7 +601,7 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     /* Recovery may stop between an append and its due snapshot; finish it now. */
     if (status == MO_SERVICE_OK)
         failed_function = MO_NO_INDEX;
-    if (status == MO_SERVICE_OK && snapshot_due &&
+    if (status == MO_SERVICE_OK && !staging && snapshot_due &&
         !(encoded.length != 0 ? snapshot(s, encoded.bytes, encoded.length)
                               : snapshot(s, s->current_encoding.bytes, s->current_encoding.length)))
         status = MO_SERVICE_STORE;
@@ -608,15 +616,31 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
                                                .time = time,
                                                .defect = defect.reason == NULL ? NULL : &defect,
                                                .function = failed_function,
-                                               .handler = handler_name(s, failed_function)};
+                                               .handler = handler_name(s, failed_function),
+                                               .replay_sequence = failed_sequence};
         s->hooks.event(&event, s->hooks.context);
         mo_service_free(s);
         return status;
     }
+    if (staging)
+        s->store = NULL;
     s->running = true;
     start_timers(s, time);
     *out = s;
     return MO_SERVICE_OK;
+}
+
+enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t index,
+                                       const struct mo_service_hooks *hooks, struct mo_store *store,
+                                       struct mo_service_loop **out) {
+    return open_service(image, index, hooks, store, false, 0, out);
+}
+enum mo_service_status mo_service_recover(const struct mo_image *image, uint32_t index,
+                                          const struct mo_service_hooks *hooks,
+                                          struct mo_store *store, uint64_t recorded_image,
+                                          struct mo_service_loop **out) {
+    MO_ASSERT(store != NULL);
+    return open_service(image, index, hooks, store, true, recorded_image, out);
 }
 
 void mo_service_free(struct mo_service_loop *s) {
@@ -1152,7 +1176,7 @@ bool mo_service_encoded_state(const struct mo_service_loop *s, const uint8_t **b
     MO_ASSERT(s != NULL && bytes != NULL && length != NULL);
     *bytes = s->current_encoding.bytes;
     *length = s->current_encoding.length;
-    return s->store != NULL;
+    return s->current_encoding.length != 0;
 }
 
 bool mo_service_mailbox_entry(const struct mo_service_loop *s, uint32_t index,

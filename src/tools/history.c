@@ -148,12 +148,100 @@ static void failure_text(struct history_output *o, const struct mo_store_history
     put(o, "\n");
 }
 
+static void program_json(struct history_output *o, const struct mo_store_program *p) {
+    put(o, "{\"ordinal\":");
+    put_quoted(o, p->ordinal);
+    put(o, ",\"image\":");
+    put_quoted(o, p->image);
+    const char *names[] = {"source", "build", "schema", "context_digest"};
+    const uint8_t *digests[] = {p->source, p->build, p->schema, p->context_digest};
+    for (size_t i = 0; i < 4; i++) {
+        put(o, ",\"");
+        put(o, names[i]);
+        put(o, "\":\"");
+        o->ok = o->ok && mo_offline_hex(o->out, digests[i], 32);
+        put(o, "\"");
+    }
+    put(o, "}");
+}
+static bool source_unavailable(const uint8_t source[32]) {
+    static const uint8_t zero[32] = {0};
+    return memcmp(source, zero, sizeof zero) == 0;
+}
+static void programs_json(struct history_output *o) {
+    put(o, ",\"program\":");
+    if (o->h->has_program)
+        program_json(o, &o->h->program);
+    else
+        put(o, "null");
+    put(o, ",\"previous_programs\":[");
+    for (const struct mo_store_history_program *p = o->h->previous_programs; p != NULL;
+         p = p->next) {
+        put(o, p == o->h->previous_programs ? "" : ",");
+        program_json(o, &p->program);
+    }
+    put(o, "],\"upgrades\":[");
+    for (const struct mo_store_history_upgrade *u = o->h->upgrades; u != NULL; u = u->next) {
+        put(o, u == o->h->upgrades ? "" : ",");
+        put(o, "{\"ordinal\":");
+        put_quoted(o, u->ordinal);
+        put(o, ",\"head\":");
+        put_quoted(o, u->head);
+        put(o, ",\"old_source\":");
+        if (source_unavailable(u->old_source))
+            put(o, "null");
+        else {
+            put(o, "\"");
+            o->ok = o->ok && mo_offline_hex(o->out, u->old_source, 32);
+            put(o, "\"");
+        }
+        put(o, ",\"new_source\":\"");
+        o->ok = o->ok && mo_offline_hex(o->out, u->new_source, 32);
+        put(o, u->program_retained
+                   ? "\",\"program_retained\":true}"
+                   : "\",\"program_retained\":false,\"reason\":\"program not retained\"}");
+    }
+    put(o, "],\"upgrade_records\":");
+    put_quoted(o, o->h->upgrade_count);
+    put(o, o->h->upgrades_truncated ? ",\"upgrades_truncated\":true"
+                                    : ",\"upgrades_truncated\":false");
+}
+static void programs_text(struct history_output *o) {
+    if (!o->h->has_program) {
+        put(o, "program: not recorded (legacy folder)\n");
+        return;
+    }
+    put(o, "program: source ");
+    o->ok = o->ok && mo_offline_hex(o->out, o->h->program.source, 32);
+    put(o, ", context ");
+    o->ok = o->ok && mo_offline_hex(o->out, o->h->program.context_digest, 32);
+    put(o, ", activation ");
+    put_uint(o, o->h->program.ordinal);
+    put(o, "\n");
+    for (const struct mo_store_history_upgrade *u = o->h->upgrades; u != NULL; u = u->next) {
+        put(o, "upgrade ");
+        put_uint(o, u->ordinal);
+        put(o, " at head ");
+        put_uint(o, u->head);
+        put(o, ": ");
+        if (source_unavailable(u->old_source))
+            put(o, "source unavailable (legacy)");
+        else
+            o->ok = o->ok && mo_offline_hex(o->out, u->old_source, 32);
+        put(o, " -> ");
+        o->ok = o->ok && mo_offline_hex(o->out, u->new_source, 32);
+        put(o, u->program_retained ? " (program retained)\n" : " (program not retained)\n");
+    }
+    if (o->h->upgrades_truncated)
+        put(o, "more upgrade records not copied: over the history bound\n");
+}
 static void history_json(struct history_output *o, const char *folder) {
     const struct mo_store_history *h = o->h;
     put(o, "{\"record\":\"history\",\"data\":");
     put_json(o, folder, strnlen(folder, MO_LIMIT_PATH_SIZE));
     put(o, ",\"folder\":\"ok\",\"recovered\":");
     put(o, h->recovered ? "true" : "false");
+    programs_json(o);
     put(o, ",\"snapshot\":");
     if (!h->has_snapshot)
         put(o, "null");
@@ -208,6 +296,7 @@ static void history_text(struct history_output *o, const char *folder) {
     put(o, h->recovered ? " (recovered: a journal was rolled back, writing database pages but "
                           "changing no record)\n"
                         : "\n");
+    programs_text(o);
     if (!h->has_snapshot)
         put(o, "snapshot: none; the service's first start never finished\n");
     else {

@@ -4,6 +4,7 @@
 #include "base/failure.h"
 #include "base/log-record.h"
 #include "base/runtime-identity.h"
+#include "base/sha256.h"
 #include "base/stack.h"
 #include "base/store-memory.h"
 #include "base/verdict.h"
@@ -24,6 +25,7 @@
 static unsigned crash_point, log_steps, simulation_appends;
 static bool check_recovery_heap, refuse_store_allocation, refuse_cache_copy;
 static unsigned recovery_heap_checks;
+static bool first_program_fault, first_program_snapshot_written, first_program_insert_refused;
 static struct {
     bool enabled, forward, refuse, refuse_case;
     struct mo_service_hooks hooks;
@@ -168,6 +170,11 @@ static int reader_code;
 static bool reader_killed;
 
 int mo_store_fault_step(sqlite3_stmt *stmt) {
+    if (first_program_fault && strstr(sqlite3_sql(stmt), "INSERT INTO program") != NULL) {
+        CHECK(first_program_snapshot_written);
+        first_program_insert_refused = true;
+        return SQLITE_FULL;
+    }
     if (reader_code != 0 && strstr(sqlite3_sql(stmt), "FROM sqlite_schema") != NULL)
         return reader_code;
     if (reader_killed && strstr(sqlite3_sql(stmt), "length(record)") != NULL)
@@ -191,6 +198,9 @@ int mo_store_fault_step(sqlite3_stmt *stmt) {
         strstr(sqlite3_sql(stmt), "INSERT INTO failure_state") != NULL)
         return SQLITE_FULL;
     int result = sqlite3_step(stmt);
+    if (first_program_fault && result == SQLITE_DONE &&
+        strstr(sqlite3_sql(stmt), "INSERT INTO snapshot") != NULL)
+        first_program_snapshot_written = true;
     if (crash_point == 17 && result == SQLITE_DONE &&
         strstr(sqlite3_sql(stmt), "DELETE FROM failure WHERE") != NULL)
         _exit(77);
@@ -224,7 +234,7 @@ struct observations {
     unsigned replies, failures, stops;
     enum mo_service_status status;
     struct mo_store *store;
-    uint64_t sequence;
+    uint64_t sequence, replay_sequence;
     struct mo_bytecode_string handler;
 };
 static bool last_sequence(const struct mo_store_record *record, void *context) {
@@ -253,6 +263,7 @@ static void event(const struct mo_service_event *e, void *context) {
     o->failures += e->kind == MO_SERVICE_FAILURE ? 1u : 0u;
     o->stops += e->kind == MO_SERVICE_STOP ? 1u : 0u;
     o->handler = e->handler;
+    o->replay_sequence = e->replay_sequence;
 }
 
 static struct mo_service_loop *open_service(struct mo_image *image, struct mo_store *store,
@@ -1819,7 +1830,7 @@ static void wrong_state_checksum(void) {
     CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID);
     check_recovery_heap = false;
     CHECK(s == NULL && o.replies == replies && o.failures == failures + 1);
-    CHECK(named(o.handler, "add"));
+    CHECK(named(o.handler, "add") && o.replay_sequence == 1);
     CHECK(recovery_heap_checks == 1);
     mo_service_free(s);
     mo_store_close(store);
@@ -3468,6 +3479,94 @@ static void long_kind(void) {
     mo_image_free(image);
 }
 
+struct first_program_inventory {
+    const struct mo_store_record *expected;
+    unsigned count;
+};
+static bool first_program_record(const struct mo_store_record *record, void *context) {
+    struct first_program_inventory *inventory = context;
+    const struct mo_store_record *expected = inventory->expected;
+    inventory->count++;
+    CHECK(record->kind == expected->kind && record->sequence == expected->sequence &&
+          record->image == expected->image && record->length == expected->length);
+    CHECK(record->length == expected->length &&
+          memcmp(record->bytes, expected->bytes, record->length) == 0);
+    return true;
+}
+/* The injected failure occurs after the snapshot INSERT really succeeded but
+ * before the program INSERT. Reopen must observe neither half of that write. */
+static void first_program_atomic(struct mo_image *image, const char *path) {
+    struct mo_limits limits = mo_service_limits();
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_buffer saved, bundle;
+    mo_buffer_init(&saved, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&bundle, MO_LIMIT_BUNDLE_BYTES);
+    CHECK(mo_value_encode(mo_process_heap(process),
+                          mo_image_bytecode(image)->services[0].state_type, mo_cell_int(7),
+                          &saved));
+    /* The host validates canonical source framing and identities; compiler
+     * admission is tested separately by the checked-restart driver. */
+    static const char source[] = "module Main\n";
+    CHECK(mo_buffer_append(&bundle, "MOSB\1", 5));
+    CHECK(mo_binary_write(&bundle, 7, 4) && mo_buffer_append(&bundle, "Main.mo", 7));
+    CHECK(mo_binary_write(&bundle, 1, 4));
+    CHECK(mo_binary_write(&bundle, 7, 4) && mo_buffer_append(&bundle, "Main.mo", 7));
+    CHECK(mo_binary_write(&bundle, sizeof source - 1, 4) &&
+          mo_buffer_append(&bundle, source, sizeof source - 1));
+    static const uint8_t context[13] = {'M', 'O', 'C', 'C', 1};
+    struct mo_store_program program = {.image = mo_image_key(image, 0),
+                                       .bundle = bundle.bytes,
+                                       .bundle_size = bundle.length,
+                                       .context = context,
+                                       .context_size = sizeof context};
+    struct mo_sha256 hash;
+    mo_sha256_init(&hash);
+    mo_sha256_update(&hash, bundle.bytes, bundle.length);
+    mo_sha256_finish(&hash, program.source);
+    mo_sha256_init(&hash);
+    mo_sha256_update(&hash, context, sizeof context);
+    mo_sha256_finish(&hash, program.context_digest);
+    CHECK(mo_runtime_identity(program.build));
+    CHECK(mo_export_schema(saved.bytes, saved.length, program.schema));
+    struct mo_store_record state = {MO_STORE_STATE, 0, program.image, saved.bytes, saved.length};
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    first_program_snapshot_written = first_program_insert_refused = false;
+    first_program_fault = true;
+    CHECK(mo_store_program_record(store, &program, &state) == MO_STORE_IO);
+    first_program_fault = false;
+    CHECK(first_program_snapshot_written && first_program_insert_refused);
+    mo_store_close(store);
+
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_store_program read;
+    bool found = true;
+    CHECK(mo_store_program_read(store, &arena, &read, &found) == MO_STORE_OK && !found);
+    struct first_program_inventory inventory = {.expected = &state};
+    CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, first_program_record, &inventory) ==
+          MO_STORE_OK);
+    CHECK(inventory.count == 0);
+    CHECK(mo_store_program_record(store, &program, &state) == MO_STORE_OK);
+    mo_store_close(store);
+
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    CHECK(mo_store_program_read(store, &arena, &read, &found) == MO_STORE_OK && found);
+    CHECK(found && read.ordinal == 0 && read.image == program.image &&
+          memcmp(read.source, program.source, 32) == 0);
+    CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, first_program_record, &inventory) ==
+          MO_STORE_OK);
+    CHECK(inventory.count == 1);
+    mo_store_close(store);
+    mo_arena_free(&arena);
+    mo_buffer_free(&bundle);
+    mo_buffer_free(&saved);
+    mo_process_free(process);
+    CHECK(unlink(path) == 0);
+}
+
 static void run(void *unused) {
     mo_runtime_identity_init();
     text_context();
@@ -3501,6 +3600,7 @@ static void run(void *unused) {
     char dir[] = "/tmp/mo-store-XXXXXX", path[256];
     MO_ASSERT(mkdtemp(dir) != NULL);
     MO_ASSERT(snprintf(path, sizeof path, "%s/state.db", dir) > 0);
+    first_program_atomic(image, path);
     crashes(image, path);
     corruption(image, path);
     uncertain_commit(image);

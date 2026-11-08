@@ -443,3 +443,20 @@ byte longer than what is left, or bytes after the last argument, fails the proof
 At 37 bytes a count above `MO_LOG_RECORD_ARGUMENTS` would be refused for want of bytes even
 without the limit, so the limit itself, longer records and the writer are covered by
 `tests/test_log_record.c` and `fuzz_log_record`, not here.
+
+## Source bundle framing
+
+`MO_CBMC_INPUT=18 bash cbmc/prove.sh bundle_path` proves path-reader bounds on
+inputs up to 18 bytes. `bash cbmc/prove.sh mo_bundle_read` proves the complete
+framing walk on inputs up to 32 bytes, enough for two minimal file entries.
+The same commands with `--reach` reach every block of each reader and the end
+of its harness, including acceptance and refusal. Larger input bounds can be
+requested with `MO_CBMC_INPUT`; these results do not prove all admission sizes.
+
+UTF-8 validity and string-comparison results are unconstrained predicates, with
+explicit assertions that their byte spans are readable. The framing proof also
+models the separately checked path reader. These are memory-bounds proofs;
+path policy, lexical ordering and entry membership are checked by the concrete
+bundle tests, not established by the abstract comparisons. The framing harness
+also proves refusal preserves its output. Initial attempts with concrete libc
+comparisons timed out (180 and 300 seconds); neither timeout was a proof result.

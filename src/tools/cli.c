@@ -177,6 +177,13 @@ enum flag_id {
     FLAG_FIX,
     FLAG_RECOVER,
     FLAG_MAX_WORK,
+    FLAG_BUNDLE,
+    FLAG_UPGRADE_FROM,
+    FLAG_OLD_BUNDLE,
+    FLAG_MIGRATE,
+    FLAG_UPGRADE,
+    FLAG_ADOPT,
+    FLAG_CONTEXT,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -218,12 +225,40 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_FIX, "--fix", false, false, VALUE_TEXT, 0, ON(REPLAY)},
     {FLAG_RECOVER, "--recover", false, false, VALUE_NONE, 0, ON(REPLAY) | ON(QUERY) | ON(HISTORY)},
     {FLAG_MAX_WORK, "--max-work", false, false, VALUE_COUNT, UINT64_MAX, ON(QUERY)},
+    {FLAG_BUNDLE, "--bundle", false, false, VALUE_NONE, 0, ON(EMIT)},
+    {FLAG_UPGRADE_FROM, "--upgrade-from", false, false, VALUE_TEXT, 0, ON(CHECK)},
+    {FLAG_OLD_BUNDLE, "--old-bundle", false, false, VALUE_TEXT, 0, ON(EMIT)},
+    {FLAG_MIGRATE, "--migrate", false, false, VALUE_TEXT, 0, ON(CHECK) | ON(SERVE) | ON(EMIT)},
+    {FLAG_UPGRADE, "--upgrade", false, false, VALUE_NONE, 0, ON(SERVE)},
+    {FLAG_ADOPT, "--adopt", false, false, VALUE_NONE, 0, ON(SERVE)},
+    {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT)},
 };
 #undef ON
 
 static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, const char *arg,
                      const char *operand, uint64_t n) {
     switch (id) {
+    case FLAG_CONTEXT:
+        out->compile_context = operand;
+        break;
+    case FLAG_BUNDLE:
+        out->source_bundle = true;
+        break;
+    case FLAG_UPGRADE_FROM:
+        out->upgrade_from = operand;
+        break;
+    case FLAG_OLD_BUNDLE:
+        out->old_bundle = operand;
+        break;
+    case FLAG_MIGRATE:
+        out->migration = operand;
+        break;
+    case FLAG_UPGRADE:
+        out->upgrade = true;
+        break;
+    case FLAG_ADOPT:
+        out->adopt = true;
+        break;
     case FLAG_JSON:
         out->json = true;
         break;
@@ -441,7 +476,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     }
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
-    if (out->command != MO_COMMAND_GUIDE && out->file_count == 0)
+    if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&
+        out->file_count == 0)
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_QUERY && out->file_count != 2)
         return refuse(out, error, "query needs a file and a function", command, NULL);
@@ -463,6 +499,14 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "serve needs --port N", command, NULL);
     if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << FLAG_DATA)) == 0)
         return refuse(out, error, "serve needs --data DIR", command, NULL);
+    if (out->command == MO_COMMAND_SERVE && out->file_count == 0 &&
+        (out->upgrade || out->adopt || out->migration != NULL))
+        return refuse(out, error, "upgrade or adoption needs a source file", command, NULL);
+    if (out->migration != NULL && !(out->upgrade || out->upgrade_from != NULL ||
+                                    out->old_bundle != NULL || out->compile_context != NULL))
+        return refuse(out, error, "--migrate needs --upgrade or an old program", "--migrate", NULL);
+    if (out->old_bundle != NULL && !out->source_bundle)
+        return refuse(out, error, "--old-bundle needs --bundle", "--old-bundle", NULL);
     if (out->json && out->emit != MO_EMIT_NONE)
         return refuse(out, error, "--json and --emit cannot be combined", "--json", "--emit");
     return true;

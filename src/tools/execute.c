@@ -16,6 +16,7 @@
 #include "tools/promises.h"
 #include "tools/run.h"
 #include "tools/tests.h"
+#include "tools/upgrade.h"
 
 #include <errno.h>
 #include <string.h>
@@ -152,7 +153,8 @@ static void execute_pipeline(void *argument) {
         work->totals.status = work->status;
         return;
     }
-    if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_EMIT) &&
+    if ((cli->command == MO_COMMAND_RUN ||
+         (cli->command == MO_COMMAND_EMIT && entry_service == MO_NO_INDEX)) &&
         program->entry.function == UINT32_MAX) {
         const char *message = "the entry module has no main function";
         struct mo_diag diag = {.code = MO_CODE_MAIN_CONTRACT,
@@ -444,6 +446,12 @@ static int fix_files(const struct mo_cli *cli, FILE *output, FILE *errors) {
 }
 
 int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
+    if (cli->source_bundle)
+        return mo_upgrade_emit(cli, output, errors);
+    if (cli->command == MO_COMMAND_SERVE)
+        return mo_upgrade_serve(cli, output, errors);
+    if (cli->upgrade_from != NULL)
+        return mo_upgrade_check(cli, output, errors);
     if (cli->command == MO_COMMAND_FETCH)
         return mo_fetch(cli, errors);
     if (cli->command == MO_COMMAND_HISTORY)

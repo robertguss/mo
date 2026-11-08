@@ -202,6 +202,11 @@ def history(binary, folder):
     assert not text.stderr, text.stderr
     lines = text.stdout.decode().splitlines()
     assert lines[0] == f"history of {data}", lines
+    with sqlite3.connect(data / "service.sqlite") as db:
+        source, context, ordinal = db.execute(
+            "SELECT source,context_digest,ordinal FROM program").fetchone()
+    assert lines.pop(1) == (f"program: source {source.hex()}, context {context.hex()}, "
+                            f"activation {ordinal}"), lines
     assert lines[1] == ("snapshot: as of sequence 0, 2 later messages not applied; "
                         "producer build not recorded"), lines
     assert lines[2].startswith("state (") and '"label":"seed","count":"0"' in lines[2], lines
@@ -221,6 +226,10 @@ def history(binary, folder):
     h = items[1]
     assert h["record"] == "history" and h["folder"] == "ok" and h["data"] == str(data), h
     assert not h["recovered"] and h["head"] == "2" and h["log_entries"] == 2, h
+    assert h["program"]["source"] == source.hex(), h
+    assert h["program"]["context_digest"] == context.hex(), h
+    assert h["program"]["ordinal"] == str(ordinal), h
+    assert h["previous_programs"] == [] and h["upgrades"] == [], h
     snapshot = h["snapshot"]
     assert snapshot["sequence"] == "0" and snapshot["later_messages"] == 2, snapshot
     assert snapshot["producer_build"] is None and snapshot["state"]["complete"], snapshot
