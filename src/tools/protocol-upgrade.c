@@ -417,21 +417,22 @@ static void release_previous(struct mo_protocol_server *s) {
 }
 
 static bool copy_active(struct protocol_upgrade *u, const struct mo_store_program *program) {
+    /* One block for both, as the store's own copy does: the arena bound fits it exactly. */
+    size_t size = program->bundle_size + program->context_size;
     struct mo_arena arena;
-    mo_arena_init(&arena, program->bundle_size + program->context_size + 2 * MO_ARENA_CHUNK_HEADER);
-    uint8_t *bundle = mo_arena_allocate(&arena, program->bundle_size, 1);
-    uint8_t *context = mo_arena_allocate(&arena, program->context_size, 1);
-    if (bundle == NULL || context == NULL) {
+    mo_arena_init(&arena, size + MO_ARENA_CHUNK_HEADER);
+    uint8_t *copy = mo_arena_allocate(&arena, size, 1);
+    if (copy == NULL) {
         mo_arena_free(&arena);
         return false;
     }
-    memcpy(bundle, program->bundle, program->bundle_size);
-    memcpy(context, program->context, program->context_size);
+    memcpy(copy, program->bundle, program->bundle_size);
+    memcpy(copy + program->bundle_size, program->context, program->context_size);
     mo_arena_free(&u->active_arena);
     u->active_arena = arena;
     u->active = *program;
-    u->active.bundle = bundle;
-    u->active.context = context;
+    u->active.bundle = copy;
+    u->active.context = copy + program->bundle_size;
     u->active_found = true;
     return true;
 }
