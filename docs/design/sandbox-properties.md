@@ -306,10 +306,18 @@ These are not guaranteed today.
 5. **No concurrency checking.** ThreadSanitizer is not a gate (`implementation.md`, condition 1);
    property P7's process-wide signal handling and any future threads need their own review.
 6. **Concurrent changes to the filesystem** are outside P8.
-7. **Verified file, not verified compiler.** A compiler bug produces a program that the verifier
+7. **The upgrade credential reaches the compiler.** A live upgrade compiles network input in a
+   child process with the service's identity, files and secrets under CPU, memory and wall
+   limits, and loads its output through the verifier. The child contains crashes and stalls but
+   not a memory-safety exploit of the compiler front end, so the upgrade credential's authority
+   is bounded only by the compiler's memory safety; long front-end fuzz runs are the evidence.
+   Write access to a data folder also equals upgrade authority, since the folder records the
+   program a restart runs. The upload page reader (`src/base/upload.c`) is untrusted-input code
+   with CBMC proofs and a fuzz target.
+8. **Verified file, not verified compiler.** A compiler bug produces a program that the verifier
    accepts but that does not mean what its source says. That is a correctness bug, not a
    sandbox escape; the Lean differential test and the golden corpus look for it.
-8. **Assertions are evidence of intent, not proof.** A pair assertion stops the process when a
+9. **Assertions are evidence of intent, not proof.** A pair assertion stops the process when a
    fact is false at run time. It does not show the fact is always true, and it costs a check
    per use. The cost was measured once, on `tests/test_vm.c` at `-O0` (0.47 s before, 0.48 s
    after); it was not measured with optimization.

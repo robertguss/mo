@@ -5,6 +5,7 @@ application_error,
 tool_result,
 tool_reply,
 operator_reply,
+upgrade_reply,
 catalog,
 prepare,
 page
@@ -123,6 +124,19 @@ end
 ## Operator refusals remain operator payloads, not author application errors.
 fn operator_reply(id: Json.Json, value: Json.Json, refused: Bool, byte_limit: Int) : Option(Text)
   bounded_reply(id, tool_content(value, false), refused, byte_limit)
+end
+
+## An upgrade tool's result: the shared report as structured content and its text rendering.
+fn upgrade_reply(id: Json.Json, report: Text, text: Text, refused: Bool, byte_limit: Int) : Option(
+  Text
+)
+  content = case Json.parse(report)
+    Ok(value): value
+    Error(_): return None
+  end
+  return None if report.byte_count + text.byte_count > byte_limit / 2
+  body = McpRpc.result(id, rendered_tool_result(content, text, refused)).to_text
+  if body.byte_count > byte_limit: None else: Some(body)
 end
 
 fn bounded_reply(id: Json.Json, content: Json.Json, failed: Bool, byte_limit: Int) : Option(Text)

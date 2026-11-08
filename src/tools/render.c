@@ -1406,6 +1406,7 @@ static const char *command_name(enum mo_command command) {
     case MO_COMMAND_SERVE:
     case MO_COMMAND_VERSION:
     case MO_COMMAND_FETCH:
+    case MO_COMMAND_PUSH:
         break;
     }
     MO_UNREACHABLE();

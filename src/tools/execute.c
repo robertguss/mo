@@ -108,7 +108,9 @@ static void execute_pipeline(void *argument) {
     if (stat(library, &st) != 0 && errno == ENOENT)
         library = NULL;
     struct mo_module_set *set =
-        mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags);
+        cli->command == MO_COMMAND_REPLAY && cli->file_count == 0
+            ? mo_upgrade_replay_set(arena, cli->data, cli->failure, library, sources, diags)
+            : mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags);
     if (set == NULL || mo_diags_any(diags))
         return;
     struct mo_program *program = mo_check(arena, set, diags);
@@ -456,6 +458,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         return mo_upgrade_rehearse(cli, output, errors);
     if (cli->command == MO_COMMAND_FETCH)
         return mo_fetch(cli, errors);
+    if (cli->command == MO_COMMAND_PUSH)
+        return mo_push(cli, output, errors);
     if (cli->command == MO_COMMAND_HISTORY)
         return mo_history(cli, output, errors);
     if (cli->command == MO_COMMAND_VERSION) {

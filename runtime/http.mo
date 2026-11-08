@@ -8,6 +8,7 @@ HeaderProblem(..),
 scan_headers,
 parse_headers,
 bearer_span,
+bearer_value,
 chunk_size,
 ascii?,
 token?,
@@ -144,10 +145,13 @@ fn bearer_span(bytes: List(Byte), head: Head) : Option(Span)
       end
     end
   end
-  value = case found
-    Some(part): part
-    None: return None
+  case found
+    Some(part): bearer_value(bytes, part)
+    None: None
   end
+end
+
+fn bearer_value(bytes: List(Byte), value: Span) : Option(Span)
   return None if value.size <= 6
   return None if not ascii?(bytes, Span(start: value.start, size: 6), [98, 101, 97, 114, 101, 114])
   var at = value.start + 6

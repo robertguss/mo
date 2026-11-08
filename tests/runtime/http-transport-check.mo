@@ -94,6 +94,13 @@ fn authorities()
   require(not HttpAuthority.check(["localhost", "bad host"]))
 end
 
+fn inspected(bytes: List(Byte)) : HttpPolicy.Access
+  case HttpPolicy.inspect(bytes, head(bytes), ["localhost"])
+    Ok(value): value
+    Error(_): stop "inspection fixture"
+  end
+end
+
 fn inspection()
   for (line, fields, expected) in [
     ("GET /bad HTTP/1.0", "", 505),
@@ -104,7 +111,8 @@ fn inspection()
     ("GET /bad HTTP/1.1", "Host: other\r\nOrigin: x\r\n", 421),
     ("GET /bad HTTP/1.1", "Host: localhost\r\nOrigin:\r\n", 403),
     ("GET /mcp?x HTTP/1.1", "Host: localhost\r\n", 404),
-    ("GET /mcp HTTP/1.1", "Host: localhost\r\n", 405),
+    ("DELETE /mcp HTTP/1.1", "Host: localhost\r\n", 405),
+    ("GET /mcp HTTP/1.1", "Host: localhost\r\nMcp-Session-Id: a\r\nMCP-SESSION-ID: b\r\n", 400),
     ("post /mcp HTTP/1.1", "Host: localhost\r\n", 405),
     ("POST http://other/mcp HTTP/1.1", "Host: localhost\r\n", 421),
     ("POST http://localhost/mcp HTTP/1.1", "Host: user@localhost\r\n", 400),
@@ -124,12 +132,52 @@ fn inspection()
     ("HTTP://LOCALHOST:/mcp", "other:9000")
   ]
     bytes = octets("POST #{target} HTTP/1.1\r\nHost: #{host}\r\nContent-Length: -1\r\n\r\n")
-    require(HttpPolicy.inspect(bytes, head(bytes), ["localhost"]) == Ok(None))
+    require(
+      HttpPolicy.inspect(bytes, head(bytes), ["localhost"]) ==
+        Ok(HttpPolicy.Access(bearer: None, upgrade: None, session: None, stream: false))
+    )
   end
   for auth in ["Bearer canary", "bEaReR  canary"]
     bytes = octets("POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: #{auth}\r\n\r\n")
     parsed = head(bytes)
-    require(HttpPolicy.inspect(bytes, parsed, ["localhost"]) == Ok(Http.bearer_span(bytes, parsed)))
+    access = inspected(bytes)
+    require(access.bearer == Http.bearer_span(bytes, parsed) and access.bearer != None)
+  end
+  stream = octets(
+    "GET /mcp HTTP/1.1\r\nHost: localhost\r\nMCP-Session-Id: abc\r\nMo-Upgrade-Authorization: Bearer  up\r\n\r\n"
+  )
+  access = inspected(stream)
+  require(access.stream and access.bearer == None)
+  require(access.session == Some(Http.Span(start: 52, size: 3)))
+  require(access.upgrade == Some(Http.Span(start: 91, size: 2)))
+  for upgrades in [
+    "Mo-Upgrade-Authorization: Bearer a\r\nmo-upgrade-authorization: Bearer b\r\n",
+    "Mo-Upgrade-Authorization: Basic a\r\n",
+    "Mo-Upgrade-Authorization: Bearer\r\n"
+  ]
+    bytes = octets("POST /mcp HTTP/1.1\r\nHost: localhost\r\n#{upgrades}\r\n")
+    found = inspected(bytes)
+    require(found.upgrade == None and not found.stream)
+  end
+end
+
+fn streams()
+  for (fields, expected) in [
+    ("Accept: text/event-stream\r\n", 0),
+    ("Accept: application/json, text/event-stream\r\n", 0),
+    ("Accept: text/*\r\nMCP-Protocol-Version: 2025-11-25\r\n", 0),
+    ("Accept: text/event-stream\r\nContent-Length: 0\r\n", 0),
+    ("", 406),
+    ("Accept: application/json\r\n", 406),
+    ("Accept: text/event-stream;q=0\r\n", 406),
+    ("Accept: text/event-stream\r\nMCP-Protocol-Version: 2025-03-26\r\n", 400),
+    ("Accept: text/event-stream\r\nContent-Length: 5\r\n", 400),
+    ("Accept: text/event-stream\r\nTransfer-Encoding: chunked\r\n", 400)
+  ]
+    bytes = octets("GET /mcp HTTP/1.1\r\nHost: localhost\r\n#{fields}\r\n")
+    if HttpPolicy.stream_plan(bytes, head(bytes)) != expected
+      stop "stream plan"
+    end
   end
 end
 
@@ -522,6 +570,7 @@ end
 fn main() : Int
   authorities()
   inspection()
+  streams()
   planning()
   bodies()
   body_limits()

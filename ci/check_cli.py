@@ -1509,6 +1509,8 @@ SERVE_EDITS = (("(state + amount, state + amount)", "(state + amount, state * am
                ("## Reads the count.", "\n## Reads the count."))
 SERVE_TOOL_PAGE = 32
 SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export", "mo-failures"]
+# Listed after the views; they need the upgrade credential and change the service.
+SERVE_UPGRADE_NAMES = ["mo-upgrade-open", "mo-upgrade-page", "mo-upgrade-commit"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -1773,7 +1775,7 @@ def serve_command(binary):
             assert served.post(SERVE_INITIALIZED, token)[0] == 202
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES
+            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES
             assert all(tool["inputSchema"]["type"] == "object" for tool in tools), tools
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
             assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
@@ -1938,7 +1940,7 @@ def serve_command(binary):
                 {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"cursor": cursor}}),
                 token)
             assert status == 200, body
-            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES, body
+            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES, body
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
 
         with serving() as served:
@@ -2033,7 +2035,7 @@ def serve_command(binary):
         with serving(entry, imported) as served:
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES, body
+            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES, body
             look = SERVE_READ.replace('"read"', '"look"')
             assert serve_structured(served.post(look, token)) == {"value": "31"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
@@ -3862,6 +3864,15 @@ def guide_claims(binary):
             "folder or an artifact without starting the service, as Diagnose a failure offline "
             "says.") in guide
     assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
+    # ci/check_upgrade_live.py exercises the live-upgrade claims through mo serve and mo push.
+    for name in SERVE_UPGRADE_NAMES:
+        assert f"`{name}`" in guide
+    for sentence in ("any other URL is refused before either credential is read.",
+                     "Pushing the active program again reports `already active` and changes "
+                     "nothing",
+                     "neither credential appears in output, events or the data folder.",
+                     "a new GET replaces it."):
+        assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]
@@ -3893,7 +3904,7 @@ def guide_claims(binary):
     result = run(binary, ["query", "tests/errors/e1413/main.mo", "nothing", "--export",
                           "tests/errors/missing.moex"], 2)
     assert result.stderr == b"mo query: no function of that name in that module\n", result
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo replay`, `mo query` and `mo history`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query` and `mo history`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -4385,8 +4396,9 @@ def check(binary):
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, replay, query or history): "bad\\x0a\\x09\\xc3\\xbf"')
-    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, replay, query or history')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query or history): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query or history')
+    mistake(["push", "main.mo", "--url", "http://127.0.0.1:1/mcp"], 'usage: mo push FILE --url URL --base DIGEST --token-env NAME --upgrade-token-env NAME [--migrate Module.function] [--json]: "push"')
     for args, message in (
             (["replay", good, "--data", "state"], 'replay needs --failure ID: "replay"'),
             (["replay", good, "--failure", "1"],

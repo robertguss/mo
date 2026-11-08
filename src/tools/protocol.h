@@ -34,6 +34,12 @@ mo_protocol_server_new(const struct mo_image *service, uint32_t index, struct mo
                        size_t authority_count, const struct mo_protocol_events *events,
                        struct mo_protocol_server **out);
 void mo_protocol_server_free(struct mo_protocol_server *server);
+/* Enables the live upgrade tools: credential is the second bearer secret every upgrade call must
+ * carry, compiler the executable that compiles candidates. Reads the active program row. */
+struct mo_bearer;
+MO_MUST_USE enum mo_protocol_server_status
+mo_protocol_server_upgrades(struct mo_protocol_server *server, const struct mo_bearer *credential,
+                            const char *compiler);
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_poll(struct mo_protocol_server *server, uint64_t until_us);
 void mo_protocol_server_stop_accepting(struct mo_protocol_server *server);

@@ -12,7 +12,7 @@ static uint32_t scan;
 static uint32_t authorization;
 static uint32_t chunk_size;
 static uint32_t header_type;
-static uint32_t authority_parse, authority_check, authority_equal, inspect, body_plan;
+static uint32_t authority_parse, authority_check, authority_equal, inspect, body_plan, stream_plan;
 static uint32_t fixed, chunked, feed;
 
 static uint32_t function_named(const char *wanted) {
@@ -93,6 +93,7 @@ static void prepare(void) {
     authority_check = function_named("HttpAuthority.check");
     authority_equal = function_named("HttpAuthority.equal?");
     inspect = function_named("HttpPolicy.inspect");
+    stream_plan = function_named("HttpPolicy.stream_plan");
     body_plan = function_named("HttpPolicy.body_plan");
     fixed = function_named("HttpBody.fixed");
     chunked = function_named("HttpBody.chunked");
@@ -396,7 +397,7 @@ static void policy_input(struct mo_process *process, const uint8_t *data, size_t
     const struct mo_bytecode *file = mo_image_bytecode(image);
     struct mo_cell record = mo_cell_get_payload(head);
     struct mo_cell fields = mo_value_field(record, 3);
-    size_t hosts = 0, origins = 0, lengths = 0, transfers = 0;
+    size_t hosts = 0, origins = 0, lengths = 0, transfers = 0, sessions = 0;
     struct part host = {data, 0}, length_part = {data, 0};
     for (uint32_t i = 0; i < mo_list_size(fields); i++) {
         struct mo_cell field;
@@ -416,6 +417,8 @@ static void policy_input(struct mo_process *process, const uint8_t *data, size_t
         }
         if (part_equal(name, "transfer-encoding", true))
             transfers++;
+        if (part_equal(name, "mcp-session-id", true))
+            sessions++;
     }
     int expected = 0;
     struct part target = part_view(data, mo_value_field(record, 1));
@@ -439,9 +442,14 @@ static void policy_input(struct mo_process *process, const uint8_t *data, size_t
             expected = 403;
         if (expected == 0 && !part_equal(target, "/mcp", false))
             expected = 404;
-        if (expected == 0 && !part_equal(part_view(data, mo_value_field(record, 0)), "POST", false))
+        struct part method = part_view(data, mo_value_field(record, 0));
+        if (expected == 0 && !part_equal(method, "POST", false) &&
+            !part_equal(method, "GET", false))
             expected = 405;
+        if (expected == 0 && sessions > 1)
+            expected = 400;
     }
+    bool get = part_equal(part_view(data, mo_value_field(record, 0)), "GET", false);
     struct mo_cell allowed;
     MO_ASSERT(mo_value_text(heap, "localhost", 9, &allowed));
     struct mo_cell args[] = {mo_cell_unit(), head, mo_cell_unit()};
@@ -456,7 +464,10 @@ static void policy_input(struct mo_process *process, const uint8_t *data, size_t
                   expected);
     } else {
         MO_ASSERT(mo_cell_get_tag(result) == 0);
-        struct mo_cell token = payload(file->functions[inspect].result_type, result);
+        struct mo_cell access =
+            mo_cell_get_payload(payload(file->functions[inspect].result_type, result));
+        MO_ASSERT(mo_cell_get_bool(mo_value_field(access, 3)) == get);
+        struct mo_cell token = mo_value_field(access, 0);
         struct mo_cell actual = call(process, authorization, args);
         MO_ASSERT(equal_values(heap, file->functions[authorization].result_type, token, actual));
         if (mo_cell_get_tag(token) == 1) {
@@ -465,7 +476,13 @@ static void policy_input(struct mo_process *process, const uint8_t *data, size_t
             span(value, after);
             struct part credential = part_view(data, value);
             const struct mo_bearer bearer = {.bytes = "fuzz-credential", .length = 15};
-            if (mo_bearer_check(&bearer, credential.bytes, credential.size)) {
+            if (get && mo_bearer_check(&bearer, credential.bytes, credential.size)) {
+                struct mo_cell stream_args[] = {args[0], head};
+                struct mo_cell refused = call(process, stream_plan, stream_args);
+                int64_t code = mo_cell_get_int(refused);
+                MO_ASSERT(code == 0 || code == 400 || code == 406);
+                MO_ASSERT(code != 0 || transfers == 0);
+            } else if (mo_bearer_check(&bearer, credential.bytes, credential.size)) {
                 struct mo_cell plan_args[] = {args[0], head, mo_cell_int(MO_LIMIT_MCP_BODY_BYTES)};
                 struct mo_cell plan = call(process, body_plan, plan_args);
                 uint32_t tag = mo_cell_get_tag(plan);

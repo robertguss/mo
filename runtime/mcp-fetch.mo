@@ -1,5 +1,5 @@
 module McpFetch
-expose read
+expose read, upgrade
 use Json
 use Http
 
@@ -16,56 +16,64 @@ fn text(value: Json.Json, key: Text) : Text
   end
 end
 
-## A closed HTTP/MCP result: empty refuses, one recognized export error or ten page fields.
-## C validates byte arithmetic and integrity before publication.
-fn read(wire: Text) : List(Text)
+## The result object of a well-formed HTTP/MCP reply to request id 1.
+fn envelope(wire: Text) : Option(Map(Text, Json.Json))
   parts = wire.split("\r\n\r\n")
-  return [] if parts.size < 2
+  return None if parts.size < 2
   head = parts.first or ""
   body = parts.drop(1).join("\r\n\r\n")
-  return [] if head.byte_count + 4 > 1024 or body.byte_count > 32768
+  return None if head.byte_count + 4 > 1024 or body.byte_count > 32768
   lines = head.split("\r\n")
   status = lines.first or ""
-  return [] if status != "HTTP/1.1 200 OK" and status != "HTTP/1.0 200 OK"
+  return None if status != "HTTP/1.1 200 OK" and status != "HTTP/1.0 200 OK"
   var length = None
   var content_type = false
   for line in lines.drop(1)
-    return [] if line.chars.any?(fn(c) (c.code < 32 and c != '\t') or c.code == 127 end)
+    return None if line.chars.any?(fn(c) (c.code < 32 and c != '\t') or c.code == 127 end)
     fields = line.split(":")
-    return [] if fields.size < 2
+    return None if fields.size < 2
     name = (fields.first or "").ascii_lowercase
     value = fields.drop(1).join(":").trim
-    return [] if name == "" or not name.chars.all?(fn(c) Http.token?(c.code) end)
+    return None if name == "" or not name.chars.all?(fn(c) Http.token?(c.code) end)
     if name == "content-length"
-      return [] if length != None
+      return None if length != None
       length = value.to_int
-      return [] if length.map(fn(n) n.to_text end) != Some(value)
+      return None if length.map(fn(n) n.to_text end) != Some(value)
     else if name == "transfer-encoding"
-      return []
+      return None
     else if name == "content-type"
-      return [] if content_type or value != "application/json"
+      return None if content_type or value != "application/json"
       content_type = true
     end
   end
-  return [] if length != Some(body.byte_count) or not content_type
+  return None if length != Some(body.byte_count) or not content_type
   envelope = case Json.parse(body)
     Ok(value): value
-    Error(_): return []
+    Error(_): return None
   end
   envelope_fields = case envelope
     Json.Object(entries): entries
-    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return None
   end
-  return [] if envelope_fields.get("jsonrpc") != Some(Json.String("2.0")) or
+  return None if envelope_fields.get("jsonrpc") != Some(Json.String("2.0")) or
     envelope_fields.get("id") != Some(Json.int(1))
-  return [] if envelope_fields.get("error") != None
+  return None if envelope_fields.get("error") != None
   result = case envelope
     Json.Object(fields): fields.get("result") or Json.Null
-    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return None
   end
-  fields = case result
-    Json.Object(fields): fields
-    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
+  case result
+    Json.Object(fields): Some(fields)
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): None
+  end
+end
+
+## A closed HTTP/MCP result: empty refuses, one recognized export error or ten page fields.
+## C validates byte arithmetic and integrity before publication.
+fn read(wire: Text) : List(Text)
+  fields = case envelope(wire)
+    Some(value): value
+    None: return []
   end
   structured = fields.get("structuredContent") or Json.Null
   content = case structured
@@ -135,5 +143,39 @@ fn read(wire: Text) : List(Text)
     text(page, "checksum"),
     text(page, "digest"),
     text(page, "base64")
+  ]
+end
+
+## A closed upgrade-tool result: the error flag, the text rendering, the structured report and
+## the slot an open names ("" otherwise). Empty refuses the reply as malformed.
+fn upgrade(wire: Text) : List(Text)
+  fields = case envelope(wire)
+    Some(value): value
+    None: return []
+  end
+  failed = case fields.get("isError")
+    Some(Json.Boolean(value)): value
+    Some(_) | None: return []
+  end
+  structured = fields.get("structuredContent") or Json.Null
+  case structured
+    Json.Object(_): Unit
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
+  end
+  rendered = case fields.get("content")
+    Some(Json.Array(items)):
+      case items.get(0)
+        Some(item): text(item, "text")
+        None: return []
+      end
+    Some(_) | None: return []
+  end
+  return [] if rendered == "!"
+  slot = text(structured, "slot")
+  [
+    if failed: "true" else: "false",
+    rendered,
+    structured.to_text,
+    if slot == "!": "" else: slot
   ]
 end

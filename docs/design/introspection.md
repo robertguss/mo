@@ -15,7 +15,9 @@ An agent operating a running Mo service gets three instruments, each with a narr
 
 1. **Live views.** Built-in operator tools on the service's existing MCP endpoint show its state,
    mailbox, timers, memory, supervisor events, retained failures and committed messages since the
-   last snapshot. A token holder can read them. They never change the service.
+   last snapshot. A token holder can read them. They never change the service. The one
+   exception is the live upgrade tools (`docs/design/upgrades.md`), which replace the program and
+   require a second credential the service token never stands in for.
 2. **Offline queries.** The service exports bounded, identified bytes of its state, or of one
    retained failure, to a private file. The agent runs a pure Mo function over that file on its
    own side. The service never runs caller-written code.

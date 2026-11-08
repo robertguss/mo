@@ -186,6 +186,10 @@ enum flag_id {
     FLAG_CONTEXT,
     FLAG_ARTIFACT,
     FLAG_CANDIDATE,
+    FLAG_URL,
+    FLAG_BASE,
+    FLAG_TOKEN_ENV,
+    FLAG_UPGRADE_TOKEN_ENV,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -204,7 +208,7 @@ static uint32_t command_bit(enum mo_command command) {
 }
 static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_JSON, "--json", false, false, VALUE_NONE, 0,
-     ON(CHECK) | ON(TEST) | ON(REPLAY) | ON(QUERY) | ON(HISTORY) | ON(REHEARSE)},
+     ON(CHECK) | ON(TEST) | ON(REPLAY) | ON(QUERY) | ON(HISTORY) | ON(REHEARSE) | ON(PUSH)},
     {FLAG_LIST, "--list", false, false, VALUE_NONE, 0, ON(TEST)},
     {FLAG_REFERENCE, "--reference", false, false, VALUE_NONE, 0, ON(GUIDE)},
     {FLAG_ONLY, "--only", false, true, VALUE_TEXT, 0, ON(TEST)},
@@ -231,12 +235,17 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_UPGRADE_FROM, "--upgrade-from", false, false, VALUE_TEXT, 0, ON(CHECK)},
     {FLAG_OLD_BUNDLE, "--old-bundle", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(REHEARSE)},
     {FLAG_MIGRATE, "--migrate", false, false, VALUE_TEXT, 0,
-     ON(CHECK) | ON(SERVE) | ON(EMIT) | ON(REHEARSE)},
+     ON(CHECK) | ON(SERVE) | ON(EMIT) | ON(REHEARSE) | ON(PUSH)},
     {FLAG_UPGRADE, "--upgrade", false, false, VALUE_NONE, 0, ON(SERVE)},
     {FLAG_ADOPT, "--adopt", false, false, VALUE_NONE, 0, ON(SERVE)},
     {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(REHEARSE)},
     {FLAG_ARTIFACT, "--artifact", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
     {FLAG_CANDIDATE, "--candidate", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
+    {FLAG_URL, "--url", false, false, VALUE_TEXT, 0, ON(PUSH)},
+    {FLAG_BASE, "--base", false, false, VALUE_TEXT, 0, ON(PUSH)},
+    {FLAG_TOKEN_ENV, "--token-env", false, false, VALUE_TEXT, 0, ON(PUSH)},
+    {FLAG_UPGRADE_TOKEN_ENV, "--upgrade-token-env", false, false, VALUE_TEXT, 0,
+     ON(SERVE) | ON(PUSH)},
 };
 #undef ON
 
@@ -248,6 +257,18 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_CANDIDATE:
         out->candidate = operand;
+        break;
+    case FLAG_URL:
+        out->push_url = operand;
+        break;
+    case FLAG_BASE:
+        out->push_base = operand;
+        break;
+    case FLAG_TOKEN_ENV:
+        out->fetch_token = operand;
+        break;
+    case FLAG_UPGRADE_TOKEN_ENV:
+        out->upgrade_token = operand;
         break;
     case FLAG_CONTEXT:
         out->compile_context = operand;
@@ -355,7 +376,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (argc < 2)
         return refuse(out, error,
                       "expected a command: check, run, test, format, fix, guide, emit, serve, "
-                      "fetch, replay, query "
+                      "fetch, push, replay, query "
                       "or history",
                       NULL, NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
@@ -397,7 +418,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                  {"fix", MO_COMMAND_FIX},           {"guide", MO_COMMAND_GUIDE},
                  {"emit", MO_COMMAND_EMIT},         {"serve", MO_COMMAND_SERVE},
                  {"replay", MO_COMMAND_REPLAY},     {"query", MO_COMMAND_QUERY},
-                 {"rehearse", MO_COMMAND_REHEARSE}, {"history", MO_COMMAND_HISTORY}};
+                 {"rehearse", MO_COMMAND_REHEARSE}, {"history", MO_COMMAND_HISTORY},
+                 {"push", MO_COMMAND_PUSH}};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
         if (strcmp(command, names[c].name) == 0)
@@ -406,11 +428,11 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(
             out, error,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, "
-            "fetch, replay, query or history)",
+            "fetch, push, replay, query or history)",
             command, NULL);
     out->command = names[c].command;
     bool flags = true;
-    uint32_t seen = 0;
+    uint64_t seen = 0;
     for (int i = 2; i < argc; i++) {
         const char *arg = argv[i];
         MO_ASSERT(arg != NULL);
@@ -435,7 +457,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             MO_ASSERT(flag->id == (enum flag_id)row);
             if ((flag->commands & command_bit(out->command)) == 0)
                 return refuse(out, error, "flag is not accepted by this command", arg, NULL);
-            uint32_t bit = UINT32_C(1) << row;
+            uint64_t bit = UINT64_C(1) << row;
             if (!flag->repeated && (seen & bit) != 0)
                 return refuse(out, error, "flag may be given only once (except --only)", arg, NULL);
             seen |= bit;
@@ -470,7 +492,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         if (out->file_count != 0 &&
             (out->command == MO_COMMAND_CHECK || out->command == MO_COMMAND_TEST ||
              out->command == MO_COMMAND_EMIT || out->command == MO_COMMAND_SERVE ||
-             out->command == MO_COMMAND_REPLAY))
+             out->command == MO_COMMAND_REPLAY || out->command == MO_COMMAND_PUSH))
             return refuse(out, error, "command takes exactly one file", arg, NULL);
         if (out->file_count != 0 && out->command == MO_COMMAND_HISTORY)
             return refuse(out, error, "history takes exactly one data folder", arg, NULL);
@@ -488,7 +510,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
     if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&
-        out->command != MO_COMMAND_REHEARSE && out->file_count == 0)
+        out->command != MO_COMMAND_REHEARSE && out->file_count == 0 &&
+        !(out->command == MO_COMMAND_REPLAY && out->data != NULL))
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_QUERY && out->file_count != 2)
         return refuse(out, error, "query needs a file and a function", command, NULL);
@@ -506,15 +529,22 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "--recover reads a data folder, not --export", "--recover", NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
-    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << FLAG_PORT)) == 0)
+    if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_PORT)) == 0)
         return refuse(out, error, "serve needs --port N", command, NULL);
-    if (out->command == MO_COMMAND_SERVE && (seen & (UINT32_C(1) << FLAG_DATA)) == 0)
+    if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_DATA)) == 0)
         return refuse(out, error, "serve needs --data DIR", command, NULL);
     if (out->command == MO_COMMAND_SERVE && out->file_count == 0 &&
         (out->upgrade || out->adopt || out->migration != NULL))
         return refuse(out, error, "upgrade or adoption needs a source file", command, NULL);
-    if (out->migration != NULL && !(out->upgrade || out->upgrade_from != NULL ||
-                                    out->old_bundle != NULL || out->compile_context != NULL))
+    if (out->command == MO_COMMAND_PUSH && (out->push_url == NULL || out->push_base == NULL ||
+                                            out->fetch_token == NULL || out->upgrade_token == NULL))
+        return refuse(out, error,
+                      "usage: mo push FILE --url URL --base DIGEST --token-env NAME "
+                      "--upgrade-token-env NAME [--migrate Module.function] [--json]",
+                      command, NULL);
+    if (out->migration != NULL && out->command != MO_COMMAND_PUSH &&
+        !(out->upgrade || out->upgrade_from != NULL || out->old_bundle != NULL ||
+          out->compile_context != NULL))
         return refuse(out, error, "--migrate needs --upgrade or an old program", "--migrate", NULL);
     if (out->command == MO_COMMAND_REHEARSE && (out->file_count != 0 || out->artifact == NULL ||
                                                 out->old_bundle == NULL || out->candidate == NULL))

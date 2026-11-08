@@ -107,7 +107,7 @@ fn methods()
       "{\"protocolVersion\":\"old\",\"capabilities\":{},\"clientInfo\":{\"name\":\"client\"}}",
       "Invalid params: initialize needs protocolVersion, capabilities and clientInfo"
     ),
-    ("tools/list", "{\"cursor\":\"10.0123456789abcdef\"}", "Invalid params: invalid cursor"),
+    ("tools/list", "{\"cursor\":\"13.0123456789abcdef\"}", "Invalid params: invalid cursor"),
     ("tools/call", "{}", "Invalid params: name must be a string"),
     ("tools/call", "{\"name\":4}", "Invalid params: name must be a string"),
     (
@@ -140,9 +140,8 @@ fn methods()
   )
   require(
     receive(initialize, None) ==
-      McpTransport.Reply(
-        status: 200,
-        body: "{\"jsonrpc\":\"2.0\",\"id\":-7,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mo\",\"version\":\"fixture-version\"}}}"
+      McpTransport.Session(
+        body: "{\"jsonrpc\":\"2.0\",\"id\":-7,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"mo\",\"version\":\"fixture-version\"}}}"
       ),
     "initialize ignores version"
   )
@@ -200,8 +199,8 @@ fn pages()
   end
   empty = descriptor(0)
   catalog = Mcp.prepare(empty, key, 32768) or stop "operator-only catalog"
-  require(catalog.tools.size == 9, "operator tools without author tools")
-  require(Mcp.page(catalog, 9, id) == None, "invalid start")
+  require(catalog.tools.size == 12, "operator tools without author tools")
+  require(Mcp.page(catalog, 12, id) == None, "invalid start")
   broken = Mcp.Catalog(tools: [], sizes: [], image_key: key, response_bytes: 0)
   require(
     McpTransport.receive(
@@ -316,8 +315,23 @@ fn http()
   )
   require(
     McpTransport.http(405, "") ==
-      "HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\nAllow: POST\r\n\r\n",
-    "Allow POST"
+      "HTTP/1.1 405 Method Not Allowed\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 0\r\nAllow: GET, POST\r\n\r\n",
+    "Allow GET and POST"
+  )
+  require(
+    McpTransport.http_session("{}", "0123456789abcdef0123456789abcdef") ==
+      "HTTP/1.1 200 OK\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Length: 2\r\nContent-Type: application/json\r\nMCP-Session-Id: 0123456789abcdef0123456789abcdef\r\n\r\n{}",
+    "session header"
+  )
+  require(
+    McpTransport.stream_head() ==
+      "HTTP/1.1 200 OK\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: text/event-stream\r\n\r\n",
+    "stream head"
+  )
+  require(
+    McpTransport.list_changed() ==
+      "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n",
+    "list changed event"
   )
   require(McpTransport.http100() == "HTTP/1.1 100 Continue\r\n\r\n", "interim")
   require(McpTransport.http(100, "") == McpTransport.http100(), "interim HTTP")
@@ -335,7 +349,7 @@ fn call?(action: McpTransport.Action) : Bool
       view: _,
       arguments: _,
       offset: _
-    ): false
+    ) | McpTransport.Session(body: _): false
   end
 end
 

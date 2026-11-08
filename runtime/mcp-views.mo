@@ -1,5 +1,6 @@
 module McpViews
 expose names,
+upgrade_arguments,
 offline_value,
 catalog,
 valid,
@@ -91,7 +92,10 @@ fn names() : List(Text)
     "mo-supervisor",
     "mo-log",
     "mo-export",
-    "mo-failures"
+    "mo-failures",
+    "mo-upgrade-open",
+    "mo-upgrade-page",
+    "mo-upgrade-commit"
   ]
 end
 
@@ -105,7 +109,32 @@ fn arguments_of(index: Int) : List(Text)
     "after",
     "before"
   ] else if index == 6: ["after"] else if index == 7: ["kind", "failure", "export", "offset"] else if index ==
-    8: ["after"] else: []
+    8: ["after"] else if index == 9: ["base", "candidate", "total", "migration"] else if index == 10: [
+    "slot",
+    "index",
+    "offset",
+    "total",
+    "bytes"
+  ] else if index == 11: ["slot", "base"] else: []
+end
+
+fn required_of(index: Int) : List(Text)
+  if index == 7: ["kind"] else if index == 9: ["base", "candidate", "total"] else if index == 10: [
+    "slot",
+    "index",
+    "offset",
+    "total",
+    "bytes"
+  ] else if index == 11: ["slot", "base"] else: []
+end
+
+## Upload pages carry 8192 decoded bytes; MO_LIMIT_UPGRADE_PAGE_TEXT is their base64 length.
+fn page_text() : Int
+  10924
+end
+
+fn hex?(text: Text, size: Int) : Bool
+  text.chars.size == size and text.chars.all?(fn(c) "0123456789abcdef".chars.contains?(c) end)
 end
 
 fn catalog() : List(Json.Json)
@@ -118,7 +147,10 @@ fn catalog() : List(Json.Json)
     "Retained in-memory supervisor events, newest first, optionally after or before an event number. A truncated page names the next arguments. Events are lost on process exit; capture refusals include an explicit reason.",
     "Committed message metadata since the last snapshot, oldest first, optionally after a sequence. Older successful messages are not retained. Does not execute handlers.",
     "Export saved state as immutable MOEX v1 pages. Start with kind state; continue with returned export id and offset. Pages expire after 60 seconds idle or replacement. Final page releases the pin. Use mo fetch on the service host to obtain a verified private state artifact. Failure export selects a retained record id.",
-    "Retained failure records, oldest first; after selects a later page. Capture refusals remain in mo-supervisor."
+    "Retained failure records, oldest first; after selects a later page. Capture refusals remain in mo-supervisor.",
+    "Open the one upload slot for a candidate source bundle replacing the active program named by base. Requires the Mo-Upgrade-Authorization credential. Changes the service when committed.",
+    "Upload the next page of the open slot: consecutive 8192-byte ranges as padded base64. The last page checks the candidate digest and starts compilation. Requires the upgrade credential.",
+    "Activate the uploaded candidate at the next message boundary if base is still active; reports refusals without changing the service. Requires the upgrade credential."
   ]
   tool_names = names()
   integer = Json.Object({"type": Json.String("integer"), "minimum": Json.int(0)})
@@ -137,9 +169,19 @@ fn catalog() : List(Json.Json)
         }) else if key == "kind": Json.Object({
           "type": Json.String("string"),
           "enum": Json.Array([Json.String("state"), Json.String("failure")])
-        }) else if key == "export": Json.Object({
+        }) else if key == "export" or key == "slot": Json.Object({
           "type": Json.String("string"),
           "pattern": Json.String("^[0-9a-f]{32}$")
+        }) else if key == "base" or key == "candidate": Json.Object({
+          "type": Json.String("string"),
+          "pattern": Json.String("^[0-9a-f]{64}$")
+        }) else if key == "migration": Json.Object({
+          "type": Json.String("string"),
+          "minLength": Json.int(1),
+          "maxLength": Json.int(255)
+        }) else if key == "bytes": Json.Object({
+          "type": Json.String("string"),
+          "maxLength": Json.int(page_text())
         }) else: integer
       )
     end
@@ -150,11 +192,16 @@ fn catalog() : List(Json.Json)
         "inputSchema": Json.Object({
           "type": Json.String("object"),
           "properties": Json.Object(properties),
-          "required": Json.Array(if i == 7: [Json.String("kind")] else: []),
+          "required": Json.Array(required_of(i).map(fn(key) Json.String(key) end)),
           "additionalProperties": Json.Boolean(false)
         }),
         "annotations": Json.Object(
-          if i == 7: {
+          if i >= 9: {
+            "readOnlyHint": Json.Boolean(false),
+            "destructiveHint": Json.Boolean(i == 11),
+            "idempotentHint": Json.Boolean(false),
+            "openWorldHint": Json.Boolean(false)
+          } else if i == 7: {
             "readOnlyHint": Json.Boolean(true),
             "idempotentHint": Json.Boolean(true),
             "openWorldHint": Json.Boolean(false)
@@ -201,6 +248,18 @@ fn valid(index: Int, arguments: Json.Json) : Bool
           Json.Null | Json.Boolean(_) | Json.Array(_) | Json.Object(_): return false
         end
       end
+    else if key == "base" or key == "candidate" or key == "slot"
+      case value
+        Json.String(text): return false if not hex?(text, if key == "slot": 32 else: 64)
+        Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
+      end
+    else if key == "migration" or key == "bytes"
+      case value
+        Json.String(text):
+          return false if text.byte_count > (if key == "bytes": page_text() else: 255)
+          return false if key == "migration" and text == ""
+        Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
+      end
     else if index == 7 and key == "kind"
       return false if value != Json.String("state") and value != Json.String("failure")
     else if index == 7 and key == "export"
@@ -216,6 +275,9 @@ fn valid(index: Int, arguments: Json.Json) : Bool
       return false
     end
   end
+  for key in required_of(index)
+    return false if fields.get(key) == None
+  end
   if index == 7
     return false if fields.get("kind") != Some(Json.String("state")) and
       fields.get("kind") != Some(Json.String("failure"))
@@ -229,6 +291,24 @@ fn valid(index: Int, arguments: Json.Json) : Bool
     return false if fields.get("export") == None and offset != 0
   end
   true
+end
+
+## Validated upgrade-tool arguments as text, "" where absent: base, candidate, total, migration,
+## slot, index, offset, bytes. The native side parses digits and hex again.
+fn upgrade_arguments(arguments: Json.Json) : List(Text)
+  fields = case arguments
+    Json.Object(value): value
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
+  end
+  ["base", "candidate", "total", "migration", "slot", "index", "offset", "bytes"].map(
+    fn(key)
+      case fields.get(key)
+        Some(Json.String(text)): text
+        Some(Json.Number(n)): Json.Number(n).to_text
+        Some(_) | None: ""
+      end
+    end
+  )
 end
 
 ## The first timer the native side copies; validated arguments only.

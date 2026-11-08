@@ -263,13 +263,12 @@ static void parse_serve(void) {
     refused(4, unknown, "unknown flag: \"--emit\"");
     const char *none[] = {"mo"};
     refused(1, none,
-            "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, replay, "
-            "query or history");
+            "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, "
+            "replay, query or history");
     const char *what[] = {"mo", "what"};
     refused(2, what,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, "
-            "replay, "
-            "query or history): \"what\"");
+            "push, replay, query or history): \"what\"");
 }
 
 #define OFFLINE(expected, ...)                                                                     \
@@ -281,6 +280,9 @@ static void parse_serve(void) {
 static void parse_offline(void) {
     struct mo_cli cli;
     const char *error;
+    /* A data folder supplies the failure's retained program when no file is named. */
+    const char *retained[] = {"mo", "replay", "--failure", "7", "--data", "state"};
+    CHECK(mo_cli_parse(6, retained, &cli, &error) && cli.file_count == 0 && cli.failure == 7);
     const char *replay[] = {"mo", "replay", "main.mo", "--failure", "7", "--data", "state"};
     CHECK(mo_cli_parse(7, replay, &cli, &error));
     CHECK(cli.command == MO_COMMAND_REPLAY && cli.failure == 7 && strcmp(cli.data, "state") == 0);
@@ -336,7 +338,7 @@ static void parse_offline(void) {
             "--export", "a");
     OFFLINE("command takes exactly one file: \"b.mo\"", "replay", "a.mo", "b.mo", "--failure", "1",
             "--data", "d");
-    OFFLINE("command needs a file: \"replay\"", "replay", "--failure", "1", "--data", "d");
+    OFFLINE("command needs a file: \"replay\"", "replay", "--failure", "1", "--export", "a.moex");
     OFFLINE("history needs a data folder: \"history\"", "history", "--json");
     OFFLINE("history takes exactly one data folder: \"b\"", "history", "a", "b");
     OFFLINE("flag may be given only once (except --only): \"--failure\"", "replay", "main.mo",

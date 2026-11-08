@@ -197,7 +197,7 @@ end
 fn initialized(version: Text) : Json.Json
   Json.Object({
     "protocolVersion": Json.String("2025-11-25"),
-    "capabilities": Json.Object({"tools": Json.Object({"listChanged": Json.Boolean(false)})}),
+    "capabilities": Json.Object({"tools": Json.Object({"listChanged": Json.Boolean(true)})}),
     "serverInfo": Json.Object({"name": Json.String("mo"), "version": Json.String(version)})
   })
 end

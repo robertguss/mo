@@ -466,7 +466,7 @@ $(BUILD)/debug/tests/test_listener_faults.test: $(BUILD)/debug/tests/test_listen
 $(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_listener_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/sanitize/listener-faults/listener.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c
+PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c src/tools/protocol-upgrade.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
@@ -474,6 +474,18 @@ $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protoco
 $(BUILD)/sanitize/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+
+$(BUILD)/debug/protocol-server-faults/tools/protocol-upgrade.o: src/tools/protocol-upgrade.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_store_activate=mo_protocol_server_fault_activate -c $< -o $@
+
+$(BUILD)/sanitize/protocol-server-faults/tools/protocol-upgrade.o: src/tools/protocol-upgrade.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_activate=mo_protocol_server_fault_activate -c $< -o $@
+
+# The activation test compiles candidates with the sibling mo executable.
+$(BUILD)/debug/tests/test_protocol_server_faults.test.run: $(BUILD)/debug/mo
+$(BUILD)/sanitize/tests/test_protocol_server_faults.test.run: $(BUILD)/sanitize/mo
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)

@@ -2,6 +2,7 @@
 
 #include "base/runtime-identity.h"
 
+#include <stdio.h>
 #include <string.h>
 
 struct view_builder {
@@ -39,8 +40,14 @@ static bool number(struct view_builder *b, mo_u128 value, struct mo_cell *out) {
     return mo_value_text(b->heap, digits + at, sizeof digits - at, out);
 }
 
-static bool name(struct view_builder *b, uint32_t index, struct mo_cell *out) {
-    const struct mo_bytecode *file = mo_image_bytecode(b->server->image);
+const struct mo_image *mo_protocol_epoch_image(const struct mo_protocol_server *s, uint64_t epoch) {
+    if (epoch == s->epoch)
+        return s->image;
+    return s->previous.image != NULL && epoch == s->previous.epoch ? s->previous.image : NULL;
+}
+
+static bool name_in(struct view_builder *b, const struct mo_bytecode *file, uint32_t index,
+                    struct mo_cell *out) {
     if (index == MO_NO_INDEX)
         return text(b, "", out);
     const struct mo_bytecode_string *value = &file->strings[index];
@@ -48,6 +55,25 @@ static bool name(struct view_builder *b, uint32_t index, struct mo_cell *out) {
         return text(b, "<name unavailable: exceeds inspection byte limit>", out);
     return mo_protocol_charge(b->connection, value->length) &&
            mo_value_text(b->heap, (const char *)value->bytes, value->length, out);
+}
+
+static bool name(struct view_builder *b, uint32_t index, struct mo_cell *out) {
+    return name_in(b, mo_image_bytecode(b->server->image), index, out);
+}
+
+static bool upgrade_reason(struct view_builder *b, const struct mo_service_upgrade *u,
+                           struct mo_cell *out) {
+    char from[65], to[65], reason[256];
+    mo_protocol_hex(u->old_source, 32, from);
+    mo_protocol_hex(u->new_source, 32, to);
+    int n = u->accepted ? snprintf(reason, sizeof reason,
+                                   "accepted ordinal %llu from %s to %s; answered %u; dropped %u",
+                                   (unsigned long long)u->ordinal, from, to, (unsigned)u->answered,
+                                   (unsigned)u->dropped)
+                        : snprintf(reason, sizeof reason, "refused E%04u from %s to %s",
+                                   (unsigned)u->code, from, to);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof reason);
+    return text(b, reason, out);
 }
 
 static uint32_t handler(const struct view_builder *b, bool timer, uint32_t index) {
@@ -136,7 +162,6 @@ static bool events(struct view_builder *b, uint32_t type, struct mo_cell *out) {
     if (!mo_value_list(b->heap, type, NULL, 0, out))
         return false;
     uint32_t element = b->types->items[type].parameters[0];
-    const struct mo_bytecode *file = mo_image_bytecode(b->server->image);
     for (uint32_t i = 0; i < MO_LIMIT_SERVICE_EVENTS; i++) {
         struct mo_service_event_summary item;
         if (!mo_service_event_entry(b->server->service, i, &item))
@@ -152,6 +177,9 @@ static bool events(struct view_builder *b, uint32_t type, struct mo_cell *out) {
         case MO_SERVICE_STOP:
             kind = "stop";
             break;
+        case MO_SERVICE_UPGRADE:
+            kind = "upgrade";
+            break;
         }
         struct mo_cell fields[8], value;
         uint32_t built = 0;
@@ -159,11 +187,21 @@ static bool events(struct view_builder *b, uint32_t type, struct mo_cell *out) {
             built++;
         if (built == 1 && text(b, kind, &fields[built]))
             built++;
-        if (built == 2 && text(b, mo_service_status_text(item.reason), &fields[built]))
+        if (built == 2 && (item.kind == MO_SERVICE_UPGRADE
+                               ? upgrade_reason(b, &item.upgrade, &fields[built])
+                               : text(b, mo_service_status_text(item.reason), &fields[built])))
             built++;
-        uint32_t function_name =
-            item.function == MO_NO_INDEX ? MO_NO_INDEX : file->functions[item.function].name;
-        if (built == 3 && name(b, function_name, &fields[built]))
+        /* Handler indexes belong to the program the event ran under, which may be gone. */
+        const struct mo_image *image = mo_protocol_epoch_image(b->server, item.epoch);
+        const struct mo_bytecode *file = image == NULL ? NULL : mo_image_bytecode(image);
+        bool known =
+            item.function == MO_NO_INDEX || (file != NULL && item.function < file->function_count);
+        if (built == 3 &&
+            (known ? name_in(b, file == NULL ? mo_image_bytecode(b->server->image) : file,
+                             item.function == MO_NO_INDEX ? MO_NO_INDEX
+                                                          : file->functions[item.function].name,
+                             &fields[built])
+                   : text(b, "<program not retained>", &fields[built])))
             built++;
         if (built == 4)
             fields[built++] = mo_cell_int(item.time.now);

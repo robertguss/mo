@@ -10,7 +10,7 @@
 #include <sys/random.h>
 #include <unistd.h>
 
-static void hex(const uint8_t *bytes, size_t length, char *out) {
+void mo_protocol_hex(const uint8_t *bytes, size_t length, char *out) {
     const char digits[] = "0123456789abcdef";
     for (size_t i = 0; i < length; i++) {
         out[i * 2] = digits[bytes[i] >> 4];
@@ -98,7 +98,7 @@ bool mo_protocol_export(struct mo_protocol_server *s, struct protocol_connection
         error = "export_released";
     else {
         char current[33];
-        hex(pin->id, 16, current);
+        mo_protocol_hex(pin->id, 16, current);
         if (requested_size != 32 || memcmp(requested_bytes, current, 32) != 0 ||
             pin->failure_id != failure_id)
             error = "export_replaced";
@@ -122,14 +122,14 @@ bool mo_protocol_export(struct mo_protocol_server *s, struct protocol_connection
     bool complete = false;
     if (*error == 0) {
         char id[33], checksum[17], digest[65];
-        hex(pin->id, 16, id);
+        mo_protocol_hex(pin->id, 16, id);
         uint64_t hash = mo_binary_checksum(pin->bytes + (size_t)offset, length);
         uint8_t big[8];
         for (unsigned i = 0; i < 8; i++)
             big[i] = (uint8_t)(hash >> ((7 - i) * 8));
-        hex(big, 8, checksum);
+        mo_protocol_hex(big, 8, checksum);
         complete = length == pin->length - (size_t)offset;
-        hex(pin->digest, 32, digest);
+        mo_protocol_hex(pin->digest, 32, digest);
         uint32_t list = fn->parameters[1].type;
         ok = add_text(s, heap, list, &args[1], id) &&
              add_number(s, heap, list, &args[1], pin->sequence) &&

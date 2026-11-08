@@ -3,6 +3,7 @@
 #include "tools/run.h"
 
 #include "base/codes.h"
+#include "host/host.h"
 #include "tools/protocol.h"
 #include "vm/vm.h"
 
@@ -62,6 +63,18 @@ static void log_event(const struct mo_service_event *event, void *context) {
         log->stopped = true;
         log->stop = event->reason;
         log_line(log->errors, "stop", text);
+        break;
+    case MO_SERVICE_UPGRADE:
+        if (event->upgrade->accepted)
+            (void)fprintf(log->errors,
+                          "mo serve: upgrade: activated ordinal %llu; %u queued calls answered as "
+                          "removed; %u ticks dropped\n",
+                          (unsigned long long)event->upgrade->ordinal,
+                          (unsigned)event->upgrade->answered, (unsigned)event->upgrade->dropped);
+        else
+            (void)fprintf(log->errors, "mo serve: upgrade: refused E%04u\n",
+                          (unsigned)event->upgrade->code);
+        (void)fflush(log->errors);
         break;
     }
     if (event->defect != NULL &&
@@ -179,6 +192,23 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
         refuse(diags, "mo serve could not read the token's variable name", NULL, "out of memory");
         goto done;
     }
+    /* The upgrade credential must be long and differ from the service token, whatever the
+     * variable names; both copies are wiped once compared. */
+    struct mo_bearer upgrade = {0}, service_token = {0};
+    if (cli->upgrade_token != NULL) {
+        bool read = mo_bearer_read(&upgrade, cli->upgrade_token) && upgrade.length >= 16;
+        bool same = read && mo_bearer_read(&service_token, (const char *)name.bytes) &&
+                    mo_bearer_check(&service_token, (const uint8_t *)upgrade.bytes, upgrade.length);
+        mo_host_wipe(&service_token, sizeof service_token);
+        if (!read || same) {
+            mo_host_wipe(&upgrade, sizeof upgrade);
+            refuse(diags, "mo serve could not use the upgrade credential from environment variable",
+                   cli->upgrade_token,
+                   read ? "it equals the service token"
+                        : "it is missing, invalid or shorter than 16 bytes");
+            goto done;
+        }
+    }
     struct mo_listener_config config = {.port = cli->port};
     enum mo_listener_status opened = mo_listener_open(&config, (const char *)name.bytes, &listener);
     if (opened != MO_LISTENER_OK) {
@@ -215,6 +245,10 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     const struct mo_protocol_events events = {log_event, &log};
     enum mo_protocol_server_status built = mo_protocol_server_new(
         image, service, store, listener, authorities, authority_count, &events, &server);
+    if (built == MO_PROTOCOL_SERVER_OK)
+        built = mo_protocol_server_upgrades(server, cli->upgrade_token == NULL ? NULL : &upgrade,
+                                            "/proc/self/exe");
+    mo_host_wipe(&upgrade, sizeof upgrade);
     if (built != MO_PROTOCOL_SERVER_OK) {
         refuse(diags, "mo serve could not start the service", NULL, server_refusal(built, &log));
         goto done;
