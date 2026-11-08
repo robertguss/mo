@@ -210,6 +210,7 @@ class Run:
         self.started = False
         self.model = {}
         self.program = self.ordinal = 0
+        self.recorded = None
         self.start()
 
     def start(self):
@@ -241,6 +242,8 @@ class Run:
 
     def history(self):
         """mo history on the killed folder: a normal read or "recovery required", nothing else."""
+        # A folder that needs recovery says nothing about its upgrade records yet.
+        self.recorded = None
         result = subprocess.run([str(self.binary), 'history', '--json', str(self.folder)],
                                 capture_output=True, timeout=300, check=False)
         lines = result.stdout.decode('utf-8', 'replace').splitlines()

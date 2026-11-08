@@ -231,11 +231,41 @@ static void refusals(void) {
     mo_image_free(old);
 }
 
+/* A retyped argument is answered as removed even when its saved bytes would still decode. */
+static void retyped_scalar(void) {
+    static const char before[] =
+        "module Main\nservice\nstate Int = 0\ntools scale\ntoken from env \"TOKEN\"\nend\n"
+        "fn scale(state: Int, _now: Time, factor: Int) : (Int, Int)\n(state + factor, "
+        "state)\nend\n";
+    static const char after[] =
+        "module Main\nservice\nstate Int = 0\ntools scale\ntoken from env \"TOKEN\"\nend\n"
+        "fn scale(state: Int, _now: Time, factor: Float) : (Int, Float)\n(state, factor)\nend\n";
+    struct mo_image *old = compile(before), *next = compile(after);
+    struct replies o = {.time = {.now = 1000000, .elapsed = 1000000}};
+    struct mo_service_loop *s = start(old, &o);
+    send_int(s, 0, 3, 40);
+    struct mo_buffer migrated;
+    mo_buffer_init(&migrated, MO_LIMIT_SAVED_BYTES);
+    encoded_int(s, old, 0, &migrated);
+    struct mo_service_loop *replacement = NULL;
+    CHECK(mo_service_swap_prepare(s, next, 0, migrated.bytes, migrated.length, &replacement) ==
+          MO_SERVICE_SWAP_READY);
+    CHECK(mo_service_pending(replacement) == 0);
+    struct mo_service_upgrade upgrade = {.accepted = true, .ordinal = 1};
+    mo_service_swap_finish(s, replacement, &upgrade);
+    CHECK(o.removed == 1 && o.ids[o.count - 1] == 40 && o.upgrade.answered == 1);
+    mo_buffer_free(&migrated);
+    mo_service_free(replacement);
+    mo_image_free(next);
+    mo_image_free(old);
+}
+
 static void run(void *unused) {
     (void)unused;
     readmission();
     removed_timer();
     refusals();
+    retyped_scalar();
 }
 
 int main(void) {

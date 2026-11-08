@@ -129,7 +129,9 @@ static void refuse(struct mo_protocol_server *s, struct protocol_connection *c, 
     struct mo_buffer json, text;
     mo_buffer_init(&json, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
     mo_buffer_init(&text, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
-    const char *migration = u->open && u->has_migration ? u->migration : NULL;
+    /* A caller without the upgrade credential learns nothing about the slot. */
+    const char *migration =
+        c != NULL && c->upgrade_authorized && u->open && u->has_migration ? u->migration : NULL;
     if (mo_live_refusal(&json, true, code, class, message, base, candidate, migration) &&
         mo_live_refusal(&text, false, code, class, message, base, candidate, migration))
         reply(s, c, &json, &text, code != 0, EFFECT_NONE);
@@ -249,7 +251,9 @@ static void page(struct mo_protocol_server *s, struct protocol_connection *c,
     if (!slot_named(u, a->slot) || !decimal(a->index, &index) || !decimal(a->offset, &offset) ||
         !decimal(a->total, &total)) {
         refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload",
-               "no open upload slot has this id; it may have closed", NULL);
+               "no open upload slot has this id; it may have closed; open a new one with "
+               "mo-upgrade-open",
+               NULL);
         return;
     }
     if (u->live != NULL) {
@@ -259,33 +263,43 @@ static void page(struct mo_protocol_server *s, struct protocol_connection *c,
     }
     enum mo_upload_status status = mo_upload_page(&u->upload, index, offset, total,
                                                   (const uint8_t *)a->bytes, strlen(a->bytes));
-    const char *problem = NULL;
+    /* Each refusal names what the slot expected and what the page said; the slot stays. */
+    char problem[256];
+    int n = 0;
     switch (status) {
     case MO_UPLOAD_MORE:
     case MO_UPLOAD_COMPLETE:
         break;
     case MO_UPLOAD_ORDER:
-        problem = "page index or offset is not the next range";
+        n = snprintf(problem, sizeof problem,
+                     "expected page %llu at offset %zu, got page %llu at offset %llu; send the "
+                     "expected page",
+                     (unsigned long long)u->upload.next, u->upload.received,
+                     (unsigned long long)index, (unsigned long long)offset);
         break;
     case MO_UPLOAD_TOTAL:
-        problem = "page total differs from the slot's";
+        n = snprintf(problem, sizeof problem, "the slot holds %zu bytes, the page says %llu",
+                     u->upload.total, (unsigned long long)total);
         break;
     case MO_UPLOAD_SIZE:
-        problem = "page size is wrong for its position";
+        n = snprintf(problem, sizeof problem,
+                     "pages hold %d decoded bytes except the last, which ends at byte %zu",
+                     MO_LIMIT_UPGRADE_PAGE_BYTES, u->upload.total);
         break;
     case MO_UPLOAD_ENCODING:
-        problem = "page bytes are not canonical padded base64";
+        n = snprintf(problem, sizeof problem, "page bytes are not canonical padded base64");
         break;
     }
-    if (problem != NULL) {
+    MO_ASSERT(n >= 0 && (size_t)n < sizeof problem);
+    if (n > 0) {
         refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload", problem, u->candidate);
         return;
     }
     u->touched = s->now.monotonic_us;
     char fields[96];
     if (status == MO_UPLOAD_MORE) {
-        int n = snprintf(fields, sizeof fields, "{\"received\":%zu,\"complete\":false}",
-                         u->upload.received);
+        n = snprintf(fields, sizeof fields, "{\"received\":%zu,\"complete\":false}",
+                     u->upload.received);
         MO_ASSERT(n > 0 && (size_t)n < sizeof fields);
         progress(s, c, fields);
         return;
@@ -298,9 +312,16 @@ static void page(struct mo_protocol_server *s, struct protocol_connection *c,
     if (memcmp(digest, u->candidate, 32) != 0) {
         uint8_t candidate[32];
         memcpy(candidate, u->candidate, 32);
+        char got[65], wanted[65], message[256];
+        mo_protocol_hex(digest, 32, got);
+        mo_protocol_hex(candidate, 32, wanted);
+        n = snprintf(message, sizeof message,
+                     "uploaded bytes do not match the candidate digest: they hash to %s, not %s; "
+                     "open a new slot",
+                     got, wanted);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof message);
         close_slot(s);
-        refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload",
-               "uploaded bytes do not match the candidate digest", candidate);
+        refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload", message, candidate);
         return;
     }
     u->live = mo_live_start(u->compiler, &u->active, u->bytes.bytes, u->upload.total,
@@ -311,8 +332,7 @@ static void page(struct mo_protocol_server *s, struct protocol_connection *c,
         return;
     }
     u->compiling = true;
-    int n =
-        snprintf(fields, sizeof fields, "{\"received\":%zu,\"complete\":true}", u->upload.received);
+    n = snprintf(fields, sizeof fields, "{\"received\":%zu,\"complete\":true}", u->upload.received);
     MO_ASSERT(n > 0 && (size_t)n < sizeof fields);
     progress(s, c, fields);
 }
@@ -323,7 +343,9 @@ static void commit(struct mo_protocol_server *s, struct protocol_connection *c,
     uint8_t base[32];
     if (!slot_named(u, a->slot) || !unhex(a->base, base, 32)) {
         refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload",
-               "no open upload slot has this id; it may have closed", NULL);
+               "no open upload slot has this id; it may have closed; open a new one with "
+               "mo-upgrade-open",
+               NULL);
         return;
     }
     if (u->live == NULL) {

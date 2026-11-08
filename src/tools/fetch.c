@@ -726,20 +726,36 @@ static int push_report(const struct mo_cli *cli, FILE *output, FILE *errors,
     return ok && !r->failed ? 0 : 1;
 }
 
+/* A failure on the client's side: the message on the error stream, or with --json a report on
+ * standard output so it stays parseable. */
+static int push_failure(const struct mo_cli *cli, FILE *output, FILE *errors, const char *message,
+                        int status) {
+    if (!cli->json) {
+        (void)fprintf(errors, "mo push: %s\n", message);
+        return status;
+    }
+    struct mo_buffer json;
+    mo_buffer_init(&json, 1024);
+    bool ok = mo_buffer_append_text(&json, "{\"version\":1,\"status\":\"refused\",\"code\":null,"
+                                           "\"class\":\"client\",\"message\":") &&
+              mo_render_json_text(&json, message, strlen(message)) &&
+              mo_buffer_append_text(&json, "}\n") &&
+              fwrite(json.bytes, 1, json.length, output) == json.length && fflush(output) == 0;
+    mo_buffer_free(&json);
+    return ok ? status : 1;
+}
+
 static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, const char *host,
                         const char *port, uint64_t end) {
     uint8_t base[32];
-    if (!unhex(cli->push_base, base, 32)) {
-        (void)fputs("mo push: --base needs the 64-digit lowercase source digest of the active "
-                    "program\n",
-                    errors);
-        return 2;
-    }
+    if (!unhex(cli->push_base, base, 32))
+        return push_failure(cli, output, errors,
+                            "--base needs the 64-digit lowercase source digest of the active "
+                            "program",
+                            2);
     const char *token = NULL, *upgrade = NULL;
-    if (!credential(cli->fetch_token, &token) || !credential(cli->upgrade_token, &upgrade)) {
-        (void)fputs("mo push: token unavailable or invalid\n", errors);
-        return 1;
-    }
+    if (!credential(cli->fetch_token, &token) || !credential(cli->upgrade_token, &upgrade))
+        return push_failure(cli, output, errors, "token unavailable or invalid", 1);
     struct mo_diags diags;
     struct mo_sources sources = {0};
     struct mo_buffer bundle;
@@ -750,8 +766,8 @@ static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, co
     struct mo_image *image = NULL;
     if (!mo_sources_init(&sources) ||
         !mo_upgrade_bundle(mo_cli_file(cli, 0), true, true, &bundle, &diags, &sources)) {
-        status =
-            mo_write_diagnostics(output, errors, false, MO_COMMAND_PUSH, &sources, &diags, NULL);
+        status = mo_write_diagnostics(output, errors, cli->json, MO_COMMAND_PUSH, &sources, &diags,
+                                      NULL);
         status = status == 0 ? 1 : status;
         goto done;
     }
@@ -773,7 +789,7 @@ static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, co
     struct mo_defect initialization;
     uint32_t function = MO_NO_INDEX;
     if (image == NULL || mo_image_init(image, &limits, &initialization) != MO_RETURNED) {
-        (void)fputs("mo push: reader unavailable\n", errors);
+        status = push_failure(cli, output, errors, "reader unavailable", 1);
         goto done;
     }
     const struct mo_bytecode *file = mo_image_bytecode(image);
@@ -830,6 +846,7 @@ static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, co
                       function, &reply);
         proceed = answered && !reply.failed;
     }
+    bool committing = proceed;
     if (proceed) {
         mo_buffer_clear(&arguments);
         mo_buffer_clear(&reply.text);
@@ -846,9 +863,14 @@ static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, co
     if (answered)
         status = push_report(cli, output, errors, &reply);
     else
-        (void)fputs("mo push: the service did not answer; the push may or may not have been "
-                    "applied; push again to learn which program is active\n",
-                    errors);
+        /* Only the commit can change the service; an earlier failure changed nothing. */
+        status = push_failure(cli, output, errors,
+                              committing ? "the service did not answer the commit; the upgrade "
+                                           "may or may not have been applied; push again to "
+                                           "learn which program is active"
+                                         : "the service did not answer or refused the request "
+                                           "before the commit; nothing was changed",
+                              1);
     mo_buffer_free(&arguments);
     mo_buffer_free(&reply.text);
     mo_buffer_free(&reply.json);

@@ -1417,10 +1417,21 @@ static void upgrade_tools(void) {
     upgrade_call(&f, upgrade_auth, "mo-upgrade-page", page, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1418\"") != NULL &&
           strstr(out, "do not match the candidate digest") != NULL);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    char migrating[1024];
+    n = snprintf(migrating, sizeof migrating,
+                 "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":3,"
+                 "\"migration\":\"Main.secret_migration\"}",
+                 base, other);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof migrating);
+    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", migrating, out, sizeof out);
     CHECK(strstr(out, "\"isError\":false") != NULL);
+    /* A caller without the credential learns nothing about the open slot. */
+    upgrade_call(&f, auth, "mo-upgrade-open", arguments, out, sizeof out);
+    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL && strstr(out, "secret_migration") == NULL);
+    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    CHECK(strstr(out, "\"code\":\"E1415\"") != NULL && strstr(out, "secret_migration") != NULL);
     /* Refusals are events: class and digests only. */
-    CHECK(upgrade_events(&log, 1416) == 1 && upgrade_events(&log, 1415) == 1 &&
+    CHECK(upgrade_events(&log, 1416) == 1 && upgrade_events(&log, 1415) == 2 &&
           upgrade_events(&log, 1418) == 5 && upgrade_events(&log, 1417) == 1);
     finish(&f);
     /* Without the credential at start, every upgrade call is refused. */

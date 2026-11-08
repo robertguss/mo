@@ -345,6 +345,16 @@ def main_flow(binary, root):
         wrong = push(binary, service, v2, base1, upgrade="NotTheUpgradeCredential0")
         outputs += [wrong.stdout, wrong.stderr]
         assert wrong.returncode == 1 and b"E1414" in wrong.stderr, wrong
+        # A wrong service token never reaches the tools: nothing changed, and --json stays JSON.
+        rejected = subprocess.run([binary, "push", str(v2), "--url",
+                                   f"http://127.0.0.1:{service.port}/mcp", "--base", base1,
+                                   "--token-env", "TOKEN", "--upgrade-token-env", "UPGRADE",
+                                   "--json"], capture_output=True, timeout=120,
+                                  env={**ENV, "TOKEN": "WrongServiceToken0123456"})
+        report = json.loads(rejected.stdout)
+        assert rejected.returncode == 1 and report["class"] == "client", rejected
+        assert "nothing was changed" in report["message"], report
+        outputs += [rejected.stdout, rejected.stderr]
         assert all(stream.events(0.5) == [] for stream in streams)
         assert service.value("read") == "v1:0"
         # A push under concurrent callers: every acknowledged call lands exactly once.
