@@ -51,18 +51,24 @@ or the inference traversal changes. E1053 and E1057 are different: allocation
 failure and corrupted compiler output are real failure modes, exercised by
 `tests/test_compiler_faults.c` without changing production limits or hooks.
 
-## Reserved upgrade diagnostics
+## Live upgrade diagnostics
 
-E1414 (upgrade credential), E1416 (stale live base), E1428 (live boundary deadline)
-and E1431 (ambiguous retained-program resolution) reserve stable numbers for the
-later live-upgrade and retained-failure paths. Checked restart has no upload slot,
-upgrade credential, live pause deadline or automatic retained-failure resolver,
-so these diagnostics are not reachable in this milestone. Their inventory entries
-are exemptions, not message tests. Replace each exemption with an executable case
-when its producing path is implemented. Existing query codes E1410–E1413 retain
-their meanings; the upgrade range starts at E1414. A recorded-program precheck
-that finds a live owner emits E1415. `mo serve` retains its existing store-lock
-message and exit status 75.
+Live upgrades produce E1414 (upgrade credential), E1415 (busy slot), E1416 (stale
+base) and E1418 (malformed upload) through the MCP upgrade tools;
+`tests/test_protocol_server.c` pins each. E1431 (ambiguous retained program) comes
+from `mo replay --failure ID --data DIR` without a source file; the store test pins
+the ambiguity it reports. Existing query codes E1410–E1413 retain their meanings;
+the upgrade range starts at E1414. A recorded-program precheck that finds a live
+owner emits E1415. `mo serve` retains its existing store-lock message and exit
+status 75.
+
+E1428 (live boundary) has no deterministic case. The service refuses a commit with
+it when the loop has stopped, but `mo serve` exits as soon as its supervisor stops
+the service, so no commit can arrive. The other path is a request that began before
+the previous upgrade and still holds that program's catalog when the commit deadline
+passes (at most two programs are kept); the request deadlines make that a timing
+window, not something a test can hold open without fault injection. Revisit this
+exemption if the service can keep serving after a stop.
 
 E1427 is the defensive runtime invalid-timer-interval guard. Source timers must
 use positive duration literals, so zero and negative intervals are rejected by

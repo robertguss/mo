@@ -3710,6 +3710,38 @@ static void activation_faults(struct mo_image *image, const char *path) {
         if (fault != 0 && activation_commit == COMMIT_REAL && result == MO_STORE_ACTIVATION_REFUSED)
             CHECK(!post);
     }
+    /* Two retained programs with one image, build and schema but different sources: a failure
+     * under either cannot name its program, so the reader reports the ambiguity mo replay
+     * renders as E1431. */
+    (void)unlink(path);
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    struct mo_store_record first = {MO_STORE_STATE, 0, programs[0].image, saved[0].bytes,
+                                    saved[0].length};
+    CHECK(mo_store_program_record(store, &programs[0], &first) == MO_STORE_OK);
+    struct mo_store_activation twin = activation;
+    twin.candidate.image = programs[0].image;
+    twin.previous_state.sequence = twin.candidate_state.sequence = 0;
+    twin.candidate_state.image = programs[0].image;
+    CHECK(mo_store_activate(store, &twin) == MO_STORE_ACTIVATED);
+    mo_store_close(store);
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_store_program found;
+    uint32_t matches = 0;
+    bool distinct = false;
+    CHECK(mo_store_retained_program_read_file(path, &arena, programs[0].image, programs[0].build,
+                                              programs[0].schema, &found, &matches,
+                                              &distinct) == MO_STORE_FOLDER_OK);
+    CHECK(matches == 2 && distinct && found.ordinal == 1 &&
+          memcmp(found.source, programs[1].source, 32) == 0 &&
+          found.bundle_size == programs[1].bundle_size);
+    static const uint8_t other[32] = {1};
+    CHECK(mo_store_retained_program_read_file(path, &arena, programs[0].image, other,
+                                              programs[0].schema, &found, &matches,
+                                              &distinct) == MO_STORE_FOLDER_OK);
+    CHECK(matches == 0 && !distinct);
+    mo_arena_free(&arena);
     CHECK(unlink(path) == 0);
     for (int i = 0; i < 2; i++) {
         mo_buffer_free(&saved[i]);
