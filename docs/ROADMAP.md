@@ -19,6 +19,10 @@ Phases 0 to 4 are finished. Phase 5, typed live upgrades, is next.
 
 ## Now
 
+Phase 5 design is in progress: [whole-program upgrades](design/upgrades.md).
+The design remains proposed pending its feasibility gates and Robert’s approval;
+no live upgrade command is implemented by this document.
+
 Phase 4, Agents can see inside it. Operator views, state export, failure capture and offline diagnosis are implemented. The diagnostic evaluation passed its declared gate: 14 of 16 correct, including two timing-defect misses. Robert approved v0.1.0 and the squash merge of PR #308 on 2026-11-07. Results and limits are in [the run record](status/phase4-run.md).
 
 - [x] The design step: `docs/design/introspection.md` and the evaluation

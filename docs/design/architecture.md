@@ -1654,12 +1654,10 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   carries its own schema, so the operator views render any state from its
   saved encoding without new bytecode tables. `docs/design/introspection.md`
   is the design.
-- **Live upgrades (Phase 5):** the module table lists each module's exposed
-  functions and types, and the type table gives what the upgrade checker
-  compares. An instantiation of a generic function belongs to the module that
-  asked for it (4.2), so swapping a module knows which instantiations to
-  rebuild. Calls between modules are direct in Phase 2; Phase 5 adds the
-  indirection it needs.
+- **Live upgrades (Phase 5, proposed):** replace the whole image at a message
+  boundary; calls remain direct. Candidates are source bundles compiled by the
+  serving build and verified before activation. The design and its outstanding
+  feasibility gates are in [upgrades.md](upgrades.md).
 - **In-place demands (Phase 7):** the in-place check of D26 runs on Core, where
   the full-3c checker's rules apply.
 
@@ -3436,8 +3434,8 @@ manually invoked `lean` and `cbmc` groups.
   unmodified sources and their hashes in the repository (section 12).
   The `drivers` group checks regeneration and the UCD's conformance data; width follows the
   explicit policy in `library.md`, not the host terminal.
-- **The bytecode format's stability.** It is internal in Phase 2. Phase 5's
-  upgrades need a versioned format; decide then whether it is public.
+- **The bytecode format's stability.** It remains internal. The proposed Phase 5
+  upgrade boundary is a versioned source bundle, not a public bytecode ABI.
 
 ### 13.2 Settled with Robert
 

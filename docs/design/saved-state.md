@@ -254,3 +254,14 @@ Damaged diagnostic rows also produce a clean refusal. They never stop the servic
 and reading them reports `MO_STORE_CORRUPT`. A failed rollback or commit error poisons
 the handle and requires close/recovery.
 Record ids are published only after successful commit. Snapshots never prune diagnostics.
+
+## Proposed whole-program upgrades
+
+[The upgrade design](upgrades.md) specifies the next phase; it is not implemented
+or approved. Current behavior above remains the shipped contract. Activation
+will atomically record the source bundle, migrated snapshot and program identities,
+with a version-2 folder that old readers refuse. The new upgrade operator tools
+change the service and require a separate credential. A compiler child limits
+crashes and stalls but shares the host identity, files and secrets: its compiler
+is part of the upgrade credential’s trusted base. Write access to the future
+program-owning data folder confers the authority to replace the running program.

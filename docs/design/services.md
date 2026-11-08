@@ -873,3 +873,14 @@ This replaces D260's finish line, a week in which Mo's own agents took every tas
 queue with one deliberate crash, which itself replaced 24 hours under synthetic load. The week was
 dropped because it was one sample of crash behaviour, mostly exercised systemd, SQLite, the proxy
 and the VM rather than Mo, and needed agents to take work from the queue that Robert starts himself.
+
+## Proposed whole-program upgrades
+
+[The upgrade design](upgrades.md) specifies the next phase; it is not implemented
+or approved. Current behavior above remains the shipped contract. Activation
+will atomically record the source bundle, migrated snapshot and program identities,
+with a version-2 folder that old readers refuse. The new upgrade operator tools
+change the service and require a separate credential. A compiler child limits
+crashes and stalls but shares the host identity, files and secrets: its compiler
+is part of the upgrade credential’s trusted base. Write access to the future
+program-owning data folder confers the authority to replace the running program.
