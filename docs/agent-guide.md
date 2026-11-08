@@ -378,3 +378,19 @@ or `history`), and a totals record whose `status` is the exit status. The fields
 `note` on `original`, where `note` is non-null only when a memory failure did not recur; and, on
 `history`, `folder` (`ok`, or why not, as `owned` or `recovery_required`), each failure's `id`
 and `replayable_here`.
+
+### Rehearse an upgrade offline
+
+`mo rehearse --artifact EXPORT --old-bundle OLD --candidate NEW
+[--migrate Module.function] [--context OLD.mocc] [--json]` reads a state export
+and two canonical MOSB source bundles. The export must come from this exact
+build; OLD must compile to its recorded program, service and saved schema.
+For a program retaining an earlier migration body, supply its recorded MOCC
+compilation context with `--context`; original source identity remains separate.
+The candidate uses the same typed comparison and migration runner as checked
+restart, with the smaller live migration work and heap limits. Exit 0 means
+"would be accepted" for this snapshot; exit 1 means refusal. The JSON report
+includes `rehearsal: true`, `accepted: false` and `state_valid`.
+Rehearsal is not upgrade acceptance. It writes no export or service data and
+opens no data folder; compilation uses temporary scratch files. A future live
+upgrade must repeat admission against the then-current service state.

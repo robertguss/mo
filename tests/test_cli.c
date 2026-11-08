@@ -808,6 +808,19 @@ static void sorted_output(void) {
     mo_diags_free(&diags);
 }
 
+static void parse_rehearsal(void) {
+    const char *args[] = {"mo",        "rehearse",     "--artifact", "state.moex", "--old-bundle",
+                          "old.mosb",  "--candidate",  "new.mosb",   "--context",  "old.mocc",
+                          "--migrate", "Main.migrate", "--json"};
+    struct mo_cli cli;
+    const char *error;
+    CHECK(mo_cli_parse(13, args, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_REHEARSE && cli.json);
+    CHECK(strcmp(cli.candidate, "new.mosb") == 0);
+    CHECK(strcmp(cli.compile_context, "old.mocc") == 0);
+    CHECK(!mo_cli_parse(6, args, &cli, &error));
+}
+
 int main(int argc, char *argv[]) {
     /* Explicit UTF-8 test locale, including on macOS; production selects the
      * user's locale instead. The C-locale regression runs last. */
@@ -832,6 +845,7 @@ int main(int argc, char *argv[]) {
     if (argc == 2 &&
         (strcmp(argv[1], "--render-json") == 0 || strcmp(argv[1], "--render-text") == 0))
         return rendering(strcmp(argv[1], "--render-json") == 0, stdout) ? 0 : 1;
+    parse_rehearsal();
     parse_commands();
     parse_serve();
     parse_fetch();

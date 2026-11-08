@@ -383,14 +383,20 @@ from `upgrades`; an evicted refusal event is not a successful activation.
 ## Offline rehearsal
 
 `mo rehearse --artifact EXPORT --old-bundle OLD --candidate NEW
-[--migrate Module.function] [--json]` accepts a Phase 4 export and two canonical
-source bundles. The export contains no source. Require its build digest to
+[--migrate Module.function] [--context OLD.mocc] [--json]` accepts a Phase 4 export and two canonical
+source bundles. The export contains no source. Supply the separately recorded
+MOCC context with `--context` when OLD retains historical generated declarations.
+It is bounded and validated before compilation, and does not change MOSB source
+identity. A tool-only candidate inherits it; a new migration generates its old
+types from OLD compiled with that context. Require its build digest to
 match the executing build and compile OLD to its recorded image key before
 decoding. NEW is expected to have a different image key; do not apply the old
 program-equality check to it. Run the same descriptor comparison, migration
 limits and result validation as live admission. Exit zero means `would be
 accepted`, exit one means refusal. The shared report also carries
 `rehearsal: true`; it never means the live service accepted the candidate.
+Successful rehearsal reports retain the exported `head` but omit `ordinal`:
+no activation occurred and the export does not carry an activation ordinal.
 Rehearsal opens no data folder and writes no service state. Live push repeats
 all checks against its current base and state. Wrong build or wrong old bundle
 refuses with both expected and actual identities.

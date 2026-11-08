@@ -1392,6 +1392,8 @@ static const char *command_name(enum mo_command command) {
         return "test";
     case MO_COMMAND_REPLAY:
         return "replay";
+    case MO_COMMAND_REHEARSE:
+        return "rehearse";
     case MO_COMMAND_QUERY:
         return "query";
     case MO_COMMAND_HISTORY:
