@@ -1,4 +1,5 @@
 #define MO_PROTOCOL_SERVER_FAULT_TEST
+#define MO_PROTOCOL_SERVER_UPGRADE_TEST
 #include "test_protocol_server.c"
 
 #include <errno.h>

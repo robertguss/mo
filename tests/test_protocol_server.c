@@ -266,6 +266,8 @@ static void wire(void *context) {
     finish(&f);
 }
 
+/* Upgrade-call helpers, shared with the activation fault test. */
+#if !defined(MO_PROTOCOL_SERVER_FAULT_TEST) || defined(MO_PROTOCOL_SERVER_UPGRADE_TEST)
 static const char upgrade_auth[] = "Authorization: Bearer McpSecretCanary42\r\n"
                                    "Mo-Upgrade-Authorization: Bearer UpgradeCanary0123456789\r\n";
 
@@ -291,6 +293,8 @@ static void upgrade_call(struct fixture_server *f, const char *fields, const cha
 }
 
 /* Refusal events carry only their code and digests; code 0 counts every refusal. */
+#endif
+
 #ifndef MO_PROTOCOL_SERVER_FAULT_TEST
 static void rate(void) {
     struct fixture_server f = start();
