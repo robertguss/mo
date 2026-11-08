@@ -30,10 +30,23 @@ enum protocol_function {
     PF_FAILURE_VIEW,
     PF_EXPORT,
     PF_OPERATOR_REPLY,
+    PF_STREAM_PLAN,
+    PF_HTTP_SESSION,
+    PF_STREAM_HEAD,
+    PF_LIST_CHANGED,
     PF_COUNT
 };
 
-enum protocol_phase { PS_EMPTY, PS_HEADERS, PS_BODY, PS_CONTINUE, PS_SERVICE, PS_WRITE, PS_DRAIN };
+enum protocol_phase {
+    PS_EMPTY,
+    PS_HEADERS,
+    PS_BODY,
+    PS_CONTINUE,
+    PS_SERVICE,
+    PS_WRITE,
+    PS_DRAIN,
+    PS_STREAM
+};
 
 enum protocol_error {
     PE_ARGUMENTS,
@@ -76,7 +89,17 @@ struct protocol_connection {
     struct mo_cell scan, body_state, version, action, descriptor, catalog;
     struct mo_cell response;
     struct mo_service_response reply;
-    bool reply_ready, retained, authenticated;
+    /* A GET stream's unwritten output and the session it serves (index + 1, 0 for none). */
+    uint8_t stream[MO_LIMIT_MCP_STREAM_BYTES];
+    size_t stream_size, session;
+    bool reply_ready, retained, authenticated, upgrade_authorized;
+};
+
+struct protocol_session {
+    char id[MO_LIMIT_MCP_SESSION_ID_BYTES];
+    uint64_t used;
+    size_t stream; /* connection slot of the session's one stream, or SIZE_MAX */
+    bool live;
 };
 
 struct mo_protocol_server {
@@ -95,12 +118,16 @@ struct mo_protocol_server {
     struct mo_cell authorities, cached_descriptor, cached_catalog;
     uint32_t functions[PF_COUNT];
     uint32_t service_index;
-    uint64_t sequence, rate_at, rate_credit, started_at;
+    uint64_t sequence, sequence_sessions, rate_at, rate_credit, started_at;
     size_t next_slot, fallback_body_max, view_scratch_peak;
     struct protocol_fallback fallbacks[PE_COUNT][EFFECT_COUNT];
     struct protocol_bytes *fallback_headers;
     struct protocol_bytes errors[506];
     struct protocol_connection connections[MO_LIMIT_MCP_CONNECTIONS];
+    struct protocol_session sessions[MO_LIMIT_MCP_SESSIONS];
+    struct protocol_bytes stream_head, list_changed;
+    struct mo_bearer upgrade_bearer;
+    bool upgrade_enabled;
     struct mo_protocol_metrics metrics;
     bool io_failed, closing;
 };
@@ -133,6 +160,14 @@ void mo_protocol_complete(struct mo_protocol_server *server,
 MO_MUST_USE bool mo_protocol_catalog(struct mo_protocol_server *server);
 MO_MUST_USE bool mo_protocol_request_process(struct mo_protocol_server *server,
                                              struct protocol_connection *connection);
+/* Session lookup by the bytes a request carried; SIZE_MAX when no live session matches. */
+MO_MUST_USE size_t mo_protocol_session_find(struct mo_protocol_server *server, const uint8_t *id,
+                                            size_t length);
+MO_MUST_USE bool mo_protocol_session_open(struct mo_protocol_server *server, size_t *out);
+void mo_protocol_stream_open(struct mo_protocol_server *server,
+                             struct protocol_connection *connection, size_t session);
+/* Queue a tools/list_changed notification on each session's one stream. */
+void mo_protocol_list_changed(struct mo_protocol_server *server);
 
 MO_MUST_USE bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *c,
                                   struct mo_cell *out);

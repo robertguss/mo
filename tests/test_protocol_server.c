@@ -203,6 +203,7 @@ static void wire(void *context) {
     CHECK(strstr(output, "HTTP/1.1 200 ") == output);
     CHECK(strstr(output, "\"id\":-0") != NULL);
     CHECK(strstr(output, "\"protocolVersion\":\"2025-11-25\"") != NULL);
+    CHECK(strstr(output, "\r\nMCP-Session-Id: ") != NULL);
     request(&f, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", auth, output,
             sizeof output, 7);
     CHECK(strstr(output, "\"inputSchema\"") != NULL);
@@ -1068,6 +1069,161 @@ static void export_idle_wait(void) {
     finish(&f);
 }
 
+static void session_of(const char *out, char id[MO_LIMIT_MCP_SESSION_ID_BYTES + 1]) {
+    const char *at = strstr(out, "\r\nMCP-Session-Id: ");
+    id[0] = 0;
+    CHECK(at != NULL);
+    if (at == NULL)
+        return;
+    at += strlen("\r\nMCP-Session-Id: ");
+    size_t n = strcspn(at, "\r");
+    CHECK(n == MO_LIMIT_MCP_SESSION_ID_BYTES && strspn(at, "0123456789abcdef") == n);
+    if (n == MO_LIMIT_MCP_SESSION_ID_BYTES) {
+        memcpy(id, at, n);
+        id[n] = 0;
+    }
+}
+
+static void initialize(struct fixture_server *f, char id[MO_LIMIT_MCP_SESSION_ID_BYTES + 1]) {
+    char out[4096];
+    request(f,
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+            "\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{"
+            "\"name\":\"test\",\"version\":\"1\"}}}",
+            auth, out, sizeof out, 0);
+    CHECK(strstr(out, "\"listChanged\":true") != NULL);
+    session_of(out, id);
+}
+
+struct stream_peer {
+    char input[512], output[4096];
+    struct mo_listener_fake_peer peer;
+};
+
+static const char stream_head[] = "HTTP/1.1 200 OK\r\nConnection: close\r\nCache-Control: "
+                                  "no-store\r\nContent-Type: text/event-stream\r\n\r\n";
+
+/* A GET that stays connected; the caller polls and inspects peer state. */
+static void stream_connect(struct fixture_server *f, struct stream_peer *p, const char *fields,
+                           bool writable) {
+    int n = snprintf(p->input, sizeof p->input, "GET /mcp HTTP/1.1\r\nHost: localhost\r\n%s\r\n",
+                     fields);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof p->input);
+    p->peer = (struct mo_listener_fake_peer){.input = (const uint8_t *)p->input,
+                                             .input_size = (size_t)n,
+                                             .output = (uint8_t *)p->output,
+                                             .output_capacity = sizeof p->output - 1,
+                                             .readable = true,
+                                             .writable = writable};
+    MO_ASSERT(mo_listener_fake_connect(f->listener, &p->peer) == MO_LISTENER_OK);
+    for (unsigned i = 0; i < 16 && p->peer.output_size < strlen(stream_head) && !p->peer.closed;
+         i++)
+        poll_server(f);
+    p->output[p->peer.output_size] = 0;
+}
+
+static void stream_fields(char *out, size_t size, const char *session) {
+    int n = snprintf(out, size,
+                     "%sAccept: text/event-stream\r\nMCP-Protocol-Version: 2025-11-25\r\n"
+                     "MCP-Session-Id: %s\r\n",
+                     auth, session);
+    MO_ASSERT(n > 0 && (size_t)n < size);
+}
+
+static void streams(void) {
+    struct fixture_server f = start();
+    char session[MO_LIMIT_MCP_SESSION_ID_BYTES + 1], other[MO_LIMIT_MCP_SESSION_ID_BYTES + 1];
+    initialize(&f, session);
+    initialize(&f, other);
+    CHECK(strcmp(session, other) != 0);
+    char fields[512], out[4096];
+    stream_fields(fields, sizeof fields, session);
+    struct stream_peer first, second, third;
+    stream_connect(&f, &first, fields, true);
+    CHECK(strcmp(first.output, stream_head) == 0 && !first.peer.closed);
+    for (unsigned i = 0; i < 8; i++)
+        poll_server(&f);
+    CHECK(!first.peer.closed && mo_protocol_server_connected(f.server));
+    /* A reconnect in the same session replaces its stream, so nothing reaches both. */
+    stream_connect(&f, &second, fields, true);
+    CHECK(strcmp(second.output, stream_head) == 0 && first.peer.closed && !second.peer.closed);
+    /* Calls keep working with or without the session header. */
+    char with_session[256];
+    int n = snprintf(with_session, sizeof with_session, "%sMCP-Session-Id: %s\r\n", auth, session);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof with_session);
+    request(&f, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}", with_session, out, sizeof out,
+            0);
+    CHECK(strstr(out, "HTTP/1.1 200 ") == out && strstr(out, "\"id\":9,\"result\":{}") != NULL);
+    n = snprintf(with_session, sizeof with_session,
+                 "%sMCP-Session-Id: 00000000000000000000000000000000\r\n", auth);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof with_session);
+    request(&f, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"ping\"}", with_session, out, sizeof out,
+            0);
+    CHECK(strstr(out, "HTTP/1.1 404 ") == out);
+    /* The client's end closes the stream and frees its slot. */
+    second.peer.eof = true;
+    for (unsigned i = 0; i < 8 && !second.peer.closed; i++)
+        poll_server(&f);
+    CHECK(second.peer.closed && !mo_protocol_server_connected(f.server));
+    const struct {
+        const char *fields;
+        int status;
+    } refusals[] = {
+        {"Accept: text/event-stream\r\nMCP-Session-Id: 0\r\n", 401},
+        {"Authorization: Bearer McpSecretCanary42\r\nAccept: text/event-stream\r\n", 400},
+        {"Authorization: Bearer McpSecretCanary42\r\nAccept: text/event-stream\r\n"
+         "MCP-Session-Id: ffffffffffffffffffffffffffffffff\r\n",
+         404},
+        {"Authorization: Bearer McpSecretCanary42\r\nAccept: application/json\r\n", 406},
+    };
+    for (size_t i = 0; i < sizeof refusals / sizeof *refusals; i++) {
+        char raw[512];
+        n = snprintf(raw, sizeof raw, "GET /mcp HTTP/1.1\r\nHost: localhost\r\n%s\r\n",
+                     refusals[i].fields);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof raw);
+        raw_status(&f, raw, refusals[i].status);
+    }
+    raw_status(&f, "DELETE /mcp HTTP/1.1\r\nHost: localhost\r\n\r\n", 405);
+    /* A consumer that never reads is disconnected, never waited for. */
+    stream_fields(fields, sizeof fields, other);
+    stream_connect(&f, &third, fields, true);
+    CHECK(!third.peer.closed);
+    third.peer.writable = false;
+    struct stream_peer slow;
+    stream_fields(fields, sizeof fields, session);
+    stream_connect(&f, &slow, fields, false);
+    CHECK(slow.peer.output_size == 0 && !slow.peer.closed);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, MO_LIMIT_MCP_WRITE_US - 1) == MO_LISTENER_OK);
+    poll_server(&f);
+    CHECK(!slow.peer.closed);
+    MO_ASSERT(mo_listener_fake_advance(f.listener, 1) == MO_LISTENER_OK);
+    poll_server(&f);
+    CHECK(slow.peer.closed && !third.peer.closed);
+    finish(&f);
+    f = start();
+    struct stream_peer open[MO_LIMIT_MCP_STREAMS + 1];
+    for (size_t i = 0; i <= MO_LIMIT_MCP_STREAMS; i++) {
+        initialize(&f, session);
+        stream_fields(fields, sizeof fields, session);
+        if (i < MO_LIMIT_MCP_STREAMS) {
+            stream_connect(&f, &open[i], fields, true);
+            CHECK(strcmp(open[i].output, stream_head) == 0 && !open[i].peer.closed);
+            continue;
+        }
+        char raw[512];
+        n = snprintf(raw, sizeof raw, "GET /mcp HTTP/1.1\r\nHost: localhost\r\n%s\r\n", fields);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof raw);
+        raw_status(&f, raw, 503);
+    }
+    mo_protocol_server_stop_accepting(f.server);
+    for (unsigned i = 0; i < 4 && mo_protocol_server_connected(f.server); i++)
+        poll_server(&f);
+    CHECK(!mo_protocol_server_connected(f.server));
+    for (size_t i = 0; i < MO_LIMIT_MCP_STREAMS; i++)
+        CHECK(open[i].peer.closed);
+    finish(&f);
+}
+
 static void run(void *context) {
     failure_text_arguments();
     failure_view_unreadable();
@@ -1089,6 +1245,7 @@ static void run(void *context) {
     connected();
     response_limit();
     busy();
+    streams();
 }
 
 int main(void) {

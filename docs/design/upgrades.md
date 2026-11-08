@@ -215,7 +215,11 @@ prerequisite for live swapping: the current POST/JSON endpoint cannot deliver
 unsolicited notifications. Add an authenticated MCP SSE stream using the same
 service credential and connection limits. A successful activation queues
 `notifications/tools/list_changed` after commit on each connected stream;
-refusals send none. Refresh the catalog before publishing the notification.
+refusals send none. Here “each connected stream” means each connected client/session,
+with one selected stream per session. Multiple streams in the same session must
+not receive duplicate notifications; distinct sessions each receive one. This
+pins the routing rule to the [MCP 2025-11-25 transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
+Refresh the catalog before publishing the notification.
 A reconnecting client refreshes `tools/list`; notification delivery is not a
 durable event log. Bound pending stream output and close slow consumers rather
 than delaying activation. Preserve existing POST/JSON calls. Advertise

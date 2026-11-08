@@ -551,6 +551,15 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_MCP_DRAIN_US UINT64_C(250000)
 #define MO_LIMIT_MCP_RATE 20
 #define MO_LIMIT_MCP_BURST 40
+/* MCP sessions: an initialize result names one, later POSTs may carry it and a GET stream must.
+ * A full table forgets its least recently used session; that session's next request receives
+ * 404 and its client initializes again. */
+#define MO_LIMIT_MCP_SESSIONS 64
+#define MO_LIMIT_MCP_SESSION_ID_BYTES 32
+/* Open GET streams across all sessions, so streams cannot take every connection slot. */
+#define MO_LIMIT_MCP_STREAMS 4
+/* Unwritten output per stream; a consumer further behind is disconnected, never waited for. */
+#define MO_LIMIT_MCP_STREAM_BYTES 1024
 
 #define MO_LIMIT_UPGRADE_PREVIOUS 2
 #define MO_LIMIT_UPGRADE_RETAINED_BYTES (32 * 1024 * 1024)

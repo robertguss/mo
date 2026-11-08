@@ -1,5 +1,15 @@
 module McpTransport
-expose Action(..), receive, runtime_error, reply, fallback, http, http_head, http100
+expose Action(..),
+receive,
+runtime_error,
+reply,
+fallback,
+http,
+http_head,
+http100,
+http_session,
+stream_head,
+list_changed
 use Json
 use Mcp
 use McpRpc
@@ -10,6 +20,7 @@ enum Action
   Reply(status: Int, body: Text)
   Call(request: McpRpc.Request, tool: Int, arguments: Json.Json)
   Operator(request: McpRpc.Request, view: Int, arguments: Json.Json, offset: Int)
+  Session(body: Text)
 end
 
 fn receive(
@@ -56,10 +67,7 @@ fn receive(
   case method
     McpRpc.InvalidParams: protocol_error(Some(request.id), -32603, "Internal error")
     McpRpc.UnknownMethod: protocol_error(Some(request.id), -32601, "Method not found")
-    McpRpc.Initialize: Reply(
-      status: 200,
-      body: reply(request.id, McpRpc.initialized(server_version))
-    )
+    McpRpc.Initialize: Session(body: reply(request.id, McpRpc.initialized(server_version)))
     McpRpc.Ping: Reply(status: 200, body: reply(request.id, Json.Object({})))
     McpRpc.ListTools(start):
       case Mcp.page(catalog, start, request.id)
@@ -214,9 +222,29 @@ fn http_head(status: Int, body_bytes: Int) : Text
   if status == 401
     headers = "#{headers}WWW-Authenticate: Bearer\r\n"
   else if status == 405
-    headers = "#{headers}Allow: POST\r\n"
+    headers = "#{headers}Allow: GET, POST\r\n"
   end
   "#{headers}\r\n"
+end
+
+## An initialize result names the session later requests and GET streams carry.
+fn http_session(body: Text, session: Text) : Text
+  head = http_head(200, body.byte_count)
+  prefix = head.drop_suffix("\r\n") or stop "MCP session head"
+  "#{prefix}MCP-Session-Id: #{session}\r\n\r\n#{body}"
+end
+
+## A server-to-client stream has no length; it ends when either side closes.
+fn stream_head() : Text
+  "HTTP/1.1 200 OK\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: text/event-stream\r\n\r\n"
+end
+
+fn list_changed() : Text
+  notification = Json.Object({
+    "jsonrpc": Json.String("2.0"),
+    "method": Json.String("notifications/tools/list_changed")
+  })
+  "data: #{notification.to_text}\n\n"
 end
 
 fn http100() : Text

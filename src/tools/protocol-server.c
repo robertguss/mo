@@ -3,16 +3,36 @@
 #include "tools/tools.h"
 
 #include <string.h>
+#include <sys/random.h>
 
-static const char *const function_names[PF_COUNT] = {
-    "Http.scan_headers",      "Http.parse_headers",    "HttpAuthority.check",
-    "HttpPolicy.inspect",     "HttpPolicy.body_plan",  "HttpBody.fixed",
-    "HttpBody.chunked",       "HttpBody.feed",         "Mcp.prepare",
-    "McpTransport.receive",   "McpValue.arguments",    "McpValue.encode",
-    "Mcp.tool_reply",         "McpTransport.fallback", "McpTransport.http",
-    "McpTransport.http_head", "McpTransport.http100",  "McpViews.render",
-    "McpViews.export_id",     "McpViews.failure_id",   "McpViews.failure_after",
-    "McpViews.failure_reply", "McpViews.export_reply", "Mcp.operator_reply"};
+static const char *const function_names[PF_COUNT] = {"Http.scan_headers",
+                                                     "Http.parse_headers",
+                                                     "HttpAuthority.check",
+                                                     "HttpPolicy.inspect",
+                                                     "HttpPolicy.body_plan",
+                                                     "HttpBody.fixed",
+                                                     "HttpBody.chunked",
+                                                     "HttpBody.feed",
+                                                     "Mcp.prepare",
+                                                     "McpTransport.receive",
+                                                     "McpValue.arguments",
+                                                     "McpValue.encode",
+                                                     "Mcp.tool_reply",
+                                                     "McpTransport.fallback",
+                                                     "McpTransport.http",
+                                                     "McpTransport.http_head",
+                                                     "McpTransport.http100",
+                                                     "McpViews.render",
+                                                     "McpViews.export_id",
+                                                     "McpViews.failure_id",
+                                                     "McpViews.failure_after",
+                                                     "McpViews.failure_reply",
+                                                     "McpViews.export_reply",
+                                                     "Mcp.operator_reply",
+                                                     "HttpPolicy.stream_plan",
+                                                     "McpTransport.http_session",
+                                                     "McpTransport.stream_head",
+                                                     "McpTransport.list_changed"};
 
 static uint64_t deadline(uint64_t now, uint64_t interval) {
     return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;
@@ -150,6 +170,8 @@ void mo_protocol_dispose(struct mo_protocol_server *s, struct protocol_connectio
 void mo_protocol_close(struct mo_protocol_server *s, struct protocol_connection *c) {
     if (c->phase == PS_EMPTY)
         return;
+    if (c->session != 0 && s->sessions[c->session - 1].stream == (size_t)(c - s->connections))
+        s->sessions[c->session - 1].stream = SIZE_MAX;
     if (c->retained)
         mo_value_drop(s->service_heap, c->reply.type, c->reply.value);
     union mo_listener_request request = {.connection = c->key};
@@ -320,7 +342,7 @@ static bool templates(struct mo_protocol_server *s) {
             return false;
     }
     static const int statuses[] = {100, 202, 400, 401, 403, 404, 405, 406,
-                                   413, 415, 417, 421, 431, 501, 505};
+                                   413, 415, 417, 421, 431, 501, 503, 505};
     for (size_t i = 0; i < sizeof statuses / sizeof *statuses; i++) {
         struct mo_cell args[] = {mo_cell_int(statuses[i]), mo_cell_int(0)}, value;
         if (!mo_protocol_invoke(s, NULL, PF_HTTP_HEAD, args, &value))
@@ -330,7 +352,109 @@ static bool templates(struct mo_protocol_server *s) {
         if (!ok)
             return false;
     }
+    const enum protocol_function streams[] = {PF_STREAM_HEAD, PF_LIST_CHANGED};
+    struct protocol_bytes *stream_bytes[] = {&s->stream_head, &s->list_changed};
+    for (size_t i = 0; i < 2; i++) {
+        struct mo_cell value;
+        if (!mo_protocol_invoke(s, NULL, streams[i], NULL, &value))
+            return false;
+        bool ok = catalog_copy(s, value, stream_bytes[i]);
+        mo_protocol_drop(s, NULL, streams[i], value);
+        if (!ok)
+            return false;
+    }
+    MO_ASSERT(s->stream_head.size + s->list_changed.size <= MO_LIMIT_MCP_STREAM_BYTES);
+    for (size_t i = 0; i < MO_LIMIT_MCP_SESSIONS; i++)
+        s->sessions[i].stream = SIZE_MAX;
     return true;
+}
+
+size_t mo_protocol_session_find(struct mo_protocol_server *s, const uint8_t *id, size_t length) {
+    if (length != MO_LIMIT_MCP_SESSION_ID_BYTES)
+        return SIZE_MAX;
+    for (size_t i = 0; i < MO_LIMIT_MCP_SESSIONS; i++)
+        if (s->sessions[i].live && memcmp(s->sessions[i].id, id, length) == 0) {
+            s->sessions[i].used = ++s->sequence_sessions;
+            return i;
+        }
+    return SIZE_MAX;
+}
+
+static void stream_close(struct mo_protocol_server *s, size_t session) {
+    size_t slot = s->sessions[session].stream;
+    if (slot != SIZE_MAX)
+        mo_protocol_close(s, &s->connections[slot]);
+}
+
+bool mo_protocol_session_open(struct mo_protocol_server *s, size_t *out) {
+    size_t chosen = 0;
+    for (size_t i = 1; i < MO_LIMIT_MCP_SESSIONS; i++)
+        if (s->sessions[chosen].live &&
+            (!s->sessions[i].live || s->sessions[i].used < s->sessions[chosen].used))
+            chosen = i;
+    uint8_t random[MO_LIMIT_MCP_SESSION_ID_BYTES / 2];
+    if (getentropy(random, sizeof random) != 0)
+        return false;
+    struct protocol_session *session = &s->sessions[chosen];
+    if (session->live)
+        stream_close(s, chosen);
+    const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < sizeof random; i++) {
+        session->id[2 * i] = digits[random[i] >> 4];
+        session->id[2 * i + 1] = digits[random[i] & 15];
+    }
+    mo_host_wipe(random, sizeof random);
+    session->live = true;
+    session->used = ++s->sequence_sessions;
+    session->stream = SIZE_MAX;
+    *out = chosen;
+    return true;
+}
+
+void mo_protocol_stream_open(struct mo_protocol_server *s, struct protocol_connection *c,
+                             size_t session) {
+    size_t streams = 0;
+    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
+        streams += s->connections[i].phase == PS_STREAM;
+    /* One stream per session: a reconnect replaces it, so no message reaches two streams. */
+    if (s->sessions[session].stream != SIZE_MAX) {
+        stream_close(s, session);
+        streams--;
+    }
+    if (streams >= MO_LIMIT_MCP_STREAMS) {
+        mo_protocol_fail(s, c, 503);
+        return;
+    }
+    mo_protocol_dispose(s, c);
+    mo_host_wipe(c->input, sizeof c->input);
+    memcpy(c->stream, s->stream_head.bytes, s->stream_head.size);
+    c->stream_size = s->stream_head.size;
+    c->session = session + 1;
+    c->phase = PS_STREAM;
+    c->deadline = s->now.monotonic_us > UINT64_MAX - MO_LIMIT_MCP_WRITE_US
+                      ? UINT64_MAX
+                      : s->now.monotonic_us + MO_LIMIT_MCP_WRITE_US;
+    s->sessions[session].stream = (size_t)(c - s->connections);
+}
+
+void mo_protocol_list_changed(struct mo_protocol_server *s) {
+    for (size_t i = 0; i < MO_LIMIT_MCP_SESSIONS; i++) {
+        size_t slot = s->sessions[i].stream;
+        if (!s->sessions[i].live || slot == SIZE_MAX)
+            continue;
+        struct protocol_connection *c = &s->connections[slot];
+        MO_ASSERT(c->phase == PS_STREAM && c->session == i + 1);
+        if (c->stream_size + s->list_changed.size > sizeof c->stream) {
+            mo_protocol_close(s, c);
+            continue;
+        }
+        if (c->stream_size == 0)
+            c->deadline = s->now.monotonic_us > UINT64_MAX - MO_LIMIT_MCP_WRITE_US
+                              ? UINT64_MAX
+                              : s->now.monotonic_us + MO_LIMIT_MCP_WRITE_US;
+        memcpy(c->stream + c->stream_size, s->list_changed.bytes, s->list_changed.size);
+        c->stream_size += s->list_changed.size;
+    }
 }
 
 enum mo_protocol_server_status
@@ -446,6 +570,37 @@ void mo_protocol_server_free(struct mo_protocol_server *s) {
     mo_arena_free(&arena);
 }
 
+static void stream_ready(struct mo_protocol_server *s, struct protocol_connection *c) {
+    union mo_listener_request request = {.write = {c->key, c->stream, c->stream_size}};
+    union mo_listener_result result;
+    enum mo_listener_status status =
+        mo_listener_call(s->listener, MO_LISTENER_WRITE, &request, &result);
+    if (status == MO_LISTENER_AGAIN)
+        return;
+    if (status != MO_LISTENER_OK) {
+        mo_protocol_close(s, c);
+        return;
+    }
+    memmove(c->stream, c->stream + result.transferred, c->stream_size - result.transferred);
+    c->stream_size -= result.transferred;
+    if (c->stream_size == 0)
+        c->deadline = UINT64_MAX;
+}
+
+/* A stream client sends nothing; its bytes are discarded and its end closes the stream. */
+static void stream_read(struct mo_protocol_server *s, struct protocol_connection *c) {
+    union mo_listener_request request = {.read = {c->key, c->input, sizeof c->input}};
+    union mo_listener_result result;
+    enum mo_listener_status status =
+        mo_listener_call(s->listener, MO_LISTENER_READ, &request, &result);
+    if (status == MO_LISTENER_AGAIN)
+        return;
+    mo_host_wipe(c->input, sizeof c->input);
+    c->drained += status == MO_LISTENER_OK ? result.transferred : 0;
+    if (status != MO_LISTENER_OK || c->drained >= MO_LIMIT_MCP_DRAIN_BYTES)
+        mo_protocol_close(s, c);
+}
+
 static void write_ready(struct mo_protocol_server *s, struct protocol_connection *c) {
     union mo_listener_request request = {
         .write = {c->key, c->output.bytes + c->write_offset, c->output.size - c->write_offset}};
@@ -526,7 +681,8 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
         struct protocol_connection *c = &s->connections[slot];
         if (c->phase == PS_EMPTY)
             continue;
-        if (c->phase != PS_SERVICE && s->now.monotonic_us >= c->deadline) {
+        if ((c->phase != PS_SERVICE && s->now.monotonic_us >= c->deadline) ||
+            (c->phase == PS_STREAM && s->closing)) {
             mo_protocol_close(s, c);
             continue;
         }
@@ -536,6 +692,8 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
             continue;
         unsigned events = c->phase == PS_WRITE || c->phase == PS_CONTINUE ? MO_LISTENER_WRITABLE
                                                                           : MO_LISTENER_READABLE;
+        if (c->phase == PS_STREAM && c->stream_size != 0)
+            events |= MO_LISTENER_WRITABLE;
         slots[request.wait.count] = slot;
         request.wait.interests[request.wait.count++] =
             (struct mo_listener_interest){c->key, events};
@@ -559,6 +717,11 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
         }
         if ((events & MO_LISTENER_ERROR) != 0) {
             mo_protocol_close(s, c);
+        } else if (c->phase == PS_STREAM) {
+            if ((events & MO_LISTENER_WRITABLE) != 0)
+                stream_ready(s, c);
+            if (c->phase == PS_STREAM && (events & MO_LISTENER_READABLE) != 0)
+                stream_read(s, c);
         } else if ((events & MO_LISTENER_WRITABLE) != 0)
             write_ready(s, c);
         else if ((events & MO_LISTENER_READABLE) != 0) {

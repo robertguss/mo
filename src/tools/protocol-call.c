@@ -228,6 +228,34 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
     }
 }
 
+/* An initialize result opens a session and names it in a response header. */
+static void session_reply(struct mo_protocol_server *s, struct protocol_connection *c) {
+    struct mo_cell body = mo_protocol_field(
+        s->protocol, mo_protocol_function(s, PF_RECEIVE)->result_type, c->action, 0);
+    size_t session;
+    struct mo_cell args[2];
+    if (!mo_protocol_session_open(s, &session)) {
+        mo_protocol_fail(s, c, 503);
+        return;
+    }
+    args[0] = body;
+    if (!mo_value_text(mo_process_heap(c->process), s->sessions[session].id,
+                       MO_LIMIT_MCP_SESSION_ID_BYTES, &args[1])) {
+        mo_protocol_fail(s, c, 413);
+        return;
+    }
+    bool ok = mo_protocol_invoke(s, c, PF_HTTP_SESSION, args, &c->response);
+    mo_value_drop(mo_process_heap(c->process),
+                  mo_protocol_function(s, PF_HTTP_SESSION)->parameters[1].type, args[1]);
+    if (!ok) {
+        mo_protocol_fail(s, c, 413);
+        return;
+    }
+    size_t size;
+    const uint8_t *bytes = mo_value_data(c->response, &size);
+    mo_protocol_start_write(s, c, (struct protocol_bytes){bytes, size});
+}
+
 void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connection *c) {
     if (s->now.monotonic_us >= c->deadline) {
         mo_protocol_close(s, c);
@@ -266,7 +294,9 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
         mo_protocol_close(s, c);
         return;
     }
-    if (mo_cell_get_tag(c->action) != 0)
+    if (mo_cell_get_tag(c->action) == 3)
+        session_reply(s, c);
+    else if (mo_cell_get_tag(c->action) != 0)
         call_tool(s, c);
     else {
         struct mo_cell fields = mo_cell_get_payload(c->action);

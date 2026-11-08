@@ -69,6 +69,39 @@ static bool authorities(struct mo_protocol_server *s, struct protocol_connection
     return true;
 }
 
+/* Some(Http.Span) gives its validated header range; None gives false. */
+static bool header_span(struct mo_protocol_server *s, struct protocol_connection *c,
+                        uint32_t option, struct mo_cell value, size_t *start, size_t *length) {
+    if (mo_cell_get_tag(value) != 1)
+        return false;
+    struct mo_cell span = mo_protocol_field(s->protocol, option, value, 0);
+    int64_t first = mo_cell_get_int(mo_value_field(mo_cell_get_payload(span), 0));
+    int64_t size = mo_cell_get_int(mo_value_field(mo_cell_get_payload(span), 1));
+    MO_ASSERT(first >= 0 && size >= 0 && (uint64_t)first <= c->header_size &&
+              (uint64_t)size <= c->header_size - (size_t)first);
+    *start = (size_t)first;
+    *length = (size_t)size;
+    return true;
+}
+
+static void stream(struct mo_protocol_server *s, struct protocol_connection *c, size_t session) {
+    struct mo_cell args[2], value;
+    if (!headers(s, c, &args[0], &args[1]))
+        return;
+    bool ok = mo_protocol_invoke(s, c, PF_STREAM_PLAN, args, &value);
+    if (!ok) {
+        mo_protocol_fail(s, c, 413);
+        return;
+    }
+    int64_t refused = mo_cell_get_int(value);
+    if (refused != 0)
+        mo_protocol_fail(s, c, (int)refused);
+    else if (session == SIZE_MAX)
+        mo_protocol_fail(s, c, 400);
+    else
+        mo_protocol_stream_open(s, c, session);
+}
+
 static bool authenticate(struct mo_protocol_server *s, struct protocol_connection *c) {
     struct mo_cell args[3], value;
     if (!headers(s, c, &args[0], &args[1]) || !authorities(s, c, &args[2]) ||
@@ -80,29 +113,51 @@ static bool authenticate(struct mo_protocol_server *s, struct protocol_connectio
         mo_protocol_fail(s, c, (int)mo_cell_get_int(part));
         return false;
     }
+    const struct mo_types *types = mo_image_types(s->protocol);
+    uint32_t access = types->items[type].cases[0].fields[0].type;
+    const struct mo_type_case *fields = &types->items[access].cases[0];
+    struct mo_cell record = mo_cell_get_payload(part);
     union mo_listener_request request = {.auth = {c->input, c->header_size, 0, 0}};
-    if (mo_cell_get_tag(part) == 1) {
-        uint32_t option = mo_image_types(s->protocol)->items[type].cases[0].fields[0].type;
-        struct mo_cell span = mo_protocol_field(s->protocol, option, part, 0);
-        int64_t start = mo_cell_get_int(mo_value_field(mo_cell_get_payload(span), 0));
-        int64_t size = mo_cell_get_int(mo_value_field(mo_cell_get_payload(span), 1));
-        MO_ASSERT(start >= 0 && size >= 0 && (uint64_t)start <= c->header_size &&
-                  (uint64_t)size <= c->header_size - (size_t)start);
-        request.auth.start = (size_t)start;
-        request.auth.length = (size_t)size;
-    }
+    (void)header_span(s, c, fields->fields[0].type, mo_value_field(record, 0), &request.auth.start,
+                      &request.auth.length);
+    size_t upgrade_start = 0, upgrade_length = 0, session_start = 0, session_length = 0;
+    bool upgrade = header_span(s, c, fields->fields[1].type, mo_value_field(record, 1),
+                               &upgrade_start, &upgrade_length);
+    bool session_named = header_span(s, c, fields->fields[2].type, mo_value_field(record, 2),
+                                     &session_start, &session_length);
+    bool streaming = mo_cell_get_bool(mo_value_field(record, 3));
     union mo_listener_result result;
     enum mo_listener_status status =
         mo_listener_call(s->listener, MO_LISTENER_AUTH, &request, &result);
+    c->upgrade_authorized =
+        status == MO_LISTENER_OK && result.authenticated && upgrade && s->upgrade_enabled &&
+        mo_bearer_check(&s->upgrade_bearer, c->input + upgrade_start, upgrade_length);
+    /* Neither credential outlives this check; nothing below reads them. */
+    mo_host_wipe(c->input + upgrade_start, upgrade_length);
+    memset(c->input + upgrade_start, 'x', upgrade_length);
+    mo_host_wipe(c->input + request.auth.start, request.auth.length);
+    memset(c->input + request.auth.start, 'x', request.auth.length);
     if (status != MO_LISTENER_OK || !result.authenticated) {
         mo_protocol_fail(s, c, 401);
         return false;
     }
-    mo_host_wipe(c->input + request.auth.start, request.auth.length);
-    memset(c->input + request.auth.start, 'x', request.auth.length);
+    size_t session = SIZE_MAX;
+    if (session_named) {
+        session = mo_protocol_session_find(s, c->input + session_start, session_length);
+        if (session == SIZE_MAX) {
+            mo_protocol_fail(s, c, 404);
+            return false;
+        }
+    }
     mo_protocol_dispose(s, c);
     c->authenticated = true;
-    return mo_protocol_request_process(s, c);
+    if (!mo_protocol_request_process(s, c))
+        return false;
+    if (streaming) {
+        stream(s, c, session);
+        return false;
+    }
+    return true;
 }
 
 static bool plan(struct mo_protocol_server *s, struct protocol_connection *c, bool *send_continue) {

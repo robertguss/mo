@@ -212,7 +212,7 @@ fn methods()
   require(
     McpRpc.initialized("test-version") ==
       json(
-        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mo\",\"version\":\"test-version\"}}"
+        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"mo\",\"version\":\"test-version\"}}"
       )
   )
 end
