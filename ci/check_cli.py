@@ -3864,6 +3864,15 @@ def guide_claims(binary):
             "folder or an artifact without starting the service, as Diagnose a failure offline "
             "says.") in guide
     assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
+    # ci/check_upgrade_live.py exercises the live-upgrade claims through mo serve and mo push.
+    for name in SERVE_UPGRADE_NAMES:
+        assert f"`{name}`" in guide
+    for sentence in ("any other URL is refused before either credential is read.",
+                     "Pushing the active program again reports `already active` and changes "
+                     "nothing",
+                     "neither credential appears in output, events or the data folder.",
+                     "a new GET replaces it."):
+        assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]

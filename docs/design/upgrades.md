@@ -1,7 +1,10 @@
 # Whole-program upgrades
 
 Status: approved in M1 (PR #310). M2 implements typed checking, migration
-validation and checked restart; live swapping remains a later milestone.
+validation and checked restart; M3 offline rehearsal; M4 live swapping at a
+message boundary, the upload tools, MCP streams and `mo push` (see Live
+implementation below). The operator-catalog polish and the remote procedure
+remain M5.
 The feasibility evidence, including failed assumptions and corrected results, is
 in [the preflight](../../learnability/phase5/preflight/README.md).
 
@@ -295,6 +298,40 @@ Before implementation is declared complete:
   collection; keep development runs out of the denominator. Release requires
   Robert's separate approval.
 
+
+## Live implementation
+
+M4 builds the live path with these decisions; each is pinned by a test named in
+`learnability/phase5/preflight/live/README.md`.
+
+- Sessions are optional on POST: a request without `MCP-Session-Id` is served
+  as before, an unknown one gets 404. A GET stream requires a known session (400
+  without, 404 unknown) and `Accept: text/event-stream` (406). A second GET in a
+  session replaces its stream, which is how one message never reaches two of a
+  session's streams. At most 4 streams exist and each holds at most 1 KiB of
+  unwritten output; a consumer that falls further behind, or leaves output
+  unwritten for 10 seconds, is disconnected. Resumability (`Last-Event-ID`) is
+  not offered. 64 sessions are kept; the least recently used is forgotten.
+- Page refusals (wrong index, offset or total, non-canonical base64, wrong size,
+  unknown or closed slot, digest mismatch) are E1418 and keep the slot, except a
+  digest mismatch, which closes it. A slot also closes 60 seconds after its last
+  accepted page unless a compile or commit is in progress.
+- The commit waits for the compile and then for the next poll after the service
+  step, when every pending reply has been encoded. The prepared loop, its catalog
+  and the migrated state are built before the transaction, so any refusal up to
+  the commit leaves the old loop untouched.
+- The server keeps the current and the previous program. The previous one stays
+  until the next upgrade so pre-upgrade events keep their handler names; the next
+  activation waits until no request that began under it remains, and refuses with
+  E1428 at the commit deadline. Events from older epochs render `<program not
+  retained>`.
+- An uncertain commit stops the loop with the store status; `mo serve` then
+  exits 70 and a restart resolves the folder to one program.
+- Refusals are events with only their code and the two source digests;
+  successful activations are upgrade records and accepted events.
+- `mo replay --failure ID --data DIR` without a source file chooses among the
+  active and previous programs by image key, build and schema; distinct sources
+  among the matches are E1431.
 
 ## Proposed host interface and stored representation
 

@@ -39,7 +39,7 @@ make format / format-check # clang-format; use clang-format 14.0.6, newer versio
 make tidy                  # clang-tidy cert-err33-c (unused stdlib results)
 make fuzz-smoke            # every fuzz target briefly (needs clang + libFuzzer; FUZZ_SECONDS=5)
 make formal                # build Mo Core in Lean and check every proof (needs elan)
-make cbmc                  # prove the bytecode reader, arena, verifier, primitives, path containment and resolution, refcounts, hash tables (needs CBMC)
+make cbmc                  # prove the bytecode reader, arena, verifier, primitives, path containment and resolution, refcounts, hash tables, upload pages (needs CBMC)
 bash ci/check.sh [group…]  # every check; groups: gcc clang sanitize fuzz drivers bench lean static cbmc
 ci/wait-for-results FILE [TIMEOUT]  # wait for a detached ci/check.sh run (see Waiting on checks)
 ```

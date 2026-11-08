@@ -216,8 +216,25 @@ that hold the old token get 401 until they restart.
 
 ## Upgrade
 
+A queue started with `--upgrade-token-env NAME` (a second secret of at least 16
+bytes, different from the queue token, kept in the same environment file) accepts a
+live upgrade over loopback on its host without stopping:
+
+```sh
+mo push NEW/main.mo --url http://127.0.0.1:8000/mcp --base DIGEST \
+  --token-env QUEUE_TOKEN --upgrade-token-env QUEUE_UPGRADE [--migrate Module.function]
+```
+
+`DIGEST` is the active program's source digest (`base_source` from
+`mo check NEW/main.mo --upgrade-from OLD/main.mo --json`). Exit 0 means the queue
+runs the new program; repeating the push reports `already active`. A refusal leaves
+the old program serving. A migration the live budget refuses can still use the
+checked restart below. With an upgrade-capable unit, `ExecStart` names only the
+folder (`mo serve --data /var/lib/task-queue --port 8000 ...`), so a restart runs
+whichever program was last activated.
+
 The deployed queue above is retired. For a queue running an upgrade-capable build,
-use a checked restart on its host. Build the new pinned tree with Install step 2,
+a stopped-service checked restart on its host also works. Build the new pinned tree with Install step 2,
 keep the old executable and source, stop the unit, and copy the whole stopped
 folder (including any journal) before changing it.
 
