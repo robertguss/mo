@@ -26,6 +26,11 @@ MO_MUST_USE enum mo_upgrade_metadata_status mo_upgrade_metadata(const struct mo_
 /* The module set of the retained program a folder's failure ran under, for replay without a
  * source file; ambiguity and absence are diagnostics. */
 struct mo_arena;
+/* Compile source replay in the same bundle order used by serve and live upgrades. */
+MO_MUST_USE struct mo_module_set *mo_upgrade_source_set(struct mo_arena *arena, const char *path,
+                                                        const char *library,
+                                                        struct mo_sources *sources,
+                                                        struct mo_diags *diags);
 MO_MUST_USE struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, const char *folder,
                                                         uint64_t failure, const char *library,
                                                         struct mo_sources *sources,

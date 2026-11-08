@@ -108,9 +108,11 @@ static void execute_pipeline(void *argument) {
     if (stat(library, &st) != 0 && errno == ENOENT)
         library = NULL;
     struct mo_module_set *set =
-        cli->command == MO_COMMAND_REPLAY && cli->file_count == 0
+        cli->command != MO_COMMAND_REPLAY
+            ? mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags)
+        : cli->file_count == 0
             ? mo_upgrade_replay_set(arena, cli->data, cli->failure, library, sources, diags)
-            : mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags);
+            : mo_upgrade_source_set(arena, mo_cli_file(cli, work->file), library, sources, diags);
     if (set == NULL || mo_diags_any(diags))
         return;
     struct mo_program *program = mo_check(arena, set, diags);
