@@ -153,6 +153,25 @@ static bool load_bundle_bytes(const uint8_t *bytes, size_t length, struct mo_sou
     return ok || upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
                                "source bundle is malformed or unreadable");
 }
+struct mo_module_set *mo_upgrade_source_set(struct mo_arena *arena, const char *path,
+                                            const char *library, struct mo_sources *sources,
+                                            struct mo_diags *diags) {
+    struct mo_buffer bundle;
+    mo_buffer_init(&bundle, MO_LIMIT_BUNDLE_BYTES);
+    struct mo_module_set *set = NULL;
+    if (mo_upgrade_bundle(path, false, false, &bundle, diags, sources)) {
+        /* Keep the original sources on a load error so diagnostics retain their spans. */
+        mo_sources_free(sources);
+        if (!mo_sources_init(sources))
+            (void)upgrade_error(diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
+                                "source replay could not allocate its bundled sources");
+        else if (load_bundle_bytes(bundle.bytes, bundle.length, sources, diags))
+            set = mo_load_bundle_sources(arena, sources, library, diags);
+    }
+    mo_buffer_free(&bundle);
+    return set;
+}
+
 static bool load_bundle(const char *path, struct mo_sources *sources, struct mo_diags *diags) {
     struct mo_buffer bytes;
     mo_buffer_init(&bytes, MO_LIMIT_BUNDLE_BYTES);

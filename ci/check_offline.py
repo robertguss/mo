@@ -428,6 +428,24 @@ def refused(binary, args, check, *pieces, timeout=120):
     return record["refusal"]
 
 
+def imported_replay(binary, folder):
+    """Source replay and live bundle compilation agree on imported module identity."""
+    folder.mkdir()
+    helper = folder / "helper.mo"
+    helper.write_text('module Helper\nexpose identity\nfn identity(n: Int) : Int\n  n\nend\n')
+    source = FAILING.replace('module Main\n', 'module Main\nuse Helper\n').replace(
+        'if n > state.count', 'if Helper.identity(n) > state.count')
+    artifact = folder / "failure.moex"
+    data = serve(binary, folder, source, [("broken", {"n": "5"})],
+                 [("failure", 1, artifact)])
+    for location in (["--data", str(data)], ["--export", str(artifact)]):
+        args = ["replay", str(folder / "main.mo"), "--failure", "1", *location]
+        result = mo(binary, args, 0)
+        assert result.stdout.endswith(b"outcome: reproduced\n"), result.stdout
+    helper.write_text(helper.read_text().replace('  n\n', '  n + 1\n'))
+    refused(binary, replay_args(folder / "main.mo", data), "program")
+
+
 def replays(binary, folder, data, artifacts):
     file = folder / "main.mo"
     digest = hashlib.sha256(binary.read_bytes()).hexdigest()
@@ -1193,6 +1211,7 @@ def check(binary):
     guide(binary)
     with tempfile.TemporaryDirectory(prefix="mo-offline-") as directory:
         folder = pathlib.Path(directory)
+        imported_replay(binary, folder / "imported")
         data = history(binary, folder)
         history_corrupt_state(binary, folder, data)
         owned(binary, folder, data)
