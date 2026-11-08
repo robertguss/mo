@@ -45,6 +45,7 @@ static void credentials(void) {
     CHECK(mo_listener_fake(environment, &listener) == MO_LISTENER_CREDENTIAL);
     CHECK(setenv(environment, secret, 1) == 0);
     CHECK(mo_listener_fake(environment, &listener) == MO_LISTENER_OK);
+    CHECK(listener != NULL);
     if (listener == NULL)
         return;
     CHECK(setenv(environment, "ChangedAfterOpen", 1) == 0);
@@ -93,6 +94,7 @@ static void configuration(void) {
     }
     struct mo_listener_config config = {.address = "0.0.0.0", .expose = true};
     CHECK(mo_listener_open(&config, environment, &listener) == MO_LISTENER_OK);
+    CHECK(listener != NULL);
     if (listener != NULL) {
         CHECK(mo_listener_port(listener) != 0);
         struct mo_listener *retained = listener;
@@ -111,6 +113,8 @@ static void fake_io(void) {
     struct mo_listener *listener = NULL, *other = NULL;
     CHECK(mo_listener_fake(environment, &listener) == MO_LISTENER_OK);
     CHECK(mo_listener_fake(environment, &other) == MO_LISTENER_OK);
+    CHECK(listener != NULL);
+    CHECK(other != NULL);
     if (listener == NULL || other == NULL) {
         mo_listener_close(listener);
         mo_listener_close(other);
@@ -204,6 +208,7 @@ static void fake_io(void) {
 static void fake_wait_and_limit(void) {
     struct mo_listener *listener = NULL;
     CHECK(mo_listener_fake(environment, &listener) == MO_LISTENER_OK);
+    CHECK(listener != NULL);
     if (listener == NULL)
         return;
     struct mo_listener_fake_peer peers[MO_LIMIT_MCP_CONNECTIONS + 1] = {0};
@@ -300,6 +305,7 @@ static void real_io(const char *address) {
     struct mo_listener *listener = NULL;
     enum mo_listener_status status = mo_listener_open(&config, environment, &listener);
     CHECK(status == MO_LISTENER_OK);
+    CHECK(listener != NULL);
     if (listener == NULL)
         return;
     CHECK(mo_listener_port(listener) != 0);
@@ -380,6 +386,7 @@ static void real_limit_and_backpressure(void) {
     struct mo_listener_config config = {0};
     struct mo_listener *listener = NULL;
     CHECK(mo_listener_open(&config, environment, &listener) == MO_LISTENER_OK);
+    CHECK(listener != NULL);
     if (listener == NULL)
         return;
     int clients[MO_LIMIT_MCP_CONNECTIONS + 1];
