@@ -3867,7 +3867,9 @@ def guide_claims(binary):
     # ci/check_upgrade_live.py exercises the live-upgrade claims through mo serve and mo push.
     for name in SERVE_UPGRADE_NAMES:
         assert f"`{name}`" in guide
-    for sentence in ("any other URL is refused before either credential is read.",
+    for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest.",
+                     "Only the nine operator views are read-only;",
+                     "any other URL is refused before either credential is read.",
                      "Pushing the active program again reports `already active` and changes "
                      "nothing",
                      "neither credential appears in output, events or the data folder.",

@@ -145,10 +145,17 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
         mo_protocol_fallback(s, c, PE_RATE, EFFECT_NONE);
         return;
     }
-    int64_t view = mo_cell_get_int(mo_value_field(fields, 1));
-    if (mo_cell_get_tag(c->action) == 2 && view >= 9) {
-        mo_protocol_upgrade_call(s, c, (uint32_t)view);
-        return;
+    if (mo_cell_get_tag(c->action) == 2) {
+        struct mo_cell index = mo_value_field(fields, 1), kind;
+        if (!mo_protocol_invoke(s, c, PF_UPGRADE_KIND, &index, &kind)) {
+            mo_protocol_fallback(s, c, failure(c), EFFECT_NONE);
+            return;
+        }
+        int64_t upgrade = mo_cell_get_int(kind);
+        if (upgrade != 0) {
+            mo_protocol_upgrade_call(s, c, (uint32_t)upgrade);
+            return;
+        }
     }
     if (mo_cell_get_tag(c->action) == 2) {
         struct mo_cell json, rendered;

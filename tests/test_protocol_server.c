@@ -296,6 +296,63 @@ static void upgrade_call(struct fixture_server *f, const char *fields, const cha
 #endif
 
 #ifndef MO_PROTOCOL_SERVER_FAULT_TEST
+/* The protocol-only object for this test renames source admission, as the bad-ABI
+ * tests do. The normal server, dispatcher and listener still handle the request. */
+static bool append_view;
+bool mo_protocol_routing_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
+                                 size_t length, uint32_t *file_out,
+                                 struct mo_source_error *error_out);
+
+static void replace_fixture(struct mo_buffer *out, const uint8_t *bytes, size_t length,
+                            const char *before, const char *after) {
+    size_t at = 0, old_size = strlen(before);
+    while (at + old_size <= length && memcmp(bytes + at, before, old_size) != 0)
+        at++;
+    MO_ASSERT(at + old_size <= length);
+    MO_ASSERT(mo_buffer_append(out, bytes, at) && mo_buffer_append_text(out, after) &&
+              mo_buffer_append(out, bytes + at + old_size, length - at - old_size));
+}
+
+bool mo_protocol_routing_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
+                                 size_t length, uint32_t *file_out,
+                                 struct mo_source_error *error_out) {
+    if (!append_view || strcmp(path, "runtime/mcp-views.mo") != 0)
+        return mo_sources_add_bytes(sources, path, bytes, length, file_out, error_out);
+    struct mo_buffer names, catalog, renderer;
+    mo_buffer_init(&names, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&catalog, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&renderer, MO_LIMIT_FILE_SIZE);
+    replace_fixture(&names, bytes, length, "    \"mo-upgrade-commit\"\n",
+                    "    \"mo-upgrade-commit\",\n    \"mo-future-view\"\n");
+    replace_fixture(&catalog, names.bytes, names.length, "stop \"view description\"",
+                    "\"fixture appended view\"");
+    replace_fixture(&renderer, catalog.bytes, catalog.length, "  stats = observation.stats\n",
+                    "  if index == 12\n"
+                    "    return Json.Object({\"appended_view\": Json.Boolean(true)})\n"
+                    "  end\n  stats = observation.stats\n");
+    bool added =
+        mo_sources_add_bytes(sources, path, renderer.bytes, renderer.length, file_out, error_out);
+    mo_buffer_free(&renderer);
+    mo_buffer_free(&catalog);
+    mo_buffer_free(&names);
+    return added;
+}
+
+static void appended_view_routes_as_view(void) {
+    append_view = true;
+    struct fixture_server f = start();
+    append_view = false;
+    char out[4096];
+    tool_request(&f, "mo-future-view", "{}", "101", out, sizeof out);
+    CHECK(strstr(out, "HTTP/1.1 200 ") == out);
+    CHECK(strstr(out, "\"isError\":false") != NULL);
+    CHECK(strstr(out, "\"appended_view\":true") != NULL);
+    CHECK(strstr(out, "E1414") == NULL);
+    tool_request(&f, "read", "{}", "102", out, sizeof out);
+    CHECK(strstr(out, "\"value\":\"0\"") != NULL);
+    finish(&f);
+}
+
 static void rate(void) {
     struct fixture_server f = start();
     char out[4096];
@@ -1454,6 +1511,7 @@ static void upgrade_tools(void) {
 }
 
 static void run(void *context) {
+    appended_view_routes_as_view();
     failure_text_arguments();
     failure_view_unreadable();
     failure_export_bad_id();

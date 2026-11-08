@@ -581,7 +581,7 @@ int mo_fetch(const struct mo_cli *cli, FILE *errors) {
 }
 
 struct push_reply {
-    bool failed;
+    bool failed, rate_limited;
     struct mo_buffer text, json;
     char slot[33];
 };
@@ -605,6 +605,14 @@ static bool push_read(struct mo_image *image, uint32_t function, const struct mo
         if (fn->parameters[0].ownership != MO_PARAMETER_OWNED)
             mo_value_drop(heap, fn->parameters[0].type, input);
         if (ok) {
+            out->rate_limited = false;
+            if (mo_list_size(output) == 1) {
+                struct mo_cell item;
+                MO_ASSERT(mo_list_get(output, 0, &item));
+                size_t length;
+                const uint8_t *text = mo_value_data(item, &length);
+                out->rate_limited = length == 12 && memcmp(text, "rate_limited", 12) == 0;
+            }
             ok = mo_list_size(output) == 4;
             struct mo_cell item;
             size_t size;
@@ -627,6 +635,7 @@ static bool push_read(struct mo_image *image, uint32_t function, const struct mo
                     out->slot[size] = 0;
                 }
             }
+            ok = ok || out->rate_limited;
             mo_value_drop(heap, fn->result_type, output);
         }
     }
@@ -634,9 +643,9 @@ static bool push_read(struct mo_image *image, uint32_t function, const struct mo
     return ok;
 }
 
-static bool push_call(struct fetch_endpoint *e, const char *upgrade, const char *tool,
-                      const char *arguments, struct mo_image *image, uint32_t function,
-                      struct push_reply *out) {
+static bool push_call_once(struct fetch_endpoint *e, const char *upgrade, const char *tool,
+                           const char *arguments, struct mo_image *image, uint32_t function,
+                           struct push_reply *out) {
     uint64_t interval = UINT64_C(1000000) / MO_LIMIT_MCP_RATE + 5000;
     uint64_t elapsed = now() - e->last_sent;
     if (e->last_sent != 0 && elapsed < interval) {
@@ -683,6 +692,18 @@ static bool push_call(struct fetch_endpoint *e, const char *upgrade, const char 
         (void)close(fd);
     mo_buffer_free(&wire);
     return ok;
+}
+
+/* Only the explicit no-effect rate refusal is retried. Lost replies remain uncertain.
+ * The existing whole-command deadline bounds retries and credential exposure. */
+static bool push_call(struct fetch_endpoint *e, const char *upgrade, const char *tool,
+                      const char *arguments, struct mo_image *image, uint32_t function,
+                      struct push_reply *out) {
+    do {
+        if (!push_call_once(e, upgrade, tool, arguments, image, function, out))
+            return false;
+    } while (out->rate_limited);
+    return true;
 }
 
 static bool credential(const char *name, const char **out) {

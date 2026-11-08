@@ -273,6 +273,8 @@ def private_state(rpc, call):
         if tool["name"] == "mo-export":
             expected["openWorldHint"] = False
         if tool["name"] in SERVE_UPGRADE_NAMES:
+            assert "Mo-Upgrade-Authorization: Bearer VALUE" in tool["description"], tool
+            assert len(tool["description"].encode()) <= 512
             expected = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False,
                         "destructiveHint": tool["name"] == "mo-upgrade-commit"}
         assert tool["annotations"] == expected, tool

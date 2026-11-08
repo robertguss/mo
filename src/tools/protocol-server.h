@@ -37,6 +37,7 @@ enum protocol_function {
     PF_LIST_CHANGED,
     PF_UPGRADE_ARGUMENTS,
     PF_UPGRADE_REPLY,
+    PF_UPGRADE_KIND,
     PF_COUNT
 };
 
@@ -214,7 +215,7 @@ void mo_protocol_respond(struct mo_protocol_server *server, struct protocol_conn
                          int status, struct mo_cell body, enum protocol_effect effect);
 /* Upgrade tools, called for an authenticated operator call; the reply may wait for commit. */
 void mo_protocol_upgrade_call(struct mo_protocol_server *server,
-                              struct protocol_connection *connection, uint32_t view);
+                              struct protocol_connection *connection, uint32_t kind);
 /* Slot expiry, compilation progress and the boundary swap, after each service step. */
 void mo_protocol_upgrade_poll(struct mo_protocol_server *server);
 /* The latest time the poll may sleep to while an upgrade is in progress. */

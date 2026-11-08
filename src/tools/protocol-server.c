@@ -34,7 +34,8 @@ static const char *const function_names[PF_COUNT] = {"Http.scan_headers",
                                                      "McpTransport.stream_head",
                                                      "McpTransport.list_changed",
                                                      "McpViews.upgrade_arguments",
-                                                     "Mcp.upgrade_reply"};
+                                                     "Mcp.upgrade_reply",
+                                                     "McpViews.upgrade_kind"};
 
 uint64_t mo_protocol_deadline(uint64_t now, uint64_t interval) {
     return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;
