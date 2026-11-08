@@ -3,8 +3,7 @@
 Status: approved in M1 (PR #310). M2 implements typed checking, migration
 validation and checked restart; M3 offline rehearsal; M4 live swapping at a
 message boundary, the upload tools, MCP streams and `mo push` (see Live
-implementation below). The operator-catalog polish and the remote procedure
-remain M5.
+implementation below). M5 finalizes the operator catalog and documents the loopback-tunnel remote procedure.
 The feasibility evidence, including failed assumptions and corrected results, is
 in [the preflight](../../learnability/phase5/preflight/README.md).
 
@@ -466,3 +465,26 @@ These are implementation gates, not claims about the current binary.
 | New compiler build | Recorded source recompiles; changed image requires verified replay before serving |
 | Non-loopback client destination | Refuse before reading either credential |
 | Kill drill and agent evaluation | Reconcile acknowledged messages; publish every miss and leave phase open below the declared gate |
+
+## Remote operator decisions
+
+The three upgrade tools remain the only operator tools that change the service.
+Their catalog descriptions specify both credentials, the slot lifecycle and the
+page protocol. Native dispatch resolves the operation from the catalog name,
+not from an index range; adding another view does not make it an upgrade tool.
+
+No active-bundle read tool is added in this milestone. A bundle and digest alone
+would not let an agent rehearse every active version: a retained migration body
+also needs its separate MOCC compilation context. A useful remote source-export
+contract must carry that context, preserve source identity and page bounded,
+consistent bytes across an activation. That interface is deferred rather than
+adding a partial rehearsal path. Remote operators obtain the original bundle and
+context from their deployment records or the host, and find the base through
+`mo check --upgrade-from` or the credentialed stale-base refusal. The service
+token alone still reveals neither upgrade reports nor source bytes.
+
+`mo push` retries only an explicit `rate_limited` runtime response whose effect
+is `none`, retaining the same slot and page arguments. Retries share the existing
+whole-command deadline; transport failures and lost replies are not retried
+implicitly. Sustained starvation can still exhaust that deadline and leave a
+slot until its 60-second idle expiry; checked restart remains the recovery path.

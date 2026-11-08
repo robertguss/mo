@@ -1,6 +1,7 @@
 module McpViews
 expose names,
 upgrade_arguments,
+upgrade_kind,
 offline_value,
 catalog,
 valid,
@@ -99,6 +100,16 @@ fn names() : List(Text)
   ]
 end
 
+## Native dispatch uses names, never a catalog position range. Zero means an ordinary view.
+fn upgrade_kind(index: Int) : Int
+  case names().get(index)
+    Some("mo-upgrade-open"): 1
+    Some("mo-upgrade-page"): 2
+    Some("mo-upgrade-commit"): 3
+    Some(_) | None: 0
+  end
+end
+
 ## MO_LIMIT_SAVED_DEPTH; test_protocol_server pins the two together.
 fn saved_depth() : Int
   128
@@ -110,12 +121,12 @@ fn arguments_of(index: Int) : List(Text)
     "before"
   ] else if index == 6: ["after"] else if index == 7: ["kind", "failure", "export", "offset"] else if index ==
     8: ["after"] else if index == 9: ["base", "candidate", "total", "migration"] else if index == 10: [
-    "slot",
-    "index",
-    "offset",
-    "total",
-    "bytes"
-  ] else if index == 11: ["slot", "base"] else: []
+      "slot",
+      "index",
+      "offset",
+      "total",
+      "bytes"
+    ] else if index == 11: ["slot", "base"] else: []
 end
 
 fn required_of(index: Int) : List(Text)
@@ -148,9 +159,9 @@ fn catalog() : List(Json.Json)
     "Committed message metadata since the last snapshot, oldest first, optionally after a sequence. Older successful messages are not retained. Does not execute handlers.",
     "Export saved state as immutable MOEX v1 pages. Start with kind state; continue with returned export id and offset. Pages expire after 60 seconds idle or replacement. Final page releases the pin. Use mo fetch on the service host to obtain a verified private state artifact. Failure export selects a retained record id.",
     "Retained failure records, oldest first; after selects a later page. Capture refusals remain in mo-supervisor.",
-    "Open the one upload slot for a candidate source bundle replacing the active program named by base. Requires the Mo-Upgrade-Authorization credential. Changes the service when committed.",
-    "Upload the next page of the open slot: consecutive 8192-byte ranges as padded base64. The last page checks the candidate digest and starts compilation. Requires the upgrade credential.",
-    "Activate the uploaded candidate at the next message boundary if base is still active; reports refusals without changing the service. Requires the upgrade credential."
+    "Reserve the single upload slot for a canonical MOSB bundle (at most 1048576 bytes), naming base and candidate SHA-256 digests and total bytes. Optional migration names a pure function. Returns slot; expires after 60 seconds without progress. Does not activate. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
+    "Write the next page to slot: zero-based consecutive index and byte offset, unchanged total, padded base64 bytes. Each decoded page is 8192 bytes except the shorter final page. Final page verifies the candidate digest and starts compilation, without activation. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
+    "Commit slot against base SHA-256: waits for compilation, then replaces the program and migrates state at a message boundary in one transaction. Returns the shared activation report with committed ordinal; refusal preserves the old program and state. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE."
   ]
   tool_names = names()
   integer = Json.Object({"type": Json.String("integer"), "minimum": Json.int(0)})
@@ -300,15 +311,13 @@ fn upgrade_arguments(arguments: Json.Json) : List(Text)
     Json.Object(value): value
     Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
   end
-  ["base", "candidate", "total", "migration", "slot", "index", "offset", "bytes"].map(
-    fn(key)
-      case fields.get(key)
-        Some(Json.String(text)): text
-        Some(Json.Number(n)): Json.Number(n).to_text
-        Some(_) | None: ""
-      end
+  ["base", "candidate", "total", "migration", "slot", "index", "offset", "bytes"].map(fn(key)
+    case fields.get(key)
+      Some(Json.String(text)): text
+      Some(Json.Number(n)): Json.Number(n).to_text
+      Some(_) | None: ""
     end
-  )
+  end)
 end
 
 ## The first timer the native side copies; validated arguments only.

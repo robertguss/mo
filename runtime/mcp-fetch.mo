@@ -157,6 +157,21 @@ fn upgrade(wire: Text) : List(Text)
     Some(Json.Boolean(value)): value
     Some(_) | None: return []
   end
+  if failed
+    case fields.get("structuredContent")
+      Some(Json.Object(content)):
+        case content.get("error")
+          Some(Json.Object(error)):
+            if error.get("kind") == Some(Json.String("runtime")) and
+              error.get("code") == Some(Json.String("rate_limited")) and
+              error.get("effect") == Some(Json.String("none"))
+              return ["rate_limited"]
+            end
+          Some(_) | None: Unit
+        end
+      Some(_) | None: Unit
+    end
+  end
   structured = fields.get("structuredContent") or Json.Null
   case structured
     Json.Object(_): Unit
@@ -172,10 +187,5 @@ fn upgrade(wire: Text) : List(Text)
   end
   return [] if rendered == "!"
   slot = text(structured, "slot")
-  [
-    if failed: "true" else: "false",
-    rendered,
-    structured.to_text,
-    if slot == "!": "" else: slot
-  ]
+  [if failed: "true" else: "false", rendered, structured.to_text, if slot == "!": "" else: slot]
 end

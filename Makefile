@@ -509,6 +509,21 @@ $(BUILD)/debug/tests/test_protocol_server_faults.test: $(BUILD)/debug/tests/test
 $(BUILD)/sanitize/tests/test_protocol_server_faults.test: $(BUILD)/sanitize/tests/test_protocol_server_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(PROTOCOL_SERVER_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/protocol-server-faults/%.o,$(PROTOCOL_SERVER_FAULT_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# Append a view in the embedded catalog only for the native dispatch regression.
+$(BUILD)/debug/protocol-routing/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_sources_add_bytes=mo_protocol_routing_sources -c $< -o $@
+
+$(BUILD)/sanitize/protocol-routing/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_sources_add_bytes=mo_protocol_routing_sources -c $< -o $@
+
+$(BUILD)/debug/tests/test_protocol_server.test: $(BUILD)/debug/tests/test_protocol_server.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/protocol.c,$(LIB_SOURCES))) $(BUILD)/debug/protocol-routing/protocol.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_protocol_server.test: $(BUILD)/sanitize/tests/test_protocol_server.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/protocol.c,$(LIB_SOURCES))) $(BUILD)/sanitize/protocol-routing/protocol.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 PROTOCOL_ABI_RENAMES := -Dmo_protocol_build=mo_protocol_bad_abi_build \
 	-Dmo_protocol_body_marks=mo_protocol_bad_abi_body_marks -Dmo_sources_add_bytes=mo_protocol_bad_abi_sources
 $(BUILD)/debug/protocol-abi/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)

@@ -1999,9 +1999,32 @@ static void test_embedded_protocol(void *entry) {
         if (disk.files[file].length == mo_protocol_sources[i].size)
             CHECK(memcmp(disk.files[file].bytes, mo_protocol_sources[i].bytes,
                          mo_protocol_sources[i].size) == 0);
-        MO_ASSERT(mo_sources_add_bytes(&sources, mo_protocol_sources[i].path,
-                                       mo_protocol_sources[i].bytes, mo_protocol_sources[i].size,
-                                       &file, &error));
+        struct mo_buffer edited;
+        mo_buffer_init(&edited, MO_LIMIT_INPUT_BYTES);
+        const uint8_t *bytes = mo_protocol_sources[i].bytes;
+        size_t size = mo_protocol_sources[i].size;
+        if (entry != NULL && strcmp(entry, "tests/runtime/mcp-upgrade-routing-check.mo") == 0 &&
+            strcmp(mo_protocol_sources[i].path, "runtime/mcp-views.mo") == 0) {
+            /* Append an ordinary view after the upgrades. Dispatch must classify its name,
+             * not assume every later index is an upgrade operation. */
+            const char marker[] = "    \"mo-upgrade-commit\"\n";
+            size_t prefix = 0;
+            while (prefix + sizeof marker - 1 <= size &&
+                   memcmp(bytes + prefix, marker, sizeof marker - 1) != 0)
+                prefix++;
+            MO_ASSERT(prefix + sizeof marker - 1 <= size);
+            const uint8_t *at = bytes + prefix;
+            MO_ASSERT(mo_buffer_append(&edited, bytes, prefix) &&
+                      mo_buffer_append_text(
+                          &edited, "    \"mo-upgrade-commit\",\n    \"mo-future-view\"\n") &&
+                      mo_buffer_append(&edited, at + sizeof marker - 1,
+                                       size - prefix - (sizeof marker - 1)));
+            bytes = edited.bytes;
+            size = edited.length;
+        }
+        MO_ASSERT(mo_sources_add_bytes(&sources, mo_protocol_sources[i].path, bytes, size, &file,
+                                       &error));
+        mo_buffer_free(&edited);
         library[i + 1] = strncmp(mo_protocol_sources[i].path, "lib/", 4) == 0;
     }
     mo_sources_free(&disk);
@@ -2431,6 +2454,8 @@ int main(int argc, char **argv) {
                                 "tests/runtime/mcp-transport-check.mo") == 0);
         MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
                                 "tests/runtime/mcp-views-check.mo") == 0);
+        MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_embedded_protocol,
+                                "tests/runtime/mcp-upgrade-routing-check.mo") == 0);
     }
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);

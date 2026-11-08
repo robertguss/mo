@@ -11,7 +11,7 @@
 #include <string.h>
 #include <sys/random.h>
 
-enum { VIEW_OPEN = 9, VIEW_PAGE = 10, VIEW_COMMIT = 11 };
+enum { UPGRADE_OPEN = 1, UPGRADE_PAGE = 2, UPGRADE_COMMIT = 3 };
 
 static bool unhex(const char *text, uint8_t *out, size_t length) {
     if (strlen(text) != 2 * length)
@@ -371,8 +371,8 @@ static void commit(struct mo_protocol_server *s, struct protocol_connection *c,
 }
 
 void mo_protocol_upgrade_call(struct mo_protocol_server *s, struct protocol_connection *c,
-                              uint32_t view) {
-    MO_ASSERT(view >= VIEW_OPEN && view <= VIEW_COMMIT);
+                              uint32_t kind) {
+    MO_ASSERT(kind >= UPGRADE_OPEN && kind <= UPGRADE_COMMIT);
     if (!s->upgrade_enabled || !c->upgrade_authorized) {
         /* Refused before any argument is read; nothing presented is echoed. */
         refuse(s, c, MO_CODE_UPGRADE_CREDENTIAL, "credential",
@@ -390,9 +390,9 @@ void mo_protocol_upgrade_call(struct mo_protocol_server *s, struct protocol_conn
         mo_protocol_fallback(s, c, c->work_left == 0 ? PE_WORK : PE_MEMORY, EFFECT_NONE);
         return;
     }
-    if (view == VIEW_OPEN)
+    if (kind == UPGRADE_OPEN)
         open_slot(s, c, a);
-    else if (view == VIEW_PAGE)
+    else if (kind == UPGRADE_PAGE)
         page(s, c, a);
     else
         commit(s, c, a);
