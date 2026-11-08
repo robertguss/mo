@@ -1363,6 +1363,12 @@ static void upgrade_tools(void) {
     upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
     CHECK(strstr(out, "\"status\":\"already_active\"") != NULL &&
           strstr(out, "\"isError\":false") != NULL);
+    /* A push repeated after a lost reply still names the old base; it is already active. */
+    n = snprintf(arguments, sizeof arguments, "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":10}",
+                 other, base);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
+    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    CHECK(strstr(out, "\"status\":\"already_active\"") != NULL);
     n = snprintf(arguments, sizeof arguments,
                  "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":1048577}", base, other);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);

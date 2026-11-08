@@ -198,12 +198,13 @@ static void open_slot(struct mo_protocol_server *s, struct protocol_connection *
                candidate);
         return;
     }
-    if (memcmp(base, u->active.source, 32) != 0) {
-        refuse_stale_base(s, c, candidate);
-        return;
-    }
+    /* The candidate first: a push repeated after its reply was lost names the old base. */
     if (memcmp(candidate, u->active.source, 32) == 0) {
         refuse(s, c, 0, "compatible", "candidate source is already active", candidate);
+        return;
+    }
+    if (memcmp(base, u->active.source, 32) != 0) {
+        refuse_stale_base(s, c, candidate);
         return;
     }
     uint8_t random[16];
@@ -580,6 +581,8 @@ void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
     if (u->compiling && mo_live_poll(u->live)) {
         u->compiling = false;
         u->touched = s->now.monotonic_us;
+        /* A waiting commit's boundary allowance starts once its candidate is compiled. */
+        u->wait_deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_BODY_US);
     }
     if (u->waiting == SIZE_MAX) {
         if (!u->compiling && s->now.monotonic_us - u->touched >= MO_LIMIT_UPGRADE_SLOT_IDLE_US)

@@ -401,7 +401,9 @@ def main_flow(binary, root):
                    for e in events), events
         # Retrying the push that already landed, and a push against a stale base.
         again = push(binary, service, v2, base1)
-        assert again.returncode == 1 and b"E1416" in again.stderr and digest2.encode() in again.stderr
+        assert again.returncode == 0 and b"already active" in again.stdout, again
+        stale = push(binary, service, v3, base1, "--migrate", "migrate")
+        assert stale.returncode == 1 and b"E1416" in stale.stderr and digest2.encode() in stale.stderr
         same = push(binary, service, v2, digest2)
         assert same.returncode == 0 and b"already active" in same.stdout, same
         # A migration over the live budget is refused; the old program keeps serving.
@@ -426,7 +428,7 @@ def main_flow(binary, root):
         assert service.value("add", amount="2") == str(counted + 2)
         same = push(binary, service, v3, digest3, "--migrate", "migrate")
         assert same.returncode == 0 and b"already active" in same.stdout, same
-        stale = push(binary, service, v3, digest2, "--migrate", "migrate")
+        stale = push(binary, service, v2, digest2)
         assert stale.returncode == 1 and digest3.encode() in stale.stderr, stale
         # A second serve on the folder waits for the lock and exits busy without serving.
         started = time.monotonic()
