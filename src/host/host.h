@@ -283,6 +283,12 @@ MO_MUST_USE enum mo_store_folder mo_store_program_read_file(const char *path,
                                                             struct mo_arena *arena,
                                                             struct mo_store_program *out,
                                                             bool *found);
+/* The retained program, active or previous, whose image key, build and schema digests match a
+ * failure record, copied into arena. matches counts every such row; distinct is true when they
+ * hold different source bundles, which leaves the choice ambiguous. */
+MO_MUST_USE enum mo_store_folder mo_store_retained_program_read_file(
+    const char *path, struct mo_arena *arena, uint64_t image, const uint8_t build[32],
+    const uint8_t schema[32], struct mo_store_program *out, uint32_t *matches, bool *distinct);
 /* A log record's metadata: argument_bytes has argument_count lengths. The handler is an
  * index; the log does not record its name. */
 struct mo_store_history_entry {

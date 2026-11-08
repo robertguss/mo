@@ -5,6 +5,7 @@
 #include "base/codes.h"
 #include "base/compile-context.h"
 #include "base/compile-metadata.h"
+#include "base/failure.h"
 #include "base/runtime-identity.h"
 #include "base/sha256.h"
 #include "base/stack.h"
@@ -1858,4 +1859,70 @@ int mo_upgrade_rehearse(const struct mo_cli *cli, FILE *output, FILE *errors) {
     struct check_upgrade_work work = {cli, output, errors, 1};
     int status = mo_with_stack(MO_SOURCE_STACK_SIZE, rehearse_upgrade, &work);
     return status == 0 ? work.status : 1;
+}
+
+/* mo replay --failure ID --data DIR without FILE: the program the failure ran under, chosen from
+ * the folder's retained programs by image key, build and schema, with its recorded context. */
+struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, const char *folder,
+                                            uint64_t failure, const char *library,
+                                            struct mo_sources *sources, struct mo_diags *diags) {
+    char path[MO_CLI_ARGUMENT_SIZE + sizeof "/" MO_DATA_FILE];
+    if (!mo_offline_store_path(folder, path, sizeof path)) {
+        (void)upgrade_error(diags, MO_CODE_UPGRADE_SOURCE_MISMATCH,
+                            "the data folder path is too long");
+        return NULL;
+    }
+    struct mo_store_history_pair pair;
+    enum mo_store_folder read = mo_store_history_pair(path, false, failure, &pair);
+    struct mo_failure_record record;
+    bool found = read == MO_STORE_FOLDER_OK && pair.found &&
+                 mo_failure_read(pair.message.bytes, pair.message.length, &record);
+    struct mo_arena copies;
+    mo_arena_init_confidential(&copies, 2 * MO_LIMIT_BUNDLE_BYTES + 2 * MO_ARENA_CHUNK_HEADER);
+    struct mo_store_program program;
+    uint32_t matches = 0;
+    bool distinct = false;
+    if (found)
+        found = mo_store_retained_program_read_file(path, &copies, record.program, record.build,
+                                                    record.schema, &program, &matches,
+                                                    &distinct) == MO_STORE_FOLDER_OK;
+    if (read == MO_STORE_FOLDER_OK)
+        mo_store_history_pair_free(&pair);
+    struct mo_module_set *set = NULL;
+    char message[192];
+    int n = 0;
+    if (!found || matches == 0)
+        n = snprintf(message, sizeof message,
+                     "no retained program matches failure %llu; replay it with its source FILE",
+                     (unsigned long long)failure);
+    else if (distinct)
+        n = snprintf(message, sizeof message,
+                     "%u retained programs with different sources match failure %llu; replay it "
+                     "with the intended source FILE",
+                     (unsigned)matches, (unsigned long long)failure);
+    MO_ASSERT(n >= 0 && (size_t)n < sizeof message);
+    if (n > 0)
+        (void)upgrade_error(
+            diags, distinct ? MO_CODE_UPGRADE_AMBIGUOUS_PROGRAM : MO_CODE_UPGRADE_SOURCE_MISMATCH,
+            message);
+    else {
+        struct mo_compile_context context;
+        bool ok = load_bundle_bytes(program.bundle, program.bundle_size, sources, diags) &&
+                  mo_compile_context_read(program.context, program.context_size, &context);
+        for (uint32_t i = 0; ok && i < context.count; i++) {
+            char name[MO_LIMIT_BUNDLE_PATH_BYTES + 1];
+            memcpy(name, context.files[i].path.bytes, context.files[i].path.length);
+            name[context.files[i].path.length] = 0;
+            uint32_t file;
+            struct mo_source_error error;
+            ok = mo_sources_add_bytes(sources, name, context.files[i].source.bytes,
+                                      context.files[i].source.length, &file, &error);
+        }
+        set = ok ? mo_load_bundle_sources(arena, sources, library, diags) : NULL;
+        if (!ok && !mo_diags_any(diags))
+            (void)upgrade_error(diags, MO_CODE_UPGRADE_INVALID_VALUE,
+                                "the retained program or its context is invalid");
+    }
+    mo_arena_free(&copies);
+    return set;
 }

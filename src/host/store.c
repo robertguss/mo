@@ -1609,6 +1609,87 @@ enum mo_store_folder mo_store_program_read_file(const char *path, struct mo_aren
     }
     return status;
 }
+/* The retained programs whose image, build and schema match a failure record: the active row
+ * and every previous program. The greatest ordinal is copied; distinct source digests among the
+ * matches make the selection ambiguous. */
+struct retained_copy {
+    struct mo_arena *arena;
+    uint64_t image;
+    const uint8_t *build, *schema;
+    struct mo_store_program program;
+    uint32_t matches;
+    bool distinct, memory;
+};
+static void consider_retained(struct retained_copy *c, const struct mo_store_program *p) {
+    if (p->image != c->image || memcmp(p->build, c->build, 32) != 0 ||
+        memcmp(p->schema, c->schema, 32) != 0)
+        return;
+    if (c->matches != 0 && memcmp(c->program.source, p->source, 32) != 0)
+        c->distinct = true;
+    c->matches++;
+    if (c->matches != 1 && p->ordinal <= c->program.ordinal)
+        return;
+    uint8_t *copy = mo_arena_allocate(c->arena, p->bundle_size + p->context_size, 1);
+    if (copy == NULL) {
+        c->memory = true;
+        return;
+    }
+    memcpy(copy, p->bundle, p->bundle_size);
+    memcpy(copy + p->bundle_size, p->context, p->context_size);
+    c->program = *p;
+    c->program.bundle = copy;
+    c->program.context = copy + p->bundle_size;
+}
+static enum mo_store_folder retained_body(struct mo_store *s, bool failure_tables, void *context) {
+    (void)failure_tables;
+    struct retained_copy *c = context;
+    struct mo_store_program active;
+    bool found = false;
+    enum mo_store_status status = read_program(s, c->arena, &active, &found);
+    if (status != MO_STORE_OK || !found)
+        return folder_status(status);
+    consider_retained(c, &active);
+    sqlite3_stmt *stmt = NULL;
+    int code =
+        sqlite3_prepare_v2(s->db,
+                           "SELECT ordinal,source,image,build,schema,bundle,context_digest,context "
+                           "FROM previous_programs ORDER BY ordinal",
+                           -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return folder_status(failure(code));
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        struct mo_store_program program = {0};
+        if (!program_row(stmt, &program)) {
+            status = MO_STORE_CORRUPT;
+            break;
+        }
+        consider_retained(c, &program);
+    }
+    if (status == MO_STORE_OK && step != SQLITE_DONE)
+        status = failure(step);
+    if (status == MO_STORE_OK && c->memory)
+        status = MO_STORE_MEMORY;
+    return folder_status(finish(stmt, status));
+}
+enum mo_store_folder mo_store_retained_program_read_file(const char *path, struct mo_arena *arena,
+                                                         uint64_t image, const uint8_t build[32],
+                                                         const uint8_t schema[32],
+                                                         struct mo_store_program *out,
+                                                         uint32_t *matches, bool *distinct) {
+    MO_ASSERT(path != NULL && arena != NULL && out != NULL && matches != NULL && distinct != NULL);
+    struct retained_copy copy = {.arena = arena, .image = image, .build = build, .schema = schema};
+    bool recovered = false;
+    enum mo_store_folder status = read_folder(path, false, &recovered, retained_body, &copy);
+    MO_ASSERT(!recovered);
+    if (status == MO_STORE_FOLDER_OK) {
+        *matches = copy.matches;
+        *distinct = copy.distinct;
+        if (copy.matches != 0)
+            *out = copy.program;
+    }
+    return status;
+}
 static enum mo_store_status copy_program_history(struct mo_store *s, struct history_copy *c) {
     struct mo_store_history *h = c->out;
     enum mo_store_status status = read_program(s, NULL, &h->program, &h->has_program);

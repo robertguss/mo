@@ -510,7 +510,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
     if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&
-        out->command != MO_COMMAND_REHEARSE && out->file_count == 0)
+        out->command != MO_COMMAND_REHEARSE && out->file_count == 0 &&
+        !(out->command == MO_COMMAND_REPLAY && out->data != NULL))
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_QUERY && out->file_count != 2)
         return refuse(out, error, "query needs a file and a function", command, NULL);

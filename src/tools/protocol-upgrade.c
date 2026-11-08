@@ -567,8 +567,6 @@ static void finish_commit(struct mo_protocol_server *s, struct protocol_connecti
 
 void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
     struct protocol_upgrade *u = &s->upgrade;
-    if (s->previous.image != NULL && !previous_borrowed(s))
-        release_previous(s);
     if (!u->open)
         return;
     if (u->compiling && mo_live_poll(u->live)) {
@@ -591,8 +589,9 @@ void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
         close_slot(s);
         return;
     }
-    if (s->previous.image != NULL) {
-        /* Two programs at most: the boundary waits until the previous one is unused. */
+    /* Two programs at most: events and earlier requests keep the previous one; the boundary
+     * waits until no request borrows it, and the activation then releases it. */
+    if (s->previous.image != NULL && previous_borrowed(s)) {
         if (s->now.monotonic_us < u->wait_deadline)
             return;
         mo_live_refuse(u->live, MO_CODE_UPGRADE_BOUNDARY_DEADLINE, "boundary",

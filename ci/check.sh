@@ -224,6 +224,8 @@ if have python3; then
 			later "Recorded schema fallback ($driver)" python3 ci/check_upgrade_fallback.py "$driver"
 			later "Upgrade adoption replay ($driver)" python3 ci/check_upgrade_adoption.py "$driver"
 			later "Recorded-context upgrade checks ($driver)" python3 ci/check_upgrade_context.py "$driver"
+			later "Live upgrades: push, streams, kills and recovery ($driver)" \
+				python3 ci/check_upgrade_live.py "$driver"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
 			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"

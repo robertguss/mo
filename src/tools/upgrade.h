@@ -23,6 +23,14 @@ MO_MUST_USE enum mo_upgrade_metadata_status mo_upgrade_metadata(const struct mo_
                                                                 struct mo_buffer *out,
                                                                 FILE *errors);
 
+/* The module set of the retained program a folder's failure ran under, for replay without a
+ * source file; ambiguity and absence are diagnostics. */
+struct mo_arena;
+MO_MUST_USE struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, const char *folder,
+                                                        uint64_t failure, const char *library,
+                                                        struct mo_sources *sources,
+                                                        struct mo_diags *diags);
+
 /* Live upgrades of a running service. start copies the candidate bundle and the active
  * program and starts the compiler child; NULL means memory, and any refusal is reported
  * through the report once poll returns true. admit repeats the typed check against the
