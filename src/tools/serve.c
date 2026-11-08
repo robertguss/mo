@@ -19,7 +19,7 @@ static void note_signal(int number) {
     atomic_store(&signalled, true);
 }
 
-static bool watch_signals(void) {
+bool mo_serve_watch_signals(void) {
     struct sigaction action = {.sa_handler = note_signal};
     return sigemptyset(&action.sa_mask) == 0 && sigaction(SIGTERM, &action, NULL) == 0 &&
            sigaction(SIGINT, &action, NULL) == 0;
@@ -152,18 +152,19 @@ static void refuse_listener(struct mo_diags *diags, enum mo_listener_status stat
 }
 
 int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint32_t service,
-                   FILE *output, FILE *errors, struct mo_diags *diags) {
+                   FILE *output, FILE *errors, struct mo_diags *diags,
+                   struct mo_store *held_store) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     MO_ASSERT(service < file->service_count);
     const struct mo_bytecode_string *token = &file->strings[file->services[service].token_env];
     struct serve_log log = {.errors = errors};
     struct mo_listener *listener = NULL;
-    struct mo_store *store = NULL;
+    struct mo_store *store = held_store;
     struct mo_protocol_server *server = NULL;
     struct mo_buffer name;
     mo_buffer_init(&name, MO_LIMIT_STRING_SIZE + 1);
     int status = 1;
-    if (!watch_signals()) {
+    if (!mo_serve_watch_signals()) {
         refuse(diags, "mo serve could not watch for stop signals", NULL, strerror(errno));
         goto done;
     }
@@ -188,7 +189,8 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     int length = snprintf(path, sizeof path, "%s/" MO_DATA_FILE, cli->data);
     MO_ASSERT(length > 0 && (size_t)length < sizeof path);
     mode_t mask = umask(S_IRWXG | S_IRWXO);
-    enum mo_store_status stored = mo_store_open_wait(path, &store);
+    enum mo_store_status stored =
+        held_store == NULL ? mo_store_open_wait(path, &store) : MO_STORE_OK;
     (void)umask(mask);
     if (stored == MO_STORE_BUSY) {
         /* Not E1409, which exits 1 and stops a service manager: the holder is temporary. */
@@ -225,7 +227,8 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     status = exit_status(&log, serve_requests(server, listener, &log));
 done:
     mo_protocol_server_free(server);
-    mo_store_close(store);
+    if (held_store == NULL)
+        mo_store_close(store);
     mo_listener_close(listener);
     mo_buffer_free(&name);
     return status;

@@ -50,3 +50,22 @@ to test its message. Revisit this exemption when parser nesting, precedence
 or the inference traversal changes. E1053 and E1057 are different: allocation
 failure and corrupted compiler output are real failure modes, exercised by
 `tests/test_compiler_faults.c` without changing production limits or hooks.
+
+## Reserved upgrade diagnostics
+
+E1414 (upgrade credential), E1416 (stale live base), E1428 (live boundary deadline)
+and E1431 (ambiguous retained-program resolution) reserve stable numbers for the
+later live-upgrade and retained-failure paths. Checked restart has no upload slot,
+upgrade credential, live pause deadline or automatic retained-failure resolver,
+so these diagnostics are not reachable in this milestone. Their inventory entries
+are exemptions, not message tests. Replace each exemption with an executable case
+when its producing path is implemented. Existing query codes E1410–E1413 retain
+their meanings; the upgrade range starts at E1414. A recorded-program precheck
+that finds a live owner emits E1415. `mo serve` retains its existing store-lock
+message and exit status 75.
+
+E1427 is the defensive runtime invalid-timer-interval guard. Source timers must
+use positive duration literals, so zero and negative intervals are rejected by
+E0103 before upgrade compilation succeeds (reported as E1419 by admission).
+The source refusal is covered by the upgrade driver; it is not a runtime E1427
+message test. Revisit this exemption if computed timer intervals become legal.

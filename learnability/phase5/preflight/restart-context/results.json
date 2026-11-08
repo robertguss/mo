@@ -1,0 +1,27 @@
+{
+  "v2_typed_upgrade": {
+    "exit": 0,
+    "stdout": "{\"version\":1,\"status\":\"accepted\",\"code\":null,\"class\":\"compatible\",\"message\":\"migration signature checked; candidate is compatible\",\"base_source\":\"e9b4bbef95e3a6ee7392b5ed3b9ce913df7706f75d7a190c337339c91bb978b7\",\"candidate_source\":\"cbe5bcf2ba974ab9e08a62526bbbf194c98ff364eda3eb185df59f8277ca2b19\",\"active_source\":\"e9b4bbef95e3a6ee7392b5ed3b9ce913df7706f75d7a190c337339c91bb978b7\",\"migration\":\"migrate\",\"ordinal\":\"0\",\"head\":\"0\"}\n",
+    "stderr": ""
+  },
+  "v2_context_old_field": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "v2_context_new_field": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "error E0065: the record has no such field  /tmp/mo-restart-context-64ymazud/candidate/main.mo:15:24\n\n  15 |   State(new_field: old.old_field)\n     |                        ^^^^^^^^^ no field with this name\n\n  --> /tmp/mo-restart-context-64ymazud/candidate/upgrade-old.mo:3:8\n  3 | struct State\n    |        ^^^^^ declared here\n\nA struct declares named fields, each with a type (reference 4.1).\n\n"
+  },
+  "v3_tool_only_context_old_field": {
+    "exit": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "v3_tool_only_context_new_field": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "error E0065: the record has no such field  /tmp/mo-restart-context-64ymazud/candidate/main.mo:15:24\n\n  15 |   State(new_field: old.old_field)\n     |                        ^^^^^^^^^ no field with this name\n\n  --> /tmp/mo-restart-context-64ymazud/candidate/upgrade-old.mo:3:8\n  3 | struct State\n    |        ^^^^^ declared here\n\nA struct declares named fields, each with a type (reference 4.1).\n\n"
+  }
+}

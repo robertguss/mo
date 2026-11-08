@@ -143,7 +143,7 @@ static void refused(int argc, const char *const *argv, const char *expected) {
     struct mo_cli cli;
     const char *error;
     CHECK(!mo_cli_parse(argc, argv, &cli, &error));
-    CHECK(strcmp(error, expected) == 0);
+    CHECK(error != NULL && strcmp(error, expected) == 0);
 }
 
 #define REFUSED(expected, ...)                                                                     \
@@ -200,6 +200,17 @@ static void parse_serve(void) {
     CHECK(cli.command == MO_COMMAND_SERVE && cli.file_count == 1 && cli.port == 8080);
     CHECK(strcmp(mo_cli_file(&cli, 0), "main.mo") == 0 && strcmp(cli.data, "state") == 0);
     CHECK(cli.allow_host == NULL);
+    const char *folder[] = {"mo", "serve", "--data", "state", "--port", "0"};
+    CHECK(mo_cli_parse(6, folder, &cli, &error) && cli.file_count == 0);
+    const char *upgrade[] = {"mo",     "serve", "new.mo",    "--data",    "state",
+                             "--port", "0",     "--upgrade", "--migrate", "Main.migrate"};
+    CHECK(mo_cli_parse(10, upgrade, &cli, &error) && cli.upgrade &&
+          strcmp(cli.migration, "Main.migrate") == 0);
+    REFUSED("upgrade or adoption needs a source file: \"serve\"", "--data", "state", "--port", "0",
+            "--upgrade");
+    REFUSED("--migrate needs --upgrade or an old program: \"--migrate\"", "new.mo", "--data",
+            "state", "--port", "0", "--migrate", "Main.migrate");
+
     const char *proxied[] = {"mo",     "serve", "main.mo", "--allow-host", "q.example:8000",
                              "--port", "1",     "--data",  "state"};
     CHECK(mo_cli_parse(9, proxied, &cli, &error) && strcmp(cli.allow_host, "q.example:8000") == 0);
@@ -224,7 +235,6 @@ static void parse_serve(void) {
     REFUSED("flag needs a nonempty value: \"--data\"", "main.mo", "--port", "1", "--data");
     REFUSED("serve needs --port N: \"serve\"", "main.mo", "--data", "state");
     REFUSED("serve needs --data DIR: \"serve\"", "main.mo", "--port", "1");
-    REFUSED("command needs a file: \"serve\"", "--port", "1", "--data", "state");
     REFUSED("flag may be given only once (except --only): \"--port\"", "main.mo", "--port", "1",
             "--port", "2", "--data", "state");
     REFUSED("flag may be given only once (except --only): \"--data\"", "main.mo", "--port", "1",

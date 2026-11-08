@@ -55,3 +55,20 @@ E1401	tests/test_cli_faults.c	the OS refusing the explicit source stack, raised 
 E1053	tests/test_compiler_faults.c	Core scratch allocation failure, raised through the public checker with compile-time fault injection
 E1057	tests/test_compiler_faults.c	compiler output corrupted at the writer boundary, refused by the real bytecode writer
 E1106	tests/errors/README.md	UNREACHABLE: parser-produced bodies cannot reach the conservative inference-frame bound; retain the defensive guard and registered code
+E1414	tests/errors/README.md	UNREACHABLE: reserved for live upgrade credentials; checked restart has no upgrade-credential endpoint
+E1415	ci/check_upgrade_context.py	a recorded-program precheck refuses the live owner without waiting or writing
+E1416	tests/errors/README.md	UNREACHABLE: reserved for live upload base comparison; no upload slot exists in checked restart
+E1417	ci/check_upgrades.py	a source bundle beyond one MiB is refused before candidate compilation
+E1419	ci/check_upgrades.py	candidate body compilation fails with the shared upgrade compile diagnostic
+E1420	tests/test_compile_child.c	real subprocess CPU and wall exhaustion return the compile-budget status rendered by upgrade admission
+E1421	ci/check_upgrades.py	changed state without a selected migration is refused
+E1422	ci/check_upgrades.py	generic, capability-bearing and wrong-result migration functions are refused
+E1423	ci/check_upgrades.py	division by zero during migration refuses and preserves the folder
+E1424	ci/check_upgrades.py	migration work exhaustion refuses and preserves the folder
+E1425	ci/check_upgrades.py	tampered stored compilation context fails validation without changing the folder
+E1426	ci/check_upgrades.py	a changed token environment clause is refused
+E1427	tests/errors/README.md	UNREACHABLE: checked source timer intervals are positive duration literals; runtime invalid-interval guard is defensive
+E1428	tests/errors/README.md	UNREACHABLE: reserved for the live boundary deadline; stopped checked restart has no pause deadline
+E1429	ci/check_upgrade_fallback.py	recorded source compilation failure names the recording build before explicit schema-backed fallback
+E1430	ci/check_upgrades.py	different source without explicit upgrade refuses and preserves the folder
+E1431	tests/errors/README.md	UNREACHABLE: reserved for ambiguous retained-program resolution in later offline failure replay

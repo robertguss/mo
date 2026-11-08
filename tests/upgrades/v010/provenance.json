@@ -1,0 +1,25 @@
+{
+  "tag": "v0.1.0",
+  "commit": "fad1467dcbd0d34a487521c5294729badbb4af40",
+  "binary_sha256": "4a90a32c6d144f51f864341470ab5029b29fdc64c28486662755d39c8aa2ff67",
+  "database_sha256": "0596bc3311ad59e5d78f4d7b09b999ab154a3bd859d3f15ad510f7115bcf282c",
+  "submit_reply": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"value\":\"1\"}"
+        }
+      ],
+      "structuredContent": {
+        "value": "1"
+      },
+      "isError": false
+    }
+  },
+  "snapshot_sequence": 0,
+  "log_records": 2,
+  "build": "make -j4 CC=gcc; default debug flags, Linux x86_64"
+}

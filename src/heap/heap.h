@@ -192,6 +192,22 @@ MO_MUST_USE enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *proc
                                                             struct mo_buffer *out);
 MO_MUST_USE bool mo_value_decode(struct mo_heap *process, uint32_t type, const uint8_t *bytes,
                                  size_t length, struct mo_cell *out);
+/* Migration input only: names[index] replaces that nominal type's saved name when
+ * comparing schemas. NULL entries keep the original name. Every other schema byte
+ * remains exact, including nested types, fields, constructors, order and arity.
+ * name_count may not exceed the image's type count; non-nominal overrides refuse.
+ * The caller owns the immutable table and NUL-terminated names for this call. */
+/* Shared deterministic codec work: node visits plus 64-byte native byte-walk blocks.
+ * Exhaustion sets *work to zero; refusal preserves value/output. These counts do not
+ * claim an elapsed-time bound or include heap cleanup/allocator synchronization. */
+MO_MUST_USE bool mo_value_decode_budget(struct mo_heap *heap, uint32_t type, const uint8_t *bytes,
+                                        size_t length, const char *const *names,
+                                        uint32_t name_count, uint64_t *work, struct mo_cell *out);
+MO_MUST_USE bool mo_value_encode_budget(struct mo_heap *heap, uint32_t type, struct mo_cell value,
+                                        struct mo_buffer *out, uint64_t *work);
+MO_MUST_USE bool mo_value_decode_names(struct mo_heap *process, uint32_t type, const uint8_t *bytes,
+                                       size_t length, const char *const *names, uint32_t name_count,
+                                       struct mo_cell *out);
 /* TYPE's saved schema, written without a value: exactly the schema bytes every encoding of a
  * TYPE value carries, so schemas can be compared before anything is decoded. Refusal (a type
  * with no saved form, the depth or size limit, memory) leaves out's length unchanged. */

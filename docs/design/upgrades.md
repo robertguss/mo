@@ -1,9 +1,9 @@
 # Whole-program upgrades
 
-Status: proposed; not implemented or approved. The feasibility evidence is in
-[the preflight](../../learnability/phase5/preflight/README.md). Approval requires
-both the reserved-old-type experiment and the complete largest-state pause
-measurement below. Source checks alone do not close either gate.
+Status: approved in M1 (PR #310). M2 implements typed checking, migration
+validation and checked restart; live swapping remains a later milestone.
+The feasibility evidence, including failed assumptions and corrected results, is
+in [the preflight](../../learnability/phase5/preflight/README.md).
 
 ## Authority and lifecycle
 
@@ -73,7 +73,9 @@ still exceed that cap and be refused. Proxy redaction covers both headers.
 Run the same executable as a child, with a private bundle directory, 1 GiB
 address-space bound, 10 CPU seconds and a 15-second wall deadline. Poll it
 without blocking the service; kill and reap an expired child. Compile before
-requesting a boundary. The child shares the host identity and is not an OS
+requesting a boundary. ASan test builds omit only the virtual-address bound because sanitizer shadow
+reservations exceed it; production retains that bound, and all builds retain
+CPU and wall limits. The child shares the host identity and is not an OS
 sandbox. The verifier checks its output, but does not protect host secrets
 from a compiler memory-safety exploit. Long front-end fuzz runs are required.
 The child probe also compiles the real service to bytecode text and emits a
@@ -140,6 +142,61 @@ folder under an accidentally matching image key and write without maintaining
 the active-program contract. Upgrade-capable readers accept legacy version 1
 only through the adoption path. Ordinary snapshot writes must preserve 2.
 
+## Durable compilation context
+
+Approved implementation clarification, 2026-11-08: each active and retained
+program also carries a bounded, validated compilation context. It is separate
+from the canonical original MOSB source bundle and its source SHA-256. A source
+can keep a migration body across later tool-only upgrades; reconstructing that
+body's old declarations from the latest snapshot loses its original input type.
+The context preserves the generated declarations and selected migration root
+without requiring a chain of older snapshots or bundles.
+
+MOCC version 1 consists of `MOCC` followed by byte 1, a little-endian u32 length
+and UTF-8 migration name, a u32 file count, then length-prefixed path/source pairs
+in strictly increasing path-byte order. The migration name is at most 255 bytes.
+There are at most 64 files, each path at most 255 bytes, and the entire context
+is at most 1 MiB. Paths are `UpgradeOld.mo` or dotted generated module names
+under `UpgradeOld`, ending in `.mo`; no separators, NUL, empty components or
+traversal are accepted. Source text is UTF-8 without NUL. The canonical empty
+context has no migration name and no files. The child compiler emits the context
+alongside its verified image; the parent validates and independently hashes it.
+A nonempty metadata suffix is a u32 byte length followed by `MOCS` and byte 1:
+length-prefixed token environment name, raw saved-state schema, a u32 count and
+sorted generated current-state declaration path/source pairs, then sorted tool
+and timer summaries. Each summary has a length-prefixed original handler name;
+a tool has a 32-byte descriptor digest, and a timer has a positive signed-64-bit
+interval encoded as little-endian u64. Counts obey the ordinary handler/file
+limits, and the entire context still fits 1 MiB. The store verifies that the raw
+schema hashes to the program schema digest. Metadata has no executable code.
+
+The current-state declarations cache reachable generic templates and recursive
+nominal types separately from the historical migration declarations. If recorded
+source no longer compiles, an empty log tail permits migration from the retained
+snapshot using these declarations. If those declarations also fail, concrete
+saved-schema synthesis is attempted. Concrete generic instances use reversible
+`Saved_<hex-qualified-name>` aliases; shape checking still compares every field,
+constructor and type parameter, with explicit nominal-name overrides. Source
+structs have single-case choice layout; legacy record layouts that source cannot
+reproduce are refused. A nonempty tail that needs an unbuildable recorded handler
+is refused without writing. This fallback never runs the new initial state in
+place of the saved state or invents replay checksums.
+
+`program` and `previous_programs` add `context_digest BLOB NOT NULL` (32-byte
+SHA-256) and `context BLOB NOT NULL`. Context identity participates in program
+comparison and is validated before compilation. An ordinary tool-only upgrade
+inherits the historical migration declarations and selection; descriptor metadata
+is refreshed from the candidate. An explicit new migration synthesizes and records
+a new historical context. Retaining a program retains its context, including failure pins.
+The source digest continues to identify only the original source bundle.
+`mo check NEW --upgrade-from DIR` reads the active bundle and its validated
+context from a stopped data folder without modifying it. A source-file base
+remains supported when it compiles without retained declarations. A tool-only
+candidate inherits the historical context; an explicit new migration generates
+its input declarations from the current old program.
+These columns are part of the new version-2 format; no released version-2
+folders predate them. Version-1 adoption is unchanged.
+
 ## Boundary, replies and catalogs
 
 Before swapping, encode pending replies so no connection holds old heap cells.
@@ -190,11 +247,16 @@ limit. Both heap sets fit within the 64 MiB service message-memory envelope.
 The measured candidate heap peak, including queued arguments, is 12,565,784
 bytes; the live allocation allowance has more than 2.6x margin. Identity uses
 one VM instruction; that does not bound native encoding work. Implementation
-must account for the native walks separately and revalidate these limits.
+charges native saved-codec work separately against the same remaining counter:
+one unit per visited schema/value node, one per override name, and one per 64
+input/output bytes rounded up. VM instructions reduce that same counter before
+output validation and timer evaluation. These deterministic units bound traversals,
+not allocator internals, collision handling or wall-clock time. Refusal preserves
+output buffers, decoded output cells and the durable store. Revalidate these limits.
 Neither set silently lifts ordinary handler limits. Also measure many generic
 instantiations and maximum accepted nesting, not only an early nesting refusal.
 
-Reserve tools codes E1410–E1427, respectively: credential, busy, stale base,
+Reserve tools codes E1414–E1431, respectively: credential, busy, stale base,
 bundle size, bundle format, compile diagnostic, compile budget, missing
 migration, migration signature, migration trap, migration budget, invalid
 migrated value, changed access, timer interval, boundary deadline, recorded
@@ -273,9 +335,9 @@ ordinal zero. Snapshot records retain their existing framed binary encoding.
 
 | Table | Columns and key |
 | --- | --- |
-| `program` | `id INTEGER PRIMARY KEY CHECK(id=1)`, `ordinal INTEGER`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB` |
+| `program` | `id INTEGER PRIMARY KEY CHECK(id=1)`, `ordinal INTEGER`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB`, `context_digest BLOB`, `context BLOB` |
 | `upgrades` | `ordinal INTEGER PRIMARY KEY`, `head INTEGER`, `old_source BLOB`, `new_source BLOB`, `old_image BLOB`, `new_image BLOB`, `old_schema BLOB`, `new_schema BLOB`, `build BLOB`, `migration TEXT`, `report TEXT` |
-| `previous_programs` | `ordinal INTEGER PRIMARY KEY`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB` |
+| `previous_programs` | `ordinal INTEGER PRIMARY KEY`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB`, `context_digest BLOB`, `context BLOB` |
 | `previous_snapshots` | `ordinal INTEGER PRIMARY KEY`, `record BLOB` |
 
 Every non-key column is `NOT NULL`; empty migration text means no migration.
@@ -290,8 +352,28 @@ Reports use versioned JSON with `version: 1`, `status` (`accepted`, `refused`,
 `candidate_source`, `active_source`, and `migration`. Digests are lowercase hex;
 unavailable identities are null. Accepted reports also carry `ordinal` and
 `head` as decimal strings, avoiding JSON integer precision loss. The text
-renderer uses the same class/message fields. Detail is bounded to 4 KiB before
-storage or output; diagnostics are truncated at UTF-8 boundaries.
+renderer uses the same class/message fields and prints every descriptor difference.
+After both programs are compared, reports also contain `old_schema`, `new_schema`,
+`implementation_changed` and the complete `differences` array. A refusal before
+comparison omits those four fields; their absence means no comparison was made,
+not that the programs match. Decimal-string VM work, native work, heap peak and
+encoded-byte metrics are always present, including zero when that work did not run. Diagnostic detail alone is bounded to 4 KiB, truncated at
+UTF-8 boundaries. Total JSON is bounded by two 1 MiB source bundles for original
+handler identifiers, 80 framing bytes per old/new handler, and eight times the
+detail bound for escaped text and fixed fields. Handler names are original source
+identifiers, never expanded generic type names; required differences are not
+silently truncated.
+
+Every legacy folder with a snapshot is adopted through the activation transaction,
+even if its image key still matches. Adoption retains that exact original snapshot
+and records how many tail records were verified. Its unavailable old source is
+encoded as 32 zero bytes in the upgrade row and rendered as null in history;
+this sentinel is not a claimed source digest. A zero-record verification is
+explicitly reported as providing no behavioral evidence.
+A changed executable build also takes this verified adoption path when its
+image key is unchanged. The new build digest becomes authoritative while the
+old identity is retained, so failure records from both builds can pin their
+programs correctly.
 
 The event ring gains `upgrade` with outcome, epoch, source digests and refusal
 code, without source bytes or credentials. Durable successful history comes

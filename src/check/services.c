@@ -608,3 +608,99 @@ enum mo_query_entry mo_check_query_entry(struct mo_arena *arena, const struct mo
     MO_ASSERT(*function != UINT32_MAX);
     return MO_QUERY_ENTRY_ACCEPTED;
 }
+
+enum mo_query_entry mo_check_migration_entry(struct mo_arena *arena,
+                                             const struct mo_program *program, const uint8_t *name,
+                                             size_t length, const struct mo_source_type *old_state,
+                                             struct mo_diags *diags, uint32_t *function) {
+    MO_ASSERT(program != NULL && program->set != NULL && name != NULL && function != NULL);
+    MO_ASSERT(old_state != NULL);
+    *function = UINT32_MAX;
+    struct service_check p = {
+        .arena = arena, .program = program, .diags = diags, .span = program->set->modules[0]->span};
+    if (!work(&p, length))
+        return MO_QUERY_ENTRY_REFUSED;
+    size_t dot = length;
+    while (dot > 0 && name[dot - 1] != '.')
+        dot--;
+    uint32_t module = 0;
+    if (dot != 0) {
+        module = UINT32_MAX;
+        for (uint32_t i = 0; i < program->set->count; i++) {
+            if (!work(&p, dot))
+                return MO_QUERY_ENTRY_REFUSED;
+            const char *candidate = program->set->names[i];
+            if (strlen(candidate) == dot - 1 && memcmp(candidate, name, dot - 1) == 0)
+                module = i;
+        }
+        if (module == UINT32_MAX)
+            return MO_QUERY_ENTRY_NO_MODULE;
+    }
+    const struct mo_module_scope *scope = &program->interfaces->scopes[module];
+    const struct mo_symbol *group = mo_find_symbol(scope, name + dot, length - dot);
+    if (group == NULL || group->declaration->kind != MO_S_FN)
+        return MO_QUERY_ENTRY_NO_FUNCTION;
+    p.span = group->declaration->children[0]->span;
+    const struct mo_checked_service *service = NULL;
+    for (uint32_t i = 0; i < program->service_count; i++)
+        if (program->services[i].module == 0)
+            service = &program->services[i];
+    if (service == NULL)
+        return refuse_query(&p, MO_CODE_UPGRADE_MIGRATION_SIGNATURE,
+                            "the program has no service to migrate",
+                            "A migration reads the state of the main module's service, and this "
+                            "program's main module declares no service.");
+    const struct mo_function_signature *selected = NULL;
+    for (uint32_t i = 0; i < group->overload_count; i++) {
+        if (!work(&p, 1))
+            return MO_QUERY_ENTRY_REFUSED;
+        const struct mo_function_signature *candidate =
+            mo_function_signature_by_symbol(program->signatures, group + i);
+        MO_ASSERT(candidate != NULL);
+        if (candidate->type->count < 2 || !same(&p, candidate->type->arguments[0], old_state, 0))
+            continue;
+        MO_ASSERT(selected == NULL);
+        selected = candidate;
+    }
+    if (p.failed)
+        return MO_QUERY_ENTRY_REFUSED;
+    if (selected == NULL && group->overload_count == 1)
+        selected = mo_function_signature_by_symbol(program->signatures, group);
+    if (selected == NULL)
+        return refuse_query(
+            &p, MO_CODE_UPGRADE_MIGRATION_SIGNATURE,
+            "no overload of the migration's function takes the service state",
+            "A migration's function takes the supplied old state as its first parameter.");
+    p.span = selected->function->declaration->children[0]->span;
+    const struct mo_source_type *type = selected->type;
+    if (type->parameters != 0)
+        return refuse_query(
+            &p, MO_CODE_UPGRADE_MIGRATION_SIGNATURE, "a migration's function is generic",
+            "A migration runs a compiled function, and only the instances a program "
+            "uses of a generic function are compiled. Select a function with "
+            "concrete types that calls it.");
+    for (uint32_t i = 0; i < type->count; i++)
+        if (!mo_check_service_purity(arena, program, type->arguments[i], p.span,
+                                     MO_PURITY_MIGRATION, diags))
+            return MO_QUERY_ENTRY_REFUSED;
+    bool state = type->count >= 2 && same(&p, type->arguments[0], old_state, 0);
+    if (p.failed)
+        return MO_QUERY_ENTRY_REFUSED;
+    if (!state)
+        return refuse_query(
+            &p, MO_CODE_UPGRADE_MIGRATION_SIGNATURE,
+            "a migration's function does not take the service state first",
+            "A migration's first parameter is exactly the supplied old state type.");
+    if (type->count != 2 || !same(&p, type->arguments[1], service->state, 0))
+        return refuse_query(&p, MO_CODE_UPGRADE_MIGRATION_SIGNATURE,
+                            "a migration must take one old state and return the new state",
+                            "The result must be exactly the new main service's state type.");
+    for (uint32_t i = 0; i < program->function_count; i++) {
+        if (!work(&p, 1))
+            return MO_QUERY_ENTRY_REFUSED;
+        if (program->functions[i].signature == selected)
+            *function = i;
+    }
+    MO_ASSERT(*function != UINT32_MAX);
+    return MO_QUERY_ENTRY_ACCEPTED;
+}
