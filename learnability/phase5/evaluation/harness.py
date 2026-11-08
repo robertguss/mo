@@ -48,7 +48,7 @@ proxy, grader = local['proxy'], local['grade']
 SLOTS = ['codex', 'claude', 'codex', 'claude']
 VERSIONS = {'codex': 'codex-cli 0.166.0', 'claude': '2.1.317 (Claude Code)'}
 BASE = 'd31c9301132ac9e55432bf9e36855c2914ecab21'
-ENTER = p4.ENTER.replace('os.chdir', 'env["QUEUE_UPGRADE"] = os.environ["QUEUE_UPGRADE"]; os.chdir')
+ENTER = p4.ENTER.replace('os.chdir', 'env["QUEUE_UPGRADE"] = os.environ["QUEUE_UPGRADE"]; env["QUEUE_UPGRADE_BEARER"] = "Bearer " + os.environ["QUEUE_UPGRADE"]; os.chdir')
 
 
 def layout():
@@ -92,7 +92,7 @@ def freeze(path, installed):
         raise ValueError('control evidence absent from freeze')
     proven = json.loads(controls.read_text())
     required_controls = ('real_service_grading', 'proxy_attestation', 'credential_redaction',
-                         'collector_success', 'collector_timeout', 'source_tests')
+                         'collector_success', 'collector_timeout', 'source_tests', 'native_upgrade_header')
     if any(proven.get(name) is not True for name in required_controls):
         raise ValueError('required development controls did not pass')
     for name in ('mo', 'codex', 'claude'):
@@ -112,7 +112,7 @@ def check(installed):
 def command(client, binary, prompt, url, config):
     cmd = p4.client_command(client, binary, prompt, url, config)
     if client == 'codex':
-        cmd[-1:-1] = ['-c', 'mcp_servers.task-queue.env_http_headers={"Mo-Upgrade-Authorization"="QUEUE_UPGRADE"}']
+        cmd[-1:-1] = ['-c', 'mcp_servers.task-queue.env_http_headers={"Mo-Upgrade-Authorization"="QUEUE_UPGRADE_BEARER"}']
     return cmd
 
 
@@ -199,7 +199,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                                list(set(l.secrets.read_text().split())) if l.secrets.exists() else ())
         l.mcp_config.write_text(json.dumps({'mcpServers': {p4.SERVER: {'type': 'http', 'url': recorder.url,
             'headers': {'Authorization': 'Bearer ${QUEUE_TOKEN}',
-                        'Mo-Upgrade-Authorization': '${QUEUE_UPGRADE}'}}}}))
+                        'Mo-Upgrade-Authorization': 'Bearer ${QUEUE_UPGRADE}'}}}}))
         os.chmod(l.mcp_config, 0o444)
         prompt = Path(s['prompt']).read_text().replace('SERVICE_URL', recorder.url)
         prompt += '\nUse the migration function name migrate. Your final message must be exactly 1.\n'

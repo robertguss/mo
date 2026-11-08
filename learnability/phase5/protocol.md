@@ -1,9 +1,11 @@
 # Live upgrade evaluation declaration
 
-Status: declared before collection; artifact freeze is pending. The nightly
+Status: original declaration retained below; the credential correction at the end
+declares experiment 2 before its collection. The nightly
 repair merged as 814ddd0f70e5fd613130fe87a9cd24cd187af8e6 in PR #317;
-integrated repository verification is in progress. Collection is authorized by the implementation request;
-Robert's explicit approval is required for release. No scored session has started. Development probes,
+integrated repository verification passed (the earlier interrupted run is retained). Collection is authorized by the implementation request;
+Robert's explicit approval is required for release. One experiment-1 session was interrupted for an instrument defect; at the
+experiment-2 declaration none of its sessions has started. Development probes,
 stub clients, preflight and instrument repairs never enter the denominator.
 This is a capability demonstration, not a comparison or population-rate claim.
 
@@ -104,3 +106,29 @@ a complete experiment freeze or an attestation of a clean tree. Require a clean
 tracked tree and inspect untracked build inputs separately. Any frozen-input
 change after collection begins requires a separately named experiment retaining
 all prior results.
+
+## Credential correction and separately declared experiment
+
+At 2026-11-08T23:28:51.391236+00:00, experiment 1 was stopped after its first slot launched.
+The collector configured the native MCP upgrade header as a raw secret rather
+than `Bearer VALUE`. The CLI push credential environment was correct, but the
+native tool setup violated the supplied-credential contract. Detection preceded
+inspection of the slot outcome. The actual transcript and interruption remain;
+slots 2–4 were not launched and remain missing misses in that experiment's
+four-slot record. This is an instrument failure, not evidence of agent inability.
+No attempt is relabeled development or silently replaced.
+
+Experiment 2 is declared now, before its collection: four fresh slots in the
+same Codex/Claude/Codex/Claude order, identical scenario, frozen clients/models,
+3,600-second limit, grading rules and 3-of-4 gate with at least one per client.
+It uses a separately frozen collector: Codex maps a derived Bearer-form
+environment value to the header, Claude expands `Bearer ${QUEUE_UPGRADE}`,
+and `mo push` retains the original raw credential variable. Real-service valid
+argument controls distinguish missing scheme E1414 from authenticated stale
+base E1416. The OS stub also checks both supplied client configurations.
+
+The prior pause/drill inputs and binaries are unchanged. Preserve their original
+freeze and verify the relevant input hashes before carrying those results
+forward; do not repeat or select latency samples to improve the margin. Publish
+both experiment records and every launched session/miss, with distinct
+denominators. The missing-model-evidence rule remains unchanged.

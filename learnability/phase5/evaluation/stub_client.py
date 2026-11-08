@@ -18,6 +18,8 @@ def emit(value):
     print(json.dumps(value), flush=True)
 emit({'type': 'session.started', 'model': 'gpt-6.1-sol'})
 assert os.environ['QUEUE_TOKEN'] and os.environ['QUEUE_UPGRADE']
+assert os.environ['QUEUE_UPGRADE_BEARER'] == 'Bearer ' + os.environ['QUEUE_UPGRADE']
+assert json.loads((root / 'session/mcp.json').read_text())['mcpServers']['task-queue']['headers']['Mo-Upgrade-Authorization'] == 'Bearer ${QUEUE_UPGRADE}'
 assert not os.access(settings['hidden'], os.R_OK)
 assert os.access('../service.log', os.R_OK)
 assert not os.access('../service.log', os.W_OK)

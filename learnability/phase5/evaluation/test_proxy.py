@@ -83,6 +83,41 @@ class Tests(unittest.TestCase):
 
 
 class RealPush(unittest.TestCase):
+    def test_native_upgrade_requires_bearer_scheme(self):
+        import fixture
+        import secrets
+        import urllib.parse
+        mo = fixture.ROOT / 'build/eval-controls/debug/mo'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            token, upgrade = secrets.token_hex(24), secrets.token_hex(24)
+            source = fixture.sources(root / 'source', 'unchanged')
+            service = fixture.Service(mo, root / 'data', token, upgrade,
+                                      root / 'service.log', source / 'main.mo')
+            recorder = proxy.Proxy(service.url, root / 'proxy.jsonl', token, upgrade)
+            try:
+                port = urllib.parse.urlsplit(recorder.url).port
+                request = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
+                    'name': 'mo-upgrade-open', 'arguments': {
+                        'base': '0' * 64, 'candidate': '1' * 64, 'total': 1}}}
+                for header, expected in ((upgrade, 'E1414'), ('Bearer ' + upgrade, 'E1416')):
+                    conn = http.client.HTTPConnection('127.0.0.1', port, timeout=30)
+                    try:
+                        conn.request('POST', '/mcp', json.dumps(request), {
+                            'Authorization': 'Bearer ' + token,
+                            'Mo-Upgrade-Authorization': header,
+                            'Content-Type': 'application/json', 'MCP-Protocol-Version': '2025-11-25'})
+                        response = conn.getresponse()
+                        result = json.loads(response.read())['result']
+                        self.assertEqual(response.status, 200)
+                        self.assertTrue(result['isError'])
+                        self.assertEqual(result['structuredContent']['code'], expected)
+                    finally:
+                        conn.close()
+            finally:
+                recorder.stop()
+                service.stop()
+
     def test_real_push_attestation(self):
         import fixture
         import grade

@@ -60,9 +60,9 @@ def clean(value, table):
 def copy_text(source, target, table):
     regular(source)
     text = source.read_text(encoding='utf-8')
-    if source.suffix == '.json':
+    if source.suffix == '.json' and source.name != 'source-tests.json':
         rendered = json.dumps(clean(json.loads(text), table), indent=2) + '\n'
-    elif source.suffix == '.jsonl':
+    elif source.suffix == '.jsonl' or source.name == 'source-tests.json':
         rendered = ''.join(json.dumps(clean(json.loads(line), table)) + '\n'
                            for line in text.splitlines() if line.strip())
     else:

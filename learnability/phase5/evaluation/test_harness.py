@@ -39,7 +39,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_credentials_are_environment_references(self):
         cmd = h.command('codex', '/bin/codex', 'prompt', 'http://127.0.0.1:1/mcp', '/config')
-        self.assertIn('QUEUE_UPGRADE', ' '.join(cmd))
+        self.assertIn('mcp_servers.task-queue.env_http_headers={\"Mo-Upgrade-Authorization\"=\"QUEUE_UPGRADE_BEARER\"}', cmd)
         self.assertIn('QUEUE_TOKEN', ' '.join(cmd))
         self.assertIn('gpt-6.1-sol', cmd)
         self.assertIn('QUEUE_UPGRADE', h.ENTER)

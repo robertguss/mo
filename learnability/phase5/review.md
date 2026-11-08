@@ -35,3 +35,21 @@ checks and found no further consequential defect in that bounded scope.
 
 Final drill, timing collection and agent outcomes were outside this review's
 scope. No release decision was made.
+
+## Collection-time corrections
+
+After experiment 1 began, the parent detected missing `Bearer ` prefixes in
+the native MCP upgrade-header configuration. The CLI push environment was
+correct. Experiment 1 was stopped and retained; the protocol separately
+declares experiment 2 with the same gate and allocation. Five proxy controls
+passed, including valid-shaped requests proving raw-header E1414 versus
+authenticated stale-base E1416. The OS collector passed all three scenarios in
+294.847 seconds and asserts the derived Codex environment and Claude header
+configuration. A separate source-only reviewer verified the correction and
+unchanged service/upgrade credential separation.
+
+Publishing the interrupted record failed because `source-tests.json` actually
+contains newline-delimited CLI records. The publisher now preserves and redacts
+each record using its JSONL path. Five tests and actual stage/archive/extract/
+rescan passed; an independent reviewer verified this bounded change. The failed
+staging directory and console remain. No original session record was rewritten.

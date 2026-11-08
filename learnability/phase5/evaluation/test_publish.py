@@ -42,6 +42,9 @@ class Publication(unittest.TestCase):
         stream.write_text(''.join(json.dumps({'text': text, 'kept': 1}) + '\n' for text in encodings))
         original = stream.read_bytes()
         (self.sessions[1] / 'client-stderr.txt').write_text('\n'.join(encodings))
+        (self.sessions[0] / 'source-tests.json').write_text(
+            json.dumps({'record': 'test', 'detail': self.tokens[2].decode()}) + '\n' +
+            json.dumps({'record': 'summary', 'passed': 47}) + '\n')
         result = publish.publish(self.sessions, self.root / 'out', [self.secret_file], [self.provider_file])
         self.assertTrue(result['publication_scan_clean'])
         self.assertTrue(result['gate']['passed'])
@@ -56,6 +59,9 @@ class Publication(unittest.TestCase):
         cleaned = [json.loads(line) for line in (staged / 'slot-1/stream.jsonl').read_text().splitlines()]
         self.assertTrue(all(row['text'].startswith('[redacted') and row['kept'] == 1 for row in cleaned))
         self.assertEqual(result['stage_files_scanned'], result['extracted_files_scanned'])
+        tests = [json.loads(line) for line in (staged / 'slot-1/source-tests.json').read_text().splitlines()]
+        self.assertEqual(tests[1], {'record': 'summary', 'passed': 47})
+        self.assertTrue(tests[0]['detail'].startswith('[redacted'))
 
     def test_missing_provider_inventory_refused(self):
         self.provider_file.write_text('')
