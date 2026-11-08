@@ -576,6 +576,10 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_UPGRADE_RESTART_WORK UINT64_C(16777216)
 #define MO_LIMIT_UPGRADE_LIVE_HEAP (32 * 1024 * 1024)
 #define MO_LIMIT_UPGRADE_RESTART_HEAP (48 * 1024 * 1024)
+/* Decoded candidate-bundle bytes per upload page; every page but the last carries exactly this. */
+#define MO_LIMIT_UPGRADE_PAGE_BYTES 8192
+/* Padded base64 text of one full upload page. */
+#define MO_LIMIT_UPGRADE_PAGE_TEXT (4 * ((MO_LIMIT_UPGRADE_PAGE_BYTES + 2) / 3))
 
 /* ASan reserves a very large virtual shadow; sanitizer test builds retain CPU/wall
  * limits but cannot use the production address-space ceiling. */
