@@ -247,7 +247,6 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
     }
 }
 
-/* An initialize result opens a session and names it in a response header. */
 static void session_reply(struct mo_protocol_server *s, struct protocol_connection *c) {
     struct mo_cell body = mo_protocol_field(
         s->protocol, mo_protocol_function(s, PF_RECEIVE)->result_type, c->action, 0);

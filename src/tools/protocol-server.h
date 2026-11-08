@@ -174,6 +174,9 @@ struct mo_protocol_server {
     bool io_failed, closing;
 };
 
+MO_MUST_USE uint64_t mo_protocol_deadline(uint64_t now, uint64_t interval);
+/* Lowercase hex of length bytes and a terminating NUL into out[2 * length + 1]. */
+void mo_protocol_hex(const uint8_t *bytes, size_t length, char *out);
 MO_MUST_USE const struct mo_bytecode_function *
 mo_protocol_function(const struct mo_protocol_server *server, enum protocol_function function);
 MO_MUST_USE struct mo_cell mo_protocol_field(const struct mo_image *image, uint32_t type,

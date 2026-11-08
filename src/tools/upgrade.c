@@ -514,7 +514,6 @@ static bool write_file_bytes(const char *path, const uint8_t *bytes, size_t leng
     bool ok = fwrite(bytes, 1, length, file) == length;
     return fclose(file) == 0 && ok;
 }
-/* One compiler child and its private scratch directory. */
 struct compile_job {
     char folder[sizeof "/tmp/mo-upgrade-XXXXXX"];
     char source[128], previous[128], image[128], diagnostics[128], input_context[128],
@@ -570,7 +569,6 @@ static bool compile_begin(const char *compiler, const struct mo_buffer *bundle,
     return refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
                           "compiler child could not start");
 }
-/* Loads and validates what a finished child wrote, then removes the scratch directory. */
 static bool compile_end(struct compile_job *job, enum mo_compile_status status,
                         const struct mo_buffer *bundle, struct upgrade_image *out,
                         struct upgrade_report *report) {
@@ -1240,7 +1238,8 @@ struct mo_live_upgrade *mo_live_start(const char *compiler, const struct mo_stor
         memcpy(u->migration, migration, n + 1);
     }
     if (!mo_buffer_append(&u->bundle, bundle, size) ||
-        !mo_buffer_append(&u->previous, active->bundle, active->bundle_size) ||
+        (u->has_migration &&
+         !mo_buffer_append(&u->previous, active->bundle, active->bundle_size)) ||
         !mo_buffer_append(&u->context, active->context, active->context_size)) {
         mo_live_free(u);
         return NULL;

@@ -580,7 +580,6 @@ int mo_fetch(const struct mo_cli *cli, FILE *errors) {
     return status;
 }
 
-/* mo push: upload a candidate bundle to a running service over loopback and commit it. */
 struct push_reply {
     bool failed;
     struct mo_buffer text, json;
@@ -716,7 +715,7 @@ static void base64_text(const uint8_t *in, size_t length, char *out) {
 /* Prints the service's report: the text form, or the structured JSON with --json. Refusals go
  * to the error stream unless JSON was asked for. */
 static int push_report(const struct mo_cli *cli, FILE *output, FILE *errors,
-                       const struct push_reply *r, bool done) {
+                       const struct push_reply *r) {
     const struct mo_buffer *shown = cli->json ? &r->json : &r->text;
     FILE *stream = cli->json || !r->failed ? output : errors;
     bool ok = fwrite(shown->bytes, 1, shown->length, stream) == shown->length &&
@@ -724,14 +723,13 @@ static int push_report(const struct mo_cli *cli, FILE *output, FILE *errors,
                    ? true
                    : fputc('\n', stream) != EOF) &&
               fflush(stream) == 0;
-    (void)done;
     return ok && !r->failed ? 0 : 1;
 }
 
 static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, const char *host,
                         const char *port, uint64_t end) {
     uint8_t base[32];
-    if (strlen(cli->push_base) != 64 || !unhex(cli->push_base, base, 32)) {
+    if (!unhex(cli->push_base, base, 32)) {
         (void)fputs("mo push: --base needs the 64-digit lowercase source digest of the active "
                     "program\n",
                     errors);
@@ -846,7 +844,7 @@ static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, co
                              image, function, &reply);
     }
     if (answered)
-        status = push_report(cli, output, errors, &reply, proceed);
+        status = push_report(cli, output, errors, &reply);
     else
         (void)fputs("mo push: the service did not answer; the push may or may not have been "
                     "applied; push again to learn which program is active\n",

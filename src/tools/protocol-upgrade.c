@@ -13,19 +13,6 @@
 
 enum { VIEW_OPEN = 9, VIEW_PAGE = 10, VIEW_COMMIT = 11 };
 
-static uint64_t later(uint64_t now, uint64_t interval) {
-    return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;
-}
-
-static void hex(const uint8_t *bytes, size_t length, char *out) {
-    const char digits[] = "0123456789abcdef";
-    for (size_t i = 0; i < length; i++) {
-        out[2 * i] = digits[bytes[i] >> 4];
-        out[2 * i + 1] = digits[bytes[i] & 15];
-    }
-    out[2 * length] = 0;
-}
-
 static bool unhex(const char *text, uint8_t *out, size_t length) {
     if (strlen(text) != 2 * length)
         return false;
@@ -174,6 +161,15 @@ static void progress(struct mo_protocol_server *s, struct protocol_connection *c
     mo_buffer_free(&json);
 }
 
+static void refuse_stale_base(struct mo_protocol_server *s, struct protocol_connection *c,
+                              const uint8_t *candidate) {
+    char active[65], message[160];
+    mo_protocol_hex(s->upgrade.active.source, 32, active);
+    int n = snprintf(message, sizeof message, "base is not the active program %s", active);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof message);
+    refuse(s, c, MO_CODE_UPGRADE_STALE_BASE, "base", message, candidate);
+}
+
 static void open_slot(struct mo_protocol_server *s, struct protocol_connection *c,
                       const struct upgrade_arguments *a) {
     struct protocol_upgrade *u = &s->upgrade;
@@ -201,11 +197,7 @@ static void open_slot(struct mo_protocol_server *s, struct protocol_connection *
         return;
     }
     if (memcmp(base, u->active.source, 32) != 0) {
-        char active[65], message[160];
-        hex(u->active.source, 32, active);
-        int n = snprintf(message, sizeof message, "base is not the active program %s", active);
-        MO_ASSERT(n > 0 && (size_t)n < sizeof message);
-        refuse(s, c, MO_CODE_UPGRADE_STALE_BASE, "base", message, candidate);
+        refuse_stale_base(s, c, candidate);
         return;
     }
     if (memcmp(candidate, u->active.source, 32) == 0) {
@@ -229,7 +221,7 @@ static void open_slot(struct mo_protocol_server *s, struct protocol_connection *
         return;
     }
     u->open = true;
-    hex(random, sizeof random, u->slot);
+    mo_protocol_hex(random, sizeof random, u->slot);
     memcpy(u->base, base, 32);
     memcpy(u->candidate, candidate, 32);
     u->has_migration = a->migration[0] != 0;
@@ -347,16 +339,12 @@ static void commit(struct mo_protocol_server *s, struct protocol_connection *c,
         uint8_t candidate[32];
         memcpy(candidate, u->candidate, 32);
         close_slot(s);
-        char active[65], message[160];
-        hex(s->upgrade.active.source, 32, active);
-        int n = snprintf(message, sizeof message, "base is not the active program %s", active);
-        MO_ASSERT(n > 0 && (size_t)n < sizeof message);
-        refuse(s, c, MO_CODE_UPGRADE_STALE_BASE, "base", message, candidate);
+        refuse_stale_base(s, c, candidate);
         return;
     }
     c->phase = PS_UPGRADE;
     u->waiting = (size_t)(c - s->connections);
-    u->wait_deadline = later(s->now.monotonic_us, MO_LIMIT_MCP_BODY_US);
+    u->wait_deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_BODY_US);
 }
 
 void mo_protocol_upgrade_call(struct mo_protocol_server *s, struct protocol_connection *c,
@@ -426,7 +414,7 @@ static bool copy_active(struct protocol_upgrade *u, const struct mo_store_progra
 }
 
 /* Admission, preparation and the activation transaction, all at one message boundary. */
-static void activate(struct mo_protocol_server *s, struct protocol_connection *c) {
+static void activate(struct mo_protocol_server *s) {
     struct protocol_upgrade *u = &s->upgrade;
     struct mo_live_upgrade *live = u->live;
     if (!mo_service_running(s->service)) {
@@ -511,7 +499,6 @@ static void activate(struct mo_protocol_server *s, struct protocol_connection *c
                            "the activation transaction was rolled back; the old program serves");
         return;
     }
-    /* Committed: from here the new program is authoritative. */
     struct mo_service_upgrade note = {.accepted = true, .ordinal = u->active.ordinal + 1};
     memcpy(note.old_source, u->active.source, 32);
     memcpy(note.new_source, candidate->source, 32);
@@ -544,7 +531,6 @@ static void activate(struct mo_protocol_server *s, struct protocol_connection *c
         mo_service_stop(s->service, MO_SERVICE_MEMORY);
         u->active_found = false;
     }
-    (void)c;
 }
 
 static void finish_commit(struct mo_protocol_server *s, struct protocol_connection *c,
@@ -597,7 +583,7 @@ void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
         mo_live_refuse(u->live, MO_CODE_UPGRADE_BOUNDARY_DEADLINE, "boundary",
                        "requests from before the last upgrade still hold its program");
     } else
-        activate(s, caller);
+        activate(s);
     bool activated = mo_live_code(u->live) == 0;
     if (!activated)
         refuse(s, NULL, mo_live_code(u->live), "", "", u->candidate);
@@ -611,10 +597,10 @@ uint64_t mo_protocol_upgrade_wake(const struct mo_protocol_server *s, uint64_t u
     const struct protocol_upgrade *u = &s->upgrade;
     if (!u->open)
         return until;
-    /* Compilation and a waiting commit are polled every 10 ms; an idle slot wakes to close. */
+    /* Compilation and a waiting commit are polled often; an idle slot wakes to close. */
     uint64_t wake = u->compiling || u->waiting != SIZE_MAX
-                        ? later(s->now.monotonic_us, 10000)
-                        : later(u->touched, MO_LIMIT_UPGRADE_SLOT_IDLE_US);
+                        ? mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_UPGRADE_POLL_US)
+                        : mo_protocol_deadline(u->touched, MO_LIMIT_UPGRADE_SLOT_IDLE_US);
     return wake < until ? wake : until;
 }
 

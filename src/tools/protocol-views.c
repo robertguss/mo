@@ -61,21 +61,11 @@ static bool name(struct view_builder *b, uint32_t index, struct mo_cell *out) {
     return name_in(b, mo_image_bytecode(b->server->image), index, out);
 }
 
-static void hex_digest(const uint8_t *digest, char *out) {
-    const char digits[] = "0123456789abcdef";
-    for (size_t i = 0; i < 32; i++) {
-        out[2 * i] = digits[digest[i] >> 4];
-        out[2 * i + 1] = digits[digest[i] & 15];
-    }
-    out[64] = 0;
-}
-
-/* An upgrade event's outcome; digests name source bundles, never their bytes. */
 static bool upgrade_reason(struct view_builder *b, const struct mo_service_upgrade *u,
                            struct mo_cell *out) {
     char from[65], to[65], reason[256];
-    hex_digest(u->old_source, from);
-    hex_digest(u->new_source, to);
+    mo_protocol_hex(u->old_source, 32, from);
+    mo_protocol_hex(u->new_source, 32, to);
     int n = u->accepted ? snprintf(reason, sizeof reason,
                                    "accepted ordinal %llu from %s to %s; answered %u; dropped %u",
                                    (unsigned long long)u->ordinal, from, to, (unsigned)u->answered,

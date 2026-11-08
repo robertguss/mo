@@ -36,7 +36,7 @@ static const char *const function_names[PF_COUNT] = {"Http.scan_headers",
                                                      "McpViews.upgrade_arguments",
                                                      "Mcp.upgrade_reply"};
 
-static uint64_t deadline(uint64_t now, uint64_t interval) {
+uint64_t mo_protocol_deadline(uint64_t now, uint64_t interval) {
     return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;
 }
 
@@ -210,7 +210,7 @@ void mo_protocol_start_write(struct mo_protocol_server *s, struct protocol_conne
                              struct protocol_bytes bytes) {
     c->output = bytes;
     c->write_offset = 0;
-    c->deadline = deadline(s->now.monotonic_us, MO_LIMIT_MCP_WRITE_US);
+    c->deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_WRITE_US);
     c->phase = PS_WRITE;
     mo_protocol_observe(s, c);
 }
@@ -450,9 +450,7 @@ void mo_protocol_stream_open(struct mo_protocol_server *s, struct protocol_conne
     c->stream_size = s->stream_head.size;
     c->session = session + 1;
     c->phase = PS_STREAM;
-    c->deadline = s->now.monotonic_us > UINT64_MAX - MO_LIMIT_MCP_WRITE_US
-                      ? UINT64_MAX
-                      : s->now.monotonic_us + MO_LIMIT_MCP_WRITE_US;
+    c->deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_WRITE_US);
     s->sessions[session].stream = (size_t)(c - s->connections);
 }
 
@@ -468,9 +466,7 @@ void mo_protocol_list_changed(struct mo_protocol_server *s) {
             continue;
         }
         if (c->stream_size == 0)
-            c->deadline = s->now.monotonic_us > UINT64_MAX - MO_LIMIT_MCP_WRITE_US
-                              ? UINT64_MAX
-                              : s->now.monotonic_us + MO_LIMIT_MCP_WRITE_US;
+            c->deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_WRITE_US);
         memcpy(c->stream + c->stream_size, s->list_changed.bytes, s->list_changed.size);
         c->stream_size += s->list_changed.size;
     }
@@ -663,7 +659,7 @@ static void write_ready(struct mo_protocol_server *s, struct protocol_connection
     mo_protocol_dispose(s, c);
     mo_host_wipe(c->input, sizeof c->input);
     c->phase = PS_DRAIN;
-    c->deadline = deadline(s->now.monotonic_us, MO_LIMIT_MCP_DRAIN_US);
+    c->deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_DRAIN_US);
 }
 
 static void drain_ready(struct mo_protocol_server *s, struct protocol_connection *c) {
@@ -694,12 +690,12 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
         return MO_PROTOCOL_SERVER_IO;
     union mo_listener_request request = {.wait = {.until_us = until_us, .accept = !s->closing}};
     if (s->state_export.bytes != NULL) {
-        uint64_t expires = deadline(s->state_export.touched, MO_LIMIT_EXPORT_IDLE_US);
+        uint64_t expires = mo_protocol_deadline(s->state_export.touched, MO_LIMIT_EXPORT_IDLE_US);
         if (expires < request.wait.until_us)
             request.wait.until_us = expires;
     }
     if (s->failure_export.bytes != NULL) {
-        uint64_t expires = deadline(s->failure_export.touched, MO_LIMIT_EXPORT_IDLE_US);
+        uint64_t expires = mo_protocol_deadline(s->failure_export.touched, MO_LIMIT_EXPORT_IDLE_US);
         if (expires < request.wait.until_us)
             request.wait.until_us = expires;
     }
@@ -781,7 +777,7 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
             MO_ASSERT(c->phase == PS_EMPTY);
             c->key = result.accepted;
             c->phase = PS_HEADERS;
-            c->deadline = deadline(s->now.monotonic_us, MO_LIMIT_MCP_HEADER_US);
+            c->deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_HEADER_US);
             c->work_left = MO_LIMIT_MCP_REQUEST_WORK;
             c->preauth_left = MO_LIMIT_MCP_HEADER_WORK;
             if (!mo_protocol_request_process(s, c))
