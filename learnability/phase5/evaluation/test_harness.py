@@ -60,6 +60,38 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(record['reported_models'], ['claude-opus-4-8'])
             self.assertTrue(record['events'][0]['fallback'])
 
+    def test_launch_failure_still_captures_and_resets(self):
+        import contextlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            l = h.p4.Layout(user='unused', install=root / 'install', private=root,
+                            state=root / 'state')
+            l.session.mkdir(parents=True)
+            l.state.mkdir()
+            source, data = root / 'source', root / 'data'
+            source.mkdir()
+            data.mkdir()
+            (source / 'main.mo').write_text('module Main\n')
+            expected = root / 'expected.json'
+            expected.write_text('{"revision":"1"}')
+            spec = root / 'spec.json'
+            spec.write_text(json.dumps({k: str(v) for k, v in dict(
+                source=source, context=source, data=data, expected=expected,
+                experiment=root / 'experiment', prompt=root / 'prompt').items()}))
+            with contextlib.ExitStack() as stack:
+                for name in ('check_private', 'place_read_only', 'sudo', 'end_all'):
+                    stack.enter_context(patch.object(h.p4, name))
+                reset = stack.enter_context(patch.object(h.p4, 'reset'))
+                capture = stack.enter_context(patch.object(h.p4, 'collect_work', return_value=0))
+                stack.enter_context(patch.object(h.subprocess, 'Popen', side_effect=OSError('launch failed')))
+                self.assertEqual(h.collect(l, spec, root / 'out', 1, development=True), 1)
+            record = json.loads((root / 'out/manifest.json').read_text())
+            self.assertFalse(record['correct'])
+            self.assertTrue(record['fixture_failure'])
+            self.assertIn('OSError', record['failures'])
+            self.assertEqual(reset.call_count, 2)
+            capture.assert_called_once()
+
     def test_final_limit_fixed(self):
         with self.assertRaises(ValueError):
             h.collect(h.layout(), 'absent', 'absent', 1, limit=1)

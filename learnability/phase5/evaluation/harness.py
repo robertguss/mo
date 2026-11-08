@@ -258,8 +258,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             cleanup('proxy', recorder.stop)
         if service is not None:
             cleanup('service process', stop_service)
-            cleanup('service stdout', service.process.stdout.close)
-            cleanup('service stderr', service.stderr.close)
+            cleanup('service stdout', lambda: service.process.stdout.close())
+            cleanup('service stderr', lambda: service.stderr.close())
             cleanup('service log', lambda: shutil.copyfile(service.stderr_path, out / 'service.log'))
         if firewall:
             cleanup('firewall', lambda: p4.sudo('iptables', '-D', *rule))
