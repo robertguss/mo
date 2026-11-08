@@ -263,13 +263,12 @@ static void parse_serve(void) {
     refused(4, unknown, "unknown flag: \"--emit\"");
     const char *none[] = {"mo"};
     refused(1, none,
-            "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, replay, "
-            "query or history");
+            "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, "
+            "replay, query or history");
     const char *what[] = {"mo", "what"};
     refused(2, what,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, "
-            "replay, "
-            "query or history): \"what\"");
+            "push, replay, query or history): \"what\"");
 }
 
 #define OFFLINE(expected, ...)                                                                     \

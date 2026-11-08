@@ -580,6 +580,8 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_UPGRADE_PAGE_BYTES 8192
 /* Padded base64 text of one full upload page. */
 #define MO_LIMIT_UPGRADE_PAGE_TEXT (4 * ((MO_LIMIT_UPGRADE_PAGE_BYTES + 2) / 3))
+/* An upload slot with no accepted page, compilation or waiting commit for this long closes. */
+#define MO_LIMIT_UPGRADE_SLOT_IDLE_US UINT64_C(60000000)
 
 /* ASan reserves a very large virtual shadow; sanitizer test builds retain CPU/wall
  * limits but cannot use the production address-space ceiling. */

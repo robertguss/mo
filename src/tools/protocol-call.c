@@ -5,35 +5,47 @@
 
 #include <string.h>
 
-bool mo_protocol_catalog(struct mo_protocol_server *s) {
-    struct mo_heap *heap = mo_process_heap(s->catalog_process);
-    struct mo_protocol_descriptor descriptor;
-    if (!mo_protocol_descriptor(s->protocol, heap, s->image, s->service_index, &descriptor))
+bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *image, uint32_t index,
+                         struct mo_process **out, struct mo_cell *descriptor_out,
+                         struct mo_cell *catalog_out) {
+    struct mo_limits limits = mo_limits_default();
+    limits.heap_size = MO_LIMIT_MCP_CATALOG_MEMORY;
+    struct mo_process *process = mo_process_new(s->protocol, &limits);
+    if (process == NULL)
         return false;
-    uint64_t key = mo_image_key(s->image, s->service_index);
+    mo_process_confidential(process);
+    struct mo_heap *heap = mo_process_heap(process);
+    struct mo_protocol_descriptor descriptor;
+    struct mo_cell args[3], catalog;
+    bool ok = mo_protocol_descriptor(s->protocol, heap, image, index, &descriptor);
+    uint64_t key = mo_image_key(image, index);
     char hex[16];
     const char digits[] = "0123456789abcdef";
     for (unsigned i = 0; i < 16; i++)
         hex[i] = digits[(key >> ((15 - i) * 4)) & 15];
-    struct mo_cell args[3], catalog;
     args[0] = descriptor.value;
-    if (!mo_value_text(heap, hex, sizeof hex, &args[1]))
-        return false;
+    ok = ok && mo_value_text(heap, hex, sizeof hex, &args[1]);
     args[2] = mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES);
-    if (!mo_protocol_invoke(s, NULL, PF_PREPARE, args, &catalog))
-        return false;
-    if (mo_cell_get_tag(catalog) != 1)
-        return false;
+    bool prepared = ok && mo_protocol_invoke_on(s, process, PF_PREPARE, args, &catalog);
+    if (ok)
+        mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->parameters[1].type, args[1]);
+    ok = prepared && mo_cell_get_tag(catalog) == 1;
     uint32_t catalog_type = mo_protocol_function(s, PF_RECEIVE)->parameters[3].type;
-    struct mo_cell prepared = mo_protocol_field(
-        s->protocol, mo_protocol_function(s, PF_PREPARE)->result_type, catalog, 0);
-    if (!mo_value_make_immortal(heap, descriptor.type, descriptor.value) ||
-        !mo_value_make_immortal(heap, catalog_type, prepared))
+    struct mo_cell value =
+        ok ? mo_protocol_field(s->protocol, mo_protocol_function(s, PF_PREPARE)->result_type,
+                               catalog, 0)
+           : mo_cell_unit();
+    ok = ok && mo_value_make_immortal(heap, descriptor.type, descriptor.value) &&
+         mo_value_make_immortal(heap, catalog_type, value);
+    if (prepared)
+        mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->result_type, catalog);
+    if (!ok) {
+        mo_process_free(process);
         return false;
-    s->cached_descriptor = descriptor.value;
-    s->cached_catalog = prepared;
-    mo_protocol_drop(s, NULL, PF_PREPARE, catalog);
-    mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->parameters[1].type, args[1]);
+    }
+    *out = process;
+    *descriptor_out = descriptor.value;
+    *catalog_out = value;
     return true;
 }
 
@@ -66,8 +78,8 @@ static enum protocol_error service_error(enum mo_service_status status) {
     MO_UNREACHABLE();
 }
 
-static void respond(struct mo_protocol_server *s, struct protocol_connection *c, int status,
-                    struct mo_cell body, enum protocol_effect effect) {
+void mo_protocol_respond(struct mo_protocol_server *s, struct protocol_connection *c, int status,
+                         struct mo_cell body, enum protocol_effect effect) {
     size_t size;
     const uint8_t *bytes = mo_value_data(body, &size);
     if (size > MO_LIMIT_MCP_RESPONSE_BYTES) {
@@ -133,6 +145,11 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
         mo_protocol_fallback(s, c, PE_RATE, EFFECT_NONE);
         return;
     }
+    int64_t view = mo_cell_get_int(mo_value_field(fields, 1));
+    if (mo_cell_get_tag(c->action) == 2 && view >= 9) {
+        mo_protocol_upgrade_call(s, c, (uint32_t)view);
+        return;
+    }
     if (mo_cell_get_tag(c->action) == 2) {
         struct mo_cell json, rendered;
         bool refused = false;
@@ -153,7 +170,7 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
         }
         struct mo_cell body = mo_protocol_field(
             s->protocol, mo_protocol_function(s, PF_OPERATOR_REPLY)->result_type, rendered, 0);
-        respond(s, c, 200, body, EFFECT_NONE);
+        mo_protocol_respond(s, c, 200, body, EFFECT_NONE);
         return;
     }
     int64_t index = mo_cell_get_int(mo_value_field(fields, 1));
@@ -272,6 +289,8 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
     }
     c->descriptor = s->cached_descriptor;
     c->catalog = s->cached_catalog;
+    c->epoch = s->epoch;
+    c->borrowed = true;
     struct mo_heap *heap = mo_process_heap(c->process);
     struct mo_cell args[5];
     const uint8_t *body = c->body;
@@ -302,8 +321,8 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
         call_tool(s, c);
     else {
         struct mo_cell fields = mo_cell_get_payload(c->action);
-        respond(s, c, (int)mo_cell_get_int(mo_value_field(fields, 0)), mo_value_field(fields, 1),
-                EFFECT_NONE);
+        mo_protocol_respond(s, c, (int)mo_cell_get_int(mo_value_field(fields, 0)),
+                            mo_value_field(fields, 1), EFFECT_NONE);
     }
 }
 
@@ -375,5 +394,5 @@ void mo_protocol_complete(struct mo_protocol_server *s, struct protocol_connecti
     }
     struct mo_cell body = mo_protocol_field(
         s->protocol, mo_protocol_function(s, PF_TOOL_REPLY)->result_type, rendered, 0);
-    respond(s, c, 200, body, effect);
+    mo_protocol_respond(s, c, 200, body, effect);
 }

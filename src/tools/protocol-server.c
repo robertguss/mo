@@ -32,7 +32,9 @@ static const char *const function_names[PF_COUNT] = {"Http.scan_headers",
                                                      "HttpPolicy.stream_plan",
                                                      "McpTransport.http_session",
                                                      "McpTransport.stream_head",
-                                                     "McpTransport.list_changed"};
+                                                     "McpTransport.list_changed",
+                                                     "McpViews.upgrade_arguments",
+                                                     "Mcp.upgrade_reply"};
 
 static uint64_t deadline(uint64_t now, uint64_t interval) {
     return interval > UINT64_MAX - now ? UINT64_MAX : now + interval;
@@ -72,10 +74,25 @@ static struct mo_service_time clock_now(void *context) {
     return (struct mo_service_time){s->now.wall_us, s->now.monotonic_us};
 }
 
+static bool invoke(struct mo_protocol_server *s, struct protocol_connection *c,
+                   struct mo_process *process, enum protocol_function function,
+                   const struct mo_cell *args, struct mo_cell *out);
+
 bool mo_protocol_invoke(struct mo_protocol_server *s, struct protocol_connection *c,
                         enum protocol_function function, const struct mo_cell *args,
                         struct mo_cell *out) {
-    struct mo_process *process = c == NULL ? s->catalog_process : c->process;
+    return invoke(s, c, c == NULL ? s->catalog_process : c->process, function, args, out);
+}
+
+bool mo_protocol_invoke_on(struct mo_protocol_server *s, struct mo_process *process,
+                           enum protocol_function function, const struct mo_cell *args,
+                           struct mo_cell *out) {
+    return invoke(s, NULL, process, function, args, out);
+}
+
+static bool invoke(struct mo_protocol_server *s, struct protocol_connection *c,
+                   struct mo_process *process, enum protocol_function function,
+                   const struct mo_cell *args, struct mo_cell *out) {
     const struct mo_bytecode_function *fn = mo_protocol_function(s, function);
     struct mo_heap *heap = mo_process_heap(process);
     struct mo_cell owned[5];
@@ -158,6 +175,7 @@ void mo_protocol_observe(struct mo_protocol_server *s, struct protocol_connectio
 }
 
 void mo_protocol_dispose(struct mo_protocol_server *s, struct protocol_connection *c) {
+    c->borrowed = false;
     if (c->process != NULL) {
         mo_protocol_observe(s, c);
         mo_scratch_free(&c->scratch);
@@ -533,10 +551,13 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
         status = MO_PROTOCOL_SERVER_CONFIG;
         goto fail;
     }
-    if (!mo_value_make_immortal(heap, list_type, s->authorities) || !mo_protocol_catalog(s) ||
+    if (!mo_value_make_immortal(heap, list_type, s->authorities) ||
+        !mo_protocol_catalog(s, image, index, &s->service_catalog, &s->cached_descriptor,
+                             &s->cached_catalog) ||
         !templates(s))
         goto fail;
-    s->metrics.catalog_memory = s->arena.used + mo_process_memory_peak(s->catalog_process);
+    s->metrics.catalog_memory = s->arena.used + mo_process_memory_peak(s->catalog_process) +
+                                mo_process_memory_peak(s->service_catalog);
     struct mo_service_hooks hooks = {clock_now, replied, event, s};
     enum mo_service_status service = mo_service_open(image, index, &hooks, store, &s->service);
     if (service != MO_SERVICE_OK || s->io_failed) {
@@ -544,6 +565,8 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
         goto fail;
     }
     s->service_heap = mo_service_heap(s->service);
+    s->store = store;
+    s->upgrade.waiting = SIZE_MAX;
     s->rate_at = s->now.monotonic_us;
     s->started_at = s->now.monotonic_us;
     *out = s;
@@ -560,7 +583,14 @@ void mo_protocol_server_free(struct mo_protocol_server *s) {
         mo_protocol_close(s, &s->connections[i]);
     mo_export_release(&s->state_export);
     mo_export_release(&s->failure_export);
+    mo_protocol_upgrade_free(s);
     mo_service_free(s->service);
+    mo_process_free(s->service_catalog);
+    mo_process_free(s->previous.catalog);
+    if (s->previous.owned != NULL)
+        mo_image_free(s->previous.owned);
+    if (s->owned_image != NULL)
+        mo_image_free(s->owned_image);
     if (s->catalog_process != NULL) {
         mo_scratch_free(&s->catalog_scratch);
         mo_process_free(s->catalog_process);
@@ -677,19 +707,21 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
     uint64_t next_service;
     if (mo_service_next_deadline(s->service, &next_service) && next_service < request.wait.until_us)
         request.wait.until_us = next_service;
+    request.wait.until_us = mo_protocol_upgrade_wake(s, request.wait.until_us);
     for (size_t n = 0; n < MO_LIMIT_MCP_CONNECTIONS; n++) {
         size_t slot = (s->next_slot + n) % MO_LIMIT_MCP_CONNECTIONS;
         struct protocol_connection *c = &s->connections[slot];
         if (c->phase == PS_EMPTY)
             continue;
-        if ((c->phase != PS_SERVICE && s->now.monotonic_us >= c->deadline) ||
+        bool waiting = c->phase == PS_SERVICE || c->phase == PS_UPGRADE;
+        if ((!waiting && s->now.monotonic_us >= c->deadline) ||
             (c->phase == PS_STREAM && s->closing)) {
             mo_protocol_close(s, c);
             continue;
         }
-        if (c->deadline < request.wait.until_us && c->phase != PS_SERVICE)
+        if (c->deadline < request.wait.until_us && !waiting)
             request.wait.until_us = c->deadline;
-        if (c->phase == PS_SERVICE)
+        if (waiting)
             continue;
         unsigned events = c->phase == PS_WRITE || c->phase == PS_CONTINUE ? MO_LISTENER_WRITABLE
                                                                           : MO_LISTENER_READABLE;
@@ -740,6 +772,8 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
         if (s->connections[i].reply_ready)
             mo_protocol_complete(s, &s->connections[i]);
+    /* No connection holds a service cell now: every reply above was encoded. */
+    mo_protocol_upgrade_poll(s);
     if (result.wait.accept) {
         status = mo_listener_call(s->listener, MO_LISTENER_ACCEPT, NULL, &result);
         if (status == MO_LISTENER_OK) {
