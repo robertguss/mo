@@ -84,8 +84,8 @@ those builds, see the [task-queue runbook](docs/ops/task-queue.md).
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0;
-Phase 5 targets typed live upgrades.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0.
+Phase 5 [typed live upgrades](docs/design/upgrades.md) are proposed and not shipped.
 
 ## Background
 

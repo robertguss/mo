@@ -97,7 +97,7 @@ expectation; the evaluation harness work subsequently recorded passing `bench` c
 ## Release decision
 
 Robert answered “yes I approve” in this continuation conversation to the explicit
-request to release v0.1.0 and squash-merge PR #308. The release tag is created only
-after comparing every build-input Git object on the squash-merge commit with
-`freeze.json`. The candidate reports `mo 0.1.0`; the two evaluation misses remain
-part of the published record. This approval changes no frozen experiment input.
+request to release v0.1.0 and squash-merge PR #308. Annotated tag `v0.1.0` points at
+squash-merge commit `fad1467d`, after comparing every build-input Git object on that
+commit with `freeze.json`. The candidate reports `mo 0.1.0`; the two evaluation misses
+remain part of the published record. This approval changes no frozen experiment input.

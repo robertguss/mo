@@ -27,9 +27,9 @@ holds, under `variants/<name>/`, each variant's session files (`main.mo`, `job-q
 key's rule, and `SHA256SUMS`; and `variants/README.md`, which says exactly what each variant
 does. This repository holds the tools that read it, which take the variants' root as an
 argument, and the plan (`docs/plans/2026-11-04-0315-feat-phase4-pilots-baseline-plan.md`),
-which names each variant's family and shape and nothing more. The freeze will record every
-private file by hash, and after the final round the private repository's history is
-published and checked against it.
+which names each variant's family and shape and nothing more. The freeze recorded every
+private file by hash; after the scored round the committed private history through
+`fda0ce0` was published in the evidence archive above and checked against it.
 
 ## The tools
 
@@ -117,8 +117,8 @@ harness that did not finish. The harness's docstring says exactly what a session
 what a run does, in order.
 
 Only a session's `manifest.json` and `grade.json` are committed here, through `publish.py OUT
-DEST`, which replaces each failed hidden test's name and detail in the grade with one line, since
-the hidden tests stay private until the final round. The scanner reads DEST before the commit.
+DEST`, which replaces each failed hidden test's name and detail in the grade with one line, so
+the hidden tests' names stay redacted in the committed grades. The scanner reads DEST before the commit.
 The pilots' record, with the rule that decides when a variant is ready to freeze, is
 `pilot/ledger.md`.
 - `preflight/` holds the experiments that sized the design; its README says what each found.

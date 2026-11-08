@@ -33,7 +33,7 @@ Phase 4, Agents can see inside it. Operator views, state export, failure capture
 - [x] Failure records, kept apart from saved state.
 - [x] `mo replay`, `mo query` and `mo history`, with the fix check.
 - [x] A prospectively declared diagnostic evaluation: gate passed, all 16 sessions published with both misses. Comparative claims require a new independent baseline.
-- [x] Robert’s v0.1 release decision and merge approval. The release tag must match the evaluation freeze’s build inputs.
+- [x] Robert’s v0.1 release decision and merge approval. Annotated tag `v0.1.0` is `fad1467d` and matches the evaluation freeze’s build inputs.
 
 Phase 3, Services, is done. It built the `service` block, its bytecode
 descriptor, the in-process runtime, SQLite saving and recovery, simulation in
