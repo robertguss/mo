@@ -23,6 +23,7 @@ enum mo_command {
     MO_COMMAND_REPLAY,
     MO_COMMAND_QUERY,
     MO_COMMAND_HISTORY,
+    MO_COMMAND_REHEARSE,
 };
 
 #define MO_EXIT_SERVICE_STOPPED 69
@@ -38,7 +39,7 @@ struct mo_cli {
     enum mo_emit emit;
     bool json, list, reference;
     bool source_bundle, upgrade, adopt;
-    const char *upgrade_from, *old_bundle, *migration, *compile_context;
+    const char *upgrade_from, *old_bundle, *migration, *compile_context, *candidate;
     struct mo_limits limits;
     uint32_t calls, seconds;
     const char *fetch_url, *fetch_token;

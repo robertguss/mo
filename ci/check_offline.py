@@ -1010,6 +1010,131 @@ def acceptance(binary, folder):
     assert (data / "service.sqlite").read_bytes() == (copy / "service.sqlite").read_bytes()
 
 
+def rehearsals(binary, folder, data, artifact):
+    def bundle(path, source):
+        def field(value):
+            return struct.pack("<I", len(value)) + value
+        wire = b"MOSB\1" + field(b"main.mo") + struct.pack("<I", 1)
+        wire += field(b"main.mo") + field(source.encode())
+        path.write_bytes(wire)
+        return path
+
+    invalid = folder / "invalid.moex"
+    invalid.write_bytes(b"invalid")
+    invalid_args = ["rehearse", "--artifact", invalid, "--old-bundle", "missing",
+                    "--candidate", "missing"]
+    observed = mo(binary, invalid_args, 1)
+    assert observed.stderr == (root / "tests/cli/rehearse/text.golden").read_bytes()
+    assert observed.stdout == b""
+    old = bundle(folder / "old.mosb", FAILING)
+    candidate_source = FAILING.replace("count", "total").replace("total: 0", "total: 999")
+    candidate = bundle(folder / "candidate.mosb", candidate_source)
+    before = {p: p.read_bytes() for p in data.rglob("*") if p.is_file()}
+    original = artifact.read_bytes()
+    args = ["rehearse", "--artifact", artifact, "--old-bundle", old, "--candidate", candidate]
+    def report(extra, status):
+        result = mo(binary, args + extra + ["--json"], status)
+        value = json.loads(result.stdout)
+        assert value["rehearsal"] is True and value["accepted"] is False, value
+        assert "ordinal" not in value, value
+        return value
+    missing = report([], 1)
+    assert missing["code"] == "E1421", missing
+    assert missing["state_valid"] is False
+    migration = """
+fn migrate(old: UpgradeOld.Box) : Box
+  Box(label: old.label, total: old.count + 17)
+end
+"""
+    bundle(candidate, candidate_source.replace("module Main", "module Main\nuse UpgradeOld") + migration)
+    success = report(["--migrate", "Main.migrate"], 0)
+    assert success["state_valid"] is True and success["encoded_bytes"] != "0", success
+    assert success["candidate_source"] == hashlib.sha256(candidate.read_bytes()).hexdigest()
+    text = mo(binary, args + ["--migrate", "Main.migrate"], 0).stdout.decode()
+    assert "rehearsal is not upgrade acceptance" in text
+    valid_candidate = candidate.read_bytes()
+    migrated_source = candidate_source.replace("module Main", "module Main\nuse UpgradeOld") + migration
+    trap = migrated_source.replace("old.count + 17", "old.count / old.count")
+    bundle(candidate, trap)
+    assert report(["--migrate", "Main.migrate"], 1)["code"] == "E1423"
+    heavy = migrated_source.replace("  Box(label: old.label, total: old.count + 17)",
+        "  var n = 0\n  while n < 200000\n    n += 1\n  end\n  Box(label: old.label, total: old.count + n)")
+    bundle(candidate, heavy)
+    limited = report(["--migrate", "Main.migrate"], 1)
+    assert limited["code"] == "E1424", limited
+    assert int(limited["vm_work"]) + int(limited["native_work"]) == 1048576, limited
+    candidate.write_bytes(valid_candidate)
+    # Wrong old source compiles, but cannot impersonate the recorded image.
+    bundle(old, FAILING.replace('count + 1', 'count + 2'))
+    mismatch = report(["--migrate", "Main.migrate"], 1)
+    assert mismatch["class"] == "program" and "export program" in mismatch["message"]
+    bundle(old, FAILING)
+    bad_context = folder / "bad.mocc"
+    bad_context.write_bytes(b"MOCC\1invalid")
+    assert report(["--context", bad_context], 1)["class"] == "bundle"
+    wrong_build = bytearray(original)
+    wrong_build[30] ^= 1
+    wrong_build[-32:] = hashlib.sha256(wrong_build[:-32]).digest()
+    foreign = folder / "foreign.moex"
+    foreign.write_bytes(wrong_build)
+    saved_artifact = args[2]
+    args[2] = foreign
+    foreign_report = report([], 1)
+    assert foreign_report["class"] == "build"
+    assert wrong_build[30:62].hex() in foreign_report["message"]
+    assert hashlib.sha256(binary.read_bytes()).hexdigest() in foreign_report["message"]
+    args[2] = saved_artifact
+
+    # Activate once, export the new state, and rehearse a subsequent tool-only edit.
+    upgraded = folder / "context-source"
+    upgraded.mkdir()
+    source = upgraded / "main.mo"
+    source.write_text(candidate_source.replace("module Main", "module Main\nuse UpgradeOld") + migration)
+    env = {**os.environ, "OPERATOR_TOKEN": TOKEN}
+    owned_data = folder / "context-data"
+    shutil.copytree(data, owned_data)
+    class Upgraded(Served):
+        def announcement(self):
+            line = super().announcement()
+            while line and not line.startswith(b"mo serve: listening"):
+                line = super().announcement()
+            return line
+    served = Upgraded(binary, source, owned_data, env, upgraded,
+                    extra=("--upgrade", "--migrate", "Main.migrate"))
+    context_export = folder / "context.moex"
+    try:
+        result = subprocess.run([str(binary), "fetch", f"http://127.0.0.1:{served.port}/mcp",
+                                 "--export", "state", "--out", str(context_export),
+                                 "--token-env", "OPERATOR_TOKEN"], env=env, capture_output=True,
+                                timeout=120)
+        assert result.returncode == 0, result.stderr
+        served.finish(0, signal.SIGTERM)
+    finally:
+        served.close()
+    with sqlite3.connect(owned_data / "service.sqlite") as db:
+        stored_bundle, context = db.execute("SELECT bundle, context FROM program").fetchone()
+    context_path = folder / "old.mocc"
+    context_path.write_bytes(context)
+    old.write_bytes(stored_bundle)
+    bundle(candidate, source.read_text() + "\n# next tool-only revision\n")
+    args[2] = context_export
+    context_before = {p: p.read_bytes() for p in owned_data.rglob("*") if p.is_file()}
+    snapshot_before = context_export.read_bytes()
+    assert report([], 1)["class"] == "compile"
+    assert report(["--context", context_path], 0)["state_valid"] is True
+    second = candidate_source.replace("total", "latest") + """
+fn second(old: UpgradeOld.Box) : Box
+  Box(label: old.label, latest: old.total + 100)
+end
+"""
+    bundle(candidate, second.replace("module Main", "module Main\nuse UpgradeOld"))
+    assert report(["--context", context_path, "--migrate", "Main.second"], 0)["state_valid"] is True
+    assert context_export.read_bytes() == snapshot_before
+    assert context_before == {p: p.read_bytes() for p in owned_data.rglob("*") if p.is_file()}
+    assert artifact.read_bytes() == original
+    assert before == {p: p.read_bytes() for p in data.rglob("*") if p.is_file()}
+
+
 # The agent guide's claims about these commands, each exercised above.
 GUIDE = [
     "shows the last snapshot \"as of sequence S, K later messages not applied\", the log tail's "
@@ -1081,6 +1206,7 @@ def check(binary):
         fetched_data = serve(binary, fetched, FAILING, [("broken", {"n": "5"})],
                              [("failure", 1, artifacts["failure 1"]),
                               ("state", None, artifacts["state"])])
+        rehearsals(binary, folder, fetched_data, artifacts["state"])
         replays(binary, folder, data, artifacts)
         queries(binary, folder, data, artifacts)
         spinning = folder / "spinning"

@@ -452,6 +452,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         return mo_upgrade_serve(cli, output, errors);
     if (cli->upgrade_from != NULL)
         return mo_upgrade_check(cli, output, errors);
+    if (cli->command == MO_COMMAND_REHEARSE)
+        return mo_upgrade_rehearse(cli, output, errors);
     if (cli->command == MO_COMMAND_FETCH)
         return mo_fetch(cli, errors);
     if (cli->command == MO_COMMAND_HISTORY)

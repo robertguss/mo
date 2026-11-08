@@ -4,6 +4,7 @@
 #include "tools/tools.h"
 MO_MUST_USE int mo_upgrade_emit(const struct mo_cli *cli, FILE *output, FILE *errors);
 MO_MUST_USE int mo_upgrade_serve(const struct mo_cli *cli, FILE *output, FILE *errors);
+MO_MUST_USE int mo_upgrade_rehearse(const struct mo_cli *cli, FILE *output, FILE *errors);
 MO_MUST_USE int mo_upgrade_check(const struct mo_cli *cli, FILE *output, FILE *errors);
 MO_MUST_USE bool mo_upgrade_bundle(const char *path, bool migration, bool serving,
                                    struct mo_buffer *out, struct mo_diags *diags,

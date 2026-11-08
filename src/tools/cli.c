@@ -184,6 +184,8 @@ enum flag_id {
     FLAG_UPGRADE,
     FLAG_ADOPT,
     FLAG_CONTEXT,
+    FLAG_ARTIFACT,
+    FLAG_CANDIDATE,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -202,7 +204,7 @@ static uint32_t command_bit(enum mo_command command) {
 }
 static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_JSON, "--json", false, false, VALUE_NONE, 0,
-     ON(CHECK) | ON(TEST) | ON(REPLAY) | ON(QUERY) | ON(HISTORY)},
+     ON(CHECK) | ON(TEST) | ON(REPLAY) | ON(QUERY) | ON(HISTORY) | ON(REHEARSE)},
     {FLAG_LIST, "--list", false, false, VALUE_NONE, 0, ON(TEST)},
     {FLAG_REFERENCE, "--reference", false, false, VALUE_NONE, 0, ON(GUIDE)},
     {FLAG_ONLY, "--only", false, true, VALUE_TEXT, 0, ON(TEST)},
@@ -227,17 +229,26 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_MAX_WORK, "--max-work", false, false, VALUE_COUNT, UINT64_MAX, ON(QUERY)},
     {FLAG_BUNDLE, "--bundle", false, false, VALUE_NONE, 0, ON(EMIT)},
     {FLAG_UPGRADE_FROM, "--upgrade-from", false, false, VALUE_TEXT, 0, ON(CHECK)},
-    {FLAG_OLD_BUNDLE, "--old-bundle", false, false, VALUE_TEXT, 0, ON(EMIT)},
-    {FLAG_MIGRATE, "--migrate", false, false, VALUE_TEXT, 0, ON(CHECK) | ON(SERVE) | ON(EMIT)},
+    {FLAG_OLD_BUNDLE, "--old-bundle", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(REHEARSE)},
+    {FLAG_MIGRATE, "--migrate", false, false, VALUE_TEXT, 0,
+     ON(CHECK) | ON(SERVE) | ON(EMIT) | ON(REHEARSE)},
     {FLAG_UPGRADE, "--upgrade", false, false, VALUE_NONE, 0, ON(SERVE)},
     {FLAG_ADOPT, "--adopt", false, false, VALUE_NONE, 0, ON(SERVE)},
-    {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT)},
+    {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(REHEARSE)},
+    {FLAG_ARTIFACT, "--artifact", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
+    {FLAG_CANDIDATE, "--candidate", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
 };
 #undef ON
 
 static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, const char *arg,
                      const char *operand, uint64_t n) {
     switch (id) {
+    case FLAG_ARTIFACT:
+        out->artifact = operand;
+        break;
+    case FLAG_CANDIDATE:
+        out->candidate = operand;
+        break;
     case FLAG_CONTEXT:
         out->compile_context = operand;
         break;
@@ -381,12 +392,12 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     static const struct {
         const char *name;
         enum mo_command command;
-    } names[] = {{"check", MO_COMMAND_CHECK},    {"run", MO_COMMAND_RUN},
-                 {"test", MO_COMMAND_TEST},      {"format", MO_COMMAND_FORMAT},
-                 {"fix", MO_COMMAND_FIX},        {"guide", MO_COMMAND_GUIDE},
-                 {"emit", MO_COMMAND_EMIT},      {"serve", MO_COMMAND_SERVE},
-                 {"replay", MO_COMMAND_REPLAY},  {"query", MO_COMMAND_QUERY},
-                 {"history", MO_COMMAND_HISTORY}};
+    } names[] = {{"check", MO_COMMAND_CHECK},       {"run", MO_COMMAND_RUN},
+                 {"test", MO_COMMAND_TEST},         {"format", MO_COMMAND_FORMAT},
+                 {"fix", MO_COMMAND_FIX},           {"guide", MO_COMMAND_GUIDE},
+                 {"emit", MO_COMMAND_EMIT},         {"serve", MO_COMMAND_SERVE},
+                 {"replay", MO_COMMAND_REPLAY},     {"query", MO_COMMAND_QUERY},
+                 {"rehearse", MO_COMMAND_REHEARSE}, {"history", MO_COMMAND_HISTORY}};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
         if (strcmp(command, names[c].name) == 0)
@@ -477,7 +488,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
     if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&
-        out->file_count == 0)
+        out->command != MO_COMMAND_REHEARSE && out->file_count == 0)
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_QUERY && out->file_count != 2)
         return refuse(out, error, "query needs a file and a function", command, NULL);
@@ -505,7 +516,12 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (out->migration != NULL && !(out->upgrade || out->upgrade_from != NULL ||
                                     out->old_bundle != NULL || out->compile_context != NULL))
         return refuse(out, error, "--migrate needs --upgrade or an old program", "--migrate", NULL);
-    if (out->old_bundle != NULL && !out->source_bundle)
+    if (out->command == MO_COMMAND_REHEARSE && (out->file_count != 0 || out->artifact == NULL ||
+                                                out->old_bundle == NULL || out->candidate == NULL))
+        return refuse(out, error,
+                      "rehearse needs --artifact, --old-bundle and --candidate, and no files",
+                      command, NULL);
+    if (out->old_bundle != NULL && !out->source_bundle && out->command != MO_COMMAND_REHEARSE)
         return refuse(out, error, "--old-bundle needs --bundle", "--old-bundle", NULL);
     if (out->json && out->emit != MO_EMIT_NONE)
         return refuse(out, error, "--json and --emit cannot be combined", "--json", "--emit");
