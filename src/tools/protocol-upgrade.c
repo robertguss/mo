@@ -4,6 +4,7 @@
 #define _DEFAULT_SOURCE
 #include "base/codes.h"
 #include "base/sha256.h"
+#include "tools/pause-timing.h"
 #include "tools/protocol-server.h"
 #include "tools/upgrade.h"
 
@@ -439,37 +440,55 @@ static bool copy_active(struct protocol_upgrade *u, const struct mo_store_progra
 
 /* Admission, preparation and the activation transaction, all at one message boundary. */
 static void activate(struct mo_protocol_server *s) {
+    PAUSE_START(boundary);
+    PAUSE_ATTEMPT();
     struct protocol_upgrade *u = &s->upgrade;
     struct mo_live_upgrade *live = u->live;
     if (!mo_service_running(s->service)) {
         mo_live_refuse(live, MO_CODE_UPGRADE_BOUNDARY_DEADLINE, "boundary",
                        "the service is stopped; no message boundary can be reached");
+        PAUSE_END(boundary, "boundary_to_commit", "refused");
         return;
     }
     const uint8_t *state;
     size_t length;
-    if (!mo_service_encoded_state(s->service, &state, &length)) {
+    PAUSE_START(cache);
+    bool cached = mo_service_encoded_state(s->service, &state, &length);
+    PAUSE_END(cache, "cached_state", cached ? "cache_hit_no_encoding" : "cache_miss_no_encoding");
+    if (!cached) {
         mo_live_refuse(live, MO_CODE_UPGRADE_BOUNDARY_DEADLINE, "boundary",
                        "the service has no saved state to migrate");
+        PAUSE_END(boundary, "boundary_to_commit", "refused");
         return;
     }
     uint64_t head = mo_service_observe(s->service).sequence;
-    if (!mo_live_admit(live, s->image, s->service_index, &u->active, state, length))
+    PAUSE_START(admit);
+    bool admitted = mo_live_admit(live, s->image, s->service_index, &u->active, state, length);
+    PAUSE_END(admit, "live_admit", admitted ? "ok" : "refused");
+    if (!admitted) {
+        PAUSE_END(boundary, "boundary_to_commit", "refused");
         return;
+    }
     uint32_t index;
     const struct mo_image *image = mo_live_image(live, &index);
     struct mo_process *catalog;
     struct mo_cell descriptor, prepared;
-    if (!mo_protocol_catalog(s, image, index, &catalog, &descriptor, &prepared)) {
+    PAUSE_START(catalog_time);
+    bool catalog_ok = mo_protocol_catalog(s, image, index, &catalog, &descriptor, &prepared);
+    PAUSE_END(catalog_time, "protocol_catalog", catalog_ok ? "ok" : "refused");
+    if (!catalog_ok) {
         mo_live_refuse(live, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "catalog",
                        "the candidate's tool catalog could not be prepared");
+        PAUSE_END(boundary, "boundary_to_commit", "refused");
         return;
     }
     size_t migrated_length;
     const uint8_t *migrated = mo_live_state(live, &migrated_length);
     struct mo_service_loop *next = NULL;
+    PAUSE_START(queue);
     enum mo_service_swap_status prepared_loop =
         mo_service_swap_prepare(s->service, image, index, migrated, migrated_length, &next);
+    PAUSE_END(queue, "swap_prepare", prepared_loop == MO_SERVICE_SWAP_READY ? "ok" : "refused");
     if (prepared_loop != MO_SERVICE_SWAP_READY) {
         mo_process_free(catalog);
         switch (prepared_loop) {
@@ -492,11 +511,14 @@ static void activate(struct mo_protocol_server *s) {
                            "the service stopped before the boundary");
             break;
         }
+        PAUSE_END(boundary, "boundary_to_commit", "refused");
         return;
     }
     const struct mo_store_program *candidate = mo_live_program(live);
     size_t report_size = 0;
+    PAUSE_START(report_time);
     const char *report = mo_live_activation(live, u->active.ordinal + 1, head, &report_size);
+    PAUSE_END(report_time, "activation_report", report != NULL ? "ok" : "refused");
     const char *migration = mo_live_migration(live);
     struct mo_store_activation activation = {
         .previous = u->active,
@@ -507,8 +529,20 @@ static void activate(struct mo_protocol_server *s) {
         .migration_size = strlen(migration),
         .report_json = report,
         .report_size = report_size};
+    PAUSE_START(commit);
     enum mo_store_activation_status stored =
         report == NULL ? MO_STORE_ACTIVATION_REFUSED : mo_store_activate(s->store, &activation);
+    PAUSE_START(committed_at);
+    /* Capture boundary end before diagnostic I/O and before cleanup. */
+    PAUSE_AT(boundary, committed_at, "boundary_to_commit",
+             stored == MO_STORE_ACTIVATED           ? "committed"
+             : stored == MO_STORE_ACTIVATION_UNSAFE ? "unknown"
+                                                    : "refused");
+    PAUSE_AT(commit, committed_at, "store_activate",
+             report == NULL                         ? "not_run"
+             : stored == MO_STORE_ACTIVATED         ? "committed"
+             : stored == MO_STORE_ACTIVATION_UNSAFE ? "unknown"
+                                                    : "refused");
     if (stored != MO_STORE_ACTIVATED) {
         mo_service_swap_abandon(next);
         mo_process_free(catalog);
