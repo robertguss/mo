@@ -17,6 +17,13 @@ A reply's runtime error says what the call did through its `effect`: `none` is n
 counts like a lost reply. A connection that is refused, reset or closed before the reply is a
 lost reply.
 
+Each folder also receives up to two live upgrades with `mo push` to tool-only variants, and
+pushes of an invalid variant that changes the access clause. Callers keep sending while a push
+runs, and some pushes are killed at a random moment. After every kill the folder restarts from
+its recorded program alone; the active program must be the one before or after the push in
+flight, the upgrade records must count one per accepted activation, and an invalid push must
+never activate.
+
 Usage: check_kill_loop.py MO [--seed N] [--kills N] [--keep]. With no options it makes the
 short run in the drivers group. Timing decides which kills land mid-commit, so the short run
 only prints that count; a run with more kills than the short one fails if none did.
@@ -24,6 +31,7 @@ only prints that count; a run with more kills than the short one fails if none d
 import argparse
 import http.client
 import json
+import os
 import pathlib
 import random
 import shutil
@@ -34,7 +42,9 @@ import tempfile
 import threading
 import time
 
-from check_task_queue import ALL_JOBS, TOKEN, Queue
+from check_task_queue import ALL_JOBS, FOLDER, TOKEN, Queue
+
+UPGRADE_TOKEN = 'KillLoopUpgradeCredential0123'
 
 
 SHORT_SEED = 1
@@ -56,10 +66,21 @@ class Mismatch(Exception):
 
 
 class KillableQueue(Queue):
-    """A Queue whose post says when the request has gone, so a kill can follow it."""
+    """A Queue whose post says when the request has gone, so a kill can follow it. It accepts
+    upgrades, and after its folder's first start it runs the recorded program alone."""
 
-    def __init__(self, binary, data):
-        super().__init__(binary, data)
+    def __init__(self, binary, data, source):
+        self.process = subprocess.Popen(
+            [str(binary), 'serve', *([str(source)] if source else []), '--port', '0', '--data',
+             str(data), '--upgrade-token-env', 'QUEUE_UPGRADE'],
+            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN},
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        try:
+            self.port = self.listening()
+        except BaseException:
+            self.kill()
+            raise
+        self.next_id = 100
         self.sent = threading.Event()
 
     def post(self, body, token=TOKEN):
@@ -167,6 +188,11 @@ class Run:
         self.latencies = [0.03]
         self.history_read = 0
         self.history_recovery = 0
+        self.upgrades = []  # the source folder of each program: the original, then variants
+        self.program = 0  # index in self.upgrades of the active program
+        self.ordinal = 0  # activations the folder has committed
+        self.recorded = None  # upgrade records the last mo history read
+        self.pushes = self.activated = self.invalid = self.push_kills = 0
 
     def fail(self, message):
         raise Mismatch(message)
@@ -183,13 +209,15 @@ class Run:
         self.folder.mkdir()
         self.started = False
         self.model = {}
+        self.program = self.ordinal = 0
         self.start()
 
     def start(self):
         # The constructor returns only after the listening line: a SIGKILL before a folder's
         # first one can leave a zero-byte service.sqlite that the store then refuses for good.
         try:
-            self.queue = KillableQueue(self.binary, self.folder)
+            self.queue = KillableQueue(self.binary, self.folder,
+                                       None if self.started else self.upgrades[0] / 'main.mo')
         except AssertionError as error:
             # A server that does not come back after a kill is a finding, so --keep keeps its
             # folder; the queue has already killed the process it started.
@@ -219,6 +247,9 @@ class Run:
         folder = json.loads(lines[1]).get('folder') if len(lines) > 2 else None
         if (result.returncode, folder) == (0, 'ok'):
             self.history_read += 1
+            for line in lines:
+                if line.startswith('{"record":"history"') or '"upgrades":' in line:
+                    self.recorded = len(json.loads(line).get('upgrades', []))
         elif (result.returncode, folder) == (1, 'recovery_required'):
             self.history_recovery += 1
         else:
@@ -345,6 +376,96 @@ class Run:
         outcomes = self.judge(call, reply['content'])
         self.restart(call, outcomes or [self.model])
 
+    # Upgrades.
+
+    def variants(self):
+        """The original queue, two tool-only variants and one that changes its access clause."""
+        source = (pathlib.Path(FOLDER) / 'main.mo').read_text()
+        for name, text in [
+                ('v0', source),
+                *[(f'v{n}', source.replace(
+                    'tools submit, lease, heartbeat, acknowledge, fail, list, stats',
+                    'tools submit, lease, heartbeat, acknowledge, fail, list, stats, version') +
+                   f'\nfn version(_queue: Queue, _now: Time) : Text\n  "{n}"\nend\n')
+                  for n in (1, 2)],
+                ('invalid', source.replace('token from env "QUEUE_TOKEN"',
+                                           'token from env "QUEUE_OTHER"'))]:
+            folder = self.root / name
+            shutil.copytree(pathlib.Path(FOLDER), folder)
+            (folder / 'main.mo').write_text(text)
+            self.upgrades.append(folder)
+
+    def digest(self, index):
+        result = subprocess.run([str(self.binary), 'check', str(self.upgrades[index] / 'main.mo'),
+                                 '--upgrade-from', str(self.upgrades[0] / 'main.mo'), '--json'],
+                                capture_output=True, timeout=120, check=False)
+        return json.loads(result.stdout)['candidate_source']
+
+    def active(self):
+        """The variant the server runs, read through the version tool the variants add."""
+        time.sleep(PACE)
+        status, body = self.queue.rpc_post('version', {})
+        if status != 200:
+            self.fail(f'version answered HTTP {status}: {body!r}')
+        reply = json.loads(body)
+        if 'error' in reply:
+            return 0
+        return int(reply['result']['structuredContent']['value'])
+
+    def push(self, target, out):
+        out['result'] = subprocess.run(
+            [str(self.binary), 'push', str(self.upgrades[target] / 'main.mo'), '--url',
+             f'http://127.0.0.1:{self.queue.port}/mcp', '--base', self.digests[self.program],
+             '--token-env', 'QUEUE_TOKEN', '--upgrade-token-env', 'QUEUE_UPGRADE', '--json'],
+            capture_output=True, timeout=300, check=False,
+            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN})
+
+    def upgrade(self):
+        """Pushes the next variant, or the invalid one, while calls go on; may kill mid-push."""
+        target = self.program + 1 if self.program < 2 and self.random.random() < 0.8 else 3
+        killing = self.random.random() < 0.5
+        self.pushes += 1
+        out = {}
+        pusher = threading.Thread(target=self.push, args=(target, out))
+        pusher.start()
+        deadline = time.monotonic() + self.random.uniform(0.05, 1.5)
+        call, outcomes = None, None
+        while pusher.is_alive() and (not killing or time.monotonic() < deadline):
+            outcomes = self.judge(call := self.choose(), self.send(call))
+            if outcomes is not None:
+                self.fail(f'{call[0]} lost its reply during a push with no kill')
+        if killing and pusher.is_alive():
+            self.push_kills += 1
+            self.kill()
+            pusher.join(timeout=300)
+            self.restart(call or ('stats', {}), [self.model])
+            now = self.active()
+            allowed = {self.program} | ({target} if target != 3 else set())
+            if now not in allowed:
+                self.fail(f'after a kill during a push to variant {target}, the server runs '
+                          f'variant {now}; it ran {self.program}')
+            if now != self.program:
+                self.program, self.ordinal = now, self.ordinal + 1
+                self.activated += 1
+            if self.recorded is not None and self.recorded != self.ordinal:
+                self.fail(f'the folder records {self.recorded} upgrades; {self.ordinal} were '
+                          'committed')
+            return
+        pusher.join(timeout=300)
+        result = out['result']
+        report = json.loads(result.stdout) if result.stdout else {}
+        if target == 3:
+            self.invalid += 1
+            if result.returncode != 1 or report.get('code') != 'E1426':
+                self.fail(f'the invalid variant was not refused for its access clause: {result}')
+        elif result.returncode != 0 or report.get('ordinal') != str(self.ordinal + 1):
+            self.fail(f'push to variant {target} failed: {result}')
+        else:
+            self.program, self.ordinal = target, self.ordinal + 1
+            self.activated += 1
+        if self.active() != self.program:
+            self.fail(f'the server does not run variant {self.program} after its push')
+
     # Reconciling.
 
     def listing(self, case):
@@ -393,13 +514,20 @@ class Run:
     # The loop.
 
     def go(self):
+        self.variants()
+        self.digests = [self.digest(index) for index in range(3)]
         self.new_folder()
         while self.killed < self.kills:
-            if len(self.model) > FOLDER_JOBS or time.monotonic() - self.born > FOLDER_SECONDS:
+            # A folder that has both upgrades is replaced now and then, so pushes keep coming.
+            if len(self.model) > FOLDER_JOBS or time.monotonic() - self.born > FOLDER_SECONDS or \
+                    (self.program == 2 and self.random.random() < 0.05):
                 self.new_folder()
             for _ in range(self.random.randrange(2, 10)):
-                if self.random.random() < 0.03:
+                roll = self.random.random()
+                if roll < 0.03:
                     self.burst()
+                elif roll < 0.06 + (0.1 if self.program < 2 else 0):
+                    self.upgrade()
                 else:
                     self.step()
             self.kill_during()
@@ -440,7 +568,8 @@ def main():
     print(f'kill loop: seed={run.seed} kills={run.killed} mid_commit={run.mid_commit} '
           f'folders={run.folders} history_read={run.history_read} '
           f'history_recovery={run.history_recovery} calls={run.calls} answered={run.answered} '
-          f'refused={run.refused} unknown={run.unknown} '
+          f'refused={run.refused} unknown={run.unknown} pushes={run.pushes} '
+          f'activated={run.activated} invalid={run.invalid} push_kills={run.push_kills} '
           f'result={"fail" if failure else "pass"} seconds={time.monotonic() - began:.0f}')
     if failure is not None:
         print(f'kill loop failed: seed {run.seed}, kill {run.killed}, call {run.calls}:\n{failure}',
