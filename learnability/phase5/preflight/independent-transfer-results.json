@@ -1,0 +1,84 @@
+{
+  "transfers": [
+    {
+      "encoded_bytes": 10464313,
+      "instructions": 1,
+      "old_heap_peak": 23568104,
+      "new_heap_peak": 12565784,
+      "encode_s": 0.009992,
+      "decode_s": 0.049702,
+      "identity_s": 5e-06,
+      "validate_s": 0.065321,
+      "snapshot_commit_s": 0.106337,
+      "total_s": 0.231358
+    },
+    {
+      "encoded_bytes": 10464313,
+      "instructions": 1,
+      "old_heap_peak": 23568104,
+      "new_heap_peak": 12565784,
+      "encode_s": 0.010293,
+      "decode_s": 0.050179,
+      "identity_s": 5e-06,
+      "validate_s": 0.064011,
+      "snapshot_commit_s": 0.110315,
+      "total_s": 0.234803
+    },
+    {
+      "encoded_bytes": 10464313,
+      "instructions": 1,
+      "old_heap_peak": 23568104,
+      "new_heap_peak": 12565784,
+      "encode_s": 0.010217,
+      "decode_s": 0.047802,
+      "identity_s": 4e-06,
+      "validate_s": 0.062833,
+      "snapshot_commit_s": 0.110881,
+      "total_s": 0.231737
+    },
+    {
+      "encoded_bytes": 10464313,
+      "instructions": 1,
+      "old_heap_peak": 23568104,
+      "new_heap_peak": 12565784,
+      "encode_s": 0.010954,
+      "decode_s": 0.055626,
+      "identity_s": 5e-06,
+      "validate_s": 0.072351,
+      "snapshot_commit_s": 0.138199,
+      "total_s": 0.277135
+    },
+    {
+      "encoded_bytes": 10464313,
+      "instructions": 1,
+      "old_heap_peak": 23568104,
+      "new_heap_peak": 12565784,
+      "encode_s": 0.015661,
+      "decode_s": 0.049069,
+      "identity_s": 1e-05,
+      "validate_s": 0.071609,
+      "snapshot_commit_s": 0.096929,
+      "total_s": 0.233279
+    }
+  ],
+  "synthesis": {
+    "same_schema_sha256": "a7567988dc56934cbc0b695e7d72963838ba85cb2d73b648b79af4be39a89777",
+    "added_field_schema_sha256": "f1b268f68491af67d6972245197a8e4f01c7de3eecf48cd0d1a4b639ba3be197",
+    "roundtrip_equal": true,
+    "added_field_differs": true,
+    "migration_emitted": true,
+    "migration_exit": 1,
+    "transfer": {
+      "encoded_bytes": 10464313,
+      "instructions": 1,
+      "old_heap_peak": 23568104,
+      "new_heap_peak": 12565784,
+      "encode_s": 0.011116,
+      "decode_s": 0.057474,
+      "identity_s": 4e-06,
+      "validate_s": 0.069483,
+      "snapshot_commit_s": 0.120343,
+      "total_s": 0.25842
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "binary_sha256": "fb4788ce27d26261029ea6707227da6490ef6c59762435ecfccd30fab04a47b2",
+  "old_declarations": {
+    "status": 0,
+    "seconds": 0.039706647978164256,
+    "stdout": "",
+    "stderr": ""
+  },
+  "wrong_argument": {
+    "status": 1,
+    "seconds": 0.01766331505496055,
+    "stdout": "",
+    "stderr": "error E0077: an argument's type doesn't match its parameter  /tmp/mo-upgrade-preflight-632k_97_/main.mo:11:11\n\n  11 |   migrate(1).revision\n     |           ^ expected Queue, found Int or BigInt or Byte or Decimal or Float\n\nA call passes each argument to its corresponding parameter (reference 5.2).\n\n"
+  },
+  "deep_source": {
+    "status": 1,
+    "seconds": 0.025310325901955366,
+    "stdout": "",
+    "stderr": "error E1006: code is nested too deeply  /tmp/mo-upgrade-preflight-632k_97_/main.mo:3:256\n\n  3 | ...(((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((...\n    |                ^\n\n"
+  },
+  "task_queue": {
+    "status": 0,
+    "seconds": 0.08701663301326334,
+    "stdout": "",
+    "stderr": ""
+  },
+  "generic_check": {
+    "status": 0,
+    "seconds": 0.04401864600367844,
+    "stdout": "",
+    "stderr": ""
+  },
+  "generic_emit": {
+    "status": 0,
+    "seconds": 0.11559623305220157,
+    "stderr": ""
+  },
+  "service_emit": {
+    "status": 0,
+    "seconds": 0.096953199012205,
+    "output_bytes": 537889,
+    "stderr": ""
+  }
+}

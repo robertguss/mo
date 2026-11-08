@@ -1743,7 +1743,8 @@ changes only when its `use` line does.
 
 ## 15. What comes later
 
-Live upgrades, including migrating saved state to a changed type (Phase 5);
+Live upgrades, including migrating saved state to a changed type (Phase 5;
+proposed design and feasibility gates in `docs/design/upgrades.md`);
 approving and locking promises (Phase 6); demanding that a function update its
 input in place (Phase 7); packages and user-defined abilities (Phase 8). None
 of them changes a rule in this reference.
