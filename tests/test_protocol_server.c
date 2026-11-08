@@ -266,6 +266,31 @@ static void wire(void *context) {
     finish(&f);
 }
 
+static const char upgrade_auth[] = "Authorization: Bearer McpSecretCanary42\r\n"
+                                   "Mo-Upgrade-Authorization: Bearer UpgradeCanary0123456789\r\n";
+
+static void hex64(const uint8_t *digest, char out[65]) {
+    const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < 32; i++) {
+        out[2 * i] = digits[digest[i] >> 4];
+        out[2 * i + 1] = digits[digest[i] & 15];
+    }
+    out[64] = 0;
+}
+
+static void upgrade_call(struct fixture_server *f, const char *fields, const char *tool,
+                         const char *arguments, char *out, size_t capacity) {
+    char body[16384];
+    int n = snprintf(body, sizeof body,
+                     "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{"
+                     "\"name\":\"%s\",\"arguments\":%s}}",
+                     tool, arguments);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof body);
+    request(f, body, fields, out, capacity, 0);
+    CHECK(strstr(out, "UpgradeCanary0123456789") == NULL);
+}
+
+/* Refusal events carry only their code and digests; code 0 counts every refusal. */
 #ifndef MO_PROTOCOL_SERVER_FAULT_TEST
 static void rate(void) {
     struct fixture_server f = start();
@@ -1236,9 +1261,6 @@ static void streams(void) {
     finish(&f);
 }
 
-static const char upgrade_auth[] = "Authorization: Bearer McpSecretCanary42\r\n"
-                                   "Mo-Upgrade-Authorization: Bearer UpgradeCanary0123456789\r\n";
-
 /* A recorded program row for the fixture, so upgrade tools have an active base. */
 static void record_program(struct fixture_server *f, uint8_t digest[32]) {
     struct mo_limits limits = mo_service_limits();
@@ -1296,28 +1318,6 @@ static struct fixture_server start_upgradable(struct event_log *log, uint8_t dig
     return f;
 }
 
-static void hex64(const uint8_t *digest, char out[65]) {
-    const char digits[] = "0123456789abcdef";
-    for (size_t i = 0; i < 32; i++) {
-        out[2 * i] = digits[digest[i] >> 4];
-        out[2 * i + 1] = digits[digest[i] & 15];
-    }
-    out[64] = 0;
-}
-
-static void upgrade_call(struct fixture_server *f, const char *fields, const char *tool,
-                         const char *arguments, char *out, size_t capacity) {
-    char body[16384];
-    int n = snprintf(body, sizeof body,
-                     "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{"
-                     "\"name\":\"%s\",\"arguments\":%s}}",
-                     tool, arguments);
-    MO_ASSERT(n > 0 && (size_t)n < sizeof body);
-    request(f, body, fields, out, capacity, 0);
-    CHECK(strstr(out, "UpgradeCanary0123456789") == NULL);
-}
-
-/* Refusal events carry only their code and digests; code 0 counts every refusal. */
 static unsigned upgrade_events(const struct event_log *log, uint16_t code) {
     unsigned count = 0;
     for (size_t i = 0; i < log->count; i++)
