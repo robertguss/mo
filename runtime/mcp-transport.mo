@@ -159,6 +159,7 @@ fn runtime_error(code: Text, effect: Text) : Json.Json
     "store_failed": "saving service state failed; whether this call took effect is unknown"
     "rate_limited": "too many calls; retry later"
     "response_limit": "the tool result is larger than the response limit"
+    "removed_by_upgrade": "an upgrade removed this tool or changed its arguments; this call had no effect"
     _: "internal error in the Mo runtime"
   end
   Mcp.tool_result(

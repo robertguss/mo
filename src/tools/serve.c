@@ -63,6 +63,18 @@ static void log_event(const struct mo_service_event *event, void *context) {
         log->stop = event->reason;
         log_line(log->errors, "stop", text);
         break;
+    case MO_SERVICE_UPGRADE:
+        if (event->upgrade->accepted)
+            (void)fprintf(log->errors,
+                          "mo serve: upgrade: activated ordinal %llu; %u queued calls answered as "
+                          "removed; %u ticks dropped\n",
+                          (unsigned long long)event->upgrade->ordinal,
+                          (unsigned)event->upgrade->answered, (unsigned)event->upgrade->dropped);
+        else
+            (void)fprintf(log->errors, "mo serve: upgrade: refused E%04u\n",
+                          (unsigned)event->upgrade->code);
+        (void)fflush(log->errors);
+        break;
     }
     if (event->defect != NULL &&
         !mo_write_defect(log->errors, event->defect->process, event->defect))

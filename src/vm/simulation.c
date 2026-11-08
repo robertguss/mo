@@ -219,6 +219,7 @@ enum mo_simulation_sent mo_simulation_send(struct mo_simulation *s,
     case MO_SERVICE_INTERVAL:
     case MO_SERVICE_STORE:
     case MO_SERVICE_SAVED_INVALID:
+    case MO_SERVICE_REMOVED:
         return MO_SENT_FAILED;
     }
     MO_UNREACHABLE();

@@ -282,8 +282,9 @@ static bool catalog_copy(struct mo_protocol_server *s, struct mo_cell value,
 
 static bool templates(struct mo_protocol_server *s) {
     static const char *const codes[] = {
-        "invalid_arguments", "busy",         "stopped",      "memory_limit",   "work_limit",
-        "handler_failed",    "store_failed", "rate_limited", "response_limit", "internal_error"};
+        "invalid_arguments", "busy",           "stopped",           "memory_limit",
+        "work_limit",        "handler_failed", "store_failed",      "rate_limited",
+        "response_limit",    "internal_error", "removed_by_upgrade"};
     static const char *const effects[] = {"none", "applied", "unknown"};
     struct mo_heap *heap = mo_process_heap(s->catalog_process);
     uint32_t text_type = mo_protocol_function(s, PF_FALLBACK)->parameters[0].type;

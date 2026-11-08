@@ -167,11 +167,29 @@ enum mo_service_status {
     MO_SERVICE_DEFECT,
     MO_SERVICE_INTERVAL,
     MO_SERVICE_STORE,
-    MO_SERVICE_SAVED_INVALID
+    MO_SERVICE_SAVED_INVALID,
+    /* A queued call whose tool an upgrade removed or retyped; it had no effect. */
+    MO_SERVICE_REMOVED
 };
 /* Stable descriptions for embedding errors; no saved bytes or secrets appear. */
 MO_MUST_USE const char *mo_service_status_text(enum mo_service_status status);
-enum mo_service_event_kind { MO_SERVICE_FAILURE, MO_SERVICE_RESTART, MO_SERVICE_STOP };
+enum mo_service_event_kind {
+    MO_SERVICE_FAILURE,
+    MO_SERVICE_RESTART,
+    MO_SERVICE_STOP,
+    MO_SERVICE_UPGRADE
+};
+/* One live upgrade outcome. Digests identify source bundles; no source bytes or credentials.
+ * A refusal has a nonzero E14xx code and leaves the program as it was. On acceptance the
+ * loop fills answered (queued calls the new program cannot take) and dropped (queued ticks
+ * of removed timers). */
+struct mo_service_upgrade {
+    bool accepted;
+    uint16_t code;
+    uint64_t ordinal;
+    uint8_t old_source[32], new_source[32];
+    uint32_t answered, dropped;
+};
 struct mo_service_event {
     enum mo_service_event_kind kind;
     enum mo_service_status reason;
@@ -187,6 +205,7 @@ struct mo_service_event {
     uint64_t replay_sequence;
     uint64_t record_id;
     const char *record_unavailable;
+    const struct mo_service_upgrade *upgrade; /* MO_SERVICE_UPGRADE only */
 };
 struct mo_service_response {
     uint64_t id;
@@ -262,6 +281,8 @@ struct mo_service_observation {
     bool running, persistent, retained_available;
     uint32_t retained_failures;
     uint64_t evicted_kinds;
+    /* Live upgrades this process applied; event summaries name the epoch they ran in. */
+    uint64_t epoch;
 };
 struct mo_service_message_summary {
     int64_t arrival;
@@ -283,6 +304,8 @@ struct mo_service_event_summary {
     uint32_t function, restart;
     uint64_t record_id;
     const char *record_unavailable;
+    uint64_t epoch;
+    struct mo_service_upgrade upgrade; /* MO_SERVICE_UPGRADE only */
 };
 MO_MUST_USE struct mo_service_observation mo_service_observe(const struct mo_service_loop *service);
 MO_MUST_USE bool mo_service_encoded_state(const struct mo_service_loop *service,
@@ -293,6 +316,33 @@ MO_MUST_USE bool mo_service_timer_entry(const struct mo_service_loop *service, u
                                         struct mo_service_timer_summary *out);
 MO_MUST_USE bool mo_service_event_entry(const struct mo_service_loop *service, uint32_t index,
                                         struct mo_service_event_summary *out);
+
+/* Live upgrade between two messages. prepare builds a replacement for a running loop from an
+ * initialized image that outlives it and the validated saved state for its state type: queued
+ * calls are remapped by tool name with their arguments re-decoded for the new types, queued
+ * ticks and timer phases are kept by timer name, and intervals are evaluated in the new
+ * process. It writes, replies and changes nothing; old stays authoritative. After the caller
+ * commits the activation, finish answers queued calls the new program cannot take with
+ * MO_SERVICE_REMOVED, drops ticks of removed timers, records the upgrade event and frees old;
+ * the replacement then serves. abandon frees an uncommitted replacement. */
+enum mo_service_swap_status {
+    MO_SERVICE_SWAP_READY,
+    MO_SERVICE_SWAP_MEMORY,
+    MO_SERVICE_SWAP_INTERVAL,
+    MO_SERVICE_SWAP_STATE,
+    MO_SERVICE_SWAP_STOPPED
+};
+MO_MUST_USE enum mo_service_swap_status
+mo_service_swap_prepare(struct mo_service_loop *old, const struct mo_image *image, uint32_t index,
+                        const uint8_t *state, size_t length, struct mo_service_loop **out);
+void mo_service_swap_finish(struct mo_service_loop *old, struct mo_service_loop *next,
+                            const struct mo_service_upgrade *upgrade);
+void mo_service_swap_abandon(struct mo_service_loop *next);
+/* Record a refused upgrade in the event ring; the loop is otherwise unchanged. */
+void mo_service_note_upgrade(struct mo_service_loop *service,
+                             const struct mo_service_upgrade *upgrade);
+/* Stop serving, as a supervisor stop does: queued calls are answered DOWN. */
+void mo_service_stop(struct mo_service_loop *service, enum mo_service_status reason);
 
 MO_MUST_USE enum mo_store_status
 mo_service_failures(const struct mo_service_loop *service,

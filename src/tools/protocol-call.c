@@ -60,6 +60,8 @@ static enum protocol_error service_error(enum mo_service_status status) {
     case MO_SERVICE_INTERVAL:
     case MO_SERVICE_SAVED_INVALID:
         return PE_INTERNAL;
+    case MO_SERVICE_REMOVED:
+        return PE_REMOVED;
     }
     MO_UNREACHABLE();
 }

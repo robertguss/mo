@@ -59,6 +59,7 @@ enum protocol_error {
     PE_RATE,
     PE_RESPONSE,
     PE_INTERNAL,
+    PE_REMOVED,
     PE_COUNT
 };
 
@@ -92,7 +93,17 @@ struct protocol_connection {
     /* A GET stream's unwritten output and the session it serves (index + 1, 0 for none). */
     uint8_t stream[MO_LIMIT_MCP_STREAM_BYTES];
     size_t stream_size, session;
+    uint64_t epoch; /* program epoch whose catalog this request borrowed */
     bool reply_ready, retained, authenticated, upgrade_authorized;
+};
+
+/* The program a live upgrade replaced, kept until nothing borrows it: requests that began
+ * before the swap may hold cells of its catalog, and events render its handler names. */
+struct protocol_previous {
+    const struct mo_image *image;
+    struct mo_image *owned;
+    struct mo_process *catalog;
+    uint64_t epoch;
 };
 
 struct protocol_session {
@@ -128,6 +139,12 @@ struct mo_protocol_server {
     struct protocol_bytes stream_head, list_changed;
     struct mo_bearer upgrade_bearer;
     bool upgrade_enabled;
+    /* The current program's epoch, its image when the server owns it, and the process
+     * holding its descriptor and catalog (the initial catalog lives in catalog_process). */
+    uint64_t epoch;
+    struct mo_image *owned_image;
+    struct mo_process *service_catalog;
+    struct protocol_previous previous;
     struct mo_protocol_metrics metrics;
     bool io_failed, closing;
 };
@@ -168,6 +185,10 @@ void mo_protocol_stream_open(struct mo_protocol_server *server,
                              struct protocol_connection *connection, size_t session);
 /* Queue a tools/list_changed notification on each session's one stream. */
 void mo_protocol_list_changed(struct mo_protocol_server *server);
+
+/* The image an event of the given epoch ran under, or NULL once it is no longer retained. */
+MO_MUST_USE const struct mo_image *mo_protocol_epoch_image(const struct mo_protocol_server *server,
+                                                           uint64_t epoch);
 
 MO_MUST_USE bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *c,
                                   struct mo_cell *out);
