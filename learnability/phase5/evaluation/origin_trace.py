@@ -47,6 +47,38 @@ def decode(value):
     return bytes(out)
 
 
+def transfer_bytes(op, args, n):
+    """Decode exactly the successful prefix of scalar or explicit iovec buffers."""
+    tail = re.sub(r'^\d+(?:<TCP:\[[^\]]+\]>|<[^>]+>)?,\s*', '', args, count=1)
+    if op in ('read', 'write', 'sendto', 'recvfrom'):
+        match = re.fullmatch(r'"((?:\\.|[^"\\])*)",\s*(\d+)(?:,.*)?', tail)
+        if not match: fail('missing or truncated transfer buffer')
+        data = decode(match[1])
+        if n > len(data) or n > int(match[2]): fail('short captured transfer buffer')
+        return data[:n]
+    vector = r'\[((?:\{iov_base="(?:\\.|[^"\\])*", iov_len=\d+\}(?:, )?)*)\]'
+    if op in ('readv', 'writev'):
+        match = re.fullmatch(vector + r', (\d+)', tail)
+    elif op in ('sendmsg', 'recvmsg'):
+        # No ancillary descriptor delivery or alternate destination is supported.
+        match = re.fullmatch(r'\{msg_name=NULL, msg_namelen=0, msg_iov=' + vector +
+            r', msg_iovlen=(\d+), (?:msg_control=NULL, )?msg_controllen=0, msg_flags=0\}, [^,]+', tail)
+    else:
+        fail('unsupported transfer operation')
+    if not match: fail('unsupported or truncated vector buffer')
+    entries = re.findall(r'\{iov_base="((?:\\.|[^"\\])*)", iov_len=(\d+)\}', match[1])
+    if len(entries) != int(match[2]): fail('incomplete vector buffer')
+    chunks = []
+    remaining = n
+    for value, length in entries:
+        need = min(remaining, int(length))
+        data = decode(value)
+        if len(data) < need: fail('short captured vector buffer')
+        chunks.append(data[:need]); remaining -= need
+    if remaining: fail('short vector transfer')
+    return b''.join(chunks)
+
+
 def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, evaluation_endpoint=None):
     from origin_observer import order_births
     from origin_descriptors import DescriptorFacts
@@ -78,12 +110,13 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
     pending_start = {}
     connections = {}
     fds = {}
+    cloexec = {}
     serial = 0
     requests, responses = [], []
     events = collections.Counter()
     def proc(pid):
         if pid not in processes:
-            processes[pid] = {'pid': pid, 'incarnation': 1, 'exec_path': None, 'exec_argv': None, 'session_id': session_id, 'generation': 0, 'dead': False}
+            processes[pid] = {'pid': pid, 'tgid': pid, 'incarnation': 1, 'exec_path': None, 'exec_argv': None, 'session_id': session_id, 'generation': 0, 'dead': False}
         return processes[pid]
     for sequence, raw in enumerate(text.splitlines(), 1):
         started = sequence
@@ -131,16 +164,29 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         events[op] += 1
         if p['dead']:
             fds[pid] = {}
-            p = processes[pid] = dict(pid=pid, incarnation=p['incarnation']+1, exec_path=None, exec_argv=None, session_id=session_id, generation=0, dead=False)
+            p = processes[pid] = dict(pid=pid, tgid=pid, incarnation=p['incarnation']+1, exec_path=None, exec_argv=None, session_id=session_id, generation=0, dead=False)
         if op in ('clone', 'clone3', 'fork', 'vfork') and re.match(r'[1-9]\d*$', result):
             child = int(result)
-            if any(c['owner']['pid']==pid for c in connections.values()): fail('inherited socket ambiguity')
-            if 'CLONE_FILES' in args and fds.get(pid): fail('shared descriptor table ambiguity')
-            fds[child] = fds.setdefault(pid, {}).copy()
+            thread = 'CLONE_THREAD' in args
+            shared = 'CLONE_FILES' in args
+            if thread and not (shared and 'CLONE_VM' in args): fail('unsupported thread flags')
+            table = fds.setdefault(pid, {})
+            flags = cloexec.setdefault(pid, set())
+            fds[child] = table if shared else table.copy()
+            cloexec[child] = flags if shared else flags.copy()
             if child in processes and not processes[child]['dead']: fail('PID lifecycle ambiguity')
             old = processes.get(child)
-            processes[child] = dict(p, pid=child, incarnation=old['incarnation']+1 if old else 1)
+            p['executable_mappings'] = processes[p['tgid']].setdefault('executable_mappings', [])
+            processes[child] = dict(p, pid=child, tgid=p['tgid'] if thread else child,
+                                    incarnation=old['incarnation']+1 if old else 1)
+            if 'CLONE_VM' not in args and op != 'vfork':
+                processes[child]['executable_mappings'] = list(p.get('executable_mappings', []))
         if op in ('execve', 'execveat') and result == '0':
+            if p['tgid'] != pid: fail('nonleader exec unsupported')
+            # Exec unshares the descriptor table and closes FD_CLOEXEC entries.
+            fds[pid] = {fd: key for fd, key in fds.get(pid, {}).items()
+                        if fd not in cloexec.get(pid, set())}
+            cloexec[pid] = set()
             path = re.match(r'"((?:\\.|[^"\\])*)"', args) if op == 'execve' else None
             if not path: fail('unsupported exec grammar')
             try: p['exec_path'] = decode(path[1]).decode('utf-8', errors='strict')
@@ -171,9 +217,9 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             if mapped and 'MAP_ANONYMOUS' not in args and 'PROT_WRITE' not in args:
                 try: name = decode(mapped[2]).decode('utf-8')
                 except UnicodeError: pass
-            p.setdefault('executable_mappings', []).append(name)
+            processes[p['tgid']].setdefault('executable_mappings', []).append(name)
         if op in ('mprotect', 'pkey_mprotect') and result == '0' and 'PROT_EXEC' in args:
-            p.setdefault('executable_mappings', []).append(None)
+            processes[p['tgid']].setdefault('executable_mappings', []).append(None)
         if op in ('exit', 'exit_group'): p['dead'] = True
         if op in ('pipe', 'pipe2') and result == '0':
             pair = re.match(r'\[\d+<pipe:\[(\d+)\]>, \d+<pipe:\[(\d+)\]>\]', args)
@@ -182,45 +228,61 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             pipes[pair[1]] = started
         pipe = re.match(r'(\d+)<pipe:\[(\d+)\]>, ', args)
         if pipe and op in ('read', 'write', 'readv', 'writev') and result.isdigit() and int(result):
-            buf = re.fullmatch(r'\d+<pipe:\[\d+\]>,\s*"((?:\\.|[^"\\])*)",\s*(\d+)', args)
-            if not buf or op not in ('read', 'write'): fail('unsupported pipe transfer')
-            data = decode(buf[1])
             n = int(result)
-            if n > len(data): fail('truncated pipe transfer')
+            data = transfer_bytes(op, args, n)
             pipe_events.append(dict(pipe=pipe[2], created=pipes.get(pipe[2]), operation=op,
                 fd=int(pipe[1]), data_hex=data[:n].hex(), sender=dict(p), started=started,
                 completed=sequence))
-        if op == 'write' and re.match(r'1(?:<[^>]+>)?, ', args) and result.isdigit():
-            buf = re.match(r'1(?:<[^>]+>)?,\s*"((?:\\.|[^"\\])*)",\s*(\d+)$', args)
-            if not buf: fail('unsupported stdout write')
-            data = decode(buf[1])
+        if op in ('write', 'writev') and re.match(r'1(?:<[^>]+>)?, ', args) and result.isdigit():
             n = int(result)
-            if n > len(data): fail('truncated stdout')
+            data = transfer_bytes(op, args, n)
             stdout_events.append(dict(data=data[:n].decode('utf-8'), sender=dict(p), started=started, completed=sequence))
+        if op in ('sendmsg', 'recvmsg', 'sendmmsg', 'recvmmsg') and not result.startswith('-1'):
+            controls = re.findall(r'msg_controllen=(\d+)', args)
+            if not controls or any(int(n) != 0 for n in controls):
+                fail('ancillary socket transfer unsupported')
         # Explicit non-TCP transports cannot contribute to these HTTP receipts.
         if re.match(r'\d+<(?:NETLINK|UNIX(?:-STREAM)?):\[', args): continue
         table = fds.setdefault(pid, {})
+        flags = cloexec.setdefault(pid, set())
         endpoint = re.match(r'(\d+)<TCP:\[([^\]]+)\]>', args)
         fd = int(endpoint[1]) if endpoint else None
         if op == 'socket' and 'TCP:[' in result:
             created = re.match(r'(\d+)<TCP:\[([^\]]+)\]>', result)
             if not created: fail('unsupported socket result')
             serial += 1
-            table[int(created[1])] = (serial, created[2])
+            created_fd = int(created[1])
+            table[created_fd] = (serial, created[2])
+            flags.discard(created_fd)
+            if 'SOCK_CLOEXEC' in args: flags.add(created_fd)
             continue
         if op in ('dup', 'dup2', 'dup3', 'fcntl'):
             source = re.match(r'(\d+)', args)
             if source and int(source[1]) in table:
+                if op == 'fcntl' and 'F_SETFD' in args and result == '0':
+                    flags.discard(int(source[1]))
+                    if 'FD_CLOEXEC' in args: flags.add(int(source[1]))
                 if op == 'fcntl' and 'F_DUPFD' not in args: continue
                 dest = re.match(r'(\d+)', result)
-                if dest: table[int(dest[1])] = table[int(source[1])]
+                if dest:
+                    target = int(dest[1])
+                    table[target] = table[int(source[1])]
+                    if target != int(source[1]): flags.discard(target)
+                    if 'CLOEXEC' in args: flags.add(target)
             continue
         if op == 'close':
             source = re.match(r'(\d+)', args)
             if source and result == '0':
                 identity = table.pop(int(source[1]), None)
+                flags.discard(int(source[1]))
                 if identity and not any(identity in t.values() for t in fds.values()):
                     if identity in connections: connections[identity]['closed'] = True
+            continue
+        if op == 'ioctl' and result == '0' and ('FIOCLEX' in args or 'FIONCLEX' in args):
+            source = re.match(r'(\d+)', args)
+            if source:
+                flags.discard(int(source[1]))
+                if 'FIOCLEX' in args: flags.add(int(source[1]))
             continue
         if op in ('connect','bind','listen','getsockname','getpeername','setsockopt','getsockopt','shutdown','poll','ppoll','select','pselect6','ioctl'):
             continue
@@ -243,24 +305,26 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         resolved = resolve(endpoint[2] if endpoint else key[1])
         if evaluation_endpoint is not None and (resolved is None or resolved.split('->')[-1] != evaluation_endpoint):
             continue
-        if op not in ('write','sendto','read','recvfrom'): fail('unsupported TCP operation')
+        if op not in ('write','sendto','read','recvfrom','writev','readv','sendmsg','recvmsg'): fail('unsupported TCP operation')
         if result.startswith('-1'): continue
         if not re.fullmatch(r'\d+',result): fail('unsupported syscall result')
         n = int(result)
         if not n: continue
-        buf = re.match(r'\d+(?:<TCP:\[[^\]]+\]>)?,\s*"((?:\\.|[^"\\])*)",\s*(\d+)(?:,.*)?$', args)
-        if not buf: fail('missing or truncated TCP buffer')
-        data = decode(buf[1])
-        if n > len(data) or n > int(buf[2]): fail('short captured TCP buffer')
-        if any(other != pid and key in table.values() and not processes[other]['dead'] for other, table in fds.items()):
-            fail('inherited socket ambiguity')
-        owner = {k:p[k] for k in ('pid','incarnation','exec_path','exec_argv','session_id','generation')}
-        owner.update(loader_context_clean=p.get('loader_context_clean', False),
-                     executable_mappings=p.get('executable_mappings', []))
+        data = transfer_bytes(op, args, n)
+        image = processes[p['tgid']]
+        owner = {k:image[k] for k in ('pid','incarnation','exec_path','exec_argv','session_id','generation')}
+        owner.update(loader_context_clean=image.get('loader_context_clean', False),
+                     executable_mappings=list(image.get('executable_mappings', [])))
+        if key not in connections and resolved is not None and any(
+                c['endpoint'] == resolved for c in connections.values()):
+            fail('repeated connection identity')
         c = connections.setdefault(key, dict(ordinal=len(connections)+1, owner=owner, fd=fd, closed=False, endpoint=resolve(endpoint[2]) if endpoint else None, tx=bytearray(), rx=bytearray(), tx_events=[], rx_events=[]))
         if c['closed']: fail('repeated connection identity')
-        if c['owner'] != owner: fail('shared sender or exec ambiguity')
-        direction = 'tx' if op in ('write','sendto') else 'rx'
+        if any(c['owner'][k] != owner[k] for k in owner if k != 'executable_mappings'):
+            fail('shared sender or exec ambiguity')
+        c['owner']['executable_mappings'] = list(dict.fromkeys(
+            c['owner']['executable_mappings'] + owner['executable_mappings']))
+        direction = 'tx' if op in ('write','sendto','writev','sendmsg') else 'rx'
         c[direction].extend(data[:n])
         c[direction+'_events'].append(dict(offset=len(c[direction])-n, count=n, sender=owner, started=started, completed=sequence))
     if pending: fail('unfinished syscall at EOF')

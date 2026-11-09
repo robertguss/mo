@@ -13,6 +13,20 @@ class BundleTests(IdentityTests):
         b.finish({'launched': True})
         return b, c
 
+    def test_jit_mapping_is_retained_without_granting_push_identity(self):
+        import json
+        request = 'GET / HTTP/1.1\r\n\r\n'
+        self.trace.write_text(self.trace.read_text() + self.mapping() +
+            '1 mprotect(0x2000, 4096, PROT_READ|PROT_EXEC) = 0\n' +
+            '1 write(3<TCP:[127.0.0.1:1234->127.0.0.1:80]>, ' +
+            json.dumps(request) + ', ' + str(len(request)) + ') = ' +
+            str(len(request)) + '\n1 +++ exited with 0 +++\n')
+        b, c = self.bundle()
+        self.assertNotIn(None, b.facts['mappings'])
+        parsed = c.consume(self.session)['trace']
+        self.assertTrue(parsed['requests'])
+        self.assertTrue(all(not r['verified_push_identity'] for r in parsed['requests']))
+
     def test_roundtrip_and_one_shot(self):
         b, c = self.bundle()
         result = replay_bundle.verify(b.root, self.session, self.uid)

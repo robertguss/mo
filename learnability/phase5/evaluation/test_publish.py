@@ -23,6 +23,7 @@ class Publication(unittest.TestCase):
             directory = self.root / str(slot)
             directory.mkdir()
             (directory / 'manifest.json').write_text(json.dumps({
+                'collection_id': format(slot,'032x'), 'started_at': float(slot),
                 'slot': slot, 'client': client, 'development': False,
                 'correct': slot != 4, 'launched': True, 'timeout': slot == 4,
                 'dimensions': dict.fromkeys((*publish.DIMENSIONS, 'publication_integrity'), True), 'failures': ['timeout'] if slot == 4 else []}))
@@ -57,7 +58,17 @@ class Publication(unittest.TestCase):
     def record(self, directory, dimensions=None):
         slot = self.sessions.index(directory) + 1
         return dict(evidence_class='FINAL', slot=slot, client=publish.evidence.ORDER[slot-1],
+                    collection_id=format(slot,'032x'), started_at=float(slot), execution_clean=True,
                     dimensions=dict.fromkeys(publish.DIMENSIONS, True) if dimensions is None else dimensions)
+
+    def test_reassembled_collection_is_refused(self):
+        for change in ({'collection_id':'f'*32}, {'started_at':999.0}):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'collection binding'):
+                publish.publish(self.sessions, self.root/'mixed', [self.secret_file],
+                    [self.provider_file], protected_regrade=lambda d: dict(self.record(d), **change))
+        result = publish.publish(self.sessions, self.root/'unclean', [self.secret_file],
+            [self.provider_file], protected_regrade=lambda d: dict(self.record(d), execution_clean=False))
+        self.assertFalse(result['gate']['passed'])
 
     def test_dimensions_require_independent_regrade(self):
         for directory in self.sessions:

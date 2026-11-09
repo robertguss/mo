@@ -2,6 +2,8 @@
 import gzip
 import hashlib
 import os
+import json
+import re
 from contextlib import contextmanager
 
 # A 1 MiB -xx argument expands to 4 MiB, plus syscall metadata.
@@ -55,17 +57,65 @@ class TraceLines:
         return seen
 
 
-def compress_stream(source, destination):
+class RootExit:
+    """Read only tracer records, reporting the original tracee's terminal status."""
+    def __init__(self, destination):
+        self.destination = destination
+        self.root = None
+        self.seen = False
+
+    def __call__(self, record):
+        match = re.fullmatch(rb'(\d+)\s+(.*)\n', record)
+        if not match:
+            raise StorageError('invalid process record')
+        pid, call = int(match[1]), match[2]
+        if self.root is None:
+            if not call.startswith(b'execve('):
+                raise StorageError('missing initial exec')
+            self.root = pid
+        terminal = re.fullmatch(rb'\+\+\+ exited with (\d+) \+\+\+', call)
+        if pid == self.root and terminal:
+            if self.seen:
+                raise StorageError('duplicate root exit')
+            self.seen = True
+            fd = os.open(self.destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'w') as out:
+                json.dump({'pid': pid, 'returncode': int(terminal[1])}, out)
+
+
+def compress_stream(source, destination, on_record=None):
     """Create final storage once; hash original bytes while preserving every byte."""
     digest = hashlib.sha256()
+    observe = on_record
+    observer_error = None
     count = 0
     fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'wb') as raw:
         with gzip.GzipFile(filename='', fileobj=raw, mode='wb', mtime=0) as out:
-            while chunk := source.read(CHUNK_BYTES):
+            pending = bytearray()
+            read = getattr(source, 'read1', source.read)
+            while chunk := read(CHUNK_BYTES):
                 digest.update(chunk)
                 count += len(chunk)
                 out.write(chunk)
+                if observe is not None:
+                    pending.extend(chunk)
+                    try:
+                        while (end := pending.find(b'\n')) >= 0:
+                            if end + 1 > MAX_RECORD_BYTES:
+                                raise StorageError('oversized trace record')
+                            observe(bytes(pending[:end+1]))
+                            del pending[:end+1]
+                        if len(pending) > MAX_RECORD_BYTES:
+                            raise StorageError('oversized trace record')
+                    except Exception as error:
+                        # Keep every raw byte even when lifetime decoding fails.
+                        observer_error = type(error).__name__
+                        observe = None
+                        pending.clear()
         raw.flush()
         os.fsync(raw.fileno())
-    return dict(sha256=digest.hexdigest(), bytes=count)
+    result = dict(sha256=digest.hexdigest(), bytes=count)
+    if observer_error is not None:
+        result['observer_error'] = observer_error
+    return result

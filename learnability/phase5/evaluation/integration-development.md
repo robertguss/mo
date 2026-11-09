@@ -201,7 +201,8 @@ may contain secrets. Directories are 0700 and payloads/manifests 0600.
 It copies exact executable bytes and sealed trace/proxy/stdout/TCP inputs,
 retaining original pins, nonce, session, loader bytes and verified mapping pins.
 `add(role, path)` and `tree(role, path)` retain protected inputs;
-`finish(launch_facts)` seals an exact inventory. Limits are 128 MiB and 4096 files;
+`finish(launch_facts)` seals an exact inventory. The initial limits were 128 MiB and 4096 files; the current byte ceiling is
+256 GiB (not a full-session capacity qualification);
 overflow fails retention, never weakens path policy. No consumed capture reopens.
 `verify(root, trusted_session_id, trusted_session_uid)` reads the private manifest
 itself and checks ownership, ancestor policy, exact inventory and original retained
@@ -261,7 +262,7 @@ not ready for authoritative publication use until that validation is complete.
 
 Accidental discovery finished: 177 tests in 111.570 seconds, one error and no
 reported skips. The collector test failed before launch because
-MO_EVALUATION_BINARY was unset. Output is retained in `regrade-tests.tmp`.
+MO_EVALUATION_BINARY was unset. Output is retained in `learnability/phase5/results/development-failures/regrade-tests.txt`.
 All started test processes finished. Final five edited eligible files passed the
 publication scanner with both private credential inventories after this edit.
 
@@ -732,3 +733,94 @@ Zero processes for both isolated users, OUTPUT ACCEPT, home 0750 and exact
 snapshot credentials were verified. Seventeen eligible public files passed both
 credential inventories. All started processes finished. These two review fixes
 have focused verification; no new full independent review receipt is claimed.
+
+## Follow-up capture review and repairs
+
+Independent read-only review of 4dffd7e2..ed7fb31c found eight issues: ordinary
+thread/fork/vector traffic was rejected; anonymous executable mappings crashed
+full retention; descendants extended a normal client exit into a timeout; command
+origin still required push-looking shell text; failed partial state retention
+allowed mutation of the only state; absent timeout facts became false; publication
+could combine launch facts from another collection; and a historical failed-test
+log was misplaced while the documented retention ceiling was stale. These are
+readiness defects, not a new scored result. The reviewer ran only an offline parser
+control, not a client session or whole suite.
+
+Repairs preserve unknown/JIT mappings without granting pinned native identity,
+use protected transfer attribution rather than shell display text, require retained
+state before mutating grading, preserve unknown timeout as null and known timeout
+through tracer exceptions, and bind publication to protected collection ID/start
+time plus protected clean-execution facts. The failed-test log moved unchanged to
+results/development-failures/regrade-tests.txt; it is intentional retained evidence.
+
+Thread groups now share descriptor state and a process-image identity. A fork
+that never transfers on an inherited socket no longer poisons its parent's
+receipts; actual transfers from different process images still fail closed.
+Close-on-exec sockets are removed at exec. Explicit vector buffers are decoded
+only through the successful byte count; truncated vectors, ancillary data,
+unsupported thread flags and kernel asynchronous transfers remain refusals.
+The compressor observes the original tracee's terminal record in its private
+stream and triggers descendant cleanup without waiting for the session deadline.
+A normal-exit/background-child control passed with complete terminal accounting.
+
+The first three new regression controls failed as expected for command-text and
+state-retention bugs; the initial JIT fixture accidentally contained no request.
+The corrected JIT fixture reproduced the TypeError, then passed after the fix.
+Logs: build/review-retention-red.txt, build/review-jit-corrected-red.txt and
+build/review-retention-green.txt (76 tests passed). Root lifetime/storage controls
+passed 47 tests (build/review-exit-controls.txt). Initial vector decoding mishandled
+the `->` inside TCP annotations; corrected and retained both failing runs. The
+55-test parser/identity/descriptor/integrity/join/observation/storage suite passed
+in build/review-thread-green.txt. Publication/replay controls passed 91 tests in
+build/review-publication-controls.txt. These overlap and are not additive totals.
+
+One bounded Node keepalive HTTP/spawn/vector development control was declared,
+with no model calls and a 20-second deadline. It failed before parsing because a
+relative trace directory was interpreted from the compressor's working directory.
+TraceRun now resolves its directory. The corrected control also failed: this Node
+build successfully invokes io_uring_setup and io_uring_enter, which the decoder
+rejects. Both captures and failures remain in build/review-node-control*; raw
+traces contain environment values and are private, never publication inputs.
+This is an unresolved supported-transport boundary, not evidence of transparent
+Node or pinned Claude/Codex qualification. No scored runs were started. Further
+work needs a capture design that accounts for these transfers or a demonstrated
+supported client configuration before a new readiness claim.
+
+The combined focused suite passed 237 tests in 114.874 seconds
+(build/review-final-focused.txt), including real-service grading controls.
+A follow-up partial-schema check requires the timeout field explicitly while
+allowing null for unknown; its focused tests passed (build/review-timeout-schema.txt).
+Exactly one separate-account DEVELOPMENT success collector is then run using the
+current GCC binary, no model calls, with the existing 60-second client deadline.
+Expected: six non-model dimensions pass, model/publication remain false, and
+account processes/firewall restore. Result log: build/review-real-collector.txt.
+
+The separate-account success collector passed in 153.047 seconds. Protected
+replay after removal of the temporary installation passed the same six non-model
+dimensions in 69.964 seconds, and every retained pin compared equal before/after.
+Private root: /home/exedev/phase5-test-private-wa6auo32. Model and publication
+qualification remained false. Eligible outputs and changed files (35 files)
+scanned clean against four credential inventories.
+
+The independent parser/lifetime re-review identified three medium and two low
+issues. Final corrections reject duplicate resolved endpoints regardless of which
+process transfers first, reject successful ancillary and pidfd descriptor delivery,
+trace ioctl flag changes, share executable mappings across CLONE_VM, preserve all
+compressed bytes when the bounded lifetime observer fails, drain compression after
+a root-exit wait timeout, and require tracer-status agreement for complete capture.
+Focused controls cover both duplicate-endpoint orders, anonymous mappings across
+vfork-like clones, oversized/malformed record retention, ancillary delivery and
+injected tracer-drain timeout. The first boundary run failed only because successful
+compression added an unnecessary null metadata field; retaining the existing
+success schema corrected it. Both logs remain in build/review-boundaries-*.txt.
+Final changed-area suite: 226 tests passed in 14.164 seconds
+(build/review-boundaries-confirmed.txt). These corrections postdate the real
+collector/replay above; the final lifecycle tests exercise actual strace processes.
+No fresh whole-phase or real-client qualification is claimed.
+
+GCC's final C/runtime candidate check remains `check.sh finished: pass` in
+build/pause-native-final-gcc.txt; later changes are Python and non-embedded docs.
+Clang, targeted sanitizers, formatting/dependency checks and pause measurements
+remain as recorded in the pause development note. Full-session resource bounds,
+actual serving-model evidence, real-client transport qualification and final
+four-slot publication remain incomplete. No release/merge approval is implied.

@@ -279,3 +279,11 @@ retains both confirmation series and the locating samples.
 Phase 5 remains open. Actual-model provenance, transparent real-client capture,
 full-session resource/publication qualification and the fresh fixed four-slot
 evaluation remain incomplete; no scored session or release was launched here.
+
+A subsequent independent capture review found compatibility and retention defects.
+Follow-up controls cover thread/socket handoff, vector buffers, JIT mappings,
+root-exit cleanup, state retention and protected collection binding. The focused
+regression suite passed 237 tests; this is not real-client qualification. A Node
+keepalive/spawn control exposed successful io_uring transfers that remain
+unsupported and are rejected. See the [capture development record](../../learnability/phase5/evaluation/integration-development.md)
+for failed controls, repairs and remaining coverage.

@@ -38,3 +38,18 @@ class StorageTests(unittest.TestCase):
                 path.write_bytes(raw)
                 with self.assertRaises(StorageError):
                     parse_trace(TraceLines(path))
+
+class LifetimeObserverRetention(unittest.TestCase):
+    def test_bad_or_oversized_record_keeps_every_raw_byte(self):
+        from trace_storage import RootExit
+        from unittest.mock import patch
+        for raw in (b'not a trace record\n' + b'x'*10000,
+                    b'1 execve("' + b'x'*300 + b'", [], []) = 0\n2 tail() = 0\n'):
+            with self.subTest(prefix=raw[:10]), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp); packed=root/'trace'
+                with patch('trace_storage.MAX_RECORD_BYTES', 128):
+                    result=compress_stream(io.BytesIO(raw), packed, RootExit(root/'exit'))
+                self.assertEqual(gzip.decompress(packed.read_bytes()),raw)
+                self.assertEqual(result['bytes'],len(raw))
+                self.assertEqual(result['sha256'],hashlib.sha256(raw).hexdigest())
+                self.assertEqual(result['observer_error'],'StorageError')

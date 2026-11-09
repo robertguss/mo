@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path, PurePosixPath
 import shutil
 import tarfile
@@ -183,8 +184,15 @@ def publish(sessions, destination, token_files, provider_files, *, protected_reg
             if (protected.get('evidence_class') != 'FINAL' or
                     protected.get('slot') != slot or protected.get('client') != evidence.ORDER[slot - 1]):
                 raise ValueError('protected classification or slot/client binding mismatch')
+            collection = manifest.get('collection_id')
+            if (not isinstance(collection, str) or not re.fullmatch('[0-9a-f]{32}', collection)
+                    or protected.get('collection_id') != collection
+                    or not isinstance(manifest.get('started_at'), (int, float))
+                    or protected.get('started_at') != manifest['started_at']
+                    or type(protected.get('execution_clean')) is not bool):
+                raise ValueError('protected collection binding mismatch')
             row['dimensions'] = validated_dimensions(protected.get('dimensions'))
-            row['execution_clean'] = (manifest.get('launched') is True and
+            row['execution_clean'] = (protected['execution_clean'] and manifest.get('launched') is True and
                                       manifest.get('timeout') is False and
                                       manifest.get('failures') == [])
         if public_rows([row], True)[0].get('correct') is True:

@@ -10,6 +10,46 @@ import origin_observer
 
 
 class TracerFailures(unittest.TestCase):
+    def test_normal_root_exit_cleans_descendant_without_timeout(self, force_wait=False):
+        import os
+        import signal
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            pidfile = root / 'descendant'
+            script = ('import os,time,pathlib; pid=os.fork(); '
+                      'pathlib.Path(' + repr(str(pidfile)) + ').write_text(str(pid)) if pid else time.sleep(30)')
+            def cleanup():
+                os.kill(int(pidfile.read_text()), signal.SIGTERM)
+            run = origin_observer.TraceRun(root / 'capture')
+            start = time.monotonic()
+            real = subprocess.Popen
+            def launch(*args, **kwargs):
+                child = real(*args, **kwargs)
+                if args[0][0] == 'strace' and force_wait:
+                    original = child.wait
+                    fired = False
+                    def wait(timeout=None):
+                        nonlocal fired
+                        if timeout == 5 and not fired:
+                            fired = True
+                            raise subprocess.TimeoutExpired('injected drain', timeout)
+                        return original(timeout=timeout)
+                    child.wait = wait
+                return child
+            with patch.object(origin_observer.subprocess, 'Popen', launch):
+                result = run.run([sys.executable, '-c', script], timeout=15, cleanup=cleanup)
+            self.assertLess(time.monotonic()-start, 10)
+            self.assertFalse(result['timed_out'])
+            self.assertEqual(result['returncode'], 0)
+            if not force_wait:
+                self.assertTrue(result['process_completeness_verified'], result)
+            import gzip
+            raw = gzip.decompress((run.directory/'trace').read_bytes())
+            self.assertEqual(len(raw), result['decoded_trace']['bytes'])
+
+    def test_root_drain_timeout_still_finishes_compression(self):
+        self.test_normal_root_exit_cleans_descendant_without_timeout(force_wait=True)
+
     def test_compressor_exits_before_fifo_open(self):
         real = subprocess.Popen
         launched = []
@@ -42,11 +82,12 @@ class TracerFailures(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'cleanup injected'):
                 run.run(['/bin/sleep', '30'], timeout=.1, cleanup=fail_cleanup)
             self.assertTrue(all(p.poll() is not None for p in launched))
+            self.assertTrue(run.timed_out)
             self.assertFalse((run.directory / 'trace.fifo').exists())
 
 
 class CollectorFailures(unittest.TestCase):
-    def exercise(self, *, stop_failure=False, source_failure=False, verification_failure=False, bundle_failure=None):
+    def exercise(self, *, stop_failure=False, source_failure=False, verification_failure=False, bundle_failure=None, state_failure=False):
         import contextlib
         import io
         import json
@@ -108,7 +149,9 @@ class CollectorFailures(unittest.TestCase):
                 def __init__(self, path, *args):
                     self.root=path; path.mkdir(); self.facts={'available':[]}; self.files={}; partials.append(self)
                 def add(self, *args, **kwargs): pass
-                def tree(self, role, path): self.facts[role]=True
+                def tree(self, role, path):
+                    if role == 'state' and state_failure: raise OSError('retention injected')
+                    self.facts[role]=True
                 def finish(self, facts):
                     self.launch=facts; (self.root/'manifest.json').write_text('{}')
             def collect_work(l, out):
@@ -147,7 +190,11 @@ class CollectorFailures(unittest.TestCase):
                 self.assertEqual(partials[0].root,out/'replay-partial-private')
                 self.assertTrue((partials[0].root/'manifest.json').exists())
                 self.assertEqual(meta['replay_path'],str(partials[0].root))
-                grade.assert_called_once()
+                if state_failure: grade.assert_not_called()
+                else: grade.assert_called_once()
+
+    def test_partial_state_failure_blocks_mutating_grade(self):
+        self.exercise(bundle_failure='constructor', state_failure=True)
 
     def test_live_service_blocks_sealing_and_grading(self): self.exercise(stop_failure=True)
     def test_source_capture_failure_preserves_work_and_blocks_reset(self): self.exercise(source_failure=True)

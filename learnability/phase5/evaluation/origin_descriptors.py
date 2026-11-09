@@ -13,7 +13,7 @@ MUTATIONS = ('open', 'openat', 'openat2', 'creat', 'memfd_create', 'close',
              'close_range', 'dup', 'dup2', 'dup3', 'fcntl', 'execve', 'execveat',
              'clone', 'clone3', 'fork', 'vfork', 'unshare', 'socket', 'socketpair',
              'accept', 'accept4', 'pipe', 'pipe2', 'recvmsg', 'recvmmsg')
-TRACE_FACTS = 'open,openat,openat2,creat,memfd_create,fstat,newfstatat,close_range'
+TRACE_FACTS = 'ioctl,pidfd_getfd,open,openat,openat2,creat,memfd_create,fstat,newfstatat,close_range'
 
 
 class DescriptorFacts:
@@ -28,6 +28,8 @@ class DescriptorFacts:
         failed = re.match(r'-1 [A-Z][A-Z0-9_]*(?: |$)', result)
         if failed:
             return False
+        if op == 'pidfd_getfd':
+            return True
         if op == 'fcntl' and 'F_DUPFD' not in args:
             return False
         if op in KERNEL + POSITIONED + ASYNC:

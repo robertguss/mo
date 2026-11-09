@@ -17,6 +17,13 @@ import proxy
 import replay_bundle
 
 
+def launch_binding(manifest):
+    launch = manifest['launch']
+    return dict(collection_id=launch.get('collection_id'), started_at=launch.get('started_at'),
+                execution_clean=(launch.get('launched') is True and
+                    launch.get('timeout') is False and launch.get('failures') == []))
+
+
 class ReplayReceipt:
     """Constructed exclusively from a verified private bundle and trusted binding."""
     def __init__(self, root, session_id, session_uid):
@@ -168,6 +175,7 @@ def regrade(root, *, session_id, session_uid, workspace_parent):
             traffic_completeness=matched['match'], model_provenance=False)
         verdict.update(evidence_class='DEVELOPMENT' if m['launch']['development'] is True else 'FINAL',
                        slot=m['launch']['slot'], client=client)
+        verdict.update(launch_binding(m))
         verdict['correct'] = False
         verdict['limitations'] = ['Serving-model provenance remains unqualified.',
             'Publication integrity requires publisher scan and archive verification.',
@@ -247,7 +255,7 @@ def partial_regrade(root, m, uid, workspace_parent):
                     reasons.append('state check unavailable: ' + type(error).__name__)
             else:
                 reasons.append('state check lacks retained live observations or inputs')
-    return dict(correct=False, dimensions=dimensions, reasons=reasons,
+    return dict(**launch_binding(m), correct=False, dimensions=dimensions, reasons=reasons,
         evidence_class='DEVELOPMENT' if m['launch']['development'] else 'FINAL',
         slot=m['launch']['slot'], client=m['launch']['client'],
         limitations=['Partial capture cannot attest command origin or final observation; model provenance unqualified.'])

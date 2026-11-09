@@ -215,14 +215,16 @@ def collect(l, spec, out, slot, development=False, limit=3600):
     token, upgrade = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     for value in (token, upgrade):
         p4.append_secret(l.tokens, value)
-    meta = {'slot': slot, 'client': SLOTS[slot-1], 'evidence_class': 'DEVELOPMENT' if development else 'FINAL',
+    meta = {'collection_id': secrets.token_hex(16), 'slot': slot, 'client': SLOTS[slot-1], 'evidence_class': 'DEVELOPMENT' if development else 'FINAL',
             'success': False, 'correct': False, 'development': development, 'launched': False, 'limit_seconds': limit, 'started_at': time.time(), 'failures': []}
     service = recorder = child = None
     firewall = False
     capture = None
     bundle = None
+    state_retained = False
     raw_live = {}
     trace_result = {}
+    trace_run = None
     firewall_baseline = p4.sudo("iptables", "-S", "OUTPUT").stdout
     rule = None
     old = {sig: signal.signal(sig, p4.stopped) for sig in (signal.SIGTERM, signal.SIGHUP)}
@@ -271,7 +273,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         capture = origin_identity.Capture(out / 'origin-identity', str(out), l.account().pw_uid, l.bin / 'mo')
         reserve(s['experiment'], slot, out)
         meta['launched'] = True
-        trace_result = origin_observer.TraceRun(out / 'origin-raw').run(
+        trace_run = origin_observer.TraceRun(out / 'origin-raw')
+        trace_result = trace_run.run(
             ['/usr/bin/python3', '-I', '-c', ENTER, json.dumps(environment), str(l.work), *cmd],
             timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
         shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
@@ -355,7 +358,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             cleanup('source capture', capture_work)
         if (out / 'stream.jsonl').exists() and (out / 'proxy.jsonl').exists():
             def reconcile():
-                nonlocal bundle
+                nonlocal bundle, state_retained
                 kwargs = {}
                 if (capture is not None and trace_result.get('capture_finished') is True
                         and meta['cleanup_zero_processes'] and meta['firewall_restored']
@@ -378,6 +381,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                     pending_bundle.facts['evaluation_endpoint'] = recorder.url.split('/')[2]
                     pending_bundle.finish(dict(meta))
                     bundle = pending_bundle
+                    state_retained = True
                     meta['replay_path'] = str(bundle.root)
                     kwargs = dict(capture=capture, session_id=capture.session,
                                   evaluation_endpoint=recorder.url.split('/')[2])
@@ -388,6 +392,9 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             cleanup('record reconciliation', reconcile)
         if meta['launched'] and bundle is None:
             def retain_partial():
+                nonlocal state_retained
+                if trace_run is not None and 'timeout' not in meta:
+                    meta['timeout'] = getattr(trace_run, 'timed_out', None)
                 partial_root = out / 'replay-private'
                 if partial_root.exists():
                     partial_root = out / 'replay-partial-private'
@@ -419,10 +426,11 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                                        ('proxy_log', out / 'proxy.jsonl'), ('prompt', out / 'prompt.txt')]:
                         if path.exists():
                             retain_optional(partial, role, path)
-                partial.finish(dict(meta, timeout=meta.get('timeout', False)))
+                partial.finish(dict(meta, timeout=meta.get('timeout')))
+                state_retained = 'state' in partial.facts['available']
                 meta['replay_path'] = str(partial.root)
             cleanup('partial retention', retain_partial)
-        if meta['launched'] and meta['service_stopped'] and meta['source_captured'] and 'replay_path' in meta:
+        if meta['launched'] and meta['service_stopped'] and meta['source_captured'] and state_retained:
             cleanup('grading', lambda: grade_collected(l, out, s, expected, token, upgrade, meta))
         meta['fixture_failure'] = not meta['launched']
         def redact_client_artifacts():

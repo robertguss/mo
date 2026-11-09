@@ -29,9 +29,10 @@ def tracer_diagnostic(stream):
 
 class TraceRun:
     def __init__(self, directory):
-        self.directory = pathlib.Path(directory)
+        self.directory = pathlib.Path(directory).resolve()
         self.directory.mkdir(mode=0o700)
         self.used = False
+        self.timed_out = None
 
     def run(self, command, *, timeout, env=None, session_user=None, cwd=None, cleanup=None):
         if self.used:
@@ -49,17 +50,21 @@ class TraceRun:
         fifo = self.directory / 'trace.fifo'
         os.mkfifo(fifo, 0o600)
         compressor = subprocess.Popen([sys.executable, '-c',
-            "import sys,json; from trace_storage import compress_stream; "
+            "import sys,json; from trace_storage import compress_stream,RootExit; "
             "source=open(sys.argv[1],'rb'); "
-            "result=compress_stream(source,sys.argv[2]); "
-            "print(json.dumps(result))", str(fifo), str(self.directory / 'trace')],
+            "result=compress_stream(source,sys.argv[2],RootExit(sys.argv[3])); "
+            "print(json.dumps(result))", str(fifo), str(self.directory / 'trace'), str(self.directory / 'root-exit.json')],
             cwd=str(pathlib.Path(__file__).resolve().parent), stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, start_new_session=True)
-        timed_out = False
+        timed_out = self.timed_out = False
+        root_exit = None
         child = None
+        tracer_stopped = False
         def stop_tracer():
+            nonlocal tracer_stopped
             if child is None or child.poll() is not None:
                 return
+            tracer_stopped = True
             # The tracer may run as root even when the collector does not.
             for sig in (signal.SIGTERM, signal.SIGKILL):
                 if session_user is not None and os.geteuid() != 0:
@@ -93,9 +98,28 @@ class TraceRun:
                         except subprocess.TimeoutExpired:
                             raise RuntimeError('trace compressor exited while tracer active')
                         break
+                    status = self.directory / 'root-exit.json'
+                    if status.exists():
+                        try:
+                            root_exit = json.loads(status.read_text())
+                        except json.JSONDecodeError:
+                            # The compressor owns this private file; its tiny write
+                            # may still be in progress. Never accept a partial record.
+                            root_exit = None
+                        if root_exit is not None:
+                            try:
+                                if cleanup is not None:
+                                    cleanup()
+                                try:
+                                    child.wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    stop_tracer()
+                            finally:
+                                stop_tracer()
+                            break
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        timed_out = True
+                        timed_out = self.timed_out = True
                         try:
                             if cleanup is not None:
                                 cleanup()
@@ -130,8 +154,17 @@ class TraceRun:
             integrity['integrity_errors'].append('tracer diagnostic')
             integrity['process_completeness_verified'] = False
             complete = False
-        return {'decoded_trace': decoded_pin, 'trace_storage': 'gzip', 'returncode': child.returncode, 'timed_out': timed_out,
-                'capture_finished': complete and not timed_out and child.returncode == 0,
+        if root_exit is None and (self.directory / 'root-exit.json').exists():
+            root_exit = json.loads((self.directory / 'root-exit.json').read_text())
+        returncode = root_exit['returncode'] if root_exit is not None else child.returncode
+        if (decoded_pin.get('observer_error') is not None or tracer_stopped or
+                root_exit is not None and child.returncode != returncode):
+            integrity['integrity_errors'].append('lifetime observer or tracer incomplete')
+            integrity['process_completeness_verified'] = False
+            complete = False
+        return {'tracer_returncode': child.returncode, 'tracer_stopped': tracer_stopped,
+                'decoded_trace': decoded_pin, 'trace_storage': 'gzip', 'returncode': returncode, 'timed_out': timed_out,
+                'capture_finished': complete and not timed_out and returncode == 0,
                 **integrity,
                 'qualified': False}
 

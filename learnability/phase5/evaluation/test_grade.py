@@ -79,6 +79,23 @@ class RetainedSourceTests(unittest.TestCase):
             self.assertEqual((root / 'work/queue-tests.mo').read_text(), 'immutable captured tests')
 
 
+class TraceAttestation(unittest.TestCase):
+    def test_verified_push_does_not_require_shell_text(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            stream = root / 'stream'; stream.write_text('{}\n')
+            log = root / 'log'
+            rows = [dict(direction='request', tool='mo-upgrade-commit', seq=7),
+                    dict(direction='response', tool='mo-upgrade-commit', status=200,
+                         body={'result': {'structuredContent': {'status':'accepted','ordinal':'1'}}})]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+            matched = dict(match=True, command_origin=[{'request_seq':7}])
+            self.assertEqual(grade.attestation('codex', stream, log, matched=matched)['origin'], 'command')
+            self.assertIsNone(grade.attestation('codex', stream, log,
+                              matched=dict(match=True, command_origin=[])))
+
+
 class RealControls(unittest.TestCase):
     def test_real_services(self):
         mo = pathlib.Path(os.environ.get('MO_EVAL_BINARY', str(fixture.ROOT / 'build/eval-controls/debug/mo')))

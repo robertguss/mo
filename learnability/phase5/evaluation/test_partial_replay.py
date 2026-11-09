@@ -12,6 +12,13 @@ class PartialTests(IdentityTests):
                       timeout=True, cleanup_zero_processes=False, firewall_restored=False))
         return b
 
+    def test_unknown_timeout_is_not_recorded_as_false(self):
+        b = replay_bundle.PartialBundle(self.root / 'partial', self.session, self.uid)
+        b.finish(dict(launched=True, development=True, slot=1, client='codex',
+                      timeout=None, cleanup_zero_processes=False, firewall_restored=False))
+        m = replay_bundle.verify(b.root, self.session, self.uid)
+        self.assertIsNone(m['launch']['timeout'])
+
     def test_absent_is_miss_and_class_is_protected(self):
         b = self.partial()
         (self.root / 'manifest.json').write_text(
@@ -44,11 +51,13 @@ class PartialTests(IdentityTests):
         b = self.partial()
         path = b.root / 'manifest.json'
         m = json.loads(path.read_text())
-        del m['launch']['cleanup_zero_processes']
-        path.unlink()
-        origin_identity.atomic_private(path, m)
-        with self.assertRaises(ValueError):
-            replay_bundle.verify(b.root, self.session, self.uid)
+        for key in ('cleanup_zero_processes', 'timeout'):
+            broken = json.loads(json.dumps(m))
+            del broken['launch'][key]
+            path.unlink()
+            origin_identity.atomic_private(path, broken)
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                replay_bundle.verify(b.root, self.session, self.uid)
 
     def test_source_checks_use_retained_inputs(self):
         import shutil

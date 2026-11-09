@@ -43,7 +43,9 @@ class Bundle:
         for direction in ('requests', 'responses'):
             for receipt in parsed[direction]:
                 for path in receipt['sender'].get('executable_mappings', []):
-                    if path not in self.facts['mappings']:
+                    # Anonymous/JIT code is preserved in the trace but cannot
+                    # acquire a protected mapping pin or native push identity.
+                    if path is not None and path not in self.facts['mappings']:
                         pin, _ = identity.protected(path, self.collector, self.uid)
                         self.facts['mappings'][path] = pin
 
@@ -117,7 +119,9 @@ def verify(root, session_id, session_uid):
                 or type(launch.get('slot')) is not int or launch['slot'] not in range(1, 5)
                 or launch.get('client') not in ('codex', 'claude')
                 or any(type(launch.get(k)) is not bool for k in
-                       ('timeout', 'cleanup_zero_processes', 'firewall_restored'))
+                       ('cleanup_zero_processes', 'firewall_restored'))
+                or 'timeout' not in launch
+                or (launch.get('timeout') is not None and type(launch.get('timeout')) is not bool)
                 or not isinstance(m.get('provenance', {}).get('available'), list)):
             identity.reject()
         available = m['provenance']['available']

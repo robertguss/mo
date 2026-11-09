@@ -55,21 +55,10 @@ def attestation(client, stream, log, *, matched=None):
     """
     if matched is None:
         matched = proxy.match(client, stream, log)
-    events = [json.loads(line) for line in stream.read_text().splitlines()]
-    successful = any(e.get('type') == 'item.completed' and
-                     e.get('item', {}).get('type') == 'command_execution' and
-                     e['item'].get('exit_code') == 0 and
-                     proxy.is_push(e['item'].get('command', '')) for e in events)
-    commands = set()
-    for event in events:
-        for block in proxy.base.content_blocks(event):
-            if not isinstance(block, dict):
-                continue
-            if block.get('type') == 'tool_use' and block.get('name') == 'Bash' and proxy.is_push(block.get('input', {}).get('command', '')):
-                commands.add(block.get('id'))
-            if block.get('type') == 'tool_result' and block.get('tool_use_id') in commands and not block.get('is_error', False):
-                successful = True
-    if not successful or not matched['match'] or not matched['command_origin']:
+    # The exact executable/argv, process generation, transfers and accepted
+    # commit are established by protected capture. Shell display text is not
+    # evidence of the invocation and wrappers need not contain "mo push".
+    if not matched['match'] or not matched['command_origin']:
         return None
     rows = proxy.base.entries(log)
     commits = [r for r in rows if r.get('direction') == 'request'
