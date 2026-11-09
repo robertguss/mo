@@ -18,6 +18,67 @@ class Selector(unittest.TestCase):
                 grade.migration_selector({'report': {'migration': selector}})
 
 
+class IndependentDiagnostics(unittest.TestCase):
+    def test_missing_origin_does_not_invent_identity_failure(self):
+        expected = dict(jobs=[], revision='1', stored_revision='1', next_id='1',
+                        source_digest='new', base_digest='old')
+        live = dict(jobs=[], stored_jobs=[], revision='1', stored_revision='1',
+                    next_id='1', state_complete=True)
+        report = {'report': dict(status='accepted', candidate_source='new',
+                                 active_source='new', ordinal='2')}
+        history = dict(program=dict(source='new', ordinal='2'),
+                       upgrades=[dict(new_source='new', old_source='old', ordinal='2')])
+        verdict = grade.compare(expected, live, live, history, None,
+                                answer='1', identity_report=report)
+        self.assertFalse(verdict['correct'])
+        self.assertNotIn('activation identity mismatch', verdict['reasons'])
+        self.assertIn('post-activation revision observation not proven', verdict['reasons'])
+        self.assertTrue(verdict['dimensions']['task_state'])
+        self.assertTrue(verdict['dimensions']['activation_identity'])
+        for answer in ('1', ' 1\n'):
+            result = grade.compare(expected, live, live, history,
+                                   dict(report, origin='development-reference'),
+                                   development=True, answer=answer, revision_observed=True)
+            self.assertTrue(result['correct'])
+        for bad_history in (dict(history, program=dict(source='wrong', ordinal='2')),
+                            dict(history, upgrades=history['upgrades'] * 2)):
+            result = grade.compare(expected, live, live, bad_history,
+                                   dict(report, origin='development-reference'),
+                                   development=True, answer='1', revision_observed=True)
+            self.assertFalse(result['dimensions']['activation_identity'])
+        for answer in ('Revision: 1', '`1`', '', '2'):
+            result = grade.compare(expected, live, live, history, None,
+                                   answer=answer, identity_report=report)
+            self.assertIn('wrong or missing answer', result['reasons'])
+
+
+class RetainedSourceTests(unittest.TestCase):
+    def test_source_timeout_is_a_diagnostic_result(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            candidate = root / 'candidate'; candidate.mkdir()
+            retained = root / 'tests'; retained.write_text('captured tests')
+            with patch.object(grade.subprocess, 'run', side_effect=subprocess.TimeoutExpired('mo', 240)):
+                result = grade.source_precheck('/unused/mo', candidate, root/'work', immutable_tests=retained)
+            self.assertEqual(result.returncode, 124)
+            self.assertTrue(result.timed_out)
+
+    def test_uses_retained_tests_when_checkout_is_absent(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            candidate = root / 'candidate'
+            candidate.mkdir()
+            (candidate / 'queue-tests.mo').write_text('untrusted candidate tests')
+            retained = root / 'retained-tests'
+            retained.write_text('immutable captured tests')
+            with patch.object(fixture, 'ROOT', root / 'absent'), patch.object(grade.subprocess, 'run'):
+                grade.source_precheck('/unused/mo', candidate, root / 'work',
+                                      immutable_tests=retained)
+            self.assertEqual((root / 'work/queue-tests.mo').read_text(), 'immutable captured tests')
+
+
 class RealControls(unittest.TestCase):
     def test_real_services(self):
         mo = pathlib.Path(os.environ.get('MO_EVAL_BINARY', str(fixture.ROOT / 'build/eval-controls/debug/mo')))
@@ -58,14 +119,14 @@ class RealControls(unittest.TestCase):
                 finally:
                     service.stop()
                 verdict = grade.stopped_grade(mo, root / 'prepared/data', token, upgrade, root / 'restart.log',
-                    expected, live, pushed, development=True, answer='1')
+                    expected, live, pushed, development=True, answer='1', revision_observed=True)
                 self.assertEqual(verdict['correct'], control in ('reference', 'qualified-reference'), verdict)
                 print(control, verdict)
                 if control == 'drop-job':
                     forged = dict(live, jobs=expected['jobs'])
                     self.assertFalse(grade.compare(expected, forged, forged,
                         grade.history(mo, root / 'prepared/data'), pushed,
-                        development=True, answer='1')['correct'])
+                        development=True, answer='1', revision_observed=True)['correct'])
                 if control == 'reference':
                     leased = [j for j in expected['jobs'] if j['state']['case'] == 'Leased']
                     self.assertEqual(len(leased), 1)
@@ -74,7 +135,7 @@ class RealControls(unittest.TestCase):
                     wrong_prefix = dict(expected, preparation_upgrades=[])
                     self.assertFalse(grade.compare(wrong_prefix, live, live,
                         grade.history(mo, root / 'prepared/data'), pushed,
-                        development=True, answer='1')['correct'])
+                        development=True, answer='1', revision_observed=True)['correct'])
 
 
 

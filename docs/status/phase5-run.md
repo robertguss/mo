@@ -161,3 +161,97 @@ actual activation reports its committed ordinal. No TLS client or relaxed
 loopback/credential ordering was introduced. Synthetic retry refusal is not real
 server bucket exhaustion. Earlier Claude automatic fallback remains in preflight;
 actual models from this collection are recorded separately. Phase 5 stays open.
+
+## Evaluation capture follow-up (2026-11-09)
+
+The follow-up preserves the original 0/4 result. No new scored sessions have
+run. Three declared model-serving development sessions completed: two Codex and
+one Claude, with no replacements. They did not qualify actual-model coverage.
+The additional Codex HTTP characterization captured 63 SSE events but no actual-model
+headers; successful client completion does not satisfy the provenance gate.
+Collection remains disabled pending trusted actual-model evidence for both
+frozen clients and complete real-client request attribution.
+
+The current repairs reject command-text-only upload attribution, distinguish
+state and activation identity from missing attestation, and clarify the entire
+final-message rule. Protected stub controls verify correct state and identity
+while missing provenance remains a failure. Publication distinguishes protected
+independent regrading from public score aggregation; its new regrader interface
+is not itself an implemented independent regrader.
+
+Capability inspection and retained failures are in
+[model provenance](../../learnability/phase5/evaluation/model-provenance-development.md),
+[origin observation](../../learnability/phase5/evaluation/origin-observation-development.md),
+[grading](../../learnability/phase5/evaluation/grading-development.md), and
+[integration](../../learnability/phase5/evaluation/integration-development.md).
+These repairs do not complete the follow-up plan or satisfy the release gate.
+
+Follow-up GCC verification completed with `check.sh finished: pass`; the log is
+`build/evaluation-repair-gcc.txt`. The initial integrated Python run completed
+25 of 26 tests and errored on the collector's missing binary environment setting.
+The corrected collector invocation and publication controls subsequently passed,
+as recorded in the integration note. No C or embedded guide/reference/library-map
+files changed, so additional compiler, sanitizer, fuzz and drivers/static groups
+have not been rerun for this Python-only follow-up.
+
+An independent six-lens review found no remaining defects in the intermediate
+capture changes. That verdict does not qualify the full plan, real clients or
+publication. Nine live transfer controls passed, including successful direct
+positioned I/O on a proven regular file. Protected publication regrading and
+actual-model coverage remain incomplete; development stub results cannot replace
+those requirements. Detailed failures, corrections and verification are retained
+in [transfer classification](../../learnability/phase5/evaluation/transfer-classification-development.md).
+
+The complete protected collector rerun passed all five development cases
+(native, curl, urllib, timeout and injected cleanup-reporting failure): two
+tests in 462.387 seconds, zero skips. Cleanup and credential restoration were
+verified; 81 publication-eligible files passed credential/provider scanning.
+This closes the intermediate review's rerun gap. Model and publication dimensions
+remain false; no fresh scored cohort has launched.
+
+Protected replay now reproduces success and no-upgrade diagnostics from fresh
+sealed development inputs, including retained immutable source tests. The
+no-upgrade case returns a complete miss instead of aborting publication. The
+original publication downgrade, current-checkout test dependency and missing-report
+exceptions have focused regression fixes. A subsequent independent re-review
+did not complete and is not an approval. Full updated collector checks and
+compilation-failure replay remain pending.
+
+Capture resource qualification is also unresolved: the latest success trace was
+145,534,029 bytes for roughly three seconds. The implementation reads and parses
+whole traces; its 256 GiB retention ceiling does not establish feasibility for
+the declared one-hour sessions. No new scored collection is authorized by these
+development results.
+
+The full collector suite after streaming and partial-receipt integration passed
+all five declared development cases: three unittest methods in 658.500 seconds
+(build/stream-full-collector.txt). Cleanup and credential restoration passed;
+82 publication-eligible files passed scanning. The required GCC check completed
+with `check.sh finished: pass` (build/stream-final-gcc.txt).
+
+A bounded production replay measurement established that the repeated 598192 KiB
+ru_maxrss value was retained accounting across exec: the measured replay kernel
+VmHWM was 40880 KiB. This resolves that measurement ambiguity, not full-hour
+resource qualification. Remaining growing buffers and model-evidence limits
+remain documented in the resource and provenance notes.
+
+Follow-up lifecycle verification (2026-11-09): integrated review found four
+failure-path defects in cleanup/source preservation, service quiescence, bundle
+fallback and tracer shutdown. Corrections pass 149 focused tests. Exactly two
+additional DEVELOPMENT collector controls (success and timeout, no retries or
+model calls) passed their assertions; the timeout's protected partial replay
+completed in 72.324s with source tests true and the other six grading dimensions
+false, preserving all retained pins. Cleanup and credential scans passed. The
+success control passed the six non-model dimensions. Independent re-review of
+these corrections is pending. Full-duration resource and actual-model proof
+remain unresolved; scored collection stays disabled and official 0/4 is unchanged.
+
+The lifecycle re-review's two remaining retention findings are corrected: existing
+work blocks reset even if the hold cannot be written, and optional artifact
+retention failures no longer abort a partial manifest. Final focused checks:
+154 passed. One declared DEVELOPMENT fallback collector and actual callback
+replay retained useful state, identity and source diagnostics while denying
+origin, traffic, final-answer and model credit. An overly strict identity
+assertion failed after replay; the failure and separate saved-verdict validation
+are retained, with no repeat collection. Cleanup and credential scans passed.
+Model proof, full-duration capacity and phase closure remain unresolved.

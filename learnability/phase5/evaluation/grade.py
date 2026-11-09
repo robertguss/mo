@@ -48,12 +48,13 @@ def history(mo, folder):
     return next(r for r in records if r.get('record') == 'history')
 
 
-def attestation(client, stream, log):
+def attestation(client, stream, log, *, matched=None):
     """Require reconciled proxy traffic and a successful recorded push command.
 
     The runner supplies protected original stream/log paths, never client summaries.
     """
-    matched = proxy.match(client, stream, log)
+    if matched is None:
+        matched = proxy.match(client, stream, log)
     events = [json.loads(line) for line in stream.read_text().splitlines()]
     successful = any(e.get('type') == 'item.completed' and
                      e.get('item', {}).get('type') == 'command_execution' and
@@ -70,7 +71,17 @@ def attestation(client, stream, log):
                 successful = True
     if not successful or not matched['match'] or not matched['command_origin']:
         return None
-    return accepted_report(log)
+    rows = proxy.base.entries(log)
+    commits = [r for r in rows if r.get('direction') == 'request'
+               and r.get('tool') == 'mo-upgrade-commit']
+    proven = {r['request_seq'] for r in matched['command_origin']}
+    if len(commits) != 1 or commits[0]['seq'] not in proven:
+        return None
+    if any(r.get('direction') == 'request' and r.get('tool') in proxy.UPLOAD
+           and r['seq'] not in proven for r in rows):
+        return None
+    accepted = accepted_report(log)
+    return dict(accepted, origin='command') if accepted else None
 
 
 def accepted_report(log):
@@ -81,7 +92,7 @@ def accepted_report(log):
             body = row.get('body') or {}
             report = body.get('result', {}).get('structuredContent', {})
             if report.get('status') == 'accepted' and report.get('ordinal'):
-                return {'origin': 'command', 'report': report}
+                return {'report': report}
     return None
 
 
@@ -92,7 +103,8 @@ def migration_selector(pushed):
     return selector
 
 
-def compare(expected, live, restarted, recorded, pushed, development=False, answer=None):
+def compare(expected, live, restarted, recorded, pushed, development=False, answer=None,
+            identity_report=None, revision_observed=False):
     reasons = []
     for label, observed in [('live', live), ('restart', restarted)]:
         if observed.get('state_complete') is not True:
@@ -102,30 +114,39 @@ def compare(expected, live, restarted, recorded, pushed, development=False, answ
         for field in ('jobs', 'revision', 'stored_revision', 'next_id'):
             if observed.get(field) != expected[field]:
                 reasons.append(label + ': wrong ' + field)
-    report = (pushed or {}).get('report', {})
+    state_ok = not reasons
+    report = (identity_report or pushed or {}).get('report', {})
     origin = (pushed or {}).get('origin')
-    if origin != 'command' and not (development and origin == 'development-reference'):
+    command_ok = origin == 'command' or (development and origin == 'development-reference')
+    if not command_ok:
         reasons.append('no successful recorded command-origin push')
     upgrades = recorded.get('upgrades', [])
     preparation = expected.get('preparation_upgrades', [])
     session_upgrades = upgrades[len(preparation):]
-    if (report.get('status') != 'accepted' or report.get('candidate_source') != expected['source_digest']
+    identity_ok = not (report.get('status') != 'accepted' or report.get('candidate_source') != expected['source_digest']
             or report.get('active_source') != expected['source_digest'] or
             recorded.get('program', {}).get('source') != expected['source_digest'] or
             recorded.get('program', {}).get('ordinal') != report.get('ordinal') or
             upgrades[:len(preparation)] != preparation or len(session_upgrades) != 1 or recorded.get('upgrades_truncated') or
             session_upgrades[0].get('new_source') != expected['source_digest'] or
             session_upgrades[0].get('old_source') != expected['base_digest'] or
-            session_upgrades[0].get('ordinal') != report.get('ordinal')):
+            session_upgrades[0].get('ordinal') != report.get('ordinal'))
+    if not identity_ok:
         reasons.append('activation identity mismatch')
-    if answer != expected['revision']:
+    if not revision_observed:
+        reasons.append('post-activation revision observation not proven')
+    answer_ok = isinstance(answer, str) and answer.strip() == expected['revision']
+    if not answer_ok:
         reasons.append('wrong or missing answer')
     return {'correct': not reasons, 'reasons': reasons,
+            'dimensions': {'task_state': state_ok, 'activation_identity': identity_ok,
+                           'command_origin': command_ok,
+                           'final_answer': revision_observed is True and answer_ok},
             'evidence_class': 'DEVELOPMENT' if development else 'SESSION'}
 
 
 def stopped_grade(mo, folder, token, upgrade, log, expected, live, pushed,
-                  development=False, answer=None):
+                  development=False, answer=None, identity_report=None, revision_observed=False):
     before = history(mo, folder)
     service = fixture.Service(mo, folder, token, upgrade, log)
     try:
@@ -133,10 +154,12 @@ def stopped_grade(mo, folder, token, upgrade, log, expected, live, pushed,
     finally:
         service.stop()
     after = history(mo, folder)
-    result = compare(expected, live, restarted, after, pushed, development, answer)
+    result = compare(expected, live, restarted, after, pushed, development, answer,
+                     identity_report, revision_observed)
     if before.get('upgrades') != after.get('upgrades'):
         result['reasons'].append('restart changed activation history')
         result['correct'] = False
+        result['dimensions']['activation_identity'] = False
     return result
 
 
@@ -144,7 +167,7 @@ precheck = fixture.precheck
 live_grade = observe
 
 
-def source_precheck(mo, candidate, work, original=None):
+def source_precheck(mo, candidate, work, original=None, *, immutable_tests=None):
     """Restore immutable queue tests in a private grading copy and execute them."""
     import pathlib
     import shutil
@@ -174,6 +197,12 @@ def source_precheck(mo, candidate, work, original=None):
     target = work / 'queue-tests.mo'
     if target.exists() or target.is_symlink():
         target.unlink()
-    shutil.copyfile(fixture.ROOT / 'services/task-queue/queue-tests.mo', target)
-    return subprocess.run([str(mo), 'test', '--json', str(target)],
-                          capture_output=True, text=True, timeout=240)
+    shutil.copyfile(immutable_tests if immutable_tests is not None else
+                    fixture.ROOT / 'services/task-queue/queue-tests.mo', target)
+    command = [str(mo), 'test', '--json', str(target)]
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=240)
+    except subprocess.TimeoutExpired:
+        result = subprocess.CompletedProcess(command, 124, stdout='', stderr='source tests timed out')
+        result.timed_out = True
+        return result

@@ -11,6 +11,9 @@ import signal
 import subprocess
 import sys
 import time
+import origin_identity
+import origin_observer
+import replay_bundle
 
 HERE = Path(__file__).resolve().parent
 
@@ -117,21 +120,66 @@ def command(client, binary, prompt, url, config):
 
 
 def models(stream):
-    found, events = set(), []
-    def walk(x):
-        if isinstance(x, dict):
-            for k, v in x.items():
-                if k == 'model' and isinstance(v, str):
-                    found.add(v)
-                walk(v)
-        elif isinstance(x, list):
-            for v in x:
-                walk(v)
-    for e in proxy.base.events(stream):
-        walk(e)
-        if 'model' in json.dumps(e).lower() or 'fallback' in json.dumps(e).lower():
-            events.append(e)
-    return {'reported_models': sorted(found), 'events': events}
+    events = [e for e in proxy.base.events(stream)
+              if 'model' in json.dumps(e).lower() or 'fallback' in json.dumps(e).lower()]
+    return {'reported_models': [], 'events': events, 'qualified': False,
+            'reason': 'trusted session-bound serving-model metadata unqualified'}
+
+
+def final_message(client, stream):
+    events = list(proxy.base.events(stream))
+    if client == 'codex':
+        answer = None
+        completed = False
+        for event in events:
+            if event.get('type') == 'turn.started':
+                answer, completed = None, False
+            if event.get('type') == 'item.completed':
+                item = event.get('item', {})
+                answer = item.get('text') if item.get('type') == 'agent_message' else None
+                completed = False
+            if event.get('type') == 'turn.completed':
+                completed = True
+            if event.get('type') in ('turn.failed', 'error'):
+                completed = False
+        return answer if completed and isinstance(answer, str) else None
+    if client == 'claude':
+        # The terminal result carries the complete final message; intermediate
+        # assistant events can include narration followed by additional tool work.
+        results = [e for e in events if e.get('type') == 'result']
+        if len(results) == 1:
+            result = results[0]
+            if result.get('subtype') == 'success' and not result.get('is_error'):
+                answer = result.get('result')
+                return answer if isinstance(answer, str) else None
+    return None
+
+
+def require_no_retention_hold(installed):
+    for path in (installed.work, installed.state / 'retention-hold.json'):
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise ValueError('uncaptured work retained: recover existing work and retention hold before reset')
+
+
+def reset_preserving_work(installed, out, meta):
+    # Never let the legacy reset delete the only copy after failed capture.
+    if meta.get('launched') and installed.work.exists() and not meta.get('source_captured'):
+        origin_identity.atomic_private(installed.state / 'retention-hold.json',
+                                      dict(work=str(installed.work), evidence=str(out),
+                                           reason='source capture incomplete', qualified=False))
+        raise RuntimeError('uncaptured work preserved; destructive reset withheld')
+    p4.reset(installed)
+
+
+def retain_optional(partial, role, path):
+    try:
+        partial.add(role, path)
+        partial.facts['available'].append(role)
+    except Exception as error:
+        partial.facts.setdefault('unavailable', {})[role] = type(error).__name__
 
 
 def collect(l, spec, out, slot, development=False, limit=3600):
@@ -139,6 +187,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         raise ValueError('invalid slot or time limit')
     if limit <= 0:
         raise ValueError('positive time limit required')
+    if not development:
+        raise ValueError('collection disabled: model and command-origin qualification incomplete')
     out = Path(out).resolve()
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
     p4.check_private(l, out, Path(spec).resolve(), l.state)
@@ -160,6 +210,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
     p4.check_private(l, Path(s['expected']), Path(s['experiment']))
     if expected.get('revision') != '1':
         raise ValueError('expected revision must be 1')
+    require_no_retention_hold(l)
     p4.reset(l)
     token, upgrade = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     for value in (token, upgrade):
@@ -168,6 +219,11 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             'success': False, 'correct': False, 'development': development, 'launched': False, 'limit_seconds': limit, 'started_at': time.time(), 'failures': []}
     service = recorder = child = None
     firewall = False
+    capture = None
+    bundle = None
+    raw_live = {}
+    trace_result = {}
+    firewall_baseline = p4.sudo("iptables", "-S", "OUTPUT").stdout
     rule = None
     old = {sig: signal.signal(sig, p4.stopped) for sig in (signal.SIGTERM, signal.SIGHUP)}
     try:
@@ -202,8 +258,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                         'Mo-Upgrade-Authorization': 'Bearer ${QUEUE_UPGRADE}'}}}}))
         os.chmod(l.mcp_config, 0o444)
         prompt = Path(s['prompt']).read_text().replace('SERVICE_URL', recorder.url)
-        prompt += '\nUse the migration function name migrate. Your final message must be exactly 1.\n'
-        meta['answer_rule'] = 'last assistant message, stripped, exactly 1'
+        meta['answer_rule'] = 'entire final message, stripped, solely the post-activation observed revision'
         meta['migration_requirement'] = 'migrate'
         (out / 'prompt.txt').write_text(prompt)
         cmd = command(meta['client'], l.bin / meta['client'], prompt, recorder.url, l.mcp_config)
@@ -211,23 +266,32 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                        'SHELL': '/bin/bash', 'PATH': f'{l.bin}:/usr/bin:/bin',
                        'LANG': 'C.UTF-8', 'DISABLE_AUTOUPDATER': '1'}
         start = time.monotonic()
-        with open(out / 'stream.jsonl', 'wb') as stdout, open(out / 'client-stderr.txt', 'wb') as stderr:
-            reserve(s['experiment'], slot, out)
-            meta['launched'] = True
-            child = subprocess.Popen(['sudo', '-n', '-u', l.user,
-                '--preserve-env=QUEUE_TOKEN,QUEUE_UPGRADE', '--', '/usr/bin/python3', '-I', '-c', ENTER,
-                json.dumps(environment), str(l.work), *cmd], env=env, stdin=subprocess.DEVNULL,
-                stdout=stdout, stderr=stderr, start_new_session=True)
-            try:
-                meta['exit_status'] = child.wait(timeout=limit)
-                meta['timeout'] = False
-            except subprocess.TimeoutExpired:
-                meta['timeout'] = True
-                p4.end_all(l.user)
-                meta['exit_status'] = child.wait(timeout=30)
+        if (l.bin / 'mo').stat().st_uid != 0:
+            raise ValueError('frozen mo must be root owned')
+        capture = origin_identity.Capture(out / 'origin-identity', str(out), l.account().pw_uid, l.bin / 'mo')
+        reserve(s['experiment'], slot, out)
+        meta['launched'] = True
+        trace_result = origin_observer.TraceRun(out / 'origin-raw').run(
+            ['/usr/bin/python3', '-I', '-c', ENTER, json.dumps(environment), str(l.work), *cmd],
+            timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
+        shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
+        shutil.copyfile(out / 'origin-raw/stderr', out / 'client-stderr.txt')
+        meta['exit_status'] = trace_result['returncode']
+        meta['timeout'] = trace_result['timed_out']
+        meta['capture'] = trace_result
         meta['seconds'] = time.monotonic() - start
         meta['models'] = models(out / 'stream.jsonl')
-        meta['live'] = grader.live_grade(client)
+        class RecordingClient:
+            def every_job(self):
+                value = client.every_job()
+                raw_live['jobs'] = value
+                return value
+            def ok(self, name):
+                value = client.ok(name)
+                raw_live[name] = value
+                return value
+        raw_live = {}
+        meta['live'] = grader.live_grade(RecordingClient())
         if meta['timeout'] or meta['exit_status'] != 0:
             meta['failures'].append('timeout or unsuccessful exit')
         wanted = 'gpt-6.1-sol' if meta['client'] == 'codex' else 'claude-opus-5-5'
@@ -243,6 +307,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                 meta['failures'].append('cleanup ' + name + ': ' + type(error).__name__)
 
         def stop_service():
+            if not hasattr(service, 'process'):
+                return
             if service.process.poll() is None:
                 service.process.terminate()
                 try:
@@ -252,33 +318,136 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                     service.process.wait(timeout=10)
 
         cleanup('client processes', lambda: p4.end_all(l.user))
+        meta['cleanup_zero_processes'] = False
+        def verify_processes():
+            found = subprocess.run(['pgrep', '-U', l.user], capture_output=True, text=True, timeout=60)
+            meta['cleanup_zero_processes'] = found.returncode == 1 and not found.stdout.strip()
+        cleanup('process verification', verify_processes)
+        if not meta['cleanup_zero_processes']:
+            cleanup('client processes retry', lambda: p4.end_all(l.user))
+            cleanup('process verification retry', verify_processes)
         if child is not None:
             cleanup('client wait', lambda: child.wait(timeout=30))
         if recorder is not None:
             cleanup('proxy', recorder.stop)
+        meta['service_stopped'] = service is None
         if service is not None:
             cleanup('service process', stop_service)
+            meta['service_stopped'] = not hasattr(service, 'process') or service.process.poll() is not None
             cleanup('service stdout', lambda: service.process.stdout.close())
             cleanup('service stderr', lambda: service.stderr.close())
             cleanup('service log', lambda: shutil.copyfile(service.stderr_path, out / 'service.log'))
         if firewall:
             cleanup('firewall', lambda: p4.sudo('iptables', '-D', *rule))
-        if l.work.exists():
+        meta['firewall_restored'] = False
+        def verify_firewall():
+            meta['firewall_restored'] = p4.sudo('iptables', '-S', 'OUTPUT').stdout == firewall_baseline
+        cleanup('firewall verification', verify_firewall)
+        if not meta['firewall_restored']:
+            cleanup('firewall verification retry', verify_firewall)
+        if not meta['firewall_restored'] or not meta['cleanup_zero_processes']:
+            meta['failures'].append('capture cleanup verification failed')
+        meta['source_captured'] = False
+        if l.work.exists() and meta['cleanup_zero_processes'] and meta['firewall_restored']:
             def capture_work():
                 meta['symlinks_removed'] = p4.collect_work(l, out)
+                meta['source_captured'] = True
             cleanup('source capture', capture_work)
         if (out / 'stream.jsonl').exists() and (out / 'proxy.jsonl').exists():
             def reconcile():
-                meta['records'] = proxy.match(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl')
+                nonlocal bundle
+                kwargs = {}
+                if (capture is not None and trace_result.get('capture_finished') is True
+                        and meta['cleanup_zero_processes'] and meta['firewall_restored']
+                        and meta['service_stopped'] and meta['source_captured']):
+                    trace = out / 'origin-raw/trace'
+                    snapshot = out / 'origin-identity/tcp.json'
+                    origin_identity.atomic_private(snapshot, dict(session=capture.session, nonce=capture.nonce,
+                        trace_sha256=origin_identity.protected(trace, os.geteuid(), capture.session_uid, private=True, pin_only=True)[0]['sha256'], snapshots=recorder.recorder.snapshots))
+                    capture.seal(trace, out / 'proxy.jsonl', snapshot, stdout=out / 'origin-raw/stdout', client_path=l.bin / meta['client'])
+                    pending_bundle = replay_bundle.Bundle(out / 'replay-private', capture,
+                        evaluation_endpoint=recorder.url.split('/')[2])
+                    pending_bundle.add('expected', s['expected'])
+                    pending_bundle.add('immutable_tests', grader.fixture.ROOT / 'services/task-queue/queue-tests.mo')
+                    pending_bundle.add('spec', spec)
+                    pending_bundle.add('prompt', out / 'prompt.txt')
+                    for role, path in [('original', out / 'serve'), ('context', s['context']),
+                                       ('candidate', out / l.work.name), ('state', out / 'data')]:
+                        pending_bundle.tree(role, path)
+                    pending_bundle.facts['live_observations'] = raw_live
+                    pending_bundle.facts['evaluation_endpoint'] = recorder.url.split('/')[2]
+                    pending_bundle.finish(dict(meta))
+                    bundle = pending_bundle
+                    meta['replay_path'] = str(bundle.root)
+                    kwargs = dict(capture=capture, session_id=capture.session,
+                                  evaluation_endpoint=recorder.url.split('/')[2])
+                meta['records'] = proxy.match(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl', **kwargs)
+                if not kwargs:
+                    meta['records']['match'] = False
+                    meta['records']['capture_incomplete'] = True
             cleanup('record reconciliation', reconcile)
-        if meta['launched']:
+        if meta['launched'] and bundle is None:
+            def retain_partial():
+                partial_root = out / 'replay-private'
+                if partial_root.exists():
+                    partial_root = out / 'replay-partial-private'
+                partial = replay_bundle.PartialBundle(partial_root, str(out), l.account().pw_uid)
+                safe = (meta['cleanup_zero_processes'] and meta['firewall_restored']
+                        and meta['service_stopped'] and meta['source_captured'])
+                partial.facts['live_observations'] = raw_live
+                for role, path in [('expected', Path(s['expected'])), ('spec', Path(spec)),
+                                   ('immutable_tests', grader.fixture.ROOT / 'services/task-queue/queue-tests.mo'),
+                                   ('binary', l.bin / 'mo')]:
+                    if path.exists():
+                        partial.add(role, path, executable=role == 'binary')
+                        partial.facts['available'].append(role)
+                if 'binary' in partial.files:
+                    loader = origin_identity.interpreter((partial.root / 'binary').read_bytes())
+                    if loader:
+                        partial.facts['loader'] = origin_identity.trusted_interpreter(loader, partial.collector, partial.uid)
+                        partial.add('loader', partial.facts['loader']['path'], expected=partial.facts['loader'])
+                if safe:
+                    for role, path in [('original', out / 'serve'), ('context', Path(s['context'])),
+                                       ('candidate', out / l.work.name), ('state', out / 'data')]:
+                        if path.is_dir():
+                            try:
+                                partial.tree(role, path)
+                                partial.facts['available'].append(role)
+                            except Exception as error:
+                                partial.facts.setdefault('unavailable', {})[role] = type(error).__name__
+                    for role, path in [('stdout', out / 'origin-raw/stdout'), ('trace', out / 'origin-raw/trace'),
+                                       ('proxy_log', out / 'proxy.jsonl'), ('prompt', out / 'prompt.txt')]:
+                        if path.exists():
+                            retain_optional(partial, role, path)
+                partial.finish(dict(meta, timeout=meta.get('timeout', False)))
+                meta['replay_path'] = str(partial.root)
+            cleanup('partial retention', retain_partial)
+        if meta['launched'] and meta['service_stopped'] and meta['source_captured'] and 'replay_path' in meta:
             cleanup('grading', lambda: grade_collected(l, out, s, expected, token, upgrade, meta))
         meta['fixture_failure'] = not meta['launched']
-        cleanup('reset', lambda: p4.reset(l))
+        def redact_client_artifacts():
+            # The sealed raw capture remains private; redact review copies only.
+            if recorder is None: return
+            for name in ('stream.jsonl', 'client-stderr.txt'):
+                path = out / name
+                if path.exists():
+                    path.write_text('\n'.join(recorder.recorder.clean(line) for line in path.read_text().splitlines()) + '\n')
+        cleanup('client redaction', redact_client_artifacts)
+        cleanup('reset', lambda: reset_preserving_work(l, out, meta))
         def inventory():
             meta['artifacts'] = p4.artifacts(out)
         cleanup('artifact inventory', inventory)
-        meta['correct'] = meta['success'] = meta['launched'] and not meta['failures']
+        dimensions = dict.fromkeys(('task_state', 'activation_identity', 'command_origin',
+                                    'final_answer'), False)
+        dimensions.update(meta.get('grade', {}).get('dimensions', {}))
+        dimensions.update(
+            source_tests=meta.get('source_tests_passed', False),
+            traffic_completeness=meta.get('records', {}).get('match') is True,
+            model_provenance=meta.get('models', {}).get('qualified') is True,
+            publication_integrity=False)
+        meta['dimensions'] = dimensions
+        meta['correct'] = meta['success'] = (meta['launched'] and not meta['failures']
+                                             and all(dimensions.values()))
         try:
             (out / 'manifest.json').write_text(json.dumps(meta, indent=2) + '\n')
         finally:
@@ -305,33 +474,52 @@ def reserve(experiment, slot, out):
 
 def grade_collected(l, out, spec, expected, token, upgrade, meta):
     candidate = out / l.work.name
-    result = grader.source_precheck(l.bin / 'mo', candidate, out / 'source-tests', out / 'serve')
+    retained_tests = Path(meta.get('replay_path', out / 'replay-private')) / 'immutable_tests'
+    result = grader.source_precheck(l.bin / 'mo', candidate, out / 'source-tests', out / 'serve',
+        immutable_tests=retained_tests if retained_tests.exists() else None)
     (out / 'source-tests.json').write_text(result.stdout)
+    meta['source_tests_passed'] = result.returncode == 0
     if result.returncode:
-        meta['failures'].append('immutable source tests failed')
-    pushed = grader.attestation(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl')
+        meta['failures'].append('source tests timed out' if getattr(result, 'timed_out', False)
+                                else 'immutable source tests failed')
+    pushed = grader.attestation(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl', matched=meta.get('records'))
     if pushed is None:
         meta['failures'].append('proxy/stream push attestation failed')
     # Compile the recorded selector even when reconciliation failed; the verdict
     # still receives None and cannot credit an unattested push.
-    selector = grader.migration_selector(grader.accepted_report(out / 'proxy.jsonl'))
-    checked = subprocess.run([str(l.bin / 'mo'), 'check', str(candidate / 'main.mo'),
-        '--upgrade-from', str(out / 'serve/main.mo'), '--migrate', selector, '--json'],
-        capture_output=True, text=True, timeout=120)
-    (out / 'upgrade-check.json').write_text(checked.stdout)
-    (out / 'upgrade-check.stderr').write_text(checked.stderr)
-    if checked.returncode:
-        meta['failures'].append('candidate upgrade compilation failed')
-        return
-    identity = json.loads(checked.stdout)
+    identity = {'candidate_source': None, 'base_source': None}
+    try:
+        selector = grader.migration_selector(grader.accepted_report(out / 'proxy.jsonl'))
+    except ValueError:
+        meta['failures'].append('no accepted upgrade with a valid migration selector')
+    else:
+        checked = subprocess.run([str(l.bin / 'mo'), 'check', str(candidate / 'main.mo'),
+            '--upgrade-from', str(out / 'serve/main.mo'), '--migrate', selector, '--json'],
+            capture_output=True, text=True, timeout=120)
+        (out / 'upgrade-check.json').write_text(checked.stdout)
+        (out / 'upgrade-check.stderr').write_text(checked.stderr)
+        if checked.returncode:
+            meta['failures'].append('candidate upgrade compilation failed')
+        else:
+            identity = json.loads(checked.stdout)
     expected = dict(expected, source_digest=identity['candidate_source'], base_digest=identity['base_source'])
     meta['identity'] = identity
-    answer = (p4.grade.last_message(out / 'stream.jsonl') or '').strip()
+    answer = final_message(meta['client'], out / 'stream.jsonl')
     verdict = grader.stopped_grade(l.bin / 'mo', out / 'data', token, upgrade,
         out / 'restart.log', expected, meta.get('live', {}), pushed,
-        development=meta['development'], answer=answer)
+        development=meta['development'], answer=answer,
+        identity_report=grader.accepted_report(out / 'proxy.jsonl'),
+        revision_observed=meta.get('records', {}).get('revision_observed') is True)
     meta['grade'] = verdict
     meta['failures'].extend(verdict['reasons'])
+
+
+def setup(installed, mo, claude, codex):
+    require_no_retention_hold(installed)
+    status = p4.setup(installed, mo, claude, codex)
+    # The capture pins a root-owned executable with no writable mode bits.
+    p4.sudo('chmod', '0555', installed.bin / 'mo')
+    return status
 
 
 def main():
@@ -344,7 +532,7 @@ def main():
     a = parser.parse_args()
     l = layout()
     if a.action == 'setup':
-        return p4.setup(l, *a.inputs)
+        return setup(l, *a.inputs)
     if a.action == 'check':
         check(l)
         freeze(a.inputs[0], l)

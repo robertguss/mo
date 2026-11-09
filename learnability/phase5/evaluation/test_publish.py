@@ -24,10 +24,89 @@ class Publication(unittest.TestCase):
             directory.mkdir()
             (directory / 'manifest.json').write_text(json.dumps({
                 'slot': slot, 'client': client, 'development': False,
-                'correct': slot != 4, 'failures': ['timeout'] if slot == 4 else []}))
+                'correct': slot != 4, 'launched': True, 'timeout': slot == 4,
+                'dimensions': dict.fromkeys((*publish.DIMENSIONS, 'publication_integrity'), True), 'failures': ['timeout'] if slot == 4 else []}))
             (directory / 'stream.jsonl').write_text('{}\n')
             (directory / 'proxy.jsonl').write_text('{}\n')
             self.sessions.append(directory)
+
+    def test_missing_dimensions_cannot_select_legacy_credit(self):
+        for directory in self.sessions:
+            path = directory / 'manifest.json'
+            row = json.loads(path.read_text())
+            del row['dimensions']
+            path.write_text(json.dumps(row))
+        calls = []
+        def regrade(directory):
+            calls.append(directory)
+            return dict.fromkeys(publish.DIMENSIONS, False)
+        with self.assertRaisesRegex(ValueError, 'dimensions required'):
+            publish.publish(self.sessions, self.root / 'downgrade',
+                            [self.secret_file], [self.provider_file],
+                            protected_regrade=regrade)
+        self.assertFalse((self.root / 'downgrade').exists())
+
+    def test_protected_classification_and_binding_required(self):
+        for value in ({'evidence_class': 'DEVELOPMENT'}, {'slot': 4}, {'client': 'claude'}):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'protected classification'):
+                publish.publish(self.sessions, self.root / 'forged-class',
+                    [self.secret_file], [self.provider_file],
+                    protected_regrade=lambda directory: dict(self.record(directory), **value))
+        self.assertFalse((self.root / 'forged-class').exists())
+
+    def record(self, directory, dimensions=None):
+        slot = self.sessions.index(directory) + 1
+        return dict(evidence_class='FINAL', slot=slot, client=publish.evidence.ORDER[slot-1],
+                    dimensions=dict.fromkeys(publish.DIMENSIONS, True) if dimensions is None else dimensions)
+
+    def test_dimensions_require_independent_regrade(self):
+        for directory in self.sessions:
+            path = directory / 'manifest.json'
+            row = json.loads(path.read_text())
+            row.update(dimensions=dict.fromkeys(publish.DIMENSIONS, True),
+                       correct=False, launched=True, timeout=False, failures=[])
+            row['dimensions']['publication_integrity'] = False
+            path.write_text(json.dumps(row))
+        with self.assertRaisesRegex(ValueError, 'independent protected'):
+            publish.publish(self.sessions, self.root / 'refused', [self.secret_file], [self.provider_file])
+        with self.assertRaisesRegex(ValueError, 'complete boolean'):
+            publish.publish(self.sessions, self.root / 'missing', [self.secret_file], [self.provider_file],
+                            protected_regrade=lambda directory: self.record(directory, {'task_state': True}))
+        # Synthetic regrader exercises the interface only; it is not qualification.
+        result = publish.publish(self.sessions, self.root / 'dimensions',
+                                 [self.secret_file], [self.provider_file],
+                                 protected_regrade=self.record)
+        self.assertTrue(result['gate']['passed'])
+        result = publish.publish(self.sessions, self.root / 'failed-dimension',
+                                 [self.secret_file], [self.provider_file],
+                                 protected_regrade=lambda directory: self.record(directory, dict(dict.fromkeys(publish.DIMENSIONS, True), model_provenance=False)))
+        self.assertFalse(result['gate']['passed'])
+
+    def test_regraded_pass_requires_original_logs(self):
+        for directory in self.sessions:
+            path = directory / 'manifest.json'
+            row = json.loads(path.read_text())
+            row.update(dimensions=dict.fromkeys(publish.DIMENSIONS, True),
+                       correct=False, launched=True, timeout=False, failures=[])
+            row['dimensions']['publication_integrity'] = False
+            path.write_text(json.dumps(row))
+        for name in ('stream.jsonl', 'proxy.jsonl'):
+            path = self.sessions[0] / name
+            original = path.read_bytes()
+            path.unlink()
+            with self.subTest(name=name), self.assertRaises((ValueError, FileNotFoundError)):
+                publish.publish(self.sessions, self.root / ('missing-' + name),
+                                [self.secret_file], [self.provider_file],
+                                protected_regrade=self.record)
+            path.write_bytes(original)
+
+    def test_scanner_rejects_unredacted_credentials(self):
+        table = publish.scan.patterns(publish.scan.read_tokens([self.secret_file, self.provider_file]))
+        for token in self.tokens:
+            for encoded in (token, base64.b64encode(token), token.hex().encode()):
+                (self.sessions[0] / 'leak.txt').write_bytes(encoded)
+                with self.assertRaises(ValueError):
+                    publish.scan_tree(self.sessions[0], table)
 
     def tearDown(self):
         self.temp.cleanup()
@@ -45,7 +124,8 @@ class Publication(unittest.TestCase):
         (self.sessions[0] / 'source-tests.json').write_text(
             json.dumps({'record': 'test', 'detail': self.tokens[2].decode()}) + '\n' +
             json.dumps({'record': 'summary', 'passed': 47}) + '\n')
-        result = publish.publish(self.sessions, self.root / 'out', [self.secret_file], [self.provider_file])
+        result = publish.publish(self.sessions, self.root / 'out', [self.secret_file], [self.provider_file],
+                                 protected_regrade=lambda directory: self.record(directory, dict.fromkeys(publish.DIMENSIONS, directory != self.sessions[3])))
         self.assertTrue(result['publication_scan_clean'])
         self.assertTrue(result['gate']['passed'])
         self.assertEqual(result['gate']['phase'], 'open')

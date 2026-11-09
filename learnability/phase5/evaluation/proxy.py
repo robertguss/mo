@@ -4,6 +4,10 @@ import pathlib
 import http.server
 import threading
 import shlex
+import origin_join
+import origin_identity
+import json
+import os
 
 PHASE4 = pathlib.Path(__file__).resolve().parents[2] / 'phase4'
 
@@ -24,6 +28,9 @@ class Recorder(base.Recorder):
         if len(tokens) < 2 or len(set(tokens)) != len(tokens) or any(len(t) < 16 for t in tokens):
             raise ValueError('two distinct credentials of at least 16 bytes are required')
         super().__init__(path, '')
+        os.chmod(path, 0o600)
+        self.snapshots = []
+        self.context = threading.local()
         self.patterns = scan.patterns(list(enumerate((t.encode() for t in tokens), 1)))
 
     def clean(self, value):
@@ -39,17 +46,62 @@ class Recorder(base.Recorder):
         return value
 
     def write(self, entry):
+        if entry['direction'] == 'request':
+            self.snapshots.append(pathlib.Path('/proc/net/tcp').read_text())
+        metadata = getattr(self.context, 'metadata', None)
+        if metadata is not None:
+            entry = {**entry, 'transport': dict(metadata) if entry['direction'] == 'request' else dict(getattr(self.context, 'response_metadata', {}))}
         cleaned = self.clean(entry)
         if cleaned != entry:
             cleaned['redacted'] = True
         return super().write(cleaned)
 
 
+def handler(upstream, recorder, token):
+    class Connection(base.http.client.HTTPConnection):
+        def getresponse(self):
+            response = super().getresponse()
+            read = response.read
+            def captured_read(*args, **kwargs):
+                data = read(*args, **kwargs)
+                recorder.context.response_metadata = origin_join.digests(data)
+                return data
+            response.read = captured_read
+            return response
+
+    class Handler(base.handler(upstream, recorder, token)):
+        def setup(self):
+            super().setup()
+            self.request_ordinal = 0
+
+        def body(self):
+            data = super().body()
+            self.request_ordinal += 1
+            recorder.context.response_metadata = {}
+            if self.upstream is None:
+                parts = base.urllib.parse.urlsplit(upstream)
+                self.upstream = Connection(parts.hostname, parts.port, timeout=300)
+            remote = self.connection.getpeername()
+            local = self.connection.getsockname()
+            recorder.context.metadata = {
+                'endpoint': f'{remote[0]}:{remote[1]}->{local[0]}:{local[1]}',
+                'request_ordinal': self.request_ordinal, **origin_join.digests(data)}
+            return data
+
+        def handle_any(self):
+            # Capture response bytes at the existing parser boundary, without
+            # changing forwarding, headers, body framing or credential handling.
+            super().handle_any()
+
+        do_POST = do_GET = do_DELETE = do_PUT = handle_any
+    return Handler
+
+
 class Proxy(base.Proxy):
     def __init__(self, upstream, log, service_token, upgrade_token, client_secrets=()):
         self.recorder = Recorder(log, [service_token, upgrade_token, *client_secrets])
         self.server = http.server.ThreadingHTTPServer(
-            ('127.0.0.1', 0), base.handler(upstream, self.recorder, service_token))
+            ('127.0.0.1', 0), handler(upstream, self.recorder, service_token))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://127.0.0.1:{self.server.server_address[1]}/mcp'
@@ -89,20 +141,71 @@ def is_push(command, depth=0):
     return False
 
 
-def match(client, stream, log):
-    """Keep unmatched uploads explicit; a recorded shell push gives command attribution.
+def match(client, stream, log, *, capture=None, session_id=None, evaluation_endpoint=None):
+    """Reconcile completed native occurrences; shell traffic needs independent evidence.
 
-    As in Phase4 fetch attribution, this cannot distinguish curl beside a push.
-    The command and individual requests remain in the private record for review.
+    Command text, request headers and arbitrary origin fields are never evidence.
+    Until a qualified collector supplies sender evidence, shell requests fail closed.
     """
-    result = base.match(client, stream, log)
-    pushed = any(kind == 'command' and is_push(command)
-                 for kind, command in base.commands(client, stream))
-    result['command_origin'] = []
-    if pushed:
-        for call in list(result['log_only']):
-            if call['tool'] in UPLOAD:
-                result['log_only'].remove(call)
-                result['command_origin'].append({**call, 'command': 'mo push'})
-    result['match'] = not result['log_only'] and not result['stream_only'] and not result['exempt']
+    rows = base.entries(log)
+    origins = {}
+    observation = False
+    if capture is not None:
+        from protected_regrade import ReplayReceipt
+        if type(capture) not in (origin_identity.Capture, ReplayReceipt):
+            raise ValueError('collector Capture required')
+        evidence = capture.consume(session_id, evaluation_endpoint=evaluation_endpoint)
+        if evidence['integrity']['process_completeness_verified'] is not True:
+            raise ValueError('incomplete process capture')
+        if evidence['proxy_rows'] != rows:
+            raise ValueError('sealed proxy log differs')
+        joined = origin_join.join(evidence['trace'], rows)
+        requests = {(r['connection_ordinal'], r['request_ordinal']): r
+                    for r in evidence['trace']['requests']}
+        for observation in joined['observations']:
+            receipt = requests[observation['connection_ordinal'], observation['request_ordinal']]
+            origins[observation['request_seq']] = receipt
+
+    if capture is not None:
+        import observation as u3
+        observation = u3.validate(evidence, rows, origins, stream.read_bytes())
+    responses = {}
+    for row in rows:
+        if row.get('direction') == 'response':
+            responses.setdefault(row.get('request'), []).append(row)
+    remaining = list(base.stream_calls(client, stream, base.SERVER))
+    result = dict(revision_observed=observation, observation_coverage="typed native results or exact single-writer pipe delivery to typed shell results; mixed writers and unsupported framing reject", pairs=0, log_only=[], stream_only=[], exempt=[], shell=0,
+                  command_origin=[], shell_origins=[],
+                  verified_push_requests=sum(r['verified_push_identity'] for r in origins.values()),
+                  verified_shell_requests=len(origins))
+    for row in rows:
+        if row.get('direction') != 'request' or row.get('rpc') != 'tools/call':
+            continue
+        call = {'log_id': row.get('id'), 'request_seq': row.get('seq'),
+                'tool': row.get('tool')}
+        replies = responses.get(row.get('seq'), [])
+        if len(replies) != 1:
+            result['exempt'].append(call)
+            continue
+        arguments = ((row.get('body') or {}).get('params') or {}).get('arguments')
+        twin = next((r for r in remaining if r[3] and r[1] == row.get('tool')
+                     and base.canonical(r[2]) == base.canonical(arguments)), None)
+        if twin is None:
+            receipt = origins.get(row.get('seq'))
+            if receipt is None:
+                result['log_only'].append(call)
+            else:
+                result['shell'] += 1
+                call['origin'] = 'shell'
+                result['shell_origins'].append(call)
+                if receipt['verified_push_identity']:
+                    result['command_origin'].append(call)
+
+        else:
+            remaining.remove(twin)
+            result['pairs'] += 1
+    for ident, tool, _, answered in remaining:
+        result['stream_only' if answered else 'exempt'].append(
+            {'stream_id': ident, 'tool': tool})
+    result['match'] = not any(result[k] for k in ('log_only', 'stream_only', 'exempt'))
     return result

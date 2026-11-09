@@ -1,3 +1,4 @@
+import os
 import base64
 import contextlib
 import http.client
@@ -78,8 +79,8 @@ class Tests(unittest.TestCase):
             stream.write_text(json.dumps({'type': 'item.completed', 'item': {
                 'type': 'command_execution', 'command': 'mo push main.mo --url URL'}}) + '\n')
             result = proxy.match('codex', stream, log)
-            self.assertTrue(result['match'])
-            self.assertEqual(len(result['command_origin']), 1)
+            self.assertFalse(result['match'])
+            self.assertEqual(result['command_origin'], [])
 
 
 class RealPush(unittest.TestCase):
@@ -87,7 +88,7 @@ class RealPush(unittest.TestCase):
         import fixture
         import secrets
         import urllib.parse
-        mo = fixture.ROOT / 'build/eval-controls/debug/mo'
+        mo = pathlib.Path(os.environ.get('MO_EVAL_BINARY', str(fixture.ROOT / 'build/eval-controls/debug/mo')))
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             token, upgrade = secrets.token_hex(24), secrets.token_hex(24)
@@ -124,7 +125,7 @@ class RealPush(unittest.TestCase):
         import os
         import secrets
         import subprocess
-        mo = fixture.ROOT / 'build/eval-controls/debug/mo'
+        mo = pathlib.Path(os.environ.get('MO_EVAL_BINARY', str(fixture.ROOT / 'build/eval-controls/debug/mo')))
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             token, upgrade = secrets.token_hex(24), secrets.token_hex(24)
@@ -151,12 +152,12 @@ class RealPush(unittest.TestCase):
             event = {'type': 'item.completed', 'item': {'type': 'command_execution',
                      'command': ' '.join(command), 'exit_code': 0}}
             stream.write_text(json.dumps(event) + '\n')
+            self.assertFalse(proxy.match('codex', stream, root / 'proxy.jsonl')['match'])
             attested = grade.attestation('codex', stream, root / 'proxy.jsonl')
-            self.assertIsNotNone(attested)
-            self.assertEqual(attested['report']['candidate_source'], identity['candidate_source'])
+            self.assertIsNone(attested)
             event['item']['command'] = "/bin/bash -lc 'mo push main.mo'"
             stream.write_text(json.dumps(event) + '\n')
-            self.assertIsNotNone(grade.attestation('codex', stream, root / 'proxy.jsonl'))
+            self.assertIsNone(grade.attestation('codex', stream, root / 'proxy.jsonl'))
             claude = [
                 {'type': 'system', 'message': 'temporary refusal'},
                 {'type': 'assistant', 'message': {'content': [
@@ -165,7 +166,7 @@ class RealPush(unittest.TestCase):
                 {'type': 'user', 'message': {'content': [
                     {'type': 'tool_result', 'tool_use_id': 'push-1', 'content': 'accepted'}]}}]
             stream.write_text(''.join(json.dumps(row) + '\n' for row in claude))
-            self.assertIsNotNone(grade.attestation('claude', stream, root / 'proxy.jsonl'))
+            self.assertIsNone(grade.attestation('claude', stream, root / 'proxy.jsonl'))
             for command_text, status in [('echo no-push', 0), ('mo push main.mo', 1)]:
                 event['item'].update(command=command_text, exit_code=status)
                 stream.write_text(json.dumps(event) + '\n')

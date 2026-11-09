@@ -115,7 +115,33 @@ def extract(archive, dest):
                     shutil.copyfileobj(source, output)
 
 
-def publish(sessions, destination, token_files, provider_files):
+DIMENSIONS = ('task_state', 'activation_identity', 'command_origin', 'final_answer',
+              'source_tests', 'traffic_completeness', 'model_provenance')
+
+
+def validated_dimensions(value):
+    if (not isinstance(value, dict) or set(value) != set(DIMENSIONS) or
+            any(type(v) is not bool for v in value.values())):
+        raise ValueError('complete boolean protected regrade dimensions required')
+    return dict(value)
+
+
+def public_rows(rows, scan_clean):
+    result = []
+    for row in rows:
+        row = dict(row)
+        if 'dimensions' in row:
+            dimensions = dict(row['dimensions'])
+            dimensions.pop('publication_integrity', None)
+            dimensions = validated_dimensions(dimensions)
+            dimensions['publication_integrity'] = scan_clean is True
+            row['dimensions'] = dimensions
+            row['correct'] = row.get('execution_clean') is True and all(dimensions.values())
+        result.append(row)
+    return result
+
+
+def publish(sessions, destination, token_files, provider_files, *, protected_regrade=None):
     if {Path(p).resolve() for p in token_files} & {Path(p).resolve() for p in provider_files}:
         raise ValueError('service and provider secret inventories must be separate')
     service = scan.read_tokens(token_files)
@@ -141,7 +167,32 @@ def publish(sessions, destination, token_files, provider_files):
         if manifest.get('correct') is True:
             for required in ('stream.jsonl', 'proxy.jsonl'):
                 regular(directory / required)
-        rows.append({key: manifest.get(key) for key in ('slot', 'client', 'correct', 'development')})
+        row = {key: manifest.get(key) for key in ('slot', 'client', 'correct', 'development')}
+        if 'dimensions' not in manifest:
+            raise ValueError('dimensions required for protected publication')
+        if 'dimensions' in manifest:
+            declared = dict(manifest['dimensions'])
+            if type(declared.pop('publication_integrity', None)) is not bool:
+                raise ValueError('publication dimension required')
+            validated_dimensions(declared)
+            # A caller must independently re-run protected checks. Manifest flags
+            # and accepted reports are not an independent grading implementation.
+            if protected_regrade is None:
+                raise ValueError('independent protected regrade required for dimension records')
+            protected = protected_regrade(directory)
+            if (protected.get('evidence_class') != 'FINAL' or
+                    protected.get('slot') != slot or protected.get('client') != evidence.ORDER[slot - 1]):
+                raise ValueError('protected classification or slot/client binding mismatch')
+            row['dimensions'] = validated_dimensions(protected.get('dimensions'))
+            row['execution_clean'] = (manifest.get('launched') is True and
+                                      manifest.get('timeout') is False and
+                                      manifest.get('failures') == [])
+        if public_rows([row], True)[0].get('correct') is True:
+            for required in ('stream.jsonl', 'proxy.jsonl'):
+                regular(directory / required)
+        rows.append(row)
+    if any('dimensions' in row for row in rows) and not all('dimensions' in row for row in rows):
+        raise ValueError('mixed legacy and dimension records refused')
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=False)
     stage = destination / 'stage'
@@ -168,6 +219,8 @@ def publish(sessions, destination, token_files, provider_files):
                 raise ValueError('publication path contains a credential')
             inventory[str(relative)] = copy_text(source, stage / relative, table)
     (stage / 'inventory.json').write_text(json.dumps({'files': inventory, 'missing_artifacts': missing}, indent=2) + '\n')
+    scan_tree(stage, table)
+    rows = public_rows(rows, True)
     summary = {'sessions': rows, 'publication_scan_clean': True,
                'gate': evidence.evaluation_gate(rows, True)}
     (stage / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
@@ -184,6 +237,9 @@ def publish(sessions, destination, token_files, provider_files):
     actual = {str(p.relative_to(extracted)): sha(p) for p in extracted.rglob('*') if p.is_file()}
     if expected != actual:
         raise ValueError('extracted archive differs from scanned stage')
+    reproduced = json.loads((extracted / 'summary.json').read_text())
+    if evidence.evaluation_gate(public_rows(reproduced['sessions'], True), True) != summary['gate']:
+        raise ValueError('public aggregation differs after extraction')
     receipt = {'archive_sha256': sha(archive), 'stage_files_scanned': scanned,
                'extracted_files_scanned': rescanned, 'publication_scan_clean': True,
                'gate': summary['gate'], 'uploaded': False}
