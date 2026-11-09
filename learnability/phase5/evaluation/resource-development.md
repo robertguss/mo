@@ -140,3 +140,145 @@ original 0/4 unchanged. No production change justified or made. Free disk after
 measurement was 330305536 bytes; compressed test executables left untouched.
 
 Parent storage maintenance after the full collector: consolidated 75 previously gzip-compressed generated sanitizer test executables into build/sanitizer-test-executables.tar.xz, verifying every original SHA-256 and full member inventory before deleting the redundant gzip copies. Recovered 691824601 bytes; receipt build/sanitizer-test-archive-receipt.json includes sizes/hashes/modes. Two slower compression attempts were stopped with originals preserved, and a redundant end-of-stream verifier call failed before a corrected complete verification. These are build-artifact maintenance failures, not evaluation runs. No source/log/capture evidence changed. GCC debug test executables were restored from their previously verified gzip copies for the required repository check; sanitizer executables remain restorable from the verified tar archive.
+
+## Resumed bounded growth measurement declaration
+
+Before execution: six fresh offline parser processes, connection payloads of
+1/2/4 MiB and process/exec records of 100/1000/10000, in that order. Each uses a
+reiterable generated trace, at most 32 MiB decoded, and a 30-second timeout.
+Payloads are HTTP request bodies in 16 KiB chunks on one connection; process
+fixtures use distinct PIDs and exec records. Record initial/final Linux VmRSS
+and VmHWM separately from ru_maxrss. These synthetic parser-only workloads do
+not qualify the collector or one-hour sessions. No model sessions are launched.
+
+First growth batch: process fixtures completed; all three payload fixtures failed
+with truncated HTTP body because the fixture subtracted eight escape bytes
+instead of six. Original logs remain in build/resource-growth-resume.
+Declare exactly three corrective payload runs (1/2/4 MiB), same bounds; use
+the decoder to derive syscall byte lengths. No process fixture rerun.
+
+All six valid fixtures completed within their bounds. Machine-readable results:
+
+```json
+[
+  {
+    "kind": "payload",
+    "count": 1,
+    "initial": {
+      "VmHWM": 16956,
+      "VmRSS": 16956
+    },
+    "final": {
+      "VmHWM": 21568,
+      "VmRSS": 21568
+    },
+    "ru_maxrss": 21380,
+    "elapsed_seconds": 0.18590809707529843,
+    "decoded_bytes": 1055936,
+    "requests": 64,
+    "exec_events": 0
+  },
+  {
+    "kind": "payload",
+    "count": 2,
+    "initial": {
+      "VmHWM": 16932,
+      "VmRSS": 16932
+    },
+    "final": {
+      "VmHWM": 22700,
+      "VmRSS": 18516
+    },
+    "ru_maxrss": 22700,
+    "elapsed_seconds": 0.28646352398209274,
+    "decoded_bytes": 2111872,
+    "requests": 128,
+    "exec_events": 0
+  },
+  {
+    "kind": "payload",
+    "count": 4,
+    "initial": {
+      "VmHWM": 16944,
+      "VmRSS": 16944
+    },
+    "final": {
+      "VmHWM": 27192,
+      "VmRSS": 18708
+    },
+    "ru_maxrss": 27192,
+    "elapsed_seconds": 0.5763226500712335,
+    "decoded_bytes": 4223744,
+    "requests": 256,
+    "exec_events": 0
+  },
+  {
+    "kind": "process",
+    "count": 100,
+    "initial": {
+      "VmHWM": 16900,
+      "VmRSS": 16900
+    },
+    "final": {
+      "VmHWM": 18404,
+      "VmRSS": 18404
+    },
+    "ru_maxrss": 18296,
+    "elapsed_seconds": 0.006764716003090143,
+    "decoded_bytes": 3910,
+    "requests": 0,
+    "exec_events": 100
+  },
+  {
+    "kind": "process",
+    "count": 1000,
+    "initial": {
+      "VmHWM": 16900,
+      "VmRSS": 16900
+    },
+    "final": {
+      "VmHWM": 19336,
+      "VmRSS": 19336
+    },
+    "ru_maxrss": 19256,
+    "elapsed_seconds": 0.025620385073125362,
+    "decoded_bytes": 39920,
+    "requests": 0,
+    "exec_events": 1000
+  },
+  {
+    "kind": "process",
+    "count": 10000,
+    "initial": {
+      "VmHWM": 16956,
+      "VmRSS": 16956
+    },
+    "final": {
+      "VmHWM": 29488,
+      "VmRSS": 28760
+    },
+    "ru_maxrss": 29488,
+    "elapsed_seconds": 0.1906745620071888,
+    "decoded_bytes": 408930,
+    "requests": 0,
+    "exec_events": 10000
+  }
+]
+```
+
+These measurements establish workload-dependent parser memory growth, not an
+aggregate memory bound. No collector, replay, child-memory sampling, full-hour
+qualification or model serving was exercised. The generator itself is streamed;
+parser process/event/HTTP retention remains workload dependent. Further work
+requires aggregate limits or spooling and full collector capacity qualification.
+
+Storage maintenance completed: 75 generated GCC test executables were gzip
+compressed, each decompressed and SHA-256 checked before its original was
+removed. Restoration paths, hashes, modes and mtimes are retained in
+build/resume-gcc-compression.json. Recovered 302592000 bytes; final available
+space 534081536 bytes. Restore these executables before running GCC checks
+(or rebuild). No sealed evidence or unrelated project/cache was changed.
+Validation: six saved result counts/bounds checked independently; 26 focused
+parser/storage/model-adapter tests passed; credential scanner found zero
+matches across 116 eligible files and two inventories; diff check passed.
+No model or scored launches, no full-hour readiness claim.
