@@ -25,6 +25,7 @@ A failed stderr write can lose records; output is deliberately best effort and
 cannot change upgrade acceptance. Incomplete records are not usable evidence.
 
 Stages cover cached-state lookup, total live admission, protocol catalog,
+with nested `catalog_descriptor`, `catalog_prepare` and `catalog_retain` records,
 swap preparation (including new-loop restoration and queue preparation),
 activation-report preparation and durable store activation. Cached state reports
 `cache_hit_no_encoding` or `cache_miss_no_encoding`: this API retrieves the existing

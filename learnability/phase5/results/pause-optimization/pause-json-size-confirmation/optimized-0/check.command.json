@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/home/exedev/code/mo-m6/build/pause-optimized/debug/mo",
+    "check",
+    "/home/exedev/code/mo-m6/build/pause-json-size-confirmation/optimized-0/old/main.mo",
+    "--upgrade-from",
+    "/home/exedev/code/mo-m6/build/pause-json-size-confirmation/optimized-0/old/main.mo",
+    "--json"
+  ],
+  "timeout_seconds": 300,
+  "exit_status": 0,
+  "elapsed_seconds": 0.3406303860247135
+}

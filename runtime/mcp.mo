@@ -112,6 +112,7 @@ fn json_bytes(value: Json.Json) : Int
 end
 
 fn string_bytes(text: Text) : Int
+  return long_string_bytes(text) if text.byte_count >= 64
   var size = text.byte_count + 2
   for c in text.chars
     case c
@@ -121,6 +122,33 @@ fn string_bytes(text: Text) : Int
     end
   end
   size
+end
+
+# Native searches avoid a character-list walk for long descriptions.
+fn long_string_bytes(text: Text) : Int
+  var size = text.byte_count + 2
+  for c in "\"\\\n\r\t\u{8}\u{c}".chars
+    size += text.byte_count - text.replace(c.to_text, "").byte_count
+  end
+  for c in "\u{0}\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{b}\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f}"
+    .chars
+    size += 5 * (text.byte_count - text.replace(c.to_text, "").byte_count)
+  end
+  size
+end
+
+test "catalog byte sizes match JSON across string lengths and escapes"
+  for count in [0, 1, 63, 64, 65, 256]
+    for suffix in [
+      "",
+      "é😀",
+      "\"\\",
+      "\u{0}\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{8}\u{9}\u{a}\u{b}\u{c}\u{d}\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f}"
+    ]
+      value = Json.String("#{"a".repeat(count)}#{suffix.repeat(3)}")
+      assert json_bytes(value) == value.to_text.byte_count
+    end
+  end
 end
 
 fn page(catalog: Catalog, start: Int, id: Json.Json) : Option(Json.Json)

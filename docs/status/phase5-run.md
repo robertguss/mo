@@ -255,3 +255,27 @@ origin, traffic, final-answer and model credit. An overly strict identity
 assertion failed after replay; the failure and separate saved-verdict validation
 are retained, with no repeat collection. Cleanup and credential scans passed.
 Model proof, full-duration capacity and phase closure remain unresolved.
+
+## Pause optimization follow-up (development)
+
+Robert authorized runtime optimization while preserving the declared workload,
+0.5-second maximum and failed samples. Catalog preparation now counts exact JSON
+bytes instead of materializing each complete tool rendering; long strings count
+escape occurrences through existing native text operations. Catalog contents,
+pagination, validation, storage synchronization and activation boundaries are
+unchanged. Nested compile-time probes attribute descriptor, preparation and
+retention costs; their synchronous writes remain inside the measured boundary.
+
+The first five-debug/five-optimized confirmation missed the debug target again:
+maximum 0.669135 seconds. It is retained in full. After the long-string change,
+a separately declared second series observed debug maximum 0.392591 seconds
+and optimized maximum 0.222705 seconds. All ten second-series samples used the
+original 5,000 distinct 2,048-byte jobs and 500 leases, passed exact state checks
+before/after, and committed ordinal 1. These development results meet the unchanged
+margin; they do not erase the original miss, establish a wall-time guarantee, or
+constitute a release freeze. The [complete follow-up evidence](../../learnability/phase5/results/pause-optimization/README.md)
+retains both confirmation series and the locating samples.
+
+Phase 5 remains open. Actual-model provenance, transparent real-client capture,
+full-session resource/publication qualification and the fresh fixed four-slot
+evaluation remain incomplete; no scored session or release was launched here.
