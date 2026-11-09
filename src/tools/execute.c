@@ -118,7 +118,6 @@ static void execute_pipeline(void *argument) {
     struct mo_program *program = mo_check(arena, set, diags);
     if (program == NULL || mo_diags_any(diags))
         return;
-    bool serving = cli->command == MO_COMMAND_SERVE;
     uint32_t entry_service = MO_NO_INDEX;
     for (uint32_t i = 0; i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
@@ -133,15 +132,6 @@ static void execute_pipeline(void *argument) {
             (void)added;
             return;
         }
-    }
-    if (serving && entry_service == MO_NO_INDEX) {
-        struct mo_diag diag = {
-            .code = MO_CODE_TOOL_SERVICE_START,
-            .primary = {set->modules[0]->span, "a service block declares one (reference 11.5)"},
-            .message = "this module has no service to start"};
-        bool added = mo_diags_add(diags, &diag);
-        (void)added;
-        return;
     }
     if (cli->command == MO_COMMAND_REPLAY || cli->command == MO_COMMAND_QUERY) {
         struct mo_offline_pipeline offline = {.arena = arena,
@@ -231,7 +221,7 @@ static void execute_pipeline(void *argument) {
     bool emitting = cli->command == MO_COMMAND_EMIT;
     if (checking && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
-    if (anchors || serving || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
+    if (anchors || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
         cli->emit == MO_EMIT_BYTECODE || emitting) {
         if (!mo_compile_services(core, &services, &wire, diags))
             goto done;
@@ -241,9 +231,9 @@ static void execute_pipeline(void *argument) {
                         &work->totals);
         goto done;
     }
-    if (anchors || serving || cli->command == MO_COMMAND_RUN) {
-        work->status = mo_run_program(cli, core, &wire, entry_service, sources, work->output,
-                                      work->errors, diags);
+    if (anchors || cli->command == MO_COMMAND_RUN) {
+        work->status =
+            mo_run_program(cli, core, &wire, sources, work->output, work->errors, diags);
         if (work->status != 0 || mo_diags_any(diags))
             goto done;
     }
