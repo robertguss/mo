@@ -15,6 +15,18 @@ import subprocess
 from origin_descriptors import DescriptorFacts, TRACE_FACTS, KERNEL, ASYNC
 
 
+def tracer_diagnostic(stream):
+    """Recognize tracer line prefixes without retaining unbounded client stderr."""
+    marker = b'\nstrace:'
+    tail = b'\n'
+    while chunk := stream.read(65536):
+        window = tail + chunk
+        if marker in window:
+            return True
+        tail = window[-(len(marker) - 1):]
+    return False
+
+
 class TraceRun:
     def __init__(self, directory):
         self.directory = pathlib.Path(directory)
@@ -112,7 +124,8 @@ class TraceRun:
         complete = lines.endswith('\n')
         integrity = process_integrity(lines)
         complete = complete and integrity['process_completeness_verified']
-        tracer_errors = any(line.startswith(b'strace:') for line in (self.directory / 'stderr').read_bytes().splitlines())
+        with (self.directory / 'stderr').open('rb') as stderr:
+            tracer_errors = tracer_diagnostic(stderr)
         if tracer_errors:
             integrity['integrity_errors'].append('tracer diagnostic')
             integrity['process_completeness_verified'] = False

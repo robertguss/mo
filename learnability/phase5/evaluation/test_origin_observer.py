@@ -80,3 +80,22 @@ class TraceTests(unittest.TestCase):
                 self.assertEqual(result['returncode'], 0)
                 self.assertFalse(result['capture_finished'])
                 self.assertIn('unsupported kernel transfer', result['integrity_errors'])
+
+
+class DiagnosticStorageTests(unittest.TestCase):
+    def test_bounded_scan_preserves_line_start_semantics(self):
+        import io
+        from origin_observer import tracer_diagnostic
+        class Bounded(io.BytesIO):
+            def read(self, size=-1):
+                self_test.assertGreater(size, 0)
+                self_test.assertLessEqual(size, 65536)
+                return super().read(size)
+        self_test = self
+        for data, expected in [(b'strace: failure', True),
+                               (b'ordinary strace: text', False),
+                               (b'x' * 2000000, False),
+                               (b'x' * 65532 + b'\nstrace: failure', True),
+                               (b'normal\nstrace', False)]:
+            with self.subTest(size=len(data)):
+                self.assertEqual(tracer_diagnostic(Bounded(data)), expected)

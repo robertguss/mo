@@ -282,3 +282,11 @@ Validation: six saved result counts/bounds checked independently; 26 focused
 parser/storage/model-adapter tests passed; credential scanner found zero
 matches across 116 eligible files and two inventories; diff check passed.
 No model or scored launches, no full-hour readiness claim.
+
+Follow-up collector fix: tracer diagnostic detection now scans stderr in 64 KiB
+chunks, retaining only a marker suffix. Previously read_bytes/splitlines retained
+all client stderr. A negative control failed before implementation (missing
+helper); 19 observer/lifecycle controls then passed, including a 2 MB unbroken
+line and a diagnostic prefix across the chunk boundary. Logs:
+build/stderr-bounded-red.txt and build/stderr-bounded-green.txt. This removes one
+whole-file allocation, not the remaining aggregate parser/capture growth.

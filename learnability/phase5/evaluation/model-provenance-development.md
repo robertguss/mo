@@ -355,3 +355,36 @@ Official sources: https://github.com/openai/codex/blob/rust-v0.166.0/codex-rs/co
 - rollout-trace_README.md: 4f5740cdd54dd3118b8b7ff3a71178cf760b8385432bf1dc485d97eeda869390
 
 Eight focused adapter tests passed again at parent integration; whitespace check passed. This inspection added zero model attempts and no qualification. Protected publication regrading remains independently implementable while actual-model collection is blocked.
+
+## Shared HTTP diagnostic hypothesis and bounded declaration
+
+Exact-tag http-client/src/client.rs:179–188 logs response headers with method,
+URL and status when RequestLogging is enabled. HttpClientBuilder defaults to
+Enabled. core/src/client.rs:253–270 builds the API transport through
+create_client_for_route. RequestTelemetry alone has no successful header field.
+This is a new candidate diagnostic channel, not qualification. Retrieved source
+hashes are in private resume-source-manifest.json and
+resume-http-source-manifest-corrected.json. The first guessed directory
+codex-http-client yielded no tree matches; the actual crate directory is http-client.
+
+Before launch, declare exactly ONE additional Codex development attempt, zero
+Claude attempts, zero scored attempts, no replacements, 180-second deadline.
+Use the existing HTTP development configuration and frozen executable/model,
+adding codex_http_client=debug to RUST_LOG. Hypothesis: the private diagnostic
+captures provider response headers with actual-model and request-ID metadata.
+Even a positive observation does not establish complete retry/auxiliary coverage.
+Private output: ~/.mo-phase5-harness/http-header-development-20261109-one.
+Preflight verified no retained work/hold and no session-user processes; frozen
+installation check passed. No TLS interception or provider endpoint change.
+
+The declared attempt completed once, exit 0; no replacement. Cumulative live
+model attempts are now Codex 3, Claude 1, scored 0. The diagnostic captured seven
+completed HTTP responses, including two /responses responses and 64 SSE events.
+Both /responses header maps were present, without openai-model or x-openai-model.
+They contained x-oai-request-id (not x-request-id). The initial summary checked
+only x-request-id; subsequent key-only inspection corrected that distinction.
+Safety-buffering model instructions and models-etag are not serving-model proof.
+No actual model was established. This is evidence about this attempt, not proof
+that every supported route is exhausted. Private raw logs and retained work are
+in the declared directory. Session cleanup verified no surviving account process,
+work folder or retention hold. No further probe is declared or justified here.
