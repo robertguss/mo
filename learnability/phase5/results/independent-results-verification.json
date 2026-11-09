@@ -1,0 +1,12 @@
+{
+  "reviewer": "independent agent verify_final_evidence",
+  "verified": [
+    "drill reported counts",
+    "ten raw pause samples and recomputed dispersion",
+    "before/after workload verification",
+    "compiler controls",
+    "285 build inputs and binary continuity"
+  ],
+  "correction": "ordinary_call breakpoint observed ordinary-request parsing PF_SCAN VM invocation, not author tool body; draft corrected",
+  "other_five_stage_claims_supported": true
+}

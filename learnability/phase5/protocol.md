@@ -132,3 +132,20 @@ freeze and verify the relevant input hashes before carrying those results
 forward; do not repeat or select latency samples to improve the margin. Publish
 both experiment records and every launched session/miss, with distinct
 denominators. The missing-model-evidence rule remains unchanged.
+
+## Collection outcome and retained grading analysis
+
+Experiment 2 completed all four original frozen slots: 0/4, gate missed. No
+replacement sessions were collected. The original manifests, transcripts and
+publication scans are under `results/experiment-2-original/`; the interrupted
+experiment remains under `results/experiment-1/`. Phase 5 remains open.
+
+A separately named `experiment-2-qualified-grader-analysis` was declared before
+regrading. It repairs the collector's assumption that the declared leaf name
+`migrate` means `Main.migrate`. All four client sessions used the unchanged
+original collector. The analysis compiles the accepted report's qualified
+selector against retained original source and independently checks identities.
+An accepted report alone does not attest a push: unmatched proxy calls and
+missing model evidence remain misses. Original verdicts remain published beside
+the analysis; no gate or denominator changes. The declaration and exact analysis
+input hashes are retained in results.

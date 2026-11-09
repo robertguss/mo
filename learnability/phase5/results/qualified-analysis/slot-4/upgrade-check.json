@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "status": "accepted",
+  "code": null,
+  "class": "compatible",
+  "message": "migration signature checked; candidate is compatible",
+  "base_source": "11674500eac5f747f85d8b08e82be28d5ee9595e7ae5a3b1e16b268421b4e559",
+  "candidate_source": "77b4ca4c76549ece2ef1f906feac8ac8197962493afbc0b899e84a3f0695c46b",
+  "active_source": "11674500eac5f747f85d8b08e82be28d5ee9595e7ae5a3b1e16b268421b4e559",
+  "migration": "Main.migrate",
+  "ordinal": "0",
+  "head": "0",
+  "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+  "new_schema": "98ae3bda94c763624b1a5c44ea600f49b81c3e0843aa5267b7d706e78d760055",
+  "implementation_changed": true,
+  "differences": [
+    {
+      "kind": "tool",
+      "name": "acknowledge",
+      "change": "schema_or_description_changed"
+    },
+    {
+      "kind": "tool",
+      "name": "fail",
+      "change": "schema_or_description_changed"
+    },
+    {
+      "kind": "tool",
+      "name": "heartbeat",
+      "change": "schema_or_description_changed"
+    },
+    {
+      "kind": "tool",
+      "name": "lease",
+      "change": "schema_or_description_changed"
+    },
+    {
+      "kind": "tool",
+      "name": "revision",
+      "change": "added"
+    },
+    {
+      "kind": "tool",
+      "name": "submit",
+      "change": "schema_or_description_changed"
+    }
+  ],
+  "vm_work": "0",
+  "native_work": "0",
+  "heap_peak": "0",
+  "encoded_bytes": "0"
+}

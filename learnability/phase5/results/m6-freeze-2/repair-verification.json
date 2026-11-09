@@ -1,0 +1,9 @@
+{
+  "commit": "814ddd0f70e5fd613130fe87a9cd24cd187af8e6",
+  "independently_checked": true,
+  "passed": true,
+  "source": "https://github.com/robertguss/mo/pull/317",
+  "merge_verified": true,
+  "verification_basis": "Merged repair PR records GCC Clang drivers bench static pass with no skips, focused ASan/UBSan replay checks and independent review; M6 integrated drivers/static and both compiler/sanitizer suites also passed. Remote nightly green is not claimed.",
+  "candidate": "3a41f17b2129fb19f2fb5c9ce89321087dac7173"
+}

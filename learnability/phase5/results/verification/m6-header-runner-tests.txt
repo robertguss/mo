@@ -1,0 +1,13 @@
+test_credentials_are_environment_references (test_harness.RunnerTests.test_credentials_are_environment_references) ... ok
+test_fallback_retained (test_harness.RunnerTests.test_fallback_retained) ... ok
+test_final_limit_fixed (test_harness.RunnerTests.test_final_limit_fixed) ... ok
+test_launch_failure_still_captures_and_resets (test_harness.RunnerTests.test_launch_failure_still_captures_and_resets) ... ok
+test_layout_is_distinct (test_harness.RunnerTests.test_layout_is_distinct) ... ok
+test_local_imports_are_isolated (test_harness.RunnerTests.test_local_imports_are_isolated) ... ok
+test_missing_freeze_refused (test_harness.RunnerTests.test_missing_freeze_refused) ... ok
+test_reservation_order_and_no_reruns (test_harness.RunnerTests.test_reservation_order_and_no_reruns) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.011s
+
+OK

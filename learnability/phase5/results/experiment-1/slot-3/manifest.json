@@ -1,0 +1,14 @@
+{
+  "slot": 3,
+  "client": "codex",
+  "development": false,
+  "evidence_class": "FINAL_INTERRUPTED_EXPERIMENT",
+  "launched": false,
+  "correct": false,
+  "success": false,
+  "record_type": "uncollected_declared_slot",
+  "failures": [
+    "experiment stopped for collector credential defect before this slot launched"
+  ],
+  "models": null
+}

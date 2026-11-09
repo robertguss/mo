@@ -53,3 +53,18 @@ contains newline-delimited CLI records. The publisher now preserves and redacts
 each record using its JSONL path. Five tests and actual stage/archive/extract/
 rescan passed; an independent reviewer verified this bounded change. The failed
 staging directory and console remain. No original session record was rewritten.
+
+## Final evidence and diagnostic correction
+
+Independent review verified that the qualified migration correction accepts
+`JobQueue.migrate` while retaining failed push attestation and missing-model
+misses. A malformed qualified control initially placed `use` before `expose`;
+the corrected eleven real-service controls and selector test passed (3 tests,
+104.922 seconds). The earlier failed control and failed analysis attempt remain.
+The corrected analysis never replaces a collected session or original manifest.
+
+A separate evidence reviewer recomputed all ten pause samples and dispersion,
+checked workload readback, drill counters, compiler controls and 285-input/binary
+continuity. It clarified that the ordinary-request debugger breakpoint observes
+the protocol parser's PF_SCAN VM invocation, not an author tool body. The run
+record uses that narrower claim; the other five stage claims were supported.

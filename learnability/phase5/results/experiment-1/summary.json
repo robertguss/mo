@@ -1,0 +1,41 @@
+{
+  "sessions": [
+    {
+      "slot": 1,
+      "client": "codex",
+      "correct": false,
+      "development": false
+    },
+    {
+      "slot": 2,
+      "client": "claude",
+      "correct": false,
+      "development": false
+    },
+    {
+      "slot": 3,
+      "client": "codex",
+      "correct": false,
+      "development": false
+    },
+    {
+      "slot": 4,
+      "client": "claude",
+      "correct": false,
+      "development": false
+    }
+  ],
+  "publication_scan_clean": true,
+  "gate": {
+    "passed": false,
+    "phase": "open",
+    "correct": {
+      "codex": 0,
+      "claude": 0
+    },
+    "denominator": 4,
+    "complete_valid_slots": true,
+    "publication_scan_clean": true,
+    "release_authorized": false
+  }
+}

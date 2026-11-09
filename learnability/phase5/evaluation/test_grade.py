@@ -9,11 +9,20 @@ import fixture
 import grade
 
 
+class Selector(unittest.TestCase):
+    def test_declared_function_name(self):
+        for selector in ('migrate', 'Main.migrate', 'JobQueue.migrate'):
+            self.assertEqual(grade.migration_selector({'report': {'migration': selector}}), selector)
+        for selector in (None, 'copy', 'JobQueue.copy', 'migrate.extra', 'migrate()', '..migrate'):
+            with self.assertRaises(ValueError):
+                grade.migration_selector({'report': {'migration': selector}})
+
+
 class RealControls(unittest.TestCase):
     def test_real_services(self):
         mo = pathlib.Path(os.environ.get('MO_EVAL_BINARY', str(fixture.ROOT / 'build/eval-controls/debug/mo')))
         self.assertTrue(mo.is_file(), 'build isolated current binary first')
-        for control in ('reference', 'unchanged', 'initializer', 'drop-job', 'payload',
+        for control in ('reference', 'qualified-reference', 'unchanged', 'initializer', 'drop-job', 'payload',
                         'duplicate-completion', 'wrong-revision', 'source-only',
                         'constant-revision', 'wrong-next-id'):
             with self.subTest(control=control), tempfile.TemporaryDirectory() as temp:
@@ -22,13 +31,14 @@ class RealControls(unittest.TestCase):
                 expected = fixture.build(mo, root / 'prepared', token, upgrade)
                 old = root / 'prepared/old'
                 candidate = fixture.sources(root / 'candidate', 'reference' if control == 'source-only' else control)
+                selector = 'JobQueue.migrate' if control == 'qualified-reference' else 'migrate'
                 service = fixture.Service(mo, root / 'prepared/data', token, upgrade, root / 'live.log', old / 'main.mo')
                 try:
                     client = fixture.Client(service.url, token)
                     self.assertTrue(grade.precheck(client, expected))
                     args = [str(mo), 'check', str(candidate / 'main.mo'), '--upgrade-from', str(old / 'main.mo'), '--json']
                     if control != 'unchanged':
-                        args += ['--migrate', 'migrate']
+                        args += ['--migrate', selector]
                     checked = subprocess.run(args, capture_output=True, text=True, timeout=120)
                     self.assertEqual(checked.returncode, 0, checked.stderr)
                     identity = json.loads(checked.stdout)
@@ -36,18 +46,20 @@ class RealControls(unittest.TestCase):
                     pushed = None
                     if control not in ('unchanged', 'source-only'):
                         result = subprocess.run([str(mo), 'push', str(candidate / 'main.mo'), '--url', service.url,
-                            '--base', identity['base_source'], '--migrate', 'migrate', '--token-env', 'QUEUE_TOKEN',
+                            '--base', identity['base_source'], '--migrate', selector, '--token-env', 'QUEUE_TOKEN',
                             '--upgrade-token-env', 'QUEUE_UPGRADE', '--json'],
                             env={**os.environ, 'QUEUE_TOKEN': token, 'QUEUE_UPGRADE': upgrade},
                             capture_output=True, text=True, timeout=180)
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         pushed = {'origin': 'development-reference', 'report': json.loads(result.stdout)}
+                    if control in ('reference', 'qualified-reference'):
+                        self.assertEqual(grade.migration_selector(pushed), selector)
                     live = grade.live_grade(client)
                 finally:
                     service.stop()
                 verdict = grade.stopped_grade(mo, root / 'prepared/data', token, upgrade, root / 'restart.log',
                     expected, live, pushed, development=True, answer='1')
-                self.assertEqual(verdict['correct'], control == 'reference', verdict)
+                self.assertEqual(verdict['correct'], control in ('reference', 'qualified-reference'), verdict)
                 print(control, verdict)
                 if control == 'drop-job':
                     forged = dict(live, jobs=expected['jobs'])

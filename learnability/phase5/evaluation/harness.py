@@ -309,14 +309,24 @@ def grade_collected(l, out, spec, expected, token, upgrade, meta):
     (out / 'source-tests.json').write_text(result.stdout)
     if result.returncode:
         meta['failures'].append('immutable source tests failed')
+    pushed = grader.attestation(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl')
+    if pushed is None:
+        meta['failures'].append('proxy/stream push attestation failed')
+    # Compile the recorded selector even when reconciliation failed; the verdict
+    # still receives None and cannot credit an unattested push.
+    selector = grader.migration_selector(grader.accepted_report(out / 'proxy.jsonl'))
     checked = subprocess.run([str(l.bin / 'mo'), 'check', str(candidate / 'main.mo'),
-        '--upgrade-from', str(out / 'serve/main.mo'), '--migrate', 'migrate', '--json'],
-        capture_output=True, text=True, timeout=120, check=True)
+        '--upgrade-from', str(out / 'serve/main.mo'), '--migrate', selector, '--json'],
+        capture_output=True, text=True, timeout=120)
+    (out / 'upgrade-check.json').write_text(checked.stdout)
+    (out / 'upgrade-check.stderr').write_text(checked.stderr)
+    if checked.returncode:
+        meta['failures'].append('candidate upgrade compilation failed')
+        return
     identity = json.loads(checked.stdout)
     expected = dict(expected, source_digest=identity['candidate_source'], base_digest=identity['base_source'])
     meta['identity'] = identity
     answer = (p4.grade.last_message(out / 'stream.jsonl') or '').strip()
-    pushed = grader.attestation(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl')
     verdict = grader.stopped_grade(l.bin / 'mo', out / 'data', token, upgrade,
         out / 'restart.log', expected, meta.get('live', {}), pushed,
         development=meta['development'], answer=answer)

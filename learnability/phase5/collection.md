@@ -1,4 +1,4 @@
-# Collection preparation
+# Collection declaration and results
 
 Final collection declaration (development runs are recorded separately): 1,000 process
 kills, seed 20261110, with concurrent callers; the existing 15-kill drivers smoke
@@ -73,3 +73,13 @@ Evaluation uses `evaluation/harness.py run SPEC OUTPUT --slot N` after its
 freeze check; measurement uses `measure_pause.py --freeze MANIFEST` with exactly
 five repetitions for each debug and optimized binary. The Phase 4 diagnostic
 `round` command is not a substitute.
+
+## Completed collection
+
+The declaration above was retained unchanged through collection. The 1,000-kill
+run passed with seed 20261110; six separate frozen-binary debugger controls
+passed, with the ordinary-request breakpoint observed in the parser VM. Five
+debug and five optimized production samples completed; the debug series missed
+the declared twofold margin. The original four-session experiment 2 scored 0/4
+and leaves the phase open. See `results/` and `docs/status/phase5-run.md` for raw
+records, corrected diagnostic analysis and release limits.

@@ -1,0 +1,10 @@
+{
+  "repair": "814ddd0f70e5fd613130fe87a9cd24cd187af8e6",
+  "candidate": "3a41f17b2129fb19f2fb5c9ce89321087dac7173",
+  "changed": [
+    "src/tools/pause-timing.h",
+    "src/tools/protocol-upgrade.c",
+    "src/tools/upgrade.c"
+  ],
+  "rebuild_required": true
+}

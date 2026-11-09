@@ -1,5 +1,6 @@
 """Private callable grader. Inputs and expected values must remain operator-owned."""
 import json
+import re
 import subprocess
 import fixture
 import proxy
@@ -69,6 +70,11 @@ def attestation(client, stream, log):
                 successful = True
     if not successful or not matched['match'] or not matched['command_origin']:
         return None
+    return accepted_report(log)
+
+
+def accepted_report(log):
+    """Recorded report for compilation diagnostics; this alone is not attestation."""
     rows = [json.loads(line) for line in log.read_text().splitlines()]
     for row in reversed(rows):
         if row.get('direction') == 'response' and row.get('tool') == 'mo-upgrade-commit' and row.get('status') == 200:
@@ -77,6 +83,13 @@ def attestation(client, stream, log):
             if report.get('status') == 'accepted' and report.get('ordinal'):
                 return {'origin': 'command', 'report': report}
     return None
+
+
+def migration_selector(pushed):
+    selector = (pushed or {}).get('report', {}).get('migration')
+    if not isinstance(selector, str) or re.fullmatch(r'(?:[A-Za-z_][A-Za-z_0-9]*\.)*migrate', selector) is None:
+        raise ValueError('recorded migration must have function name migrate')
+    return selector
 
 
 def compare(expected, live, restarted, recorded, pushed, development=False, answer=None):

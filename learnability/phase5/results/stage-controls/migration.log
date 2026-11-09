@@ -1,0 +1,30 @@
+[New LWP 3081874]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007f5736edbe51 in __futex_abstimed_wait_common64 (private=128, cancel=true, abstime=0x0, op=265, expected=3081874, futex_word=0x7f5736de6990) at ./nptl/futex-internal.c:57
+warning: 57	./nptl/futex-internal.c: No such file or directory
+Breakpoint 1 at 0x55994807d7a5: file src/tools/upgrade.c, line 1151.
+[Detaching after fork from child process 3081947]
+[Switching to Thread 0x7f5736de66c0 (LWP 3081874)]
+
+Thread 2 "mo" hit Breakpoint 1, migration_state (old=0x7f5736ddf5b0, next=0x7f572c226108, migration=0x7f572c226000 "migrate", bytes=0x7f572c240a10 "MOSV\001(\001", length=452, out=0x7f572c225f70, report=0x7f572c226220, rehearsal=true) at src/tools/upgrade.c:1151
+1151	            enum mo_outcome result = mo_call(process, selected, &argument, 1, &value, &defect);
+Breakpoint 2 at 0x559948084fc9: file src/vm/execute.c, line 106.
+
+Thread 2 "mo" hit Breakpoint 2, mo_vm_execute (p=0x7f572c22e390, result=0x7f5736ddecc0) at src/vm/execute.c:106
+106	        uint32_t head = fn->code[f->pc], op = head & MO_OPCODE_MASK;
+#0  mo_vm_execute (p=0x7f572c22e390, result=0x7f5736ddecc0) at src/vm/execute.c:106
+#1  0x000055994808b7cf in call (process=0x7f572c22e390, function=10, arguments=0x7f5736ddecd0, argument_count=1, keep_running=0x0, context=0x0, result_out=0x7f5736ddecc0, defect_out=0x7f5736ddece0) at src/vm/process.c:235
+#2  0x000055994808b954 in mo_call (process=0x7f572c22e390, function=10, arguments=0x7f5736ddecd0, argument_count=1, result_out=0x7f5736ddecc0, defect_out=0x7f5736ddece0) at src/vm/process.c:260
+#3  0x000055994807d7da in migration_state (old=0x7f5736ddf5b0, next=0x7f572c226108, migration=0x7f572c226000 "migrate", bytes=0x7f572c240a10 "MOSV\001(\001", length=452, out=0x7f572c225f70, report=0x7f572c226220, rehearsal=true) at src/tools/upgrade.c:1151
+#4  0x000055994807e6ca in mo_live_admit (u=0x7f572c225b40, running=0x7f572c1513d8, index=0, active=0x7f572c0cec60, state=0x7f572c240a10 "MOSV\001(\001", length=452) at src/tools/upgrade.c:1328
+#5  0x000055994805c3f2 in activate (s=0x7f572c0c4f60) at src/tools/protocol-upgrade.c:466
+#6  0x000055994805d1b8 in mo_protocol_upgrade_poll (s=0x7f572c0c4f60) at src/tools/protocol-upgrade.c:646
+#7  0x0000559948059b3a in mo_protocol_server_poll (s=0x7f572c0c4f60, until_us=771571405887) at src/tools/protocol-server.c:773
+#8  0x000055994806eed0 in serve_requests (server=0x7f572c0c4f60, listener=0x7f572c0c4ac0, log=0x7f5736ddff20) at src/tools/serve.c:136
+#9  0x000055994806f91f in mo_serve_image (cli=0x7fff0ba09ef0, image=0x7f572c1513d8, service=0, output=0x7f57370485c0 <_IO_2_1_stdout_>, errors=0x7f57370484e0 <_IO_2_1_stderr_>, diags=0x7f5736de13d0, held_store=0x7f572c016380) at src/tools/serve.c:261
+#10 0x0000559948080f08 in serve_upgrade (context=0x7fff0ba09e30) at src/tools/upgrade.c:1751
+#11 0x0000559947f1efc2 in run (argument=0x7fff0ba09da0) at src/base/stack.c:17
+#12 0x00007f5736edfb84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#13 0x00007f5736f6cecc in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+[Inferior 1 (process 3081873) killed]

@@ -1,0 +1,24 @@
+[New LWP 3081503]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007fda27154e51 in __futex_abstimed_wait_common64 (private=128, cancel=true, abstime=0x0, op=265, expected=3081503, futex_word=0x7fda2705f990) at ./nptl/futex-internal.c:57
+warning: 57	./nptl/futex-internal.c: No such file or directory
+Breakpoint 1 at 0x5621aae6a533: file src/tools/protocol-upgrade.c, line 266.
+[Switching to Thread 0x7fda2705f6c0 (LWP 3081503)]
+
+Thread 2 "mo" hit Breakpoint 1, page (s=0x7fda200c4f60, c=0x7fda200c75d8, a=0x7fda20259d00) at src/tools/protocol-upgrade.c:266
+266	    enum mo_upload_status status = mo_upload_page(&u->upload, index, offset, total,
+#0  page (s=0x7fda200c4f60, c=0x7fda200c75d8, a=0x7fda20259d00) at src/tools/protocol-upgrade.c:266
+#1  0x00005621aae6aeb0 in mo_protocol_upgrade_call (s=0x7fda200c4f60, c=0x7fda200c75d8, kind=2) at src/tools/protocol-upgrade.c:397
+#2  0x00005621aae5ca4b in call_tool (s=0x7fda200c4f60, c=0x7fda200c75d8) at src/tools/protocol-call.c:156
+#3  0x00005621aae5dd05 in mo_protocol_receive (s=0x7fda200c4f60, c=0x7fda200c75d8) at src/tools/protocol-call.c:327
+#4  0x00005621aae637be in feed (s=0x7fda200c4f60, c=0x7fda200c75d8, bytes=0x7fda200c7680 "Vhc2UocXVldWU6IFF1ZXVlLCBqb2I6IEpvYikgOiBRdWV1ZQogIHZhciByZWxlYXNlZCA9IGpvYgogIHJlbGVhc2VkLnN0YXQ=\"}}}", size=102) at src/tools/protocol-request.c:250
+#5  0x00005621aae63c34 in mo_protocol_read (s=0x7fda200c4f60, c=0x7fda200c75d8) at src/tools/protocol-request.c:313
+#6  0x00005621aae68a1b in mo_protocol_server_poll (s=0x7fda200c4f60, until_us=771554989941) at src/tools/protocol-server.c:761
+#7  0x00005621aae7ded0 in serve_requests (server=0x7fda200c4f60, listener=0x7fda200c4ac0, log=0x7fda27058f20) at src/tools/serve.c:136
+#8  0x00005621aae7e91f in mo_serve_image (cli=0x7ffe9efd2bf0, image=0x7fda201513d8, service=0, output=0x7fda272c15c0 <_IO_2_1_stdout_>, errors=0x7fda272c14e0 <_IO_2_1_stderr_>, diags=0x7fda2705a3d0, held_store=0x7fda20016380) at src/tools/serve.c:261
+#9  0x00005621aae8ff08 in serve_upgrade (context=0x7ffe9efd2b30) at src/tools/upgrade.c:1751
+#10 0x00005621aad2dfc2 in run (argument=0x7ffe9efd2aa0) at src/base/stack.c:17
+#11 0x00007fda27158b84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x00007fda271e5ecc in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+[Inferior 1 (process 3081500) killed]

@@ -70,6 +70,11 @@ def sources(out, control='reference'):
     body = body.replace('Queue(jobs:', 'Queue(revision: 1, jobs:')
     body += '\nfn restore(jobs: Map(Int, Job), next_id: Int, revision: Int) : Queue\n  Queue(jobs: jobs, next_id: next_id, revision: revision)\nend\n'
     body += '\nfn revision(queue: Queue) : Int\n  queue.revision\nend\n'
+    if control == 'qualified-reference':
+        body = body.replace('\n\nmax_attempts', '\n\nuse UpgradeOld\n\nmax_attempts', 1)
+        body = body.replace('expose Queue,', 'expose Queue, migrate,', 1)
+        body += migration.replace('JobQueue.', '')
+        (out / 'main.mo').write_text(main.replace('use UpgradeOld\n', ''))
     queue.write_text(body)
     return out
 

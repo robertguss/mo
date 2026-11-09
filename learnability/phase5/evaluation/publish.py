@@ -26,7 +26,9 @@ def load(name, path):
 scan = load('publication_scan', HERE.parents[1] / 'phase4/scan.py')
 evidence = load('publication_gate', HERE.parent / 'evidence.py')
 FILES = ('manifest.json', 'grade.json', 'stream.jsonl', 'proxy.jsonl', 'prompt.txt',
-         'client-stderr.txt', 'service.log', 'restart.log', 'source-tests.json')
+         'client-stderr.txt', 'service.log', 'restart.log', 'source-tests.json',
+         'upgrade-check.json', 'upgrade-check.stderr', 'original-manifest.json',
+         'grading-correction.json')
 SOURCE_TREES = ('task-queue', 'serve')
 
 

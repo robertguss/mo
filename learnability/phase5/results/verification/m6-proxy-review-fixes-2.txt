@@ -1,0 +1,9 @@
+test_real_push_attestation (test_proxy.RealPush.test_real_push_attestation) ... ok
+test_command_origin (test_proxy.Tests.test_command_origin) ... ok
+test_forward_and_redact (test_proxy.Tests.test_forward_and_redact) ... ok
+test_wrapped_commands (test_proxy.Tests.test_wrapped_commands) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 3.626s
+
+OK

@@ -1,0 +1,14 @@
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 20261111
+INFO: Loaded 1 modules   (139337 inline 8-bit counters): 139337 [0x5630ccbe03c0, 0x5630ccc02409), 
+INFO: Loaded 1 PC tables (139337 PCs): 139337 [0x5630ccc02410,0x5630cce228a0), 
+INFO:        0 files found in build/m6-fuzz-corpus/protocol_server
+INFO: -max_len is not provided; libFuzzer will not generate inputs larger than 4096 bytes
+INFO: A corpus is not provided, starting from an empty corpus
+#2	pulse  ft: 13468 exec/s: 1 rss: 627Mb
+#2	INITED cov: 13467 ft: 13468 corp: 1/1b exec/s: 1 rss: 627Mb
+#3	NEW    cov: 13481 ft: 14870 corp: 2/2b lim: 4 exec/s: 0 rss: 627Mb L: 1/1 MS: 1 ChangeBit-
+#4	pulse  cov: 13481 ft: 14891 corp: 2/2b lim: 4 exec/s: 0 rss: 627Mb
+#4	NEW    cov: 13482 ft: 14891 corp: 3/3b lim: 4 exec/s: 0 rss: 627Mb L: 1/1 MS: 1 ChangeByte-
+#4	DONE   cov: 13482 ft: 14891 corp: 3/3b lim: 4 exec/s: 0 rss: 627Mb
+Done 4 runs in 8 second(s)

@@ -8,7 +8,7 @@ The development toolchain also supports typed live upgrades and state migration.
 > runs services. The [Phase 4 diagnostic evaluation](docs/status/phase4-run.md)
 > passed its gate with 14 of 16 sessions correct, including two recorded misses.
 > Typed live upgrades are implemented on the development branch. Phase 5 remains
-> open: final upgrade evidence and Robert’s v0.2 release approval are pending.
+> open: the agent gate and debug pause margin missed; v0.2 is unreleased.
 > See the [upgrade run record](docs/status/phase5-run.md).
 > Contributions are not yet open.
 
@@ -90,8 +90,8 @@ those builds, see the [task-queue runbook](docs/ops/task-queue.md).
 ## Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0;
-Phase 5 implements typed live upgrades and remains open pending its final evidence
-and release decision. [v0.2 preparation notes](docs/releases/v0.2-preparation.md)
+Phase 5 implements typed live upgrades. Its 1,000-kill drill passed, but the
+agent gate and debug pause margin missed; the phase remains open. [v0.2 preparation notes](docs/releases/v0.2-preparation.md)
 describe the implemented behavior and unresolved limits.
 
 ## Background

@@ -142,3 +142,9 @@ Migration now verifies the one-argument mo_call frame after skipping the first
 VM instruction; transaction-interior and compiled-staging checks also passed.
 The stale-binary run above is not used for those claims. clang-format 14's dry
 check passed the probe header and both instrumented C files.
+
+Independent final evidence inspection narrowed the `ordinary_call` debugger
+claim: its stop is in the ordinary request parser's PF_SCAN VM invocation, not
+the author tool body. The frozen control record is retained unchanged; the run
+report states this exact boundary. Randomized ordinary-call kills and the five
+other debugger stages remain separate observations.

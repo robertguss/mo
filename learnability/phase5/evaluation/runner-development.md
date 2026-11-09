@@ -128,3 +128,16 @@ fixture preparation history, persistent revision and next_id checks were added.
 Command: `MO_EVALUATION_BINARY=/tmp/mo-eval-build-aanyuygb/build/gcc/debug/mo python3 -m unittest discover -s learnability/phase5/evaluation -p test_collector.py -v`.
 Raw output: `build/m6-collector-integrated.txt`. FINAL now requires the immutable
 freeze and a hashed control receipt; no scored session has run.
+
+## Collected qualified-name correction
+
+All four experiment-2 sessions used the frozen collector. Slots 1 and 3 activated
+qualified `JobQueue.migrate` functions; the frozen grader's bare `migrate`
+selector raised a compile refusal. The separately named post-collection analysis
+accepts qualified leaf `migrate`, independently checks source identities and
+retains failed attestation. It scores 0/4, exactly as the original cohort. The
+first correction attempt failed because attestation was absent; that console and
+the initial malformed qualified-control failure are retained under results.
+Final separate-account cleanup left no session-user processes and no OUTPUT
+firewall rules (default ACCEPT only). No new model sessions were collected for
+the analysis.

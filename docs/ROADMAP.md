@@ -10,22 +10,23 @@ step for anything a Mo user would notice.
 | 2. Agents can write it | A toolchain agents use every day | Internal milestone |
 | 3. Services | Long-running services and MCP servers in Mo | |
 | 4. Agents can see inside it | A runtime agents can operate | **v0.1**, the first public release |
-| 5. It evolves while running | Typed live upgrades; final evidence in progress | v0.2, unreleased |
+| 5. It evolves while running | Typed live upgrades; evaluation gate missed | v0.2, unreleased |
 | 6. Intent and autonomy | People approve intent; agents ship the rest | v0.3 |
 | 7. Fast | Fast enough for serious services | v0.4 |
 | 8. Ecosystem | Others build and share | 1.0 |
 
 Phases 0 to 4 are finished. Phase 5 is implemented through the live upgrade and
-remote operator path; its final evidence and release decision remain open.
+remote operator path; the evaluation gate and debug pause margin missed.
 
 ## Now
 
 Phase 5 follows the approved [whole-program upgrade design](design/upgrades.md).
 Typed migration checking, checked restart, offline rehearsal, live activation,
 credential-gated MCP upgrade tools and loopback `mo push` are implemented.
-The final task-queue drill, declared agent evaluation, production pause measurement
-and frozen build-input comparison are in progress. Development controls do not
-close those gates; the phase remains open, and v0.2 is unreleased. Robert decides
+The declared 1,000-kill drill passed. The four-session evaluation scored 0/4
+against its 3/4 gate, and the debug production pause series missed the twofold
+margin. Frozen inputs and every miss are recorded; the phase remains open and
+v0.2 is unreleased. Robert decides
 the release after reviewing the evidence. See the [run record](status/phase5-run.md)
 and [release preparation notes](releases/v0.2-preparation.md).
 
