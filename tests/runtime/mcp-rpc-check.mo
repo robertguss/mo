@@ -256,6 +256,7 @@ fn pages()
   var exact = 0
   for i in 0..wide.tools.size
     item = wide.tools.get(i) or stop "expected tool"
+    require(wide.sizes.get(i) == Some(item.to_text.byte_count))
     bytes = expected_page([item], i + 1, wide.tools.size, key, id).to_text.byte_count
     if bytes > exact
       exact = bytes

@@ -1,0 +1,52 @@
+{
+  "jobs": [
+    {
+      "id": "1",
+      "payload": "completed item",
+      "attempts": "1",
+      "state": {
+        "case": "Done"
+      }
+    },
+    {
+      "id": "2",
+      "payload": "leased payload \u03bb",
+      "attempts": "2",
+      "state": {
+        "case": "Leased",
+        "fields": {
+          "until": "2099-01-01T00:30:00Z"
+        }
+      }
+    },
+    {
+      "id": "3",
+      "payload": "ready item",
+      "attempts": "0",
+      "state": {
+        "case": "Ready"
+      }
+    },
+    {
+      "id": "4",
+      "payload": "another ready item",
+      "attempts": "0",
+      "state": {
+        "case": "Ready"
+      }
+    }
+  ],
+  "revision": "1",
+  "stored_revision": "1",
+  "next_id": "5",
+  "preparation_upgrades": [
+    {
+      "ordinal": "1",
+      "head": "10",
+      "old_source": "ed6a0442c90285830cfa15451b334f3ddf9d101db0afdbabcd1b0a3318015dd8",
+      "new_source": "11674500eac5f747f85d8b08e82be28d5ee9595e7ae5a3b1e16b268421b4e559",
+      "program_retained": true
+    }
+  ],
+  "lease_fixture_time": "2099-01-01T00:00:00Z"
+}

@@ -1,0 +1,19 @@
+test_prepared_lease_ages_only_at_declared_deadline (test_grade.RealControls.test_prepared_lease_ages_only_at_declared_deadline) ... ok
+test_real_services (test_grade.RealControls.test_real_services) ... ok
+test_declared_function_name (test_grade.Selector.test_declared_function_name) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 104.922s
+
+OK
+reference {'correct': True, 'reasons': [], 'evidence_class': 'DEVELOPMENT'}
+qualified-reference {'correct': True, 'reasons': [], 'evidence_class': 'DEVELOPMENT'}
+unchanged {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'no successful recorded command-origin push', 'activation identity mismatch'], 'evidence_class': 'DEVELOPMENT'}
+initializer {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'live: wrong next_id', 'restart: wrong persisted jobs', 'restart: wrong jobs', 'restart: wrong next_id'], 'evidence_class': 'DEVELOPMENT'}
+drop-job {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'evidence_class': 'DEVELOPMENT'}
+payload {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'evidence_class': 'DEVELOPMENT'}
+duplicate-completion {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'evidence_class': 'DEVELOPMENT'}
+wrong-revision {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision'], 'evidence_class': 'DEVELOPMENT'}
+source-only {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'no successful recorded command-origin push', 'activation identity mismatch'], 'evidence_class': 'DEVELOPMENT'}
+constant-revision {'correct': False, 'reasons': ['live: wrong stored_revision', 'restart: wrong stored_revision'], 'evidence_class': 'DEVELOPMENT'}
+wrong-next-id {'correct': False, 'reasons': ['live: wrong next_id', 'restart: wrong next_id'], 'evidence_class': 'DEVELOPMENT'}

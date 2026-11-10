@@ -1,0 +1,10 @@
+{
+  "analysis": "experiment-2-qualified-grader-analysis",
+  "original_manifest_sha256": "a60cb047baadd7e580cbfc20b6dcbe686e217b7f394d9004cfd9b92413b773ba",
+  "declaration_sha256": "06481e1a4cbaa75e9bafb73a70887d83238532c46a620baffda60315d8ae35a8",
+  "original_collection_freeze": "/home/exedev/code/mo-m6/build/m6-freeze-2/manifest.json",
+  "live_observation": "unchanged original collector observation",
+  "restart": "new observation on copy of original stopped folder",
+  "correct": false,
+  "no_new_client_session": true
+}

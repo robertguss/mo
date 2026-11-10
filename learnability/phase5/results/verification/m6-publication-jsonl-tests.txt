@@ -1,0 +1,10 @@
+test_all_slots_misses_encodings_and_archive (test_publish.Publication.test_all_slots_misses_encodings_and_archive) ... ok
+test_input_symlink_and_archive_attacks (test_publish.Publication.test_input_symlink_and_archive_attacks) ... ok
+test_missing_provider_inventory_refused (test_publish.Publication.test_missing_provider_inventory_refused) ... ok
+test_missing_slot_and_development_refused (test_publish.Publication.test_missing_slot_and_development_refused) ... ok
+test_scanner_refuses_opaque_file (test_publish.Publication.test_scanner_refuses_opaque_file) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.020s
+
+OK

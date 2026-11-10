@@ -1,0 +1,1 @@
+200 0.46612893405836076 {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{\"value\":true}"}],"structuredContent":{"value":true},"isError":false}}

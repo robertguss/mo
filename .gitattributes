@@ -1,0 +1,2 @@
+# Preserve verbatim evidence logs, including tool-emitted trailing spaces.
+learnability/phase5/results/**/*.txt whitespace=-blank-at-eol

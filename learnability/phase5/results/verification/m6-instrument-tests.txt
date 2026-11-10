@@ -1,0 +1,16 @@
+test_malformed_compiler_output (test_capture_failures.Retention.test_malformed_compiler_output) ... ok
+test_partial_timeout_output (test_capture_failures.Retention.test_partial_timeout_output) ... ok
+test_complete (test_measure_pause.Parsing.test_complete) ... ok
+test_duplicate (test_measure_pause.Parsing.test_duplicate) ... ok
+test_explicit_migration_rejected (test_measure_pause.Parsing.test_explicit_migration_rejected) ... ok
+test_missing (test_measure_pause.Parsing.test_missing) ... ok
+test_null_and_refusal (test_measure_pause.Parsing.test_null_and_refusal) ... ok
+test_exact_snapshot_matches_readback_and_rejects_corruption (test_measure_pause.SnapshotValidation.test_exact_snapshot_matches_readback_and_rejects_corruption) ... ok
+test_development_never_counts (test_evidence.EvidenceTests.test_development_never_counts) ... ok
+test_missing_and_duplicate_slots_cannot_pass (test_evidence.EvidenceTests.test_missing_and_duplicate_slots_cannot_pass) ... ok
+test_one_miss_permitted_but_not_a_missing_client (test_evidence.EvidenceTests.test_one_miss_permitted_but_not_a_missing_client) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 20.436s
+
+OK

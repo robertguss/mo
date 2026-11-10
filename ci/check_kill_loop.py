@@ -17,8 +17,8 @@ A reply's runtime error says what the call did through its `effect`: `none` is n
 counts like a lost reply. A connection that is refused, reset or closed before the reply is a
 lost reply.
 
-Each folder also receives up to two live upgrades with `mo push` to tool-only variants, and
-pushes of an invalid variant that changes the access clause. Callers keep sending while a push
+Each folder also receives up to tool-only and state-changing live upgrades with `mo push`, plus
+access, migration-trap, oversized-bundle and stale-base refusal controls. Callers keep sending while a push
 runs, and some pushes are killed at a random moment. After every kill the folder restarts from
 its recorded program alone; the active program must be the one before or after the push in
 flight, the upgrade records must count one per accepted activation, and an invalid push must
@@ -192,6 +192,10 @@ class Run:
         self.program = 0  # index in self.upgrades of the active program
         self.ordinal = 0  # activations the folder has committed
         self.recorded = None  # upgrade records the last mo history read
+        self.refusal_counts = {}
+        self.requested_push_kills = 0
+        self.post_migration_kills = 0
+        self.requested_call_kills = 0
         self.pushes = self.activated = self.invalid = self.push_kills = 0
 
     def fail(self, message):
@@ -355,6 +359,7 @@ class Run:
 
     def kill_during(self):
         """Sends a call and kills the server a random delay after the request has gone."""
+        self.requested_call_kills += 1
         call = self.choose()
         reply = {}
         self.queue.sent.clear()
@@ -382,7 +387,7 @@ class Run:
     # Upgrades.
 
     def variants(self):
-        """The original queue, two tool-only variants and one that changes its access clause."""
+        """Tool-only, access, field-migration, trapping and oversized candidates."""
         source = (pathlib.Path(FOLDER) / 'main.mo').read_text()
         for name, text in [
                 ('v0', source),
@@ -398,11 +403,41 @@ class Run:
             (folder / 'main.mo').write_text(text)
             self.upgrades.append(folder)
 
+        # State-changing fixtures keep the queue API and all existing jobs intact.
+        for name, broken in [('migrated', False), ('broken', True)]:
+            folder = self.root / name
+            shutil.copytree(self.upgrades[2], folder)
+            main = (folder / 'main.mo').read_text().replace('"2"', '"4"')
+            main = main.replace('use JobQueue', 'use UpgradeOld\nuse JobQueue')
+            migration = pathlib.Path('tests/kill-loop/migration.mo.inc').read_text()
+            if broken:
+                migration = migration.replace('old.next_id, 1)',
+                                              'old.next_id, 1 / (old.next_id - old.next_id))')
+            main += migration
+            (folder / 'main.mo').write_text(main)
+            queue = folder / 'job-queue.mo'
+            body = queue.read_text().replace('expose Queue,', 'expose Queue, restore,')
+            body = body.replace('  next_id: Int\n', '  next_id: Int\n  revision: Int\n')
+            body = body.replace('Queue(jobs:', 'Queue(revision: 1, jobs:')
+            body += ("\nfn restore(jobs: Map(Int, Job), next_id: Int, revision: Int) : Queue\n"
+                     "  Queue(jobs: jobs, next_id: next_id, revision: revision)\nend\n")
+            queue.write_text(body)
+            self.upgrades.append(folder)
+        folder = self.root / 'oversized'
+        shutil.copytree(self.upgrades[2], folder)
+        with (folder / 'main.mo').open('a') as output:
+            output.write(('\n##' + 'x' * 1000) * 1050 + '\n')
+        self.upgrades.append(folder)
+
     def digest(self, index):
         result = subprocess.run([str(self.binary), 'check', str(self.upgrades[index] / 'main.mo'),
-                                 '--upgrade-from', str(self.upgrades[0] / 'main.mo'), '--json'],
+                                 '--upgrade-from', str(self.upgrades[0] / 'main.mo'),
+                                 *(['--migrate', 'migrate'] if index == 4 else []), '--json'],
                                 capture_output=True, timeout=120, check=False)
-        return json.loads(result.stdout)['candidate_source']
+        report = json.loads(result.stdout)
+        if result.returncode != 0:
+            self.fail(f'candidate {index} check failed: {report}')
+        return report['candidate_source']
 
     def active(self):
         """The variant the server runs, read through the version tool the variants add."""
@@ -415,25 +450,34 @@ class Run:
             return 0
         return int(reply['result']['structuredContent']['value'])
 
-    def push(self, target, out):
+    def push(self, target, out, stale=False):
         out['result'] = subprocess.run(
             [str(self.binary), 'push', str(self.upgrades[target] / 'main.mo'), '--url',
-             f'http://127.0.0.1:{self.queue.port}/mcp', '--base', self.digests[self.program],
+             f'http://127.0.0.1:{self.queue.port}/mcp', '--base', self.digests[0 if stale else self.program],
+             *(['--migrate', 'migrate'] if target in (4, 5) else []),
              '--token-env', 'QUEUE_TOKEN', '--upgrade-token-env', 'QUEUE_UPGRADE', '--json'],
             capture_output=True, timeout=300, check=False,
             env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN})
 
-    def upgrade(self):
+    def upgrade(self, target=None, killing=None, stale=False, load=True):
         """Pushes the next variant, or the invalid one, while calls go on; may kill mid-push."""
-        target = self.program + 1 if self.program < 2 and self.random.random() < 0.8 else 3
-        killing = self.random.random() < 0.5
+        if target is None:
+            target = ({0: 1, 1: 2, 2: 4}.get(self.program, 3)
+                      if self.random.random() < 0.8 else 3)
+        if killing is None:
+            killing = self.random.random() < 0.5
+        self.requested_push_kills += int(killing)
+        refusal = 'E1416' if stale else {3: 'E1426', 5: 'E1423', 6: 'E1417'}.get(target)
         self.pushes += 1
         out = {}
-        pusher = threading.Thread(target=self.push, args=(target, out))
+        pusher = threading.Thread(target=self.push, args=(target, out, stale))
         pusher.start()
         deadline = time.monotonic() + self.random.uniform(0.05, 1.5)
         call, outcomes = None, None
         while pusher.is_alive() and (not killing or time.monotonic() < deadline):
+            if not load:
+                time.sleep(0.01)
+                continue
             outcomes = self.judge(call := self.choose(), self.send(call))
             if outcomes is not None:
                 self.fail(f'{call[0]} lost its reply during a push with no kill')
@@ -441,9 +485,9 @@ class Run:
             self.push_kills += 1
             self.kill()
             pusher.join(timeout=300)
-            self.restart(call or ('stats', {}), [self.model])
+            self.restart(call or ('stats', {}), [self.model], check_program=False)
             now = self.active()
-            allowed = {self.program} | ({target} if target != 3 else set())
+            allowed = {self.program} | ({target} if refusal is None else set())
             if now not in allowed:
                 self.fail(f'after a kill during a push to variant {target}, the server runs '
                           f'variant {now}; it ran {self.program}')
@@ -456,11 +500,13 @@ class Run:
             return
         pusher.join(timeout=300)
         result = out['result']
-        report = json.loads(result.stdout) if result.stdout else {}
-        if target == 3:
+        reports = [json.loads(line) for line in result.stdout.splitlines()]
+        report = next((item for item in reports if 'code' in item or 'ordinal' in item), {})
+        if refusal is not None:
             self.invalid += 1
-            if result.returncode != 1 or report.get('code') != 'E1426':
-                self.fail(f'the invalid variant was not refused for its access clause: {result}')
+            if result.returncode != 1 or report.get('code') != refusal:
+                self.fail(f'variant {target} expected {refusal}: {result}')
+            self.refusal_counts[refusal] = self.refusal_counts.get(refusal, 0) + 1
         elif result.returncode != 0 or report.get('ordinal') != str(self.ordinal + 1):
             self.fail(f'push to variant {target} failed: {result}')
         else:
@@ -492,9 +538,20 @@ class Run:
                 return jobs
             after = content['value']['next']['value']
 
-    def restart(self, call, outcomes):
+    def restart(self, call, outcomes, check_program=True):
         """Restarts on the same folder and requires the queue to be one of `outcomes`."""
         self.start()
+        if self.recorded is None:
+            # Recovery has completed. Read the durable ordinal with the store closed.
+            self.queue.stop()
+            self.queue = None
+            self.history()
+            self.start()
+        if check_program:
+            if self.active() != self.program:
+                self.fail('restart changed the active program without a push')
+            if self.recorded is not None and self.recorded != self.ordinal:
+                self.fail('restart activation count differs from accepted pushes')
         if call[0] == 'lease' and len(outcomes) == 2:
             leased = set(project(self.listing('Leased')))
             known = {id for id, job in self.model.items() if job[2] == 'Leased'}
@@ -503,7 +560,10 @@ class Run:
                 self.fail(f'after a lease without a reply, the queue leases {sorted(leased)}; '
                           f'the model knows {sorted(known)} and allows only job '
                           f'{oldest_ready(self.model)} more')
-        observed = project(self.listing(ALL_JOBS['case']))
+        jobs = self.listing(ALL_JOBS['case'])
+        observed = project(jobs)
+        if len(observed) != len(jobs):
+            self.fail('listing contains duplicate job ids')
         for outcome in outcomes:
             if observed == outcome:
                 self.model = outcome
@@ -518,14 +578,36 @@ class Run:
 
     def go(self):
         self.variants()
-        self.digests = [self.digest(index) for index in range(3)]
+        self.digests = {index: self.digest(index) for index in (0, 1, 2, 4)}
         self.new_folder()
+        # Guaranteed controls, on nonempty state including an outstanding lease.
+        for call in [('submit', {'payload': self.payload()}), ('lease', {})]:
+            if self.judge(call, self.send(call)) is not None:
+                self.fail('lost reply during development controls')
+        self.upgrade(1, False)
+        self.upgrade(2, False)
+        for target, stale in [(3, False), (5, False), (6, False), (4, True)]:
+            self.upgrade(target, False, stale)
+        before = self.listing(ALL_JOBS['case'])
+        self.upgrade(4, True, load=False)
+        if self.program != 4:
+            self.upgrade(4, False, load=False)
+        after = self.listing(ALL_JOBS['case'])
+        if before != after:
+            self.fail('migration changed jobs or lease deadlines')
+        self.kill()
+        self.post_migration_kills += 1
+        self.restart(('stats', {}), [self.model])
+        if self.active() != 4 or self.recorded != self.ordinal:
+            self.fail('migrated folder restart lost program or activation records')
         while self.killed < self.kills:
             # A folder that has both upgrades is replaced now and then, so pushes keep coming.
             if len(self.model) > FOLDER_JOBS or time.monotonic() - self.born > FOLDER_SECONDS or \
-                    (self.program == 2 and self.random.random() < 0.05):
+                    (self.program == 4 and self.random.random() < 0.05):
                 self.new_folder()
             for _ in range(self.random.randrange(2, 10)):
+                if self.killed >= self.kills:
+                    break
                 roll = self.random.random()
                 if roll < 0.03:
                     self.burst()
@@ -533,7 +615,8 @@ class Run:
                     self.upgrade()
                 else:
                     self.step()
-            self.kill_during()
+            if self.killed < self.kills:
+                self.kill_during()
         self.queue.stop()
         self.queue = None
 
@@ -557,7 +640,8 @@ def main():
             failure = 'no kill landed mid-commit'
     except Mismatch as error:
         failure = str(error)
-    except BaseException:
+    except BaseException as error:
+        failure = repr(error)
         print(f'kill loop: seed {run.seed}, kill {run.killed + 1}, call {run.calls}: '
               f'the driver stopped', file=sys.stderr)
         raise
@@ -565,7 +649,7 @@ def main():
         if run.queue is not None:
             run.queue.kill()
         if failure is not None and options.keep:
-            print(f'kill loop: data folder kept at {run.folder}', file=sys.stderr)
+            print(f'kill loop: fixtures and data kept at {run.root}', file=sys.stderr)
         else:
             shutil.rmtree(root, ignore_errors=True)
     print(f'kill loop: seed={run.seed} kills={run.killed} mid_commit={run.mid_commit} '
@@ -573,6 +657,10 @@ def main():
           f'history_recovery={run.history_recovery} calls={run.calls} answered={run.answered} '
           f'refused={run.refused} unknown={run.unknown} pushes={run.pushes} '
           f'activated={run.activated} invalid={run.invalid} push_kills={run.push_kills} '
+          f'requested_push_kills={run.requested_push_kills} refusals={run.refusal_counts} '
+          f'requested_kills={run.kills} call_kills={run.killed - run.push_kills - run.post_migration_kills} '
+          f'requested_call_kills={run.requested_call_kills} '
+          f'post_migration_kills={run.post_migration_kills} internal_stage_coverage=unobserved '
           f'result={"fail" if failure else "pass"} seconds={time.monotonic() - began:.0f}')
     if failure is not None:
         print(f'kill loop failed: seed {run.seed}, kill {run.killed}, call {run.calls}:\n{failure}',

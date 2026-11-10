@@ -1,0 +1,561 @@
+{
+  "status": "complete",
+  "verdict": "Ready with fixes",
+  "verdict_reason": "The original snapshot has three P1 defects affecting evaluation scoring or cleanup. Fix and verify findings before relying on collection; subsequent parent fixes were not independently reviewed.",
+  "scope": {
+    "base": "814ddd0",
+    "branch": "feat/phase5-m6-evidence",
+    "head_sha": "814ddd0f70e5fd613130fe87a9cd24cd187af8e6",
+    "pr_url": null,
+    "files_changed": 38
+  },
+  "intent": "Prepare trustworthy M6 upgrade drill, pause measurement and four-slot agent evaluation evidence, preserving failures and redacting secrets. Final collection and release decision remain pending.",
+  "intent_confidence": "explicit",
+  "reviewers": [
+    "correctness",
+    "testing",
+    "security",
+    "project-standards",
+    "maintainability",
+    "reliability",
+    "agent-native"
+  ],
+  "findings": [
+    {
+      "#": 1,
+      "autofix_class": "manual",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/grade.py:63: for block in (event.get('message') or {}).get('content', []):",
+        "learnability/phase4/proxy.py:244: message = event.get('message')  # text, not an object, when Claude Code refused a command",
+        "grade.py:56: events = [json.loads(line) for line in stream.read_text().splitlines()]. Phase4 events() skips non-JSON lines; this raises instead."
+      ],
+      "file": "learnability/phase5/evaluation/grade.py",
+      "first_evidence": "learnability/phase5/evaluation/grade.py:63: for block in (event.get('message') or {}).get('content', []):",
+      "independent_reviewers": [
+        "adversarial-claude",
+        "correctness"
+      ],
+      "line": 63,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "adversarial-claude",
+        "correctness"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Use proxy.base.content_blocks(event) in attestation instead of calling .get on message directly. Add a Claude transcript control with a string-message refusal followed by a successful Bash push and tool result.",
+      "title": "Handle Claude string-message events during attestation",
+      "why_it_matters": "A Claude refusal can emit a string message. Attestation calls .get on it and raises, so the harness records a grading failure even when the session subsequently completes the upgrade."
+    },
+    {
+      "#": 2,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/harness.py:265 --                 meta['correct'] = meta['success'] = not meta['failures']",
+        "learnability/phase5/evaluation/harness.py:267 --             p4.reset(l)",
+        "learnability/phase5/evaluation/harness.py:270 --             (out / 'manifest.json').write_text(json.dumps(meta, indent=2) + '\\n')"
+      ],
+      "file": "learnability/phase5/evaluation/harness.py",
+      "first_evidence": "learnability/phase5/evaluation/harness.py:265 --                 meta['correct'] = meta['success'] = not meta['failures']",
+      "independent_reviewers": [
+        "reliability"
+      ],
+      "line": 265,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "reliability"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Guard each cleanup step, record its exception in failures, attempt all remaining cleanup, and set success and correct only after reset has succeeded; mark cleanup-incomplete manifests explicitly.",
+      "title": "Record cleanup failures before declaring a session successful",
+      "why_it_matters": "If session reset fails after grading, the finally block still writes a manifest reporting success and an empty failure list, and later slots accept that manifest as complete. Earlier cleanup errors can also skip service shutdown, firewall removal, and working-tree capture while still producing a manifest. Collect cleanup errors independently, continue the remaining cleanup, and only report success after cleanup succeeds so incomplete runs cannot look valid.",
+      "validation_status": "confirmed",
+      "validation_reason": "If reset fails after a successful grade, the new harness sets success and correct before p4.reset, writes the manifest in its finally block, and reserve accepts its existence; Phase 4 reset can raise on surviving processes or files, though incidence was not measured."
+    },
+    {
+      "#": 3,
+      "autofix_class": "manual",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/proxy.py:59 -- PUSH = re.compile(r'(?:^|[\\s/])mo\\s+push\\s')",
+        "learnability/phase5/evaluation/grade.py:60 -- proxy.PUSH.search(e['item'].get('command', '')) for e in events)",
+        "learnability/phase4/pilot/ledger.md:49 -- no web search. Codex's five commands all came wrapped in `bash -lc`, and the host check read"
+      ],
+      "file": "learnability/phase5/evaluation/proxy.py",
+      "first_evidence": "learnability/phase5/evaluation/proxy.py:59 -- PUSH = re.compile(r'(?:^|[\\s/])mo\\s+push\\s')",
+      "independent_reviewers": [
+        "correctness",
+        "adversarial-claude"
+      ],
+      "line": 59,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "correctness",
+        "adversarial-claude"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Normalize shell-wrapped command strings before detecting the mo push invocation, and share that recognizer between proxy.match and grade.attestation. Add controls for the pinned Codex bash -lc representation, bare commands, quoted absolute executable paths, and failed commands.",
+      "title": "Recognize shell-wrapped push commands",
+      "why_it_matters": "A successful Codex upgrade executed as /bin/bash -lc 'mo push main.mo ...' is graded as having no command-origin push. The quote immediately before mo fails the new regex, so proxy.match leaves its upload calls unmatched and grade.attestation cannot recognize the successful command either. The Phase4 pilot ledger explicitly records that this pinned Codex client wraps its commands in bash -lc, making the stub's bare-command coverage insufficient for the actual evaluation."
+    },
+    {
+      "#": 4,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/compiler_load.py:39 --         result = subprocess.run(command, capture_output=True, timeout=60)",
+        "learnability/phase5/compiler_load.py:42 --         reports = [json.loads(line) for line in result.stdout.splitlines()]",
+        "learnability/phase5/compiler_load.py:47 --         (out / 'attempts.json').write_text(json.dumps(records, indent=2) + '\\n')"
+      ],
+      "file": "learnability/phase5/compiler_load.py",
+      "first_evidence": "learnability/phase5/compiler_load.py:39 --         result = subprocess.run(command, capture_output=True, timeout=60)",
+      "independent_reviewers": [
+        "reliability",
+        "testing"
+      ],
+      "line": 39,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "reliability",
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Catch TimeoutExpired and process launch failures, write available stdout and stderr and an attempt record with timeout or error details, and persist the record before parsing or validating reports.",
+      "title": "Record compiler attempts before handling timeouts or malformed output",
+      "why_it_matters": "A compiler timeout leaves no attempt record or captured output, and malformed JSON also prevents the attempt from being recorded. These are precisely the failures needed to investigate compiler-stall evidence; the retained input alone does not say how the attempt ended or preserve its diagnostics. Recording the outcome and raw streams before parsing preserves that evidence.",
+      "validation_status": "confirmed",
+      "validation_reason": "If a compiler invocation times out or returns malformed JSON, the new compiler_load.py exits before appending and writing its attempt record, and timeout also precedes both output writes; incidence was not measured."
+    },
+    {
+      "#": 5,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/harness.py:182 -- service.stderr_path = out / 'service.log'",
+        "learnability/phase5/protocol.md:28 -- Each session gets the frozen executable, editable candidate source, read-only historical source/MOSB and any required MOCC, guide, service log, proxy URL and names of two distinct credential environment variables."
+      ],
+      "file": "learnability/phase5/evaluation/harness.py",
+      "first_evidence": "service.stderr_path = out / 'service.log'",
+      "independent_reviewers": [
+        "agent-native"
+      ],
+      "line": 182,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "agent-native"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Provide a credential-safe readable service log in the session area and identify it in the prompt.",
+      "title": "Provide the declared service log to the session",
+      "why_it_matters": "The session user cannot read the service log inside the private output directory, denying the declared diagnostic context when the service reports an error.",
+      "validation_status": "confirmed",
+      "validation_reason": "For a session needing service diagnostics, the new harness writes service.log under the private output directory checked inaccessible to the session user and the prompt supplies no log path, contrary to protocol.md's declared service log; incidence was not measured."
+    },
+    {
+      "#": 6,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/measure_pause.py:141 --     p = subprocess.run(command, capture_output=True, env=env, cwd=ROOT, timeout=300)",
+        "learnability/phase5/measure_pause.py:124 --         result = subprocess.run(command, capture_output=True, env=env, cwd=ROOT, timeout=300)",
+        "learnability/phase5/measure_pause.py:244 --                 except Exception as exc:"
+      ],
+      "file": "learnability/phase5/measure_pause.py",
+      "first_evidence": "learnability/phase5/measure_pause.py:141 --     p = subprocess.run(command, capture_output=True, env=env, cwd=ROOT, timeout=300)",
+      "independent_reviewers": [
+        "reliability"
+      ],
+      "line": 141,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "reliability"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Catch TimeoutExpired in both run and verify_snapshot, write its available stdout and stderr to the corresponding files, then propagate a timeout failure.",
+      "title": "Preserve partial command logs on pause measurement timeouts",
+      "why_it_matters": "A timed-out check, push, fetch, or query is marked as failed but its captured stdout and stderr are discarded before the files are written. Operators lose the partial diagnostics needed to explain a stalled measurement. Persisting TimeoutExpired output retains the same raw evidence provided for ordinary command failures.",
+      "validation_status": "confirmed",
+      "validation_reason": "If a check, push, fetch or query exceeds 300 seconds, the new measure_pause.py raises before writing that command's captured streams and records only the exception as a sample failure; incidence was not measured."
+    },
+    {
+      "#": 7,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "learnability/phase5/evaluation/publish.py:118: if len({token for _, token in tokens}) < 2:",
+        "publish.py:4: publish.py SESSIONS_JSON DEST --tokens SERVICE_TOKENS PROVIDER_SECRETS",
+        "publish.py:190: parser.add_argument('--tokens', nargs='+', required=True). One file is accepted."
+      ],
+      "file": "learnability/phase5/evaluation/publish.py",
+      "first_evidence": "learnability/phase5/evaluation/publish.py:118: if len({token for _, token in tokens}) < 2:",
+      "independent_reviewers": [
+        "adversarial-claude"
+      ],
+      "line": 118,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "adversarial-claude"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Take separate options (`--service-tokens` and `--provider-secrets`), require both files to be non-empty, and record both file digests in the receipt. At minimum, require exactly two files and at least one token from each.",
+      "title": "Publication accepts tokens without provider secrets, despite documenting both",
+      "why_it_matters": "The docstring requires SERVICE_TOKENS and PROVIDER_SECRETS, but the check only needs two distinct tokens in total. The harness's tokens file alone holds at least 8 per-session service tokens, so `--tokens STATE/tokens` passes without STATE/secrets. Provider OAuth or API secrets in stream.jsonl, client-stderr.txt or service.log are then neither redacted nor caught by the stage and extract scans, and the receipt says publication_scan_clean: true. One operator omission leaks credentials into the archive.",
+      "validation_status": "confirmed",
+      "validation_reason": "If the operator supplies only the service-token file and a distinct provider secret occurs in a published artifact without matching its patterns, the new publisher accepts two service tokens, redacts and scans only supplied patterns, and reports a clean receipt; harness.py appends two fresh service tokens per session and incidence of such secret-bearing artifacts was not measured.",
+      "protected_subject": "secrets-exposure"
+    }
+  ],
+  "actionable_findings": [
+    {
+      "#": 1,
+      "autofix_class": "manual",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/grade.py:63: for block in (event.get('message') or {}).get('content', []):",
+        "learnability/phase4/proxy.py:244: message = event.get('message')  # text, not an object, when Claude Code refused a command",
+        "grade.py:56: events = [json.loads(line) for line in stream.read_text().splitlines()]. Phase4 events() skips non-JSON lines; this raises instead."
+      ],
+      "file": "learnability/phase5/evaluation/grade.py",
+      "first_evidence": "learnability/phase5/evaluation/grade.py:63: for block in (event.get('message') or {}).get('content', []):",
+      "independent_reviewers": [
+        "adversarial-claude",
+        "correctness"
+      ],
+      "line": 63,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "adversarial-claude",
+        "correctness"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Use proxy.base.content_blocks(event) in attestation instead of calling .get on message directly. Add a Claude transcript control with a string-message refusal followed by a successful Bash push and tool result.",
+      "title": "Handle Claude string-message events during attestation",
+      "why_it_matters": "A Claude refusal can emit a string message. Attestation calls .get on it and raises, so the harness records a grading failure even when the session subsequently completes the upgrade."
+    },
+    {
+      "#": 2,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/harness.py:265 --                 meta['correct'] = meta['success'] = not meta['failures']",
+        "learnability/phase5/evaluation/harness.py:267 --             p4.reset(l)",
+        "learnability/phase5/evaluation/harness.py:270 --             (out / 'manifest.json').write_text(json.dumps(meta, indent=2) + '\\n')"
+      ],
+      "file": "learnability/phase5/evaluation/harness.py",
+      "first_evidence": "learnability/phase5/evaluation/harness.py:265 --                 meta['correct'] = meta['success'] = not meta['failures']",
+      "independent_reviewers": [
+        "reliability"
+      ],
+      "line": 265,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "reliability"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Guard each cleanup step, record its exception in failures, attempt all remaining cleanup, and set success and correct only after reset has succeeded; mark cleanup-incomplete manifests explicitly.",
+      "title": "Record cleanup failures before declaring a session successful",
+      "why_it_matters": "If session reset fails after grading, the finally block still writes a manifest reporting success and an empty failure list, and later slots accept that manifest as complete. Earlier cleanup errors can also skip service shutdown, firewall removal, and working-tree capture while still producing a manifest. Collect cleanup errors independently, continue the remaining cleanup, and only report success after cleanup succeeds so incomplete runs cannot look valid.",
+      "validation_status": "confirmed",
+      "validation_reason": "If reset fails after a successful grade, the new harness sets success and correct before p4.reset, writes the manifest in its finally block, and reserve accepts its existence; Phase 4 reset can raise on surviving processes or files, though incidence was not measured."
+    },
+    {
+      "#": 3,
+      "autofix_class": "manual",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/proxy.py:59 -- PUSH = re.compile(r'(?:^|[\\s/])mo\\s+push\\s')",
+        "learnability/phase5/evaluation/grade.py:60 -- proxy.PUSH.search(e['item'].get('command', '')) for e in events)",
+        "learnability/phase4/pilot/ledger.md:49 -- no web search. Codex's five commands all came wrapped in `bash -lc`, and the host check read"
+      ],
+      "file": "learnability/phase5/evaluation/proxy.py",
+      "first_evidence": "learnability/phase5/evaluation/proxy.py:59 -- PUSH = re.compile(r'(?:^|[\\s/])mo\\s+push\\s')",
+      "independent_reviewers": [
+        "correctness",
+        "adversarial-claude"
+      ],
+      "line": 59,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "correctness",
+        "adversarial-claude"
+      ],
+      "severity": "P1",
+      "suggested_fix": "Normalize shell-wrapped command strings before detecting the mo push invocation, and share that recognizer between proxy.match and grade.attestation. Add controls for the pinned Codex bash -lc representation, bare commands, quoted absolute executable paths, and failed commands.",
+      "title": "Recognize shell-wrapped push commands",
+      "why_it_matters": "A successful Codex upgrade executed as /bin/bash -lc 'mo push main.mo ...' is graded as having no command-origin push. The quote immediately before mo fails the new regex, so proxy.match leaves its upload calls unmatched and grade.attestation cannot recognize the successful command either. The Phase4 pilot ledger explicitly records that this pinned Codex client wraps its commands in bash -lc, making the stub's bare-command coverage insufficient for the actual evaluation."
+    },
+    {
+      "#": 4,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/compiler_load.py:39 --         result = subprocess.run(command, capture_output=True, timeout=60)",
+        "learnability/phase5/compiler_load.py:42 --         reports = [json.loads(line) for line in result.stdout.splitlines()]",
+        "learnability/phase5/compiler_load.py:47 --         (out / 'attempts.json').write_text(json.dumps(records, indent=2) + '\\n')"
+      ],
+      "file": "learnability/phase5/compiler_load.py",
+      "first_evidence": "learnability/phase5/compiler_load.py:39 --         result = subprocess.run(command, capture_output=True, timeout=60)",
+      "independent_reviewers": [
+        "reliability",
+        "testing"
+      ],
+      "line": 39,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "reliability",
+        "testing"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Catch TimeoutExpired and process launch failures, write available stdout and stderr and an attempt record with timeout or error details, and persist the record before parsing or validating reports.",
+      "title": "Record compiler attempts before handling timeouts or malformed output",
+      "why_it_matters": "A compiler timeout leaves no attempt record or captured output, and malformed JSON also prevents the attempt from being recorded. These are precisely the failures needed to investigate compiler-stall evidence; the retained input alone does not say how the attempt ended or preserve its diagnostics. Recording the outcome and raw streams before parsing preserves that evidence.",
+      "validation_status": "confirmed",
+      "validation_reason": "If a compiler invocation times out or returns malformed JSON, the new compiler_load.py exits before appending and writing its attempt record, and timeout also precedes both output writes; incidence was not measured."
+    },
+    {
+      "#": 5,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/evaluation/harness.py:182 -- service.stderr_path = out / 'service.log'",
+        "learnability/phase5/protocol.md:28 -- Each session gets the frozen executable, editable candidate source, read-only historical source/MOSB and any required MOCC, guide, service log, proxy URL and names of two distinct credential environment variables."
+      ],
+      "file": "learnability/phase5/evaluation/harness.py",
+      "first_evidence": "service.stderr_path = out / 'service.log'",
+      "independent_reviewers": [
+        "agent-native"
+      ],
+      "line": 182,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "agent-native"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Provide a credential-safe readable service log in the session area and identify it in the prompt.",
+      "title": "Provide the declared service log to the session",
+      "why_it_matters": "The session user cannot read the service log inside the private output directory, denying the declared diagnostic context when the service reports an error.",
+      "validation_status": "confirmed",
+      "validation_reason": "For a session needing service diagnostics, the new harness writes service.log under the private output directory checked inaccessible to the session user and the prompt supplies no log path, contrary to protocol.md's declared service log; incidence was not measured."
+    },
+    {
+      "#": 6,
+      "autofix_class": "gated_auto",
+      "confidence": 100,
+      "evidence": [
+        "learnability/phase5/measure_pause.py:141 --     p = subprocess.run(command, capture_output=True, env=env, cwd=ROOT, timeout=300)",
+        "learnability/phase5/measure_pause.py:124 --         result = subprocess.run(command, capture_output=True, env=env, cwd=ROOT, timeout=300)",
+        "learnability/phase5/measure_pause.py:244 --                 except Exception as exc:"
+      ],
+      "file": "learnability/phase5/measure_pause.py",
+      "first_evidence": "learnability/phase5/measure_pause.py:141 --     p = subprocess.run(command, capture_output=True, env=env, cwd=ROOT, timeout=300)",
+      "independent_reviewers": [
+        "reliability"
+      ],
+      "line": 141,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "reliability"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Catch TimeoutExpired in both run and verify_snapshot, write its available stdout and stderr to the corresponding files, then propagate a timeout failure.",
+      "title": "Preserve partial command logs on pause measurement timeouts",
+      "why_it_matters": "A timed-out check, push, fetch, or query is marked as failed but its captured stdout and stderr are discarded before the files are written. Operators lose the partial diagnostics needed to explain a stalled measurement. Persisting TimeoutExpired output retains the same raw evidence provided for ordinary command failures.",
+      "validation_status": "confirmed",
+      "validation_reason": "If a check, push, fetch or query exceeds 300 seconds, the new measure_pause.py raises before writing that command's captured streams and records only the exception as a sample failure; incidence was not measured."
+    },
+    {
+      "#": 7,
+      "autofix_class": "gated_auto",
+      "confidence": 75,
+      "evidence": [
+        "learnability/phase5/evaluation/publish.py:118: if len({token for _, token in tokens}) < 2:",
+        "publish.py:4: publish.py SESSIONS_JSON DEST --tokens SERVICE_TOKENS PROVIDER_SECRETS",
+        "publish.py:190: parser.add_argument('--tokens', nargs='+', required=True). One file is accepted."
+      ],
+      "file": "learnability/phase5/evaluation/publish.py",
+      "first_evidence": "learnability/phase5/evaluation/publish.py:118: if len({token for _, token in tokens}) < 2:",
+      "independent_reviewers": [
+        "adversarial-claude"
+      ],
+      "line": 118,
+      "owner": "downstream-resolver",
+      "pre_existing": false,
+      "requires_verification": true,
+      "reviewers": [
+        "adversarial-claude"
+      ],
+      "severity": "P2",
+      "suggested_fix": "Take separate options (`--service-tokens` and `--provider-secrets`), require both files to be non-empty, and record both file digests in the receipt. At minimum, require exactly two files and at least one token from each.",
+      "title": "Publication accepts tokens without provider secrets, despite documenting both",
+      "why_it_matters": "The docstring requires SERVICE_TOKENS and PROVIDER_SECRETS, but the check only needs two distinct tokens in total. The harness's tokens file alone holds at least 8 per-session service tokens, so `--tokens STATE/tokens` passes without STATE/secrets. Provider OAuth or API secrets in stream.jsonl, client-stderr.txt or service.log are then neither redacted nor caught by the stage and extract scans, and the receipt says publication_scan_clean: true. One operator omission leaks credentials into the archive.",
+      "validation_status": "confirmed",
+      "validation_reason": "If the operator supplies only the service-token file and a distinct provider secret occurs in a published artifact without matching its patterns, the new publisher accepts two service tokens, redacts and scans only supplied patterns, and reports a clean receipt; harness.py appends two fresh service tokens per session and incidence of such secret-bearing artifacts was not measured.",
+      "protected_subject": "secrets-exposure"
+    }
+  ],
+  "triage_groups": [
+    {
+      "title": "Evaluation attribution and scoring",
+      "findings": [
+        1,
+        3
+      ],
+      "context": "Both issues can turn successful sessions into misses.",
+      "preferred_resolution": "Correct command recognition and tolerate documented client events, then exercise real transcript shapes.",
+      "why": "Both paths feed the same protected grading result."
+    },
+    {
+      "title": "Failure evidence and cleanup",
+      "findings": [
+        2,
+        4,
+        6
+      ],
+      "context": "Exceptional paths can misreport cleanup or lose diagnostics.",
+      "preferred_resolution": "Record each failure and attempt remaining cleanup, retaining partial command outputs.",
+      "why": "The evidence must make failed measurements and incomplete sessions auditable."
+    }
+  ],
+  "pre_existing_findings": [],
+  "requirements_completeness": {
+    "source": "explicit",
+    "items": [
+      {
+        "id": "R23",
+        "status": "partially addressed",
+        "note": "Drill tooling is present; final execution and recorded outcome are intentionally pending."
+      },
+      {
+        "id": "R24",
+        "status": "partially addressed",
+        "note": "Evaluation protocol and tooling are present; final collection and publication remain pending. Findings #1, #2, #3, #5 and #7 affect reliability."
+      },
+      {
+        "id": "R25",
+        "status": "partially addressed",
+        "note": "Release preparation is present; Robert's decision and release are intentionally pending."
+      },
+      {
+        "id": "U6 / PR6",
+        "status": "partially addressed",
+        "note": "Drill, evaluation and release preparation are present; collection and release remain pending as scoped."
+      }
+    ],
+    "unrequested_behavior_rules": []
+  },
+  "learnings": [],
+  "agent_native_gaps": [
+    {
+      "finding": 5,
+      "note": "The session cannot read the declared service log."
+    }
+  ],
+  "deployment_notes": [],
+  "residual_risks": [],
+  "testing_gaps": [
+    "Review did not execute builds, tests, or scored sessions; subsequent fixes require independent targeted follow-up."
+  ],
+  "coverage": {
+    "depth": "full",
+    "notes": [
+      "Scope is saved staged snapshot against 814ddd0, with ci/check.sh kill-count/seed additions included. Parent fixes after snapshot require targeted followup.",
+      "AGENTS.md fallback criteria apply all changed files; no REVIEW.md or CE config found.",
+      "No build, test execution, or scored sessions performed by review; parent checks ongoing.",
+      "Initial correctness/testing reviewers inherited session model; later roles used skill default gpt-6.1-terra high.",
+      "Untracked test database excluded. Final collection outcomes not assessed and not claimed complete.",
+      "Cross-model adversarial review completed via claude; requested and served claude-opus-5-5, requested high effort, actual effort unverified, receipt_supported true, independence_verified true.",
+      "Discarded partial startup line concern: the service writes a complete short listening line and flushes it; a partial-line stall was not established.",
+      "The declared missing-model-evidence miss gate remains unchanged.",
+      "Two findings skip independent validation because both local and independently verified Claude reviews support them.",
+      "Three candidates suppressed below confidence 75 after reconciliation."
+    ],
+    "validation": {
+      "confirmed": 5,
+      "rejected": 0,
+      "unresolved": 0,
+      "malformed": 0,
+      "failed": 0,
+      "shortcut_skipped": 2,
+      "shortcut_basis": "Findings #1 and #3 are quote-anchored and independently corroborated by local and cross-model reviewers.",
+      "batch": "One batch returned within the bound: #2, #4, #5, #6 and #7 confirmed; incidence was not measured.",
+      "protected_subject": "Finding #7 is secrets-exposure; no reclassification."
+    },
+    "suppressed_by_confidence": {
+      "50": 3
+    },
+    "first_evidence_backfilled": 0,
+    "first_evidence_demotions": 0,
+    "soft_bucket_demotions": 0,
+    "failed_reviewers": [],
+    "review_policy": {
+      "sources": [],
+      "removed": 0,
+      "regraded": 0,
+      "not_applied": []
+    },
+    "reviewer_selection": [
+      {
+        "reviewer": "correctness",
+        "reason": "always-on"
+      },
+      {
+        "reviewer": "testing",
+        "reason": "new harnesses and proof tests"
+      },
+      {
+        "reviewer": "security",
+        "reason": "credentials and publication scrub"
+      },
+      {
+        "reviewer": "project-standards",
+        "reason": "AGENTS.md fallback"
+      },
+      {
+        "reviewer": "maintainability",
+        "reason": "1738 executable non-test changed lines"
+      },
+      {
+        "reviewer": "reliability",
+        "reason": "timeouts and cleanup"
+      },
+      {
+        "reviewer": "agent-native",
+        "reason": "agent-facing evaluation prompt"
+      }
+    ],
+    "snapshot_limit": "Parent reports fixes and targeted tests for attribution, timeout retention, provider inventory and readable log; these fixes were not independently reviewed. This verdict covers only the original saved snapshot."
+  },
+  "peer": {
+    "outcome": "folded",
+    "coverage": "Cross-model adversarial review completed via claude; requested and served claude-opus-5-5, requested high effort, actual effort unverified, receipt_supported true, independence_verified true."
+  },
+  "artifact_path": "/tmp/compound-engineering-1000/ce-code-review/m6-independent",
+  "run_id": "m6-independent"
+}

@@ -54,7 +54,7 @@ fn prepare(descriptor: McpType.Service, image_key: Text, response_bytes: Int) : 
   id_bytes = Json.String("\u{0}".repeat(128)).to_text.byte_count
   for i in 0..tools.size
     tool = tools.get(i) or stop "MCP catalog index"
-    size = tool.to_text.byte_count
+    size = json_bytes(tool)
     next = if i + 1 < tools.size: Some(i + 1) else: None
     if page_size(id_bytes, image_key, next, 1, size) > response_bytes
       return None
@@ -62,6 +62,93 @@ fn prepare(descriptor: McpType.Service, image_key: Text, response_bytes: Int) : 
     sizes = sizes.append(size)
   end
   Some(Catalog(tools: tools, sizes: sizes, image_key: image_key, response_bytes: response_bytes))
+end
+
+# Exact compact JSON length, without allocating a rendered copy of every tool.
+fn json_bytes(value: Json.Json) : Int
+  examples
+    json_bytes(Json.Null) == 4
+    json_bytes(Json.Boolean(true)) == 4
+    json_bytes(Json.Boolean(false)) == 5
+    json_bytes(Json.int(-123)) == 4
+    json_bytes(Json.Array([])) == 2
+    json_bytes(Json.Object({})) == 2
+    json_bytes(Json.String("é😀")) == 8
+    json_bytes(Json.String("\"\\\n\r\t\u{8}\u{c}\u{0}\u{1f}")) ==
+      Json.String("\"\\\n\r\t\u{8}\u{c}\u{0}\u{1f}").to_text.byte_count
+    json_bytes(Json.Object({"é": Json.Array([Json.Null, Json.Boolean(false), Json.int(12)])})) ==
+      Json.Object({"é": Json.Array([Json.Null, Json.Boolean(false), Json.int(12)])}).to_text
+        .byte_count
+  end
+
+  case value
+    Json.Null: 4
+    Json.Boolean(b): if b: 4 else: 5
+    Json.Number(n): n.to_text.byte_count
+    Json.String(text): string_bytes(text)
+    Json.Array(items):
+      var size = 2
+      var first = true
+      for item in items
+        if not first
+          size += 1
+        end
+        first = false
+        size += json_bytes(item)
+      end
+      size
+    Json.Object(fields):
+      var size = 2
+      var first = true
+      for (key, item) in fields
+        if not first
+          size += 1
+        end
+        first = false
+        size += string_bytes(key) + 1 + json_bytes(item)
+      end
+      size
+  end
+end
+
+fn string_bytes(text: Text) : Int
+  return long_string_bytes(text) if text.byte_count >= 64
+  var size = text.byte_count + 2
+  for c in text.chars
+    case c
+      '"' | '\\' | '\n' | '\r' | '\t' | '\u{8}' | '\u{c}': size += 1
+      _ if c.code < 32: size += 5
+      _: Unit
+    end
+  end
+  size
+end
+
+# Native searches avoid a character-list walk for long descriptions.
+fn long_string_bytes(text: Text) : Int
+  var size = text.byte_count + 2
+  for c in "\"\\\n\r\t\u{8}\u{c}".chars
+    size += text.byte_count - text.replace(c.to_text, "").byte_count
+  end
+  for c in "\u{0}\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{b}\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f}"
+    .chars
+    size += 5 * (text.byte_count - text.replace(c.to_text, "").byte_count)
+  end
+  size
+end
+
+test "catalog byte sizes match JSON across string lengths and escapes"
+  for count in [0, 1, 63, 64, 65, 256]
+    for suffix in [
+      "",
+      "é😀",
+      "\"\\",
+      "\u{0}\u{1}\u{2}\u{3}\u{4}\u{5}\u{6}\u{7}\u{8}\u{9}\u{a}\u{b}\u{c}\u{d}\u{e}\u{f}\u{10}\u{11}\u{12}\u{13}\u{14}\u{15}\u{16}\u{17}\u{18}\u{19}\u{1a}\u{1b}\u{1c}\u{1d}\u{1e}\u{1f}"
+    ]
+      value = Json.String("#{"a".repeat(count)}#{suffix.repeat(3)}")
+      assert json_bytes(value) == value.to_text.byte_count
+    end
+  end
 end
 
 fn page(catalog: Catalog, start: Int, id: Json.Json) : Option(Json.Json)

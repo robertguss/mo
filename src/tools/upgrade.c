@@ -1,5 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include "tools/upgrade.h"
+#include "tools/pause-timing.h"
+#ifdef MO_UPGRADE_PAUSE_TIMING
+uint64_t mo_pause_attempt;
+#endif
 #include "base/binary.h"
 #include "base/bundle.h"
 #include "base/codes.h"
@@ -1025,8 +1029,10 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
     uint64_t budget = rehearsal ? MO_LIMIT_UPGRADE_LIVE_WORK : MO_LIMIT_UPGRADE_RESTART_WORK;
     uint64_t work = budget, vm_work = 0;
     if (ok && migration == NULL) {
+        PAUSE_START(identity);
         ok = mo_value_decode_budget(mo_process_heap(process), result_type, bytes, length, NULL, 0,
                                     &work, &value);
+        PAUSE_END(identity, "identity_decode", ok ? "ok_no_migration" : "refused");
         owned = ok;
     } else if (ok) {
         const struct mo_types *types = mo_image_types(next->image);
@@ -1126,8 +1132,12 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
             if (function->parameter_count != 1 || strlen(migration) != end - from ||
                 memcmp(full->bytes + from, migration, end - from) != 0)
                 continue;
-            if (mo_value_decode_budget(mo_process_heap(process), function->parameters[0].type,
-                                       bytes, length, names, types->count, &work, &argument)) {
+            PAUSE_START(decode);
+            bool decoded =
+                mo_value_decode_budget(mo_process_heap(process), function->parameters[0].type,
+                                       bytes, length, names, types->count, &work, &argument);
+            PAUSE_END(decode, "old_decode", decoded ? "ok" : "refused");
+            if (decoded) {
                 selected = i;
                 break;
             }
@@ -1137,7 +1147,9 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
             struct mo_defect defect;
             mo_process_instruction_limit(process, work);
             uint64_t before_call = work;
+            PAUSE_START(call);
             enum mo_outcome result = mo_call(process, selected, &argument, 1, &value, &defect);
+            PAUSE_END(call, "migration_call", result == MO_RETURNED ? "ok" : "refused");
             if (file->functions[selected].parameters[0].ownership == MO_PARAMETER_BORROWED)
                 mo_value_drop(mo_process_heap(process),
                               file->functions[selected].parameters[0].type, argument);
@@ -1156,14 +1168,19 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
                                      "migration did not return");
         }
     }
-    if (ok)
+    if (ok) {
+        PAUSE_START(encode);
         ok = mo_value_encode_budget(mo_process_heap(process), result_type, value, out, &work);
+        PAUSE_END(encode, "output_encode", ok ? "ok" : "refused");
+    }
     if (owned)
         mo_value_drop(mo_process_heap(process), result_type, value);
     if (ok) {
+        PAUSE_START(validation);
         struct mo_cell verified;
         ok = mo_value_decode_budget(mo_process_heap(process), result_type, out->bytes, out->length,
                                     NULL, 0, &work, &verified);
+        PAUSE_END(validation, "validation_decode", ok ? "ok" : "refused");
         if (ok)
             mo_value_drop(mo_process_heap(process), result_type, verified);
     }
@@ -1171,6 +1188,7 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
     bool timers_started = ok;
     if (ok)
         mo_process_instruction_limit(process, work);
+    PAUSE_START(timers);
     uint64_t before_timers = work;
     for (uint32_t i = 0; ok && i < service->timer_count; i++) {
         struct mo_cell interval;
@@ -1182,6 +1200,7 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
             (void)refuse_upgrade(report, MO_CODE_UPGRADE_TIMER_INTERVAL, "timer",
                                  "candidate timer interval is invalid or exceeded its budget");
     }
+    PAUSE_END(timers, "timer_validation", !timers_started ? "not_run" : ok ? "ok" : "refused");
     if (timers_started) {
         work = mo_process_instructions_remaining(process);
         vm_work += before_timers - work;

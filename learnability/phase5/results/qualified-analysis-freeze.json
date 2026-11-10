@@ -1,0 +1,27 @@
+{
+  "analysis": "experiment-2-qualified-grader-analysis",
+  "frozen_at": "2026-11-09T00:18:33.414203+00:00",
+  "collection_candidate": "10499452286bda1b85e8e43775175bd1a69169b4",
+  "artifact_sha256": {
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/fixture.py": "c879683d073a9433f49e7715f0b552386a3655e5ec9e2065c1122bb0edd8f683",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/grade.py": "5d73e0aaac411717b15cdb634b768c991e695d59e8483d393000065c84a740bb",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/test_proxy.py": "73756e6d10cb44f1a55201d73a3a3e5046a145693b7724d11d1bd41998090b4a",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/stub_client.py": "34f1208da1a03f97ea0d291c23199bd55dff32c5c15cc0bad6cbf015a0b049db",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/test_harness.py": "585b5a9933acaff90ff347a998e7466d4ada05b33849b4dde83de417ad44faf6",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/proxy.py": "53db39b62209ec8da054d1a2d42137197812729a5e3101ef3160cc9bb277cc70",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/test_collector.py": "c6485a6c4d84c1ac3418c28b15adfcf304e6f6fd383ca7116763fdfa1f9c9e3d",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/test_publish.py": "fa62c273203914acf83c6cee54c671871fe0e4ea91bde350f6eecaf0793d67cc",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/test_grade.py": "00d7ac407864ca0b57dd049e27998874acf08bcf20cb0a13bf8b3d690f05618a",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/harness.py": "69a62439f36865c8737ea7dc60800fa49a32e1c39d717876268bc26a79a9546b",
+    "/home/exedev/code/mo-m6/learnability/phase5/evaluation/publish.py": "1767bb3bb487b5137dd72f9cbb85fd080cbfd64af9d0b19a3a87ca09eac11922",
+    "/home/exedev/code/mo-m6/build/m6-post-collection-analysis.py": "770b3b85a4a47b292104e5a85ae2caf84bab9e034b040cbafe62c38b2f668377",
+    "/home/exedev/.mo-phase5-collection/qualified-analysis-declaration.json": "06481e1a4cbaa75e9bafb73a70887d83238532c46a620baffda60315d8ae35a8",
+    "/home/exedev/.mo-phase5-collection/experiment-2-slot-1/manifest.json": "59468f0f2f37d0efd3ca7523febd30a95fb60c2981ea8903c50f54cec5f03798",
+    "/home/exedev/.mo-phase5-collection/experiment-2-slot-2/manifest.json": "a60cb047baadd7e580cbfc20b6dcbe686e217b7f394d9004cfd9b92413b773ba",
+    "/home/exedev/.mo-phase5-collection/experiment-2-slot-3/manifest.json": "8f7c9b86ba7e6730f8338b3c8030ced9fb2a2cf8bed59670beec9ea546cea62c",
+    "/home/exedev/.mo-phase5-collection/experiment-2-slot-4/manifest.json": "fc24fce1e833be26c9b3dec98a893997f4890855e3bbfb7ec009c9179a131879"
+  },
+  "binary_sha256": "517da0610ccc341a69dedd202cd8f5439cab695827d8ad60cf2312f8e61703b9",
+  "new_sessions": 0,
+  "gate_changed": false
+}

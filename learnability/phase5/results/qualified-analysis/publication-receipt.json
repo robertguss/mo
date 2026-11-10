@@ -1,0 +1,19 @@
+{
+  "archive_sha256": "874191141ac347eafb53bd6d62b6953ec9a607a07bb2bb5029c9f5694c7b341e",
+  "stage_files_scanned": 74,
+  "extracted_files_scanned": 74,
+  "publication_scan_clean": true,
+  "gate": {
+    "passed": false,
+    "phase": "open",
+    "correct": {
+      "claude": 0,
+      "codex": 0
+    },
+    "denominator": 4,
+    "complete_valid_slots": true,
+    "publication_scan_clean": true,
+    "release_authorized": false
+  },
+  "uploaded": false
+}

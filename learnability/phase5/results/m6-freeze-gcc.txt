@@ -1,0 +1,107 @@
+check.sh started: pid 3009325
+
+==> Build and test with gcc (warnings are errors)
+test_arena: all checks passed
+artifact: all checks passed
+test_buffer: all checks passed
+bundle: all checks passed
+bytecode repeated-name refusal: 0.063 CPU seconds
+bytecode collision round trip: 0.091 CPU seconds
+test_bytecode_io: all checks passed
+bytecode text: all checks passed
+verifier work: 65 registers, 261 words, 8839 steps
+verifier work: 129 registers, 517 words, 34055 steps
+verifier work: 257 registers, 1029 words, 133639 steps
+unused-choice regression: 65535 registers, 524005 words, 851541 steps
+bytecode verifier: all checks passed
+constant sources: 22 public load/check controls
+generic import sources: 17 public load/check controls
+import sources: 42 public load/check controls
+capture sources: 39 public load/check controls
+check import scaling: 1 importers, 3362848 checking arena bytes
+check import scaling: 32 importers, 7557152 checking arena bytes
+check import scaling: 128 importers, 22212640 checking arena bytes
+check: all checks passed
+check bodies: all checks passed
+test_cli: all checks passed
+test_cli_faults: all checks passed
+test_codegen: all checks passed
+test_codes: all checks passed
+compiler child: all checks passed
+compile context: all checks passed
+test_compiler_faults: all checks passed
+Core long-name checking: 0.029 CPU seconds
+test_core_check: all checks passed
+test_core_print: all checks passed
+test_core_text: all checks passed
+promise deadline: all checks passed
+test_diag: all checks passed
+export: all checks passed
+{"state_bytes":16777216,"message_bytes":1048064,"pair_frame_bytes":17825348,"three_transactions_seconds":0.546778,"baseline_rss_kib":21568,"peak_rss_kib":56784,"sqlite_file_bytes":35708928}
+failure sizing: all checks passed
+test_fakes: all checks passed
+fetch deadline: all checks passed
+fetch peer: all checks passed
+test_fix: all checks passed
+format corpus: 130 accepted inputs checked
+test_format: all checks passed
+heap: all checks passed
+host hostile links (default): 0.129 s; depth 500, 40 links, 790 parent pairs per link
+host hostile links (portable): 0.129 s; depth 500, 40 links, 790 parent pairs per link
+host: all checks passed
+host faults: all checks passed
+host resolver limits and races: all checks passed
+promise inputs: all checks passed
+test_limits: all checks passed
+listener: all checks passed
+listener_faults: all checks passed
+log record: all checks passed
+lower: all checks passed
+test_opcodes: all checks passed
+module paths: all checks passed
+Compiled VM uncons (0 elements): 0.000002 s
+Compiled VM uncons (31 elements): 0.000053 s
+primitives: all checks passed
+program: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+program allocation: all checks passed
+protocol_bounds: all checks passed
+protocol composites: all checks passed
+protocol memory: all checks passed
+protocol_server: all checks passed
+protocol_server_faults: all checks passed
+protocol scalar values: all checks passed
+recovery: all checks passed
+recovery faults: all checks passed
+saved state: all checks passed
+service runtime: all checks passed
+service store: all checks passed
+service_swap: all checks passed
+service descriptors: all checks passed
+sha256: all checks passed
+test_sources: all checks passed
+stack: all checks passed
+syntax performance 0: 2000002 bytes, 0.013 CPU seconds
+syntax performance 1: 7803020 bytes, 1.712 CPU seconds
+syntax performance 2: 2006009 bytes, 0.217 CPU seconds
+test_syntax: all checks passed
+syntax corpus: 159 inputs checked
+test_syntax_corpus: all checks passed
+test_tables: all checks passed
+test_types: all checks passed
+Unicode16: all checks passed
+upgrade store: all checks passed
+test_upload: all checks passed
+utf-8: all checks passed
+verdict: all checks passed
+vm: all checks passed
+vm faults: all checks passed
+python3 ci/check_sha256.py build/gcc/debug/tests/test_sha256.test
+sha256: executable identity and 110 reference comparisons passed
+
+==> All checks in gcc passed
+check.sh finished: pass

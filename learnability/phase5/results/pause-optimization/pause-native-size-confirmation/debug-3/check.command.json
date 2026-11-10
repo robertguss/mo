@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/home/exedev/code/mo-m6/build/pause-gcc/debug/mo",
+    "check",
+    "/home/exedev/code/mo-m6/build/pause-native-size-confirmation/debug-3/old/main.mo",
+    "--upgrade-from",
+    "/home/exedev/code/mo-m6/build/pause-native-size-confirmation/debug-3/old/main.mo",
+    "--json"
+  ],
+  "timeout_seconds": 300,
+  "exit_status": 0,
+  "elapsed_seconds": 0.4622564020100981
+}

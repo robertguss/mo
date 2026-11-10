@@ -1,0 +1,447 @@
+{
+  "evidence_class": "DEVELOPMENT",
+  "binary_sha256": "7c3c05e122e41159eb27dd099bda276df408d998dfac96146d5c42743d20d182",
+  "generic_instantiations": 64,
+  "accepted_parentheses": 255,
+  "first_refused_parentheses": 256,
+  "attempts": [
+    {
+      "name": "generics-64",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/generics-64/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "7e5616971f48e6b6024502228b716b3570d62b48f5328eaecbf76b8e26584cc5",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "00c7c225d025637c54b4fdcf8c9eeb546f91589219b93743a50cb76398e9d975",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.42357296391855925
+    },
+    {
+      "name": "nesting-0",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-0/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "dcea31cb39a3f12d772ae4e0aace13092fe283a74aec9f3fbe181b07f29eb8fb",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.40083693200722337
+    },
+    {
+      "name": "nesting-257",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-257/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "324760dad275f6c12ae3c12cd6381d1b69c43639d8ce6e365495f2a48a12bf26",
+      "exit_status": 1,
+      "reports": [
+        {
+          "version": 1,
+          "status": "refused",
+          "code": "E1419",
+          "class": "compile",
+          "message": "code is nested too deeply",
+          "base_source": null,
+          "candidate_source": null,
+          "active_source": null,
+          "migration": null,
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.02866687800269574
+    },
+    {
+      "name": "nesting-128",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-128/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "f014c99511506ef304dc51c01c9029273f67f37d020b7dff1148cff212f9c527",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "bcfc1a1eaff1ed865bd291bb9d6320b06627b6aa5a5ba56f28fcf3c4c5883a67",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.34034259198233485
+    },
+    {
+      "name": "nesting-192",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-192/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "27455572ac0612bd8d56c36c0dd6ef5fd9b701c1b93618b8e04454edde10051f",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "e127fee8d251e286bc1672c412706b883c00e064790cd0054a411836d188c7f6",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.3030532830161974
+    },
+    {
+      "name": "nesting-224",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-224/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "2a57ea9765b4bb58e5c546fa8c12aecd5c9cf3d6e95e323cb4d578fa60bb550d",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "30233a6f46e47233a45fd5cb34a8fda98faa65d49e56ce7f5b4ecccf3fc96fd7",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.35093519394285977
+    },
+    {
+      "name": "nesting-240",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-240/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "b2d5450098a8d872c9f95915eb4793fc7c54ca9b2702740fca59bf3fdb164b8d",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "c027d37dcf215c391ade399762c48afb7547a10eb6036128fa67f302c40b7f4d",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.4018902900861576
+    },
+    {
+      "name": "nesting-248",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-248/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "b6a266cfe9a243644c04e4f0d746b89a88da3c53695f3f1379f6ad58e7aaea28",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "8e424c329be32a8a87df9bf6909f53c884fab466767673337a1e70a3533db39c",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.3628765040775761
+    },
+    {
+      "name": "nesting-252",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-252/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "c1d01db6595649ceb2d227059bc0d4d0c8becf7cc40e095965edd0a2cf9643b7",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "fc215312fb48cb56968b60bb97002058ff8d6861202309eb8fdc256f9b719210",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.289858989068307
+    },
+    {
+      "name": "nesting-254",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-254/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "5d763cef5eb9866d98d9436575f36ab97cd473803943dc4bdd38131e832d9f95",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "6cf5c79321af630aa1b83eeba235584f4e59d0827f6717b538808e448d31a339",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.3456213070312515
+    },
+    {
+      "name": "nesting-255",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-255/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "93c032cc0c9fe4cc17737c8ac0e6d1535a7ebf444bccba31d85ac9d57557fe33",
+      "exit_status": 0,
+      "reports": [
+        {
+          "version": 1,
+          "status": "accepted",
+          "code": null,
+          "class": "compatible",
+          "message": "state schema unchanged; candidate is compatible",
+          "base_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "candidate_source": "d292c62f7b2cd5562c1c28ae37255bc282da5b0168a9c41757a598b79fc52756",
+          "active_source": "a7137e1203b2c601fb1c1f91f5f71e0a8737e1fb7bb000240b0ae780a4811f58",
+          "migration": null,
+          "ordinal": "0",
+          "head": "0",
+          "old_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "new_schema": "e53cebb134b635d4b2b3f60a3fa7d8890c908c28b31b3a13cff29dd61c5b15ae",
+          "implementation_changed": true,
+          "differences": [],
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.3194186460459605
+    },
+    {
+      "name": "nesting-256",
+      "command": [
+        "/home/exedev/code/mo-m6/build/gcc/debug/mo",
+        "check",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/nesting-256/main.mo",
+        "--upgrade-from",
+        "/home/exedev/code/mo-m6/build/compiler-load-review-fixed/old/main.mo",
+        "--json"
+      ],
+      "source_sha256": "6aa1ba9e680db365778064562fe27ae7e8fa55cee9697d0b77a180292982a8e8",
+      "exit_status": 1,
+      "reports": [
+        {
+          "version": 1,
+          "status": "refused",
+          "code": "E1419",
+          "class": "compile",
+          "message": "code is nested too deeply",
+          "base_source": null,
+          "candidate_source": null,
+          "active_source": null,
+          "migration": null,
+          "vm_work": "0",
+          "native_work": "0",
+          "heap_peak": "0",
+          "encoded_bytes": "0"
+        }
+      ],
+      "seconds": 0.022718187072314322
+    }
+  ],
+  "production_child_limits": {
+    "memory_bytes": 1073741824,
+    "cpu_seconds": 10,
+    "wall_seconds": 15
+  },
+  "limits": "Family-specific compiler acceptance, not all type shapes or worst-case resource use. Timings include old and candidate compilation plus bundling; negative parsing can refuse before child launch."
+}

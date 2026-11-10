@@ -1,0 +1,21 @@
+[New LWP 3082116]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007f9fdfb4ee51 in __futex_abstimed_wait_common64 (private=128, cancel=true, abstime=0x0, op=265, expected=3082116, futex_word=0x7f9fdfa59990) at ./nptl/futex-internal.c:57
+warning: 57	./nptl/futex-internal.c: No such file or directory
+Breakpoint 1 at 0x564077d27997: file src/tools/protocol-upgrade.c, line 546.
+[Detaching after fork from child process 3082149]
+[Switching to Thread 0x7f9fdfa596c0 (LWP 3082116)]
+
+Thread 2 "mo" hit Breakpoint 1, activate (s=0x7f9fd80c4f60) at src/tools/protocol-upgrade.c:546
+546	    if (stored != MO_STORE_ACTIVATED) {
+#0  activate (s=0x7f9fd80c4f60) at src/tools/protocol-upgrade.c:546
+#1  0x0000564077d281b8 in mo_protocol_upgrade_poll (s=0x7f9fd80c4f60) at src/tools/protocol-upgrade.c:646
+#2  0x0000564077d24b3a in mo_protocol_server_poll (s=0x7f9fd80c4f60, until_us=771583133641) at src/tools/protocol-server.c:773
+#3  0x0000564077d39ed0 in serve_requests (server=0x7f9fd80c4f60, listener=0x7f9fd80c4ac0, log=0x7f9fdfa52f20) at src/tools/serve.c:136
+#4  0x0000564077d3a91f in mo_serve_image (cli=0x7fffabca9d40, image=0x7f9fd81513d8, service=0, output=0x7f9fdfcbb5c0 <_IO_2_1_stdout_>, errors=0x7f9fdfcbb4e0 <_IO_2_1_stderr_>, diags=0x7f9fdfa543d0, held_store=0x7f9fd8016380) at src/tools/serve.c:261
+#5  0x0000564077d4bf08 in serve_upgrade (context=0x7fffabca9c80) at src/tools/upgrade.c:1751
+#6  0x0000564077be9fc2 in run (argument=0x7fffabca9bf0) at src/base/stack.c:17
+#7  0x00007f9fdfb52b84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#8  0x00007f9fdfbdfecc in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+[Inferior 1 (process 3082114) killed]

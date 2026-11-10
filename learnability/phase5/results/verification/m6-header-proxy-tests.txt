@@ -1,0 +1,10 @@
+test_native_upgrade_requires_bearer_scheme (test_proxy.RealPush.test_native_upgrade_requires_bearer_scheme) ... ok
+test_real_push_attestation (test_proxy.RealPush.test_real_push_attestation) ... ok
+test_command_origin (test_proxy.Tests.test_command_origin) ... ok
+test_forward_and_redact (test_proxy.Tests.test_forward_and_redact) ... ok
+test_wrapped_commands (test_proxy.Tests.test_wrapped_commands) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 5.125s
+
+OK

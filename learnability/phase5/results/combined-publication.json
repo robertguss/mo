@@ -1,0 +1,10 @@
+{
+  "stage_files_scanned": 359,
+  "extracted_files_scanned": 359,
+  "archive_sha256": "d0234472945a1bf9642a4b3d9ae5cbdcab083a0b125fce5b21de1fcc4fab702e",
+  "publication_scan_clean": true,
+  "byte_identical_extraction": true,
+  "service_and_provider_inventories": true,
+  "gate_changed": false,
+  "release_authorized": false
+}

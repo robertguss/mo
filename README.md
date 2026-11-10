@@ -2,12 +2,14 @@
 
 **An open-source language and runtime for living software.** Humans state the
 intent, agents write the code, and agents can inspect and diagnose running services.
-Typed live upgrades are planned for a later phase.
+The development toolchain also supports typed live upgrades and state migration.
 
 > **Status: v0.1.0.** The toolchain builds and
 > runs services. The [Phase 4 diagnostic evaluation](docs/status/phase4-run.md)
 > passed its gate with 14 of 16 sessions correct, including two recorded misses.
-> This first release has a narrow scope; typed live upgrades are planned.
+> Typed live upgrades are implemented on the development branch. Phase 5 remains
+> open: the agent gate and debug pause margin missed; v0.2 is unreleased.
+> See the [upgrade run record](docs/status/phase5-run.md).
 > Contributions are not yet open.
 
 ## The idea
@@ -25,8 +27,11 @@ first:
   with the original program and runtime build; it does not reproduce the
   live heap or mailbox. A verified fix can still be wrong: independent tests
   rejected two such fixes in the diagnostic evaluation.
-- **Living software, planned.** Phase 5 targets typed live upgrades and state
-  migration. The current toolchain does not provide them.
+- **Upgrades while running.** The development toolchain checks candidate programs
+  and typed migrations, rehearses them offline, and activates them at a service
+  message boundary. `mo push` uses a separate upgrade credential and a loopback
+  connection; remote operators use a tunnel. Final drill, pause and agent-evaluation
+  evidence is still pending. This functionality is not part of v0.1.0.
 
 Mo draws on Elixir and the BEAM (processes, supervision, hot code loading),
 Rust (safety plus control over memory and performance), Koka (effects and
@@ -85,7 +90,9 @@ those builds, see the [task-queue runbook](docs/ops/task-queue.md).
 ## Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0;
-Phase 5 targets typed live upgrades.
+Phase 5 implements typed live upgrades. Its 1,000-kill drill passed, but the
+agent gate and debug pause margin missed; the phase remains open. [v0.2 preparation notes](docs/releases/v0.2-preparation.md)
+describe the implemented behavior and unresolved limits.
 
 ## Background
 

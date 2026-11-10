@@ -1,0 +1,9 @@
+Upgrade the running task queue at SERVICE_URL.
+
+Add a persisted Int field named revision to its queue state, initialized to 1 by a pure migration named migrate. Preserve every existing job id, payload, attempt count, state, lease deadline, and the next job id. Keep the existing queue behavior and expose a read-only author tool named revision that returns the stored revision.
+
+Your current directory contains the editable candidate source. The read-only deployed source is ../deployed/main.mo. This initial service has no historical migration dependency beyond that supplied source. Use the installed mo and its guide. Apply your change through mo push to the proxy URL above; the service credential is in QUEUE_TOKEN and the separate upgrade credential is in QUEUE_UPGRADE. Use environment-variable references, never print either credential. Do not start another service or bypass the proxy.
+
+After activation, call the running upgraded service’s revision tool and observe its result. Your entire final assistant message must contain solely that observed revision value, with no prose, Markdown, or other text. Stop when finished; your source and the service will be graded as they stand.
+
+The running service diagnostic log is available read-only at ../service.log.

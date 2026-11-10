@@ -1,6 +1,7 @@
 #include "tools/protocol-server.h"
 
 #include "base/utf8.h"
+#include "tools/pause-timing.h"
 #include "tools/tools.h"
 
 #include <string.h>
@@ -17,7 +18,9 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *im
     struct mo_heap *heap = mo_process_heap(process);
     struct mo_protocol_descriptor descriptor;
     struct mo_cell args[3], catalog;
+    PAUSE_START(descriptor_time);
     bool ok = mo_protocol_descriptor(s->protocol, heap, image, index, &descriptor);
+    PAUSE_END(descriptor_time, "catalog_descriptor", ok ? "ok" : "refused");
     uint64_t key = mo_image_key(image, index);
     char hex[16];
     const char digits[] = "0123456789abcdef";
@@ -26,7 +29,9 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *im
     args[0] = descriptor.value;
     ok = ok && mo_value_text(heap, hex, sizeof hex, &args[1]);
     args[2] = mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES);
+    PAUSE_START(prepare_time);
     bool prepared = ok && mo_protocol_invoke_on(s, process, PF_PREPARE, args, &catalog);
+    PAUSE_END(prepare_time, "catalog_prepare", prepared ? "ok" : "refused");
     if (ok)
         mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->parameters[1].type, args[1]);
     ok = prepared && mo_cell_get_tag(catalog) == 1;
@@ -35,8 +40,10 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *im
         ok ? mo_protocol_field(s->protocol, mo_protocol_function(s, PF_PREPARE)->result_type,
                                catalog, 0)
            : mo_cell_unit();
+    PAUSE_START(retain_time);
     ok = ok && mo_value_make_immortal(heap, descriptor.type, descriptor.value) &&
          mo_value_make_immortal(heap, catalog_type, value);
+    PAUSE_END(retain_time, "catalog_retain", ok ? "ok" : "refused");
     if (prepared)
         mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->result_type, catalog);
     if (!ok) {

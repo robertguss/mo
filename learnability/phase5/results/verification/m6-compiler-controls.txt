@@ -1,0 +1,13 @@
+{
+  "evidence_class": "DEVELOPMENT",
+  "binary_sha256": "7c3c05e122e41159eb27dd099bda276df408d998dfac96146d5c42743d20d182",
+  "generic_instantiations": 64,
+  "accepted_parentheses": 255,
+  "first_refused_parentheses": 256,
+  "production_child_limits": {
+    "memory_bytes": 1073741824,
+    "cpu_seconds": 10,
+    "wall_seconds": 15
+  },
+  "limits": "Family-specific compiler acceptance, not all type shapes or worst-case resource use. Timings include old and candidate compilation plus bundling; negative parsing can refuse before child launch."
+}

@@ -1,0 +1,15 @@
+{
+  "declaration": {
+    "kills": 1000,
+    "seed": 20261110
+  },
+  "raw_summary": "kill loop: seed=20261110 kills=1000 mid_commit=53 folders=25 history_read=1000 history_recovery=53 calls=15163 answered=14447 refused=152 unknown=716 pushes=235 activated=75 invalid=88 push_kills=79 requested_push_kills=116 refusals={'E1426': 85, 'E1423': 1, 'E1417': 1, 'E1416': 1} requested_kills=1000 call_kills=920 requested_call_kills=920 post_migration_kills=1 internal_stage_coverage=unobserved result=pass seconds=2865",
+  "driver_result": "check.sh finished: pass",
+  "supplemental_stage_controls": {
+    "count": 6,
+    "seed": 20261110,
+    "passed": true,
+    "random_denominator": false,
+    "raw_label": "DEVELOPMENT"
+  }
+}

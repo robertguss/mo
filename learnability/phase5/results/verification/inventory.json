@@ -1,0 +1,192 @@
+{
+  "m6-collector-cleanup-control.txt": {
+    "original_sha256": "5e37d34405d6d10dd255a0d839ef045a9a16016552ac0bbcfa23505454f7c932",
+    "published_sha256": "5e37d34405d6d10dd255a0d839ef045a9a16016552ac0bbcfa23505454f7c932",
+    "redacted": false
+  },
+  "m6-collector-integrated.txt": {
+    "original_sha256": "5ed81a67fedd4212d68b5f2f7e1f8f0825f14da589fec7f7be474e0880025d5a",
+    "published_sha256": "5ed81a67fedd4212d68b5f2f7e1f8f0825f14da589fec7f7be474e0880025d5a",
+    "redacted": false
+  },
+  "m6-collector-review-fixed.txt": {
+    "original_sha256": "8d0f329c62dbfc4f5750af436618b8c9b0fb29aa458c360fcc2f039657205f88",
+    "published_sha256": "8d0f329c62dbfc4f5750af436618b8c9b0fb29aa458c360fcc2f039657205f88",
+    "redacted": false
+  },
+  "m6-compiler-controls.txt": {
+    "original_sha256": "5e64e15826bcc6fd38169164e14e7a3cd4601f53eb0a6561cd1fda3d195d9143",
+    "published_sha256": "5e64e15826bcc6fd38169164e14e7a3cd4601f53eb0a6561cd1fda3d195d9143",
+    "redacted": false
+  },
+  "m6-direct-verifier-control-retry.txt": {
+    "original_sha256": "3255093f95e47fda484a89a7fcc0eba719cdf67311ea536a2c384250543ed4af",
+    "published_sha256": "3255093f95e47fda484a89a7fcc0eba719cdf67311ea536a2c384250543ed4af",
+    "redacted": false
+  },
+  "m6-direct-verifier-control.txt": {
+    "original_sha256": "7ee999b9ef6a2d3d8bfc85338ca7430f4bff875446494a8e4c2090562b2bec3f",
+    "published_sha256": "7ee999b9ef6a2d3d8bfc85338ca7430f4bff875446494a8e4c2090562b2bec3f",
+    "redacted": false
+  },
+  "m6-drivers-static-rerun.txt": {
+    "original_sha256": "a5cdb3644537d6a3b282421ae40bf219c0d8ad28eff74dfe14fa6d80a012e58a",
+    "published_sha256": "a5cdb3644537d6a3b282421ae40bf219c0d8ad28eff74dfe14fa6d80a012e58a",
+    "redacted": false
+  },
+  "m6-evaluation-setup-authenticated.txt": {
+    "original_sha256": "14e45294a8ee12bba331e44833c9ff7562ef86be3ddd02d1fabaf928cd0a630a",
+    "published_sha256": "14e45294a8ee12bba331e44833c9ff7562ef86be3ddd02d1fabaf928cd0a630a",
+    "redacted": false
+  },
+  "m6-evaluation-setup.txt": {
+    "original_sha256": "a0dedbf138c2f4d4c0d6b8e4f4e77b25be65c02e84e9263f84ba1fcb981fb345",
+    "published_sha256": "a0dedbf138c2f4d4c0d6b8e4f4e77b25be65c02e84e9263f84ba1fcb981fb345",
+    "redacted": false
+  },
+  "m6-final-drivers.txt": {
+    "original_sha256": "a8daca013b6749e5741a260bcc994dff055f4683007f964a034282e3f7eaeefc",
+    "published_sha256": "a8daca013b6749e5741a260bcc994dff055f4683007f964a034282e3f7eaeefc",
+    "redacted": false
+  },
+  "m6-freeze-gcc.txt": {
+    "original_sha256": "44a627c24f7c166353a82ebb5d1c30fb0f5e582d79f0c4214b5fdbd1bcddab04",
+    "published_sha256": "44a627c24f7c166353a82ebb5d1c30fb0f5e582d79f0c4214b5fdbd1bcddab04",
+    "redacted": false
+  },
+  "m6-frozen-stage-controls.txt": {
+    "original_sha256": "bede2a4602467981da46e405c166bb0bfa8a1b96c43d19de99efd74407e5656b",
+    "published_sha256": "bede2a4602467981da46e405c166bb0bfa8a1b96c43d19de99efd74407e5656b",
+    "redacted": false
+  },
+  "m6-full-validator-retry.txt": {
+    "original_sha256": "61188024ebd9b0fea546af7ece15a52e7bf550a2188a8e245848b3d26b7d8550",
+    "published_sha256": "61188024ebd9b0fea546af7ece15a52e7bf550a2188a8e245848b3d26b7d8550",
+    "redacted": false
+  },
+  "m6-full-validator.txt": {
+    "original_sha256": "324f477e9adbd80af809b29960c20b8f84c9d4790ae3e1569b3f0cbde519ace9",
+    "published_sha256": "324f477e9adbd80af809b29960c20b8f84c9d4790ae3e1569b3f0cbde519ace9",
+    "redacted": false
+  },
+  "m6-fuzz-build.txt": {
+    "original_sha256": "d949d28ba24643de7c61b11abe141516162b931b838063bef7fc23e34fe2ae4f",
+    "published_sha256": "d949d28ba24643de7c61b11abe141516162b931b838063bef7fc23e34fe2ae4f",
+    "redacted": false
+  },
+  "m6-fuzz-protocol-server-seeded.txt": {
+    "original_sha256": "a566728a5ca6449c2d281c1abc8ac0d9c505d12e027013df29589d3b210af59e",
+    "published_sha256": "a566728a5ca6449c2d281c1abc8ac0d9c505d12e027013df29589d3b210af59e",
+    "redacted": false
+  },
+  "m6-fuzz-protocol-server.txt": {
+    "original_sha256": "f313d394619d8a065270c2f6cfe47a27a7a6c5ccf076c05d0b3e0bcbd6d2ad14",
+    "published_sha256": "f313d394619d8a065270c2f6cfe47a27a7a6c5ccf076c05d0b3e0bcbd6d2ad14",
+    "redacted": false
+  },
+  "m6-fuzz-upgrade-pages-seeded.txt": {
+    "original_sha256": "d687789c89680f481bd08a6f8a90641884aed2666ff173d52180190af1a4f2eb",
+    "published_sha256": "d687789c89680f481bd08a6f8a90641884aed2666ff173d52180190af1a4f2eb",
+    "redacted": false
+  },
+  "m6-fuzz-upgrade-pages.txt": {
+    "original_sha256": "c314b5cf6e65809b262fd9f68ae4529f26dd1207d6f400608eaae264fc97a1ec",
+    "published_sha256": "c314b5cf6e65809b262fd9f68ae4529f26dd1207d6f400608eaae264fc97a1ec",
+    "redacted": false
+  },
+  "m6-grading-revision-publish-tests.txt": {
+    "original_sha256": "d518ac14bc4728855986f1a92b6cfb5f96728b11975e04dec16d03bccfa09048",
+    "published_sha256": "d518ac14bc4728855986f1a92b6cfb5f96728b11975e04dec16d03bccfa09048",
+    "redacted": false
+  },
+  "m6-harness-launch-failure.txt": {
+    "original_sha256": "b5e9151bc7df3b9f3701a3e5363d7c8ca147d8e1cebe83dc990f7bd2229a5df7",
+    "published_sha256": "b5e9151bc7df3b9f3701a3e5363d7c8ca147d8e1cebe83dc990f7bd2229a5df7",
+    "redacted": false
+  },
+  "m6-harness-review-fixed.txt": {
+    "original_sha256": "3198ba7538480381709d6897bfb516abab985c2ee0527cb314d7cca55358d3bc",
+    "published_sha256": "3198ba7538480381709d6897bfb516abab985c2ee0527cb314d7cca55358d3bc",
+    "redacted": false
+  },
+  "m6-header-collector-control.txt": {
+    "original_sha256": "674f313b90b778d681c027543eaf9ab0828efa8e1ab6d5a9dd6940385fb1edcd",
+    "published_sha256": "674f313b90b778d681c027543eaf9ab0828efa8e1ab6d5a9dd6940385fb1edcd",
+    "redacted": false
+  },
+  "m6-header-proxy-tests.txt": {
+    "original_sha256": "b2f439b04e31775f281286c1c5b25485d5a5e131b6db8be779c361ef738da073",
+    "published_sha256": "b2f439b04e31775f281286c1c5b25485d5a5e131b6db8be779c361ef738da073",
+    "redacted": false
+  },
+  "m6-header-runner-tests.txt": {
+    "original_sha256": "ccdaba0420d662dff03c2d197a73601dbee30bedff033de0824e241b9ae79fbe",
+    "published_sha256": "ccdaba0420d662dff03c2d197a73601dbee30bedff033de0824e241b9ae79fbe",
+    "redacted": false
+  },
+  "m6-instrument-tests.txt": {
+    "original_sha256": "5e5460c77af6524b39f8b725ea21c34cd10220cbc6903cce6c62419c3e12e2b3",
+    "published_sha256": "5e5460c77af6524b39f8b725ea21c34cd10220cbc6903cce6c62419c3e12e2b3",
+    "redacted": false
+  },
+  "m6-integration-checks.txt": {
+    "original_sha256": "531d0824ac8d1fcdd8e8c4c12aec6fa9a31295b4a6a10173296136f56047ce40",
+    "published_sha256": "531d0824ac8d1fcdd8e8c4c12aec6fa9a31295b4a6a10173296136f56047ce40",
+    "redacted": false
+  },
+  "m6-live-full-control.txt": {
+    "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "published_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redacted": false
+  },
+  "m6-live-validator-tests.txt": {
+    "original_sha256": "c1c841c02e2bc33a7bbccd18d9e608c1291cebb887fd761328997763027acf0f",
+    "published_sha256": "c1c841c02e2bc33a7bbccd18d9e608c1291cebb887fd761328997763027acf0f",
+    "redacted": false
+  },
+  "m6-pause-debug-build.txt": {
+    "original_sha256": "039d202a51a316ed09915c73b90c25cd6b3422c5c49d65621668229f63ade4f9",
+    "published_sha256": "039d202a51a316ed09915c73b90c25cd6b3422c5c49d65621668229f63ade4f9",
+    "redacted": false
+  },
+  "m6-pause-optimized-build.txt": {
+    "original_sha256": "7bac1e0cb8a122a5941f1bf49560fe230fe838aaf23e0db73e5cd2808cb2cd6a",
+    "published_sha256": "7bac1e0cb8a122a5941f1bf49560fe230fe838aaf23e0db73e5cd2808cb2cd6a",
+    "redacted": false
+  },
+  "m6-proxy-review-fixes-2.txt": {
+    "original_sha256": "5d2365ac2cb728ed21addf390a157134fe06c71261dc4fb699725c69a1dddbf1",
+    "published_sha256": "5d2365ac2cb728ed21addf390a157134fe06c71261dc4fb699725c69a1dddbf1",
+    "redacted": false
+  },
+  "m6-proxy-review-fixes-3.txt": {
+    "original_sha256": "8b76fc6a51fa72e7974a6f07903ff678dfef3b3529dc77bc55df543cca652ef2",
+    "published_sha256": "8b76fc6a51fa72e7974a6f07903ff678dfef3b3529dc77bc55df543cca652ef2",
+    "redacted": false
+  },
+  "m6-proxy-review-fixes.txt": {
+    "original_sha256": "342286f6a6fb1c083793c20aeefc434794851289be1b01ebf60551690edaf923",
+    "published_sha256": "342286f6a6fb1c083793c20aeefc434794851289be1b01ebf60551690edaf923",
+    "redacted": false
+  },
+  "m6-publication-jsonl-tests.txt": {
+    "original_sha256": "d518ac14bc4728855986f1a92b6cfb5f96728b11975e04dec16d03bccfa09048",
+    "published_sha256": "d518ac14bc4728855986f1a92b6cfb5f96728b11975e04dec16d03bccfa09048",
+    "redacted": false
+  },
+  "m6-publish-review-fixes.txt": {
+    "original_sha256": "7331de3fa28a2506b4ecfac2967e54ae85d2f16ed6b22d4797edd74aaf61a4bb",
+    "published_sha256": "7331de3fa28a2506b4ecfac2967e54ae85d2f16ed6b22d4797edd74aaf61a4bb",
+    "redacted": false
+  },
+  "m6-qualified-grader-controls-2.txt": {
+    "original_sha256": "a6c4816c6d935520592221117ae980c8024d1f66270b3495dfb957a7c817456c",
+    "published_sha256": "a6c4816c6d935520592221117ae980c8024d1f66270b3495dfb957a7c817456c",
+    "redacted": false
+  },
+  "m6-qualified-grader-controls.txt": {
+    "original_sha256": "c7c6e3d9717db7aa262213fe2ab84f291e4f0ba7f2a13c36e69e6f2af0ad6481",
+    "published_sha256": "c7c6e3d9717db7aa262213fe2ab84f291e4f0ba7f2a13c36e69e6f2af0ad6481",
+    "redacted": false
+  }
+}
