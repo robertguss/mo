@@ -249,6 +249,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         p4.place_read_only(s['context'], l.deployed)
         shutil.copytree(s['source'], l.work)
         p4.sudo('chown', '-R', f'{l.user}:{l.user}', l.work)
+        if p4.as_session_user(l, l.bin / 'mo', 'check', l.work / 'main.mo')[0]:
+            raise ValueError('session account cannot compile the supplied source')
         env = {'PATH': '/usr/bin:/bin', 'QUEUE_TOKEN': token, 'QUEUE_UPGRADE': upgrade}
         service = p4.fixture.Service.__new__(p4.fixture.Service)
         service.stderr_path = l.service_log
@@ -292,6 +294,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         trace_result = trace_run.run(
             ['/usr/bin/python3', '-I', '-c', ENTER, json.dumps(environment), str(l.work), *cmd],
             timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
+        recorder.recorder.close()
         shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
         shutil.copyfile(out / 'origin-raw/stderr', out / 'client-stderr.txt')
         meta['kernel'] = os.uname().release

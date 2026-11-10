@@ -131,7 +131,7 @@ class CollectorFailures(unittest.TestCase):
                     return dict(returncode=0, timed_out=False, capture_finished=True)
             class Recorder:
                 url='http://127.0.0.1:12346/mcp'
-                recorder=SimpleNamespace(snapshots=[], clean=lambda x:x)
+                recorder=SimpleNamespace(snapshots=[], clean=lambda x:x, close=lambda: None)
                 def __init__(self, url, path, *args): path.write_text('')
                 def stop(self): pass
             partials=[]
@@ -160,6 +160,7 @@ class CollectorFailures(unittest.TestCase):
             def mocked(owner, name, **kwargs): return stack.enter_context(patch.object(owner,name,**kwargs))
             mocked(h.p4,'check_private'); reset=mocked(h.p4,'reset')
             mocked(h.p4,'append_secret'); mocked(h.p4,'place_read_only'); mocked(h.p4,'end_all')
+            mocked(h.p4,'as_session_user',return_value=(0,''))
             mocked(h.p4,'sudo',return_value=SimpleNamespace(stdout=b'baseline'))
             mocked(h.p4,'collect_work',side_effect=collect_work); mocked(h.p4,'artifacts',return_value={})
             mocked(h.p4.fixture,'Service',new=Service)

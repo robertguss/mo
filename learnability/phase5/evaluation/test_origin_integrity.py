@@ -23,6 +23,18 @@ class IntegrityTests(unittest.TestCase):
         self.assertTrue(observer.process_integrity(text + '2 +++ exited with 0 +++\n')['process_completeness_verified'])
         self.assertFalse(observer.process_integrity(text + '2 read(3, <unfinished ...>\n')['process_completeness_verified'])
 
+    def test_namespace_creation_through_clone_flags_is_refused(self):
+        plain = '1 execve("/bin/true", [], []) = 0\n1 clone(child_stack=NULL, flags=SIGCHLD) = 2\n2 +++ exited with 0 +++\n1 +++ exited with 0 +++\n'
+        self.assertTrue(observer.process_integrity(plain)['process_completeness_verified'])
+        for call in ('clone(child_stack=NULL, flags=CLONE_NEWNS|CLONE_NEWUSER|SIGCHLD) = 2',
+                     'clone3({flags=CLONE_NEWPID, exit_signal=SIGCHLD}, 88) = 2',
+                     'clone(child_stack=NULL, <unfinished ...>\n1 <... clone resumed>flags=CLONE_NEWNS|SIGCHLD) = 2'):
+            with self.subTest(call=call):
+                result = observer.process_integrity(plain.replace('clone(child_stack=NULL, flags=SIGCHLD) = 2', call))
+                self.assertFalse(result['process_completeness_verified'])
+                self.assertIn('unsupported isolation or memory transition', result['integrity_errors'])
+
+
 
 def live():
     import threading

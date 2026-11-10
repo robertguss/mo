@@ -986,3 +986,68 @@ the capture; a client that re-reads its output file only after emitting the resu
 observation; what `codex_core=debug` echoes to stderr is unaudited, and although channel
 attestation limits that text to the client's own writes, a forged provider record inside it
 is not excluded.
+
+### Pairs four and five under merged main (2026-11-10)
+
+Both pairs were declared before launch, scored 0, no replacements. Cumulative development model
+attempts are now Codex 8, Claude 6.
+
+**Operator error (pair four).** The evaluation `mo` was reinstalled from a checkout build whose
+embedded library path the session account cannot read; the earlier frozen binary had been built
+in a separate readable tree. The first launch was refused before any model ran, for a different
+reason: data persisted by the older binary is adopted at startup and prints a line before the
+listening line. The fixture was rebuilt with the installed binary (source byte-identical,
+`expected.json` equal). The relaunch then ran both clients against a `mo` that could not compile
+for them. Claude reported exactly that and stopped. Both sessions are invalid as confirmation
+and are retained.
+
+**Capture false pass found by pair four.** Codex worked around the unreadable library by running
+`mo push` inside its own `bwrap` mount namespace with a library it reconstructed, and the capture
+credited the push. Process integrity flagged `unshare` and `setns` but not namespaces created
+through `clone` flags (`clone(child_stack=NULL, flags=CLONE_NEWNS|CLONE_NEWUSER|SIGCHLD)`, eight
+calls). Any `CLONE_NEW` flag on `clone` or `clone3` now fails integrity, and that sealed trace now
+fails as it should.
+
+**Repairs before pair five.** `mo` is built from e53a822e in `/opt/mo-phase5/build-e53a822e`
+(root-owned, tree mode 0711, `lib` world-readable) and installed through `harness.py setup`;
+client pins are unchanged. The collector now refuses to launch unless the session account can
+compile the supplied source, which would have stopped pair four before it spent two sessions.
+
+**Pair five, live.** Codex passed every evidence dimension end to end with no repair applied
+afterwards: capture integrity, command origin, revision observation, traffic completeness and
+model provenance (32 of 32 responses). It failed the immutable source tests, and so did its
+pair-four candidate. That is the agent's work: both candidates changed `expose Queue,` to
+`expose Queue(..),`, which lets the property test build a queue with `next_id` at the largest
+integer, where `submit` overflows. The original source and both pair-three candidates pass the
+same tests under the same binary.
+
+Claude completed the task correctly but its reconciliation failed with `JoinError`. Each MCP
+client opens a `GET` event stream that `mo serve` never answers in that form; the proxy ends it
+with a synthesized 502 after its 300-second upstream timeout. Sessions longer than that have the
+reply recorded. Claude's 333-second session ended first, so the request had no reply in the proxy
+log or the trace and the join rejected the whole session. The join now records a request that is
+unanswered on both sides as explicitly unanswered instead of rejecting. Traffic completeness is
+unchanged for tool calls: an unanswered tool call still fails, and a reply present on only one
+side still rejects. With that change, and no in-memory patching, the protected regrade of the
+sealed pair-five sessions gives Claude all seven dimensions and Codex six.
+
+### Review of the pair-four and pair-five repairs (2026-11-10)
+
+A focused review (own read plus one separately dispatched adversarial reviewer on the same model
+family; no cross-model peer, no validator) checked the three gate changes. It confirmed that an
+unanswered tool call still fails traffic completeness, earns no command origin and no observation
+credit, and that a reply on only one side still rejects. It found one defect, now fixed: the
+proxy log stayed open through live grading, so a 502 synthesized after the client had exited
+could be logged with no trace response and reject a genuine session. The log now closes as soon
+as the traced session returns. The counters `verified_push_requests` and
+`verified_shell_requests` no longer include unanswered requests.
+
+Open risk, not fixed: strace reads `clone3` flags from user memory, so a deliberately racing
+multi-threaded process could hide a namespace flag. Closing it in the kernel means setting
+`user.max_user_namespaces=0` for each session, a host-wide change that would also break other
+sandboxed tools on the machine for that hour. That needs the owner's decision. A short window
+also remains between the client's exit and the log closing.
+
+The no-model collector test (`test_collector`: success, curl, urllib, timeout and cleanup-failure
+cases with a stub client under a separate test account) passed in 563.047 seconds with the
+launch-path changes, using the evaluation binary.

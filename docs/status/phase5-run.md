@@ -351,3 +351,15 @@ Phase 5 remains open. Still required: merge of this work, reinstalling the froze
 merged commit, the freeze, and the fixed four-slot cohort with its publication. The original 0/4
 stands. The [capture development record](../../learnability/phase5/evaluation/integration-development.md)
 lists every failed run, repair and open risk.
+
+## Confirmation under merged main (development, 2026-11-10)
+
+Two more declared development pairs ran after the merge (cumulative development model attempts
+Codex 8, Claude 6; scored 0). The first was invalid: the reinstalled `mo` could not read its
+library as the session account. It still exposed a capture false pass, since fixed: a client
+that ran `mo push` inside its own mount namespace was credited. The second pair ran against a
+correctly built `mo`. Live and unrepaired, Codex passed every evidence dimension and failed the
+immutable source tests through its own design choice. Claude's session passes all seven
+dimensions on protected regrade after one more join repair for a request left unanswered at
+session end. Details are in the [capture development record](../../learnability/phase5/evaluation/integration-development.md).
+Phase 5 remains open; the scored cohort has not run.

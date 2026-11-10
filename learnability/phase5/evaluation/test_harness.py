@@ -183,6 +183,7 @@ class RunnerTests(unittest.TestCase):
                 for name in ('check_private', 'place_read_only', 'sudo', 'end_all'):
                     stack.enter_context(patch.object(h.p4, name))
                 reset = stack.enter_context(patch.object(h.p4, 'reset'))
+                compiles = stack.enter_context(patch.object(h.p4, 'as_session_user', return_value=(0, '')))
                 capture = stack.enter_context(patch.object(h.p4, 'collect_work', return_value=0))
                 stack.enter_context(patch.object(h.subprocess, 'Popen', side_effect=OSError('launch failed')))
                 self.assertEqual(h.collect(l, spec, root / 'out', 1, development=True), 1)
@@ -192,6 +193,7 @@ class RunnerTests(unittest.TestCase):
             for dimension in ('task_state', 'activation_identity', 'command_origin', 'final_answer'):
                 self.assertIs(record['dimensions'][dimension], False)
             self.assertIn('OSError', record['failures'])
+            compiles.assert_called_once()
             self.assertEqual(reset.call_count, 2)
             capture.assert_not_called()  # Cleanup was not verified; do not copy mutable files.
 
