@@ -824,3 +824,50 @@ Clang, targeted sanitizers, formatting/dependency checks and pause measurements
 remain as recorded in the pause development note. Full-session resource bounds,
 actual serving-model evidence, real-client transport qualification and final
 four-slot publication remain incomplete. No release/merge approval is implied.
+
+## Real-client development collectors (2026-11-10)
+
+Declared before launch (private `~/.mo-phase5-harness/real-collector-development-20261110/declaration.json`):
+exactly one DEVELOPMENT Codex slot and one DEVELOPMENT Claude slot through `harness.py run
+--development --limit 3600` at commit c5e6fa19, no replacements, scored 0. Predictions: both
+traces parse with no rejected transfer; channels attested; provenance qualified unless a real
+session makes an unclassified provider request or bills an auxiliary model.
+
+First attempt: both slots refused **before launch** (`IdentityError`, launched=false, no model
+run). The Nov 8 install left `/opt/mo-phase5/bin/mo` at mode 0755; the capture requires no write
+bits, and current `harness.setup` already applies `chmod 0555`. That one step was applied
+(SHA-256 `517da061…` unchanged), the refused outputs were retained as `prelaunch-refusal-*`,
+and the same declaration ran. Cumulative development model attempts are now Codex 4, Claude 2.
+
+| Slot | Client | Wall | Exit | Decoded trace | gzip | Collector peak RSS |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Codex | 1212 s | 0 | 3,666,228,166 B | 447,596,106 B | 461,740 KiB |
+| 2 | Claude | 619 s | 0 | 1,280,413,604 B | — | 254,224 KiB |
+
+Both agents completed the upgrade: task state, activation identity and source tests passed.
+**Both captures failed process integrity**, so nothing was consumed and command origin, revision
+observation, traffic completeness and model provenance all failed closed. The predictions about
+capture were wrong; the failures are retained.
+
+- **Codex:** `ambiguous child ordering`, `unregistered descendant`, `unsupported isolation or memory
+  transition`, `unsupported kernel transfer`. Cause: Codex's own `--sandbox workspace-write` runs
+  commands through `/usr/bin/bwrap` (114 execs, 76 `unshare(CLONE_NEWUSER…)`). PID namespaces make
+  `clone` return namespace-local PIDs, and the cleared descriptor tables make later file copies
+  (725 `copy_file_range`) and one `sendfile` from a `/tmp/queue-upg…` file unprovable. Supporting
+  this inside the capture is not a narrow repair: a mount namespace can rebind
+  `/opt/mo-phase5/bin/mo`, which would defeat path-based push identity.
+- **Claude:** only `unsupported kernel transfer`: one `copy_file_range` by the client's own
+  multi-threaded process backing up `~/.claude.json` (shared descriptor table, so no regular-file
+  credit). Single-threaded `cat`/`cp` copies were credited as designed.
+
+**Provenance route on the real streams (adapters run directly, development only).** Codex:
+38 logged `/responses` attempts, 38 provider responses, all `gpt-6.1-sol`/`xhigh`, usage reconciled,
+no failed attempts, no unclassified provider request, one thread. Claude: 34 requests, all
+`claude-opus-5-5`, input usage equal to terminal `modelUsage`, no other model. These would qualify
+once the channels are attested; they are not attested here because the capture failed.
+
+Resource note: at this rate a 3600 s Codex slot is about 11 GB decoded and 1.3 GB compressed
+trace. That is a single-session observation, not a bound.
+
+Next work depends on a decision about Codex's sandbox (it is the evaluation condition all earlier
+experiments used); see `docs/status/phase5-run.md`.

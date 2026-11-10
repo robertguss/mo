@@ -306,3 +306,21 @@ record.
 The route is not yet exercised through the full traced harness with a real client.
 That, full-session resource bounds and the fixed four-slot cohort remain outstanding;
 Phase 5 remains open.
+
+## Real-client development collectors (2026-11-10)
+
+One declared development slot per client ran through the full traced harness (scored 0). Both
+agents completed the upgrade with correct state and activation identity, and the provenance
+adapters qualified both real streams (Codex 38/38 responses, Claude 34 reconciled requests). But
+**both captures failed process integrity**, so the slots failed closed. Codex's own bubblewrap
+sandbox uses user and PID namespaces the capture cannot follow. Claude backs up its config with
+one `copy_file_range` that the descriptor rule cannot credit. Collection stays blocked on real-client
+capture qualification. Details and retained failures are in the
+[capture development record](../../learnability/phase5/evaluation/integration-development.md).
+
+Machine-local note: between 01:50 and 02:15 UTC on 2026-11-10, something outside this work
+deleted both checkouts' `build/` directories (and some `/tmp` review trees), freeing about 127 GB.
+Build logs that earlier records cite under `build/` (for example `build/pause-native-final-gcc.txt`
+and `build/review-*.txt`) no longer exist. The repository records keep their stated results; the
+logs themselves cannot be re-read. Private evidence under `~/.mo-phase5-harness` and the
+`phase5-test-private-*` roots is intact.
