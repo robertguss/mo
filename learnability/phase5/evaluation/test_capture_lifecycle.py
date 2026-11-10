@@ -131,7 +131,7 @@ class CollectorFailures(unittest.TestCase):
                     return dict(returncode=0, timed_out=False, capture_finished=True)
             class Recorder:
                 url='http://127.0.0.1:12346/mcp'
-                recorder=SimpleNamespace(snapshots=[], clean=lambda x:x)
+                recorder=SimpleNamespace(snapshots=[], clean=lambda x:x, close=lambda: None)
                 def __init__(self, url, path, *args): path.write_text('')
                 def stop(self): pass
             partials=[]

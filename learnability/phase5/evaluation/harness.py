@@ -294,6 +294,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         trace_result = trace_run.run(
             ['/usr/bin/python3', '-I', '-c', ENTER, json.dumps(environment), str(l.work), *cmd],
             timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
+        recorder.recorder.close()
         shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
         shutil.copyfile(out / 'origin-raw/stderr', out / 'client-stderr.txt')
         meta['kernel'] = os.uname().release

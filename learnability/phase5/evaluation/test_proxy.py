@@ -101,6 +101,11 @@ class Tests(unittest.TestCase):
             result = proxy.match('codex', stream, log)
             self.assertFalse(result['match'])
             self.assertEqual(result['command_origin'], [])
+            log.write_text(log.read_text().splitlines()[0] + '\n')
+            unanswered = proxy.match('codex', stream, log)
+            self.assertFalse(unanswered['match'])
+            self.assertEqual([c['tool'] for c in unanswered['exempt']], ['mo-upgrade-open'])
+            self.assertEqual(unanswered['command_origin'], [])
 
 
 class RealPush(unittest.TestCase):

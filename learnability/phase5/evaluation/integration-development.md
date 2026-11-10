@@ -1030,3 +1030,24 @@ unanswered on both sides as explicitly unanswered instead of rejecting. Traffic 
 unchanged for tool calls: an unanswered tool call still fails, and a reply present on only one
 side still rejects. With that change, and no in-memory patching, the protected regrade of the
 sealed pair-five sessions gives Claude all seven dimensions and Codex six.
+
+### Review of the pair-four and pair-five repairs (2026-11-10)
+
+A focused review (own read plus one separately dispatched adversarial reviewer on the same model
+family; no cross-model peer, no validator) checked the three gate changes. It confirmed that an
+unanswered tool call still fails traffic completeness, earns no command origin and no observation
+credit, and that a reply on only one side still rejects. It found one defect, now fixed: the
+proxy log stayed open through live grading, so a 502 synthesized after the client had exited
+could be logged with no trace response and reject a genuine session. The log now closes as soon
+as the traced session returns. The counters `verified_push_requests` and
+`verified_shell_requests` no longer include unanswered requests.
+
+Open risk, not fixed: strace reads `clone3` flags from user memory, so a deliberately racing
+multi-threaded process could hide a namespace flag. Closing it in the kernel means setting
+`user.max_user_namespaces=0` for each session, a host-wide change that would also break other
+sandboxed tools on the machine for that hour. That needs the owner's decision. A short window
+also remains between the client's exit and the log closing.
+
+The no-model collector test (`test_collector`: success, curl, urllib, timeout and cleanup-failure
+cases with a stub client under a separate test account) passed in 563.047 seconds with the
+launch-path changes, using the evaluation binary.
