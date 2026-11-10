@@ -388,3 +388,93 @@ No actual model was established. This is evidence about this attempt, not proof
 that every supported route is exhausted. Private raw logs and retained work are
 in the declared directory. Session cleanup verified no surviving account process,
 work folder or retention hold. No further probe is declared or justified here.
+
+## Provider response-object route (2026-11-10; no model attempts)
+
+Baseline: main at 86f526cd6b5cd09b5e0a6a9977eab51f5299d7fa (PR #318), branch
+phase5/close-evidence. This pass made **zero** model-serving invocations (Codex 0,
+Claude 0), zero scored launches. Cumulative development model attempts remain
+Codex 3, Claude 1. Original 0/4, pins, gate and miss rules are unchanged.
+
+**Hypothesis (new, tested on retained evidence only).** Earlier passes looked for an
+`openai-model` header and found none. They never checked the provider's own response
+object, which the trace at codex-api/src/sse/responses.rs:622 already records. Both
+retained HTTP captures (`http-development-20261109-one`, `http-header-development-20261109-one`)
+contain, for every response, `response.created` and `response.completed` events whose
+`response` object carries `id`, `model: gpt-6.1-sol` and `reasoning.effort: xhigh`.
+This is the same evidence class already accepted for Claude (`message.model` in the
+provider message): provider-authored, not requested configuration, not agent text.
+The Codex source test that ignores payload `model` governs only its mismatch warning.
+
+**Per-attempt ledger.** Exact-tag http-client/src/client.rs:150–212 logs every attempt
+through `execute` as `Request completed` (method, URL, status, response headers) or
+`Request failed`, inside the turn span that names `thread_id`. Whole-tree search of the
+tag's Rust source (codeload tarball SHA-256
+`718c86dcd7104919f2820aa79db0fa0083b5f240aa16da704f43e4acf7b544e5`): the only client that
+disables request logging is workload-identity/src/exchange.rs:50 (token exchange, not
+model serving). The route-aware pool (route_aware_client_pool/execution.rs:118–187) logs
+each final response once; its unlogged paths are redirect hops and a failed TLS first
+attempt, neither of which can serve a response. Model-serving routes in codex-api are
+`/responses` (also used by remote compaction), `memories/trace_summarize`,
+`realtime/calls`, `alpha/search` and `images/*`. The second retained capture has two
+logged `POST …/codex/responses` 200 attempts and two provider responses. The first
+capture predates `codex_http_client=debug`, has no ledger, and now serves as a real
+negative control.
+
+**Independent reconciliation.** In both captures the sums of provider
+`response.completed` usage (input, cached input, output, reasoning) equal the client's
+own `turn.completed` usage on stdout exactly (28808/26624/63/0 and 28809/26624/64/0).
+
+**Claude.** No new route was needed. In all three real Claude sessions available
+(the development run and original scored slots 2 and 4, 2/23/21 requests), the
+per-request provider `message.usage` input, cache-read and cache-creation tokens,
+taken once per request ID, sum exactly to terminal `modelUsage["claude-opus-5-5"]`.
+Every request bills nonzero input, so a served request without an envelope (retry,
+compaction, auxiliary or fallback) would break the equality, and any other terminal
+model key is retained and fails. Output tokens are not compared: envelope usage is
+the stream-start snapshot. The SDK's `ANTHROPIC_LOG=debug` ledger was found in the
+pinned bundle but not used: its logger is `console` (stdout, shared with stream-json)
+and it logs full request bodies.
+
+**Writer attestation.** Both channels are text a same-UID process could try to write
+into. The capture already traces every write with descriptor annotations, so
+`parse_trace` now records fd-2 writes (`stderr_events`) as it already did fd 1.
+`model_adapter.session_provenance` qualifies a session only if the client's root
+process (exec path, argv, tgid) wrote every byte of stdout, and for Codex of stderr.
+Another writer, extra bytes or a missing channel fails closed.
+
+**Implementation.** `model_adapter.codex_responses` binds each successful
+`/responses` attempt to one provider `response.created` (order and count), requires
+the expected model and effort in created and terminal events, retains failed
+attempts and truncated streams, and fails on: no ledger, unanswered or unrequested
+responses, duplicate IDs, other session threads, unaccounted model routes, WebSocket
+or non-HTTPS transport, malformed provider events and usage that does not reconcile.
+`claude_metadata` adds the usage reconciliation; `qualified` is now true only when it
+holds. `proxy.match` derives provenance from the consumed capture; the harness seals
+stderr, gates `model_provenance` on it and records any miss under the predeclared
+"missing or substituted model evidence" rule. Protected regrade reads the same sealed
+stderr. The recursive `harness.models` search is removed.
+
+**Collection configuration change (disclosed, not a pin change).** Codex's WebSocket
+path does not trace provider events (responses_websocket.rs has no event trace), so
+collection now runs Codex over the HTTP Responses transport via the
+`responses_http` provider override (display name OpenAI, `requires_openai_auth=true`,
+`supports_websockets=false`, no base URL), the configuration already characterized live
+twice above, with `RUST_LOG=codex_api=trace,codex_http_client=debug`. Binary, version,
+requested model and effort are unchanged. Published `client-stderr.txt` drops these
+provider diagnostic lines (response headers, cookies, instructions); the raw stderr
+stays sealed in the private replay bundle.
+
+Tests written first and failing (ImportError, then three red Claude positives), then
+green: test_codex_provenance.py, test_claude_provenance.py, test_model_adapter.py (33
+tests, including both retained Codex captures, the private Claude run and the two public
+original Claude streams). The focused evaluation suites passed 257 tests in 114.600
+seconds before the Claude change (build/u1-provenance-focused.txt).
+
+**Remaining limits.** This qualifies the evidence route against retained real
+captures; it does not qualify a real client through the full traced harness. That needs
+a declared development collector per client (capture, attestation, sealing, regrade).
+A no-model check (scratch HOME, dummy key, closed loopback endpoint, 45 s each) found
+**no** `io_uring_*` calls from either pinned client on startup and network paths, unlike
+the failed Node control; that is not full-session qualification. Same-UID writes through
+transfers the decoder rejects (io_uring, splice) remain rejected rather than accounted.

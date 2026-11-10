@@ -120,25 +120,11 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'merged repair'):
                 h.freeze(path, h.layout())
 
-    def test_fallback_retained(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'stream'
-            path.write_text('{"model":"claude-opus-4-8","fallback":true}\n')
-            record = h.models(path)
-            self.assertEqual(record['reported_models'], [])
-            self.assertTrue(record['events'][0]['fallback'])
-
-    def test_untrusted_model_claims_never_qualify(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'stream'
-            for event in ({'model': 'gpt-6.1-sol'},
-                          {'type': 'item.completed', 'item': {'model': 'gpt-6.1-sol'}},
-                          {'session_id': 'other', 'message': {'model': 'claude-opus-5-5'}}):
-                path.write_text(json.dumps(event) + '\n')
-                record = h.models(path)
-                self.assertFalse(record['qualified'])
-                self.assertEqual(record['reported_models'], [])
-                self.assertEqual(record['events'], [event])
+    def test_codex_uses_traced_http_transport(self):
+        cmd = h.command('codex', Path('/bin/codex'), 'p', 'http://x/mcp', Path('/c'))
+        self.assertIn('model_provider="responses_http"', cmd)
+        self.assertIn('supports_websockets=false', ' '.join(cmd))
+        self.assertNotIn('responses_http', ' '.join(h.command('claude', Path('/bin/claude'), 'p', 'http://x/mcp', Path('/c'))))
 
     def test_typed_final_messages(self):
         with tempfile.TemporaryDirectory() as tmp:

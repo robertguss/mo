@@ -103,6 +103,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         return next(iter(values)) if values else None
     exec_events = []
     stdout_events = []
+    stderr_events = []
     pipe_events = []
     pipes = {}
     processes = {}
@@ -237,6 +238,10 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             n = int(result)
             data = transfer_bytes(op, args, n)
             stdout_events.append(dict(data=data[:n].decode('utf-8'), sender=dict(p), started=started, completed=sequence))
+        if op in ('write', 'writev') and re.match(r'2(?:<[^>]+>)?, ', args) and result.isdigit():
+            n = int(result)
+            # Diagnostic stderr may split UTF-8 across writes; keep exact bytes.
+            stderr_events.append(dict(data_hex=transfer_bytes(op, args, n)[:n].hex(), sender=dict(p)))
         if op in ('sendmsg', 'recvmsg', 'sendmmsg', 'recvmmsg') and not result.startswith('-1'):
             controls = re.findall(r'msg_controllen=(\d+)', args)
             if not controls or any(int(n) != 0 for n in controls):
@@ -376,7 +381,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
                         receipt['argument_count']=len(params.get('arguments',{})) if isinstance(params,dict) and isinstance(params.get('arguments',{}),dict) else 0
                 except (ValueError,UnicodeError): receipt['json_object']=False
                 output.append(receipt); pos=stop
-    return dict(requests=requests,responses=responses,event_counts=dict(events), stdout_events=stdout_events, pipe_events=pipe_events, exec_events=exec_events, binary_hash_verified=False)
+    return dict(requests=requests,responses=responses,event_counts=dict(events), stdout_events=stdout_events, stderr_events=stderr_events, pipe_events=pipe_events, exec_events=exec_events, binary_hash_verified=False)
 
 
 if __name__ == '__main__':

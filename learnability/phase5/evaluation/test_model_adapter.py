@@ -31,7 +31,7 @@ class ModelAdapterTests(unittest.TestCase):
             self.assertIsNone(codex_header(e))
         self.assertFalse(claude_metadata([{'type':'user','message':{'model':'fake'}}], 's').complete)
 
-    def test_positive_is_not_qualification(self):
+    def test_envelopes_without_usage_do_not_qualify(self):
         r=claude_metadata(self.events(),'s')
         self.assertTrue(r.complete)
         self.assertEqual(r.requests, (('r','claude-opus-5-5'),))

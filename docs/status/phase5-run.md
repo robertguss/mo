@@ -287,3 +287,22 @@ regression suite passed 237 tests; this is not real-client qualification. A Node
 keepalive/spawn control exposed successful io_uring transfers that remain
 unsupported and are rejected. See the [capture development record](../../learnability/phase5/evaluation/integration-development.md)
 for failed controls, repairs and remaining coverage.
+
+## Model provenance route (development, 2026-11-10)
+
+Both frozen clients now have a typed actual-model route, qualified against retained
+real captures, with no new model sessions (cumulative development attempts stay
+Codex 3, Claude 1; scored 0). Codex: the provider's own `response.model` and
+`reasoning.effort` in every traced HTTP response, bound one-to-one to the client's
+logged `/responses` attempts and reconciled with its turn usage. Claude: provider
+`message.model` per request ID, with per-request input usage summing exactly to the
+terminal `modelUsage`, as it does in both original scored Claude streams. A session
+qualifies only if the client process itself wrote those channels, checked from the
+syscall trace. Codex collection therefore uses the HTTP Responses transport with
+diagnostic logging; binary, model and effort pins are unchanged. Details, source
+references and limits are in the [model provenance](../../learnability/phase5/evaluation/model-provenance-development.md)
+record.
+
+The route is not yet exercised through the full traced harness with a real client.
+That, full-session resource bounds and the fixed four-slot cohort remain outstanding;
+Phase 5 remains open.

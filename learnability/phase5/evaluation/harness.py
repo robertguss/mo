@@ -112,18 +112,21 @@ def check(installed):
             raise ValueError('frozen client version unavailable: ' + name)
 
 
+# Codex traces provider response objects only over HTTP (codex-api sse/responses.rs:622);
+# this provider keeps the built-in OpenAI identity and auth (model-provider-info 782-844).
+CODEX_HTTP = ['-c', 'model_provider="responses_http"', '-c',
+              'model_providers.responses_http={name="OpenAI",requires_openai_auth=true,supports_websockets=false}']
+CODEX_LOG = 'codex_api=trace,codex_http_client=debug'
+# Published stderr omits these provider diagnostics; the sealed raw copy keeps them.
+PRIVATE_DIAGNOSTICS = ('codex_api::', 'codex_http_client::')
+
+
 def command(client, binary, prompt, url, config):
     cmd = p4.client_command(client, binary, prompt, url, config)
     if client == 'codex':
-        cmd[-1:-1] = ['-c', 'mcp_servers.task-queue.env_http_headers={"Mo-Upgrade-Authorization"="QUEUE_UPGRADE_BEARER"}']
+        cmd[-1:-1] = ['-c', 'mcp_servers.task-queue.env_http_headers={"Mo-Upgrade-Authorization"="QUEUE_UPGRADE_BEARER"}',
+                      *CODEX_HTTP]
     return cmd
-
-
-def models(stream):
-    events = [e for e in proxy.base.events(stream)
-              if 'model' in json.dumps(e).lower() or 'fallback' in json.dumps(e).lower()]
-    return {'reported_models': [], 'events': events, 'qualified': False,
-            'reason': 'trusted session-bound serving-model metadata unqualified'}
 
 
 def final_message(client, stream):
@@ -267,6 +270,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         environment = {'HOME': str(l.home()), 'USER': l.user, 'LOGNAME': l.user,
                        'SHELL': '/bin/bash', 'PATH': f'{l.bin}:/usr/bin:/bin',
                        'LANG': 'C.UTF-8', 'DISABLE_AUTOUPDATER': '1'}
+        if meta['client'] == 'codex':
+            environment['RUST_LOG'] = CODEX_LOG
         start = time.monotonic()
         if (l.bin / 'mo').stat().st_uid != 0:
             raise ValueError('frozen mo must be root owned')
@@ -283,7 +288,6 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         meta['timeout'] = trace_result['timed_out']
         meta['capture'] = trace_result
         meta['seconds'] = time.monotonic() - start
-        meta['models'] = models(out / 'stream.jsonl')
         class RecordingClient:
             def every_job(self):
                 value = client.every_job()
@@ -297,9 +301,6 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         meta['live'] = grader.live_grade(RecordingClient())
         if meta['timeout'] or meta['exit_status'] != 0:
             meta['failures'].append('timeout or unsuccessful exit')
-        wanted = 'gpt-6.1-sol' if meta['client'] == 'codex' else 'claude-opus-5-5'
-        if meta['models']['reported_models'] != [wanted] or any(e.get('fallback') for e in meta['models']['events']):
-            meta['failures'].append('missing or substituted model evidence')
     except BaseException as error:
         meta['failures'].append(type(error).__name__)
     finally:
@@ -367,7 +368,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                     snapshot = out / 'origin-identity/tcp.json'
                     origin_identity.atomic_private(snapshot, dict(session=capture.session, nonce=capture.nonce,
                         trace_sha256=origin_identity.protected(trace, os.geteuid(), capture.session_uid, private=True, pin_only=True)[0]['sha256'], snapshots=recorder.recorder.snapshots))
-                    capture.seal(trace, out / 'proxy.jsonl', snapshot, stdout=out / 'origin-raw/stdout', client_path=l.bin / meta['client'])
+                    capture.seal(trace, out / 'proxy.jsonl', snapshot, stdout=out / 'origin-raw/stdout',
+                                 client_path=l.bin / meta['client'], stderr=out / 'origin-raw/stderr')
                     pending_bundle = replay_bundle.Bundle(out / 'replay-private', capture,
                         evaluation_endpoint=recorder.url.split('/')[2])
                     pending_bundle.add('expected', s['expected'])
@@ -389,7 +391,10 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                 if not kwargs:
                     meta['records']['match'] = False
                     meta['records']['capture_incomplete'] = True
+                meta['models'] = meta['records'].pop('model_provenance')
             cleanup('record reconciliation', reconcile)
+        if meta.get('models', {}).get('qualified') is not True:
+            meta['failures'].append('missing or substituted model evidence')
         if meta['launched'] and bundle is None:
             def retain_partial():
                 nonlocal state_retained
@@ -422,7 +427,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                                 partial.facts['available'].append(role)
                             except Exception as error:
                                 partial.facts.setdefault('unavailable', {})[role] = type(error).__name__
-                    for role, path in [('stdout', out / 'origin-raw/stdout'), ('trace', out / 'origin-raw/trace'),
+                    for role, path in [('stdout', out / 'origin-raw/stdout'), ('stderr', out / 'origin-raw/stderr'),
+                                       ('trace', out / 'origin-raw/trace'),
                                        ('proxy_log', out / 'proxy.jsonl'), ('prompt', out / 'prompt.txt')]:
                         if path.exists():
                             retain_optional(partial, role, path)
@@ -439,7 +445,10 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             for name in ('stream.jsonl', 'client-stderr.txt'):
                 path = out / name
                 if path.exists():
-                    path.write_text('\n'.join(recorder.recorder.clean(line) for line in path.read_text().splitlines()) + '\n')
+                    lines = path.read_text(errors='replace').splitlines()
+                    if name == 'client-stderr.txt':
+                        lines = [l for l in lines if not any(t in l for t in PRIVATE_DIAGNOSTICS)]
+                    path.write_text('\n'.join(recorder.recorder.clean(line) for line in lines) + '\n')
         cleanup('client redaction', redact_client_artifacts)
         cleanup('reset', lambda: reset_preserving_work(l, out, meta))
         def inventory():
