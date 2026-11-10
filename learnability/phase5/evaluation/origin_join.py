@@ -39,6 +39,7 @@ def join(trace, rows):
         replies = [r for r in rows if r['direction'] == 'response']
         used = set()
         result = []
+        unanswered = []
         for row in requests:
             evidence = row['transport']
             endpoint = evidence['endpoint']
@@ -59,17 +60,21 @@ def join(trace, rows):
             response = [r for r in trace['responses'] if
                         (r['connection_ordinal'], r['request_ordinal']) == key]
             reply = [r for r in replies if r['request'] == row['seq']]
-            if len(response) != 1 or len(reply) != 1: reject()
             if request['method'] != row['http']: reject()
-            if response[0]['status'] != reply[0]['status']: reject()
-            for actual, expected in ((request, evidence),
-                                     (response[0], reply[0]['transport'])):
+            pairs = [(request, evidence)]
+            if response or reply:
+                if len(response) != 1 or len(reply) != 1: reject()
+                if response[0]['status'] != reply[0]['status']: reject()
+                pairs.append((response[0], reply[0]['transport']))
+            else:
+                unanswered.append(row['seq'])
+            for actual, expected in pairs:
                 if not actual['occurrences']: reject()
                 for name in ('body_byte_count', 'body_sha256', 'canonical_json_sha256'):
                     if actual.get(name) != expected.get(name): reject()
             result.append({'request_seq': row['seq'], 'sender': request['sender'],
                            'connection_ordinal': key[0], 'request_ordinal': key[1]})
-        if len(used) != len(trace['requests']) or len(replies) != len(requests): reject()
-        return {'qualified': False, 'observations': result, 'command_origin': []}
+        if len(used) != len(trace['requests']) or len(replies) != len(requests) - len(unanswered): reject()
+        return {'qualified': False, 'observations': result, 'unanswered': unanswered, 'command_origin': []}
     except (KeyError, TypeError, AttributeError):
         reject()

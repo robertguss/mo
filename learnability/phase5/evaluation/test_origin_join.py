@@ -31,3 +31,17 @@ class JoinTests(unittest.TestCase):
             if mutation == 4: trace['responses'] = []
             if mutation == 5: rows[1]['status'] = 500
             with self.assertRaises(JoinError): join(trace, rows)
+
+    def test_request_unanswered_on_both_sides_stays_explicit(self):
+        trace, rows = self.fixture()
+        trace['responses'] = []
+        result = join(trace, rows[:1])
+        self.assertEqual(result['unanswered'], [1])
+        self.assertEqual(len(result['observations']), 1)
+        with self.assertRaises(JoinError): join(trace, rows)
+        trace, rows = self.fixture()
+        with self.assertRaises(JoinError): join(trace, rows[:1])
+        trace, rows = self.fixture()
+        trace['responses'] = []
+        rows[0]['transport']['body_sha256'] = 'forged'
+        with self.assertRaises(JoinError): join(trace, rows[:1])

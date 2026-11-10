@@ -155,6 +155,7 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
     """
     rows = base.entries(log)
     origins = {}
+    unanswered = []
     observation = False
     if capture is not None:
         from protected_regrade import ReplayReceipt
@@ -166,6 +167,7 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
         if evidence['proxy_rows'] != rows:
             raise ValueError('sealed proxy log differs')
         joined = origin_join.join(evidence['trace'], rows)
+        unanswered = joined['unanswered']
         requests = {(r['connection_ordinal'], r['request_ordinal']): r
                     for r in evidence['trace']['requests']}
         for observation in joined['observations']:
@@ -186,7 +188,7 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
         if row.get('direction') == 'response':
             responses.setdefault(row.get('request'), []).append(row)
     remaining = list(base.stream_calls(client, stream, base.SERVER))
-    result = dict(revision_observed=observation, model_provenance=provenance, observation_coverage="typed native results; exact single-writer pipe delivery to typed shell results; or shell output containing the exact response body that the receiving process wrote to its standard output and the client then read from the same pipe or file before emitting the typed result; other framing rejects", pairs=0, log_only=[], stream_only=[], exempt=[], shell=0,
+    result = dict(revision_observed=observation, model_provenance=provenance, observation_coverage="typed native results; exact single-writer pipe delivery to typed shell results; or shell output containing the exact response body that the receiving process wrote to its standard output and the client then read from the same pipe or file before emitting the typed result; other framing rejects", pairs=0, log_only=[], stream_only=[], exempt=[], shell=0, unanswered_requests=unanswered,
                   command_origin=[], shell_origins=[],
                   verified_push_requests=sum(r['verified_push_identity'] for r in origins.values()),
                   verified_shell_requests=len(origins))
