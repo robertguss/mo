@@ -239,6 +239,7 @@ def process_integrity(text):
             errors.append('unsupported kernel transfer')
         if op in ('clone', 'clone3', 'fork', 'vfork') and result.isdigit() and int(result) > 0:
             child = int(result)
+            if 'CLONE_NEW' in args: errors.append('unsupported isolation or memory transition')
             if child in ledger: errors.append('ambiguous child ordering')
             else: ledger[child] = dict(pid=child, incarnation=1, attached_before_exec=True, terminal=False)
         if op in ('unshare', 'setns', 'ptrace', 'process_vm_writev') and re.match(r'^\d+', result):
