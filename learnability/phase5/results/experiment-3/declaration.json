@@ -1,0 +1,44 @@
+{
+  "experiment": "experiment-3",
+  "declared_at": "2026-11-10T21:19:48.382032+00:00",
+  "candidate_commit": "4023da940ddbf201465881912841bd25a683375d",
+  "slots": [
+    "codex",
+    "claude",
+    "codex",
+    "claude"
+  ],
+  "limit_seconds": 3600,
+  "replacement_slots": false,
+  "gate": {
+    "minimum_passes": 3,
+    "each_client_must_pass": true
+  },
+  "original_experiment_2_score": "0/4",
+  "development_attempts": {
+    "codex": 8,
+    "claude": 6
+  },
+  "fixture_statement": "Rebuilt with the final installed binary because old persisted data did not start cleanly. Independent comparison against the first development fixture confirms byte-identical source and context and equal expectations; receipt: fixture-continuity.json.",
+  "runtime_continuity": "All 285 build inputs match e53a822e. M6 differs in runtime/mcp.mo and src/tools/protocol-call.c; M6 pause and kill-drill results cannot be reused for this candidate.",
+  "limits": [
+    "user.max_user_namespaces remains unchanged; a racing clone3 can evade strace flag observation",
+    "Claude has no live pass under final code; its qualification is protected regrade",
+    "Long-session compaction may fail provenance closed",
+    "Resource extrapolation is an estimate, not a one-hour capacity guarantee",
+    "Codex diagnostic stderr echoes are not fully audited against forged provider records",
+    "Vectored transfers above the 32 MiB record cap fail capture",
+    "Output re-read only after a typed result fails observation",
+    "A window remains between client exit and proxy log closure"
+  ],
+  "approval": "pending Robert approval before slot 1",
+  "client_configuration": {
+    "codex": "0.166.0; gpt-6.1-sol; xhigh; danger-full-access under collector isolation",
+    "claude": "2.1.317; claude-opus-5-5"
+  },
+  "answer_rule": "Entire final message must solely equal the observed revision after whitespace trimming",
+  "instrument_defect_rule": "Keep launched slots, stop collection, report unlaunched slots; no repair and rerun",
+  "recording": "Transparent collector-owned syscall and HTTP recording; ordinary curl, urllib and mo push remain supported.",
+  "mixed_output": "Revision in larger shell output requires the exact response-body byte chain from receiver to client before the typed result.",
+  "resource_evidence": "resource-summary.json; successful compatible replay plus preserved largest-trace failures; linear estimates only"
+}

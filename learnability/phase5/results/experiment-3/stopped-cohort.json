@@ -1,0 +1,36 @@
+{
+  "experiment": "experiment-3",
+  "status": "stopped-instrument-defect",
+  "candidate": "4023da940ddbf201465881912841bd25a683375d",
+  "freeze_sha256": "bb34a34df452400c4dd60bb7c4802786593cd80e5b5b746ad3d36d07925c5170",
+  "launched_slots": [
+    1
+  ],
+  "unlaunched_slots": [
+    2,
+    3,
+    4
+  ],
+  "replacements": 0,
+  "slot_1": {
+    "client": "codex",
+    "result": "miss",
+    "timed_out": false,
+    "independently_regraded": true,
+    "dimensions": {
+      "task_state": true,
+      "activation_identity": true,
+      "command_origin": false,
+      "final_answer": false,
+      "source_tests": true,
+      "traffic_completeness": false,
+      "model_provenance": false
+    }
+  },
+  "completed_four_slot_cohort": false,
+  "four_slot_publication": "not performed; publisher requires four terminal slots",
+  "original_experiment_2_score": "0/4",
+  "phase": "open",
+  "instrument_defect": "Three resumed sendfile calls were rejected while both operands were recorded as regular files and no shared-descriptor ambiguity was recorded.",
+  "instrument_changed_after_launch": false
+}
