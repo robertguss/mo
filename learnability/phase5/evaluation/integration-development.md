@@ -1073,3 +1073,20 @@ src/tools/protocol-call.c differ. The M6 pause and kill-drill results therefore
 cannot serve as current-candidate evidence. Their original results remain intact.
 The installed mo and both client hashes match the declared pins. Full freeze,
 resource qualification, controls and independent review remain in preparation.
+
+Freeze controls completed: 24 real-service/proxy/publication tests passed in
+111.039 seconds; all five stub-collector cases passed (three unittest methods,
+603.075 seconds); success and timeout with the new lifetime lock passed in
+208.128 seconds. The 18 harness tests passed. GCC ended with
+`check.sh finished: pass`. No skips were reported by these focused controls.
+
+The installed build command was recovered from the prior session transcript and
+its retained log: `timeout 900 make -j8 CC=gcc`, in
+/opt/mo-phase5/build-e53a822e, from an archive of e53a822e. Build, setup and
+session-account compile checks exited zero. The copied build log hashes to
+d01b400ada032cf6a74d09ce85f70136069f3e835a2354193bf916b82282d623.
+The installed and built binaries have the same declared hash; ELF metadata
+identifies GCC 13.3.0. Original and rebuilt fixture source/context are byte-identical
+and expectations compare equal. Resource measurements and retained failures are
+in resource-development.md. Final freeze review and Robert's scored-launch
+approval remain required.
