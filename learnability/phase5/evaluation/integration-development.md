@@ -955,3 +955,34 @@ memory, sealed files unchanged): **Codex and Claude both pass all seven graded d
 This is development evidence from one session per client, not the scored cohort.
 
 Code comments added earlier on this branch were removed; their reasoning is in these records.
+
+### Second independent review (2026-11-10)
+
+Six reviewers and a validator reviewed a4c0c3a4..b04a5eb3 (one session model, adversarial lens
+in-process, no cross-model peer). Security and correctness traced the `copy_file_range` credit,
+channel matching, per-event voiding, process identity and the 502 digests and found each fails
+closed. Three findings were confirmed and are fixed:
+
+1. **False pass in mixed delivery (P1).** The rule compared only the client's latest read with
+   the receiver's last write and searched all reads together. A second process could write the
+   predicted body first, the client could read it, and any later read of the same object then
+   satisfied the rule. Now only client reads that finish after the receiver's first write, and
+   before the typed result, are searched. The reviewer's probe returned `True` before the fix
+   and `False` after. The suggestion to reject any other writer on the object was not adopted:
+   it would undo the mixed-output decision, since Claude's shell file always has several writers.
+2. The recorded `observation_coverage` text still said mixed writers reject. It now states the rule.
+3. The mixed-delivery guards had no negative tests. Controls now cover an early forged read, a
+   write before the response arrived, a read after the typed result, a result that omits the
+   body, and two matching objects.
+
+Also fixed from residuals: client stdout bytes now round-trip when a write splits a multi-byte
+character, and the collector refuses to run below Linux 5.3, the kernel floor the
+`copy_file_range` credit depends on. Both sealed run-three bundles still pass all seven regraded
+dimensions after these changes.
+
+Open risks, not fixed: Codex remote compaction in a long session may not reconcile with turn
+usage and would fail provenance closed; a vectored transfer above the 32 MiB record cap fails
+the capture; a client that re-reads its output file only after emitting the result fails
+observation; what `codex_core=debug` echoes to stderr is unaudited, and although channel
+attestation limits that text to the client's own writes, a forged provider record inside it
+is not excluded.

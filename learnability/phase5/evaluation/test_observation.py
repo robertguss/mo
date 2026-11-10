@@ -36,7 +36,7 @@ class Controls(unittest.TestCase):
             dict(pipe='12',created=2,operation='read',fd=3,data_hex=output.encode().hex(),sender=owner,started=4,completed=4.3)]
         e['stdout']=prefix+s
         return e,r,o,prefix+s
-    def mixed_fixture(self, transport='file'):
+    def mixed_fixture(self, transport='file', shown=True):
         import hashlib
         e,r,o,s=self.shell_fixture()
         owner=e['trace']['exec_events'][0]
@@ -56,6 +56,11 @@ class Controls(unittest.TestCase):
                    dict(key,operation='read',fd=9,data_hex=output.encode().hex(),sender=owner,started=4.3,completed=4.3)]
         e['trace']['pipe_events']=transfers if transport=='pipe' else []
         e['trace']['file_events']=transfers if transport=='file' else []
+        if not shown:
+            event['item']['aggregated_output']='status 200\nother output\n'
+            prefix=json.dumps(event)+'\n'
+            e['trace']['stdout_events'][0]['data']=prefix
+            e['stdout']=prefix.encode()+b'\n'.join(s.splitlines()[1:])+b'\n'
         return e,r,o,e['stdout'],transfers,other
     def test_mixed_shell_output_needs_the_receiver_to_deliver_the_exact_response(self):
         for transport in ('file','pipe'):
@@ -65,9 +70,20 @@ class Controls(unittest.TestCase):
         e,r,o,s,transfers,_=self.mixed_fixture('pipe')
         for transfer in transfers: transfer['created']=None
         self.assertFalse(observation.validate(e,r,o,s))
-        for case in ('forged_writer','client_never_read','altered_bytes','read_before_write','uncaptured'):
+        e,r,o,s,_,_=self.mixed_fixture(shown=False)
+        self.assertFalse(observation.validate(e,r,o,s))
+        for case in ('forged_writer','client_never_read','altered_bytes','read_before_write','uncaptured',
+                     'early_forged_read','written_before_receipt','read_after_emission','two_objects'):
             with self.subTest(case=case):
                 e,r,o,s,transfers,other=self.mixed_fixture()
+                owner=transfers[2]['sender']
+                if case=='early_forged_read':
+                    transfers[0]['data_hex']=transfers[1]['data_hex']
+                    transfers.insert(1,dict(transfers[0],operation='read',fd=9,sender=owner,started=4.06,completed=4.07))
+                    transfers[-1]['data_hex']=b'unrelated'.hex()
+                if case=='written_before_receipt': transfers[1]['started']=3
+                if case=='read_after_emission': transfers[2]['completed']=6
+                if case=='two_objects': e['trace']['file_events']=transfers+[dict(t,path='/tmp/second.output') for t in transfers]
                 if case=='forged_writer': transfers[1]['sender']=other
                 if case=='client_never_read': transfers[2]['sender']=other
                 if case=='altered_bytes': transfers[1]['data_hex']=(bytes.fromhex(transfers[1]['data_hex'])+b' ').hex()

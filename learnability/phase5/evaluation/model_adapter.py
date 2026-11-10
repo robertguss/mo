@@ -231,7 +231,7 @@ def session_provenance(client, evidence, stream):
     trace = evidence['trace']
     initial = next((e for e in trace['exec_events'] if e['exec_path'] == evidence['client_path']), None)
     stdout_ok = (initial is not None and evidence['stdout'] == stream and _written_by_client(
-        trace['stdout_events'], stream, initial, lambda w: w['data'].encode()))
+        trace['stdout_events'], stream, initial, lambda w: w['data'].encode('utf-8', 'surrogateescape')))
     stderr_ok = (initial is not None and _written_by_client(
         trace.get('stderr_events', []), evidence.get('stderr'), initial, lambda w: bytes.fromhex(w['data_hex'])))
     events = []

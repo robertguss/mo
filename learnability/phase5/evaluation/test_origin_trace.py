@@ -137,10 +137,12 @@ class OrderingIntervals(unittest.TestCase):
     def test_uncapturable_pipe_or_stdout_transfer_voids_only_that_event(self):
         r = parse_trace('10 pipe2([3<pipe:[7]>, 4<pipe:[7]>], O_CLOEXEC) = 0\n'
                         '11 write(1<pipe:[7]>, "abc"..., 9) = 9\n'
-                        '10 write(1, "\\xe2", 1) = 1\n'
+                        '10 write(1, "abc"..., 9) = 9\n'
                         '10 write(2, "ok", 2) = 2')
         self.assertIsNone(r['pipe_events'][0]['data_hex'])
         self.assertIsNone(r['stdout_events'][-1]['data'])
+        split = parse_trace('10 write(1, "\\xe2\\x80", 2) = 2\n10 write(1, "\\x94", 1) = 1')
+        self.assertEqual(''.join(e['data'] for e in split['stdout_events']).encode('utf-8', 'surrogateescape'), '\u2014'.encode())
         self.assertEqual(r['stderr_events'][0]['data_hex'], '6f6b')
 
     def test_udp_datagrams_are_not_http_receipts(self):

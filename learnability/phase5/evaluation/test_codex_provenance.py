@@ -116,12 +116,14 @@ class CodexProvenanceTests(unittest.TestCase):
         unspanned = ('2026-11-09T20:33:30Z DEBUG codex_http_client::client: Request completed '
                      'method=POST url=https://chatgpt.com/backend-api/codex/{} status=200 OK headers={{}}')
         for extra in (unspanned.format('responses/compact'), unspanned.format('wham/tasks'),
-                      unspanned.format('memories/trace_summarize')):
+                      unspanned.format('memories/trace_summarize'),
+                      unspanned.replace('https://chatgpt.com/backend-api/codex/{}', 'https://api.openai.com/v1/decisions')):
             lines, events = self.good()
             self.assertFalse(self.check(lines + [extra], events).complete, extra)
         lines, events = self.good()
         local = unspanned.replace('https://chatgpt.com/backend-api/codex/{}', 'http://127.0.0.1:9/mcp')
-        r = self.check(lines + [local, req('models', method='GET')], events)
+        lookalike = unspanned.replace('https://chatgpt.com/backend-api/codex/{}', 'https://chatgpt.com.example/x')
+        r = self.check(lines + [local, lookalike, req('models', method='GET')], events)
         self.assertTrue(r.complete, r.problems)
         lines.append(req().replace('https://', 'http://'))
         self.assertFalse(self.check(lines, events).complete)

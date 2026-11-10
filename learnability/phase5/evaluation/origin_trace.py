@@ -260,8 +260,8 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         if channel('stdout', '1') and result.isdigit():
             n = int(result)
             try:
-                text = transfer_bytes(op, args, n)[:n].decode('utf-8')
-            except (TraceError, UnicodeDecodeError):
+                text = transfer_bytes(op, args, n)[:n].decode('utf-8', 'surrogateescape')
+            except TraceError:
                 text = None
             stdout_events.append(dict(data=text, sender=dict(p), started=started, completed=sequence))
         if channel('stderr', '2') and result.isdigit():

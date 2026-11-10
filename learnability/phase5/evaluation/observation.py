@@ -8,7 +8,7 @@ def validate(evidence, rows, origins, stream):
         trace = evidence['trace']
         writes = [w for w in trace['stdout_events'] if evidence['client_path'] == w['sender']['exec_path']]
         if any(w['data'] is None for w in writes): return False
-        if ''.join(w['data'] for w in writes).encode() != stream: return False
+        if ''.join(w['data'] for w in writes).encode('utf-8', 'surrogateescape') != stream: return False
         events = [json.loads(line) for line in stream.splitlines()]
         final = events[-2]
         if events[-1].get('type') == 'turn.completed':
@@ -27,7 +27,7 @@ def validate(evidence, rows, origins, stream):
         cursor = 0
         final_writes = []
         for w in writes:
-            end = cursor + len(w['data'].encode())
+            end = cursor + len(w['data'].encode('utf-8', 'surrogateescape'))
             if end > offset: final_writes.append(w)
             cursor = end
         owner = final_writes[0]['sender']
@@ -71,6 +71,7 @@ def validate(evidence, rows, origins, stream):
                 matches = []
                 lines = stream.splitlines(keepends=True)
                 for ordinal, result in candidates:
+                    exact = False
                     if native:
                         if result != body['result']['structuredContent']: continue
                     else:
@@ -84,21 +85,26 @@ def validate(evidence, rows, origins, stream):
                     cursor = 0
                     emission = []
                     for write in writes:
-                        end = cursor + len(write['data'].encode())
+                        end = cursor + len(write['data'].encode('utf-8', 'surrogateescape'))
                         if end > lo and cursor < hi: emission.append(write)
                         cursor = end
                     if (emission and all(same(w['sender'], owner) for w in emission)
                             and received_at < min(w['started'] for w in emission)
                             and max(w['completed'] for w in emission) < start
-                            and (native or exact and pipe_delivery(trace, req['sender'], owner, same,
-                                received_at, min(w['started'] for w in emission), result)
-                                or not native and mixed_delivery(trace, req['sender'], owner, same,
-                                received, min(w['started'] for w in emission), result))):
+                            and delivered(native, exact, trace, req['sender'], owner, same, received,
+                                          min(w['started'] for w in emission), result)):
                         matches.append(ordinal)
                 if len(matches) == 1: return True
         return False
     except (KeyError, IndexError, TypeError, ValueError, StopIteration):
         return False
+
+
+def delivered(native, exact, trace, child, owner, same, received, emitted_at, output):
+    if native: return True
+    received_at = max(e['completed'] for e in received['occurrences'])
+    if exact and pipe_delivery(trace, child, owner, same, received_at, emitted_at, output): return True
+    return mixed_delivery(trace, child, owner, same, received, emitted_at, output)
 
 
 def typed_results(events):
@@ -212,7 +218,9 @@ def mixed_delivery(trace, child, owner, same, received, emitted_at, output):
 
     The process that received the response must have written exactly that body to
     its standard output, and the client must have read it from the same pipe or
-    file before emitting the typed result that contains it.
+    file before emitting the typed result that contains it. Only client reads that
+    finish after the receiver's first write count, so bytes another writer placed
+    there earlier cannot stand in for the response.
     """
     received_at = max(e['completed'] for e in received['occurrences'])
     objects = {}
@@ -229,9 +237,9 @@ def mixed_delivery(trace, child, owner, same, received, emitted_at, output):
         body = b''.join(bytes.fromhex(e['data_hex']) for e in sent)
         if hashlib.sha256(body).hexdigest() != received['body_sha256']: continue
         if min(e['started'] for e in sent) <= received_at: continue
-        if max(e['completed'] for e in sent) >= max(e['completed'] for e in reads): continue
-        if max(e['completed'] for e in reads) >= emitted_at: continue
-        if body not in b''.join(bytes.fromhex(e['data_hex']) for e in reads): continue
+        wrote_at = min(e['completed'] for e in sent)
+        counted = [e for e in reads if wrote_at < e['completed'] < emitted_at]
+        if body not in b''.join(bytes.fromhex(e['data_hex']) for e in counted): continue
         if body.decode() not in output: continue
         matches += 1
     return matches == 1

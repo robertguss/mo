@@ -1,4 +1,7 @@
-"""Collector descriptor facts; path annotations never establish file type.
+"""Collector descriptor facts; path annotations alone never establish file type.
+
+copy_file_range credit relies on the kernel accepting only regular files, which
+holds from Linux 5.3; the collector refuses to run on older kernels.
 
 Shared descriptor tables cannot grant regular-file transfer credit. A successful
 exec creates an independent descriptor context, so unrelated client threads do
