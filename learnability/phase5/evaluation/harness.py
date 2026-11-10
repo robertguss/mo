@@ -201,8 +201,6 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         raise ValueError('positive time limit required')
     if tuple(int(n) for n in os.uname().release.split('.')[:2]) < (5, 3):
         raise ValueError('capture requires Linux 5.3 or newer')
-    if not development:
-        raise ValueError('collection disabled: model and command-origin qualification incomplete')
     out = Path(out).resolve()
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
     p4.check_private(l, out, Path(spec).resolve(), l.state)

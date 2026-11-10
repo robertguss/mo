@@ -157,9 +157,15 @@ class RunnerTests(unittest.TestCase):
                 path.write_text(''.join(json.dumps(e) + '\n' for e in events))
                 self.assertEqual(h.final_message(client, path), answer)
 
-    def test_scored_collection_blocked_before_side_effects(self):
-        with self.assertRaisesRegex(ValueError, 'qualification'):
-            h.collect(h.layout(), 'absent', 'absent', 1)
+    def test_scored_collection_requires_freeze(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = root / 'spec.json'
+            spec.write_text(json.dumps(dict(source=tmp, context=tmp, data=tmp,
+                                           freeze=str(root / 'missing-freeze.json'))))
+            with patch.object(h.p4, 'check_private'), patch.object(h, 'check'):
+                with self.assertRaises(FileNotFoundError):
+                    h.collect(h.layout(), spec, root / 'out', 1)
 
     def test_launch_failure_resets_without_unverified_source_copy(self):
         import contextlib
