@@ -332,3 +332,22 @@ experiments used and is disclosed as such. The descriptor rule also now credits 
 `copy_file_range` between two non-virtual paths without table facts: since Linux 5.3 that call
 succeeds only between regular files, so it cannot carry socket or pipe bytes. Re-run over the
 retained Claude trace, process integrity now passes; the run records the host kernel.
+
+## Real-client qualification (development, 2026-11-10)
+
+Three declared development pairs ran through the full traced harness (cumulative development
+model attempts Codex 6, Claude 4; scored 0). After the capture repairs and two independent
+reviews, the protected regrade of the last sealed Codex and Claude sessions passes all seven
+graded dimensions: task state, activation identity, command origin, final answer, source tests,
+traffic completeness and model provenance. The last repairs were applied offline to those sealed
+sessions, so no single live run has yet passed end to end under the final code.
+
+**Decision (Robert, 2026-11-10):** the revision observation is accepted inside larger shell
+output when the process that received the response wrote exactly that body to its standard
+output and the client then read it from the same pipe or file before its typed result. No agent
+instruction changed.
+
+Phase 5 remains open. Still required: merge of this work, reinstalling the frozen `mo` from the
+merged commit, the freeze, and the fixed four-slot cohort with its publication. The original 0/4
+stands. The [capture development record](../../learnability/phase5/evaluation/integration-development.md)
+lists every failed run, repair and open risk.
