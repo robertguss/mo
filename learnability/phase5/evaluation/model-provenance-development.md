@@ -410,9 +410,20 @@ The Codex source test that ignores payload `model` governs only its mismatch war
 through `execute` as `Request completed` (method, URL, status, response headers) or
 `Request failed`, inside the turn span that names `thread_id`. Whole-tree search of the
 tag's Rust source (codeload tarball SHA-256
-`718c86dcd7104919f2820aa79db0fa0083b5f240aa16da704f43e4acf7b544e5`): the only client that
-disables request logging is workload-identity/src/exchange.rs:50 (token exchange, not
-model serving). The route-aware pool (route_aware_client_pool/execution.rs:118–187) logs
+`718c86dcd7104919f2820aa79db0fa0083b5f240aa16da704f43e4acf7b544e5`) for clients built
+without request logging. **Correction:** the first version of this note named only
+workload-identity/src/exchange.rs:50; that search's output had been truncated, and the
+independent review found the rest. The full non-test list is about 30 call sites:
+login/OAuth and auth refresh, workload identity, AWS auth, OTLP export, plugins and
+startup sync, cloud and backend task clients, file upload (core/src/session/session.rs:1803),
+the models-endpoint redirect path, doctor, the app-server daemon and remote control, the
+separate responses-api-proxy binary, the code-mode gRPC host transport, and
+ext/guardian-v2/src/async_scorer/startup.rs:38. Only the last serves a model
+(`POST https://api.openai.com/v1/decisions`, model `gpt-5.6-luna`). It is unreachable here:
+feature `guardianv2` is UnderDevelopment and off by default (features/src/lib.rs:2038–2041),
+and its key lookup (startup.rs:60–75) fails under ChatGPT auth with provider id
+`responses_http`. Sessions are therefore not exposed to an unlogged serving route under
+the declared configuration. The route-aware pool (route_aware_client_pool/execution.rs:118–187) logs
 each final response once; its unlogged paths are redirect hops and a failed TLS first
 attempt, neither of which can serve a response. Model-serving routes in codex-api are
 `/responses` (also used by remote compaction), `memories/trace_summarize`,
@@ -443,6 +454,23 @@ into. The capture already traces every write with descriptor annotations, so
 process (exec path, argv, tgid) wrote every byte of stdout, and for Codex of stderr.
 Another writer, extra bytes or a missing channel fails closed.
 
+**Independent review (2026-11-10) and fixes.** Six reviewers (correctness, security,
+adversarial, testing, maintainability, project standards; one session model, no
+cross-model peer) and a validator confirmed five findings, all fixed in the follow-up
+commit: (1) the collection `RUST_LOG` omitted `codex_core=debug`, which supplies the
+`session_loop{thread_id}` span, so every real Codex session would have failed closed; it
+is now exactly the characterized filter; (2) `str.splitlines()` also splits at U+2028/U+2029,
+which could fail a genuine session and let fragments of a provider record through the
+publication filter; both paths now split on `\n` only, and the published stderr drops
+every tracing record, not just two targets; (3, 5) the harness wiring and the
+trace-to-capture stderr path had no tests; (6) the regrade limitation always said
+"unqualified". Also addressed from residuals: every provider request line is now
+classified regardless of span (a `/responses` attempt, an allow-listed non-serving route,
+or a problem), loopback MCP traffic is not a provider request, sub-agent threads are
+retained instead of failing (the attested process binds the session and their models are
+still checked), an uncapturable stderr write voids provenance instead of the whole trace
+parse, and a malformed value fails provenance alone.
+
 **Implementation.** `model_adapter.codex_responses` binds each successful
 `/responses` attempt to one provider `response.created` (order and count), requires
 the expected model and effort in created and terminal events, retains failed
@@ -460,7 +488,7 @@ path does not trace provider events (responses_websocket.rs has no event trace),
 collection now runs Codex over the HTTP Responses transport via the
 `responses_http` provider override (display name OpenAI, `requires_openai_auth=true`,
 `supports_websockets=false`, no base URL), the configuration already characterized live
-twice above, with `RUST_LOG=codex_api=trace,codex_http_client=debug`. Binary, version,
+twice above, with `RUST_LOG=codex_api=trace,codex_core=debug,codex_http_client=debug`. Binary, version,
 requested model and effort are unchanged. Published `client-stderr.txt` drops these
 provider diagnostic lines (response headers, cookies, instructions); the raw stderr
 stays sealed in the private replay bundle.

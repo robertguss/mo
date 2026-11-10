@@ -240,8 +240,13 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             stdout_events.append(dict(data=data[:n].decode('utf-8'), sender=dict(p), started=started, completed=sequence))
         if op in ('write', 'writev') and re.match(r'2(?:<[^>]+>)?, ', args) and result.isdigit():
             n = int(result)
-            # Diagnostic stderr may split UTF-8 across writes; keep exact bytes.
-            stderr_events.append(dict(data_hex=transfer_bytes(op, args, n)[:n].hex(), sender=dict(p)))
+            # Diagnostic stderr may split UTF-8 across writes; keep exact bytes. An
+            # uncapturable write only voids stderr attestation, not the whole trace.
+            try:
+                data_hex = transfer_bytes(op, args, n)[:n].hex()
+            except TraceError:
+                data_hex = None
+            stderr_events.append(dict(data_hex=data_hex, sender=dict(p)))
         if op in ('sendmsg', 'recvmsg', 'sendmmsg', 'recvmmsg') and not result.startswith('-1'):
             controls = re.findall(r'msg_controllen=(\d+)', args)
             if not controls or any(int(n) != 0 for n in controls):

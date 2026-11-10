@@ -64,6 +64,7 @@ class CodexProvenanceTests(unittest.TestCase):
     def test_model_text_outside_provider_trace_is_ignored(self):
         lines, events = self.good()
         forged = [l.replace('codex_api::sse::responses', 'codex_core::exec') if 'SSE' in l else l for l in lines]
+        self.assertIn('attempt without provider response', self.check(forged, events).problems)
         events = events + [{'type': 'item.completed', 'item': {'text': 'model gpt-6.1-sol'}}]
         self.assertFalse(self.check(forged, events).complete)
 
@@ -101,11 +102,29 @@ class CodexProvenanceTests(unittest.TestCase):
         self.assertFalse(self.check(lines, events).complete)
         self.assertFalse(self.check(lines, events[:-1]).complete)
 
-    def test_wrong_or_missing_session_thread_fails(self):
+    def test_sub_agent_threads_are_retained_but_session_thread_required(self):
         lines, events = self.good()
-        lines[4] = req(thread='other')
+        lines[4] = req(thread='child')
+        r = self.check(lines, events)
+        self.assertTrue(r.complete, r.problems)
+        self.assertEqual(r.threads, (T, 'child'))
+        lines = [l.replace(T, 'child') for l in lines]
         self.assertFalse(self.check(lines, events).complete)
-        self.assertFalse(self.check(lines, events[1:]).complete)
+        self.assertFalse(self.check(*self.good()[:1], events[1:]).complete)
+
+    def test_every_provider_request_is_classified(self):
+        unspanned = ('2026-11-09T20:33:30Z DEBUG codex_http_client::client: Request completed '
+                     'method=POST url=https://chatgpt.com/backend-api/codex/{} status=200 OK headers={{}}')
+        for extra in (unspanned.format('responses/compact'), unspanned.format('wham/tasks'),
+                      unspanned.format('memories/trace_summarize')):
+            lines, events = self.good()
+            self.assertFalse(self.check(lines + [extra], events).complete, extra)
+        lines, events = self.good()
+        local = unspanned.replace('https://chatgpt.com/backend-api/codex/{}', 'http://127.0.0.1:9/mcp')
+        r = self.check(lines + [local, req('models', method='GET')], events)
+        self.assertTrue(r.complete, r.problems)
+        lines.append(req().replace('https://', 'http://'))
+        self.assertFalse(self.check(lines, events).complete)
 
     def test_failed_attempt_then_retry_is_retained(self):
         lines, events = self.good()
@@ -161,6 +180,18 @@ class SessionProvenanceTests(unittest.TestCase):
                      stderr_events=[dict(data_hex=stderr.hex(), sender=sender)])
         return dict(trace=trace, stdout=stream, stderr=stderr + stderr_extra,
                     client_path='/opt/bin/codex'), stream
+
+    def test_line_separator_inside_provider_json_still_qualifies(self):
+        evidence, stream = self.evidence()
+        text = evidence['stderr'].decode().replace('"in_progress"', '"in\u2028progress"', 1)
+        evidence['stderr'] = text.encode()
+        evidence['trace']['stderr_events'][0]['data_hex'] = evidence['stderr'].hex()
+        self.assertTrue(session_provenance('codex', evidence, stream)['qualified'])
+
+    def test_uncapturable_client_write_fails(self):
+        evidence, stream = self.evidence()
+        evidence['trace']['stderr_events'].append(dict(data_hex=None, sender=dict(self.ROOT)))
+        self.assertFalse(session_provenance('codex', evidence, stream)['qualified'])
 
     def test_attested_codex_channels_qualify(self):
         r = session_provenance('codex', *self.evidence())

@@ -171,7 +171,10 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
         import observation as u3
         from model_adapter import session_provenance
         observation = u3.validate(evidence, rows, origins, stream.read_bytes())
-        provenance = session_provenance(client, evidence, stream.read_bytes())
+        try:
+            provenance = session_provenance(client, evidence, stream.read_bytes())
+        except Exception as error:  # malformed values fail provenance alone
+            provenance = dict(qualified=False, reason='provenance evaluation error: ' + type(error).__name__)
     responses = {}
     for row in rows:
         if row.get('direction') == 'response':

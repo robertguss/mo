@@ -98,6 +98,19 @@ class OrderingIntervals(unittest.TestCase):
         self.assertEqual(len(parse_trace(tcp)['requests']), 1)
         self.assertEqual(parse_trace('10 write(1,  "ok", 2) = 2')['stdout_events'][0]['data'], 'ok')
 
+    def test_stderr_writes_keep_exact_bytes_and_writer(self):
+        r = parse_trace('10 write(2</run/stderr>, "\\xe2\\x80", 2) = 2\n'
+                        '10 writev(2, [{iov_base="\\xa8x", iov_len=2}], 1) = 2\n'
+                        '10 write(1, "ok", 2) = 2')
+        self.assertEqual(''.join(e['data_hex'] for e in r['stderr_events']), 'e280a878')
+        self.assertEqual({e['sender']['tgid'] for e in r['stderr_events']}, {10})
+        self.assertEqual(len(r['stdout_events']), 1)
+
+    def test_uncapturable_stderr_write_voids_only_that_event(self):
+        r = parse_trace('10 write(2, "abc"..., 9) = 9\n10 write(1, "ok", 2) = 2')
+        self.assertIsNone(r['stderr_events'][0]['data_hex'])
+        self.assertEqual(r['stdout_events'][0]['data'], 'ok')
+
     def test_kernel_transfers_reject_receipts(self):
         for name in ('sendfile', 'splice', 'tee', 'vmsplice', 'copy_file_range'):
             with self.subTest(name=name), self.assertRaises(TraceError):

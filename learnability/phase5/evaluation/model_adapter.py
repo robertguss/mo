@@ -96,8 +96,12 @@ def claude_metadata(events: list[dict[str, Any]], session: str, model: str = 'cl
 # Exact rust-v0.166.0 log targets: codex-api/src/sse/responses.rs:622 traces every SSE
 # payload; http-client/src/client.rs:150-212 logs every attempt as completed or failed.
 _SSE = ' TRACE codex_api::sse::responses: SSE event: '
-_HTTP = re.compile(r'session_loop\{thread_id=([^}\s]+)\}.*: codex_http_client::client: '
-                   r'Request (completed|failed) method=(\S+) url=(\S+) status=(\S+)')
+_HTTP = re.compile(r'codex_http_client::client: Request (completed|failed) '
+                   r'method=(\S+) url=(\S+) status=(\S+)')
+_THREAD = re.compile(r'session_loop\{thread_id=([^}\s]+)\}')
+_PROVIDER_HOSTS = ('chatgpt.com', 'openai.com')
+# The only provider requests in the retained captures that serve no model.
+_NON_SERVING = (('GET', '/models'), ('POST', '/analytics-events/events'))
 _TERMINAL = ('response.completed', 'response.failed', 'response.incomplete')
 # codex-api/src/endpoint paths that serve a model but are not the primary turn stream.
 _AUXILIARY = ('memories/trace_summarize', 'realtime', 'alpha/search', 'images')
@@ -106,6 +110,7 @@ _AUXILIARY = ('memories/trace_summarize', 'realtime', 'alpha/search', 'images')
 @dataclass(frozen=True)
 class CodexProvenance:
     thread: str | None
+    threads: tuple[str, ...]
     responses: tuple[tuple[str, str | None, str | None, str | None], ...]
     substituted: tuple[tuple[str, str | None, str | None], ...]
     attempts: int
@@ -117,8 +122,11 @@ class CodexProvenance:
 def codex_responses(lines, events, model, effort) -> CodexProvenance:
     """Bind provider-authored response.model/reasoning.effort to every /responses attempt.
 
-    lines: collector-owned client stderr with RUST_LOG=codex_api=trace,codex_http_client=debug
-    over HTTP transport; events: the client's own --json stdout. Text anywhere else is ignored.
+    lines: collector-owned client stderr with RUST_LOG=codex_api=trace,codex_core=debug,
+    codex_http_client=debug over HTTP transport; events: the client's own --json stdout.
+    Every provider request must be a /responses attempt or a known non-serving route.
+    Sub-agent threads are allowed: the attested process already binds the session, and
+    their responses must still name the expected model.
     """
     problems = []
     thread = next((e.get('thread_id') for e in events if e.get('type') == 'thread.started'), None)
@@ -126,6 +134,7 @@ def codex_responses(lines, events, model, effort) -> CodexProvenance:
         problems.append('no session thread')
     responses: dict[str, list] = {}
     pending = attempts = failed = 0
+    threads = []
     totals = [0, 0, 0, 0]
     for line in lines:
         if _SSE in line:
@@ -169,22 +178,31 @@ def codex_responses(lines, events, model, effort) -> CodexProvenance:
         match = _HTTP.search(line)
         if not match:
             continue
-        line_thread, outcome, method, url, status = match.groups()
-        path = url.split('?', 1)[0]
-        if not url.startswith('https://') or status == '101':
-            problems.append('unaccounted transport ' + url.split(':', 1)[0] + ' ' + status)
-        elif any(part in path for part in _AUXILIARY):
-            problems.append('unaccounted model route ' + path.rsplit('/', 2)[-2] + '/' + path.rsplit('/', 1)[-1])
+        outcome, method, url, status = match.groups()
+        scheme, _, rest = url.partition('://')
+        host, _, path = rest.partition('/')
+        path = '/' + path.split('?', 1)[0]
+        host = host.rsplit('@', 1)[-1].split(':', 1)[0].lower()
+        provider = any(host == h or host.endswith('.' + h) for h in _PROVIDER_HOSTS)
+        if any(part in path for part in _AUXILIARY):
+            problems.append('unaccounted model route ' + path)
         elif method == 'POST' and path.endswith('/responses'):
             attempts += 1
-            if line_thread != thread:
-                problems.append('attempt outside session thread')
+            if scheme != 'https' or status == '101':
+                problems.append('unaccounted transport ' + scheme + ' ' + status)
+            seen_thread = _THREAD.search(line)
+            if seen_thread and seen_thread[1] not in threads:
+                threads.append(seen_thread[1])
             if outcome == 'completed' and status.startswith('2'):
                 pending += 1
             else:
                 failed += 1
+        elif provider and not any(method == m and path.endswith(p) for m, p in _NON_SERVING):
+            problems.append('unclassified provider request ' + method + ' ' + path)
     if pending:
         problems.append('attempt without provider response')
+    if thread not in threads:
+        problems.append('no attempt in the session thread')
     if attempts == 0 or not responses:
         problems.append('no logged serving attempt')
     turns = [e.get('usage') for e in events if e.get('type') == 'turn.completed']
@@ -197,7 +215,8 @@ def codex_responses(lines, events, model, effort) -> CodexProvenance:
     if substituted:
         problems.append('substituted or changed serving model')
     flat = tuple((rid, m, e, end) for rid, (m, e, end, _) in responses.items())
-    return CodexProvenance(thread, flat, substituted, attempts, failed, tuple(problems), not problems)
+    return CodexProvenance(thread, tuple(threads), flat, substituted, attempts, failed,
+                           tuple(problems), not problems)
 
 
 EXPECTED = {'codex': ('gpt-6.1-sol', 'xhigh'), 'claude': ('claude-opus-5-5', None)}
@@ -208,7 +227,10 @@ def _written_by_client(writes, data, initial, decode):
     own = [w for w in writes if w['sender'].get('tgid') == initial['tgid']
            and w['sender'].get('exec_path') == initial['exec_path']
            and w['sender'].get('exec_argv') == initial['exec_argv']]
-    return data is not None and b''.join(decode(w) for w in own) == data
+    # An uncapturable write by the client itself voids the channel.
+    if data is None or any(w.get('data_hex', '') is None for w in own):
+        return False
+    return b''.join(decode(w) for w in own) == data
 
 
 def session_provenance(client, evidence, stream):
@@ -220,17 +242,21 @@ def session_provenance(client, evidence, stream):
     stderr_ok = (initial is not None and _written_by_client(
         trace.get('stderr_events', []), evidence.get('stderr'), initial, lambda w: bytes.fromhex(w['data_hex'])))
     events = []
-    for line in stream.splitlines():
+    for line in stream.split(b'\n'):
+        if not line:
+            continue
         try:
             events.append(json.loads(line))
         except ValueError:
             stdout_ok = False
     model, effort = EXPECTED[client]
     if client == 'codex':
-        lines = (evidence.get('stderr') or b'').decode('utf-8', 'replace').splitlines()
+        # Codex ends records only at \n; str.splitlines would also split at U+2028.
+        lines = (evidence.get('stderr') or b'').decode('utf-8', 'replace').split('\n')
         r = codex_responses(lines, events, model, effort)
         detail = dict(responses=r.responses, substituted=r.substituted, attempts=r.attempts,
-                      failed_attempts=r.failed_attempts, problems=r.problems, thread=r.thread)
+                      failed_attempts=r.failed_attempts, problems=r.problems, thread=r.thread,
+                      threads=r.threads)
         qualified, reason = stdout_ok and stderr_ok and r.complete, None
     else:
         session = next((e.get('session_id') for e in events if e.get('type') == 'system'), '')

@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import re
 import os
 from pathlib import Path
 import secrets
@@ -116,9 +117,19 @@ def check(installed):
 # this provider keeps the built-in OpenAI identity and auth (model-provider-info 782-844).
 CODEX_HTTP = ['-c', 'model_provider="responses_http"', '-c',
               'model_providers.responses_http={name="OpenAI",requires_openai_auth=true,supports_websockets=false}']
-CODEX_LOG = 'codex_api=trace,codex_http_client=debug'
-# Published stderr omits these provider diagnostics; the sealed raw copy keeps them.
-PRIVATE_DIAGNOSTICS = ('codex_api::', 'codex_http_client::')
+# Exactly the filter characterized live; codex_core supplies the session_loop span.
+CODEX_LOG = 'codex_api=trace,codex_core=debug,codex_http_client=debug'
+# Published stderr omits tracing records; the sealed raw copy keeps them.
+PRIVATE_DIAGNOSTICS = re.compile(r'^\S+\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s|codex_(?:api|core|http_client)::')
+
+
+def client_environment(client, base):
+    return dict(base, RUST_LOG=CODEX_LOG) if client == 'codex' else dict(base)
+
+
+def public_stderr(text):
+    # Codex ends records only at \n; str.splitlines would also split at U+2028.
+    return [line for line in text.split('\n') if line and not PRIVATE_DIAGNOSTICS.search(line)]
 
 
 def command(client, binary, prompt, url, config):
@@ -267,11 +278,10 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         meta['migration_requirement'] = 'migrate'
         (out / 'prompt.txt').write_text(prompt)
         cmd = command(meta['client'], l.bin / meta['client'], prompt, recorder.url, l.mcp_config)
-        environment = {'HOME': str(l.home()), 'USER': l.user, 'LOGNAME': l.user,
-                       'SHELL': '/bin/bash', 'PATH': f'{l.bin}:/usr/bin:/bin',
-                       'LANG': 'C.UTF-8', 'DISABLE_AUTOUPDATER': '1'}
-        if meta['client'] == 'codex':
-            environment['RUST_LOG'] = CODEX_LOG
+        environment = client_environment(meta['client'], {
+            'HOME': str(l.home()), 'USER': l.user, 'LOGNAME': l.user,
+            'SHELL': '/bin/bash', 'PATH': f'{l.bin}:/usr/bin:/bin',
+            'LANG': 'C.UTF-8', 'DISABLE_AUTOUPDATER': '1'})
         start = time.monotonic()
         if (l.bin / 'mo').stat().st_uid != 0:
             raise ValueError('frozen mo must be root owned')
@@ -445,9 +455,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             for name in ('stream.jsonl', 'client-stderr.txt'):
                 path = out / name
                 if path.exists():
-                    lines = path.read_text(errors='replace').splitlines()
-                    if name == 'client-stderr.txt':
-                        lines = [l for l in lines if not any(t in l for t in PRIVATE_DIAGNOSTICS)]
+                    text = path.read_text(errors='replace')
+                    lines = public_stderr(text) if name == 'client-stderr.txt' else text.splitlines()
                     path.write_text('\n'.join(recorder.recorder.clean(line) for line in lines) + '\n')
         cleanup('client redaction', redact_client_artifacts)
         cleanup('reset', lambda: reset_preserving_work(l, out, meta))

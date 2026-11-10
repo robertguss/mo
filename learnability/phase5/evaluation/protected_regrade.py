@@ -179,7 +179,10 @@ def regrade(root, *, session_id, session_uid, workspace_parent):
                        slot=m['launch']['slot'], client=client)
         verdict.update(launch_binding(m))
         verdict['correct'] = False
-        verdict['limitations'] = ['Serving-model provenance remains unqualified.',
+        provenance = matched['model_provenance']
+        verdict['limitations'] = [('Serving-model provenance qualified from sealed client channels.'
+            if provenance['qualified'] is True else
+            'Serving-model provenance unqualified: ' + str(provenance.get('reason'))),
             'Publication integrity requires publisher scan and archive verification.',
             'Replay requires unchanged protected system loader and mapped libraries.']
         return verdict

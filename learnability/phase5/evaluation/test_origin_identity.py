@@ -49,6 +49,13 @@ class IdentityTests(unittest.TestCase):
     def test_replay(self):
         c = self.capture(); c.seal(self.trace, self.log); c.consume(self.session)
         with self.assertRaises(identity.IdentityError): c.consume(self.session)
+    def test_stderr_sealed_and_consumed(self):
+        err = self.root / 'stderr'; err.write_bytes(b'diag\n'); err.chmod(0o600)
+        c = self.capture(); c.seal(self.trace, self.log, stderr=err)
+        self.assertEqual(c.consume(self.session)['stderr'], b'diag\n')
+        c = identity.Capture(self.root / 'capture-2', self.session, self.uid, self.binary)
+        c.seal(self.trace, self.log, stderr=err); err.write_bytes(b'forged\n')
+        with self.assertRaises(identity.IdentityError): c.consume(self.session)
     def test_claim_not_accepted(self):
         c = self.capture()
         with self.assertRaises(identity.IdentityError): c.consume(self.session)
