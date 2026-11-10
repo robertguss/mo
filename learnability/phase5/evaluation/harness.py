@@ -249,6 +249,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         p4.place_read_only(s['context'], l.deployed)
         shutil.copytree(s['source'], l.work)
         p4.sudo('chown', '-R', f'{l.user}:{l.user}', l.work)
+        if p4.as_session_user(l, l.bin / 'mo', 'check', l.work / 'main.mo')[0]:
+            raise ValueError('session account cannot compile the supplied source')
         env = {'PATH': '/usr/bin:/bin', 'QUEUE_TOKEN': token, 'QUEUE_UPGRADE': upgrade}
         service = p4.fixture.Service.__new__(p4.fixture.Service)
         service.stderr_path = l.service_log
