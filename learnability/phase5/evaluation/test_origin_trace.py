@@ -172,6 +172,15 @@ class OrderingIntervals(unittest.TestCase):
                         '12 +++ exited with 0 +++\n10 clone(flags=SIGCHLD) = 12\n12 write(1, "c", 1) = 1')
         self.assertEqual([e['sender']['process'] for e in r['stdout_events']], ['10:1', '12:1', '12:2'])
 
+    def test_stdout_files_record_the_writer_and_later_readers(self):
+        hexed = lambda path: ''.join('\\x%02x' % c for c in path.encode())
+        r = parse_trace('11 write(1<' + hexed('/tmp/task.output') + '>, "ab", 2) = 2\n'
+                        '10 pread64(9<' + hexed('/tmp/task.output') + '>, "ab", 4096, 0) = 2\n'
+                        '10 read(8<' + hexed('/etc/hosts') + '>, "zz", 2) = 2\n'
+                        '11 write(4<' + hexed('/tmp/other') + '>, "q", 1) = 1')
+        self.assertEqual([(e['operation'], e['sender']['pid'], e['data_hex']) for e in r['file_events']],
+                         [('write', 11, '6162'), ('read', 10, '6162')])
+
     def test_resumed_vector_transfer(self):
         r = parse_trace('10 socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 3\n'
                         '10 writev(3<TCP:[1.2.3.4:5->6.7.8.9:10]>, [{iov_base="GET / HTTP/1.1\\r\\n\\r\\n", iov_len=18}], 1 <unfinished ...>\n'

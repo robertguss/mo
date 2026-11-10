@@ -69,7 +69,6 @@ def claude_metadata(events: list[dict[str, Any]], session: str, model: str = 'cl
             continue
         key = (served, message.get('id'),
                tuple(use.get(k) for k, _ in _INPUTS) if isinstance(use, dict) else None)
-        # Split assistant content repeats one request; any disagreement fails.
         if requests.setdefault(request, key) != key:
             valid = False
         if (request, served) not in observed:
@@ -93,17 +92,13 @@ def claude_metadata(events: list[dict[str, Any]], session: str, model: str = 'cl
     return Metadata(tuple(observed), models, valid, valid and reconciled)
 
 
-# Exact rust-v0.166.0 log targets: codex-api/src/sse/responses.rs:622 traces every SSE
-# payload; http-client/src/client.rs:150-212 logs every attempt as completed or failed.
 _SSE = ' TRACE codex_api::sse::responses: SSE event: '
 _HTTP = re.compile(r'codex_http_client::client: Request (completed|failed) '
                    r'method=(\S+) url=(\S+) status=(\S+)')
 _THREAD = re.compile(r'session_loop\{thread_id=([^}\s]+)\}')
 _PROVIDER_HOSTS = ('chatgpt.com', 'openai.com')
-# The only provider requests in the retained captures that serve no model.
 _NON_SERVING = (('GET', '/models'), ('POST', '/analytics-events/events'))
 _TERMINAL = ('response.completed', 'response.failed', 'response.incomplete')
-# codex-api/src/endpoint paths that serve a model but are not the primary turn stream.
 _AUXILIARY = ('memories/trace_summarize', 'realtime', 'alpha/search', 'images')
 
 
@@ -210,7 +205,6 @@ def codex_responses(lines, events, model, effort) -> CodexProvenance:
               ('input_tokens', 'cached_input_tokens', 'output_tokens', 'reasoning_output_tokens')]
     if not turns or client != totals:
         problems.append('provider usage does not reconcile with client turns')
-    # A terminal event that disagrees with its created event also counts as substituted.
     substituted = tuple((rid, m, e) for rid, (m, e, _, changed) in responses.items() if changed)
     if substituted:
         problems.append('substituted or changed serving model')
@@ -227,7 +221,6 @@ def _written_by_client(writes, data, initial, decode):
     own = [w for w in writes if w['sender'].get('tgid') == initial['tgid']
            and w['sender'].get('exec_path') == initial['exec_path']
            and w['sender'].get('exec_argv') == initial['exec_argv']]
-    # An uncapturable write by the client itself voids the channel.
     if data is None or any(w.get('data_hex', '') is None or w.get('data', '') is None for w in own):
         return False
     return b''.join(decode(w) for w in own) == data
@@ -251,7 +244,6 @@ def session_provenance(client, evidence, stream):
             stdout_ok = False
     model, effort = EXPECTED[client]
     if client == 'codex':
-        # Codex ends records only at \n; str.splitlines would also split at U+2028.
         lines = (evidence.get('stderr') or b'').decode('utf-8', 'replace').split('\n')
         r = codex_responses(lines, events, model, effort)
         detail = dict(responses=r.responses, substituted=r.substituted, attempts=r.attempts,
@@ -262,7 +254,6 @@ def session_provenance(client, evidence, stream):
         session = next((e.get('session_id') for e in events if e.get('type') == 'system'), '')
         r = claude_metadata(events, session, model)
         detail = dict(requests=r.requests, terminal_models=r.terminal_models, envelope_complete=r.complete)
-        # Claude evidence is entirely on stdout; its stderr carries none.
         stderr_ok, qualified, reason = True, stdout_ok and r.qualified, None
     if not (stdout_ok and stderr_ok):
         reason = 'client channels not attested to the client process'

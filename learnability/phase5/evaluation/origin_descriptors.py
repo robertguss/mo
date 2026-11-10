@@ -42,10 +42,6 @@ class DescriptorFacts:
                 return False
             operands = re.findall(r'(?:^|, )(\d+)(?:<[^>]*>)?', args)
             needed = 2 if op == 'sendfile' else 1
-            # Since Linux 5.3 a successful copy_file_range requires two regular files
-            # (fs/read_write.c generic_file_rw_checks), so it cannot carry socket or pipe
-            # bytes. Channel files still fail closed: their writer reconstruction would
-            # miss these bytes. Virtual filesystems stay rejected.
             if op == 'copy_file_range':
                 ends = [re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: chr(int(m[1], 16)), e)
                         for e in re.findall(r'(?:^|, )\d+<([^>]*)>', args)]

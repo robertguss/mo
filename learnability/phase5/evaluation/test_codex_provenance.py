@@ -156,7 +156,6 @@ class CodexProvenanceTests(unittest.TestCase):
 
     @unittest.skipUnless(os.access(Path.home() / '.mo-phase5-harness', os.R_OK), 'private capture absent')
     def test_retained_pinned_client_captures(self):
-        # The first capture predates codex_http_client=debug, so it has no attempt ledger.
         for name, complete in (('http-development-20261109-one', False),
                                ('http-header-development-20261109-one', True)):
             base = Path.home() / '.mo-phase5-harness' / name

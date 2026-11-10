@@ -937,3 +937,21 @@ incarnation), and HTTP receipts carry it too. Results after both fixes:
   revision response with other responses and status lines. The observation rule accepts only a
   shell result that is exactly the response (or the bare value) delivered by one writer, and
   rejects mixed output. The agent did see the response; the instrument cannot attribute it.
+
+### Mixed shell output (Robert's decision, 2026-11-10)
+
+Robert chose to accept the revision response inside larger shell output, with an exact chain
+and no new agent instruction. The rule: the process that received the response must have written
+exactly that body (same SHA-256 as the traced HTTP response) to its standard output; the client
+process must have read it from the same pipe or file afterwards; and the typed shell result the
+client emitted must contain it, all after the commit and before the final message. Claude's shell
+writes command output to a regular file that the client reads with `pread64`, so the trace now
+records writes to a process's standard-output file and later reads of that file.
+
+Controls reject a different writer forging the same bytes, a client that never read the object,
+altered bytes, a read that precedes the write, an uncaptured transfer and a pipe whose creation
+was not observed. Re-run over the two sealed run-three bundles (corrected 502 rule applied in
+memory, sealed files unchanged): **Codex and Claude both pass all seven graded dimensions.**
+This is development evidence from one session per client, not the scored cohort.
+
+Code comments added earlier on this branch were removed; their reasoning is in these records.

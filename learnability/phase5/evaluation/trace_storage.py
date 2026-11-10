@@ -6,7 +6,6 @@ import json
 import re
 from contextlib import contextmanager
 
-# strace -s 4 MiB under -xx prints up to 16 MiB per buffer, plus vectors and framing.
 MAX_RECORD_BYTES = 32 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 

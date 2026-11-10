@@ -113,13 +113,9 @@ def check(installed):
             raise ValueError('frozen client version unavailable: ' + name)
 
 
-# Codex traces provider response objects only over HTTP (codex-api sse/responses.rs:622);
-# this provider keeps the built-in OpenAI identity and auth (model-provider-info 782-844).
 CODEX_HTTP = ['-c', 'model_provider="responses_http"', '-c',
               'model_providers.responses_http={name="OpenAI",requires_openai_auth=true,supports_websockets=false}']
-# Exactly the filter characterized live; codex_core supplies the session_loop span.
 CODEX_LOG = 'codex_api=trace,codex_core=debug,codex_http_client=debug'
-# Published stderr omits tracing records; the sealed raw copy keeps them.
 PRIVATE_DIAGNOSTICS = re.compile(r'^\S+\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s|codex_(?:api|core|http_client)::')
 
 
@@ -128,16 +124,12 @@ def client_environment(client, base):
 
 
 def public_stderr(text):
-    # Codex ends records only at \n; str.splitlines would also split at U+2028.
     return [line for line in text.split('\n') if line and not PRIVATE_DIAGNOSTICS.search(line)]
 
 
 def command(client, binary, prompt, url, config):
     cmd = p4.client_command(client, binary, prompt, url, config)
     if client == 'codex':
-        # Robert's decision (2026-11-10): Codex's bubblewrap sandbox uses user/PID/mount
-        # namespaces the capture cannot attribute, so Phase 5 relies on the collector's own
-        # isolation (separate account, backend firewall, private folders) instead.
         at = cmd.index('--sandbox')
         assert cmd[at + 1:at + 4] == ['workspace-write', '-c', 'sandbox_workspace_write.network_access=true']
         cmd[at + 1:at + 4] = ['danger-full-access']
@@ -300,7 +292,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
         shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
         shutil.copyfile(out / 'origin-raw/stderr', out / 'client-stderr.txt')
-        meta['kernel'] = os.uname().release  # copy_file_range credit relies on Linux >= 5.3
+        meta['kernel'] = os.uname().release
         meta['exit_status'] = trace_result['returncode']
         meta['timeout'] = trace_result['timed_out']
         meta['capture'] = trace_result

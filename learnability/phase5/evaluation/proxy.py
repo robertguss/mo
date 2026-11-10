@@ -52,9 +52,6 @@ class Recorder(base.Recorder):
         if metadata is not None:
             response = dict(getattr(self.context, 'response_metadata', {}))
             if entry['direction'] == 'response' and not response:
-                # The base proxy synthesizes replies it never read upstream (502). Rebuild
-                # them from the recorded text only when exact: a lossy UTF-8 decode always
-                # changes the length, so equal length means the bytes round-trip.
                 text = entry.get('body')
                 raw = b'' if text is None else text.encode() if isinstance(text, str) else None
                 if raw is not None and len(raw) == entry.get('bytes'):
@@ -182,7 +179,7 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
         observation = u3.validate(evidence, rows, origins, stream.read_bytes())
         try:
             provenance = session_provenance(client, evidence, stream.read_bytes())
-        except Exception as error:  # malformed values fail provenance alone
+        except Exception as error:
             provenance = dict(qualified=False, reason='provenance evaluation error: ' + type(error).__name__)
     responses = {}
     for row in rows:

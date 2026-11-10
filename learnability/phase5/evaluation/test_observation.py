@@ -36,6 +36,44 @@ class Controls(unittest.TestCase):
             dict(pipe='12',created=2,operation='read',fd=3,data_hex=output.encode().hex(),sender=owner,started=4,completed=4.3)]
         e['stdout']=prefix+s
         return e,r,o,prefix+s
+    def mixed_fixture(self, transport='file'):
+        import hashlib
+        e,r,o,s=self.shell_fixture()
+        owner=e['trace']['exec_events'][0]
+        child=o[3]['sender']
+        body=json.dumps(r[3]['body']).encode()
+        output='status 200\n'+body.decode()+'\nother output\n'
+        event=json.loads(s.splitlines()[0])
+        event['item']['aggregated_output']=output
+        prefix=json.dumps(event)+'\n'
+        e['trace']['stdout_events'][0]['data']=prefix
+        e['stdout']=prefix.encode()+b'\n'.join(s.splitlines()[1:])+b'\n'
+        e['trace']['responses'][1]['body_sha256']=hashlib.sha256(body).hexdigest()
+        other=dict(owner,pid=3,process='3:1',exec_path='/usr/bin/echo',exec_argv=['echo'])
+        key=dict(pipe='12',created=2) if transport=='pipe' else dict(path='/tmp/task.output')
+        transfers=[dict(key,operation='write',fd=1,data_hex=b'status 200\n'.hex(),sender=other,started=4.05,completed=4.05),
+                   dict(key,operation='write',fd=1,data_hex=body.hex(),sender=child,started=4.1,completed=4.2),
+                   dict(key,operation='read',fd=9,data_hex=output.encode().hex(),sender=owner,started=4.3,completed=4.3)]
+        e['trace']['pipe_events']=transfers if transport=='pipe' else []
+        e['trace']['file_events']=transfers if transport=='file' else []
+        return e,r,o,e['stdout'],transfers,other
+    def test_mixed_shell_output_needs_the_receiver_to_deliver_the_exact_response(self):
+        for transport in ('file','pipe'):
+            with self.subTest(transport=transport):
+                e,r,o,s,_,_=self.mixed_fixture(transport)
+                self.assertTrue(observation.validate(e,r,o,s))
+        e,r,o,s,transfers,_=self.mixed_fixture('pipe')
+        for transfer in transfers: transfer['created']=None
+        self.assertFalse(observation.validate(e,r,o,s))
+        for case in ('forged_writer','client_never_read','altered_bytes','read_before_write','uncaptured'):
+            with self.subTest(case=case):
+                e,r,o,s,transfers,other=self.mixed_fixture()
+                if case=='forged_writer': transfers[1]['sender']=other
+                if case=='client_never_read': transfers[2]['sender']=other
+                if case=='altered_bytes': transfers[1]['data_hex']=(bytes.fromhex(transfers[1]['data_hex'])+b' ').hex()
+                if case=='read_before_write': transfers[2]['completed']=4.15
+                if case=='uncaptured': transfers[1]['data_hex']=None
+                self.assertFalse(observation.validate(e,r,o,s))
     def test_shell_delivery(self):
         self.assertTrue(observation.validate(*self.shell_fixture()))
     def test_sibling_threads_of_the_client_are_the_same_process(self):

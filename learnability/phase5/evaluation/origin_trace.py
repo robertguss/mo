@@ -81,9 +81,6 @@ def transfer_bytes(op, args, n):
 
 
 def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, evaluation_endpoint=None, channels=None):
-    # channels: {'stdout': path, 'stderr': path} of the collector's files. A client may
-    # write them through any descriptor (Bun dups stdout to fd 5); without channels,
-    # writes to descriptors 1 and 2 are taken instead.
     channel_paths = {k: os.path.realpath(str(v)).encode() for k, v in (channels or {}).items()}
     from origin_observer import order_births
     from origin_descriptors import DescriptorFacts
@@ -110,6 +107,8 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
     stdout_events = []
     stderr_events = []
     pipe_events = []
+    file_events = []
+    stdout_files = set()
     pipes = {}
     processes = {}
     pending = {}
@@ -122,7 +121,6 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
     events = collections.Counter()
     def proc(pid):
         if pid not in processes:
-            # process names the thread group and its leader incarnation; threads share it.
             processes[pid] = {'pid': pid, 'tgid': pid, 'incarnation': 1, 'process': f'{pid}:1', 'exec_path': None, 'exec_argv': None, 'session_id': session_id, 'generation': 0, 'dead': False}
         return processes[pid]
     for sequence, raw in enumerate(text.splitlines(), 1):
@@ -138,7 +136,6 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         if s.endswith('<unfinished ...>'):
             if pid in pending: fail('overlapping unfinished calls')
             pending_start[pid] = sequence
-            # strace separates the printed prefix from the marker with one space.
             pending[pid] = s[:-len(' <unfinished ...>')] if s.endswith(' <unfinished ...>') else s[:-len('<unfinished ...>')]
             continue
         resumed = re.match(r'<\.\.\. (\w+) resumed>(.*)', s)
@@ -238,7 +235,6 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         pipe = re.match(r'(\d+)<pipe:\[(\d+)\]>, ', args)
         if pipe and op in ('read', 'write', 'readv', 'writev') and result.isdigit() and int(result):
             n = int(result)
-            # An uncapturable pipe transfer voids that pipe's evidence, not the trace.
             try:
                 data_hex = transfer_bytes(op, args, n)[:n].hex()
             except TraceError:
@@ -246,6 +242,16 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             pipe_events.append(dict(pipe=pipe[2], created=pipes.get(pipe[2]), operation=op,
                 fd=int(pipe[1]), data_hex=data_hex, sender=dict(p), started=started,
                 completed=sequence))
+        moved = re.match(r'(\d+)<((?:\\x2f|/)[^>]*)>, ', args) if result.isdigit() and int(result) else None
+        writes_stdout = bool(moved) and op in ('write', 'writev') and moved[1] == '1' and decode(moved[2]) not in channel_paths.values()
+        if writes_stdout or moved and op in ('read', 'readv', 'pread64') and moved[2] in stdout_files:
+            stdout_files.add(moved[2])
+            try:
+                data_hex = transfer_bytes('read' if op == 'pread64' else op, args, int(result)).hex()
+            except TraceError:
+                data_hex = None
+            file_events.append(dict(path=moved[2], operation='write' if writes_stdout else 'read', fd=int(moved[1]),
+                data_hex=data_hex, sender=dict(p), started=started, completed=sequence))
         target = re.match(r'(\d+)(?:<([^>]*)>)?, ', args) if op in ('write', 'writev') else None
         def channel(name, number):
             if not target: return False
@@ -256,12 +262,10 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             try:
                 text = transfer_bytes(op, args, n)[:n].decode('utf-8')
             except (TraceError, UnicodeDecodeError):
-                text = None  # voids stdout attestation for this writer
+                text = None
             stdout_events.append(dict(data=text, sender=dict(p), started=started, completed=sequence))
         if channel('stderr', '2') and result.isdigit():
             n = int(result)
-            # Diagnostic stderr may split UTF-8 across writes; keep exact bytes. An
-            # uncapturable write only voids stderr attestation, not the whole trace.
             try:
                 data_hex = transfer_bytes(op, args, n)[:n].hex()
             except TraceError:
@@ -271,7 +275,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             controls = re.findall(r'msg_controllen=(\d+)', args)
             if not controls or any(int(n) != 0 for n in controls):
                 fail('ancillary socket transfer unsupported')
-        # Explicit non-TCP transports (including DNS over UDP) cannot reach the TCP proxy.
+        # Explicit non-TCP transports cannot contribute to these HTTP receipts.
         if re.match(r'\d+<(?:NETLINK|UNIX(?:-STREAM)?|UDP(?:v6)?):\[', args): continue
         table = fds.setdefault(pid, {})
         flags = cloexec.setdefault(pid, set())
@@ -406,7 +410,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
                         receipt['argument_count']=len(params.get('arguments',{})) if isinstance(params,dict) and isinstance(params.get('arguments',{}),dict) else 0
                 except (ValueError,UnicodeError): receipt['json_object']=False
                 output.append(receipt); pos=stop
-    return dict(requests=requests,responses=responses,event_counts=dict(events), stdout_events=stdout_events, stderr_events=stderr_events, pipe_events=pipe_events, exec_events=exec_events, binary_hash_verified=False)
+    return dict(requests=requests,responses=responses,event_counts=dict(events), stdout_events=stdout_events, stderr_events=stderr_events, pipe_events=pipe_events, file_events=file_events, exec_events=exec_events, binary_hash_verified=False)
 
 
 if __name__ == '__main__':
