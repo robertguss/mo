@@ -68,6 +68,26 @@ class Tests(unittest.TestCase):
             server.server_close()
             thread.join()
 
+    def test_synthesized_unreachable_reply_is_recorded_exactly(self):
+        import hashlib, socket
+        tokens = ['service-secret-0123456789', 'upgrade-secret-9876543210']
+        with socket.socket() as probe:
+            probe.bind(('127.0.0.1', 0)); port = probe.getsockname()[1]
+        with tempfile.TemporaryDirectory() as directory:
+            log = pathlib.Path(directory) / 'proxy.jsonl'
+            with contextlib.redirect_stderr(io.StringIO()):
+                recorder = proxy.Proxy(f'http://127.0.0.1:{port}/mcp', log, *tokens)
+                try:
+                    conn = http.client.HTTPConnection('127.0.0.1', recorder.server.server_port)
+                    conn.request('GET', '/mcp', headers={'Authorization': 'Bearer ' + tokens[0]})
+                    response = conn.getresponse(); sent = response.read(); conn.close()
+                finally:
+                    recorder.stop()
+            self.assertEqual(response.status, 502)
+            reply = [r for r in proxy.base.entries(log) if r['direction'] == 'response'][0]
+            self.assertEqual(reply['transport']['body_byte_count'], len(sent))
+            self.assertEqual(reply['transport']['body_sha256'], hashlib.sha256(sent).hexdigest())
+
     def test_command_origin(self):
         with tempfile.TemporaryDirectory() as directory:
             stream, log = [pathlib.Path(directory) / name for name in ('stream', 'log')]

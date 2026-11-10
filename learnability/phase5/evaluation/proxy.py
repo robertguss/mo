@@ -50,7 +50,16 @@ class Recorder(base.Recorder):
             self.snapshots.append(pathlib.Path('/proc/net/tcp').read_text())
         metadata = getattr(self.context, 'metadata', None)
         if metadata is not None:
-            entry = {**entry, 'transport': dict(metadata) if entry['direction'] == 'request' else dict(getattr(self.context, 'response_metadata', {}))}
+            response = dict(getattr(self.context, 'response_metadata', {}))
+            if entry['direction'] == 'response' and not response:
+                # The base proxy synthesizes replies it never read upstream (502). Rebuild
+                # them from the recorded text only when exact: a lossy UTF-8 decode always
+                # changes the length, so equal length means the bytes round-trip.
+                text = entry.get('body')
+                raw = b'' if text is None else text.encode() if isinstance(text, str) else None
+                if raw is not None and len(raw) == entry.get('bytes'):
+                    response = origin_join.digests(raw)
+            entry = {**entry, 'transport': dict(metadata) if entry['direction'] == 'request' else response}
         cleaned = self.clean(entry)
         if cleaned != entry:
             cleaned['redacted'] = True

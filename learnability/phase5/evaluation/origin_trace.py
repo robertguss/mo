@@ -122,7 +122,8 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
     events = collections.Counter()
     def proc(pid):
         if pid not in processes:
-            processes[pid] = {'pid': pid, 'tgid': pid, 'incarnation': 1, 'exec_path': None, 'exec_argv': None, 'session_id': session_id, 'generation': 0, 'dead': False}
+            # process names the thread group and its leader incarnation; threads share it.
+            processes[pid] = {'pid': pid, 'tgid': pid, 'incarnation': 1, 'process': f'{pid}:1', 'exec_path': None, 'exec_argv': None, 'session_id': session_id, 'generation': 0, 'dead': False}
         return processes[pid]
     for sequence, raw in enumerate(text.splitlines(), 1):
         started = sequence
@@ -171,7 +172,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         events[op] += 1
         if p['dead']:
             fds[pid] = {}
-            p = processes[pid] = dict(pid=pid, tgid=pid, incarnation=p['incarnation']+1, exec_path=None, exec_argv=None, session_id=session_id, generation=0, dead=False)
+            p = processes[pid] = dict(pid=pid, tgid=pid, incarnation=p['incarnation']+1, process=f"{pid}:{p['incarnation']+1}", exec_path=None, exec_argv=None, session_id=session_id, generation=0, dead=False)
         if op in ('clone', 'clone3', 'fork', 'vfork') and re.match(r'[1-9]\d*$', result):
             child = int(result)
             thread = 'CLONE_THREAD' in args
@@ -184,8 +185,9 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             if child in processes and not processes[child]['dead']: fail('PID lifecycle ambiguity')
             old = processes.get(child)
             p['executable_mappings'] = processes[p['tgid']].setdefault('executable_mappings', [])
-            processes[child] = dict(p, pid=child, tgid=p['tgid'] if thread else child,
-                                    incarnation=old['incarnation']+1 if old else 1)
+            incarnation = old['incarnation']+1 if old else 1
+            processes[child] = dict(p, pid=child, tgid=p['tgid'] if thread else child, incarnation=incarnation,
+                                    process=p['process'] if thread else f'{child}:{incarnation}')
             if 'CLONE_VM' not in args and op != 'vfork':
                 processes[child]['executable_mappings'] = list(p.get('executable_mappings', []))
         if op in ('execve', 'execveat') and result == '0':
@@ -340,7 +342,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         if not n: continue
         data = transfer_bytes(op, args, n)
         image = processes[p['tgid']]
-        owner = {k:image[k] for k in ('pid','incarnation','exec_path','exec_argv','session_id','generation')}
+        owner = {k:image[k] for k in ('pid','incarnation','process','exec_path','exec_argv','session_id','generation')}
         owner.update(loader_context_clean=image.get('loader_context_clean', False),
                      executable_mappings=list(image.get('executable_mappings', [])))
         if key not in connections and resolved is not None and any(

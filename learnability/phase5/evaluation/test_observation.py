@@ -4,7 +4,7 @@ import unittest
 import observation
 class Controls(unittest.TestCase):
     def fixture(self):
-        owner=dict(pid=1,incarnation=1,generation=1,exec_path='/client',exec_argv=['/client'],session_id='s')
+        owner=dict(pid=1,incarnation=1,process='1:1',generation=1,exec_path='/client',exec_argv=['/client'],session_id='s')
         def receipt(a,b): return dict(sender=owner,connection_ordinal=a,request_ordinal=1,occurrences=[dict(started=b,completed=b)])
         origins={1:dict(receipt(1,1),verified_push_identity=True),3:receipt(2,3)}
         rows=[dict(direction='request',seq=1,id=1,tool='mo-upgrade-commit'),dict(direction='response',seq=2,request=1,status=200,body={'result':{'structuredContent':{'status':'accepted','ordinal':'2'}}}),dict(direction='request',seq=3,id=2,tool='revision'),dict(direction='response',seq=4,request=3,status=200,body={'result':{'structuredContent':{'value':'1'}}})]
@@ -24,7 +24,7 @@ class Controls(unittest.TestCase):
     def shell_fixture(self):
         e,r,o,s=self.fixture()
         owner=e['trace']['exec_events'][0]
-        child=dict(owner,pid=2,exec_path='/usr/bin/curl',exec_argv=['curl'])
+        child=dict(owner,pid=2,process='2:1',exec_path='/usr/bin/curl',exec_argv=['curl'])
         o[3]['sender']=child
         e['trace']['responses'][1]['sender']=child
         output=json.dumps(r[3]['body'])+'\n'
@@ -38,6 +38,13 @@ class Controls(unittest.TestCase):
         return e,r,o,prefix+s
     def test_shell_delivery(self):
         self.assertTrue(observation.validate(*self.shell_fixture()))
+    def test_sibling_threads_of_the_client_are_the_same_process(self):
+        e,r,o,s=self.shell_fixture()
+        for transfer in e['trace']['pipe_events']:
+            if transfer['operation']=='read': transfer['sender']=dict(transfer['sender'],pid=7)
+        self.assertTrue(observation.validate(e,r,o,s))
+        e['trace']['pipe_events'][-1]['sender']=dict(e['trace']['pipe_events'][-1]['sender'],process='1:2')
+        self.assertFalse(observation.validate(e,r,o,s))
     def test_uncapturable_pipe_or_stdout_transfer_fails_closed(self):
         e,r,o,s=self.shell_fixture()
         e['trace']['pipe_events'][0]['data_hex']=None
@@ -79,20 +86,20 @@ class Controls(unittest.TestCase):
             self.assertTrue(observation.validate(e,r,o,s))
             pipes=e['trace']['pipe_events']
             if case=='no_read': pipes.pop()
-            if case=='wrong_reader': pipes[1]['sender']=dict(pipes[1]['sender'],pid=9)
-            if case=='wrong_writer': pipes[0]['sender']=dict(pipes[0]['sender'],pid=9)
+            if case=='wrong_reader': pipes[1]['sender']=dict(pipes[1]['sender'],pid=9,process='9:1')
+            if case=='wrong_writer': pipes[0]['sender']=dict(pipes[0]['sender'],pid=9,process='9:1')
             if case=='different_bytes': pipes[1]['data_hex']='31'
             if case=='late_read': pipes[1]['completed']=6
             if case=='early_write': pipes[0]['started']=3
             if case=='uncreated': pipes[0]['created']=None
-            if case=='shared_writer': pipes.append(dict(pipes[0],sender=dict(pipes[0]['sender'],pid=9)))
+            if case=='shared_writer': pipes.append(dict(pipes[0],sender=dict(pipes[0]['sender'],pid=9,process='9:1')))
             with self.subTest(case=case): self.assertFalse(observation.validate(e,r,o,s))
     def test_native_controls(self):
         for case in ('before_receive', 'after_final', 'wrong_tool', 'fake_child', 'truncated', 'wrong_value'):
             e,r,o,s=self.native_fixture()
             if case == 'before_receive': e['trace']['stdout_events'][0]['started']=3.5
             if case == 'after_final': e['trace']['stdout_events'][0]['completed']=6
-            if case == 'fake_child': e['trace']['stdout_events'][0]['sender']=dict(e['trace']['exec_events'][0],pid=99)
+            if case == 'fake_child': e['trace']['stdout_events'][0]['sender']=dict(e['trace']['exec_events'][0],pid=99,process='99:1')
             if case == 'truncated': s=s[:-3]
             if case in ('wrong_tool','wrong_value'):
                 event=json.loads(s.splitlines()[0])

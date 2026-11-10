@@ -161,6 +161,17 @@ class OrderingIntervals(unittest.TestCase):
         self.assertEqual([e['data_hex'] for e in r['stderr_events']], ['65'])
         self.assertEqual(len(parse_trace(trace)['stdout_events']), 2)
 
+    def test_http_receipts_carry_process_identity(self):
+        r = parse_trace(line(b'GET / HTTP/1.1\r\n\r\n'))
+        self.assertEqual(r['requests'][0]['sender']['process'], '%d:1' % r['requests'][0]['sender']['pid'])
+
+    def test_threads_share_process_identity_and_reuse_does_not(self):
+        r = parse_trace('10 clone(flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_THREAD|CLONE_SIGHAND) = 11\n'
+                        '10 clone(flags=SIGCHLD) = 12\n'
+                        '11 write(1, "a", 1) = 1\n12 write(1, "b", 1) = 1\n'
+                        '12 +++ exited with 0 +++\n10 clone(flags=SIGCHLD) = 12\n12 write(1, "c", 1) = 1')
+        self.assertEqual([e['sender']['process'] for e in r['stdout_events']], ['10:1', '12:1', '12:2'])
+
     def test_resumed_vector_transfer(self):
         r = parse_trace('10 socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 3\n'
                         '10 writev(3<TCP:[1.2.3.4:5->6.7.8.9:10]>, [{iov_base="GET / HTTP/1.1\\r\\n\\r\\n", iov_len=18}], 1 <unfinished ...>\n'

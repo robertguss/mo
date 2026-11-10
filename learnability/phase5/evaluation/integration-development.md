@@ -907,3 +907,33 @@ Re-run over the sealed evidence with these fixes: the Claude session's provenanc
 attested), but stdout is not attested: two of Codex's own JSONL writes (1,107,176 and 1,057,620
 bytes) were truncated by the old 1 MiB limit. A new declared pair is needed to show both
 end to end under the fixed capture.
+
+### Third pair and offline regrade (2026-11-10)
+
+Declared before launch (`real-collector-development-20261110-three/declaration.json`, commit
+fa0daefe), one Codex and one Claude DEVELOPMENT slot, scored 0. Cumulative development model
+attempts: Codex 6, Claude 4.
+
+Both captures passed integrity and both traces parsed, as predicted. Both slots then failed
+reconciliation with `JoinError`, which was not predicted: each MCP client opens a `GET` event
+stream, the upstream refuses it, and the base proxy answers with a synthesized 502 whose body
+digest the Phase 5 recorder never took (16 of 16 requests matched otherwise). The recorder now
+rebuilds a synthesized reply's digest from the recorded text when, and only when, its length
+equals the recorded byte count. Run three's proxy logs were written before that fix and stay as
+recorded.
+
+To find the next failure without another model run, the protected regrade was run over the two
+sealed bundles with the corrected 502 rule applied to the rows in memory (development diagnosis;
+the sealed files are unchanged). It found one more defect: observation compared senders by thread
+ID, and both clients are multi-threaded (Codex's pipe reads and stdout writes happen on different
+tokio threads). Senders now carry a process identity (thread-group ID with the leader's
+incarnation), and HTTP receipts carry it too. Results after both fixes:
+
+- **Codex: all seven graded dimensions pass** (task state, activation identity, command origin,
+  final answer, source tests, traffic completeness, model provenance). Publication integrity is
+  not graded by the regrade.
+- **Claude: six pass; final answer fails** with "post-activation revision observation not proven".
+  Claude ran its revision `curl` inside a larger Bash command, so the shell output combines the
+  revision response with other responses and status lines. The observation rule accepts only a
+  shell result that is exactly the response (or the bare value) delivered by one writer, and
+  rejects mixed output. The agent did see the response; the instrument cannot attribute it.

@@ -30,7 +30,9 @@ def validate(evidence, rows, origins, stream):
             if end > offset: final_writes.append(w)
             cursor = end
         owner = final_writes[0]['sender']
-        keys = ('pid', 'incarnation', 'generation', 'exec_path', 'exec_argv', 'session_id')
+        # Process identity, not thread: multi-threaded clients read pipes and write stdout
+        # on different threads. process carries the leader incarnation, so PID reuse differs.
+        keys = ('process', 'generation', 'exec_path', 'exec_argv', 'session_id')
         same = lambda a,b: all(a[k] == b[k] for k in keys)
         initial = next(e for e in trace['exec_events'] if e['exec_path'] == evidence['client_path'])
         if not same(initial, owner): return False
