@@ -134,6 +134,46 @@ class OrderingIntervals(unittest.TestCase):
         with self.assertRaises(TraceError):
             parse_trace(shared + '11 copy_file_range(11<' + hexed('/home/s/a') + '>, NULL, 12, NULL, 4, 0) = 4')
 
+    def test_uncapturable_pipe_or_stdout_transfer_voids_only_that_event(self):
+        r = parse_trace('10 pipe2([3<pipe:[7]>, 4<pipe:[7]>], O_CLOEXEC) = 0\n'
+                        '11 write(1<pipe:[7]>, "abc"..., 9) = 9\n'
+                        '10 write(1, "\\xe2", 1) = 1\n'
+                        '10 write(2, "ok", 2) = 2')
+        self.assertIsNone(r['pipe_events'][0]['data_hex'])
+        self.assertIsNone(r['stdout_events'][-1]['data'])
+        self.assertEqual(r['stderr_events'][0]['data_hex'], '6f6b')
+
+    def test_udp_datagrams_are_not_http_receipts(self):
+        r = parse_trace('10 sendto(5<UDPv6:[[::1]:40000->[::1]:53]>, "q", 1, MSG_NOSIGNAL, NULL, 0) = 1\n'
+                        '10 recvmsg(6<UDP:[127.0.0.1:40001->127.0.0.53:53]>, {msg_name=NULL, msg_namelen=0, msg_iov=[{iov_base="abc", iov_len=3}], msg_iovlen=1, msg_controllen=0, msg_flags=0}, 0) = 3')
+        self.assertEqual(r['requests'], [])
+        with self.assertRaises(TraceError):
+            parse_trace('10 sendto(5<SCTP:[1]>, "q", 1, 0, NULL, 0) = 1')
+
+    def test_channels_follow_the_file_not_the_descriptor_number(self):
+        hexed = lambda path: ''.join('\\x%02x' % c for c in path.encode())
+        trace = ('10 write(5<' + hexed('/run/out/stdout') + '>, "a\\n", 2) = 2\n'
+                 '11 write(1<pipe:[9]>, "child", 5) = 5\n'
+                 '10 write(1<' + hexed('/run/out/other') + '>, "x", 1) = 1\n'
+                 '10 write(7<' + hexed('/run/out/stderr') + '>, "e", 1) = 1')
+        r = parse_trace(trace, channels={'stdout': '/run/out/stdout', 'stderr': '/run/out/stderr'})
+        self.assertEqual([e['data'] for e in r['stdout_events']], ['a\n'])
+        self.assertEqual([e['data_hex'] for e in r['stderr_events']], ['65'])
+        self.assertEqual(len(parse_trace(trace)['stdout_events']), 2)
+
+    def test_resumed_vector_transfer(self):
+        r = parse_trace('10 socket(AF_INET, SOCK_STREAM, IPPROTO_TCP) = 3\n'
+                        '10 writev(3<TCP:[1.2.3.4:5->6.7.8.9:10]>, [{iov_base="GET / HTTP/1.1\\r\\n\\r\\n", iov_len=18}], 1 <unfinished ...>\n'
+                        '10 <... writev resumed>) = 18')
+        self.assertEqual(len(r['requests']), 1)
+
+    def test_resumed_pipe_creation(self):
+        hexed = ''.join('\\x%02x' % c for c in b'pipe:[54493390]')
+        r = parse_trace('10 pipe2( <unfinished ...>\n'
+                        '10 <... pipe2 resumed>[36<' + hexed + '>, 37<' + hexed + '>], O_CLOEXEC) = 0\n'
+                        '11 write(37<' + hexed + '>, "ab", 2) = 2')
+        self.assertEqual(r['pipe_events'][0]['created'], 1)
+
     def test_pipe_transfer_bytes(self):
         trace='\n'.join(['10 pipe2([3<pipe:[123]>, 4<pipe:[123]>], O_CLOEXEC) = 0',
             '11 write(1<pipe:[123]>, "abc", 3) = 3',

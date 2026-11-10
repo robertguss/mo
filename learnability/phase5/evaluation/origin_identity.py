@@ -166,7 +166,9 @@ class Capture:
             snapshot = json.loads(data['tcp_snapshot'])
             if snapshot['session'] != self.session or snapshot['nonce'] != self.nonce or snapshot['trace_sha256'] != manifest['trace']['sha256']: reject()
             snapshots = snapshot['snapshots']
-        parsed = origin_trace.parse_trace(TraceLines(manifest['trace']['path']), session_id=self.session, tcp_snapshots=snapshots, evaluation_endpoint=evaluation_endpoint)
+        parsed = origin_trace.parse_trace(TraceLines(manifest['trace']['path']), session_id=self.session, tcp_snapshots=snapshots,
+            evaluation_endpoint=evaluation_endpoint,
+            channels={k: manifest[k]['path'] for k in ('stdout', 'stderr') if k in manifest} or None)
         integrity = origin_observer.process_integrity(TraceLines(manifest['trace']['path']))
         loader_valid = self.loader is None or protected(self.loader['path'], self.collector, self.session_uid)[0] == self.loader
         def trusted_execution(sender):

@@ -52,7 +52,8 @@ class ReplayReceipt:
                 or snapshot['trace_sha256'] != m['files']['trace']['retained']['sha256']):
             identity.reject()
         parsed = origin_trace.parse_trace(raw, session_id=self.session,
-            tcp_snapshots=snapshot['snapshots'], evaluation_endpoint=p['evaluation_endpoint'])
+            tcp_snapshots=snapshot['snapshots'], evaluation_endpoint=p['evaluation_endpoint'],
+            channels={k: p['capture'][k]['path'] for k in ('stdout', 'stderr') if k in p['capture']} or None)
         integrity = origin_observer.process_integrity(raw)
         for direction in ('requests', 'responses'):
             for receipt in parsed[direction]:

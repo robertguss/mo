@@ -6,6 +6,7 @@ def validate(evidence, rows, origins, stream):
         if evidence['stdout'] != stream: return False
         trace = evidence['trace']
         writes = [w for w in trace['stdout_events'] if evidence['client_path'] == w['sender']['exec_path']]
+        if any(w['data'] is None for w in writes): return False
         if ''.join(w['data'] for w in writes).encode() != stream: return False
         events = [json.loads(line) for line in stream.splitlines()]
         final = events[-2]
@@ -180,6 +181,7 @@ def pipe_delivery(trace, child, owner, same, received_at, emitted_at, output):
         writes = [e for e in transfers if e['operation'] == 'write']
         reads = [e for e in transfers if e['operation'] == 'read']
         if not writes or not reads: continue
+        if any(e['data_hex'] is None for e in transfers): continue
         if any(e['created'] is None or e['created'] >= e['started'] for e in transfers): continue
         if any(not same(e['sender'], child) or e['fd'] != 1 for e in writes): continue
         if any(not same(e['sender'], owner) for e in reads): continue

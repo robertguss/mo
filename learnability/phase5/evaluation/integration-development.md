@@ -871,3 +871,39 @@ trace. That is a single-session observation, not a bound.
 
 Next work depends on a decision about Codex's sandbox (it is the evaluation condition all earlier
 experiments used); see `docs/status/phase5-run.md`.
+
+### Requalification pair (2026-11-10, after the sandbox decision)
+
+Declared before launch (`real-collector-development-20261110-two/declaration.json`, commit
+a4ff8621): one Codex and one Claude DEVELOPMENT slot, no replacements, scored 0. Cumulative
+development model attempts: Codex 5, Claude 3.
+
+| Slot | Client | Wall | Exit | Decoded trace | Process integrity | Reconciliation |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Codex (`danger-full-access`) | 1581 s | 0 | 4,991,762,484 B | verified, no errors | `TraceError` |
+| 2 | Claude | 410 s | 0 | 875,206,012 B | verified, no errors | `TraceError` |
+
+Both agents again completed the upgrade with correct state and activation identity. The
+sandbox decision and the `copy_file_range` rule cleared every process-integrity error, which
+was the prediction. The prediction that both traces would parse was wrong. Re-parsing the
+sealed traces found four parser defects, each fixed with a test and retained here:
+
+1. A resumed call kept the space strace prints before `<unfinished ...>`, so resumed `pipe2`
+   and vector transfers (`writev(…, 2 ) = 543`) failed exact matches. The pending prefix now
+   drops that one separator.
+2. DNS over UDP (`UDP`/`UDPv6` sockets) hit the TCP-only rule. UDP cannot reach the TCP proxy;
+   it now joins NETLINK and UNIX as an explicitly skipped transport.
+3. Codex threads make single pipe and stdout writes of about 1.1 MB, above strace's
+   `-s 1048576`. Any truncated transfer aborted the whole parse. A truncated pipe, stdout or
+   stderr transfer now voids only that event (its pipe or channel then fails closed), and the
+   capture uses `-s 4194304`, with the trace record cap raised to 32 MiB to fit `-xx` output.
+4. Bun writes Claude's stdout through descriptor 5, a duplicate of fd 1, so the client's own
+   output looked unwritten. Channel writes are now matched by the file the descriptor resolves
+   to, using the stdout and stderr paths sealed in the capture manifest.
+
+Re-run over the sealed evidence with these fixes: the Claude session's provenance **qualifies**
+(stdout attested to the client process, 22 requests, input usage equal to `modelUsage`, only
+`claude-opus-5-5`). The Codex ledger is complete (54 attempts, 54 provider responses, stderr
+attested), but stdout is not attested: two of Codex's own JSONL writes (1,107,176 and 1,057,620
+bytes) were truncated by the old 1 MiB limit. A new declared pair is needed to show both
+end to end under the fixed capture.

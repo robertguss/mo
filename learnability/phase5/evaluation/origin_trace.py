@@ -9,6 +9,7 @@ import hashlib
 import argparse
 import collections
 import json
+import os
 import re
 from trace_storage import TraceLines, StorageError
 
@@ -79,7 +80,11 @@ def transfer_bytes(op, args, n):
     return b''.join(chunks)
 
 
-def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, evaluation_endpoint=None):
+def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, evaluation_endpoint=None, channels=None):
+    # channels: {'stdout': path, 'stderr': path} of the collector's files. A client may
+    # write them through any descriptor (Bun dups stdout to fd 5); without channels,
+    # writes to descriptors 1 and 2 are taken instead.
+    channel_paths = {k: os.path.realpath(str(v)).encode() for k, v in (channels or {}).items()}
     from origin_observer import order_births
     from origin_descriptors import DescriptorFacts
     descriptors = DescriptorFacts()
@@ -132,7 +137,8 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         if s.endswith('<unfinished ...>'):
             if pid in pending: fail('overlapping unfinished calls')
             pending_start[pid] = sequence
-            pending[pid] = s[:-len('<unfinished ...>')]
+            # strace separates the printed prefix from the marker with one space.
+            pending[pid] = s[:-len(' <unfinished ...>')] if s.endswith(' <unfinished ...>') else s[:-len('<unfinished ...>')]
             continue
         resumed = re.match(r'<\.\.\. (\w+) resumed>(.*)', s)
         if resumed:
@@ -230,15 +236,27 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         pipe = re.match(r'(\d+)<pipe:\[(\d+)\]>, ', args)
         if pipe and op in ('read', 'write', 'readv', 'writev') and result.isdigit() and int(result):
             n = int(result)
-            data = transfer_bytes(op, args, n)
+            # An uncapturable pipe transfer voids that pipe's evidence, not the trace.
+            try:
+                data_hex = transfer_bytes(op, args, n)[:n].hex()
+            except TraceError:
+                data_hex = None
             pipe_events.append(dict(pipe=pipe[2], created=pipes.get(pipe[2]), operation=op,
-                fd=int(pipe[1]), data_hex=data[:n].hex(), sender=dict(p), started=started,
+                fd=int(pipe[1]), data_hex=data_hex, sender=dict(p), started=started,
                 completed=sequence))
-        if op in ('write', 'writev') and re.match(r'1(?:<[^>]+>)?, ', args) and result.isdigit():
+        target = re.match(r'(\d+)(?:<([^>]*)>)?, ', args) if op in ('write', 'writev') else None
+        def channel(name, number):
+            if not target: return False
+            if name in channel_paths: return target[2] is not None and decode(target[2]) == channel_paths[name]
+            return target[1] == number
+        if channel('stdout', '1') and result.isdigit():
             n = int(result)
-            data = transfer_bytes(op, args, n)
-            stdout_events.append(dict(data=data[:n].decode('utf-8'), sender=dict(p), started=started, completed=sequence))
-        if op in ('write', 'writev') and re.match(r'2(?:<[^>]+>)?, ', args) and result.isdigit():
+            try:
+                text = transfer_bytes(op, args, n)[:n].decode('utf-8')
+            except (TraceError, UnicodeDecodeError):
+                text = None  # voids stdout attestation for this writer
+            stdout_events.append(dict(data=text, sender=dict(p), started=started, completed=sequence))
+        if channel('stderr', '2') and result.isdigit():
             n = int(result)
             # Diagnostic stderr may split UTF-8 across writes; keep exact bytes. An
             # uncapturable write only voids stderr attestation, not the whole trace.
@@ -251,8 +269,8 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             controls = re.findall(r'msg_controllen=(\d+)', args)
             if not controls or any(int(n) != 0 for n in controls):
                 fail('ancillary socket transfer unsupported')
-        # Explicit non-TCP transports cannot contribute to these HTTP receipts.
-        if re.match(r'\d+<(?:NETLINK|UNIX(?:-STREAM)?):\[', args): continue
+        # Explicit non-TCP transports (including DNS over UDP) cannot reach the TCP proxy.
+        if re.match(r'\d+<(?:NETLINK|UNIX(?:-STREAM)?|UDP(?:v6)?):\[', args): continue
         table = fds.setdefault(pid, {})
         flags = cloexec.setdefault(pid, set())
         endpoint = re.match(r'(\d+)<TCP:\[([^\]]+)\]>', args)

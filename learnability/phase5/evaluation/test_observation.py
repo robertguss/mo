@@ -38,6 +38,13 @@ class Controls(unittest.TestCase):
         return e,r,o,prefix+s
     def test_shell_delivery(self):
         self.assertTrue(observation.validate(*self.shell_fixture()))
+    def test_uncapturable_pipe_or_stdout_transfer_fails_closed(self):
+        e,r,o,s=self.shell_fixture()
+        e['trace']['pipe_events'][0]['data_hex']=None
+        self.assertFalse(observation.validate(e,r,o,s))
+        e,r,o,s=self.shell_fixture()
+        e['trace']['stdout_events'][0]['data']=None
+        self.assertFalse(observation.validate(e,r,o,s))
     def test_shell_printed_revision(self):
         e,r,o,s=self.shell_fixture()
         event=json.loads(s.splitlines()[0])

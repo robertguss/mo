@@ -228,7 +228,7 @@ def _written_by_client(writes, data, initial, decode):
            and w['sender'].get('exec_path') == initial['exec_path']
            and w['sender'].get('exec_argv') == initial['exec_argv']]
     # An uncapturable write by the client itself voids the channel.
-    if data is None or any(w.get('data_hex', '') is None for w in own):
+    if data is None or any(w.get('data_hex', '') is None or w.get('data', '') is None for w in own):
         return False
     return b''.join(decode(w) for w in own) == data
 

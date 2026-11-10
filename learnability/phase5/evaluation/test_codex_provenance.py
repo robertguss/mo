@@ -188,6 +188,11 @@ class SessionProvenanceTests(unittest.TestCase):
         evidence['trace']['stderr_events'][0]['data_hex'] = evidence['stderr'].hex()
         self.assertTrue(session_provenance('codex', evidence, stream)['qualified'])
 
+    def test_uncapturable_client_stdout_write_fails(self):
+        evidence, stream = self.evidence()
+        evidence['trace']['stdout_events'].append(dict(data=None, sender=dict(self.ROOT, pid=11)))
+        self.assertFalse(session_provenance('codex', evidence, stream)['qualified'])
+
     def test_uncapturable_client_write_fails(self):
         evidence, stream = self.evidence()
         evidence['trace']['stderr_events'].append(dict(data_hex=None, sender=dict(self.ROOT)))
