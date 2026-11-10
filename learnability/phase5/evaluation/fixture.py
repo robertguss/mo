@@ -31,16 +31,6 @@ class Service(base.Service):
             self.stderr.close()
             raise
 
-    def stop(self):
-        try:
-            return super().stop()
-        finally:
-            stdout = getattr(getattr(self, 'process', None), 'stdout', None)
-            if stdout is not None and not stdout.closed:
-                stdout.close()
-            if getattr(self, 'stderr', None) is not None and not self.stderr.closed:
-                self.stderr.close()
-
 
 def sources(out, control='reference'):
     out = pathlib.Path(out)
