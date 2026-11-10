@@ -122,6 +122,18 @@ class OrderingIntervals(unittest.TestCase):
         parse_trace('10 sendfile(1, 2, NULL, 3) = -1 EINVAL (Invalid argument)')
         parse_trace('10 sendfile(1, 2, NULL, 0) = 0')
 
+    def test_copy_file_range_between_regular_paths_needs_no_table_credit(self):
+        hexed = lambda path: ''.join('\\x%02x' % c for c in path.encode())
+        shared = '10 clone(flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_THREAD|CLONE_SIGHAND) = 11\n'
+        ok = '11 copy_file_range(11<' + hexed('/home/s/.claude.json') + '>, [0], 12<' + hexed('/home/s/.claude.json.backup') + '>, [0], 84, 0) = 84'
+        parse_trace(shared + ok)
+        for src, dst in (('/home/s/a', '/proc/10/mem'), ('/sys/x', '/home/s/b'), ('/home/s/a', 'pipe:[5]'),
+                         ('/home/s/a', 'TCP:[1.2.3.4:5->6.7.8.9:10]')):
+            with self.subTest(dst=dst), self.assertRaises(TraceError):
+                parse_trace(shared + '11 copy_file_range(11<' + hexed(src) + '>, NULL, 12<' + hexed(dst) + '>, NULL, 4, 0) = 4')
+        with self.assertRaises(TraceError):
+            parse_trace(shared + '11 copy_file_range(11<' + hexed('/home/s/a') + '>, NULL, 12, NULL, 4, 0) = 4')
+
     def test_pipe_transfer_bytes(self):
         trace='\n'.join(['10 pipe2([3<pipe:[123]>, 4<pipe:[123]>], O_CLOEXEC) = 0',
             '11 write(1<pipe:[123]>, "abc", 3) = 3',

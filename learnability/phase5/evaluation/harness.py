@@ -135,6 +135,12 @@ def public_stderr(text):
 def command(client, binary, prompt, url, config):
     cmd = p4.client_command(client, binary, prompt, url, config)
     if client == 'codex':
+        # Robert's decision (2026-11-10): Codex's bubblewrap sandbox uses user/PID/mount
+        # namespaces the capture cannot attribute, so Phase 5 relies on the collector's own
+        # isolation (separate account, backend firewall, private folders) instead.
+        at = cmd.index('--sandbox')
+        assert cmd[at + 1:at + 4] == ['workspace-write', '-c', 'sandbox_workspace_write.network_access=true']
+        cmd[at + 1:at + 4] = ['danger-full-access']
         cmd[-1:-1] = ['-c', 'mcp_servers.task-queue.env_http_headers={"Mo-Upgrade-Authorization"="QUEUE_UPGRADE_BEARER"}',
                       *CODEX_HTTP]
     return cmd
@@ -294,6 +300,7 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
         shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
         shutil.copyfile(out / 'origin-raw/stderr', out / 'client-stderr.txt')
+        meta['kernel'] = os.uname().release  # copy_file_range credit relies on Linux >= 5.3
         meta['exit_status'] = trace_result['returncode']
         meta['timeout'] = trace_result['timed_out']
         meta['capture'] = trace_result

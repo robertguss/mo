@@ -318,9 +318,17 @@ one `copy_file_range` that the descriptor rule cannot credit. Collection stays b
 capture qualification. Details and retained failures are in the
 [capture development record](../../learnability/phase5/evaluation/integration-development.md).
 
-Machine-local note: between 01:50 and 02:15 UTC on 2026-11-10, something outside this work
-deleted both checkouts' `build/` directories (and some `/tmp` review trees), freeing about 127 GB.
+Machine-local note: between 01:50 and 02:15 UTC on 2026-11-10, Robert's disk cleanup removed
+both checkouts' `build/` directories (and some `/tmp` review trees), freeing about 127 GB.
 Build logs that earlier records cite under `build/` (for example `build/pause-native-final-gcc.txt`
 and `build/review-*.txt`) no longer exist. The repository records keep their stated results; the
 logs themselves cannot be re-read. Private evidence under `~/.mo-phase5-harness` and the
 `phase5-test-private-*` roots is intact.
+
+**Decision (Robert, 2026-11-10):** Phase 5 runs Codex with `--sandbox danger-full-access`
+instead of its bubblewrap `workspace-write` sandbox, relying on the collector's isolation
+(separate account, backend firewall, private folders). This changes the condition earlier
+experiments used and is disclosed as such. The descriptor rule also now credits a successful
+`copy_file_range` between two non-virtual paths without table facts: since Linux 5.3 that call
+succeeds only between regular files, so it cannot carry socket or pipe bytes. Re-run over the
+retained Claude trace, process integrity now passes; the run records the host kernel.

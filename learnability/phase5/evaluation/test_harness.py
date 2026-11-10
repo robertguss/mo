@@ -124,6 +124,8 @@ class RunnerTests(unittest.TestCase):
         cmd = h.command('codex', Path('/bin/codex'), 'p', 'http://x/mcp', Path('/c'))
         self.assertIn('model_provider="responses_http"', cmd)
         self.assertIn('supports_websockets=false', ' '.join(cmd))
+        self.assertEqual(cmd[cmd.index('--sandbox') + 1], 'danger-full-access')
+        self.assertNotIn('workspace-write', ' '.join(cmd))
         self.assertNotIn('responses_http', ' '.join(h.command('claude', Path('/bin/claude'), 'p', 'http://x/mcp', Path('/c'))))
 
     def test_codex_alone_gets_the_characterized_log_filter(self):
