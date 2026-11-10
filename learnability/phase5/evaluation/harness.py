@@ -195,6 +195,13 @@ def retain_optional(partial, role, path):
 
 
 def collect(l, spec, out, slot, development=False, limit=3600):
+    import fcntl
+    with (l.state / 'collector.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return collect_locked(l, spec, out, slot, development, limit)
+
+
+def collect_locked(l, spec, out, slot, development=False, limit=3600):
     if slot not in range(1, 5) or (not development and limit != 3600):
         raise ValueError('invalid slot or time limit')
     if limit <= 0:

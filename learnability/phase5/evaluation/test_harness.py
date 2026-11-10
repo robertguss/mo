@@ -157,15 +157,30 @@ class RunnerTests(unittest.TestCase):
                 path.write_text(''.join(json.dumps(e) + '\n' for e in events))
                 self.assertEqual(h.final_message(client, path), answer)
 
+    def test_concurrent_collection_cannot_reset_account(self):
+        import fcntl
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            with (state / 'collector.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.object(h.p4, 'reset') as reset:
+                    with self.assertRaises(BlockingIOError):
+                        h.collect(SimpleNamespace(state=state), 'absent', state / 'out', 1)
+                    reset.assert_not_called()
+            self.assertFalse((state / 'out').exists())
+
     def test_scored_collection_requires_freeze(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             spec = root / 'spec.json'
             spec.write_text(json.dumps(dict(source=tmp, context=tmp, data=tmp,
                                            freeze=str(root / 'missing-freeze.json'))))
+            from types import SimpleNamespace
             with patch.object(h.p4, 'check_private'), patch.object(h, 'check'):
-                with self.assertRaises(FileNotFoundError):
-                    h.collect(h.layout(), spec, root / 'out', 1)
+                with self.assertRaises(FileNotFoundError) as error:
+                    h.collect(SimpleNamespace(state=root), spec, root / 'out', 1)
+                self.assertEqual(error.exception.filename, str(root / 'missing-freeze.json'))
 
     def test_launch_failure_resets_without_unverified_source_copy(self):
         import contextlib

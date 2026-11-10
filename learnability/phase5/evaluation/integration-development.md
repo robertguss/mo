@@ -1051,3 +1051,25 @@ also remains between the client's exit and the log closing.
 The no-model collector test (`test_collector`: success, curl, urllib, timeout and cleanup-failure
 cases with a stub client under a separate test account) passed in 563.047 seconds with the
 launch-path changes, using the evaluation binary.
+
+### Freeze preparation and concurrent collection exclusion (2026-11-10)
+
+Scored collection's unconditional development block was removed after the five
+recorded development pairs. Frozen inputs, exact client versions, the one-hour
+limit, durable reservations and all grading dimensions remain required. No new
+scored session has launched; Robert's approval remains required before slot one.
+
+The independent freeze reviewer found that account reset preceded slot reservation,
+so a competing invocation could kill an active attempt before being rejected.
+Collection now holds a nonblocking exclusive account-state lock through setup,
+launch, grading and cleanup. A regression control holds that lock and verifies
+that another collection is rejected before allocating output or resetting the
+account. The focused harness suite passes 18 tests. The missing-freeze control
+uses temporary state and checks the exact missing filename.
+
+Build continuity at candidate 42327013: all 285 inputs match e53a822e and the
+root-owned installed build tree. Compared with M6, runtime/mcp.mo and
+src/tools/protocol-call.c differ. The M6 pause and kill-drill results therefore
+cannot serve as current-candidate evidence. Their original results remain intact.
+The installed mo and both client hashes match the declared pins. Full freeze,
+resource qualification, controls and independent review remain in preparation.
