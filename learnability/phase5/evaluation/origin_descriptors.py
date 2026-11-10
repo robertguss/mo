@@ -1,4 +1,7 @@
-"""Collector descriptor facts; path annotations never establish file type.
+"""Collector descriptor facts; path annotations alone never establish file type.
+
+copy_file_range credit relies on the kernel accepting only regular files, which
+holds from Linux 5.3; the collector refuses to run on older kernels.
 
 Shared descriptor tables cannot grant regular-file transfer credit. A successful
 exec creates an independent descriptor context, so unrelated client threads do
@@ -42,9 +45,12 @@ class DescriptorFacts:
                 return False
             operands = re.findall(r'(?:^|, )(\d+)(?:<[^>]*>)?', args)
             needed = 2 if op == 'sendfile' else 1
-            # copy_file_range remains conservative: require actual descriptor
-            # facts too, rather than depending on filesystem-specific semantics.
             if op == 'copy_file_range':
+                ends = [re.sub(r'\\x([0-9a-fA-F]{2})', lambda m: chr(int(m[1], 16)), e)
+                        for e in re.findall(r'(?:^|, )\d+<([^>]*)>', args)]
+                if len(ends) == 2 and all(e.startswith('/') and not e.startswith(('/proc/', '/sys/', '/dev/'))
+                                          for e in ends):
+                    return False
                 match = re.match(r'(\d+)(?:<[^>]*>)?(?:\(deleted\))?, [^,]+, (\d+)', args)
                 operands = list(match.groups()) if match else []
                 needed = 2

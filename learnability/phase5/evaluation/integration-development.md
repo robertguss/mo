@@ -824,3 +824,165 @@ Clang, targeted sanitizers, formatting/dependency checks and pause measurements
 remain as recorded in the pause development note. Full-session resource bounds,
 actual serving-model evidence, real-client transport qualification and final
 four-slot publication remain incomplete. No release/merge approval is implied.
+
+## Real-client development collectors (2026-11-10)
+
+Declared before launch (private `~/.mo-phase5-harness/real-collector-development-20261110/declaration.json`):
+exactly one DEVELOPMENT Codex slot and one DEVELOPMENT Claude slot through `harness.py run
+--development --limit 3600` at commit c5e6fa19, no replacements, scored 0. Predictions: both
+traces parse with no rejected transfer; channels attested; provenance qualified unless a real
+session makes an unclassified provider request or bills an auxiliary model.
+
+First attempt: both slots refused **before launch** (`IdentityError`, launched=false, no model
+run). The Nov 8 install left `/opt/mo-phase5/bin/mo` at mode 0755; the capture requires no write
+bits, and current `harness.setup` already applies `chmod 0555`. That one step was applied
+(SHA-256 `517da061…` unchanged), the refused outputs were retained as `prelaunch-refusal-*`,
+and the same declaration ran. Cumulative development model attempts are now Codex 4, Claude 2.
+
+| Slot | Client | Wall | Exit | Decoded trace | gzip | Collector peak RSS |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Codex | 1212 s | 0 | 3,666,228,166 B | 447,596,106 B | 461,740 KiB |
+| 2 | Claude | 619 s | 0 | 1,280,413,604 B | — | 254,224 KiB |
+
+Both agents completed the upgrade: task state, activation identity and source tests passed.
+**Both captures failed process integrity**, so nothing was consumed and command origin, revision
+observation, traffic completeness and model provenance all failed closed. The predictions about
+capture were wrong; the failures are retained.
+
+- **Codex:** `ambiguous child ordering`, `unregistered descendant`, `unsupported isolation or memory
+  transition`, `unsupported kernel transfer`. Cause: Codex's own `--sandbox workspace-write` runs
+  commands through `/usr/bin/bwrap` (114 execs, 76 `unshare(CLONE_NEWUSER…)`). PID namespaces make
+  `clone` return namespace-local PIDs, and the cleared descriptor tables make later file copies
+  (725 `copy_file_range`) and one `sendfile` from a `/tmp/queue-upg…` file unprovable. Supporting
+  this inside the capture is not a narrow repair: a mount namespace can rebind
+  `/opt/mo-phase5/bin/mo`, which would defeat path-based push identity.
+- **Claude:** only `unsupported kernel transfer`: one `copy_file_range` by the client's own
+  multi-threaded process backing up `~/.claude.json` (shared descriptor table, so no regular-file
+  credit). Single-threaded `cat`/`cp` copies were credited as designed.
+
+**Provenance route on the real streams (adapters run directly, development only).** Codex:
+38 logged `/responses` attempts, 38 provider responses, all `gpt-6.1-sol`/`xhigh`, usage reconciled,
+no failed attempts, no unclassified provider request, one thread. Claude: 34 requests, all
+`claude-opus-5-5`, input usage equal to terminal `modelUsage`, no other model. These would qualify
+once the channels are attested; they are not attested here because the capture failed.
+
+Resource note: at this rate a 3600 s Codex slot is about 11 GB decoded and 1.3 GB compressed
+trace. That is a single-session observation, not a bound.
+
+Next work depends on a decision about Codex's sandbox (it is the evaluation condition all earlier
+experiments used); see `docs/status/phase5-run.md`.
+
+### Requalification pair (2026-11-10, after the sandbox decision)
+
+Declared before launch (`real-collector-development-20261110-two/declaration.json`, commit
+a4ff8621): one Codex and one Claude DEVELOPMENT slot, no replacements, scored 0. Cumulative
+development model attempts: Codex 5, Claude 3.
+
+| Slot | Client | Wall | Exit | Decoded trace | Process integrity | Reconciliation |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Codex (`danger-full-access`) | 1581 s | 0 | 4,991,762,484 B | verified, no errors | `TraceError` |
+| 2 | Claude | 410 s | 0 | 875,206,012 B | verified, no errors | `TraceError` |
+
+Both agents again completed the upgrade with correct state and activation identity. The
+sandbox decision and the `copy_file_range` rule cleared every process-integrity error, which
+was the prediction. The prediction that both traces would parse was wrong. Re-parsing the
+sealed traces found four parser defects, each fixed with a test and retained here:
+
+1. A resumed call kept the space strace prints before `<unfinished ...>`, so resumed `pipe2`
+   and vector transfers (`writev(…, 2 ) = 543`) failed exact matches. The pending prefix now
+   drops that one separator.
+2. DNS over UDP (`UDP`/`UDPv6` sockets) hit the TCP-only rule. UDP cannot reach the TCP proxy;
+   it now joins NETLINK and UNIX as an explicitly skipped transport.
+3. Codex threads make single pipe and stdout writes of about 1.1 MB, above strace's
+   `-s 1048576`. Any truncated transfer aborted the whole parse. A truncated pipe, stdout or
+   stderr transfer now voids only that event (its pipe or channel then fails closed), and the
+   capture uses `-s 4194304`, with the trace record cap raised to 32 MiB to fit `-xx` output.
+4. Bun writes Claude's stdout through descriptor 5, a duplicate of fd 1, so the client's own
+   output looked unwritten. Channel writes are now matched by the file the descriptor resolves
+   to, using the stdout and stderr paths sealed in the capture manifest.
+
+Re-run over the sealed evidence with these fixes: the Claude session's provenance **qualifies**
+(stdout attested to the client process, 22 requests, input usage equal to `modelUsage`, only
+`claude-opus-5-5`). The Codex ledger is complete (54 attempts, 54 provider responses, stderr
+attested), but stdout is not attested: two of Codex's own JSONL writes (1,107,176 and 1,057,620
+bytes) were truncated by the old 1 MiB limit. A new declared pair is needed to show both
+end to end under the fixed capture.
+
+### Third pair and offline regrade (2026-11-10)
+
+Declared before launch (`real-collector-development-20261110-three/declaration.json`, commit
+fa0daefe), one Codex and one Claude DEVELOPMENT slot, scored 0. Cumulative development model
+attempts: Codex 6, Claude 4.
+
+Both captures passed integrity and both traces parsed, as predicted. Both slots then failed
+reconciliation with `JoinError`, which was not predicted: each MCP client opens a `GET` event
+stream, the upstream refuses it, and the base proxy answers with a synthesized 502 whose body
+digest the Phase 5 recorder never took (16 of 16 requests matched otherwise). The recorder now
+rebuilds a synthesized reply's digest from the recorded text when, and only when, its length
+equals the recorded byte count. Run three's proxy logs were written before that fix and stay as
+recorded.
+
+To find the next failure without another model run, the protected regrade was run over the two
+sealed bundles with the corrected 502 rule applied to the rows in memory (development diagnosis;
+the sealed files are unchanged). It found one more defect: observation compared senders by thread
+ID, and both clients are multi-threaded (Codex's pipe reads and stdout writes happen on different
+tokio threads). Senders now carry a process identity (thread-group ID with the leader's
+incarnation), and HTTP receipts carry it too. Results after both fixes:
+
+- **Codex: all seven graded dimensions pass** (task state, activation identity, command origin,
+  final answer, source tests, traffic completeness, model provenance). Publication integrity is
+  not graded by the regrade.
+- **Claude: six pass; final answer fails** with "post-activation revision observation not proven".
+  Claude ran its revision `curl` inside a larger Bash command, so the shell output combines the
+  revision response with other responses and status lines. The observation rule accepts only a
+  shell result that is exactly the response (or the bare value) delivered by one writer, and
+  rejects mixed output. The agent did see the response; the instrument cannot attribute it.
+
+### Mixed shell output (Robert's decision, 2026-11-10)
+
+Robert chose to accept the revision response inside larger shell output, with an exact chain
+and no new agent instruction. The rule: the process that received the response must have written
+exactly that body (same SHA-256 as the traced HTTP response) to its standard output; the client
+process must have read it from the same pipe or file afterwards; and the typed shell result the
+client emitted must contain it, all after the commit and before the final message. Claude's shell
+writes command output to a regular file that the client reads with `pread64`, so the trace now
+records writes to a process's standard-output file and later reads of that file.
+
+Controls reject a different writer forging the same bytes, a client that never read the object,
+altered bytes, a read that precedes the write, an uncaptured transfer and a pipe whose creation
+was not observed. Re-run over the two sealed run-three bundles (corrected 502 rule applied in
+memory, sealed files unchanged): **Codex and Claude both pass all seven graded dimensions.**
+This is development evidence from one session per client, not the scored cohort.
+
+Code comments added earlier on this branch were removed; their reasoning is in these records.
+
+### Second independent review (2026-11-10)
+
+Six reviewers and a validator reviewed a4c0c3a4..b04a5eb3 (one session model, adversarial lens
+in-process, no cross-model peer). Security and correctness traced the `copy_file_range` credit,
+channel matching, per-event voiding, process identity and the 502 digests and found each fails
+closed. Three findings were confirmed and are fixed:
+
+1. **False pass in mixed delivery (P1).** The rule compared only the client's latest read with
+   the receiver's last write and searched all reads together. A second process could write the
+   predicted body first, the client could read it, and any later read of the same object then
+   satisfied the rule. Now only client reads that finish after the receiver's first write, and
+   before the typed result, are searched. The reviewer's probe returned `True` before the fix
+   and `False` after. The suggestion to reject any other writer on the object was not adopted:
+   it would undo the mixed-output decision, since Claude's shell file always has several writers.
+2. The recorded `observation_coverage` text still said mixed writers reject. It now states the rule.
+3. The mixed-delivery guards had no negative tests. Controls now cover an early forged read, a
+   write before the response arrived, a read after the typed result, a result that omits the
+   body, and two matching objects.
+
+Also fixed from residuals: client stdout bytes now round-trip when a write splits a multi-byte
+character, and the collector refuses to run below Linux 5.3, the kernel floor the
+`copy_file_range` credit depends on. Both sealed run-three bundles still pass all seven regraded
+dimensions after these changes.
+
+Open risks, not fixed: Codex remote compaction in a long session may not reconcile with turn
+usage and would fail provenance closed; a vectored transfer above the 32 MiB record cap fails
+the capture; a client that re-reads its output file only after emitting the result fails
+observation; what `codex_core=debug` echoes to stderr is unaudited, and although channel
+attestation limits that text to the client's own writes, a forged provider record inside it
+is not excluded.

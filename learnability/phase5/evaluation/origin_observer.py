@@ -39,7 +39,7 @@ class TraceRun:
             raise RuntimeError('trace lifetime already consumed')
         self.used = True
         # -xx makes arbitrary payload bytes unambiguous; -s bounds each buffer.
-        args = ['strace', '-f', '-v', '-yy', '-xx', '-s', '1048576', '-o',
+        args = ['strace', '-f', '-v', '-yy', '-xx', '-s', '4194304', '-o',
                 str(self.directory / 'trace.fifo'), '-e',
                 'trace=' + TRACE_FACTS + ',%process,%network,pipe,pipe2,read,write,readv,writev,pread64,pwrite64,preadv,pwritev,preadv2,pwritev2,mmap,mprotect,pkey_mprotect,process_vm_writev,close,dup,dup2,dup3,fcntl,unshare,setns,ptrace,' + ','.join(KERNEL + ASYNC),
                 '--', *command]

@@ -1,4 +1,5 @@
 """Post-activation observation over protected HTTP, pipe and client event records."""
+import hashlib
 import json
 
 def validate(evidence, rows, origins, stream):
@@ -6,7 +7,8 @@ def validate(evidence, rows, origins, stream):
         if evidence['stdout'] != stream: return False
         trace = evidence['trace']
         writes = [w for w in trace['stdout_events'] if evidence['client_path'] == w['sender']['exec_path']]
-        if ''.join(w['data'] for w in writes).encode() != stream: return False
+        if any(w['data'] is None for w in writes): return False
+        if ''.join(w['data'] for w in writes).encode('utf-8', 'surrogateescape') != stream: return False
         events = [json.loads(line) for line in stream.splitlines()]
         final = events[-2]
         if events[-1].get('type') == 'turn.completed':
@@ -25,11 +27,11 @@ def validate(evidence, rows, origins, stream):
         cursor = 0
         final_writes = []
         for w in writes:
-            end = cursor + len(w['data'].encode())
+            end = cursor + len(w['data'].encode('utf-8', 'surrogateescape'))
             if end > offset: final_writes.append(w)
             cursor = end
         owner = final_writes[0]['sender']
-        keys = ('pid', 'incarnation', 'generation', 'exec_path', 'exec_argv', 'session_id')
+        keys = ('process', 'generation', 'exec_path', 'exec_argv', 'session_id')
         same = lambda a,b: all(a[k] == b[k] for k in keys)
         initial = next(e for e in trace['exec_events'] if e['exec_path'] == evidence['client_path'])
         if not same(initial, owner): return False
@@ -69,31 +71,40 @@ def validate(evidence, rows, origins, stream):
                 matches = []
                 lines = stream.splitlines(keepends=True)
                 for ordinal, result in candidates:
+                    exact = False
                     if native:
                         if result != body['result']['structuredContent']: continue
                     else:
                         try: parsed = json.loads(result)
-                        except (ValueError, TypeError): continue
-                        scalar = type(parsed) in (str, int) and str(parsed) == value
-                        if not scalar and parsed not in (body, body['result']['structuredContent']): continue
+                        except (ValueError, TypeError): parsed = None
+                        exact = (type(parsed) in (str, int) and str(parsed) == value
+                                 or parsed in (body, body['result']['structuredContent']))
+                        if not exact and not isinstance(result, str): continue
                     lo = sum(len(line) for line in lines[:ordinal])
                     hi = lo + len(lines[ordinal])
                     cursor = 0
                     emission = []
                     for write in writes:
-                        end = cursor + len(write['data'].encode())
+                        end = cursor + len(write['data'].encode('utf-8', 'surrogateescape'))
                         if end > lo and cursor < hi: emission.append(write)
                         cursor = end
                     if (emission and all(same(w['sender'], owner) for w in emission)
                             and received_at < min(w['started'] for w in emission)
                             and max(w['completed'] for w in emission) < start
-                            and (native or pipe_delivery(trace, req['sender'], owner, same,
-                                received_at, min(w['started'] for w in emission), result))):
+                            and delivered(native, exact, trace, req['sender'], owner, same, received,
+                                          min(w['started'] for w in emission), result)):
                         matches.append(ordinal)
                 if len(matches) == 1: return True
         return False
     except (KeyError, IndexError, TypeError, ValueError, StopIteration):
         return False
+
+
+def delivered(native, exact, trace, child, owner, same, received, emitted_at, output):
+    if native: return True
+    received_at = max(e['completed'] for e in received['occurrences'])
+    if exact and pipe_delivery(trace, child, owner, same, received_at, emitted_at, output): return True
+    return mixed_delivery(trace, child, owner, same, received, emitted_at, output)
 
 
 def typed_results(events):
@@ -180,6 +191,7 @@ def pipe_delivery(trace, child, owner, same, received_at, emitted_at, output):
         writes = [e for e in transfers if e['operation'] == 'write']
         reads = [e for e in transfers if e['operation'] == 'read']
         if not writes or not reads: continue
+        if any(e['data_hex'] is None for e in transfers): continue
         if any(e['created'] is None or e['created'] >= e['started'] for e in transfers): continue
         if any(not same(e['sender'], child) or e['fd'] != 1 for e in writes): continue
         if any(not same(e['sender'], owner) for e in reads): continue
@@ -198,4 +210,36 @@ def pipe_delivery(trace, child, owner, same, received_at, emitted_at, output):
             if consumed > available: break
         else:
             matches += 1
+    return matches == 1
+
+
+def mixed_delivery(trace, child, owner, same, received, emitted_at, output):
+    """Accept the response inside larger shell output only through an exact chain.
+
+    The process that received the response must have written exactly that body to
+    its standard output, and the client must have read it from the same pipe or
+    file before emitting the typed result that contains it. Only client reads that
+    finish after the receiver's first write count, so bytes another writer placed
+    there earlier cannot stand in for the response.
+    """
+    received_at = max(e['completed'] for e in received['occurrences'])
+    objects = {}
+    for event in trace.get('pipe_events', []):
+        objects.setdefault(('pipe', event['pipe']), []).append(event)
+    for event in trace.get('file_events', []):
+        objects.setdefault(('file', event['path']), []).append(event)
+    matches = 0
+    for transfers in objects.values():
+        sent = [e for e in transfers if e['operation'].startswith('write') and e['fd'] == 1 and same(e['sender'], child)]
+        reads = [e for e in transfers if e['operation'].startswith('read') and same(e['sender'], owner)]
+        if not sent or not reads or any(e['data_hex'] is None for e in sent + reads): continue
+        if any('pipe' in e and (e['created'] is None or e['created'] >= e['started']) for e in transfers): continue
+        body = b''.join(bytes.fromhex(e['data_hex']) for e in sent)
+        if hashlib.sha256(body).hexdigest() != received['body_sha256']: continue
+        if min(e['started'] for e in sent) <= received_at: continue
+        wrote_at = min(e['completed'] for e in sent)
+        counted = [e for e in reads if wrote_at < e['completed'] < emitted_at]
+        if body not in b''.join(bytes.fromhex(e['data_hex']) for e in counted): continue
+        if body.decode() not in output: continue
+        matches += 1
     return matches == 1

@@ -120,25 +120,27 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'merged repair'):
                 h.freeze(path, h.layout())
 
-    def test_fallback_retained(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'stream'
-            path.write_text('{"model":"claude-opus-4-8","fallback":true}\n')
-            record = h.models(path)
-            self.assertEqual(record['reported_models'], [])
-            self.assertTrue(record['events'][0]['fallback'])
+    def test_codex_uses_traced_http_transport(self):
+        cmd = h.command('codex', Path('/bin/codex'), 'p', 'http://x/mcp', Path('/c'))
+        self.assertIn('model_provider="responses_http"', cmd)
+        self.assertIn('supports_websockets=false', ' '.join(cmd))
+        self.assertEqual(cmd[cmd.index('--sandbox') + 1], 'danger-full-access')
+        self.assertNotIn('workspace-write', ' '.join(cmd))
+        self.assertNotIn('responses_http', ' '.join(h.command('claude', Path('/bin/claude'), 'p', 'http://x/mcp', Path('/c'))))
 
-    def test_untrusted_model_claims_never_qualify(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / 'stream'
-            for event in ({'model': 'gpt-6.1-sol'},
-                          {'type': 'item.completed', 'item': {'model': 'gpt-6.1-sol'}},
-                          {'session_id': 'other', 'message': {'model': 'claude-opus-5-5'}}):
-                path.write_text(json.dumps(event) + '\n')
-                record = h.models(path)
-                self.assertFalse(record['qualified'])
-                self.assertEqual(record['reported_models'], [])
-                self.assertEqual(record['events'], [event])
+    def test_codex_alone_gets_the_characterized_log_filter(self):
+        self.assertEqual(h.client_environment('codex', {'A': '1'}),
+                         {'A': '1', 'RUST_LOG': 'codex_api=trace,codex_core=debug,codex_http_client=debug'})
+        self.assertEqual(h.client_environment('claude', {'A': '1'}), {'A': '1'})
+
+    def test_public_stderr_drops_every_tracing_record(self):
+        sse = ('2026-11-09T20:33:31Z TRACE codex_api::sse::responses: SSE event: '
+               + json.dumps({'response': {'delta': 'a\u2028b', 'safety_identifier': 'private'}}, ensure_ascii=False))
+        text = '\n'.join([sse,
+            '2026-11-09T20:33:30Z DEBUG session_loop{thread_id=t}: codex_http_client::client: Request completed set-cookie',
+            '2026-11-09T20:33:30Z DEBUG codex_core::session::session: Configuring session',
+            '  INFO codex_core::x: indented', 'error: plain client message', ''])
+        self.assertEqual(h.public_stderr(text), ['error: plain client message'])
 
     def test_typed_final_messages(self):
         with tempfile.TemporaryDirectory() as tmp:

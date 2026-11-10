@@ -9,6 +9,7 @@ import hashlib
 import argparse
 import collections
 import json
+import os
 import re
 from trace_storage import TraceLines, StorageError
 
@@ -79,7 +80,8 @@ def transfer_bytes(op, args, n):
     return b''.join(chunks)
 
 
-def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, evaluation_endpoint=None):
+def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, evaluation_endpoint=None, channels=None):
+    channel_paths = {k: os.path.realpath(str(v)).encode() for k, v in (channels or {}).items()}
     from origin_observer import order_births
     from origin_descriptors import DescriptorFacts
     descriptors = DescriptorFacts()
@@ -103,7 +105,10 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         return next(iter(values)) if values else None
     exec_events = []
     stdout_events = []
+    stderr_events = []
     pipe_events = []
+    file_events = []
+    stdout_files = set()
     pipes = {}
     processes = {}
     pending = {}
@@ -116,7 +121,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
     events = collections.Counter()
     def proc(pid):
         if pid not in processes:
-            processes[pid] = {'pid': pid, 'tgid': pid, 'incarnation': 1, 'exec_path': None, 'exec_argv': None, 'session_id': session_id, 'generation': 0, 'dead': False}
+            processes[pid] = {'pid': pid, 'tgid': pid, 'incarnation': 1, 'process': f'{pid}:1', 'exec_path': None, 'exec_argv': None, 'session_id': session_id, 'generation': 0, 'dead': False}
         return processes[pid]
     for sequence, raw in enumerate(text.splitlines(), 1):
         started = sequence
@@ -131,7 +136,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         if s.endswith('<unfinished ...>'):
             if pid in pending: fail('overlapping unfinished calls')
             pending_start[pid] = sequence
-            pending[pid] = s[:-len('<unfinished ...>')]
+            pending[pid] = s[:-len(' <unfinished ...>')] if s.endswith(' <unfinished ...>') else s[:-len('<unfinished ...>')]
             continue
         resumed = re.match(r'<\.\.\. (\w+) resumed>(.*)', s)
         if resumed:
@@ -164,7 +169,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         events[op] += 1
         if p['dead']:
             fds[pid] = {}
-            p = processes[pid] = dict(pid=pid, tgid=pid, incarnation=p['incarnation']+1, exec_path=None, exec_argv=None, session_id=session_id, generation=0, dead=False)
+            p = processes[pid] = dict(pid=pid, tgid=pid, incarnation=p['incarnation']+1, process=f"{pid}:{p['incarnation']+1}", exec_path=None, exec_argv=None, session_id=session_id, generation=0, dead=False)
         if op in ('clone', 'clone3', 'fork', 'vfork') and re.match(r'[1-9]\d*$', result):
             child = int(result)
             thread = 'CLONE_THREAD' in args
@@ -177,8 +182,9 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
             if child in processes and not processes[child]['dead']: fail('PID lifecycle ambiguity')
             old = processes.get(child)
             p['executable_mappings'] = processes[p['tgid']].setdefault('executable_mappings', [])
-            processes[child] = dict(p, pid=child, tgid=p['tgid'] if thread else child,
-                                    incarnation=old['incarnation']+1 if old else 1)
+            incarnation = old['incarnation']+1 if old else 1
+            processes[child] = dict(p, pid=child, tgid=p['tgid'] if thread else child, incarnation=incarnation,
+                                    process=p['process'] if thread else f'{child}:{incarnation}')
             if 'CLONE_VM' not in args and op != 'vfork':
                 processes[child]['executable_mappings'] = list(p.get('executable_mappings', []))
         if op in ('execve', 'execveat') and result == '0':
@@ -229,20 +235,48 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         pipe = re.match(r'(\d+)<pipe:\[(\d+)\]>, ', args)
         if pipe and op in ('read', 'write', 'readv', 'writev') and result.isdigit() and int(result):
             n = int(result)
-            data = transfer_bytes(op, args, n)
+            try:
+                data_hex = transfer_bytes(op, args, n)[:n].hex()
+            except TraceError:
+                data_hex = None
             pipe_events.append(dict(pipe=pipe[2], created=pipes.get(pipe[2]), operation=op,
-                fd=int(pipe[1]), data_hex=data[:n].hex(), sender=dict(p), started=started,
+                fd=int(pipe[1]), data_hex=data_hex, sender=dict(p), started=started,
                 completed=sequence))
-        if op in ('write', 'writev') and re.match(r'1(?:<[^>]+>)?, ', args) and result.isdigit():
+        moved = re.match(r'(\d+)<((?:\\x2f|/)[^>]*)>, ', args) if result.isdigit() and int(result) else None
+        writes_stdout = bool(moved) and op in ('write', 'writev') and moved[1] == '1' and decode(moved[2]) not in channel_paths.values()
+        if writes_stdout or moved and op in ('read', 'readv', 'pread64') and moved[2] in stdout_files:
+            stdout_files.add(moved[2])
+            try:
+                data_hex = transfer_bytes('read' if op == 'pread64' else op, args, int(result)).hex()
+            except TraceError:
+                data_hex = None
+            file_events.append(dict(path=moved[2], operation='write' if writes_stdout else 'read', fd=int(moved[1]),
+                data_hex=data_hex, sender=dict(p), started=started, completed=sequence))
+        target = re.match(r'(\d+)(?:<([^>]*)>)?, ', args) if op in ('write', 'writev') else None
+        def channel(name, number):
+            if not target: return False
+            if name in channel_paths: return target[2] is not None and decode(target[2]) == channel_paths[name]
+            return target[1] == number
+        if channel('stdout', '1') and result.isdigit():
             n = int(result)
-            data = transfer_bytes(op, args, n)
-            stdout_events.append(dict(data=data[:n].decode('utf-8'), sender=dict(p), started=started, completed=sequence))
+            try:
+                text = transfer_bytes(op, args, n)[:n].decode('utf-8', 'surrogateescape')
+            except TraceError:
+                text = None
+            stdout_events.append(dict(data=text, sender=dict(p), started=started, completed=sequence))
+        if channel('stderr', '2') and result.isdigit():
+            n = int(result)
+            try:
+                data_hex = transfer_bytes(op, args, n)[:n].hex()
+            except TraceError:
+                data_hex = None
+            stderr_events.append(dict(data_hex=data_hex, sender=dict(p)))
         if op in ('sendmsg', 'recvmsg', 'sendmmsg', 'recvmmsg') and not result.startswith('-1'):
             controls = re.findall(r'msg_controllen=(\d+)', args)
             if not controls or any(int(n) != 0 for n in controls):
                 fail('ancillary socket transfer unsupported')
         # Explicit non-TCP transports cannot contribute to these HTTP receipts.
-        if re.match(r'\d+<(?:NETLINK|UNIX(?:-STREAM)?):\[', args): continue
+        if re.match(r'\d+<(?:NETLINK|UNIX(?:-STREAM)?|UDP(?:v6)?):\[', args): continue
         table = fds.setdefault(pid, {})
         flags = cloexec.setdefault(pid, set())
         endpoint = re.match(r'(\d+)<TCP:\[([^\]]+)\]>', args)
@@ -312,7 +346,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
         if not n: continue
         data = transfer_bytes(op, args, n)
         image = processes[p['tgid']]
-        owner = {k:image[k] for k in ('pid','incarnation','exec_path','exec_argv','session_id','generation')}
+        owner = {k:image[k] for k in ('pid','incarnation','process','exec_path','exec_argv','session_id','generation')}
         owner.update(loader_context_clean=image.get('loader_context_clean', False),
                      executable_mappings=list(image.get('executable_mappings', [])))
         if key not in connections and resolved is not None and any(
@@ -376,7 +410,7 @@ def parse_trace(text, default_pid=None, *, tcp_snapshots=(), session_id=None, ev
                         receipt['argument_count']=len(params.get('arguments',{})) if isinstance(params,dict) and isinstance(params.get('arguments',{}),dict) else 0
                 except (ValueError,UnicodeError): receipt['json_object']=False
                 output.append(receipt); pos=stop
-    return dict(requests=requests,responses=responses,event_counts=dict(events), stdout_events=stdout_events, pipe_events=pipe_events, exec_events=exec_events, binary_hash_verified=False)
+    return dict(requests=requests,responses=responses,event_counts=dict(events), stdout_events=stdout_events, stderr_events=stderr_events, pipe_events=pipe_events, file_events=file_events, exec_events=exec_events, binary_hash_verified=False)
 
 
 if __name__ == '__main__':

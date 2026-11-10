@@ -52,7 +52,8 @@ class ReplayReceipt:
                 or snapshot['trace_sha256'] != m['files']['trace']['retained']['sha256']):
             identity.reject()
         parsed = origin_trace.parse_trace(raw, session_id=self.session,
-            tcp_snapshots=snapshot['snapshots'], evaluation_endpoint=p['evaluation_endpoint'])
+            tcp_snapshots=snapshot['snapshots'], evaluation_endpoint=p['evaluation_endpoint'],
+            channels={k: p['capture'][k]['path'] for k in ('stdout', 'stderr') if k in p['capture']} or None)
         integrity = origin_observer.process_integrity(raw)
         for direction in ('requests', 'responses'):
             for receipt in parsed[direction]:
@@ -69,6 +70,7 @@ class ReplayReceipt:
         return dict(integrity=integrity, trace=parsed,
             proxy_rows=proxy.base.entries(self.root / 'proxy_log'),
             stdout=(self.root / 'stdout').read_bytes(),
+            stderr=(self.root / 'stderr').read_bytes() if 'stderr' in m['files'] else None,
             client_path=p['capture']['client_path'], qualified=False)
 
 
@@ -172,12 +174,16 @@ def regrade(root, *, session_id, session_uid, workspace_parent):
         if getattr(source, 'timed_out', False):
             verdict['reasons'].append('source tests timed out')
         verdict['dimensions'].update(source_tests=source.returncode == 0,
-            traffic_completeness=matched['match'], model_provenance=False)
+            traffic_completeness=matched['match'],
+            model_provenance=matched['model_provenance']['qualified'] is True)
         verdict.update(evidence_class='DEVELOPMENT' if m['launch']['development'] is True else 'FINAL',
                        slot=m['launch']['slot'], client=client)
         verdict.update(launch_binding(m))
         verdict['correct'] = False
-        verdict['limitations'] = ['Serving-model provenance remains unqualified.',
+        provenance = matched['model_provenance']
+        verdict['limitations'] = [('Serving-model provenance qualified from sealed client channels.'
+            if provenance['qualified'] is True else
+            'Serving-model provenance unqualified: ' + str(provenance.get('reason'))),
             'Publication integrity requires publisher scan and archive verification.',
             'Replay requires unchanged protected system loader and mapped libraries.']
         return verdict

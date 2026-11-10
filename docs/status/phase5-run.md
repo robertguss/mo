@@ -287,3 +287,67 @@ regression suite passed 237 tests; this is not real-client qualification. A Node
 keepalive/spawn control exposed successful io_uring transfers that remain
 unsupported and are rejected. See the [capture development record](../../learnability/phase5/evaluation/integration-development.md)
 for failed controls, repairs and remaining coverage.
+
+## Model provenance route (development, 2026-11-10)
+
+Both frozen clients now have a typed actual-model route, qualified against retained
+real captures, with no new model sessions (cumulative development attempts stay
+Codex 3, Claude 1; scored 0). Codex: the provider's own `response.model` and
+`reasoning.effort` in every traced HTTP response, bound one-to-one to the client's
+logged `/responses` attempts and reconciled with its turn usage. Claude: provider
+`message.model` per request ID, with per-request input usage summing exactly to the
+terminal `modelUsage`, as it does in both original scored Claude streams. A session
+qualifies only if the client process itself wrote those channels, checked from the
+syscall trace. Codex collection therefore uses the HTTP Responses transport with
+diagnostic logging; binary, model and effort pins are unchanged. Details, source
+references and limits are in the [model provenance](../../learnability/phase5/evaluation/model-provenance-development.md)
+record.
+
+The route is not yet exercised through the full traced harness with a real client.
+That, full-session resource bounds and the fixed four-slot cohort remain outstanding;
+Phase 5 remains open.
+
+## Real-client development collectors (2026-11-10)
+
+One declared development slot per client ran through the full traced harness (scored 0). Both
+agents completed the upgrade with correct state and activation identity, and the provenance
+adapters qualified both real streams (Codex 38/38 responses, Claude 34 reconciled requests). But
+**both captures failed process integrity**, so the slots failed closed. Codex's own bubblewrap
+sandbox uses user and PID namespaces the capture cannot follow. Claude backs up its config with
+one `copy_file_range` that the descriptor rule cannot credit. Collection stays blocked on real-client
+capture qualification. Details and retained failures are in the
+[capture development record](../../learnability/phase5/evaluation/integration-development.md).
+
+Machine-local note: between 01:50 and 02:15 UTC on 2026-11-10, Robert's disk cleanup removed
+both checkouts' `build/` directories (and some `/tmp` review trees), freeing about 127 GB.
+Build logs that earlier records cite under `build/` (for example `build/pause-native-final-gcc.txt`
+and `build/review-*.txt`) no longer exist. The repository records keep their stated results; the
+logs themselves cannot be re-read. Private evidence under `~/.mo-phase5-harness` and the
+`phase5-test-private-*` roots is intact.
+
+**Decision (Robert, 2026-11-10):** Phase 5 runs Codex with `--sandbox danger-full-access`
+instead of its bubblewrap `workspace-write` sandbox, relying on the collector's isolation
+(separate account, backend firewall, private folders). This changes the condition earlier
+experiments used and is disclosed as such. The descriptor rule also now credits a successful
+`copy_file_range` between two non-virtual paths without table facts: since Linux 5.3 that call
+succeeds only between regular files, so it cannot carry socket or pipe bytes. Re-run over the
+retained Claude trace, process integrity now passes; the run records the host kernel.
+
+## Real-client qualification (development, 2026-11-10)
+
+Three declared development pairs ran through the full traced harness (cumulative development
+model attempts Codex 6, Claude 4; scored 0). After the capture repairs and two independent
+reviews, the protected regrade of the last sealed Codex and Claude sessions passes all seven
+graded dimensions: task state, activation identity, command origin, final answer, source tests,
+traffic completeness and model provenance. The last repairs were applied offline to those sealed
+sessions, so no single live run has yet passed end to end under the final code.
+
+**Decision (Robert, 2026-11-10):** the revision observation is accepted inside larger shell
+output when the process that received the response wrote exactly that body to its standard
+output and the client then read it from the same pipe or file before its typed result. No agent
+instruction changed.
+
+Phase 5 remains open. Still required: merge of this work, reinstalling the frozen `mo` from the
+merged commit, the freeze, and the fixed four-slot cohort with its publication. The original 0/4
+stands. The [capture development record](../../learnability/phase5/evaluation/integration-development.md)
+lists every failed run, repair and open risk.

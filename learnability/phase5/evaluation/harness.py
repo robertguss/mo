@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import re
 import os
 from pathlib import Path
 import secrets
@@ -112,18 +113,29 @@ def check(installed):
             raise ValueError('frozen client version unavailable: ' + name)
 
 
+CODEX_HTTP = ['-c', 'model_provider="responses_http"', '-c',
+              'model_providers.responses_http={name="OpenAI",requires_openai_auth=true,supports_websockets=false}']
+CODEX_LOG = 'codex_api=trace,codex_core=debug,codex_http_client=debug'
+PRIVATE_DIAGNOSTICS = re.compile(r'^\S+\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s|codex_(?:api|core|http_client)::')
+
+
+def client_environment(client, base):
+    return dict(base, RUST_LOG=CODEX_LOG) if client == 'codex' else dict(base)
+
+
+def public_stderr(text):
+    return [line for line in text.split('\n') if line and not PRIVATE_DIAGNOSTICS.search(line)]
+
+
 def command(client, binary, prompt, url, config):
     cmd = p4.client_command(client, binary, prompt, url, config)
     if client == 'codex':
-        cmd[-1:-1] = ['-c', 'mcp_servers.task-queue.env_http_headers={"Mo-Upgrade-Authorization"="QUEUE_UPGRADE_BEARER"}']
+        at = cmd.index('--sandbox')
+        assert cmd[at + 1:at + 4] == ['workspace-write', '-c', 'sandbox_workspace_write.network_access=true']
+        cmd[at + 1:at + 4] = ['danger-full-access']
+        cmd[-1:-1] = ['-c', 'mcp_servers.task-queue.env_http_headers={"Mo-Upgrade-Authorization"="QUEUE_UPGRADE_BEARER"}',
+                      *CODEX_HTTP]
     return cmd
-
-
-def models(stream):
-    events = [e for e in proxy.base.events(stream)
-              if 'model' in json.dumps(e).lower() or 'fallback' in json.dumps(e).lower()]
-    return {'reported_models': [], 'events': events, 'qualified': False,
-            'reason': 'trusted session-bound serving-model metadata unqualified'}
 
 
 def final_message(client, stream):
@@ -187,6 +199,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         raise ValueError('invalid slot or time limit')
     if limit <= 0:
         raise ValueError('positive time limit required')
+    if tuple(int(n) for n in os.uname().release.split('.')[:2]) < (5, 3):
+        raise ValueError('capture requires Linux 5.3 or newer')
     if not development:
         raise ValueError('collection disabled: model and command-origin qualification incomplete')
     out = Path(out).resolve()
@@ -264,9 +278,10 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         meta['migration_requirement'] = 'migrate'
         (out / 'prompt.txt').write_text(prompt)
         cmd = command(meta['client'], l.bin / meta['client'], prompt, recorder.url, l.mcp_config)
-        environment = {'HOME': str(l.home()), 'USER': l.user, 'LOGNAME': l.user,
-                       'SHELL': '/bin/bash', 'PATH': f'{l.bin}:/usr/bin:/bin',
-                       'LANG': 'C.UTF-8', 'DISABLE_AUTOUPDATER': '1'}
+        environment = client_environment(meta['client'], {
+            'HOME': str(l.home()), 'USER': l.user, 'LOGNAME': l.user,
+            'SHELL': '/bin/bash', 'PATH': f'{l.bin}:/usr/bin:/bin',
+            'LANG': 'C.UTF-8', 'DISABLE_AUTOUPDATER': '1'})
         start = time.monotonic()
         if (l.bin / 'mo').stat().st_uid != 0:
             raise ValueError('frozen mo must be root owned')
@@ -279,11 +294,11 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
         shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
         shutil.copyfile(out / 'origin-raw/stderr', out / 'client-stderr.txt')
+        meta['kernel'] = os.uname().release
         meta['exit_status'] = trace_result['returncode']
         meta['timeout'] = trace_result['timed_out']
         meta['capture'] = trace_result
         meta['seconds'] = time.monotonic() - start
-        meta['models'] = models(out / 'stream.jsonl')
         class RecordingClient:
             def every_job(self):
                 value = client.every_job()
@@ -297,9 +312,6 @@ def collect(l, spec, out, slot, development=False, limit=3600):
         meta['live'] = grader.live_grade(RecordingClient())
         if meta['timeout'] or meta['exit_status'] != 0:
             meta['failures'].append('timeout or unsuccessful exit')
-        wanted = 'gpt-6.1-sol' if meta['client'] == 'codex' else 'claude-opus-5-5'
-        if meta['models']['reported_models'] != [wanted] or any(e.get('fallback') for e in meta['models']['events']):
-            meta['failures'].append('missing or substituted model evidence')
     except BaseException as error:
         meta['failures'].append(type(error).__name__)
     finally:
@@ -367,7 +379,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                     snapshot = out / 'origin-identity/tcp.json'
                     origin_identity.atomic_private(snapshot, dict(session=capture.session, nonce=capture.nonce,
                         trace_sha256=origin_identity.protected(trace, os.geteuid(), capture.session_uid, private=True, pin_only=True)[0]['sha256'], snapshots=recorder.recorder.snapshots))
-                    capture.seal(trace, out / 'proxy.jsonl', snapshot, stdout=out / 'origin-raw/stdout', client_path=l.bin / meta['client'])
+                    capture.seal(trace, out / 'proxy.jsonl', snapshot, stdout=out / 'origin-raw/stdout',
+                                 client_path=l.bin / meta['client'], stderr=out / 'origin-raw/stderr')
                     pending_bundle = replay_bundle.Bundle(out / 'replay-private', capture,
                         evaluation_endpoint=recorder.url.split('/')[2])
                     pending_bundle.add('expected', s['expected'])
@@ -389,7 +402,10 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                 if not kwargs:
                     meta['records']['match'] = False
                     meta['records']['capture_incomplete'] = True
+                meta['models'] = meta['records'].pop('model_provenance')
             cleanup('record reconciliation', reconcile)
+        if meta.get('models', {}).get('qualified') is not True:
+            meta['failures'].append('missing or substituted model evidence')
         if meta['launched'] and bundle is None:
             def retain_partial():
                 nonlocal state_retained
@@ -422,7 +438,8 @@ def collect(l, spec, out, slot, development=False, limit=3600):
                                 partial.facts['available'].append(role)
                             except Exception as error:
                                 partial.facts.setdefault('unavailable', {})[role] = type(error).__name__
-                    for role, path in [('stdout', out / 'origin-raw/stdout'), ('trace', out / 'origin-raw/trace'),
+                    for role, path in [('stdout', out / 'origin-raw/stdout'), ('stderr', out / 'origin-raw/stderr'),
+                                       ('trace', out / 'origin-raw/trace'),
                                        ('proxy_log', out / 'proxy.jsonl'), ('prompt', out / 'prompt.txt')]:
                         if path.exists():
                             retain_optional(partial, role, path)
@@ -439,7 +456,9 @@ def collect(l, spec, out, slot, development=False, limit=3600):
             for name in ('stream.jsonl', 'client-stderr.txt'):
                 path = out / name
                 if path.exists():
-                    path.write_text('\n'.join(recorder.recorder.clean(line) for line in path.read_text().splitlines()) + '\n')
+                    text = path.read_text(errors='replace')
+                    lines = public_stderr(text) if name == 'client-stderr.txt' else text.splitlines()
+                    path.write_text('\n'.join(recorder.recorder.clean(line) for line in lines) + '\n')
         cleanup('client redaction', redact_client_artifacts)
         cleanup('reset', lambda: reset_preserving_work(l, out, meta))
         def inventory():

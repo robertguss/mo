@@ -4,7 +4,7 @@ import unittest
 import observation
 class Controls(unittest.TestCase):
     def fixture(self):
-        owner=dict(pid=1,incarnation=1,generation=1,exec_path='/client',exec_argv=['/client'],session_id='s')
+        owner=dict(pid=1,incarnation=1,process='1:1',generation=1,exec_path='/client',exec_argv=['/client'],session_id='s')
         def receipt(a,b): return dict(sender=owner,connection_ordinal=a,request_ordinal=1,occurrences=[dict(started=b,completed=b)])
         origins={1:dict(receipt(1,1),verified_push_identity=True),3:receipt(2,3)}
         rows=[dict(direction='request',seq=1,id=1,tool='mo-upgrade-commit'),dict(direction='response',seq=2,request=1,status=200,body={'result':{'structuredContent':{'status':'accepted','ordinal':'2'}}}),dict(direction='request',seq=3,id=2,tool='revision'),dict(direction='response',seq=4,request=3,status=200,body={'result':{'structuredContent':{'value':'1'}}})]
@@ -24,7 +24,7 @@ class Controls(unittest.TestCase):
     def shell_fixture(self):
         e,r,o,s=self.fixture()
         owner=e['trace']['exec_events'][0]
-        child=dict(owner,pid=2,exec_path='/usr/bin/curl',exec_argv=['curl'])
+        child=dict(owner,pid=2,process='2:1',exec_path='/usr/bin/curl',exec_argv=['curl'])
         o[3]['sender']=child
         e['trace']['responses'][1]['sender']=child
         output=json.dumps(r[3]['body'])+'\n'
@@ -36,8 +36,76 @@ class Controls(unittest.TestCase):
             dict(pipe='12',created=2,operation='read',fd=3,data_hex=output.encode().hex(),sender=owner,started=4,completed=4.3)]
         e['stdout']=prefix+s
         return e,r,o,prefix+s
+    def mixed_fixture(self, transport='file', shown=True):
+        import hashlib
+        e,r,o,s=self.shell_fixture()
+        owner=e['trace']['exec_events'][0]
+        child=o[3]['sender']
+        body=json.dumps(r[3]['body']).encode()
+        output='status 200\n'+body.decode()+'\nother output\n'
+        event=json.loads(s.splitlines()[0])
+        event['item']['aggregated_output']=output
+        prefix=json.dumps(event)+'\n'
+        e['trace']['stdout_events'][0]['data']=prefix
+        e['stdout']=prefix.encode()+b'\n'.join(s.splitlines()[1:])+b'\n'
+        e['trace']['responses'][1]['body_sha256']=hashlib.sha256(body).hexdigest()
+        other=dict(owner,pid=3,process='3:1',exec_path='/usr/bin/echo',exec_argv=['echo'])
+        key=dict(pipe='12',created=2) if transport=='pipe' else dict(path='/tmp/task.output')
+        transfers=[dict(key,operation='write',fd=1,data_hex=b'status 200\n'.hex(),sender=other,started=4.05,completed=4.05),
+                   dict(key,operation='write',fd=1,data_hex=body.hex(),sender=child,started=4.1,completed=4.2),
+                   dict(key,operation='read',fd=9,data_hex=output.encode().hex(),sender=owner,started=4.3,completed=4.3)]
+        e['trace']['pipe_events']=transfers if transport=='pipe' else []
+        e['trace']['file_events']=transfers if transport=='file' else []
+        if not shown:
+            event['item']['aggregated_output']='status 200\nother output\n'
+            prefix=json.dumps(event)+'\n'
+            e['trace']['stdout_events'][0]['data']=prefix
+            e['stdout']=prefix.encode()+b'\n'.join(s.splitlines()[1:])+b'\n'
+        return e,r,o,e['stdout'],transfers,other
+    def test_mixed_shell_output_needs_the_receiver_to_deliver_the_exact_response(self):
+        for transport in ('file','pipe'):
+            with self.subTest(transport=transport):
+                e,r,o,s,_,_=self.mixed_fixture(transport)
+                self.assertTrue(observation.validate(e,r,o,s))
+        e,r,o,s,transfers,_=self.mixed_fixture('pipe')
+        for transfer in transfers: transfer['created']=None
+        self.assertFalse(observation.validate(e,r,o,s))
+        e,r,o,s,_,_=self.mixed_fixture(shown=False)
+        self.assertFalse(observation.validate(e,r,o,s))
+        for case in ('forged_writer','client_never_read','altered_bytes','read_before_write','uncaptured',
+                     'early_forged_read','written_before_receipt','read_after_emission','two_objects'):
+            with self.subTest(case=case):
+                e,r,o,s,transfers,other=self.mixed_fixture()
+                owner=transfers[2]['sender']
+                if case=='early_forged_read':
+                    transfers[0]['data_hex']=transfers[1]['data_hex']
+                    transfers.insert(1,dict(transfers[0],operation='read',fd=9,sender=owner,started=4.06,completed=4.07))
+                    transfers[-1]['data_hex']=b'unrelated'.hex()
+                if case=='written_before_receipt': transfers[1]['started']=3
+                if case=='read_after_emission': transfers[2]['completed']=6
+                if case=='two_objects': e['trace']['file_events']=transfers+[dict(t,path='/tmp/second.output') for t in transfers]
+                if case=='forged_writer': transfers[1]['sender']=other
+                if case=='client_never_read': transfers[2]['sender']=other
+                if case=='altered_bytes': transfers[1]['data_hex']=(bytes.fromhex(transfers[1]['data_hex'])+b' ').hex()
+                if case=='read_before_write': transfers[2]['completed']=4.15
+                if case=='uncaptured': transfers[1]['data_hex']=None
+                self.assertFalse(observation.validate(e,r,o,s))
     def test_shell_delivery(self):
         self.assertTrue(observation.validate(*self.shell_fixture()))
+    def test_sibling_threads_of_the_client_are_the_same_process(self):
+        e,r,o,s=self.shell_fixture()
+        for transfer in e['trace']['pipe_events']:
+            if transfer['operation']=='read': transfer['sender']=dict(transfer['sender'],pid=7)
+        self.assertTrue(observation.validate(e,r,o,s))
+        e['trace']['pipe_events'][-1]['sender']=dict(e['trace']['pipe_events'][-1]['sender'],process='1:2')
+        self.assertFalse(observation.validate(e,r,o,s))
+    def test_uncapturable_pipe_or_stdout_transfer_fails_closed(self):
+        e,r,o,s=self.shell_fixture()
+        e['trace']['pipe_events'][0]['data_hex']=None
+        self.assertFalse(observation.validate(e,r,o,s))
+        e,r,o,s=self.shell_fixture()
+        e['trace']['stdout_events'][0]['data']=None
+        self.assertFalse(observation.validate(e,r,o,s))
     def test_shell_printed_revision(self):
         e,r,o,s=self.shell_fixture()
         event=json.loads(s.splitlines()[0])
@@ -72,20 +140,20 @@ class Controls(unittest.TestCase):
             self.assertTrue(observation.validate(e,r,o,s))
             pipes=e['trace']['pipe_events']
             if case=='no_read': pipes.pop()
-            if case=='wrong_reader': pipes[1]['sender']=dict(pipes[1]['sender'],pid=9)
-            if case=='wrong_writer': pipes[0]['sender']=dict(pipes[0]['sender'],pid=9)
+            if case=='wrong_reader': pipes[1]['sender']=dict(pipes[1]['sender'],pid=9,process='9:1')
+            if case=='wrong_writer': pipes[0]['sender']=dict(pipes[0]['sender'],pid=9,process='9:1')
             if case=='different_bytes': pipes[1]['data_hex']='31'
             if case=='late_read': pipes[1]['completed']=6
             if case=='early_write': pipes[0]['started']=3
             if case=='uncreated': pipes[0]['created']=None
-            if case=='shared_writer': pipes.append(dict(pipes[0],sender=dict(pipes[0]['sender'],pid=9)))
+            if case=='shared_writer': pipes.append(dict(pipes[0],sender=dict(pipes[0]['sender'],pid=9,process='9:1')))
             with self.subTest(case=case): self.assertFalse(observation.validate(e,r,o,s))
     def test_native_controls(self):
         for case in ('before_receive', 'after_final', 'wrong_tool', 'fake_child', 'truncated', 'wrong_value'):
             e,r,o,s=self.native_fixture()
             if case == 'before_receive': e['trace']['stdout_events'][0]['started']=3.5
             if case == 'after_final': e['trace']['stdout_events'][0]['completed']=6
-            if case == 'fake_child': e['trace']['stdout_events'][0]['sender']=dict(e['trace']['exec_events'][0],pid=99)
+            if case == 'fake_child': e['trace']['stdout_events'][0]['sender']=dict(e['trace']['exec_events'][0],pid=99,process='99:1')
             if case == 'truncated': s=s[:-3]
             if case in ('wrong_tool','wrong_value'):
                 event=json.loads(s.splitlines()[0])

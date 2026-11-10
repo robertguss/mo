@@ -126,7 +126,7 @@ class Capture:
         protected(self.directory / 'reservation', self.collector, session_uid, private=True)
         self.manifest = None
 
-    def seal(self, trace, proxy_log, tcp_snapshot=None, stdout=None, client_path=None):
+    def seal(self, trace, proxy_log, tcp_snapshot=None, stdout=None, client_path=None, stderr=None):
         if self.manifest is not None: reject()
         current, _ = protected(self.binary['path'], self.collector, self.session_uid, executable=True)
         if current != self.binary: reject()
@@ -140,6 +140,8 @@ class Capture:
             records['tcp_snapshot'], _ = protected(tcp_snapshot, self.collector, self.session_uid, private=True)
         if stdout is not None:
             records['stdout'], _ = protected(stdout, self.collector, self.session_uid, private=True)
+        if stderr is not None:
+            records['stderr'], _ = protected(stderr, self.collector, self.session_uid, private=True)
         manifest = dict(client_path=str(client_path) if client_path else None, nonce=self.nonce, session=self.session, binary=self.binary, **records)
         atomic_private(self.directory / 'manifest.json', manifest)
         self.manifest, _ = protected(self.directory / 'manifest.json', self.collector, self.session_uid, private=True)
@@ -151,7 +153,7 @@ class Capture:
         manifest = json.loads(raw)
         if manifest['session'] != self.session or manifest['nonce'] != self.nonce: reject()
         data = {}
-        for name in ('binary', 'trace', 'proxy_log', *(['tcp_snapshot'] if 'tcp_snapshot' in manifest else []), *(['stdout'] if 'stdout' in manifest else [])):
+        for name in ('binary', 'trace', 'proxy_log', *(['tcp_snapshot'] if 'tcp_snapshot' in manifest else []), *(['stdout'] if 'stdout' in manifest else []), *(['stderr'] if 'stderr' in manifest else [])):
             pin, data[name] = protected(manifest[name]['path'], self.collector, self.session_uid,
                                         executable=name == 'binary', private=name != 'binary', pin_only=name == 'trace')
             if pin != manifest[name]: reject()
@@ -164,7 +166,9 @@ class Capture:
             snapshot = json.loads(data['tcp_snapshot'])
             if snapshot['session'] != self.session or snapshot['nonce'] != self.nonce or snapshot['trace_sha256'] != manifest['trace']['sha256']: reject()
             snapshots = snapshot['snapshots']
-        parsed = origin_trace.parse_trace(TraceLines(manifest['trace']['path']), session_id=self.session, tcp_snapshots=snapshots, evaluation_endpoint=evaluation_endpoint)
+        parsed = origin_trace.parse_trace(TraceLines(manifest['trace']['path']), session_id=self.session, tcp_snapshots=snapshots,
+            evaluation_endpoint=evaluation_endpoint,
+            channels={k: manifest[k]['path'] for k in ('stdout', 'stderr') if k in manifest} or None)
         integrity = origin_observer.process_integrity(TraceLines(manifest['trace']['path']))
         loader_valid = self.loader is None or protected(self.loader['path'], self.collector, self.session_uid)[0] == self.loader
         def trusted_execution(sender):
@@ -191,4 +195,4 @@ class Capture:
                     sender['exec_path'] == self.binary['path'] and len(argv) > 1 and argv[1] == 'push'
                     and trusted_execution(sender))
         return dict(integrity=integrity, trace=parsed, proxy_rows=[json.loads(line) for line in data['proxy_log'].splitlines()],
-                    stdout=data.get('stdout'), client_path=manifest.get('client_path'), qualified=False, nonce=self.nonce)
+                    stdout=data.get('stdout'), stderr=data.get('stderr'), client_path=manifest.get('client_path'), qualified=False, nonce=self.nonce)

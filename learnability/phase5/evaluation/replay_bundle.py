@@ -30,7 +30,7 @@ class Bundle:
         self.root.mkdir(mode=0o700)
         self.facts = dict(capture=manifest, loader=capture.loader,
                           runtime_valid=capture.runtime_valid, mappings={})
-        for role in ('binary', 'trace', 'proxy_log', 'stdout', 'tcp_snapshot'):
+        for role in ('binary', 'trace', 'proxy_log', 'stdout', 'stderr', 'tcp_snapshot'):
             if role in manifest:
                 self.add(role, manifest[role]['path'], expected=manifest[role], executable=role == 'binary')
         if capture.loader:

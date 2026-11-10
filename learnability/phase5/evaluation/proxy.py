@@ -50,7 +50,13 @@ class Recorder(base.Recorder):
             self.snapshots.append(pathlib.Path('/proc/net/tcp').read_text())
         metadata = getattr(self.context, 'metadata', None)
         if metadata is not None:
-            entry = {**entry, 'transport': dict(metadata) if entry['direction'] == 'request' else dict(getattr(self.context, 'response_metadata', {}))}
+            response = dict(getattr(self.context, 'response_metadata', {}))
+            if entry['direction'] == 'response' and not response:
+                text = entry.get('body')
+                raw = b'' if text is None else text.encode() if isinstance(text, str) else None
+                if raw is not None and len(raw) == entry.get('bytes'):
+                    response = origin_join.digests(raw)
+            entry = {**entry, 'transport': dict(metadata) if entry['direction'] == 'request' else response}
         cleaned = self.clean(entry)
         if cleaned != entry:
             cleaned['redacted'] = True
@@ -166,15 +172,21 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
             receipt = requests[observation['connection_ordinal'], observation['request_ordinal']]
             origins[observation['request_seq']] = receipt
 
+    provenance = dict(qualified=False, reason='no collector capture')
     if capture is not None:
         import observation as u3
+        from model_adapter import session_provenance
         observation = u3.validate(evidence, rows, origins, stream.read_bytes())
+        try:
+            provenance = session_provenance(client, evidence, stream.read_bytes())
+        except Exception as error:
+            provenance = dict(qualified=False, reason='provenance evaluation error: ' + type(error).__name__)
     responses = {}
     for row in rows:
         if row.get('direction') == 'response':
             responses.setdefault(row.get('request'), []).append(row)
     remaining = list(base.stream_calls(client, stream, base.SERVER))
-    result = dict(revision_observed=observation, observation_coverage="typed native results or exact single-writer pipe delivery to typed shell results; mixed writers and unsupported framing reject", pairs=0, log_only=[], stream_only=[], exempt=[], shell=0,
+    result = dict(revision_observed=observation, model_provenance=provenance, observation_coverage="typed native results; exact single-writer pipe delivery to typed shell results; or shell output containing the exact response body that the receiving process wrote to its standard output and the client then read from the same pipe or file before emitting the typed result; other framing rejects", pairs=0, log_only=[], stream_only=[], exempt=[], shell=0,
                   command_origin=[], shell_origins=[],
                   verified_push_requests=sum(r['verified_push_identity'] for r in origins.values()),
                   verified_shell_requests=len(origins))

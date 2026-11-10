@@ -6,8 +6,7 @@ import json
 import re
 from contextlib import contextmanager
 
-# A 1 MiB -xx argument expands to 4 MiB, plus syscall metadata.
-MAX_RECORD_BYTES = 8 * 1024 * 1024
+MAX_RECORD_BYTES = 32 * 1024 * 1024
 CHUNK_BYTES = 64 * 1024
 
 
