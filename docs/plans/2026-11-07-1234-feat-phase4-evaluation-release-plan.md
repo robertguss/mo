@@ -11,6 +11,10 @@ execution: code
 
 # Phase 4 Diagnostic Evaluation and v0.1 Release - Plan
 
+**Status, 2026-11-07:** collection and U8 complete. PR #308 squash-merged; annotated tag
+`v0.1.0` is `fad1467d`. Closed unmerged #286, #298, #299 and #300 are not follow-up
+tasks. Units and open questions below are the historical evaluation-release contract.
+
 ## Goal Capsule
 
 - **Objective:** Robert can decide whether to release v0.1 from a published, prospectively declared record of what fresh agent sessions could diagnose and fix with Phase 4's instruments, misses included. If he releases, users get a tagged build that is the build that was evaluated, with documentation that claims only what the record shows.

@@ -683,7 +683,7 @@ host, a full 16 MiB saved encoding used 132.7 MiB service RSS and 57.6 MiB fetch
 separate high-water marks. Retain the service's approximately 170 MiB deployment allowance
 above and allow another 64 MiB for the ordinary fetch executable; these are deployment
 allowances informed by one fixture, not universal RSS limits. Sanitizer instrumentation is
-outside those deployment measurements. The U4 allowance remains reserved, not implemented.
+outside those deployment measurements. **2026-11-07:** U4 capture later landed; the reserved-allowance sentence here was U9 staging, not current status. See [failure capture](../../learnability/phase4/failure-capture/README.md) and Retained diagnostic implementation below.
 
 ## 11. Verification
 
@@ -827,6 +827,8 @@ Robert accepted each of these on 2026-11-04, as written here.
 
 ### Implementation staging and observation metadata
 
+**2026-11-07:** The notes in this subsection and the U8/U9 evidence below describe those merges. U4 capture and failure-kind export later landed; see Retained diagnostic implementation and §5.1 (`kind: "failure"`). They are not a current unavailability claim.
+
 The operator milestone first retains the current saved encoding and bounded native metadata, then exposes authenticated live views, then state export and private fetch. Failure-backed catalog entries and failure-kind export become available with U4’s capture/retention implementation. Earlier milestones omit unavailable capabilities from discovery and refuse direct requests through normal unsupported-action validation; they never return an ordinary empty success suggesting that capture is functioning. Views that reference a later capability must state its current availability.
 
 Mailbox argument byte size is the encoded length when available. For legal read-only arguments whose encoding cannot be obtained within the diagnostic bounds, return an explicit unavailable value and reason. Do not reject an otherwise legal call to satisfy a diagnostic size field, report a fabricated zero, or retain live argument values beyond their existing lifetime.
@@ -916,8 +918,8 @@ not scored diagnostic evaluation observations.
 
 ### Immutable state export producer
 
-U8 adds `mo-export` for state only. Failure-kind export remains unavailable until U4;
-`mo fetch` and final-file publication remain U9. JSON shaping, argument validation and
+U8 added `mo-export` for state only. At that merge, failure-kind export remained unavailable until U4;
+`mo fetch` and final-file publication remained U9. **2026-11-07:** U4 and U9 later landed (Retained diagnostic implementation). JSON shaping, argument validation and
 base64 are embedded Mo; the native bridge copies cached MOSV bytes and serves bounded
 pages without encoding live values or altering bytecode shape tables.
 
@@ -953,7 +955,7 @@ State owns one confidential arena, bounded by half `MO_LIMIT_EXPORT_BYTES` inclu
 its chunk header. Replacement frees it before allocating another, so an allocation
 failure can release the old pin but cannot double its resident allowance. Expiry is
 checked during polling and before every export; its deadline participates in polling.
-The second kind's allowance is reserved for U4 and is not allocated. Copying and hashing
+The second kind's allowance was reserved for U4 at this merge and was not then allocated. **2026-11-07:** U4 later allocated it (Retained diagnostic implementation). Copying and hashing
 use constant stack space beyond the pin. One page and its rendering stay inside
 `MO_LIMIT_EXPORT_SCRATCH` (the existing 16 MiB per-request budget), independent of the
 service heap, and no Mo reference survives the request. Pin bytes reported by
@@ -985,7 +987,7 @@ The host-local command now creates a new state generation on each invocation, ve
 page coverage, generation and both sequence fields, validates the complete MOEX framing and
 schema/artifact digests, and publishes through a non-overwriting hard link. Pin creation,
 final-page completion/release and local file publication remain distinct lifecycle events.
-Failure-kind export/capture remains unavailable.
+At this U9 write-up, failure-kind export/capture remained unavailable. **2026-11-07:** both later landed; see Retained diagnostic implementation.
 
 Development checks have exercised a 14-page private nominal state export with proxies configured,
 mode-0600 publication, existing destinations and symlinks, wrong credentials, malformed/truncated/

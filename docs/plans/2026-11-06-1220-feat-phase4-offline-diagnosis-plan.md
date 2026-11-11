@@ -11,6 +11,9 @@ execution: code
 
 # Phase 4 Offline Diagnosis - Plan
 
+**Status, 2026-11-07:** implemented (PR #302). Diagnostic collection and v0.1.0 followed in
+PR #308; Phase 4 is complete. Units below are the historical implementation contract.
+
 ## Goal Capsule
 
 - **Objective:** An agent with a shell on a Mo service's host can replay a retained handler failure and learn whether it reproduced. It can check a revised handler against the same inputs and get a verdict that is never `verified` unless the original reproduced. It can run its own pure function over an exported state or a failure's inputs, and read a stopped data folder's persisted history without starting the service. Every incompatibility is refused by name before anything runs.

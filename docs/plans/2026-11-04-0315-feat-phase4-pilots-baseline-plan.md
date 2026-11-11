@@ -16,6 +16,8 @@ This document is retained as the historical implementation contract for the pilo
 
 The current execution authority is `docs/plans/2026-11-03-1704-feat-phase4-see-inside-plan.md`, R20–R24. It permits diagnostic implementation after the pilot findings and requires a new declared protocol before scored evaluation. The original predictions, calibration rules and outcome remain preserved; the historical requirements below are not current instructions to collect a baseline.
 
+**2026-11-07:** The replacement diagnostic protocol was approved and collected; Phase 4 closed with v0.1.0 (`fad1467d`, PR #308). This document remains the historical pilot/harness contract. PR4 / U8 must still not be launched.
+
 ---
 
 ## Goal Capsule
