@@ -189,3 +189,6 @@ A one-line fix keeps each to a sentence; it still gets a test.
 
 `docs/status/agent-mistakes.md` is the ledger of mistake classes agents have repeated here. Read it
 before C work; it is reviewed at phase boundaries, not bumped in every PR.
+
+`docs/solutions/` holds learnings from past work: the problem, why it happened and what to do,
+with `module` and `tags` in each file's frontmatter. Search it before working in an area it covers.
