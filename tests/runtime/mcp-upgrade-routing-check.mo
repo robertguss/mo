@@ -15,6 +15,51 @@ fn main() : Int
     McpViews.upgrade_kind(11) != 3
     stop "upgrade names lost their routing"
   end
+  var seen_future = false
+  for tool in McpViews.catalog()
+    fields = case tool
+      Json.Object(value): value
+      Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_):
+        stop "catalog tool"
+    end
+    name = fields.get("name")
+    annotations = fields.get("annotations")
+    if name == Some(Json.String("mo-future-view"))
+      seen_future = true
+      if annotations !=
+        Some(Json.Object({"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)}))
+        stop "appended view lost readOnlyHint"
+      end
+    else if name == Some(Json.String("mo-upgrade-open")) or
+      name == Some(Json.String("mo-upgrade-page"))
+      if annotations !=
+        Some(
+          Json.Object({
+            "readOnlyHint": Json.Boolean(false),
+            "destructiveHint": Json.Boolean(false),
+            "idempotentHint": Json.Boolean(false),
+            "openWorldHint": Json.Boolean(false)
+          })
+        )
+        stop "upgrade tool annotations"
+      end
+    else if name == Some(Json.String("mo-upgrade-commit"))
+      if annotations !=
+        Some(
+          Json.Object({
+            "readOnlyHint": Json.Boolean(false),
+            "destructiveHint": Json.Boolean(true),
+            "idempotentHint": Json.Boolean(false),
+            "openWorldHint": Json.Boolean(false)
+          })
+        )
+        stop "commit annotations"
+      end
+    end
+  end
+  if not seen_future
+    stop "fixture did not catalog its view"
+  end
   for effect in ["none", "applied", "unknown"]
     body = Json.Object({
       "jsonrpc": Json.String("2.0"),

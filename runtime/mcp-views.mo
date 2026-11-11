@@ -116,27 +116,29 @@ fn saved_depth() : Int
 end
 
 fn arguments_of(index: Int) : List(Text)
-  if index == 1: ["path"] else if index == 2 or index == 3: ["offset"] else if index == 5: [
-    "after",
-    "before"
-  ] else if index == 6: ["after"] else if index == 7: ["kind", "failure", "export", "offset"] else if index ==
-    8: ["after"] else if index == 9: ["base", "candidate", "total", "migration"] else if index == 10: [
-      "slot",
-      "index",
-      "offset",
-      "total",
-      "bytes"
-    ] else if index == 11: ["slot", "base"] else: []
+  case names().get(index)
+    Some("mo-state"): ["path"]
+    Some("mo-mailbox"): ["offset"]
+    Some("mo-timers"): ["offset"]
+    Some("mo-supervisor"): ["after", "before"]
+    Some("mo-log"): ["after"]
+    Some("mo-export"): ["kind", "failure", "export", "offset"]
+    Some("mo-failures"): ["after"]
+    Some("mo-upgrade-open"): ["base", "candidate", "total", "migration"]
+    Some("mo-upgrade-page"): ["slot", "index", "offset", "total", "bytes"]
+    Some("mo-upgrade-commit"): ["slot", "base"]
+    Some(_) | None: []
+  end
 end
 
 fn required_of(index: Int) : List(Text)
-  if index == 7: ["kind"] else if index == 9: ["base", "candidate", "total"] else if index == 10: [
-    "slot",
-    "index",
-    "offset",
-    "total",
-    "bytes"
-  ] else if index == 11: ["slot", "base"] else: []
+  case names().get(index)
+    Some("mo-export"): ["kind"]
+    Some("mo-upgrade-open"): ["base", "candidate", "total"]
+    Some("mo-upgrade-page"): ["slot", "index", "offset", "total", "bytes"]
+    Some("mo-upgrade-commit"): ["slot", "base"]
+    Some(_) | None: []
+  end
 end
 
 ## Upload pages carry 8192 decoded bytes; MO_LIMIT_UPGRADE_PAGE_TEXT is their base64 length.
@@ -196,9 +198,11 @@ fn catalog() : List(Json.Json)
         }) else: integer
       )
     end
+    name = tool_names.get(i) or stop "view name"
+    kind = upgrade_kind(i)
     tools = tools.append(
       Json.Object({
-        "name": Json.String(tool_names.get(i) or stop "view name"),
+        "name": Json.String(name),
         "description": Json.String(descriptions.get(i) or stop "view description"),
         "inputSchema": Json.Object({
           "type": Json.String("object"),
@@ -207,12 +211,12 @@ fn catalog() : List(Json.Json)
           "additionalProperties": Json.Boolean(false)
         }),
         "annotations": Json.Object(
-          if i >= 9: {
+          if kind != 0: {
             "readOnlyHint": Json.Boolean(false),
-            "destructiveHint": Json.Boolean(i == 11),
+            "destructiveHint": Json.Boolean(kind == 3),
             "idempotentHint": Json.Boolean(false),
             "openWorldHint": Json.Boolean(false)
-          } else if i == 7: {
+          } else if name == "mo-export": {
             "readOnlyHint": Json.Boolean(true),
             "idempotentHint": Json.Boolean(true),
             "openWorldHint": Json.Boolean(false)
@@ -278,10 +282,7 @@ fn valid(index: Int, arguments: Json.Json) : Bool
         Json.String(text): text
         Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
       end
-      return false if id.chars.size != 32
-      for char in id.chars
-        return false if not "0123456789abcdef".chars.contains?(char)
-      end
+      return false if not hex?(id, 32)
     else if whole(value) == None
       return false
     end

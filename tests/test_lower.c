@@ -2005,8 +2005,8 @@ static void test_embedded_protocol(void *entry) {
         size_t size = mo_protocol_sources[i].size;
         if (entry != NULL && strcmp(entry, "tests/runtime/mcp-upgrade-routing-check.mo") == 0 &&
             strcmp(mo_protocol_sources[i].path, "runtime/mcp-views.mo") == 0) {
-            /* Append an ordinary view after the upgrades. Dispatch must classify its name,
-             * not assume every later index is an upgrade operation. */
+            /* Append an ordinary view after the upgrades. Dispatch and catalog annotations
+             * must classify its name, not assume every later index is an upgrade. */
             const char marker[] = "    \"mo-upgrade-commit\"\n";
             size_t prefix = 0;
             while (prefix + sizeof marker - 1 <= size &&
@@ -2014,11 +2014,24 @@ static void test_embedded_protocol(void *entry) {
                 prefix++;
             MO_ASSERT(prefix + sizeof marker - 1 <= size);
             const uint8_t *at = bytes + prefix;
-            MO_ASSERT(mo_buffer_append(&edited, bytes, prefix) &&
+            struct mo_buffer names;
+            mo_buffer_init(&names, MO_LIMIT_INPUT_BYTES);
+            MO_ASSERT(mo_buffer_append(&names, bytes, prefix) &&
                       mo_buffer_append_text(
-                          &edited, "    \"mo-upgrade-commit\",\n    \"mo-future-view\"\n") &&
-                      mo_buffer_append(&edited, at + sizeof marker - 1,
+                          &names, "    \"mo-upgrade-commit\",\n    \"mo-future-view\"\n") &&
+                      mo_buffer_append(&names, at + sizeof marker - 1,
                                        size - prefix - (sizeof marker - 1)));
+            const char stop[] = "stop \"view description\"";
+            size_t at_stop = 0;
+            while (at_stop + sizeof stop - 1 <= names.length &&
+                   memcmp(names.bytes + at_stop, stop, sizeof stop - 1) != 0)
+                at_stop++;
+            MO_ASSERT(at_stop + sizeof stop - 1 <= names.length);
+            MO_ASSERT(mo_buffer_append(&edited, names.bytes, at_stop) &&
+                      mo_buffer_append_text(&edited, "\"fixture appended view\"") &&
+                      mo_buffer_append(&edited, names.bytes + at_stop + sizeof stop - 1,
+                                       names.length - at_stop - (sizeof stop - 1)));
+            mo_buffer_free(&names);
             bytes = edited.bytes;
             size = edited.length;
         }
