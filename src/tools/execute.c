@@ -232,8 +232,7 @@ static void execute_pipeline(void *argument) {
         goto done;
     }
     if (anchors || cli->command == MO_COMMAND_RUN) {
-        work->status =
-            mo_run_program(cli, core, &wire, sources, work->output, work->errors, diags);
+        work->status = mo_run_program(cli, core, &wire, sources, work->output, work->errors, diags);
         if (work->status != 0 || mo_diags_any(diags))
             goto done;
     }
