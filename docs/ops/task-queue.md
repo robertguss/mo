@@ -276,7 +276,7 @@ new program on an empty folder and import through its tools. Keep the old tree
 and folder. Live swapping and streaming notifications are implemented in the
 upgrade-capable build described above. The [run record](../status/phase5-run.md)
 records the drill, the pause series and the agent evaluation, which passed on one
-frozen build; v0.2 remains unreleased until Robert decides. A work-budget refusal
+frozen build and shipped in v0.2.0. A work-budget refusal
 is not a deadline guarantee.
 
 ## Drill

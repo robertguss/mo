@@ -4,12 +4,12 @@
 intent, agents write the code, and agents can inspect and diagnose running services.
 The development toolchain also supports typed live upgrades and state migration.
 
-> **Status: v0.1.0.** The toolchain builds and
+> **Status: v0.2.0.** The toolchain builds and
 > runs services. The [Phase 4 diagnostic evaluation](docs/status/phase4-run.md)
 > passed its gate with 14 of 16 sessions correct, including two recorded misses.
-> Typed live upgrades are implemented on the development branch. Phase 5's
-> closing evidence passed (drill, pause series, 4/4 agent evaluation); v0.2 is
-> unreleased until Robert decides. See the [upgrade run record](docs/status/phase5-run.md).
+> Typed live upgrades shipped in v0.2.0, which closes Phase 5: its drill, pause
+> series and 4/4 agent evaluation passed on one frozen build. See the
+> [upgrade run record](docs/status/phase5-run.md).
 > Contributions are not yet open.
 
 ## The idea
@@ -31,7 +31,7 @@ first:
   and typed migrations, rehearses them offline, and activates them at a service
   message boundary. `mo push` uses a separate upgrade credential and a loopback
   connection; remote operators use a tunnel. The drill, the pause series and the
-  agent evaluation passed on one frozen build. This functionality is not part of v0.1.0.
+  agent evaluation passed on one frozen build. This functionality ships in v0.2.0.
 
 Mo draws on Elixir and the BEAM (processes, supervision, hot code loading),
 Rust (safety plus control over memory and performance), Koka (effects and
@@ -68,15 +68,15 @@ bash ci/check.sh  # every check, run locally
 See [docs/design/implementation.md](docs/design/implementation.md) for the
 rules the implementation follows and how it is checked.
 
-## Install v0.1.0 from source
+## Install v0.2.0 from source
 
 Check out the release tag and build it in its permanent location. Its build inputs
-match the evaluated candidate recorded in [the freeze](learnability/phase4/freeze.json):
+match the evaluated candidate recorded in [the freeze](learnability/phase5/results/experiment-4/freeze/build-inputs.json):
 
 ```sh
-git clone https://github.com/robertguss/mo mo-v0.1
-cd mo-v0.1
-git checkout --detach v0.1.0
+git clone https://github.com/robertguss/mo mo-v0.2
+cd mo-v0.2
+git checkout --detach v0.2.0
 make CC=gcc build/gcc/debug/mo
 ./build/gcc/debug/mo --version
 ./build/gcc/debug/mo guide
@@ -89,10 +89,9 @@ those builds, see the [task-queue runbook](docs/ops/task-queue.md).
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0;
-Phase 5 implements typed live upgrades. Its 1,000-kill drill, pause series and
-agent evaluation (4/4) passed on one frozen build; closure and the v0.2 release are
-Robert's decision. [v0.2 preparation notes](docs/releases/v0.2-preparation.md)
+See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closed with v0.1.0 and Phase 5,
+typed live upgrades, closed with v0.2.0: its 1,000-kill drill, pause series and
+agent evaluation (4/4) passed on one frozen build. [v0.2 preparation notes](docs/releases/v0.2-preparation.md)
 describe the implemented behavior and unresolved limits.
 
 ## Background
