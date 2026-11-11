@@ -8,7 +8,7 @@
 #include <mach-o/dyld.h>
 #endif
 #ifndef MO_VERSION
-#define MO_VERSION "0.1.0"
+#define MO_VERSION "0.2.0"
 #endif
 static bool initialized, available;
 static uint8_t executable_digest[32];
