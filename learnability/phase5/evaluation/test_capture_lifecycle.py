@@ -87,7 +87,7 @@ class TracerFailures(unittest.TestCase):
 
 
 class CollectorFailures(unittest.TestCase):
-    def exercise(self, *, stop_failure=False, source_failure=False, verification_failure=False, bundle_failure=None, state_failure=False):
+    def exercise(self, *, stop_failure=False, source_failure=False, verification_failure=False, state_failure=False):
         import contextlib
         import io
         import json
@@ -120,31 +120,12 @@ class CollectorFailures(unittest.TestCase):
             process = Process()
             class Service:
                 def listening(self): return 12345
-            class Capture:
-                def __init__(self, directory, session, uid, binary):
-                    directory.mkdir(); self.session=session; self.session_uid=uid; self.nonce='nonce'
-                def seal(self, *args, **kwargs): pass
-            class Trace:
-                def __init__(self, directory): self.directory=directory; directory.mkdir()
-                def run(self, *args, **kwargs):
-                    for name in ('stdout','stderr','trace'): (self.directory/name).write_text('')
-                    return dict(returncode=0, timed_out=False, capture_finished=True)
             class Recorder:
                 url='http://127.0.0.1:12346/mcp'
                 recorder=SimpleNamespace(snapshots=[], clean=lambda x:x, close=lambda: None)
                 def __init__(self, url, path, *args): path.write_text('')
                 def stop(self): pass
             partials=[]
-            class Bundle:
-                def __init__(self, path, *args, **kwargs):
-                    self.root=path; path.mkdir(); self.facts={}; self.files={}
-                    if bundle_failure=='constructor': raise ValueError('injected constructor')
-                def add(self, *args, **kwargs):
-                    if bundle_failure=='population': raise ValueError('injected file limit')
-                def tree(self, *args): pass
-                def finish(self, *args):
-                    if bundle_failure=='finish': raise ValueError('injected finish')
-                    (self.root/'manifest.json').write_text('{}')
             class Partial:
                 def __init__(self, path, *args):
                     self.root=path; path.mkdir(); self.facts={'available':[]}; self.files={}; partials.append(self)
@@ -169,11 +150,10 @@ class CollectorFailures(unittest.TestCase):
             mocked(h.grader.fixture,'Client'); mocked(h.grader,'precheck',return_value=True)
             mocked(h.grader,'live_grade',return_value={})
             grade=mocked(h,'grade_collected')
-            mocked(h.origin_identity,'Capture',new=Capture)
-            mocked(h.origin_identity,'protected',return_value=({'sha256':'fake'},None))
-            mocked(h.origin_observer,'TraceRun',new=Trace)
-            mocked(h.proxy,'Proxy',new=Recorder); mocked(h.proxy,'match',return_value={'match':False})
-            mocked(h.replay_bundle,'Bundle',new=Bundle); mocked(h.replay_bundle,'PartialBundle',new=Partial)
+            mocked(h.proxy,'Proxy',new=Recorder)
+            mocked(h.proxy,'match',return_value=dict(match=False,pairs=0,log_only=[],stream_only=[],exempt=[],
+                                                     upload_routes=dict(native=0,shell=0)))
+            mocked(h.replay_bundle,'PartialBundle',new=Partial)
             self.assertEqual(h.collect(l,spec,out,1,development=True,limit=1),1)
             meta=json.loads((out/'manifest.json').read_text())
             self.assertFalse(meta['correct'])
@@ -188,21 +168,19 @@ class CollectorFailures(unittest.TestCase):
                 grade.assert_not_called()
             else:
                 self.assertEqual(len(partials),1)
-                self.assertEqual(partials[0].root,out/'replay-partial-private')
+                self.assertEqual(partials[0].root,out/'replay-private')
+                self.assertFalse((out/'origin-raw').exists())
+                self.assertEqual(meta['failures'],[])
                 self.assertTrue((partials[0].root/'manifest.json').exists())
                 self.assertEqual(meta['replay_path'],str(partials[0].root))
                 if state_failure: grade.assert_not_called()
                 else: grade.assert_called_once()
 
-    def test_partial_state_failure_blocks_mutating_grade(self):
-        self.exercise(bundle_failure='constructor', state_failure=True)
-
-    def test_live_service_blocks_sealing_and_grading(self): self.exercise(stop_failure=True)
+    def test_retained_session_is_graded(self): self.exercise()
+    def test_partial_state_failure_blocks_mutating_grade(self): self.exercise(state_failure=True)
+    def test_live_service_blocks_retention_and_grading(self): self.exercise(stop_failure=True)
     def test_source_capture_failure_preserves_work_and_blocks_reset(self): self.exercise(source_failure=True)
     def test_unverified_process_cleanup_preserves_work(self): self.exercise(verification_failure=True)
-    def test_full_bundle_failure_falls_back_at_each_stage(self):
-        for stage in ('constructor','population','finish'):
-            with self.subTest(stage=stage): self.exercise(bundle_failure=stage)
 
 
 class RetentionRollback(unittest.TestCase):
@@ -227,18 +205,6 @@ class RetentionRollback(unittest.TestCase):
             self.assertEqual(r.verify(bundle.root,'session',os.getuid()+1)['provenance']['available'],[])
 
 
-class PartialCallback(unittest.TestCase):
-    def test_callback_uses_protected_partial_after_failed_full_attempt(self):
-        import protected_regrade as r
-        with tempfile.TemporaryDirectory() as tmp:
-            root=pathlib.Path(tmp); (root/'replay-private').mkdir()
-            (root/'replay-partial-private').mkdir()
-            callback=r.callback({root.resolve():('session',123)},root.parent)
-            with patch.object(r,'regrade',return_value={'correct':False}) as regrade:
-                self.assertFalse(callback(root)['correct'])
-                self.assertEqual(regrade.call_args.args[0],root/'replay-partial-private')
-
-
 class RetentionExhaustion(unittest.TestCase):
     def test_work_inspection_errors_and_dangling_links_refuse_reset(self):
         from types import SimpleNamespace
@@ -257,7 +223,7 @@ class RetentionExhaustion(unittest.TestCase):
             root=pathlib.Path(tmp)
             work=root/'work'; work.mkdir(); (work/'result.mo').write_text('uncaptured work')
             l=SimpleNamespace(work=work,state=root,bin=root/'bin')
-            with patch.object(h.origin_identity,'atomic_private',side_effect=OSError('disk full')):
+            with patch.object(h.pinned,'atomic_private',side_effect=OSError('disk full')):
                 with self.assertRaises(OSError):
                     h.reset_preserving_work(l,root,dict(launched=True,source_captured=False))
             self.assertFalse((root/'retention-hold.json').exists())
@@ -279,7 +245,7 @@ class RetentionExhaustion(unittest.TestCase):
                 root=pathlib.Path(tmp); source=root/'source'; source.mkdir()
                 (source/'small').write_bytes(b'x')
                 trace=root/'trace'; trace.write_bytes(b'oversized')
-                bundle=r.PartialBundle(root/'replay-partial-private',str(root),os.getuid()+1)
+                bundle=r.PartialBundle(root/'replay-private',str(root),os.getuid()+1)
                 bundle.tree('original',source); bundle.facts['available'].append('original')
                 with patch.object(r,limit_name,limit):
                     h.retain_optional(bundle,'trace',trace)

@@ -89,11 +89,12 @@ class PartialTests(IdentityTests):
                 shutil.rmtree(source)
                 from unittest.mock import patch
                 with patch.object(protected_regrade.grade, 'stopped_grade', return_value={
-                        'dimensions': {'task_state': expected, 'activation_identity': False},
+                        'dimensions': {'task_state': expected, 'activation_identity': False, 'final_answer': False},
                         'reasons': []}) as stopped:
                     verdict = protected_regrade.regrade(root, session_id=self.session,
                         session_uid=self.uid, workspace_parent=self.root)
                 stopped.assert_called_once()  # Missing revision is observable, not absent state.
                 self.assertIs(verdict['dimensions']['task_state'], expected)
                 self.assertIs(verdict['dimensions']['source_tests'], expected)
-                self.assertFalse(verdict['dimensions']['command_origin'])
+                self.assertIs(verdict['dimensions']['final_answer'], False)
+                self.assertFalse(verdict['correct'])

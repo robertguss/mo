@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import io
 import json
 from pathlib import Path
@@ -90,7 +91,7 @@ class Publication(unittest.TestCase):
         self.assertTrue(result['gate']['passed'])
         result = publish.publish(self.sessions, self.root / 'failed-dimension',
                                  [self.secret_file], [self.provider_file],
-                                 protected_regrade=lambda directory: self.record(directory, dict(dict.fromkeys(publish.DIMENSIONS, True), model_provenance=False)))
+                                 protected_regrade=lambda directory: self.record(directory, dict(dict.fromkeys(publish.DIMENSIONS, True), final_answer=False)))
         self.assertFalse(result['gate']['passed'])
 
     def test_regraded_pass_requires_original_logs(self):
@@ -161,8 +162,10 @@ class Publication(unittest.TestCase):
         self.assertFalse((self.root / 'out').exists())
 
     def test_missing_slot_and_development_refused(self):
-        with self.assertRaises(ValueError):
-            publish.publish(self.sessions[:3], self.root / 'out', [self.secret_file], [self.provider_file])
+        for sessions in (self.sessions[:3], [self.sessions[0], *self.sessions[:3]]):
+            with self.assertRaises(ValueError):
+                publish.publish(sessions, self.root / 'out', [self.secret_file], [self.provider_file],
+                                protected_regrade=self.record)
         path = self.sessions[0] / 'manifest.json'
         row = json.loads(path.read_text())
         row['development'] = True
@@ -189,6 +192,39 @@ class Publication(unittest.TestCase):
             with self.assertRaises(ValueError):
                 publish.extract(archive, self.root / f'extract-{index}')
         self.assertFalse((self.root / 'escape').exists())
+
+    def test_command_line_publishes_the_experiment_folder(self):
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import harness
+        import protected_regrade
+        experiment = self.root / 'experiment'
+        experiment.mkdir()
+        for slot, directory in enumerate(self.sessions, 1):
+            (experiment / str(slot)).write_text(str(directory))
+        layout = SimpleNamespace(tokens=self.secret_file, secrets=self.provider_file,
+                                 account=lambda: SimpleNamespace(pw_uid=4242))
+        bound = {}
+        def callback(bindings, work):
+            bound.update(bindings, work=work)
+            return self.record
+        argv = ['publish.py', str(experiment), str(self.root / 'published')]
+        with patch.object(harness, 'layout', return_value=layout), \
+                patch.object(protected_regrade, 'callback', callback), patch.object(sys, 'argv', argv), \
+                contextlib.redirect_stdout(io.StringIO()):
+            publish.main()
+        receipt = json.loads((self.root / 'published/receipt.json').read_text())
+        self.assertTrue(receipt['publication_scan_clean'])
+        self.assertEqual(receipt['stage_files_scanned'], receipt['extracted_files_scanned'])
+        self.assertTrue(receipt['gate']['passed'])
+        self.assertEqual(bound.pop('work'), experiment / 'publication-work')
+        self.assertEqual(bound, {d.resolve(): (str(d.resolve()), 4242) for d in self.sessions})
+        (experiment / '4').unlink()
+        with patch.object(harness, 'layout', return_value=layout), \
+                patch.object(sys, 'argv', [*argv[:2], str(self.root / 'three')]), self.assertRaises(FileNotFoundError):
+            publish.main()
+        self.assertFalse((self.root / 'three').exists())
 
     def test_scanner_refuses_opaque_file(self):
         tree = self.root / 'opaque'

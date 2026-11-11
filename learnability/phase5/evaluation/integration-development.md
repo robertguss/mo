@@ -1090,3 +1090,46 @@ identifies GCC 13.3.0. Original and rebuilt fixture source/context are byte-iden
 and expectations compare equal. Resource measurements and retained failures are
 in resource-development.md. Final freeze review and Robert's scored-launch
 approval remain required.
+
+## Outcome-gated collector dress rehearsal (2026-11-11)
+
+The collector now launches the client untraced, grades task state, activation identity,
+immutable source tests and the final answer against the grader's own live reading, and
+records the reported model, the upload route and unmatched proxy calls without grading them.
+This rehearsal ran on commit 5d713bcc, before the experiment 4 freeze.
+
+`mo` 0.2.0 was built from an archive of 5d713bcc with `timeout 900 make -j8 CC=gcc` in
+`/opt/mo-phase5/build-5d713bcc` (root-owned, top folder 0711, no group or world write) and
+installed through `harness.py setup`; its SHA-256 is
+8f066a6722e4d4e5f2fbe07f87d0e3fa0029fff0118ca0be3e8d9376bc128b5e. Both client pins are
+unchanged. The fixture was rebuilt with the installed binary in `fixture-5d713bcc-eval`: its
+source is byte-identical to the e53a822e fixture and `expected.json` compares equal. The
+session account compiles it.
+
+On the installed binary, the grader accepted the reference and qualified-reference upgrades
+and rejected the unchanged service, initializer substitution, dropped job, altered payload,
+duplicate completion, wrong revision, source-only fix, constant revision and wrong next_id.
+The proxy controls passed, including a real `mo push` whose accepted commit the proxy
+recorded. The whole evaluation suite passed on 5d713bcc (317 tests, three opt-in development
+tests skipped), including the stub collector's success, curl, urllib, no-upgrade, timeout and
+cleanup-failure cases, each regraded from its retained bundle with the same verdict.
+
+One declared development pair ran (cumulative development model attempts now Codex 9,
+Claude 7; scored 0; no retry). Both sessions ran to completion with no harness failure and no
+change between launch and regrade:
+
+| Slot | Client | Wall time | Live verdict | Regrade | Reported model | Upload route | Unmatched proxy calls |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | Codex | 6:22 | four of four | four of four, identical | gpt-6.1-sol | `mo push`, 6 shell uploads | 11 |
+| 2 | Claude | 3:36 | four of four | four of four, identical | claude-opus-5-5 | `mo push`, 6 shell uploads | 10 |
+
+Both agents used `mo push`, so no upload had a native twin; the unmatched calls are those
+uploads plus shell `mo-state`, `revision` and `stats` queries. The controls file for the freeze
+and its evidence are in `build/freeze-4/` of the rehearsal checkout.
+
+**Accepted difference from the rehearsed commit (2026-11-11).** After the rehearsal, f307b642
+renamed a local argument parser in `learnability/phase5/evidence.py` from `freeze` to `inputs`;
+the old name shadowed the new `freeze()` function and made `evidence.py freeze` fail from its
+command line. `evidence.py` is freeze-hashed, so the freeze's comparison with 5d713bcc shows this
+one file changed. The rehearsal never ran it. Robert accepted the difference on 2026-11-11 instead
+of a repeat rehearsal; every other freeze-hashed file must still match 5d713bcc.

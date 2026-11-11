@@ -381,3 +381,15 @@ The four-slot publisher cannot publish an incomplete cohort. M6 pause and
 kill-drill evidence cannot carry forward to these changed inputs. Phase 5 remains
 open; a new experiment needs a separate declaration, and release approval remains
 Robert's decision.
+
+## Experiment 4 declared on outcome
+
+Experiment 4 is declared before collection in the
+[protocol](../../learnability/phase5/protocol.md#experiment-4-outcome-gated-declaration)
+and its [declaration record](../../learnability/phase5/results/experiment-4/declaration.json).
+It keeps experiment 2's four slots, clients, task, prompt, limit and 3-of-4 gate, and
+passes a session on the outcome of its upgrade: service state, one expected
+activation whose accepted commit the proxy recorded, immutable source tests and the
+final answer. The syscall tracer does not run; the reported model, the upload route
+and unmatched proxy calls are recorded, not graded. The drill and a new pause series
+rerun on the same frozen build. Nothing has been collected; Phase 5 remains open.

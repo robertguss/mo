@@ -1,11 +1,10 @@
 """Phase5 recording wrapper; Phase4 transport and scanner remain unchanged."""
+import hashlib
 import importlib.util
 import pathlib
 import http.server
 import threading
 import shlex
-import origin_join
-import origin_identity
 import json
 import os
 
@@ -21,6 +20,19 @@ def load(name):
 
 base = load('proxy')
 scan = load('scan')
+
+
+def digests(data):
+    result = {'body_byte_count': len(data),
+              'body_sha256': hashlib.sha256(data).hexdigest()}
+    try:
+        value = json.loads(data)
+        result['canonical_json_sha256'] = hashlib.sha256(json.dumps(
+            value, sort_keys=True, separators=(',', ':'), ensure_ascii=True
+        ).encode('ascii')).hexdigest()
+    except (ValueError, UnicodeError):
+        pass
+    return result
 
 
 class Recorder(base.Recorder):
@@ -55,7 +67,7 @@ class Recorder(base.Recorder):
                 text = entry.get('body')
                 raw = b'' if text is None else text.encode() if isinstance(text, str) else None
                 if raw is not None and len(raw) == entry.get('bytes'):
-                    response = origin_join.digests(raw)
+                    response = digests(raw)
             entry = {**entry, 'transport': dict(metadata) if entry['direction'] == 'request' else response}
         cleaned = self.clean(entry)
         if cleaned != entry:
@@ -70,7 +82,7 @@ def handler(upstream, recorder, token):
             read = response.read
             def captured_read(*args, **kwargs):
                 data = read(*args, **kwargs)
-                recorder.context.response_metadata = origin_join.digests(data)
+                recorder.context.response_metadata = digests(data)
                 return data
             response.read = captured_read
             return response
@@ -91,7 +103,7 @@ def handler(upstream, recorder, token):
             local = self.connection.getsockname()
             recorder.context.metadata = {
                 'endpoint': f'{remote[0]}:{remote[1]}->{local[0]}:{local[1]}',
-                'request_ordinal': self.request_ordinal, **origin_join.digests(data)}
+                'request_ordinal': self.request_ordinal, **digests(data)}
             return data
 
         def handle_any(self):
@@ -158,6 +170,8 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
     unanswered = []
     observation = False
     if capture is not None:
+        import origin_identity
+        import origin_join
         from protected_regrade import ReplayReceipt
         if type(capture) not in (origin_identity.Capture, ReplayReceipt):
             raise ValueError('collector Capture required')
@@ -189,7 +203,7 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
             responses.setdefault(row.get('request'), []).append(row)
     remaining = list(base.stream_calls(client, stream, base.SERVER))
     result = dict(revision_observed=observation, model_provenance=provenance, observation_coverage="typed native results; exact single-writer pipe delivery to typed shell results; or shell output containing the exact response body that the receiving process wrote to its standard output and the client then read from the same pipe or file before emitting the typed result; other framing rejects", pairs=0, log_only=[], stream_only=[], exempt=[], shell=0, unanswered_requests=unanswered,
-                  command_origin=[], shell_origins=[],
+                  command_origin=[], shell_origins=[], upload_routes=dict(native=0, shell=0),
                   verified_push_requests=sum(r['verified_push_identity'] for seq, r in origins.items()
                                              if seq not in unanswered),
                   verified_shell_requests=len(origins) - len(unanswered))
@@ -205,6 +219,8 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
         arguments = ((row.get('body') or {}).get('params') or {}).get('arguments')
         twin = next((r for r in remaining if r[3] and r[1] == row.get('tool')
                      and base.canonical(r[2]) == base.canonical(arguments)), None)
+        if row.get('tool') in UPLOAD:
+            result['upload_routes']['shell' if twin is None else 'native'] += 1
         if twin is None:
             receipt = origins.get(row.get('seq'))
             if receipt is None:

@@ -216,6 +216,28 @@ def codex_responses(lines, events, model, effort) -> CodexProvenance:
 EXPECTED = {'codex': ('gpt-6.1-sol', 'xhigh'), 'claude': ('claude-opus-5-5', None)}
 
 
+def reported_models(client, stream, stderr):
+    """The model the client requested and every model its own output reports; never graded."""
+    events = []
+    for line in stream.split(b'\n'):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    model, effort = EXPECTED[client]
+    if client == 'codex':
+        r = codex_responses(stderr.decode('utf-8', 'replace').split('\n'), events, model, effort)
+        reported = {m for _, m, _, _ in r.responses}
+    else:
+        session = next((e.get('session_id') for e in events if e.get('type') == 'system'), '')
+        r = claude_metadata(events, session, model)
+        reported = {m for _, m in r.requests} | set(r.terminal_models)
+    return dict(requested_model=model, requested_effort=effort,
+                reported_models=sorted(m for m in reported if isinstance(m, str) and m))
+
+
 def _written_by_client(writes, data, initial, decode):
     """True only if the client's root process wrote every byte of this channel file."""
     own = [w for w in writes if w['sender'].get('tgid') == initial['tgid']

@@ -245,7 +245,7 @@ def history(binary, folder):
         assert f["handler"] == "broken" and f["kind"].startswith("broken:0:stop:"), f
         assert f["signature"]["class"] == "defect" and f["signature"]["reason"] == "stop", f
         assert f["build"] == digest and f["replayable_here"] and f["not_replayable"] is None, f
-        assert f["build_label"].startswith("mo 0.1.0; "), f
+        assert f["build_label"].startswith("mo 0.2.0; "), f
     assert h["left_bytes"] == "0" and int(h["retained_bytes"]) > 0, h
     return data
 

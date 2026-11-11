@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Stage a complete four-slot experiment; scan, archive, extract and scan again.
+"""Stage a complete four-slot experiment; regrade, scan, archive, extract and scan again.
 
-publish.py SESSIONS_JSON DEST --tokens SERVICE_TOKENS --provider-secrets PROVIDER_SECRETS
-SESSIONS_JSON is an ordered list of four private session directories. DEST must
-not exist. Nothing is uploaded. Private databases and original records stay put.
+publish.py EXPERIMENT DEST
+EXPERIMENT is the collector's experiment folder, whose slot reservations name the four
+session directories. Each session is regraded from its retained bundle, and the
+collector's own credential inventories drive both scans. DEST must not exist.
+Nothing is uploaded. Private databases and original records stay put.
 """
 import argparse
 import hashlib
@@ -116,8 +118,7 @@ def extract(archive, dest):
                     shutil.copyfileobj(source, output)
 
 
-DIMENSIONS = ('task_state', 'activation_identity', 'command_origin', 'final_answer',
-              'source_tests', 'traffic_completeness', 'model_provenance')
+DIMENSIONS = ('task_state', 'activation_identity', 'final_answer', 'source_tests')
 
 
 def validated_dimensions(value):
@@ -257,12 +258,18 @@ def publish(sessions, destination, token_files, provider_files, *, protected_reg
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('sessions', type=Path)
+    parser.add_argument('experiment', type=Path)
     parser.add_argument('destination', type=Path)
-    parser.add_argument('--tokens', nargs='+', required=True)
-    parser.add_argument('--provider-secrets', nargs='+', required=True)
     args = parser.parse_args()
-    result = publish(json.loads(args.sessions.read_text()), args.destination, args.tokens, args.provider_secrets)
+    import harness
+    import protected_regrade
+    layout = harness.layout()
+    sessions = [Path((args.experiment / str(slot)).read_text()).resolve() for slot in range(1, 5)]
+    uid = layout.account().pw_uid
+    work = args.experiment / 'publication-work'
+    work.mkdir(mode=0o700, exist_ok=True)
+    result = publish(sessions, args.destination, [layout.tokens], [layout.secrets],
+                     protected_regrade=protected_regrade.callback({p: (str(p), uid) for p in sessions}, work))
     print(json.dumps(result, indent=2))
 
 
