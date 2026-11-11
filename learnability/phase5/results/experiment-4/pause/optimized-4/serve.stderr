@@ -1,0 +1,19 @@
+{"mo_pause":1,"attempt":0,"stage":"catalog_descriptor","outcome":"ok","elapsed_ns":42643}
+{"mo_pause":1,"attempt":0,"stage":"catalog_prepare","outcome":"ok","elapsed_ns":50047549}
+{"mo_pause":1,"attempt":0,"stage":"catalog_retain","outcome":"ok","elapsed_ns":448848}
+{"mo_pause":1,"attempt":1,"stage":"cached_state","outcome":"cache_hit_no_encoding","elapsed_ns":631}
+{"mo_pause":1,"attempt":1,"stage":"identity_decode","outcome":"ok_no_migration","elapsed_ns":30428731}
+{"mo_pause":1,"attempt":1,"stage":"output_encode","outcome":"ok","elapsed_ns":10160126}
+{"mo_pause":1,"attempt":1,"stage":"validation_decode","outcome":"ok","elapsed_ns":26932336}
+{"mo_pause":1,"attempt":1,"stage":"timer_validation","outcome":"ok","elapsed_ns":7892}
+{"mo_pause":1,"attempt":1,"stage":"live_admit","outcome":"ok","elapsed_ns":71120303}
+{"mo_pause":1,"attempt":1,"stage":"catalog_descriptor","outcome":"ok","elapsed_ns":49824}
+{"mo_pause":1,"attempt":1,"stage":"catalog_prepare","outcome":"ok","elapsed_ns":43756403}
+{"mo_pause":1,"attempt":1,"stage":"catalog_retain","outcome":"ok","elapsed_ns":449780}
+{"mo_pause":1,"attempt":1,"stage":"protocol_catalog","outcome":"ok","elapsed_ns":44295165}
+{"mo_pause":1,"attempt":1,"stage":"swap_prepare","outcome":"ok","elapsed_ns":26783004}
+{"mo_pause":1,"attempt":1,"stage":"activation_report","outcome":"ok","elapsed_ns":10786}
+{"mo_pause":1,"attempt":1,"stage":"boundary_to_commit","outcome":"committed","elapsed_ns":203762176}
+{"mo_pause":1,"attempt":1,"stage":"store_activate","outcome":"committed","elapsed_ns":61401323}
+mo serve: upgrade: activated ordinal 1; 0 queued calls answered as removed; 0 ticks dropped
+mo serve: stop: a signal asked the service to stop

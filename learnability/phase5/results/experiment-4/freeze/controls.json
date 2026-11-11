@@ -1,0 +1,20 @@
+{
+  "commit": "5d713bcca45c42bbe8afdb6c7f23eb6a497e0b8e",
+  "installed_mo_sha256": "8f066a6722e4d4e5f2fbe07f87d0e3fa0029fff0118ca0be3e8d9376bc128b5e",
+  "real_service_grading": true,
+  "proxy_commit": true,
+  "credential_redaction": true,
+  "collector_success": true,
+  "collector_timeout": true,
+  "source_tests": true,
+  "native_upgrade_header": true,
+  "evidence": {
+    "real_service_grading": "controls/grader-and-proxy-controls.txt: test_grade.RealControls on the installed mo, reference and qualified reference accepted, nine wrong outcomes rejected",
+    "proxy_commit": "controls/grader-and-proxy-controls.txt: test_proxy real push records the accepted commit through the proxy; rehearsal slots 1 and 2 activation_identity true live and on regrade",
+    "credential_redaction": "controls/grader-and-proxy-controls.txt test_forward_and_redact; controls/evaluation-suite-5d713bcc.txt test_collector stub tokens absent from the stream",
+    "collector_success": "controls/evaluation-suite-5d713bcc.txt test_collector success, curl, urllib, noop; controls/rehearsal-regrade.json both real clients pass four dimensions live and on regrade",
+    "collector_timeout": "controls/evaluation-suite-5d713bcc.txt test_collector timeout case",
+    "source_tests": "controls/rehearsal-regrade.json source_tests true for both clients; evaluation suite retained-source tests",
+    "native_upgrade_header": "controls/grader-and-proxy-controls.txt test_native_upgrade_requires_bearer_scheme"
+  }
+}

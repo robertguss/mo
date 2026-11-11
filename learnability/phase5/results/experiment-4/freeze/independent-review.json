@@ -1,0 +1,104 @@
+{
+  "reviewer": "Independent freeze reviewer (Claude Opus 5.5 subagent, read-only), 2026-11-11; delta re-review of the re-taken freeze",
+  "candidate": "bd40f9f5cc4973ddf1bde41596c51c213337db11",
+  "manifest_sha256": "3f4374d68763121486ae9b787a675b78c49e04cf531cfeac278ec17f8ea8afe2",
+  "verdict": "ready for Robert's scored-launch decision",
+  "blocking_findings": [],
+  "non_blocking_findings": [
+    {
+      "id": "N2",
+      "title": "The declaration's claim that the prompt is byte-identical is true of experiment 3 only, not experiment 2",
+      "evidence": [
+        "learnability/phase5/protocol.md:171-174 says experiment 4 keeps experiment 2's shape with 'the same task and the same prompt ... The prompt is byte-identical'",
+        "The prompt (sha256 1570c535...) last changed in 86f526cd (2026-11-09), which clarified the final-answer sentence after experiment 2",
+        "learnability/phase5/results/experiment-2-original/slot-1/prompt.txt:7 has the old final-answer sentence, and lines 10-11 carry an extra appended line, 'Use the migration function name migrate. Your final message must be exactly 1.'",
+        "The prompt is byte-identical, after SERVICE_URL substitution, to the one experiment 3 slot 1 and both rehearsal slots received; plan R2 calls it 'the same task with the clarified final-answer instruction'"
+      ],
+      "action": "No change to frozen files. The PR2 run record should state that experiment 4's prompt equals experiment 3's and differs from experiment 2's in the final-answer instruction and the appended line."
+    },
+    {
+      "id": "N3",
+      "title": "Recorded-only evidence code can still turn a correct session into a miss if it raises",
+      "evidence": [
+        "harness.py:389-394 runs proxy.match and recorded() (model_adapter.reported_models) inside cleanup(); cleanup appends 'cleanup record reconciliation: <Error>' to meta['failures'] (harness.py:338-342)",
+        "publish.py:196-198 and protected_regrade.py:23-24 count a session only when failures == []",
+        "Plan KTD5 (plan line 185) and R4/R5 say these fields never enter failures or the verdict",
+        "model_adapter.py:141, 168-171 and 204 assume dict events and integer usage values, so a null usage field or a non-object SSE payload would raise TypeError or AttributeError"
+      ],
+      "assessment": "Latent: the frozen client versions produced well-formed output across the rehearsal and earlier development sessions. If a scored session misses only for this reason, the run record must name it as a harness-reason miss under R8. Do not repair it mid-experiment."
+    },
+    {
+      "id": "N5",
+      "title": "Publication counts the independent regrade and never compares it with the live verdict",
+      "evidence": [
+        "publish.py:195 takes row dimensions from protected_regrade only; the live meta['dimensions'] are validated for shape (publish.py:176-179) but never compared",
+        "harness.py:447-450 sets publication_integrity False, so every live manifest reads correct=false; both rehearsal manifests show this, which is by design",
+        "The regrade depends on retention: replay_bundle.py:11 (MAX_FILES 4096) and pinned.py:31 (regular files only) mean an agent work tree with more than about 4,000 files, or with a FIFO or socket, loses 'candidate' retention, and the regrade then fails source_tests and activation_identity although the live grade passed"
+      ],
+      "action": "In PR2, publish each slot's live and regrade dimensions side by side and name any disagreement. Low probability; the rehearsal regrade matched the live grade exactly."
+    },
+    {
+      "id": "N6",
+      "title": "Only the Codex entrypoint is frozen, not its sibling package binaries",
+      "evidence": [
+        "evidence.py:92-93 and harness.py:102-104 hash /opt/mo-phase5/codex/bin/codex only; bin/codex-exec-server, bin/codex-code-mode-host, codex-resources/bwrap and codex-path/rg are unhashed",
+        "All are root-owned 0755, unchanged since 2026-11-08 22:52 (before experiments 2 and 3)"
+      ],
+      "action": "Optional: record their SHA-256 in PR2 for completeness."
+    },
+    {
+      "id": "N7",
+      "title": "The freeze checkout shares origin/main with every other worktree",
+      "evidence": [
+        "harness.py:76-77 compares refs/remotes/origin/main with main_commit; /home/exedev/code/mo-freeze-4 is a worktree of /home/exedev/code/mo, so a `git fetch` anywhere after any merge (for example the open PRs #312, #313, #319, #320, #322) makes every later slot refuse to launch"
+      ],
+      "action": "Merge nothing and fetch nowhere until slot 4 ends, as the plan's risk table says (plan line 238)."
+    },
+    {
+      "id": "N8",
+      "title": "The drill exercises a binary built from the same inputs, not the installed session binary",
+      "evidence": [
+        "build/gcc/debug/mo (drill) sha256 fd4fe3be... differs from /opt/mo-phase5/bin/mo 8f066a67...; both are debug gcc builds of byte-identical inputs, and they differ through embedded build paths"
+      ],
+      "action": "None. This matches earlier freezes; R11 ties the drill to the frozen build inputs."
+    }
+  ],
+  "verified": [
+    "Delta, computed independently: the new manifest (3f4374d6...) and the superseded one (92666f97..., kept as manifest-superseded.json.txt) have the same artifact groups and the same file lists. Exactly two digests changed: fixtures/build/freeze-4/spec.json and verification/build/freeze-4/verification.json. The only top-level field that changed is created_at; repository, commits, slots, evidence paths and binaries are identical.",
+    "spec.json gained only the freeze key; source, context, data, expected, experiment and prompt are unchanged.",
+    "All 386 frozen digests match the files on disk. All 10 session inputs (spec.json, the 3 source/context files, data/service.sqlite, prompt.txt, expected.json) are in the manifest with matching SHA-256, and none is a symlink.",
+    "`PYTHONDONTWRITEBYTECODE=1 python3 learnability/phase5/evaluation/harness.py check build/freeze-4/manifest.json` exits 0. A direct harness.freeze(s['freeze'], layout) call also passes.",
+    "HEAD and origin/main are both bd40f9f5; the working tree is clean; experiment-4/ is empty; the installed mo, codex and claude digests match the manifest.",
+    "Drill: build/freeze-4/drill.txt ends 'check.sh finished: pass'; line 345 reads 'kill loop: seed=20261110 kills=1000 ... result=pass seconds=2780', matching the declared count and seed. Its 'skipped' mentions are corpus content counts (fragments, lowering-impossible inputs), not missing-tool skips.",
+    "Everything else in the first review still holds unchanged, because the delta touches no other frozen file: binaries and versions; the 285 build inputs identical between /opt/mo-phase5/build-5d713bcc and bd40f9f5; evidence.py as the only freeze-hashed change since 5d713bcc; the controls and their evidence; both gcc logs passing without skips; fixture equality and freshness; the slots, limit and gate against the declaration; and the publication path."
+  ],
+  "limits": [
+    "No test suite, collector, client, make or check.sh was run; control results are taken from the frozen logs.",
+    "The gcc logs do not name the commit or checkout they ran in; their independence rests on verification.json's statement.",
+    "collector-suite-verbose.txt does not state which commit it ran on.",
+    "Client logins and credential validity at launch time were not checked; doing so would need a client launch.",
+    "Firewall coverage of IPv6 loopback and of mo serve's bind address was not verified.",
+    "The evidence.py freeze run itself was not reproduced; manifest digests were rechecked instead.",
+    "The pause series had not started and was not reviewed; plan R13 applies to its samples.",
+    "The drill ran on the superseded manifest. Its inputs (instruments, build inputs, binaries) have the same digests in both manifests, so it carries forward under R10."
+  ],
+  "launch_authorized": false,
+  "superseded_manifest_sha256": "92666f976c31fda3202c7d36958fab87404543fbdd7c745f6850fa1499cce613",
+  "resolved_findings": [
+    {
+      "id": "B1",
+      "title": "The frozen spec.json cannot launch a scored session: it has no 'freeze' key",
+      "resolution": "spec.json now has \"freeze\": \"/home/exedev/code/mo-freeze-4/build/freeze-4/manifest.json\", which resolves to the new manifest. harness.freeze(s['freeze'], harness.layout()), the call collect_locked makes at harness.py:245, returned the candidate bd40f9f5 without error."
+    },
+    {
+      "id": "N1",
+      "title": "The running drill leaves an untracked file in the freeze checkout; harness.freeze will refuse until it is removed",
+      "resolution": "tests/errors/e1409-token/service.sqlite was removed; `git status --porcelain` is empty in the freeze checkout."
+    },
+    {
+      "id": "N4",
+      "title": "verification.json names a rehearsal commit that does not resolve",
+      "resolution": "verification.json rehearsal_commit is now 5d713bcca45c42bbe8afdb6c7f23eb6a497e0b8e, which resolves to a commit; every other field is unchanged."
+    }
+  ]
+}

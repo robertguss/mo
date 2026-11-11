@@ -1,0 +1,13 @@
+{
+  "command": [
+    "/home/exedev/code/mo-freeze-4/build/pause-optimized/debug/mo",
+    "check",
+    "/home/exedev/code/mo-freeze-4/build/freeze-4/pause/optimized-3/old/main.mo",
+    "--upgrade-from",
+    "/home/exedev/code/mo-freeze-4/build/freeze-4/pause/optimized-3/old/main.mo",
+    "--json"
+  ],
+  "timeout_seconds": 300,
+  "exit_status": 0,
+  "elapsed_seconds": 0.3108406919054687
+}

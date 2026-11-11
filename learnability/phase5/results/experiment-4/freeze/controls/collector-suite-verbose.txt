@@ -1,0 +1,9 @@
+test_development_and_timeout (test_collector.Collector.test_development_and_timeout) ... ok
+test_missing_binary_does_not_allocate (test_collector.Collector.test_missing_binary_does_not_allocate) ... ok
+test_missing_report_continues_state_grading (test_collector.Collector.test_missing_report_continues_state_grading) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 875.067s
+
+OK
+exit 0

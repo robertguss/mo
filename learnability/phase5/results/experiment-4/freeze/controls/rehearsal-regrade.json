@@ -1,0 +1,38 @@
+{
+ "1": {
+  "collection_id": "1663bb3d8193c9d450f5f06dbcadb7bc",
+  "started_at": 1794361044.7495062,
+  "execution_clean": true,
+  "correct": true,
+  "dimensions": {
+   "task_state": true,
+   "activation_identity": true,
+   "final_answer": true,
+   "source_tests": true
+  },
+  "reasons": [
+   "source tests return code: 0"
+  ],
+  "slot": 1,
+  "client": "codex",
+  "evidence_class": "DEVELOPMENT"
+ },
+ "2": {
+  "collection_id": "268acc5bb7f9f8171d0f8fba8fc8f00e",
+  "started_at": 1794361426.485386,
+  "execution_clean": true,
+  "correct": true,
+  "dimensions": {
+   "task_state": true,
+   "activation_identity": true,
+   "final_answer": true,
+   "source_tests": true
+  },
+  "reasons": [
+   "source tests return code: 0"
+  ],
+  "slot": 2,
+  "client": "claude",
+  "evidence_class": "DEVELOPMENT"
+ }
+}

@@ -1,0 +1,32 @@
+test_answer_in_prose_is_a_miss (test_grade.Outcome.test_answer_in_prose_is_a_miss) ... ok
+test_answer_must_match_the_live_reading (test_grade.Outcome.test_answer_must_match_the_live_reading) ... ok
+test_correct_upgrade_passes_on_every_dimension (test_grade.Outcome.test_correct_upgrade_passes_on_every_dimension) ... ok
+test_no_upload_or_extra_activation_is_an_identity_miss (test_grade.Outcome.test_no_upload_or_extra_activation_is_an_identity_miss) ... ok
+test_prepared_lease_ages_only_at_declared_deadline (test_grade.RealControls.test_prepared_lease_ages_only_at_declared_deadline) ... ok
+test_real_services (test_grade.RealControls.test_real_services) ... ok
+test_source_timeout_is_a_diagnostic_result (test_grade.RetainedSourceTests.test_source_timeout_is_a_diagnostic_result) ... ok
+test_uses_retained_tests_when_checkout_is_absent (test_grade.RetainedSourceTests.test_uses_retained_tests_when_checkout_is_absent) ... ok
+test_declared_function_name (test_grade.Selector.test_declared_function_name) ... ok
+test_native_upgrade_requires_bearer_scheme (test_proxy.RealPush.test_native_upgrade_requires_bearer_scheme) ... ok
+test_real_push_records_the_accepted_commit_on_the_shell_route (test_proxy.RealPush.test_real_push_records_the_accepted_commit_on_the_shell_route) ... ok
+test_command_origin (test_proxy.Tests.test_command_origin) ... ok
+test_forward_and_redact (test_proxy.Tests.test_forward_and_redact) ... ok
+test_synthesized_unreachable_reply_is_recorded_exactly (test_proxy.Tests.test_synthesized_unreachable_reply_is_recorded_exactly) ... ok
+test_upload_routes_follow_stream_twins (test_proxy.Tests.test_upload_routes_follow_stream_twins) ... ok
+test_wrapped_commands (test_proxy.Tests.test_wrapped_commands) ... ok
+
+----------------------------------------------------------------------
+Ran 16 tests in 105.280s
+
+OK
+reference {'correct': True, 'reasons': [], 'dimensions': {'task_state': True, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+qualified-reference {'correct': True, 'reasons': [], 'dimensions': {'task_state': True, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+unchanged {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'activation identity mismatch', 'wrong or missing answer'], 'dimensions': {'task_state': False, 'activation_identity': False, 'final_answer': False}, 'evidence_class': 'DEVELOPMENT'}
+initializer {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'live: wrong next_id', 'restart: wrong persisted jobs', 'restart: wrong jobs', 'restart: wrong next_id'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+drop-job {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+payload {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+duplicate-completion {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+wrong-revision {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'wrong or missing answer'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': False}, 'evidence_class': 'DEVELOPMENT'}
+source-only {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'activation identity mismatch', 'wrong or missing answer'], 'dimensions': {'task_state': False, 'activation_identity': False, 'final_answer': False}, 'evidence_class': 'DEVELOPMENT'}
+constant-revision {'correct': False, 'reasons': ['live: wrong stored_revision', 'restart: wrong stored_revision'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+wrong-next-id {'correct': False, 'reasons': ['live: wrong next_id', 'restart: wrong next_id'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
