@@ -57,9 +57,8 @@ class BundleTests(IdentityTests):
     def test_integration_order(self):
         from pathlib import Path
         source = Path(__file__).with_name('harness.py').read_text()
-        self.assertLess(source.index('bundle.finish'), source.index("meta['records'] = proxy.match"))
         self.assertLess(source.index("('state', out / 'data')"), source.index("cleanup('grading'"))
-        self.assertIn("bundle.facts['live_observations'] = raw_live", source)
+        self.assertIn("partial.facts['live_observations'] = raw_live", source)
 
     def test_extra_and_writable(self):
         b, _ = self.bundle()

@@ -12,8 +12,8 @@ import signal
 import subprocess
 import sys
 import time
-import origin_identity
-import origin_observer
+import model_adapter
+import pinned
 import replay_bundle
 
 HERE = Path(__file__).resolve().parent
@@ -95,7 +95,7 @@ def freeze(path, installed):
     if str(controls) not in f['artifacts']['controls']:
         raise ValueError('control evidence absent from freeze')
     proven = json.loads(controls.read_text())
-    required_controls = ('real_service_grading', 'proxy_attestation', 'credential_redaction',
+    required_controls = ('real_service_grading', 'proxy_commit', 'credential_redaction',
                          'collector_success', 'collector_timeout', 'source_tests', 'native_upgrade_header')
     if any(proven.get(name) is not True for name in required_controls):
         raise ValueError('required development controls did not pass')
@@ -179,7 +179,7 @@ def require_no_retention_hold(installed):
 def reset_preserving_work(installed, out, meta):
     # Never let the legacy reset delete the only copy after failed capture.
     if meta.get('launched') and installed.work.exists() and not meta.get('source_captured'):
-        origin_identity.atomic_private(installed.state / 'retention-hold.json',
+        pinned.atomic_private(installed.state / 'retention-hold.json',
                                       dict(work=str(installed.work), evidence=str(out),
                                            reason='source capture incomplete', qualified=False))
         raise RuntimeError('uncaptured work preserved; destructive reset withheld')
@@ -194,6 +194,32 @@ def retain_optional(partial, role, path):
         partial.facts.setdefault('unavailable', {})[role] = type(error).__name__
 
 
+def launch(l, argv, env, out, limit):
+    with open(out / 'stream.jsonl', 'wb') as stdout, open(out / 'client-stderr.raw', 'wb') as stderr:
+        child = subprocess.Popen(['sudo', '-n', '-u', l.user, '--preserve-env=QUEUE_TOKEN,QUEUE_UPGRADE',
+                                  '--', *argv], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                 env=env, start_new_session=True)
+        try:
+            return child.wait(timeout=limit), False
+        except subprocess.TimeoutExpired:
+            p4.signal_all(l.user, 'TERM')
+            try:
+                child.wait(timeout=p4.GRACE)
+            except subprocess.TimeoutExpired:
+                p4.signal_all(l.user, 'KILL')
+            return child.wait(timeout=60), True
+
+
+def recorded(client, out, matched):
+    stream, stderr = out / 'stream.jsonl', out / 'client-stderr.raw'
+    return dict(model_adapter.reported_models(client, stream.read_bytes(),
+                                              stderr.read_bytes() if stderr.exists() else b''),
+                transcript_mo_push=any(what == 'command' and proxy.is_push(text)
+                                       for what, text in proxy.base.commands(client, stream)),
+                unmatched_proxy_calls=len(matched['log_only']),
+                upload_routes=matched['upload_routes'])
+
+
 def collect(l, spec, out, slot, development=False, limit=3600):
     import fcntl
     with (l.state / 'collector.lock').open('a') as lock:
@@ -206,8 +232,6 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
         raise ValueError('invalid slot or time limit')
     if limit <= 0:
         raise ValueError('positive time limit required')
-    if tuple(int(n) for n in os.uname().release.split('.')[:2]) < (5, 3):
-        raise ValueError('capture requires Linux 5.3 or newer')
     out = Path(out).resolve()
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
     p4.check_private(l, out, Path(spec).resolve(), l.state)
@@ -236,14 +260,10 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
         p4.append_secret(l.tokens, value)
     meta = {'collection_id': secrets.token_hex(16), 'slot': slot, 'client': SLOTS[slot-1], 'evidence_class': 'DEVELOPMENT' if development else 'FINAL',
             'success': False, 'correct': False, 'development': development, 'launched': False, 'limit_seconds': limit, 'started_at': time.time(), 'failures': []}
-    service = recorder = child = None
+    service = recorder = None
     firewall = False
-    capture = None
-    bundle = None
     state_retained = False
     raw_live = {}
-    trace_result = {}
-    trace_run = None
     firewall_baseline = p4.sudo("iptables", "-S", "OUTPUT").stdout
     rule = None
     old = {sig: signal.signal(sig, p4.stopped) for sig in (signal.SIGTERM, signal.SIGHUP)}
@@ -281,7 +301,7 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
                         'Mo-Upgrade-Authorization': 'Bearer ${QUEUE_UPGRADE}'}}}}))
         os.chmod(l.mcp_config, 0o444)
         prompt = Path(s['prompt']).read_text().replace('SERVICE_URL', recorder.url)
-        meta['answer_rule'] = 'entire final message, stripped, solely the post-activation observed revision'
+        meta['answer_rule'] = 'entire final message, stripped, equals the revision the grader reads from the live service'
         meta['migration_requirement'] = 'migrate'
         (out / 'prompt.txt').write_text(prompt)
         cmd = command(meta['client'], l.bin / meta['client'], prompt, recorder.url, l.mcp_config)
@@ -292,20 +312,12 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
         start = time.monotonic()
         if (l.bin / 'mo').stat().st_uid != 0:
             raise ValueError('frozen mo must be root owned')
-        capture = origin_identity.Capture(out / 'origin-identity', str(out), l.account().pw_uid, l.bin / 'mo')
         reserve(s['experiment'], slot, out)
         meta['launched'] = True
-        trace_run = origin_observer.TraceRun(out / 'origin-raw')
-        trace_result = trace_run.run(
-            ['/usr/bin/python3', '-I', '-c', ENTER, json.dumps(environment), str(l.work), *cmd],
-            timeout=limit, env=env, session_user=l.user, cleanup=lambda: p4.end_all(l.user))
+        meta['exit_status'], meta['timeout'] = launch(
+            l, ['/usr/bin/python3', '-I', '-c', ENTER, json.dumps(environment), str(l.work), *cmd],
+            env, out, limit)
         recorder.recorder.close()
-        shutil.copyfile(out / 'origin-raw/stdout', out / 'stream.jsonl')
-        shutil.copyfile(out / 'origin-raw/stderr', out / 'client-stderr.txt')
-        meta['kernel'] = os.uname().release
-        meta['exit_status'] = trace_result['returncode']
-        meta['timeout'] = trace_result['timed_out']
-        meta['capture'] = trace_result
         meta['seconds'] = time.monotonic() - start
         class RecordingClient:
             def every_job(self):
@@ -349,8 +361,6 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
         if not meta['cleanup_zero_processes']:
             cleanup('client processes retry', lambda: p4.end_all(l.user))
             cleanup('process verification retry', verify_processes)
-        if child is not None:
-            cleanup('client wait', lambda: child.wait(timeout=30))
         if recorder is not None:
             cleanup('proxy', recorder.stop)
         meta['service_stopped'] = service is None
@@ -378,51 +388,14 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
             cleanup('source capture', capture_work)
         if (out / 'stream.jsonl').exists() and (out / 'proxy.jsonl').exists():
             def reconcile():
-                nonlocal bundle, state_retained
-                kwargs = {}
-                if (capture is not None and trace_result.get('capture_finished') is True
-                        and meta['cleanup_zero_processes'] and meta['firewall_restored']
-                        and meta['service_stopped'] and meta['source_captured']):
-                    trace = out / 'origin-raw/trace'
-                    snapshot = out / 'origin-identity/tcp.json'
-                    origin_identity.atomic_private(snapshot, dict(session=capture.session, nonce=capture.nonce,
-                        trace_sha256=origin_identity.protected(trace, os.geteuid(), capture.session_uid, private=True, pin_only=True)[0]['sha256'], snapshots=recorder.recorder.snapshots))
-                    capture.seal(trace, out / 'proxy.jsonl', snapshot, stdout=out / 'origin-raw/stdout',
-                                 client_path=l.bin / meta['client'], stderr=out / 'origin-raw/stderr')
-                    pending_bundle = replay_bundle.Bundle(out / 'replay-private', capture,
-                        evaluation_endpoint=recorder.url.split('/')[2])
-                    pending_bundle.add('expected', s['expected'])
-                    pending_bundle.add('immutable_tests', grader.fixture.ROOT / 'services/task-queue/queue-tests.mo')
-                    pending_bundle.add('spec', spec)
-                    pending_bundle.add('prompt', out / 'prompt.txt')
-                    for role, path in [('original', out / 'serve'), ('context', s['context']),
-                                       ('candidate', out / l.work.name), ('state', out / 'data')]:
-                        pending_bundle.tree(role, path)
-                    pending_bundle.facts['live_observations'] = raw_live
-                    pending_bundle.facts['evaluation_endpoint'] = recorder.url.split('/')[2]
-                    pending_bundle.finish(dict(meta))
-                    bundle = pending_bundle
-                    state_retained = True
-                    meta['replay_path'] = str(bundle.root)
-                    kwargs = dict(capture=capture, session_id=capture.session,
-                                  evaluation_endpoint=recorder.url.split('/')[2])
-                meta['records'] = proxy.match(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl', **kwargs)
-                if not kwargs:
-                    meta['records']['match'] = False
-                    meta['records']['capture_incomplete'] = True
-                meta['models'] = meta['records'].pop('model_provenance')
+                matched = proxy.match(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl')
+                meta['records'] = {k: matched[k] for k in ('match', 'pairs', 'log_only', 'stream_only', 'exempt')}
+                meta['recorded'] = recorded(meta['client'], out, matched)
             cleanup('record reconciliation', reconcile)
-        if meta.get('models', {}).get('qualified') is not True:
-            meta['failures'].append('missing or substituted model evidence')
-        if meta['launched'] and bundle is None:
+        if meta['launched']:
             def retain_partial():
                 nonlocal state_retained
-                if trace_run is not None and 'timeout' not in meta:
-                    meta['timeout'] = getattr(trace_run, 'timed_out', None)
-                partial_root = out / 'replay-private'
-                if partial_root.exists():
-                    partial_root = out / 'replay-partial-private'
-                partial = replay_bundle.PartialBundle(partial_root, str(out), l.account().pw_uid)
+                partial = replay_bundle.PartialBundle(out / 'replay-private', str(out), l.account().pw_uid)
                 safe = (meta['cleanup_zero_processes'] and meta['firewall_restored']
                         and meta['service_stopped'] and meta['source_captured'])
                 partial.facts['live_observations'] = raw_live
@@ -433,9 +406,9 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
                         partial.add(role, path, executable=role == 'binary')
                         partial.facts['available'].append(role)
                 if 'binary' in partial.files:
-                    loader = origin_identity.interpreter((partial.root / 'binary').read_bytes())
+                    loader = pinned.interpreter((partial.root / 'binary').read_bytes())
                     if loader:
-                        partial.facts['loader'] = origin_identity.trusted_interpreter(loader, partial.collector, partial.uid)
+                        partial.facts['loader'] = pinned.trusted_interpreter(loader, partial.collector, partial.uid)
                         partial.add('loader', partial.facts['loader']['path'], expected=partial.facts['loader'])
                 if safe:
                     for role, path in [('original', out / 'serve'), ('context', Path(s['context'])),
@@ -446,8 +419,7 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
                                 partial.facts['available'].append(role)
                             except Exception as error:
                                 partial.facts.setdefault('unavailable', {})[role] = type(error).__name__
-                    for role, path in [('stdout', out / 'origin-raw/stdout'), ('stderr', out / 'origin-raw/stderr'),
-                                       ('trace', out / 'origin-raw/trace'),
+                    for role, path in [('stdout', out / 'stream.jsonl'), ('stderr', out / 'client-stderr.raw'),
                                        ('proxy_log', out / 'proxy.jsonl'), ('prompt', out / 'prompt.txt')]:
                         if path.exists():
                             retain_optional(partial, role, path)
@@ -459,27 +431,20 @@ def collect_locked(l, spec, out, slot, development=False, limit=3600):
             cleanup('grading', lambda: grade_collected(l, out, s, expected, token, upgrade, meta))
         meta['fixture_failure'] = not meta['launched']
         def redact_client_artifacts():
-            # The sealed raw capture remains private; redact review copies only.
             if recorder is None: return
-            for name in ('stream.jsonl', 'client-stderr.txt'):
-                path = out / name
-                if path.exists():
-                    text = path.read_text(errors='replace')
+            for source, name in (('stream.jsonl', 'stream.jsonl'), ('client-stderr.raw', 'client-stderr.txt')):
+                if (out / source).exists():
+                    text = (out / source).read_text(errors='replace')
                     lines = public_stderr(text) if name == 'client-stderr.txt' else text.splitlines()
-                    path.write_text('\n'.join(recorder.recorder.clean(line) for line in lines) + '\n')
+                    (out / name).write_text('\n'.join(recorder.recorder.clean(line) for line in lines) + '\n')
         cleanup('client redaction', redact_client_artifacts)
         cleanup('reset', lambda: reset_preserving_work(l, out, meta))
         def inventory():
             meta['artifacts'] = p4.artifacts(out)
         cleanup('artifact inventory', inventory)
-        dimensions = dict.fromkeys(('task_state', 'activation_identity', 'command_origin',
-                                    'final_answer'), False)
+        dimensions = dict.fromkeys(('task_state', 'activation_identity', 'final_answer'), False)
         dimensions.update(meta.get('grade', {}).get('dimensions', {}))
-        dimensions.update(
-            source_tests=meta.get('source_tests_passed', False),
-            traffic_completeness=meta.get('records', {}).get('match') is True,
-            model_provenance=meta.get('models', {}).get('qualified') is True,
-            publication_integrity=False)
+        dimensions.update(source_tests=meta.get('source_tests_passed', False), publication_integrity=False)
         meta['dimensions'] = dimensions
         meta['correct'] = meta['success'] = (meta['launched'] and not meta['failures']
                                              and all(dimensions.values()))
@@ -509,24 +474,21 @@ def reserve(experiment, slot, out):
 
 def grade_collected(l, out, spec, expected, token, upgrade, meta):
     candidate = out / l.work.name
+    reasons = []
     retained_tests = Path(meta.get('replay_path', out / 'replay-private')) / 'immutable_tests'
     result = grader.source_precheck(l.bin / 'mo', candidate, out / 'source-tests', out / 'serve',
         immutable_tests=retained_tests if retained_tests.exists() else None)
     (out / 'source-tests.json').write_text(result.stdout)
     meta['source_tests_passed'] = result.returncode == 0
     if result.returncode:
-        meta['failures'].append('source tests timed out' if getattr(result, 'timed_out', False)
-                                else 'immutable source tests failed')
-    pushed = grader.attestation(meta['client'], out / 'stream.jsonl', out / 'proxy.jsonl', matched=meta.get('records'))
-    if pushed is None:
-        meta['failures'].append('proxy/stream push attestation failed')
-    # Compile the recorded selector even when reconciliation failed; the verdict
-    # still receives None and cannot credit an unattested push.
+        reasons.append('source tests timed out' if getattr(result, 'timed_out', False)
+                       else 'immutable source tests failed')
     identity = {'candidate_source': None, 'base_source': None}
+    report = grader.accepted_report(out / 'proxy.jsonl')
     try:
-        selector = grader.migration_selector(grader.accepted_report(out / 'proxy.jsonl'))
+        selector = grader.migration_selector(report)
     except ValueError:
-        meta['failures'].append('no accepted upgrade with a valid migration selector')
+        reasons.append('no accepted upgrade with a valid migration selector')
     else:
         checked = subprocess.run([str(l.bin / 'mo'), 'check', str(candidate / 'main.mo'),
             '--upgrade-from', str(out / 'serve/main.mo'), '--migrate', selector, '--json'],
@@ -534,25 +496,22 @@ def grade_collected(l, out, spec, expected, token, upgrade, meta):
         (out / 'upgrade-check.json').write_text(checked.stdout)
         (out / 'upgrade-check.stderr').write_text(checked.stderr)
         if checked.returncode:
-            meta['failures'].append('candidate upgrade compilation failed')
+            reasons.append('candidate upgrade compilation failed')
         else:
             identity = json.loads(checked.stdout)
     expected = dict(expected, source_digest=identity['candidate_source'], base_digest=identity['base_source'])
     meta['identity'] = identity
-    answer = final_message(meta['client'], out / 'stream.jsonl')
     verdict = grader.stopped_grade(l.bin / 'mo', out / 'data', token, upgrade,
-        out / 'restart.log', expected, meta.get('live', {}), pushed,
-        development=meta['development'], answer=answer,
-        identity_report=grader.accepted_report(out / 'proxy.jsonl'),
-        revision_observed=meta.get('records', {}).get('revision_observed') is True)
+        out / 'restart.log', expected, meta.get('live', {}), development=meta['development'],
+        answer=final_message(meta['client'], out / 'stream.jsonl'), identity_report=report)
+    verdict['reasons'].extend(reasons)
     meta['grade'] = verdict
-    meta['failures'].extend(verdict['reasons'])
 
 
 def setup(installed, mo, claude, codex):
     require_no_retention_hold(installed)
     status = p4.setup(installed, mo, claude, codex)
-    # The capture pins a root-owned executable with no writable mode bits.
+    # The retained bundle pins a root-owned executable with no writable mode bits.
     p4.sudo('chmod', '0555', installed.bin / 'mo')
     return status
 

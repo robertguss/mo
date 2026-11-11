@@ -1,5 +1,6 @@
+import json
 import unittest
-from model_adapter import codex_header, claude_metadata
+from model_adapter import codex_header, claude_metadata, reported_models
 
 class ModelAdapterTests(unittest.TestCase):
     def events(self):
@@ -57,5 +58,24 @@ class ModelAdapterTests(unittest.TestCase):
     def test_terminal_accounting_mismatch(self):
         e=self.events();e[-1]['modelUsage']={}
         self.assertFalse(claude_metadata(e,'s').complete)
+
+    def test_reported_models_come_from_client_output(self):
+        def stream(events):
+            return b'not json\n' + b''.join(json.dumps(e).encode() + b'\n' for e in events)
+        system = dict(type='system', session_id='s')
+        self.assertEqual(reported_models('claude', stream([system, *self.events()]), b''),
+                         dict(requested_model='claude-opus-5-5', requested_effort=None,
+                              reported_models=['claude-opus-5-5']))
+        e = self.events(); e[0]['message']['model'] = 'claude-fallback'
+        e[-1]['modelUsage'] = {'claude-fallback': {}}
+        self.assertEqual(reported_models('claude', stream([system, *e]), b'')['reported_models'],
+                         ['claude-fallback'])
+        thread = stream([dict(type='thread.started', thread_id='t')])
+        silent = reported_models('codex', thread, b'error: plain client message\n')
+        self.assertEqual(silent, dict(requested_model='gpt-6.1-sol', requested_effort='xhigh',
+                                      reported_models=[]))
+        sse = ('2026-11-10T00:00:00Z TRACE codex_api::sse::responses: SSE event: '
+               + json.dumps(dict(type='response.created', response=dict(id='r1', model='gpt-6.1-sol'))))
+        self.assertEqual(reported_models('codex', thread, sse.encode())['reported_models'], ['gpt-6.1-sol'])
 
 if __name__=='__main__': unittest.main()

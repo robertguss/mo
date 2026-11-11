@@ -10,8 +10,8 @@ import tempfile
 
 import grade
 import harness
-import origin_identity as identity
 import origin_observer
+import pinned as identity
 import origin_trace
 import proxy
 import replay_bundle
@@ -99,27 +99,6 @@ def reconstruct(root, manifest, work):
                 shutil.copyfileobj(stream, out, 65536)
 
 
-def runtime(root, manifest, work, uid):
-    p = manifest['provenance']
-    if p.get('runtime_valid') is not True: identity.reject()
-    binary = Path(root) / 'binary'
-    loader_path = identity.interpreter(binary.read_bytes())
-    if bool(loader_path) != bool(p['loader']): identity.reject()
-    for pin in p['mappings'].values():
-        if pin == p['capture']['binary']: continue
-        if identity.protected(pin['path'], os.geteuid(), uid)[0] != pin:
-            identity.reject()
-    target = work / 'mo'
-    shutil.copyfile(binary, target)
-    target.chmod(0o500)
-    if loader_path:
-        if identity.trusted_interpreter(loader_path, os.geteuid(), uid) != p['loader']:
-            identity.reject()
-        if identity.digest((Path(root) / 'loader').read_bytes()) != p['loader']['sha256']:
-            identity.reject()
-    return target
-
-
 def compile_identity(mo, work, report):
     missing = dict(source_digest=None, base_digest=None)
     try:
@@ -136,85 +115,36 @@ def compile_identity(mo, work, report):
 
 
 def regrade(root, *, session_id, session_uid, workspace_parent):
-    receipt = ReplayReceipt(root, session_id, session_uid)
-    m = receipt.manifest
-    if m.get('record_type') == 'collector-partial':
-        return partial_regrade(root, m, session_uid, workspace_parent)
-    required = {'binary', 'trace', 'stdout', 'proxy_log', 'tcp_snapshot', 'expected', 'spec', 'prompt', 'immutable_tests'}
-    if not required <= m['files'].keys(): identity.reject()
-    parent = Path(workspace_parent).resolve()
-    if parent == Path(root).resolve() or Path(root).resolve() in parent.parents:
+    m = replay_bundle.verify(root, session_id, session_uid)
+    if m.get('record_type') != 'collector-partial':
         identity.reject()
-    with tempfile.TemporaryDirectory(prefix='protected-regrade-', dir=parent) as tmp:
-        work = Path(tmp)
-        identity.atomic_private(work / 'reservation', {'session': session_id})
-        identity.protected(work / 'reservation', os.geteuid(), session_uid, private=True)
-        reconstruct(root, m, work)
-        mo = runtime(root, m, work, session_uid)
-        stream, log = Path(root) / 'stdout', Path(root) / 'proxy_log'
-        client = m['launch']['client']
-        matched = proxy.match(client, stream, log, capture=receipt, session_id=session_id)
-        expected = json.loads((Path(root) / 'expected').read_bytes())
-        source = grade.source_precheck(mo, work / 'candidate', work / 'tests', work / 'original',
-                                      immutable_tests=Path(root) / 'immutable_tests')
-        report = grade.accepted_report(log)
-        compiled, identity_failures = compile_identity(mo, work, report)
-        expected.update(compiled)
-        raw = m['provenance']['live_observations']
-        class Live:
-            def every_job(self): return raw['jobs']
-            def ok(self, name): return raw[name]
-        verdict = grade.stopped_grade(mo, work / 'state', secrets.token_hex(32),
-            secrets.token_hex(32), work / 'restart.log', expected, grade.observe(Live()),
-            grade.attestation(client, stream, log, matched=matched),
-            development=m['launch']['development'] is True,
-            answer=harness.final_message(client, stream), identity_report=report,
-            revision_observed=matched['revision_observed'])
-        verdict['reasons'].extend(identity_failures)
-        if getattr(source, 'timed_out', False):
-            verdict['reasons'].append('source tests timed out')
-        verdict['dimensions'].update(source_tests=source.returncode == 0,
-            traffic_completeness=matched['match'],
-            model_provenance=matched['model_provenance']['qualified'] is True)
-        verdict.update(evidence_class='DEVELOPMENT' if m['launch']['development'] is True else 'FINAL',
-                       slot=m['launch']['slot'], client=client)
-        verdict.update(launch_binding(m))
-        verdict['correct'] = False
-        provenance = matched['model_provenance']
-        verdict['limitations'] = [('Serving-model provenance qualified from sealed client channels.'
-            if provenance['qualified'] is True else
-            'Serving-model provenance unqualified: ' + str(provenance.get('reason'))),
-            'Publication integrity requires publisher scan and archive verification.',
-            'Replay requires unchanged protected system loader and mapped libraries.']
-        return verdict
+    return partial_regrade(root, m, session_uid, workspace_parent)
 
 
 def callback(bindings, workspace_parent):
     """Bindings are collector-supplied directory -> (session ID, isolated UID)."""
     def run(directory):
         session, uid = bindings[Path(directory).resolve()]
-        root = Path(directory) / 'replay-partial-private'
-        if not root.exists():
-            root = Path(directory) / 'replay-private'
-        return regrade(root, session_id=session,
+        return regrade(Path(directory) / 'replay-private', session_id=session,
             session_uid=uid, workspace_parent=workspace_parent)
     return run
 
 
 def partial_regrade(root, m, uid, workspace_parent):
-    """Independent diagnostics only; incomplete traces cannot attest a command."""
+    """Regrade a retained session from its retained inputs alone."""
     import publish
     root = Path(root)
     parent = Path(workspace_parent).resolve()
     if parent == root.resolve() or root.resolve() in parent.parents:
         identity.reject()
     dimensions = dict.fromkeys(publish.DIMENSIONS, False)
-    reasons = ['incomplete capture: command origin, traffic and final observation unavailable']
+    reasons = []
     available = set(m['provenance']['available'])
-    for role in ('binary', 'expected', 'immutable_tests', 'original', 'candidate', 'state'):
+    client = m['launch']['client']
+    for role in ('binary', 'expected', 'immutable_tests', 'original', 'candidate', 'state', 'stdout', 'proxy_log'):
         if role not in available:
             reasons.append(role + ': absent or unsafe to retain')
-    with tempfile.TemporaryDirectory(prefix='partial-regrade-', dir=parent) as tmp:
+    with tempfile.TemporaryDirectory(prefix='regrade-', dir=parent) as tmp:
         work = Path(tmp)
         reconstruct(root, m, work)
         if 'binary' in available:
@@ -247,21 +177,22 @@ def partial_regrade(root, m, uid, workspace_parent):
                         reasons.extend(failures)
                     except (ValueError, OSError, subprocess.SubprocessError, KeyError) as error:
                         reasons.append('compilation unavailable: ' + type(error).__name__)
+                answer = harness.final_message(client, root / 'stdout') if 'stdout' in available else None
                 class Live:
                     def every_job(self): return raw['jobs']
                     def ok(self, name): return raw[name]
                 try:
                     result = grade.stopped_grade(mo, work / 'state', secrets.token_hex(32),
-                        secrets.token_hex(32), work / 'restart.log', expected,
-                        grade.observe(Live()), None, identity_report=report)
-                    dimensions['activation_identity'] = result['dimensions']['activation_identity']
-                    dimensions['task_state'] = result['dimensions']['task_state']
+                        secrets.token_hex(32), work / 'restart.log', expected, grade.observe(Live()),
+                        answer=answer, identity_report=report)
+                    for name in ('task_state', 'activation_identity', 'final_answer'):
+                        dimensions[name] = result['dimensions'][name]
                     reasons.extend(result['reasons'])
                 except (ValueError, OSError, subprocess.SubprocessError, KeyError) as error:
                     reasons.append('state check unavailable: ' + type(error).__name__)
             else:
                 reasons.append('state check lacks retained live observations or inputs')
-    return dict(**launch_binding(m), correct=False, dimensions=dimensions, reasons=reasons,
-        evidence_class='DEVELOPMENT' if m['launch']['development'] else 'FINAL',
-        slot=m['launch']['slot'], client=m['launch']['client'],
-        limitations=['Partial capture cannot attest command origin or final observation; model provenance unqualified.'])
+    binding = launch_binding(m)
+    return dict(**binding, correct=binding['execution_clean'] and all(dimensions.values()),
+        dimensions=dimensions, reasons=reasons, slot=m['launch']['slot'], client=client,
+        evidence_class='DEVELOPMENT' if m['launch']['development'] else 'FINAL')

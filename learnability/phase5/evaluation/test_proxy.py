@@ -108,6 +108,24 @@ class Tests(unittest.TestCase):
             self.assertEqual(unanswered['command_origin'], [])
 
 
+    def test_upload_routes_follow_stream_twins(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stream, log = [pathlib.Path(directory) / name for name in ('stream', 'log')]
+            rows = []
+            for seq, tool in ((1, 'mo-upgrade-open'), (3, 'mo-upgrade-commit'), (5, 'revision')):
+                rows += [{'seq': seq, 'direction': 'request', 'rpc': 'tools/call', 'id': seq, 'tool': tool,
+                          'body': {'params': {'arguments': {'n': seq}}}},
+                         {'seq': seq + 1, 'direction': 'response', 'request': seq}]
+            log.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+            item = {'id': 'a', 'type': 'mcp_tool_call', 'server': 'task-queue', 'tool': 'mo-upgrade-open',
+                    'arguments': {'n': 1}}
+            stream.write_text(''.join(json.dumps({'type': kind, 'item': item}) + '\n'
+                                      for kind in ('item.started', 'item.completed')))
+            result = proxy.match('codex', stream, log)
+            self.assertEqual(result['upload_routes'], dict(native=1, shell=1))
+            self.assertEqual([c['tool'] for c in result['log_only']], ['mo-upgrade-commit', 'revision'])
+
+
 class RealPush(unittest.TestCase):
     def test_native_upgrade_requires_bearer_scheme(self):
         import fixture
@@ -144,7 +162,7 @@ class RealPush(unittest.TestCase):
                 recorder.stop()
                 service.stop()
 
-    def test_real_push_attestation(self):
+    def test_real_push_records_the_accepted_commit_on_the_shell_route(self):
         import fixture
         import grade
         import os
@@ -174,36 +192,23 @@ class RealPush(unittest.TestCase):
                 record.stop()
                 service.stop()
             stream = root / 'stream.jsonl'
-            event = {'type': 'item.completed', 'item': {'type': 'command_execution',
-                     'command': ' '.join(command), 'exit_code': 0}}
-            stream.write_text(json.dumps(event) + '\n')
-            self.assertFalse(proxy.match('codex', stream, root / 'proxy.jsonl')['match'])
-            attested = grade.attestation('codex', stream, root / 'proxy.jsonl')
-            self.assertIsNone(attested)
-            event['item']['command'] = "/bin/bash -lc 'mo push main.mo'"
-            stream.write_text(json.dumps(event) + '\n')
-            self.assertIsNone(grade.attestation('codex', stream, root / 'proxy.jsonl'))
-            claude = [
-                {'type': 'system', 'message': 'temporary refusal'},
-                {'type': 'assistant', 'message': {'content': [
-                    {'type': 'tool_use', 'id': 'push-1', 'name': 'Bash',
-                     'input': {'command': 'mo push main.mo'}}]}},
-                {'type': 'user', 'message': {'content': [
-                    {'type': 'tool_result', 'tool_use_id': 'push-1', 'content': 'accepted'}]}}]
-            stream.write_text(''.join(json.dumps(row) + '\n' for row in claude))
-            self.assertIsNone(grade.attestation('claude', stream, root / 'proxy.jsonl'))
-            for command_text, status in [('echo no-push', 0), ('mo push main.mo', 1)]:
-                event['item'].update(command=command_text, exit_code=status)
-                stream.write_text(json.dumps(event) + '\n')
-                self.assertIsNone(grade.attestation('codex', stream, root / 'proxy.jsonl'))
-            event['item'].update(command='mo push main.mo', exit_code=0)
-            stream.write_text(json.dumps(event) + '\n')
+            stream.write_text(json.dumps({'type': 'item.completed', 'item': {
+                'type': 'command_execution', 'command': ' '.join(command), 'exit_code': 0}}) + '\n')
+            matched = proxy.match('codex', stream, root / 'proxy.jsonl')
+            uploads = [r for r in proxy.base.entries(root / 'proxy.jsonl')
+                       if r.get('direction') == 'request' and r.get('tool') in proxy.UPLOAD]
+            self.assertGreaterEqual(len(uploads), 3)
+            self.assertEqual(matched['upload_routes'], dict(native=0, shell=len(uploads)))
+            self.assertEqual(len(matched['log_only']), len(uploads))
+            accepted = grade.accepted_report(root / 'proxy.jsonl')['report']
+            self.assertEqual(accepted['status'], 'accepted')
+            self.assertEqual(accepted['candidate_source'], identity['candidate_source'])
             rows = [json.loads(line) for line in (root / 'proxy.jsonl').read_text().splitlines()]
             for row in rows:
                 if row.get('direction') == 'response' and row.get('tool') == 'mo-upgrade-commit':
                     row['body']['result']['structuredContent']['status'] = 'refused'
             (root / 'refused.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
-            self.assertIsNone(grade.attestation('codex', stream, root / 'refused.jsonl'))
+            self.assertIsNone(grade.accepted_report(root / 'refused.jsonl'))
 
 
 if __name__ == '__main__':

@@ -41,23 +41,6 @@ class ReplayTests(BundleTests):
         with self.assertRaises(ValueError):
             replay.proxy.match('codex', self.log, self.log, capture={})
 
-    def test_retained_executable_survives_original_removal(self):
-        import subprocess
-        b, _ = self.bundle()
-        m = replay.replay_bundle.verify(b.root, self.session, self.uid)
-        self.binary.unlink()
-        with tempfile.TemporaryDirectory(dir=self.root) as tmp:
-            executable = replay.runtime(b.root, m, Path(tmp), self.uid)
-            self.assertEqual(subprocess.run([str(executable)], timeout=10).returncode, 0)
-
-    def test_invalid_runtime_is_rejected_before_execution(self):
-        b, _ = self.bundle()
-        m = replay.replay_bundle.verify(b.root, self.session, self.uid)
-        m['provenance']['runtime_valid'] = False
-        with tempfile.TemporaryDirectory(dir=self.root) as tmp:
-            with self.assertRaises(ValueError):
-                replay.runtime(b.root, m, Path(tmp), self.uid)
-
     def test_receipt_rejects_invalid_runtime(self):
         import json
         b, _ = self.bundle()

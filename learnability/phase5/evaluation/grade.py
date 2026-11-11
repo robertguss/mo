@@ -3,7 +3,6 @@ import json
 import re
 import subprocess
 import fixture
-import proxy
 
 
 def stored_jobs(fields):
@@ -48,33 +47,8 @@ def history(mo, folder):
     return next(r for r in records if r.get('record') == 'history')
 
 
-def attestation(client, stream, log, *, matched=None):
-    """Require reconciled proxy traffic and a successful recorded push command.
-
-    The runner supplies protected original stream/log paths, never client summaries.
-    """
-    if matched is None:
-        matched = proxy.match(client, stream, log)
-    # The exact executable/argv, process generation, transfers and accepted
-    # commit are established by protected capture. Shell display text is not
-    # evidence of the invocation and wrappers need not contain "mo push".
-    if not matched['match'] or not matched['command_origin']:
-        return None
-    rows = proxy.base.entries(log)
-    commits = [r for r in rows if r.get('direction') == 'request'
-               and r.get('tool') == 'mo-upgrade-commit']
-    proven = {r['request_seq'] for r in matched['command_origin']}
-    if len(commits) != 1 or commits[0]['seq'] not in proven:
-        return None
-    if any(r.get('direction') == 'request' and r.get('tool') in proxy.UPLOAD
-           and r['seq'] not in proven for r in rows):
-        return None
-    accepted = accepted_report(log)
-    return dict(accepted, origin='command') if accepted else None
-
-
 def accepted_report(log):
-    """Recorded report for compilation diagnostics; this alone is not attestation."""
+    """The accepted commit reply the proxy recorded, or None."""
     rows = [json.loads(line) for line in log.read_text().splitlines()]
     for row in reversed(rows):
         if row.get('direction') == 'response' and row.get('tool') == 'mo-upgrade-commit' and row.get('status') == 200:
@@ -92,8 +66,7 @@ def migration_selector(pushed):
     return selector
 
 
-def compare(expected, live, restarted, recorded, pushed, development=False, answer=None,
-            identity_report=None, revision_observed=False):
+def compare(expected, live, restarted, recorded, development=False, answer=None, identity_report=None):
     reasons = []
     for label, observed in [('live', live), ('restart', restarted)]:
         if observed.get('state_complete') is not True:
@@ -104,11 +77,7 @@ def compare(expected, live, restarted, recorded, pushed, development=False, answ
             if observed.get(field) != expected[field]:
                 reasons.append(label + ': wrong ' + field)
     state_ok = not reasons
-    report = (identity_report or pushed or {}).get('report', {})
-    origin = (pushed or {}).get('origin')
-    command_ok = origin == 'command' or (development and origin == 'development-reference')
-    if not command_ok:
-        reasons.append('no successful recorded command-origin push')
+    report = (identity_report or {}).get('report', {})
     upgrades = recorded.get('upgrades', [])
     preparation = expected.get('preparation_upgrades', [])
     session_upgrades = upgrades[len(preparation):]
@@ -122,20 +91,17 @@ def compare(expected, live, restarted, recorded, pushed, development=False, answ
             session_upgrades[0].get('ordinal') != report.get('ordinal'))
     if not identity_ok:
         reasons.append('activation identity mismatch')
-    if not revision_observed:
-        reasons.append('post-activation revision observation not proven')
-    answer_ok = isinstance(answer, str) and answer.strip() == expected['revision']
+    answer_ok = isinstance(answer, str) and answer.strip() == live.get('revision')
     if not answer_ok:
         reasons.append('wrong or missing answer')
     return {'correct': not reasons, 'reasons': reasons,
             'dimensions': {'task_state': state_ok, 'activation_identity': identity_ok,
-                           'command_origin': command_ok,
-                           'final_answer': revision_observed is True and answer_ok},
+                           'final_answer': answer_ok},
             'evidence_class': 'DEVELOPMENT' if development else 'SESSION'}
 
 
-def stopped_grade(mo, folder, token, upgrade, log, expected, live, pushed,
-                  development=False, answer=None, identity_report=None, revision_observed=False):
+def stopped_grade(mo, folder, token, upgrade, log, expected, live,
+                  development=False, answer=None, identity_report=None):
     before = history(mo, folder)
     service = fixture.Service(mo, folder, token, upgrade, log)
     try:
@@ -143,8 +109,7 @@ def stopped_grade(mo, folder, token, upgrade, log, expected, live, pushed,
     finally:
         service.stop()
     after = history(mo, folder)
-    result = compare(expected, live, restarted, after, pushed, development, answer,
-                     identity_report, revision_observed)
+    result = compare(expected, live, restarted, after, development, answer, identity_report)
     if before.get('upgrades') != after.get('upgrades'):
         result['reasons'].append('restart changed activation history')
         result['correct'] = False

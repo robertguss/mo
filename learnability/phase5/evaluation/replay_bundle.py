@@ -1,11 +1,9 @@
 """Collector-owned retention only. Never a grading or publication qualification."""
 import shutil
-from trace_storage import TraceLines
 import json
 import os
 from pathlib import Path
-import stat
-import origin_identity as identity
+import pinned as identity
 
 # Real Mo capture observed 145,526,721 bytes in 3.113 seconds.
 # Bound a full 3600-second session at that rate with approximately 60% headroom.
@@ -15,17 +13,19 @@ MAX_FILES = 4096
 
 class Bundle:
     def __init__(self, root, capture, *, evaluation_endpoint=None):
-        if type(capture) is not identity.Capture or capture.manifest is None:
-            identity.reject()
+        import origin_identity
+        from trace_storage import TraceLines
+        if type(capture) is not origin_identity.Capture or capture.manifest is None:
+            origin_identity.reject()
         if (capture.directory / 'consumed').exists():
-            identity.reject()
+            origin_identity.reject()
         self.root = Path(root)
         self.collector, self.uid = capture.collector, capture.session_uid
         self.session = capture.session
         self.files = {}
         self.total = 0
-        pin, raw = identity.protected(capture.directory / 'manifest.json', self.collector, self.uid, private=True)
-        if pin != capture.manifest: identity.reject()
+        pin, raw = origin_identity.protected(capture.directory / 'manifest.json', self.collector, self.uid, private=True)
+        if pin != capture.manifest: origin_identity.reject()
         manifest = json.loads(raw)
         self.root.mkdir(mode=0o700)
         self.facts = dict(capture=manifest, loader=capture.loader,
@@ -37,7 +37,7 @@ class Bundle:
             self.add('loader', capture.loader['path'], expected=capture.loader)
         # Record actual mappings while original paths still exist; no later inference.
         snapshot = json.loads((self.root / 'tcp_snapshot').read_bytes()) if 'tcp_snapshot' in self.files else None
-        parsed = identity.origin_trace.parse_trace(TraceLines(self.root / 'trace'),
+        parsed = origin_identity.origin_trace.parse_trace(TraceLines(self.root / 'trace'),
             session_id=self.session, tcp_snapshots=snapshot['snapshots'] if snapshot else (),
             evaluation_endpoint=evaluation_endpoint)
         for direction in ('requests', 'responses'):

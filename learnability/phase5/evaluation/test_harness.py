@@ -42,9 +42,10 @@ class RunnerTests(unittest.TestCase):
             '10 <... vfork resumed>) = 11',
             '11 +++ exited with 0 +++',
             '10 +++ exited with 0 +++', ''])
-        self.assertTrue(h.origin_observer.process_integrity(trace)['process_completeness_verified'])
+        import origin_observer
+        self.assertTrue(origin_observer.process_integrity(trace)['process_completeness_verified'])
         truncated = trace.replace('10 <... vfork resumed>) = 11\n', '')
-        self.assertFalse(h.origin_observer.process_integrity(truncated)['process_completeness_verified'])
+        self.assertFalse(origin_observer.process_integrity(truncated)['process_completeness_verified'])
 
     def test_native_occurrences_are_consumed_once(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -81,7 +82,58 @@ class RunnerTests(unittest.TestCase):
     def test_local_imports_are_isolated(self):
         self.assertEqual(Path(h.grader.fixture.__file__).parent, h.HERE)
         self.assertEqual(Path(h.p4.fixture.__file__).parent.name, 'phase4')
-        self.assertIs(h.grader.proxy, h.proxy)
+        self.assertIs(h.grader.fixture.proxy, h.proxy)
+
+    def test_collector_imports_no_tracer_module(self):
+        import subprocess
+        import sys
+        tracer = ['origin_controls', 'origin_descriptors', 'origin_identity', 'origin_join',
+                  'origin_observer', 'origin_trace', 'observation', 'trace_storage']
+        loaded = subprocess.run([sys.executable, '-I', '-c',
+            'import json, sys; sys.path.insert(0, sys.argv[1]); import harness; '
+            'print(json.dumps(sorted(set(sys.argv[2:]) & set(sys.modules))))', str(h.HERE), *tracer],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(loaded.stdout), [])
+
+    def test_launch_carries_both_credentials_and_stops_at_the_limit(self):
+        from types import SimpleNamespace
+        launched = []
+        class Child:
+            waits = 0
+            def __init__(self, argv, **kwargs):
+                launched.append((argv, kwargs['env']))
+            def wait(self, timeout):
+                Child.waits += 1
+                if Child.waits == 1:
+                    raise h.subprocess.TimeoutExpired('client', timeout)
+                return -15
+        with tempfile.TemporaryDirectory() as tmp, patch.object(h.subprocess, 'Popen', Child), \
+                patch.object(h.p4, 'signal_all') as signal_all:
+            env = {'QUEUE_TOKEN': 't', 'QUEUE_UPGRADE': 'u'}
+            self.assertEqual(h.launch(SimpleNamespace(user='session'), ['client', 'arg'], env, Path(tmp), 7), (-15, True))
+            self.assertTrue((Path(tmp) / 'stream.jsonl').exists())
+            self.assertTrue((Path(tmp) / 'client-stderr.raw').exists())
+        argv, given = launched[0]
+        self.assertEqual(argv, ['sudo', '-n', '-u', 'session', '--preserve-env=QUEUE_TOKEN,QUEUE_UPGRADE',
+                                '--', 'client', 'arg'])
+        self.assertIs(given, env)
+        signal_all.assert_called_once_with('session', 'TERM')
+
+    def test_recorded_evidence_is_never_graded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            push = "/bin/bash -lc 'cd /work && mo push main.mo --url URL'"
+            for command, shown in ((push, True), ('mo check main.mo', False)):
+                (out / 'stream.jsonl').write_text(json.dumps({'type': 'item.completed', 'item': {
+                    'type': 'command_execution', 'command': command}}) + '\n')
+                (out / 'client-stderr.raw').write_text('')
+                matched = dict(log_only=[{'tool': 'mo-upgrade-open'}], upload_routes=dict(native=0, shell=1))
+                record = h.recorded('codex', out, matched)
+                self.assertIs(record['transcript_mo_push'], shown)
+                self.assertEqual(record['reported_models'], [])
+                self.assertEqual(record['requested_model'], 'gpt-6.1-sol')
+                self.assertEqual(record['unmatched_proxy_calls'], 1)
+                self.assertEqual(record['upload_routes'], dict(native=0, shell=1))
 
     def test_reservation_order_and_no_reruns(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -120,7 +172,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'merged repair'):
                 h.freeze(path, h.layout())
 
-    def test_codex_uses_traced_http_transport(self):
+    def test_codex_uses_http_transport_and_full_access(self):
         cmd = h.command('codex', Path('/bin/codex'), 'p', 'http://x/mcp', Path('/c'))
         self.assertIn('model_provider="responses_http"', cmd)
         self.assertIn('supports_websockets=false', ' '.join(cmd))
@@ -211,7 +263,7 @@ class RunnerTests(unittest.TestCase):
             record = json.loads((root / 'out/manifest.json').read_text())
             self.assertFalse(record['correct'])
             self.assertTrue(record['fixture_failure'])
-            for dimension in ('task_state', 'activation_identity', 'command_origin', 'final_answer'):
+            for dimension in ('task_state', 'activation_identity', 'final_answer', 'source_tests'):
                 self.assertIs(record['dimensions'][dimension], False)
             self.assertIn('OSError', record['failures'])
             compiles.assert_called_once()

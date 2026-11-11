@@ -18,10 +18,11 @@ class Collector(unittest.TestCase):
             out = Path(tmp)
             layout = SimpleNamespace(work=Path('work'), bin=Path('/unused'))
             meta = {'client': 'codex', 'development': True, 'failures': []}
-            with patch.object(harness.grader, 'source_precheck', return_value=SimpleNamespace(returncode=0, stdout='')),                 patch.object(harness.grader, 'attestation', return_value=None),                 patch.object(harness.grader, 'accepted_report', return_value=None),                 patch.object(harness, 'final_message', return_value='No upgrade attempted'),                 patch.object(harness.grader, 'stopped_grade', return_value={'reasons': [], 'dimensions': {}}) as stopped:
+            with patch.object(harness.grader, 'source_precheck', return_value=SimpleNamespace(returncode=0, stdout='')),                 patch.object(harness.grader, 'accepted_report', return_value=None),                 patch.object(harness, 'final_message', return_value='No upgrade attempted'),                 patch.object(harness.grader, 'stopped_grade', return_value={'reasons': [], 'dimensions': {}}) as stopped:
                 harness.grade_collected(layout, out, {}, {}, 'token', 'upgrade', meta)
             stopped.assert_called_once()
-            self.assertIn('no accepted upgrade with a valid migration selector', meta['failures'])
+            self.assertIn('no accepted upgrade with a valid migration selector', meta['grade']['reasons'])
+            self.assertEqual(meta['failures'], [])
             self.assertIsNone(meta['identity']['candidate_source'])
 
     def test_missing_binary_does_not_allocate(self):
@@ -30,7 +31,8 @@ class Collector(unittest.TestCase):
                 self.test_development_and_timeout()
             allocate.assert_not_called()
 
-    def test_development_and_timeout(self, cases=('success', 'curl', 'urllib', 'timeout', 'cleanup-failure')):
+    def test_development_and_timeout(self, cases=('success', 'curl', 'urllib', 'noop', 'timeout', 'cleanup-failure')):
+        import protected_regrade
         mo = Path(os.environ['MO_EVALUATION_BINARY']).resolve()
         p4 = harness.p4
         p4.sudo('true')
@@ -86,10 +88,8 @@ class Collector(unittest.TestCase):
                     resets += 1
                     if cleanup_failure and resets == 2:
                         raise RuntimeError('injected reset reporting failure')
-                def fail_bundle(path, *args, **kwargs):
-                    Path(path).mkdir(mode=0o700)
-                    raise ValueError('injected full-bundle construction failure')
-                retention_fault = (patch.object(harness.replay_bundle, 'Bundle', side_effect=fail_bundle)
+                retention_fault = (patch.object(harness.replay_bundle, 'PartialBundle',
+                                                side_effect=ValueError('injected retention failure'))
                                    if case == 'retention-failure' else contextlib.nullcontext())
                 with patch.object(p4, 'sudo', sudo), patch.object(p4, 'reset', reset), retention_fault:
                     status = harness.collect(l, path, out, 1, development=True, limit=3 if sleeping else 60)
@@ -106,43 +106,50 @@ class Collector(unittest.TestCase):
                     self.assertEqual(p4.sudo('iptables', '-S', 'OUTPUT').stdout, baseline)
                     captured = out/l.work.name
                     self.assertTrue(all(json.loads((captured/'isolation.json').read_text()).values()))
+                    self.assertTrue(meta['launched'])
+                    self.assertFalse((out/'origin-raw').exists())
+                    self.assertEqual(set(meta['dimensions']), {'task_state', 'activation_identity', 'final_answer',
+                                                               'source_tests', 'publication_integrity'})
+                    regraded = None
+                    if case != 'retention-failure':
+                        regraded = protected_regrade.callback({out: (str(out), l.account().pw_uid)}, private)(out)
+                        self.assertEqual(regraded['dimensions'], {k: v for k, v in meta['dimensions'].items()
+                                                                  if k != 'publication_integrity'})
                     if sleeping:
-                        self.assertFalse(meta['capture']['capture_finished'])
-                        self.assertFalse(meta['records']['match'])
                         self.assertTrue((captured/'partial.txt').exists())
+                        self.assertFalse(regraded['correct'])
                     elif case == 'retention-failure':
-                        self.assertTrue(any('record reconciliation' in f for f in meta['failures']))
-                        self.assertTrue((out/'replay-partial-private/manifest.json').is_file())
-                        self.assertEqual(meta['replay_path'], str(out/'replay-partial-private'))
-                        self.assertFalse(meta['dimensions']['traffic_completeness'])
-                        self.assertFalse(meta['correct'])
+                        self.assertTrue(any('cleanup partial retention' in f for f in meta['failures']))
+                        self.assertNotIn('grade', meta)
                     elif case == 'noop':
-                        self.assertFalse(meta['correct'])
                         self.assertFalse(meta['dimensions']['activation_identity'])
-                        self.assertEqual(meta['records']['verified_push_requests'], 0)
-                        self.assertNotIn('stub-push', (out/'stream.jsonl').read_text())
+                        self.assertEqual(meta['recorded']['upload_routes'], dict(native=0, shell=0))
+                        self.assertFalse(meta['recorded']['transcript_mo_push'])
+                        self.assertFalse(regraded['correct'])
                     elif case == 'compile-failure':
-                        self.assertTrue(meta['records']['match'])
-                        self.assertEqual(meta['records']['verified_push_requests'], 6)
-                        self.assertFalse(meta['correct'])
                         self.assertFalse(meta['grade']['correct'])
-                        for dimension in ('task_state', 'command_origin', 'traffic_completeness', 'final_answer'):
+                        for dimension in ('task_state', 'final_answer'):
                             self.assertTrue(meta['dimensions'][dimension], dimension)
-                        for dimension in ('activation_identity', 'source_tests', 'model_provenance'):
+                        for dimension in ('activation_identity', 'source_tests'):
                             self.assertFalse(meta['dimensions'][dimension], dimension)
                         self.assertIn('@@@ invalid development syntax', (captured/'job-queue.mo').read_text())
-                    else:
-                        self.assertTrue(meta['records']['match'], meta)
-                        self.assertEqual(meta['records']['verified_push_requests'], 6)
+                    elif not cleanup_failure:
                         self.assertTrue(meta['grade']['correct'], meta)
+                        self.assertEqual(meta['failures'], [])
                         self.assertFalse(meta['correct'])
-                        for dimension in ('task_state', 'activation_identity', 'source_tests', 'command_origin', 'traffic_completeness', 'final_answer'):
+                        for dimension in ('task_state', 'activation_identity', 'source_tests', 'final_answer'):
                             self.assertTrue(meta['dimensions'][dimension], meta)
-                        for dimension in ('model_provenance', 'publication_integrity'):
-                            self.assertFalse(meta['dimensions'][dimension], meta)
-                        self.assertNotIn('no successful recorded command-origin push', meta['failures'])
-                        self.assertNotIn('post-activation revision observation not proven', meta['failures'])
-                        self.assertNotIn('activation identity mismatch', meta['failures'])
+                        self.assertFalse(meta['dimensions']['publication_integrity'])
+                        self.assertTrue(regraded['correct'], regraded)
+                        recorded = meta['recorded']
+                        self.assertEqual(recorded['reported_models'], [])
+                        self.assertTrue(recorded['transcript_mo_push'])
+                        self.assertEqual(recorded['upload_routes']['native'], 0)
+                        self.assertGreaterEqual(recorded['upload_routes']['shell'], 3)
+                        self.assertEqual(recorded['unmatched_proxy_calls'],
+                                         recorded['upload_routes']['shell'] + (case != 'success'))
+                        self.assertIn('codex_core::stub', (out/'client-stderr.raw').read_text())
+                        self.assertNotIn('codex_core::stub', (out/'client-stderr.txt').read_text())
                         self.assertEqual(meta['grade']['evidence_class'], 'DEVELOPMENT')
                         self.assertEqual((captured/'main.mo').read_bytes(), (reference/'main.mo').read_bytes())
                         self.assertTrue((out/'source-tests.json').exists())

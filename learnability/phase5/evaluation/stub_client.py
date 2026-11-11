@@ -17,6 +17,7 @@ settings = json.loads((root / 'stub-settings.json').read_text())
 def emit(value):
     print(json.dumps(value), flush=True)
 emit({'type': 'session.started', 'model': 'gpt-6.1-sol'})
+print('2026-11-10T00:00:00Z DEBUG codex_core::stub: development diagnostic', file=sys.stderr, flush=True)
 assert os.environ['QUEUE_TOKEN'] and os.environ['QUEUE_UPGRADE']
 assert os.environ['QUEUE_UPGRADE_BEARER'] == 'Bearer ' + os.environ['QUEUE_UPGRADE']
 assert json.loads((root / 'session/mcp.json').read_text())['mcpServers']['task-queue']['headers']['Mo-Upgrade-Authorization'] == 'Bearer ${QUEUE_UPGRADE}'
