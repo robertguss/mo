@@ -275,7 +275,7 @@
     X(1406, TOOL_TEST_INITIALIZATION, NULL)                                                        \
     /* Fixing is given no regular source file, or cannot atomically replace one. */                \
     X(1407, TOOL_FIX_IO, NULL)                                                                     \
-    /* Running a service is not implemented in this build. */                                      \
+    /* mo run does not start services. */                                                          \
     X(1408, TOOL_SERVICE_UNAVAILABLE, NULL)                                                        \
     X(1409, TOOL_SERVICE_START, NULL)                                                              \
     /* A query's function is generic. */                                                           \

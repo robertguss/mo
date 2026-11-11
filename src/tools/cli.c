@@ -376,8 +376,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (argc < 2)
         return refuse(out, error,
                       "expected a command: check, run, test, format, fix, guide, emit, serve, "
-                      "fetch, push, replay, query "
-                      "or history",
+                      "fetch, push, replay, query, rehearse or history",
                       NULL, NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];
@@ -428,7 +427,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(
             out, error,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, "
-            "fetch, push, replay, query or history)",
+            "fetch, push, replay, query, rehearse or history)",
             command, NULL);
     out->command = names[c].command;
     bool flags = true;
