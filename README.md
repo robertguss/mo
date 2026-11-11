@@ -7,9 +7,9 @@ The development toolchain also supports typed live upgrades and state migration.
 > **Status: v0.1.0.** The toolchain builds and
 > runs services. The [Phase 4 diagnostic evaluation](docs/status/phase4-run.md)
 > passed its gate with 14 of 16 sessions correct, including two recorded misses.
-> Typed live upgrades are implemented on the development branch. Phase 5 remains
-> open: the agent gate and debug pause margin missed; v0.2 is unreleased.
-> See the [upgrade run record](docs/status/phase5-run.md).
+> Typed live upgrades are implemented on the development branch. Phase 5's
+> closing evidence passed (drill, pause series, 4/4 agent evaluation); v0.2 is
+> unreleased until Robert decides. See the [upgrade run record](docs/status/phase5-run.md).
 > Contributions are not yet open.
 
 ## The idea
@@ -30,8 +30,8 @@ first:
 - **Upgrades while running.** The development toolchain checks candidate programs
   and typed migrations, rehearses them offline, and activates them at a service
   message boundary. `mo push` uses a separate upgrade credential and a loopback
-  connection; remote operators use a tunnel. Final drill, pause and agent-evaluation
-  evidence is still pending. This functionality is not part of v0.1.0.
+  connection; remote operators use a tunnel. The drill, the pause series and the
+  agent evaluation passed on one frozen build. This functionality is not part of v0.1.0.
 
 Mo draws on Elixir and the BEAM (processes, supervision, hot code loading),
 Rust (safety plus control over memory and performance), Koka (effects and
@@ -90,8 +90,9 @@ those builds, see the [task-queue runbook](docs/ops/task-queue.md).
 ## Roadmap
 
 See [docs/ROADMAP.md](docs/ROADMAP.md). Phase 4 closes with v0.1.0;
-Phase 5 implements typed live upgrades. Its 1,000-kill drill passed, but the
-agent gate and debug pause margin missed; the phase remains open. [v0.2 preparation notes](docs/releases/v0.2-preparation.md)
+Phase 5 implements typed live upgrades. Its 1,000-kill drill, pause series and
+agent evaluation (4/4) passed on one frozen build; closure and the v0.2 release are
+Robert's decision. [v0.2 preparation notes](docs/releases/v0.2-preparation.md)
 describe the implemented behavior and unresolved limits.
 
 ## Background

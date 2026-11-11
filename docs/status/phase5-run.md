@@ -1,9 +1,11 @@
-# Live upgrade evidence — phase open
+# Live upgrade evidence — closing evidence passed, decision pending
 
-The 1,000-kill drill passed. The production pause series missed its declared
-2× margin in the debug build. The declared agent evaluation missed its gate.
-This is v0.2 preparation, not a release: no tag, deployment or phase closure is
-claimed. Robert's explicit release approval remains required.
+On one frozen build of merged main, the 1,000-kill drill passed, the production
+pause series met its 0.5-second margin, and experiment 4 scored 4/4 against its
+3/4 gate (see the last section). The earlier records below are unchanged: the
+first debug pause series missed its 2× margin, experiment 2 scored 0/4, and
+experiments 1 and 3 stopped. This is v0.2 preparation, not a release: no tag,
+deployment or phase closure is claimed. Robert decides closure and the release.
 
 The repaired main commit is `814ddd0f70e5fd613130fe87a9cd24cd187af8e6`
 (PR #317). It was merged and independently verified before final collection;
@@ -392,4 +394,40 @@ passes a session on the outcome of its upgrade: service state, one expected
 activation whose accepted commit the proxy recorded, immutable source tests and the
 final answer. The syscall tracer does not run; the reported model, the upload route
 and unmatched proxy calls are recorded, not graded. The drill and a new pause series
-rerun on the same frozen build. Nothing has been collected; Phase 5 remains open.
+rerun on the same frozen build.
+
+## Experiment 4 passed its gate (2026-11-11)
+
+The freeze is merged main `bd40f9f5cc4973ddf1bde41596c51c213337db11`, written by
+`evidence.py freeze` (395 artifacts, manifest SHA-256
+`3f4374d68763121486ae9b787a675b78c49e04cf531cfeac278ec17f8ea8afe2`). Its build
+inputs match the rehearsed commit byte for byte; the only frozen file that differs
+from the rehearsal is `evidence.py`, whose parser rename Robert accepted.
+`bash ci/check.sh gcc` passed on the candidate twice, once from a separate clean
+checkout. An independent freeze review found one blocker before any launch (the
+frozen session spec lacked its freeze key); the freeze was retaken and re-reviewed
+as ready. Robert approved the scored launch on 2026-11-11.
+
+| Measurement | Result |
+| --- | --- |
+| 1,000-kill drill, seed 20261110 | pass, 2,780 s, 73 mid-commit kills, 64 push kills |
+| Pause, debug (5 samples) | slowest boundary-to-commit 0.409 s, median 0.361 s: pass |
+| Pause, optimized (5 samples) | slowest 0.211 s, median 0.208 s: pass |
+| Experiment 4 | 4/4 (Codex 2, Claude 2) against a 3/4 gate: pass |
+
+| Slot | Client | Seconds | Reported model | Live and regrade |
+| --- | --- | --- | --- | --- |
+| 1 | Codex | 280 | gpt-6.1-sol | all four dimensions |
+| 2 | Claude | 160 | claude-opus-5-5 | all four dimensions |
+| 3 | Codex | 392 | gpt-6.1-sol | all four dimensions |
+| 4 | Claude | 130 | claude-opus-5-5 | all four dimensions |
+
+Every agent uploaded with `mo push`; none used the native MCP route. The live
+verdict and the independent regrade from each retained bundle agree on every
+dimension of every slot. Both publication scans were clean (66 files). The
+prompt is byte-identical to experiment 3's and the rehearsal's; experiment 2's
+prompt had an older final-answer wording. Records and evidence are in
+[experiment 4](../../learnability/phase5/results/experiment-4/README.md).
+Phase 5's closing conditions are met; closure and the v0.2 release are Robert's
+decision.
+
