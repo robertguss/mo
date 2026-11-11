@@ -1,0 +1,11 @@
+{
+  "approved_by": "Robert",
+  "approved_at": "2026-11-11T11:50:15.214839+00:00",
+  "words": "Yes approved",
+  "scope": "the four scored experiment 4 sessions, slots 1-4 (codex, claude, codex, claude)",
+  "candidate": "bd40f9f5cc4973ddf1bde41596c51c213337db11",
+  "manifest_sha256": "3f4374d68763121486ae9b787a675b78c49e04cf531cfeac278ec17f8ea8afe2",
+  "independent_review": "independent-review.json: ready for Robert's scored-launch decision, no blocking findings",
+  "drill": "drill.txt: kills=1000 seed=20261110 result=pass",
+  "pause": "pause/results.json: slowest debug 0.409 s, slowest optimized 0.211 s"
+}

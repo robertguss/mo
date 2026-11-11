@@ -1,0 +1,289 @@
+{
+  "collection_id": "f4d99f2a9a9b5de60df15eff0dd3d405",
+  "slot": 1,
+  "client": "codex",
+  "evidence_class": "FINAL",
+  "success": false,
+  "correct": false,
+  "development": false,
+  "launched": true,
+  "limit_seconds": 3600,
+  "started_at": 1794397822.994717,
+  "failures": [],
+  "answer_rule": "entire final message, stripped, equals the revision the grader reads from the live service",
+  "migration_requirement": "migrate",
+  "exit_status": 0,
+  "timeout": false,
+  "seconds": 280.05761981301475,
+  "live": {
+    "jobs": [
+      {
+        "id": "1",
+        "payload": "completed item",
+        "attempts": "1",
+        "state": {
+          "case": "Done"
+        }
+      },
+      {
+        "id": "2",
+        "payload": "leased payload \u03bb",
+        "attempts": "2",
+        "state": {
+          "case": "Leased",
+          "fields": {
+            "until": "2099-01-01T00:30:00Z"
+          }
+        }
+      },
+      {
+        "id": "3",
+        "payload": "ready item",
+        "attempts": "0",
+        "state": {
+          "case": "Ready"
+        }
+      },
+      {
+        "id": "4",
+        "payload": "another ready item",
+        "attempts": "0",
+        "state": {
+          "case": "Ready"
+        }
+      }
+    ],
+    "revision": "1",
+    "state_complete": true,
+    "stored_revision": "1",
+    "next_id": "5",
+    "stored_jobs": [
+      {
+        "id": "1",
+        "payload": "completed item",
+        "attempts": "1",
+        "state": {
+          "case": "Done"
+        }
+      },
+      {
+        "id": "2",
+        "payload": "leased payload \u03bb",
+        "attempts": "2",
+        "state": {
+          "case": "Leased",
+          "fields": {
+            "until": "2099-01-01T00:30:00Z"
+          }
+        }
+      },
+      {
+        "id": "3",
+        "payload": "ready item",
+        "attempts": "0",
+        "state": {
+          "case": "Ready"
+        }
+      },
+      {
+        "id": "4",
+        "payload": "another ready item",
+        "attempts": "0",
+        "state": {
+          "case": "Ready"
+        }
+      }
+    ]
+  },
+  "cleanup_zero_processes": true,
+  "service_stopped": true,
+  "firewall_restored": true,
+  "source_captured": true,
+  "symlinks_removed": [],
+  "records": {
+    "match": false,
+    "pairs": 0,
+    "log_only": [
+      {
+        "log_id": 1,
+        "request_seq": 8,
+        "tool": "mo-state"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 10,
+        "tool": "mo-state"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 12,
+        "tool": "mo-upgrade-open"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 14,
+        "tool": "mo-upgrade-page"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 16,
+        "tool": "mo-upgrade-page"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 18,
+        "tool": "mo-upgrade-page"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 20,
+        "tool": "mo-upgrade-page"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 22,
+        "tool": "mo-upgrade-commit"
+      },
+      {
+        "log_id": 1,
+        "request_seq": 26,
+        "tool": "mo-state"
+      },
+      {
+        "log_id": 2,
+        "request_seq": 28,
+        "tool": "revision"
+      }
+    ],
+    "stream_only": [],
+    "exempt": []
+  },
+  "recorded": {
+    "requested_model": "gpt-6.1-sol",
+    "requested_effort": "xhigh",
+    "reported_models": [
+      "gpt-6.1-sol"
+    ],
+    "transcript_mo_push": true,
+    "unmatched_proxy_calls": 10,
+    "upload_routes": {
+      "native": 0,
+      "shell": 6
+    }
+  },
+  "replay_path": "/home/exedev/.mo-phase5-harness/experiment-4/slot-1/replay-private",
+  "source_tests_passed": true,
+  "identity": {
+    "version": 1,
+    "status": "accepted",
+    "code": null,
+    "class": "compatible",
+    "message": "migration signature checked; candidate is compatible",
+    "base_source": "11674500eac5f747f85d8b08e82be28d5ee9595e7ae5a3b1e16b268421b4e559",
+    "candidate_source": "a605527f3975a7b60baec081c895c82845403dfd77942dee09925c5c8b568d80",
+    "active_source": "11674500eac5f747f85d8b08e82be28d5ee9595e7ae5a3b1e16b268421b4e559",
+    "migration": "JobQueue.migrate",
+    "ordinal": "0",
+    "head": "0",
+    "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+    "new_schema": "98ae3bda94c763624b1a5c44ea600f49b81c3e0843aa5267b7d706e78d760055",
+    "implementation_changed": true,
+    "differences": [
+      {
+        "kind": "tool",
+        "name": "acknowledge",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "fail",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "heartbeat",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "lease",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "revision",
+        "change": "added"
+      },
+      {
+        "kind": "tool",
+        "name": "submit",
+        "change": "schema_or_description_changed"
+      }
+    ],
+    "vm_work": "0",
+    "native_work": "0",
+    "heap_peak": "0",
+    "encoded_bytes": "0"
+  },
+  "grade": {
+    "correct": true,
+    "reasons": [],
+    "dimensions": {
+      "task_state": true,
+      "activation_identity": true,
+      "final_answer": true
+    },
+    "evidence_class": "SESSION"
+  },
+  "fixture_failure": false,
+  "artifacts": {
+    "client-stderr.raw": "a00434c54f24d9ce99ac1d4a2dda65838eee47571f451bd2c472f1950e631aba",
+    "client-stderr.txt": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721",
+    "data/service.sqlite": "2dcbafc9a0a96c717ac7fd0760eed603b95d5ba542c533ff5b383b71bf5b5335",
+    "prompt.txt": "80909650e4db734f2e38d77f6257bbc12e8ba0f7a4dbc4ce2351f139c3021fbe",
+    "proxy.jsonl": "61ad4e6c76c95dea9aae27672783ed6b78c202dc5a96b073fd29dfa1e743be15",
+    "replay-private/binary": "8f066a6722e4d4e5f2fbe07f87d0e3fa0029fff0118ca0be3e8d9376bc128b5e",
+    "replay-private/candidate-0": "12673f90d7fc13bdf04bea17a0019aaf40bef6e1d347655da04e04e64afa9151",
+    "replay-private/candidate-1": "6da58566fffc7233616611e38b0a8b5b7459c8378bf9b3c1102cb3613b1baa93",
+    "replay-private/candidate-2": "d214054503c63b165d89935604711c4941f75d7f9f79fb6b2b6555563a6f088c",
+    "replay-private/context-0": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+    "replay-private/context-1": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+    "replay-private/context-2": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+    "replay-private/expected": "9ffaba9b34b2bb48ab8844fe9790a95cd59dbff42acb1f8d312a0f61730db2a8",
+    "replay-private/immutable_tests": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+    "replay-private/loader": "c20a2dc8917c755f02b94049356320fe1f62ac7d9f8994731f807d9df39302da",
+    "replay-private/original-0": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+    "replay-private/original-1": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+    "replay-private/original-2": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+    "replay-private/prompt": "80909650e4db734f2e38d77f6257bbc12e8ba0f7a4dbc4ce2351f139c3021fbe",
+    "replay-private/proxy_log": "61ad4e6c76c95dea9aae27672783ed6b78c202dc5a96b073fd29dfa1e743be15",
+    "replay-private/spec": "f096f18767a779b89a5560d3a8510bc4f03e8d2b8a963a8d2e8797e4ea7e2a53",
+    "replay-private/state-0": "568757d51833ce0a685ebf9cb63909ffa87b4b8e97f6ff15a7704e1dff9df19c",
+    "replay-private/stderr": "a00434c54f24d9ce99ac1d4a2dda65838eee47571f451bd2c472f1950e631aba",
+    "replay-private/stdout": "c0e9494870eeae64d74151d7cb93ca218e261f46e5acc34ff61d1766b5c3dd5b",
+    "restart.log": "c856456711515e441433f60df0c44619d386796b4a66007c6ed935edeb8e4bfd",
+    "serve/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+    "serve/main.mo": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+    "serve/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+    "service.log": "8578e29bb7a879e9b2a37fc0ace69d31e22587ac2013c651dc242d957d903a9f",
+    "source-tests/job-queue.mo": "12673f90d7fc13bdf04bea17a0019aaf40bef6e1d347655da04e04e64afa9151",
+    "source-tests/main.mo": "6da58566fffc7233616611e38b0a8b5b7459c8378bf9b3c1102cb3613b1baa93",
+    "source-tests/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+    "source-tests/upgrade-old.mo": "b289281f15c2064285ce4ed2b18008bf149e98e9ef2cd4df8bc8b43fd7d68349",
+    "source-tests.json": "c938bcd9b6481d2be120d99b5ee0a9344dad270eacd5c62ba4876066d4782ee5",
+    "start-data/service.sqlite": "59c89c1c843ad0a66230359fae525ce1626707a28dc863214689247993409744",
+    "stream.jsonl": "c0e9494870eeae64d74151d7cb93ca218e261f46e5acc34ff61d1766b5c3dd5b",
+    "task-queue/job-queue.mo": "12673f90d7fc13bdf04bea17a0019aaf40bef6e1d347655da04e04e64afa9151",
+    "task-queue/main.mo": "6da58566fffc7233616611e38b0a8b5b7459c8378bf9b3c1102cb3613b1baa93",
+    "task-queue/queue-tests.mo": "d214054503c63b165d89935604711c4941f75d7f9f79fb6b2b6555563a6f088c",
+    "upgrade-check.json": "bfc91ec7d75644c4941c83f74ae9df641b09a5ea920e3ac2db948155366ff433",
+    "upgrade-check.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "dimensions": {
+    "task_state": true,
+    "activation_identity": true,
+    "final_answer": true,
+    "source_tests": true,
+    "publication_integrity": false
+  }
+}

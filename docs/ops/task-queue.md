@@ -274,9 +274,10 @@ If checked restart cannot accept the candidate, use the agent guide's fresh-fold
 recovery procedure: export needed data through the old program's tools, start the
 new program on an empty folder and import through its tools. Keep the old tree
 and folder. Live swapping and streaming notifications are implemented in the
-upgrade-capable build described above. The [M6 evidence](../status/phase5-run.md)
-records the passed drill, missed agent gate and debug pause margin; v0.2 remains
-unreleased. A work-budget refusal is not a deadline guarantee.
+upgrade-capable build described above. The [run record](../status/phase5-run.md)
+records the drill, the pause series and the agent evaluation, which passed on one
+frozen build; v0.2 remains unreleased until Robert decides. A work-budget refusal
+is not a deadline guarantee.
 
 ## Drill
 

@@ -1,0 +1,36 @@
+{
+ "identity": "rehearsal-5d713bcc",
+ "declared_at": "2026-11-11T01:37:21.097831+00:00",
+ "purpose": "DEVELOPMENT dress rehearsal of the outcome-gated collector before the experiment 4 freeze; outside every denominator",
+ "commit": "5d713bcc",
+ "mo_build_root": "/opt/mo-phase5/build-5d713bcc",
+ "slots": [
+  {
+   "slot": 1,
+   "client": "codex"
+  },
+  {
+   "slot": 2,
+   "client": "claude"
+  }
+ ],
+ "codex": 1,
+ "claude": 1,
+ "scored": 0,
+ "retry_or_replacement": false,
+ "limit_seconds": 3600,
+ "cumulative_development_model_attempts_after": {
+  "codex": 9,
+  "claude": 7
+ },
+ "pins": {
+  "mo_sha256": "8f066a6722e4d4e5f2fbe07f87d0e3fa0029fff0118ca0be3e8d9376bc128b5e",
+  "codex_sha256": "b8a11fedf24b2dfb59a70c9e52b030f9a508dcd49cd2dd0d41956f4c785156b8",
+  "claude_sha256": "eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0"
+ },
+ "predictions": {
+  "launch": "both run untraced to completion with both credentials and no harness fault",
+  "grading": "an agent that upgrades correctly passes all four dimensions live and on regrade; any agent miss is recorded, not retried",
+  "recorded": "Codex reports gpt-6.1-sol through diagnostic stderr; Claude reports claude-opus-5-5 or a fallback"
+ }
+}

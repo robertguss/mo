@@ -1,0 +1,17 @@
+.............................................s.............................................................................................................................................................................................................................s....................................s............
+----------------------------------------------------------------------
+Ran 317 tests in 1111.998s
+
+OK (skipped=3)
+reference {'correct': True, 'reasons': [], 'dimensions': {'task_state': True, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+qualified-reference {'correct': True, 'reasons': [], 'dimensions': {'task_state': True, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+unchanged {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'activation identity mismatch', 'wrong or missing answer'], 'dimensions': {'task_state': False, 'activation_identity': False, 'final_answer': False}, 'evidence_class': 'DEVELOPMENT'}
+initializer {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'live: wrong next_id', 'restart: wrong persisted jobs', 'restart: wrong jobs', 'restart: wrong next_id'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+drop-job {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+payload {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+duplicate-completion {'correct': False, 'reasons': ['live: wrong persisted jobs', 'live: wrong jobs', 'restart: wrong persisted jobs', 'restart: wrong jobs'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+wrong-revision {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'wrong or missing answer'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': False}, 'evidence_class': 'DEVELOPMENT'}
+source-only {'correct': False, 'reasons': ['live: wrong revision', 'live: wrong stored_revision', 'restart: wrong revision', 'restart: wrong stored_revision', 'activation identity mismatch', 'wrong or missing answer'], 'dimensions': {'task_state': False, 'activation_identity': False, 'final_answer': False}, 'evidence_class': 'DEVELOPMENT'}
+constant-revision {'correct': False, 'reasons': ['live: wrong stored_revision', 'restart: wrong stored_revision'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+wrong-next-id {'correct': False, 'reasons': ['live: wrong next_id', 'restart: wrong next_id'], 'dimensions': {'task_state': False, 'activation_identity': True, 'final_answer': True}, 'evidence_class': 'DEVELOPMENT'}
+exit 0
