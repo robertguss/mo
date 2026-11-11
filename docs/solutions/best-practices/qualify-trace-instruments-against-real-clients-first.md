@@ -6,6 +6,7 @@ module: learnability/phase5/evaluation
 problem_type: best_practice
 component: testing_framework
 severity: high
+last_updated: 2026-11-11
 applies_when:
   - An instrument parses another program's real behaviour, such as syscall traces or client log formats
   - Its tests are hand-built fixtures written by the same author as the parser
@@ -17,10 +18,11 @@ tags: [strace, capture, evaluation, real-client, fixtures, offline-replay]
 
 ## Context
 
-The Phase 5 evaluation collector traces a pinned agent client with strace and grades the session
-from that trace. Before any real client had run through it, the capture passed 237 focused tests.
-The first real Codex and Claude development sessions then failed every evidence dimension, and
-three declared development pairs were needed to find eight defects (pending in PR #321):
+Through experiment 3, the Phase 5 evaluation collector traced a pinned agent client with strace
+and graded the session from that trace. Before any real client had run through it, the capture
+passed 237 focused tests. The first real Codex and Claude development sessions then failed every
+evidence dimension, and three declared development pairs were needed to find eight defects (fixed
+in #321):
 
 - Codex's own sandbox runs commands in bubblewrap user, PID and mount namespaces.
 - A multi-threaded client backs up a config file with `copy_file_range`.
@@ -33,6 +35,11 @@ three declared development pairs were needed to find eight defects (pending in P
 
 Every one of these is a fact about the client or the tracer. None could have come from a fixture,
 because the fixtures encoded the author's model of the client, and the parser encoded the same model.
+
+Qualification shortened the tail but did not end it: experiment 3's first scored slot still hit an
+unrecognised behaviour (resumed `sendfile` calls) and stopped. Experiment 4 (#325) then graded on
+the outcome of the upgrade instead, and the collector now launches clients untraced; the tracer
+modules remain in the tree, unused.
 
 ## Guidance
 
