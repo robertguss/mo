@@ -1126,3 +1126,10 @@ change between launch and regrade:
 Both agents used `mo push`, so no upload had a native twin; the unmatched calls are those
 uploads plus shell `mo-state`, `revision` and `stats` queries. The controls file for the freeze
 and its evidence are in `build/freeze-4/` of the rehearsal checkout.
+
+**Accepted difference from the rehearsed commit (2026-11-11).** After the rehearsal, f307b642
+renamed a local argument parser in `learnability/phase5/evidence.py` from `freeze` to `inputs`;
+the old name shadowed the new `freeze()` function and made `evidence.py freeze` fail from its
+command line. `evidence.py` is freeze-hashed, so the freeze's comparison with 5d713bcc shows this
+one file changed. The rehearsal never ran it. Robert accepted the difference on 2026-11-11 instead
+of a repeat rehearsal; every other freeze-hashed file must still match 5d713bcc.
