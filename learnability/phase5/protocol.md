@@ -1,7 +1,8 @@
 # Live upgrade evaluation declaration
 
-Status: original declaration retained below; the credential correction at the end
-declares experiment 2 before its collection. The nightly
+Status: original declaration retained below; the credential correction declares
+experiment 2 before its collection, and the last section declares experiment 4
+before its collection. The nightly
 repair merged as 814ddd0f70e5fd613130fe87a9cd24cd187af8e6 in PR #317;
 integrated repository verification passed (the earlier interrupted run is retained). Collection is authorized by the implementation request;
 Robert's explicit approval is required for release. One experiment-1 session was interrupted for an instrument defect; at the
@@ -149,3 +150,65 @@ An accepted report alone does not attest a push: unmatched proxy calls and
 missing model evidence remain misses. Original verdicts remain published beside
 the analysis; no gate or denominator changes. The declaration and exact analysis
 input hashes are retained in results.
+
+## Experiment 4: outcome-gated declaration
+
+Experiment 4 is declared here, before any of its sessions launches. Experiments 1,
+2 and 3 and every development failure stay published unchanged; experiment 3 is
+a stopped experiment and its slot is not regraded.
+
+The pass conditions are narrowed from experiments 2 and 3. None of the recorded
+misses showed an upgrade that did not work: in all five scored sessions that ran
+to the end, the service state and the recorded activation were correct. The
+misses came from the evidence of how bytes travelled, not from the work. After
+experiment 2 the collector gained a syscall tracer that had to recognise every
+action of two closed-source clients on a live kernel and rejected anything it did
+not recognise. Each new client behaviour needed a repair, and because the counting
+rules forbid repairs during an experiment, each surprise cost a whole experiment;
+experiment 3 stopped after one session on resumed `sendfile` calls. This is a
+capability demonstration, so experiment 4 judges the result of the upgrade.
+
+Experiment 4 keeps experiment 2's shape: four fresh sessions in Codex, Claude,
+Codex, Claude order, the frozen clients and requested models above, the same task
+and the same prompt, a 3,600-second limit, and a gate of at least three passes with
+at least one per client. The prompt is byte-identical and still names `mo push`.
+Grading credits an upload through the proxy whether the agent used `mo push` or
+the client's native MCP route, because the service gives every way in one upgrade
+path. A session passes when all of these hold:
+
+- the hidden checks on the running service pass (`task_state`);
+- the folder-only restart check passes (`task_state`);
+- exactly one durable activation with the expected identity follows the fixture's
+  preparation, and the proxy record holds the accepted commit reply for it
+  (`activation_identity`); the session account cannot reach the service's direct
+  port, so an accepted commit can only have arrived through the proxy;
+- the immutable source tests pass (`source_tests`);
+- the final message, trimmed of whitespace, is exactly the revision value the grader
+  itself reads from the live service (`final_answer`).
+
+Command origin by process trace, traffic completeness and model provenance are not
+pass conditions, and the syscall tracer does not run. Each session's record states,
+without grading them, the requested model, the models the client's own output
+reports (or that it reported none), whether the transcript shows `mo push`, how
+many uploads had a matching native client event and how many did not, and the
+number of proxy calls with no matching client event. A session whose client reports
+a different model from the one requested counts when the conditions above hold and
+is published under the reported model; this replaces the earlier rule that missing
+or substituted model evidence is a miss.
+
+Codex runs with `--sandbox danger-full-access` under the collector's isolation (a
+separate session account, a firewall on the service port, read-only grader inputs),
+with the HTTP Responses transport and diagnostic logging that let it report a model.
+Experiment 2 used the `workspace-write` sandbox; every development and scored
+session since then used full access.
+
+Experiment 2's counting rules carry over unchanged: every launched session counts,
+there are no replacements, and neither the collector nor the grader changes after
+the first launch. A harness defect seen after a launch is published with the affected
+slot as a miss. If the gate is missed, the phase stays open, the miss is published,
+and no further experiment runs without Robert's decision. Before the freeze, one
+development session per client must pass these conditions live on the final
+collector with no offline repair, and the grader must accept a reference upgrade and
+reject each wrong outcome listed under Gate and records. An independent review of
+the freeze and Robert's approval both precede the first scored launch. The
+declaration record is `results/experiment-4/declaration.json`.

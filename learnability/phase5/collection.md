@@ -83,3 +83,18 @@ debug and five optimized production samples completed; the debug series missed
 the declared twofold margin. The original four-session experiment 2 scored 0/4
 and leaves the phase open. See `results/` and `docs/status/phase5-run.md` for raw
 records, corrected diagnostic analysis and release limits.
+
+## Experiment 4 closing sequence
+
+The drill, the pause series and the four experiment 4 sessions run on one frozen
+build of merged main, written by `evidence.py freeze`. A result carries forward to a
+later freeze only when every input it depends on is byte-identical.
+
+The 1,000-kill drill reruns on that build under the declaration above, with count
+1,000 and seed 20261110, and must pass. One new pause series of five debug and five
+optimized repetitions runs on the same build with the declared workload, through
+`measure_pause.py --freeze`, and every sample is published. Its slowest sample
+decides the outcome: at or under 0.5 seconds is a pass; above 0.5 and at or under 1
+second is published as a margin miss and does not block closing; any sample above 1
+second keeps the phase open. The earlier series and their margin miss stay published
+unchanged; samples are not repeated or selected to improve the margin.
