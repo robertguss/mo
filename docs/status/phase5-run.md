@@ -363,3 +363,21 @@ immutable source tests through its own design choice. Claude's session passes al
 dimensions on protected regrade after one more join repair for a request left unanswered at
 session end. Details are in the [capture development record](../../learnability/phase5/evaluation/integration-development.md).
 Phase 5 remains open; the scored cohort has not run.
+
+## Experiment 3 stopped on a capture defect
+
+After Robert approved the reviewed freeze, the first scored Codex slot finished
+without timeout. Independent protected regrading passed task state, activation
+identity and immutable source tests, but missed command origin, revision
+observation/final answer, traffic completeness and model provenance. Three
+resumed regular-file `sendfile` transfers triggered capture rejection. The
+instrument was not repaired during the cohort; collection stopped with slot 1
+retained as a miss and slots 2–4 unlaunched. There are no replacements and no
+completed four-slot score. The original official 0/4 remains unchanged.
+
+The stop report and freeze metadata are retained in
+[experiment 3](../../learnability/phase5/results/experiment-3/README.md).
+The four-slot publisher cannot publish an incomplete cohort. M6 pause and
+kill-drill evidence cannot carry forward to these changed inputs. Phase 5 remains
+open; a new experiment needs a separate declaration, and release approval remains
+Robert's decision.

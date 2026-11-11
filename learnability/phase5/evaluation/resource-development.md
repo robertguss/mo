@@ -290,3 +290,37 @@ helper); 19 observer/lifecycle controls then passed, including a 2 MB unbroken
 line and a diagnostic prefix across the chunk boundary. Logs:
 build/stderr-bounded-red.txt and build/stderr-bounded-green.txt. This removes one
 whole-file allocation, not the remaining aggregate parser/capture growth.
+
+## Experiment 3 freeze preparation (2026-11-10)
+
+Measured retained development evidence without launching any model session. The
+largest sealed trace is pair two's partial Codex bundle: 565,819,943 compressed
+bytes from 1,580.563 seconds. Protected partial regrading completed in 74.197
+seconds, but skips origin parsing. Its 475,168 KiB ru_maxrss may be an inherited
+accounting floor; no kernel peak was retained. Trying the complete receipt path
+on that partial bundle rejected with IdentityError in 0.795 seconds. A separate
+direct parser measurement rejected with TraceError after 629.539 seconds and
+1,016,332 KiB ru_maxrss (a live kernel sample reached 1,002,756 KiB). The partial
+bundle lacks the snapshot needed for complete origin replay.
+
+The largest complete bundle is pair three's Codex trace: 474,674,336 compressed
+bytes from 1,268.970 seconds. Protected regrading rejected with JoinError after
+475.463 seconds, with Linux VmHWM 813,252 KiB. These failures are retained and
+are not successful full-session qualification.
+
+The final-code-compatible pair-five Codex bundle then completed protected replay
+in 421.287 seconds, with Linux VmHWM 1,624,500 KiB. Its trace is 346,619,942
+compressed bytes from 874.117 seconds. Linear scaling to 3,600 seconds estimates
+1,735.046 seconds of replay (28.9 minutes), 6,690,411 KiB peak memory (6.38 GiB),
+and 11.12 GiB of retained files for four slots, including the measured slot's
+multiple copies. The host had 31 GiB RAM and approximately 123 GiB available
+disk. Slots and publication regrades run serially. This is a planning estimate
+from the observed event mix, not a deterministic one-hour resource bound;
+connection, process and event structures still grow with workload. Wall times
+include overlapping controls and other measurements.
+
+Machine-local receipts and scripts are in build/freeze-3. Initial measurement
+drivers reused output names; the reported records were restored under distinct
+names from their retained process outputs before continuing. Every rejected
+measurement remains included. No raw trace, credential or provider stream is
+published by this preparation. The original 0/4 and all development misses stand.

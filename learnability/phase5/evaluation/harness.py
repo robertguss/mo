@@ -195,14 +195,19 @@ def retain_optional(partial, role, path):
 
 
 def collect(l, spec, out, slot, development=False, limit=3600):
+    import fcntl
+    with (l.state / 'collector.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return collect_locked(l, spec, out, slot, development, limit)
+
+
+def collect_locked(l, spec, out, slot, development=False, limit=3600):
     if slot not in range(1, 5) or (not development and limit != 3600):
         raise ValueError('invalid slot or time limit')
     if limit <= 0:
         raise ValueError('positive time limit required')
     if tuple(int(n) for n in os.uname().release.split('.')[:2]) < (5, 3):
         raise ValueError('capture requires Linux 5.3 or newer')
-    if not development:
-        raise ValueError('collection disabled: model and command-origin qualification incomplete')
     out = Path(out).resolve()
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
     p4.check_private(l, out, Path(spec).resolve(), l.state)

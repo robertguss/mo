@@ -1,0 +1,85 @@
+{
+  "measurements": [
+    {
+      "operation": "regrade",
+      "status": "completed",
+      "seconds": 74.19671968696639,
+      "peak_rss_kib": 475168,
+      "trace_bytes": 565819943,
+      "session_seconds": 1580.562921839999,
+      "receipt_recovery": "Distinct filename restored from retained process output after measurement drivers reused output names.",
+      "receipt": "resource-partial-regrade.json",
+      "linear_estimated_wall_seconds": 168.9956073132016,
+      "linear_estimated_peak_rss_kib": 1082275.67302959,
+      "linear_estimated_stored_trace_bytes": 1288750841.015997
+    },
+    {
+      "operation": "parser",
+      "status": "failed: IdentityError",
+      "seconds": 0.7954991389997303,
+      "peak_rss_kib": 475168,
+      "trace_bytes": 565819943,
+      "session_seconds": 1580.562921839999,
+      "receipt_recovery": "Distinct filename restored from retained process output after measurement drivers reused output names.",
+      "receipt": "resource-rejected-receipt.json",
+      "linear_estimated_wall_seconds": 1.8118841463553783,
+      "linear_estimated_peak_rss_kib": 1082275.67302959,
+      "linear_estimated_stored_trace_bytes": 1288750841.015997
+    },
+    {
+      "operation": "parser",
+      "status": "failed: TraceError",
+      "seconds": 629.5388236159924,
+      "peak_rss_kib": 1016332,
+      "trace_bytes": 565819943,
+      "session_seconds": 1580.562921839999,
+      "receipt_recovery": "Distinct filename restored from retained process output after measurement drivers reused output names.",
+      "receipt": "resource-largest-parser.json",
+      "linear_estimated_wall_seconds": 1433.8813935855412,
+      "linear_estimated_peak_rss_kib": 2314868.4240553007,
+      "linear_estimated_stored_trace_bytes": 1288750841.015997
+    },
+    {
+      "kernel_peak_rss_kib": 813252,
+      "operation": "regrade",
+      "status": "failed: JoinError",
+      "seconds": 475.4632142280461,
+      "peak_rss_kib": 813252,
+      "trace_bytes": 474674336,
+      "session_seconds": 1268.970176524017,
+      "receipt_recovery": "Distinct filename restored from retained process output after measurement drivers reused output names.",
+      "receipt": "resource-largest-complete.json",
+      "linear_estimated_wall_seconds": 1348.8635138058112,
+      "linear_estimated_peak_rss_kib": 2307152.0940071433,
+      "linear_estimated_stored_trace_bytes": 1346625508.7892194
+    },
+    {
+      "kernel_peak_rss_kib": 1624500,
+      "operation": "regrade",
+      "status": "completed",
+      "seconds": 421.28683817293495,
+      "peak_rss_kib": 1624500,
+      "trace_bytes": 346619942,
+      "session_seconds": 874.1166590929497,
+      "slot_file_bytes": 724854252,
+      "linear_estimated_wall_seconds": 1735.0460051823516,
+      "linear_estimated_peak_rss_kib": 6690411.330300625,
+      "linear_estimated_stored_trace_bytes": 1427534618.1994126,
+      "linear_estimated_four_slot_file_bytes": 11941084888.636219,
+      "receipt": "resource-latest-compatible.json"
+    }
+  ],
+  "qualified": true,
+  "limitations": [
+    "Partial regrade does not parse origin evidence.",
+    "Largest parser and complete regrade rejected; these are failed-path measurements.",
+    "Partial regrade ru_maxrss may inherit an accounting floor; no kernel measurement was retained.",
+    "Linear extrapolation assumes comparable event mix and growth; it is not a bound or a completed one-hour session.",
+    "Elapsed times include concurrent checks and measurements."
+  ],
+  "latest_compatible_regrade": "completed",
+  "qualification_scope": "Observed latest compatible protected replay and linear planning estimate fit current host; no deterministic one-hour memory/time bound.",
+  "disk_available_bytes_at_check": 131133681664,
+  "installed_ram_gib": 31,
+  "serial_slots": true
+}

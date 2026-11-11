@@ -1,0 +1,30 @@
+{
+  "ordinary_evaluation": {
+    "source_root": "/opt/mo-phase5/build-e53a822e",
+    "source_commit": "e53a822e",
+    "binary": "/opt/mo-phase5/bin/mo",
+    "library_root": "/opt/mo-phase5/build-e53a822e/lib",
+    "command": [
+      "timeout",
+      "900",
+      "make",
+      "-j8",
+      "CC=gcc"
+    ],
+    "source_preparation": "git archive e53a822e Makefile ci docs lib runtime src vendor | tar -x -C /opt/mo-phase5/build-e53a822e",
+    "build_result": "make exit 0",
+    "setup_result": "setup exit 0",
+    "session_compile_result": "session-check-exit 0",
+    "receipt": "build-history-receipt.json"
+  },
+  "candidate_verification": {
+    "command": [
+      "bash",
+      "ci/check.sh",
+      "gcc"
+    ],
+    "log": "build/freeze-3/gcc.txt",
+    "result": "check.sh finished: pass"
+  },
+  "timing_and_drill": "M6 inputs differ. No carry-forward claim; final continuity evidence remains open."
+}
