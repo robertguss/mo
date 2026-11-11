@@ -82,6 +82,7 @@ python3 learnability/phase5/evaluation/resource_probe_development.py probe build
 python3 learnability/phase5/evaluation/resource_probe_development.py stream build/resource-real-investigation/stream.json
 python3 learnability/phase5/evaluation/resource_probe_development.py regrade /home/exedev/code/mo-m6/build/resource-real-investigation/regrade.json
 ```
+The development probe script named in these commands has been removed; the recorded measurements below are unchanged.
 
 All memory values below are KiB. Initial/final fields are VmRSS, VmHWM,
 and resource RUSAGE_SELF ru_maxrss; periodic sampling interval is 10 ms.
