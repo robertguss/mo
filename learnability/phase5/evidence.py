@@ -109,9 +109,9 @@ def freeze(root, folder, experiment, installed, debug, optimized):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
-    freeze = sub.add_parser('build-inputs')
-    freeze.add_argument('root', type=pathlib.Path)
-    freeze.add_argument('--compare', type=pathlib.Path)
+    inputs = sub.add_parser('build-inputs')
+    inputs.add_argument('root', type=pathlib.Path)
+    inputs.add_argument('--compare', type=pathlib.Path)
     grade = sub.add_parser('gate')
     grade.add_argument('records', type=pathlib.Path)
     frozen = sub.add_parser('freeze')

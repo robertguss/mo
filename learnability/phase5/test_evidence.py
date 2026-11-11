@@ -75,6 +75,11 @@ class FreezeTests(unittest.TestCase):
                 return harness.freeze(folder / 'manifest.json', SimpleNamespace(bin=installed))
 
             manifest = frozen(controls)
+            (folder / 'manifest.json').unlink()
+            subprocess.run([sys.executable, str(Path(evidence.__file__)), 'freeze', str(folder),
+                            '--experiment', 'experiment-3', '--debug', str(debug), '--optimized', str(optimized),
+                            '--installed', str(installed)], check=True, capture_output=True)
+            self.assertEqual(json.loads((folder / 'manifest.json').read_text())['binaries'], manifest['binaries'])
             self.assertEqual(manifest['candidate_commit'], head)
             for name in evidence.INSTRUMENTS:
                 self.assertIn(str(repo / name), manifest['artifacts']['instruments'])
