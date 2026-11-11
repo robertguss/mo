@@ -289,6 +289,11 @@ bool mo_check_service_purity(struct mo_arena *arena, const struct mo_program *pr
     MO_ASSERT(parameters == 0);
     if (!capability)
         return true;
+    if (rule == MO_PURITY_MIGRATION)
+        return report(
+            &p, MO_CODE_UPGRADE_MIGRATION_SIGNATURE,
+            "a migration value holds a capability or function",
+            "A migration's old state and new result must be pure, including every nested type.");
     if (rule == MO_PURITY_QUERY)
         return report(&p, MO_CODE_QUERY_CAPABILITY, "a query value holds a capability or function",
                       "A query's parameters and result cannot contain capabilities or functions, "

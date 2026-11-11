@@ -1,0 +1,24 @@
+
+mo-phase5-session is not logged in to every client (.claude/.credentials.json, .codex/auth.json is missing). Log in once, then run setup again:
+  sudo -u mo-phase5-session env -i HOME=/home/mo-phase5-session PATH=/opt/mo-phase5/bin:/usr/bin:/bin DISABLE_AUTOUPDATER=1 TERM=$TERM bash
+  claude                 # log in, then /exit
+  codex login --device-auth
+
+{
+  "mo": {
+    "path": "/opt/mo-phase5/bin/mo",
+    "sha256": "517da0610ccc341a69dedd202cd8f5439cab695827d8ad60cf2312f8e61703b9",
+    "version": "mo 0.1.0"
+  },
+  "claude": {
+    "path": "/opt/mo-phase5/bin/claude",
+    "sha256": "eb224419e344575faa4a1f39b290b649425a10cd5ee2ef1d003480cd9ae57eb0",
+    "version": "2.1.317 (Claude Code)"
+  },
+  "codex": {
+    "path": "/opt/mo-phase5/bin/codex",
+    "sha256": "b8a11fedf24b2dfb59a70c9e52b030f9a508dcd49cd2dd0d41956f4c785156b8",
+    "version": "codex-cli 0.166.0"
+  },
+  "previous": []
+}

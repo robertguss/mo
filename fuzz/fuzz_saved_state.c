@@ -68,6 +68,29 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             MO_ASSERT(mo_cell_get_int(result) == 713);
         MO_ASSERT(mo_heap_used(heap) == used);
     }
+    /* Migration input maps nominal names by index. The migrated output is then
+     * encoded and decoded under its ordinary, unmodified schema. */
+    const char **names =
+        mo_arena_allocate_array(&f.arena, f.types.count, sizeof *names, _Alignof(const char *));
+    MO_ASSERT(names != NULL);
+    memset(names, 0, f.types.count * sizeof *names);
+    names[f.node] = "UpgradeOld.Node";
+    names[f.record] = "UpgradeOld.Item";
+    struct mo_cell migrated = mo_cell_int(713);
+    if (mo_value_decode_names(heap, type, data + 1, size - 1, names, f.types.count, &migrated)) {
+        struct mo_buffer validated;
+        mo_buffer_init(&validated, MO_LIMIT_SAVED_BYTES);
+        MO_ASSERT(mo_value_encode(heap, type, migrated, &validated));
+        struct mo_cell again;
+        MO_ASSERT(mo_value_decode(heap, type, validated.bytes, validated.length, &again));
+        bool same = false;
+        MO_ASSERT(mo_value_equal(heap, type, migrated, again, &same) && same);
+        mo_value_drop(heap, type, again);
+        mo_value_drop(heap, type, migrated);
+        mo_buffer_free(&validated);
+    } else
+        MO_ASSERT(mo_cell_get_int(migrated) == 713);
+    MO_ASSERT(mo_heap_used(heap) == used);
     mo_buffer_free(&bytes);
     mo_heap_free(heap);
     mo_heap_image_free(f.image);

@@ -216,12 +216,68 @@ that hold the old token get 401 until they restart.
 
 ## Upgrade
 
-A new build is a new tree: run Install step 2 with the new `SHA`, change both
-paths in the unit, `sudo systemctl daemon-reload` and restart. If the new build
-refuses the data with E1409, its program changed. Point the unit back at the
-old tree, read the jobs you need through `list`, then follow Recover from a
-stop's fixed-program path with a new data folder. Keep the old tree and the old
-folder.
+A queue started with `--upgrade-token-env NAME` (a second secret of at least 16
+bytes, different from the queue token, kept in the same environment file) accepts a
+live upgrade over loopback on its host without stopping:
+
+```sh
+mo push NEW/main.mo --url http://127.0.0.1:8000/mcp --base DIGEST \
+  --token-env QUEUE_TOKEN --upgrade-token-env QUEUE_UPGRADE [--migrate Module.function]
+```
+
+`DIGEST` is the active program's source digest (`base_source` from
+`mo check NEW/main.mo --upgrade-from OLD/main.mo --json`). Exit 0 means the queue
+runs the new program; repeating the push reports `already active`. A refusal leaves
+the old program serving. A migration the live budget refuses can still use the
+checked restart below. With an upgrade-capable unit, `ExecStart` names only the
+folder (`mo serve --data /var/lib/task-queue --port 8000 ...`), so a restart runs
+whichever program was last activated.
+
+The deployed queue above is retired. For a queue running an upgrade-capable build,
+a stopped-service checked restart on its host also works. Build the new pinned tree with Install step 2,
+keep the old executable and source, stop the unit, and copy the whole stopped
+folder (including any journal) before changing it.
+
+Check the candidate against the old source with the new executable:
+
+```sh
+/opt/mo/$SHA/build/gcc/debug/mo check NEW/main.mo --upgrade-from /var/lib/task-queue
+```
+
+If the state schema changes, add `--migrate Module.function`. The function takes
+one generated `UpgradeOld` state and returns the new state, without capabilities
+or type parameters. This command checks types; it does not run the migration
+against the saved queue.
+The stopped folder supplies the recorded source and generated declarations from
+any prior migration; the check leaves it unchanged. A standalone old source file
+can also be used as `--upgrade-from OLD/main.mo` when it needs no retained context.
+
+For the first start of the new version, set the unit's `ExecStart` to the new
+executable and candidate source with `--upgrade`, retaining its port, data folder,
+allowed host and environment file. Include `--migrate Module.function` if needed.
+Run `sudo systemctl daemon-reload` and start the unit. A successful checked restart
+validates the migrated state and commits it with the recorded program. A migration
+refusal leaves the previous program and state authoritative; inspect the refusal
+instead of repeatedly restarting the unit.
+
+After success, remove the source argument, `--upgrade` and `--migrate` from
+`ExecStart`, leaving `mo serve --data /var/lib/task-queue --port 8000` and the
+existing allowed-host option. Reload the unit. Later starts compile the recorded
+source and its retained generated declaration context; they do not rerun the
+migration. Keep `RestartPreventExitStatus=1 2 69` so compilation or migration
+refusals do not loop.
+
+An older folder with no program record is adopted on an exact image match.
+`--adopt` permits a different image only through verified replay; a report of
+zero verified messages is not evidence that changed handlers preserve behavior.
+If checked restart cannot accept the candidate, use the agent guide's fresh-folder
+recovery procedure: export needed data through the old program's tools, start the
+new program on an empty folder and import through its tools. Keep the old tree
+and folder. Live swapping and streaming notifications are implemented in the
+upgrade-capable build described above. The [run record](../status/phase5-run.md)
+records the drill, the pause series and the agent evaluation, which passed on one
+frozen build; v0.2 remains unreleased until Robert decides. A work-budget refusal
+is not a deadline guarantee.
 
 ## Drill
 
@@ -378,3 +434,41 @@ covers the reconstructed case, not application correctness or live memory pressu
 misses in the [diagnostic evaluation](../status/phase4-run.md) received `verified` but failed
 hidden correctness tests. Run the application’s tests before considering deployment.
 Restart the service when diagnosis of its stopped folder is finished.
+
+### Push from a remote machine
+
+Keep the host listener bound to loopback. On the operator machine, open an SSH
+local forward (replace `HOST` and the host listener port `8080`):
+
+```sh
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:8080:127.0.0.1:8080 HOST
+```
+
+Use the same local and host port: the server validates the HTTP Host authority.
+If the local port must differ, start the host service with
+`--allow-host 127.0.0.1:LOCAL_PORT` as well; an unlisted authority is refused with
+HTTP 421. Leave that terminal running. In another terminal on the same operator machine,
+use the service token and the distinct upgrade credential in environment variables:
+
+```sh
+mo push new/main.mo --url http://127.0.0.1:8080/mcp --base DIGEST \
+  --token-env SERVICE_TOKEN --upgrade-token-env UPGRADE_TOKEN
+```
+
+`DIGEST` is the current canonical source digest, obtained from
+`mo check new/main.mo --upgrade-from old/main.mo --json` (`base_source`) or a
+credentialed stale-base refusal. Supply `--migrate Module.function` when needed.
+For offline rehearsal also retain the original bundle and any MOCC compilation
+context; neither a state export nor the service token supplies those source bytes.
+The client validates the loopback URL before reading either credential. There is
+no TLS client in this release: a public HTTPS endpoint is not a `mo push` target.
+The SSH connection authenticates and encrypts the remote hop. The local-forward
+listener binds only `127.0.0.1`; stop SSH after use.
+
+Direct pushes and pushes through this forward use the same upload and activation
+path and print identical acceptance/refusal text. Exit 0 means the candidate is
+active (including already active), 1 means refusal or client failure, and 2 means
+invalid usage, URL or base digest. A transport failure after commit may leave its
+outcome unknown; repeat the same candidate to resolve it without reapplying a
+migration. Transient no-effect rate refusals are retried within the command's
+deadline. Sustained starvation can leave the slot busy until its idle expiry.

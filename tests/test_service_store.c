@@ -4,6 +4,7 @@
 #include "base/failure.h"
 #include "base/log-record.h"
 #include "base/runtime-identity.h"
+#include "base/sha256.h"
 #include "base/stack.h"
 #include "base/store-memory.h"
 #include "base/verdict.h"
@@ -24,6 +25,11 @@
 static unsigned crash_point, log_steps, simulation_appends;
 static bool check_recovery_heap, refuse_store_allocation, refuse_cache_copy;
 static unsigned recovery_heap_checks;
+/* Activation faults: fail the n-th SQLite step, or COMMIT before or after it really runs. */
+static bool activation_counting;
+static unsigned activation_steps, activation_fault;
+static enum { COMMIT_REAL, COMMIT_FAIL_BEFORE, COMMIT_FAIL_AFTER, BEGIN_FAIL } activation_commit;
+static bool first_program_fault, first_program_snapshot_written, first_program_insert_refused;
 static struct {
     bool enabled, forward, refuse, refuse_case;
     struct mo_service_hooks hooks;
@@ -150,6 +156,17 @@ enum mo_store_status mo_store_fault_call(struct mo_store *store, enum mo_store_o
 int mo_store_fault_exec(sqlite3 *db, const char *sql,
                         int (*callback)(void *, int, char **, char **), void *context,
                         char **error) {
+    if (activation_counting && activation_commit == BEGIN_FAIL &&
+        strcmp(sql, "BEGIN IMMEDIATE") == 0)
+        return SQLITE_BUSY;
+    if (activation_counting && activation_commit == COMMIT_FAIL_BEFORE &&
+        strcmp(sql, "COMMIT") == 0)
+        return SQLITE_IOERR;
+    if (activation_counting && activation_commit == COMMIT_FAIL_AFTER &&
+        strcmp(sql, "COMMIT") == 0) {
+        CHECK(sqlite3_exec(db, sql, callback, context, error) == SQLITE_OK);
+        return SQLITE_IOERR;
+    }
     if (crash_point == 15 && strcmp(sql, "ROLLBACK") == 0)
         return SQLITE_IOERR;
     int result = sqlite3_exec(db, sql, callback, context, error);
@@ -168,6 +185,13 @@ static int reader_code;
 static bool reader_killed;
 
 int mo_store_fault_step(sqlite3_stmt *stmt) {
+    if (activation_counting && ++activation_steps == activation_fault)
+        return SQLITE_FULL;
+    if (first_program_fault && strstr(sqlite3_sql(stmt), "INSERT INTO program") != NULL) {
+        CHECK(first_program_snapshot_written);
+        first_program_insert_refused = true;
+        return SQLITE_FULL;
+    }
     if (reader_code != 0 && strstr(sqlite3_sql(stmt), "FROM sqlite_schema") != NULL)
         return reader_code;
     if (reader_killed && strstr(sqlite3_sql(stmt), "length(record)") != NULL)
@@ -191,6 +215,9 @@ int mo_store_fault_step(sqlite3_stmt *stmt) {
         strstr(sqlite3_sql(stmt), "INSERT INTO failure_state") != NULL)
         return SQLITE_FULL;
     int result = sqlite3_step(stmt);
+    if (first_program_fault && result == SQLITE_DONE &&
+        strstr(sqlite3_sql(stmt), "INSERT INTO snapshot") != NULL)
+        first_program_snapshot_written = true;
     if (crash_point == 17 && result == SQLITE_DONE &&
         strstr(sqlite3_sql(stmt), "DELETE FROM failure WHERE") != NULL)
         _exit(77);
@@ -224,7 +251,7 @@ struct observations {
     unsigned replies, failures, stops;
     enum mo_service_status status;
     struct mo_store *store;
-    uint64_t sequence;
+    uint64_t sequence, replay_sequence;
     struct mo_bytecode_string handler;
 };
 static bool last_sequence(const struct mo_store_record *record, void *context) {
@@ -253,6 +280,7 @@ static void event(const struct mo_service_event *e, void *context) {
     o->failures += e->kind == MO_SERVICE_FAILURE ? 1u : 0u;
     o->stops += e->kind == MO_SERVICE_STOP ? 1u : 0u;
     o->handler = e->handler;
+    o->replay_sequence = e->replay_sequence;
 }
 
 static struct mo_service_loop *open_service(struct mo_image *image, struct mo_store *store,
@@ -1819,7 +1847,7 @@ static void wrong_state_checksum(void) {
     CHECK(mo_service_open(image, 0, &hooks, store, &s) == MO_SERVICE_SAVED_INVALID);
     check_recovery_heap = false;
     CHECK(s == NULL && o.replies == replies && o.failures == failures + 1);
-    CHECK(named(o.handler, "add"));
+    CHECK(named(o.handler, "add") && o.replay_sequence == 1);
     CHECK(recovery_heap_checks == 1);
     mo_service_free(s);
     mo_store_close(store);
@@ -3468,6 +3496,260 @@ static void long_kind(void) {
     mo_image_free(image);
 }
 
+struct first_program_inventory {
+    const struct mo_store_record *expected;
+    unsigned count;
+};
+static bool first_program_record(const struct mo_store_record *record, void *context) {
+    struct first_program_inventory *inventory = context;
+    const struct mo_store_record *expected = inventory->expected;
+    inventory->count++;
+    CHECK(record->kind == expected->kind && record->sequence == expected->sequence &&
+          record->image == expected->image && record->length == expected->length);
+    CHECK(record->length == expected->length &&
+          memcmp(record->bytes, expected->bytes, record->length) == 0);
+    return true;
+}
+/* The injected failure occurs after the snapshot INSERT really succeeded but
+ * before the program INSERT. Reopen must observe neither half of that write. */
+static void first_program_atomic(struct mo_image *image, const char *path) {
+    struct mo_limits limits = mo_service_limits();
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_buffer saved, bundle;
+    mo_buffer_init(&saved, MO_LIMIT_SAVED_BYTES);
+    mo_buffer_init(&bundle, MO_LIMIT_BUNDLE_BYTES);
+    CHECK(mo_value_encode(mo_process_heap(process),
+                          mo_image_bytecode(image)->services[0].state_type, mo_cell_int(7),
+                          &saved));
+    /* The host validates canonical source framing and identities; compiler
+     * admission is tested separately by the checked-restart driver. */
+    static const char source[] = "module Main\n";
+    CHECK(mo_buffer_append(&bundle, "MOSB\1", 5));
+    CHECK(mo_binary_write(&bundle, 7, 4) && mo_buffer_append(&bundle, "Main.mo", 7));
+    CHECK(mo_binary_write(&bundle, 1, 4));
+    CHECK(mo_binary_write(&bundle, 7, 4) && mo_buffer_append(&bundle, "Main.mo", 7));
+    CHECK(mo_binary_write(&bundle, sizeof source - 1, 4) &&
+          mo_buffer_append(&bundle, source, sizeof source - 1));
+    static const uint8_t context[13] = {'M', 'O', 'C', 'C', 1};
+    struct mo_store_program program = {.image = mo_image_key(image, 0),
+                                       .bundle = bundle.bytes,
+                                       .bundle_size = bundle.length,
+                                       .context = context,
+                                       .context_size = sizeof context};
+    struct mo_sha256 hash;
+    mo_sha256_init(&hash);
+    mo_sha256_update(&hash, bundle.bytes, bundle.length);
+    mo_sha256_finish(&hash, program.source);
+    mo_sha256_init(&hash);
+    mo_sha256_update(&hash, context, sizeof context);
+    mo_sha256_finish(&hash, program.context_digest);
+    CHECK(mo_runtime_identity(program.build));
+    CHECK(mo_export_schema(saved.bytes, saved.length, program.schema));
+    struct mo_store_record state = {MO_STORE_STATE, 0, program.image, saved.bytes, saved.length};
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    first_program_snapshot_written = first_program_insert_refused = false;
+    first_program_fault = true;
+    CHECK(mo_store_program_record(store, &program, &state) == MO_STORE_IO);
+    first_program_fault = false;
+    CHECK(first_program_snapshot_written && first_program_insert_refused);
+    mo_store_close(store);
+
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_store_program read;
+    bool found = true;
+    CHECK(mo_store_program_read(store, &arena, &read, &found) == MO_STORE_OK && !found);
+    struct first_program_inventory inventory = {.expected = &state};
+    CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, first_program_record, &inventory) ==
+          MO_STORE_OK);
+    CHECK(inventory.count == 0);
+    CHECK(mo_store_program_record(store, &program, &state) == MO_STORE_OK);
+    mo_store_close(store);
+
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    CHECK(mo_store_program_read(store, &arena, &read, &found) == MO_STORE_OK && found);
+    CHECK(found && read.ordinal == 0 && read.image == program.image &&
+          memcmp(read.source, program.source, 32) == 0);
+    CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, first_program_record, &inventory) ==
+          MO_STORE_OK);
+    CHECK(inventory.count == 1);
+    mo_store_close(store);
+    mo_arena_free(&arena);
+    mo_buffer_free(&bundle);
+    mo_buffer_free(&saved);
+    mo_process_free(process);
+    CHECK(unlink(path) == 0);
+}
+
+struct activation_view {
+    unsigned states, logs;
+    uint64_t image, sequence;
+    uint8_t first;
+};
+static bool view_record(const struct mo_store_record *record, void *context) {
+    struct activation_view *v = context;
+    if (record->kind == MO_STORE_STATE) {
+        v->states++;
+        v->image = record->image;
+        v->sequence = record->sequence;
+        v->first = record->length == 0 ? 0 : record->bytes[record->length - 1];
+    } else
+        v->logs++;
+    return true;
+}
+
+/* The folder after a failed or uncertain activation is entirely the old program and state or
+ * entirely the new: program row, ordinal, snapshot, tail and retained rows move together. */
+static bool activation_side(const char *path, const struct mo_store_program *old,
+                            const struct mo_store_program *next, bool *post) {
+    struct mo_store *store = NULL;
+    if (mo_store_open(path, &store) != MO_STORE_OK)
+        return false;
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_store_program read;
+    bool found = false;
+    struct activation_view view = {0};
+    bool ok = mo_store_program_read(store, &arena, &read, &found) == MO_STORE_OK && found &&
+              mo_store_call(store, MO_STORE_LOAD, NULL, view_record, &view) == MO_STORE_OK &&
+              view.states == 1;
+    *post = ok && memcmp(read.source, next->source, 32) == 0;
+    if (ok && *post)
+        ok = read.ordinal == 1 && read.image == next->image && view.image == next->image &&
+             view.sequence == 1 && view.logs == 0;
+    else if (ok)
+        ok = memcmp(read.source, old->source, 32) == 0 && read.ordinal == 0 &&
+             read.image == old->image && view.image == old->image && view.logs == 1;
+    mo_store_close(store);
+    mo_arena_free(&arena);
+    return ok;
+}
+
+static void activation_faults(struct mo_image *image, const char *path) {
+    struct mo_limits limits = mo_service_limits();
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    uint32_t type = mo_image_bytecode(image)->services[0].state_type;
+    struct mo_buffer saved[2], bundles[2];
+    struct mo_store_program programs[2];
+    static const uint8_t context[13] = {'M', 'O', 'C', 'C', 1};
+    for (int i = 0; i < 2; i++) {
+        mo_buffer_init(&saved[i], MO_LIMIT_SAVED_BYTES);
+        mo_buffer_init(&bundles[i], MO_LIMIT_BUNDLE_BYTES);
+        CHECK(mo_value_encode(mo_process_heap(process), type, mo_cell_int(7 + i), &saved[i]));
+        const char *source = i == 0 ? "module Main\n" : "module Main\n\n";
+        size_t n = strlen(source);
+        CHECK(mo_buffer_append(&bundles[i], "MOSB\1", 5) && mo_binary_write(&bundles[i], 7, 4) &&
+              mo_buffer_append(&bundles[i], "Main.mo", 7) && mo_binary_write(&bundles[i], 1, 4) &&
+              mo_binary_write(&bundles[i], 7, 4) && mo_buffer_append(&bundles[i], "Main.mo", 7) &&
+              mo_binary_write(&bundles[i], n, 4) && mo_buffer_append(&bundles[i], source, n));
+        programs[i] = (struct mo_store_program){.image = mo_image_key(image, 0) + (uint64_t)i,
+                                                .ordinal = (uint64_t)i,
+                                                .bundle = bundles[i].bytes,
+                                                .bundle_size = bundles[i].length,
+                                                .context = context,
+                                                .context_size = sizeof context};
+        struct mo_sha256 hash;
+        mo_sha256_init(&hash);
+        mo_sha256_update(&hash, bundles[i].bytes, bundles[i].length);
+        mo_sha256_finish(&hash, programs[i].source);
+        mo_sha256_init(&hash);
+        mo_sha256_update(&hash, context, sizeof context);
+        mo_sha256_finish(&hash, programs[i].context_digest);
+        CHECK(mo_runtime_identity(programs[i].build));
+        CHECK(mo_export_schema(saved[i].bytes, saved[i].length, programs[i].schema));
+    }
+    static const char report[] = "{\"version\":1}";
+    struct mo_store_activation activation = {
+        .previous = programs[0],
+        .candidate = programs[1],
+        .previous_state = {MO_STORE_STATE, 1, programs[0].image, saved[0].bytes, saved[0].length},
+        .candidate_state = {MO_STORE_STATE, 1, programs[1].image, saved[1].bytes, saved[1].length},
+        .migration = "",
+        .report_json = report,
+        .report_size = sizeof report - 1};
+    /* Fault zero counts the statements of an unfaulted activation; each later run fails one. */
+    unsigned statements = 0;
+    for (unsigned fault = 0; fault <= statements + 3; fault++) {
+        (void)unlink(path);
+        struct mo_store *store = NULL;
+        CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+        struct mo_store_record first = {MO_STORE_STATE, 0, programs[0].image, saved[0].bytes,
+                                        saved[0].length};
+        CHECK(mo_store_program_record(store, &programs[0], &first) == MO_STORE_OK);
+        struct mo_store_record tail = {MO_STORE_LOG, 1, programs[0].image, saved[0].bytes,
+                                       saved[0].length};
+        CHECK(mo_store_call(store, MO_STORE_APPEND, &tail, NULL, NULL) == MO_STORE_OK);
+        activation_steps = 0;
+        activation_fault = fault <= statements ? fault : 0;
+        activation_commit = fault <= statements       ? COMMIT_REAL
+                            : fault == statements + 1 ? BEGIN_FAIL
+                            : fault == statements + 2 ? COMMIT_FAIL_BEFORE
+                                                      : COMMIT_FAIL_AFTER;
+        activation_counting = true;
+        enum mo_store_activation_status result = mo_store_activate(store, &activation);
+        activation_counting = false;
+        if (fault == 0) {
+            CHECK(result == MO_STORE_ACTIVATED);
+            statements = activation_steps;
+            CHECK(statements > 8);
+        } else if (activation_commit == COMMIT_REAL || activation_commit == BEGIN_FAIL)
+            /* A failed statement before COMMIT refuses; failing the rollback check is unsafe. */
+            CHECK(result == MO_STORE_ACTIVATION_REFUSED || result == MO_STORE_ACTIVATION_UNSAFE);
+        else
+            CHECK(result == MO_STORE_ACTIVATION_UNSAFE);
+        if (result == MO_STORE_ACTIVATION_UNSAFE)
+            CHECK(mo_store_activate(store, &activation) == MO_STORE_ACTIVATION_UNSAFE);
+        mo_store_close(store);
+        bool post = false;
+        CHECK(activation_side(path, &programs[0], &programs[1], &post));
+        CHECK(post == (fault == 0 || activation_commit == COMMIT_FAIL_AFTER));
+        if (fault != 0 && activation_commit == COMMIT_REAL && result == MO_STORE_ACTIVATION_REFUSED)
+            CHECK(!post);
+    }
+    /* Two retained programs with one image, build and schema but different sources: a failure
+     * under either cannot name its program, so the reader reports the ambiguity mo replay
+     * renders as E1431. */
+    (void)unlink(path);
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    struct mo_store_record first = {MO_STORE_STATE, 0, programs[0].image, saved[0].bytes,
+                                    saved[0].length};
+    CHECK(mo_store_program_record(store, &programs[0], &first) == MO_STORE_OK);
+    struct mo_store_activation twin = activation;
+    twin.candidate.image = programs[0].image;
+    twin.previous_state.sequence = twin.candidate_state.sequence = 0;
+    twin.candidate_state.image = programs[0].image;
+    CHECK(mo_store_activate(store, &twin) == MO_STORE_ACTIVATED);
+    mo_store_close(store);
+    struct mo_arena arena;
+    mo_arena_init(&arena, 1 << 20);
+    struct mo_store_program found;
+    uint32_t matches = 0;
+    bool distinct = false;
+    CHECK(mo_store_retained_program_read_file(path, &arena, programs[0].image, programs[0].build,
+                                              programs[0].schema, &found, &matches,
+                                              &distinct) == MO_STORE_FOLDER_OK);
+    CHECK(matches == 2 && distinct && found.ordinal == 1 &&
+          memcmp(found.source, programs[1].source, 32) == 0 &&
+          found.bundle_size == programs[1].bundle_size);
+    static const uint8_t other[32] = {1};
+    CHECK(mo_store_retained_program_read_file(path, &arena, programs[0].image, other,
+                                              programs[0].schema, &found, &matches,
+                                              &distinct) == MO_STORE_FOLDER_OK);
+    CHECK(matches == 0 && !distinct);
+    mo_arena_free(&arena);
+    CHECK(unlink(path) == 0);
+    for (int i = 0; i < 2; i++) {
+        mo_buffer_free(&saved[i]);
+        mo_buffer_free(&bundles[i]);
+    }
+    mo_process_free(process);
+}
+
 static void run(void *unused) {
     mo_runtime_identity_init();
     text_context();
@@ -3501,6 +3783,8 @@ static void run(void *unused) {
     char dir[] = "/tmp/mo-store-XXXXXX", path[256];
     MO_ASSERT(mkdtemp(dir) != NULL);
     MO_ASSERT(snprintf(path, sizeof path, "%s/state.db", dir) > 0);
+    first_program_atomic(image, path);
+    activation_faults(image, path);
     crashes(image, path);
     corruption(image, path);
     uncertain_commit(image);

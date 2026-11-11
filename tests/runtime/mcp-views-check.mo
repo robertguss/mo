@@ -141,7 +141,84 @@ fn main() : Int
   next = page.get("next") or stop "next page"
   require(McpViews.valid(7, next))
   require(McpViews.failure_id(next) == 7)
-  require(McpViews.names().size == 9)
+  require(McpViews.names().size == 12)
+  require(McpViews.upgrade_kind(-1) == 0)
+  require(McpViews.upgrade_kind(12) == 0)
+  for i in 0..9
+    require(McpViews.upgrade_kind(i) == 0)
+  end
+  require(McpViews.upgrade_kind(9) == 1)
+  require(McpViews.upgrade_kind(10) == 2)
+  require(McpViews.upgrade_kind(11) == 3)
+  require(McpViews.names().get(9) == Some("mo-upgrade-open"))
+  require(McpViews.names().get(11) == Some("mo-upgrade-commit"))
+  up_base = "0".repeat(64)
+  up_candidate = "a".repeat(64)
+  up_slot = "b".repeat(32)
+  require(
+    McpViews.valid(
+      9,
+      Json.Object({
+        "base": Json.String(up_base),
+        "candidate": Json.String(up_candidate),
+        "total": Json.int(10),
+        "migration": Json.String("Main.migrate")
+      })
+    )
+  )
+  for arguments in [
+    Json.Object({"base": Json.String(up_base), "candidate": Json.String(up_candidate)}),
+    Json.Object({
+      "base": Json.String("0".repeat(63)),
+      "candidate": Json.String(up_candidate),
+      "total": Json.int(1)
+    }),
+    Json.Object({
+      "base": Json.String("A".repeat(64)),
+      "candidate": Json.String(up_candidate),
+      "total": Json.int(1)
+    }),
+    Json.Object({
+      "base": Json.String(up_base),
+      "candidate": Json.String(up_candidate),
+      "total": Json.int(1),
+      "migration": Json.String("")
+    }),
+    Json.Object({
+      "base": Json.String(up_base),
+      "candidate": Json.String(up_candidate),
+      "total": Json.int(1),
+      "slot": Json.String(up_slot)
+    })
+  ]
+    require(not McpViews.valid(9, arguments))
+  end
+  up_page = Json.Object({
+    "slot": Json.String(up_slot),
+    "index": Json.int(0),
+    "offset": Json.int(0),
+    "total": Json.int(3),
+    "bytes": Json.String("YWJj")
+  })
+  require(McpViews.valid(10, up_page))
+  require(not McpViews.valid(10, Json.Object({"slot": Json.String(up_slot)})))
+  require(
+    not McpViews.valid(
+      10,
+      Json.Object({
+        "slot": Json.String(up_slot),
+        "index": Json.int(0),
+        "offset": Json.int(0),
+        "total": Json.int(3),
+        "bytes": Json.String("A".repeat(10925))
+      })
+    )
+  )
+  require(
+    McpViews.valid(11, Json.Object({"slot": Json.String(up_slot), "base": Json.String(up_base)}))
+  )
+  require(not McpViews.valid(11, Json.Object({"slot": Json.String(up_slot)})))
+  require(McpViews.upgrade_arguments(up_page) == ["", "", "3", "", up_slot, "0", "0", "YWJj"])
   require(McpViews.names().contains?("mo-export"))
   require(McpViews.names().contains?("mo-failures"))
   require(
@@ -179,7 +256,16 @@ fn main() : Int
               "readOnlyHint": Json.Boolean(true),
               "idempotentHint": Json.Boolean(true),
               "openWorldHint": Json.Boolean(false)
-            } else: {"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)}
+            } else if fields.get("name") == Some(Json.String("mo-upgrade-open")) or
+              fields.get("name") == Some(Json.String("mo-upgrade-page")) or
+              fields.get("name") == Some(Json.String("mo-upgrade-commit")): {
+                "readOnlyHint": Json.Boolean(false),
+                "destructiveHint": Json.Boolean(
+                  fields.get("name") == Some(Json.String("mo-upgrade-commit"))
+                ),
+                "idempotentHint": Json.Boolean(false),
+                "openWorldHint": Json.Boolean(false)
+              } else: {"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)}
           )
         )
     )

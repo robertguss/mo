@@ -551,6 +551,60 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_MCP_DRAIN_US UINT64_C(250000)
 #define MO_LIMIT_MCP_RATE 20
 #define MO_LIMIT_MCP_BURST 40
+/* MCP sessions: an initialize result names one, later POSTs may carry it and a GET stream must.
+ * A full table forgets its least recently used session; that session's next request receives
+ * 404 and its client initializes again. */
+#define MO_LIMIT_MCP_SESSIONS 64
+#define MO_LIMIT_MCP_SESSION_ID_BYTES 32
+/* Open GET streams across all sessions, so streams cannot take every connection slot. */
+#define MO_LIMIT_MCP_STREAMS 4
+/* Unwritten output per stream; a consumer further behind is disconnected, never waited for. */
+#define MO_LIMIT_MCP_STREAM_BYTES 1024
+
+#define MO_LIMIT_UPGRADE_PREVIOUS 2
+#define MO_LIMIT_UPGRADE_RETAINED_BYTES (32 * 1024 * 1024)
+#define MO_LIMIT_UPGRADE_REPORT_BYTES 4096
+/* Handler identifiers consume at most the two original source bundles. Each
+ * old/new descriptor contributes at most 80 bytes of JSON framing; the final
+ * term covers escaped detail and fixed report fields. Names are source names,
+ * never expanded generic type spellings. */
+#define MO_LIMIT_UPGRADE_REPORT_JSON_BYTES                                                         \
+    (2 * MO_LIMIT_BUNDLE_BYTES + 2 * MO_LIMIT_SERVICE_HANDLERS * 80 +                              \
+     8 * MO_LIMIT_UPGRADE_REPORT_BYTES)
+#define MO_LIMIT_UPGRADE_MIGRATION_NAME 255
+#define MO_LIMIT_UPGRADE_LIVE_WORK UINT64_C(1048576)
+#define MO_LIMIT_UPGRADE_RESTART_WORK UINT64_C(16777216)
+#define MO_LIMIT_UPGRADE_LIVE_HEAP (32 * 1024 * 1024)
+#define MO_LIMIT_UPGRADE_RESTART_HEAP (48 * 1024 * 1024)
+/* Decoded candidate-bundle bytes per upload page; every page but the last carries exactly this. */
+#define MO_LIMIT_UPGRADE_PAGE_BYTES 8192
+/* Padded base64 text of one full upload page. */
+#define MO_LIMIT_UPGRADE_PAGE_TEXT (4 * ((MO_LIMIT_UPGRADE_PAGE_BYTES + 2) / 3))
+/* An upload slot with no accepted page, compilation or waiting commit for this long closes. */
+#define MO_LIMIT_UPGRADE_SLOT_IDLE_US UINT64_C(60000000)
+/* How often the server checks a compiling candidate or a waiting commit. */
+#define MO_LIMIT_UPGRADE_POLL_US UINT64_C(10000)
+
+/* ASan reserves a very large virtual shadow; sanitizer test builds retain CPU/wall
+ * limits but cannot use the production address-space ceiling. */
+#if defined(__SANITIZE_ADDRESS__)
+#define MO_UPGRADE_COMPILE_ASAN 1
+#elif defined(__clang__)
+#if __has_feature(address_sanitizer)
+#define MO_UPGRADE_COMPILE_ASAN 1
+#endif
+#endif
+#ifndef MO_UPGRADE_COMPILE_ASAN
+#define MO_UPGRADE_COMPILE_ASAN 0
+#endif
+
+#define MO_LIMIT_UPGRADE_COMPILE_MEMORY (UINT64_C(1024) * 1024 * 1024)
+#define MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS 10
+#define MO_LIMIT_UPGRADE_COMPILE_WALL_US UINT64_C(15000000)
+
+#define MO_LIMIT_BUNDLE_FILES 64
+#define MO_LIMIT_BUNDLE_PATH_BYTES 255
+#define MO_LIMIT_BUNDLE_BYTES (1024 * 1024)
 
 /* How the limits depend on each other and on the formats. */
 _Static_assert(MO_LIMIT_FILE_SIZE < UINT32_MAX, "spans hold byte offsets in 32 bits");

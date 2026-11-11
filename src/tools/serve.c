@@ -3,6 +3,7 @@
 #include "tools/run.h"
 
 #include "base/codes.h"
+#include "host/host.h"
 #include "tools/protocol.h"
 #include "vm/vm.h"
 
@@ -19,7 +20,7 @@ static void note_signal(int number) {
     atomic_store(&signalled, true);
 }
 
-static bool watch_signals(void) {
+bool mo_serve_watch_signals(void) {
     struct sigaction action = {.sa_handler = note_signal};
     return sigemptyset(&action.sa_mask) == 0 && sigaction(SIGTERM, &action, NULL) == 0 &&
            sigaction(SIGINT, &action, NULL) == 0;
@@ -62,6 +63,18 @@ static void log_event(const struct mo_service_event *event, void *context) {
         log->stopped = true;
         log->stop = event->reason;
         log_line(log->errors, "stop", text);
+        break;
+    case MO_SERVICE_UPGRADE:
+        if (event->upgrade->accepted)
+            (void)fprintf(log->errors,
+                          "mo serve: upgrade: activated ordinal %llu; %u queued calls answered as "
+                          "removed; %u ticks dropped\n",
+                          (unsigned long long)event->upgrade->ordinal,
+                          (unsigned)event->upgrade->answered, (unsigned)event->upgrade->dropped);
+        else
+            (void)fprintf(log->errors, "mo serve: upgrade: refused E%04u\n",
+                          (unsigned)event->upgrade->code);
+        (void)fflush(log->errors);
         break;
     }
     if (event->defect != NULL &&
@@ -152,18 +165,19 @@ static void refuse_listener(struct mo_diags *diags, enum mo_listener_status stat
 }
 
 int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint32_t service,
-                   FILE *output, FILE *errors, struct mo_diags *diags) {
+                   FILE *output, FILE *errors, struct mo_diags *diags,
+                   struct mo_store *held_store) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     MO_ASSERT(service < file->service_count);
     const struct mo_bytecode_string *token = &file->strings[file->services[service].token_env];
     struct serve_log log = {.errors = errors};
     struct mo_listener *listener = NULL;
-    struct mo_store *store = NULL;
+    struct mo_store *store = held_store;
     struct mo_protocol_server *server = NULL;
     struct mo_buffer name;
     mo_buffer_init(&name, MO_LIMIT_STRING_SIZE + 1);
     int status = 1;
-    if (!watch_signals()) {
+    if (!mo_serve_watch_signals()) {
         refuse(diags, "mo serve could not watch for stop signals", NULL, strerror(errno));
         goto done;
     }
@@ -178,6 +192,23 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
         refuse(diags, "mo serve could not read the token's variable name", NULL, "out of memory");
         goto done;
     }
+    /* The upgrade credential must be long and differ from the service token, whatever the
+     * variable names; both copies are wiped once compared. */
+    struct mo_bearer upgrade = {0}, service_token = {0};
+    if (cli->upgrade_token != NULL) {
+        bool read = mo_bearer_read(&upgrade, cli->upgrade_token) && upgrade.length >= 16;
+        bool same = read && mo_bearer_read(&service_token, (const char *)name.bytes) &&
+                    mo_bearer_check(&service_token, (const uint8_t *)upgrade.bytes, upgrade.length);
+        mo_host_wipe(&service_token, sizeof service_token);
+        if (!read || same) {
+            mo_host_wipe(&upgrade, sizeof upgrade);
+            refuse(diags, "mo serve could not use the upgrade credential from environment variable",
+                   cli->upgrade_token,
+                   read ? "it equals the service token"
+                        : "it is missing, invalid or shorter than 16 bytes");
+            goto done;
+        }
+    }
     struct mo_listener_config config = {.port = cli->port};
     enum mo_listener_status opened = mo_listener_open(&config, (const char *)name.bytes, &listener);
     if (opened != MO_LISTENER_OK) {
@@ -188,7 +219,8 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     int length = snprintf(path, sizeof path, "%s/" MO_DATA_FILE, cli->data);
     MO_ASSERT(length > 0 && (size_t)length < sizeof path);
     mode_t mask = umask(S_IRWXG | S_IRWXO);
-    enum mo_store_status stored = mo_store_open_wait(path, &store);
+    enum mo_store_status stored =
+        held_store == NULL ? mo_store_open_wait(path, &store) : MO_STORE_OK;
     (void)umask(mask);
     if (stored == MO_STORE_BUSY) {
         /* Not E1409, which exits 1 and stops a service manager: the holder is temporary. */
@@ -213,6 +245,10 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     const struct mo_protocol_events events = {log_event, &log};
     enum mo_protocol_server_status built = mo_protocol_server_new(
         image, service, store, listener, authorities, authority_count, &events, &server);
+    if (built == MO_PROTOCOL_SERVER_OK)
+        built = mo_protocol_server_upgrades(server, cli->upgrade_token == NULL ? NULL : &upgrade,
+                                            "/proc/self/exe");
+    mo_host_wipe(&upgrade, sizeof upgrade);
     if (built != MO_PROTOCOL_SERVER_OK) {
         refuse(diags, "mo serve could not start the service", NULL, server_refusal(built, &log));
         goto done;
@@ -225,7 +261,8 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     status = exit_status(&log, serve_requests(server, listener, &log));
 done:
     mo_protocol_server_free(server);
-    mo_store_close(store);
+    if (held_store == NULL)
+        mo_store_close(store);
     mo_listener_close(listener);
     mo_buffer_free(&name);
     return status;

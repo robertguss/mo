@@ -1,0 +1,19 @@
+{
+  "command": [
+    "/home/exedev/code/mo-m6/build/pause-optimized/debug/mo",
+    "push",
+    "/home/exedev/code/mo-m6/build/pause-native-size-confirmation/optimized-4/new/main.mo",
+    "--url",
+    "http://127.0.0.1:43905/mcp",
+    "--base",
+    "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+    "--token-env",
+    "QUEUE_TOKEN",
+    "--upgrade-token-env",
+    "QUEUE_UPGRADE",
+    "--json"
+  ],
+  "timeout_seconds": 300,
+  "exit_status": 0,
+  "elapsed_seconds": 0.8440522599266842
+}

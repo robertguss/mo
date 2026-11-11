@@ -140,6 +140,9 @@ static void event(const struct mo_service_event *e, void *context) {
     case MO_SERVICE_STOP:
         o->stops++;
         break;
+    case MO_SERVICE_UPGRADE:
+        CHECK(false);
+        break;
     }
 }
 

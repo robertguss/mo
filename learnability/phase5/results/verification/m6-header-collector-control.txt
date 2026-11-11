@@ -1,0 +1,6 @@
+test_development_and_timeout (test_collector.Collector.test_development_and_timeout) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 294.847s
+
+OK

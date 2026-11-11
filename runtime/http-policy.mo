@@ -1,7 +1,15 @@
 module HttpPolicy
-expose BodyPlan(..), inspect, body_plan
+expose BodyPlan(..), Access(..), inspect, body_plan, stream_plan
 use Http
 use HttpAuthority
+
+## Header spans the native side checks and wipes; stream marks an MCP GET stream request.
+struct Access
+  bearer: Option(Http.Span)
+  upgrade: Option(Http.Span)
+  session: Option(Http.Span)
+  stream: Bool
+end
 
 enum BodyPlan
   Reject(Int)
@@ -61,10 +69,7 @@ fn authority(bytes: List(Byte), part: Http.Span) : Option(HttpAuthority.Authorit
   HttpAuthority.parse(Text.from_chars(chars))
 end
 
-fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result(
-  Option(Http.Span),
-  Int
-)
+fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result(Access, Int)
   return Error(505) if not equal?(bytes, head.version, "HTTP/1.1")
   hosts = values(bytes, head, "host")
   return Error(400) if hosts.size != 1
@@ -101,8 +106,23 @@ fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result
   return Error(421) if not allowed
   return Error(403) if not values(bytes, head, "origin").empty?
   return Error(404) if not equal?(bytes, path, "/mcp")
-  return Error(405) if not equal?(bytes, head.method, "POST")
-  Ok(Http.bearer_span(bytes, head))
+  stream = equal?(bytes, head.method, "GET")
+  return Error(405) if not stream and not equal?(bytes, head.method, "POST")
+  sessions = values(bytes, head, "mcp-session-id")
+  return Error(400) if sessions.size > 1
+  upgrades = values(bytes, head, "mo-upgrade-authorization")
+  upgrade = case upgrades.get(0)
+    Some(value): if upgrades.size == 1: Http.bearer_value(bytes, value) else: None
+    None: None
+  end
+  Ok(
+    Access(
+      bearer: Http.bearer_span(bytes, head),
+      upgrade: upgrade,
+      session: sessions.get(0),
+      stream: stream
+    )
+  )
 end
 
 fn space(bytes: List(Byte), start: Int, finish: Int) : Int
@@ -205,6 +225,10 @@ end
 
 fn accepts_json?(bytes: List(Byte), parts: List(Http.Span)) : Bool
   return true if parts.empty?
+  accepts?(bytes, parts, "application/json", "application/*")
+end
+
+fn accepts?(bytes: List(Byte), parts: List(Http.Span), kind: Text, family: Text) : Bool
   parsed = case items(bytes, parts)
     Some(value): value
     None: return false
@@ -212,9 +236,9 @@ fn accepts_json?(bytes: List(Byte), parts: List(Http.Span)) : Bool
   var specificity = -1
   var best = 0
   for item in parsed
-    rank = if ascii?(bytes, item.name, "application/json")
+    rank = if ascii?(bytes, item.name, kind)
       2
-    else if ascii?(bytes, item.name, "application/*")
+    else if ascii?(bytes, item.name, family)
       1
     else if ascii?(bytes, item.name, "*/*")
       0
@@ -266,6 +290,18 @@ fn length(bytes: List(Byte), part: Http.Span) : Option(Int)
     value = value * 10 + digit
   end
   Some(value)
+end
+
+## A GET stream carries no body; zero accepts it, otherwise the HTTP status to refuse with.
+fn stream_plan(bytes: List(Byte), head: Http.Head) : Int
+  return 400 if protocol_version(bytes, head) == Some("")
+  accept = values(bytes, head, "accept")
+  return 406 if accept.empty? or not accepts?(bytes, accept, "text/event-stream", "text/*")
+  return 400 if not values(bytes, head, "transfer-encoding").empty?
+  for part in values(bytes, head, "content-length")
+    return 400 if length(bytes, part) != Some(0)
+  end
+  0
 end
 
 fn body_plan(bytes: List(Byte), head: Http.Head, body_limit: Int) : BodyPlan

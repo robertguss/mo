@@ -36,7 +36,7 @@ struct mo_service_loop {
     uint64_t restarts[MO_LIMIT_SERVICE_RESTARTS];
     uint64_t last_clock;
     struct mo_store *store;
-    uint64_t sequence, image_key, snapshot_sequence, encoded_sequence;
+    uint64_t sequence, image_key, restore_key, snapshot_sequence, encoded_sequence;
     struct mo_buffer current_encoding;
     struct mo_service_message_summary log[MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES];
     uint32_t log_count;
@@ -48,6 +48,10 @@ struct mo_service_loop {
     const char *capture_refusal;
     bool capture_unsafe;
     bool running;
+    /* Live upgrades applied in this process, and a prepared replacement's deferred answers. */
+    uint64_t epoch;
+    uint64_t removed[MO_LIMIT_SERVICE_MAILBOX];
+    uint32_t removed_count, dropped;
 };
 
 const char *mo_service_status_text(enum mo_service_status status) {
@@ -70,6 +74,8 @@ const char *mo_service_status_text(enum mo_service_status status) {
         return mo_store_status_text(MO_STORE_IO);
     case MO_SERVICE_SAVED_INVALID:
         return mo_store_status_text(MO_STORE_CORRUPT);
+    case MO_SERVICE_REMOVED:
+        return "an upgrade removed or retyped this tool";
     }
     MO_UNREACHABLE();
 }
@@ -127,16 +133,18 @@ static struct mo_bytecode_string handler_name(const struct mo_service_loop *s, u
     return without_module_or_overload(file->strings[file->functions[function].name]);
 }
 
-static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
-                      enum mo_service_status reason, struct mo_service_time time,
-                      const struct mo_defect *defect, uint32_t handler, uint32_t restart) {
+static void record_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
+                         enum mo_service_status reason, struct mo_service_time time,
+                         const struct mo_defect *defect, uint32_t handler, uint32_t restart,
+                         const struct mo_service_upgrade *upgrade) {
     struct mo_service_event event = {.kind = kind,
                                      .reason = reason,
                                      .time = time,
                                      .defect = defect,
                                      .function = MO_NO_INDEX,
                                      .handler = handler_name(s, handler),
-                                     .restart = restart};
+                                     .restart = restart,
+                                     .upgrade = upgrade};
     if (kind == MO_SERVICE_FAILURE) {
         event.record_id = s->capture_id;
         event.record_unavailable = s->capture_refusal;
@@ -154,8 +162,17 @@ static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind
                                           .function = handler,
                                           .restart = restart,
                                           .record_id = event.record_id,
-                                          .record_unavailable = event.record_unavailable};
+                                          .record_unavailable = event.record_unavailable,
+                                          .epoch = s->epoch};
+    if (upgrade != NULL)
+        s->events[slot].upgrade = *upgrade;
     s->hooks.event(&event, s->hooks.context);
+}
+
+static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
+                      enum mo_service_status reason, struct mo_service_time time,
+                      const struct mo_defect *defect, uint32_t handler, uint32_t restart) {
+    record_event(s, kind, reason, time, defect, handler, restart, NULL);
 }
 
 /* Service processes have no external capabilities. Every transferred value is
@@ -313,7 +330,7 @@ static bool snapshot(struct mo_service_loop *s, const uint8_t *bytes, size_t len
 struct recovery {
     struct mo_service_loop *service;
     struct mo_cell state;
-    uint64_t sequence, snapshot;
+    uint64_t sequence, snapshot, failed_sequence;
     enum mo_service_status limit;
     uint32_t failed_function;
     bool found;
@@ -323,7 +340,8 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
     struct recovery *r = context;
     struct mo_service_loop *s = r->service;
     struct mo_heap *heap = s->process->heap;
-    if (record->image != s->image_key)
+    r->failed_sequence = record->kind == MO_STORE_LOG ? record->sequence : 0;
+    if (record->image != s->restore_key)
         return false;
     if (record->kind == MO_STORE_STATE) {
         if (r->found || !mo_value_decode(heap, s->descriptor->state_type, record->bytes,
@@ -396,6 +414,7 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
     for (uint32_t i = 0; i < built; i++)
         mo_value_drop(heap, tool->argument_types[i], m.arguments[i]);
     if (ok) {
+        r->failed_sequence = 0;
         MO_ASSERT(s->log_count < MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES);
         s->log[s->log_count++] =
             (struct mo_service_message_summary){.arrival = m.arrival,
@@ -409,11 +428,13 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
 }
 
 static enum mo_service_status recover(struct mo_service_loop *s, bool *found, struct mo_cell *state,
-                                      bool *snapshot_due, uint32_t *failed_function) {
+                                      bool *snapshot_due, uint32_t *failed_function,
+                                      uint64_t *failed_sequence) {
     struct recovery r = {.service = s, .limit = MO_SERVICE_OK, .failed_function = MO_NO_INDEX};
     enum mo_store_status status = mo_store_call(s->store, MO_STORE_LOAD, NULL, restore_record, &r);
     if (status != MO_STORE_OK) {
         *failed_function = r.failed_function;
+        *failed_sequence = r.failed_sequence;
         if (r.found)
             mo_value_drop(s->process->heap, s->descriptor->state_type, r.state);
         if (r.limit != MO_SERVICE_OK)
@@ -523,9 +544,10 @@ enum mo_service_status mo_service_new(const struct mo_image *image, uint32_t ind
     return mo_service_open(image, index, hooks, NULL, out);
 }
 
-enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t index,
-                                       const struct mo_service_hooks *hooks, struct mo_store *store,
-                                       struct mo_service_loop **out) {
+static enum mo_service_status open_service(const struct mo_image *image, uint32_t index,
+                                           const struct mo_service_hooks *hooks,
+                                           struct mo_store *store, bool staging,
+                                           uint64_t restore_key, struct mo_service_loop **out) {
     MO_ASSERT(image != NULL && hooks != NULL && hooks->clock != NULL && hooks->reply != NULL &&
               hooks->event != NULL && out != NULL);
     const struct mo_bytecode *file = mo_image_bytecode(image);
@@ -536,10 +558,12 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
         mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_service_loop));
     if (s == NULL)
         return MO_SERVICE_MEMORY;
-    *s = (struct mo_service_loop){.descriptor = &file->services[index],
-                                  .hooks = *hooks,
-                                  .store = store,
-                                  .image_key = mo_image_key(image, index)};
+    *s =
+        (struct mo_service_loop){.descriptor = &file->services[index],
+                                 .hooks = *hooks,
+                                 .store = store,
+                                 .image_key = mo_image_key(image, index),
+                                 .restore_key = staging ? restore_key : mo_image_key(image, index)};
     mo_buffer_init(&s->current_encoding, MO_LIMIT_SAVED_BYTES);
     s->timers = mo_arena_allocate_array(&arena, s->descriptor->timer_count, sizeof *s->timers,
                                         _Alignof(struct service_timer));
@@ -574,10 +598,11 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     if (status == MO_SERVICE_OK)
         failed_function = MO_NO_INDEX;
     bool found = false, snapshot_due = false;
+    uint64_t failed_sequence = 0;
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
     if (status == MO_SERVICE_OK && store != NULL)
-        status = recover(s, &found, &s->state, &snapshot_due, &failed_function);
+        status = recover(s, &found, &s->state, &snapshot_due, &failed_function, &failed_sequence);
     if (status == MO_SERVICE_OK && !found) {
         failed_function = s->descriptor->start;
         status = invoke(s->process, s->descriptor->start, NULL, 0, &s->state, &defect);
@@ -593,7 +618,7 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
     /* Recovery may stop between an append and its due snapshot; finish it now. */
     if (status == MO_SERVICE_OK)
         failed_function = MO_NO_INDEX;
-    if (status == MO_SERVICE_OK && snapshot_due &&
+    if (status == MO_SERVICE_OK && !staging && snapshot_due &&
         !(encoded.length != 0 ? snapshot(s, encoded.bytes, encoded.length)
                               : snapshot(s, s->current_encoding.bytes, s->current_encoding.length)))
         status = MO_SERVICE_STORE;
@@ -608,15 +633,31 @@ enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t in
                                                .time = time,
                                                .defect = defect.reason == NULL ? NULL : &defect,
                                                .function = failed_function,
-                                               .handler = handler_name(s, failed_function)};
+                                               .handler = handler_name(s, failed_function),
+                                               .replay_sequence = failed_sequence};
         s->hooks.event(&event, s->hooks.context);
         mo_service_free(s);
         return status;
     }
+    if (staging)
+        s->store = NULL;
     s->running = true;
     start_timers(s, time);
     *out = s;
     return MO_SERVICE_OK;
+}
+
+enum mo_service_status mo_service_open(const struct mo_image *image, uint32_t index,
+                                       const struct mo_service_hooks *hooks, struct mo_store *store,
+                                       struct mo_service_loop **out) {
+    return open_service(image, index, hooks, store, false, 0, out);
+}
+enum mo_service_status mo_service_recover(const struct mo_image *image, uint32_t index,
+                                          const struct mo_service_hooks *hooks,
+                                          struct mo_store *store, uint64_t recorded_image,
+                                          struct mo_service_loop **out) {
+    MO_ASSERT(store != NULL);
+    return open_service(image, index, hooks, store, true, recorded_image, out);
 }
 
 void mo_service_free(struct mo_service_loop *s) {
@@ -1137,7 +1178,8 @@ struct mo_service_observation mo_service_observe(const struct mo_service_loop *s
                                                  .stack_capacity = s->process->capacity,
                                                  .stack_limit = s->process->limits.stack_size,
                                                  .encoded_bytes = s->current_encoding.length,
-                                                 .encoded_capacity = s->current_encoding.capacity};
+                                                 .encoded_capacity = s->current_encoding.capacity,
+                                                 .epoch = s->epoch};
     observation.observed_elapsed = s->last_clock;
     observation.retained_available =
         s->store != NULL && mo_store_failure_stats(s->store, &observation.retained_failures,
@@ -1152,7 +1194,7 @@ bool mo_service_encoded_state(const struct mo_service_loop *s, const uint8_t **b
     MO_ASSERT(s != NULL && bytes != NULL && length != NULL);
     *bytes = s->current_encoding.bytes;
     *length = s->current_encoding.length;
-    return s->store != NULL;
+    return s->current_encoding.length != 0;
 }
 
 bool mo_service_mailbox_entry(const struct mo_service_loop *s, uint32_t index,
@@ -1255,4 +1297,205 @@ bool mo_service_pin_failure(const struct mo_service_loop *s, uint64_t failure,
     return s->store != NULL &&
            mo_store_failure_get(s->store, failure, pin_failure, &context) == MO_STORE_OK &&
            context.found;
+}
+
+static struct mo_bytecode_string function_name(const struct mo_bytecode *file, uint32_t function) {
+    MO_ASSERT(function < file->function_count);
+    return without_module_or_overload(file->strings[file->functions[function].name]);
+}
+
+static bool same_name(struct mo_bytecode_string a, struct mo_bytecode_string b) {
+    return a.length == b.length && memcmp(a.bytes, b.bytes, a.length) == 0;
+}
+
+static uint32_t timer_named(const struct mo_bytecode *file, const struct mo_bytecode_service *d,
+                            struct mo_bytecode_string name) {
+    for (uint32_t i = 0; i < d->timer_count; i++)
+        if (same_name(function_name(file, d->timers[i].function), name))
+            return i;
+    return MO_NO_INDEX;
+}
+
+static uint32_t tool_named(const struct mo_bytecode *file, const struct mo_bytecode_service *d,
+                           struct mo_bytecode_string name) {
+    for (uint32_t i = 0; i < d->tool_count; i++)
+        if (same_name(file->strings[d->tools[i].name], name))
+            return i;
+    return MO_NO_INDEX;
+}
+
+/* A queued call keeps its place when the new program has a tool of the same name whose
+ * argument types accept the saved encoding of each argument; otherwise it is answered later. */
+static enum mo_service_swap_status readmit(struct mo_service_loop *old,
+                                           struct mo_service_loop *next,
+                                           const struct service_message *m) {
+    const struct mo_bytecode *from = old->process->file, *to = next->process->file;
+    if (m->timer) {
+        uint32_t timer =
+            timer_named(to, next->descriptor,
+                        function_name(from, old->descriptor->timers[m->handler].function));
+        if (timer == MO_NO_INDEX) {
+            next->dropped++;
+            return MO_SERVICE_SWAP_READY;
+        }
+        *append(next) = (struct service_message){.arrival = m->arrival,
+                                                 .handler = timer,
+                                                 .timer = true,
+                                                 .argument_bytes_available = true};
+        next->timers[timer].waiting = true;
+        return MO_SERVICE_SWAP_READY;
+    }
+    const struct mo_bytecode_service_tool *was = &old->descriptor->tools[m->handler];
+    uint32_t tool = tool_named(to, next->descriptor, from->strings[was->name]);
+    const struct mo_bytecode_service_tool *now =
+        tool == MO_NO_INDEX ? NULL : &next->descriptor->tools[tool];
+    struct service_message moved = *m;
+    moved.handler = tool;
+    bool kept = now != NULL && now->argument_count == was->argument_count;
+    uint32_t decoded = 0;
+    struct mo_buffer encoded;
+    mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
+    enum mo_service_swap_status status = MO_SERVICE_SWAP_READY;
+    while (kept && decoded < was->argument_count) {
+        mo_buffer_clear(&encoded);
+        if (!mo_value_encode(old->process->heap, was->argument_types[decoded],
+                             m->arguments[decoded], &encoded)) {
+            status = MO_SERVICE_SWAP_MEMORY;
+            break;
+        }
+        kept = mo_value_decode(next->process->heap, now->argument_types[decoded], encoded.bytes,
+                               encoded.length, &moved.arguments[decoded]);
+        decoded += kept;
+    }
+    mo_buffer_free(&encoded);
+    if (kept && status == MO_SERVICE_SWAP_READY) {
+        *append(next) = moved;
+        return status;
+    }
+    for (uint32_t i = 0; i < decoded; i++)
+        mo_value_drop(next->process->heap, now->argument_types[i], moved.arguments[i]);
+    if (status == MO_SERVICE_SWAP_READY)
+        next->removed[next->removed_count++] = m->id;
+    return status;
+}
+
+enum mo_service_swap_status mo_service_swap_prepare(struct mo_service_loop *old,
+                                                    const struct mo_image *image, uint32_t index,
+                                                    const uint8_t *state, size_t length,
+                                                    struct mo_service_loop **out) {
+    MO_ASSERT(old != NULL && image != NULL && out != NULL && (state != NULL || length == 0));
+    *out = NULL;
+    if (!old->running)
+        return MO_SERVICE_SWAP_STOPPED;
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    MO_ASSERT(index < file->service_count);
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_LIMIT_SERVICE_METADATA);
+    struct mo_service_loop *s =
+        mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_service_loop));
+    if (s == NULL) {
+        mo_arena_free(&arena);
+        return MO_SERVICE_SWAP_MEMORY;
+    }
+    *s = (struct mo_service_loop){.descriptor = &file->services[index],
+                                  .hooks = old->hooks,
+                                  .store = old->store,
+                                  .image_key = mo_image_key(image, index),
+                                  .restore_key = mo_image_key(image, index),
+                                  .sequence = old->sequence,
+                                  .snapshot_sequence = old->sequence,
+                                  .encoded_sequence = old->sequence,
+                                  .last_clock = old->last_clock,
+                                  .event_number = old->event_number,
+                                  .event_head = old->event_head,
+                                  .event_count = old->event_count,
+                                  .failure_count = old->failure_count,
+                                  .restart_count = old->restart_count,
+                                  .epoch = old->epoch + 1};
+    memcpy(s->events, old->events, sizeof s->events);
+    memcpy(s->failures, old->failures, sizeof s->failures);
+    memcpy(s->restarts, old->restarts, sizeof s->restarts);
+    mo_buffer_init(&s->current_encoding, MO_LIMIT_SAVED_BYTES);
+    s->timers = mo_arena_allocate_array(&arena, s->descriptor->timer_count, sizeof *s->timers,
+                                        _Alignof(struct service_timer));
+    s->arena = arena;
+    struct mo_limits limits = mo_service_limits();
+    if (s->timers == NULL || (s->process = mo_process_new(image, &limits)) == NULL) {
+        mo_service_free(s);
+        return MO_SERVICE_SWAP_MEMORY;
+    }
+    memset(s->timers, 0, s->descriptor->timer_count * sizeof *s->timers);
+    enum mo_service_swap_status status = MO_SERVICE_SWAP_READY;
+    for (uint32_t i = 0; status == MO_SERVICE_SWAP_READY && i < s->descriptor->timer_count; i++) {
+        struct mo_cell value;
+        struct mo_defect defect;
+        enum mo_service_status called =
+            invoke(s->process, s->descriptor->timers[i].interval, NULL, 0, &value, &defect);
+        int64_t interval = called == MO_SERVICE_OK ? mo_cell_get_duration(value) : 0;
+        if (called != MO_SERVICE_OK)
+            finish_call(s->process);
+        if (interval <= 0)
+            status = MO_SERVICE_SWAP_INTERVAL;
+        else {
+            s->timers[i].interval = (uint64_t)interval;
+            /* A kept timer keeps its next due time; a new one is due now, as at a start. */
+            uint32_t was = timer_named(old->process->file, old->descriptor,
+                                       function_name(file, s->descriptor->timers[i].function));
+            s->timers[i].next = was == MO_NO_INDEX ? old->last_clock : old->timers[was].next;
+        }
+    }
+    if (status == MO_SERVICE_SWAP_READY &&
+        !mo_value_decode(s->process->heap, s->descriptor->state_type, state, length, &s->state))
+        status = MO_SERVICE_SWAP_STATE;
+    else if (status == MO_SERVICE_SWAP_READY)
+        s->running = true;
+    if (status == MO_SERVICE_SWAP_READY && s->store != NULL &&
+        !mo_buffer_append(&s->current_encoding, state, length))
+        status = MO_SERVICE_SWAP_MEMORY;
+    for (uint32_t i = 0; status == MO_SERVICE_SWAP_READY && i < old->count; i++)
+        status = readmit(old, s, &old->mailbox[(old->head + i) % MO_LIMIT_SERVICE_MAILBOX]);
+    if (status != MO_SERVICE_SWAP_READY) {
+        mo_service_free(s);
+        return status;
+    }
+    *out = s;
+    return MO_SERVICE_SWAP_READY;
+}
+
+void mo_service_swap_finish(struct mo_service_loop *old, struct mo_service_loop *next,
+                            const struct mo_service_upgrade *upgrade) {
+    MO_ASSERT(old != NULL && next != NULL && upgrade != NULL && next->epoch == old->epoch + 1);
+    struct mo_service_upgrade note = *upgrade;
+    note.accepted = true;
+    note.code = 0;
+    note.answered = next->removed_count;
+    note.dropped = next->dropped;
+    for (uint32_t i = 0; i < next->removed_count; i++) {
+        struct mo_service_response reply = {.id = next->removed[i], .status = MO_SERVICE_REMOVED};
+        next->hooks.reply(&reply, next->hooks.context);
+    }
+    next->removed_count = 0;
+    next->dropped = 0;
+    record_event(next, MO_SERVICE_UPGRADE, MO_SERVICE_OK, sample_clock(next), NULL, MO_NO_INDEX, 0,
+                 &note);
+    mo_service_free(old);
+}
+
+void mo_service_swap_abandon(struct mo_service_loop *next) {
+    mo_service_free(next);
+}
+
+void mo_service_note_upgrade(struct mo_service_loop *s, const struct mo_service_upgrade *upgrade) {
+    MO_ASSERT(s != NULL && upgrade != NULL && !upgrade->accepted && upgrade->code != 0);
+    record_event(s, MO_SERVICE_UPGRADE, MO_SERVICE_OK, sample_clock(s), NULL, MO_NO_INDEX, 0,
+                 upgrade);
+}
+
+void mo_service_stop(struct mo_service_loop *s, enum mo_service_status reason) {
+    MO_ASSERT(s != NULL && reason != MO_SERVICE_OK);
+    if (!s->running)
+        return;
+    s->running = false;
+    log_event(s, MO_SERVICE_STOP, reason, sample_clock(s), NULL, MO_NO_INDEX, 0);
+    drain(s, false);
 }

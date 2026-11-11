@@ -36,6 +36,20 @@ MO_MUST_USE struct mo_module_set *mo_load_program_sources(struct mo_arena *arena
                                                           const bool *library,
                                                           struct mo_diags *diags);
 
+/* Bundle capture only: supply an empty in-memory UpgradeOld module while discovering
+ * candidate files. It cannot type-check a migration; the compiler replaces it with the
+ * recorded declarations before checking. No UpgradeOld file is read from disk. */
+MO_MUST_USE struct mo_module_set *mo_load_upgrade_sources(struct mo_arena *arena,
+                                                          struct mo_sources *sources,
+                                                          const char *entry, const char *library,
+                                                          struct mo_diags *diags);
+/* In-memory closed source set plus this build's standard library. Missing imports never
+ * fall back to candidate filesystem paths. */
+MO_MUST_USE struct mo_module_set *mo_load_bundle_sources(struct mo_arena *arena,
+                                                         struct mo_sources *sources,
+                                                         const char *library,
+                                                         struct mo_diags *diags);
+
 struct mo_symbol {
     const char *name;
     const struct mo_syntax *declaration;
@@ -678,5 +692,14 @@ MO_MUST_USE enum mo_query_entry mo_check_query_entry(struct mo_arena *arena,
                                                      const uint8_t *name, size_t length,
                                                      enum mo_query_input input, uint32_t handler,
                                                      struct mo_diags *diags, uint32_t *function);
+
+/* Select a closed migration by name and exact old-state input type within this checked
+ * program. Refuse generic functions, capabilities/functions anywhere in the types,
+ * additional arguments and results other than the main service's state. Old declarations
+ * are supplied by tools through the reserved in-memory module, not the candidate's disk. */
+MO_MUST_USE enum mo_query_entry
+mo_check_migration_entry(struct mo_arena *arena, const struct mo_program *program,
+                         const uint8_t *name, size_t length, const struct mo_source_type *old_state,
+                         struct mo_diags *diags, uint32_t *function);
 
 #endif

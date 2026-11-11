@@ -15,7 +15,9 @@ An agent operating a running Mo service gets three instruments, each with a narr
 
 1. **Live views.** Built-in operator tools on the service's existing MCP endpoint show its state,
    mailbox, timers, memory, supervisor events, retained failures and committed messages since the
-   last snapshot. A token holder can read them. They never change the service.
+   last snapshot. A token holder can read them. They never change the service. The one
+   exception is the live upgrade tools (`docs/design/upgrades.md`), which replace the program and
+   require a second credential the service token never stands in for.
 2. **Offline queries.** The service exports bounded, identified bytes of its state, or of one
    retained failure, to a private file. The agent runs a pure Mo function over that file on its
    own side. The service never runs caller-written code.
@@ -66,9 +68,9 @@ documented limit: it gets the views and nothing else.
 | `mo-timers` | Each timer: name, interval, next due time, whether a tick is waiting | `offset` (optional timer position) |
 | `mo-memory` | Heap used, peak and limit; stack limit; encoded state bytes; pinned export bytes; diagnostic scratch peak | none |
 | `mo-supervisor` | The in-memory event ring: failures, restarts, stops and capture refusals, newest first | `after`, `before` (optional event numbers) |
-| `mo-failures` | Retained failure records: id, handler, kind key, arrival time, signature, state and message byte sizes; unavailable records with their reasons | `after` (optional record id) |
 | `mo-log` | Committed messages since the last snapshot: sequence, handler, arrival time, argument byte sizes; not argument values | `after` (optional sequence) |
 | `mo-export` | One page of a pinned export (section 5) | `kind`, `failure`, `export`, `offset` |
+| `mo-failures` | Retained failure records: id, handler, kind key, arrival time, signature, state and message byte sizes; unavailable records with their reasons | `after` (optional record id) |
 
 Operator tools are listed after every author tool, in the order above, under the same catalog
 paging (`runtime/mcp.mo`). A list view that does not fit one reply carries `"truncated": N`, the
@@ -91,12 +93,24 @@ proxy:
   approval, but approval policy is never"). With `mcp_servers.NAME.default_tools_approval_mode="approve"`
   it ran all three.
 
-Every operator tool therefore carries `readOnlyHint: true` and `idempotentHint: true`, and
+Every operator view therefore carries `readOnlyHint: true` and `idempotentHint: true`, and
 `mo-export` also `openWorldHint: false`. Descriptions are at most 512 bytes each and say what the
 tool shows and its limits. Author tools gain no annotations in this phase: the existing
 `read_only` field of `McpType.Tool` is still not emitted, so an author's read-only tool is not
 silently given an approval-skipping hint. The evaluation configures client approval explicitly
 (`learnability/phase4/protocol.md`).
+
+The nine views are followed by `mo-upgrade-open`, `mo-upgrade-page` and
+`mo-upgrade-commit`. These are the one documented exception to operator read-only
+safety: open reserves an upload slot, page writes consecutive padded-base64
+ranges (8192 decoded bytes except the final page), and commit replaces the
+program and migrates state at a message boundary. Every call needs the service
+token plus `Mo-Upgrade-Authorization: Bearer VALUE`; the service token alone
+never authorizes an upgrade. All three carry `readOnlyHint: false`,
+`idempotentHint: false` and `openWorldHint: false`; only commit carries
+`destructiveHint: true`. Their descriptions and schemas specify the page fields,
+base/candidate digests and slot lifetime. See `upgrades.md` for the shared reports.
+Remote pushes use the SSH local-forward procedure in `../ops/task-queue.md`.
 
 ### 3.2 Dispatch
 

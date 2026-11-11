@@ -2424,7 +2424,7 @@ examples/wc.mo` would write these lines, with the four results that pass
 among them:
 
 ```json
-{"record":"version","format":"1.0","mo":"0.1.0","command":"test"}
+{"record":"version","format":"1.0","mo":"0.2.0","command":"test"}
 {"record":"result","name":"Wc.count.example.3","kind":"example","span":{"file":"examples/wc.mo","file_bytes":"6578616d706c65732f77632e6d6f","start":453,"end":513,"line":16,"column":5,"end_line":16,"end_column":65},"outcome":"failed","microseconds":41,"left":"Counts(lines: 0, words: 1, bytes: 10)","right":"Counts(lines: 0, words: 2, bytes: 10)"}
 {"record":"totals","errors":0,"dropped":0,"passed":4,"failed":1,"stopped":0,"status":1}
 ```

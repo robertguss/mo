@@ -1,9 +1,11 @@
 # Whole-program upgrades
 
-Status: proposed; not implemented or approved. The feasibility evidence is in
-[the preflight](../../learnability/phase5/preflight/README.md). Approval requires
-both the reserved-old-type experiment and the complete largest-state pause
-measurement below. Source checks alone do not close either gate.
+Status: approved in M1 (PR #310). M2 implements typed checking, migration
+validation and checked restart; M3 offline rehearsal; M4 live swapping at a
+message boundary, the upload tools, MCP streams and `mo push` (see Live
+implementation below). M5 finalizes the operator catalog and documents the loopback-tunnel remote procedure.
+The feasibility evidence, including failed assumptions and corrected results, is
+in [the preflight](../../learnability/phase5/preflight/README.md).
 
 ## Authority and lifecycle
 
@@ -73,7 +75,9 @@ still exceed that cap and be refused. Proxy redaction covers both headers.
 Run the same executable as a child, with a private bundle directory, 1 GiB
 address-space bound, 10 CPU seconds and a 15-second wall deadline. Poll it
 without blocking the service; kill and reap an expired child. Compile before
-requesting a boundary. The child shares the host identity and is not an OS
+requesting a boundary. ASan test builds omit only the virtual-address bound because sanitizer shadow
+reservations exceed it; production retains that bound, and all builds retain
+CPU and wall limits. The child shares the host identity and is not an OS
 sandbox. The verifier checks its output, but does not protect host secrets
 from a compiler memory-safety exploit. Long front-end fuzz runs are required.
 The child probe also compiles the real service to bytecode text and emits a
@@ -140,6 +144,61 @@ folder under an accidentally matching image key and write without maintaining
 the active-program contract. Upgrade-capable readers accept legacy version 1
 only through the adoption path. Ordinary snapshot writes must preserve 2.
 
+## Durable compilation context
+
+Approved implementation clarification, 2026-11-08: each active and retained
+program also carries a bounded, validated compilation context. It is separate
+from the canonical original MOSB source bundle and its source SHA-256. A source
+can keep a migration body across later tool-only upgrades; reconstructing that
+body's old declarations from the latest snapshot loses its original input type.
+The context preserves the generated declarations and selected migration root
+without requiring a chain of older snapshots or bundles.
+
+MOCC version 1 consists of `MOCC` followed by byte 1, a little-endian u32 length
+and UTF-8 migration name, a u32 file count, then length-prefixed path/source pairs
+in strictly increasing path-byte order. The migration name is at most 255 bytes.
+There are at most 64 files, each path at most 255 bytes, and the entire context
+is at most 1 MiB. Paths are `UpgradeOld.mo` or dotted generated module names
+under `UpgradeOld`, ending in `.mo`; no separators, NUL, empty components or
+traversal are accepted. Source text is UTF-8 without NUL. The canonical empty
+context has no migration name and no files. The child compiler emits the context
+alongside its verified image; the parent validates and independently hashes it.
+A nonempty metadata suffix is a u32 byte length followed by `MOCS` and byte 1:
+length-prefixed token environment name, raw saved-state schema, a u32 count and
+sorted generated current-state declaration path/source pairs, then sorted tool
+and timer summaries. Each summary has a length-prefixed original handler name;
+a tool has a 32-byte descriptor digest, and a timer has a positive signed-64-bit
+interval encoded as little-endian u64. Counts obey the ordinary handler/file
+limits, and the entire context still fits 1 MiB. The store verifies that the raw
+schema hashes to the program schema digest. Metadata has no executable code.
+
+The current-state declarations cache reachable generic templates and recursive
+nominal types separately from the historical migration declarations. If recorded
+source no longer compiles, an empty log tail permits migration from the retained
+snapshot using these declarations. If those declarations also fail, concrete
+saved-schema synthesis is attempted. Concrete generic instances use reversible
+`Saved_<hex-qualified-name>` aliases; shape checking still compares every field,
+constructor and type parameter, with explicit nominal-name overrides. Source
+structs have single-case choice layout; legacy record layouts that source cannot
+reproduce are refused. A nonempty tail that needs an unbuildable recorded handler
+is refused without writing. This fallback never runs the new initial state in
+place of the saved state or invents replay checksums.
+
+`program` and `previous_programs` add `context_digest BLOB NOT NULL` (32-byte
+SHA-256) and `context BLOB NOT NULL`. Context identity participates in program
+comparison and is validated before compilation. An ordinary tool-only upgrade
+inherits the historical migration declarations and selection; descriptor metadata
+is refreshed from the candidate. An explicit new migration synthesizes and records
+a new historical context. Retaining a program retains its context, including failure pins.
+The source digest continues to identify only the original source bundle.
+`mo check NEW --upgrade-from DIR` reads the active bundle and its validated
+context from a stopped data folder without modifying it. A source-file base
+remains supported when it compiles without retained declarations. A tool-only
+candidate inherits the historical context; an explicit new migration generates
+its input declarations from the current old program.
+These columns are part of the new version-2 format; no released version-2
+folders predate them. Version-1 adoption is unchanged.
+
 ## Boundary, replies and catalogs
 
 Before swapping, encode pending replies so no connection holds old heap cells.
@@ -158,7 +217,11 @@ prerequisite for live swapping: the current POST/JSON endpoint cannot deliver
 unsolicited notifications. Add an authenticated MCP SSE stream using the same
 service credential and connection limits. A successful activation queues
 `notifications/tools/list_changed` after commit on each connected stream;
-refusals send none. Refresh the catalog before publishing the notification.
+refusals send none. Here “each connected stream” means each connected client/session,
+with one selected stream per session. Multiple streams in the same session must
+not receive duplicate notifications; distinct sessions each receive one. This
+pins the routing rule to the [MCP 2025-11-25 transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
+Refresh the catalog before publishing the notification.
 A reconnecting client refreshes `tools/list`; notification delivery is not a
 durable event log. Bound pending stream output and close slow consumers rather
 than delaying activation. Preserve existing POST/JSON calls. Advertise
@@ -190,11 +253,16 @@ limit. Both heap sets fit within the 64 MiB service message-memory envelope.
 The measured candidate heap peak, including queued arguments, is 12,565,784
 bytes; the live allocation allowance has more than 2.6x margin. Identity uses
 one VM instruction; that does not bound native encoding work. Implementation
-must account for the native walks separately and revalidate these limits.
+charges native saved-codec work separately against the same remaining counter:
+one unit per visited schema/value node, one per override name, and one per 64
+input/output bytes rounded up. VM instructions reduce that same counter before
+output validation and timer evaluation. These deterministic units bound traversals,
+not allocator internals, collision handling or wall-clock time. Refusal preserves
+output buffers, decoded output cells and the durable store. Revalidate these limits.
 Neither set silently lifts ordinary handler limits. Also measure many generic
 instantiations and maximum accepted nesting, not only an early nesting refusal.
 
-Reserve tools codes E1410–E1427, respectively: credential, busy, stale base,
+Reserve tools codes E1414–E1431, respectively: credential, busy, stale base,
 bundle size, bundle format, compile diagnostic, compile budget, missing
 migration, migration signature, migration trap, migration budget, invalid
 migrated value, changed access, timer interval, boundary deadline, recorded
@@ -229,6 +297,40 @@ Before implementation is declared complete:
   collection; keep development runs out of the denominator. Release requires
   Robert's separate approval.
 
+
+## Live implementation
+
+M4 builds the live path with these decisions; each is pinned by a test named in
+`learnability/phase5/preflight/live/README.md`.
+
+- Sessions are optional on POST: a request without `MCP-Session-Id` is served
+  as before, an unknown one gets 404. A GET stream requires a known session (400
+  without, 404 unknown) and `Accept: text/event-stream` (406). A second GET in a
+  session replaces its stream, which is how one message never reaches two of a
+  session's streams. At most 4 streams exist and each holds at most 1 KiB of
+  unwritten output; a consumer that falls further behind, or leaves output
+  unwritten for 10 seconds, is disconnected. Resumability (`Last-Event-ID`) is
+  not offered. 64 sessions are kept; the least recently used is forgotten.
+- Page refusals (wrong index, offset or total, non-canonical base64, wrong size,
+  unknown or closed slot, digest mismatch) are E1418 and keep the slot, except a
+  digest mismatch, which closes it. A slot also closes 60 seconds after its last
+  accepted page unless a compile or commit is in progress.
+- The commit waits for the compile and then for the next poll after the service
+  step, when every pending reply has been encoded. The prepared loop, its catalog
+  and the migrated state are built before the transaction, so any refusal up to
+  the commit leaves the old loop untouched.
+- The server keeps the current and the previous program. The previous one stays
+  until the next upgrade so pre-upgrade events keep their handler names; the next
+  activation waits until no request that began under it remains, and refuses with
+  E1428 at the commit deadline. Events from older epochs render `<program not
+  retained>`.
+- An uncertain commit stops the loop with the store status; `mo serve` then
+  exits 70 and a restart resolves the folder to one program.
+- Refusals are events with only their code and the two source digests;
+  successful activations are upgrade records and accepted events.
+- `mo replay --failure ID --data DIR` without a source file chooses among the
+  active and previous programs by image key, build and schema; distinct sources
+  among the matches are E1431.
 
 ## Proposed host interface and stored representation
 
@@ -273,9 +375,9 @@ ordinal zero. Snapshot records retain their existing framed binary encoding.
 
 | Table | Columns and key |
 | --- | --- |
-| `program` | `id INTEGER PRIMARY KEY CHECK(id=1)`, `ordinal INTEGER`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB` |
+| `program` | `id INTEGER PRIMARY KEY CHECK(id=1)`, `ordinal INTEGER`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB`, `context_digest BLOB`, `context BLOB` |
 | `upgrades` | `ordinal INTEGER PRIMARY KEY`, `head INTEGER`, `old_source BLOB`, `new_source BLOB`, `old_image BLOB`, `new_image BLOB`, `old_schema BLOB`, `new_schema BLOB`, `build BLOB`, `migration TEXT`, `report TEXT` |
-| `previous_programs` | `ordinal INTEGER PRIMARY KEY`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB` |
+| `previous_programs` | `ordinal INTEGER PRIMARY KEY`, `source BLOB`, `image BLOB`, `build BLOB`, `schema BLOB`, `bundle BLOB`, `context_digest BLOB`, `context BLOB` |
 | `previous_snapshots` | `ordinal INTEGER PRIMARY KEY`, `record BLOB` |
 
 Every non-key column is `NOT NULL`; empty migration text means no migration.
@@ -290,8 +392,28 @@ Reports use versioned JSON with `version: 1`, `status` (`accepted`, `refused`,
 `candidate_source`, `active_source`, and `migration`. Digests are lowercase hex;
 unavailable identities are null. Accepted reports also carry `ordinal` and
 `head` as decimal strings, avoiding JSON integer precision loss. The text
-renderer uses the same class/message fields. Detail is bounded to 4 KiB before
-storage or output; diagnostics are truncated at UTF-8 boundaries.
+renderer uses the same class/message fields and prints every descriptor difference.
+After both programs are compared, reports also contain `old_schema`, `new_schema`,
+`implementation_changed` and the complete `differences` array. A refusal before
+comparison omits those four fields; their absence means no comparison was made,
+not that the programs match. Decimal-string VM work, native work, heap peak and
+encoded-byte metrics are always present, including zero when that work did not run. Diagnostic detail alone is bounded to 4 KiB, truncated at
+UTF-8 boundaries. Total JSON is bounded by two 1 MiB source bundles for original
+handler identifiers, 80 framing bytes per old/new handler, and eight times the
+detail bound for escaped text and fixed fields. Handler names are original source
+identifiers, never expanded generic type names; required differences are not
+silently truncated.
+
+Every legacy folder with a snapshot is adopted through the activation transaction,
+even if its image key still matches. Adoption retains that exact original snapshot
+and records how many tail records were verified. Its unavailable old source is
+encoded as 32 zero bytes in the upgrade row and rendered as null in history;
+this sentinel is not a claimed source digest. A zero-record verification is
+explicitly reported as providing no behavioral evidence.
+A changed executable build also takes this verified adoption path when its
+image key is unchanged. The new build digest becomes authoritative while the
+old identity is retained, so failure records from both builds can pin their
+programs correctly.
 
 The event ring gains `upgrade` with outcome, epoch, source digests and refusal
 code, without source bytes or credentials. Durable successful history comes
@@ -301,14 +423,20 @@ from `upgrades`; an evicted refusal event is not a successful activation.
 ## Offline rehearsal
 
 `mo rehearse --artifact EXPORT --old-bundle OLD --candidate NEW
-[--migrate Module.function] [--json]` accepts a Phase 4 export and two canonical
-source bundles. The export contains no source. Require its build digest to
+[--migrate Module.function] [--context OLD.mocc] [--json]` accepts a Phase 4 export and two canonical
+source bundles. The export contains no source. Supply the separately recorded
+MOCC context with `--context` when OLD retains historical generated declarations.
+It is bounded and validated before compilation, and does not change MOSB source
+identity. A tool-only candidate inherits it; a new migration generates its old
+types from OLD compiled with that context. Require its build digest to
 match the executing build and compile OLD to its recorded image key before
 decoding. NEW is expected to have a different image key; do not apply the old
 program-equality check to it. Run the same descriptor comparison, migration
 limits and result validation as live admission. Exit zero means `would be
 accepted`, exit one means refusal. The shared report also carries
 `rehearsal: true`; it never means the live service accepted the candidate.
+Successful rehearsal reports retain the exported `head` but omit `ordinal`:
+no activation occurred and the export does not carry an activation ordinal.
 Rehearsal opens no data folder and writes no service state. Live push repeats
 all checks against its current base and state. Wrong build or wrong old bundle
 refuses with both expected and actual identities.
@@ -337,3 +465,26 @@ These are implementation gates, not claims about the current binary.
 | New compiler build | Recorded source recompiles; changed image requires verified replay before serving |
 | Non-loopback client destination | Refuse before reading either credential |
 | Kill drill and agent evaluation | Reconcile acknowledged messages; publish every miss and leave phase open below the declared gate |
+
+## Remote operator decisions
+
+The three upgrade tools remain the only operator tools that change the service.
+Their catalog descriptions specify both credentials, the slot lifecycle and the
+page protocol. Native dispatch resolves the operation from the catalog name,
+not from an index range; adding another view does not make it an upgrade tool.
+
+No active-bundle read tool is added in this milestone. A bundle and digest alone
+would not let an agent rehearse every active version: a retained migration body
+also needs its separate MOCC compilation context. A useful remote source-export
+contract must carry that context, preserve source identity and page bounded,
+consistent bytes across an activation. That interface is deferred rather than
+adding a partial rehearsal path. Remote operators obtain the original bundle and
+context from their deployment records or the host, and find the base through
+`mo check --upgrade-from` or the credentialed stale-base refusal. The service
+token alone still reveals neither upgrade reports nor source bytes.
+
+`mo push` retries only an explicit `rate_limited` runtime response whose effect
+is `none`, retaining the same slot and page arguments. Retries share the existing
+whole-command deadline; transport failures and lost replies are not retried
+implicitly. Sustained starvation can still exhaust that deadline and leave a
+slot until its 60-second idle expiry; checked restart remains the recovery path.

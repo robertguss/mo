@@ -184,7 +184,7 @@ fn methods()
     require(McpRpc.method(input, ["echo"], "0123456789abcdef") == expected)
   end
   for cursor in [
-    "11.0123456789abcdef",
+    "14.0123456789abcdef",
     "00.0123456789abcdef",
     "-0.0123456789abcdef",
     "+1.0123456789abcdef",
@@ -212,7 +212,7 @@ fn methods()
   require(
     McpRpc.initialized("test-version") ==
       json(
-        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mo\",\"version\":\"test-version\"}}"
+        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"mo\",\"version\":\"test-version\"}}"
       )
   )
 end
@@ -256,6 +256,7 @@ fn pages()
   var exact = 0
   for i in 0..wide.tools.size
     item = wide.tools.get(i) or stop "expected tool"
+    require(wide.sizes.get(i) == Some(item.to_text.byte_count))
     bytes = expected_page([item], i + 1, wide.tools.size, key, id).to_text.byte_count
     if bytes > exact
       exact = bytes

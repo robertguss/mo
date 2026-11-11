@@ -1,0 +1,24 @@
+{
+  "real_service_grading": true,
+  "proxy_attestation": true,
+  "credential_redaction": true,
+  "collector_success": true,
+  "collector_timeout": true,
+  "source_tests": true,
+  "cleanup_failure_negative": true,
+  "launch_failure_negative": true,
+  "notes": "Development controls only; all current fixes independently verified. No scored agent sessions.",
+  "logs": [
+    "build/eval-aging-stored-state-development.txt",
+    "build/m6-proxy-review-fixes-3.txt",
+    "build/m6-publish-review-fixes.txt",
+    "build/m6-collector-cleanup-control.txt",
+    "build/m6-harness-launch-failure.txt",
+    "build/m6-live-validator-tests.txt",
+    "build/m6-header-proxy-tests.txt",
+    "build/m6-header-collector-control.txt",
+    "build/m6-header-runner-tests.txt",
+    "build/m6-publication-jsonl-tests.txt"
+  ],
+  "native_upgrade_header": true
+}

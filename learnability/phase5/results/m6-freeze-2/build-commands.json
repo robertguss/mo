@@ -1,0 +1,44 @@
+{
+  "ordinary_evaluation": {
+    "source_root": "/tmp/mo-eval-build-aanyuygb",
+    "command": [
+      "make",
+      "-j8",
+      "CC=gcc"
+    ],
+    "library_root": "/tmp/mo-eval-build-aanyuygb/lib",
+    "input_comparison": "all 285 tracked build inputs identical to candidate; absolute library path is retained"
+  },
+  "ordinary_drill": {
+    "source_root": "/home/exedev/code/mo-m6",
+    "command": [
+      "make",
+      "-j8",
+      "CC=gcc"
+    ]
+  },
+  "debug_timing": {
+    "source_root": "/home/exedev/code/mo-m6",
+    "command": [
+      "make",
+      "-j4",
+      "CC=gcc",
+      "BUILD=build/pause-gcc",
+      "INCLUDES=-Isrc -Ibuild/generated -Ivendor/sqlite -DMO_UPGRADE_PAUSE_TIMING"
+    ],
+    "configuration": "debug -O0 -g -pthread"
+  },
+  "optimized_timing": {
+    "source_root": "/home/exedev/code/mo-m6",
+    "command": [
+      "make",
+      "-j4",
+      "CC=gcc",
+      "BUILD=build/pause-optimized",
+      "INCLUDES=-Isrc -Ibuild/generated -Ivendor/sqlite -DMO_UPGRADE_PAUSE_TIMING",
+      "DEBUG=-DMO_BUILD_CONFIGURATION=\\\"optimized\\\" -O2 -g -pthread"
+    ],
+    "configuration": "optimized -O2 -g -pthread"
+  },
+  "limits": "instrumented builds synchronously write stage records to stderr; macro absent from ordinary binaries. Physical storage is not exposed by guest."
+}

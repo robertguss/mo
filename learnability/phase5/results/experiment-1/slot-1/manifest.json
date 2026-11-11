@@ -1,0 +1,141 @@
+{
+  "slot": 1,
+  "client": "codex",
+  "evidence_class": "FINAL",
+  "success": false,
+  "correct": false,
+  "development": false,
+  "launched": true,
+  "limit_seconds": 3600,
+  "started_at": 1794180147.5925627,
+  "failures": [
+    "SystemExit",
+    "live: incomplete persisted state observation",
+    "live: wrong persisted jobs",
+    "live: wrong jobs",
+    "live: wrong revision",
+    "live: wrong stored_revision",
+    "live: wrong next_id",
+    "restart: wrong revision",
+    "restart: wrong stored_revision",
+    "no successful recorded command-origin push",
+    "activation identity mismatch",
+    "wrong or missing answer"
+  ],
+  "answer_rule": "last assistant message, stripped, exactly 1",
+  "migration_requirement": "migrate",
+  "symlinks_removed": [],
+  "records": {
+    "match": false,
+    "pairs": 0,
+    "log_only": [
+      {
+        "log_id": 1,
+        "tool": "mo-overview"
+      },
+      {
+        "log_id": 2,
+        "tool": "mo-state"
+      },
+      {
+        "log_id": 3,
+        "tool": "stats"
+      }
+    ],
+    "stream_only": [],
+    "exempt": [],
+    "shell": 0,
+    "command_origin": []
+  },
+  "identity": {
+    "version": 1,
+    "status": "accepted",
+    "code": null,
+    "class": "compatible",
+    "message": "migration signature checked; candidate is compatible",
+    "base_source": "11674500eac5f747f85d8b08e82be28d5ee9595e7ae5a3b1e16b268421b4e559",
+    "candidate_source": "4072e50e2a90143f2896819dd1f23303dea718387ac9ad6ff8e8110fd877b8ee",
+    "active_source": "11674500eac5f747f85d8b08e82be28d5ee9595e7ae5a3b1e16b268421b4e559",
+    "migration": "migrate",
+    "ordinal": "0",
+    "head": "0",
+    "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+    "new_schema": "98ae3bda94c763624b1a5c44ea600f49b81c3e0843aa5267b7d706e78d760055",
+    "implementation_changed": true,
+    "differences": [
+      {
+        "kind": "tool",
+        "name": "acknowledge",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "fail",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "heartbeat",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "lease",
+        "change": "schema_or_description_changed"
+      },
+      {
+        "kind": "tool",
+        "name": "revision",
+        "change": "added"
+      },
+      {
+        "kind": "tool",
+        "name": "submit",
+        "change": "schema_or_description_changed"
+      }
+    ],
+    "vm_work": "0",
+    "native_work": "0",
+    "heap_peak": "0",
+    "encoded_bytes": "0"
+  },
+  "grade": {
+    "correct": false,
+    "reasons": [
+      "live: incomplete persisted state observation",
+      "live: wrong persisted jobs",
+      "live: wrong jobs",
+      "live: wrong revision",
+      "live: wrong stored_revision",
+      "live: wrong next_id",
+      "restart: wrong revision",
+      "restart: wrong stored_revision",
+      "no successful recorded command-origin push",
+      "activation identity mismatch",
+      "wrong or missing answer"
+    ],
+    "evidence_class": "SESSION"
+  },
+  "fixture_failure": false,
+  "artifacts": {
+    "client-stderr.txt": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721",
+    "data/service.sqlite": "b36f5fd4e9ad7b2d8bd5126ec5ebaaa28d68d9c17d86a2ad563da61dbd2f87a5",
+    "prompt.txt": "3a40f0b001df507f0fb490f1c17a8bfcec2702c21365f34636b436f41228058d",
+    "proxy.jsonl": "13177048c50f1c546e54ce3a0954f2e04d6a664527d4d8efac8f3e7e51fff394",
+    "restart.log": "c856456711515e441433f60df0c44619d386796b4a66007c6ed935edeb8e4bfd",
+    "serve/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+    "serve/main.mo": "9243d2b30c3470c1135ad56f58822870923d82e708dbb9a42f672e9c166a88b1",
+    "serve/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+    "service.log": "c856456711515e441433f60df0c44619d386796b4a66007c6ed935edeb8e4bfd",
+    "source-tests/job-queue.mo": "bff8a6ecf6a466190099fc8641e52fd9e99d8151d4d052d3b2f8f09a24ddcdc6",
+    "source-tests/main.mo": "28d16108d46ac8711e8b8f1e6af35f6d358257bc59b9f60ace2c11cbc4f21316",
+    "source-tests/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758",
+    "source-tests/upgrade-old.mo": "b289281f15c2064285ce4ed2b18008bf149e98e9ef2cd4df8bc8b43fd7d68349",
+    "source-tests.json": "211494704779cf1acd13e7b5ddee3cba0e3b1721e71e894ae45db95d9a38e42a",
+    "start-data/service.sqlite": "2822c901ba4a0d044d6eff729aa6338d4458dd3b4a251454dffa734fc8f4391d",
+    "stream.jsonl": "d2a4745b5f7ddf1149a9d186436bb5e0e491ec856270c74795cb85bf9e8b40a9",
+    "task-queue/job-queue.mo": "bff8a6ecf6a466190099fc8641e52fd9e99d8151d4d052d3b2f8f09a24ddcdc6",
+    "task-queue/main.mo": "28d16108d46ac8711e8b8f1e6af35f6d358257bc59b9f60ace2c11cbc4f21316",
+    "task-queue/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758"
+  }
+}

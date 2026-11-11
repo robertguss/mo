@@ -1,0 +1,11 @@
+{
+  "scope": "stopped-cohort report and freeze metadata only; not four-slot publication",
+  "both_credential_inventories_scanned": true,
+  "files_scanned": 8,
+  "extracted_files_scanned": 8,
+  "archive_round_trip_equal": true,
+  "archive_sha256": "76ee39236d8b7145a1ea84661295fc7accf45ee1ea1422d552396c8997044e7b",
+  "prior_result_files_unchanged": 152,
+  "public_cohort_score_reproduced": false,
+  "reason": "three slots unlaunched"
+}

@@ -1,0 +1,11 @@
+{
+  "from_freeze_sha256": "3831de803b57cef3229ecdc2aca698d4c21a87e46383de3ffb8c85faa6908ae7",
+  "original_candidate": "3a41f17b2129fb19f2fb5c9ce89321087dac7173",
+  "new_candidate": "10499452286bda1b85e8e43775175bd1a69169b4",
+  "unchanged_groups": [
+    "binaries",
+    "instruments",
+    "build_inputs"
+  ],
+  "verification": "Every file in these groups was compared byte-for-byte by SHA-256 before the second freeze. Original pause/drill evidence retains its original freeze; no timing sample was selected or repeated."
+}

@@ -1,0 +1,4 @@
+{main}
+--bundle
+-o
+unused.bc

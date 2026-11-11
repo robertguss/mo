@@ -12,8 +12,9 @@ lexical path containment and bounded resolution (`path.c`, `resolve.c` and `reso
 [Hash-table probing](#hash-table-probing)), the export and failure-record readers in
 `src/base/export.c` and `failure.c` (`export.c`, `export-consume.c`, `artifact.c` and
 `failure.c`, from [Export producer framing and pages](#export-producer-framing-and-pages) on),
-and the walk over a service log record in `src/base/log-record.c` (`log-record.c`, in
-[Service log record walk](#service-log-record-walk)).
+the walk over a service log record in `src/base/log-record.c` (`log-record.c`, in
+[Service log record walk](#service-log-record-walk)), and the live-upgrade upload page reader in
+`src/base/upload.c` (`upload.c`, in [Upgrade upload pages](#upgrade-upload-pages)).
 
 For the bytecode reader, for **every input of up to
 `MO_CBMC_INPUT` bytes** (32 by default, and more for the proofs whose loops need it), decoding:
@@ -443,3 +444,57 @@ byte longer than what is left, or bytes after the last argument, fails the proof
 At 37 bytes a count above `MO_LOG_RECORD_ARGUMENTS` would be refused for want of bytes even
 without the limit, so the limit itself, longer records and the writer are covered by
 `tests/test_log_record.c` and `fuzz_log_record`, not here.
+
+## Source bundle framing
+
+`MO_CBMC_INPUT=18 bash cbmc/prove.sh bundle_path` proves path-reader bounds on
+inputs up to 18 bytes. `bash cbmc/prove.sh mo_bundle_read` proves the complete
+framing walk on inputs up to 32 bytes, enough for two minimal file entries.
+The same commands with `--reach` reach every block of each reader and the end
+of its harness, including acceptance and refusal. Larger input bounds can be
+requested with `MO_CBMC_INPUT`; these results do not prove all admission sizes.
+
+UTF-8 validity and string-comparison results are unconstrained predicates, with
+explicit assertions that their byte spans are readable. The framing proof also
+models the separately checked path reader. These are memory-bounds proofs;
+path policy, lexical ordering and entry membership are checked by the concrete
+bundle tests, not established by the abstract comparisons. The framing harness
+also proves refusal preserves its output. Initial attempts with concrete libc
+comparisons timed out (180 and 300 seconds); neither timeout was a proof result.
+
+## Upgrade upload pages
+
+`bash cbmc/prove.sh mo_upload_base64 mo_upload_page` and their `--reach` counterparts run the
+actual `mo_upload_base64` and `mo_upload_page`, with the decoder they share, with nothing
+modeled. The harness shrinks two limits before including `src/base/upload.c`:
+`MO_LIMIT_UPGRADE_PAGE_BYTES` is 4 (so a full page is 8 text bytes) and `MO_LIMIT_BUNDLE_BYTES`
+is 10 (two full pages and a short third). Text is any byte string of up to 12 bytes, one quad
+longer than a page, so oversize pages are covered. The production values, 8,192-byte pages and a
+1 MiB bundle, are covered by `tests/test_upload.c` and `fuzz_upgrade_pages`, not here.
+
+The decoder proof gives `mo_upload_base64` an output object of exactly `capacity` bytes (0 to 12),
+so a write past it fails the pointer check. Both proofs compare against an encoder written in the
+harness, in both directions: accepted text is exactly the encoding of the bytes written, and the
+encoding of any byte string of up to 9 bytes is accepted, decoding back to it, when it fits. Each
+byte string therefore has exactly one accepted encoding.
+
+The page proof starts from any state an upload can reach: a slot of 1 to 10 bytes in an object of
+exactly that size, with any number of pages already accepted, and then sends one page with any
+64-bit index, offset and total. An accepted page carries the slot's total, the next index and the
+received offset; it advances the index by one and the received count by one nonempty page, short
+only when it ends at total; it reports completion exactly when every byte arrived, writes only its
+own range, and stores exactly what its text encodes. Every refusal leaves the slot's fields and
+all of its bytes unchanged; a total refusal names a different total, an order refusal a wrong
+index or offset, and an encoding or size refusal only follows a matching total, index and offset.
+For a matching page whose text is a canonical encoding, the page is accepted exactly when its size
+fits and is refused for size otherwise.
+
+The decoder proof has 479 properties and took 9 seconds; the page proof has 561 and took 56
+seconds. The reach checks took 9 and 17 seconds and reach every block of `mo_upload_base64`,
+`mo_upload_page`, `mo_upload_init` and the decoder apart from `MO_ASSERT` failure branches, so
+both acceptance results and every refusal status occur. Accepting a short page that is not the
+last, a nonzero trailing bit after a single decoded byte, an offset below the received count, or
+a page that does not advance the index each fails the proof. With the loop bounds left at 13 for
+every loop, the decoder proof was killed after 385 seconds, most likely for lack of memory; the
+decoder's own loops are now bounded at their real trip counts, which the unwinding assertions
+check.

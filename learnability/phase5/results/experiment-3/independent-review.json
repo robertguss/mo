@@ -1,0 +1,25 @@
+{
+  "reviewer": "Independent separate agent /root/freeze_review",
+  "candidate": "4023da940ddbf201465881912841bd25a683375d",
+  "manifest_sha256": "bb34a34df452400c4dd60bb7c4802786593cd80e5b5b746ad3d36d07925c5170",
+  "verdict": "ready for Robert scored-run decision",
+  "blocking_findings": [],
+  "fixed_finding": "Concurrent collector reset preceded reservation; collector lifetime lock and regression control fix it.",
+  "verified": [
+    "harness check exit 0",
+    "677 unique pinned artifacts; 0 missing required fixture/runtime/instrument files",
+    "historical build command and compiler identity recovered",
+    "GCC check.sh finished: pass",
+    "24 focused controls,18 harness tests,full collector and post-lock success/timeout controls passed",
+    "152 prior-result hashes match",
+    "no reservation or scored launch",
+    "publication callback and both credential inventories supplied"
+  ],
+  "limits": [
+    "Resource extrapolation is not a one-hour guarantee; older large traces rejected",
+    "Claude qualification is protected replay, not final-code live pass",
+    "Namespace-race and diagnostic-provenance limitations remain",
+    "M6 pause and kill-drill evidence cannot carry forward"
+  ],
+  "launch_authorized": false
+}

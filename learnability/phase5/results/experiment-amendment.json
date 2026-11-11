@@ -1,0 +1,19 @@
+{
+  "declared_at": "2026-11-08T23:28:51.391236+00:00",
+  "reason": "Native MCP upgrade authorization configured without required Bearer scheme; detected before examining slot outcome. mo push raw environment credentials were correct.",
+  "original_experiment": "experiment-1",
+  "interrupted_slot": 1,
+  "original_freeze": "3831de803b57cef3229ecdc2aca698d4c21a87e46383de3ffb8c85faa6908ae7",
+  "original_candidate": "3a41f17b2129fb19f2fb5c9ce89321087dac7173",
+  "remaining_original_slots": "not launched; retained as missing misses, not development probes",
+  "replacement_experiment": "experiment-2",
+  "slots": [
+    "codex",
+    "claude",
+    "codex",
+    "claude"
+  ],
+  "gate": "at least 3 of 4 with at least 1 per client; unchanged",
+  "models": "unchanged; missing/substituted model evidence is still a miss",
+  "timing_and_drill": "Original freeze remains the provenance for timing/drill, with unchanged binaries and their relevant instrument/build inputs; verify comparison before carrying forward."
+}

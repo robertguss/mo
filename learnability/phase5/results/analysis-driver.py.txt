@@ -1,0 +1,23 @@
+import importlib.util,json,pathlib,shutil,secrets,time
+ROOT=pathlib.Path('/home/exedev/code/mo-m6')
+s=importlib.util.spec_from_file_location('phase5_analysis_harness',ROOT/'learnability/phase5/evaluation/harness.py');h=importlib.util.module_from_spec(s);s.loader.exec_module(h)
+l=h.layout();base=pathlib.Path('/home/exedev/.mo-phase5-collection')
+outputs=[]
+for slot in range(1,5):
+ original=base/f'experiment-2-slot-{slot}';out=base/f'qualified-analysis-slot-{slot}'
+ shutil.copytree(original,out,ignore=shutil.ignore_patterns('source-tests'))
+ shutil.copyfile(original/'manifest.json',out/'original-manifest.json')
+ meta=json.loads((original/'manifest.json').read_text())
+ meta['failures']=[v for v in meta['failures'] if not v.startswith('cleanup grading:')]
+ meta['analysis_name']='experiment-2-qualified-grader-analysis'
+ meta['original_correct']=meta['correct'];meta['original_failures']=json.loads((original/'manifest.json').read_text())['failures']
+ spec=json.loads((base/f'experiment-2-spec-{slot}.json').read_text());expected=json.loads(pathlib.Path(spec['expected']).read_text())
+ token,upgrade=secrets.token_urlsafe(32),secrets.token_urlsafe(32)
+ for value in (token,upgrade): h.p4.append_secret(l.tokens,value)
+ try: h.grade_collected(l,out,spec,expected,token,upgrade,meta)
+ except Exception as e: meta['failures'].append('analysis grading: '+type(e).__name__)
+ meta['correct']=meta['success']=not meta['failures']
+ (out/'grading-correction.json').write_text(json.dumps({'analysis':meta['analysis_name'],'original_manifest_sha256':h.p4.sha256(original/'manifest.json'),'declaration_sha256':h.p4.sha256(base/'qualified-analysis-declaration.json'),'original_collection_freeze':spec['freeze'],'live_observation':'unchanged original collector observation','restart':'new observation on copy of original stopped folder','correct':meta['correct'],'no_new_client_session':True},indent=2)+'\n')
+ (out/'manifest.json').write_text(json.dumps(meta,indent=2)+'\n')
+ outputs.append(str(out));print(json.dumps({'slot':slot,'correct':meta['correct'],'failures':meta['failures'],'grade':meta.get('grade')}),flush=True)
+(base/'qualified-analysis-sessions.json').write_text(json.dumps(outputs,indent=2)+'\n')

@@ -466,7 +466,7 @@ $(BUILD)/debug/tests/test_listener_faults.test: $(BUILD)/debug/tests/test_listen
 $(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_listener_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/sanitize/listener-faults/listener.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c
+PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c src/tools/protocol-upgrade.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
@@ -474,6 +474,18 @@ $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protoco
 $(BUILD)/sanitize/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+
+$(BUILD)/debug/protocol-server-faults/tools/protocol-upgrade.o: src/tools/protocol-upgrade.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_store_activate=mo_protocol_server_fault_activate -c $< -o $@
+
+$(BUILD)/sanitize/protocol-server-faults/tools/protocol-upgrade.o: src/tools/protocol-upgrade.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_activate=mo_protocol_server_fault_activate -c $< -o $@
+
+# The activation test compiles candidates with the sibling mo executable.
+$(BUILD)/debug/tests/test_protocol_server_faults.test.run: $(BUILD)/debug/mo
+$(BUILD)/sanitize/tests/test_protocol_server_faults.test.run: $(BUILD)/sanitize/mo
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
@@ -495,6 +507,21 @@ $(BUILD)/debug/tests/test_protocol_server_faults.test: $(BUILD)/debug/tests/test
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/sanitize/tests/test_protocol_server_faults.test: $(BUILD)/sanitize/tests/test_protocol_server_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(PROTOCOL_SERVER_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/protocol-server-faults/%.o,$(PROTOCOL_SERVER_FAULT_SOURCES))
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+# Append a view in the embedded catalog only for the native dispatch regression.
+$(BUILD)/debug/protocol-routing/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_sources_add_bytes=mo_protocol_routing_sources -c $< -o $@
+
+$(BUILD)/sanitize/protocol-routing/protocol.o: src/tools/protocol.c build/generated/tools/protocol-sources.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_sources_add_bytes=mo_protocol_routing_sources -c $< -o $@
+
+$(BUILD)/debug/tests/test_protocol_server.test: $(BUILD)/debug/tests/test_protocol_server.o $(call objects,$(BUILD)/debug,$(filter-out src/tools/protocol.c,$(LIB_SOURCES))) $(BUILD)/debug/protocol-routing/protocol.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_protocol_server.test: $(BUILD)/sanitize/tests/test_protocol_server.o $(call objects,$(BUILD)/sanitize,$(filter-out src/tools/protocol.c,$(LIB_SOURCES))) $(BUILD)/sanitize/protocol-routing/protocol.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 PROTOCOL_ABI_RENAMES := -Dmo_protocol_build=mo_protocol_bad_abi_build \

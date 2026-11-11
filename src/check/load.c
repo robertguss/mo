@@ -2,6 +2,7 @@
 
 #include "check/check.h"
 
+#include "base/buffer.h"
 #include "base/codes.h"
 #include "base/limits.h"
 #include "base/path.h"
@@ -33,7 +34,7 @@ struct loader {
     const char *real_library;
     const char *real_entry; /* the entry's real path when the entry is a library file */
     uint32_t index;         /* AVL root, one-based; zero is absent */
-    bool memory_only;
+    bool memory_only, upgrade;
     bool failed;
 };
 
@@ -511,6 +512,21 @@ static MO_MUST_USE bool graph(struct loader *l) {
             if (name == NULL)
                 return false;
             uint32_t target = find(l, name);
+            if (target == 0 && l->upgrade && strncmp(name, "UpgradeOld.", 11) == 0) {
+                struct mo_buffer text;
+                mo_buffer_init(&text, MO_LIMIT_FILE_SIZE);
+                bool ok = mo_buffer_append_text(&text, "module ") &&
+                          mo_buffer_append_text(&text, name) && mo_buffer_append_byte(&text, '\n');
+                uint32_t file;
+                struct mo_source_error error;
+                ok = ok &&
+                     mo_sources_add_bytes(l->sources, name, text.bytes, text.length, &file, &error);
+                if (ok)
+                    target = index_module(l, file, name, path->span, false);
+                mo_buffer_free(&text);
+                if (!ok || target == 0)
+                    return false;
+            }
             if (l->memory_only &&
                 (target == 0 || (l->out->library[frame->id - 1] && !l->out->library[target - 1]))) {
                 bool kept = source_error(
@@ -616,7 +632,7 @@ static MO_MUST_USE struct mo_module_set *parse_modules(struct loader *l) {
 
 static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_sources *sources,
                                               const char *entry, const char *library,
-                                              struct mo_diags *diags) {
+                                              struct mo_diags *diags, bool upgrade) {
     MO_ASSERT(arena != NULL && sources != NULL && entry != NULL && diags != NULL);
     MO_ASSERT(sources->count == 0);
     struct loader l = {.arena = arena, .sources = sources, .diags = diags};
@@ -667,6 +683,16 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     l.real_root = real_path(&l, root, l.items[0].header.path->span, false);
     if (l.real_root == NULL)
         return NULL;
+    l.upgrade = upgrade;
+    if (upgrade) {
+        static const uint8_t placeholder[] = "module UpgradeOld\n";
+        uint32_t file;
+        struct mo_source_error error;
+        if (!mo_sources_add_bytes(sources, "<UpgradeOld>", placeholder, sizeof placeholder - 1,
+                                  &file, &error) ||
+            index_module(&l, file, "UpgradeOld", (struct mo_span){UINT32_MAX, 0, 0}, false) == 0)
+            return NULL;
+    }
     if (library != NULL && !library_files(&l, library))
         return NULL;
     return parse_modules(&l);
@@ -675,7 +701,7 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
 struct mo_module_set *mo_load_program(struct mo_arena *arena, struct mo_sources *sources,
                                       const char *entry, const char *library,
                                       struct mo_diags *diags) {
-    struct mo_module_set *set = load(arena, sources, entry, library, diags);
+    struct mo_module_set *set = load(arena, sources, entry, library, diags, false);
     mo_diags_sort(diags);
     return set;
 }
@@ -696,6 +722,35 @@ struct mo_module_set *mo_load_program_sources(struct mo_arena *arena, struct mo_
     }
     set = parse_modules(&l);
 done:
+    mo_diags_sort(diags);
+    return set;
+}
+
+struct mo_module_set *mo_load_upgrade_sources(struct mo_arena *arena, struct mo_sources *sources,
+                                              const char *entry, const char *library,
+                                              struct mo_diags *diags) {
+    struct mo_module_set *set = load(arena, sources, entry, library, diags, true);
+    mo_diags_sort(diags);
+    return set;
+}
+struct mo_module_set *mo_load_bundle_sources(struct mo_arena *arena, struct mo_sources *sources,
+                                             const char *library, struct mo_diags *diags) {
+    MO_ASSERT(sources->count != 0);
+    struct loader l = {.arena = arena, .sources = sources, .diags = diags};
+    if (!prepare(&l))
+        return NULL;
+    l.out->root = "";
+    uint32_t count = sources->count;
+    for (uint32_t i = 0; i < count; i++)
+        if (index_module(&l, i, NULL, (struct mo_span){UINT32_MAX, 0, 0}, false) == 0)
+            return NULL;
+    if (library != NULL) {
+        l.real_library = real_path(&l, library, (struct mo_span){UINT32_MAX, 0, 0}, true);
+        if (l.real_library == NULL || !library_files(&l, library))
+            return NULL;
+    }
+    l.memory_only = true;
+    struct mo_module_set *set = parse_modules(&l);
     mo_diags_sort(diags);
     return set;
 }

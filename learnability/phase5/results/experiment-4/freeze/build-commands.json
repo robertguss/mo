@@ -1,0 +1,64 @@
+{
+  "ordinary_evaluation": {
+    "source_root": "/opt/mo-phase5/build-5d713bcc",
+    "source_commit": "5d713bcc",
+    "source_preparation": "git archive 5d713bcc | tar -x -C /opt/mo-phase5/build-5d713bcc (root-owned, top folder 0711, no group or world write)",
+    "command": [
+      "timeout",
+      "900",
+      "make",
+      "-j8",
+      "CC=gcc"
+    ],
+    "binary": "/opt/mo-phase5/bin/mo",
+    "installed_sha256": "8f066a6722e4d4e5f2fbe07f87d0e3fa0029fff0118ca0be3e8d9376bc128b5e",
+    "build_log_sha256": "0760915d14cabf2d7a0f81c1e835f22982cafdb71dd8dce17eb6ac9917e14364",
+    "setup": "harness.py setup /opt/mo-phase5/build-5d713bcc/build/gcc/debug/mo /opt/mo-phase5/bin/claude /opt/mo-phase5/bin/codex, exit 0",
+    "input_comparison": "all tracked build inputs identical between 5d713bcc and the candidate (git diff of src lib runtime vendor Makefile ci/embed_docs.py ci/embed_protocol.py docs/agent-guide.md docs/reference/README.md is empty)"
+  },
+  "ordinary_drill": {
+    "source_root": "/home/exedev/code/mo-freeze-4",
+    "command": [
+      "env",
+      "MO_KILL_COUNT=1000",
+      "MO_KILL_SEED=20261110",
+      "bash",
+      "ci/check.sh",
+      "drivers"
+    ]
+  },
+  "debug_timing": {
+    "source_root": "/home/exedev/code/mo-freeze-4",
+    "command": [
+      "make",
+      "-j4",
+      "CC=gcc",
+      "BUILD=build/pause-gcc",
+      "INCLUDES=-Isrc -Ibuild/generated -Ivendor/sqlite -DMO_UPGRADE_PAUSE_TIMING"
+    ],
+    "configuration": "debug -O0 -g -pthread",
+    "log": "verification/build-pause-debug.txt"
+  },
+  "optimized_timing": {
+    "source_root": "/home/exedev/code/mo-freeze-4",
+    "command": [
+      "make",
+      "-j4",
+      "CC=gcc",
+      "BUILD=build/pause-optimized",
+      "INCLUDES=-Isrc -Ibuild/generated -Ivendor/sqlite -DMO_UPGRADE_PAUSE_TIMING",
+      "DEBUG=-DMO_BUILD_CONFIGURATION=\\\"optimized\\\" -O2 -g -pthread"
+    ],
+    "configuration": "optimized -O2 -g -pthread",
+    "log": "verification/build-pause-optimized.txt"
+  },
+  "candidate_verification": {
+    "command": [
+      "bash",
+      "ci/check.sh",
+      "gcc"
+    ],
+    "log": "verification/gcc.txt",
+    "result": "check.sh finished: pass"
+  }
+}

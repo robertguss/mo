@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "/home/exedev/code/mo-m6/learnability/phase5/evaluation/publish.py", line 204, in <module>
+    main()
+    ~~~~^^
+  File "/home/exedev/code/mo-m6/learnability/phase5/evaluation/publish.py", line 199, in main
+    result = publish(json.loads(args.sessions.read_text()), args.destination, args.tokens, args.provider_secrets)
+  File "/home/exedev/code/mo-m6/learnability/phase5/evaluation/publish.py", line 167, in publish
+    inventory[str(relative)] = copy_text(source, stage / relative, table)
+                               ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/exedev/code/mo-m6/learnability/phase5/evaluation/publish.py", line 64, in copy_text
+    rendered = json.dumps(clean(json.loads(text), table), indent=2) + '\n'
+                                ~~~~~~~~~~^^^^^^
+  File "/home/exedev/.local/share/mise/installs/python/3.14.7/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/home/exedev/.local/share/mise/installs/python/3.14.7/lib/python3.14/json/decoder.py", line 348, in decode
+    raise JSONDecodeError("Extra data", s, end)
+json.decoder.JSONDecodeError: Extra data: line 2 column 1 (char 66)

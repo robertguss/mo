@@ -1,0 +1,13 @@
+{"mo_pause":1,"attempt":1,"stage":"cached_state","outcome":"cache_hit_no_encoding","elapsed_ns":961}
+{"mo_pause":1,"attempt":1,"stage":"identity_decode","outcome":"ok_no_migration","elapsed_ns":53064449}
+{"mo_pause":1,"attempt":1,"stage":"output_encode","outcome":"ok","elapsed_ns":13677993}
+{"mo_pause":1,"attempt":1,"stage":"validation_decode","outcome":"ok","elapsed_ns":49381890}
+{"mo_pause":1,"attempt":1,"stage":"timer_validation","outcome":"ok","elapsed_ns":10986}
+{"mo_pause":1,"attempt":1,"stage":"live_admit","outcome":"ok","elapsed_ns":121266192}
+{"mo_pause":1,"attempt":1,"stage":"protocol_catalog","outcome":"ok","elapsed_ns":199718277}
+{"mo_pause":1,"attempt":1,"stage":"swap_prepare","outcome":"ok","elapsed_ns":61858926}
+{"mo_pause":1,"attempt":1,"stage":"activation_report","outcome":"ok","elapsed_ns":35913}
+{"mo_pause":1,"attempt":1,"stage":"boundary_to_commit","outcome":"committed","elapsed_ns":485798519}
+{"mo_pause":1,"attempt":1,"stage":"store_activate","outcome":"committed","elapsed_ns":102678904}
+mo serve: upgrade: activated ordinal 1; 0 queued calls answered as removed; 0 ticks dropped
+mo serve: stop: a signal asked the service to stop

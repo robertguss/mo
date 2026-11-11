@@ -97,6 +97,32 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
  * the in-memory fake, retained by the embedding across simulated restarts.
  * A disk path names one service's database, locked exclusively until close.
  * Each handle belongs to at most one live service. Only success writes out. */
+/* Candidate compiler subprocess. Paths and executable are absolute; tools owns a private
+ * bundle directory and validates the emitted image. Poll never blocks unless it must reap
+ * a child it has just killed. The child shares the service's OS identity, not a sandbox. */
+struct mo_compile_child {
+    int pid;
+    uint64_t deadline;
+};
+enum mo_compile_status {
+    MO_COMPILE_RUNNING,
+    MO_COMPILE_OK,
+    MO_COMPILE_DIAGNOSTIC,
+    /* Compiler child runtime failures retain their ordinary startup meaning. */
+    MO_COMPILE_INITIALIZER, /* exit 70 */
+    MO_COMPILE_SERVICE,     /* exit 69 */
+    MO_COMPILE_BUDGET,
+    MO_COMPILE_CRASH,
+    MO_COMPILE_IO
+};
+MO_MUST_USE enum mo_compile_status mo_compile_start(const char *executable, const char *entry,
+                                                    const char *output, const char *diagnostics,
+                                                    const char *old_bundle, const char *migration,
+                                                    const char *context, uint64_t now,
+                                                    struct mo_compile_child *child);
+MO_MUST_USE enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now);
+void mo_compile_cancel(struct mo_compile_child *child);
+
 struct mo_store;
 enum mo_store_status {
     MO_STORE_OK,
@@ -148,6 +174,46 @@ MO_MUST_USE enum mo_store_status
 mo_store_call(struct mo_store *store, enum mo_store_operation operation,
               const struct mo_store_record *record,
               bool (*consume)(const struct mo_store_record *record, void *context), void *context);
+
+/* The active canonical source and its runtime identities. Bundles borrow caller storage. */
+struct mo_store_program {
+    uint8_t source[32], build[32], schema[32], context_digest[32];
+    uint64_t image, ordinal;
+    const uint8_t *bundle;
+    size_t bundle_size;
+    const uint8_t *context;
+    size_t context_size;
+};
+struct mo_store_activation {
+    struct mo_store_program previous, candidate;
+    struct mo_store_record previous_state, candidate_state;
+    const char *migration, *report_json;
+    size_t migration_size, report_size;
+};
+enum mo_store_activation_status {
+    MO_STORE_ACTIVATED,
+    MO_STORE_ACTIVATION_REFUSED,
+    MO_STORE_ACTIVATION_UNSAFE
+};
+/* Copies the active bundle into arena; absent means a legacy/empty folder. Refusal
+ * preserves out and found. The exclusive store lock must already be held. */
+MO_MUST_USE enum mo_store_status mo_store_program_read(struct mo_store *store,
+                                                       struct mo_arena *arena,
+                                                       struct mo_store_program *out, bool *found);
+/* Record/adopt the initial program, atomically with its authoritative snapshot. An
+ * existing program may only be refreshed with the same source and ordinal after verified
+ * replay. A failure is uncertain and requires close/recovery. */
+MO_MUST_USE enum mo_store_status mo_store_program_record(struct mo_store *store,
+                                                         const struct mo_store_program *program,
+                                                         const struct mo_store_record *snapshot);
+MO_MUST_USE enum mo_store_activation_status
+mo_store_activate(struct mo_store *store, const struct mo_store_activation *activation);
+/* Verified replay adoption retains previous_state verbatim, which must equal the
+ * stored snapshot; candidate_state is at the current head. Legacy adoption has no
+ * previous program, uses zero old source (unavailable), and installs ordinal 1.
+ * Recorded rebuilds retain the previous program and increment its ordinal. */
+MO_MUST_USE enum mo_store_activation_status
+mo_store_adopt(struct mo_store *store, const struct mo_store_activation *activation, bool legacy);
 
 /* Diagnostic writes publish an id only after commit. REFUSED means rollback and
  * a subsequent recovery-head read succeeded; DAMAGED is REFUSED because stored
@@ -210,6 +276,19 @@ enum mo_store_folder {
     MO_STORE_FOLDER_MEMORY,
     MO_STORE_FOLDER_HANDLES
 };
+/* Read only the active program from a stopped store file, without creating it or
+ * recovering a journal. Bundle/context are validated and copied into arena.
+ * Only OK publishes out/found; a missing program is OK with found=false. */
+MO_MUST_USE enum mo_store_folder mo_store_program_read_file(const char *path,
+                                                            struct mo_arena *arena,
+                                                            struct mo_store_program *out,
+                                                            bool *found);
+/* The retained program, active or previous, whose image key, build and schema digests match a
+ * failure record, copied into arena. matches counts every such row; distinct is true when they
+ * hold different source bundles, which leaves the choice ambiguous. */
+MO_MUST_USE enum mo_store_folder mo_store_retained_program_read_file(
+    const char *path, struct mo_arena *arena, uint64_t image, const uint8_t build[32],
+    const uint8_t schema[32], struct mo_store_program *out, uint32_t *matches, bool *distinct);
 /* A log record's metadata: argument_bytes has argument_count lengths. The handler is an
  * index; the log does not record its name. */
 struct mo_store_history_entry {
@@ -231,8 +310,24 @@ struct mo_store_history_failure {
 /* What was copied is bounded by MO_LIMIT_HISTORY_BYTES, in this order: the snapshot, the log
  * entries, the failures. Past the bound nothing more is copied, and left_bytes counts what
  * was not; every log row is still checked. A snapshot that was not copied has NULL bytes. */
+struct mo_store_history_upgrade {
+    struct mo_store_history_upgrade *next;
+    uint64_t ordinal, head;
+    uint8_t old_source[32], new_source[32];
+    bool program_retained;
+};
+struct mo_store_history_program {
+    struct mo_store_history_program *next;
+    struct mo_store_program program; /* identities only; bundle/context pointers are NULL */
+};
 struct mo_store_history {
     struct mo_arena arena;
+    bool has_program;
+    struct mo_store_program program;
+    struct mo_store_history_program *previous_programs;
+    struct mo_store_history_upgrade *upgrades;
+    uint64_t upgrade_count;
+    bool upgrades_truncated;
     bool recovered;      /* opened read-write and rolled a journal back */
     bool failure_tables; /* false for a store from before failure capture */
     bool has_snapshot;   /* false only for a store a first start never finished */

@@ -1,0 +1,8 @@
+{
+  "declared_at": "2026-11-09T00:03:00.614437+00:00",
+  "name": "experiment-2-qualified-grader-analysis",
+  "collection": "All four original sessions use freeze2 unchanged. No replacement sessions.",
+  "correction": "Resolve compiler selector from recorded accepted report; independent candidate check; do not waive proxy mismatch or missing model evidence.",
+  "original_records": "Remain immutable, alongside separate analysis.",
+  "independent_review": "verify_qualified_grader: no blocking findings; slot1 digests reproduced, attestation remains None."
+}

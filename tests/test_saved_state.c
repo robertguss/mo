@@ -141,6 +141,109 @@ static void values(struct heap_fixture *f, struct mo_heap *heap) {
     malformed_scalar(f, heap, MO_TYPE_DECIMAL, mo_cell_decimal(0), bad_decimal, sizeof bad_decimal);
 }
 
+static void name_overrides(struct heap_fixture *f, struct mo_heap *heap) {
+    struct mo_cell node, value;
+    MO_ASSERT(mo_value_case(heap, f->node, 0, NULL, 0, &node));
+    struct mo_buffer bytes;
+    mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
+    MO_ASSERT(mo_value_encode(heap, f->node, node, &bytes));
+    /* Nominal name starts after the tag and its four-byte length. */
+    MO_ASSERT(memcmp(bytes.bytes + 14, "Node", 4) == 0);
+    memcpy(bytes.bytes + 14, "OldN", 4);
+    const char **names =
+        mo_arena_allocate_array(&f->arena, f->types.count, sizeof *names, _Alignof(const char *));
+    MO_ASSERT(names != NULL);
+    memset(names, 0, f->types.count * sizeof *names);
+    names[f->node] = "OldN";
+    value = mo_cell_int(77);
+    CHECK(!mo_value_decode(heap, f->node, bytes.bytes, bytes.length, &value));
+    CHECK(mo_cell_get_int(value) == 77);
+    CHECK(mo_value_decode_names(heap, f->node, bytes.bytes, bytes.length, names, f->types.count,
+                                &value));
+    mo_value_drop(heap, f->node, value);
+    /* Override does not permit a constructor rename or malformed payload. */
+    MO_ASSERT(memcmp(bytes.bytes + 30, "End", 3) == 0);
+    bytes.bytes[30] = 'X';
+    value = mo_cell_int(77);
+    CHECK(!mo_value_decode_names(heap, f->node, bytes.bytes, bytes.length, names, f->types.count,
+                                 &value));
+    CHECK(mo_cell_get_int(value) == 77);
+    bytes.bytes[30] = 'E';
+    for (size_t n = 0; n < bytes.length; n++) {
+        value = mo_cell_int(77);
+        CHECK(!mo_value_decode_names(heap, f->node, bytes.bytes, n, names, f->types.count, &value));
+        CHECK(mo_cell_get_int(value) == 77);
+    }
+    names[f->node] = "Node";
+    CHECK(!mo_value_decode_names(heap, f->node, bytes.bytes, bytes.length, names, f->types.count,
+                                 &value));
+    names[f->node] = "OldN";
+    names[f->builtin[MO_TYPE_INT]] = "OldInt";
+    CHECK(!mo_value_decode_names(heap, f->node, bytes.bytes, bytes.length, names, f->types.count,
+                                 &value));
+    names[f->builtin[MO_TYPE_INT]] = NULL;
+    struct mo_cell boxed;
+    MO_ASSERT(mo_value_case(heap, f->option, 3, &node, 1, &boxed));
+    bytes.length = 0;
+    MO_ASSERT(mo_value_encode(heap, f->option, boxed, &bytes));
+    /* A nested nominal keeps its original identity unless explicitly mapped. */
+    bool changed = false;
+    for (size_t i = 9; i + 4 <= bytes.length; i++) {
+        if (memcmp(bytes.bytes + i, "Node", 4) == 0) {
+            memcpy(bytes.bytes + i, "OldN", 4);
+            changed = true;
+            break;
+        }
+    }
+    MO_ASSERT(changed);
+    CHECK(!mo_value_decode(heap, f->option, bytes.bytes, bytes.length, &value));
+    CHECK(mo_value_decode_names(heap, f->option, bytes.bytes, bytes.length, names, f->types.count,
+                                &value));
+    mo_value_drop(heap, f->option, value);
+    names[f->node] = NULL;
+    CHECK(!mo_value_decode_names(heap, f->option, bytes.bytes, bytes.length, names, f->types.count,
+                                 &value));
+    mo_value_drop(heap, f->option, boxed);
+    mo_value_drop(heap, f->node, node);
+    mo_buffer_free(&bytes);
+}
+
+static void migration_codec_budget(struct heap_fixture *f, struct mo_heap *heap) {
+    uint32_t type = f->builtin[MO_TYPE_INT];
+    struct mo_buffer bytes;
+    mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
+    CHECK(mo_buffer_append_text(&bytes, "prefix"));
+    for (uint64_t available = 0; available < 2; available++) {
+        uint64_t work = available;
+        CHECK(!mo_value_encode_budget(heap, type, mo_cell_int(42), &bytes, &work));
+        CHECK(work == 0 && bytes.length == 6 && memcmp(bytes.bytes, "prefix", 6) == 0);
+    }
+    bytes.length = 0;
+    uint64_t work = 1000;
+    CHECK(mo_value_encode_budget(heap, type, mo_cell_int(42), &bytes, &work));
+    CHECK(work > 0 && work < 1000);
+    uint64_t after_encode = work;
+    struct mo_cell decoded = mo_cell_int(91);
+    size_t used = mo_heap_used(heap);
+    for (uint64_t available = 0; available < 2; available++) {
+        uint64_t small = available;
+        CHECK(!mo_value_decode_budget(heap, type, bytes.bytes, bytes.length, NULL, 0, &small,
+                                      &decoded));
+        CHECK(small == 0 && mo_cell_get_int(decoded) == 91 && mo_heap_used(heap) == used);
+    }
+    CHECK(mo_value_decode_budget(heap, type, bytes.bytes, bytes.length, NULL, 0, &work, &decoded));
+    CHECK(mo_cell_get_int(decoded) == 42 && work > 0 && work < after_encode);
+    /* The shared allowance cannot reset at a subsequent codec boundary. */
+    unsigned completed = 0;
+    while (
+        mo_value_decode_budget(heap, type, bytes.bytes, bytes.length, NULL, 0, &work, &decoded)) {
+        completed++;
+        MO_ASSERT(completed < 1000);
+    }
+    CHECK(completed > 0 && work == 0 && mo_cell_get_int(decoded) == 42);
+    mo_buffer_free(&bytes);
+}
+
 int main(void) {
     struct heap_fixture f;
     heap_fixture_init(&f);
@@ -166,7 +269,9 @@ int main(void) {
     CHECK(!mo_value_decode(heap, f.builtin[MO_TYPE_TIME], bytes.bytes, bytes.length, &value));
     mo_buffer_free(&bytes);
     size_t used = mo_heap_used(heap);
+    migration_codec_budget(&f, heap);
     values(&f, heap);
+    name_overrides(&f, heap);
     CHECK(mo_heap_used(heap) == used);
     mo_heap_free(heap);
     mo_heap_image_free(f.image);

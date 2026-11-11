@@ -3,9 +3,10 @@
 # the bytecode verifier (verify.c), the primitives' arithmetic and UTF-8 (decimal.c, number.c,
 # text.c, unicode.c), lexical path containment (path.c), path resolution (resolve.c,
 # resolve-kernel.c), reference counts (refcount.c), hash-table probing (table.c), and the
-# export and failure-record readers (export.c, export-consume.c, artifact.c, failure.c), and the
-# service log record walk (log-record.c). Each proof checks one function against its
-# specification, with the functions it calls replaced by their models (cbmc/README.md).
+# export and failure-record readers (export.c, export-consume.c, artifact.c, failure.c), the
+# service log record walk (log-record.c), and the live-upgrade upload page reader (upload.c).
+# Each proof checks one function against its specification, with the functions it calls
+# replaced by their models (cbmc/README.md).
 #
 #   bash cbmc/prove.sh [proof...]           with no names, every proof
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved
@@ -34,6 +35,8 @@ fi
 # at least d bytes, plus one for the loop's exit), "f.k:+" is n + 1 (a loop over bytes) and
 # "f.k:c" is c. The least input size lets every loop's body run.
 proofs=(
+	"bundle_path|mo_utf8_valid component_is|harness_bundle_path.0:+,bundle_path.0:+,mo_binary_uint.0:5|18|bundle.c|--unwind 25"
+	"mo_bundle_read|mo_utf8_valid bundle_path compare|harness_mo_bundle_read.0:+,harness_mo_bundle_read.1:/8,mo_bundle_read.0:/8,bundle_path.0:+,mo_binary_uint.0:5|32|bundle.c|--unwind 33"
 	"export_page_matches||harness_export_page_matches.0:17,memcmp.0:17||export-consume.c|--unwind 17"
 	"slice||harness_slice.0:+,mo_binary_uint.0:5|12|failure.c|--unwind 6"
 	"mo_failure_argument_next||harness_mo_failure_argument_next.0:+,mo_binary_uint.0:5|13|failure.c|--unwind 6"
@@ -41,6 +44,8 @@ proofs=(
 	"mo_export_page_bounds||||export.c|"
 	"mo_export_schema|digest|harness_mo_export_schema.0:+,mo_binary_uint.0:5|10|export.c|--unwind 6"
 	"mo_export_read|digest mo_utf8_valid mo_export_schema failure_body|harness_mo_export_read.0:+,mo_binary_uint.0:9,little_endian.0:9|172|artifact.c|--unwind 33"
+	"mo_upload_base64||decode.0:5,decode.1:4,decode.2:4,encode.0:5||upload.c|--unwind 13"
+	"mo_upload_page||decode.0:5,decode.1:4,decode.2:4,encode.0:5||upload.c|--unwind 13"
 	"word|||"
 	"boolean|word||"
 	"allocate|||"
@@ -147,6 +152,9 @@ proved_function() {
 	mo_failure_argument_next) echo 'mo_failure_argument_next|argument' ;;
 	# The log record walk covers the header reader it calls.
 	mo_log_record_walk) echo 'mo_log_record_walk|mo_log_record_header_read' ;;
+	# The upload proofs cover the shared decoder; the page proof also opens its slot.
+	mo_upload_base64) echo 'mo_upload_base64|decode|sextet' ;;
+	mo_upload_page) echo 'mo_upload_page|decode|sextet|mo_upload_init' ;;
 	# A primitive proof covers the helpers its function calls that no other proof covers.
 	text_scalar | unicode_scalar) echo scalar ;;
 	text_encode | unicode_encode) echo encode ;;

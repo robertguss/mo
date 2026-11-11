@@ -1,0 +1,1558 @@
+{
+  "label": "FINAL",
+  "freeze_sha256": "3831de803b57cef3229ecdc2aca698d4c21a87e46383de3ffb8c85faa6908ae7",
+  "host": {
+    "system": "Linux",
+    "node": "aurora-but-gold",
+    "release": "6.12.113",
+    "version": "#1 SMP Sun Oct 18 07:08:09 UTC 2026",
+    "machine": "x86_64",
+    "processor": "x86_64"
+  },
+  "cpu_models": [
+    "AMD EPYC 9554P 64-Core Processor"
+  ],
+  "memory_total": "MemTotal:       32859860 kB",
+  "physical_storage": "not exposed by the exe.dev guest; guest device/filesystem disclosed below",
+  "build_description": "Frozen 3a41f17b; GCC debug O0 and optimized O2; compile-time stage probe; build/m6-freeze/build-commands.json records exact invocations",
+  "build_files_sha256": {
+    "Makefile": "ac0a0ca0c768553b69afd919ba0fbc090e00f172c4e22d3d514b1c9936f4ca4c",
+    "src/base/arena.c": "daa5506988da6ee7213bb986911797872d214ad42ffd7601efcccf19b0befad1",
+    "src/base/arena.h": "77ea21be42695c26d6a345ccea2f9639f37a25e4bc9ee1f6946034df3e621262",
+    "src/base/base.c": "799076fd47dcf0d22bb4c00f270dfb2bcbcbcef87ec2997dc65b87473bbcd40a",
+    "src/base/base.h": "71d20fb857c5a6c6327fd37b3433fcabf70fc4f2340afb32e1536ccc155316c0",
+    "src/base/binary.c": "154ecadd1472f9b1d9d9183f89728258644a94bbf9ed616cb7eedbf763afab48",
+    "src/base/binary.h": "437dcb8484b8730541ad8efa057025c6982516b641a74515f4ab21f13e41fa4a",
+    "src/base/buffer.c": "a676b30c6e24c35d28404d58adf644cf695802ed0730444fe9398c14b6e05f4f",
+    "src/base/buffer.h": "a06988aaa3da2166d1431fe26e1b314e6fd4d875be26ee5080a6d76d4336d854",
+    "src/base/bundle.c": "f545f3708e5b36485221a1d39a47919bb33b99a5e9f11380a5c28734306a82f6",
+    "src/base/bundle.h": "663ada44b0fa425b4cd89a68fe1aaad86cbcbdf4552e6098e24d5d297e455296",
+    "src/base/capabilities.c": "8ca10840f98f86ebe39043c42e145044cd35533c109453e4ba7347e9dba637a7",
+    "src/base/capabilities.h": "6d72ae204b97212a4c6de868237f41acc77660040033aeb5f0839b863ea6d7a8",
+    "src/base/codes.c": "b2d1d570a34a398fe523426d59505ccd9f6637886d3c408948a892c47e6099ef",
+    "src/base/codes.h": "0a976d209934f12fe907a04163f1b324ca2e1d4bc1556eb0bf8a4b77eafe27dd",
+    "src/base/compile-context.c": "3c67915dbc9561ae2fc5226c99b13479caeade241312414f9b952d2c8e361d0a",
+    "src/base/compile-context.h": "87c98c09a5869039599317456c63532214e7caeb782886ebab4fcc7d2fa5255d",
+    "src/base/compile-metadata.c": "b0774beb6599910dd122e78c96ab3c8fe78e49480bb2b62181417373d9fceb26",
+    "src/base/compile-metadata.h": "1ac6a15ac9ff0d3afff0cf2fc3027c998902d04a7273bfcc7a2a545fbc7746ab",
+    "src/base/decimal.c": "29c66df2f86776ee451523c97cbc6652ca94e595cf4ff75ee43835b7d1b41fa2",
+    "src/base/decimal.h": "a43de3cf6424c7100b8d4b07e609d24423fd7bf4a6f057ba7e5d6a1d19926fe4",
+    "src/base/diag.c": "5b86dd02731bd3d263db6fc39d4808f2440f95b9d998d51f7e0bfe03d53345fc",
+    "src/base/diag.h": "06b54abf8f71bb44eff26c0243ee751e8e9c2911d5d5b4770e7f2d707fccc8f9",
+    "src/base/export.c": "6ac484ec1e3cd2d42279df89ba9ebb272b08299b37de4219646645847e38a099",
+    "src/base/export.h": "082d037043d79e0608b3ea159ac030ed1468319b86185b5a41c4fd4c93c62555",
+    "src/base/failure.c": "f8a0834e56a645e3edad5ef28f11a14c27315343741fc48e350a07965d5d8838",
+    "src/base/failure.h": "91865ce5a1dd0fe6452b63f6a4e6a12afb4ca765e93dd2fe56c1212991715c70",
+    "src/base/hash.c": "d5e6368cc1723c24f6b74cce9854024bdc194077262dfe2fc71189d408d9c767",
+    "src/base/hash.h": "a57cc3fde7a3855a19ac29454f103dd47392d5b5f7e6c811ab48ab1537725aef",
+    "src/base/hostops.def": "e81d562b0c964f84a5edca5a8ed064fd73a3e72e217e4832c3b3302b22131347",
+    "src/base/hostops.h": "67de5b31fabb1c4224fa74054a621aba38af72658411c7a2076e7281176b80bc",
+    "src/base/limits.h": "7fff4cb0c3ad0cf191cd1cde3f224dfcb79d62a5bffefcedd54a0fde008b91d6",
+    "src/base/log-record.c": "987bd998276699cf613c3fcd6f13295a1b6d64802bdff4c3b3b9a03e1ec2c285",
+    "src/base/log-record.h": "369b2636945671f15ebc7cf1e7453a6c7ee8e617a511f94916f9a5165c92e78f",
+    "src/base/path.c": "fc373b1f5621b59a66c54467f55d69a0236a49a5617f62f976a1e306f61b79cc",
+    "src/base/path.h": "be16d10310334375661e16af0924d1a6b2c7be2cbc7ef0e4a47dab9a67bb809c",
+    "src/base/prims.def": "8c6ea55e300bcae18347346e0f95fd06bf81c2e33c0d1e133fd77d412dca0520",
+    "src/base/prims.h": "8de1c2df9492dab2380b14145ab6d592b02a2496713b04b710a2ab75cc23ffc9",
+    "src/base/runtime-identity.c": "bbc215a881dcc7cd7795801ba2930cd542b3389adff0a65dc7a757c8ac4a6a4f",
+    "src/base/runtime-identity.h": "80f49f074f228b4e7f652efbbea4793de46f4472598d5c01d60e78c0522b33a0",
+    "src/base/service.h": "36fcc12dc2f98a00405724ec8005560b6f7b23fab1f45b7e7e9f1340d8db5e60",
+    "src/base/sha256.c": "533c7d29737d5a107aa235e3312b9ed01f57d5b28ef914cd241a4630b0c62bea",
+    "src/base/sha256.h": "797b5d390b5cb3750d7e534484b422e24541230645fdc6ca2cc571f1a121e5f2",
+    "src/base/simops.h": "bf20fc302663b68839357565c99f69071518f82eb874969d48762b275c4a94c8",
+    "src/base/stack.c": "681b44198b04b17fd9b909951669fd3e5d4560dd7bab19c48046d9984c806cee",
+    "src/base/stack.h": "2c68754d94b57b548317af759cd4e05a920c1b802239fbef7f09d97298ee9bd3",
+    "src/base/store-memory.c": "c923c0e88cbe9e1302908f505d54bc6d17d1d5e59e2fde9416c8f29d2872878a",
+    "src/base/store-memory.h": "fe873f736843eba124931b1ab8ace4129e8892c0a8e126e8b6085aa025e681f7",
+    "src/base/upload.c": "fddd9409c41621eba3a1c1a2dab12225bdca8016218ccc3fe9355438716375d1",
+    "src/base/upload.h": "991d7d100397f1c365ee6d3b07489142baea1a708cd1f48ac999fc5ffdb541e4",
+    "src/base/utf8.c": "031780047497f43a0bd78294d56aec94182668d0ef577a0be7fd9f390b1a8c21",
+    "src/base/utf8.h": "09d08875045109e9187d111b2bad0a37ebd9afa2902685690072d3edbce79fe2",
+    "src/base/verdict.c": "f003b8a88a9c1c2e49386847bef6a2b0f3b0541569c764837503155914b5d14a",
+    "src/base/verdict.h": "cb744b3b1c8ed970f6a1946a09f25aaf99adcd3422b48395166d372d5632a487",
+    "src/bytecode/assemble.c": "7b9d1437394669aadf9c79c908f1775e0cf06e0a0e3afcdc571d8ae57318f1f2",
+    "src/bytecode/assemble.h": "0e506bf61c5eab411d3a080a6784df693310bf880ea033fd53d95023aa1b7bea",
+    "src/bytecode/bytecode.h": "30e5d3ccda9af3cd4a255f92cd5b696287851e5a2e2287dfd6d14f899d18bebf",
+    "src/bytecode/disassemble.c": "28955a0f9bf79ac5a2e5b7a1a4ae9dc073a73225db40c6fc09de25f17ea9823d",
+    "src/bytecode/image.c": "79651e1f864a7f2fd4846ea9a087e59065336153f301ef6210963494000b3f79",
+    "src/bytecode/indexed.c": "d82871e3925417e0de06e08894614e407f67dc25233adbcb3ca4498ce5ac70e4",
+    "src/bytecode/io.h": "588f1d7bd5e37c3bc0bf023d4c10c7b47e579c2342285ad92e25a8a534ec8dae",
+    "src/bytecode/names.c": "b91b1f4503e556b4bd84ca3d9f30684fa3aff28fe7219fd6c7f2c070eeda4e9a",
+    "src/bytecode/names.h": "ee3a5512f3aa8569f49e04a840f5e2274ce515638a94bad02acd29819d26f300",
+    "src/bytecode/opcodes.def": "07841a12e506c68f477f604736b6cdbd308baa7df68a048493baf4bbb810baa2",
+    "src/bytecode/read.c": "6d234e363f775176efa35ac7e7aeed0d9a154f9d9b0e4cb27baa5b162136d0ce",
+    "src/bytecode/service-reach.c": "ba84fc8ee781de7569260b1a049ed3f2521af12699aeb108be8615bae000c95c",
+    "src/bytecode/shorthand-finish.c": "3472c8775ae2bbd6ba4c78ae2467937c1e3d23f54e994320750df5a924dd54e4",
+    "src/bytecode/shorthand-function.c": "5760c52f30a5ab0c6661a8ca94e224eb56686ab41e759a6df375345fc5aee0ca",
+    "src/bytecode/shorthand-type.c": "7196293b8bfa66bf9a2da95a76d9f0639a60f1bbfc85e3f53292793c561c2667",
+    "src/bytecode/shorthand.c": "34880cdfaf0d46349235120561099dd965fd17bb1d962c4f08d64f9765dbd17b",
+    "src/bytecode/shorthand.h": "6b5aa72d2dbd09f7d7df35e9aa31e1c208f0f735470480754f31f194afbcc8a3",
+    "src/bytecode/signature.c": "e459f0256759e0d3b8e4bbbe6952043839ac7d997f584bb09a68be650003c340",
+    "src/bytecode/signature.h": "d3da1b5435a56a05eb5dfa3c88ff0fbdfd5a0161e85a2808c1b0f387d0e06bea",
+    "src/bytecode/text-index.c": "e12befa0fa3ae33f34a69d1566de8c4d97a37603a9c571d75fd5d86c8584744c",
+    "src/bytecode/text-index.h": "70f19450b378ceace7f3534caf37fef7fe83555a7c256accddf4d712812ee8e3",
+    "src/bytecode/text-scalar.c": "8bef7050850c267bc6b07eafcd89f09458a6d2785ebc6e35cfb422062806a8f6",
+    "src/bytecode/text.h": "dd0265d7d39049609c68aaf696da37ce2282d019924ec908e2a20a9e7f55eaa2",
+    "src/bytecode/validate.c": "0190b2a350fdbe8e27b46552b38f94e6f993e64081af4a27cd7721392434f18c",
+    "src/bytecode/verify-instruction.c": "9c5283eec8ef8340309c71022f8beb2008f6bfebca9da7b25f1e4e626a7922e1",
+    "src/bytecode/verify-program.c": "784616594f87ade3cfe53935500e4c158bd8c2f601696eb8735ce4f7ad3c7c57",
+    "src/bytecode/verify-program.h": "99bf9ed61fcfa2f0130636874c7618d1f2a8cae43ce55dfa14f628f4f81ce651",
+    "src/bytecode/verify.c": "96e752e817eaf632f006efbbb6610d75d4454b4b76814f82ea6e0f7b2ef71062",
+    "src/bytecode/verify.h": "2824c5e0abcb5c798418edd27dd7b0145eee2404f785d548bedc133c4444beda",
+    "src/bytecode/write.c": "7eb8f5fa38ee7f1895ad5269a96785e4736fa5c67756b9fee16923a441c73580",
+    "src/check/abilities.c": "909e41840016495ce72bd2ca0e7dae38bc55caf70b9d9c3ddb019d5ead8f3112",
+    "src/check/abilities.h": "14793702c453012a4b7230c4869c4df4a31f252fe73e0edf5757732b2bd81141",
+    "src/check/bodies.c": "06ce95e79ce123df0a448f4624bce29aa166baf27e6aa10ed02cdd5f1b3ffdc2",
+    "src/check/captures.c": "229059dfe1fef6f52a26b56571beb09385faf9b3c2cc9c5520f02419258d245b",
+    "src/check/check.h": "2852bdbee5a4c2c352cbac5427fefe2ace041b811c4daa6928aa2c5f54608051",
+    "src/check/checked.h": "e4fd13dd5f288e9e623dc4d51624280b269874dbe30d36cd12eb0253375a488f",
+    "src/check/constants.c": "eacff98e5d6afab3523bea3938cc44183634afcef730d0e37dd1e7b6537c51f7",
+    "src/check/data.h": "7a3b31717330132dfdb08127b0632a412a929b95afd5373006bc5dce82311d0e",
+    "src/check/internal.h": "c52fbe63a3223bba90fd3c667d5de1daf01b8a41285e7d79a0beef6f5816a1ae",
+    "src/check/load.c": "15dc1b16e4c0de486630d4753f9059aa0f719866c344cc7b6ae34b137f807ca1",
+    "src/check/map_keys.c": "6429bcbdb9cfec14c48d4a92c475d2ae5988ee3ac9314bdc68774b25a3c47c38",
+    "src/check/map_keys.h": "2178678f0cc00a2771749dccea634c31df0d999c496ca3392d866d4e57704d82",
+    "src/check/modules.c": "bf95720acb41a100685579297fdf361379425ba3f33eb83ba57493cf37edda14",
+    "src/check/native.h": "e2c8a0a9bc07edc020b0b43b54bba6a0b3a67426a8e269523e85139c3f4e6c49",
+    "src/check/patterns.c": "8fb3585be90140846f9d57b596b9806297216b8c280616af43667ce7877f52f9",
+    "src/check/patterns.h": "5b847f6252c902d5247f6ca71c299b2b6c92f574da1ed18833ad62d60d7250f7",
+    "src/check/program.c": "cd85fe2aa836f08a6f01295381c0afe9a3bb9c9f23ca67e5a824ae3f5956f91d",
+    "src/check/recursion.c": "8b25b70d4f93bac0fbf1dace2fc545613ab248c26598428ceba0a99632a4732f",
+    "src/check/service-fixes.c": "21844200d50e8c8789b3150b7deb201767c1461f691ef52586a3683539ca53a9",
+    "src/check/service-fixes.h": "515987fc0e4698916e3a502fdfc45051f01f89b0bd419432239180536dbd5bef",
+    "src/check/services.c": "1223baec66b45e44539e671f1c926eef6cebee6fe50d3cd1ef81d2a8fb37664b",
+    "src/check/signatures.c": "d9f925bca470cea0cd8927acba4c6cc65b16cf40e8bf518e8a93690fe5a5e3a7",
+    "src/check/signatures.h": "5edb1d20dab465146dafea2ab5f4931e037abc647a75a26af96909962a1ead20",
+    "src/codegen/bigint.c": "26a3f87fc03bab54d9ff09f235e0f8502643f348a79d09df3c5c5c01754e8fe2",
+    "src/codegen/bigint.h": "504d695275b57b4ed34225c8e5bef5a6ed93f3b8506df2706cb4c70aa93505db",
+    "src/codegen/codegen.h": "aec4aeadfc43519ae0341deee9bde71bda9f7b090df9de207ea8832981ec7853",
+    "src/codegen/compile.c": "806b3cb470cf0b36f8e5ff5d7110d76f114f36c81d8170d78a8ade44b68ef5f5",
+    "src/codegen/control.c": "c0044c9c159947897d2edc7d6ede263d54ae75ad6d8cddd8f536df0a33885c6d",
+    "src/codegen/control.h": "df38b9e038251b0ddae989117d5dfeeebe734748facfcc55ece99b902dd9e22b",
+    "src/codegen/index.c": "2402b4961bd427f4648617890418c848673d6e3c95b73f0fe150eea41407775b",
+    "src/codegen/index.h": "d40110858be76c9b22c48c9314063c421f9031326fd74f2387a8a51156b5d87d",
+    "src/codegen/operations.c": "782f4e400210b6c19e8403b4f7964a8c146994e5e7455545baceba288b97e604",
+    "src/codegen/operations.h": "111bb864519be2d37ef4a0cecc02c3d4ce87d95b4e47592393ea3c8ada8f2511",
+    "src/codegen/registers.c": "3cf7c1dc236fff851976c30c23f388855e391fa990cf3fe92fc3223a1758d12f",
+    "src/codegen/registers.h": "00f3620f22838f3a8b5f1ac6c2b373bd9d0fc367958024f113b92b71f629aeaf",
+    "src/core/check.c": "284dd55d0d738c69caab80cabe765ed7f6c0afa422e3ee8394fdc7008cc76f51",
+    "src/core/core.h": "aa412dbbed99f1fd88b8052701be29abba536e235bb616c12db9171bc05713b4",
+    "src/core/metadata.c": "e6a61bd7d26aedc57dc28e347c1c86253f35f3e50513ed2fb4d34a52020bd097",
+    "src/core/ops.def": "158e3df299bf07cafd357c02af5b66470efdf3009574a1100449ab8d3fd07ac4",
+    "src/core/text.c": "d8bc0061707ec39f4ef0c06cb8231a01ad22f615adcb91638563dc0156420ac5",
+    "src/core/text_schema.def": "6b922b8335101d22429dc2f4454dfefa82a03a79649dd621dddb075eb08716a5",
+    "src/heap/abilities.c": "80876547db801d6d0011a3f053b56d6cefeae2e62e90eab84a3f8c9f7d573255",
+    "src/heap/bigint.c": "a10086ea037a443230e046a022c27b79419777906f9b6d27086a93a4b62c11dc",
+    "src/heap/cell.c": "7f3684d547b022a261639ad4d3f8c9869121c472c35a33e49dc70dc02b0aca8d",
+    "src/heap/float.c": "967acc3289ae317fb168617837cd68086519bea59009e55a2e74e09ca90bc4e6",
+    "src/heap/generic.c": "9b3b75816cca83efe812004fbbf65a38b3723a5a93ae6ff665952671fc16a626",
+    "src/heap/hash.c": "37428173f1170926d6fd8a12a712831f353b3e503e562ca558772aa1ac08e279",
+    "src/heap/heap.c": "28a3df1b488c9a97ae7f066b5759a7167c7a7820468edc3fd4d2a7bb535114d2",
+    "src/heap/heap.h": "b03e70d1f7f94dc7daed413f829cc11cbc67484df21ab51b39c2accd63f62b7c",
+    "src/heap/host.c": "411873399d00870769ea17b09f7a8e7289052b9923883f39a56720c410cf8c55",
+    "src/heap/internal.h": "d4a823b2fd0b446d64b7ee5bfb063aea54aae9184e131862381720c2f2aec817",
+    "src/heap/print.c": "31a35afbcf274e5cbe2bee50cc36b61977c6735f0d88abcc8d58389e34bdbd8b",
+    "src/heap/reuse.c": "0aa339e08bae67e142638079912d4d78c8425645f54095efc9e3096c644d065c",
+    "src/heap/saved.c": "a812ff2f8d3ea3d6e6570d64bf8a06ce816ec8303bfe2239dc9aee906ac99121",
+    "src/heap/table.c": "8bf30905415c77c83b987ce9d3bd806f39df8d8bf067c24995b58050adc0131f",
+    "src/heap/types.c": "9539500c6b89875f92f8c4178a664b9ab322067e0fb97266f57c690111da2545",
+    "src/heap/types.h": "7a0435152ea977de1e37d120dc49d00ae3c0d848c9231da98d13e98421ba49d7",
+    "src/heap/value.c": "3598f04b71661873177a9f4371756c523ab20b77def4547136688a9f6eee1b96",
+    "src/host/compile.c": "783ba6701e3a4a93a7a7d12edb51f995c05765eefe982f91084dd134d840bf47",
+    "src/host/console.c": "5419799ab064bc57633f6125ede14c7d3be703083ee03097f844551cffe51ca4",
+    "src/host/credentials.c": "591ca00ce13229230cde58385511487400eddb35afeee0b652141a70a95d5a65",
+    "src/host/fake-files.c": "27c64a9ad94931b203a3ed551c814f54de3e638e0d13b1d83c8f7f959ffd014a",
+    "src/host/files.c": "dc0e69387cb1acd5654bfa3742c98d28943943e773a286ef2872a508ec745e34",
+    "src/host/files.h": "8c915221975ba9db62ac8432e549a5cc6d586c4cb5c82202565592fd10f504e0",
+    "src/host/host.c": "2083295c16eff90234601069920588e60914585d833a7d41f78aec1df5093772",
+    "src/host/host.h": "b1bc381c8ba40f9cb69799435bd9c7ce6239a45841640b45746fe4c9c119fa32",
+    "src/host/internal.h": "f16671f496db85d409c511a47b1f6afe1b70d7d8f48d09dd320e4971a2f64737",
+    "src/host/listener.c": "89f226346b662ceed62e3b45f5cfa0cb7d25bf7ec725630923b18e3637ea52cc",
+    "src/host/path.c": "6254681f68ae7e6c3db37ab28cb910c6ff2667e84d9c2f42f08c6e5ce3b03747",
+    "src/host/random.c": "915033dec369a5fde54f232dabcba7b600f743fac865894cbd524b974960e4bc",
+    "src/host/real-files.c": "e2d2849b41b0e32fc940634778df83b63af8f18da46584981d7b6d3a86321448",
+    "src/host/store.c": "7d198a5f7abb4857cb236d5f10c42ecd37eec3b6ba53f7c421a702cfe7c41462",
+    "src/host/types.c": "065b7dae79a4b7a4cb56b7b5f77a67520987397749d3544f048ad61938a8b51a",
+    "src/lower/abilities.c": "081aeaa22fc065f2fd89c03b40a2f56e2a4c9acbc6f15781de203e2fede95e88",
+    "src/lower/constants.c": "6620471df71600f3ab62b157db1e47c1eb139aa542c9fb880a4c18065f28fbb6",
+    "src/lower/expressions.c": "22051500944f21d7649acc5006d50807562c704d82578dfbddb43d058284cd38",
+    "src/lower/internal.h": "a7d12c36abbf5e2f5fdea9eb34da468a776a4de060725e2787c218298cdd4426",
+    "src/lower/lower.c": "2d5756535d74e51877ec44c82def72d37f1f5b06a6121b6145e87e31a19c3178",
+    "src/lower/lower.h": "b124926f1971ae908d9717ccd73c6006250bf950f9c3c4e2d0ed69afcc9313e0",
+    "src/lower/metadata.c": "8a0a57a53b2eca4f13df92f8332a5367c4abac00e57edcf7dddb1e03411e7e91",
+    "src/lower/scalar.c": "5d82ed42406684cb6d2fe4f97593db41fc31e6608fb672ce21deb9d5110f50f8",
+    "src/lower/scalar.h": "4a0e5ba163884820ef17d7c3ec119c140c7d2136a6090e5439a5688547a8d142",
+    "src/lower/specs.c": "7c057478e639c75e54fe44b93c984e7c4100bd27354e0bbccca4dbaaa34345a8",
+    "src/lower/types.c": "c5e6628a69b863fb11146326317c7891f6a93fc83b9c61191c7e310fc69eddd3",
+    "src/prim/bigint.c": "a93a7466a73410d3059dd141df4f2104a1436938c5c0cef194d359f1cc220594",
+    "src/prim/collections.c": "c96fa0b36b3e7f607c3bd14741b34d3f91e116c5551d707d2aed05294d0dc93d",
+    "src/prim/internal.h": "8b090bdef740f0e63b691a2acf2b6f53884d942d21107703c94898fc809b75db",
+    "src/prim/number.c": "a78dc7f17b772181007a799635d0005d5ba2762a2cac92cf03d27fcbcaf62fac",
+    "src/prim/parse.c": "58e1ba592613292fc025a7990b9ca088e8eb296ae292e82d80b79fb4e0f1f089",
+    "src/prim/prim.c": "8b56a47a536289101ac60cff046e81d6400bd288382cf5f19ab78d9b70f0b1d9",
+    "src/prim/prim.h": "d1e11165ebc9e64946627f9d35f7432743940ad483b3b8d49a1dbe490d0631b7",
+    "src/prim/text.c": "859656f45038ae88ef8f1c9d3fbf60b24e2f3384ba3071003dddd68697fa6806",
+    "src/prim/time.c": "8272edfd7bdc9d5f12a886875663ac6101edb880ae28510af9b14aa0844ffe8b",
+    "src/prim/unicode.c": "d06be31703953573d2d41f34c6c2b328f214fde58e3c754b2c4e750a840742a1",
+    "src/prim/unicode16-data.h": "d37bea053bc97b6d77dd073ede8736e86732a1ef5a059c96cb71def95f5f38b2",
+    "src/syntax/comments.c": "8e3b7d0dcdc2f0ba87cddede9f74d9c336dcd1002607490fc91f0f8200684589",
+    "src/syntax/format-doc.c": "d41b1b89ae185c5b22d0865de345380541297b372df3c2352b67e79a73a7b8fa",
+    "src/syntax/format-doc.h": "fc040dc84897f48cc77c1d7683d1de92bf7f73c61a8886f8b742e9f3fba9a47c",
+    "src/syntax/format.c": "aa04452510446cedc9e312f6a8514b4a60fda36b3feefc31245e90eb3eb6ac40",
+    "src/syntax/format.h": "51f7e910d3afb39730c66468eb917cd6a635239f8ae7d84f98527a063b083534",
+    "src/syntax/internal.h": "aca95121c2429bb12d2ecd2b42a6bf58f9baab60addc91aea23d03a3853a56b0",
+    "src/syntax/lexer.c": "1ec2180107517d28ae73be3fe50de86c4da5d42fb401ebf421383970acd5fcf1",
+    "src/syntax/parser.c": "045c62195e467d9b57363dbb970303d80741dbfb67a8e2dc3d17ac27576cd882",
+    "src/syntax/syntax.h": "003f6ad0b217b8036a7cc07c422323716d45de8ce2e3d529ada121d95ce96571",
+    "src/tools/builders.c": "403eba4dc20157a9430276e16a2f907043ae5a33fb8bc0f6b4ef36c85947a9a2",
+    "src/tools/builders.h": "8dca80671214f20d734269cb55208e39df1e9d9a2d952b109f8067b0887c4c59",
+    "src/tools/cli.c": "7d2428031cf4b58f3e72f23d61c232b0d2428d427a01e9f6b1ee162dc66a970c",
+    "src/tools/deadline.c": "286931ace4626667ec7578940da457613d1fd855c0798e62c97aa8717bb4b097",
+    "src/tools/deadline.h": "be2bdd29ce6ee4501e8983d028e6a426570c73d6eed41818dde6f3dd36dfaac2",
+    "src/tools/execute.c": "7f42e8ce6fbdd812aaa69619cacc8d0d07b1f3a3cb0ad48ff7487336246e87b4",
+    "src/tools/fakes.c": "89065f1a965330c3aafcd91d998110fb0e64bacdf72c144635c3e92d7aa4f6c1",
+    "src/tools/fakes.h": "d35526fedd3789003a8b9be7212b24f49b54a6c4725476f6758fec5796b3ac19",
+    "src/tools/fetch.c": "49ad89b9827e400ec569bb1e58d503608e63e03df8ddb434beb67f3c99e98a15",
+    "src/tools/fix.c": "63402d8363b22854efc061541cc809311df2c4e155d051172d24c3ea3f572bf5",
+    "src/tools/fix.h": "5e1566d0e49b3f6f975dce234fb8140717e8f143943986e646b30b5feb1daf39",
+    "src/tools/format.c": "f179896e00fa0849bd20caf7cc241c28d9cb3ffc19459d77442d28a244e2ffb5",
+    "src/tools/format.h": "311279f7f028ef552f0d9f3ef91b0f2195b667b92f7cde0fb4eb6094e0880268",
+    "src/tools/history.c": "377ed43dd5346227e1334dcc81be585c110b551136b83fedc8f463c651e14d2f",
+    "src/tools/inputs-build.c": "ad4e481decf252e3be271aeba149933aa51ea278652b611046eb2ab880fe6cd1",
+    "src/tools/inputs-internal.h": "4c5a26fe1e2fcadd4311c2a07baff5054e2f5fa3aaeccc7f67de3dfa3dd7cb00",
+    "src/tools/inputs-prepare.c": "39550c53ca25cd27c8135fc6aaf66877b853a6d3a9f1e13601292c689826c520",
+    "src/tools/inputs-scalars.c": "875e2a792006ff01d6eff7c192698ad01e7d1f7b6a6c3fae45c6205c79b9b25e",
+    "src/tools/inputs-shrink.c": "47fa33e494c14cc7c31f88d21b596665a607fb3d2144758ccfc1baa372b1cbc6",
+    "src/tools/inputs.c": "86556b2988144436df10406f6d3e61bfe8c63d529119bd072b555e0233dd7102",
+    "src/tools/inputs.h": "9d1495e0dfa2b63eb5f4e4a07ea4449a925c306a6e9c93afab13948f5f916192",
+    "src/tools/main.c": "ef9cd82dbdf31b27187c8c24e51a3daeda213e2f9e9c57ff379af5a9cece2103",
+    "src/tools/offline-output.c": "aa7aa3ace8637a884163d0adf115e17ed78b752bee8cf613f979fc7eebfa976a",
+    "src/tools/offline.c": "f2a6d2fa950627fe2f64c6ed97f59b96df1ef9b0e2a2dccc842c06cc6defab5c",
+    "src/tools/offline.h": "659b984076ec1f29fabecf4d00bc073262aff227b9646b536c10abb39601d80f",
+    "src/tools/pause-timing.h": "3bdbfba4eda396f7e79e9ebd1ce2bd538f754000aac7035fb5e4abe20e3166aa",
+    "src/tools/promises.c": "901ae6c51dd4b568d45cc45e2a83288a7e44a1fa2f8b45236950088ea5d672bc",
+    "src/tools/promises.h": "9f7b927b6d225654a4956772ad8d67473825018ddc089eed17fcea87badf0569",
+    "src/tools/protocol-call.c": "026cfc8b2eed6a81cf47e4f0c752ea38d8a2b1ea6586e5719a516a3ffdc9e4d2",
+    "src/tools/protocol-descriptor.c": "38d430c7bc93a1c7b435584a6af3660b23ea6b4b68d12221f4bae9afd08d981d",
+    "src/tools/protocol-export.c": "782a366f56bdbc28c71c5fe52a601afb5a51f6dc32225a16f50a41aac3a1a57a",
+    "src/tools/protocol-request.c": "5a366ca7b5f9af5c3225c04cf142ad1c130788058564b71c1c65753db3d3d332",
+    "src/tools/protocol-scalar.c": "b522e8ffb4df9cc3291b90788032684a275a56e2b3f64e4d4c76164c2f3c02ef",
+    "src/tools/protocol-server.c": "d0cd037017fb395317cea447aeaed9f657e92f6b8a67520e38034a08ea45bf39",
+    "src/tools/protocol-server.h": "8754bd2e9c1836c89c77d382682cf26bd4362fe965c70d8ff97c8082ccd6b64b",
+    "src/tools/protocol-upgrade.c": "984ef7e958808164098b7d9b7d1f1f649ead33ab24716e867696030b5e3ad7ce",
+    "src/tools/protocol-value.c": "2c4fff552c264d130b0d73c2d8f9c8d581feb74a69cb656b01e665d4bd94092d",
+    "src/tools/protocol-views.c": "ad714bdf5fecdd5fdcf55fad4eb359bdc1aa90b60ee6d8fd785a0a01e2c126cc",
+    "src/tools/protocol.c": "2f004d903f3f54e044c1577ea63c08c51f11b753a2df53522af610872ae3a5c6",
+    "src/tools/protocol.h": "15d70cf009aa13739e29bc7d63e690fdefa410567cd825765bba618d05b8b72e",
+    "src/tools/recovery.c": "afbcb8f319704ac048077d987d1d81c5a84cab64923e17d487e6c11ac1bc8dd3",
+    "src/tools/recovery.h": "e3adc79df2a1cf7f7b4916b504ac31669d8c1275f39a3b14f5fd338a8381b54c",
+    "src/tools/render.c": "31dbdf25e295f7b060e2561aa7fb28621b7ad4110c4cd7c4f94fb5a9b117b2e1",
+    "src/tools/run.c": "158e79a3e0c789e5f1a999f0596ff607597e541faa935f8454e0737807edea18",
+    "src/tools/run.h": "b045aa6951354932556ad66bf5835e3fe8f2440e978be39d9adc00dd9361ba9a",
+    "src/tools/serve.c": "b667012230016931e221cb75e6332f4354ff0f213f33482afeea690aba3ddd39",
+    "src/tools/tests.c": "262828a62ac5622c58ad61e9bb6e883b33ee8d5be2099889a351e56e10b73d87",
+    "src/tools/tests.h": "9f2d5335ced52d3e46f2692315e22b08b6308d8a6b6330f941374d6938b5b346",
+    "src/tools/tools.h": "a0efacb161d389f0d596021292ea3a73643a50e611802661085f809fb9c12b0f",
+    "src/tools/upgrade-metadata.c": "14b9b3323427e10ecd0e4bb600c33dd655e23cc1f230181efd157205912c5b5b",
+    "src/tools/upgrade-schema.c": "b0cafb257e096031dc7acc6af27cb310a7c7c902f8205a17850ff9109f89200f",
+    "src/tools/upgrade-types.c": "73f445b44fb28b647d6fdff540cfa3d6d1a2cc9ac0ae72cd5749d0d390b5c339",
+    "src/tools/upgrade.c": "86b1c7098c6d9c73c02f8358bda044f2898e3a851b6320c485d6af30aeb6866b",
+    "src/tools/upgrade.h": "fcea23f8fbe72a99f0b57462177015e2bae2d6f49679af155193750d6ac3d094",
+    "src/vm/defect.c": "1ea3a6461a911badfdcb6c0eddeaa81089121fbf61e67f8fbe2d823bc103e00d",
+    "src/vm/execute.c": "a0d2866d4ae85c95becd28641b48e677377c0fb6099782db8e3ead2100b2fa47",
+    "src/vm/image.c": "9edabbc1d5aaaae8744dfd5649bcb90e172160a523f40f2c2daad42babf552c0",
+    "src/vm/internal.h": "015e9a7dc1273f82e1c872585101c915a06a98c24e04ea515c8fd1bde7304d53",
+    "src/vm/number.c": "a68dc97ca7a5adef2cc1e9548769334d05145fb2d4673601fc98c495d0223bca",
+    "src/vm/offline.c": "d9283b6ce0720464d4f70ae27aaf7dca9f2355589c8882246c8d30bd48654252",
+    "src/vm/process.c": "7c21cdd2fcba760e09f0b3d28ef5657d4703bf77099ddddf2c437c026004270d",
+    "src/vm/service.c": "20c225811584b90a63db01666b9629649e28eb4ad37cfc76899f56c1353128a3",
+    "src/vm/simulation.c": "3609b5aeba7b47dab2764955f567355b97f3c3e3a3b20b118fb39f0c96147ceb",
+    "src/vm/vm.h": "79566d80d76a2260204f1289cad9d60f6d33f192ad17ff70af0704fab6c25199"
+  },
+  "target_seconds": 1,
+  "required_margin": 2,
+  "jobs": 5000,
+  "leases": 500,
+  "payload_bytes": 2048,
+  "samples": [
+    {
+      "label": "debug",
+      "binary_sha256": "0c971003bca54ca05ba97462ec542fb78494ce4197b6ecfed58349c9d86c10a7",
+      "index": 0,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 961
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 53064449
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 13677993
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 49381890
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 10986
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 121266192
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 199718277
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 61858926
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 35913
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 485798519
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 102678904
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "debug",
+      "binary_sha256": "0c971003bca54ca05ba97462ec542fb78494ce4197b6ecfed58349c9d86c10a7",
+      "index": 1,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 591
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 58999871
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 16382297
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 54822786
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 38817
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 136495853
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 227286708
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 51891724
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 14402
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 554237676
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 138293960
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "debug",
+      "binary_sha256": "0c971003bca54ca05ba97462ec542fb78494ce4197b6ecfed58349c9d86c10a7",
+      "index": 2,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 851
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 57488582
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 15404622
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 59441007
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 13680
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 138099820
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 189364381
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 48590041
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 26138
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 472147176
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 95865656
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "debug",
+      "binary_sha256": "0c971003bca54ca05ba97462ec542fb78494ce4197b6ecfed58349c9d86c10a7",
+      "index": 3,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 932
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 56781510
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 14865819
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 49317123
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 12609
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 126370257
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 199984003
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 58539355
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 30064
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 502718166
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 117566206
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "debug",
+      "binary_sha256": "0c971003bca54ca05ba97462ec542fb78494ce4197b6ecfed58349c9d86c10a7",
+      "index": 4,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 852
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 50849263
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 13565686
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 48921383
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 11527
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 118390023
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 183699582
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 48513236
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 26249
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 449488542
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 98650241
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "optimized",
+      "binary_sha256": "5258631435d27a657a3d516d15ff36ba242d2ae8ce3d1439179ab00faefb56c3",
+      "index": 0,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 290
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 38303305
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 11144233
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 27794538
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 9534
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 81279843
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 96613149
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 36592429
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 11688
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 281597402
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 66846917
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "optimized",
+      "binary_sha256": "5258631435d27a657a3d516d15ff36ba242d2ae8ce3d1439179ab00faefb56c3",
+      "index": 1,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 420
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 47249377
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 14649408
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 30709495
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 8593
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 97035547
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 83045541
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 32209978
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 31017
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 273588516
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 60980949
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "optimized",
+      "binary_sha256": "5258631435d27a657a3d516d15ff36ba242d2ae8ce3d1439179ab00faefb56c3",
+      "index": 2,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 431
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 36834169
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 14287338
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 30779689
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 8112
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 85881641
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 85509367
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 33579576
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 9954
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 284485300
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 79299806
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "optimized",
+      "binary_sha256": "5258631435d27a657a3d516d15ff36ba242d2ae8ce3d1439179ab00faefb56c3",
+      "index": 3,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 170
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 31453241
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 15675426
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 28146641
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 8853
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 78955755
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 79417723
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 27706886
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 24016
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 248552191
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 62150299
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    },
+    {
+      "label": "optimized",
+      "binary_sha256": "5258631435d27a657a3d516d15ff36ba242d2ae8ce3d1439179ab00faefb56c3",
+      "index": 4,
+      "report": {
+        "version": 1,
+        "status": "accepted",
+        "code": null,
+        "class": "compatible",
+        "message": "upgrade activated; state schema unchanged",
+        "base_source": "571dc61b3a2d5e19932b6b350c732670b3e94f8ae9cc6cf54d96062e14ec3f02",
+        "candidate_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "active_source": "5237b61aef12b33fb55f19ea1d59abcc655a12ecdc842ae2faf2209ee6ba35c3",
+        "migration": null,
+        "ordinal": "1",
+        "head": "1",
+        "old_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "new_schema": "6ac1878a3aa5c507378261649a4a4465c9b515c07d1316404d2e64a095b1c160",
+        "implementation_changed": true,
+        "differences": [],
+        "vm_work": "5",
+        "native_work": "619287",
+        "heap_peak": "11967960",
+        "encoded_bytes": "10464325"
+      },
+      "records": [
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "cached_state",
+          "outcome": "cache_hit_no_encoding",
+          "elapsed_ns": 391
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "identity_decode",
+          "outcome": "ok_no_migration",
+          "elapsed_ns": 39207670
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "output_encode",
+          "outcome": "ok",
+          "elapsed_ns": 12040797
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "validation_decode",
+          "outcome": "ok",
+          "elapsed_ns": 30947991
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "timer_validation",
+          "outcome": "ok",
+          "elapsed_ns": 7842
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "live_admit",
+          "outcome": "ok",
+          "elapsed_ns": 85957364
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "protocol_catalog",
+          "outcome": "ok",
+          "elapsed_ns": 90222529
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "swap_prepare",
+          "outcome": "ok",
+          "elapsed_ns": 28387751
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "activation_report",
+          "outcome": "ok",
+          "elapsed_ns": 10546
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "boundary_to_commit",
+          "outcome": "committed",
+          "elapsed_ns": 264455737
+        },
+        {
+          "mo_pause": 1,
+          "attempt": 1,
+          "stage": "store_activate",
+          "outcome": "committed",
+          "elapsed_ns": 59680124
+        }
+      ],
+      "source_hashes": {
+        "new/main.mo": "698e1d112dd4bb60c0761d56a044a826a3d9e8571cc9c69249e3f04283aaf05a",
+        "new/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344",
+        "old/main.mo": "653cdf8c090fd7065eb20a354195c320c25655a45316bef1266f594c0928380a",
+        "old/job-queue.mo": "188f39272785d13093c6ce339129085fef499f70414a7a838d108e8e57a96344"
+      }
+    }
+  ],
+  "filesystem": "{\n   \"filesystems\": [\n      {\n         \"target\": \"/\",\n         \"source\": \"/dev/vda\",\n         \"fstype\": \"ext4\",\n         \"options\": \"rw,relatime,stripe=4\"\n      }\n   ]\n}\n",
+  "sync": "production SQLite journal_mode=DELETE, synchronous=EXTRA, temp_store=MEMORY; synchronous probe stderr writes included",
+  "separate_compiler_stall_evidence": "not exercised by pause workload; see separately retained compiler-family controls",
+  "summary": {
+    "optimized": {
+      "stages_seconds": {
+        "output_encode": {
+          "count": 5,
+          "min": 0.011144233,
+          "median": 0.014287338,
+          "max": 0.015675426,
+          "sample_stddev": 0.0018930639124129693
+        },
+        "validation_decode": {
+          "count": 5,
+          "min": 0.027794538,
+          "median": 0.030709495,
+          "max": 0.030947991,
+          "sample_stddev": 0.001563892586967596
+        },
+        "timer_validation": {
+          "count": 5,
+          "min": 7.842e-06,
+          "median": 8.593e-06,
+          "max": 9.534e-06,
+          "sample_stddev": 6.61107177392592e-07
+        },
+        "live_admit": {
+          "count": 5,
+          "min": 0.078955755,
+          "median": 0.085881641,
+          "max": 0.097035547,
+          "sample_stddev": 0.006955969152295745
+        },
+        "protocol_catalog": {
+          "count": 5,
+          "min": 0.079417723,
+          "median": 0.085509367,
+          "max": 0.096613149,
+          "sample_stddev": 0.006673466771331163
+        },
+        "swap_prepare": {
+          "count": 5,
+          "min": 0.027706886,
+          "median": 0.032209978,
+          "max": 0.036592429,
+          "sample_stddev": 0.0036960989079845396
+        },
+        "activation_report": {
+          "count": 5,
+          "min": 9.954e-06,
+          "median": 1.1688e-05,
+          "max": 3.1017e-05,
+          "sample_stddev": 9.542425697903023e-06
+        },
+        "identity_decode": {
+          "count": 5,
+          "min": 0.031453241,
+          "median": 0.038303305,
+          "max": 0.047249377,
+          "sample_stddev": 0.005689087807438185
+        },
+        "cached_state": {
+          "count": 5,
+          "min": 1.7e-07,
+          "median": 3.91e-07,
+          "max": 4.31e-07,
+          "sample_stddev": 1.1031908266478652e-07
+        },
+        "boundary_to_commit": {
+          "count": 5,
+          "min": 0.248552191,
+          "median": 0.273588516,
+          "max": 0.2844853,
+          "sample_stddev": 0.014547447325713591
+        },
+        "store_activate": {
+          "count": 5,
+          "min": 0.059680124,
+          "median": 0.062150299,
+          "max": 0.079299806,
+          "sample_stddev": 0.008020861833713663
+        }
+      },
+      "meets_margin": true
+    },
+    "debug": {
+      "stages_seconds": {
+        "output_encode": {
+          "count": 5,
+          "min": 0.013565686,
+          "median": 0.014865819,
+          "max": 0.016382297,
+          "sample_stddev": 0.0011888911399830938
+        },
+        "validation_decode": {
+          "count": 5,
+          "min": 0.048921383,
+          "median": 0.04938189,
+          "max": 0.059441007,
+          "sample_stddev": 0.004641036628281951
+        },
+        "timer_validation": {
+          "count": 5,
+          "min": 1.0986e-05,
+          "median": 1.2609e-05,
+          "max": 3.8817e-05,
+          "sample_stddev": 1.1948167880474394e-05
+        },
+        "live_admit": {
+          "count": 5,
+          "min": 0.118390023,
+          "median": 0.126370257,
+          "max": 0.13809982,
+          "sample_stddev": 0.008866515094968913
+        },
+        "protocol_catalog": {
+          "count": 5,
+          "min": 0.183699582,
+          "median": 0.199718277,
+          "max": 0.227286708,
+          "sample_stddev": 0.016759053634947643
+        },
+        "swap_prepare": {
+          "count": 5,
+          "min": 0.048513236,
+          "median": 0.051891724,
+          "max": 0.061858926,
+          "sample_stddev": 0.0060438378454577436
+        },
+        "activation_report": {
+          "count": 5,
+          "min": 1.4402e-05,
+          "median": 2.6249e-05,
+          "max": 3.5913e-05,
+          "sample_stddev": 7.871597086995752e-06
+        },
+        "identity_decode": {
+          "count": 5,
+          "min": 0.050849263,
+          "median": 0.05678151,
+          "max": 0.058999871,
+          "sample_stddev": 0.0033684964851959562
+        },
+        "cached_state": {
+          "count": 5,
+          "min": 5.91e-07,
+          "median": 8.52e-07,
+          "max": 9.61e-07,
+          "sample_stddev": 1.4606265778767685e-07
+        },
+        "boundary_to_commit": {
+          "count": 5,
+          "min": 0.449488542,
+          "median": 0.485798519,
+          "max": 0.554237676,
+          "sample_stddev": 0.039447337952685034
+        },
+        "store_activate": {
+          "count": 5,
+          "min": 0.095865656,
+          "median": 0.102678904,
+          "max": 0.13829396,
+          "sample_stddev": 0.017593494801711875
+        }
+      },
+      "meets_margin": false
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "commit": "bd40f9f5cc4973ddf1bde41596c51c213337db11",
+  "independently_checked": true,
+  "passed": true,
+  "gcc_result": "check.sh finished: pass",
+  "gcc_log": "verification/gcc.txt",
+  "independent_check": "A separate agent ran bash ci/check.sh gcc in its own clean detached checkout of bd40f9f5cc4973ddf1bde41596c51c213337db11 and got check.sh finished: pass with no skips; log verification/independent-gcc.txt, SHA-256 17bc672edcd4f7a600ec2d5fdca3a0d7ee50f0600f8f2d872371caa73098dcad",
+  "rehearsal_commit": "5d713bcca45c42bbe8afdb6c7f23eb6a497e0b8e",
+  "changed_since_rehearsal": [
+    "docs/plans/2026-11-10-2318-fix-phase5-close-outcome-gate-plan.md",
+    "learnability/phase5/evaluation/integration-development.md",
+    "learnability/phase5/evidence.py",
+    "learnability/phase5/test_evidence.py"
+  ],
+  "rehearsal_comparison": "Of the files changed since the rehearsal, only learnability/phase5/evidence.py is freeze-hashed; Robert accepted that parser rename on 2026-11-11 instead of a repeat rehearsal. Build inputs are identical between 5d713bcc and the candidate."
+}

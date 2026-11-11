@@ -10,18 +10,26 @@ step for anything a Mo user would notice.
 | 2. Agents can write it | A toolchain agents use every day | Internal milestone |
 | 3. Services | Long-running services and MCP servers in Mo | |
 | 4. Agents can see inside it | A runtime agents can operate | **v0.1**, the first public release |
-| 5. It evolves while running | Typed live upgrades | v0.2 |
+| 5. It evolves while running | Typed live upgrades; evaluation gate passed | v0.2, awaiting release decision |
 | 6. Intent and autonomy | People approve intent; agents ship the rest | v0.3 |
 | 7. Fast | Fast enough for serious services | v0.4 |
 | 8. Ecosystem | Others build and share | 1.0 |
 
-Phases 0 to 4 are finished. Phase 5, typed live upgrades, is next.
+Phases 0 to 4 are finished. Phase 5 is implemented through the live upgrade and
+remote operator path, and its closing evidence passed; Robert decides closure.
 
 ## Now
 
-Phase 5 design is in progress: [whole-program upgrades](design/upgrades.md).
-The design remains proposed pending its feasibility gates and Robert’s approval;
-no live upgrade command is implemented by this document.
+Phase 5 follows the approved [whole-program upgrade design](design/upgrades.md).
+Typed migration checking, checked restart, offline rehearsal, live activation,
+credential-gated MCP upgrade tools and loopback `mo push` are implemented.
+On one frozen build of merged main, the 1,000-kill drill passed, the production
+pause series stayed inside its 0.5-second margin (slowest debug sample 0.409
+seconds), and experiment 4 scored 4/4 against its 3/4 gate. Experiment 4 judges a
+session on the outcome of its upgrade; experiments 1 to 3, the earlier 0/4 and the
+earlier debug pause margin miss stay published unchanged. v0.2 is unreleased and
+the phase is not yet closed: Robert decides both after reviewing the evidence. See
+the [run record](status/phase5-run.md) and [release preparation notes](releases/v0.2-preparation.md).
 
 Phase 4, Agents can see inside it. Operator views, state export, failure capture and offline diagnosis are implemented. The diagnostic evaluation passed its declared gate: 14 of 16 correct, including two timing-defect misses. Robert approved v0.1.0 and the squash merge of PR #308 on 2026-11-07. Results and limits are in [the run record](status/phase4-run.md).
 

@@ -143,7 +143,7 @@ static void refused(int argc, const char *const *argv, const char *expected) {
     struct mo_cli cli;
     const char *error;
     CHECK(!mo_cli_parse(argc, argv, &cli, &error));
-    CHECK(strcmp(error, expected) == 0);
+    CHECK(error != NULL && strcmp(error, expected) == 0);
 }
 
 #define REFUSED(expected, ...)                                                                     \
@@ -200,6 +200,17 @@ static void parse_serve(void) {
     CHECK(cli.command == MO_COMMAND_SERVE && cli.file_count == 1 && cli.port == 8080);
     CHECK(strcmp(mo_cli_file(&cli, 0), "main.mo") == 0 && strcmp(cli.data, "state") == 0);
     CHECK(cli.allow_host == NULL);
+    const char *folder[] = {"mo", "serve", "--data", "state", "--port", "0"};
+    CHECK(mo_cli_parse(6, folder, &cli, &error) && cli.file_count == 0);
+    const char *upgrade[] = {"mo",     "serve", "new.mo",    "--data",    "state",
+                             "--port", "0",     "--upgrade", "--migrate", "Main.migrate"};
+    CHECK(mo_cli_parse(10, upgrade, &cli, &error) && cli.upgrade &&
+          strcmp(cli.migration, "Main.migrate") == 0);
+    REFUSED("upgrade or adoption needs a source file: \"serve\"", "--data", "state", "--port", "0",
+            "--upgrade");
+    REFUSED("--migrate needs --upgrade or an old program: \"--migrate\"", "new.mo", "--data",
+            "state", "--port", "0", "--migrate", "Main.migrate");
+
     const char *proxied[] = {"mo",     "serve", "main.mo", "--allow-host", "q.example:8000",
                              "--port", "1",     "--data",  "state"};
     CHECK(mo_cli_parse(9, proxied, &cli, &error) && strcmp(cli.allow_host, "q.example:8000") == 0);
@@ -224,7 +235,6 @@ static void parse_serve(void) {
     REFUSED("flag needs a nonempty value: \"--data\"", "main.mo", "--port", "1", "--data");
     REFUSED("serve needs --port N: \"serve\"", "main.mo", "--data", "state");
     REFUSED("serve needs --data DIR: \"serve\"", "main.mo", "--port", "1");
-    REFUSED("command needs a file: \"serve\"", "--port", "1", "--data", "state");
     REFUSED("flag may be given only once (except --only): \"--port\"", "main.mo", "--port", "1",
             "--port", "2", "--data", "state");
     REFUSED("flag may be given only once (except --only): \"--data\"", "main.mo", "--port", "1",
@@ -253,13 +263,12 @@ static void parse_serve(void) {
     refused(4, unknown, "unknown flag: \"--emit\"");
     const char *none[] = {"mo"};
     refused(1, none,
-            "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, replay, "
-            "query or history");
+            "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, "
+            "replay, query or history");
     const char *what[] = {"mo", "what"};
     refused(2, what,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, "
-            "replay, "
-            "query or history): \"what\"");
+            "push, replay, query or history): \"what\"");
 }
 
 #define OFFLINE(expected, ...)                                                                     \
@@ -271,6 +280,9 @@ static void parse_serve(void) {
 static void parse_offline(void) {
     struct mo_cli cli;
     const char *error;
+    /* A data folder supplies the failure's retained program when no file is named. */
+    const char *retained[] = {"mo", "replay", "--failure", "7", "--data", "state"};
+    CHECK(mo_cli_parse(6, retained, &cli, &error) && cli.file_count == 0 && cli.failure == 7);
     const char *replay[] = {"mo", "replay", "main.mo", "--failure", "7", "--data", "state"};
     CHECK(mo_cli_parse(7, replay, &cli, &error));
     CHECK(cli.command == MO_COMMAND_REPLAY && cli.failure == 7 && strcmp(cli.data, "state") == 0);
@@ -326,7 +338,7 @@ static void parse_offline(void) {
             "--export", "a");
     OFFLINE("command takes exactly one file: \"b.mo\"", "replay", "a.mo", "b.mo", "--failure", "1",
             "--data", "d");
-    OFFLINE("command needs a file: \"replay\"", "replay", "--failure", "1", "--data", "d");
+    OFFLINE("command needs a file: \"replay\"", "replay", "--failure", "1", "--export", "a.moex");
     OFFLINE("history needs a data folder: \"history\"", "history", "--json");
     OFFLINE("history takes exactly one data folder: \"b\"", "history", "a", "b");
     OFFLINE("flag may be given only once (except --only): \"--failure\"", "replay", "main.mo",
@@ -798,6 +810,19 @@ static void sorted_output(void) {
     mo_diags_free(&diags);
 }
 
+static void parse_rehearsal(void) {
+    const char *args[] = {"mo",        "rehearse",     "--artifact", "state.moex", "--old-bundle",
+                          "old.mosb",  "--candidate",  "new.mosb",   "--context",  "old.mocc",
+                          "--migrate", "Main.migrate", "--json"};
+    struct mo_cli cli;
+    const char *error;
+    CHECK(mo_cli_parse(13, args, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_REHEARSE && cli.json);
+    CHECK(strcmp(cli.candidate, "new.mosb") == 0);
+    CHECK(strcmp(cli.compile_context, "old.mocc") == 0);
+    CHECK(!mo_cli_parse(6, args, &cli, &error));
+}
+
 int main(int argc, char *argv[]) {
     /* Explicit UTF-8 test locale, including on macOS; production selects the
      * user's locale instead. The C-locale regression runs last. */
@@ -822,6 +847,7 @@ int main(int argc, char *argv[]) {
     if (argc == 2 &&
         (strcmp(argv[1], "--render-json") == 0 || strcmp(argv[1], "--render-text") == 0))
         return rendering(strcmp(argv[1], "--render-json") == 0, stdout) ? 0 : 1;
+    parse_rehearsal();
     parse_commands();
     parse_serve();
     parse_fetch();

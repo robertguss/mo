@@ -23,6 +23,8 @@ enum mo_command {
     MO_COMMAND_REPLAY,
     MO_COMMAND_QUERY,
     MO_COMMAND_HISTORY,
+    MO_COMMAND_REHEARSE,
+    MO_COMMAND_PUSH,
 };
 
 #define MO_EXIT_SERVICE_STOPPED 69
@@ -37,9 +39,14 @@ struct mo_cli {
     enum mo_command command;
     enum mo_emit emit;
     bool json, list, reference;
+    bool source_bundle, upgrade, adopt;
+    const char *upgrade_from, *old_bundle, *migration, *compile_context, *candidate;
     struct mo_limits limits;
     uint32_t calls, seconds;
     const char *fetch_url, *fetch_token;
+    /* push: the loopback endpoint, the expected active source digest and the two credentials'
+     * environment names; serve reads upgrade_token for its upgrade credential. */
+    const char *push_url, *push_base, *upgrade_token;
     uint64_t fetch_failure;
     const char *module;
     const char *output; /* emit's -o file */
@@ -109,6 +116,7 @@ MO_MUST_USE enum mo_fetch_read_status mo_fetch_read(struct mo_image *image, uint
                                                     const struct mo_buffer *wire,
                                                     struct mo_export_page *out);
 MO_MUST_USE int mo_fetch(const struct mo_cli *cli, FILE *errors);
+MO_MUST_USE int mo_push(const struct mo_cli *cli, FILE *output, FILE *errors);
 /* Whole checking and the certified lowering/runtime pipeline run inside one
  * explicit source-stack call. Owns no borrowed data after returning. */
 MO_MUST_USE int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors);

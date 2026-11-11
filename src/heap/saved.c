@@ -8,9 +8,26 @@
 struct saved_output {
     struct mo_buffer *bytes;
     const char *failure;
+    uint64_t *work;
 };
 
+/* One unit per visited schema/value node and per 64-byte native byte-walk block.
+ * A failed charge exhausts the shared budget; ordinary codec callers pass NULL. */
+static bool charge(uint64_t *work, uint64_t amount) {
+    if (work == NULL)
+        return true;
+    if (amount > *work) {
+        *work = 0;
+        return false;
+    }
+    *work -= amount;
+    return true;
+}
 static bool saved_append(struct saved_output *out, const void *bytes, size_t size) {
+    if (!charge(out->work, (uint64_t)(size / 64) + (size % 64 != 0 ? 1 : 0))) {
+        out->failure = "work budget";
+        return false;
+    }
     if (size > out->bytes->limit - out->bytes->length) {
         out->failure = "MO_LIMIT_SAVED_BYTES (16777216)";
         return false;
@@ -36,6 +53,8 @@ struct schema_writer {
     const struct mo_types *types;
     struct saved_output *out;
     uint32_t *seen, next;
+    const char *const *names;
+    uint32_t name_count;
 };
 
 static bool name(struct saved_output *out, const char *text) {
@@ -94,6 +113,10 @@ static uint8_t saved_tag(enum mo_type_kind kind) {
 }
 
 static bool schema(struct schema_writer *w, uint32_t index, unsigned depth) {
+    if (!charge(w->out->work, 1)) {
+        w->out->failure = "work budget";
+        return false;
+    }
     if (depth == MO_LIMIT_SAVED_DEPTH) {
         w->out->failure = "MO_LIMIT_SAVED_DEPTH (128)";
         return false;
@@ -106,7 +129,8 @@ static bool schema(struct schema_writer *w, uint32_t index, unsigned depth) {
     if (tag == SAVED_NO_TAG || !saved_uint(w->out, tag, 1))
         return false;
     if (t->kind == MO_TYPE_RECORD || t->kind == MO_TYPE_CHOICE) {
-        if (!name(w->out, t->name))
+        if (!name(w->out,
+                  index < w->name_count && w->names[index] != NULL ? w->names[index] : t->name))
             return false;
     }
     if (!saved_uint(w->out, t->parameter_count, 4))
@@ -136,7 +160,8 @@ static bool schema(struct schema_writer *w, uint32_t index, unsigned depth) {
     return true;
 }
 
-static bool write_schema(struct mo_heap *heap, uint32_t type, struct saved_output *out) {
+static bool write_schema_names(struct mo_heap *heap, uint32_t type, struct saved_output *out,
+                               const char *const *names, uint32_t name_count) {
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, heap);
     uint32_t *seen =
@@ -147,15 +172,23 @@ static bool write_schema(struct mo_heap *heap, uint32_t type, struct saved_outpu
     if (ok) {
         for (uint32_t i = 0; i < heap->types->count; i++)
             seen[i] = MO_NO_INDEX;
-        struct schema_writer w = {heap->types, out, seen, 0};
+        struct schema_writer w = {heap->types, out, seen, 0, names, name_count};
         ok = schema(&w, type, 0);
     }
     mo_scratch_free(&scratch);
     return ok;
 }
 
+static bool write_schema(struct mo_heap *heap, uint32_t type, struct saved_output *out) {
+    return write_schema_names(heap, type, out, NULL, 0);
+}
+
 static bool encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
                    struct saved_output *out, unsigned depth, uint32_t *nodes) {
+    if (!charge(out->work, 1)) {
+        out->failure = "work budget";
+        return false;
+    }
     if (depth == MO_LIMIT_SAVED_DEPTH || *nodes == MO_LIMIT_SAVED_NODES) {
         out->failure = depth == MO_LIMIT_SAVED_DEPTH ? "MO_LIMIT_SAVED_DEPTH (128)"
                                                      : "MO_LIMIT_SAVED_NODES (1048576)";
@@ -249,10 +282,11 @@ struct decoder {
     struct mo_heap *heap;
     struct mo_binary input;
     uint32_t nodes;
+    uint64_t *work;
 };
 
 static bool decode(struct decoder *d, uint32_t type, unsigned depth, struct mo_cell *out) {
-    if (depth == MO_LIMIT_SAVED_DEPTH || d->nodes == MO_LIMIT_SAVED_NODES)
+    if (!charge(d->work, 1) || depth == MO_LIMIT_SAVED_DEPTH || d->nodes == MO_LIMIT_SAVED_NODES)
         return false;
     d->nodes++;
     const struct mo_type *t = &d->heap->types->items[type];
@@ -395,12 +429,12 @@ static bool decode(struct decoder *d, uint32_t type, unsigned depth, struct mo_c
 }
 
 static bool encode_value(struct mo_heap *heap, uint32_t type, struct mo_cell value,
-                         struct mo_buffer *out, const char **failure) {
+                         struct mo_buffer *out, const char **failure, uint64_t *work) {
     MO_ASSERT(type < heap->types->count);
     struct mo_buffer bytes, shape;
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
     mo_buffer_init(&shape, MO_LIMIT_SAVED_BYTES);
-    struct saved_output output = {&bytes, NULL}, schema_output = {&shape, NULL};
+    struct saved_output output = {&bytes, NULL, work}, schema_output = {&shape, NULL, work};
     uint32_t nodes = 0;
     bool ok = write_schema(heap, type, &schema_output) && saved_append(&output, "MOSV\1", 5) &&
               saved_uint(&output, shape.length, 4) &&
@@ -419,7 +453,7 @@ static bool encode_value(struct mo_heap *heap, uint32_t type, struct mo_cell val
 bool mo_value_encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
                      struct mo_buffer *out) {
     const char *failure;
-    return encode_value(heap, type, value, out, &failure);
+    return encode_value(heap, type, value, out, &failure, NULL);
 }
 
 static enum mo_saved_status saved_status(bool ok, const char *failure) {
@@ -444,13 +478,13 @@ enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *heap, uint32_t t
     uint32_t *seen =
         mo_arena_allocate_array(&scratch, heap->types->count, sizeof *seen, _Alignof(uint32_t));
     size_t start = out->length;
-    struct saved_output output = {out, NULL};
+    struct saved_output output = {out, NULL, NULL};
     bool ok = seen != NULL && saved_append(&output, "MOSV\1", 5) && saved_uint(&output, 0, 4);
     size_t schema_start = out->length;
     if (ok) {
         for (uint32_t i = 0; i < heap->types->count; i++)
             seen[i] = MO_NO_INDEX;
-        struct schema_writer writer = {heap->types, &output, seen, 0};
+        struct schema_writer writer = {heap->types, &output, seen, 0, NULL, 0};
         ok = schema(&writer, type, 0);
     }
     if (ok) {
@@ -469,7 +503,7 @@ enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *heap, uint32_t t
 enum mo_saved_status mo_value_encode_status(struct mo_heap *heap, uint32_t type,
                                             struct mo_cell value, struct mo_buffer *out) {
     const char *failure;
-    bool ok = encode_value(heap, type, value, out, &failure);
+    bool ok = encode_value(heap, type, value, out, &failure, NULL);
     return saved_status(ok, failure);
 }
 
@@ -479,7 +513,7 @@ bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type
     MO_ASSERT(from->image == to->image && encoded_length != NULL && failure != NULL);
     struct mo_buffer bytes;
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
-    bool ok = encode_value(from, type, value, &bytes, failure);
+    bool ok = encode_value(from, type, value, &bytes, failure, NULL);
     if (ok) {
         ok = mo_value_decode(to, type, bytes.bytes, bytes.length, out);
         if (!ok)
@@ -491,12 +525,22 @@ bool mo_value_copy_saved(struct mo_heap *from, struct mo_heap *to, uint32_t type
     return ok;
 }
 
-bool mo_value_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, size_t length,
-                     struct mo_cell *out) {
+static bool decode_names(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, size_t length,
+                         const char *const *names, uint32_t name_count, struct mo_cell *out,
+                         uint64_t *work) {
     MO_ASSERT(type < heap->types->count && (bytes != NULL || length == 0));
+    if (name_count > heap->types->count || (name_count != 0 && names == NULL))
+        return false;
+    if (!charge(work, name_count + (uint64_t)(length / 64) + (length % 64 != 0 ? 1 : 0)))
+        return false;
+    for (uint32_t i = 0; i < name_count; i++)
+        if (names[i] != NULL && heap->types->items[i].kind != MO_TYPE_RECORD &&
+            heap->types->items[i].kind != MO_TYPE_CHOICE)
+            return false;
+
     if (length > MO_LIMIT_SAVED_BYTES || length < 9 || memcmp(bytes, "MOSV\1", 5) != 0)
         return false;
-    struct decoder d = {.heap = heap, .input = {bytes, length, 5}};
+    struct decoder d = {.heap = heap, .input = {bytes, length, 5}, .work = work};
     uint64_t shape_length;
     const uint8_t *shape_bytes;
     if (!mo_binary_uint(&d.input, 4, &shape_length) ||
@@ -504,9 +548,9 @@ bool mo_value_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, 
         return false;
     struct mo_buffer shape;
     mo_buffer_init(&shape, MO_LIMIT_SAVED_BYTES);
-    struct saved_output schema_output = {&shape, NULL};
-    bool ok = write_schema(heap, type, &schema_output) && shape.length == shape_length &&
-              memcmp(shape.bytes, shape_bytes, shape.length) == 0;
+    struct saved_output schema_output = {&shape, NULL, work};
+    bool ok = write_schema_names(heap, type, &schema_output, names, name_count) &&
+              shape.length == shape_length && memcmp(shape.bytes, shape_bytes, shape.length) == 0;
     mo_buffer_free(&shape);
     struct mo_cell value;
     if (ok)
@@ -520,10 +564,31 @@ bool mo_value_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, 
     return ok;
 }
 
+bool mo_value_decode_names(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, size_t length,
+                           const char *const *names, uint32_t name_count, struct mo_cell *out) {
+    return decode_names(heap, type, bytes, length, names, name_count, out, NULL);
+}
+bool mo_value_decode_budget(struct mo_heap *heap, uint32_t type, const uint8_t *bytes,
+                            size_t length, const char *const *names, uint32_t name_count,
+                            uint64_t *work, struct mo_cell *out) {
+    MO_ASSERT(work != NULL);
+    return decode_names(heap, type, bytes, length, names, name_count, out, work);
+}
+bool mo_value_encode_budget(struct mo_heap *heap, uint32_t type, struct mo_cell value,
+                            struct mo_buffer *out, uint64_t *work) {
+    MO_ASSERT(work != NULL);
+    const char *failure;
+    return encode_value(heap, type, value, out, &failure, work);
+}
+bool mo_value_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, size_t length,
+                     struct mo_cell *out) {
+    return mo_value_decode_names(heap, type, bytes, length, NULL, 0, out);
+}
+
 bool mo_type_schema(struct mo_heap *heap, uint32_t type, struct mo_buffer *out) {
     MO_ASSERT(type < heap->types->count);
     size_t start = out->length;
-    struct saved_output output = {out, NULL};
+    struct saved_output output = {out, NULL, NULL};
     bool ok = write_schema(heap, type, &output);
     if (!ok)
         out->length = start;

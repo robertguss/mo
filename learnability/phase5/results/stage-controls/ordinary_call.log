@@ -1,0 +1,24 @@
+[New LWP 3081770]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007f602e31ce51 in __futex_abstimed_wait_common64 (private=128, cancel=true, abstime=0x0, op=265, expected=3081770, futex_word=0x7f602e227990) at ./nptl/futex-internal.c:57
+warning: 57	./nptl/futex-internal.c: No such file or directory
+Breakpoint 1 at 0x5634c090afc9: file src/vm/execute.c, line 106.
+[Switching to Thread 0x7f602e2276c0 (LWP 3081770)]
+
+Thread 2 "mo" hit Breakpoint 1, mo_vm_execute (p=0x7f602423fc90, result=0x7f602e220970) at src/vm/execute.c:106
+106	        uint32_t head = fn->code[f->pc], op = head & MO_OPCODE_MASK;
+#0  mo_vm_execute (p=0x7f602423fc90, result=0x7f602e220970) at src/vm/execute.c:106
+#1  0x00005634c09117cf in call (process=0x7f602423fc90, function=4, arguments=0x7f602e220820, argument_count=3, keep_running=0x0, context=0x0, result_out=0x7f602e220970, defect_out=0x7f602e220870) at src/vm/process.c:235
+#2  0x00005634c0911954 in mo_call (process=0x7f602423fc90, function=4, arguments=0x7f602e220820, argument_count=3, result_out=0x7f602e220970, defect_out=0x7f602e220870) at src/vm/process.c:260
+#3  0x00005634c08dc071 in invoke (s=0x7f60240c4f60, c=0x7f60240c75d8, process=0x7f602423fc90, function=PF_SCAN, args=0x7f602e220990, out=0x7f602e220970) at src/tools/protocol-server.c:112
+#4  0x00005634c08dbdad in mo_protocol_invoke (s=0x7f60240c4f60, c=0x7f60240c75d8, function=PF_SCAN, args=0x7f602e220990, out=0x7f602e220970) at src/tools/protocol-server.c:85
+#5  0x00005634c08dad0a in mo_protocol_read (s=0x7f60240c4f60, c=0x7f60240c75d8) at src/tools/protocol-request.c:321
+#6  0x00005634c08dfa1b in mo_protocol_server_poll (s=0x7f60240c4f60, until_us=771565583705) at src/tools/protocol-server.c:761
+#7  0x00005634c08f4ed0 in serve_requests (server=0x7f60240c4f60, listener=0x7f60240c4ac0, log=0x7f602e220f20) at src/tools/serve.c:136
+#8  0x00005634c08f591f in mo_serve_image (cli=0x7fffe562fbd0, image=0x7f60241513d8, service=0, output=0x7f602e4895c0 <_IO_2_1_stdout_>, errors=0x7f602e4894e0 <_IO_2_1_stderr_>, diags=0x7f602e2223d0, held_store=0x7f6024016380) at src/tools/serve.c:261
+#9  0x00005634c0906f08 in serve_upgrade (context=0x7fffe562fb10) at src/tools/upgrade.c:1751
+#10 0x00005634c07a4fc2 in run (argument=0x7fffe562fa80) at src/base/stack.c:17
+#11 0x00007f602e320b84 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:447
+#12 0x00007f602e3adecc in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:78
+[Inferior 1 (process 3081768) killed]

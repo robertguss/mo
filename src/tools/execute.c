@@ -16,6 +16,7 @@
 #include "tools/promises.h"
 #include "tools/run.h"
 #include "tools/tests.h"
+#include "tools/upgrade.h"
 
 #include <errno.h>
 #include <string.h>
@@ -107,7 +108,11 @@ static void execute_pipeline(void *argument) {
     if (stat(library, &st) != 0 && errno == ENOENT)
         library = NULL;
     struct mo_module_set *set =
-        mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags);
+        cli->command != MO_COMMAND_REPLAY
+            ? mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags)
+        : cli->file_count == 0
+            ? mo_upgrade_replay_set(arena, cli->data, cli->failure, library, sources, diags)
+            : mo_upgrade_source_set(arena, mo_cli_file(cli, work->file), library, sources, diags);
     if (set == NULL || mo_diags_any(diags))
         return;
     struct mo_program *program = mo_check(arena, set, diags);
@@ -152,7 +157,8 @@ static void execute_pipeline(void *argument) {
         work->totals.status = work->status;
         return;
     }
-    if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_EMIT) &&
+    if ((cli->command == MO_COMMAND_RUN ||
+         (cli->command == MO_COMMAND_EMIT && entry_service == MO_NO_INDEX)) &&
         program->entry.function == UINT32_MAX) {
         const char *message = "the entry module has no main function";
         struct mo_diag diag = {.code = MO_CODE_MAIN_CONTRACT,
@@ -444,8 +450,18 @@ static int fix_files(const struct mo_cli *cli, FILE *output, FILE *errors) {
 }
 
 int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
+    if (cli->source_bundle)
+        return mo_upgrade_emit(cli, output, errors);
+    if (cli->command == MO_COMMAND_SERVE)
+        return mo_upgrade_serve(cli, output, errors);
+    if (cli->upgrade_from != NULL)
+        return mo_upgrade_check(cli, output, errors);
+    if (cli->command == MO_COMMAND_REHEARSE)
+        return mo_upgrade_rehearse(cli, output, errors);
     if (cli->command == MO_COMMAND_FETCH)
         return mo_fetch(cli, errors);
+    if (cli->command == MO_COMMAND_PUSH)
+        return mo_push(cli, output, errors);
     if (cli->command == MO_COMMAND_HISTORY)
         return mo_history(cli, output, errors);
     if (cli->command == MO_COMMAND_VERSION) {

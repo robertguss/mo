@@ -80,8 +80,11 @@ static int64_t transport_receive(struct mo_process *process, const struct transp
     struct mo_cell args[] = {text, version, transport->descriptor, transport->catalog,
                              transport->version};
     struct mo_cell action = call(process, receive, args);
-    MO_ASSERT(mo_cell_get_tag(action) == 0);
-    int64_t status = mo_cell_get_int(mo_value_field(mo_cell_get_payload(action), 0));
+    /* An initialize result is a Session reply: status 200 with a session header. */
+    uint32_t tag = mo_cell_get_tag(action);
+    MO_ASSERT(tag == 0 || tag == 3);
+    int64_t status =
+        tag == 3 ? 200 : mo_cell_get_int(mo_value_field(mo_cell_get_payload(action), 0));
     MO_ASSERT(status == 200 || status == 202 || status == 400 || status == 413);
     mo_value_drop(mo_process_heap(process), fn->result_type, action);
     return status;

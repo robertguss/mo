@@ -1,0 +1,13 @@
+test_complete (test_measure_pause.Parsing.test_complete) ... ok
+test_duplicate (test_measure_pause.Parsing.test_duplicate) ... ok
+test_explicit_migration_rejected (test_measure_pause.Parsing.test_explicit_migration_rejected) ... ok
+test_missing (test_measure_pause.Parsing.test_missing) ... ok
+test_null_and_refusal (test_measure_pause.Parsing.test_null_and_refusal) ... ok
+test_exact_snapshot_matches_readback_and_rejects_corruption (test_measure_pause.SnapshotValidation.test_exact_snapshot_matches_readback_and_rejects_corruption) ... ok
+test_malformed_compiler_output (test_capture_failures.Retention.test_malformed_compiler_output) ... ok
+test_partial_timeout_output (test_capture_failures.Retention.test_partial_timeout_output) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 17.383s
+
+OK

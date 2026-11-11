@@ -1,0 +1,9 @@
+{
+ "source": "/home/exedev/.mo-phase5-harness/fixture-5d713bcc-eval/old",
+ "context": "/home/exedev/.mo-phase5-harness/fixture-5d713bcc-eval/old",
+ "data": "/home/exedev/.mo-phase5-harness/fixture-5d713bcc-eval/data",
+ "expected": "/home/exedev/.mo-phase5-harness/fixture-5d713bcc-eval/expected.json",
+ "experiment": "/home/exedev/.mo-phase5-harness/experiment-4",
+ "prompt": "/home/exedev/code/mo-freeze-4/learnability/phase5/evaluation/prompt.txt",
+ "freeze": "/home/exedev/code/mo-freeze-4/build/freeze-4/manifest.json"
+}

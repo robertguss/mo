@@ -1,0 +1,52 @@
+{
+  "experiment": "experiment-4",
+  "declared_at": "2026-11-11T01:02:58.094690+00:00",
+  "candidate": "merged main as frozen by evidence.py freeze; the freeze manifest records the commit",
+  "slots": [
+    "codex",
+    "claude",
+    "codex",
+    "claude"
+  ],
+  "limit_seconds": 3600,
+  "replacement_slots": false,
+  "gate": {
+    "minimum_passes": 3,
+    "each_client_must_pass": true
+  },
+  "earlier_results": {
+    "experiment-1": "stopped on a credential defect",
+    "experiment-2": "0/4",
+    "experiment-3": "stopped after slot 1 on a capture defect"
+  },
+  "narrowed_from_experiment_3": "Pass conditions judge the outcome of the upgrade; command origin by process trace, traffic completeness and model provenance left the verdict because each new client behaviour the tracer did not recognise cost a whole experiment, while no recorded miss showed an upgrade that did not work.",
+  "pass_conditions": {
+    "task_state": "hidden checks on the running service and the folder-only restart check pass",
+    "activation_identity": "exactly one durable activation with the expected identity follows the preparation, and the proxy record holds its accepted commit reply",
+    "source_tests": "the immutable source tests pass",
+    "final_answer": "the final message, trimmed of whitespace, equals the revision the grader reads from the live service"
+  },
+  "recorded_never_graded": [
+    "requested model",
+    "models the client output reports, or none",
+    "whether the transcript shows mo push",
+    "uploads with and without a matching native client event",
+    "proxy calls with no matching client event"
+  ],
+  "model_rule": "A session whose client reports a different model counts when the pass conditions hold and is published under the reported model.",
+  "upload_routes": "mo push or the client's native MCP route; the prompt is unchanged",
+  "client_configuration": {
+    "codex": "0.166.0; gpt-6.1-sol; xhigh; danger-full-access under collector isolation; HTTP Responses transport with diagnostic logging",
+    "claude": "2.1.317; claude-opus-5-5"
+  },
+  "recording": "Collector-owned proxy recording of every MCP request and reply, and the client's own stdout and stderr; no syscall tracing.",
+  "instrument_defect_rule": "Every launched session counts; no replacements; neither collector nor grader changes after the first launch.",
+  "missed_gate_rule": "The phase stays open, the miss is published, and no further experiment runs without Robert's decision.",
+  "drill": {
+    "count": 1000,
+    "seed": 20261110
+  },
+  "pause_rule": "Slowest sample at or under 0.5 s passes; above 0.5 s and at or under 1 s is a published margin miss that does not block closing; any sample above 1 s keeps the phase open.",
+  "readiness": "One development session per client passes live on the final collector with no offline repair, and the grader controls accept the reference and reject each listed wrong outcome, before the freeze.",
+  "approval": "pending an independent freeze review and Robert's approval before slot 1"
+}

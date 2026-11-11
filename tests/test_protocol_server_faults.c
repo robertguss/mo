@@ -1,7 +1,10 @@
 #define MO_PROTOCOL_SERVER_FAULT_TEST
+#define MO_PROTOCOL_SERVER_UPGRADE_TEST
 #include "test_protocol_server.c"
 
 #include <errno.h>
+#include <time.h>
+#include <unistd.h>
 
 static struct mo_protocol_server *fault_server;
 static uint64_t admitted_before;
@@ -10,6 +13,9 @@ static unsigned exhausted_calls, memory_stops, decode_after, decode_failures, ap
 static unsigned fail_call_after;
 static bool scan_limit_zero;
 static size_t resize_calls, resize_after, resize_failures, resize_sizes[4096];
+/* 0 runs the real activation; otherwise its result without touching the store. */
+static enum mo_store_activation_status activation_result;
+static bool activation_faulted;
 
 enum mo_outcome mo_protocol_server_fault_call(struct mo_process *process, uint32_t function,
                                               const struct mo_cell *arguments, uint32_t count,
@@ -376,6 +382,221 @@ static void poll_failures(void) {
     finish(&f);
 }
 
+enum mo_store_activation_status
+mo_protocol_server_fault_activate(struct mo_store *store, const struct mo_store_activation *a);
+enum mo_store_activation_status
+mo_protocol_server_fault_activate(struct mo_store *store, const struct mo_store_activation *a) {
+    if (!activation_faulted)
+        return mo_store_activate(store, a);
+    return activation_result;
+}
+
+static void write_bytes(const char *path, const uint8_t *bytes, size_t length) {
+    FILE *file = fopen(path, "wb");
+    MO_ASSERT(file != NULL && fwrite(bytes, 1, length, file) == length && fclose(file) == 0);
+}
+
+static void read_bytes(const char *path, struct mo_buffer *out) {
+    FILE *file = fopen(path, "rb");
+    MO_ASSERT(file != NULL);
+    uint8_t chunk[4096];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, file)) != 0)
+        MO_ASSERT(mo_buffer_append(out, chunk, n));
+    MO_ASSERT(fclose(file) == 0);
+}
+
+static void one_file_bundle(const char *text, struct mo_buffer *out) {
+    MO_ASSERT(mo_buffer_append(out, "MOSB\1", 5) && mo_binary_write(out, 7, 4) &&
+              mo_buffer_append(out, "main.mo", 7) && mo_binary_write(out, 1, 4) &&
+              mo_binary_write(out, 7, 4) && mo_buffer_append(out, "main.mo", 7) &&
+              mo_binary_write(out, strlen(text), 4) && mo_buffer_append(out, text, strlen(text)));
+}
+
+static void base64(const uint8_t *in, size_t length, char *out) {
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t at = 0;
+    for (size_t i = 0; i < length; i += 3) {
+        uint32_t v = (uint32_t)in[i] << 16 | (i + 1 < length ? (uint32_t)in[i + 1] << 8 : 0) |
+                     (i + 2 < length ? in[i + 2] : 0);
+        out[at++] = alphabet[v >> 18 & 63];
+        out[at++] = alphabet[v >> 12 & 63];
+        out[at++] = i + 1 < length ? alphabet[v >> 6 & 63] : '=';
+        out[at++] = i + 2 < length ? alphabet[v & 63] : '=';
+    }
+    out[at] = 0;
+}
+
+/* A request whose reply may wait on the compiler child, so the poll runs in real time. */
+static void slow_call(struct fixture_server *f, const char *tool, const char *arguments, char *out,
+                      size_t capacity) {
+    static char body[16384];
+    int n = snprintf(body, sizeof body,
+                     "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{"
+                     "\"name\":\"%s\",\"arguments\":%s}}",
+                     tool, arguments);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof body);
+    struct mo_buffer input;
+    input_request(&input, body, upgrade_auth);
+    struct mo_listener_fake_peer peer = {.input = input.bytes,
+                                         .input_size = input.length,
+                                         .output = (uint8_t *)out,
+                                         .output_capacity = capacity - 1,
+                                         .readable = true,
+                                         .writable = true,
+                                         .eof = true};
+    MO_ASSERT(mo_listener_fake_connect(f->listener, &peer) == MO_LISTENER_OK);
+    for (unsigned i = 0; i < 6000 && !peer.closed; i++) {
+        poll_server(f);
+        struct timespec pause = {0, 5000000};
+        (void)nanosleep(&pause, NULL);
+    }
+    CHECK(peer.closed);
+    out[peer.output_size] = 0;
+    mo_buffer_free(&input);
+}
+
+/* The server's side of an activation whose transaction is refused or whose outcome is unknown:
+ * a rollback keeps the old program serving, an uncertain commit stops it with the store status. */
+static void activation_outcomes(void) {
+    mo_runtime_identity_init();
+    char exe[4096];
+    ssize_t length = readlink("/proc/self/exe", exe, sizeof exe - 8);
+    MO_ASSERT(length > 0);
+    exe[length] = 0;
+    char *slash = strrchr(exe, '/');
+    MO_ASSERT(slash != NULL);
+    strcpy(slash, "/../mo");
+    char dir[] = "/tmp/mo-activation-XXXXXX", path[256], image_path[300], command[8192];
+    MO_ASSERT(mkdtemp(dir) != NULL);
+    static const char next_text[] = "module Main\nservice\n state Int = 0\n tools read\n"
+                                    " token from env \"MO_TEST_MCP_TOKEN\"\nend\n"
+                                    "fn read(state: Int, _now: Time) : Text\n"
+                                    " \"v2:#{state}\"\nend\n";
+    struct mo_buffer old_bundle, next_bundle, wire, context;
+    mo_buffer_init(&old_bundle, MO_LIMIT_BUNDLE_BYTES);
+    mo_buffer_init(&next_bundle, MO_LIMIT_BUNDLE_BYTES);
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    mo_buffer_init(&context, MO_LIMIT_BUNDLE_BYTES);
+    one_file_bundle(source_text_for_upgrade, &old_bundle);
+    one_file_bundle(next_text, &next_bundle);
+    MO_ASSERT(snprintf(path, sizeof path, "%s/old.mosb", dir) > 0);
+    MO_ASSERT(snprintf(image_path, sizeof image_path, "%s/old.bc", dir) > 0);
+    write_bytes(path, old_bundle.bytes, old_bundle.length);
+    /* The recorded program and its context come from the same compiler child live upgrades use. */
+    MO_ASSERT(snprintf(command, sizeof command, "'%s' emit '%s' -o '%s' --bundle", exe, path,
+                       image_path) > 0);
+    MO_ASSERT(system(command) == 0);
+    read_bytes(image_path, &wire);
+    MO_ASSERT(snprintf(command, sizeof command, "%s.mocc", image_path) > 0);
+    read_bytes(command, &context);
+    for (unsigned mode = 0; mode < 3; mode++) {
+        struct mo_load_error error;
+        struct fixture_server f = {.image = mo_load(wire.bytes, wire.length, &error)};
+        MO_ASSERT(f.image != NULL);
+        struct mo_limits limits = mo_limits_default();
+        struct mo_defect defect;
+        MO_ASSERT(mo_image_init(f.image, &limits, &defect) == MO_RETURNED);
+        CHECK(setenv("MO_TEST_MCP_TOKEN", "McpSecretCanary42", 1) == 0);
+        MO_ASSERT(mo_listener_fake("MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
+        MO_ASSERT(mo_store_open(NULL, &f.store) == MO_STORE_OK);
+        struct mo_limits service = mo_service_limits();
+        struct mo_process *process = mo_process_new(f.image, &service);
+        MO_ASSERT(process != NULL);
+        uint32_t state_type = mo_image_bytecode(f.image)->services[0].state_type;
+        struct mo_buffer saved;
+        mo_buffer_init(&saved, MO_LIMIT_SAVED_BYTES);
+        MO_ASSERT(mo_value_encode(mo_process_heap(process), state_type, mo_cell_int(4), &saved));
+        struct mo_store_program program = {.image = mo_image_key(f.image, 0),
+                                           .bundle = old_bundle.bytes,
+                                           .bundle_size = old_bundle.length,
+                                           .context = context.bytes,
+                                           .context_size = context.length};
+        MO_ASSERT(mo_type_schema_digest(mo_process_heap(process), state_type, program.schema));
+        mo_process_free(process);
+        struct mo_sha256 hash;
+        mo_sha256_init(&hash);
+        mo_sha256_update(&hash, old_bundle.bytes, old_bundle.length);
+        mo_sha256_finish(&hash, program.source);
+        mo_sha256_init(&hash);
+        mo_sha256_update(&hash, context.bytes, context.length);
+        mo_sha256_finish(&hash, program.context_digest);
+        MO_ASSERT(mo_runtime_identity(program.build));
+        struct mo_store_record first = {MO_STORE_STATE, 0, program.image, saved.bytes,
+                                        saved.length};
+        MO_ASSERT(mo_store_program_record(f.store, &program, &first) == MO_STORE_OK);
+        mo_buffer_free(&saved);
+        struct event_log log = {0};
+        const char *authorities[] = {"localhost"};
+        const struct mo_protocol_events events = {note_event, &log};
+        MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &events,
+                                         &f.server) == MO_PROTOCOL_SERVER_OK);
+        struct mo_bearer bearer = {.length = 23};
+        memcpy(bearer.bytes, "UpgradeCanary0123456789", 23);
+        CHECK(mo_protocol_server_upgrades(f.server, &bearer, exe) == MO_PROTOCOL_SERVER_OK);
+        char base[65], candidate[65], arguments[16384], out[32768];
+        hex64(program.source, base);
+        uint8_t digest[32];
+        mo_sha256_init(&hash);
+        mo_sha256_update(&hash, next_bundle.bytes, next_bundle.length);
+        mo_sha256_finish(&hash, digest);
+        hex64(digest, candidate);
+        int n = snprintf(arguments, sizeof arguments,
+                         "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":%zu}", base, candidate,
+                         next_bundle.length);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
+        upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+        const char *slot_at = strstr(out, "\\\"slot\\\":\\\"");
+        MO_ASSERT(slot_at != NULL);
+        char slot[33] = {0}, text[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
+        memcpy(slot, slot_at + strlen("\\\"slot\\\":\\\""), 32);
+        base64(next_bundle.bytes, next_bundle.length, text);
+        n = snprintf(arguments, sizeof arguments,
+                     "{\"slot\":\"%s\",\"index\":0,\"offset\":0,\"total\":%zu,\"bytes\":\"%s\"}",
+                     slot, next_bundle.length, text);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
+        upgrade_call(&f, upgrade_auth, "mo-upgrade-page", arguments, out, sizeof out);
+        CHECK(strstr(out, "\\\"complete\\\":true") != NULL);
+        activation_faulted = mode != 0;
+        activation_result = mode == 1 ? MO_STORE_ACTIVATION_REFUSED : MO_STORE_ACTIVATION_UNSAFE;
+        n = snprintf(arguments, sizeof arguments, "{\"slot\":\"%s\",\"base\":\"%s\"}", slot, base);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
+        slow_call(&f, "mo-upgrade-commit", arguments, out, sizeof out);
+        activation_faulted = false;
+        bool stopped = false;
+        for (size_t i = 0; i < log.count; i++)
+            stopped |=
+                log.events[i].kind == MO_SERVICE_STOP && log.events[i].reason == MO_SERVICE_STORE;
+        if (mode == 0) {
+            CHECK(strstr(out, "\"status\":\"accepted\"") != NULL && !stopped);
+            tool_request(&f, "read", "{}", "6", out, sizeof out);
+            CHECK(strstr(out, "v2:4") != NULL);
+        } else if (mode == 1) {
+            CHECK(strstr(out, "\"code\":\"E1425\"") != NULL && strstr(out, "rolled back") != NULL);
+            CHECK(!stopped);
+            tool_request(&f, "read", "{}", "6", out, sizeof out);
+            CHECK(strstr(out, "\"value\":\"4\"") != NULL);
+        } else {
+            CHECK(strstr(out, "\"code\":\"E1425\"") != NULL &&
+                  strstr(out, "outcome is unknown") != NULL);
+            CHECK(stopped);
+            tool_request(&f, "read", "{}", "6", out, sizeof out);
+            tool_error(out, "stopped", "none", "6");
+        }
+        finish(&f);
+    }
+    (void)unlink(path);
+    (void)unlink(image_path);
+    MO_ASSERT(snprintf(command, sizeof command, "%s.mocc", image_path) > 0);
+    (void)unlink(command);
+    (void)rmdir(dir);
+    mo_buffer_free(&old_bundle);
+    mo_buffer_free(&next_bundle);
+    mo_buffer_free(&wire);
+    mo_buffer_free(&context);
+}
+
 static void run_faults(void *context) {
     wire(context);
     poll_failures();
@@ -386,6 +607,7 @@ static void run_faults(void *context) {
     saved_copy_memory();
     store_failure();
     store_stop_event();
+    activation_outcomes();
 }
 
 int main(void) {

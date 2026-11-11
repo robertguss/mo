@@ -1,0 +1,365 @@
+check.sh started: pid 271934
+
+==> Build the test executables the checks below drive
+
+==> Check runner: timed checks run alone and failures propagate
+........
+----------------------------------------------------------------------
+Ran 8 tests in 28.019s
+
+OK
+(28 s)
+
+==> Waiting on check results: running, passed, failed, killed and missing runs
+....................
+----------------------------------------------------------------------
+Ran 20 tests in 1.537s
+
+OK
+(1 s)
+
+==> Reference conformance: every rule has programs or an explicit gap
+262 reference rules indexed; 1 have explicit gaps; 48 name other drivers; 11 have cost claims checked for semantics only; 1 have cost measured; 7 untestable
+(0 s)
+
+==> Reference conformance: coverage-check regression tests
+..........
+----------------------------------------------------------------------
+Ran 10 tests in 1.615s
+
+OK
+(2 s)
+
+==> Authenticated operator views (build/gcc/debug/mo)
+operator: private state, scalar types, paths, truncation, paging, routing, nonmutation and retained failures passed
+(25 s)
+
+==> Typed upgrades and checked restart (build/gcc/debug/mo)
+Typed upgrade checks, migrated values, retained contexts and restart refusals passed
+(25 s)
+
+==> Recorded schema fallback (build/gcc/debug/mo)
+upgrade fallback: pass
+(8 s)
+
+==> Upgrade adoption replay (build/gcc/debug/mo)
+Recorded rebuild replay and explicit empty-tail adoption passed
+(13 s)
+
+==> Recorded-context upgrade checks (build/gcc/debug/mo)
+Recorded-context prechecks preserve the store across retention and migrations
+(13 s)
+
+==> Live upgrades: push, streams, kills and recovery (build/gcc/debug/mo)
+live upgrades: pushes, refusals, streams, timers, events, kills, restarts, retained replay and credential hygiene passed
+(36 s)
+
+==> Remote upgrades: proxy, tunnel and rate retry (build/gcc/debug/mo)
+remote upgrades: direct/proxy/forward reports match; credentials and rate retry passed
+(11 s)
+
+==> Immutable state exports (build/gcc/debug/mo)
+export: independent MOEX framing, identities, schema/artifact/page digests, immutable commit trace, authentication, replacement and malformed requests passed
+(5 s)
+
+==> Service simulation: deterministic lifecycle and real persistence (build/gcc/debug/mo)
+Simulation: lifecycle, deadlines, D308, real JobQueue recovery, cleanup and transfer limits pass
+(26 s)
+
+==> Reference examples: check every block and run complete programs (build/gcc/debug/mo)
+reference examples: 48 blocks, 19 checked, 2 run, 29 fragments skipped, 0 failures
+(1 s)
+
+==> Reference examples: driver regression tests (build/gcc/debug/mo)
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 2.978s
+
+OK
+(3 s)
+
+==> The golden corpus: whole programs match their expected output and exit status (build/gcc/debug/mo)
+217 golden programs match
+(25 s)
+
+==> The library: every file passes mo test (build/gcc/debug/mo)
+==> mo test lib/file-error.mo
+passed FileError.to_text.example.1  lib/file-error.mo:7:5
+passed FileError.to_text.example.2  lib/file-error.mo:8:5
+passed FileError.to_text.example.3  lib/file-error.mo:9:5
+passed FileError.to_text.example.4  lib/file-error.mo:10:5
+4 passed, 0 failed, 0 stopped
+==> mo test lib/files.mo
+passed Files.walk.example.1  lib/files.mo:9:5
+passed Files.walk.example.2  lib/files.mo:17:5
+passed Files.walk.example.3  lib/files.mo:19:5
+passed Files.walk.example.4  lib/files.mo:20:5
+4 passed, 0 failed, 0 stopped
+==> mo test lib/json.mo
+passed Json.parse.example.1  lib/json.mo:56:5
+passed Json.parse.example.2  lib/json.mo:57:5
+passed Json.parse.example.3  lib/json.mo:58:5
+passed Json.parse.example.4  lib/json.mo:59:5
+passed Json.parse.example.5  lib/json.mo:60:5
+passed Json.parse.example.6  lib/json.mo:61:5
+passed Json.parse.example.7  lib/json.mo:63:5
+passed Json.parse.example.8  lib/json.mo:64:5
+passed Json.parse.example.9  lib/json.mo:65:5
+passed Json.int.example.1  lib/json.mo:329:5
+passed Json.decimal.example.1  lib/json.mo:338:5
+passed Json.float.example.1  lib/json.mo:347:5
+passed Json.float.example.2  lib/json.mo:348:5
+passed Json.to_int.example.1  lib/json.mo:359:5
+passed Json.to_int.example.2  lib/json.mo:360:5
+passed Json.to_int.example.3  lib/json.mo:361:5
+passed Json.to_int.example.4  lib/json.mo:362:5
+passed Json.to_decimal.example.1  lib/json.mo:374:5
+passed Json.to_decimal.example.2  lib/json.mo:375:5
+passed Json.to_decimal.example.3  lib/json.mo:376:5
+passed Json.plain.example.1  lib/json.mo:390:5
+passed Json.plain.example.2  lib/json.mo:391:5
+passed Json.plain.example.3  lib/json.mo:392:5
+passed Json.plain.example.4  lib/json.mo:393:5
+passed Json.to_float.example.1  lib/json.mo:457:5
+passed Json.to_float.example.2  lib/json.mo:458:5
+passed Json.to_text@Json.example.1  lib/json.mo:472:5
+passed Json.pretty.example.1  lib/json.mo:491:5
+passed Json.pretty.example.2  lib/json.mo:492:5
+passed Json.quoted.example.1  lib/json.mo:516:5
+passed Json.quoted.example.2  lib/json.mo:517:5
+passed Json.quoted.example.3  lib/json.mo:518:5
+passed Json.test.1  lib/json.mo:553:1
+passed Json.test.2  lib/json.mo:570:1
+passed Json.test.3  lib/json.mo:583:1
+passed Json.test.4  lib/json.mo:594:1
+passed Json.test.5  lib/json.mo:609:1
+passed Json.test.6  lib/json.mo:631:1
+38 passed, 0 failed, 0 stopped
+==> mo test lib/list.mo
+passed List.map.example.1  lib/list.mo:21:5
+passed List.map.example.2  lib/list.mo:22:5
+passed List.map.example.3  lib/list.mo:23:5
+passed List.filter.example.1  lib/list.mo:36:5
+passed List.filter.example.2  lib/list.mo:37:5
+passed List.filter_map.example.1  lib/list.mo:52:5
+passed List.flat_map.example.1  lib/list.mo:68:5
+passed List.reduce.example.1  lib/list.mo:81:5
+passed List.reduce.example.2  lib/list.mo:82:5
+passed List.any?.example.1  lib/list.mo:95:5
+passed List.any?.example.2  lib/list.mo:96:5
+passed List.any?.example.3  lib/list.mo:97:5
+passed List.sort_by.example.1  lib/list.mo:109:5
+passed List.sort_by.example.2  lib/list.mo:110:5
+passed List.sort.example.1  lib/list.mo:121:5
+passed List.sort.example.2  lib/list.mo:122:5
+passed List.sort.example.3  lib/list.mo:123:5
+passed List.sort.example.4  lib/list.mo:124:5
+passed List.min.example.1  lib/list.mo:166:5
+passed List.min.example.2  lib/list.mo:167:5
+passed List.min.example.3  lib/list.mo:168:5
+passed List.group_by.example.1  lib/list.mo:187:5
+passed List.group_by.example.2  lib/list.mo:188:5
+passed List.find.example.1  lib/list.mo:203:5
+passed List.find.example.2  lib/list.mo:204:5
+passed List.all?.example.1  lib/list.mo:216:5
+passed List.all?.example.2  lib/list.mo:217:5
+passed List.all?.example.3  lib/list.mo:218:5
+passed List.count.example.1  lib/list.mo:230:5
+passed List.count.example.2  lib/list.mo:231:5
+passed List.sort_by_desc.example.1  lib/list.mo:246:5
+passed List.sort_by_desc.example.2  lib/list.mo:247:5
+passed List.max.example.1  lib/list.mo:289:5
+passed List.max.example.2  lib/list.mo:290:5
+passed List.max.example.3  lib/list.mo:291:5
+passed List.test.1  lib/list.mo:307:1
+passed List.test.2  lib/list.mo:312:1
+passed List.test.3  lib/list.mo:320:1
+38 passed, 0 failed, 0 stopped
+==> mo test lib/map.mo
+passed Map.update.example.1  lib/map.mo:7:5
+passed Map.update.example.2  lib/map.mo:8:5
+2 passed, 0 failed, 0 stopped
+==> mo test lib/option.mo
+passed Option.or_fail.example.1  lib/option.mo:7:5
+passed Option.or_fail.example.2  lib/option.mo:8:5
+passed Option.map.example.1  lib/option.mo:20:5
+passed Option.map.example.2  lib/option.mo:21:5
+passed Option.map.example.3  lib/option.mo:22:5
+5 passed, 0 failed, 0 stopped
+==> mo test lib/read-files.mo
+passed ReadFiles.walk.example.1  lib/read-files.mo:9:5
+passed ReadFiles.walk.example.2  lib/read-files.mo:17:5
+passed ReadFiles.walk.example.3  lib/read-files.mo:19:5
+passed ReadFiles.walk.example.4  lib/read-files.mo:20:5
+4 passed, 0 failed, 0 stopped
+==> mo test lib/result.mo
+passed Result.map.example.1  lib/result.mo:7:5
+passed Result.map.example.2  lib/result.mo:8:5
+passed Result.map_error.example.1  lib/result.mo:20:5
+passed Result.map_error.example.2  lib/result.mo:21:5
+4 passed, 0 failed, 0 stopped
+==> mo test lib/set.mo
+passed Set.test.1  lib/set.mo:5:1
+passed Set.test.2  lib/set.mo:14:1
+passed Set.test.3  lib/set.mo:25:1
+passed Set.test.4  lib/set.mo:34:1
+passed Set.test.5  lib/set.mo:43:1
+passed Set.test.6  lib/set.mo:54:1
+passed Set.test.7  lib/set.mo:66:1
+passed Set.test.8  lib/set.mo:79:1
+passed Set.test.9  lib/set.mo:92:1
+passed Set.test.10  lib/set.mo:100:1
+passed Set.test.11  lib/set.mo:108:1
+passed Set.test.12  lib/set.mo:116:1
+passed Set.test.13  lib/set.mo:127:1
+passed Set.test.14  lib/set.mo:137:1
+passed Set.test.15  lib/set.mo:158:1
+15 passed, 0 failed, 0 stopped
+==> mo test lib/text.mo
+passed Text.test.1  lib/text.mo:5:1
+passed Text.test.2  lib/text.mo:16:1
+passed Text.test.3  lib/text.mo:22:1
+passed Text.test.4  lib/text.mo:32:1
+passed Text.test.5  lib/text.mo:38:1
+passed Text.test.6  lib/text.mo:51:1
+passed Text.test.7  lib/text.mo:59:1
+passed Text.test.8  lib/text.mo:68:1
+passed Text.test.9  lib/text.mo:80:1
+passed Text.test.10  lib/text.mo:95:1
+passed Text.test.11  lib/text.mo:105:1
+passed Text.test.12  lib/text.mo:114:1
+passed Text.test.13  lib/text.mo:121:1
+passed Text.test.14  lib/text.mo:132:1
+passed Text.test.15  lib/text.mo:140:1
+passed Text.test.16  lib/text.mo:160:1
+passed Text.test.17  lib/text.mo:176:1
+passed Text.test.18  lib/text.mo:199:1
+passed Text.test.19  lib/text.mo:214:1
+passed Text.test.20  lib/text.mo:219:1
+20 passed, 0 failed, 0 stopped
+==> mo test lib/time.mo
+passed Time.test.1  lib/time.mo:7:1
+passed Time.test.2  lib/time.mo:17:1
+passed Time.test.3  lib/time.mo:27:1
+passed Time.test.4  lib/time.mo:40:1
+passed Time.test.5  lib/time.mo:53:1
+passed Time.test.6  lib/time.mo:63:1
+passed Time.test.7  lib/time.mo:74:1
+passed Time.test.8  lib/time.mo:89:1
+passed Time.test.9  lib/time.mo:101:1
+passed Time.test.10  lib/time.mo:110:1
+passed Time.test.11  lib/time.mo:125:1
+passed Time.test.12  lib/time.mo:138:1
+passed Time.test.13  lib/time.mo:152:1
+passed Time.test.14  lib/time.mo:161:1
+passed Time.test.15  lib/time.mo:182:1
+15 passed, 0 failed, 0 stopped
+==> mo test lib/unicode16.mo
+passed Unicode16.test.1  lib/unicode16.mo:5:1
+passed Unicode16.test.2  lib/unicode16.mo:16:1
+passed Unicode16.test.3  lib/unicode16.mo:23:1
+passed Unicode16.test.4  lib/unicode16.mo:33:1
+passed Unicode16.test.5  lib/unicode16.mo:47:1
+passed Unicode16.test.6  lib/unicode16.mo:60:1
+passed Unicode16.test.7  lib/unicode16.mo:70:1
+passed Unicode16.test.8  lib/unicode16.mo:79:1
+passed Unicode16.test.9  lib/unicode16.mo:88:1
+9 passed, 0 failed, 0 stopped
+all 12 library files passed mo test
+(4 s)
+
+==> Bytecode text: repeated layout and BigInt conversion stay within work ceilings
+build/gcc/debug/tests/test_bytecode_text.test: record work passed in 0.21s (ceiling 10s)
+build/gcc/debug/tests/test_bytecode_text.test: case work passed in 0.37s (ceiling 10s)
+build/gcc/debug/tests/test_bytecode_text.test: bigint work passed in 1.31s (ceiling 10s)
+(2 s)
+
+==> Core code generation: deterministic writer-checked fixtures, corpora and generated programs
+codegen: build/gcc/debug/tests/test_codegen.test: 56 fixture/corpus inputs
+codegen corpus: 17 compiled deterministically; 0 explicitly unsupported; 0 lowering-impossible inputs skipped; 0 entry-name collisions; 0 resource limits; 39 not checked programs
+test_codegen corpus: all checks passed
+codegen corpus: 15 compiled deterministically; 0 explicitly unsupported; 0 lowering-impossible inputs skipped; 0 entry-name collisions; 0 resource limits; 0 not checked programs
+test_codegen corpus: all checks passed
+codegen corpus: 1707 compiled deterministically; 0 explicitly unsupported; 0 lowering-impossible inputs skipped; 0 entry-name collisions; 0 resource limits; 0 not checked programs
+test_codegen corpus: all checks passed
+codegen corpus: 0 compiled deterministically; 0 explicitly unsupported; 4 lowering-impossible inputs skipped; 0 entry-name collisions; 0 resource limits; 0 not checked programs
+test_codegen corpus: all checks passed
+codegen: build/gcc/debug/tests/test_codegen.test: 204 BigInt signs/magnitudes match Python
+codegen: all generated programs compiled; corpus coverage reported separately (1.64s)
+(2 s)
+
+==> Unicode 16: the pinned tables match the UCD files
+Unicode 16: source hashes and generated tables agree (261885 source bytes)
+(1 s)
+
+==> Unicode 16: UCD conformance and long-text work bounds
+Unicode 16: 1093 grapheme vectors, 19965 NFC rows (all five columns), full case/width data
+build/gcc/debug/tests/test_unicode16.test: letter/digit agree at all 1112064 scalars; 163656 Unicode calls agree; work 0.25s
+(2 s)
+
+==> The source formatter: reference, examples, library and good grammar are fixed points
+format corpus: 130 accepted inputs checked
+test_format: all checks passed
+(0 s)
+
+==> Every error code has a message test or reachability explanation (build/gcc/debug/mo)
+E1106 UNREACHABLE: parser-produced bodies cannot reach the conservative inference-frame bound; retain the defensive guard and registered code
+E1427 UNREACHABLE: checked source timer intervals are positive duration literals; runtime invalid-interval guard is defensive
+E1428 UNREACHABLE: mo serve exits when its supervisor stops the service, and the only other boundary refusal needs a request from before the last upgrade to outlive the commit deadline
+144 codes by message, 70 by unit test, 3 unreachable, of 217
+(15 s)
+
+==> Private state fetch (build/gcc/debug/mo)
+fetch: private state and failure artifacts, exact state during commits, identities/digests, lifecycle, proxy bypass and refusals passed
+(55 s)
+
+==> Offline history, replay and query (build/gcc/debug/mo)
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: offline history, replay and query checks passed
+(63 s)
+
+==> Task queue: simulation tests and the real service over loopback (build/gcc/debug/mo)
+Task queue: simulation, wire shapes, size limits, paging and recovery after kill -9 pass
+(91 s)
+
+==> The mo command: text/JSON goldens, argument matrix and JSON validity (build/gcc/debug/mo)
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: real source check/run/emission, statuses, limits and defects passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: map literal context, order, captures, abilities and duplicate keys passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: real source anchor truth, stops, bounds and nonexecution passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: source constant initialization, generic anchors and refusal boundaries passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: exact filename-byte execution, bytecode and anchor locations passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: source inventory, exact selections and list nonexecution passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: escaped captures, snapshots, stopped spans and codec roundtrips passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: imported aliases, observation owners, stopped spans and unused-import preflight passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: imported generic keys, caller proofs, source observations, stops and ability preflight passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: imported constants, composite retained values and initializer/preflight boundaries passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: CLI goldens, argument matrix and JSON validity passed
+(129 s)
+
+==> Every tracked Mo source: formatter idempotence, trees, check and execution (build/gcc/debug/mo)
+format corpus: 1170 accepted inputs checked
+test_format: all checks passed
+/home/exedev/code/mo-freeze-4/build/gcc/debug/mo: 1333 tracked .mo files, 1157 formatted, 176 unchanged refusals, 418 run comparisons, 322 modules without main, 217 golden input comparisons
+(366 s)
+
+==> Task queue: SIGKILL a real mo serve and reconcile what its client saw (build/gcc/debug/mo)
+kill loop: seed=20261110 kills=1000 mid_commit=73 folders=23 history_read=1000 history_recovery=73 calls=14768 answered=14036 refused=144 unknown=732 pushes=214 activated=69 invalid=89 push_kills=64 requested_push_kills=100 refusals={'E1426': 86, 'E1423': 1, 'E1417': 1, 'E1416': 1} requested_kills=1000 call_kills=935 requested_call_kills=935 post_migration_kills=1 internal_stage_coverage=unobserved result=pass seconds=2780
+(2780 s)
+
+==> mo check stays under 0.1 s on each sample (build/gcc/debug/mo)
+mo check, best of 5 runs, limit 0.100 s (build/gcc/debug/mo)
+  account.mo        0.0493 s
+  expenses.mo       0.0288 s
+  find.mo           0.0261 s
+  greet.mo          0.0249 s
+  inventory.mo      0.0292 s
+  job-queue.mo      0.0721 s
+  json-query.mo     0.0308 s
+  kv.mo             0.0568 s
+  notes-tool.mo     0.0471 s
+  rate-limit.mo     0.0527 s
+  todo.mo           0.0555 s
+  wc.mo             0.0273 s
+all 12 samples within 0.1 s
+
+==> All checks in drivers passed
+check.sh finished: pass
