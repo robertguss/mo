@@ -1,11 +1,13 @@
-# Live upgrade evidence — closing evidence passed, decision pending
+# Live upgrade evidence — Phase 5 closed, v0.2.0 released
 
 On one frozen build of merged main, the 1,000-kill drill passed, the production
 pause series met its 0.5-second margin, and experiment 4 scored 4/4 against its
 3/4 gate (see the last section). The earlier records below are unchanged: the
 first debug pause series missed its 2× margin, experiment 2 scored 0/4, and
-experiments 1 and 3 stopped. This is v0.2 preparation, not a release: no tag,
-deployment or phase closure is claimed. Robert decides closure and the release.
+experiments 1 and 3 stopped. Robert approved v0.2.0 and the close of Phase 5 on
+2026-11-11: annotated tag `v0.2.0` is `3b91e55b`, whose build inputs match the
+freeze, and the scanned evidence archive is attached to the
+`evidence-phase5-experiment4-2026-11-11` pre-release. No deployment is claimed.
 
 The repaired main commit is `814ddd0f70e5fd613130fe87a9cd24cd187af8e6`
 (PR #317). It was merged and independently verified before final collection;
@@ -428,6 +430,6 @@ dimension of every slot. Both publication scans were clean (66 files). The
 prompt is byte-identical to experiment 3's and the rehearsal's; experiment 2's
 prompt had an older final-answer wording. Records and evidence are in
 [experiment 4](../../learnability/phase5/results/experiment-4/README.md).
-Phase 5's closing conditions are met; closure and the v0.2 release are Robert's
-decision.
+Phase 5's closing conditions are met; Robert approved v0.2.0 and the close on
+2026-11-11.
 
