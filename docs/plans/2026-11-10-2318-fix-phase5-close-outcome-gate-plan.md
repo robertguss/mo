@@ -146,7 +146,7 @@ flowchart TB
 - No runtime upgrade behaviour changes.
 - Comparative or population-rate claims about agents are outside this work.
 - Considered and not built: a switch that lets the harness run with or without the tracer. One untraced path is all experiment 4 needs; a second path would need its own controls. A decision to run another traced experiment would change this.
-- Considered and not built: a tool that compares two whole freeze manifests. Every measured run sits on one freeze, and `evidence.py build-inputs --compare` already covers the carry-forward case in AE8.
+- Considered and not built: a tool that compares two whole freeze manifests. Every measured run sits on one freeze. If AE8's case arises, the `build_inputs`, `instruments` and `binaries` groups of the two manifests are compared by SHA-256, as `learnability/phase5/results/m6-freeze-2/carry-forward.json` records for experiment 2; `evidence.py build-inputs --compare` covers build inputs only.
 
 #### Deferred to Follow-Up Work
 
@@ -186,7 +186,7 @@ All file references below are to the harness as it stands on branch `phase5/free
 - KTD6. **The retained-bundle regrade becomes the independent regrade.** `protected_regrade.partial_regrade` already regrades state, identity and source tests from retained artifacts without a capture; it gains `final_answer` and stops hard-coding a miss. The sealed-trace `regrade` path is not used. Governs R16.
 - KTD7. **The freeze and publication tools become tracked code.** Experiment 3's freeze manifest and its publication both ran from untracked scripts under a gitignored `build/` folder, and `publish.py`'s command line cannot publish a graded session on its own. A disk cleanup already deleted `build/` once. Governs R10, R16.
 - KTD8. **The version becomes 0.2.0 before the freeze.** The version is a constant in two C files, so changing it after the freeze would make the released binary differ from the evaluated one. Phase 4's candidate reported `mo 0.1.0` at its freeze for the same reason. Governs R10, R19.
-- KTD9. **The dress rehearsal runs on the PR1 head, and the freeze proves tree equality.** PR1 is squash-merged, so the merged tree equals the rehearsed tree when the branch is current with `main`. The freeze step checks that equality instead of repeating the sessions. Governs R9, R10.
+- KTD9. **The dress rehearsal runs on the PR1 branch, and the freeze proves the rehearsed files are the frozen files.** The freeze step compares every file the freeze hashes between the rehearsed commit and merged `main`, instead of repeating the sessions. Files the freeze does not hash, such as the development record that U6 writes after the rehearsal, may differ. Governs R9, R10.
 - KTD10. **The drill and pause series run during the review wait.** R14 gates only the scored launch. Running the measured runs first also means a pause sample above 1 second is found before any scored session is spent. Governs R11, R12, R14.
 
 ### High-Level Technical Design
@@ -213,7 +213,7 @@ How each pass condition of R3 is graded, and what is recorded beside it.
 
 These are bets made without asking; each is cheap to change before PR1 merges.
 
-- PR1 is built on `phase5/freeze-3`, so the experiment 3 record and the harness change merge together. The branch stays on origin because experiment 3's candidate commit lives on it.
+- PR1 is built on `phase5/freeze-3`, so the experiment 3 record and the harness change merge together; F1's first step happens inside PR1 and is not a PR of its own. The branch stays on origin because experiment 3's candidate commit lives on it.
 - `main` reports `mo 0.2.0` from the PR1 merge until Robert decides the release (KTD8).
 - The prompt stays byte-identical. It still tells the agent to use `mo push`; the declaration states that grading credits either route.
 - Codex keeps the HTTP Responses transport and diagnostic logging that the recent sessions used, since they are what let it report a model.
@@ -233,7 +233,9 @@ PR1 merges first. The freeze is then taken on merged `main`, and everything in P
 | The installed `mo` cannot read its library as the session account, as on 2026-11-10 | U6 rehearses with the binary installed exactly as the freeze installs it |
 | A pause sample is slow on the shared host | R13 blocks only above 1 second; KTD10 finds it before the scored sessions |
 | A proxy recorder step needs a capture object to run | U1 removes only what fails without one |
-| PR1 drifts from `main` between rehearsal and merge | KTD9's tree-equality check fails and the rehearsal repeats |
+| A freeze-hashed file changes between rehearsal and merge | KTD9's comparison fails and the rehearsal repeats |
+| A cleanup of the ignored `build/` folder removes freeze evidence mid-run, as on 2026-11-10 | U7 keeps the freeze folder until U8 has copied it into the repository |
+| Another PR merges to `main` between the freeze and slot 4, and `harness.freeze` then refuses to launch | Nothing else merges in that window; the wait for Robert's approval is the only pause inside it |
 
 ### Open Questions
 
@@ -265,11 +267,13 @@ Waits on: nothing.
 - **Approach:**
   1. Replace the `TraceRun` launch in `collect_locked` with the launch pattern from `learnability/phase4/harness.py`: session-user switch, output to files, TERM then KILL at the limit.
   2. Write the client's stdout as the stream and keep its raw stderr in the private session folder; the public stderr stays stripped of diagnostic lines as today.
-  3. Stop constructing the capture object; adjust the proxy recorder only where it fails without one.
-  4. Leave the Codex and Claude command lines as they are.
+  3. Carry both `QUEUE_TOKEN` and `QUEUE_UPGRADE` through the user switch. `TraceRun` preserved both; the Phase 4 launch preserves only the first, and the Phase 5 entry wrapper reads the second.
+  4. Stop constructing the capture object; adjust the proxy recorder only where it fails without one.
+  5. Leave the Codex and Claude command lines as they are.
 - **Patterns to follow:** `learnability/phase4/harness.py` client launch; the existing `public_stderr` filter.
 - **Test scenarios:**
   - Stub client, normal exit: the stream file and both stderr files exist, and no trace folder is created.
+  - Stub client launched through the real entry wrapper: it sees the service credential and both upgrade credential variables.
   - Stub client that exceeds the limit: the client is killed, the session records a timeout and counts as launched.
   - Codex stub with diagnostic stderr lines: the private copy keeps them and the public copy has none.
   - The built Codex command still carries `danger-full-access`, and no built command contains `strace`.
@@ -310,8 +314,9 @@ Waits on: nothing.
   1. Copy the two untracked experiment 3 scripts out of the gitignored `build/freeze-3/` folder of the `phase5/freeze-3` checkout before any other step.
   2. Make the retained bundle the only bundle a scored session writes, and make `partial_regrade` return the four-dimension verdict with the final evidence class.
   3. Change `publish.py` to validate the four dimensions and to pass the regrade callback from its own command line, taking the experiment folder as input.
-  4. Add a `freeze` subcommand to `learnability/phase5/evidence.py` that writes the manifest `harness.freeze` reads, with the same artifact groups the experiment 3 script hashed.
-  5. Leave `evidence.py gate` as it is; it already reads only `correct`, slot order and the scan result.
+  4. Add a `freeze` subcommand to `learnability/phase5/evidence.py` that writes the manifest `harness.freeze` reads. It hashes the artifact groups the experiment 3 script hashed, plus the `instruments` and `binaries` groups of `learnability/phase5/results/m6-freeze-2/manifest.json`: the drill and pause instruments and the debug and optimised measurement binaries. `measure_pause.py --freeze` refuses a manifest without those binaries.
+  5. In `harness.freeze`, replace the required control `proxy_attestation` with one for the accepted commit in the proxy record, since U2 removes the trace-proven attestation.
+  6. Leave `evidence.py gate` as it is; it already reads only `correct`, slot order and the scan result.
 - **Patterns to follow:** `protected_regrade.partial_regrade`; `evidence.py build-inputs`; the existing publish stage, scan, archive, extract and rescan sequence.
 - **Test scenarios:**
   - Retained bundle of a passing stub session: the regrade reproduces four true dimensions and matches the live verdict.
@@ -322,6 +327,8 @@ Waits on: nothing.
   - Covers AE5. Gate input with two Codex passes and two Claude misses: the gate reports a miss.
   - Gate input with three passes including one per client: the gate reports a pass.
   - `evidence.py freeze` then one changed harness file: `harness.freeze` rejects the manifest.
+  - A manifest from `evidence.py freeze` lists both measurement binaries and each drill and pause instrument.
+  - A controls file missing the proxy commit control: `harness.freeze` rejects the manifest.
   - The collector suite's stub cases assert the four dimensions and no trace artifacts.
 - **Verification:** The full collector suite passes on stub clients with no file outside the repository involved in freezing or publishing.
 
@@ -363,7 +370,8 @@ Waits on: nothing.
   1. Install `mo` from the PR1 head exactly as the freeze will, and confirm the session account can compile the fixture.
   2. Run the grader's reference and wrong-outcome controls.
   3. Run one development session per client, outside any denominator, and regrade each with the U3 path.
-  4. Record every run in the development record, including failures. A failure sends the work back to the unit that owns the defect, and the pair runs again.
+  4. Write the controls file that `harness.freeze` requires from these runs and the collector suite; each flag is true only if its run passed.
+  5. Record every run in the development record, including failures. A failure sends the work back to the unit that owns the defect, and the pair runs again.
 - **Test scenarios:** Test expectation: none -- this unit is the live proof for U1 to U3.
 - **Verification:** Both development sessions pass all four dimensions live and on regrade, with no change made between the launch and the regrade.
 
@@ -376,13 +384,15 @@ Waits on: PR1, needed before this group can start because the freeze is taken on
 - **Goal:** One frozen build has a passed drill, a published pause series, a clean independent review and Robert's approval.
 - **Requirements:** R10, R11, R12, R13, R14; KTD9, KTD10.
 - **Dependencies:** U6, and PR1 merged.
-- **Files:** `learnability/phase5/results/experiment-4/`, `docs/status/phase5-run.md`.
+- **Files:** `build/freeze-4/`, which is gitignored and machine-local until U8 copies it.
 - **Approach:**
-  1. Confirm the merged tree equals the rehearsed PR1 head, then write the freeze manifest with `evidence.py freeze`.
-  2. Start the independent freeze review.
-  3. Run the drill as `learnability/phase5/collection.md` declares it, then the pause series with `measure_pause.py --freeze`.
-  4. Apply R13 to the pause samples and stop here if the drill fails or any sample exceeds 1 second.
-  5. Ask Robert for the launch approval with the review result and both measured results in hand.
+  1. Compare the freeze-hashed files between the rehearsed commit and merged `main`, per KTD9.
+  2. Obtain an independent check of the merged commit's `gcc` result and write the verification file that `harness.freeze` requires.
+  3. Write the freeze manifest with `evidence.py freeze`. Keep the manifest, its evidence files and every measured output under `build/freeze-4/` until slot 4 ends: `harness.freeze` refuses a checkout with any untracked or changed file.
+  4. Start the independent freeze review.
+  5. Run the drill as `learnability/phase5/collection.md` declares it, then the pause series with `measure_pause.py --freeze`.
+  6. Apply R13 to the pause samples and stop here if the drill fails or any sample exceeds 1 second.
+  7. Ask Robert for the launch approval with the review result and both measured results in hand.
 - **Execution note:** The drill takes about 48 minutes; start it detached and wait as `AGENTS.md` describes.
 - **Test scenarios:** Test expectation: none -- measured runs on frozen inputs.
 - **Verification:** The drill reports no accepted message lost or duplicated, every pause sample is recorded with the freeze digest, and the approval is recorded with its date.
@@ -393,7 +403,7 @@ Waits on: PR1, needed before this group can start because the freeze is taken on
 - **Requirements:** R2, R8, R16, R17.
 - **Dependencies:** U7.
 - **Files:** `learnability/phase5/results/experiment-4/`.
-- **Approach:** Run slots 1 to 4 in order with no change between them. Regrade and publish with the U3 command line, then run `evidence.py gate` on the published record.
+- **Approach:** Run slots 1 to 4 in order with no change between them. Regrade and publish with the U3 command line, then run `evidence.py gate` on the published record. After slot 4, copy the freeze manifest, its evidence files and the measured outputs from `build/freeze-4/` into `learnability/phase5/results/experiment-4/`.
 - **Test scenarios:**
   - Covers AE7. A harness defect seen after slot 1 launches: no file changes, no slot is replaced, and the record names the defect.
 - **Verification:** The published record holds four slots, both scans are clean, and the gate result is stated with each client's subtotal.
