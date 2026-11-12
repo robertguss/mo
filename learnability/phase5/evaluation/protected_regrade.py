@@ -1,5 +1,4 @@
 """Private replay of collector inputs. No model or publication qualification."""
-from trace_storage import TraceLines
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -10,10 +9,7 @@ import tempfile
 
 import grade
 import harness
-import origin_observer
 import pinned as identity
-import origin_trace
-import proxy
 import replay_bundle
 
 
@@ -22,56 +18,6 @@ def launch_binding(manifest):
     return dict(collection_id=launch.get('collection_id'), started_at=launch.get('started_at'),
                 execution_clean=(launch.get('launched') is True and
                     launch.get('timeout') is False and launch.get('failures') == []))
-
-
-class ReplayReceipt:
-    """Constructed exclusively from a verified private bundle and trusted binding."""
-    def __init__(self, root, session_id, session_uid):
-        self.root = Path(root)
-        self.manifest = replay_bundle.verify(root, session_id, session_uid)
-        self.session = session_id
-        self.uid = session_uid
-
-    def consume(self, session_id, *, evaluation_endpoint=None):
-        if session_id != self.session:
-            identity.reject()
-        m = replay_bundle.verify(self.root, self.session, self.uid)
-        p = m['provenance']
-        if p.get('runtime_valid') is not True: identity.reject()
-        if evaluation_endpoint is not None and evaluation_endpoint != p['evaluation_endpoint']:
-            identity.reject()
-        if p['loader'] is not None and identity.protected(p['loader']['path'], os.geteuid(), self.uid)[0] != p['loader']:
-            identity.reject()
-        for pin in p['mappings'].values():
-            if pin == p['capture']['binary']: continue
-            if identity.protected(pin['path'], os.geteuid(), self.uid)[0] != pin:
-                identity.reject()
-        raw = TraceLines(self.root / 'trace')
-        snapshot = json.loads((self.root / 'tcp_snapshot').read_bytes())
-        if (snapshot['session'] != self.session or snapshot['nonce'] != p['capture']['nonce']
-                or snapshot['trace_sha256'] != m['files']['trace']['retained']['sha256']):
-            identity.reject()
-        parsed = origin_trace.parse_trace(raw, session_id=self.session,
-            tcp_snapshots=snapshot['snapshots'], evaluation_endpoint=p['evaluation_endpoint'],
-            channels={k: p['capture'][k]['path'] for k in ('stdout', 'stderr') if k in p['capture']} or None)
-        integrity = origin_observer.process_integrity(raw)
-        for direction in ('requests', 'responses'):
-            for receipt in parsed[direction]:
-                sender = receipt['sender']
-                argv = sender.get('exec_argv') or []
-                mappings = sender.get('executable_mappings', [])
-                valid = all(path in p['mappings'] for path in mappings)
-                receipt['verified_push_identity'] = bool(
-                    sender['exec_path'] == p['capture']['binary']['path']
-                    and len(argv) > 1 and argv[1] == 'push'
-                    and sender.get('loader_context_clean') and valid
-                    and (p['loader'] is None or mappings)
-                    and integrity['process_completeness_verified'] is True)
-        return dict(integrity=integrity, trace=parsed,
-            proxy_rows=proxy.base.entries(self.root / 'proxy_log'),
-            stdout=(self.root / 'stdout').read_bytes(),
-            stderr=(self.root / 'stderr').read_bytes() if 'stderr' in m['files'] else None,
-            client_path=p['capture']['client_path'], qualified=False)
 
 
 def reconstruct(root, manifest, work):

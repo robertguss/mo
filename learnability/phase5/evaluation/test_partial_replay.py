@@ -1,11 +1,28 @@
+import json
+import os
+from pathlib import Path
+import shutil
+import tempfile
 import unittest
+from unittest.mock import patch
+import pinned
 import replay_bundle
 import protected_regrade
-import origin_identity
-from test_origin_identity import IdentityTests
 
 
-class PartialTests(IdentityTests):
+class PartialTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=Path.home())
+        self.root = Path(self.tmp.name)
+        self.session = 'session-one'
+        self.uid = 65534 if os.getuid() != 65534 else 65533
+        self.trace = self.root / 'trace'
+        self.trace.write_text('dummy retained file\n')
+        self.trace.chmod(0o600)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
     def partial(self):
         b = replay_bundle.PartialBundle(self.root / 'partial', self.session, self.uid)
         b.finish(dict(launched=True, development=True, slot=1, client='codex',
@@ -47,7 +64,6 @@ class PartialTests(IdentityTests):
                 session_uid=self.uid, workspace_parent=self.root)
 
     def test_malformed_partial_rejected(self):
-        import json
         b = self.partial()
         path = b.root / 'manifest.json'
         m = json.loads(path.read_text())
@@ -55,13 +71,11 @@ class PartialTests(IdentityTests):
             broken = json.loads(json.dumps(m))
             del broken['launch'][key]
             path.unlink()
-            origin_identity.atomic_private(path, broken)
+            pinned.atomic_private(path, broken)
             with self.subTest(key=key), self.assertRaises(ValueError):
                 replay_bundle.verify(b.root, self.session, self.uid)
 
     def test_source_checks_use_retained_inputs(self):
-        import shutil
-        from pathlib import Path
         for executable, expected in (('/bin/true', True), ('/bin/false', False)):
             with self.subTest(executable=executable):
                 root = self.root / ('pass' if expected else 'fail')
@@ -70,8 +84,8 @@ class PartialTests(IdentityTests):
                 binary.write_bytes(Path(executable).read_bytes())
                 binary.chmod(0o555)
                 b.add('binary', binary, executable=True)
-                loader = origin_identity.interpreter((root / 'binary').read_bytes())
-                b.facts['loader'] = origin_identity.trusted_interpreter(loader, b.collector, b.uid)
+                loader = pinned.interpreter((root / 'binary').read_bytes())
+                b.facts['loader'] = pinned.trusted_interpreter(loader, b.collector, b.uid)
                 b.add('loader', b.facts['loader']['path'], expected=b.facts['loader'])
                 source = self.root / ('source-pass' if expected else 'source-fail')
                 source.mkdir()
@@ -87,7 +101,6 @@ class PartialTests(IdentityTests):
                 b.finish(dict(launched=True, development=True, slot=1, client='codex',
                               timeout=True, cleanup_zero_processes=True, firewall_restored=True))
                 shutil.rmtree(source)
-                from unittest.mock import patch
                 with patch.object(protected_regrade.grade, 'stopped_grade', return_value={
                         'dimensions': {'task_state': expected, 'activation_identity': False, 'final_answer': False},
                         'reasons': []}) as stopped:
@@ -98,3 +111,8 @@ class PartialTests(IdentityTests):
                 self.assertIs(verdict['dimensions']['source_tests'], expected)
                 self.assertIs(verdict['dimensions']['final_answer'], False)
                 self.assertFalse(verdict['correct'])
+
+    def test_integration_order(self):
+        source = Path(__file__).with_name('harness.py').read_text()
+        self.assertLess(source.index("('state', out / 'data')"), source.index("cleanup('grading'"))
+        self.assertIn("partial.facts['live_observations'] = raw_live", source)

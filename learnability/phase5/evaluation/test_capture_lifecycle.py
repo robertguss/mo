@@ -1,89 +1,8 @@
 """Bounded failure controls for collector lifecycle; no model sessions."""
 import pathlib
-import subprocess
-import sys
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
-import origin_observer
-
-
-class TracerFailures(unittest.TestCase):
-    def test_normal_root_exit_cleans_descendant_without_timeout(self, force_wait=False):
-        import os
-        import signal
-        with tempfile.TemporaryDirectory() as tmp:
-            root = pathlib.Path(tmp)
-            pidfile = root / 'descendant'
-            script = ('import os,time,pathlib; pid=os.fork(); '
-                      'pathlib.Path(' + repr(str(pidfile)) + ').write_text(str(pid)) if pid else time.sleep(30)')
-            def cleanup():
-                os.kill(int(pidfile.read_text()), signal.SIGTERM)
-            run = origin_observer.TraceRun(root / 'capture')
-            start = time.monotonic()
-            real = subprocess.Popen
-            def launch(*args, **kwargs):
-                child = real(*args, **kwargs)
-                if args[0][0] == 'strace' and force_wait:
-                    original = child.wait
-                    fired = False
-                    def wait(timeout=None):
-                        nonlocal fired
-                        if timeout == 5 and not fired:
-                            fired = True
-                            raise subprocess.TimeoutExpired('injected drain', timeout)
-                        return original(timeout=timeout)
-                    child.wait = wait
-                return child
-            with patch.object(origin_observer.subprocess, 'Popen', launch):
-                result = run.run([sys.executable, '-c', script], timeout=15, cleanup=cleanup)
-            self.assertLess(time.monotonic()-start, 10)
-            self.assertFalse(result['timed_out'])
-            self.assertEqual(result['returncode'], 0)
-            if not force_wait:
-                self.assertTrue(result['process_completeness_verified'], result)
-            import gzip
-            raw = gzip.decompress((run.directory/'trace').read_bytes())
-            self.assertEqual(len(raw), result['decoded_trace']['bytes'])
-
-    def test_root_drain_timeout_still_finishes_compression(self):
-        self.test_normal_root_exit_cleans_descendant_without_timeout(force_wait=True)
-
-    def test_compressor_exits_before_fifo_open(self):
-        real = subprocess.Popen
-        launched = []
-        def launch(args, **kwargs):
-            if args[0] == sys.executable:
-                args = [sys.executable, '-c', 'raise SystemExit(7)']
-            child = real(args, **kwargs)
-            launched.append(child)
-            return child
-        with tempfile.TemporaryDirectory() as tmp, patch.object(origin_observer.subprocess, 'Popen', launch):
-            run = origin_observer.TraceRun(pathlib.Path(tmp) / 'capture')
-            start = time.monotonic()
-            with self.assertRaisesRegex(RuntimeError, 'compressor|compression'):
-                run.run(['/bin/true'], timeout=30)
-            self.assertLess(time.monotonic() - start, 12)
-            self.assertTrue(all(p.poll() is not None for p in launched))
-            self.assertFalse((run.directory / 'trace.fifo').exists())
-
-    def test_timeout_cleanup_exception_still_reaps_tracer(self):
-        real = subprocess.Popen
-        launched = []
-        def launch(*args, **kwargs):
-            child = real(*args, **kwargs)
-            launched.append(child)
-            return child
-        def fail_cleanup():
-            raise RuntimeError('cleanup injected')
-        with tempfile.TemporaryDirectory() as tmp, patch.object(origin_observer.subprocess, 'Popen', launch):
-            run = origin_observer.TraceRun(pathlib.Path(tmp) / 'capture')
-            with self.assertRaisesRegex(RuntimeError, 'cleanup injected'):
-                run.run(['/bin/sleep', '30'], timeout=.1, cleanup=fail_cleanup)
-            self.assertTrue(all(p.poll() is not None for p in launched))
-            self.assertTrue(run.timed_out)
-            self.assertFalse((run.directory / 'trace.fifo').exists())
 
 
 class CollectorFailures(unittest.TestCase):
