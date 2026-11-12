@@ -19,8 +19,6 @@ Phases 0 to 5 are finished. Robert approved v0.2.0 and the close of Phase 5 on
 2026-11-11; annotated tag `v0.2.0` is `3b91e55b` and matches the evaluation
 freeze's build inputs.
 
-## Now
-
 Phase 5 follows the approved [whole-program upgrade design](design/upgrades.md).
 Typed migration checking, checked restart, offline rehearsal, live activation,
 credential-gated MCP upgrade tools and loopback `mo push` are implemented.
@@ -31,6 +29,8 @@ session on the outcome of its upgrade; experiments 1 to 3, the earlier 0/4 and t
 earlier debug pause margin miss stay published unchanged. Robert approved v0.2.0
 on 2026-11-11 (tag `v0.2.0` at `3b91e55b`). See
 the [run record](status/phase5-run.md) and [release preparation notes](releases/v0.2-preparation.md).
+
+## Now
 
 Phase 4, Agents can see inside it. Operator views, state export, failure capture and offline diagnosis are implemented. The diagnostic evaluation passed its declared gate: 14 of 16 correct, including two timing-defect misses. Robert approved v0.1.0 and the squash merge of PR #308 on 2026-11-07. Results and limits are in [the run record](status/phase4-run.md).
 
@@ -76,7 +76,7 @@ Parked until a phase needs them: generated function-valued inputs in
 spinning when file descriptors run out, which did not reproduce in the kill
 loop; smaller `mo fix` edits for service adapters; the checker crash
 on an interpolated `stop`; gcc sanitize, fuzz and a bounded arena proof in the
-nightly; running a `.bc` file that `mo emit` wrote (Phase 5); `mo test
+nightly; running a `.bc` file that `mo emit` wrote; `mo test
 --strength` (Phase 6); Fil-C compatibility (Phase 7).
 
 ## Alongside every phase

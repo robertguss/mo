@@ -5,7 +5,7 @@ Guidance for coding agents (Claude Code, Codex, Cursor and others) working in th
 
 ## What this is
 
-Mo is a pre-release language and runtime for "living software", designed for agents first. The
+Mo is a language and runtime for "living software" at v0.2.0, designed for agents first. The
 toolchain is one C17 program, `mo` (`check`, `run`, `test`, `format`, `fix`), that compiles a whole
 program from source to bytecode and runs it on its own VM. Commit and PR titles say what the
 change does. Older commits and documents cite decisions as `D2xx` and tasks as `MO-NN`; neither

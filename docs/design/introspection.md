@@ -1150,8 +1150,9 @@ The numbers and the commands are in `learnability/phase4/offline/results/verific
 
 ## Proposed whole-program upgrades
 
-[The upgrade design](upgrades.md) specifies the next phase; it is not implemented
-or approved. Current behavior above remains the shipped contract. Activation
+**2026-11-11:** The upgrade design in [upgrades.md](upgrades.md) was implemented
+and released in v0.2.0; Phase 5 is closed. Evidence: [run record](../status/phase5-run.md).
+Current behavior above remains this document's shipped contract. Activation
 will atomically record the source bundle, migrated snapshot and program identities,
 with a version-2 folder that old readers refuse. The new upgrade operator tools
 change the service and require a separate credential. A compiler child limits
