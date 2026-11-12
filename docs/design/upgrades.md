@@ -464,7 +464,7 @@ These are implementation gates, not claims about the current binary.
 | Store failure | Confirmed rollback continues old service; uncertain commit stops and restart resolves one consistent state |
 | New compiler build | Recorded source recompiles; changed image requires verified replay before serving |
 | Non-loopback client destination | Refuse before reading either credential |
-| Kill drill and agent evaluation | Reconcile acknowledged messages; publish every miss and leave phase open below the declared gate |
+| Kill drill and agent evaluation | Reconcile acknowledged messages; publish every miss. **2026-11-11:** experiments 1–3 missed the gate; experiment 4 passed 4/4; Phase 5 closed. |
 
 ## Remote operator decisions
 
