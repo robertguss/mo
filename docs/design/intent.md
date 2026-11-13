@@ -176,9 +176,9 @@ queue's intent is strengthened, so fixes to `fail`'s logic stop waiting.
 Everything else stays: a builder or a type changes what anchors mean.
 
 Known limits of the identity: an example row passes arguments by position, so a
-reorder of two parameters of one type, with every call updated, leaves a row's
-text and digest unchanged and changes which case it checks; when the row still
-passes, the change activates. A change to a library module or the toolchain can
+reorder of two parameters of one type that updates every call except the example
+rows leaves a row's text and digest unchanged and changes which case it checks;
+when the row still passes, the change activates. A change to a library module or the toolchain can
 change what an item means with its digest unchanged.
 
 ## Promise strength
@@ -208,7 +208,10 @@ The review setting is `everything` or `intent`. A service starts on
 `everything`, and only Robert changes it. Under `everything` every upgrade waits
 for him. Under `intent` an upgrade whose candidate carries every approved digest
 of the active program, and which names no migration, activates without a
-person; any other upgrade waits.
+person; any other upgrade waits. A candidate carries an approved digest only
+when the item's owner is still called from one of the service's tools, timers
+or its state initializer, so a handler that stops calling an approved function
+waits like a removed item.
 
 The review record keeps every decision: activated without a person, held,
 replaced, made stale, answered yes or no, refused after a yes, a checked
@@ -310,8 +313,10 @@ The door decides on the event loop after the checks return, from values read at
 that moment: the active program's digest and items, the review setting and the
 approval-set version. A base that changed meanwhile is the existing stale-base
 refusal, E1416. The upgrade activates when the setting is `intent`, every
-approved digest of the active program is among the candidate's items, and the
-push names no migration. Otherwise it is held. A later change of the setting
+approved digest of the active program is among the candidate's items and its
+owner is reached from the service, and the push names no migration. Otherwise
+it is held. The intent difference marks an approved item whose owner is no
+longer reached `not reached`. A later change of the setting
 never decides an upgrade already held.
 
 ```mermaid
@@ -323,10 +328,10 @@ stateDiagram-v2
   Checking --> Refused: a check fails, or the plan does not finish
   Checking --> Deciding: checks pass, item list reported
   Deciding --> Refused: base changed meanwhile
-  Deciding --> Activating: intent setting, every approved digest present, no migration
+  Deciding --> Activating: intent setting, every approved digest present and reached, no migration
   Deciding --> Held: any other case
   Held --> Rechecking: yes that names the review id
-  Held --> Dropped: no, replaced by a later held push, or another activation
+  Held --> Dropped: no, replaced by a later held push, another activation, or an approval
   Rechecking --> Activating: compiles and passes again
   Rechecking --> Refused: fails on this build
   Activating --> Active: one transaction writes program, items, approvals and record
@@ -346,8 +351,8 @@ owner that the active program lacks, marked `added`. Declarations an item reads
 are shown with the item. The code difference comes after, from the two source
 trees.
 
-A service holds one pending upgrade. A later held push replaces it, any
-activation makes it stale, and both are recorded. Robert's answer names the
+A service holds one pending upgrade. A later held push replaces it, and any
+activation or other write to `approvals` makes it stale; each is recorded. Robert's answer names the
 review id; the service recomputes it and acts only on an exact match, otherwise
 it replies E1435 with the current review id and changes nothing. With nothing
 pending the answer is E1436.
@@ -356,7 +361,9 @@ pending the answer is E1436.
   then activates it at the next boundary through Phase 5's activation
   transaction. The same transaction approves every candidate item the review
   showed, edited and added, and retires the approved digests the candidate
-  lacks.
+  lacks. If the base or the approval-set version changed while it was
+  rechecked, the upgrade is stale instead and the answer is recorded as refused
+  after a yes.
 - **No** drops the pending upgrade and records the answer.
 
 A restart keeps the pending upgrade. An upgrade that activates without a person
@@ -367,9 +374,9 @@ leaves its added items unapproved until Robert approves them.
 `mo serve FILE --data DIR --upgrade [--migrate M] [--review ID]` goes through the
 same decision. It runs the candidate's checks under the door's plan and refuses
 a failed or unfinished run with E1433 or E1432. It then computes the same intent
-difference. When an approved item changed or a migration is named, it prints the
-difference and the review id and refuses with E1435, unless `--review` names
-that id. It always writes a decision row and drops a pending upgrade as stale.
+difference. When the decision would hold a push, under either setting, it
+prints the difference and the review id and refuses with E1435, unless
+`--review` names that id. It always writes a decision row and drops a pending upgrade as stale.
 The review id here shows that the operator saw the change; it is no authority
 check, since a shell on the host is the stated limit.
 
@@ -382,7 +389,7 @@ check, since a shell on the host is the stated limit.
 | E1432 | The plan did not finish: `mo test` of a service, a strength run, or the door's checks |
 | E1433 | The door's checks failed; the report names the failing item |
 | E1434 | `mo serve` has the upgrade credential without the approval credential, or two secrets are equal |
-| E1435 | The review id does not match the pending upgrade; the reply gives the current one |
+| E1435 | The review id does not match the pending upgrade, or a checked restart that would be held names no matching `--review`; the reply gives the current one |
 | E1436 | No upgrade is pending |
 | E1437 | The review record is full |
 
@@ -397,12 +404,12 @@ EPYC 9554P, 31 GiB), on the debug build the task queue was deployed with
 
 | The task queue's checks | Wall | CPU | Peak RSS |
 | --- | --- | --- | --- |
-| `mo check` | 0.08–0.12 s | 0.07–0.11 s | 28 MB |
-| 200 sequences, no service promises | 2.8–3.7 s | 2.7–3.2 s | 28 MB |
-| 200 sequences, three service promises | 3.0–3.2 s | 3.0–3.1 s | 28 MB |
-| 1,000 sequences, no service promises | 14.9–16.3 s | 14.9–16.2 s | 28 MB |
-| 1,000 sequences, three service promises | 17.0–18.0 s | 17.0–17.6 s | 28 MB |
-| `queue-tests.mo`, not imported by `main.mo` | 66.1 s | 66.0 s | 37 MB |
+| `mo check` | 0.08–0.15 s | 0.07–0.12 s | 28 MB |
+| 200 sequences, no service promises | 2.7–2.9 s | 2.7–2.9 s | 28 MB |
+| 200 sequences, three service promises | 3.0–3.1 s | 3.0–3.1 s | 28 MB |
+| 1,000 sequences, no service promises | 14.5–16.2 s | 14.5–15.9 s | 28 MB |
+| 1,000 sequences, three service promises | 16.0–16.2 s | 15.9–16.1 s | 28 MB |
+| `queue-tests.mo`, not imported by `main.mo`, so outside the door | 65.2 s | 65.1 s | 37 MB |
 
 Declared:
 
@@ -411,8 +418,8 @@ Declared:
 | `MO_DOOR_PLAN_INPUTS` | 200 inputs per function promise | Today's default |
 | `MO_DOOR_PLAN_SEQUENCES` | 1,000 sequences per service | Five times today's default: the door checks the same sequences on every push, so the size of that fixed set is its only coverage |
 | `MO_LIMIT_CHECK_MEMORY` | 1 GiB address space | As the compile child; peak was 28 MB |
-| `MO_LIMIT_CHECK_CPU_SECONDS` | 120 | 6.8 times the slowest run |
-| `MO_LIMIT_CHECK_WALL_US` | 180 seconds | 10 times the slowest run; with the compile child's 15 seconds it stays far inside the 600 seconds after which `mo push` gives up (`MO_LIMIT_FETCH_US`) |
+| `MO_LIMIT_CHECK_CPU_SECONDS` | 120 | 7.4 times the slowest check the door runs (1,000 sequences) |
+| `MO_LIMIT_CHECK_WALL_US` | 180 seconds | 11 times the slowest check the door runs; with the compile child's 15 seconds it stays far inside the 600 seconds after which `mo push` gives up (`MO_LIMIT_FETCH_US`) |
 | `MO_LIMIT_SERVICE_PROMISES` | 64 per service | About 0.5 ms per promise per sequence here |
 | `MO_LIMIT_REVIEW_RECORDS` | 65,536 rows | The live stage is expected to use hundreds |
 
@@ -453,6 +460,9 @@ rule for every service behind the door.
   outside them passes every time.
 - A reorder of same-typed parameters can change what a positional example row
   checks without changing its digest (Intent items).
+- A handler that still calls an approved function but ignores or undoes its
+  result keeps the item reached and its digest unchanged. Service promises over
+  the service's state are what catch that.
 - Tests are not approved intent; an agent can change them freely.
 
 ## Models and proof obligations

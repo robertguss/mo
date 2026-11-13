@@ -48,7 +48,7 @@ check "$new" mutant-finished prototype-mutant-finished
 check "$new" mutant-submit prototype-mutant-submit
 check "$old" original baseline-original
 check "$new" original prototype-original
-cmp "$out/prototype-faulty-1.txt" "$out/prototype-faulty-2.txt" && echo "identical" >"$out/determinism.txt"
+if cmp -s "$out/prototype-faulty-1.txt" "$out/prototype-faulty-2.txt"; then echo identical; else echo different; fi >"$out/determinism.txt"
 
 : >"$out/cost.txt"
 for run in 1 2 3; do

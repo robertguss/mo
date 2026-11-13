@@ -18,13 +18,13 @@ walks the checked program it returns.
 | `identity.c` | The prototype. Usage: `identity ENTRY.mo LIBRARY-FOLDER`. Prints JSON. |
 | `run.sh` | Builds `mo` and the prototype, digests the service and each variant, runs `mo test` on each, and writes `out/`. Takes about 10 minutes, because each debug `mo test` run takes about a minute. |
 | `compare.py` | Compares each variant's JSON with `out/base.json` and prints `out/table.md`. |
-| `variants/*.patch` | The variants, as unified diffs against `services/task-queue`. `run.sh` applies each one to a fresh copy under `build/identity/runs/`. |
+| `variants/*.patch` | The variants, as unified diffs against `services/task-queue`. `run.sh` applies each one to a fresh copy of it. |
 | `out/<variant>.json` | Raw prototype output: each item with its name, kind, subject, line, reach, digests for three text rules × two flavours, canonical own text and subject signature, plus the text of every declaration reached. |
 | `out/<variant>.test.txt` | The `mo test` exit status, the name of each failed check, and the summary line. |
 | `out/table.md` | The variant tables below, as `compare.py` printed them. |
 
-To reproduce everything, run `bash learnability/phase6/preflight/identity/run.sh` from any
-clean checkout of 02822786 that has this folder.
+To reproduce everything, run `bash learnability/phase6/preflight/identity/run.sh`. It
+exports 02822786 from git into a temporary folder and builds there.
 
 ## What the prototype computes
 

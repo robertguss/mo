@@ -28,7 +28,7 @@ of host.
   check passes it. The prototype fails it on the first sequence, shrunk to four
   steps ending in the restart, and two runs print identical output.
 - Two more planted faults each break one of the other guarantees.
-- Cost at a fixed 200 sequences: 2.6 s without promises, 2.9 s with three, the
+- Cost at a fixed 200 sequences: 2.7 s without promises, 3.0 s with three, the
   same 28 MB peak.
 - Mo Core and Lean refuse a promise function with no subject
   (`src/core/metadata.c:247`, `formal/MoCore/Metadata.lean:63`); the bytecode
@@ -59,12 +59,13 @@ Built from 02822786 with the service-promise patch, the task queue's checks
 under a plan fixed by counts (`--seconds 100000`, so no clock cuts them short):
 
 - `mo check`: 0.1 s.
-- 200 sequences: 2.8 to 3.7 s without service promises, 3.0 to 3.2 s with three.
-- 1,000 sequences: 14.9 to 16.3 s without, 17.0 to 18.0 s with three. Every run
+- 200 sequences: 2.7 to 2.9 s without service promises, 3.0 to 3.1 s with three.
+- 1,000 sequences: 14.5 to 16.2 s without, 16.0 to 16.2 s with three. Every run
   peaked at 28 MB.
 - `queue-tests.mo`, which `main.mo` does not import and a push therefore does
-  not carry: 66 s, 64 s of it in the test that fills the queue to 5,000 jobs.
+  not carry: 65 s.
 - Today's default 2-second cap stopped the recovery check after 173 of its 200
-  sequences and reported a pass.
+  sequences and exited 0, a pass.
+- Every timed run exited 0; `timing.txt` records each exit status.
 
 The limits declared from these numbers are in the design's Limits section.

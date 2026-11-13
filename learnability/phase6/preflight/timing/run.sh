@@ -26,9 +26,10 @@ measure() { # label repeats command...
     local label=$1 repeats=$2
     shift 2
     for run in $(seq "$repeats"); do
-        (cd "$work" && /usr/bin/time -f "%e %U %M" "$@" >/dev/null 2>"$work/err" || true)
+        local status=0
+        (cd "$work" && /usr/bin/time -f "%e %U %M" "$@" >/dev/null 2>"$work/err") || status=$?
         read -r wall user rss < <(tail -1 "$work/err")
-        echo "$label run $run  wall ${wall}s  cpu ${user}s  max_rss ${rss}KB" >>"$report"
+        echo "$label run $run  exit $status  wall ${wall}s  cpu ${user}s  max_rss ${rss}KB" >>"$report"
     done
 }
 
@@ -40,5 +41,5 @@ done
 measure "test queue-tests.mo (not imported by main.mo), default plan" 1 "$mo" test original/queue-tests.mo
 measure "default 2-second cap, original" 1 "$mo" test original/main.mo
 (cd "$work" && "$mo" test original/main.mo --only Main.service.recovery --json) |
-    grep -o '"sequences":[0-9]*' | sed 's/^/default 2-second cap reached /' >>"$report"
+    grep -o '"sequences":[0-9]*\|"status":"[a-z]*"' | tr '\n' ' ' | sed 's/^/default 2-second cap: /; s/ $/\n/' >>"$report"
 rm -rf "$work"

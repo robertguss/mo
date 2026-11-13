@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Rebuilds mo and the prototype, then digests the task queue and every variant.
+# Rebuilds mo and the prototype in a clean copy of 02822786 exported from git, then digests the
+# task queue and every variant.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-root="$(cd "$here/../../../.." && pwd)"
+repo=$(git -C "$here" rev-parse --show-toplevel)
+root=$(mktemp -d)
+git -C "$repo" archive 02822786 | tar -x -C "$root"
 cd "$root"
 
 make -j8 CC=gcc >/dev/null
@@ -39,3 +42,4 @@ for patch in "$here"/variants/*.patch; do
 done
 python3 "$here/compare.py" "$here/out" >"$here/out/table.md"
 cat "$here/out/table.md"
+rm -rf "$root"

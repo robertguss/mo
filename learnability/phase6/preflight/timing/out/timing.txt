@@ -1,20 +1,20 @@
 host: 8 vCPUs, AMD EPYC 9554P 64-Core Processor, 31 GiB, 6.12.113, gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
 build: 02822786 + service-promise/prototype.patch, gcc debug, as the task queue was deployed
-check main.mo run 1  wall 0.08s  cpu 0.07s  max_rss 27764KB
-check main.mo run 2  wall 0.09s  cpu 0.08s  max_rss 27588KB
-check main.mo run 3  wall 0.12s  cpu 0.11s  max_rss 27400KB
-test original, 200 sequences run 1  wall 3.71s  cpu 3.22s  max_rss 27720KB
-test original, 200 sequences run 2  wall 2.76s  cpu 2.73s  max_rss 27720KB
-test original, 200 sequences run 3  wall 2.87s  cpu 2.85s  max_rss 27812KB
-test with three service promises, 200 sequences run 1  wall 3.02s  cpu 3.00s  max_rss 28020KB
-test with three service promises, 200 sequences run 2  wall 3.18s  cpu 3.14s  max_rss 28152KB
-test with three service promises, 200 sequences run 3  wall 3.09s  cpu 3.09s  max_rss 28040KB
-test original, 1000 sequences run 1  wall 14.92s  cpu 14.89s  max_rss 27688KB
-test original, 1000 sequences run 2  wall 16.18s  cpu 15.97s  max_rss 27660KB
-test original, 1000 sequences run 3  wall 16.28s  cpu 16.24s  max_rss 27956KB
-test with three service promises, 1000 sequences run 1  wall 17.03s  cpu 17.00s  max_rss 28100KB
-test with three service promises, 1000 sequences run 2  wall 17.11s  cpu 17.09s  max_rss 28092KB
-test with three service promises, 1000 sequences run 3  wall 17.98s  cpu 17.57s  max_rss 27856KB
-test queue-tests.mo (not imported by main.mo), default plan run 1  wall 66.08s  cpu 66.02s  max_rss 37128KB
-default 2-second cap, original run 1  wall 2.18s  cpu 2.17s  max_rss 27800KB
-default 2-second cap reached "sequences":173
+check main.mo run 1  exit 0  wall 0.10s  cpu 0.08s  max_rss 27524KB
+check main.mo run 2  exit 0  wall 0.15s  cpu 0.12s  max_rss 27596KB
+check main.mo run 3  exit 0  wall 0.08s  cpu 0.07s  max_rss 27576KB
+test original, 200 sequences run 1  exit 0  wall 2.93s  cpu 2.89s  max_rss 27756KB
+test original, 200 sequences run 2  exit 0  wall 2.74s  cpu 2.72s  max_rss 27972KB
+test original, 200 sequences run 3  exit 0  wall 2.75s  cpu 2.72s  max_rss 27932KB
+test with three service promises, 200 sequences run 1  exit 0  wall 3.07s  cpu 3.06s  max_rss 28068KB
+test with three service promises, 200 sequences run 2  exit 0  wall 3.03s  cpu 3.01s  max_rss 28072KB
+test with three service promises, 200 sequences run 3  exit 0  wall 3.00s  cpu 2.98s  max_rss 27948KB
+test original, 1000 sequences run 1  exit 0  wall 14.47s  cpu 14.47s  max_rss 27684KB
+test original, 1000 sequences run 2  exit 0  wall 16.17s  cpu 15.88s  max_rss 27660KB
+test original, 1000 sequences run 3  exit 0  wall 14.60s  cpu 14.57s  max_rss 27716KB
+test with three service promises, 1000 sequences run 1  exit 0  wall 16.11s  cpu 16.02s  max_rss 27916KB
+test with three service promises, 1000 sequences run 2  exit 0  wall 15.98s  cpu 15.94s  max_rss 28180KB
+test with three service promises, 1000 sequences run 3  exit 0  wall 16.15s  cpu 16.13s  max_rss 28112KB
+test queue-tests.mo (not imported by main.mo), default plan run 1  exit 0  wall 65.17s  cpu 65.13s  max_rss 37128KB
+default 2-second cap, original run 1  exit 0  wall 2.17s  cpu 2.15s  max_rss 27848KB
+default 2-second cap: "sequences":173

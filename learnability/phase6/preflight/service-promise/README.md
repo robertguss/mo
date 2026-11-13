@@ -11,7 +11,7 @@ A throwaway prototype, built on commit 02822786, that tests two planning decisio
 Verdict: both hold up. The recovery check's per-step hook can fail a sequence, the shrinker keeps
 a shorter sequence only when the same predicate fails, state decodes cleanly through the saved
 codec, and a fault that the existing recovery check cannot see is found and shrunk to a
-four-step sequence that ends in the restart. On the task queue, three predicates cost about 13%
+four-step sequence that ends in the restart. On the task queue, three predicates cost about 10%
 more time per sequence. Nothing in this prototype is a blocker.
 
 ## Files
@@ -203,12 +203,12 @@ Debug build (`-O0`), 200 sequences, three runs each (`out/cost.txt`):
 
 | Binary and program | Wall (runs 1, 2, 3) | Median wall | Per sequence | User CPU (median) | Max RSS |
 | --- | --- | --- | --- | --- | --- |
-| Baseline, original service | 2.58, 2.71, 2.55 s | 2.58 s | 12.9 ms | 2.56 s | 27.8 MB |
-| Prototype, original service (no guarantees) | 3.02, 2.61, 2.51 s | 2.61 s | 13.1 ms | 2.59 s | 27.8 MB |
-| Prototype, three guarantees | 3.17, 2.92, 2.87 s | 2.92 s | 14.6 ms | 2.90 s | 28.1 MB |
+| Baseline, original service | 2.62, 2.69, 2.69 s | 2.69 s | 13.5 ms | 2.65 s | 27.8 MB |
+| Prototype, original service (no guarantees) | 2.77, 2.56, 2.75 s | 2.75 s | 13.8 ms | 2.73 s | 27.7 MB |
+| Prototype, three guarantees | 2.85, 3.09, 2.95 s | 2.95 s | 14.8 ms | 2.93 s | 28.0 MB |
 
 With no guarantees the hook is absent and nothing is encoded, so the cost is within noise. Three
-guarantees add about 13% wall time and 0.3 MB. The prototype is naive: it encodes the state twice
+guarantees add about 10% wall time and 0.2 MB. The prototype is naive: it encodes the state twice
 per step and decodes it twice per step, although one step's "after" is the next step's "before".
 Reusing that encoding would remove about half of the codec work.
 
