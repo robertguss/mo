@@ -192,6 +192,7 @@ fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, QueueErr
     fail(holding([tried(1, 3)]), t0, 1, 3) == Ok(holding([dead(1)]))
     fail(holding([ready(1)]), t0, 1, 0) == Error(NotLeased(id: 1))
     fail(empty, t0, 9, 1) == Error(NoSuchJob(id: 9))
+    fail(holding([tried(1, 1), ready(2)]), t0, 1, 1).map(jobs) == Ok([retried(1, 1), ready(2)])
   end
 
   job = try leased_job(queue, now, id, attempt)
@@ -200,9 +201,24 @@ end
 
 ## Gives back every job whose lease ran out by now, as if its worker failed.
 fn expire(queue: Queue, now: Time) : Queue
+  promise "expiry gives back every ended lease, only those, and keeps every job"
+    result.jobs.size == queue.jobs.size
+    queue.jobs.values.all?(fn(job) result.jobs.get(job.id) == Some(expired(job, now)) end)
+    allows queue: holding([leased(1, t0), leased(2, t0 + 1.second)]), now: t0, result: holding([
+      retried(1, 1),
+      leased(2, t0 + 1.second)
+    ])
+    forbids queue: holding([leased(1, t0), leased(2, t0)]), now: t0, result: holding([
+      retried(1, 1),
+      leased(2, t0)
+    ])
+  end
+
   examples
     expire(holding([leased(1, t0)]), t0) == holding([retried(1, 1)])
     expire(holding([leased(1, t0 + 1.second)]), t0) == holding([leased(1, t0 + 1.second)])
+    expire(holding([leased(1, t0), leased(2, t0)]), t0) == holding([retried(1, 1), retried(2, 1)])
+    expire(holding([tried(1, 3)]), t0 + 30.seconds) == holding([dead(1)])
   end
 
   var after = queue
@@ -219,7 +235,6 @@ fn jobs(queue: Queue) : List(Job)
   examples
     jobs(empty) == []
     jobs(holding([ready(1), done(2)])) == [ready(1), done(2)]
-    fail(holding([tried(1, 1), ready(2)]), t0, 1, 1).map(jobs) == Ok([retried(1, 1), ready(2)])
   end
 
   queue.jobs.values
@@ -248,6 +263,18 @@ fn put(queue: Queue, job: Job) : Queue
 end
 
 t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
+
+fn expired(job: Job, now: Time) : Job
+  case job.state
+    Leased(until: until): if until > now: job else: Job(
+      id: job.id,
+      payload: job.payload,
+      attempts: job.attempts,
+      state: if job.attempts >= max_attempts: Dead else: Ready
+    )
+    Ready | Done | Dead: job
+  end
+end
 
 fn holding(jobs: List(Job)) : Queue
   Queue(jobs: jobs.map(fn(job) (job.id, job) end).to_map, next_id: jobs.size + 1)
