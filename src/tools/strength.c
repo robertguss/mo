@@ -6,6 +6,7 @@
 #include "base/sha256.h"
 #include "check/check.h"
 #include "tools/intent.h"
+#include "tools/offline.h"
 #include "tools/tests.h"
 
 #include <dirent.h>
@@ -291,10 +292,12 @@ static struct mo_test_selection *intent_checks(struct mo_arena *arena,
 
 static enum outcome classify(const struct mo_test_totals *totals, const struct mo_diags *diags) {
     bool promise = totals->failed > totals->failed_examples, example = totals->failed_examples != 0;
-    if (promise || example)
-        return promise && example ? KILLED_BY_BOTH
-               : promise          ? KILLED_BY_PROMISE
-                                  : KILLED_BY_EXAMPLE;
+    if (promise && example)
+        return KILLED_BY_BOTH;
+    if (promise)
+        return KILLED_BY_PROMISE;
+    if (example)
+        return KILLED_BY_EXAMPLE;
     bool unfinished = false;
     for (uint32_t i = 0; i < diags->count; i++)
         unfinished = unfinished || diags->items[i].code != MO_CODE_TOOL_TEST_INITIALIZATION;
@@ -303,19 +306,26 @@ static enum outcome classify(const struct mo_test_totals *totals, const struct m
     return totals->stopped != 0 || diags->count != 0 ? DEFECT : SURVIVED;
 }
 
+static uint8_t *sorted_digests(struct mo_arena *arena, const struct mo_intent *intent) {
+    uint8_t *digests =
+        mo_arena_allocate_array(arena, intent->count == 0 ? 1 : intent->count, 32, 1);
+    if (digests == NULL)
+        return NULL;
+    for (uint32_t i = 0; i < intent->count; i++)
+        memcpy(digests + 32 * (size_t)i, intent->items[i].digest, 32);
+    qsort(digests, intent->count, 32, by_digest);
+    return digests;
+}
+
 static bool same_intent(const struct measure *m, struct mo_arena *arena,
                         const struct mo_program *program, bool *same) {
     struct mo_intent intent;
-    if (!mo_intent_items(arena, program, &intent))
-        return false;
-    *same = intent.count == m->digest_count;
-    uint8_t *digests = mo_arena_allocate_array(arena, intent.count == 0 ? 1 : intent.count, 32, 1);
+    uint8_t *digests =
+        mo_intent_items(arena, program, &intent) ? sorted_digests(arena, &intent) : NULL;
     if (digests == NULL)
         return false;
-    for (uint32_t i = 0; i < intent.count; i++)
-        memcpy(digests + 32 * (size_t)i, intent.items[i].digest, 32);
-    qsort(digests, intent.count, 32, by_digest);
-    *same = *same && memcmp(digests, m->digests, 32 * (size_t)intent.count) == 0;
+    *same = intent.count == m->digest_count &&
+            memcmp(digests, m->digests, 32 * (size_t)intent.count) == 0;
     return true;
 }
 
@@ -384,16 +394,11 @@ done:
     mo_arena_free(&arena);
 }
 
-static void hex(struct mo_buffer *out, bool *ok, const uint8_t digest[32]) {
-    for (uint32_t i = 0; i < 32; i++)
-        *ok = *ok && mo_buffer_append_hex(out, digest[i], 2);
-}
-
 static bool render(const struct mo_strength_run *run, const struct set *set, bool original,
                    struct mo_buffer *out) {
     uint32_t counts[OUTCOMES] = {0};
     uint32_t killed = 0, scored = 0;
-    for (uint32_t i = 0; i < set->count; i++) {
+    for (uint32_t i = 0; original && i < set->count; i++) {
         const struct version *v = &set->versions[i];
         counts[v->outcome]++;
         bool kill = v->outcome == KILLED_BY_PROMISE || v->outcome == KILLED_BY_EXAMPLE ||
@@ -422,8 +427,8 @@ static bool render(const struct mo_strength_run *run, const struct set *set, boo
             ok = ok && mo_buffer_append_text(out, i == 0 ? "{\"name\":" : ",{\"name\":") &&
                  mo_render_json_text(out, v->name, strlen(v->name)) &&
                  mo_buffer_append_text(out, ",\"sha256\":\"");
-            hex(out, &ok, v->sha256);
-            ok = ok && mo_buffer_append_text(out, "\",\"outcome\":\"") &&
+            ok = ok && mo_offline_hex(out, v->sha256, 32) &&
+                 mo_buffer_append_text(out, "\",\"outcome\":\"") &&
                  mo_buffer_append_text(out, names[v->outcome]) && mo_buffer_append_text(out, "\"");
             if (v->outcome == INVALID)
                 ok = ok && mo_buffer_append_text(out, ",\"reason\":") &&
@@ -434,14 +439,11 @@ static bool render(const struct mo_strength_run *run, const struct set *set, boo
         for (uint32_t i = 0; i < OUTCOMES; i++)
             ok = ok && mo_buffer_append_text(out, i == 0 ? "\"" : ",\"") &&
                  mo_buffer_append_text(out, names[i]) && mo_buffer_append_text(out, "\":") &&
-                 mo_buffer_append_uint(out, original ? counts[i] : 0);
+                 mo_buffer_append_uint(out, counts[i]);
         ok = ok && mo_buffer_append_text(out, "},\"killed\":") &&
-             mo_buffer_append_uint(out, original ? killed : 0) &&
-             mo_buffer_append_text(out, ",\"scored\":") &&
-             mo_buffer_append_uint(out, original ? scored : 0) &&
-             mo_buffer_append_text(out, ",\"rate\":") &&
-             mo_buffer_append_text(out, original ? rate : "null") &&
-             mo_buffer_append_text(out, ",\"partial\":") &&
+             mo_buffer_append_uint(out, killed) && mo_buffer_append_text(out, ",\"scored\":") &&
+             mo_buffer_append_uint(out, scored) && mo_buffer_append_text(out, ",\"rate\":") &&
+             mo_buffer_append_text(out, rate) && mo_buffer_append_text(out, ",\"partial\":") &&
              mo_buffer_append_text(out, original && counts[UNFINISHED] == 0 ? "false" : "true") &&
              mo_buffer_append_text(out, "}\n");
         return ok;
@@ -496,14 +498,11 @@ void mo_strength(const struct mo_strength_run *run) {
         *run->mistake = "the program has no promises or examples for --strength to measure";
         return;
     }
-    uint8_t *digests = mo_arena_allocate_array(run->arena, intent.count, 32, 1);
+    uint8_t *digests = sorted_digests(run->arena, &intent);
     struct mo_test_selection *selection =
         digests == NULL ? NULL : intent_checks(run->arena, run->program, run->cli, run->diags);
     if (selection == NULL)
         return;
-    for (uint32_t i = 0; i < intent.count; i++)
-        memcpy(digests + 32 * (size_t)i, intent.items[i].digest, 32);
-    qsort(digests, intent.count, 32, by_digest);
     if (run->cli->json && !(*run->version = mo_write_version(run->output, run->cli->command)))
         return;
     uint32_t before = run->diags->count;

@@ -164,7 +164,10 @@ static struct mo_syntax *bare(struct walker *w, const struct mo_syntax *n) {
         return out;
     out->children = array(w, n->count, sizeof *out->children, _Alignof(struct mo_syntax *));
     for (uint32_t i = 0; out->children != NULL && i < n->count; i++)
-        out->children[i] = bare(w, n->children[i]);
+        out->children[i] =
+            n->kind == MO_S_FN && i == 4
+                ? node(w, (struct mo_syntax){.kind = MO_S_SEQUENCE, .span = n->children[4]->span})
+                : bare(w, n->children[i]);
     return w->ok ? out : NULL;
 }
 
@@ -188,9 +191,6 @@ static struct text canonical(struct walker *w, const struct mo_syntax *original)
     const struct mo_syntax *found = find(w->parsed[file]->tree, original->span, original->kind);
     MO_ASSERT(found != NULL);
     struct mo_syntax *item = bare(w, found);
-    if (item != NULL && item->kind == MO_S_FN)
-        item->children[4] =
-            node(w, (struct mo_syntax){.kind = MO_S_SEQUENCE, .span = item->children[4]->span});
     struct mo_syntax *items =
         node(w, (struct mo_syntax){.kind = MO_S_SEQUENCE, .span = item->span});
     struct mo_syntax **pair = array(w, 2, sizeof *pair, _Alignof(struct mo_syntax *));

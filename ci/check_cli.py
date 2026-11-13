@@ -1164,15 +1164,19 @@ def recovery_checks(binary):
     assert len(listed) == len(set(listed)), listed
     items = records(run(binary, ["test", "--list", "--json", "--in", "Main", queue], 0), "test")
     assert [(r["name"], r["kind"]) for r in items[1:-1]] == [
-        *((f"Main.service.promise.{n}", "promise") for n in range(1, 5)),
+        *((f"Main.submit.example.{n}", "example") for n in range(1, 4)),
+        ("Main.list.promise.1", "promise"),
+        *((f"Main.list.example.{n}", "example") for n in range(1, 4)),
+        *((f"Main.expire.example.{n}", "example") for n in range(1, 3)),
+        *((f"Main.service.promise.{n}", "promise") for n in range(1, 11)),
         ("Main.service.recovery", "recovery")], items
     span = items[-2]["span"]
-    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 51), span
+    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 149), span
     tests = "services/task-queue/queue-tests.mo"
     listed = run(binary, ["test", "--list", "--in", "QueueTests", tests], 0).stdout.decode()
     assert "QueueTests.test.1\n" in listed and "service" not in listed, listed
     listed = run(binary, ["test", "--list", "--in", "Main", tests], 0).stdout.decode()
-    assert listed.endswith("Main.service.promise.4\nMain.service.recovery\n"), listed
+    assert listed.endswith("Main.service.promise.10\nMain.service.recovery\n"), listed
     # --only runs the one check; --calls caps its sequences, and JSON carries the counts.
     items = records(run(binary, ["test", "--json", "--calls", "3", "--only",
                                  "Main.service.recovery", queue], 0), "test")
@@ -1284,9 +1288,6 @@ def strength_record(binary, program, versions, status=0):
 
 
 def strength_checks(binary):
-    """mo test --strength runs the program's own checks, then each wrong version against the
-    same fixed plan: a kill is a failed promise or example, and a version that does not check,
-    changes what an intent item reads, or stops is kept out of the rate."""
     versions = f"{STRENGTH}/versions"
     record = strength_record(binary, f"{STRENGTH}/main.mo", versions)
     assert {v["name"]: v["outcome"] for v in record["versions"]} == STRENGTH_OUTCOMES, record
@@ -3993,7 +3994,6 @@ def guide_claims(binary):
                      "neither credential appears in output, events or the data folder.",
                      "a new GET replaces it."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
-    # strength_checks exercises mo test --strength and the digests it compares.
     assert ("A wrong version that does not check, changes a digest, or stops is kept out of the "
             "rate.") in guide
     blocks = guide.split("```mo\n")
