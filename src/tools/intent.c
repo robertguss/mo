@@ -25,13 +25,13 @@ struct walker {
     struct mo_arena *arena;
     const struct mo_program *program;
     struct mo_diags diags;
-    uint32_t *offsets; /* each module's first index among all symbols */
+    uint32_t *offsets;
     uint32_t symbol_count;
-    uint32_t *functions, *constants, *data; /* by symbol: its index there, or UINT32_MAX */
-    uint32_t *marks;                        /* by symbol: the walk that last reached it */
-    uint32_t *reach;                        /* the current walk's symbols, in reaching order */
+    uint32_t *functions, *constants, *data;
+    uint32_t *marks;
+    uint32_t *reach;
     uint32_t reach_count;
-    struct text *texts; /* by symbol: canonical text once needed */
+    struct text *texts;
     struct mo_module_syntax **parsed;
     const struct mo_syntax *subject;
     uint32_t mark;
@@ -109,7 +109,6 @@ static void walk_body(struct walker *w, const struct mo_checked_body *body) {
         walk_type(w, body->bindings[i].type);
 }
 
-/* Follows what every reached declaration reads, until nothing new is reached. */
 static void close_reach(struct walker *w) {
     const struct mo_program *p = w->program;
     for (uint32_t i = 0; i < w->reach_count && w->ok; i++) {
@@ -153,7 +152,6 @@ static struct mo_syntax *node(struct walker *w, struct mo_syntax value) {
     return out;
 }
 
-/* A copy without comments or blank lines. */
 static struct mo_syntax *bare(struct walker *w, const struct mo_syntax *n) {
     if (n == NULL || !charge(w))
         return NULL;
@@ -177,8 +175,6 @@ static uint32_t display_width(const uint8_t *bytes, size_t length) {
     return (uint32_t)width;
 }
 
-/* A declaration or spec formatted on its own from an unchecked parse of its file, without its
- * comments, blank lines and, for a function, its promise and example blocks. */
 static struct text canonical(struct walker *w, const struct mo_syntax *original) {
     struct text out = {NULL, 0};
     uint32_t file = original->span.file;
@@ -246,7 +242,6 @@ static void text_field(struct mo_sha256 *h, const char *text) {
     field(h, text, strlen(text));
 }
 
-/* Walks one item from the bodies already walked and writes its digest. */
 static void digest(struct walker *w, const char *owner, const char *kind,
                    const struct mo_syntax *syntax, uint8_t out[32]) {
     close_reach(w);

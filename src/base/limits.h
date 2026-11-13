@@ -237,13 +237,12 @@
 /* Service promises in one service block; each runs after every step of every sequence. */
 #define MO_LIMIT_SERVICE_PROMISES 64
 
-/* Steps of the walks that find what a program's intent items read: one per body row, type node,
- * proof part and declaration reached, summed over every item. */
 #define MO_LIMIT_INTENT_WORK (UINT64_C(1) << 28)
 
-/* The fixed plan of mo test --strength: inputs per function promise and sequences per service. */
 #define MO_DOOR_PLAN_INPUTS 200
 #define MO_DOOR_PLAN_SEQUENCES 1000
+
+#define MO_LIMIT_STRENGTH_VERSIONS 1024
 
 /* Entries in the debug section (bytecode.md section 3.4). */
 #define MO_LIMIT_DEBUG_ENTRIES (1 << 24)

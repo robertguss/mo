@@ -1,0 +1,6 @@
+passed Main.clamp.promise.1  tests/errors/e1432/main.mo:15:3
+passed Main.clamp.example.1  tests/errors/e1432/main.mo:22:5
+passed Main.clamp.example.2  tests/errors/e1432/main.mo:23:5
+strength: loop.mo did not finish its plan
+strength: 0 of 0 wrong versions killed (no rate); 0 invalid, 0 changes_intent, 0 defect, 1 unfinished, 0 not_counted
+3 passed, 0 failed, 0 stopped

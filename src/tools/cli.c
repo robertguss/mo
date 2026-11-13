@@ -190,6 +190,7 @@ enum flag_id {
     FLAG_BASE,
     FLAG_TOKEN_ENV,
     FLAG_UPGRADE_TOKEN_ENV,
+    FLAG_STRENGTH,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -246,6 +247,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_TOKEN_ENV, "--token-env", false, false, VALUE_TEXT, 0, ON(PUSH)},
     {FLAG_UPGRADE_TOKEN_ENV, "--upgrade-token-env", false, false, VALUE_TEXT, 0,
      ON(SERVE) | ON(PUSH)},
+    {FLAG_STRENGTH, "--strength", false, false, VALUE_TEXT, 0, ON(TEST)},
 };
 #undef ON
 
@@ -269,6 +271,9 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_UPGRADE_TOKEN_ENV:
         out->upgrade_token = operand;
+        break;
+    case FLAG_STRENGTH:
+        out->strength = operand;
         break;
     case FLAG_CONTEXT:
         out->compile_context = operand;
@@ -554,6 +559,16 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "--old-bundle needs --bundle", "--old-bundle", NULL);
     if (out->json && out->emit != MO_EMIT_NONE)
         return refuse(out, error, "--json and --emit cannot be combined", "--json", "--emit");
+    uint64_t planned = (UINT64_C(1) << FLAG_LIST) | (UINT64_C(1) << FLAG_ONLY) |
+                       (UINT64_C(1) << FLAG_IN) | (UINT64_C(1) << FLAG_CALLS);
+    if (out->strength != NULL && (seen & planned) != 0)
+        return refuse(out, error,
+                      "--strength runs a fixed plan over the whole program; it takes no --list, "
+                      "--only, --in or --calls",
+                      "--strength", NULL);
+    if (out->strength != NULL)
+        out->calls = MO_DOOR_PLAN_INPUTS;
+    out->sequences = out->strength != NULL ? MO_DOOR_PLAN_SEQUENCES : out->calls;
     return true;
 }
 

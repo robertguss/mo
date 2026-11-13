@@ -69,7 +69,6 @@ static bool same(const uint8_t *a, const uint8_t *b) {
     return memcmp(a, b, 32) == 0;
 }
 
-/* Items in order: the two promises, then the example row. */
 static void identity(void) {
     struct digests base = digests_of(BASE CLAMP(HEADER, CLAMP_PROMISES, BODY));
     CHECK(base.count == 3);

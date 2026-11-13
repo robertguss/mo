@@ -16,6 +16,7 @@
 #include "tools/offline.h"
 #include "tools/promises.h"
 #include "tools/run.h"
+#include "tools/strength.h"
 #include "tools/tests.h"
 #include "tools/upgrade.h"
 
@@ -161,9 +162,15 @@ static void execute_pipeline(void *argument) {
         return;
     }
     /* Test observations are separate from the compiler's anchor checks. */
-    struct mo_test_selection *selection = NULL;
+    if (cli->command == MO_COMMAND_TEST && cli->strength != NULL) {
+        struct mo_strength_run run = {
+            cli,          arena, program,       sources,        library,
+            work->output, diags, &work->totals, &work->version, &work->mistake};
+        mo_strength(&run);
+        return;
+    }
     if (cli->command == MO_COMMAND_TEST) {
-        selection = mo_select_tests(arena, program, cli, diags);
+        struct mo_test_selection *selection = mo_select_tests(arena, program, cli, diags);
         if (selection == NULL)
             return;
         if (selection->mistake != NULL) {
@@ -184,7 +191,6 @@ static void execute_pipeline(void *argument) {
                            NULL);
                 return;
             }
-            /* Items and observations share program order, so one cursor pairs them. */
             uint32_t next = 0;
             for (uint32_t i = 0; i < selection->count; i++) {
                 const struct mo_observation *o = &selection->items[i];
@@ -206,44 +212,28 @@ static void execute_pipeline(void *argument) {
             }
             return;
         }
-        /* Closed declarations can refuse before lowering. Generic inputs need
-         * the concrete uses retained below; both passes precede execution. */
-        if (!mo_promises_supported(program, selection, diags))
-            return;
+        mo_run_tests(cli, arena, program, sources, selection, work->output, diags, &work->totals);
+        return;
     }
     bool anchors = mo_program_has_anchors(program);
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
-    struct mo_lowered_promises promises;
     struct mo_services services;
-    struct mo_core *core =
-        mo_lower_services(&lowered, program, sources, diags,
-                          cli->command == MO_COMMAND_TEST ? &promises : NULL, &services);
+    struct mo_core *core = mo_lower_services(&lowered, program, sources, diags, NULL, &services);
     struct mo_buffer wire, printed;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&printed, cli->emit == MO_EMIT_CORE ? MO_LIMIT_CORE_TEXT_SIZE
                                                        : MO_LIMIT_BYTECODE_TEXT_SIZE);
     if (core == NULL || mo_diags_any(diags) || !mo_core_check_services(core, &services, diags))
         goto done;
-    if (cli->command == MO_COMMAND_TEST) {
-        selection = mo_instantiate_tests(arena, selection, &promises, diags);
-        if (selection == NULL || !mo_promises_supported(program, selection, diags))
-            goto done;
-    }
     /* Plain check and fix validate lowering too, but never execute the user's main. */
     bool checking = cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_FIX;
     bool emitting = cli->command == MO_COMMAND_EMIT;
     if (checking && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
-    if (anchors || cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_TEST ||
-        cli->emit == MO_EMIT_BYTECODE || emitting) {
+    if (anchors || cli->command == MO_COMMAND_RUN || cli->emit == MO_EMIT_BYTECODE || emitting) {
         if (!mo_compile_services(core, &services, &wire, diags))
             goto done;
-    }
-    if (cli->command == MO_COMMAND_TEST) {
-        mo_test_program(cli, program, selection, &wire, sources, work->output, diags,
-                        &work->totals);
-        goto done;
     }
     if (anchors || cli->command == MO_COMMAND_RUN) {
         work->status =

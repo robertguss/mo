@@ -38,7 +38,6 @@ void mo_test_report_error(struct mo_diags *diags, const char *message, struct mo
 MO_MUST_USE struct mo_test_selection *
 mo_instantiate_tests(struct mo_arena *arena, const struct mo_test_selection *selection,
                      const struct mo_lowered_promises *promises, struct mo_diags *diags);
-/* digest is an intent item's content digest, or NULL. */
 MO_MUST_USE bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
                                const struct mo_observation *observation, const uint8_t *digest);
 
@@ -63,6 +62,10 @@ MO_MUST_USE bool mo_render_test_result(const struct mo_sources *sources,
                                        struct mo_buffer *out);
 MO_MUST_USE bool mo_write_test_result(FILE *output, bool json, const struct mo_sources *sources,
                                       const struct mo_test_result *result);
+void mo_run_tests(const struct mo_cli *cli, struct mo_arena *arena,
+                  const struct mo_program *program, const struct mo_sources *sources,
+                  const struct mo_test_selection *selection, FILE *output, struct mo_diags *diags,
+                  struct mo_test_totals *totals);
 /* Selection has passed generator preflight and is nonempty. Never enters main. */
 void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
                      const struct mo_test_selection *selection, const struct mo_buffer *wire,
