@@ -1064,13 +1064,14 @@ This build checks service blocks. `mo run` of a service entry module still repor
 
 A module may declare one top-level `service ... end` block. Its clauses name
 the state type and start value, local functions offered as tools, timer
-handlers, and the environment variable holding its access token.
+handlers, the environment variable holding its access token, and the promises
+the service keeps (section 12.2).
 `service` is reserved. The clause words `state`, `tools`, `every`, `token`,
-`from` and `env` remain ordinary identifiers outside their clause positions.
+`from`, `env` and `on` remain ordinary identifiers outside their clause positions.
 
 Clauses occur in this order: exactly one `state`, exactly one `tools` naming
-at least one function, zero or more `every` clauses, and exactly one `token`
-last. Empty services and timer-only services are refused. No function name
+at least one function, zero or more `every` clauses, exactly one `token`, then
+zero or more service promises. Empty services and timer-only services are refused. No function name
 may appear twice anywhere in the block, including across tools and timers.
 
 ```mo
@@ -1234,9 +1235,50 @@ shrinks values separately for each instance, and a failure names its concrete
 types. This checks those instances, not every possible substitution for the
 function's type parameters.
 
-A promise about many steps, such as "an accepted job is never lost", is a
-promise on the function that takes one step: something each step keeps true
-between its input and its result.
+A promise about a whole service is written in its `service` block, after
+`token`. A step promise holds across every step the service takes: a tool call,
+a clock advance, or a crash and restart. Its body reads `before`, `after` and
+`now`. A tool promise, `promise "…" on submit`, holds after every call to that
+tool that replied, and also reads the tool's arguments by name and `reply`,
+what the caller received. Anchors give each of those names a value. `mo test`
+checks service promises on the recovery check's generated sequences (section
+12.5) and reports a failure as a short sequence that still fails.
+
+```mo
+module Counter
+
+service
+  state Int = 0
+  tools add
+  token from env "COUNTER_TOKEN"
+
+  promise "the count never falls"
+    after >= before
+    allows before: 1, after: 3, now: t0
+    forbids before: 3, after: 1, now: t0
+  end
+
+  promise "an addition adds its amount's size" on add
+    after == before + amount.abs
+    allows before: 1, amount: -2, reply: Unit, after: 3, now: t0
+    forbids before: 1, amount: -2, reply: Unit, after: -1, now: t0
+  end
+end
+
+fn add(state: Int, _now: Time, amount: Int) : (Int, Unit)
+  (state + amount.abs, Unit)
+end
+
+t0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"
+```
+
+For a crash and restart, `before` is the state at the crash and `after` the
+state once recovery and the restart's startup ticks have run. `reply` is `R` for
+a tool that returns `(State, R)` or a read-only `R`, and `Result(R, E)` for one
+that returns `Result((State, R), E)`. A tool parameter named `before`, `after`,
+`now` or `reply`, an `on` that names none of the block's tools, or a service
+promise outside a `service` block is E0107. A service has at most 64 service
+promises (E1109).
 
 There are no preconditions. What a caller must guarantee becomes a type, such
 as a `Quantity` that its module never builds negative, or a failure, such as
@@ -1315,8 +1357,8 @@ an admission refusal reports that no handler ran and does not count toward the
 failure limit. Read-only messages are not saved. Copy-out failure names the
 executed tool and any committed update; it does not roll back or retry.
 A promise whose inputs include a `Simulation` is E1400: `mo test` generates
-steps against a service only in its recovery check (section 12.5), and
-promises that an author writes over a service's sequences are deferred.
+steps against a service only in its recovery check (section 12.5), which also
+checks the promises written in its `service` block (section 12.2).
 
 A capability is a handle on something outside the program, and a fake is a
 handle on something kept for the test. Every use of one fake sees the same
@@ -1363,19 +1405,28 @@ next step is a restart, compared against the state at the stop. When the start
 value or an interval fails as the service first opens, the check stops with
 that failure.
 
-The check is listed and selected like any other (section 13.4) and has a
-promise's budget: `--seconds` bounds its time, 2 seconds by default, shrinking
-included, and `--calls` caps its sequences. A sequence has at most 64 steps and
-8 restarts. A pass needs at least one compared restart; if time runs out
-first, the result is E1404.
+The same sequences check the service's promises (section 12.2): after each
+step every step promise, and after each call that replied every promise on that
+tool. Each is listed and selected as `Module.service.promise.N`, numbered in
+source order, just before its service's recovery check, and fails on its own.
+A promise body runs under the same work limit as a tool call; one that runs
+past it stops that promise.
+
+Every check is listed and selected like any other (section 13.4). It runs its
+whole plan: `--calls` sequences, 200 by default, each seeded from the service's
+name and its number, so every run reports the same result. `--seconds` does not
+apply. A sequence has at most 64 steps and 8 restarts.
 
 A failing sequence is shrunk: steps are deleted, a crash always with its
 restart, then arguments are simplified and advances shortened, within 200
-additional sequence runs and the original deadline. The shrunk sequence runs
-once more before it is reported, and fails the same way. The report numbers
-the steps, a crash and its restart counting as two, and gives each tool call's
-arguments as literal values, each step's outcome, and the state before the
-crash beside the state recovery produced.
+additional sequence runs. A shorter sequence is kept only when it fails the
+same check, and for a promise on the same line. The shrunk sequence runs once
+more before it is reported, and fails the same way. The report numbers the
+steps, a crash and its restart counting as two, and gives each tool call's
+arguments as literal values and each step's outcome. A recovery failure shows
+the state before the crash beside the state recovery produced; a promise
+failure marks the step that broke it, shows the states before and after that
+step, and points at the line that was false.
 
 ## 13. Running
 
@@ -1453,8 +1504,9 @@ which. Each has a full name: its function's name, or a test's module's, then
 its kind and a number counted from 1 in source order, such as
 `Wc.count.example.3` for the third example of `Wc.count`,
 `Account.transfer.promise.1`, or `Wc.test.2` for the second test in `Wc`. A
-recovery check's full name is its service module's, then `service.recovery`
-(section 12.5). `--only NAME` runs the one with that full name, and can be given more
+recovery check's full name is its service module's, then `service.recovery`,
+and a service promise's its service module's, then `service.promise` and its
+number (section 12.5). `--only NAME` runs the one with that full name, and can be given more
 than once; `--in MODULE` runs one module's, still checking the whole program;
 and `--list` prints the full names without running anything. A selection that
 matches nothing is a mistake in the command.
@@ -1745,11 +1797,9 @@ changes only when its `use` line does.
 
 Live upgrades, including migrating saved state to a changed type, are tools
 (Phase 5, `docs/design/upgrades.md`) and change no rule in this reference.
-Promises about a whole service, which will change sections 11.5 and 12, and
-approving and locking promises (Phase 6; proposed design in
-`docs/design/intent.md`); demanding that a function update its input in place
-(Phase 7); packages and user-defined abilities (Phase 8). Phases 7 and 8 change
-no rule in this reference.
+Approving and locking promises (Phase 6, `docs/design/intent.md`); demanding
+that a function update its input in place (Phase 7); packages and user-defined
+abilities (Phase 8). Phases 7 and 8 change no rule in this reference.
 
 ## Appendix A. Errors
 
@@ -1788,7 +1838,7 @@ module      = "module" Path NL ("expose" exposed ("," exposed)* NL)? use* item*
 exposed     = name | Name | Name "(" ".." ")"
 use         = "use" Path ("{" (name | Name) ("," (name | Name))* "}")? NL
 item        = function | struct | enum | test | service | name "=" expr NL
-service     = "service" NL ("state" type "=" expr NL | "tools" name ("," name)* NL | "every" expr name NL | "token" "from" "env" text NL)* "end" NL
+service     = "service" NL ("state" type "=" expr NL | "tools" name ("," name)* NL | "every" expr name NL | "token" "from" "env" text NL | promise)* "end" NL
 function    = "fn" name "(" params? ")" (":" type)? where? NL (promise | examples)* statement* "end" NL
 params      = name ":" type ("," name ":" type)*
 where       = "where" Name ":" Name ("," Name ":" Name)*
@@ -1798,7 +1848,7 @@ type        = Name ("." Name)? ("(" type ("," type)* ")")?
 struct      = "struct" Name ("(" Name ("," Name)* ")")? NL (name ":" type NL)+ "end" NL
 enum        = "enum" Name ("(" Name ("," Name)* ")")? NL (case NL)+ "end" NL
 case        = Name | Name "(" type ")" | Name "(" name ":" type ("," name ":" type)* ")"
-promise     = "promise" text NL (expr NL)+ (("allows" | "forbids") anchor ("," anchor)* NL)+ "end" NL
+promise     = "promise" text ("on" name)? NL (expr NL)+ (("allows" | "forbids") anchor ("," anchor)* NL)+ "end" NL
 anchor      = name ":" expr
 examples    = "examples" NL (expr NL)+ "end" NL
 test        = "test" text NL statement* "end" NL

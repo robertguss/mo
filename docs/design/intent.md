@@ -109,12 +109,15 @@ check reaches 173 of its 200 sequences in those 2 seconds and reports a pass.
 
 A service's sequences run to the end of their plan: `--calls` sequences, 200 by
 default, each seeded from the service's name and its ordinal. `--seconds` no
-longer cuts them short. A run that cannot finish its plan, because a limit
-stopped it, is E1432, "the plan did not finish", and is never a pass. Function
-promises and examples keep today's behaviour under plain `mo test`. `mo test
---strength` and the door's check child run the door's plan (Limits) for every
-item, so a wrong version that the strength record counts as killed is one the
-door refuses.
+longer cuts them short, and under plain `mo test` nothing else does: shrinking
+is bounded by its 200 runs, and each service promise body runs under the
+service's work budget, `MO_LIMIT_SERVICE_WORK`, so a body that runs past it
+stops that promise and is reported with its sequence. Function promises and
+examples keep today's behaviour under plain `mo test`. `mo test --strength` and
+the door's check child run the door's plan (Limits) for every item, so a wrong
+version that the strength record counts as killed is one the door refuses. A
+run of theirs that cannot finish its plan, because a limit stopped it, is E1432,
+"the plan did not finish", and is never a pass.
 
 ### Reference text
 
@@ -133,7 +136,7 @@ function that takes one step" is replaced by:
 Section 11.5's clause order gains "then zero or more service promises", section
 12.4's sentence on deferred service promises is removed, and section 12.5 says
 that its sequences also check the service's promises, that a service's plan
-runs to its end, and that E1432 replaces E1404 for a service. The grammar's
+runs to its end, and that `--seconds` does not apply to it. The grammar's
 `service` rule gains `promise` items with an optional `"on" name`. Robert
 approves this text in this document; the reference changes with the code.
 
@@ -386,7 +389,7 @@ check, since a shell on the host is the stated limit.
 | --- | --- |
 | E0107 | A service promise names a tool parameter `before`, `after`, `now` or `reply`, its `on` names no tool of the block, or it sits outside a `service` block |
 | E1109 | More than 64 service promises in one service |
-| E1432 | The plan did not finish: `mo test` of a service, a strength run, or the door's checks |
+| E1432 | The plan did not finish: a strength run, or the door's checks |
 | E1433 | The door's checks failed; the report names the failing item |
 | E1434 | `mo serve` has the upgrade credential without the approval credential, or two secrets are equal |
 | E1435 | The review id does not match the pending upgrade, or a checked restart that would be held names no matching `--review`; the reply gives the current one |

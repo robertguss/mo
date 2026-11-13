@@ -1658,8 +1658,8 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   boundary; calls remain direct. Candidates are source bundles compiled by the
   serving build and verified before activation. [upgrades.md](upgrades.md) is
   the design.
-- **Intent and the review door (Phase 6, approved, not yet implemented):** service promises lower to
-  plain spec functions checked by the tools on the recovery check's generated
+- **Intent and the review door (Phase 6, approved; service promises implemented):** service
+  promises lower to plain spec functions checked by the tools on the recovery check's generated
   sequences, so Mo Core, Lean and the bytecode do not change. Each promise and
   example row has a content digest the store's approvals refer to, and a second
   child runs a candidate's checks before the door decides. [intent.md](intent.md)
@@ -2329,12 +2329,19 @@ function values and hidden types, so no builders or fakes take part. Values a
 reply returned are kept, one reply's together, and often replace generated
 arguments. `src/tools/recovery.c` makes the steps, runs each sequence through
 the simulated-service API in `vm/vm.h`, and compares each restart's recovered
-state with the state before its crash. A failing sequence shrinks by deleting
-steps, a crash with its restart, then by the input shrinker on each call's
-arguments, then by halving advances; each candidate reruns from a fresh store,
-within `MO_CLI_RECOVERY_SHRINK_RUNS` runs and the check's deadline. The shrunk
-sequence runs once more for its report, and must fail the same way, or the
-check reports E1404.
+state with the state before its crash. The same sequences judge the service's
+promises: `src/tools/service-tests.c` calls each one's lowered spec function,
+`<Module>.service.promise.N`, after the steps it covers, with the states before
+and after copied out through the saved-value codec, in a separate process under
+`MO_LIMIT_SERVICE_WORK`. One search serves every selected check of a service;
+after a failure it shrinks, reports, sets that check aside and resumes at the
+same sequence for the rest. Every search runs its whole plan, `--calls`
+sequences seeded by ordinal, and `--seconds` does not apply. A failing sequence
+shrinks by deleting steps, a crash with its restart, then by the input shrinker
+on each call's arguments, then by halving advances; each candidate reruns from a
+fresh store, within `MO_CLI_RECOVERY_SHRINK_RUNS` runs, and is kept only when
+the same check fails, a promise on the same line. The shrunk sequence runs once
+more for its report, and must fail the same way, or the check reports E1404.
 
 ### 10.2 JSON output
 
@@ -2358,7 +2365,8 @@ records may be added, and readers ignore what they don't know.
 - **`test`**, one per example, promise, test and recovery check, written by
   `--list`: `name`, `kind` and `span`, as in `result`.
 - **`result`**, one per example, promise, test and recovery check run: `name`,
-  its full name (`bytecode.md` section 3.5, or `<Module>.service.recovery`);
+  its full name (`bytecode.md` section 3.5, `<Module>.service.recovery`, or
+  `<Module>.service.promise.N`);
   `kind`, `"example"`, `"promise"`, `"test"` or `"recovery"`;
   `span`; `outcome`, `"passed"`, `"failed"` or `"stopped"`; and
   `microseconds`, how long it took. A failed example, or a failed test whose
@@ -2376,12 +2384,15 @@ records may be added, and readers ignore what they don't know.
   that input holds one of its type's extremes: the parameter's `name` and the
   extreme's `description`, such as `"Decimal's largest value"`.
   A recovery check's `span` is its `service` block, and it adds `sequences`,
-  the sequences run, and `restarts`, the restarts compared, which depend on
-  machine speed unless `--calls` caps them. A failed one adds `steps`, `before`
-  and `after` or `refusal`, and `differ_at` when the two states print the same,
-  as `services.md` describes. A stopped one adds the start value's or
-  interval's `defect`: `reason`, optional `detail`, `span`, and empty `stack`
-  and `variables`, since the failure is copied out of the service.
+  the sequences run, and `restarts`, the restarts compared. A failed one adds
+  `steps`, `before` and `after` or `refusal`, and `differ_at` when the two
+  states print the same, as `services.md` describes. A stopped one adds the
+  start value's or interval's `defect`: `reason`, optional `detail`, `span`, and
+  empty `stack` and `variables`, since the failure is copied out of the service.
+  A service promise's `span` is the promise, and it adds `sequences`. A failed
+  or stopped one adds `steps`, whose failing step carries `broke`, the
+  promise's name; `before` and `after`, the states around that step; and `line`,
+  the false line, or `defect` for a body that stopped.
 - **`totals`**, always last: `errors`, the diagnostics written, and
   `dropped`, those found past the limits a run keeps
   (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;

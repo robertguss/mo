@@ -1156,21 +1156,23 @@ end
 
 def recovery_checks(binary):
     """Every service gets one recovery check, listed, selected, run and reported like the others
-    (reference 12.5 and 13.4). The failure report is tested in tests/test_recovery.c, and the
-    deadline that compares no restart in tests/test_deadline.c."""
+    (reference 12.5 and 13.4). The failure report is tested in tests/test_recovery.c, and a
+    deadline that passed before the plan began in tests/test_deadline.c."""
     queue = "services/task-queue/main.mo"
     listed = run(binary, ["test", "--list", queue], 0).stdout.decode().splitlines()
     assert listed[-1] == "Main.service.recovery" and "JobQueue.test.1" in listed, listed
     assert len(listed) == len(set(listed)), listed
     items = records(run(binary, ["test", "--list", "--json", "--in", "Main", queue], 0), "test")
-    assert [(r["name"], r["kind"]) for r in items[1:-1]] == [("Main.service.recovery", "recovery")]
-    span = items[1]["span"]
-    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 20), span
+    assert [(r["name"], r["kind"]) for r in items[1:-1]] == [
+        *((f"Main.service.promise.{n}", "promise") for n in range(1, 5)),
+        ("Main.service.recovery", "recovery")], items
+    span = items[-2]["span"]
+    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 51), span
     tests = "services/task-queue/queue-tests.mo"
     listed = run(binary, ["test", "--list", "--in", "QueueTests", tests], 0).stdout.decode()
     assert "QueueTests.test.1\n" in listed and "service" not in listed, listed
-    listed = run(binary, ["test", "--list", "--in", "Main", tests], 0).stdout
-    assert listed == b"Main.service.recovery\n", listed
+    listed = run(binary, ["test", "--list", "--in", "Main", tests], 0).stdout.decode()
+    assert listed.endswith("Main.service.promise.4\nMain.service.recovery\n"), listed
     # --only runs the one check; --calls caps its sequences, and JSON carries the counts.
     items = records(run(binary, ["test", "--json", "--calls", "3", "--only",
                                  "Main.service.recovery", queue], 0), "test")
@@ -1218,6 +1220,53 @@ def recovery_checks(binary):
         defect = items[1]["defect"]
         assert items[1]["outcome"] == "stopped" and items[1]["restarts"] == 0, items
         assert (defect["reason"], defect["detail"], defect["span"]["line"]) == ("stop", "no start", 4)
+
+
+SERVICE_PROMISES = COUNTER.replace('  token from env "COUNTER_TOKEN"\nend\n', '''  token from env "COUNTER_TOKEN"
+
+  promise "reading the total changes nothing" on total
+    after == before and reply.count == before
+    allows before: 1, reply: Total(count: 1), after: 1, now: t0
+    forbids before: 1, reply: Total(count: 1), after: 2, now: t0
+  end
+
+  promise "an addition adds its amount" on add
+    after == before + amount
+    allows before: 1, amount: 2, reply: Unit, after: 3, now: t0
+    forbids before: 1, amount: 2, reply: Unit, after: 1, now: t0
+  end
+end
+''') + 't0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"\n'
+
+
+def without_time(result):
+    """A run's JSON records without the one field that measures the run, not the program."""
+    return [{k: v for k, v in r.items() if k != "microseconds"} for r in records(result, "test")]
+
+
+def service_promise_checks(binary):
+    """Service promises are listed before their service's recovery check, run its whole plan
+    whatever --seconds says, and report the same records on every run (reference 12.2, 12.5)."""
+    with tempfile.TemporaryDirectory(prefix="mo-service-promises-") as directory:
+        path = pathlib.Path(directory) / "main.mo"
+        path.write_text(SERVICE_PROMISES)
+        listed = run(binary, ["test", "--list", str(path)], 0).stdout
+        assert listed == (b"Main.service.promise.1\nMain.service.promise.2\n"
+                          b"Main.service.recovery\n"), listed
+        items = without_time(run(binary, ["test", "--json", str(path)], 0))
+        assert [(r["name"], r["kind"], r["outcome"]) for r in items[1:-1]] == [
+            ("Main.service.promise.1", "promise", "passed"),
+            ("Main.service.promise.2", "promise", "passed"),
+            ("Main.service.recovery", "recovery", "passed")], items
+        assert all(r["sequences"] == 200 for r in items[1:-1]), items
+        assert "restarts" not in items[1] and items[3]["restarts"] >= 200, items
+        assert without_time(run(binary, ["test", "--json", "--seconds", "1", str(path)], 0)) == items
+        only = records(run(binary, ["test", "--json", "--only", "Main.service.promise.2", str(path)],
+                           0), "test")
+        assert [r["name"] for r in only[1:-1]] == ["Main.service.promise.2"], only
+    failing = "tests/golden/service-promise-restart/main.mo"
+    first, second = (without_time(run(binary, ["test", "--json", failing], 1)) for _ in range(2))
+    assert first == second and first[1]["steps"][-1]["broke"] == "Main.service.promise.1", first
 
 
 def fix_command(binary):
@@ -3964,13 +4013,15 @@ def guide_claims(binary):
          "module, such as `Counter.service.recovery` (reference 12.5).",
          "Its author writes nothing for it.",
          "`--list` prints it after its module's other checks, and `--only` and `--in` select it.",
-         "It shares a promise's budget: `--seconds` bounds its time and `--calls` caps its "
-         "sequences.",
+         "A service's own promises (reference 12.2) are checked on the same sequences.",
+         "Each is named after its position, such as `Counter.service.promise.1`, listed just "
+         "before the recovery check, and judged after every step it covers, restarts included.",
+         "Every service check runs its whole plan of 200 sequences, which `--calls` caps; "
+         "`--seconds` does not apply.",
+         "A promise body that runs past `MO_LIMIT_SERVICE_WORK` stops with that bug.",
          "For `counter.mo` under Run a service, `mo test counter.mo` prints "
          "`passed Counter.service.recovery  counter.mo:3:1`, then `1 passed, 0 failed, 0 stopped`.",
          "When the start value stops, the check stops with that bug.",
-         'When the deadline ends before the check compares a restart, `mo test` reports E1404, '
-         '"the deadline ended before the check compared a restart".',
          "`mo test FILE` checks its examples, promises, tests and recovery checks.",
          "1 when the program has errors or an example, promise, test or recovery check fails")
     with tempfile.TemporaryDirectory(prefix="mo-guide-recovery-") as directory:
@@ -4293,6 +4344,7 @@ def check(binary):
     composite_deadlines(binary)
     promise_selection(binary)
     recovery_checks(binary)
+    service_promise_checks(binary)
     imported_constants(binary)
     fix_command(binary)
     items = records(run(faults, ["--json"], 1), "check")

@@ -433,7 +433,7 @@ static inline struct mo_limits mo_limits_default(void) {
 /* A service's recovery check. One generated sequence holds at most this many steps, a crash and
  * its restart counting as two, and at most this many restarts. Reply values kept for later
  * arguments, across one sequence. --calls bounds the sequences; shrinking a failing one reruns it
- * at most MO_CLI_RECOVERY_SHRINK_RUNS times, on the same deadline. */
+ * at most MO_CLI_RECOVERY_SHRINK_RUNS times. */
 #define MO_CLI_RECOVERY_STEPS 64
 #define MO_CLI_RECOVERY_RESTARTS 8
 #define MO_CLI_RECOVERY_POOL 64
