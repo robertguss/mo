@@ -1,0 +1,586 @@
+diff --git a/src/tools/recovery.c b/src/tools/recovery.c
+index e532ad70..a3b5a4a9 100644
+--- a/src/tools/recovery.c
++++ b/src/tools/recovery.c
+@@ -72,7 +72,8 @@ void mo_recovery_sequence_clear(struct mo_recovery *r, struct mo_recovery_sequen
+ }
+ 
+ static void result_init(struct mo_recovery_result *out) {
+-    *out = (struct mo_recovery_result){.outcome = MO_RECOVERY_PASSED, .step = MO_NO_INDEX};
++    *out = (struct mo_recovery_result){
++        .outcome = MO_RECOVERY_PASSED, .step = MO_NO_INDEX, .promise = MO_NO_INDEX};
+     mo_recovery_sequence_init(&out->sequence);
+     mo_buffer_init(&out->before, MO_LIMIT_SAVED_BYTES);
+     mo_buffer_init(&out->after, MO_LIMIT_SAVED_BYTES);
+@@ -205,6 +206,10 @@ struct mo_heap *mo_recovery_heap(struct mo_recovery *r) {
+     return r->heap;
+ }
+ 
++struct mo_process *mo_recovery_process(struct mo_recovery *r) {
++    return r->process;
++}
++
+ enum mo_recovery_compared mo_recovery_compare(struct mo_simulation *simulation,
+                                               const struct mo_buffer *before,
+                                               struct mo_buffer *after) {
+@@ -544,8 +549,9 @@ struct trial {
+     bool harvest;
+     bool failed; /* failure holds the newest failure the service handed back */
+     struct mo_recovery_failure failure;
+-    uint32_t failed_firings;  /* timer handlers that failed during the current step */
+-    uint64_t committed, lost; /* this store's commits, and timer firings that committed nothing */
++    uint32_t failed_firings;    /* timer handlers that failed during the current step */
++    uint64_t committed, lost;   /* this store's commits, and timer firings that committed nothing */
++    struct mo_buffer pre, post; /* the state around a step, for the check hook */
+ };
+ 
+ static void copy_text(char *out, size_t size, const char *text, size_t length) {
+@@ -590,6 +596,8 @@ static uint64_t commits(const struct trial *t) {
+ /* Opens the service on a fresh store and runs its startup ticks. */
+ static enum mo_recovery_outcome start(struct trial *t) {
+     struct mo_recovery *r = t->recovery;
++    mo_buffer_init(&t->pre, MO_LIMIT_SAVED_BYTES);
++    mo_buffer_init(&t->post, MO_LIMIT_SAVED_BYTES);
+     if (mo_simulation_new(r->image, r->index, recovery_epoch, &t->simulation) != MO_STORE_OK) {
+         t->simulation = NULL;
+         t->out->problem = "an in-memory store could not be opened";
+@@ -608,6 +616,8 @@ static enum mo_recovery_outcome start(struct trial *t) {
+ }
+ 
+ static void finish(struct trial *t) {
++    mo_buffer_free(&t->post);
++    mo_buffer_free(&t->pre);
+     mo_simulation_free(t->simulation);
+     t->simulation = NULL;
+     pool_clear(t->recovery);
+@@ -621,7 +631,16 @@ static enum mo_recovery_outcome run_step(struct trial *t, struct mo_recovery_ste
+     struct mo_simulation_reply reply = {0};
+     enum mo_recovery_outcome outcome = MO_RECOVERY_PASSED;
+     bool replied = false, restarted = false;
++    bool checked = t->observer != NULL && t->observer->check != NULL;
++    const struct mo_buffer *before = NULL;
+     t->failed_firings = 0;
++    if (checked && step->kind == MO_RECOVERY_RESTART)
++        before = &out->before;
++    else if (checked && step->kind != MO_RECOVERY_CRASH) {
++        mo_buffer_clear(&t->pre);
++        if (mo_simulation_encode(t->simulation, &t->pre))
++            before = &t->pre;
++    }
+     switch (step->kind) {
+     case MO_RECOVERY_SEND: {
+         bool running = mo_simulation_running(t->simulation);
+@@ -684,21 +703,42 @@ static enum mo_recovery_outcome run_step(struct trial *t, struct mo_recovery_ste
+     }
+     step->ran = true;
+     if (t->observer != NULL && t->observer->observe != NULL) {
+-        const struct mo_recovery_observation observation = {t->ordinal, index, step,
+-                                                            replied ? &reply : NULL, t->simulation};
++        const struct mo_recovery_observation observation = {
++            t->ordinal, index, step, replied ? &reply : NULL, t->simulation, NULL, NULL};
+         t->observer->observe(&observation, t->observer->context);
+     }
+-    if (replied) {
+-        if (t->harvest)
+-            harvest(r, step->tool, step->sent, &reply);
+-        mo_value_drop(r->heap, reply.type, reply.reply);
+-    }
+     /* The startup ticks run only after the recovered state was compared. */
+     if (restarted) {
+         MO_ASSERT(mo_simulation_drain(t->simulation, &t->hooks) == MO_SIMULATION_OK);
+         t->committed += r->service->timer_count;
+     }
+-    if (outcome == MO_RECOVERY_MISMATCH || outcome == MO_RECOVERY_REFUSED)
++    if (checked && outcome == MO_RECOVERY_PASSED && step->kind != MO_RECOVERY_CRASH) {
++        mo_buffer_clear(&t->post);
++        const struct mo_buffer *after =
++            mo_simulation_encode(t->simulation, &t->post) ? &t->post : NULL;
++        const struct mo_recovery_observation observation = {
++            t->ordinal, index, step, replied ? &reply : NULL, t->simulation, before, after};
++        uint32_t promise = t->observer->check(&observation, t->observer->context);
++        if (promise != MO_NO_INDEX) {
++            outcome = MO_RECOVERY_PROMISE;
++            out->promise = promise;
++            struct mo_buffer swap = out->after;
++            out->after = t->post;
++            t->post = swap;
++            if (before == &t->pre) {
++                swap = out->before;
++                out->before = t->pre;
++                t->pre = swap;
++            }
++        }
++    }
++    if (replied) {
++        if (t->harvest)
++            harvest(r, step->tool, step->sent, &reply);
++        mo_value_drop(r->heap, reply.type, reply.reply);
++    }
++    if (outcome == MO_RECOVERY_MISMATCH || outcome == MO_RECOVERY_REFUSED ||
++        outcome == MO_RECOVERY_PROMISE)
+         out->step = index;
+     return outcome;
+ }
+@@ -793,7 +833,8 @@ enum mo_recovery_outcome mo_recovery_search(struct mo_recovery *r, uint64_t sequ
+         out->counts.sequences++;
+         mo_recovery_sequence_clear(r, &out->sequence);
+     }
+-    if (outcome != MO_RECOVERY_MISMATCH && outcome != MO_RECOVERY_REFUSED)
++    if (outcome != MO_RECOVERY_MISMATCH && outcome != MO_RECOVERY_REFUSED &&
++        outcome != MO_RECOVERY_PROMISE)
+         mo_recovery_sequence_clear(r, &out->sequence);
+     if (outcome == MO_RECOVERY_PASSED && deadline->state == MO_DEADLINE_ERROR) {
+         out->problem = "the check's clock could not be read";
+@@ -843,6 +884,8 @@ struct shrink {
+     struct mo_recovery *recovery;
+     struct mo_recovery_sequence *best;
+     enum mo_recovery_outcome failure;
++    uint32_t promise;
++    const struct mo_recovery_hooks *hooks;
+     struct mo_deadline *deadline;
+     uint32_t runs;
+     bool ended; /* the budget or the deadline ran out, or memory did */
+@@ -899,12 +942,14 @@ static bool attempt(struct shrink *s, struct mo_recovery_sequence *candidate) {
+     else {
+         s->runs++;
+         struct mo_recovery_result result;
+-        fails = mo_recovery_replay(r, candidate, NULL, &result) == s->failure;
++        fails = mo_recovery_replay(r, candidate, s->hooks, &result) == s->failure &&
++                result.promise == s->promise;
+         uint32_t step = result.step;
+         mo_recovery_result_free(r, &result);
+         if (fails) {
+             MO_ASSERT(step < candidate->count &&
+-                      candidate->steps[step].kind == MO_RECOVERY_RESTART);
++                      (s->failure == MO_RECOVERY_PROMISE ||
++                       candidate->steps[step].kind == MO_RECOVERY_RESTART));
+             cut(r, candidate, step + 1);
+             struct mo_recovery_sequence old = *s->best;
+             *s->best = *candidate;
+@@ -994,10 +1039,18 @@ static bool shorten_advances(struct shrink *s) {
+ }
+ 
+ uint32_t mo_recovery_shrink(struct mo_recovery *r, struct mo_recovery_sequence *sequence,
+-                            enum mo_recovery_outcome failure, struct mo_deadline *deadline) {
++                            enum mo_recovery_outcome failure, uint32_t promise,
++                            const struct mo_recovery_hooks *hooks, struct mo_deadline *deadline) {
+     MO_ASSERT(r != NULL && sequence != NULL && deadline != NULL);
+-    MO_ASSERT(failure == MO_RECOVERY_MISMATCH || failure == MO_RECOVERY_REFUSED);
+-    struct shrink s = {.recovery = r, .best = sequence, .failure = failure, .deadline = deadline};
++    MO_ASSERT(failure == MO_RECOVERY_MISMATCH || failure == MO_RECOVERY_REFUSED ||
++              failure == MO_RECOVERY_PROMISE);
++    MO_ASSERT((failure == MO_RECOVERY_PROMISE) == (promise != MO_NO_INDEX));
++    struct shrink s = {.recovery = r,
++                       .best = sequence,
++                       .failure = failure,
++                       .promise = promise,
++                       .hooks = hooks,
++                       .deadline = deadline};
+     for (bool progress = true; progress && !s.ended;) {
+         progress = delete_steps(&s);
+         progress |= shrink_arguments(&s);
+diff --git a/src/tools/recovery.h b/src/tools/recovery.h
+index 4d90dcec..e98669e2 100644
+--- a/src/tools/recovery.h
++++ b/src/tools/recovery.h
+@@ -71,6 +71,7 @@ enum mo_recovery_outcome {
+     MO_RECOVERY_MISMATCH,   /* a restart recovered a state that differs from the one at its crash */
+     MO_RECOVERY_REFUSED,    /* recovery refused the store at a restart; failure says why */
+     MO_RECOVERY_STOPPED,    /* the service failed at its first open, as failure says */
++    MO_RECOVERY_PROMISE,    /* a service promise was false after a step; promise names it */
+     MO_RECOVERY_UNCOMPARED, /* the budget ended before any restart was compared */
+     MO_RECOVERY_UNAVAILABLE /* the checker could not go on: problem says why */
+ };
+@@ -90,10 +91,12 @@ struct mo_recovery_counts {
+ struct mo_recovery_result {
+     enum mo_recovery_outcome outcome;
+     struct mo_recovery_counts counts;
+-    /* A search's MISMATCH or REFUSED: the failing sequence, ending at the failing restart. */
++    /* A search's MISMATCH, REFUSED or PROMISE: the failing sequence, ending at the failing step. */
+     struct mo_recovery_sequence sequence;
+-    uint32_t step; /* MISMATCH and REFUSED: the failing restart's index */
+-    /* MISMATCH: the state's saved encoding before the crash, and as recovered. */
++    uint32_t step;    /* MISMATCH, REFUSED and PROMISE: the failing step's index */
++    uint32_t promise; /* PROMISE: what the check hook returned */
++    /* MISMATCH: the state's saved encoding before the crash, and as recovered. PROMISE: the
++     * state's saved encoding before and after the failing step. */
+     struct mo_buffer before, after;
+     struct mo_recovery_failure failure; /* REFUSED and STOPPED */
+     const char *problem;                /* UNAVAILABLE */
+@@ -107,10 +110,16 @@ struct mo_recovery_observation {
+     const struct mo_recovery_step *step;
+     const struct mo_simulation_reply *reply; /* a SEND that REPLIED or was REJECTED; else NULL */
+     struct mo_simulation *simulation;        /* to read the state; never to drive it */
++    /* check only: the state's saved encoding before and after the step, a crash and its restart
++     * being one step; NULL when the service could not be read. */
++    const struct mo_buffer *before, *after;
+ };
+ struct mo_recovery_hooks {
+     void (*observe)(const struct mo_recovery_observation *observation, void *context);
+     void *context;
++    /* After each step but a crash, once a restart's startup ticks ran: MO_NO_INDEX when the step
++     * kept every promise, or which one failed, ending the sequence with PROMISE. */
++    uint32_t (*check)(const struct mo_recovery_observation *observation, void *context);
+ };
+ 
+ /* A checker for service, an index in an initialized image that outlives it. It owns a process
+@@ -125,6 +134,7 @@ void mo_recovery_free(struct mo_recovery *recovery);
+ /* <Module>.service.recovery, NUL-terminated. */
+ MO_MUST_USE const char *mo_recovery_name(const struct mo_recovery *recovery);
+ MO_MUST_USE struct mo_heap *mo_recovery_heap(struct mo_recovery *recovery);
++MO_MUST_USE struct mo_process *mo_recovery_process(struct mo_recovery *recovery);
+ 
+ /* Runs generated sequences until one fails, sequences have run, or deadline (started, and polled
+  * between steps) ends. A sequence the deadline cuts short is not counted, though restarts it
+@@ -140,7 +150,8 @@ MO_MUST_USE enum mo_recovery_outcome mo_recovery_replay(struct mo_recovery *reco
+                                                         const struct mo_recovery_hooks *hooks,
+                                                         struct mo_recovery_result *out);
+ 
+-/* Shrinks sequence, which failed with failure (MISMATCH or REFUSED) at its last step: deletes
++/* Shrinks sequence, which failed with failure (MISMATCH, REFUSED, or PROMISE with promise) at its
++ * last step, replaying with hooks: deletes
+  * steps, a crash always with its restart, then simplifies tool arguments with the input shrinker,
+  * then shortens advances, as long as any pass makes progress. Each candidate is replayed from a
+  * fresh store, and kept, cut after its failing restart, when it fails the same way. Arguments are
+@@ -149,7 +160,8 @@ MO_MUST_USE enum mo_recovery_outcome mo_recovery_replay(struct mo_recovery *reco
+  * records of what each step did are stale afterwards; replay it to read them. */
+ MO_MUST_USE uint32_t mo_recovery_shrink(struct mo_recovery *recovery,
+                                         struct mo_recovery_sequence *sequence,
+-                                        enum mo_recovery_outcome failure,
++                                        enum mo_recovery_outcome failure, uint32_t promise,
++                                        const struct mo_recovery_hooks *hooks,
+                                         struct mo_deadline *deadline);
+ 
+ /* The part of a SEND's reply a report shows, borrowed from reply: an update's reply without its
+diff --git a/src/tools/render.c b/src/tools/render.c
+index cacf2ec2..f3ca93af 100644
+--- a/src/tools/render.c
++++ b/src/tools/render.c
+@@ -1105,7 +1105,8 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
+     const struct mo_recovery_report *report = result->recovery;
+     const struct mo_recovery_result *run = report->result;
+     const struct mo_recovery_sequence *sequence = report->sequence;
+-    MO_ASSERT(run->step < sequence->count && run->step != 0);
++    bool promise = run->outcome == MO_RECOVERY_PROMISE;
++    MO_ASSERT(run->step < sequence->count && (run->step != 0 || promise));
+     if (json)
+         text(w, ",\"steps\":[");
+     for (uint32_t i = 0; w->ok && i < sequence->count; i++) {
+@@ -1135,7 +1136,7 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
+                              : "restart  recovery refused the store: ");
+                 if (!json)
+                     recovery_failure(w, &run->failure, false);
+-            } else if (i == run->step) {
++            } else if (i == run->step && !promise) {
+                 MO_ASSERT(run->outcome == MO_RECOVERY_MISMATCH);
+                 text(w, json ? "\"restart\",\"recovered\":\"different\""
+                              : "restart  recovered a different state");
+@@ -1144,6 +1145,14 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
+                              : "restart  recovered the same state");
+             break;
+         }
++        if (promise && i == run->step) {
++            const struct mo_bytecode_string *name =
++                &result->file->strings[result->file->functions[run->promise].name];
++            text(w, json ? ",\"broke\":\"" : "  broke ");
++            safe_bytes(w, name->bytes, name->length);
++            if (json)
++                text(w, "\"");
++        }
+         text(w, json ? "}" : "\n");
+     }
+     struct mo_buffer before, after;
+@@ -1151,12 +1160,15 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
+     mo_buffer_init(&after, MO_CLI_DIAGNOSTIC_SIZE);
+     w->ok = w->ok && state_literal(result, &run->before, &before);
+     bool mismatch = run->outcome == MO_RECOVERY_MISMATCH;
+-    if (mismatch)
++    if (mismatch || promise)
+         w->ok = w->ok && state_literal(result, &run->after, &after);
++    uint32_t first = promise && sequence->steps[run->step].kind != MO_RECOVERY_RESTART
++                         ? run->step + 1
++                         : run->step;
+     if (json) {
+         text(w, "],\"before\":");
+         json_bytes(w, before.bytes, before.length);
+-        if (mismatch) {
++        if (mismatch || promise) {
+             text(w, ",\"after\":");
+             json_bytes(w, after.bytes, after.length);
+         } else {
+@@ -1165,11 +1177,11 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
+         }
+     } else {
+         text(w, "  state before step ");
+-        unsigned_number(w, run->step);
++        unsigned_number(w, first);
+         text(w, ": ");
+         safe_bytes(w, before.bytes, before.length);
+         text(w, "\n");
+-        if (mismatch) {
++        if (mismatch || promise) {
+             text(w, "  state after step ");
+             unsigned_number(w, run->step + 1);
+             text(w, ": ");
+diff --git a/src/tools/tests.c b/src/tools/tests.c
+index 2119297e..b61abc3f 100644
+--- a/src/tools/tests.c
++++ b/src/tools/tests.c
+@@ -357,13 +357,106 @@ static uint64_t microseconds(struct timespec start, struct timespec end) {
+     return seconds * 1000000 + (uint64_t)nanos / 1000;
+ }
+ 
+-/* What each step of a failing sequence's last run replied, copied into the checker's heap. */
++enum { GUARANTEES = 16 };
++struct guarantee {
++    uint32_t function;
++    uint32_t tool; /* MO_NO_INDEX: every step */
++};
++
++/* What each step of a failing sequence's last run replied, copied into the checker's heap, and the
++ * service module's guarantee_ functions. */
+ struct replies {
+     struct mo_recovery *recovery;
++    const struct mo_bytecode *file;
++    const struct mo_bytecode_service *service;
++    struct guarantee guarantees[GUARANTEES];
++    uint32_t guarantee_count;
+     struct mo_cell values[MO_CLI_RECOVERY_STEPS];
+     uint32_t types[MO_CLI_RECOVERY_STEPS];
+ };
+ 
++static bool same_types(const struct mo_parameter *parameters, const uint32_t *types,
++                       uint32_t count) {
++    for (uint32_t i = 0; i < count; i++)
++        if (parameters[i].type != types[i])
++            return false;
++    return true;
++}
++
++/* (before: State, after: State) holds at every step; (before: State, a tool's arguments, its
++ * result, after: State) at each of that tool's replies. */
++static void find_guarantees(struct replies *w) {
++    static const char prefix[] = ".guarantee_";
++    const struct mo_bytecode *file = w->file;
++    const struct mo_bytecode_service *service = w->service;
++    const struct mo_bytecode_string *module = &file->strings[file->modules[service->module].name];
++    for (uint32_t f = 0; f < file->function_count; f++) {
++        const struct mo_bytecode_function *function = &file->functions[f];
++        const struct mo_bytecode_string *name = &file->strings[function->name];
++        if (function->kind != MO_FUNCTION_FUNCTION ||
++            name->length <= module->length + sizeof prefix - 1 ||
++            memcmp(name->bytes, module->bytes, module->length) != 0 ||
++            memcmp(name->bytes + module->length, prefix, sizeof prefix - 1) != 0)
++            continue;
++        uint32_t n = function->parameter_count, state = service->state_type;
++        MO_ASSERT(w->guarantee_count < GUARANTEES && n >= 2 &&
++                  function->parameters[0].type == state &&
++                  function->parameters[n - 1].type == state);
++        uint32_t tool = MO_NO_INDEX;
++        if (n != 2) {
++            for (tool = 0; tool < service->tool_count; tool++) {
++                const struct mo_bytecode_service_tool *t = &service->tools[tool];
++                if (n == t->argument_count + 3 &&
++                    same_types(function->parameters + 1, t->argument_types, t->argument_count) &&
++                    function->parameters[n - 2].type == t->result_type)
++                    break;
++            }
++            MO_ASSERT(tool < service->tool_count);
++        }
++        w->guarantees[w->guarantee_count++] = (struct guarantee){f, tool};
++    }
++}
++
++static uint32_t check_guarantees(const struct mo_recovery_observation *o, void *context) {
++    struct replies *w = context;
++    if (o->before == NULL || o->after == NULL)
++        return MO_NO_INDEX;
++    struct mo_heap *heap = mo_recovery_heap(w->recovery);
++    uint32_t state = w->service->state_type;
++    struct mo_cell before, after;
++    MO_ASSERT(mo_value_decode(heap, state, o->before->bytes, o->before->length, &before));
++    MO_ASSERT(mo_value_decode(heap, state, o->after->bytes, o->after->length, &after));
++    uint32_t failed = MO_NO_INDEX;
++    for (uint32_t g = 0; g < w->guarantee_count && failed == MO_NO_INDEX; g++) {
++        uint32_t tool = w->guarantees[g].tool;
++        if (tool != MO_NO_INDEX &&
++            (o->step->kind != MO_RECOVERY_SEND || o->step->tool != tool || o->reply == NULL))
++            continue;
++        const struct mo_bytecode_function *function =
++            &w->file->functions[w->guarantees[g].function];
++        uint32_t n = function->parameter_count;
++        struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
++        arguments[0] = before;
++        arguments[n - 1] = after;
++        for (uint32_t a = 1; a + 2 < n; a++)
++            arguments[a] = o->step->arguments[a - 1];
++        if (n > 2)
++            arguments[n - 2] = o->reply->reply;
++        for (uint32_t a = 0; a < n; a++)
++            if (function->parameters[a].ownership == MO_PARAMETER_OWNED)
++                arguments[a] = mo_value_dup(heap, function->parameters[a].type, arguments[a]);
++        struct mo_cell held;
++        struct mo_defect defect;
++        MO_ASSERT(mo_call(mo_recovery_process(w->recovery), w->guarantees[g].function, arguments, n,
++                          &held, &defect) == MO_RETURNED);
++        if (!mo_cell_get_bool(held))
++            failed = w->guarantees[g].function;
++    }
++    mo_value_drop(heap, state, after);
++    mo_value_drop(heap, state, before);
++    return failed;
++}
++
+ static void keep_reply(const struct mo_recovery_observation *observation, void *context) {
+     struct replies *replies = context;
+     if (observation->reply == NULL)
+@@ -397,11 +490,16 @@ static bool test_recovery(const struct mo_cli *cli, struct mo_image *image,
+         return true;
+     }
+     struct mo_recovery_result found, rerun;
+-    enum mo_recovery_outcome outcome =
+-        mo_recovery_search(recovery, cli->calls, &deadline, NULL, &found);
+-    struct replies replies = {.recovery = recovery};
++    struct replies replies = {.recovery = recovery,
++                              .file = mo_image_bytecode(image),
++                              .service = &mo_image_bytecode(image)->services[service]};
+     for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
+         replies.types[i] = MO_NO_INDEX;
++    find_guarantees(&replies);
++    const struct mo_recovery_hooks checks = {
++        NULL, &replies, replies.guarantee_count != 0 ? check_guarantees : NULL};
++    enum mo_recovery_outcome outcome =
++        mo_recovery_search(recovery, cli->calls, &deadline, &checks, &found);
+     struct mo_recovery_report report = {
+         .recovery = recovery, .service = service, .counts = found.counts, .result = &found};
+     struct mo_test_result result = {.observation = observation,
+@@ -425,13 +523,16 @@ static bool test_recovery(const struct mo_cli *cli, struct mo_image *image,
+         detail = found.problem;
+         break;
+     case MO_RECOVERY_MISMATCH:
+-    case MO_RECOVERY_REFUSED: {
++    case MO_RECOVERY_REFUSED:
++    case MO_RECOVERY_PROMISE: {
+         report.counts.sequences++;
+-        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, &deadline);
++        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, found.promise,
++                                           &checks, &deadline);
+         (void)runs; /* gcc ignores a (void) cast on a must-use result. */
+-        const struct mo_recovery_hooks hooks = {keep_reply, &replies};
++        const struct mo_recovery_hooks hooks = {keep_reply, &replies, checks.check};
+         ran_again = true;
+-        if (mo_recovery_replay(recovery, &found.sequence, &hooks, &rerun) != outcome) {
++        if (mo_recovery_replay(recovery, &found.sequence, &hooks, &rerun) != outcome ||
++            rerun.promise != found.promise) {
+             problem = "the shrunk recovery sequence did not fail the same way when it ran again";
+             break;
+         }
+diff --git a/tests/test_recovery.c b/tests/test_recovery.c
+index 24cc10fd..2aebd91a 100644
+--- a/tests/test_recovery.c
++++ b/tests/test_recovery.c
+@@ -202,7 +202,7 @@ static void task_queue(void) {
+                                 .acknowledge = tool_named(image, 0, "acknowledge"),
+                                 .fail = tool_named(image, 0, "fail"),
+                                 .sequence = UINT64_MAX};
+-    const struct mo_recovery_hooks hooks = {watch_queue, &watch};
++    const struct mo_recovery_hooks hooks = {watch_queue, &watch, NULL};
+ 
+     /* mo test's default budget, 200 sequences within 2 seconds, compares restarts. */
+     struct mo_recovery *recovery = checker(image, 0);
+@@ -457,7 +457,7 @@ static void read_only(void) {
+     MO_ASSERT(process != NULL && mo_value_encode(mo_process_heap(process),
+                                                  mo_image_bytecode(image)->services[0].state_type,
+                                                  mo_cell_int(5), &t.fixed));
+-    const struct mo_recovery_hooks hooks = {count, &t};
++    const struct mo_recovery_hooks hooks = {count, &t, NULL};
+     struct mo_recovery_result result;
+     CHECK(search(recovery, 50, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+     CHECK(result.counts.sequences == 50 && result.counts.restarts == t.restarts);
+@@ -480,7 +480,7 @@ static void failing_tool(void) {
+     struct mo_recovery *recovery = checker(image, 0);
+     struct tally t;
+     tally_init(&t);
+-    const struct mo_recovery_hooks hooks = {count, &t};
++    const struct mo_recovery_hooks hooks = {count, &t, NULL};
+     struct mo_recovery_result result;
+     CHECK(search(recovery, 100, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+     CHECK(t.tool_failed > 0 && t.replied > 0 && t.refused == 0);
+@@ -503,7 +503,7 @@ static void supervisor_stop(void) {
+     struct mo_recovery *recovery = checker(image, 0);
+     struct tally t;
+     tally_init(&t);
+-    const struct mo_recovery_hooks hooks = {count, &t};
++    const struct mo_recovery_hooks hooks = {count, &t, NULL};
+     struct mo_recovery_result result;
+     CHECK(search(recovery, 400, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+     CHECK(t.tool_failed == t.sends - t.down && t.stops >= 5 && t.compared_at_stop == t.stops);
+@@ -550,7 +550,7 @@ static void two_services(void) {
+     /* Both checkers live at once, alternating, so each holds its own state. */
+     for (uint32_t round = 0; round < 3; round++)
+         for (uint32_t i = 0; i < 2; i++) {
+-            const struct mo_recovery_hooks hooks = {count, &tallies[i]};
++            const struct mo_recovery_hooks hooks = {count, &tallies[i], NULL};
+             struct mo_recovery_result result;
+             CHECK(search(recoveries[i], 20, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+             CHECK(result.counts.sequences == 20 && result.counts.restarts >= 20);
+@@ -585,7 +585,7 @@ static void recursive_argument(void) {
+     tally_init(&t);
+     t.types = mo_image_types(image);
+     t.service = &mo_image_bytecode(image)->services[0];
+-    const struct mo_recovery_hooks hooks = {count, &t};
++    const struct mo_recovery_hooks hooks = {count, &t, NULL};
+     struct mo_recovery_result result;
+     CHECK(search(recovery, 200, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+     CHECK(t.tools[0] > 0 && t.tools[1] > 0 && t.refused == 0 && t.replied == t.sends);
+@@ -609,7 +609,7 @@ static void deterministic(void) {
+         tally_init(&t);
+         t.heap = mo_recovery_heap(recovery);
+         t.hashed = &mo_image_bytecode(image)->services[0];
+-        const struct mo_recovery_hooks hooks = {count, &t};
++        const struct mo_recovery_hooks hooks = {count, &t, NULL};
+         struct mo_recovery_result result;
+         CHECK(search(recovery, 10 * MO_LIMIT_STORES, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+         CHECK(result.counts.sequences == 10 * MO_LIMIT_STORES);
+@@ -678,7 +678,8 @@ static void shrink_keeps_passing(void) {
+     memcpy(sequence.steps, steps, sizeof steps);
+     struct mo_deadline deadline;
+     MO_ASSERT(mo_deadline_start(&deadline, 600));
+-    uint32_t runs = mo_recovery_shrink(recovery, &sequence, MO_RECOVERY_MISMATCH, &deadline);
++    uint32_t runs =
++        mo_recovery_shrink(recovery, &sequence, MO_RECOVERY_MISMATCH, MO_NO_INDEX, NULL, &deadline);
+     CHECK(runs > sequence.count && runs <= MO_CLI_RECOVERY_SHRINK_RUNS);
+     CHECK(sequence.count == sizeof steps / sizeof steps[0]);
+     for (uint32_t i = 0; i < sequence.count; i++)
+@@ -794,7 +795,7 @@ static void failure_report(void) {
+     struct kept kept = {.recovery = recovery};
+     for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
+         kept.types[i] = MO_NO_INDEX;
+-    const struct mo_recovery_hooks hooks = {keep, &kept};
++    const struct mo_recovery_hooks hooks = {keep, &kept, NULL};
+     struct mo_recovery_result result;
+     CHECK(mo_recovery_replay(recovery, &sequence, &hooks, &result) == MO_RECOVERY_PASSED);
+     /* The recovered state reads 0, as if the add were lost. */
+diff --git a/tests/test_recovery_faults.c b/tests/test_recovery_faults.c
+index ddd4ed20..661c2228 100644
+--- a/tests/test_recovery_faults.c
++++ b/tests/test_recovery_faults.c
+@@ -93,7 +93,7 @@ static int64_t state_of(struct mo_recovery *recovery, uint32_t type, const struc
+ static void shrunk_failure(struct mo_recovery *recovery, const struct mo_bytecode_service *service,
+                            uint32_t add, struct mo_recovery_sequence *sequence,
+                            enum mo_recovery_outcome expected, struct mo_deadline *deadline) {
+-    uint32_t runs = mo_recovery_shrink(recovery, sequence, expected, deadline);
++    uint32_t runs = mo_recovery_shrink(recovery, sequence, expected, MO_NO_INDEX, NULL, deadline);
+     CHECK(runs > 0 && runs < MO_CLI_RECOVERY_SHRINK_RUNS);
+     const struct mo_recovery_step *steps = sequence->steps;
+     bool shape = sequence->count == 3 && steps[0].kind == MO_RECOVERY_SEND &&
+@@ -194,7 +194,8 @@ static void shrunk_advance(void *unused) {
+     enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 200, &deadline, NULL, &found);
+     CHECK(outcome == MO_RECOVERY_MISMATCH);
+     if (outcome == MO_RECOVERY_MISMATCH) {
+-        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, &deadline);
++        uint32_t runs =
++            mo_recovery_shrink(recovery, &found.sequence, outcome, MO_NO_INDEX, NULL, &deadline);
+         CHECK(runs > 0 && runs < MO_CLI_RECOVERY_SHRINK_RUNS);
+         const struct mo_recovery_step *steps = found.sequence.steps;
+         const int64_t minute = INT64_C(60000000);

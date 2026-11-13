@@ -1,0 +1,58 @@
+--- a/job-queue.mo
++++ b/job-queue.mo
+@@ -91,7 +91,7 @@
+ 
+ ## Renews the current lease until now + 30 minutes without counting an attempt.
+ ## NotLeased also covers an expired lease or a different attempt.
+-fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, QueueError)
++fn heartbeat(queue: Queue, now: Time, attempt: Int, id: Int) : Result(Queue, QueueError)
+   promise "only a current lease can be renewed"
+     result is Ok(_) implies
+       queue.jobs.get(id) is Some(job) and
+@@ -296,7 +296,7 @@
+   (submitted, other) = submit(first, "publish the report")
+   assert lease(submitted, t0, 30.minutes) is Ok((taken, Some(job)))
+   now = t0 + 20.minutes
+-  assert heartbeat(taken, now, id, job.attempts) is Ok(renewed)
++  assert heartbeat(taken, now, job.attempts, id) is Ok(renewed)
+   assert renewed.jobs.get(id) is Some(current)
+   assert current ==
+     Job(id: id, payload: "send the invoice", attempts: 1, state: Leased(until: t0 + 50.minutes))
+@@ -319,11 +319,11 @@
+   assert lease(returned, now, 30.seconds) is Ok((second, Some(current)))
+   assert current.attempts == 2
+   for attempt in [0, job.attempts, 3]
+-    assert heartbeat(second, now, id, attempt) == Error(NotLeased(id: id))
++    assert heartbeat(second, now, attempt, id) == Error(NotLeased(id: id))
+     assert acknowledge(second, now, id, attempt) == Error(NotLeased(id: id))
+     assert fail(second, now, id, attempt) == Error(NotLeased(id: id))
+   end
+-  assert heartbeat(second, now, id, current.attempts) is Ok(renewed)
++  assert heartbeat(second, now, current.attempts, id) is Ok(renewed)
+   assert renewed.jobs.get(id) is Some(extended) and extended.attempts == 2
+   assert acknowledge(second, now, id, current.attempts) is Ok(finished)
+   assert finished.jobs.get(id) is Some(completed) and completed.state == Done
+@@ -337,10 +337,10 @@
+ test "expired and ended leases are refused even before the expiry tick"
+   for job in [leased(1, t0), leased(1, t0 - 1.second), ready(1), done(1), dead(1)]
+     queue = holding([job])
+-    assert heartbeat(queue, t0, 1, job.attempts) == Error(NotLeased(id: 1))
++    assert heartbeat(queue, t0, job.attempts, 1) == Error(NotLeased(id: 1))
+     assert acknowledge(queue, t0, 1, job.attempts) == Error(NotLeased(id: 1))
+     assert fail(queue, t0, 1, job.attempts) == Error(NotLeased(id: 1))
+   end
+-  assert heartbeat(empty, t0, 9, 1) == Error(NoSuchJob(id: 9))
++  assert heartbeat(empty, t0, 1, 9) == Error(NoSuchJob(id: 9))
+   assert acknowledge(empty, t0, 9, 1) == Error(NoSuchJob(id: 9))
+ end
+--- a/main.mo
++++ b/main.mo
+@@ -126,7 +126,7 @@
+ ## Never repeat a call that got handler_failed, work_limit or memory_limit: it
+ ## can stop the service for everyone.
+ fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+-  after = try JobQueue.heartbeat(queue, now, id, attempt)
++  after = try JobQueue.heartbeat(queue, now, attempt, id)
+   Ok((after, Unit))
+ end
+ 

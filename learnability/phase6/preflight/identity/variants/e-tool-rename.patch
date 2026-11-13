@@ -1,0 +1,13 @@
+--- a/main.mo
++++ b/main.mo
+@@ -125,8 +125,8 @@
+ ## NoSuchJob: the id is wrong; do not retry.
+ ## Never repeat a call that got handler_failed, work_limit or memory_limit: it
+ ## can stop the service for everyone.
+-fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+-  after = try JobQueue.heartbeat(queue, now, id, attempt)
++fn heartbeat(queue: Queue, now: Time, id: Int, attempt_number: Int) : Result((Queue, Unit), QueueError)
++  after = try JobQueue.heartbeat(queue, now, id, attempt_number)
+   Ok((after, Unit))
+ end
+ 

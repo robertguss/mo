@@ -1,0 +1,4 @@
+58c58
+<   after.jobs = after.jobs.set(id, Job(id: id, payload: payload, attempts: 0, state: Ready))
+---
+>   after.jobs = after.jobs.set(id, Job(id: id, payload: payload, attempts: 1, state: Ready))

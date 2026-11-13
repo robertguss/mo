@@ -1148,13 +1148,20 @@ rows. Rendering is linear in the state's size, about 8 s per MB at `-O2` and 20 
 rendering, so `mo serve` started beside a `mo history` of the 10.4 MB state listened within 2.3 s.
 The numbers and the commands are in `learnability/phase4/offline/results/verification.md`.
 
-## Proposed whole-program upgrades
+## Whole-program upgrades and the review door
 
-[The upgrade design](upgrades.md) specifies the next phase; it is not implemented
-or approved. Current behavior above remains the shipped contract. Activation
-will atomically record the source bundle, migrated snapshot and program identities,
-with a version-2 folder that old readers refuse. The new upgrade operator tools
-change the service and require a separate credential. A compiler child limits
-crashes and stalls but shares the host identity, files and secrets: its compiler
-is part of the upgrade credential’s trusted base. Write access to the future
-program-owning data folder confers the authority to replace the running program.
+Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
+describes. Activation atomically records the source bundle, migrated snapshot and
+program identities in a version-2 folder that older readers refuse. The upgrade
+operator tools change the service and require a separate credential. A compiler
+child limits crashes and stalls but shares the host identity, files and secrets:
+its compiler is part of the upgrade credential's trusted base. Write access to
+the data folder confers the authority to replace the running program.
+
+Phase 6 proposes [the review door](intent.md), not yet implemented: a third
+secret, the approval credential, held only on the service's host; a second
+child that runs the candidate's checks there under limits but without
+operating-system confinement; and a version-3 folder holding approvals. Write
+access to the data folder then confers approval authority too, and a
+memory-safety defect in the compiler or the VM that pushed source can reach is a
+way around the door without a shell.

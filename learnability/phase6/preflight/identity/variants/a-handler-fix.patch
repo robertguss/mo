@@ -1,0 +1,20 @@
+--- a/main.mo
++++ b/main.mo
+@@ -10,7 +10,7 @@
+ max_jobs = 5000
+ max_page_jobs = 100
+ lease_length = 30.minutes
+-full_advice = "This limit counts every job ever submitted and never falls, so retrying cannot help. Tell a person."
++full_advice = "This limit counts every job ever submitted and never falls, so retrying cannot help. Tell a person now."
+ 
+ service
+   state Queue = JobQueue.empty
+@@ -195,7 +195,7 @@
+   end
+   matching = JobQueue.jobs(queue).filter(fn(job) job.id > after and shown?(filter, job) end)
+   page = matching.take(limit)
+-  next = if matching.size > limit: page.last.map(fn(job) job.id end) else: None
++  next = if limit < matching.size: page.last.map(fn(job) job.id end) else: None
+   Ok(Page(jobs: page, next: next, now: now))
+ end
+ 

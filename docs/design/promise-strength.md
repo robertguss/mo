@@ -1,6 +1,6 @@
 # Promise strength from natural mutants
 
-Status: Design proposal (16 Oct 2026, task `MO-66` / `S1`). Not yet implemented; implementation is tracked separately under Phase 6 (`MO-67` / `S2`).
+Status: Design proposal (16 Oct 2026, task `MO-66` / `S1`), amended for Phase 6 by section 15, which takes precedence where the two differ. Not yet implemented.
 
 ## 1. Purpose and scope
 
@@ -22,7 +22,7 @@ A score describes the frozen implementations and inputs examined. It is not a pr
 
 ## 3. What is scored
 
-The unit of measurement is one source function and its unchanged promises and examples.
+The unit of measurement is one source function and its unchanged promises and examples. Phase 6 measures a whole program instead (section 15).
 
 For each subject, prepare approximately ten distinct natural mutants: plausible wrong implementations with a documented mistake, rather than relying exclusively on mechanical operator changes. Ten is a starting corpus target, not evidence of statistical sufficiency.
 
@@ -239,3 +239,19 @@ All choices below are proposed for the design, not yet implemented in the compil
 ## 14. Dependencies and scope boundary
 
 `S1` (`MO-66`) has no task prerequisites. `S2` (`MO-67`) depends on scalar promise execution (`I1` / `MO-44`) and `S1`, and remains scoped to Phase 6.
+
+## 15. The Phase 6 measurement
+
+Phase 6 builds the part of this design that measuring the task queue's intent needs, and extends it from one function to a whole program, service promises included ([intent.md](intent.md)).
+
+**The measured unit is the program.** Its intent items are every promise, service promise and example row it carries, each identified by the content digest in `intent.md`.
+
+**A wrong version** is a set of replacement implementations for named declarations, applied to the program being measured. The promises and example rows at the top of a replaced function stay those of the measured program, so a wrong version cannot edit what judges it, and a set frozen before the intent is strengthened still applies afterwards. Each wrong version records the session that wrote it and the mistake it represents.
+
+**What counts.** A wrong version counts only when every intent item's digest is unchanged by it. One that changes a declaration an item reads is reported as changing intent and stays out of the kill rate. The counted set is fixed at the first measurement. A wrong version that changes intent only after the intent was strengthened stays in the denominator as its own class and is never a kill, so widening what items read cannot raise the rate.
+
+**Who writes them, and the held-back half.** The wrong versions are written by an agent session that does not write the program's intent, and are frozen before that intent is strengthened. Half of each frozen set, chosen at the freeze, is held back from the strengthening session: it sits outside the repository, and its SHA-256 manifest is committed at the freeze. The result Robert is asked to accept is measured on the held-back half, and the strengthening session's transcript shows it never read those files. A held-back set is spent once its result is shown. If Robert declines a result, the writing session freezes a new held-back set and the next result is measured on it.
+
+**Built in Phase 6:** the frozen, versioned set (section 3); running the original first (section 4); the outcome classes (section 6) plus the changes-intent class above; the kill rate with every count and a partial label (section 6); the fixed input plan, which for a service is the door's plan of sequences, so a wrong version counted as killed is one the door refuses (section 9); the `mo test --strength` entry (section 10); and one versioned JSON record kind, `strength`.
+
+**Deferred:** the paired promise-only and example-only views and the always-true baseline (section 7), per-line attribution (section 7), and the anchor contribution view (section 8).

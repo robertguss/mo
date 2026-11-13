@@ -1743,11 +1743,13 @@ changes only when its `use` line does.
 
 ## 15. What comes later
 
-Live upgrades, including migrating saved state to a changed type (Phase 5;
-proposed design and feasibility gates in `docs/design/upgrades.md`);
-approving and locking promises (Phase 6); demanding that a function update its
-input in place (Phase 7); packages and user-defined abilities (Phase 8). None
-of them changes a rule in this reference.
+Live upgrades, including migrating saved state to a changed type, are tools
+(Phase 5, `docs/design/upgrades.md`) and change no rule in this reference.
+Promises about a whole service, which will change sections 11.5 and 12, and
+approving and locking promises (Phase 6; proposed design in
+`docs/design/intent.md`); demanding that a function update its input in place
+(Phase 7); packages and user-defined abilities (Phase 8). Phases 7 and 8 change
+no rule in this reference.
 
 ## Appendix A. Errors
 

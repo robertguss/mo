@@ -1,0 +1,8 @@
+exit 1
+failed JobQueue.fail.example.2  job-queue.mo:192:5
+failed JobQueue.fail.example.3  job-queue.mo:193:5
+failed JobQueue.fail.example.4  job-queue.mo:194:5
+failed JobQueue.test.1  job-queue.mo:280:1
+failed JobQueue.test.3  job-queue.mo:314:1
+failed JobQueue.test.4  job-queue.mo:337:1
+41 passed, 6 failed, 0 stopped

@@ -1,0 +1,10 @@
+failed Main.service.recovery  faulty/main.mo:15:1
+  sequences: 1
+  1. advance 0.000001s  0 timer firings
+  2. submit("")  replied 1, committed
+  3. crash
+  4. restart  recovered the same state  broke Main.guarantee_no_job_lost
+  state before step 3: Queue(jobs: {1: Job(id: 1, payload: "", attempts: 0, state: Ready)}, next_id: 2)
+  state after step 4: Queue(jobs: {}, next_id: 2)
+0 passed, 1 failed, 0 stopped
+exit 1

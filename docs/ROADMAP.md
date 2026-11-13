@@ -21,6 +21,12 @@ freeze's build inputs.
 
 ## Now
 
+Phase 6, Intent and autonomy, is in its design step: [intent and the review
+door](design/intent.md), with the prototypes it rests on in
+`learnability/phase6/preflight/`. The design is proposed pending Robert's
+approval; nothing it describes is implemented. The phase's plan is
+`docs/plans/2026-11-12-1604-feat-phase6-intent-autonomy-plan.md`.
+
 Phase 5 follows the approved [whole-program upgrade design](design/upgrades.md).
 Typed migration checking, checked restart, offline rehearsal, live activation,
 credential-gated MCP upgrade tools and loopback `mo push` are implemented.

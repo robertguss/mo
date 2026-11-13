@@ -1,0 +1,11 @@
+--- a/job-queue.mo
++++ b/job-queue.mo
+@@ -17,7 +17,7 @@
+ expire,
+ jobs
+ 
+-max_attempts = 3
++max_attempts = 4
+ 
+ struct Job
+   id: Int

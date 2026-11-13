@@ -1,0 +1,22 @@
+--- a/job-queue.mo
++++ b/job-queue.mo
+@@ -163,7 +163,7 @@
+ 
+ ## Gives a current lease back after its worker failed: ready again, or dead after
+ ## its last attempt. Expired or mismatched attempts return NotLeased.
+-fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, QueueError)
++fn fail(queue: Queue, now: Time, attempt: Int, id: Int) : Result(Queue, QueueError)
+   promise "only a current lease can fail"
+     result is Ok(_) implies
+       queue.jobs.get(id) is Some(job) and
+--- a/main.mo
++++ b/main.mo
+@@ -161,7 +161,7 @@
+ ## Never repeat a call that got handler_failed, work_limit or memory_limit: it
+ ## can stop the service for everyone.
+ fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+-  after = try JobQueue.fail(queue, now, id, attempt)
++  after = try JobQueue.fail(queue, now, attempt, id)
+   Ok((after, Unit))
+ end
+ 

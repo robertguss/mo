@@ -1,0 +1,9 @@
+baseline-original run 1  wall 0:02.62  user 2.61s  max RSS 27896 KB
+prototype-no-promises run 1  wall 0:02.77  user 2.73s  max RSS 27692 KB
+prototype-three-promises run 1  wall 0:02.85  user 2.82s  max RSS 28232 KB
+baseline-original run 2  wall 0:02.69  user 2.65s  max RSS 27812 KB
+prototype-no-promises run 2  wall 0:02.56  user 2.54s  max RSS 27692 KB
+prototype-three-promises run 2  wall 0:03.09  user 3.05s  max RSS 27864 KB
+baseline-original run 3  wall 0:02.69  user 2.66s  max RSS 27800 KB
+prototype-no-promises run 3  wall 0:02.75  user 2.73s  max RSS 27896 KB
+prototype-three-promises run 3  wall 0:02.95  user 2.93s  max RSS 28020 KB
