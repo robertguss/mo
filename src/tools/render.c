@@ -1103,8 +1103,6 @@ static bool state_literal(const struct mo_test_result *result, const struct mo_b
 static void stopped_result(struct writer *w, const struct mo_sources *sources,
                            const struct mo_test_result *result, bool json);
 
-/* The numbered steps of a failing sequence's last run, then the states around its failing step,
- * and for a service promise, its false line or how its body stopped. */
 static void recovery_failed(struct writer *w, const struct mo_sources *sources,
                             const struct mo_test_result *result, bool json) {
     const struct mo_recovery_report *report = result->recovery;
@@ -1135,7 +1133,6 @@ static void recovery_failed(struct writer *w, const struct mo_sources *sources,
             text(w, json ? "\"crash\"" : "crash");
             break;
         case MO_RECOVERY_RESTART:
-            /* A service promise's run does not compare restarts. */
             if (promise)
                 text(w, json ? "\"restart\"" : "restart");
             else if (step->outcome == MO_SIMULATION_DOWN) {

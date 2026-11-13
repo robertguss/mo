@@ -12,7 +12,7 @@
 struct judge {
     uint32_t item;
     uint32_t function;
-    uint32_t tool; /* the bytecode tool's index, or MO_NO_INDEX for a promise about every step */
+    uint32_t tool;
     bool active;
 };
 
@@ -30,7 +30,7 @@ struct run {
     struct mo_process *process;
     struct judge judges[MO_LIMIT_SERVICE_PROMISES];
     uint32_t judge_count;
-    uint32_t recovery_item; /* MO_NO_INDEX when the recovery check is not selected */
+    uint32_t recovery_item;
     const char *problem;
     struct timespec start;
     bool last;
@@ -111,9 +111,6 @@ static bool work_remaining(void *context) {
     return true;
 }
 
-/* Runs j's body after the observed step, under a handler's work limit: true with line its first
- * false line, or 0, when the body returned; false when it stopped, or with problem set when it
- * could not run. */
 static bool returned(struct run *w, const struct judge *j, const struct mo_recovery_observation *o,
                      uint32_t *line) {
     const struct mo_bytecode_function *f = &w->file->functions[j->function];
@@ -238,7 +235,7 @@ static bool failed(struct run *w, uint32_t item, struct mo_recovery_result *foun
     struct mo_recovery_hooks hooks = {NULL, check ? judge_step : NULL, w};
     uint32_t runs = mo_recovery_shrink(w->recovery, &found->sequence, found->outcome,
                                        check ? &hooks : NULL, found->verdict);
-    (void)runs; /* gcc ignores a (void) cast on a must-use result. */
+    (void)runs;
     for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
         w->types_kept[i] = MO_NO_INDEX;
     w->last = true;

@@ -51,8 +51,6 @@ int main(int argc, char *argv[]) {
         }
         return mo_cli_execute(&cli, stdout, stderr);
     }
-    /* A service's checks run their whole plan: a clock already past the deadline changes
-     * nothing. */
     char folder[] = "/tmp/mo-deadline-XXXXXX", path[64], output[64], errors[64];
     MO_ASSERT(mkdtemp(folder) != NULL);
     MO_ASSERT(snprintf(path, sizeof path, "%s/main.mo", folder) > 0 &&

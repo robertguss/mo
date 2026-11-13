@@ -97,7 +97,6 @@ static bool in_library(const struct mo_program *program, uint32_t module) {
     return module != 0 && program->set->library != NULL && program->set->library[module];
 }
 
-/* Lowering leaves out a library module's anchors, as it does all its specs. */
 bool mo_program_has_anchors(const struct mo_program *program) {
     bool anchors = false;
     for (uint32_t i = 0; i < program->spec_count; i++)
@@ -110,8 +109,6 @@ bool mo_program_has_anchors(const struct mo_program *program) {
     return anchors;
 }
 
-/* A service promise's lines come from the checked program: Core keeps no lines for a function
- * that is not about a subject. */
 static struct mo_span false_line(const struct mo_bytecode *file, const struct mo_sources *sources,
                                  uint32_t function, const struct mo_checked_spec *service,
                                  int64_t line) {

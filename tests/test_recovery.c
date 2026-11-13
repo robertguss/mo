@@ -58,7 +58,6 @@ static struct mo_recovery *checker(const struct mo_image *image, uint32_t servic
     return recovery;
 }
 
-/* Runs a check's first sequences. */
 static enum mo_recovery_outcome search(struct mo_recovery *recovery, uint64_t sequences,
                                        const struct mo_recovery_hooks *hooks,
                                        struct mo_recovery_result *result) {
@@ -202,7 +201,6 @@ static void task_queue(void) {
                                 .sequence = UINT64_MAX};
     const struct mo_recovery_hooks hooks = {watch_queue, NULL, &watch};
 
-    /* mo test's 200 sequences, watched. */
     struct mo_recovery *recovery = checker(image, 0);
     CHECK(strcmp(mo_recovery_name(recovery), "Main.service.recovery") == 0);
     struct mo_recovery_result result;
@@ -681,7 +679,6 @@ static void shrink_keeps_passing(void) {
     mo_image_free(image);
 }
 
-/* A check that fails on line 2 at a read from step 8 on, and on line 1 at a read at step 4 or 5. */
 static struct mo_recovery_verdict two_lines(const struct mo_recovery_observation *observation,
                                             void *context) {
     (void)context;
@@ -691,8 +688,6 @@ static struct mo_recovery_verdict two_lines(const struct mo_recovery_observation
     return (struct mo_recovery_verdict){line == 0 ? MO_NO_INDEX : 0, line};
 }
 
-/* Shrinking keeps a candidate only when the same check fails on the same line: deleting four of
- * the advances before the read would fail line 1 instead. */
 static void shrink_same_line(void) {
     struct mo_image *image =
         compile("module Main\nservice\nstate Int = 0\ntools read\ntoken from env \"TOKEN\"\nend\n"

@@ -180,8 +180,6 @@ static MO_MUST_USE uint32_t named_tool(const struct mo_checked_service *service,
     return UINT32_MAX;
 }
 
-/* Checks one promise of service, the number-th, and its anchors. false with *halt when checking
- * cannot go on; false alone after diagnostics that let the next promise be checked. */
 static MO_MUST_USE bool check_promise(struct mo_arena *arena, const struct mo_program *program,
                                       struct mo_constant_context *constants,
                                       const struct mo_checked_service *service,
