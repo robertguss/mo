@@ -178,7 +178,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.5/2					tests/test_recovery.c:task_queue,tests/test_recovery.c:replay,tests/test_recovery.c:read_only,tests/test_recovery.c:deterministic
 12.5/3					tests/test_recovery.c:comparison,tests/test_recovery.c:failure_report,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
 12.5/4		service-start-stops			tests/test_recovery.c:failing_tool,tests/test_recovery.c:supervisor_stop,tests/test_recovery.c:failed_firings,tests/test_recovery.c:start_failure,ci/check_cli.py:recovery_checks,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
-12.5/5		service-promise-restart,service-promise-timer,service-promise-work			ci/check_cli.py:service_promise_checks,ci/check_task_queue.py:restart_fault
+12.5/5		service-promise-restart,service-promise-timer,service-promise-two,service-promise-work			ci/check_cli.py:service_promise_checks,ci/check_task_queue.py:restart_fault,tests/test_recovery_faults.c:promise_after_refusal
 12.5/6					ci/check_cli.py:recovery_checks,ci/check_cli.py:service_promise_checks,tests/test_deadline.c:main
 12.5/7					tests/test_recovery.c:failure_report,tests/test_recovery.c:same_text,tests/test_recovery_faults.c:shrunk_failure,tests/test_recovery_faults.c:shrunk_advance,tests/test_recovery_faults.c:check_command,tests/test_recovery_faults.c:check_unrepeatable,tests/test_recovery.c:shrink_same_line
 13.1/1	ref-evaluation			

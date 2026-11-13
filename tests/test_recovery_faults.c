@@ -232,7 +232,7 @@ struct printed {
     int status;
 };
 
-static void run_test_command(const char *program, struct printed *p) {
+static void run_test_command(const char *program, bool json, struct printed *p) {
     char folder[] = "/tmp/mo-recovery-faults-XXXXXX", output[96], errors[96];
     MO_ASSERT(mkdtemp(folder) != NULL);
     MO_ASSERT(snprintf(p->path, sizeof p->path, "%s/main.mo", folder) > 0 &&
@@ -240,10 +240,15 @@ static void run_test_command(const char *program, struct printed *p) {
               snprintf(errors, sizeof errors, "%s/err", folder) > 0);
     FILE *source = fopen(p->path, "w");
     MO_ASSERT(source != NULL && fputs(program, source) >= 0 && fclose(source) == 0);
-    const char *arguments[] = {"mo", "test", "--seconds", "60", p->path};
+    const char *arguments[] = {"mo",
+                               "test",
+                               json ? "--json" : "--calls",
+                               json ? "--calls" : "200",
+                               json ? "200" : p->path,
+                               p->path};
     struct mo_cli cli;
     const char *error;
-    MO_ASSERT(mo_cli_parse(5, arguments, &cli, &error));
+    MO_ASSERT(mo_cli_parse(json ? 6 : 5, arguments, &cli, &error));
     FILE *out = fopen(output, "w+"), *err = fopen(errors, "w+");
     MO_ASSERT(out != NULL && err != NULL);
     p->status = mo_cli_execute(&cli, out, err);
@@ -268,7 +273,7 @@ static bool same_text(const char *printed, const char *expected) {
 static void check_command(unsigned delivered, int status, const char *word, const char *body) {
     deliveries = delivered;
     static struct printed p;
-    run_test_command(counter, &p);
+    run_test_command(counter, false, &p);
     CHECK(p.status == status);
     static char expected[8192];
     int written = snprintf(expected, sizeof expected, "%s Main.service.recovery  %s:3:1\n%s", word,
@@ -285,7 +290,7 @@ static void check_unrepeatable(void) {
     faulty_loads = 1;
     held_loads = 0;
     static struct printed p;
-    run_test_command(increment, &p);
+    run_test_command(increment, false, &p);
     CHECK(held_loads > 1);
     CHECK(p.status == 1);
     CHECK(same_text(p.out, ""));
@@ -299,6 +304,35 @@ static void check_unrepeatable(void) {
     CHECK(strncmp(p.err, expected, strlen(expected)) == 0);
     CHECK(strstr(p.err, "^^^ Main.service.recovery\n") != NULL);
     faulty_loads = UINT_MAX;
+}
+
+static const char promised[] = "module Main\n\nservice\n  state Int = 0\n  tools add\n"
+                               "  token from env \"COUNTER_TOKEN\"\n\n"
+                               "  promise \"an addition adds its amount\" on add\n"
+                               "    after == before + amount\n"
+                               "    allows before: 1, amount: 2, reply: Unit, after: 3, now: t0\n"
+                               "    forbids before: 1, amount: 2, reply: Unit, after: 1, now: t0\n"
+                               "  end\nend\n\n"
+                               "fn add(state: Int, _now: Time, amount: Int) : (Int, Unit)\n"
+                               "  (state + amount, Unit)\nend\n\n"
+                               "t0 = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\"\n";
+
+static void promise_after_refusal(void) {
+    deliveries = 2;
+    static struct printed p;
+    run_test_command(promised, true, &p);
+    CHECK(p.status == 1);
+    CHECK(same_text(p.err, ""));
+    const char *promise = strstr(p.out, "\"name\":\"Main.service.promise.1\"");
+    const char *recovery = strstr(p.out, "\"name\":\"Main.service.recovery\"");
+    CHECK(promise != NULL && recovery != NULL && promise < recovery);
+    if (promise == NULL || recovery == NULL)
+        return;
+    const char *passed = strstr(promise, "\"outcome\":\"passed\"");
+    const char *judged = strstr(promise, "\"sequences\":200}");
+    CHECK(passed != NULL && passed < recovery && judged != NULL && judged < recovery);
+    CHECK(strstr(recovery, "\"outcome\":\"failed\"") != NULL);
+    CHECK(strstr(recovery, "\"refusal\"") != NULL);
 }
 
 int main(void) {
@@ -325,5 +359,6 @@ int main(void) {
     MO_ASSERT(written > 0 && (size_t)written < sizeof refused);
     check_command(2, 1, "failed", refused);
     check_unrepeatable();
+    promise_after_refusal();
     return mo_test_report("recovery faults");
 }
