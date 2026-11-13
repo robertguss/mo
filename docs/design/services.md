@@ -433,17 +433,16 @@ The test-only TaskQueue fixture wraps the unchanged `examples/job-queue.mo`.
 Its submit/crash/restart/lease test exercises real recovery; ignoring an accepted
 reply and retrying after recovery produces two jobs. The MO-162 service,
 networking and deployment are outside this change. Generated sequences against
-a service came later as the recovery check below; promises an author writes
-over a service's sequences remain deferred.
+a service came later as the recovery check below, and promises an author writes
+over a service's sequences later still (`intent.md`, "Service promises").
 
 ### Recovery check
 
 `mo test` checks every service for one property of the runtime: a restart
 recovers exactly the state the service had committed. The author writes
-nothing for it and there is no new syntax. A promise about many steps is still
-a promise on the function that takes one step (reference 12.2), so the queue's
-own logic stays covered by its promises, and this check covers what no handler
-can see, the log and snapshots underneath. It drives the service through the
+nothing for it and there is no new syntax. The queue's own logic stays covered
+by its promises, function and service ones (reference 12.2), and this check
+covers what no handler can see, the log and snapshots underneath. It drives the service through the
 simulated-service API in `vm/vm.h`, the same code `Simulation` wraps, so it
 tests what `Simulation` and `mo serve` run.
 
@@ -510,7 +509,6 @@ reimplement replay.
 | The supervisor restarts or stops the service (D308) | Ordinary step. After a stop, the next step is a restart, compared against the state at the stop |
 | A tool call meets `ServiceDown` | Ordinary step |
 | The start value or an interval fails when the service first opens | Stopped, with the service's own failure, not a recovery failure |
-| The deadline ends before any restart was compared | E1404 |
 
 Replay already refuses a repeated log record: `restore_record` requires
 consecutive sequence numbers and checks each record's state checksum. A runtime
@@ -518,19 +516,17 @@ that duplicated a committed update would fail through the refusal row, not the
 comparison. The checker inserts the restart that follows a stop itself; it is
 not a generated step.
 
-**Budget and limits.** The check shares a promise's deadline, `--seconds`, 2
-seconds by default, covering generation, every run and shrinking. `--calls`
-caps the number of sequences. Reaching either limit between sequences ends
-the search normally. A pass needs at least one compared
-restart; otherwise the result is E1404, saying the deadline ended before the
-check compared a restart. The named limits in `src/base/limits.h`:
+**Budget and limits.** The check runs its whole plan: `--calls` sequences, 200
+by default, each seeded by its ordinal, so a verdict never depends on machine
+speed. `--seconds` does not apply. Every sequence ends in a restart, so a pass
+always compared one. The named limits in `src/base/limits.h`:
 
 | Limit | Value | Meaning |
 | --- | --- | --- |
 | `MO_CLI_RECOVERY_STEPS` | 64 | steps in one sequence, a crash and its restart counting as two |
 | `MO_CLI_RECOVERY_RESTARTS` | 8 | restarts in one sequence |
 | `MO_CLI_RECOVERY_POOL` | 64 | reply values kept for reuse |
-| `MO_CLI_RECOVERY_SHRINK_RUNS` | 200 | additional sequence runs while shrinking, within the same deadline |
+| `MO_CLI_RECOVERY_SHRINK_RUNS` | 200 | additional sequence runs while shrinking |
 
 On a gcc debug build, `mo test` compared 179 sequences and 572 restarts of
 `services/task-queue/main.mo` in about 2.0 s, so the 2-second default stands.
@@ -621,9 +617,8 @@ stopped Main.service.recovery  main.mo:3:1
 ```
 
 A failing timer interval reads `in the interval of timer Main.tick`. The rerun
-of a shrunk sequence that does not fail the same way, a checker that cannot
-start, and a deadline that ends before any restart is compared are E1404, with
-no result.
+of a shrunk sequence that does not fail the same way and a checker that cannot
+start are E1404, with no result.
 
 **JSON.** A result's `kind` is `recovery`. It carries `sequences`, the
 sequences run, and `restarts`, the restarts compared, beside the usual name,

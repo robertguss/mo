@@ -147,7 +147,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.4/5	ref-shout	e0007-log		
 11.5/1	service-read-only	e1408			ci/check_cli.py:service_commands
 11.5/2	service-read-only				tests/test_syntax.c:services,tests/test_program.c:service_rules
-11.5/3	service-read-only	e0099,e0099-duplicate-handler			ci/check_cli.py:service_refusals,tests/test_program.c:service_rules,Makefile:grammar
+11.5/3	service-read-only	e0099,e0099-duplicate-handler,e0107			ci/check_cli.py:service_refusals,tests/test_program.c:service_rules,Makefile:grammar
 11.5/4	service-read-only	e0100,e0100-generic,e0100-import,e0100-state,e0103,e0104,e0104-function		mo run of a service entry is still E1408	ci/check_cli.py:service_refusals,tests/test_program.c:service_handlers
 11.5/5	service-read-only	e0105,e0105-nested,e0105-update,e0105-result-update,e0106,e0101-predicate			ci/check_errors.py:check_cases
 11.5/6	service-read-only	e0101,e0101-predicate,e0101-result,service-bare-state,service-result-state			ci/check_cli.py:service_commands,tests/test_program.c:service_handlers,tests/test_fix.c:service_fixes,tests/test_service_store.c:run
@@ -164,8 +164,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/6					ci/check_cli.py:hidden_promises,ci/check_cli.py:promise_shrinking
 12.2/7					ci/check_cli.py:hidden_promises
 12.2/8					ci/check_cli.py:generic_promises,ci/check_cli.py:promise_selection
-12.2/9	sample-job-queue-tests
-12.2/10	mod-hidden-type,fail-result-declared	e0007-requires
+12.2/9		service-promise-restart,service-promise-result			ci/check_cli.py:service_promise_checks,ci/check_task_queue.py:restart_fault
+12.2/10		e0107,e0107-no-tool,e0107-reserved,e1109,service-promise-result,service-promise-restart			ci/check_task_queue.py:simulation,ci/check_cli.py:service_promise_checks
+12.2/11	mod-hidden-type,fail-result-declared	e0007-requires
 12.3/1	tst-private-names,tst-assert-is-binding,sample-job-queue-tests	tst-failing-assert		
 12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes	e0098,e0098-constant,e0098-printed,e0098-simulation			ci/check_simulation.py:main
 12.4/2		e0050-simulation-dot,e0050-simulation-operation,e0055-simulation-value,e0055-simulation-start,e0055-simulation-send,e0055-simulation-advance,e0055-simulation-crash,e0055-simulation-restart,e0100-simulation-start,e0100-simulation-send			ci/check_simulation.py:main,tests/test_program.c:simulation_inputs,tests/test_service_store.c:simulation_persistence
@@ -177,8 +178,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.5/2					tests/test_recovery.c:task_queue,tests/test_recovery.c:replay,tests/test_recovery.c:read_only,tests/test_recovery.c:deterministic
 12.5/3					tests/test_recovery.c:comparison,tests/test_recovery.c:failure_report,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
 12.5/4		service-start-stops			tests/test_recovery.c:failing_tool,tests/test_recovery.c:supervisor_stop,tests/test_recovery.c:failed_firings,tests/test_recovery.c:start_failure,ci/check_cli.py:recovery_checks,tests/test_recovery_faults.c:check_directly,tests/test_recovery_faults.c:check_command
-12.5/5					ci/check_cli.py:recovery_checks,tests/test_deadline.c:main
-12.5/6					tests/test_recovery.c:failure_report,tests/test_recovery.c:same_text,tests/test_recovery_faults.c:shrunk_failure,tests/test_recovery_faults.c:shrunk_advance,tests/test_recovery_faults.c:check_command,tests/test_recovery_faults.c:check_unrepeatable
+12.5/5		service-promise-restart,service-promise-timer,service-promise-two,service-promise-work			ci/check_cli.py:service_promise_checks,ci/check_task_queue.py:restart_fault,tests/test_recovery_faults.c:promise_after_refusal
+12.5/6					ci/check_cli.py:recovery_checks,ci/check_cli.py:service_promise_checks,tests/test_deadline.c:main
+12.5/7					tests/test_recovery.c:failure_report,tests/test_recovery.c:same_text,tests/test_recovery_faults.c:shrunk_failure,tests/test_recovery_faults.c:shrunk_advance,tests/test_recovery_faults.c:check_command,tests/test_recovery_faults.c:check_unrepeatable,tests/test_recovery.c:shrink_same_line
 13.1/1	ref-evaluation			
 13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop		ci/check_cli.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random
 13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images

@@ -522,6 +522,8 @@ mo_simulation_advance(struct mo_simulation *simulation, const struct mo_simulati
 /* Ends the service where it stands; the store keeps what it committed. */
 void mo_simulation_crash(struct mo_simulation *simulation);
 MO_MUST_USE bool mo_simulation_running(const struct mo_simulation *simulation);
+/* The simulated clock, in microseconds. */
+MO_MUST_USE int64_t mo_simulation_now(const struct mo_simulation *simulation);
 /* The supervisor's restarts so far, counting the one that stops the service. */
 MO_MUST_USE uint64_t mo_simulation_restarts(const struct mo_simulation *simulation);
 /* Appends the live state's saved encoding. false when the service is crashed or never opened, or

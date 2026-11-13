@@ -5578,16 +5578,15 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
 }
 
 static MO_MUST_USE bool anchor_inputs(struct inference *p, const struct mo_syntax *anchor,
-                                      const struct mo_syntax *parameters,
+                                      const struct mo_syntax *parameters, uint32_t count,
                                       const struct mo_syntax **inputs) {
     const struct mo_syntax *values = anchor->children[0];
-    uint32_t count = parameters->count + 1;
     memset(inputs, 0, (size_t)count * sizeof(*inputs));
     for (uint32_t i = 0; i < values->count; i++) {
         const struct mo_syntax *item = values->children[i];
         const struct mo_syntax *name = item->children[0];
         uint32_t at = parameters->count;
-        if (compare_text(name, "result") != 0) {
+        if (count == parameters->count || compare_text(name, "result") != 0) {
             for (at = 0; at < parameters->count; at++) {
                 if (!work(p))
                     return false;
@@ -5630,6 +5629,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     bool promise = spec != NULL && spec->kind == MO_SPEC_PROMISE;
     bool anchor = spec != NULL && spec->kind == MO_SPEC_ANCHOR;
     bool test = spec != NULL && spec->kind == MO_SPEC_TEST;
+    bool service_promise = (promise || anchor) && spec->subject == UINT32_MAX;
     bool constant = syntax->kind == MO_S_CONST;
     bool service = syntax->kind == MO_S_SERVICE_STATE || syntax->kind == MO_S_SERVICE_EVERY;
     struct inference p = {.arena = arena,
@@ -5639,7 +5639,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                           .function = signature,
                           .constants = constants,
                           .checked = checked != NULL,
-                          .spec = spec != NULL,
+                          .spec = spec != NULL && !service_promise,
                           .span = written->span};
     p.abilities = (struct mo_ability_context){
         .arena = arena, .interfaces = interfaces, .signatures = signatures, .work = &p.work};
@@ -5662,19 +5662,20 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     if (p.result == NULL)
         goto failed;
     const struct mo_syntax *parameters = test || constant || service ? NULL : syntax->children[1];
+    uint32_t slots = service_promise ? fn->shape.count - 1 : fn->shape.count;
     uint32_t parameter_count = constant || service ? 0
                                : spec == NULL      ? parameters->count
-                               : promise           ? parameters->count + 1
+                               : promise           ? slots
                                                    : 0;
     const struct mo_syntax **inputs = NULL;
     struct note **spec_notes = NULL;
     if (promise || anchor) {
-        inputs = allocate(&p, fn->shape.count, sizeof(*inputs), _Alignof(const struct mo_syntax *));
+        inputs = allocate(&p, slots, sizeof(*inputs), _Alignof(const struct mo_syntax *));
         if (inputs == NULL ||
             !anchor_inputs(&p, anchor ? written : written->children[2]->children[0], parameters,
-                           inputs))
+                           slots, inputs))
             goto failed;
-        uint32_t count = anchor ? fn->shape.count : written->children[1]->count;
+        uint32_t count = anchor ? slots : written->children[1]->count;
         spec_notes = allocate(&p, count, sizeof(*spec_notes), _Alignof(struct note *));
         if (spec_notes == NULL)
             goto failed;
@@ -5705,7 +5706,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 if (!work(&p))
                     goto failed;
                 slot++;
-                MO_ASSERT(slot < fn->shape.count);
+                MO_ASSERT(slot < slots);
             }
             v = infer_as(&p, inputs[slot]->children[1], argument(&p, fn, slot),
                          MO_CODE_ARGUMENT_TYPE);
@@ -5955,13 +5956,13 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
                 conditions[i].expression = spec_notes[i]->index;
         }
         if (anchor) {
-            uint32_t *values = allocate(&p, fn->shape.count, sizeof(*values), _Alignof(uint32_t));
+            uint32_t *values = allocate(&p, slots, sizeof(*values), _Alignof(uint32_t));
             if (values == NULL || finish_type(&p, fn, 0) == NULL ||
                 !finish_function_use(&p, instance.graph))
                 goto failed;
-            for (uint32_t i = 0; i < fn->shape.count; i++)
+            for (uint32_t i = 0; i < slots; i++)
                 values[i] = spec_notes[i]->index;
-            spec->value_count = fn->shape.count;
+            spec->value_count = slots;
             spec->values = values;
             spec->arguments = instance.graph->output.arguments;
             spec->ability_count = instance.graph->output.ability_count;

@@ -105,9 +105,9 @@ static MO_MUST_USE bool type_abilities(struct mo_ability_context *context,
     return kept && !resource_failed(diags);
 }
 
-static MO_MUST_USE bool copy_text(struct mo_arena *arena, struct mo_diags *diags,
-                                  const struct mo_sources *sources, struct mo_span span,
-                                  struct mo_spec_text *out) {
+bool mo_spec_copy_text(struct mo_arena *arena, struct mo_diags *diags,
+                       const struct mo_sources *sources, struct mo_span span,
+                       struct mo_spec_text *out) {
     MO_ASSERT(sources != NULL && span.file < sources->count && span.start <= span.end &&
               span.end <= sources->files[span.file].length);
     size_t length = span.end - span.start;
@@ -125,8 +125,8 @@ static MO_MUST_USE unsigned hex_digit(uint8_t c) {
                       : (unsigned)(c - '0');
 }
 
-static MO_MUST_USE bool wording(struct mo_arena *arena, struct mo_diags *diags,
-                                const struct mo_syntax *text, struct mo_checked_spec *spec) {
+bool mo_spec_wording(struct mo_arena *arena, struct mo_diags *diags, const struct mo_syntax *text,
+                     struct mo_checked_spec *spec) {
     size_t length = text->span.end - text->span.start;
     size_t quote = length >= 6 && text->text[1] == '"' && text->text[2] == '"' ? 3 : 1;
     uint8_t *out = allocate(arena, diags, text->span, length, 1, 1);
@@ -224,7 +224,7 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                                                      .subject = i,
                                                      .number = ++example_number,
                                                      .promise = UINT32_MAX};
-                    if (!copy_text(arena, diags, sources, line->span, &spec->text))
+                    if (!mo_spec_copy_text(arena, diags, sources, line->span, &spec->text))
                         return false;
                     bool halt;
                     if (!mo_check_spec_body(arena, program->interfaces, signatures, constants, fn,
@@ -235,6 +235,14 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                 continue;
             }
             MO_ASSERT(item->kind == MO_S_PROMISE && index < count);
+            if (item->children[3] != NULL) {
+                bool kept = report(diags, MO_CODE_SERVICE_PROMISE, item->children[3]->span,
+                                   "a tool promise is outside a service block",
+                                   "A promise on a tool is written in the service block, after "
+                                   "token (reference 12.2).");
+                (void)kept;
+                return false;
+            }
             uint32_t promise_index = index;
             struct mo_checked_spec *promise = &specs[index++];
             *promise = (struct mo_checked_spec){.kind = MO_SPEC_PROMISE,
@@ -245,8 +253,8 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                                                 .promise = UINT32_MAX};
             struct mo_span header = item->span;
             header.end = item->children[0]->span.end;
-            if (!copy_text(arena, diags, sources, header, &promise->text) ||
-                !wording(arena, diags, item->children[0], promise))
+            if (!mo_spec_copy_text(arena, diags, sources, header, &promise->text) ||
+                !mo_spec_wording(arena, diags, item->children[0], promise))
                 return false;
             const struct mo_syntax *lines = item->children[1];
             struct mo_checked_condition *conditions =
@@ -256,8 +264,8 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                 return false;
             for (uint32_t k = 0; k < lines->count; k++) {
                 conditions[k] = (struct mo_checked_condition){.expression = UINT32_MAX};
-                if (!copy_text(arena, diags, sources, lines->children[k]->span,
-                               &conditions[k].text))
+                if (!mo_spec_copy_text(arena, diags, sources, lines->children[k]->span,
+                                       &conditions[k].text))
                     return false;
             }
             promise->condition_count = lines->count;
@@ -284,7 +292,7 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                                                  .number = allow ? ++allows : ++forbids,
                                                  .promise = promise_index,
                                                  .allows = allow};
-                if (!copy_text(arena, diags, sources, line->span, &spec->text))
+                if (!mo_spec_copy_text(arena, diags, sources, line->span, &spec->text))
                     return false;
                 if (!mo_check_spec_body(arena, program->interfaces, signatures, constants, fn, spec,
                                         NULL, diags, &halt) &&
@@ -310,8 +318,8 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                                              .promise = UINT32_MAX};
             struct mo_span header = item->span;
             header.end = item->children[0]->span.end;
-            if (!copy_text(arena, diags, sources, header, &spec->text) ||
-                !wording(arena, diags, item->children[0], spec))
+            if (!mo_spec_copy_text(arena, diags, sources, header, &spec->text) ||
+                !mo_spec_wording(arena, diags, item->children[0], spec))
                 return false;
             struct mo_source_type unit = {
                 .kind = MO_SOURCE_NAMED, .name = "Unit", .module = UINT32_MAX};
@@ -559,6 +567,7 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     program->spec_count = spec_count;
     program->specs = ordered_specs;
     if (!mo_check_services(arena, program, &constants, diags) ||
+        !mo_check_service_promises(arena, program, &constants, diags) ||
         !mo_check_recursion(arena, program, diags) ||
         !mo_check_capture_arguments(arena, program, diags))
         return NULL;

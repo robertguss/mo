@@ -1,0 +1,12 @@
+error E1109: a service has too many service promises  tests/errors/e1109/main.mo:328:3
+
+  328 |   promise "the count is never negative 65"
+      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  329 |     after >= 0
+      | ^^^^^^^^^^^^^^
+      | ...
+  331 |     forbids before: 0, after: -1, now: t0
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  332 |   end
+      | ^^^^^ a service has too many service promises
+

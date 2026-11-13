@@ -43,7 +43,7 @@ def main():
                               'tests/lower-source/service-simulation/controls.mo'],
                              capture_output=True, text=True, timeout=60)
     assert checked.returncode == 0 and not checked.stdout and not checked.stderr, checked
-    passed = results(binary, 'tests/lower-source/service-simulation/main.mo')
+    passed = results(binary, 'tests/lower-source/service-simulation/main.mo', 0, '--calls', '10')
     assert len(passed) == 11 and all(r['outcome'] == 'passed' for r in passed), passed
     # Each service, the imported Ticks included, gets one recovery check after the other checks.
     assert [(r['name'], r['kind']) for r in passed[-2:]] == [
@@ -157,7 +157,7 @@ _reply = Simulation.send(sim, Ticks.history)
 end
 ''')
         shutil.copyfile('tests/lower-source/service-simulation/ticks.mo', root / 'ticks.mo')
-        stopped = results(binary, path, 1)
+        stopped = results(binary, path, 1, '--calls', '10')
         assert ('Simulation.send selected Ticks.history, but this simulation runs Main; '
                 'nothing was queued or committed') in str(stopped[0]), stopped
 

@@ -92,8 +92,9 @@ static int64_t state_of(struct mo_recovery *recovery, uint32_t type, const struc
  * they fail the same way each time they run again. */
 static void shrunk_failure(struct mo_recovery *recovery, const struct mo_bytecode_service *service,
                            uint32_t add, struct mo_recovery_sequence *sequence,
-                           enum mo_recovery_outcome expected, struct mo_deadline *deadline) {
-    uint32_t runs = mo_recovery_shrink(recovery, sequence, expected, deadline);
+                           enum mo_recovery_outcome expected) {
+    uint32_t runs = mo_recovery_shrink(recovery, sequence, expected, NULL,
+                                       (struct mo_recovery_verdict){MO_NO_INDEX, 0});
     CHECK(runs > 0 && runs < MO_CLI_RECOVERY_SHRINK_RUNS);
     const struct mo_recovery_step *steps = sequence->steps;
     bool shape = sequence->count == 3 && steps[0].kind == MO_RECOVERY_SEND &&
@@ -142,17 +143,15 @@ static void check_directly(unsigned delivered, enum mo_recovery_outcome expected
     struct mo_limits limits = mo_limits_default();
     struct mo_recovery *recovery = NULL;
     MO_ASSERT(mo_recovery_new(image, 0, &limits, &recovery) == MO_INPUT_OK);
-    struct mo_deadline deadline;
-    MO_ASSERT(mo_deadline_start(&deadline, 600));
     struct mo_recovery_result found;
-    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 200, &deadline, NULL, &found);
+    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 0, 200, NULL, &found);
     CHECK(outcome == expected);
     /* Every mode ran restarts whose load held a log record back. */
     CHECK(held_loads > 0);
     if (outcome == MO_RECOVERY_PASSED)
         CHECK(found.counts.restarts > 0 && found.counts.sequences == 200);
     if (outcome == expected && expected != MO_RECOVERY_PASSED)
-        shrunk_failure(recovery, service, add, &found.sequence, expected, &deadline);
+        shrunk_failure(recovery, service, add, &found.sequence, expected);
     mo_recovery_result_free(recovery, &found);
     mo_recovery_free(recovery);
     mo_image_free(image);
@@ -188,13 +187,12 @@ static void shrunk_advance(void *unused) {
     struct mo_limits limits = mo_limits_default();
     struct mo_recovery *recovery = NULL;
     MO_ASSERT(mo_recovery_new(image, 0, &limits, &recovery) == MO_INPUT_OK);
-    struct mo_deadline deadline;
-    MO_ASSERT(mo_deadline_start(&deadline, 600));
     struct mo_recovery_result found;
-    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 200, &deadline, NULL, &found);
+    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 0, 200, NULL, &found);
     CHECK(outcome == MO_RECOVERY_MISMATCH);
     if (outcome == MO_RECOVERY_MISMATCH) {
-        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, &deadline);
+        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, NULL,
+                                           (struct mo_recovery_verdict){MO_NO_INDEX, 0});
         CHECK(runs > 0 && runs < MO_CLI_RECOVERY_SHRINK_RUNS);
         const struct mo_recovery_step *steps = found.sequence.steps;
         const int64_t minute = INT64_C(60000000);
@@ -234,7 +232,7 @@ struct printed {
     int status;
 };
 
-static void run_test_command(const char *program, struct printed *p) {
+static void run_test_command(const char *program, bool json, struct printed *p) {
     char folder[] = "/tmp/mo-recovery-faults-XXXXXX", output[96], errors[96];
     MO_ASSERT(mkdtemp(folder) != NULL);
     MO_ASSERT(snprintf(p->path, sizeof p->path, "%s/main.mo", folder) > 0 &&
@@ -242,10 +240,15 @@ static void run_test_command(const char *program, struct printed *p) {
               snprintf(errors, sizeof errors, "%s/err", folder) > 0);
     FILE *source = fopen(p->path, "w");
     MO_ASSERT(source != NULL && fputs(program, source) >= 0 && fclose(source) == 0);
-    const char *arguments[] = {"mo", "test", "--seconds", "60", p->path};
+    const char *arguments[] = {"mo",
+                               "test",
+                               json ? "--json" : "--calls",
+                               json ? "--calls" : "200",
+                               json ? "200" : p->path,
+                               p->path};
     struct mo_cli cli;
     const char *error;
-    MO_ASSERT(mo_cli_parse(5, arguments, &cli, &error));
+    MO_ASSERT(mo_cli_parse(json ? 6 : 5, arguments, &cli, &error));
     FILE *out = fopen(output, "w+"), *err = fopen(errors, "w+");
     MO_ASSERT(out != NULL && err != NULL);
     p->status = mo_cli_execute(&cli, out, err);
@@ -270,7 +273,7 @@ static bool same_text(const char *printed, const char *expected) {
 static void check_command(unsigned delivered, int status, const char *word, const char *body) {
     deliveries = delivered;
     static struct printed p;
-    run_test_command(counter, &p);
+    run_test_command(counter, false, &p);
     CHECK(p.status == status);
     static char expected[8192];
     int written = snprintf(expected, sizeof expected, "%s Main.service.recovery  %s:3:1\n%s", word,
@@ -287,7 +290,7 @@ static void check_unrepeatable(void) {
     faulty_loads = 1;
     held_loads = 0;
     static struct printed p;
-    run_test_command(increment, &p);
+    run_test_command(increment, false, &p);
     CHECK(held_loads > 1);
     CHECK(p.status == 1);
     CHECK(same_text(p.out, ""));
@@ -301,6 +304,35 @@ static void check_unrepeatable(void) {
     CHECK(strncmp(p.err, expected, strlen(expected)) == 0);
     CHECK(strstr(p.err, "^^^ Main.service.recovery\n") != NULL);
     faulty_loads = UINT_MAX;
+}
+
+static const char promised[] = "module Main\n\nservice\n  state Int = 0\n  tools add\n"
+                               "  token from env \"COUNTER_TOKEN\"\n\n"
+                               "  promise \"an addition adds its amount\" on add\n"
+                               "    after == before + amount\n"
+                               "    allows before: 1, amount: 2, reply: Unit, after: 3, now: t0\n"
+                               "    forbids before: 1, amount: 2, reply: Unit, after: 1, now: t0\n"
+                               "  end\nend\n\n"
+                               "fn add(state: Int, _now: Time, amount: Int) : (Int, Unit)\n"
+                               "  (state + amount, Unit)\nend\n\n"
+                               "t0 = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\"\n";
+
+static void promise_after_refusal(void) {
+    deliveries = 2;
+    static struct printed p;
+    run_test_command(promised, true, &p);
+    CHECK(p.status == 1);
+    CHECK(same_text(p.err, ""));
+    const char *promise = strstr(p.out, "\"name\":\"Main.service.promise.1\"");
+    const char *recovery = strstr(p.out, "\"name\":\"Main.service.recovery\"");
+    CHECK(promise != NULL && recovery != NULL && promise < recovery);
+    if (promise == NULL || recovery == NULL)
+        return;
+    const char *passed = strstr(promise, "\"outcome\":\"passed\"");
+    const char *judged = strstr(promise, "\"sequences\":200}");
+    CHECK(passed != NULL && passed < recovery && judged != NULL && judged < recovery);
+    CHECK(strstr(recovery, "\"outcome\":\"failed\"") != NULL);
+    CHECK(strstr(recovery, "\"refusal\"") != NULL);
 }
 
 int main(void) {
@@ -327,5 +359,6 @@ int main(void) {
     MO_ASSERT(written > 0 && (size_t)written < sizeof refused);
     check_command(2, 1, "failed", refused);
     check_unrepeatable();
+    promise_after_refusal();
     return mo_test_report("recovery faults");
 }

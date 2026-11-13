@@ -18,6 +18,8 @@ FOLDER = 'services/task-queue'
 TOKEN = 'TaskQueueCanary42'
 JOB_QUEUE_RESULTS = 23
 QUEUE_TEST_RESULTS = 23
+SERVICE_CHECKS = ['Main.service.promise.1', 'Main.service.promise.2', 'Main.service.promise.3',
+                  'Main.service.promise.4', 'Main.service.recovery']
 DESCRIPTION_LIMIT = 4096
 INT = {'type': 'string', 'pattern': '^-?[0-9]+$'}
 INITIALIZE = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
@@ -127,10 +129,51 @@ def simulation(binary):
     tests = [r for r in records if r['record'] == 'result']
     assert all(r['outcome'] == 'passed' for r in tests), tests
     modules = collections.Counter(r['name'].split('.')[0] for r in tests)
-    # Main, the queue's service, has no checks of its own besides its recovery check.
+    # Main, the queue's service, has no checks of its own besides its service's.
     assert modules == {'JobQueue': JOB_QUEUE_RESULTS, 'QueueTests': QUEUE_TEST_RESULTS,
-                       'Main': 1}, modules
-    assert tests[-1]['name'] == 'Main.service.recovery' and tests[-1]['kind'] == 'recovery', tests
+                       'Main': len(SERVICE_CHECKS)}, modules
+    assert [r['name'] for r in tests[-len(SERVICE_CHECKS):]] == SERVICE_CHECKS, tests
+    assert tests[-1]['kind'] == 'recovery', tests
+
+
+EXPIRE = '''      after = release(after, job)
+    end
+  end
+  after
+end
+'''
+PLANTED = '''      after = release(after, job)
+    end
+  end
+  return after if (now - t0).in_milliseconds % 60000 == 0
+  after.jobs = after.jobs.remove(after.next_id - 1)
+  after
+end
+'''
+
+
+def restart_fault(binary):
+    """A planted fault that loses the newest job only at a restart's startup tick, after the clock
+    moved: recovery itself is exact, so only the promise that no job is lost catches it, with a
+    short sequence that ends at the restart."""
+    with tempfile.TemporaryDirectory(prefix='mo-task-queue-fault-') as directory:
+        folder = pathlib.Path(directory)
+        for file in pathlib.Path(FOLDER).glob('*.mo'):
+            (folder / file.name).write_text(file.read_text())
+        source = (folder / 'job-queue.mo').read_text()
+        assert source.count(EXPIRE) == 1
+        (folder / 'job-queue.mo').write_text(source.replace(EXPIRE, PLANTED))
+        result = subprocess.run([str(binary), 'test', '--json', str(folder / 'main.mo')],
+                                capture_output=True, text=True, timeout=1800)
+        assert result.returncode == 1 and not result.stderr, result
+        records = {r['name']: r for r in map(json.loads, result.stdout.splitlines())
+                   if r['record'] == 'result'}
+        assert records['Main.service.recovery']['outcome'] == 'passed', records
+        lost = records['Main.service.promise.1']
+        assert lost['outcome'] == 'failed', lost
+        actions = [step['action'] for step in lost['steps']]
+        assert len(actions) <= 6 and actions[-2:] == ['crash', 'restart'], lost
+        assert lost['steps'][-1]['broke'] == 'Main.service.promise.1', lost
 
 
 def catalog(queue):
@@ -249,6 +292,7 @@ def paging(queue):
 def main():
     binary = pathlib.Path(sys.argv[1]).resolve()
     simulation(binary)
+    restart_fault(binary)
     with tempfile.TemporaryDirectory(prefix='mo-task-queue-') as directory:
         data = pathlib.Path(directory)
         queue = Queue(binary, data)
@@ -281,7 +325,8 @@ def main():
             queue.kill()
             raise
         queue.stop()
-    print('Task queue: simulation, wire shapes, size limits, paging and recovery after kill -9 pass')
+    print('Task queue: simulation, a restart fault, wire shapes, size limits, paging and recovery '
+          'after kill -9 pass')
 
 
 if __name__ == '__main__':

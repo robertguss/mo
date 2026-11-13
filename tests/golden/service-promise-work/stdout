@@ -1,0 +1,8 @@
+stopped Main.service.promise.1  tests/golden/service-promise-work/main.mo:10:3
+  sequences: 1
+  1. add(1)  replied 1, committed  broke Main.service.promise.1
+  state before step 1: 0
+  state after step 1: 1
+  bug: running past a service promise's work limit (MO_LIMIT_SERVICE_WORK = 1048576)
+passed Main.service.recovery  tests/golden/service-promise-work/main.mo:5:1
+1 passed, 0 failed, 1 stopped

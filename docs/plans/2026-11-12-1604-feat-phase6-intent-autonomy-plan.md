@@ -371,7 +371,7 @@ Waits on: PR1, needed before this group can start, because the source form is Ro
   1. Add the source form to the grammar and the parser together, with the formatter and the fuzz seeds.
   2. Check and lower the promise as a predicate over plain values (KTD1), and copy state out through the saved codec (KTD2).
   3. Give the recovery generator a verdict that can fail, a promise outcome, and shrinking on the same promise and line.
-  4. Run the fixed plan and report an unfinished one as incomplete (KTD3).
+  4. Run the fixed plan to its end, with no time cut; each service promise body runs under `MO_LIMIT_SERVICE_WORK`, and one that runs past it stops with its sequence (KTD3, as Robert settled it on 2026-11-13).
   5. State the task queue's service guarantees as promises in `main.mo`, and update the pinned counts.
   6. Update the reference, the agent guide and the claims `ci/check_cli.py` checks.
 - **Patterns to follow:** `test_recovery` in `src/tools/tests.c` for the search, shrink and replay sequence; `tests/errors/e1400-simulation/` for a tools code case.
@@ -379,7 +379,8 @@ Waits on: PR1, needed before this group can start, because the source form is Ro
   - Covers AE7. A task queue variant loses a leased job only after a crash and restart: `mo test` fails the service promise and reports a short sequence that contains the restart.
   - A service promise that holds passes and reports the full count of sequences in its plan.
   - Two runs of the same program give byte-identical JSON results.
-  - A plan that cannot finish under a small `--seconds` is reported as incomplete and the command does not exit 0.
+  - `--seconds 1` leaves a service's results unchanged: its plan runs to its end whatever the clock says.
+  - A service promise body that runs past `MO_LIMIT_SERVICE_WORK` stops and is reported with its sequence.
   - A failing sequence shrinks to fewer steps and still fails the same promise on the same line.
   - A promise that turns false only when a timer fires reports the clock advance in its sequence.
   - A deliberately false service promise fails. This is the control that the checker can fail at all.

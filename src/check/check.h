@@ -523,18 +523,6 @@ struct mo_checked_service_timer {
     struct mo_checked_body interval;
 };
 
-struct mo_checked_service {
-    const struct mo_syntax *syntax;
-    uint32_t module;
-    const struct mo_source_type *state;
-    struct mo_checked_body initializer;
-    uint32_t tool_count;
-    const struct mo_checked_service_tool *tools;
-    uint32_t timer_count;
-    const struct mo_checked_service_timer *timers;
-    const struct mo_syntax *token_source; /* environment-name literal, never a secret value */
-};
-
 /* Exact original source bytes, not decoded/unescaped wording. May contain NUL;
  * length is authoritative. span names those bytes in the original sources. */
 struct mo_spec_text {
@@ -557,8 +545,8 @@ struct mo_checked_spec {
     /* One-based source ordinal before rewrites: tests per module, examples/promises
      * per subject, anchors per promise and allows/forbids expectation. */
     uint32_t number;
-    uint32_t subject;         /* index in program.functions, UINT32_MAX for test */
-    uint32_t promise;         /* index in program.specs for anchor, UINT32_MAX otherwise */
+    uint32_t subject; /* index in program.functions; UINT32_MAX for a test or service promise */
+    uint32_t promise; /* index in program.specs for anchor, UINT32_MAX otherwise */
     struct mo_spec_text text; /* original header/line */
     const uint8_t *wording;   /* decoded test/promise sentence, otherwise NULL */
     size_t wording_length;    /* may contain NUL; do not use strlen */
@@ -577,6 +565,30 @@ struct mo_checked_spec {
     uint32_t condition_count;
     const struct mo_checked_condition *conditions; /* promise Bool lines, in written order */
     bool allows; /* anchor expectation only: true=allows, false=forbids */
+};
+
+/* A promise about a service (reference 12.2), checked on generated sequences. spec is a PROMISE
+ * with no subject whose parameters are before, after and now, then for a tool promise the tool's
+ * arguments after State and Time and reply; its anchors give each of them a value. */
+struct mo_checked_service_promise {
+    struct mo_checked_spec spec;
+    uint32_t tool; /* index in the service's tools, or UINT32_MAX for a promise about every step */
+    uint32_t anchor_count;
+    const struct mo_checked_spec *anchors;
+};
+
+struct mo_checked_service {
+    const struct mo_syntax *syntax;
+    uint32_t module;
+    const struct mo_source_type *state;
+    struct mo_checked_body initializer;
+    uint32_t tool_count;
+    const struct mo_checked_service_tool *tools;
+    uint32_t timer_count;
+    const struct mo_checked_service_timer *timers;
+    const struct mo_syntax *token_source; /* environment-name literal, never a secret value */
+    uint32_t promise_count;
+    const struct mo_checked_service_promise *promises; /* source order */
 };
 
 enum mo_checked_entry_result { MO_ENTRY_UNIT, MO_ENTRY_STATUS, MO_ENTRY_RESULT };

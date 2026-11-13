@@ -234,6 +234,9 @@
 #define MO_LIMIT_SERVICES MO_LIMIT_MODULES
 #define MO_LIMIT_SERVICE_HANDLERS MO_LIMIT_MODULE_NAMES
 
+/* Service promises in one service block; each runs after every step of every sequence. */
+#define MO_LIMIT_SERVICE_PROMISES 64
+
 /* Entries in the debug section (bytecode.md section 3.4). */
 #define MO_LIMIT_DEBUG_ENTRIES (1 << 24)
 
@@ -430,7 +433,7 @@ static inline struct mo_limits mo_limits_default(void) {
 /* A service's recovery check. One generated sequence holds at most this many steps, a crash and
  * its restart counting as two, and at most this many restarts. Reply values kept for later
  * arguments, across one sequence. --calls bounds the sequences; shrinking a failing one reruns it
- * at most MO_CLI_RECOVERY_SHRINK_RUNS times, on the same deadline. */
+ * at most MO_CLI_RECOVERY_SHRINK_RUNS times. */
 #define MO_CLI_RECOVERY_STEPS 64
 #define MO_CLI_RECOVERY_RESTARTS 8
 #define MO_CLI_RECOVERY_POOL 64

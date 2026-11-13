@@ -1,0 +1,10 @@
+passed Main.service.promise.1  tests/golden/service-promise-result/main.mo:10:3
+failed Main.service.promise.2  tests/golden/service-promise-result/main.mo:16:3
+  sequences: 1
+  1. withdraw(11)  replied Error(Overdrawn(balance: 10))  broke Main.service.promise.2
+  state before step 1: 10
+  state after step 1: 10
+  17 |     reply is Error(_) implies after == 0
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this promise condition was false
+passed Main.service.recovery  tests/golden/service-promise-result/main.mo:5:1
+2 passed, 1 failed, 0 stopped

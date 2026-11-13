@@ -277,6 +277,11 @@ bool mo_simulation_running(const struct mo_simulation *s) {
     return s->loop != NULL && mo_service_running(s->loop);
 }
 
+int64_t mo_simulation_now(const struct mo_simulation *s) {
+    MO_ASSERT(s != NULL);
+    return s->time.now;
+}
+
 uint64_t mo_simulation_restarts(const struct mo_simulation *s) {
     MO_ASSERT(s != NULL);
     return s->restarts;

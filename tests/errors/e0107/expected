@@ -1,0 +1,7 @@
+error E0107: a tool promise is outside a service block  tests/errors/e0107/main.mo:4:39
+
+  4 |   promise "doubling never shrinks" on double
+    |                                       ^^^^^^ a tool promise is outside a service block
+
+A promise on a tool is written in the service block, after token (reference 12.2).
+

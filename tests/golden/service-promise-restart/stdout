@@ -1,0 +1,12 @@
+failed Main.service.promise.1  tests/golden/service-promise-restart/main.mo:12:3
+  sequences: 1
+  1. advance 0.001735s  0 timer firings
+  2. add(0)  replied 1, committed
+  3. crash
+  4. restart  broke Main.service.promise.1
+  state before step 3: [0]
+  state after step 4: []
+  13 |     before.all?(fn(n) after.contains?(n) end)
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this promise condition was false
+passed Main.service.recovery  tests/golden/service-promise-restart/main.mo:6:1
+1 passed, 1 failed, 0 stopped

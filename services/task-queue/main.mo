@@ -17,6 +17,37 @@ service
   tools submit, lease, heartbeat, acknowledge, fail, list, stats
   every 1.minute expire
   token from env "QUEUE_TOKEN"
+
+  promise "no job is ever lost"
+    ids(before).all?(fn(id) ids(after).contains?(id) end)
+    allows before: one_job, after: one_job, now: t0
+    forbids before: one_job, after: JobQueue.empty, now: t0
+  end
+
+  promise "a finished job stays as it finished"
+    JobQueue.jobs(before).all?(
+      fn(job) not finished?(job) or JobQueue.jobs(after).contains?(job) end
+    )
+    allows before: done_job, after: done_job, now: t0
+    forbids before: done_job, after: one_job, now: t0
+  end
+
+  promise "a lease ends at most 30 minutes from now"
+    JobQueue.jobs(after).all?(
+      fn(job) job.state is JobQueue.Leased(until: until) implies until <= now + lease_length end
+    )
+    allows before: one_job, after: leased_job, now: t0
+    forbids before: one_job, after: leased_job, now: t0 - 1.hour
+  end
+
+  promise "a submitted job is in the queue, ready" on submit
+    reply is Ok(id) implies
+      JobQueue.jobs(after).contains?(
+        Job(id: id, payload: payload, attempts: 0, state: JobQueue.Ready)
+      )
+    allows before: JobQueue.empty, payload: "x", reply: Ok(1), after: one_job, now: t0
+    forbids before: JobQueue.empty, payload: "x", reply: Ok(1), after: JobQueue.empty, now: t0
+  end
 end
 
 enum SubmitError
@@ -247,4 +278,23 @@ fn shown?(filter: JobFilter, job: Job) : Bool
     Done: job.state == JobQueue.Done
     Dead: job.state == JobQueue.Dead
   end
+end
+
+fn ids(queue: Queue) : List(Int)
+  JobQueue.jobs(queue).map(fn(job) job.id end)
+end
+
+fn finished?(job: Job) : Bool
+  job.state == JobQueue.Done or job.state == JobQueue.Dead
+end
+
+t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
+one_job = JobQueue.submit(JobQueue.empty, "x").0
+leased_job = case JobQueue.lease(one_job, t0, lease_length)
+  Ok((queue, _)): queue
+  Error(_): stop "a ready job can be leased"
+end
+done_job = case JobQueue.acknowledge(leased_job, t0, 1, 1)
+  Ok(queue): queue
+  Error(_): stop "a leased job can be acknowledged"
 end

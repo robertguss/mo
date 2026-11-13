@@ -1,0 +1,7 @@
+error E0107: a tool parameter has a name a service promise reads  tests/errors/e0107-reserved/main.mo:15:32
+
+  15 | fn add(state: Int, _now: Time, after: Int) : (Int, Int)
+     |                                ^^^^^ a tool parameter has a name a service promise reads
+
+A tool promise reads before, after, now and reply, so its tool's parameters need other names (reference 12.2).
+

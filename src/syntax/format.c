@@ -504,6 +504,11 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         text(f, promise ? "promise " : "examples");
         if (promise)
             node(f, n->children[0]);
+        if (promise && n->children[3] != NULL) {
+            text(f, " ");
+            clause_word(f, "on");
+            node(f, n->children[3]);
+        }
         op(f, MO_DOC_LINE_IF);
         op(f, MO_DOC_NEST);
         statements(f, n->children[promise ? 1 : 0], false);

@@ -1,0 +1,7 @@
+error E0107: a service promise names no tool of its service  tests/errors/e0107-no-tool/main.mo:8:37
+
+  8 |   promise "a removal never adds" on remove
+    |                                     ^^^^^^ a service promise names no tool of its service
+
+on names one of the tools in this service block (reference 12.2).
+

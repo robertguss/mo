@@ -1100,12 +1100,16 @@ static bool state_literal(const struct mo_test_result *result, const struct mo_b
     return printed;
 }
 
-/* The numbered steps of a failing sequence's last run, then both states at its failing restart. */
-static void recovery_failed(struct writer *w, const struct mo_test_result *result, bool json) {
+static void stopped_result(struct writer *w, const struct mo_sources *sources,
+                           const struct mo_test_result *result, bool json);
+
+static void recovery_failed(struct writer *w, const struct mo_sources *sources,
+                            const struct mo_test_result *result, bool json) {
     const struct mo_recovery_report *report = result->recovery;
     const struct mo_recovery_result *run = report->result;
     const struct mo_recovery_sequence *sequence = report->sequence;
-    MO_ASSERT(run->step < sequence->count && run->step != 0);
+    bool promise = run->outcome == MO_RECOVERY_CHECK;
+    MO_ASSERT(run->step < sequence->count && (run->step != 0 || promise));
     if (json)
         text(w, ",\"steps\":[");
     for (uint32_t i = 0; w->ok && i < sequence->count; i++) {
@@ -1129,7 +1133,9 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
             text(w, json ? "\"crash\"" : "crash");
             break;
         case MO_RECOVERY_RESTART:
-            if (step->outcome == MO_SIMULATION_DOWN) {
+            if (promise)
+                text(w, json ? "\"restart\"" : "restart");
+            else if (step->outcome == MO_SIMULATION_DOWN) {
                 MO_ASSERT(i == run->step && run->outcome == MO_RECOVERY_REFUSED);
                 text(w, json ? "\"restart\",\"recovered\":\"refused\""
                              : "restart  recovery refused the store: ");
@@ -1144,6 +1150,13 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
                              : "restart  recovered the same state");
             break;
         }
+        if (promise && i == run->step) {
+            text(w, json ? ",\"broke\":" : "  broke ");
+            if (json)
+                json_string(w, result->observation->name);
+            else
+                safe_text(w, result->observation->name);
+        }
         text(w, json ? "}" : "\n");
     }
     struct mo_buffer before, after;
@@ -1151,12 +1164,15 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
     mo_buffer_init(&after, MO_CLI_DIAGNOSTIC_SIZE);
     w->ok = w->ok && state_literal(result, &run->before, &before);
     bool mismatch = run->outcome == MO_RECOVERY_MISMATCH;
-    if (mismatch)
+    if (mismatch || promise)
         w->ok = w->ok && state_literal(result, &run->after, &after);
+    uint32_t first = promise && sequence->steps[run->step].kind != MO_RECOVERY_RESTART
+                         ? run->step + 1
+                         : run->step;
     if (json) {
         text(w, "],\"before\":");
         json_bytes(w, before.bytes, before.length);
-        if (mismatch) {
+        if (mismatch || promise) {
             text(w, ",\"after\":");
             json_bytes(w, after.bytes, after.length);
         } else {
@@ -1165,11 +1181,11 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
         }
     } else {
         text(w, "  state before step ");
-        unsigned_number(w, run->step);
+        unsigned_number(w, first);
         text(w, ": ");
         safe_bytes(w, before.bytes, before.length);
         text(w, "\n");
-        if (mismatch) {
+        if (mismatch || promise) {
             text(w, "  state after step ");
             unsigned_number(w, run->step + 1);
             text(w, ": ");
@@ -1191,6 +1207,15 @@ static void recovery_failed(struct writer *w, const struct mo_test_result *resul
     }
     mo_buffer_free(&after);
     mo_buffer_free(&before);
+    if (promise && result->outcome == MO_STOPPED)
+        stopped_result(w, sources, result, json);
+    else if (promise && json) {
+        text(w, ",\"line\":");
+        json_span(w, sources, result->line, NULL, false);
+    } else if (promise) {
+        struct mo_label label = {result->line, "this promise condition was false"};
+        text_label(w, sources, &label);
+    }
 }
 
 /* The service's own failure at its first open, as a stopped test shows its bug. */
@@ -1248,24 +1273,23 @@ static void recovery_result(struct writer *w, const struct mo_sources *sources,
     if (json) {
         text(w, ",\"sequences\":");
         unsigned_number(w, report->counts.sequences);
-        text(w, ",\"restarts\":");
-        unsigned_number(w, report->counts.restarts);
-    }
-    switch (result->outcome) {
-    case MO_RETURNED:
-        break;
-    case MO_FAILED:
-        if (!json) {
-            text(w, "  sequences: ");
-            unsigned_number(w, report->counts.sequences);
-            text(w, "\n");
+        if (result->observation->promise == NULL) {
+            text(w, ",\"restarts\":");
+            unsigned_number(w, report->counts.restarts);
         }
-        recovery_failed(w, result, json);
-        break;
-    case MO_STOPPED:
-        recovery_stopped(w, sources, result, json);
-        break;
     }
+    if (result->outcome == MO_RETURNED)
+        return;
+    if (report->sequence == NULL) {
+        recovery_stopped(w, sources, result, json);
+        return;
+    }
+    if (!json) {
+        text(w, "  sequences: ");
+        unsigned_number(w, report->counts.sequences);
+        text(w, "\n");
+    }
+    recovery_failed(w, sources, result, json);
 }
 
 bool mo_render_test_result(const struct mo_sources *sources, const struct mo_test_result *result,

@@ -74,7 +74,7 @@ static struct node *OP(struct node *node, int token) {
 %token EQ "==" NE "!=" LT "<" LE "<=" GT ">" GE ">="
 %token PLUS "+" MINUS "-" STAR "*" SLASH "/" PERCENT "%"
 %token SOFT_STATE "state" SOFT_TOOLS "tools" SOFT_EVERY "every"
-%token SOFT_TOKEN "token" SOFT_FROM "from" SOFT_ENV "env"
+%token SOFT_TOKEN "token" SOFT_FROM "from" SOFT_ENV "env" SOFT_ON "on"
 
 %start start
 
@@ -106,6 +106,7 @@ identifier
     | SOFT_TOKEN
     | SOFT_FROM
     | SOFT_ENV
+    | SOFT_ON
     ;
 
 module_header
@@ -196,6 +197,7 @@ service_clause
     | "tools" service_tools NL              { $$ = MK(K_SERVICE_TOOLS, @$, $2); }
     | "every" expr identifier NL            { $$ = MK(K_SERVICE_EVERY, @$, $2, $3); }
     | "token" "from" "env" TEXT NL         { $$ = MK(K_SERVICE_TOKEN, @$, $4); }
+    | promise
     ;
 
 service_tools
@@ -320,8 +322,13 @@ specification
     ;
 
 promise
-    : "promise" TEXT NL lines anchors "end" NL
-                                            { $$ = MK(K_PROMISE, @$, $2, $4, $5); }
+    : "promise" TEXT promise_tool NL lines anchors "end" NL
+                                            { $$ = MK(K_PROMISE, @$, $2, $5, $6, $3); }
+    ;
+
+promise_tool
+    : %empty                                { $$ = NULL; }
+    | "on" identifier                       { $$ = $2; }
     ;
 
 anchors

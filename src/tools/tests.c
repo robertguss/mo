@@ -3,10 +3,10 @@
 #include "tools/tests.h"
 
 #include "base/codes.h"
-#include "tools/deadline.h"
 #include "tools/promises.h"
 #include "tools/recovery.h"
 #include "tools/run.h"
+#include "tools/service-tests.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -15,7 +15,7 @@
 
 const char *mo_observation_kind(const struct mo_observation *observation) {
     if (observation->source == NULL)
-        return "recovery";
+        return observation->promise != NULL ? "promise" : "recovery";
     switch (observation->source->kind) {
     case MO_SPEC_TEST:
         return "test";
@@ -30,8 +30,9 @@ const char *mo_observation_kind(const struct mo_observation *observation) {
 }
 
 struct mo_span mo_observation_span(const struct mo_observation *observation) {
-    return observation->source != NULL ? observation->source->syntax->span
-                                       : observation->service->syntax->span;
+    return observation->source != NULL    ? observation->source->syntax->span
+           : observation->promise != NULL ? observation->promise->spec.syntax->span
+                                          : observation->service->syntax->span;
 }
 
 static char *name(struct mo_arena *arena, const struct mo_program *program,
@@ -62,14 +63,18 @@ static char *name(struct mo_arena *arena, const struct mo_program *program,
     return result;
 }
 
-/* <Module>.service.recovery: service is reserved, so no spec has the name. */
-static char *recovery_name(struct mo_arena *arena, const struct mo_program *program,
-                           const struct mo_checked_service *service, size_t *work) {
+static char *service_name(struct mo_arena *arena, const struct mo_program *program,
+                          const struct mo_checked_service *service,
+                          const struct mo_checked_service_promise *promise, size_t *work) {
     struct mo_buffer buffer;
     mo_buffer_init(&buffer, *work < MO_CLI_DIAGNOSTIC_SIZE ? *work : MO_CLI_DIAGNOSTIC_SIZE);
-    bool ok = mo_buffer_append_text(&buffer, program->set->names[service->module]) &&
-              mo_buffer_append_text(&buffer, MO_RECOVERY_SUFFIX) &&
-              mo_buffer_append_byte(&buffer, 0);
+    bool ok = mo_buffer_append_text(&buffer, program->set->names[service->module]);
+    if (promise == NULL)
+        ok = ok && mo_buffer_append_text(&buffer, MO_RECOVERY_SUFFIX);
+    else
+        ok = ok && mo_buffer_append_text(&buffer, ".service.promise.") &&
+             mo_buffer_append_uint(&buffer, promise->spec.number);
+    ok = ok && mo_buffer_append_byte(&buffer, 0);
     *work -= buffer.length;
     char *result = ok ? mo_arena_copy(arena, buffer.bytes, buffer.length, 1) : NULL;
     mo_buffer_free(&buffer);
@@ -98,16 +103,18 @@ static bool selected(const struct mo_program *program, const struct mo_cli *cli,
 
 struct mo_test_selection *mo_select_tests(struct mo_arena *arena, const struct mo_program *program,
                                           const struct mo_cli *cli, struct mo_diags *diags) {
-    if ((uint64_t)program->spec_count + program->service_count > MO_LIMIT_CORE_NODES)
+    uint64_t candidates = (uint64_t)program->spec_count + program->service_count;
+    for (uint32_t i = 0; i < program->service_count; i++)
+        candidates += program->services[i].promise_count;
+    if (candidates > MO_LIMIT_CORE_NODES)
         goto exhausted;
     struct mo_test_selection *selection =
         mo_arena_allocate(arena, sizeof(*selection), _Alignof(struct mo_test_selection));
     if (selection == NULL)
         goto exhausted;
     *selection = (struct mo_test_selection){0};
-    selection->items =
-        mo_arena_allocate_array(arena, (size_t)program->spec_count + program->service_count,
-                                sizeof(*selection->items), _Alignof(struct mo_observation));
+    selection->items = mo_arena_allocate_array(arena, (size_t)candidates, sizeof(*selection->items),
+                                               _Alignof(struct mo_observation));
     if (selection->items == NULL)
         goto exhausted;
     bool found[MO_CLI_ARGUMENTS] = {false};
@@ -132,20 +139,23 @@ struct mo_test_selection *mo_select_tests(struct mo_arena *arena, const struct m
         if (exhausted)
             goto exhausted;
     }
-    /* Each service's recovery check follows every other check of its module. */
     for (uint32_t i = 0; i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
         if (service->module != 0 && program->set->library != NULL &&
             program->set->library[service->module])
             continue;
-        char *full = recovery_name(arena, program, service, &work);
-        if (full == NULL)
-            goto exhausted;
-        if (selected(program, cli, service->module, full, lengths, found, &work, &exhausted))
-            selection->items[selection->count++] =
-                (struct mo_observation){.name = full, .service = service};
-        if (exhausted)
-            goto exhausted;
+        for (uint32_t j = 0; j <= service->promise_count; j++) {
+            const struct mo_checked_service_promise *promise =
+                j < service->promise_count ? &service->promises[j] : NULL;
+            char *full = service_name(arena, program, service, promise, &work);
+            if (full == NULL)
+                goto exhausted;
+            if (selected(program, cli, service->module, full, lengths, found, &work, &exhausted))
+                selection->items[selection->count++] =
+                    (struct mo_observation){.name = full, .service = service, .promise = promise};
+            if (exhausted)
+                goto exhausted;
+        }
     }
     for (uint32_t i = 0; i < cli->only_count; i++)
         if (!found[i])
@@ -163,8 +173,8 @@ exhausted:;
     return NULL;
 }
 
-static void report_error(struct mo_diags *diags, const char *message, struct mo_span span,
-                         const char *detail) {
+void mo_test_report_error(struct mo_diags *diags, const char *message, struct mo_span span,
+                          const char *detail) {
     struct mo_diag diag = {
         .code = MO_CODE_TOOL_PIPELINE, .message = message, .primary = {span, detail}};
     bool added = mo_diags_add(diags, &diag);
@@ -213,15 +223,15 @@ struct mo_test_selection *mo_instantiate_tests(struct mo_arena *arena,
                 item->instance = promise;
         }
         if (result->count == before) {
-            report_error(diags, "selected promise has no concrete instantiation",
-                         observation->source->syntax->span, observation->name);
+            mo_test_report_error(diags, "selected promise has no concrete instantiation",
+                                 observation->source->syntax->span, observation->name);
             return NULL;
         }
     }
     return result;
 exhausted:
-    report_error(diags, "test instances exceed tool resources", (struct mo_span){UINT32_MAX, 0, 0},
-                 NULL);
+    mo_test_report_error(diags, "test instances exceed tool resources",
+                         (struct mo_span){UINT32_MAX, 0, 0}, NULL);
     return NULL;
 }
 
@@ -357,115 +367,6 @@ static uint64_t microseconds(struct timespec start, struct timespec end) {
     return seconds * 1000000 + (uint64_t)nanos / 1000;
 }
 
-/* What each step of a failing sequence's last run replied, copied into the checker's heap. */
-struct replies {
-    struct mo_recovery *recovery;
-    struct mo_cell values[MO_CLI_RECOVERY_STEPS];
-    uint32_t types[MO_CLI_RECOVERY_STEPS];
-};
-
-static void keep_reply(const struct mo_recovery_observation *observation, void *context) {
-    struct replies *replies = context;
-    if (observation->reply == NULL)
-        return;
-    const struct mo_recovery_step *step = observation->step;
-    uint32_t type;
-    struct mo_cell value =
-        mo_recovery_reply(replies->recovery, step->tool, step->sent, observation->reply, &type);
-    replies->values[observation->index] =
-        mo_value_dup(mo_recovery_heap(replies->recovery), type, value);
-    replies->types[observation->index] = type;
-}
-
-/* Runs one service's recovery check (reference 12.5) on the shared deadline, shrinks a failing
- * sequence and runs it once more, then writes the result. A check that cannot reach an outcome is
- * E1404. false when the result could not be written, which ends the run. */
-static bool test_recovery(const struct mo_cli *cli, struct mo_image *image,
-                          const struct mo_sources *sources,
-                          const struct mo_observation *observation, uint32_t service, FILE *output,
-                          struct mo_diags *diags, struct mo_test_totals *totals) {
-    struct mo_span span = mo_observation_span(observation);
-    struct mo_deadline deadline;
-    if (!mo_deadline_start(&deadline, cli->seconds)) {
-        report_error(diags, "recovery check clock could not be read", span,
-                     strerror(deadline.error));
-        return true;
-    }
-    struct mo_recovery *recovery = NULL;
-    if (mo_recovery_new(image, service, &cli->limits, &recovery) != MO_INPUT_OK) {
-        report_error(diags, "recovery check could not be prepared", span, observation->name);
-        return true;
-    }
-    struct mo_recovery_result found, rerun;
-    enum mo_recovery_outcome outcome =
-        mo_recovery_search(recovery, cli->calls, &deadline, NULL, &found);
-    struct replies replies = {.recovery = recovery};
-    for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
-        replies.types[i] = MO_NO_INDEX;
-    struct mo_recovery_report report = {
-        .recovery = recovery, .service = service, .counts = found.counts, .result = &found};
-    struct mo_test_result result = {.observation = observation,
-                                    .file = mo_image_bytecode(image),
-                                    .line.file = UINT32_MAX,
-                                    .recovery = &report};
-    const char *problem = NULL, *detail = observation->name;
-    bool ran_again = false;
-    switch (outcome) {
-    case MO_RECOVERY_PASSED:
-        result.outcome = MO_RETURNED;
-        break;
-    case MO_RECOVERY_STOPPED:
-        result.outcome = MO_STOPPED;
-        break;
-    case MO_RECOVERY_UNCOMPARED:
-        problem = "the deadline ended before the check compared a restart";
-        break;
-    case MO_RECOVERY_UNAVAILABLE:
-        problem = "recovery check could not run";
-        detail = found.problem;
-        break;
-    case MO_RECOVERY_MISMATCH:
-    case MO_RECOVERY_REFUSED: {
-        report.counts.sequences++;
-        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, &deadline);
-        (void)runs; /* gcc ignores a (void) cast on a must-use result. */
-        const struct mo_recovery_hooks hooks = {keep_reply, &replies};
-        ran_again = true;
-        if (mo_recovery_replay(recovery, &found.sequence, &hooks, &rerun) != outcome) {
-            problem = "the shrunk recovery sequence did not fail the same way when it ran again";
-            break;
-        }
-        result.outcome = MO_FAILED;
-        report.sequence = &found.sequence;
-        report.result = &rerun;
-        report.replies = replies.values;
-        report.reply_types = replies.types;
-        break;
-    }
-    }
-    result.microseconds = mo_deadline_microseconds(&deadline);
-    bool written = true;
-    if (problem != NULL)
-        report_error(diags, problem, span, detail);
-    else {
-        totals->passed += result.outcome == MO_RETURNED;
-        totals->failed += result.outcome == MO_FAILED;
-        totals->stopped += result.outcome == MO_STOPPED;
-        written = mo_write_test_result(output, cli->json, sources, &result);
-        if (!written)
-            report_error(diags, "test result could not be rendered or written completely", span,
-                         observation->name);
-    }
-    for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
-        if (replies.types[i] != MO_NO_INDEX)
-            mo_value_drop(mo_recovery_heap(recovery), replies.types[i], replies.values[i]);
-    if (ran_again)
-        mo_recovery_result_free(recovery, &rerun);
-    mo_recovery_result_free(recovery, &found);
-    mo_recovery_free(recovery);
-    return written;
-}
-
 void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
                      const struct mo_test_selection *selection, const struct mo_buffer *wire,
                      const struct mo_sources *sources, FILE *output, struct mo_diags *diags,
@@ -473,8 +374,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
-        report_error(diags, "compiled bytecode could not be loaded",
-                     (struct mo_span){UINT32_MAX, 0, 0}, error.reason);
+        mo_test_report_error(diags, "compiled bytecode could not be loaded",
+                             (struct mo_span){UINT32_MAX, 0, 0}, error.reason);
         return;
     }
     struct mo_arena scratch;
@@ -482,13 +383,12 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
     const struct mo_bytecode *file = mo_image_bytecode(image);
     uint32_t *functions = bind_observations(&scratch, file, program, sources, selection);
     if (functions == NULL) {
-        report_error(diags, "selected observations could not be bound to compiled functions",
-                     (struct mo_span){UINT32_MAX, 0, 0}, NULL);
+        mo_test_report_error(diags,
+                             "selected observations could not be bound to compiled functions",
+                             (struct mo_span){UINT32_MAX, 0, 0}, NULL);
         goto done;
     }
-    bool anchors = false;
-    for (uint32_t i = 0; i < file->function_count; i++)
-        anchors |= file->functions[i].kind == MO_FUNCTION_ANCHOR;
+    bool anchors = mo_program_has_anchors(program);
     struct mo_defect defect;
     enum mo_outcome initialized =
         anchors ? mo_image_init_bounded(image, &cli->limits, MO_CLI_ANCHOR_INSTRUCTIONS, &defect)
@@ -510,14 +410,20 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         mo_buffer_free(&report);
         goto done;
     }
-    if (!mo_check_anchors(image, cli, sources, diags))
+    if (!mo_check_anchors(image, cli, sources, program, diags))
         goto done;
     for (uint32_t i = 0; i < selection->count; i++) {
         const struct mo_observation *observation = &selection->items[i];
         uint32_t function = functions[i];
         if (observation->source == NULL) {
-            if (!test_recovery(cli, image, sources, observation, function, output, diags, totals))
+            uint32_t count = 1;
+            while (i + count < selection->count &&
+                   selection->items[i + count].service == observation->service)
+                count++;
+            if (!mo_test_service(cli, program, image, sources, observation, count, function, output,
+                                 diags, totals))
                 break;
+            i += count - 1;
             continue;
         }
         if (observation->source->kind == MO_SPEC_PROMISE) {
@@ -528,8 +434,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         }
         struct timespec start, end;
         if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
-            report_error(diags, "could not measure test execution",
-                         observation->source->syntax->span, strerror(errno));
+            mo_test_report_error(diags, "could not measure test execution",
+                                 observation->source->syntax->span, strerror(errno));
             break;
         }
         errno = 0;
@@ -573,8 +479,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         }
         mo_process_free(process);
         if (!shown) {
-            report_error(diags, "test result could not be rendered or written completely",
-                         observation->source->syntax->span, observation->name);
+            mo_test_report_error(diags, "test result could not be rendered or written completely",
+                                 observation->source->syntax->span, observation->name);
             break;
         }
     }
