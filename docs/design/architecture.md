@@ -1658,7 +1658,7 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   boundary; calls remain direct. Candidates are source bundles compiled by the
   serving build and verified before activation. [upgrades.md](upgrades.md) is
   the design.
-- **Intent and the review door (Phase 6, proposed):** service promises lower to
+- **Intent and the review door (Phase 6, approved, not yet implemented):** service promises lower to
   plain spec functions checked by the tools on the recovery check's generated
   sequences, so Mo Core, Lean and the bytecode do not change. Each promise and
   example row has a content digest the store's approvals refer to, and a second
