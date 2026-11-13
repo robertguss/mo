@@ -58,13 +58,11 @@ static struct mo_recovery *checker(const struct mo_image *image, uint32_t servic
     return recovery;
 }
 
-/* Runs a check: at most sequences, within seconds. */
+/* Runs a check's first sequences. */
 static enum mo_recovery_outcome search(struct mo_recovery *recovery, uint64_t sequences,
-                                       uint32_t seconds, const struct mo_recovery_hooks *hooks,
+                                       const struct mo_recovery_hooks *hooks,
                                        struct mo_recovery_result *result) {
-    struct mo_deadline deadline;
-    MO_ASSERT(mo_deadline_start(&deadline, seconds));
-    return mo_recovery_search(recovery, sequences, &deadline, hooks, result);
+    return mo_recovery_search(recovery, 0, sequences, hooks, result);
 }
 
 /* What a choice holds: false unless value is the case named. */
@@ -202,20 +200,13 @@ static void task_queue(void) {
                                 .acknowledge = tool_named(image, 0, "acknowledge"),
                                 .fail = tool_named(image, 0, "fail"),
                                 .sequence = UINT64_MAX};
-    const struct mo_recovery_hooks hooks = {watch_queue, &watch};
+    const struct mo_recovery_hooks hooks = {watch_queue, NULL, &watch};
 
-    /* mo test's default budget, 200 sequences within 2 seconds, compares restarts. */
+    /* mo test's 200 sequences, watched. */
     struct mo_recovery *recovery = checker(image, 0);
     CHECK(strcmp(mo_recovery_name(recovery), "Main.service.recovery") == 0);
     struct mo_recovery_result result;
-    CHECK(search(recovery, 200, 2, NULL, &result) == MO_RECOVERY_PASSED);
-    CHECK(result.outcome == MO_RECOVERY_PASSED && result.counts.restarts > 0);
-    mo_recovery_result_free(recovery, &result);
-    mo_recovery_free(recovery);
-
-    /* The same 200 sequences, watched, with time enough for slower builds to run them all. */
-    recovery = checker(image, 0);
-    CHECK(search(recovery, 200, 600, &hooks, &result) == MO_RECOVERY_PASSED);
+    CHECK(search(recovery, 200, &hooks, &result) == MO_RECOVERY_PASSED);
     CHECK(result.counts.sequences == 200 && result.counts.restarts >= 400);
     /* Some restarts recover past a snapshot taken at the hundredth commit. */
     CHECK(result.counts.snapshots > 0 && result.counts.replayed > 0);
@@ -457,9 +448,9 @@ static void read_only(void) {
     MO_ASSERT(process != NULL && mo_value_encode(mo_process_heap(process),
                                                  mo_image_bytecode(image)->services[0].state_type,
                                                  mo_cell_int(5), &t.fixed));
-    const struct mo_recovery_hooks hooks = {count, &t};
+    const struct mo_recovery_hooks hooks = {count, NULL, &t};
     struct mo_recovery_result result;
-    CHECK(search(recovery, 50, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+    CHECK(search(recovery, 50, &hooks, &result) == MO_RECOVERY_PASSED);
     CHECK(result.counts.sequences == 50 && result.counts.restarts == t.restarts);
     CHECK(t.restarts > 50 && t.compared_to_fixed == t.restarts);
     CHECK(t.replied > 0 && t.replied == t.sends && result.counts.commits == 0);
@@ -480,9 +471,9 @@ static void failing_tool(void) {
     struct mo_recovery *recovery = checker(image, 0);
     struct tally t;
     tally_init(&t);
-    const struct mo_recovery_hooks hooks = {count, &t};
+    const struct mo_recovery_hooks hooks = {count, NULL, &t};
     struct mo_recovery_result result;
-    CHECK(search(recovery, 100, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+    CHECK(search(recovery, 100, &hooks, &result) == MO_RECOVERY_PASSED);
     CHECK(t.tool_failed > 0 && t.replied > 0 && t.refused == 0);
     CHECK(result.counts.restarts == t.restarts && t.restarts >= 100);
     mo_recovery_result_free(recovery, &result);
@@ -503,9 +494,9 @@ static void supervisor_stop(void) {
     struct mo_recovery *recovery = checker(image, 0);
     struct tally t;
     tally_init(&t);
-    const struct mo_recovery_hooks hooks = {count, &t};
+    const struct mo_recovery_hooks hooks = {count, NULL, &t};
     struct mo_recovery_result result;
-    CHECK(search(recovery, 400, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+    CHECK(search(recovery, 400, &hooks, &result) == MO_RECOVERY_PASSED);
     CHECK(t.tool_failed == t.sends - t.down && t.stops >= 5 && t.compared_at_stop == t.stops);
     /* Each stop is a send's, and two restarts come before each stop's restart. */
     CHECK(t.supervisor_stops == t.stops && t.supervisor_restarts >= 2 * t.stops);
@@ -523,7 +514,7 @@ static void start_failure(void) {
                                      "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n");
     struct mo_recovery *recovery = checker(image, 0);
     struct mo_recovery_result result;
-    CHECK(search(recovery, 200, 60, NULL, &result) == MO_RECOVERY_STOPPED);
+    CHECK(search(recovery, 200, NULL, &result) == MO_RECOVERY_STOPPED);
     CHECK(result.outcome == MO_RECOVERY_STOPPED && result.counts.restarts == 0);
     CHECK(result.failure.status == MO_SERVICE_DEFECT &&
           result.failure.function == mo_image_bytecode(image)->services[0].start);
@@ -550,9 +541,9 @@ static void two_services(void) {
     /* Both checkers live at once, alternating, so each holds its own state. */
     for (uint32_t round = 0; round < 3; round++)
         for (uint32_t i = 0; i < 2; i++) {
-            const struct mo_recovery_hooks hooks = {count, &tallies[i]};
+            const struct mo_recovery_hooks hooks = {count, NULL, &tallies[i]};
             struct mo_recovery_result result;
-            CHECK(search(recoveries[i], 20, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+            CHECK(search(recoveries[i], 20, &hooks, &result) == MO_RECOVERY_PASSED);
             CHECK(result.counts.sequences == 20 && result.counts.restarts >= 20);
             mo_recovery_result_free(recoveries[i], &result);
         }
@@ -585,9 +576,9 @@ static void recursive_argument(void) {
     tally_init(&t);
     t.types = mo_image_types(image);
     t.service = &mo_image_bytecode(image)->services[0];
-    const struct mo_recovery_hooks hooks = {count, &t};
+    const struct mo_recovery_hooks hooks = {count, NULL, &t};
     struct mo_recovery_result result;
-    CHECK(search(recovery, 200, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+    CHECK(search(recovery, 200, &hooks, &result) == MO_RECOVERY_PASSED);
     CHECK(t.tools[0] > 0 && t.tools[1] > 0 && t.refused == 0 && t.replied == t.sends);
     /* The recursion is exercised, and stays well inside the saved depth. */
     CHECK(t.tallest >= 4 && t.tallest <= MO_LIMIT_SAVED_DEPTH / 2);
@@ -609,9 +600,9 @@ static void deterministic(void) {
         tally_init(&t);
         t.heap = mo_recovery_heap(recovery);
         t.hashed = &mo_image_bytecode(image)->services[0];
-        const struct mo_recovery_hooks hooks = {count, &t};
+        const struct mo_recovery_hooks hooks = {count, NULL, &t};
         struct mo_recovery_result result;
-        CHECK(search(recovery, 10 * MO_LIMIT_STORES, 60, &hooks, &result) == MO_RECOVERY_PASSED);
+        CHECK(search(recovery, 10 * MO_LIMIT_STORES, &hooks, &result) == MO_RECOVERY_PASSED);
         CHECK(result.counts.sequences == 10 * MO_LIMIT_STORES);
         CHECK(t.advances > 0 && t.replied > 0 && t.rejected > 0);
         hashes[run] = t.hash;
@@ -676,9 +667,8 @@ static void shrink_keeps_passing(void) {
         {.kind = MO_RECOVERY_RESTART}};
     sequence.count = sizeof steps / sizeof steps[0];
     memcpy(sequence.steps, steps, sizeof steps);
-    struct mo_deadline deadline;
-    MO_ASSERT(mo_deadline_start(&deadline, 600));
-    uint32_t runs = mo_recovery_shrink(recovery, &sequence, MO_RECOVERY_MISMATCH, &deadline);
+    uint32_t runs = mo_recovery_shrink(recovery, &sequence, MO_RECOVERY_MISMATCH, NULL,
+                                       (struct mo_recovery_verdict){MO_NO_INDEX, 0});
     CHECK(runs > sequence.count && runs <= MO_CLI_RECOVERY_SHRINK_RUNS);
     CHECK(sequence.count == sizeof steps / sizeof steps[0]);
     for (uint32_t i = 0; i < sequence.count; i++)
@@ -686,6 +676,42 @@ static void shrink_keeps_passing(void) {
               sequence.steps[i].duration == steps[i].duration);
     CHECK(mo_cell_get_int(sequence.steps[0].arguments[0]) == 7 &&
           mo_cell_get_int(sequence.steps[4].arguments[0]) == 900);
+    mo_recovery_sequence_clear(recovery, &sequence);
+    mo_recovery_free(recovery);
+    mo_image_free(image);
+}
+
+/* A check that fails on line 2 at a read from step 8 on, and on line 1 at a read at step 4 or 5. */
+static struct mo_recovery_verdict two_lines(const struct mo_recovery_observation *observation,
+                                            void *context) {
+    (void)context;
+    bool read = observation->step->kind == MO_RECOVERY_SEND;
+    uint32_t index = observation->index;
+    uint32_t line = read && index >= 8 ? 2 : read && (index == 4 || index == 5) ? 1 : 0;
+    return (struct mo_recovery_verdict){line == 0 ? MO_NO_INDEX : 0, line};
+}
+
+/* Shrinking keeps a candidate only when the same check fails on the same line: deleting four of
+ * the advances before the read would fail line 1 instead. */
+static void shrink_same_line(void) {
+    struct mo_image *image =
+        compile("module Main\nservice\nstate Int = 0\ntools read\ntoken from env \"TOKEN\"\nend\n"
+                "fn read(state: Int, _now: Time) : List(Int)\n[state]\nend\n");
+    struct mo_recovery *recovery = checker(image, 0);
+    struct mo_recovery_sequence sequence;
+    mo_recovery_sequence_init(&sequence);
+    for (uint32_t i = 0; i < 8; i++)
+        sequence.steps[i] = (struct mo_recovery_step){.kind = MO_RECOVERY_ADVANCE, .duration = 1};
+    sequence.steps[8] = (struct mo_recovery_step){.kind = MO_RECOVERY_SEND};
+    sequence.count = 9;
+    const struct mo_recovery_hooks hooks = {NULL, two_lines, NULL};
+    const struct mo_recovery_verdict verdict = {0, 2};
+    uint32_t runs = mo_recovery_shrink(recovery, &sequence, MO_RECOVERY_CHECK, &hooks, verdict);
+    CHECK(runs > 0 && sequence.count == 9);
+    struct mo_recovery_result result;
+    CHECK(mo_recovery_replay(recovery, &sequence, &hooks, &result) == MO_RECOVERY_CHECK);
+    CHECK(result.step == 8 && result.verdict.check == 0 && result.verdict.line == 2);
+    mo_recovery_result_free(recovery, &result);
     mo_recovery_sequence_clear(recovery, &sequence);
     mo_recovery_free(recovery);
     mo_image_free(image);
@@ -794,7 +820,7 @@ static void failure_report(void) {
     struct kept kept = {.recovery = recovery};
     for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
         kept.types[i] = MO_NO_INDEX;
-    const struct mo_recovery_hooks hooks = {keep, &kept};
+    const struct mo_recovery_hooks hooks = {keep, NULL, &kept};
     struct mo_recovery_result result;
     CHECK(mo_recovery_replay(recovery, &sequence, &hooks, &result) == MO_RECOVERY_PASSED);
     /* The recovered state reads 0, as if the add were lost. */
@@ -959,6 +985,7 @@ static void run(void *unused) {
     (void)unused;
     failed_firings();
     shrink_keeps_passing();
+    shrink_same_line();
     failure_report();
     same_text();
     comparison();

@@ -51,8 +51,8 @@ int main(int argc, char *argv[]) {
         }
         return mo_cli_execute(&cli, stdout, stderr);
     }
-    /* A recovery check whose deadline has passed by its first poll compared no restart: that is
-     * E1404, not a pass. */
+    /* A service's checks run their whole plan: a clock already past the deadline changes
+     * nothing. */
     char folder[] = "/tmp/mo-deadline-XXXXXX", path[64], output[64], errors[64];
     MO_ASSERT(mkdtemp(folder) != NULL);
     MO_ASSERT(snprintf(path, sizeof path, "%s/main.mo", folder) > 0 &&
@@ -73,20 +73,18 @@ int main(int argc, char *argv[]) {
     MO_ASSERT(mo_cli_parse(3, arguments, &cli, &error));
     FILE *out = fopen(output, "w+"), *err = fopen(errors, "w+");
     MO_ASSERT(out != NULL && err != NULL);
-    CHECK(mo_cli_execute(&cli, out, err) == 1);
+    CHECK(mo_cli_execute(&cli, out, err) == 0);
     char text[4096] = "";
-    rewind(out);
-    CHECK(fread(text, 1, sizeof text - 1, out) == 0);
     rewind(err);
-    size_t length = fread(text, 1, sizeof text - 1, err);
+    CHECK(fread(text, 1, sizeof text - 1, err) == 0);
+    rewind(out);
+    size_t length = fread(text, 1, sizeof text - 1, out);
     text[length] = '\0';
     char expected[256];
     MO_ASSERT(snprintf(expected, sizeof expected,
-                       "error E1404: the deadline ended before the check compared a restart  "
-                       "%s:2:1\n",
+                       "passed Main.service.recovery  %s:2:1\n1 passed, 0 failed, 0 stopped\n",
                        path) > 0);
-    CHECK(strncmp(text, expected, strlen(expected)) == 0);
-    CHECK(strstr(text, "Main.service.recovery") != NULL && strstr(text, "passed") == NULL);
+    CHECK(strcmp(text, expected) == 0);
     MO_ASSERT(fclose(out) == 0 && fclose(err) == 0);
     MO_ASSERT(unlink(path) == 0 && unlink(output) == 0 && unlink(errors) == 0 &&
               rmdir(folder) == 0);

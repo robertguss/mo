@@ -949,7 +949,7 @@ def check_simulation_specs(driver, root, world):
     assert lowered.returncode == 0, lowered.stderr
     path = root / 'simulation.core'
     path.write_text(lowered.stdout)
-    runs = simulation_results(driver.parent / 'mo', source)
+    runs = simulation_results(driver.parent / 'mo', source, 0, '--calls', '10')
     matched = boundary = 0
     # Mo Core does not model services, so recovery checks have no Lean counterpart.
     checks = [r['name'] for r in runs if r['kind'] == 'recovery']

@@ -2,11 +2,11 @@
  * restarts, each run on a fresh in-memory store through the simulated-service API. Before every
  * crash the live state is encoded with the saved-value codec; after every restart, before the
  * startup ticks run, the recovered state is encoded too, and the two must be equal byte for byte.
- * The search is deterministic, seeded from the check's name. */
+ * A check hook can judge every step too, as mo test does with service promises. The search is
+ * deterministic, seeded from the check's name. */
 #ifndef MO_TOOLS_RECOVERY_H
 #define MO_TOOLS_RECOVERY_H
 
-#include "tools/deadline.h"
 #include "tools/inputs.h"
 #include "vm/vm.h"
 
@@ -67,12 +67,18 @@ struct mo_recovery_failure {
 };
 
 enum mo_recovery_outcome {
-    MO_RECOVERY_PASSED,     /* restarts were compared, and every one recovered the state */
+    MO_RECOVERY_PASSED,     /* every restart compared recovered the state, and every check held */
     MO_RECOVERY_MISMATCH,   /* a restart recovered a state that differs from the one at its crash */
     MO_RECOVERY_REFUSED,    /* recovery refused the store at a restart; failure says why */
     MO_RECOVERY_STOPPED,    /* the service failed at its first open, as failure says */
-    MO_RECOVERY_UNCOMPARED, /* the budget ended before any restart was compared */
+    MO_RECOVERY_CHECK,      /* the check hook found a failure at step, as verdict says */
     MO_RECOVERY_UNAVAILABLE /* the checker could not go on: problem says why */
+};
+
+/* What a check hook found after a step. */
+struct mo_recovery_verdict {
+    uint32_t check; /* the hook's own index of the failed check; MO_NO_INDEX when all held */
+    uint32_t line;  /* its first false line, one-based, or 0 when its body stopped */
 };
 
 /* Counted from what the simulated-service API reports. Commits are a lower bound, since ticks a
@@ -90,11 +96,16 @@ struct mo_recovery_counts {
 struct mo_recovery_result {
     enum mo_recovery_outcome outcome;
     struct mo_recovery_counts counts;
-    /* A search's MISMATCH or REFUSED: the failing sequence, ending at the failing restart. */
+    /* A search's MISMATCH, REFUSED or CHECK: the failing sequence, ending at the failing step. */
     struct mo_recovery_sequence sequence;
-    uint32_t step; /* MISMATCH and REFUSED: the failing restart's index */
-    /* MISMATCH: the state's saved encoding before the crash, and as recovered. */
+    uint64_t ordinal; /* a search's failing sequence */
+    /* A search's failure: counts before the failing sequence ran, to resume from it. */
+    struct mo_recovery_counts resume;
+    uint32_t step; /* MISMATCH and REFUSED: the failing restart's index; CHECK: the step's */
+    /* MISMATCH: the state's saved encoding before the crash, and as recovered. CHECK: the state
+     * before the step, or at its crash for a restart, and after it. */
     struct mo_buffer before, after;
+    struct mo_recovery_verdict verdict; /* CHECK */
     struct mo_recovery_failure failure; /* REFUSED and STOPPED */
     const char *problem;                /* UNAVAILABLE */
 };
@@ -107,9 +118,15 @@ struct mo_recovery_observation {
     const struct mo_recovery_step *step;
     const struct mo_simulation_reply *reply; /* a SEND that REPLIED or was REJECTED; else NULL */
     struct mo_simulation *simulation;        /* to read the state; never to drive it */
+    /* check only: the state's saved encodings before and after the step, NULL when unreadable. A
+     * restart's before is the state at its crash, and its after follows the startup ticks. */
+    const struct mo_buffer *before, *after;
 };
 struct mo_recovery_hooks {
     void (*observe)(const struct mo_recovery_observation *observation, void *context);
+    /* Runs after every step but a crash, once the startup ticks of a restart ran; may be NULL. */
+    struct mo_recovery_verdict (*check)(const struct mo_recovery_observation *observation,
+                                        void *context);
     void *context;
 };
 
@@ -125,32 +142,38 @@ void mo_recovery_free(struct mo_recovery *recovery);
 /* <Module>.service.recovery, NUL-terminated. */
 MO_MUST_USE const char *mo_recovery_name(const struct mo_recovery *recovery);
 MO_MUST_USE struct mo_heap *mo_recovery_heap(struct mo_recovery *recovery);
+/* Whether restarts are compared, as they are at first. When not, a refused restart ends its
+ * sequence. */
+void mo_recovery_compare_restarts(struct mo_recovery *recovery, bool compare);
 
-/* Runs generated sequences until one fails, sequences have run, or deadline (started, and polled
- * between steps) ends. A sequence the deadline cuts short is not counted, though restarts it
- * compared are. Always writes out; free it after. Hooks may be NULL. */
-MO_MUST_USE enum mo_recovery_outcome
-mo_recovery_search(struct mo_recovery *recovery, uint64_t sequences, struct mo_deadline *deadline,
-                   const struct mo_recovery_hooks *hooks, struct mo_recovery_result *out);
+/* Runs the generated sequences numbered from first up to sequences, until one fails. Each one's
+ * steps depend only on the check's name and its number. Always writes out; free it after. Hooks
+ * may be NULL. */
+MO_MUST_USE enum mo_recovery_outcome mo_recovery_search(struct mo_recovery *recovery,
+                                                        uint64_t first, uint64_t sequences,
+                                                        const struct mo_recovery_hooks *hooks,
+                                                        struct mo_recovery_result *out);
 /* Runs exactly sequence, from a fresh store, recording what each step did, until it ends or a
- * restart fails. Its crashes and restarts must alternate, starting with a crash. out's sequence
+ * step fails. Its crashes and restarts must alternate, starting with a crash. out's sequence
  * stays empty. Always writes out; free it after. */
 MO_MUST_USE enum mo_recovery_outcome mo_recovery_replay(struct mo_recovery *recovery,
                                                         struct mo_recovery_sequence *sequence,
                                                         const struct mo_recovery_hooks *hooks,
                                                         struct mo_recovery_result *out);
 
-/* Shrinks sequence, which failed with failure (MISMATCH or REFUSED) at its last step: deletes
- * steps, a crash always with its restart, then simplifies tool arguments with the input shrinker,
- * then shortens advances, as long as any pass makes progress. Each candidate is replayed from a
- * fresh store, and kept, cut after its failing restart, when it fails the same way. Arguments are
- * literal values, so one an earlier reply supplied keeps its value when that step goes. At most
- * MO_CLI_RECOVERY_SHRINK_RUNS replays, while deadline runs; returns how many ran. sequence's
- * records of what each step did are stale afterwards; replay it to read them. */
+/* Shrinks sequence, which failed with failure (MISMATCH, REFUSED, or CHECK with verdict) at its
+ * last step: deletes steps, a crash always with its restart, then simplifies tool arguments with
+ * the input shrinker, then shortens advances, as long as any pass makes progress. Each candidate
+ * is replayed from a fresh store with hooks, and kept, cut after its failing step, when it fails
+ * the same way, with the same verdict. Arguments are literal values, so one an earlier reply
+ * supplied keeps its value when that step goes. At most MO_CLI_RECOVERY_SHRINK_RUNS replays;
+ * returns how many ran. sequence's records of what each step did are stale afterwards; replay it
+ * to read them. */
 MO_MUST_USE uint32_t mo_recovery_shrink(struct mo_recovery *recovery,
                                         struct mo_recovery_sequence *sequence,
                                         enum mo_recovery_outcome failure,
-                                        struct mo_deadline *deadline);
+                                        const struct mo_recovery_hooks *hooks,
+                                        struct mo_recovery_verdict verdict);
 
 /* The part of a SEND's reply a report shows, borrowed from reply: an update's reply without its
  * new state, or the whole result of a read-only tool or of a rejection. */
@@ -159,13 +182,14 @@ MO_MUST_USE struct mo_cell mo_recovery_reply(const struct mo_recovery *recovery,
                                              const struct mo_simulation_reply *reply,
                                              uint32_t *type);
 
-/* What mo test reports for one recovery check. */
+/* What mo test reports for one recovery check or service promise. */
 struct mo_recovery_report {
     struct mo_recovery *recovery;
     uint32_t service;                 /* its index in the image */
     struct mo_recovery_counts counts; /* the search's, a failing sequence included */
-    /* A failure: the shrunk sequence and its last run, which failed at result->step. STOPPED:
-     * result holds the failure and sequence is NULL. */
+    /* A failure, or a service promise whose body stopped: the shrunk sequence and its last run,
+     * which failed at result->step. The service's own stop: result holds the failure and
+     * sequence is NULL. */
     const struct mo_recovery_sequence *sequence;
     const struct mo_recovery_result *result;
     /* Per step of sequence: the reply a SEND showed, of type reply_types[i], in the checker's

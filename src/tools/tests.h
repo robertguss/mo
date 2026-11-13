@@ -7,11 +7,12 @@
 #include "tools/tools.h"
 #include "vm/vm.h"
 
-/* An example, promise or test written in the source, or a service's recovery check. */
+/* An example, promise or test written in the source, or a service's promise or recovery check. */
 struct mo_observation {
     const char *name;
-    const struct mo_checked_spec *source;      /* NULL for a recovery check */
-    const struct mo_checked_service *service;  /* a recovery check's service, else NULL */
+    const struct mo_checked_spec *source;     /* NULL for a service's checks */
+    const struct mo_checked_service *service; /* a service promise's or recovery check's service */
+    const struct mo_checked_service_promise *promise; /* a service promise, else NULL */
     const struct mo_lowered_promise *instance; /* generic promise only, NULL in the inventory */
 };
 
@@ -21,16 +22,16 @@ struct mo_test_selection {
     const char *mistake; /* exit 2; no records may have been published */
 };
 
-/* NULL on resource failure (diagnosed). Includes uninstantiated promises, and after them one
- * recovery check for each service outside the toolchain's library; anchors are compiler checks,
- * never user-selectable observations. */
+/* NULL on resource failure (diagnosed). Includes uninstantiated promises, and after them, for each
+ * service outside the toolchain's library, its service promises then its recovery check; anchors
+ * are compiler checks, never user-selectable observations. */
 MO_MUST_USE struct mo_test_selection *mo_select_tests(struct mo_arena *arena,
                                                       const struct mo_program *program,
                                                       const struct mo_cli *cli,
                                                       struct mo_diags *diags);
 /* "example", "promise", "test" or "recovery". */
 MO_MUST_USE const char *mo_observation_kind(const struct mo_observation *observation);
-/* The written spec, or a recovery check's service block. */
+/* The written spec or service promise, or a recovery check's service block. */
 MO_MUST_USE struct mo_span mo_observation_span(const struct mo_observation *observation);
 MO_MUST_USE struct mo_test_selection *
 mo_instantiate_tests(struct mo_arena *arena, const struct mo_test_selection *selection,
@@ -50,7 +51,7 @@ struct mo_test_result {
     uint64_t microseconds;
     struct mo_span line;                       /* original assert or false promise condition */
     const struct mo_promise_result *promise;   /* NULL for ordinary observations */
-    const struct mo_recovery_report *recovery; /* a recovery check's, else NULL */
+    const struct mo_recovery_report *recovery; /* a service promise's or recovery check's */
 };
 /* One complete bounded record, or false with the buffer empty. Never truncates
  * a field to manufacture a record; all process views remain borrowed. */

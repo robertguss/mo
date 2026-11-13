@@ -328,6 +328,11 @@ static struct mo_services services(struct lowering *p) {
     return (struct mo_services){.count = count, .items = items};
 }
 
+/* A promise about a function; a service promise lowers to a plain function the tools run. */
+static bool function_promise(const struct instance *f) {
+    return f->spec != NULL && f->spec->kind == MO_SPEC_PROMISE && f->spec->subject != UINT32_MAX;
+}
+
 static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *program,
                              const struct mo_sources *sources, struct mo_diags *diags,
                              struct mo_lowered_promises *promises,
@@ -436,13 +441,13 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
         *promises = (struct mo_lowered_promises){0};
         for (struct instance *f = p->functions; f != NULL; f = f->next) {
             lower_work(p, 1);
-            promises->count += f->spec != NULL && f->spec->kind == MO_SPEC_PROMISE ? 1U : 0U;
+            promises->count += function_promise(f) ? 1U : 0U;
         }
         promises->items = LOWER_NEW(p, struct mo_lowered_promise, promises->count);
         uint32_t at = 0;
         for (struct instance *f = p->functions; f != NULL; f = f->next) {
             lower_work(p, 1);
-            if (f->spec == NULL || f->spec->kind != MO_SPEC_PROMISE)
+            if (!function_promise(f))
                 continue;
             struct mo_lowered_promise *promise = &promises->items[at++];
             promise->source = f->spec;

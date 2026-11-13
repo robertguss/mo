@@ -1,0 +1,11 @@
+failed Main.service.promise.1  tests/golden/service-promise-timer/main.mo:11:3
+  sequences: 83
+  1. top_up(1)  replied 1, committed
+  2. advance 6862.5s  1 timer firing  broke Main.service.promise.1
+  state before step 2: 1
+  state after step 2: -4
+  12 |     after >= 0
+     |     ^^^^^^^^^^ this promise condition was false
+passed Main.service.promise.2  tests/golden/service-promise-timer/main.mo:17:3
+passed Main.service.recovery  tests/golden/service-promise-timer/main.mo:5:1
+2 passed, 1 failed, 0 stopped

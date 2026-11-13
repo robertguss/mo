@@ -92,8 +92,9 @@ static int64_t state_of(struct mo_recovery *recovery, uint32_t type, const struc
  * they fail the same way each time they run again. */
 static void shrunk_failure(struct mo_recovery *recovery, const struct mo_bytecode_service *service,
                            uint32_t add, struct mo_recovery_sequence *sequence,
-                           enum mo_recovery_outcome expected, struct mo_deadline *deadline) {
-    uint32_t runs = mo_recovery_shrink(recovery, sequence, expected, deadline);
+                           enum mo_recovery_outcome expected) {
+    uint32_t runs = mo_recovery_shrink(recovery, sequence, expected, NULL,
+                                       (struct mo_recovery_verdict){MO_NO_INDEX, 0});
     CHECK(runs > 0 && runs < MO_CLI_RECOVERY_SHRINK_RUNS);
     const struct mo_recovery_step *steps = sequence->steps;
     bool shape = sequence->count == 3 && steps[0].kind == MO_RECOVERY_SEND &&
@@ -142,17 +143,15 @@ static void check_directly(unsigned delivered, enum mo_recovery_outcome expected
     struct mo_limits limits = mo_limits_default();
     struct mo_recovery *recovery = NULL;
     MO_ASSERT(mo_recovery_new(image, 0, &limits, &recovery) == MO_INPUT_OK);
-    struct mo_deadline deadline;
-    MO_ASSERT(mo_deadline_start(&deadline, 600));
     struct mo_recovery_result found;
-    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 200, &deadline, NULL, &found);
+    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 0, 200, NULL, &found);
     CHECK(outcome == expected);
     /* Every mode ran restarts whose load held a log record back. */
     CHECK(held_loads > 0);
     if (outcome == MO_RECOVERY_PASSED)
         CHECK(found.counts.restarts > 0 && found.counts.sequences == 200);
     if (outcome == expected && expected != MO_RECOVERY_PASSED)
-        shrunk_failure(recovery, service, add, &found.sequence, expected, &deadline);
+        shrunk_failure(recovery, service, add, &found.sequence, expected);
     mo_recovery_result_free(recovery, &found);
     mo_recovery_free(recovery);
     mo_image_free(image);
@@ -188,13 +187,12 @@ static void shrunk_advance(void *unused) {
     struct mo_limits limits = mo_limits_default();
     struct mo_recovery *recovery = NULL;
     MO_ASSERT(mo_recovery_new(image, 0, &limits, &recovery) == MO_INPUT_OK);
-    struct mo_deadline deadline;
-    MO_ASSERT(mo_deadline_start(&deadline, 600));
     struct mo_recovery_result found;
-    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 200, &deadline, NULL, &found);
+    enum mo_recovery_outcome outcome = mo_recovery_search(recovery, 0, 200, NULL, &found);
     CHECK(outcome == MO_RECOVERY_MISMATCH);
     if (outcome == MO_RECOVERY_MISMATCH) {
-        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, &deadline);
+        uint32_t runs = mo_recovery_shrink(recovery, &found.sequence, outcome, NULL,
+                                           (struct mo_recovery_verdict){MO_NO_INDEX, 0});
         CHECK(runs > 0 && runs < MO_CLI_RECOVERY_SHRINK_RUNS);
         const struct mo_recovery_step *steps = found.sequence.steps;
         const int64_t minute = INT64_C(60000000);

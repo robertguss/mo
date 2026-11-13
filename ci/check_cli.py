@@ -3955,7 +3955,8 @@ def guide_claims(binary):
     refuses(['check', 'tests/errors/e0100-generic/main.mo'], '0100',
             'a service handler is generic',
             'A selected generic handler gets E0100, "a service handler is generic".')
-    simulation = run(binary, ['test', 'tests/lower-source/service-simulation/main.mo'], 0)
+    simulation = run(binary, ['test', '--calls', '10', 'tests/lower-source/service-simulation/main.mo'],
+                     0)
     assert not simulation.stderr and simulation.stdout.endswith(b"11 passed, 0 failed, 0 stopped\n")
     refused = run(binary, ['test', 'tests/errors/e1400-simulation/main.mo'], 1)
     assert b"error E1400: " in refused.stderr and b"promise" in refused.stderr, refused.stderr
