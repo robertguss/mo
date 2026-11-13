@@ -86,3 +86,17 @@ their names and hashes, which still match.
   queue holding Dead jobs, and anything only `Main` sees that no row reaches.
 - A version that replaces a helper a new item reads is `changes_intent` and stays in the
   denominator as not killed, since the `counted` file lists all 12.
+
+### Held-back half: result
+
+`results/5-held-back.json`: 11 of 12 killed, 91.7%, not partial, measured at `21c06316`, after
+the review's fixes, which leave the working half's record unchanged byte for byte. Eight were
+killed by a promise, two by an example and one by both; `w20` survived. None was invalid or
+changed intent.
+
+The prediction was wrong: the rate did not fall below the working half's. The likeliest reading
+is that the new tool promises judge the service as a whole rather than the working half's
+particular mistakes, so they catch mistakes they were not written against. This session still
+has not read `w20` or any held-back mistake.
+
+The held-back set is now spent. Robert's answer: pending.
