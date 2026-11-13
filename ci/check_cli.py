@@ -3993,6 +3993,9 @@ def guide_claims(binary):
                      "neither credential appears in output, events or the data folder.",
                      "a new GET replaces it."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
+    # strength_checks exercises mo test --strength and the digests it compares.
+    assert ("A wrong version that does not check, changes a digest, or stops is kept out of the "
+            "rate.") in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]
