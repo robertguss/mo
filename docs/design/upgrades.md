@@ -6,6 +6,8 @@ message boundary, the upload tools, MCP streams and `mo push` (see Live
 implementation below). M5 finalizes the operator catalog and documents the loopback-tunnel remote procedure.
 The feasibility evidence, including failed assumptions and corrected results, is
 in [the preflight](../../learnability/phase5/preflight/README.md).
+Phase 6 proposes [the review door](intent.md) on this path: checks before
+activation, approvals, a held outcome and a third credential.
 
 ## Authority and lifecycle
 

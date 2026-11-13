@@ -1654,10 +1654,16 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   carries its own schema, so the operator views render any state from its
   saved encoding without new bytecode tables. `docs/design/introspection.md`
   is the design.
-- **Live upgrades (Phase 5, proposed):** replace the whole image at a message
+- **Live upgrades (Phase 5):** replace the whole image at a message
   boundary; calls remain direct. Candidates are source bundles compiled by the
-  serving build and verified before activation. The design and its outstanding
-  feasibility gates are in [upgrades.md](upgrades.md).
+  serving build and verified before activation. [upgrades.md](upgrades.md) is
+  the design.
+- **Intent and the review door (Phase 6, proposed):** service promises lower to
+  plain spec functions checked by the tools on the recovery check's generated
+  sequences, so Mo Core, Lean and the bytecode do not change. Each promise and
+  example row has a content digest the store's approvals refer to, and a second
+  child runs a candidate's checks before the door decides. [intent.md](intent.md)
+  is the design.
 - **In-place demands (Phase 7):** the in-place check of D26 runs on Core, where
   the full-3c checker's rules apply.
 
@@ -3434,8 +3440,8 @@ manually invoked `lean` and `cbmc` groups.
   unmodified sources and their hashes in the repository (section 12).
   The `drivers` group checks regeneration and the UCD's conformance data; width follows the
   explicit policy in `library.md`, not the host terminal.
-- **The bytecode format's stability.** It remains internal. The proposed Phase 5
-  upgrade boundary is a versioned source bundle, not a public bytecode ABI.
+- **The bytecode format's stability.** It remains internal. The Phase 5 upgrade
+  boundary is a versioned source bundle, not a public bytecode ABI.
 
 ### 13.2 Settled with Robert
 
