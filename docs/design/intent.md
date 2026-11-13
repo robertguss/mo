@@ -503,3 +503,8 @@ Recorded on 2026-11-13, each with the evidence it was put with:
 - The door's plan is 1,000 sequences and 200 inputs; the check child's limits
   are 1 GiB, 120 CPU seconds and 180 seconds; each planted change runs once per
   setting; the limits are measured again on the live host before it serves.
+- From the code review, kept on 2026-11-13: an approved item counts as carried
+  only while the service still calls its owner; any write to approvals makes a
+  held upgrade stale, including during the recheck after a yes; and the checked
+  restart refuses whatever the door would hold, under either setting, unless
+  `--review` names its id.
