@@ -213,10 +213,11 @@ static const struct {
     {"token", SOFT_TOKEN},
     {"from", SOFT_FROM},
     {"env", SOFT_ENV},
+    {"on", SOFT_ON},
 };
 
 static int name_context_token(int token) {
-    return token >= SOFT_STATE && token <= SOFT_ENV ? NAME : token;
+    return token >= SOFT_STATE && token <= SOFT_ON ? NAME : token;
 }
 
 static int keyword(const unsigned char *text, size_t length) {

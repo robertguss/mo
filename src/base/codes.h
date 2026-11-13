@@ -132,6 +132,7 @@
     X(104, SERVICE_CAPABILITY, "11.5")                                                             \
     X(105, SERVICE_HIDDEN_TYPE, "11.5")                                                            \
     X(106, SERVICE_TOOL_NAME, "11.5")                                                              \
+    X(107, SERVICE_PROMISE, "12.2")                                                                \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \
@@ -241,6 +242,8 @@
     X(1107, CHECK_PROGRAM_WORK, NULL)                                                              \
     /* A nominal ability graph exceeds MO_LIMIT_SOURCE_ABILITY_DEPTH. */                           \
     X(1108, CHECK_ABILITY_DEPTH, NULL)                                                             \
+    /* A service has more than MO_LIMIT_SERVICE_PROMISES service promises. */                      \
+    X(1109, TOO_MANY_SERVICE_PROMISES, NULL)                                                       \
     /* A checked form not yet implemented by lowering. */                                          \
     X(1150, LOWER_UNFINISHED, NULL)                                                                \
     /* The caller's lowering arena has no room. */                                                 \

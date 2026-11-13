@@ -190,14 +190,7 @@ static void execute_pipeline(void *argument) {
         if (!mo_promises_supported(program, selection, diags))
             return;
     }
-    bool anchors = false;
-    for (uint32_t i = 0; i < program->spec_count; i++) {
-        uint32_t module = program->specs[i].module;
-        /* Lowering leaves out a library module's anchors, as it does all its specs. */
-        bool in_library =
-            module != 0 && program->set->library != NULL && program->set->library[module];
-        anchors |= program->specs[i].kind == MO_SPEC_ANCHOR && !in_library;
-    }
+    bool anchors = mo_program_has_anchors(program);
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
     struct mo_lowered_promises promises;
@@ -232,7 +225,8 @@ static void execute_pipeline(void *argument) {
         goto done;
     }
     if (anchors || cli->command == MO_COMMAND_RUN) {
-        work->status = mo_run_program(cli, core, &wire, sources, work->output, work->errors, diags);
+        work->status =
+            mo_run_program(cli, program, core, &wire, sources, work->output, work->errors, diags);
         if (work->status != 0 || mo_diags_any(diags))
             goto done;
     }

@@ -43,22 +43,34 @@ struct mo_span mo_runtime_span(const struct mo_bytecode *file, const struct mo_s
     return (struct mo_span){UINT32_MAX, start, end};
 }
 
+uint32_t mo_service_function(const struct mo_bytecode *file, const char *module, uint32_t promise,
+                             const struct mo_checked_spec *anchor) {
+    char suffix[64];
+    int n = anchor == NULL ? snprintf(suffix, sizeof suffix, ".service.promise.%u", promise)
+                           : snprintf(suffix, sizeof suffix, ".service.promise.%u.%s.%u", promise,
+                                      anchor->allows ? "allows" : "forbids", anchor->number);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof suffix);
+    size_t prefix = strlen(module), length = prefix + (size_t)n;
+    for (uint32_t i = 0; i < file->function_count; i++) {
+        const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
+        if (name->length == length && memcmp(name->bytes, module, prefix) == 0 &&
+            memcmp(name->bytes + prefix, suffix, (size_t)n) == 0)
+            return i;
+    }
+    return MO_NO_INDEX;
+}
+
 static bool anchor_error(const struct mo_bytecode *file, const struct mo_sources *sources,
-                         uint32_t function, const char *message, const char *detail, int64_t line,
-                         struct mo_diags *diags) {
+                         uint32_t function, const char *message, const char *detail,
+                         const struct mo_span *line, struct mo_diags *diags) {
     struct mo_diag diag = {
         .code = MO_CODE_TOOL_ANCHOR, .message = message, .primary = {{UINT32_MAX, 0, 0}, detail}};
     struct mo_label condition;
     if (function != MO_NO_INDEX) {
         const struct mo_bytecode_debug *debug = &file->debug[function];
         diag.primary.span = mo_runtime_span(file, sources, debug->file, debug->start, debug->end);
-        if (line > 0) {
-            const struct mo_bytecode_debug *promise = &file->debug[debug->subject];
-            MO_ASSERT((uint64_t)line <= promise->line_count);
-            const struct mo_bytecode_spec_line *failed = &promise->lines[(uint32_t)line - 1];
-            condition = (struct mo_label){
-                mo_runtime_span(file, sources, failed->file, failed->start, failed->end),
-                "this promise condition was false"};
+        if (line != NULL) {
+            condition = (struct mo_label){*line, "this promise condition was false"};
             diag.secondary = &condition;
             diag.secondary_count = 1;
         }
@@ -75,52 +87,112 @@ static bool anchor_stopped(const struct mo_bytecode *file, const struct mo_sourc
     const char *detail = "anchor execution could not complete; defect report unavailable";
     if (complete && mo_buffer_append_byte(&report, 0))
         detail = (const char *)report.bytes;
-    bool added =
-        anchor_error(file, sources, function, "an anchor could not be checked", detail, 0, diags);
+    bool added = anchor_error(file, sources, function, "an anchor could not be checked", detail,
+                              NULL, diags);
     mo_buffer_free(&report);
     return added;
 }
 
+static bool in_library(const struct mo_program *program, uint32_t module) {
+    return module != 0 && program->set->library != NULL && program->set->library[module];
+}
+
+/* Lowering leaves out a library module's anchors, as it does all its specs. */
+bool mo_program_has_anchors(const struct mo_program *program) {
+    bool anchors = false;
+    for (uint32_t i = 0; i < program->spec_count; i++)
+        anchors |= program->specs[i].kind == MO_SPEC_ANCHOR &&
+                   !in_library(program, program->specs[i].module);
+    for (uint32_t i = 0; i < program->service_count; i++)
+        for (uint32_t j = 0; j < program->services[i].promise_count; j++)
+            anchors |= program->services[i].promises[j].anchor_count > 0 &&
+                       !in_library(program, program->services[i].module);
+    return anchors;
+}
+
+/* A service promise's lines come from the checked program: Core keeps no lines for a function
+ * that is not about a subject. */
+static struct mo_span false_line(const struct mo_bytecode *file, const struct mo_sources *sources,
+                                 uint32_t function, const struct mo_checked_spec *service,
+                                 int64_t line) {
+    if (service != NULL) {
+        MO_ASSERT((uint64_t)line <= service->condition_count);
+        return service->conditions[line - 1].text.span;
+    }
+    const struct mo_bytecode_debug *promise = &file->debug[file->debug[function].subject];
+    MO_ASSERT((uint64_t)line <= promise->line_count);
+    const struct mo_bytecode_spec_line *failed = &promise->lines[(uint32_t)line - 1];
+    return mo_runtime_span(file, sources, failed->file, failed->start, failed->end);
+}
+
 /* Each anchor is an independent observation of its promise, never a call of
  * the subject. The image is shared; all process heaps and frames are fresh. */
-bool mo_check_anchors(struct mo_image *image, const struct mo_cli *cli,
-                      const struct mo_sources *sources, struct mo_diags *diags) {
+static bool check_anchor(struct mo_image *image, const struct mo_cli *cli,
+                         const struct mo_sources *sources, uint32_t function, bool allows,
+                         const struct mo_checked_spec *service, struct mo_diags *diags) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
-    for (uint32_t i = 0; i < file->function_count; i++) {
-        if (file->functions[i].kind != MO_FUNCTION_ANCHOR)
-            continue;
-        struct mo_process *process = mo_process_new(image, &cli->limits);
-        if (process == NULL) {
-            bool added = anchor_error(file, sources, i, "an anchor could not be checked",
-                                      "could not allocate its fresh process", 0, diags);
-            (void)added;
-            return false;
+    struct mo_process *process = mo_process_new(image, &cli->limits);
+    if (process == NULL) {
+        bool added = anchor_error(file, sources, function, "an anchor could not be checked",
+                                  "could not allocate its fresh process", NULL, diags);
+        (void)added;
+        return false;
+    }
+    mo_process_instruction_limit(process, MO_CLI_ANCHOR_INSTRUCTIONS);
+    struct mo_cell result;
+    struct mo_defect defect;
+    enum mo_outcome outcome = mo_call(process, function, NULL, 0, &result, &defect);
+    bool added = true;
+    if (outcome == MO_RETURNED) {
+        int64_t answer = mo_cell_get_int(result);
+        MO_ASSERT(answer >= 0);
+        if ((answer == 0) != allows) {
+            struct mo_span line;
+            if (answer > 0)
+                line = false_line(file, sources, function, service, answer);
+            added = anchor_error(file, sources, function,
+                                 allows ? "an allows anchor was rejected"
+                                        : "a forbids anchor was accepted",
+                                 "allows must satisfy the promise; forbids must fail it "
+                                 "(reference 12.2)",
+                                 answer > 0 ? &line : NULL, diags);
         }
-        mo_process_instruction_limit(process, MO_CLI_ANCHOR_INSTRUCTIONS);
-        struct mo_cell result;
-        struct mo_defect defect;
-        enum mo_outcome outcome = mo_call(process, i, NULL, 0, &result, &defect);
-        bool added = true;
-        if (outcome == MO_RETURNED) {
-            int64_t answer = mo_cell_get_int(result);
-            MO_ASSERT(answer >= 0);
-            bool allows = file->debug[i].expectation == MO_BYTECODE_ALLOWS;
-            if ((answer == 0) != allows)
-                added = anchor_error(file, sources, i,
-                                     allows ? "an allows anchor was rejected"
-                                            : "a forbids anchor was accepted",
-                                     "allows must satisfy the promise; forbids must fail it "
-                                     "(reference 12.2)",
-                                     answer, diags);
-            mo_value_drop(mo_process_heap(process), file->functions[i].result_type, result);
-            /* Verified bytecode releases every reference it acquires (bytecode 4.2). */
-            MO_ASSERT(mo_heap_objects(mo_process_heap(process)) == 0);
-        } else
-            added = anchor_stopped(file, sources, i, &defect, diags);
-        /* Reporting copies everything before the stopped owner is released. */
-        mo_process_free(process);
-        if (!added)
+        mo_value_drop(mo_process_heap(process), file->functions[function].result_type, result);
+        /* Verified bytecode releases every reference it acquires (bytecode 4.2). */
+        MO_ASSERT(mo_heap_objects(mo_process_heap(process)) == 0);
+    } else
+        added = anchor_stopped(file, sources, function, &defect, diags);
+    /* Reporting copies everything before the stopped owner is released. */
+    mo_process_free(process);
+    return added;
+}
+
+bool mo_check_anchors(struct mo_image *image, const struct mo_cli *cli,
+                      const struct mo_sources *sources, const struct mo_program *program,
+                      struct mo_diags *diags) {
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    for (uint32_t i = 0; i < file->function_count; i++)
+        if (file->functions[i].kind == MO_FUNCTION_ANCHOR &&
+            !check_anchor(image, cli, sources, i, file->debug[i].expectation == MO_BYTECODE_ALLOWS,
+                          NULL, diags))
             return false;
+    for (uint32_t i = 0; i < program->service_count; i++) {
+        const struct mo_checked_service *service = &program->services[i];
+        for (uint32_t j = 0; j < service->promise_count; j++) {
+            const struct mo_checked_service_promise *promise = &service->promises[j];
+            uint32_t module = promise->spec.module;
+            if (in_library(program, module))
+                continue;
+            for (uint32_t k = 0; k < promise->anchor_count; k++) {
+                const struct mo_checked_spec *anchor = &promise->anchors[k];
+                uint32_t function = mo_service_function(file, program->set->names[module],
+                                                        promise->spec.number, anchor);
+                MO_ASSERT(function != MO_NO_INDEX);
+                if (!check_anchor(image, cli, sources, function, anchor->allows, &promise->spec,
+                                  diags))
+                    return false;
+            }
+        }
     }
     return !mo_diags_any(diags);
 }
@@ -183,9 +255,10 @@ static int stopped(struct mo_process *process, const char *reason, const char *l
     return 70;
 }
 
-int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
-                   const struct mo_buffer *wire, const struct mo_sources *sources, FILE *output,
-                   FILE *errors, struct mo_diags *diags) {
+int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
+                   const struct mo_core *core, const struct mo_buffer *wire,
+                   const struct mo_sources *sources, FILE *output, FILE *errors,
+                   struct mo_diags *diags) {
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
@@ -199,9 +272,7 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
     const struct mo_bytecode *file = mo_image_bytecode(image);
     uint32_t main = entry(core, file);
     struct mo_defect defect;
-    bool anchors = false;
-    for (uint32_t i = 0; i < file->function_count; i++)
-        anchors |= file->functions[i].kind == MO_FUNCTION_ANCHOR;
+    bool anchors = mo_program_has_anchors(program);
     enum mo_outcome outcome =
         anchors ? mo_image_init_bounded(image, &cli->limits, MO_CLI_ANCHOR_INSTRUCTIONS, &defect)
                 : mo_image_init(image, &cli->limits, &defect);
@@ -221,7 +292,7 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_core *core,
         }
         goto done;
     }
-    if (!mo_check_anchors(image, cli, sources, diags)) {
+    if (!mo_check_anchors(image, cli, sources, program, diags)) {
         status = 1;
         goto done;
     }

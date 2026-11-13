@@ -98,6 +98,52 @@ void lower_subject_specs(struct lowering *p, struct instance *subject) {
     }
 }
 
+/* A service promise, or one of its anchors when promise is set, lowers to a plain function: Core
+ * links a promise only to the function it is about, and a service promise has none. The tools
+ * keep its sentence, lines and anchors themselves. */
+static struct instance *service_function(struct lowering *p, const struct mo_checked_spec *source,
+                                         struct instance *promise) {
+    p->span = source->syntax->span;
+    if (p->function_count == MO_LIMIT_CORE_NODES)
+        lower_refuse(p, MO_CODE_LOWER_WORK, "lowering exceeds its spec function limit");
+    struct instance *f = LOWER_NEW(p, struct instance, 1);
+    f->spec = source;
+    f->subject = promise;
+    f->owner = source->module;
+    f->index = p->function_count++;
+    *p->function_tail = f;
+    p->function_tail = &f->next;
+    f->fun.module = lower_text(p, p->program->set->names[f->owner]);
+    f->fun.kind = MO_CORE_FUNCTION;
+    f->fun.const_count.digits = lower_text(p, "0");
+    static const struct mo_source_type int_ = {
+        .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+    f->fun.ret = lower_type(p, &int_, NULL);
+    f->meta.span = lower_span(p, p->span);
+    f->fun.name =
+        promise == NULL
+            ? lower_concat(p, f->fun.module, ".service.promise.", lower_number(p, source->number))
+            : lower_concat(p, promise->fun.name, source->allows ? ".allows." : ".forbids.",
+                           lower_number(p, source->number));
+    f->meta.name = f->fun.name;
+    return f;
+}
+
+static void lower_service_promises(struct lowering *p) {
+    for (uint32_t i = 0; i < p->program->service_count; i++) {
+        const struct mo_checked_service *service = &p->program->services[i];
+        for (uint32_t j = 0; j < service->promise_count; j++) {
+            const struct mo_checked_service_promise *promise = &service->promises[j];
+            lower_work(p, 1);
+            if (library_spec(p, &promise->spec))
+                continue;
+            struct instance *f = service_function(p, &promise->spec, NULL);
+            for (uint32_t k = 0; k < promise->anchor_count; k++)
+                (void)service_function(p, &promise->anchors[k], f);
+        }
+    }
+}
+
 void lower_specs(struct lowering *p) {
     uint32_t count = p->program->spec_count;
     p->specs = LOWER_NEW(p, struct instance *, count);
@@ -138,4 +184,5 @@ void lower_specs(struct lowering *p) {
     for (struct instance *f = p->functions; f != NULL; f = f->next)
         if (f->source != NULL)
             lower_subject_specs(p, f);
+    lower_service_promises(p);
 }

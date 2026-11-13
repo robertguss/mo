@@ -234,6 +234,9 @@
 #define MO_LIMIT_SERVICES MO_LIMIT_MODULES
 #define MO_LIMIT_SERVICE_HANDLERS MO_LIMIT_MODULE_NAMES
 
+/* Service promises in one service block; each runs after every step of every sequence. */
+#define MO_LIMIT_SERVICE_PROMISES 64
+
 /* Entries in the debug section (bytecode.md section 3.4). */
 #define MO_LIMIT_DEBUG_ENTRIES (1 << 24)
 

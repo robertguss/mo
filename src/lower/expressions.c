@@ -2129,8 +2129,8 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         instance->meta.body.params.items[i] =
             (struct mo_core_name){true, lower_text(p, parameter->name)};
     }
-    if (instance->fun.kind == MO_CORE_ANCHOR) {
-        const struct mo_checked_spec *spec = instance->spec;
+    const struct mo_checked_spec *spec = instance->spec;
+    if (spec != NULL && spec->kind == MO_SPEC_ANCHOR) {
         MO_ASSERT(spec->value_count != 0);
         struct continuation *k = continuation(&b, K_ANCHOR);
         struct anchor_value *values = LOWER_NEW(p, struct anchor_value, spec->value_count);
@@ -2143,7 +2143,7 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         k->values = values;
         k->arguments = arguments(&b, spec->value_count);
         emit(&b, values[0].expression, (struct state){0}, k, &instance->fun.body);
-    } else if (instance->fun.kind == MO_CORE_PROMISE) {
+    } else if (spec != NULL && spec->kind == MO_SPEC_PROMISE) {
         MO_ASSERT(instance->spec->condition_count != 0);
         emit(&b, instance->spec->conditions[0].expression, (struct state){0},
              continuation(&b, K_PROMISE), &instance->fun.body);

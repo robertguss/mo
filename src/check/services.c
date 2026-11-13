@@ -376,11 +376,16 @@ bool mo_prepare_services(struct mo_arena *arena, struct mo_program *program,
             else if (stage == 2 && clause->kind == MO_S_SERVICE_TOKEN) {
                 token = clause;
                 stage = 3;
+            } else if (stage == 3 && clause->kind == MO_S_PROMISE) {
+                if (++p.service->promise_count > MO_LIMIT_SERVICE_PROMISES)
+                    return report(&p, MO_CODE_TOO_MANY_SERVICE_PROMISES,
+                                  "a service has too many service promises",
+                                  "A service has at most 64 service promises.");
             } else
                 return report(&p, MO_CODE_SERVICE_BLOCK,
                               "a service clause is repeated or out of order",
-                              "Write state, tools, zero or more every clauses, then token, in that "
-                              "order (reference 11.5).");
+                              "Write state, tools, zero or more every clauses, token, then any "
+                              "service promises, in that order (reference 11.5).");
         }
         if (stage != 3 || p.service->tool_count == 0)
             return report(

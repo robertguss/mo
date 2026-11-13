@@ -47,6 +47,18 @@ mo_check_spec_body(struct mo_arena *arena, const struct mo_module_interfaces *in
                    const struct mo_function_signature *signature, struct mo_checked_spec *spec,
                    struct mo_checked_condition *conditions, struct mo_diags *diags, bool *halt);
 
+/* An arena copy of the original source bytes at span. */
+MO_MUST_USE bool mo_spec_copy_text(struct mo_arena *arena, struct mo_diags *diags,
+                                   const struct mo_sources *sources, struct mo_span span,
+                                   struct mo_spec_text *out);
+/* The decoded sentence of a test or promise header's text literal. */
+MO_MUST_USE bool mo_spec_wording(struct mo_arena *arena, struct mo_diags *diags,
+                                 const struct mo_syntax *text, struct mo_checked_spec *spec);
+/* Checks each service's promises and their anchors (reference 12.2), after mo_check_services. */
+MO_MUST_USE bool mo_check_service_promises(struct mo_arena *arena, struct mo_program *program,
+                                           struct mo_constant_context *constants,
+                                           struct mo_diags *diags);
+
 MO_MUST_USE bool mo_check_service_value(struct mo_arena *arena,
                                         const struct mo_module_interfaces *interfaces,
                                         const struct mo_signatures *signatures,

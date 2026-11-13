@@ -1001,6 +1001,15 @@ static MO_MUST_USE struct mo_syntax *statements(struct parser *p) {
     return n;
 }
 
+static MO_MUST_USE bool clause_word(struct parser *p, const char *word) {
+    struct mo_token t = p->current;
+    if (t.kind != MO_T_NAME || t.span.end - t.span.start != strlen(word) ||
+        memcmp(p->lx.source->bytes + t.span.start, word, strlen(word)) != 0)
+        return false;
+    next(p);
+    return true;
+}
+
 static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_token token,
                                            struct mo_syntax **parts) {
     jmp_buf escape;
@@ -1057,8 +1066,11 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
     } else if (token == MO_T_STRUCT || token == MO_T_ENUM) {
         parts[0] = name(p, MO_T_CAPNAME);
         parts[1] = type_parameters(p);
-    } else if (token == MO_T_TEST || token == MO_T_PROMISE)
+    } else if (token == MO_T_TEST || token == MO_T_PROMISE) {
         parts[0] = name(p, MO_T_TEXT);
+        if (token == MO_T_PROMISE && clause_word(p, "on"))
+            parts[1] = name(p, MO_T_NAME);
+    }
     expect(p, MO_T_NL);
     p->escape = saved;
     p->expect_code = code;
@@ -1111,8 +1123,8 @@ static MO_MUST_USE struct mo_syntax *specification_item(struct parser *p) {
         expect(p, MO_T_NL);
     } else
         p->previous = p->current.span;
-    struct mo_syntax *n =
-        promise ? N(MO_S_PROMISE, start, parts[0], lines, anchors) : N(MO_S_EXAMPLES, start, lines);
+    struct mo_syntax *n = promise ? N(MO_S_PROMISE, start, parts[0], lines, anchors, parts[1])
+                                  : N(MO_S_EXAMPLES, start, lines);
     n->incomplete = n->incomplete || !valid;
     p->depth--;
     return n;
@@ -1163,16 +1175,9 @@ static MO_MUST_USE struct mo_syntax *member(struct parser *p, bool record) {
     return n;
 }
 
-static MO_MUST_USE bool clause_word(struct parser *p, const char *word) {
-    struct mo_token t = p->current;
-    if (t.kind != MO_T_NAME || t.span.end - t.span.start != strlen(word) ||
-        memcmp(p->lx.source->bytes + t.span.start, word, strlen(word)) != 0)
-        return false;
-    next(p);
-    return true;
-}
-
 static MO_MUST_USE struct mo_syntax *service_clause(struct parser *p) {
+    if (p->current.kind == MO_T_PROMISE)
+        return specification_item(p);
     struct mo_span start = p->current.span;
     struct mo_syntax *n;
     if (clause_word(p, "state")) {
@@ -1196,7 +1201,7 @@ static MO_MUST_USE struct mo_syntax *service_clause(struct parser *p) {
         n = N(MO_S_SERVICE_TOKEN, start, name(p, MO_T_TEXT));
     } else {
         error(p, MO_CODE_SOURCE_SYNTAX, start,
-              "a service clause starts with state, tools, every or token",
+              "a service clause starts with state, tools, every, token or promise",
               "Put each service clause on its own logical line, then close the service with end.");
     }
     expect(p, MO_T_NL);

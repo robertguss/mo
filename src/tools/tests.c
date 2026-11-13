@@ -510,7 +510,7 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         mo_buffer_free(&report);
         goto done;
     }
-    if (!mo_check_anchors(image, cli, sources, diags))
+    if (!mo_check_anchors(image, cli, sources, program, diags))
         goto done;
     for (uint32_t i = 0; i < selection->count; i++) {
         const struct mo_observation *observation = &selection->items[i];
