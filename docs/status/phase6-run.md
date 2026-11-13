@@ -6,10 +6,11 @@ The wrong versions are set 1 in `learnability/phase6/strength/` (see its README)
 measurement is
 
 ```sh
-mo test services/task-queue/main.mo --strength <folder> --json
+mo test services/task-queue/main.mo --strength <folder> --seconds 10 --json
 ```
 
-with each promise on 200 inputs and each service promise on 1,000 sequences.
+with each promise on 200 inputs and each service promise on 1,000 sequences. The records
+before `results/4-after.json` ran with the default `--seconds 2`; why the rest use 10 is below.
 
 ### First measurement, working half: prediction
 

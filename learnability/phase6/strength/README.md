@@ -12,5 +12,5 @@ program is `services/task-queue/main.mo` and `job-queue.mo` as `manifest.json` h
   outside the repository in `/home/exedev/code/mo-strength-held-back/set-1` with their mistakes,
   until their result is shown to Robert. The manifest carries every file's SHA-256 and the
   working half's mistakes only.
-- **Measure:** `mo test services/task-queue/main.mo --strength learnability/phase6/strength/working`.
+- **Measure:** `mo test services/task-queue/main.mo --strength learnability/phase6/strength/working --seconds 10 --json`, kept in `results/`.
   Results are in `docs/status/phase6-run.md`.
