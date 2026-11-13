@@ -1,0 +1,5 @@
+234c234,235
+<     Ready | Done | Dead: Error(NotLeased(id: id))
+---
+>     Done: Ok(job)
+>     Ready | Dead: Error(NotLeased(id: id))

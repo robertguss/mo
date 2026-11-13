@@ -1,0 +1,4 @@
+make: Entering directory '/tmp/tmp.VQoH0ceTcu/prototype'
+recovery faults: all checks passed
+recovery: all checks passed
+make: Leaving directory '/tmp/tmp.VQoH0ceTcu/prototype'

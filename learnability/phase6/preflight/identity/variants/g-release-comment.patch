@@ -1,0 +1,10 @@
+--- a/job-queue.mo
++++ b/job-queue.mo
+@@ -237,6 +237,7 @@
+ 
+ fn release(queue: Queue, job: Job) : Queue
+   var released = job
++  # The last attempt makes the job dead; any earlier one makes it ready.
+   released.state = if job.attempts >= max_attempts: Dead else: Ready
+   put(queue, released)
+ end

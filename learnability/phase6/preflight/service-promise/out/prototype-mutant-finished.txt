@@ -1,0 +1,12 @@
+failed Main.service.recovery  mutant-finished/main.mo:15:1
+  sequences: 21
+  1. submit("")  replied 1, committed
+  2. lease()  replied Some(Job(id: 1, payload: "", attempts: 1, state: Leased(until: 2026-01-01T00:30:00Z))), committed
+  3. fail(1, 1)  replied Unit, committed
+  4. lease()  replied Some(Job(id: 1, payload: "", attempts: 2, state: Leased(until: 2026-01-01T00:30:00Z))), committed
+  5. acknowledge(1, 2)  replied Unit, committed
+  6. heartbeat(1, 0)  replied Unit, committed  broke Main.guarantee_finished_jobs_stay
+  state before step 6: Queue(jobs: {1: Job(id: 1, payload: "", attempts: 2, state: Done)}, next_id: 2)
+  state after step 6: Queue(jobs: {1: Job(id: 1, payload: "", attempts: 2, state: Leased(until: 2026-01-01T00:30:00Z))}, next_id: 2)
+0 passed, 1 failed, 0 stopped
+exit 1
