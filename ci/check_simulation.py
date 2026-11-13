@@ -157,7 +157,7 @@ _reply = Simulation.send(sim, Ticks.history)
 end
 ''')
         shutil.copyfile('tests/lower-source/service-simulation/ticks.mo', root / 'ticks.mo')
-        stopped = results(binary, path, 1)
+        stopped = results(binary, path, 1, '--calls', '10')
         assert ('Simulation.send selected Ticks.history, but this simulation runs Main; '
                 'nothing was queued or committed') in str(stopped[0]), stopped
 

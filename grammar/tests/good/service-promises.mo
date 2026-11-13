@@ -25,5 +25,6 @@ fn on(on: Int) : Int
     allows on: 1, result: 1
     forbids on: 1, result: 2
   end
+
   on
 end
