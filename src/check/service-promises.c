@@ -37,8 +37,6 @@ static MO_MUST_USE bool reserved(const struct mo_syntax *name) {
     return false;
 }
 
-/* A name the promise binds: a copy of a tool parameter's, or, when word is set, before, after,
- * now or reply, spanning the word's length from where the promise starts. */
 static MO_MUST_USE struct mo_syntax *bound(struct mo_arena *arena, struct mo_diags *diags,
                                            struct mo_span at, const struct mo_syntax *declared,
                                            const char *word) {
@@ -52,8 +50,6 @@ static MO_MUST_USE struct mo_syntax *bound(struct mo_arena *arena, struct mo_dia
     return n;
 }
 
-/* What a caller of the tool receives (reference 12.2): R, or Result(R, E) for a tool returning
- * Result((State, R), E). */
 static MO_MUST_USE const struct mo_source_type *
 reply_type(struct mo_arena *arena, struct mo_diags *diags, struct mo_span span,
            const struct mo_checked_service_tool *tool, const struct mo_source_type *result) {
@@ -81,8 +77,6 @@ reply_type(struct mo_arena *arena, struct mo_diags *diags, struct mo_span span,
     return type;
 }
 
-/* The promise's context: a function over its named values, in the order its lowered function
- * takes them (before, after, now, a tool's arguments, reply), returning Bool. */
 static MO_MUST_USE const struct mo_function_signature *
 context(struct mo_arena *arena, const struct mo_program *program,
         const struct mo_checked_service *service, const struct mo_syntax *item, uint32_t tool,

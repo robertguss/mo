@@ -43,7 +43,7 @@ struct mo_recovery {
     struct pool_entry pool[MO_CLI_RECOVERY_POOL];
     uint32_t pool_count;
     uint32_t group;
-    bool compare; /* restarts are compared */
+    bool compare;
 };
 
 void mo_recovery_sequence_init(struct mo_recovery_sequence *sequence) {
@@ -553,8 +553,7 @@ struct trial {
     struct mo_recovery_failure failure;
     uint32_t failed_firings;  /* timer handlers that failed during the current step */
     uint64_t committed, lost; /* this store's commits, and timer firings that committed nothing */
-    bool ended; /* a refused restart ended the sequence, as restarts are not compared */
-    /* For the check hook: the state before and after the current step, when encoded. */
+    bool ended;
     struct mo_buffer pre, post;
     bool have_pre;
 };
@@ -634,7 +633,6 @@ static void swap(struct mo_buffer *a, struct mo_buffer *b) {
     *b = held;
 }
 
-/* Runs the check hook after step, which ran without failing. */
 static enum mo_recovery_outcome check(struct trial *t, const struct mo_recovery_step *step,
                                       uint32_t index, const struct mo_simulation_reply *reply) {
     struct mo_recovery_result *out = t->out;
@@ -778,7 +776,6 @@ static struct mo_recovery_step *add_step(struct mo_recovery_sequence *sequence,
     return step;
 }
 
-/* Generates and runs one sequence into out->sequence. */
 static enum mo_recovery_outcome generate(struct trial *t) {
     struct mo_recovery *r = t->recovery;
     struct mo_recovery_sequence *sequence = &t->out->sequence;
@@ -902,7 +899,7 @@ struct shrink {
     const struct mo_recovery_hooks *hooks;
     struct mo_recovery_verdict verdict;
     uint32_t runs;
-    bool ended; /* the budget ran out, or memory did */
+    bool ended;
 };
 
 /* Copies from's steps into to, which is empty, leaving out the steps in [skip, end). false when

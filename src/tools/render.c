@@ -1169,7 +1169,6 @@ static void recovery_failed(struct writer *w, const struct mo_sources *sources,
     bool mismatch = run->outcome == MO_RECOVERY_MISMATCH;
     if (mismatch || promise)
         w->ok = w->ok && state_literal(result, &run->after, &after);
-    /* A restart's before is the state at its crash, the step before it. */
     uint32_t first = promise && sequence->steps[run->step].kind != MO_RECOVERY_RESTART
                          ? run->step + 1
                          : run->step;

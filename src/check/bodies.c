@@ -5577,7 +5577,6 @@ static MO_MUST_USE bool finish_dispatches(struct inference *p) {
     return true;
 }
 
-/* A service promise names all its values as parameters; a function promise adds result. */
 static MO_MUST_USE bool anchor_inputs(struct inference *p, const struct mo_syntax *anchor,
                                       const struct mo_syntax *parameters, uint32_t count,
                                       const struct mo_syntax **inputs) {
@@ -5663,8 +5662,6 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     if (p.result == NULL)
         goto failed;
     const struct mo_syntax *parameters = test || constant || service ? NULL : syntax->children[1];
-    /* The values an anchor gives: a function promise's parameters and result, or a service
-     * promise's named values, which its signature lists before a Bool result. */
     uint32_t slots = service_promise ? fn->shape.count - 1 : fn->shape.count;
     uint32_t parameter_count = constant || service ? 0
                                : spec == NULL      ? parameters->count

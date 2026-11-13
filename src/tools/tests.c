@@ -63,8 +63,6 @@ static char *name(struct mo_arena *arena, const struct mo_program *program,
     return result;
 }
 
-/* <Module>.service.recovery, or <Module>.service.promise.N for promise: service is reserved, so
- * no spec has the name. */
 static char *service_name(struct mo_arena *arena, const struct mo_program *program,
                           const struct mo_checked_service *service,
                           const struct mo_checked_service_promise *promise, size_t *work) {
@@ -141,7 +139,6 @@ struct mo_test_selection *mo_select_tests(struct mo_arena *arena, const struct m
         if (exhausted)
             goto exhausted;
     }
-    /* Each service's promises, then its recovery check, follow every other check of its module. */
     for (uint32_t i = 0; i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
         if (service->module != 0 && program->set->library != NULL &&
@@ -176,8 +173,8 @@ exhausted:;
     return NULL;
 }
 
-static void report_error(struct mo_diags *diags, const char *message, struct mo_span span,
-                         const char *detail) {
+void mo_test_report_error(struct mo_diags *diags, const char *message, struct mo_span span,
+                          const char *detail) {
     struct mo_diag diag = {
         .code = MO_CODE_TOOL_PIPELINE, .message = message, .primary = {span, detail}};
     bool added = mo_diags_add(diags, &diag);
@@ -226,15 +223,15 @@ struct mo_test_selection *mo_instantiate_tests(struct mo_arena *arena,
                 item->instance = promise;
         }
         if (result->count == before) {
-            report_error(diags, "selected promise has no concrete instantiation",
-                         observation->source->syntax->span, observation->name);
+            mo_test_report_error(diags, "selected promise has no concrete instantiation",
+                                 observation->source->syntax->span, observation->name);
             return NULL;
         }
     }
     return result;
 exhausted:
-    report_error(diags, "test instances exceed tool resources", (struct mo_span){UINT32_MAX, 0, 0},
-                 NULL);
+    mo_test_report_error(diags, "test instances exceed tool resources",
+                         (struct mo_span){UINT32_MAX, 0, 0}, NULL);
     return NULL;
 }
 
@@ -377,8 +374,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
-        report_error(diags, "compiled bytecode could not be loaded",
-                     (struct mo_span){UINT32_MAX, 0, 0}, error.reason);
+        mo_test_report_error(diags, "compiled bytecode could not be loaded",
+                             (struct mo_span){UINT32_MAX, 0, 0}, error.reason);
         return;
     }
     struct mo_arena scratch;
@@ -386,8 +383,9 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
     const struct mo_bytecode *file = mo_image_bytecode(image);
     uint32_t *functions = bind_observations(&scratch, file, program, sources, selection);
     if (functions == NULL) {
-        report_error(diags, "selected observations could not be bound to compiled functions",
-                     (struct mo_span){UINT32_MAX, 0, 0}, NULL);
+        mo_test_report_error(diags,
+                             "selected observations could not be bound to compiled functions",
+                             (struct mo_span){UINT32_MAX, 0, 0}, NULL);
         goto done;
     }
     bool anchors = mo_program_has_anchors(program);
@@ -436,8 +434,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         }
         struct timespec start, end;
         if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
-            report_error(diags, "could not measure test execution",
-                         observation->source->syntax->span, strerror(errno));
+            mo_test_report_error(diags, "could not measure test execution",
+                                 observation->source->syntax->span, strerror(errno));
             break;
         }
         errno = 0;
@@ -481,8 +479,8 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
         }
         mo_process_free(process);
         if (!shown) {
-            report_error(diags, "test result could not be rendered or written completely",
-                         observation->source->syntax->span, observation->name);
+            mo_test_report_error(diags, "test result could not be rendered or written completely",
+                                 observation->source->syntax->span, observation->name);
             break;
         }
     }

@@ -9,7 +9,6 @@
 #include <string.h>
 #include <time.h>
 
-/* A service promise's compiled function, and the tool it is about. */
 struct judge {
     uint32_t item;
     uint32_t function;
@@ -28,14 +27,12 @@ struct run {
     const struct mo_bytecode *file;
     const struct mo_types *types;
     struct mo_recovery *recovery;
-    struct mo_process *process; /* runs promise bodies */
+    struct mo_process *process;
     struct judge judges[MO_LIMIT_SERVICE_PROMISES];
     uint32_t judge_count;
     uint32_t recovery_item; /* MO_NO_INDEX when the recovery check is not selected */
-    const char *problem;    /* set once promise bodies cannot run */
+    const char *problem;
     struct timespec start;
-    /* The last run of a failing sequence: each step's reply in the checker's heap, and the process
-     * of a promise body that stopped, kept with its defect until the result is rendered. */
     bool last;
     struct mo_cell values[MO_CLI_RECOVERY_STEPS];
     uint32_t types_kept[MO_CLI_RECOVERY_STEPS];
@@ -47,14 +44,6 @@ struct run {
     struct mo_diags *diags;
 };
 
-static void report_error(struct mo_diags *diags, const char *message, struct mo_span span,
-                         const char *detail) {
-    struct mo_diag diag = {
-        .code = MO_CODE_TOOL_PIPELINE, .message = message, .primary = {span, detail}};
-    bool added = mo_diags_add(diags, &diag);
-    (void)added;
-}
-
 static bool copy_in(struct run *w, uint32_t type, struct mo_cell value, struct mo_cell *out) {
     size_t length = 0;
     const char *failure = NULL;
@@ -62,8 +51,6 @@ static bool copy_in(struct run *w, uint32_t type, struct mo_cell value, struct m
                                value, out, &length, &failure);
 }
 
-/* The reply a tool promise reads, of type, in the judge's heap: the tool's R, or Result(R, E) for
- * a tool returning Result((State, R), E). */
 static bool reply_value(struct run *w, const struct mo_recovery_observation *o, uint32_t type,
                         struct mo_cell *out) {
     uint32_t shown;
@@ -90,7 +77,6 @@ static bool reply_value(struct run *w, const struct mo_recovery_observation *o, 
     return false;
 }
 
-/* The judge's arguments: before, after and now, then a tool promise's arguments and reply. */
 static bool arguments(struct run *w, const struct judge *j, const struct mo_recovery_observation *o,
                       struct mo_cell *out, uint32_t *made) {
     const struct mo_bytecode_function *f = &w->file->functions[j->function];
@@ -151,7 +137,6 @@ static bool returned(struct run *w, const struct judge *j, const struct mo_recov
                                         .limit = MO_LIMIT_SERVICE_WORK,
                                         .span.file = MO_NO_INDEX};
         if (outcome != MO_CONTROL_RETURNED) {
-            /* A stopped process keeps its heap, and the defect's view of it, until it is freed. */
             if (w->last) {
                 MO_ASSERT(w->stopped == NULL);
                 w->stopped = w->process;
@@ -216,16 +201,14 @@ static uint64_t elapsed(const struct run *w) {
     return us > 0 ? (uint64_t)us : 0;
 }
 
-/* Decides item: a problem, or a record kept to be written in order. false when the record could
- * not be rendered. */
 static bool decide(struct run *w, uint32_t item, const char *problem, const char *detail,
                    struct mo_test_result *result) {
     MO_ASSERT(!w->decided[item]);
     w->decided[item] = true;
     const struct mo_observation *observation = &w->items[item];
     if (problem != NULL) {
-        report_error(w->diags, problem, mo_observation_span(observation),
-                     detail != NULL ? detail : observation->name);
+        mo_test_report_error(w->diags, problem, mo_observation_span(observation),
+                             detail != NULL ? detail : observation->name);
         return true;
     }
     result->observation = observation;
@@ -236,8 +219,8 @@ static bool decide(struct run *w, uint32_t item, const char *problem, const char
     w->totals->stopped += result->outcome == MO_STOPPED;
     if (mo_render_test_result(w->sources, result, w->cli->json, &w->records[item]))
         return true;
-    report_error(w->diags, "test result could not be rendered or written completely",
-                 mo_observation_span(observation), observation->name);
+    mo_test_report_error(w->diags, "test result could not be rendered or written completely",
+                         mo_observation_span(observation), observation->name);
     return false;
 }
 
@@ -246,7 +229,6 @@ static void set_judges(struct run *w, uint32_t only) {
         w->judges[i].active = !w->decided[w->judges[i].item] && (only == MO_NO_INDEX || i == only);
 }
 
-/* Shrinks found's failing sequence, which failed item, runs it once more and decides the item. */
 static bool failed(struct run *w, uint32_t item, struct mo_recovery_result *found,
                    struct mo_recovery_counts counts) {
     bool check = found->outcome == MO_RECOVERY_CHECK;
@@ -286,13 +268,11 @@ static bool failed(struct run *w, uint32_t item, struct mo_recovery_result *foun
         result.outcome = MO_STOPPED;
     } else if (check)
         result.line = promise->spec.conditions[rerun.verdict.line - 1].text.span;
-    bool written = w->problem != NULL || !same
-                       ? decide(w, item,
-                                w->problem != NULL ? "service promises could not run"
-                                                   : "the shrunk recovery sequence did not fail "
-                                                     "the same way when it ran again",
-                                w->problem, NULL)
-                       : decide(w, item, NULL, NULL, &result);
+    const char *problem = w->problem != NULL ? "service promises could not run"
+                          : same             ? NULL
+                                             : "the shrunk recovery sequence did not fail the "
+                                               "same way when it ran again";
+    bool written = decide(w, item, problem, w->problem, &result);
     for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
         if (w->types_kept[i] != MO_NO_INDEX)
             mo_value_drop(mo_recovery_heap(w->recovery), w->types_kept[i], w->values[i]);
@@ -311,8 +291,6 @@ static void add(struct mo_recovery_counts *to, struct mo_recovery_counts from) {
     to->snapshots += from.snapshots;
 }
 
-/* Runs the search until every selected check is decided. false when a record could not be
- * rendered. */
 static bool search(struct run *w) {
     struct mo_recovery_counts base = {0};
     uint64_t first = 0;
@@ -332,6 +310,7 @@ static bool search(struct run *w) {
         const char *problem = w->problem != NULL ? "service promises could not run" : NULL;
         const char *detail = w->problem;
         enum mo_outcome every = MO_RETURNED;
+        bool more = false;
         switch (outcome) {
         case MO_RECOVERY_PASSED:
             break;
@@ -345,16 +324,13 @@ static bool search(struct run *w) {
         case MO_RECOVERY_MISMATCH:
         case MO_RECOVERY_REFUSED:
             if (problem == NULL)
-                written = failed(w, w->recovery_item, &found, counts);
+                more = written = failed(w, w->recovery_item, &found, counts);
             break;
         case MO_RECOVERY_CHECK:
             if (problem == NULL)
-                written = failed(w, w->judges[found.verdict.check].item, &found, counts);
+                more = written = failed(w, w->judges[found.verdict.check].item, &found, counts);
             break;
         }
-        bool more = written && problem == NULL &&
-                    (outcome == MO_RECOVERY_MISMATCH || outcome == MO_RECOVERY_REFUSED ||
-                     outcome == MO_RECOVERY_CHECK);
         for (uint32_t i = 0; written && !more && i < w->count; i++)
             if (!w->decided[i]) {
                 struct mo_test_result result = {
@@ -369,7 +345,6 @@ static bool search(struct run *w) {
     }
 }
 
-/* The judges of the selected service promises, bound by name. false when one is missing. */
 static bool bind_judges(struct run *w) {
     const struct mo_checked_service *checked = w->items[0].service;
     const struct mo_bytecode_service *service = &w->file->services[w->service];
@@ -439,8 +414,8 @@ bool mo_test_service(const struct mo_cli *cli, const struct mo_program *program,
         if (w->records[i].length != 0 &&
             (fwrite(w->records[i].bytes, 1, w->records[i].length, output) != w->records[i].length ||
              fflush(output) != 0)) {
-            report_error(diags, "test result could not be rendered or written completely",
-                         mo_observation_span(&items[i]), items[i].name);
+            mo_test_report_error(diags, "test result could not be rendered or written completely",
+                                 mo_observation_span(&items[i]), items[i].name);
             written = false;
         }
     for (uint32_t i = 0; i < count; i++)

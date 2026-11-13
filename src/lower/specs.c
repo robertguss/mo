@@ -98,9 +98,6 @@ void lower_subject_specs(struct lowering *p, struct instance *subject) {
     }
 }
 
-/* A service promise, or one of its anchors when promise is set, lowers to a plain function: Core
- * links a promise only to the function it is about, and a service promise has none. The tools
- * keep its sentence, lines and anchors themselves. */
 static struct instance *service_function(struct lowering *p, const struct mo_checked_spec *source,
                                          struct instance *promise) {
     p->span = source->syntax->span;

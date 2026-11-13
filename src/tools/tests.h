@@ -33,6 +33,8 @@ MO_MUST_USE struct mo_test_selection *mo_select_tests(struct mo_arena *arena,
 MO_MUST_USE const char *mo_observation_kind(const struct mo_observation *observation);
 /* The written spec or service promise, or a recovery check's service block. */
 MO_MUST_USE struct mo_span mo_observation_span(const struct mo_observation *observation);
+void mo_test_report_error(struct mo_diags *diags, const char *message, struct mo_span span,
+                          const char *detail);
 MO_MUST_USE struct mo_test_selection *
 mo_instantiate_tests(struct mo_arena *arena, const struct mo_test_selection *selection,
                      const struct mo_lowered_promises *promises, struct mo_diags *diags);

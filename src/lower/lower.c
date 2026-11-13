@@ -328,7 +328,6 @@ static struct mo_services services(struct lowering *p) {
     return (struct mo_services){.count = count, .items = items};
 }
 
-/* A promise about a function; a service promise lowers to a plain function the tools run. */
 static bool function_promise(const struct instance *f) {
     return f->spec != NULL && f->spec->kind == MO_SPEC_PROMISE && f->spec->subject != UINT32_MAX;
 }
