@@ -1,7 +1,7 @@
 # Intent and the review door
 
-Status: proposed in the Phase 6 design step, pending Robert's approval. Nothing
-here is implemented. The feasibility evidence, with its commands and raw
+Status: approved by Robert on 2026-11-13 as Phase 6's design. Nothing here is
+implemented yet. The feasibility evidence, with its commands and raw
 outputs, is in [the preflight](../../learnability/phase6/preflight/README.md).
 [Whole-program upgrades](upgrades.md) remains the contract this extends; where
 the two differ, this document describes the change.

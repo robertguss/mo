@@ -265,7 +265,7 @@ child limits crashes and stalls but shares the host identity, files and secrets:
 its compiler is part of the upgrade credential's trusted base. Write access to
 the data folder confers the authority to replace the running program.
 
-Phase 6 proposes [the review door](intent.md), not yet implemented: a third
+Phase 6's approved design adds [the review door](intent.md), not yet implemented: a third
 secret, the approval credential, held only on the service's host; a second
 child that runs the candidate's checks there under limits but without
 operating-system confinement; and a version-3 folder holding approvals. Write
