@@ -73,3 +73,16 @@ built from `JobQueue`'s exposed operations, which rarely reach a Dead job. Killi
 a row whose queue holds a Dead job, which `Main` can build only through `JobQueue.expire` or
 `JobQueue.fail`. That would make fixes to the function it calls wait for review, so it is left
 for Robert to decide.
+
+### Held-back half: prediction
+
+Written on 2026-11-13 while the first held-back measurement ran, before any of its output was
+read. This session has never seen the held-back files or their mistakes: the manifest holds only
+their names and hashes, which still match.
+
+- The original passes, and the run is not partial.
+- Killed: 7 to 10 of 12. The intent was strengthened against the working half, so the held-back
+  rate should fall below its 91.7%. The weak spots are the same ones `w11` showed: `list` on a
+  queue holding Dead jobs, and anything only `Main` sees that no row reaches.
+- A version that replaces a helper a new item reads is `changes_intent` and stays in the
+  denominator as not killed, since the `counted` file lists all 12.
