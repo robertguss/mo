@@ -572,7 +572,7 @@ static bool write_buffer(FILE *stream, const struct mo_buffer *buffer) {
 }
 
 bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
-                   const struct mo_observation *observation) {
+                   const struct mo_observation *observation, const uint8_t *digest) {
     struct mo_buffer buffer;
     mo_buffer_init(&buffer, MO_CLI_DIAGNOSTIC_SIZE);
     struct writer w = {.out = &buffer, .ok = true};
@@ -583,6 +583,12 @@ bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
         json_string(&w, mo_observation_kind(observation));
         text(&w, ",\"span\":");
         json_span(&w, sources, mo_observation_span(observation), NULL, false);
+        if (digest != NULL) {
+            text(&w, ",\"digest\":\"");
+            for (uint32_t i = 0; i < 32; i++)
+                hex(&w, digest[i], 2);
+            text(&w, "\"");
+        }
         text(&w, "}\n");
     } else {
         safe_text(&w, observation->name);

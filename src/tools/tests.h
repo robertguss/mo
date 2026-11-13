@@ -38,8 +38,9 @@ void mo_test_report_error(struct mo_diags *diags, const char *message, struct mo
 MO_MUST_USE struct mo_test_selection *
 mo_instantiate_tests(struct mo_arena *arena, const struct mo_test_selection *selection,
                      const struct mo_lowered_promises *promises, struct mo_diags *diags);
+/* digest is an intent item's content digest, or NULL. */
 MO_MUST_USE bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
-                               const struct mo_observation *observation);
+                               const struct mo_observation *observation, const uint8_t *digest);
 
 struct mo_promise_result;
 struct mo_recovery_report;

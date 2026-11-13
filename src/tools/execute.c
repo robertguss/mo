@@ -12,6 +12,7 @@
 #include "tools/embedded.h"
 #include "tools/fix.h"
 #include "tools/format.h"
+#include "tools/intent.h"
 #include "tools/offline.h"
 #include "tools/promises.h"
 #include "tools/run.h"
@@ -177,12 +178,32 @@ static void execute_pipeline(void *argument) {
             }
         }
         if (cli->list) {
-            for (uint32_t i = 0; i < selection->count; i++)
-                if (!mo_write_test(work->output, cli->json, sources, &selection->items[i])) {
+            struct mo_intent intent = {0};
+            if (cli->json && !mo_intent_items(arena, program, &intent)) {
+                tool_error(diags, MO_CODE_TOOL_PIPELINE, "intent items exceed tool resources",
+                           NULL);
+                return;
+            }
+            /* Items and observations share program order, so one cursor pairs them. */
+            uint32_t next = 0;
+            for (uint32_t i = 0; i < selection->count; i++) {
+                const struct mo_observation *o = &selection->items[i];
+                const struct mo_checked_spec *spec =
+                    o->promise != NULL ? &o->promise->spec : o->source;
+                const uint8_t *digest = NULL;
+                if (spec != NULL && spec->kind != MO_SPEC_TEST) {
+                    while (next < intent.count && intent.items[next].spec != spec)
+                        next++;
+                    MO_ASSERT(!cli->json || next < intent.count);
+                    if (next < intent.count)
+                        digest = intent.items[next].digest;
+                }
+                if (!mo_write_test(work->output, cli->json, sources, o, digest)) {
                     tool_error(diags, MO_CODE_TOOL_PIPELINE, "test inventory could not be written",
                                NULL);
                     break;
                 }
+            }
             return;
         }
         /* Closed declarations can refuse before lowering. Generic inputs need
