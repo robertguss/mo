@@ -1,0 +1,144 @@
+{
+  "set": 1,
+  "session": "phase6-wrong-versions-1",
+  "seed": 61113,
+  "measured_program": {
+    "services/task-queue/main.mo": "c9091d348fb63fdcf67441262560d6c8d617bd57fcc0c270193d33f11a99059e",
+    "services/task-queue/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840"
+  },
+  "held_back_folder": "/home/exedev/code/mo-strength-held-back/set-1",
+  "versions": [
+    {
+      "name": "w01.mo",
+      "half": "working",
+      "sha256": "7970ff9376ba377b00afb4e6f3ad591533d1d13f326d282b86ec214a4b7aa9e1",
+      "mistake": "The fail handler calls JobQueue.acknowledge (copy-paste), so a failed job is marked Done instead of being retried."
+    },
+    {
+      "name": "w02.mo",
+      "half": "working",
+      "sha256": "7fb8cf7434b010c1c58dd106e1e23b25199d92567c8ece504315751d5787bd11",
+      "mistake": "The submit handler applies the 5,000-job limit only to Ready and Leased jobs instead of every job ever submitted."
+    },
+    {
+      "name": "w03.mo",
+      "half": "working",
+      "sha256": "418cdf6e1df0c80a0ccd63b5d48cb9f96ec85473dd308442d3daa80c53099925",
+      "mistake": "JobQueue.expire releases each expired job from the original queue instead of the running result, so when several leases expire in one tick only the last one is given back."
+    },
+    {
+      "name": "w04.mo",
+      "half": "working",
+      "sha256": "a57aea5a22f48e8fb2c1c666237f58841763870dbdd23c5abffb9690e3241afd",
+      "mistake": "JobQueue.expire only returns leases whose end is strictly before now, so a lease ending exactly at the tick is left leased."
+    },
+    {
+      "name": "w05.mo",
+      "half": "working",
+      "sha256": "b6cd91fdf1573eefdf9cfb819e788666cc5739d2aa89d14fcb2688dfad30da7a",
+      "mistake": "JobQueue.expire always puts an expired job back to Ready, so a job whose third attempt expires is retried forever instead of becoming Dead."
+    },
+    {
+      "name": "w06.mo",
+      "half": "working",
+      "sha256": "05de4432f16b37c998de0289d5979bd4f797cc84236b070ab31c5e8f374ae471",
+      "mistake": "The lease handler leases for 60 minutes instead of the 30-minute lease length."
+    },
+    {
+      "name": "w07.mo",
+      "half": "working",
+      "sha256": "744f1379643662ff1f5da40adbf58765ddbddb14a97b177fa88725b5f29af531",
+      "mistake": "The stats handler counts Dead jobs as done, so dead stays 0 and total leaves out dead jobs."
+    },
+    {
+      "name": "w08.mo",
+      "half": "working",
+      "sha256": "896a52351f8d977e8d1b57699ed5491a4268ee8493fdeb020e2cd3ee64b5e4b7",
+      "mistake": "The expiry tick expires leases one minute ahead of now, returning jobs whose leases still have up to a minute left."
+    },
+    {
+      "name": "w09.mo",
+      "half": "working",
+      "sha256": "31d7dc29523f319f1f07d8fd1d775a4eba4e514bd3064d3d6c449ee1e90dca27",
+      "mistake": "The fail handler turns NotLeased into a silent success that leaves the queue unchanged, hiding expired or superseded leases from the worker."
+    },
+    {
+      "name": "w10.mo",
+      "half": "working",
+      "sha256": "53de8fb939458d955fe14850db5588a0feab9d0b3c98b9965ac3ca54620cbf17",
+      "mistake": "JobQueue.expire marks every expired lease Dead at once instead of returning it to Ready unless it was on its last attempt."
+    },
+    {
+      "name": "w11.mo",
+      "half": "working",
+      "sha256": "aa307e3264d4cff68a1988e7ce70b09d3dc1564d6f44ecb90319be9028fc3dd8",
+      "mistake": "The Done filter in list also shows Dead jobs."
+    },
+    {
+      "name": "w12.mo",
+      "half": "working",
+      "sha256": "f691e90257a053302a9029867799070eb33cca2c53a510d0e5ad48fdfe9f2703",
+      "mistake": "The list handler includes the job whose id equals after, so every following page repeats the previous page's last job."
+    },
+    {
+      "name": "w13.mo",
+      "half": "held-back",
+      "sha256": "60772733e128852e772c02e2cee4adb8e9744caf0358f0d0b955f87bc42b0851"
+    },
+    {
+      "name": "w14.mo",
+      "half": "held-back",
+      "sha256": "d5da733cf694bf5c635d33ee1b160f5a85266d2de6e99b0224e6b80c392788b8"
+    },
+    {
+      "name": "w15.mo",
+      "half": "held-back",
+      "sha256": "269976b1ccbce92e44de1c8c9202c0a0b9507b8728734026fb6106fa41a29521"
+    },
+    {
+      "name": "w16.mo",
+      "half": "held-back",
+      "sha256": "0c8123f635b78d4ed9dc39587110230038041340a81c27b005220e1c277e6b34"
+    },
+    {
+      "name": "w17.mo",
+      "half": "held-back",
+      "sha256": "4fc084878106d881249f5fc27357315193006f781cdc0d455d789d370673e49c"
+    },
+    {
+      "name": "w18.mo",
+      "half": "held-back",
+      "sha256": "39ad7352af37c129cacaf5646a0f2fbf733f74e0e082d8ea8e4a5060abc6f123"
+    },
+    {
+      "name": "w19.mo",
+      "half": "held-back",
+      "sha256": "1d9ff8fe9d96d334e83def9215c3a0f113bdd60b3a8d990945a20b2013634989"
+    },
+    {
+      "name": "w20.mo",
+      "half": "held-back",
+      "sha256": "8672da6ad178d9b9d971f70c52ece1bcc4cc35e9677fbc0f98d12aa26f540495"
+    },
+    {
+      "name": "w21.mo",
+      "half": "held-back",
+      "sha256": "4eb56c20292f344b6d062835bb667dd234f5b49f96314a257290abd5f2adc209"
+    },
+    {
+      "name": "w22.mo",
+      "half": "held-back",
+      "sha256": "2dd5b928b1e180e2ec2ecc408cd1e2ba27cb7c5c66b98e1a39245307c8b3344e"
+    },
+    {
+      "name": "w23.mo",
+      "half": "held-back",
+      "sha256": "89eb4b5aea09bb503425e20e3065282854aa10f70c051d03964cb0573099bb62"
+    },
+    {
+      "name": "w24.mo",
+      "half": "held-back",
+      "sha256": "b085c45041510c10755565a14e64a6777d0cf61c0e06a263f7a67a5e8b21f351"
+    }
+  ]
+}
