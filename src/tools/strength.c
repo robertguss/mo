@@ -10,6 +10,7 @@
 #include "tools/tests.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,7 +83,7 @@ static const char *read_counted(struct set *set, const char *folder) {
         return "--strength names a folder whose path is too long";
     FILE *in = fopen(file, "r");
     if (in == NULL)
-        return NULL;
+        return errno == ENOENT ? NULL : "the counted file could not be read";
     set->counted = true;
     const char *mistake = NULL;
     char line[NAME_MAX + 2];

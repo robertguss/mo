@@ -1335,8 +1335,18 @@ def strength_checks(binary):
         broken.write_text(source.replace("  return 0 if n < 0\n", ""))
         failed = strength_record(binary, str(broken), str(folder / "versions"), 1)
         assert (failed["original"], failed["versions"], failed["rate"]) == ("failed", [], None)
+        (folder / "versions" / "counted").symlink_to("counted")
+        unreadable = run(binary, ["test", str(stronger), "--strength", str(folder / "versions")], 2)
+        assert b"the counted file could not be read" in unreadable.stderr, unreadable
     refused = run(binary, ["test", "--list", f"{STRENGTH}/main.mo", "--strength", versions], 2)
     assert b"--strength runs a fixed plan over the whole program" in refused.stderr, refused
+    builder = without_time(run(binary, ["test", "--json", "tests/cli/strength-builder/main.mo",
+                                        "--strength", "tests/cli/strength-builder/versions",
+                                        "--seconds", "1"], 1))
+    cut = next(r for r in builder if r["record"] == "strength")
+    assert ([v["outcome"] for v in cut["versions"]], cut["partial"]) == (["unfinished"], True), cut
+    library = without_time(run(binary, ["test", "--list", "--json", "lib/list.mo"], 0))
+    assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
 
 
 def fix_command(binary):
@@ -3994,8 +4004,9 @@ def guide_claims(binary):
                      "neither credential appears in output, events or the data folder.",
                      "a new GET replaces it."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
-    assert ("A wrong version that does not check, changes a digest, or stops is kept out of the "
-            "rate.") in guide
+    assert ("A wrong version that stops is kept out of the rate, and so is one that does not check "
+            "or changes a digest, unless a `counted` file in `DIR` lists it: a listed one stays in "
+            "the rate as not killed.") in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]

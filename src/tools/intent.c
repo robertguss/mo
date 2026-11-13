@@ -58,6 +58,10 @@ static bool library(const struct mo_program *p, uint32_t module) {
     return module == UINT32_MAX || p->set->library[module];
 }
 
+static bool tested(const struct mo_program *p, uint32_t module) {
+    return module == 0 || !library(p, module);
+}
+
 static uint32_t symbol_index(const struct walker *w, const struct mo_symbol *symbol) {
     const struct mo_module_scope *scope = &w->program->interfaces->scopes[symbol->module];
     MO_ASSERT(symbol >= scope->symbols && symbol < scope->symbols + scope->count);
@@ -191,10 +195,12 @@ static struct text canonical(struct walker *w, const struct mo_syntax *original)
     const struct mo_syntax *found = find(w->parsed[file]->tree, original->span, original->kind);
     MO_ASSERT(found != NULL);
     struct mo_syntax *item = bare(w, found);
+    if (!w->ok || item == NULL)
+        return out;
     struct mo_syntax *items =
         node(w, (struct mo_syntax){.kind = MO_S_SEQUENCE, .span = item->span});
     struct mo_syntax **pair = array(w, 2, sizeof *pair, _Alignof(struct mo_syntax *));
-    if (!w->ok || item == NULL || items == NULL || pair == NULL)
+    if (!w->ok || items == NULL || pair == NULL)
         return out;
     items->count = 1;
     items->children = &item;
@@ -356,10 +362,10 @@ bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
     for (uint32_t i = 0; i < program->spec_count; i++) {
         const struct mo_checked_spec *spec = &program->specs[i];
         count += (spec->kind == MO_SPEC_PROMISE || spec->kind == MO_SPEC_EXAMPLE) &&
-                 !library(program, spec->module);
+                 tested(program, spec->module);
     }
     for (uint32_t i = 0; i < program->service_count; i++)
-        if (!library(program, program->services[i].module))
+        if (tested(program, program->services[i].module))
             count += program->services[i].promise_count;
     uint32_t *anchors = array(w, program->spec_count, sizeof *anchors, _Alignof(uint32_t));
     uint32_t *first = array(w, program->spec_count, sizeof *first, _Alignof(uint32_t));
@@ -376,7 +382,7 @@ bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
     for (uint32_t i = 0; w->ok && i < program->spec_count; i++) {
         const struct mo_checked_spec *spec = &program->specs[i];
         if ((spec->kind != MO_SPEC_PROMISE && spec->kind != MO_SPEC_EXAMPLE) ||
-            library(program, spec->module))
+            !tested(program, spec->module))
             continue;
         const struct mo_symbol *subject = program->functions[spec->subject].signature->function;
         begin(w, subject->declaration);
@@ -393,7 +399,7 @@ bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
     }
     for (uint32_t i = 0; w->ok && i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
-        if (library(program, service->module))
+        if (!tested(program, service->module))
             continue;
         const char *module = program->set->names[service->module];
         size_t length = strlen(module) + sizeof ".service";
