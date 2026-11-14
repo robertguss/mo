@@ -236,6 +236,14 @@ static MO_MUST_USE bool sweep(struct captures *p) {
         for (uint32_t j = 0; j < service->timer_count; j++)
             if (!body(p, 0, &service->timers[j].interval))
                 return false;
+        for (uint32_t j = 0; j < service->promise_count; j++) {
+            const struct mo_checked_service_promise *promise = &service->promises[j];
+            if (!body(p, 0, &promise->spec.body))
+                return false;
+            for (uint32_t k = 0; k < promise->anchor_count; k++)
+                if (!body(p, 0, &promise->anchors[k].body))
+                    return false;
+        }
     }
     return true;
 }

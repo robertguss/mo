@@ -258,7 +258,7 @@ static MO_MUST_USE bool check_promise(struct mo_arena *arena, const struct mo_pr
                                               .module = service->module,
                                               .number = allow ? ++allows : ++forbids,
                                               .subject = UINT32_MAX,
-                                              .promise = number - 1,
+                                              .promise = UINT32_MAX,
                                               .allows = allow};
         if (!mo_spec_copy_text(arena, diags, sources, line->span, &anchors[k].text))
             return false;
