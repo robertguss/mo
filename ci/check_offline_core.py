@@ -34,7 +34,7 @@ import tempfile
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from check_cli import records  # noqa: E402
+from cli_common import records  # noqa: E402
 from check_core_check import VERSION, WORLD, parse  # noqa: E402
 from check_offline import edit_record, serve  # noqa: E402
 from check_vm import outcome_of  # noqa: E402

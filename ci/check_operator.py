@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 
-from check_cli import SERVE_OPERATOR_NAMES as NAMES, SERVE_UPGRADE_NAMES, SERVE_REVIEW_NAMES, Served, serve_events, serve_supervised
+from cli_common import SERVE_OPERATOR_NAMES as NAMES, SERVE_UPGRADE_NAMES, SERVE_REVIEW_NAMES, Served, serve_events, serve_supervised
 
 TOKEN = "OperatorViewCanary"
 VIEW_BYTES = 6144

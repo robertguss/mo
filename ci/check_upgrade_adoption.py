@@ -16,7 +16,7 @@ import sqlite3
 import sys
 import tempfile
 from check_upgrades import OLD, TOKEN, run, serve
-from check_cli import Served
+from cli_common import Served
 
 
 def checksum(data):

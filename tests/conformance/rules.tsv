@@ -196,7 +196,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.4/2					ci/check_cli.py:promise_selection,ci/check_cli.py:recovery_checks
 13.4/3	lang-recursion-tail				ci/check_cli.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
 13.4/4		e1410,e1411,e1411-function,e1412,e1413			ci/check_offline.py:history,ci/check_offline.py:owned,ci/check_offline.py:hot_journal,ci/check_offline.py:pre_capture,ci/check_offline.py:replays,ci/check_offline.py:work_limit,ci/check_offline.py:queries,ci/check_cli.py:guide_claims
-13.4/5					ci/check_cli.py:records,ci/check_cli.py:check,ci/check_offline.py:replays,ci/check_offline.py:queries		No program can show that a field keeps its name, type and meaning in later versions of the format.
+13.4/5					ci/cli_common.py:records,ci/check_cli.py:check,ci/check_offline.py:replays,ci/check_offline.py:queries		No program can show that a field keeps its name, type and meaning in later versions of the format.
 14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers,ref-qualified-abilities	e0050-unknown-member	fail-bug-take-negative	
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-pow-negative,fail-bug-duration-unit-overflow	
 14/3	num-bigint,ref-library-natives,ref-bigint			

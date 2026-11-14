@@ -15,7 +15,7 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "ci"))
-from check_cli import Served
+from cli_common import Served
 from check_operator import SOURCE, TOKEN
 
 

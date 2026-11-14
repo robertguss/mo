@@ -17,7 +17,7 @@ import tempfile
 import threading
 import time
 
-from check_cli import Served, records
+from cli_common import Served, records
 from check_operator import TOKEN, client
 
 root = pathlib.Path(__file__).resolve().parent.parent

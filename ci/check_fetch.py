@@ -15,7 +15,7 @@ import subprocess
 import sys
 import tempfile
 
-from check_cli import Served
+from cli_common import Served
 from check_operator import FAILING, SOURCE, TOKEN, body, client, exported
 from check_export import SOURCE as COMMIT_SOURCE
 
