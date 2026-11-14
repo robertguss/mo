@@ -350,6 +350,19 @@ struct mo_store_history_program {
     struct mo_store_history_program *next;
     struct mo_store_program program; /* identities only; bundle/context pointers are NULL */
 };
+struct mo_store_history_approval {
+    struct mo_store_history_approval *next;
+    uint8_t digest[32];
+    uint64_t version;
+};
+struct mo_store_history_decision {
+    struct mo_store_history_decision *next;
+    uint64_t sequence;
+    int64_t time;
+    uint8_t base[32];
+    bool intent;
+    const char *kind, *detail;
+};
 struct mo_store_history {
     struct mo_arena arena;
     bool has_program;
@@ -358,6 +371,11 @@ struct mo_store_history {
     struct mo_store_history_upgrade *upgrades;
     uint64_t upgrade_count;
     bool upgrades_truncated;
+    bool reviewed, review_intent;
+    uint64_t review_version, decision_count;
+    struct mo_store_history_approval *approvals;
+    struct mo_store_history_decision *decisions;
+    bool review_truncated;
     bool recovered;      /* opened read-write and rolled a journal back */
     bool failure_tables; /* false for a store from before failure capture */
     bool has_snapshot;   /* false only for a store a first start never finished */

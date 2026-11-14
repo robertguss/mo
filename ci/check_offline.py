@@ -207,6 +207,7 @@ def history(binary, folder):
             "SELECT source,context_digest,ordinal FROM program").fetchone()
     assert lines.pop(1) == (f"program: source {source.hex()}, context {context.hex()}, "
                             f"activation {ordinal}"), lines
+    assert lines.pop(1) == "review setting: everything; approval version 0", lines
     assert lines[1] == ("snapshot: as of sequence 0, 2 later messages not applied; "
                         "producer build not recorded"), lines
     assert lines[2].startswith("state (") and '"label":"seed","count":"0"' in lines[2], lines
@@ -230,6 +231,8 @@ def history(binary, folder):
     assert h["program"]["context_digest"] == context.hex(), h
     assert h["program"]["ordinal"] == str(ordinal), h
     assert h["previous_programs"] == [] and h["upgrades"] == [], h
+    assert h["review"] == {"setting": "everything", "approval_version": "0", "approvals": [],
+                           "decisions": [], "decision_records": "0", "truncated": False}, h
     snapshot = h["snapshot"]
     assert snapshot["sequence"] == "0" and snapshot["later_messages"] == 2, snapshot
     assert snapshot["producer_build"] is None and snapshot["state"]["complete"], snapshot

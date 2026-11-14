@@ -1300,6 +1300,7 @@ static bool copy_failure_metadata(const struct mo_store_failure *f, void *contex
 }
 
 static enum mo_store_status copy_program_history(struct mo_store *s, struct history_copy *c);
+static enum mo_store_status copy_review_history(struct mo_store *s, struct history_copy *c);
 
 static enum mo_store_folder history_body(struct mo_store *s, bool failure_tables, void *context) {
     struct history_copy *c = context;
@@ -1337,6 +1338,8 @@ static enum mo_store_folder history_body(struct mo_store *s, bool failure_tables
     }
     if (status == MO_STORE_OK)
         status = copy_program_history(s, c);
+    if (status == MO_STORE_OK)
+        status = copy_review_history(s, c);
     return folder_status(status);
 }
 
@@ -1971,6 +1974,117 @@ static enum mo_store_status read_approvals(struct mo_store *s, struct mo_arena *
     out->approved = approved;
     out->approved_count = count;
     return finish(stmt, result);
+}
+static const char *copy_text(struct history_copy *c, sqlite3_stmt *stmt, int column) {
+    const unsigned char *text = sqlite3_column_text(stmt, column);
+    size_t length = (size_t)sqlite3_column_bytes(stmt, column);
+    if (text == NULL || length > MO_LIMIT_INTENT_LIST_BYTES || memchr(text, 0, length) != NULL)
+        return NULL;
+    char *copy = mo_arena_allocate(&c->out->arena, length + 1, 1);
+    if (copy != NULL) {
+        memcpy(copy, text, length);
+        copy[length] = 0;
+    }
+    return copy;
+}
+static enum mo_store_status copy_approvals(struct mo_store *s, struct history_copy *c) {
+    struct mo_store_history *h = c->out;
+    sqlite3_stmt *stmt = NULL;
+    int code = sqlite3_prepare_v2(
+        s->db, "SELECT digest,version FROM approvals ORDER BY version,digest", -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return failure(code);
+    struct mo_store_history_approval **tail = &h->approvals;
+    enum mo_store_status status = MO_STORE_OK;
+    int step;
+    while (status == MO_STORE_OK && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (!blob_size(stmt, 0, 32) || sqlite3_column_type(stmt, 1) != SQLITE_INTEGER ||
+            sqlite3_column_int64(stmt, 1) <= 0 ||
+            (uint64_t)sqlite3_column_int64(stmt, 1) > h->review_version)
+            status = MO_STORE_CORRUPT;
+        else if (!retain(c, sizeof **tail))
+            h->review_truncated = true;
+        else if ((*tail = mo_arena_allocate(&h->arena, sizeof **tail,
+                                            _Alignof(struct mo_store_history_approval))) == NULL)
+            status = MO_STORE_MEMORY;
+        else {
+            **tail = (struct mo_store_history_approval){
+                .version = (uint64_t)sqlite3_column_int64(stmt, 1)};
+            memcpy((*tail)->digest, sqlite3_column_blob(stmt, 0), 32);
+            tail = &(*tail)->next;
+        }
+    }
+    if (status == MO_STORE_OK && step != SQLITE_DONE)
+        status = failure(step);
+    return finish(stmt, status);
+}
+static enum mo_store_status copy_decisions(struct mo_store *s, struct history_copy *c) {
+    struct mo_store_history *h = c->out;
+    sqlite3_stmt *stmt = NULL;
+    int code = sqlite3_prepare_v2(
+        s->db, "SELECT seq,time,kind,base,setting,detail FROM decisions ORDER BY seq", -1, &stmt,
+        NULL);
+    if (code != SQLITE_OK)
+        return failure(code);
+    struct mo_store_history_decision **tail = &h->decisions;
+    enum mo_store_status status = MO_STORE_OK;
+    int step;
+    while (status == MO_STORE_OK && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const unsigned char *setting = sqlite3_column_text(stmt, 4);
+        if (sqlite3_column_type(stmt, 0) != SQLITE_INTEGER || sqlite3_column_int64(stmt, 0) <= 0 ||
+            sqlite3_column_type(stmt, 1) != SQLITE_INTEGER || !blob_size(stmt, 3, 32) ||
+            setting == NULL ||
+            (strcmp((const char *)setting, "everything") != 0 &&
+             strcmp((const char *)setting, "intent") != 0)) {
+            status = MO_STORE_CORRUPT;
+            break;
+        }
+        h->decision_count++;
+        size_t bytes = sizeof **tail + (size_t)sqlite3_column_bytes(stmt, 2) +
+                       (size_t)sqlite3_column_bytes(stmt, 5) + 2;
+        if (!retain(c, bytes)) {
+            h->review_truncated = true;
+            continue;
+        }
+        struct mo_store_history_decision *node = mo_arena_allocate(
+            &h->arena, sizeof *node, _Alignof(struct mo_store_history_decision));
+        if (node == NULL) {
+            status = MO_STORE_MEMORY;
+            break;
+        }
+        *node = (struct mo_store_history_decision){
+            .sequence = (uint64_t)sqlite3_column_int64(stmt, 0),
+            .time = sqlite3_column_int64(stmt, 1),
+            .intent = setting[0] == 'i',
+            .kind = copy_text(c, stmt, 2),
+            .detail = copy_text(c, stmt, 5)};
+        memcpy(node->base, sqlite3_column_blob(stmt, 3), 32);
+        if (node->kind == NULL || node->detail == NULL || node->kind[0] == 0) {
+            status = MO_STORE_CORRUPT;
+            break;
+        }
+        *tail = node;
+        tail = &node->next;
+    }
+    if (status == MO_STORE_OK && step != SQLITE_DONE)
+        status = failure(step);
+    return finish(stmt, status);
+}
+static enum mo_store_status copy_review_history(struct mo_store *s, struct history_copy *c) {
+    struct mo_store_history *h = c->out;
+    int version;
+    enum mo_store_status status = store_version(s, &version);
+    if (status != MO_STORE_OK || version != 3)
+        return status;
+    struct mo_store_review review = {0};
+    status = read_setting(s, &review);
+    if (status != MO_STORE_OK)
+        return status;
+    h->reviewed = true;
+    h->review_intent = review.intent;
+    h->review_version = review.version;
+    status = copy_approvals(s, c);
+    return status == MO_STORE_OK ? copy_decisions(s, c) : status;
 }
 enum mo_store_status mo_store_review_read(struct mo_store *s, struct mo_arena *arena,
                                           struct mo_store_review *out) {
