@@ -146,7 +146,7 @@ Four shared contracts; changing one means changing every side that reads it:
   All outside-world effects go through capabilities, which have real and fake implementations.
 
 Adding a library function typically touches its `check` signature (`src/check/signatures.c`,
-`constants.c`), lowering (`src/lower/expressions.c`), possibly a primitive in `prims.def` and
+`constants.c`), lowering (`src/lower/applications.c`), possibly a primitive in `prims.def` and
 `src/prim/`, a `tests/lower-source/<name>/main.mo` fixture, `tests/test_program.c`, and
 `docs/status/sample-blockers.md` when it unblocks a sample.
 
