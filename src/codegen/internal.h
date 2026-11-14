@@ -127,4 +127,41 @@ static inline MO_MUST_USE bool codegen_live_has(const struct live_set *live, uin
     return at < live->count && live->items[at] == r;
 }
 
+MO_MUST_USE bool codegen_problem(struct compiler *c, uint16_t code, const char *reason);
+MO_MUST_USE void *codegen_allocate(struct compiler *c, size_t count, size_t width);
+MO_MUST_USE void *codegen_append(struct compiler *c, struct vector *v, uint32_t n, uint32_t limit,
+                                 uint16_t code);
+MO_MUST_USE bool codegen_service_shape(struct compiler *c, uint32_t type,
+                                       const struct mo_service_shape *source);
+MO_MUST_USE mo_core_string codegen_text(const char *s);
+MO_MUST_USE struct mo_codegen_index *codegen_index_add(struct compiler *c,
+                                                       struct mo_codegen_index **root,
+                                                       mo_core_string key, uint32_t value,
+                                                       bool copy);
+MO_MUST_USE uint32_t codegen_string(struct compiler *c, mo_core_string s);
+MO_MUST_USE bool codegen_name_valid(struct compiler *c, mo_core_string s);
+MO_MUST_USE const char *codegen_name(struct compiler *c, mo_core_string s);
+MO_MUST_USE uint32_t codegen_suffixed_name(struct compiler *c, mo_core_string base,
+                                           const char *suffix);
+MO_MUST_USE uint32_t codegen_type_result(struct compiler *c, enum mo_type_problem status,
+                                         uint32_t id);
+MO_MUST_USE uint32_t codegen_scalar(struct compiler *c, enum mo_type_kind kind);
+MO_MUST_USE uint32_t codegen_type(struct compiler *c, mo_core_ty t, unsigned depth);
+MO_MUST_USE uint32_t codegen_constant(struct compiler *c, struct mo_bytecode_constant value);
+MO_MUST_USE uint32_t codegen_register_add(struct compiler *c, struct function *f, uint32_t ty,
+                                          uint32_t original);
+void codegen_function_init(struct function *f);
+MO_MUST_USE struct node *codegen_prepare(struct compiler *c, struct function *f, mo_core_expr expr,
+                                         uint32_t expected, unsigned depth);
+MO_MUST_USE uint32_t codegen_emit(struct compiler *c, struct function *f,
+                                  struct mo_core_span source, enum mo_opcode op,
+                                  const uint32_t *fixed, uint32_t n, const uint32_t *variable,
+                                  uint32_t count);
+MO_MUST_USE bool codegen_entry_valid(struct compiler *c);
+MO_MUST_USE bool codegen_declarations(struct compiler *c);
+MO_MUST_USE bool codegen_globals(struct compiler *c);
+MO_MUST_USE bool codegen_bodies(struct compiler *c);
+MO_MUST_USE bool codegen_initializer(struct compiler *c, struct function *f, uint32_t index);
+MO_MUST_USE bool codegen_service_descriptors(struct compiler *c, struct mo_bytecode *file);
+
 #endif
