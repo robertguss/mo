@@ -49,8 +49,19 @@ struct mo_service_loop {
     uint32_t removed_count, dropped;
 };
 
+struct mo_service_time mo_service_clock(struct mo_service_loop *s);
+struct mo_bytecode_string mo_service_short_name(struct mo_bytecode_string name);
 struct mo_bytecode_string mo_service_handler_name(const struct mo_service_loop *s,
                                                   uint32_t function);
+void mo_service_record_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
+                             enum mo_service_status reason, struct mo_service_time time,
+                             const struct mo_defect *defect, uint32_t handler, uint32_t restart,
+                             const struct mo_service_upgrade *upgrade);
+void mo_service_finish_call(struct mo_process *p);
+enum mo_service_status mo_service_invoke(struct mo_process *p, uint32_t function,
+                                         const struct mo_cell *arguments, uint32_t count,
+                                         struct mo_cell *out, struct mo_defect *defect);
+struct service_message *mo_service_append(struct mo_service_loop *s);
 void mo_service_capture_failure(struct mo_service_loop *s, const struct service_message *m,
                                 const struct mo_service_call *call);
 
