@@ -35,8 +35,8 @@ int main(void) {
     MO_ASSERT(snprintf(errors, sizeof errors, "%s/errors", dir) > 0);
     FILE *script = fopen(exe, "w");
     MO_ASSERT(script != NULL);
-    MO_ASSERT(fputs("#!/bin/sh\nif [ \"$1\" = test ]; then\n"
-                    "  [ ! -e \"/proc/$$/fd/$2\" ] && [ -z \"$MO_LIST_CANARY\" ] || exit 1\n"
+    MO_ASSERT(fputs("#!/bin/sh\n[ -z \"$MO_CHILD_CANARY\" ] || exit 1\nif [ \"$1\" = test ]; then\n"
+                    "  [ ! -e \"/proc/$$/fd/$2\" ] || exit 1\n"
                     "  printf list > \"$6\"; exit 0\nfi\ncase \"$2\" in\n"
                     "ok) printf image > \"$4\";;\n"
                     "diagnostic) echo refused >&2; exit 1;;\n"
@@ -48,7 +48,8 @@ int main(void) {
                     "test \"$(ulimit -t)\" = 10 && test \"$(ulimit -c)\" = 0;;\n"
                     "*) exit 125;;\nesac\n",
                     script) >= 0);
-    MO_ASSERT(fclose(script) == 0 && chmod(exe, 0700) == 0);
+    MO_ASSERT(fclose(script) == 0 && chmod(exe, 0700) == 0 &&
+              setenv("MO_CHILD_CANARY", "1", 1) == 0);
     const char *modes[] = {"ok", "diagnostic", "crash", "limits", "initializer", "service"};
     const enum mo_compile_status expected[] = {MO_COMPILE_OK,          MO_COMPILE_DIAGNOSTIC,
                                                MO_COMPILE_CRASH,       MO_COMPILE_OK,
@@ -87,7 +88,7 @@ int main(void) {
           MO_COMPILE_IO);
     CHECK(unlink(errors) == 0);
     int held = open(dir, O_RDONLY | O_DIRECTORY);
-    MO_ASSERT(held > 2 && setenv("MO_LIST_CANARY", "1", 1) == 0);
+    MO_ASSERT(held > 2);
     char number[16];
     MO_ASSERT(snprintf(number, sizeof number, "%d", held) > 0);
     CHECK(mo_list_start(exe, number, output, errors, NULL, NULL, 100, &child) ==

@@ -33,8 +33,7 @@ struct child_limits {
 };
 static enum mo_compile_status spawn(const char *const *arguments, unsigned count,
                                     const char *diagnostics, struct child_limits limits,
-                                    char *const *environment, uint64_t now,
-                                    struct mo_compile_child *child) {
+                                    uint64_t now, struct mo_compile_child *child) {
     MO_ASSERT(child != NULL && child->pid == 0 && count < 16 && arguments[count] == NULL);
     if (now > UINT64_MAX - limits.wall)
         return MO_COMPILE_IO;
@@ -59,10 +58,8 @@ static enum mo_compile_status spawn(const char *const *arguments, unsigned count
         char *mutable[16];
         for (unsigned i = 0; i <= count; i++)
             memcpy(&mutable[i], &arguments[i], sizeof mutable[i]);
-        if (environment == NULL)
-            execv(arguments[0], mutable);
-        else
-            execve(arguments[0], mutable, environment);
+        static char *const empty[] = {NULL};
+        execve(arguments[0], mutable, empty);
         _exit(125);
     }
     (void)close(errors);
@@ -98,7 +95,7 @@ enum mo_compile_status mo_compile_start(const char *executable, const char *entr
     struct child_limits limits = {MO_LIMIT_UPGRADE_COMPILE_MEMORY,
                                   MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS,
                                   MO_LIMIT_UPGRADE_COMPILE_WALL_US};
-    return spawn(arguments, count, diagnostics, limits, NULL, now, child);
+    return spawn(arguments, count, diagnostics, limits, now, child);
 }
 enum mo_compile_status mo_list_start(const char *executable, const char *bundle, const char *output,
                                      const char *diagnostics, const char *old_bundle,
@@ -108,8 +105,7 @@ enum mo_compile_status mo_list_start(const char *executable, const char *bundle,
     unsigned count = upgrade_inputs(arguments, 7, old_bundle, NULL, context);
     struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
                                   MO_LIMIT_CHECK_WALL_US};
-    static char *const empty[] = {NULL};
-    return spawn(arguments, count, diagnostics, limits, empty, now, child);
+    return spawn(arguments, count, diagnostics, limits, now, child);
 }
 enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now) {
     MO_ASSERT(child != NULL && child->pid > 0);

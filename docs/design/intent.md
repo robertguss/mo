@@ -314,9 +314,9 @@ imports. Tests in a module the served program does not import, such as the task
 queue's `queue-tests.mo`, are the agent's to run; under the door, the service's
 guarantees are service promises in its entry module.
 
-The child gets no descriptor beyond its standard streams, so none on the
-store, and runs with an empty environment, so none of the service's three
-secrets. The server polls it where it polls the compile
+Both children get no descriptor beyond their standard streams, so none on the
+store, and run with an empty environment, so none of the service's three
+secrets. The server polls the check child where it polls the compile
 child, in `mo_protocol_upgrade_poll`, and the upload slot stays busy while it
 runs. Its limits are under Limits. A failed check is E1433 and an unfinished
 plan is E1432; both refuse the push and leave the old program serving. A first
