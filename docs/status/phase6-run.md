@@ -99,4 +99,17 @@ is that the new tool promises judge the service as a whole rather than the worki
 particular mistakes, so they catch mistakes they were not written against. This session still
 has not read `w20` or any held-back mistake.
 
-The held-back set is now spent. Robert's answer: pending.
+The held-back set is now spent.
+
+Robert's answer, 2026-11-14: accepted. Two limits stand beside the acceptance:
+
+- Twelve versions is a small sample: 11 of 12 has a 95% Wilson interval of about 65% to 98%.
+- The set is narrow. The digest rule keeps a wrong version from replacing anything an item
+  reads, so neither half could touch `submit`, `lease`, `acknowledge`, `fail` or the anchors.
+  The rate says the intent is strong against mistakes in `heartbeat`, `expire` and the `Main`
+  handlers, and nothing about the operations its own items read.
+
+`w11` stays a known gap. A row that kills it would read `JobQueue.expire` or `JobQueue.fail` and
+make every fix to them an intent change. The better fix is an input generator that builds
+queues reaching rarer states, such as Dead jobs, which would help every promise over a hidden
+type. That is follow-on work, not part of this measurement.
