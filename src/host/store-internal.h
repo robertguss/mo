@@ -54,4 +54,15 @@ enum mo_store_status store_read_program(struct mo_store *s, struct mo_arena *are
                                         struct mo_store_program *out, bool *found);
 enum mo_store_status store_read_setting(struct mo_store *s, struct mo_store_review *out);
 
+struct store_table {
+    const char *name, *sql;
+};
+
+bool store_table_ready(struct mo_store *s, const struct store_table *t);
+bool store_items_valid(const struct mo_store_program *p);
+bool store_decide(struct mo_store *s, int64_t time, const char *kind, const uint8_t base[32],
+                  const char *setting, const char *detail);
+bool store_review_write(struct mo_store *s, const struct mo_store_program *p);
+bool store_not_version_two(struct mo_store *s);
+
 #endif
