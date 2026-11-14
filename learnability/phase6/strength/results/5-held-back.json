@@ -1,0 +1,84 @@
+{
+  "record": "strength",
+  "version": 1,
+  "set": "/home/exedev/code/mo-strength-held-back/set-1",
+  "counted_file": true,
+  "original": "passed",
+  "versions": [
+    {
+      "name": "w13.mo",
+      "sha256": "60772733e128852e772c02e2cee4adb8e9744caf0358f0d0b955f87bc42b0851",
+      "outcome": "killed_by_promise"
+    },
+    {
+      "name": "w14.mo",
+      "sha256": "d5da733cf694bf5c635d33ee1b160f5a85266d2de6e99b0224e6b80c392788b8",
+      "outcome": "killed_by_example"
+    },
+    {
+      "name": "w15.mo",
+      "sha256": "269976b1ccbce92e44de1c8c9202c0a0b9507b8728734026fb6106fa41a29521",
+      "outcome": "killed_by_both"
+    },
+    {
+      "name": "w16.mo",
+      "sha256": "0c8123f635b78d4ed9dc39587110230038041340a81c27b005220e1c277e6b34",
+      "outcome": "killed_by_promise"
+    },
+    {
+      "name": "w17.mo",
+      "sha256": "4fc084878106d881249f5fc27357315193006f781cdc0d455d789d370673e49c",
+      "outcome": "killed_by_example"
+    },
+    {
+      "name": "w18.mo",
+      "sha256": "39ad7352af37c129cacaf5646a0f2fbf733f74e0e082d8ea8e4a5060abc6f123",
+      "outcome": "killed_by_promise"
+    },
+    {
+      "name": "w19.mo",
+      "sha256": "1d9ff8fe9d96d334e83def9215c3a0f113bdd60b3a8d990945a20b2013634989",
+      "outcome": "killed_by_promise"
+    },
+    {
+      "name": "w20.mo",
+      "sha256": "8672da6ad178d9b9d971f70c52ece1bcc4cc35e9677fbc0f98d12aa26f540495",
+      "outcome": "survived"
+    },
+    {
+      "name": "w21.mo",
+      "sha256": "4eb56c20292f344b6d062835bb667dd234f5b49f96314a257290abd5f2adc209",
+      "outcome": "killed_by_promise"
+    },
+    {
+      "name": "w22.mo",
+      "sha256": "2dd5b928b1e180e2ec2ecc408cd1e2ba27cb7c5c66b98e1a39245307c8b3344e",
+      "outcome": "killed_by_promise"
+    },
+    {
+      "name": "w23.mo",
+      "sha256": "89eb4b5aea09bb503425e20e3065282854aa10f70c051d03964cb0573099bb62",
+      "outcome": "killed_by_promise"
+    },
+    {
+      "name": "w24.mo",
+      "sha256": "b085c45041510c10755565a14e64a6777d0cf61c0e06a263f7a67a5e8b21f351",
+      "outcome": "killed_by_promise"
+    }
+  ],
+  "counts": {
+    "invalid": 0,
+    "changes_intent": 0,
+    "killed_by_promise": 8,
+    "killed_by_example": 2,
+    "killed_by_both": 1,
+    "survived": 1,
+    "defect": 0,
+    "unfinished": 0,
+    "not_counted": 0
+  },
+  "killed": 11,
+  "scored": 12,
+  "rate": 0.9167,
+  "partial": false
+}

@@ -3,6 +3,9 @@
 #include "tools/tests.h"
 
 #include "base/codes.h"
+#include "codegen/codegen.h"
+#include "core/core.h"
+#include "tools/deadline.h"
 #include "tools/promises.h"
 #include "tools/recovery.h"
 #include "tools/run.h"
@@ -452,8 +455,25 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
                                         .limit = cli->limits.heap_size,
                                         .span.file = MO_NO_INDEX};
             result.outcome = MO_STOPPED;
-        } else
+        } else if (cli->strength == NULL)
             result.outcome = mo_call(process, function, NULL, 0, &value, &defect);
+        else {
+            struct mo_deadline deadline;
+            enum mo_controlled_outcome outcome =
+                mo_deadline_start(&deadline, cli->seconds)
+                    ? mo_call_controlled(process, function, NULL, 0, mo_deadline_running, &deadline,
+                                         &value, &defect)
+                    : MO_CONTROL_CANCELLED;
+            if (outcome == MO_CONTROL_CANCELLED) {
+                mo_test_report_error(diags, "example interrupted before its outcome was known",
+                                     observation->source->syntax->span, observation->name);
+                mo_process_free(process);
+                continue;
+            }
+            result.outcome = outcome == MO_CONTROL_RETURNED ? MO_RETURNED
+                             : outcome == MO_CONTROL_FAILED ? MO_FAILED
+                                                            : MO_STOPPED;
+        }
         switch (result.outcome) {
         case MO_RETURNED:
             totals->passed++;
@@ -463,6 +483,7 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
             break;
         case MO_FAILED:
             totals->failed++;
+            totals->failed_examples += observation->source->kind == MO_SPEC_EXAMPLE;
             if (observation->source->kind == MO_SPEC_TEST)
                 result.line = assertion_span(observation->source,
                                              mo_runtime_span(file, sources, defect.span.file,
@@ -487,4 +508,32 @@ void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
 done:
     mo_arena_free(&scratch);
     mo_image_free(image);
+}
+
+void mo_run_tests(const struct mo_cli *cli, struct mo_arena *arena,
+                  const struct mo_program *program, const struct mo_sources *sources,
+                  const struct mo_test_selection *selection, FILE *output, struct mo_diags *diags,
+                  struct mo_test_totals *totals) {
+    /* Closed declarations can refuse before lowering. Generic inputs need the concrete uses
+     * retained below; both passes precede execution. */
+    if (!mo_promises_supported(program, selection, diags))
+        return;
+    struct mo_arena lowered;
+    mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
+    struct mo_lowered_promises promises;
+    struct mo_services services;
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *core =
+        mo_lower_services(&lowered, program, sources, diags, &promises, &services);
+    if (core == NULL || mo_diags_any(diags) || !mo_core_check_services(core, &services, diags))
+        goto done;
+    selection = mo_instantiate_tests(arena, selection, &promises, diags);
+    if (selection == NULL || !mo_promises_supported(program, selection, diags) ||
+        !mo_compile_services(core, &services, &wire, diags))
+        goto done;
+    mo_test_program(cli, program, selection, &wire, sources, output, diags, totals);
+done:
+    mo_buffer_free(&wire);
+    mo_arena_free(&lowered);
 }

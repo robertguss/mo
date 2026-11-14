@@ -16,10 +16,10 @@ import time
 
 FOLDER = 'services/task-queue'
 TOKEN = 'TaskQueueCanary42'
-JOB_QUEUE_RESULTS = 23
+JOB_QUEUE_RESULTS = 26
 QUEUE_TEST_RESULTS = 23
-SERVICE_CHECKS = ['Main.service.promise.1', 'Main.service.promise.2', 'Main.service.promise.3',
-                  'Main.service.promise.4', 'Main.service.recovery']
+MAIN_RESULTS = 9
+SERVICE_CHECKS = [*(f'Main.service.promise.{n}' for n in range(1, 11)), 'Main.service.recovery']
 DESCRIPTION_LIMIT = 4096
 INT = {'type': 'string', 'pattern': '^-?[0-9]+$'}
 INITIALIZE = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
@@ -129,9 +129,8 @@ def simulation(binary):
     tests = [r for r in records if r['record'] == 'result']
     assert all(r['outcome'] == 'passed' for r in tests), tests
     modules = collections.Counter(r['name'].split('.')[0] for r in tests)
-    # Main, the queue's service, has no checks of its own besides its service's.
     assert modules == {'JobQueue': JOB_QUEUE_RESULTS, 'QueueTests': QUEUE_TEST_RESULTS,
-                       'Main': len(SERVICE_CHECKS)}, modules
+                       'Main': MAIN_RESULTS + len(SERVICE_CHECKS)}, modules
     assert [r['name'] for r in tests[-len(SERVICE_CHECKS):]] == SERVICE_CHECKS, tests
     assert tests[-1]['kind'] == 'recovery', tests
 

@@ -237,6 +237,13 @@
 /* Service promises in one service block; each runs after every step of every sequence. */
 #define MO_LIMIT_SERVICE_PROMISES 64
 
+#define MO_LIMIT_INTENT_WORK (UINT64_C(1) << 28)
+
+#define MO_DOOR_PLAN_INPUTS 200
+#define MO_DOOR_PLAN_SEQUENCES 1000
+
+#define MO_LIMIT_STRENGTH_VERSIONS 1024
+
 /* Entries in the debug section (bytecode.md section 3.4). */
 #define MO_LIMIT_DEBUG_ENTRIES (1 << 24)
 

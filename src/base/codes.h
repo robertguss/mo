@@ -306,7 +306,8 @@
     X(1428, UPGRADE_BOUNDARY_DEADLINE, NULL)                                                       \
     X(1429, UPGRADE_RECORDED_COMPILE, NULL)                                                        \
     X(1430, UPGRADE_SOURCE_MISMATCH, NULL)                                                         \
-    X(1431, UPGRADE_AMBIGUOUS_PROGRAM, NULL)
+    X(1431, UPGRADE_AMBIGUOUS_PROGRAM, NULL)                                                       \
+    X(1432, PLAN_UNFINISHED, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

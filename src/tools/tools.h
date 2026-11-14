@@ -42,7 +42,8 @@ struct mo_cli {
     bool source_bundle, upgrade, adopt;
     const char *upgrade_from, *old_bundle, *migration, *compile_context, *candidate;
     struct mo_limits limits;
-    uint32_t calls, seconds;
+    uint32_t calls, sequences, seconds;
+    const char *strength;
     const char *fetch_url, *fetch_token;
     /* push: the loopback endpoint, the expected active source digest and the two credentials'
      * environment names; serve reads upgrade_token for its upgrade credential. */
@@ -86,6 +87,7 @@ MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const st
                                       bool json, struct mo_buffer *out);
 struct mo_test_totals {
     uint32_t passed, failed, stopped;
+    uint32_t failed_examples;
     /* An offline command's own result status, which the totals report when no diagnostic
      * or failed test already makes it 1. */
     int status;

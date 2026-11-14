@@ -299,7 +299,7 @@ static bool search(struct run *w) {
         struct mo_recovery_hooks hooks = {NULL, w->judge_count != 0 ? judge_step : NULL, w};
         struct mo_recovery_result found;
         enum mo_recovery_outcome outcome =
-            mo_recovery_search(w->recovery, first, w->cli->calls, &hooks, &found);
+            mo_recovery_search(w->recovery, first, w->cli->sequences, &hooks, &found);
         struct mo_recovery_counts counts = base;
         add(&counts, found.counts);
         struct mo_recovery_report report = {

@@ -1164,15 +1164,19 @@ def recovery_checks(binary):
     assert len(listed) == len(set(listed)), listed
     items = records(run(binary, ["test", "--list", "--json", "--in", "Main", queue], 0), "test")
     assert [(r["name"], r["kind"]) for r in items[1:-1]] == [
-        *((f"Main.service.promise.{n}", "promise") for n in range(1, 5)),
+        *((f"Main.submit.example.{n}", "example") for n in range(1, 4)),
+        ("Main.list.promise.1", "promise"),
+        *((f"Main.list.example.{n}", "example") for n in range(1, 4)),
+        *((f"Main.expire.example.{n}", "example") for n in range(1, 3)),
+        *((f"Main.service.promise.{n}", "promise") for n in range(1, 11)),
         ("Main.service.recovery", "recovery")], items
     span = items[-2]["span"]
-    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 51), span
+    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 149), span
     tests = "services/task-queue/queue-tests.mo"
     listed = run(binary, ["test", "--list", "--in", "QueueTests", tests], 0).stdout.decode()
     assert "QueueTests.test.1\n" in listed and "service" not in listed, listed
     listed = run(binary, ["test", "--list", "--in", "Main", tests], 0).stdout.decode()
-    assert listed.endswith("Main.service.promise.4\nMain.service.recovery\n"), listed
+    assert listed.endswith("Main.service.promise.10\nMain.service.recovery\n"), listed
     # --only runs the one check; --calls caps its sequences, and JSON carries the counts.
     items = records(run(binary, ["test", "--json", "--calls", "3", "--only",
                                  "Main.service.recovery", queue], 0), "test")
@@ -1267,6 +1271,82 @@ def service_promise_checks(binary):
     failing = "tests/golden/service-promise-restart/main.mo"
     first, second = (without_time(run(binary, ["test", "--json", failing], 1)) for _ in range(2))
     assert first == second and first[1]["steps"][-1]["broke"] == "Main.service.promise.1", first
+
+
+STRENGTH = "tests/cli/strength"
+STRENGTH_OUTCOMES = {
+    "a-negative.mo": "killed_by_promise", "b-nine.mo": "killed_by_example",
+    "c-no-ceiling.mo": "killed_by_both", "d-seven.mo": "survived",
+    "e-limit.mo": "changes_intent", "f-text.mo": "invalid", "g-stop.mo": "defect",
+    "h-unknown.mo": "invalid"}
+
+
+def strength_record(binary, program, versions, status=0):
+    items = without_time(run(binary, ["test", "--json", program, "--strength", versions], status))
+    assert items[-2]["record"] == "strength" and items[-2]["set"] == versions, items
+    return items[-2]
+
+
+def strength_checks(binary):
+    versions = f"{STRENGTH}/versions"
+    record = strength_record(binary, f"{STRENGTH}/main.mo", versions)
+    assert {v["name"]: v["outcome"] for v in record["versions"]} == STRENGTH_OUTCOMES, record
+    assert (record["killed"], record["scored"], record["rate"], record["partial"],
+            record["counted_file"], record["original"]) == (3, 4, 0.75, False, False, "passed")
+    assert [v.get("reason") for v in record["versions"] if v["outcome"] == "invalid"] == [
+        "E0078: a function's result doesn't match its signature",
+        "a declaration it replaces is missing, overloaded or replaced twice"], record
+    assert strength_record(binary, f"{STRENGTH}/main.mo", versions) == record
+    text = run(binary, ["test", f"{STRENGTH}/main.mo", "--strength", versions], 0).stdout
+    assert (b"strength: 3 of 4 wrong versions killed (75.0%); 2 invalid, 1 changes_intent, "
+            b"1 defect, 0 unfinished, 0 not_counted\n") in text, text
+    source = (root / STRENGTH / "main.mo").read_text()
+    with tempfile.TemporaryDirectory(prefix="mo-strength-") as directory:
+        folder = pathlib.Path(directory)
+        shutil.copytree(root / versions, folder / "versions")
+        stronger = folder / "main.mo"
+        stronger.write_text(source.replace(
+            "  examples\n",
+            "  promise \"the result is the ceiling of a natural input\"\n"
+            "    n < 0 or result == ceiling(n)\n"
+            "    allows n: 3, result: 3\n    forbids n: 3, result: 4\n  end\n\n  examples\n", 1))
+        unlisted = strength_record(binary, str(stronger), str(folder / "versions"))
+        assert (unlisted["killed"], unlisted["scored"], unlisted["rate"]) == (2, 2, 1.0), unlisted
+        (folder / "versions" / "counted").write_text(
+            "a-negative.mo\nb-nine.mo\nc-no-ceiling.mo\nd-seven.mo\n")
+        counted = strength_record(binary, str(stronger), str(folder / "versions"))
+        assert {v["name"]: v["outcome"] for v in counted["versions"]} == {
+            **{name: "not_counted" for name in STRENGTH_OUTCOMES},
+            "a-negative.mo": "killed_by_promise", "b-nine.mo": "killed_by_both",
+            "c-no-ceiling.mo": "changes_intent", "d-seven.mo": "changes_intent"}, counted
+        assert (counted["killed"], counted["scored"], counted["counted_file"]) == (2, 4, True)
+        (folder / "control").mkdir()
+        control = folder / "control" / "main.mo"
+        control.write_text(source[:source.index("  promise")] +
+                           "  promise \"the result is never one particular number\"\n"
+                           "    result != 123456789\n"
+                           "    allows n: 3, result: 3\n    forbids n: 3, result: 123456789\n"
+                           "  end\n\n" + source[source.index("  return 0"):])
+        (folder / "versions" / "counted").unlink()
+        weak = strength_record(binary, str(control), str(folder / "versions"))
+        assert (weak["killed"], weak["scored"], weak["rate"]) == (0, 6, 0.0), weak
+        (folder / "broken").mkdir()
+        broken = folder / "broken" / "main.mo"
+        broken.write_text(source.replace("  return 0 if n < 0\n", ""))
+        failed = strength_record(binary, str(broken), str(folder / "versions"), 1)
+        assert (failed["original"], failed["versions"], failed["rate"]) == ("failed", [], None)
+        (folder / "versions" / "counted").symlink_to("counted")
+        unreadable = run(binary, ["test", str(stronger), "--strength", str(folder / "versions")], 2)
+        assert b"the counted file could not be read" in unreadable.stderr, unreadable
+    refused = run(binary, ["test", "--list", f"{STRENGTH}/main.mo", "--strength", versions], 2)
+    assert b"--strength runs a fixed plan over the whole program" in refused.stderr, refused
+    builder = without_time(run(binary, ["test", "--json", "tests/cli/strength-builder/main.mo",
+                                        "--strength", "tests/cli/strength-builder/versions",
+                                        "--seconds", "1"], 1))
+    cut = next(r for r in builder if r["record"] == "strength")
+    assert ([v["outcome"] for v in cut["versions"]], cut["partial"]) == (["unfinished"], True), cut
+    library = without_time(run(binary, ["test", "--list", "--json", "lib/list.mo"], 0))
+    assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
 
 
 def fix_command(binary):
@@ -3924,6 +4004,9 @@ def guide_claims(binary):
                      "neither credential appears in output, events or the data folder.",
                      "a new GET replaces it."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
+    assert ("A wrong version that stops is kept out of the rate, and so is one that does not check "
+            "or changes a digest, unless a `counted` file in `DIR` lists it: a listed one stays in "
+            "the rate as not killed.") in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]
@@ -4345,6 +4428,7 @@ def check(binary):
     promise_selection(binary)
     recovery_checks(binary)
     service_promise_checks(binary)
+    strength_checks(binary)
     imported_constants(binary)
     fix_command(binary)
     items = records(run(faults, ["--json"], 1), "check")
