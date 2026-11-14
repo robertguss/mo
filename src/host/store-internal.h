@@ -32,4 +32,26 @@ enum mo_store_status store_failure_read(struct mo_store *s, uint64_t after, uint
                                         bool (*consume)(const struct mo_store_failure *, void *),
                                         void *context);
 
+/* The head and the snapshot, checked against the version and each other. */
+struct saved_head {
+    uint64_t head, sequence, image;
+    bool empty;
+};
+
+typedef enum mo_store_folder (*folder_body)(struct mo_store *s, bool failure_tables, void *context);
+
+enum mo_store_status store_version(struct mo_store *s, int *version);
+enum mo_store_status store_load_snapshot(struct mo_store *s, struct saved_head *h,
+                                         bool (*consume)(const struct mo_store_record *, void *),
+                                         void *context);
+bool store_next_log_row(const struct saved_head *h, sqlite3_stmt *stmt, uint64_t sequence);
+enum mo_store_folder store_folder_status(enum mo_store_status status);
+enum mo_store_folder store_read_folder(const char *path, bool recover, bool *recovered,
+                                       folder_body body, void *context);
+bool store_blob_size(sqlite3_stmt *stmt, int column, int length);
+bool store_program_row(sqlite3_stmt *stmt, struct mo_store_program *p);
+enum mo_store_status store_read_program(struct mo_store *s, struct mo_arena *arena,
+                                        struct mo_store_program *out, bool *found);
+enum mo_store_status store_read_setting(struct mo_store *s, struct mo_store_review *out);
+
 #endif
