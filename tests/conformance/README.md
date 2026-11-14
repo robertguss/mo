@@ -43,8 +43,9 @@ programs pin the complete CLI error, including its locations and fixes.
   unsupported language behavior, a missing program, or a question the
   reference leaves open. Only this column counts as a gap.
 - `drivers` lists other checks that cover the block, as `PATH:TEST` separated
-  by commas (D280): a function in a Python driver such as
-  `ci/check_cli.py:promise_selection`, a function in a C unit test such as
+  by commas (D280): a function in a Python driver, or in a `ci/cli_*.py`
+  module that `ci/check_cli.py` calls, such as
+  `ci/cli_intent.py:promise_selection`, a function in a C unit test such as
   `tests/test_format.c:check_source`, or a Makefile target such as
   `Makefile:grammar`. A library function in `lib/`, such as `lib/json.mo:to_decimal`,
   also counts: the drivers group runs every `lib/` file's examples and tests with `mo test`.
@@ -156,8 +157,9 @@ cites `lib/json.mo`'s `to_decimal` examples. No row had a gap after MO-140.
 
 D280, D281 and D282 (MO-131) reclassified 34 of the 45 gap entries on main
 `fb4b7bc`. Twenty rows now name other drivers, such as the formatter tests,
-`ci/check_cli.py`, `ci/check_errors.py`, the host and checker unit tests and
-`make grammar`. Eleven rows name C unit tests for cost claims, and seven give
+`ci/check_cli.py` and its `ci/cli_*.py` modules, `ci/check_errors.py`, the host
+and checker unit tests and `make grammar`. Eleven rows name C unit tests for
+cost claims, and seven give
 an untestable reason. At that point, the remaining gaps were reference rules
 the compiler did not follow, refusals no fixture pinned, questions the reference
 left open, and the cost of `sort`. The latter is now measured by
