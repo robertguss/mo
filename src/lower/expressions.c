@@ -1,87 +1,14 @@
+#include "lower/cps.h"
 #include "lower/scalar.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-/* CPS is a work list, not C calls. A continuation may be shared by branches;
- * mutable values cross that boundary as explicit join parameters. */
-struct variable {
-    const struct mo_checked_binding *binding;
-    struct variable *next;
-};
-struct continuation;
-struct loop {
-    struct continuation *break_, *continue_;
-};
-struct state {
-    struct variable *variables;
-    struct loop *loop;
-    struct continuation *return_;
-};
-enum continuation_kind {
-    K_END,
-    K_SEQUENCE,
-    K_BIND,
-    K_ARGUMENTS,
-    K_JUMP,
-    K_SELECT,
-    K_PATTERN,
-    K_MATCH,
-    K_FOR,
-    K_OPTION,
-    K_TRY,
-    K_TEXT,
-    K_PROMISE,
-    K_ANCHOR
-};
-struct anchor_value {
-    uint32_t expression, slot;
-};
-struct continuation {
-    enum continuation_kind kind;
-    struct continuation *next;
-    const struct mo_checked_expression *row;
-    uint32_t at, skip;
-    mo_core_string name;
-    const struct mo_checked_binding *binding;
-    mo_core_expr_list arguments;
-    struct variable *variables;
-    bool result, diagnostic;
-    mo_core_expr extra, then_, else_;
-    mo_core_string position;
-    mo_core_ty position_type;
-    const struct mo_checked_pattern *pattern;
-    const struct anchor_value *values;
-};
-enum task_kind { TASK_ROW, TASK_FINISH, TASK_CONDITION, TASK_PATTERN, TASK_ARM, TASK_COPY };
-struct task {
-    enum task_kind kind;
-    struct task *next;
-    uint32_t row;
-    struct state state;
-    struct continuation *continuation;
-    mo_core_expr *out, *success, value, then_, else_;
-    const struct mo_checked_pattern *pattern;
-    const struct mo_checked_arm *arm;
-    bool diagnostic;
-};
-struct body {
-    struct lowering *p;
-    struct instance *instance;
-    const struct mo_checked_body *source;
-    mo_core_string *names;
-    struct task *tasks;
-};
 
 static void push(struct body *b, struct task task) {
     struct task *t = LOWER_NEW(b->p, struct task, 1);
     *t = task;
     t->next = b->tasks;
     b->tasks = t;
-}
-static const struct mo_checked_expression *row(struct body *b, uint32_t index) {
-    MO_ASSERT(index < b->source->count);
-    return &b->source->items[index];
 }
 static bool returns(struct body *b, uint32_t root) {
     bool *seen = LOWER_NEW(b->p, bool, b->source->count);
@@ -91,7 +18,7 @@ static bool returns(struct body *b, uint32_t root) {
         lower_work(b->p, 1);
         if (!seen[i])
             continue;
-        const struct mo_checked_expression *r = row(b, i);
+        const struct mo_checked_expression *r = lower_cps_row(b, i);
         if (r->syntax->kind == MO_S_RETURN || r->syntax->kind == MO_S_STOP || r->try_ != NULL)
             return true;
         if (r->lambda != NULL)
@@ -103,9 +30,6 @@ static bool returns(struct body *b, uint32_t root) {
         }
     }
     return false;
-}
-static mo_core_ty type(struct body *b, const struct mo_source_type *source) {
-    return lower_type(b->p, source, &b->instance->substitution);
 }
 static mo_core_string binding_name(struct body *b, const struct mo_checked_binding *binding) {
     MO_ASSERT(binding >= b->source->bindings &&
@@ -123,7 +47,7 @@ static void binder_slots(struct body *b, mo_core_expr e, size_t count) {
     node->binders.count = count;
     node->binders.items = LOWER_NEW(b->p, struct mo_core_name, count);
 }
-static struct continuation *continuation(struct body *b, enum continuation_kind kind) {
+struct continuation *lower_cps_continuation(struct body *b, enum continuation_kind kind) {
     struct continuation *k = LOWER_NEW(b->p, struct continuation, 1);
     k->kind = kind;
     return k;
@@ -146,16 +70,16 @@ static mo_core_expr let(struct body *b, mo_core_string name, mo_core_expr value)
     binder_slots(b, e, 1);
     return e;
 }
-static mo_core_expr_list arguments(struct body *b, size_t count) {
+mo_core_expr_list lower_cps_arguments(struct body *b, size_t count) {
     return (mo_core_expr_list){.items = LOWER_NEW(b->p, mo_core_expr, count), .count = count};
 }
-static mo_core_expr projection(struct body *b, mo_core_expr value, size_t index) {
+mo_core_expr lower_cps_projection(struct body *b, mo_core_expr value, size_t index) {
     mo_core_expr e = lower_expr(b->p, MO_CORE_EXPR_PROJ);
     e->as.proj.expr = value;
     e->as.proj.index.digits = lower_number(b->p, index);
     return e;
 }
-static mo_core_expr jump(struct body *b, struct continuation *k, mo_core_expr value) {
+mo_core_expr lower_cps_jump(struct body *b, struct continuation *k, mo_core_expr value) {
     struct mo_span previous = b->p->span;
     if (k->row != NULL)
         b->p->span = k->row->syntax->span;
@@ -166,7 +90,7 @@ static mo_core_expr jump(struct body *b, struct continuation *k, mo_core_expr va
         count++;
     mo_core_expr e = lower_expr(b->p, MO_CORE_EXPR_JUMP);
     e->as.jump.name = k->name;
-    e->as.jump.args = arguments(b, count);
+    e->as.jump.args = lower_cps_arguments(b, count);
     size_t at = 0;
     if (k->result)
         e->as.jump.args.items[at++] = value;
@@ -177,7 +101,7 @@ static mo_core_expr jump(struct body *b, struct continuation *k, mo_core_expr va
     b->p->span = previous;
     return e;
 }
-static mo_core_expr join(struct body *b, struct continuation *k, mo_core_ty result) {
+mo_core_expr lower_cps_join(struct body *b, struct continuation *k, mo_core_ty result) {
     mo_core_expr e = lower_expr(b->p, MO_CORE_EXPR_JOIN);
     e->as.join.name = k->name;
     size_t count = result == NULL ? 0 : 1;
@@ -194,8 +118,8 @@ static mo_core_expr join(struct body *b, struct continuation *k, mo_core_ty resu
     if (k->position_type != NULL)
         e->as.join.params.items[at++] = (struct mo_core_param){k->position, k->position_type};
     for (struct variable *v = k->variables; v != NULL; v = v->next) {
-        e->as.join.params.items[at] =
-            (struct mo_core_param){binding_name(b, v->binding), type(b, v->binding->type)};
+        e->as.join.params.items[at] = (struct mo_core_param){binding_name(b, v->binding),
+                                                             lower_cps_type(b, v->binding->type)};
         binder(b, e, at++, v->binding);
     }
     return e;
@@ -204,21 +128,21 @@ static struct continuation *branch_join(struct body *b, struct task t, mo_core_t
                                         mo_core_expr **out) {
     if (t.continuation->kind == K_END)
         return t.continuation;
-    struct continuation *k = continuation(b, K_JUMP);
+    struct continuation *k = lower_cps_continuation(b, K_JUMP);
     k->name = lower_fresh(b->p);
     k->result = true;
     k->variables = t.state.variables;
-    mo_core_expr e = join(b, k, result);
+    mo_core_expr e = lower_cps_join(b, k, result);
     *t.out = e;
     finish(b, lower_var(b->p, e->as.join.params.items[0].name), t.state, t.continuation,
            &e->as.join.body);
     *out = &e->as.join.rest;
     return k;
 }
-static mo_core_expr field_read(struct body *b, mo_core_ty base, mo_core_expr value,
-                               uint32_t field) {
+mo_core_expr lower_cps_field_read(struct body *b, mo_core_ty base, mo_core_expr value,
+                                  uint32_t field) {
     if (base->tag == MO_CORE_TY_TUPLE)
-        return projection(b, value, field);
+        return lower_cps_projection(b, value, field);
     mo_core_ctors ctors = lower_ctors(b->p, base);
     MO_ASSERT(ctors.count == 1 && field < ctors.items[0].fields.count);
     mo_core_expr e = lower_expr(b->p, MO_CORE_EXPR_CASE);
@@ -240,18 +164,18 @@ static mo_core_expr field_update(struct body *b, const struct mo_checked_express
     uint32_t path[MO_LIMIT_NESTING_DEPTH];
     size_t count = 0;
     uint32_t at = assignment->operands[0];
-    while (row(b, at)->field != UINT32_MAX && row(b, at)->operand_count == 1) {
+    while (lower_cps_row(b, at)->field != UINT32_MAX && lower_cps_row(b, at)->operand_count == 1) {
         if (count == MO_LIMIT_NESTING_DEPTH)
             lower_refuse(b->p, MO_CODE_LOWER_DEPTH, "field update path is too deep");
         path[count++] = at;
-        at = row(b, at)->operands[0];
+        at = lower_cps_row(b, at)->operands[0];
     }
     MO_ASSERT(count != 0);
     mo_core_expr answer = NULL, *out = &answer;
     mo_core_expr old = lower_var(b->p, binding_name(b, assignment->binding));
     for (size_t i = count; i != 0; i--) {
-        const struct mo_checked_expression *step = row(b, path[i - 1]);
-        mo_core_ty base = type(b, row(b, step->operands[0])->type);
+        const struct mo_checked_expression *step = lower_cps_row(b, path[i - 1]);
+        mo_core_ty base = lower_cps_type(b, lower_cps_row(b, step->operands[0])->type);
         mo_core_ctors ctors = lower_ctors(b->p, base);
         MO_ASSERT(ctors.count == 1 && step->field < ctors.items[0].fields.count);
         mo_core_expr e = lower_expr(b->p, MO_CORE_EXPR_CASE);
@@ -265,7 +189,7 @@ static mo_core_expr field_update(struct body *b, const struct mo_checked_express
         mo_core_expr rebuilt = lower_expr(b->p, MO_CORE_EXPR_CON);
         rebuilt->as.con.ty = base;
         rebuilt->as.con.ctor = arm->ctor;
-        rebuilt->as.con.args = arguments(b, arm->names.count);
+        rebuilt->as.con.args = lower_cps_arguments(b, arm->names.count);
         for (size_t j = 0; j < arm->names.count; j++) {
             arm->names.items[j] = lower_fresh(b->p);
             rebuilt->as.con.args.items[j] = lower_var(b->p, arm->names.items[j]);
@@ -315,10 +239,10 @@ static void pattern_task(struct body *b, struct task t) {
         *t.out = e;
         return;
     }
-    mo_core_ty ty = type(b, pattern->type);
+    mo_core_ty ty = lower_cps_type(b, pattern->type);
     if (pattern->kind == MO_PATTERN_LITERAL) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
-        mo_core_expr_list args = arguments(b, 2);
+        mo_core_expr_list args = lower_cps_arguments(b, 2);
         args.items[0] = t.value;
         const struct mo_syntax *s = pattern->syntax;
         bool negative = s->kind == MO_S_NEGATE || s->kind == MO_S_PREFIX;
@@ -333,9 +257,9 @@ static void pattern_task(struct body *b, struct task t) {
         return;
     }
     if (pattern->kind == MO_PATTERN_TUPLE) {
-        mo_core_expr_list values = arguments(b, ty->as.tuple.count);
+        mo_core_expr_list values = lower_cps_arguments(b, ty->as.tuple.count);
         for (size_t i = 0; i < values.count; i++)
-            values.items[i] = projection(b, t.value, i);
+            values.items[i] = lower_cps_projection(b, t.value, i);
         pattern_parts(b, pattern, values, yes, t.else_, t.out);
         return;
     }
@@ -343,7 +267,7 @@ static void pattern_task(struct body *b, struct task t) {
     *t.out = e;
     if (pattern->kind == MO_PATTERN_LIST) {
         MO_ASSERT(ty->tag == MO_CORE_TY_LIST);
-        mo_core_expr_list args = arguments(b, 1);
+        mo_core_expr_list args = lower_cps_arguments(b, 1);
         args.items[0] = t.value;
         e->as.case_.expr = lower_prim(
             p,
@@ -362,9 +286,9 @@ static void pattern_task(struct body *b, struct task t) {
         if (pattern->part_count == 0)
             some->body = t.else_;
         else {
-            mo_core_expr_list values = arguments(b, 2);
+            mo_core_expr_list values = lower_cps_arguments(b, 2);
             for (size_t i = 0; i < 2; i++)
-                values.items[i] = projection(b, lower_var(p, some->names.items[0]), i);
+                values.items[i] = lower_cps_projection(b, lower_var(p, some->names.items[0]), i);
             pattern_parts(b, pattern, values, yes, t.else_, &some->body);
         }
         return;
@@ -382,7 +306,7 @@ static void pattern_task(struct body *b, struct task t) {
         arm->ctor = ctors.items[i].name;
         arm->names.count = ctors.items[i].fields.count;
         arm->names.items = LOWER_NEW(p, mo_core_string, arm->names.count);
-        mo_core_expr_list values = arguments(b, arm->names.count);
+        mo_core_expr_list values = lower_cps_arguments(b, arm->names.count);
         for (size_t j = 0; j < arm->names.count; j++) {
             arm->names.items[j] = lower_fresh(p);
             values.items[j] = lower_var(p, arm->names.items[j]);
@@ -432,7 +356,7 @@ static struct variable *pattern_variables(struct body *b, const struct mo_checke
  * binders are unique, so a name introduced here cannot be local to the target. */
 static struct variable *condition_variables(struct body *b, uint32_t index, mo_core_expr target,
                                             struct variable *outer) {
-    const struct mo_checked_expression *root = row(b, index);
+    const struct mo_checked_expression *root = lower_cps_row(b, index);
     if (root->pattern == NULL && root->operation != MO_T_AND && root->operation != MO_T_OR &&
         root->operation != MO_T_IMPLIES)
         return outer;
@@ -442,7 +366,7 @@ static struct variable *condition_variables(struct body *b, uint32_t index, mo_c
     rows[0] = index;
     while (count != 0) {
         lower_work(b->p, 1);
-        const struct mo_checked_expression *r = row(b, rows[--count]);
+        const struct mo_checked_expression *r = lower_cps_row(b, rows[--count]);
         if (r->pattern != NULL)
             candidates = pattern_variables(b, r->pattern, candidates);
         if (r->operation == MO_T_AND || r->operation == MO_T_OR || r->operation == MO_T_IMPLIES) {
@@ -515,26 +439,26 @@ static mo_core_expr share_target(struct body *b, struct task t, mo_core_expr tar
                                  mo_core_expr **out) {
     if (small_target(target))
         return target;
-    struct continuation *k = continuation(b, K_JUMP);
+    struct continuation *k = lower_cps_continuation(b, K_JUMP);
     k->name = lower_fresh(b->p);
     k->variables = condition_variables(b, t.row, target, t.state.variables);
-    mo_core_expr e = join(b, k, NULL);
+    mo_core_expr e = lower_cps_join(b, k, NULL);
     e->as.join.body = target;
     **out = e;
     *out = &e->as.join.rest;
-    return jump(b, k, NULL);
+    return lower_cps_jump(b, k, NULL);
 }
 
 static void arm_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     const struct mo_checked_arm *arm = t.arm;
     p->span = arm->syntax->span;
-    struct continuation *selected = continuation(b, K_JUMP);
+    struct continuation *selected = lower_cps_continuation(b, K_JUMP);
     selected->name = lower_fresh(p);
     selected->variables = pattern_variables(b, arm->patterns[0], t.state.variables);
     if (arm->guard != UINT32_MAX)
         selected->variables = condition_variables(b, arm->guard, t.value, selected->variables);
-    mo_core_expr success = join(b, selected, NULL);
+    mo_core_expr success = lower_cps_join(b, selected, NULL);
     success->as.join.body = t.value;
     *t.out = success;
     if (arm->guard != UINT32_MAX && arm->pattern_count > 1) {
@@ -542,31 +466,31 @@ static void arm_task(struct body *b, struct task t) {
          * guard/body preserves closure identity even when patterns overlap. */
         static const struct mo_source_type int_ = {
             .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
-        struct continuation *choose = continuation(b, K_JUMP);
+        struct continuation *choose = lower_cps_continuation(b, K_JUMP);
         choose->name = lower_fresh(p);
         choose->position = lower_fresh(p);
-        choose->position_type = type(b, &int_);
+        choose->position_type = lower_cps_type(b, &int_);
         choose->variables = t.state.variables;
-        mo_core_expr dispatch = join(b, choose, NULL);
+        mo_core_expr dispatch = lower_cps_join(b, choose, NULL);
         success->as.join.rest = dispatch;
         struct continuation initial = *choose;
         initial.extra = lower_int(p, 0);
-        dispatch->as.join.rest = jump(b, &initial, NULL);
-        struct continuation *guard = continuation(b, K_JUMP);
+        dispatch->as.join.rest = lower_cps_jump(b, &initial, NULL);
+        struct continuation *guard = lower_cps_continuation(b, K_JUMP);
         guard->name = lower_fresh(p);
         guard->position = lower_fresh(p);
         guard->position_type = choose->position_type;
         guard->variables = pattern_variables(b, arm->patterns[0], t.state.variables);
-        mo_core_expr tested = join(b, guard, NULL);
+        mo_core_expr tested = lower_cps_join(b, guard, NULL);
         dispatch->as.join.body = tested;
         mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
-        select->as.if_.then_ = jump(b, selected, NULL);
-        mo_core_expr_list args = arguments(b, 2);
+        select->as.if_.then_ = lower_cps_jump(b, selected, NULL);
+        mo_core_expr_list args = lower_cps_arguments(b, 2);
         args.items[0] = lower_var(p, guard->position);
         args.items[1] = lower_int(p, 1);
         choose->extra = lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_ADD}, args);
-        select->as.if_.else_ = jump(b, choose, NULL);
+        select->as.if_.else_ = lower_cps_jump(b, choose, NULL);
         push(b, (struct task){.kind = TASK_CONDITION,
                               .row = arm->guard,
                               .state = t.state,
@@ -575,7 +499,7 @@ static void arm_task(struct body *b, struct task t) {
         mo_core_expr failure = t.else_;
         for (uint32_t j = arm->pattern_count; j != 0; j--) {
             mo_core_expr gate = lower_expr(p, MO_CORE_EXPR_IF);
-            args = arguments(b, 2);
+            args = lower_cps_arguments(b, 2);
             args.items[0] = lower_var(p, choose->position);
             args.items[1] = lower_int(p, j - 1);
             gate->as.if_.cond =
@@ -590,8 +514,8 @@ static void arm_task(struct body *b, struct task t) {
             push(b, (struct task){.kind = TASK_PATTERN,
                                   .pattern = arm->patterns[j - 1],
                                   .value = t.then_,
-                                  .then_ = jump(b, guard, NULL),
-                                  .else_ = jump(b, &retry, NULL),
+                                  .then_ = lower_cps_jump(b, guard, NULL),
+                                  .else_ = lower_cps_jump(b, &retry, NULL),
                                   .out = &gate->as.if_.then_});
             failure = gate;
         }
@@ -600,13 +524,13 @@ static void arm_task(struct body *b, struct task t) {
     }
     mo_core_expr failure = t.else_;
     for (uint32_t j = arm->pattern_count; j != 0; j--) {
-        struct continuation *next = continuation(b, K_JUMP);
+        struct continuation *next = lower_cps_continuation(b, K_JUMP);
         next->name = lower_fresh(p);
         next->variables = t.state.variables;
-        mo_core_expr fallback = join(b, next, NULL);
+        mo_core_expr fallback = lower_cps_join(b, next, NULL);
         fallback->as.join.body = failure;
-        mo_core_expr yes = jump(b, selected, NULL);
-        mo_core_expr no = jump(b, next, NULL);
+        mo_core_expr yes = lower_cps_jump(b, selected, NULL);
+        mo_core_expr no = lower_cps_jump(b, next, NULL);
         if (arm->guard != UINT32_MAX) {
             mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
             select->as.if_.then_ = yes;
@@ -644,19 +568,19 @@ static void match(struct body *b, struct task t, struct continuation *k) {
     struct task branch = t;
     branch.out = out;
     branch.continuation = k->next;
-    struct continuation *done = branch_join(b, branch, type(b, k->row->type), &out);
+    struct continuation *done = branch_join(b, branch, lower_cps_type(b, k->row->type), &out);
     mo_core_expr failure = lower_expr(p, MO_CORE_EXPR_STOP);
     failure->as.stop = lower_text(p, "unreachable pattern failure");
     const struct mo_checked_match *m = k->row->match;
     for (uint32_t i = m->arm_count; i != 0; i--) {
         const struct mo_checked_arm *arm = &m->arms[i - 1];
         p->span = arm->syntax->span;
-        struct continuation *arm_next = continuation(b, K_JUMP);
+        struct continuation *arm_next = lower_cps_continuation(b, K_JUMP);
         arm_next->name = lower_fresh(p);
         arm_next->variables = t.state.variables;
-        mo_core_expr arm_exit = join(b, arm_next, NULL);
+        mo_core_expr arm_exit = lower_cps_join(b, arm_next, NULL);
         arm_exit->as.join.body = failure;
-        failure = jump(b, arm_next, NULL);
+        failure = lower_cps_jump(b, arm_next, NULL);
         MO_ASSERT(arm->pattern_count != 0);
         mo_core_expr *body = LOWER_NEW(p, mo_core_expr, 1);
         push(b, (struct task){.kind = TASK_ARM,
@@ -672,8 +596,8 @@ static void match(struct body *b, struct task t, struct continuation *k) {
     *out = failure;
 }
 
-static mo_core_expr unary(struct body *b, struct mo_core_prim prim, mo_core_expr value) {
-    mo_core_expr_list args = arguments(b, 1);
+mo_core_expr lower_cps_unary(struct body *b, struct mo_core_prim prim, mo_core_expr value) {
+    mo_core_expr_list args = lower_cps_arguments(b, 1);
     args.items[0] = value;
     return lower_prim(b->p, prim, args);
 }
@@ -687,7 +611,7 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
     mo_core_ty collection = NULL;
     mo_core_string list = {0}, end = {0};
     if (for_) {
-        collection = type(b, row(b, r->operands[0])->type);
+        collection = lower_cps_type(b, lower_cps_row(b, r->operands[0])->type);
         if (collection->tag == MO_CORE_TY_MAP || collection->tag == MO_CORE_TY_SET) {
             mo_core_ty converted = LOWER_NEW(p, struct mo_core_ty, 1);
             converted->tag = MO_CORE_TY_LIST;
@@ -709,7 +633,7 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
                 prim.as.map.v = collection->as.map.v;
                 prim.as.map.op.tag = MO_CORE_MAP_OP_ENTRIES;
             }
-            iterable = unary(b, prim, iterable);
+            iterable = lower_cps_unary(b, prim, iterable);
             collection = converted;
         }
         mo_core_expr e = let(b, lower_fresh(p), iterable);
@@ -717,24 +641,25 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
         list = e->as.let_.name;
         out = &e->as.let_.body;
         if (collection->tag == MO_CORE_TY_RANGE) {
-            mo_core_expr limit = let(b, lower_fresh(p),
-                                     unary(b,
-                                           (struct mo_core_prim){.tag = MO_CORE_PRIM_RANGE,
-                                                                 .as.range = MO_CORE_RANGE_OP_END},
-                                           lower_var(p, list)));
+            mo_core_expr limit =
+                let(b, lower_fresh(p),
+                    lower_cps_unary(b,
+                                    (struct mo_core_prim){.tag = MO_CORE_PRIM_RANGE,
+                                                          .as.range = MO_CORE_RANGE_OP_END},
+                                    lower_var(p, list)));
             *out = limit;
             end = limit->as.let_.name;
             out = &limit->as.let_.body;
         } else
             MO_ASSERT(collection->tag == MO_CORE_TY_LIST);
     }
-    struct continuation *done = continuation(b, K_JUMP);
+    struct continuation *done = lower_cps_continuation(b, K_JUMP);
     done->name = lower_fresh(p);
     done->variables = t.state.variables;
-    mo_core_expr exit = join(b, done, NULL);
+    mo_core_expr exit = lower_cps_join(b, done, NULL);
     *out = exit;
     finish(b, lower_unit(p), t.state, t.continuation, &exit->as.join.body);
-    struct continuation *again = continuation(b, K_JUMP);
+    struct continuation *again = lower_cps_continuation(b, K_JUMP);
     again->name = lower_fresh(p);
     again->row = r;
     again->variables = t.state.variables;
@@ -745,9 +670,9 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
                               ? binding_name(b, r->binding)
                               : lower_fresh(p);
         again->position_type =
-            collection->tag == MO_CORE_TY_RANGE ? type(b, &int_type) : collection;
+            collection->tag == MO_CORE_TY_RANGE ? lower_cps_type(b, &int_type) : collection;
     }
-    mo_core_expr round = join(b, again, NULL);
+    mo_core_expr round = lower_cps_join(b, again, NULL);
     exit->as.join.rest = round;
     struct loop *scope = LOWER_NEW(p, struct loop, 1);
     *scope = (struct loop){done, again};
@@ -758,7 +683,7 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
     struct continuation initial = *again;
     if (!for_) {
         mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
-        select->as.if_.else_ = jump(b, done, NULL);
+        select->as.if_.else_ = lower_cps_jump(b, done, NULL);
         push(b, (struct task){.kind = TASK_CONDITION,
                               .row = r->operands[0],
                               .state = state,
@@ -770,7 +695,7 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
             binder(b, round, 0, r->binding);
         mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
         round->as.join.body = select;
-        mo_core_expr_list args = arguments(b, 2);
+        mo_core_expr_list args = lower_cps_arguments(b, 2);
         args.items[0] = lower_var(p, again->position);
         args.items[1] = lower_var(p, end);
         select->as.if_.cond =
@@ -778,30 +703,30 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
                        (struct mo_core_prim){.tag = MO_CORE_PRIM_CMP,
                                              .as.cmp = {MO_CORE_BASE_INT, MO_CORE_CMP_OP_LT}},
                        args);
-        select->as.if_.else_ = jump(b, done, NULL);
+        select->as.if_.else_ = lower_cps_jump(b, done, NULL);
         body_out = &select->as.if_.then_;
         element = lower_var(p, again->position);
-        args = arguments(b, 2);
+        args = lower_cps_arguments(b, 2);
         args.items[0] = lower_var(p, again->position);
         args.items[1] = lower_int(p, 1);
         again->extra = lower_prim(
             p, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_ADD}, args);
-        initial.extra = unary(
+        initial.extra = lower_cps_unary(
             b, (struct mo_core_prim){.tag = MO_CORE_PRIM_RANGE, .as.range = MO_CORE_RANGE_OP_START},
             lower_var(p, list));
     } else {
         mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
         round->as.join.body = select;
         select->as.case_.expr =
-            unary(b,
-                  (struct mo_core_prim){
-                      .tag = MO_CORE_PRIM_LIST,
-                      .as.list = {.t = collection->as.list, .op.tag = MO_CORE_LIST_OP_UNCONS}},
-                  lower_var(p, again->position));
+            lower_cps_unary(b,
+                            (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                                                  .as.list = {.t = collection->as.list,
+                                                              .op.tag = MO_CORE_LIST_OP_UNCONS}},
+                            lower_var(p, again->position));
         select->as.case_.arms.count = 2;
         select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
-        select->as.case_.arms.items[0] =
-            (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = jump(b, done, NULL)};
+        select->as.case_.arms.items[0] = (struct mo_core_arm){
+            .ctor = lower_text(p, "None"), .body = lower_cps_jump(b, done, NULL)};
         struct mo_core_arm *some = &select->as.case_.arms.items[1];
         some->ctor = lower_text(p, "Some");
         some->names.count = 1;
@@ -809,16 +734,16 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
         some->names.items[0] = lower_fresh(p);
         mo_core_expr item =
             let(b, r->binding == NULL ? lower_fresh(p) : binding_name(b, r->binding),
-                projection(b, lower_var(p, some->names.items[0]), 0));
+                lower_cps_projection(b, lower_var(p, some->names.items[0]), 0));
         if (r->binding != NULL)
             binder(b, item, 0, r->binding);
         some->body = item;
         body_out = &item->as.let_.body;
         element = lower_var(p, item->as.let_.name);
-        again->extra = projection(b, lower_var(p, some->names.items[0]), 1);
+        again->extra = lower_cps_projection(b, lower_var(p, some->names.items[0]), 1);
         initial.extra = lower_var(p, list);
     }
-    round->as.join.rest = jump(b, &initial, NULL);
+    round->as.join.rest = lower_cps_jump(b, &initial, NULL);
     if (for_ && r->binding == NULL && r->pattern != NULL) {
         mo_core_expr *success = LOWER_NEW(p, mo_core_expr, 1);
         mo_core_expr impossible = lower_expr(p, MO_CORE_EXPR_STOP);
@@ -834,666 +759,6 @@ static void loop(struct body *b, struct task t, const struct mo_checked_expressi
     emit(b, r->operands[1], state, again, body_out);
 }
 
-static enum mo_syntax_kind kind(const struct mo_checked_expression *r) {
-    const struct mo_syntax *s = r->syntax;
-    if (r->operation != MO_T_EOF)
-        return MO_S_BINARY;
-    if (s->kind == MO_S_POSTFIX)
-        return s->children[s->count - 1]->kind;
-    if (s->kind == MO_S_BINARY_CHAIN)
-        return MO_S_BINARY;
-    if (s->kind == MO_S_PREFIX)
-        return MO_S_NEGATE;
-    return s->kind;
-}
-
-static const struct mo_ability_implementation *ability(struct body *b,
-                                                       const struct mo_checked_expression *r,
-                                                       enum mo_source_ability wanted,
-                                                       uint32_t operand) {
-    for (uint32_t i = 0; i < r->ability_count; i++) {
-        lower_work(b->p, 1);
-        const struct mo_checked_ability_use *use = &r->abilities[i];
-        if (use->operand == operand && use->implementation->ability == wanted)
-            return use->implementation;
-    }
-    lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED, "this operation has no selected ability proof");
-}
-
-/* to_text or compare through an ability: a dot call, or qualified (T.to_text). */
-static bool ability_native(const struct mo_checked_expression *r) {
-    return strcmp(r->native, "to_text") == 0 || strcmp(r->native, "compare") == 0;
-}
-
-static bool direct_function(struct body *b, const struct mo_checked_expression *r) {
-    if (r->symbol == NULL || r->symbol->declaration->kind != MO_S_FN)
-        return false;
-    if (r->operand_count == 0)
-        return true; /* A function-value adapter invokes its own declaration. */
-    const struct mo_checked_expression *callee = row(b, r->operands[0]);
-    return callee->operand_count == 0 && callee->symbol == r->symbol;
-}
-
-static mo_core_expr list_sum(struct body *b, mo_core_ty number, mo_core_expr values) {
-    struct lowering *p = b->p;
-    mo_core_ty list = LOWER_NEW(p, struct mo_core_ty, 1);
-    list->tag = MO_CORE_TY_LIST;
-    list->as.list = number;
-    mo_core_expr zero = lower_int(p, 0);
-    if (number->tag != MO_CORE_TY_INT) {
-        MO_ASSERT(number->tag == MO_CORE_TY_BIG_INT || number->tag == MO_CORE_TY_DECIMAL ||
-                  number->tag == MO_CORE_TY_FLOAT);
-        enum mo_core_int_op convert = number->tag == MO_CORE_TY_BIG_INT ? MO_CORE_INT_OP_TO_BIG
-                                      : number->tag == MO_CORE_TY_DECIMAL
-                                          ? MO_CORE_INT_OP_TO_DECIMAL
-                                          : MO_CORE_INT_OP_TO_FLOAT;
-        zero = unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = convert}, zero);
-    }
-    struct continuation *done = continuation(b, K_JUMP);
-    done->name = lower_fresh(p);
-    done->result = true;
-    mo_core_expr exit = join(b, done, number);
-    exit->as.join.body = lower_var(p, exit->as.join.params.items[0].name);
-    struct continuation *again = continuation(b, K_JUMP);
-    again->name = lower_fresh(p);
-    again->result = true;
-    again->position = lower_fresh(p);
-    again->position_type = list;
-    mo_core_expr round = join(b, again, number);
-    exit->as.join.rest = round;
-    mo_core_expr accumulator = lower_var(p, round->as.join.params.items[0].name);
-    mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
-    round->as.join.body = select;
-    select->as.case_.expr =
-        unary(b,
-              (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
-                                    .as.list = {.t = number, .op.tag = MO_CORE_LIST_OP_UNCONS}},
-              lower_var(p, again->position));
-    select->as.case_.arms.count = 2;
-    select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
-    select->as.case_.arms.items[0] =
-        (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = jump(b, done, accumulator)};
-    struct mo_core_arm *some = &select->as.case_.arms.items[1];
-    some->ctor = lower_text(p, "Some");
-    some->names.count = 1;
-    some->names.items = LOWER_NEW(p, mo_core_string, 1);
-    some->names.items[0] = lower_fresh(p);
-    mo_core_expr pair = lower_var(p, some->names.items[0]);
-    mo_core_expr_list args = arguments(b, 2);
-    args.items[0] = accumulator;
-    args.items[1] = projection(b, pair, 0);
-    again->extra = projection(b, pair, 1);
-    some->body = jump(b, again, lower_prim(p, lower_operator(p, MO_T_PLUS, number, number), args));
-    again->extra = values;
-    round->as.join.rest = jump(b, again, zero);
-    return exit;
-}
-
-static mo_core_expr application(struct body *b, const struct mo_checked_expression *r,
-                                mo_core_expr_list args) {
-    struct lowering *p = b->p;
-    mo_core_ty result = type(b, r->type);
-    if (r->operation != MO_T_EOF) {
-        mo_core_ty left = type(b, row(b, r->operands[0])->type);
-        mo_core_ty right = args.count == 2 ? type(b, row(b, r->operands[1])->type) : NULL;
-        if (r->operation == MO_T_LT || r->operation == MO_T_LE || r->operation == MO_T_GT ||
-            r->operation == MO_T_GE) {
-            for (uint32_t i = 0; i < r->ability_count; i++) {
-                lower_work(p, 1);
-                const struct mo_checked_ability_use *use = &r->abilities[i];
-                if (use->operand != r->operands[0] ||
-                    use->implementation->ability != MO_SOURCE_ORDER)
-                    continue;
-                const struct mo_ability_implementation *proof = use->implementation;
-                const struct substitution *substitution = &b->instance->substitution;
-                lower_proof(p, &proof, &substitution);
-                if (proof->kind == MO_ABILITY_NATIVE)
-                    continue;
-                static const struct mo_source_type ordering = {
-                    .kind = MO_SOURCE_NAMED, .name = "Ordering", .module = UINT32_MAX};
-                mo_core_ty order = type(b, &ordering);
-                mo_core_expr_list values = arguments(b, 2);
-                values.items[0] = lower_compare(p, proof, substitution, b->instance->owner,
-                                                b->instance->depth, args.items[0], args.items[1]);
-                values.items[1] = lower_expr(p, MO_CORE_EXPR_CON);
-                values.items[1]->as.con.ty = order;
-                values.items[1]->as.con.ctor = lower_text(
-                    p, r->operation == MO_T_LT || r->operation == MO_T_GE ? "Less" : "Greater");
-                mo_core_expr e = lower_prim(
-                    p, (struct mo_core_prim){.tag = MO_CORE_PRIM_EQ, .as.eq = order}, values);
-                if (r->operation == MO_T_LE || r->operation == MO_T_GE)
-                    e = unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_NOT}, e);
-                return e;
-            }
-        }
-        if (left->tag == MO_CORE_TY_UNIT && (r->operation == MO_T_LT || r->operation == MO_T_LE ||
-                                             r->operation == MO_T_GT || r->operation == MO_T_GE))
-            return lower_bool(p, r->operation == MO_T_LE || r->operation == MO_T_GE);
-        mo_core_expr e = lower_prim(p, lower_operator(p, r->operation, left, right), args);
-        if (r->operation == MO_T_NE) {
-            mo_core_expr_list one = arguments(b, 1);
-            one.items[0] = e;
-            return lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_NOT}, one);
-        }
-        return e;
-    }
-    if (r->native != NULL && strncmp(r->native, "Simulation.", 11) == 0) {
-        static const struct {
-            const char *name;
-            enum mo_sim_operation operation;
-        } operations[] = {
-#define HOSTOP(id, module, member, signature, params, bugs, spec_only)
-#define SIMOP(id, module, member, spec_only) {module "." member, MO_SIM_##id},
-#include "base/hostops.def"
-        };
-        size_t index = 0;
-        while (index < MO_SIM_COUNT && strcmp(r->native, operations[index].name) != 0)
-            index++;
-        MO_ASSERT(index < MO_SIM_COUNT);
-        struct mo_core_sim_op op = {.tag = operations[index].operation,
-                                    .descriptor = {.digits = lower_number(p, r->service)},
-                                    .tool = {.digits = lower_number(p, r->tool)}};
-        if (op.tag == MO_SIM_SEND) {
-            MO_ASSERT(r->operand_count >= 1);
-            op.arguments.count = r->operand_count - 1;
-            op.arguments.items = LOWER_NEW(p, mo_core_ty, op.arguments.count);
-            for (size_t i = 0; i < op.arguments.count; i++)
-                op.arguments.items[i] = type(b, row(b, r->operands[i + 1])->type);
-            op.result = type(b, r->type->arguments[0]);
-        }
-        return lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op}, args);
-    }
-    if (r->native != NULL) {
-        static const struct {
-            const char *name;
-            enum mo_core_int_op operation;
-        } natives[] = {{"Int.abs", MO_CORE_INT_OP_ABS},
-                       {"Int.min", MO_CORE_INT_OP_MIN},
-                       {"Int.max", MO_CORE_INT_OP_MAX},
-                       {"Int.pow", MO_CORE_INT_OP_POW},
-                       {"Int.floor_div", MO_CORE_INT_OP_FLOOR_DIV},
-                       {"Int.floor_mod", MO_CORE_INT_OP_FLOOR_MOD},
-                       {"Int.wrapping_add", MO_CORE_INT_OP_WRAPPING_ADD},
-                       {"Int.wrapping_sub", MO_CORE_INT_OP_WRAPPING_SUB},
-                       {"Int.wrapping_mul", MO_CORE_INT_OP_WRAPPING_MUL},
-                       {"Int.saturating_add", MO_CORE_INT_OP_SATURATING_ADD},
-                       {"Int.saturating_sub", MO_CORE_INT_OP_SATURATING_SUB},
-                       {"Int.saturating_mul", MO_CORE_INT_OP_SATURATING_MUL},
-                       {"Int.checked_add", MO_CORE_INT_OP_CHECKED_ADD},
-                       {"Int.checked_sub", MO_CORE_INT_OP_CHECKED_SUB},
-                       {"Int.checked_mul", MO_CORE_INT_OP_CHECKED_MUL},
-                       {"Int.to_decimal", MO_CORE_INT_OP_TO_DECIMAL},
-                       {"Int.to_float", MO_CORE_INT_OP_TO_FLOAT},
-                       {"Int.to_big", MO_CORE_INT_OP_TO_BIG},
-                       {"Int.to_byte", MO_CORE_INT_OP_TO_BYTE},
-                       {"Int.to_char", MO_CORE_INT_OP_TO_CHAR},
-                       {"Int.seconds", MO_CORE_INT_OP_SECONDS},
-                       {"Int.milliseconds", MO_CORE_INT_OP_MILLISECONDS},
-                       {"Int.minutes", MO_CORE_INT_OP_MINUTES},
-                       {"Int.hours", MO_CORE_INT_OP_HOURS},
-                       {"Int.days", MO_CORE_INT_OP_DAYS}};
-        for (size_t i = 0; i < sizeof natives / sizeof natives[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, natives[i].name) == 0)
-                return lower_prim(
-                    p,
-                    (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = natives[i].operation},
-                    args);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_big_op operation;
-        } bigs[] = {{"BigInt.abs", MO_CORE_BIG_OP_ABS},
-                    {"BigInt.min", MO_CORE_BIG_OP_MIN},
-                    {"BigInt.max", MO_CORE_BIG_OP_MAX},
-                    {"BigInt.pow", MO_CORE_BIG_OP_POW},
-                    {"BigInt.floor_div", MO_CORE_BIG_OP_FLOOR_DIV},
-                    {"BigInt.floor_mod", MO_CORE_BIG_OP_FLOOR_MOD},
-                    {"BigInt.to_int", MO_CORE_BIG_OP_TO_INT}};
-        for (size_t i = 0; i < sizeof bigs / sizeof bigs[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, bigs[i].name) == 0)
-                return lower_prim(
-                    p, (struct mo_core_prim){.tag = MO_CORE_PRIM_BIG, .as.big = bigs[i].operation},
-                    args);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_float_op operation;
-        } floats[] = {{"Float.abs", MO_CORE_FLOAT_OP_ABS},
-                      {"Float.floor", MO_CORE_FLOAT_OP_FLOOR},
-                      {"Float.ceil", MO_CORE_FLOAT_OP_CEIL},
-                      {"Float.round", MO_CORE_FLOAT_OP_ROUND},
-                      {"Float.sqrt", MO_CORE_FLOAT_OP_SQRT},
-                      {"Float.nan?", MO_CORE_FLOAT_OP_IS_NAN},
-                      {"Float.infinite?", MO_CORE_FLOAT_OP_IS_INFINITE},
-                      {"Float.to_decimal", MO_CORE_FLOAT_OP_TO_DECIMAL}};
-        for (size_t i = 0; i < sizeof floats / sizeof floats[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, floats[i].name) == 0)
-                return lower_prim(p,
-                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_FLOAT,
-                                                        .as.float_ = floats[i].operation},
-                                  args);
-        }
-        if (strcmp(r->native, "Byte.to_int") == 0)
-            return lower_prim(
-                p,
-                (struct mo_core_prim){.tag = MO_CORE_PRIM_BYTE, .as.byte = MO_CORE_BYTE_OP_TO_INT},
-                args);
-        if (strcmp(r->native, "List.sum") == 0) {
-            MO_ASSERT(args.count == 1);
-            return list_sum(b, result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result,
-                            args.items[0]);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_bytes_op operation;
-        } bytes[] = {{"Bytes.size", MO_CORE_BYTES_OP_SIZE},
-                     {"Bytes.get", MO_CORE_BYTES_OP_GET},
-                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8}};
-        for (size_t i = 0; i < sizeof bytes / sizeof bytes[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, bytes[i].name) == 0)
-                return lower_prim(p,
-                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_BYTES,
-                                                        .as.bytes = bytes[i].operation},
-                                  args);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_range_op operation;
-        } ranges[] = {{"Range.to_list", MO_CORE_RANGE_OP_TO_LIST},
-                      {"Range.contains?", MO_CORE_RANGE_OP_CONTAINS}};
-        for (size_t i = 0; i < sizeof ranges / sizeof ranges[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, ranges[i].name) == 0)
-                return lower_prim(p,
-                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_RANGE,
-                                                        .as.range = ranges[i].operation},
-                                  args);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_dec_op operation;
-        } decimals[] = {{"Decimal.abs", MO_CORE_DEC_OP_ABS},
-                        {"Decimal.min", MO_CORE_DEC_OP_MIN},
-                        {"Decimal.max", MO_CORE_DEC_OP_MAX},
-                        {"Decimal.floor", MO_CORE_DEC_OP_FLOOR},
-                        {"Decimal.ceil", MO_CORE_DEC_OP_CEIL},
-                        {"Decimal.round", MO_CORE_DEC_OP_ROUND},
-                        {"Decimal.to_int", MO_CORE_DEC_OP_TO_INT},
-                        {"Decimal.to_fixed", MO_CORE_DEC_OP_TO_FIXED},
-                        {"Decimal.to_float", MO_CORE_DEC_OP_TO_FLOAT}};
-        for (size_t i = 0; i < sizeof decimals / sizeof decimals[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, decimals[i].name) == 0)
-                return lower_prim(
-                    p,
-                    (struct mo_core_prim){.tag = MO_CORE_PRIM_DEC, .as.dec = decimals[i].operation},
-                    args);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_time_op operation;
-        } times[] = {{"Time.checked_add", MO_CORE_TIME_OP_CHECKED_ADD},
-                     {"Time.parse", MO_CORE_TIME_OP_PARSE},
-                     {"Duration.in_milliseconds", MO_CORE_TIME_OP_IN_MILLISECONDS},
-                     {"Duration.in_seconds", MO_CORE_TIME_OP_IN_SECONDS}};
-        for (size_t i = 0; i < sizeof times / sizeof times[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, times[i].name) == 0)
-                return lower_prim(
-                    p,
-                    (struct mo_core_prim){.tag = MO_CORE_PRIM_TIME, .as.time = times[i].operation},
-                    args);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_unicode_op operation;
-        } unicodes[] = {{"Unicode16.graphemes", MO_CORE_UNICODE_OP_GRAPHEMES},
-                        {"Unicode16.display_width", MO_CORE_UNICODE_OP_DISPLAY_WIDTH},
-                        {"Unicode16.normalize_nfc", MO_CORE_UNICODE_OP_NORMALIZE_NFC},
-                        {"Unicode16.lowercase", MO_CORE_UNICODE_OP_LOWERCASE},
-                        {"Unicode16.uppercase", MO_CORE_UNICODE_OP_UPPERCASE},
-                        {"Unicode16.letter?", MO_CORE_UNICODE_OP_LETTER},
-                        {"Unicode16.digit?", MO_CORE_UNICODE_OP_DIGIT}};
-        for (size_t i = 0; i < sizeof unicodes / sizeof unicodes[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, unicodes[i].name) == 0)
-                return lower_prim(p,
-                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_UNICODE16,
-                                                        .as.unicode16 = unicodes[i].operation},
-                                  args);
-        }
-    }
-    if (r->native != NULL) {
-        static const struct {
-            const char *name;
-            struct mo_core_io_op operation;
-        } io[] = {{"Console.print", {MO_CORE_IO_OP_PRINT, false}},
-                  {"Console.error", {MO_CORE_IO_OP_PRINT_ERROR, false}},
-                  {"Console.read_line", {MO_CORE_IO_OP_READ_LINE, false}},
-                  {"Args.list", {MO_CORE_IO_OP_ARGS_LIST, false}},
-                  {"Args.of", {MO_CORE_IO_OP_ARGS_OF, false}},
-                  {"Env.get", {MO_CORE_IO_OP_ENV_GET, false}},
-                  {"Env.of", {MO_CORE_IO_OP_ENV_OF, false}},
-                  {"Console.fake", {MO_CORE_IO_OP_CONSOLE_FAKE, false}},
-                  {"Console.fake_input", {MO_CORE_IO_OP_CONSOLE_FAKE_INPUT, false}},
-                  {"Console.printed", {MO_CORE_IO_OP_PRINTED, false}},
-                  {"Console.printed_errors", {MO_CORE_IO_OP_PRINTED_ERRORS, false}},
-                  {"Files.in_memory", {MO_CORE_IO_OP_FILES_IN_MEMORY, false}},
-                  {"Files.read_only", {MO_CORE_IO_OP_READ_ONLY, false}},
-                  {"Files.read_text", {MO_CORE_IO_OP_READ_TEXT, false}},
-                  {"Files.write_text", {MO_CORE_IO_OP_WRITE_TEXT, false}},
-                  {"Files.read_bytes", {MO_CORE_IO_OP_READ_BYTES, false}},
-                  {"Files.append_text", {MO_CORE_IO_OP_APPEND_TEXT, false}},
-                  {"Files.remove", {MO_CORE_IO_OP_REMOVE, false}},
-                  {"Files.make_folder", {MO_CORE_IO_OP_MAKE_FOLDER, false}},
-                  {"Files.list", {MO_CORE_IO_OP_LIST, false}},
-                  {"Files.entries", {MO_CORE_IO_OP_ENTRIES, false}},
-                  {"Files.exists?", {MO_CORE_IO_OP_EXISTS, false}},
-                  {"Files.within", {MO_CORE_IO_OP_WITHIN, false}},
-                  {"ReadFiles.read_text", {MO_CORE_IO_OP_READ_TEXT, true}},
-                  {"ReadFiles.read_bytes", {MO_CORE_IO_OP_READ_BYTES, true}},
-                  {"ReadFiles.list", {MO_CORE_IO_OP_LIST, true}},
-                  {"ReadFiles.entries", {MO_CORE_IO_OP_ENTRIES, true}},
-                  {"ReadFiles.exists?", {MO_CORE_IO_OP_EXISTS, true}},
-                  {"ReadFiles.within", {MO_CORE_IO_OP_WITHIN, true}},
-                  {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
-                  {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}},
-                  {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
-                  {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}}};
-        for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, io[i].name) == 0)
-                return lower_prim(
-                    p, (struct mo_core_prim){.tag = MO_CORE_PRIM_IO, .as.io = io[i].operation},
-                    args);
-        }
-        if (strcmp(r->native, "List.join") == 0)
-            return lower_prim(
-                p, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_JOIN},
-                args);
-        static const struct {
-            const char *name;
-            enum mo_core_list_op_tag operation;
-        } lists[] = {{"List.first", MO_CORE_LIST_OP_FIRST},
-                     {"List.last", MO_CORE_LIST_OP_LAST},
-                     {"List.get", MO_CORE_LIST_OP_GET},
-                     {"List.size", MO_CORE_LIST_OP_SIZE},
-                     {"List.empty?", MO_CORE_LIST_OP_IS_EMPTY},
-                     {"List.append", MO_CORE_LIST_OP_APPEND},
-                     {"List.prepend", MO_CORE_LIST_OP_PREPEND},
-                     {"List.concat", MO_CORE_LIST_OP_CONCAT},
-                     {"List.reverse", MO_CORE_LIST_OP_REVERSE},
-                     {"List.take", MO_CORE_LIST_OP_TAKE},
-                     {"List.drop", MO_CORE_LIST_OP_DROP},
-                     {"List.set", MO_CORE_LIST_OP_SET},
-                     {"List.remove_at", MO_CORE_LIST_OP_REMOVE_AT},
-                     {"List.enumerate", MO_CORE_LIST_OP_ENUMERATE},
-                     {"List.contains?", MO_CORE_LIST_OP_CONTAINS},
-                     {"List.unique", MO_CORE_LIST_OP_UNIQUE}};
-        if (strcmp(r->native, "List.zip") == 0) {
-            MO_ASSERT(args.count == 2);
-            mo_core_ty zipped = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
-            MO_ASSERT(zipped->tag == MO_CORE_TY_LIST && zipped->as.list->tag == MO_CORE_TY_TUPLE &&
-                      zipped->as.list->as.tuple.count == 2);
-            return lower_prim(
-                p,
-                (struct mo_core_prim){
-                    .tag = MO_CORE_PRIM_LIST,
-                    .as.list = {.t = zipped->as.list->as.tuple.items[0],
-                                .op = {.tag = MO_CORE_LIST_OP_ZIP,
-                                       .as.zip = zipped->as.list->as.tuple.items[1]}}},
-                args);
-        }
-        for (size_t i = 0; i < sizeof lists / sizeof lists[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, lists[i].name) == 0) {
-                mo_core_ty receiver =
-                    r->operand_count == 0
-                        ? result->as.fn.params.items[0]
-                        : type(b, row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)
-                                      ->type);
-                if (receiver->tag == MO_CORE_TY_FN)
-                    receiver = receiver->as.fn.params.items[0];
-                MO_ASSERT(receiver->tag == MO_CORE_TY_LIST);
-                return lower_prim(p,
-                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
-                                                        .as.list = {.t = receiver->as.list,
-                                                                    .op.tag = lists[i].operation}},
-                                  args);
-            }
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_char_op operation;
-        } chars[] = {{"Char.code", MO_CORE_CHAR_OP_CODE},
-                     {"Char.ascii_digit?", MO_CORE_CHAR_OP_IS_DIGIT},
-                     {"Char.ascii_letter?", MO_CORE_CHAR_OP_IS_LETTER},
-                     {"Char.ascii_white_space?", MO_CORE_CHAR_OP_IS_WHITE_SPACE},
-                     {"Char.ascii_lowercase", MO_CORE_CHAR_OP_LOWER},
-                     {"Char.ascii_uppercase", MO_CORE_CHAR_OP_UPPER},
-                     {"Char.to_text", MO_CORE_CHAR_OP_TO_TEXT}};
-        for (size_t i = 0; i < sizeof chars / sizeof chars[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, chars[i].name) == 0)
-                return lower_prim(
-                    p,
-                    (struct mo_core_prim){.tag = MO_CORE_PRIM_CHAR, .as.char_ = chars[i].operation},
-                    args);
-        }
-        static const struct {
-            const char *name;
-            enum mo_core_text_op operation;
-        } texts[] = {{"Text.bytes", MO_CORE_TEXT_OP_BYTES},
-                     {"Text.byte_count", MO_CORE_TEXT_OP_BYTE_COUNT},
-                     {"Text.char_count", MO_CORE_TEXT_OP_CHAR_COUNT},
-                     {"Text.empty?", MO_CORE_TEXT_OP_IS_EMPTY},
-                     {"Text.chars", MO_CORE_TEXT_OP_CHARS},
-                     {"Text.from_chars", MO_CORE_TEXT_OP_FROM_CHARS},
-                     {"Text.words", MO_CORE_TEXT_OP_WORDS},
-                     {"Text.split", MO_CORE_TEXT_OP_SPLIT},
-                     {"Text.trim", MO_CORE_TEXT_OP_TRIM},
-                     {"Text.trim_start", MO_CORE_TEXT_OP_TRIM_START},
-                     {"Text.trim_end", MO_CORE_TEXT_OP_TRIM_END},
-                     {"Text.pad_left", MO_CORE_TEXT_OP_PAD_LEFT},
-                     {"Text.pad_right", MO_CORE_TEXT_OP_PAD_RIGHT},
-                     {"Text.starts_with?", MO_CORE_TEXT_OP_STARTS_WITH},
-                     {"Text.ends_with?", MO_CORE_TEXT_OP_ENDS_WITH},
-                     {"Text.drop_prefix", MO_CORE_TEXT_OP_DROP_PREFIX},
-                     {"Text.drop_suffix", MO_CORE_TEXT_OP_DROP_SUFFIX},
-                     {"Text.replace", MO_CORE_TEXT_OP_REPLACE},
-                     {"Text.repeat", MO_CORE_TEXT_OP_REPEAT},
-                     {"Text.lines", MO_CORE_TEXT_OP_LINES},
-                     {"Text.contains?", MO_CORE_TEXT_OP_CONTAINS},
-                     {"Text.ascii_lowercase", MO_CORE_TEXT_OP_LOWER},
-                     {"Text.ascii_uppercase", MO_CORE_TEXT_OP_UPPER},
-                     {"Text.to_int", MO_CORE_TEXT_OP_TO_INT},
-                     {"Text.to_decimal", MO_CORE_TEXT_OP_TO_DECIMAL},
-                     {"Text.to_float", MO_CORE_TEXT_OP_TO_FLOAT}};
-        for (size_t i = 0; i < sizeof texts / sizeof texts[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, texts[i].name) == 0)
-                return lower_prim(
-                    p,
-                    (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = texts[i].operation},
-                    args);
-        }
-    }
-    if (r->native != NULL && strcmp(r->native, "List.to_map") == 0) {
-        mo_core_ty map_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
-        MO_ASSERT(map_ty->tag == MO_CORE_TY_MAP);
-        struct mo_core_prim prim = {.tag = MO_CORE_PRIM_MAP,
-                                    .as.map = {.k = map_ty->as.map.k,
-                                               .v = map_ty->as.map.v,
-                                               .op.tag = MO_CORE_MAP_OP_OF_LIST}};
-        return lower_prim(p, prim, args);
-    }
-    if (r->native != NULL && strcmp(r->native, "List.to_set") == 0) {
-        mo_core_ty set_ty = result->tag == MO_CORE_TY_FN ? result->as.fn.ret : result;
-        MO_ASSERT(set_ty->tag == MO_CORE_TY_SET);
-        return lower_prim(
-            p,
-            (struct mo_core_prim){.tag = MO_CORE_PRIM_SET,
-                                  .as.set = {.t = set_ty->as.set, .op = MO_CORE_SET_OP_OF_LIST}},
-            args);
-    }
-    static const struct {
-        const char *name;
-        enum mo_core_map_op_tag operation;
-    } maps[] = {{"Map.get", MO_CORE_MAP_OP_GET},         {"Map.set", MO_CORE_MAP_OP_SET},
-                {"Map.remove", MO_CORE_MAP_OP_REMOVE},   {"Map.size", MO_CORE_MAP_OP_SIZE},
-                {"Map.empty?", MO_CORE_MAP_OP_IS_EMPTY}, {"Map.has?", MO_CORE_MAP_OP_HAS},
-                {"Map.keys", MO_CORE_MAP_OP_KEYS},       {"Map.values", MO_CORE_MAP_OP_VALUES},
-                {"Map.entries", MO_CORE_MAP_OP_ENTRIES}};
-    for (size_t i = 0; r->native != NULL && i < sizeof maps / sizeof maps[0]; i++) {
-        if (strcmp(r->native, maps[i].name) != 0)
-            continue;
-        mo_core_ty receiver =
-            r->operand_count == 0
-                ? result->as.fn.params.items[0]
-                : type(b, row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
-        if (receiver->tag == MO_CORE_TY_FN)
-            receiver = receiver->as.fn.params.items[0];
-        MO_ASSERT(receiver->tag == MO_CORE_TY_MAP);
-        struct mo_core_prim prim = {.tag = MO_CORE_PRIM_MAP,
-                                    .as.map = {.k = receiver->as.map.k,
-                                               .v = receiver->as.map.v,
-                                               .op.tag = maps[i].operation}};
-        return lower_prim(p, prim, args);
-    }
-    if (r->native != NULL && strncmp(r->native, "Set.", 4) == 0) {
-        static const struct {
-            const char *name;
-            enum mo_core_set_op operation;
-        } sets[] = {{"Set.empty", MO_CORE_SET_OP_EMPTY},
-                    {"Set.size", MO_CORE_SET_OP_SIZE},
-                    {"Set.empty?", MO_CORE_SET_OP_IS_EMPTY},
-                    {"Set.has?", MO_CORE_SET_OP_HAS},
-                    {"Set.add", MO_CORE_SET_OP_ADD},
-                    {"Set.remove", MO_CORE_SET_OP_REMOVE},
-                    {"Set.union", MO_CORE_SET_OP_UNION},
-                    {"Set.intersection", MO_CORE_SET_OP_INTERSECTION},
-                    {"Set.difference", MO_CORE_SET_OP_DIFFERENCE},
-                    {"Set.to_list", MO_CORE_SET_OP_TO_LIST}};
-        for (size_t i = 0; i < sizeof sets / sizeof sets[0]; i++) {
-            lower_work(p, 1);
-            if (strcmp(r->native, sets[i].name) != 0)
-                continue;
-            mo_core_ty receiver =
-                r->operand_count == 0
-                    ? (result->tag == MO_CORE_TY_FN ? result->as.fn.params.items[0] : result)
-                    : type(b,
-                           row(b, r->receiver == UINT32_MAX ? r->operands[0] : r->receiver)->type);
-            if (receiver->tag == MO_CORE_TY_FN)
-                receiver = receiver->as.fn.params.items[0];
-            MO_ASSERT(receiver->tag == MO_CORE_TY_SET);
-            return lower_prim(
-                p,
-                (struct mo_core_prim){.tag = MO_CORE_PRIM_SET,
-                                      .as.set = {.t = receiver->as.set, .op = sets[i].operation}},
-                args);
-        }
-    }
-    if (r->native != NULL) {
-        const char *member = strrchr(r->native, '.');
-        if (member != NULL && strcmp(member, ".to_text") == 0) {
-            MO_ASSERT(args.count == 1);
-            /* Qualified natives are already selected by the shared signature
-             * table; an ordinary same-name helper has a source symbol instead. */
-            mo_core_ty receiver = r->operand_count == 0
-                                      ? type(b, r->type)->as.fn.params.items[0]
-                                      : type(b, row(b, r->operands[r->operand_count - 1])->type);
-            return lower_error_text(p, receiver, args.items[0]);
-        }
-    }
-    /* A qualified ability function value proves its ability on its own row. */
-    uint32_t proved = r->operand_count == 0 ? (uint32_t)(r - b->source->items) : r->operands[0];
-    if (r->native != NULL && strcmp(r->native, "to_text") == 0) {
-        MO_ASSERT(args.count == 1);
-        return lower_to_text(p, ability(b, r, MO_SOURCE_TEXT, proved), &b->instance->substitution,
-                             b->instance->owner, b->instance->depth, args.items[0]);
-    }
-    if (r->native != NULL && strcmp(r->native, "compare") == 0) {
-        MO_ASSERT(args.count == 2);
-        return lower_compare(p, ability(b, r, MO_SOURCE_ORDER, proved), &b->instance->substitution,
-                             b->instance->owner, b->instance->depth, args.items[0], args.items[1]);
-    }
-    if (r->native != NULL &&
-        (strcmp(r->native, "Entry.name") == 0 || strcmp(r->native, "Entry.kind") == 0)) {
-        MO_ASSERT(r->field != UINT32_MAX && r->operand_count == 1 && args.count == 1);
-        return field_read(b, type(b, row(b, r->operands[0])->type), args.items[0], r->field);
-    }
-    if (r->native != NULL && strcmp(r->native, "None") != 0 && strcmp(r->native, "Some") != 0 &&
-        strcmp(r->native, "Ok") != 0 && strcmp(r->native, "Error") != 0 &&
-        strcmp(r->native, "Less") != 0 && strcmp(r->native, "Equal") != 0 &&
-        strcmp(r->native, "Greater") != 0 && strcmp(r->native, "NotFound") != 0 &&
-        strcmp(r->native, "NotAllowed") != 0 && strcmp(r->native, "NotText") != 0 &&
-        strcmp(r->native, "Failed") != 0 && strcmp(r->native, "Entry") != 0 &&
-        strcmp(r->native, "File") != 0 && strcmp(r->native, "Folder") != 0 &&
-        strcmp(r->native, "Link") != 0 && strcmp(r->native, "Other") != 0 &&
-        strcmp(r->native, "ServiceDown") != 0 && strcmp(r->native, "ToolFailed") != 0)
-        lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
-    if (kind(r) == MO_S_TUPLE || kind(r) == MO_S_MAP_ENTRY) {
-        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);
-        e->as.tuple = args;
-        return e;
-    }
-    if (r->field != UINT32_MAX && r->operand_count == 1 && kind(r) != MO_S_NAMED_ARG)
-        return field_read(b, type(b, row(b, r->operands[0])->type), args.items[0], r->field);
-    if (kind(r) == MO_S_LIST) {
-        struct mo_core_prim prim = {
-            .tag = MO_CORE_PRIM_LIST,
-            .as.list = {
-                .t = result->as.list,
-                .op = {.tag = MO_CORE_LIST_OP_LIT, .as.lit.digits = lower_number(p, args.count)}}};
-        return lower_prim(p, prim, args);
-    }
-    if (kind(r) == MO_S_MAP) {
-        struct mo_core_prim prim = {
-            .tag = MO_CORE_PRIM_MAP,
-            .as.map = {
-                .k = result->as.map.k,
-                .v = result->as.map.v,
-                .op = {.tag = MO_CORE_MAP_OP_LIT, .lit.digits = lower_number(p, args.count / 2)}}};
-        return lower_prim(p, prim, args);
-    }
-    if (direct_function(b, r)) {
-        struct instance *f = lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
-                                            r->ability_count, r->abilities, b->instance->owner,
-                                            b->instance->depth + (r->arguments.count != 0));
-        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CALL);
-        e->as.call.name = f->fun.name;
-        e->as.call.args = args;
-        return e;
-    }
-    if ((r->symbol != NULL && r->symbol->declaration->kind != MO_S_CONST &&
-         r->symbol->declaration->kind != MO_S_FN) ||
-        (r->native != NULL && strchr(r->native, '.') == NULL)) {
-        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CON);
-        e->as.con.ty = result;
-        e->as.con.ctor = lower_text(p, r->symbol != NULL ? r->symbol->name : r->native);
-        e->as.con.args = arguments(b, args.count);
-        for (size_t i = 0; i < args.count; i++) {
-            const struct mo_checked_expression *operand = row(b, r->operands[i]);
-            size_t slot = kind(operand) == MO_S_NAMED_ARG ? operand->field : i;
-            MO_ASSERT(slot < args.count);
-            e->as.con.args.items[slot] = args.items[i];
-        }
-        return e;
-    }
-    if (kind(r) == MO_S_CALL) {
-        MO_ASSERT(args.count != 0);
-        mo_core_expr e = lower_expr(p, MO_CORE_EXPR_APP);
-        e->as.app.f = args.items[0];
-        e->as.app.args = (mo_core_expr_list){args.items + 1, args.count - 1};
-        return e;
-    }
-    lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this checked operation is not lowered yet");
-}
-
 static mo_core_expr text_value(struct body *b, const char *value) {
     mo_core_expr e = lower_unit(b->p);
     e->as.lit->tag = MO_CORE_LIT_TEXT;
@@ -1502,7 +767,7 @@ static mo_core_expr text_value(struct body *b, const char *value) {
 }
 
 static mo_core_expr text_concat(struct body *b, mo_core_expr left, mo_core_expr right) {
-    mo_core_expr_list values = arguments(b, 2);
+    mo_core_expr_list values = lower_cps_arguments(b, 2);
     values.items[0] = left;
     values.items[1] = right;
     return lower_prim(
@@ -1516,15 +781,16 @@ static mo_core_expr detail_field(struct body *b, const char *label, mo_core_ty t
                                  mo_core_expr value) {
     mo_core_expr e =
         let(b, lower_fresh(b->p),
-            unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_STRUCTURAL, .as.structural = type_},
-                  value));
+            lower_cps_unary(
+                b, (struct mo_core_prim){.tag = MO_CORE_PRIM_STRUCTURAL, .as.structural = type_},
+                value));
     mo_core_expr text = lower_var(b->p, e->as.let_.name);
-    mo_core_expr count = unary(
+    mo_core_expr count = lower_cps_unary(
         b, (struct mo_core_prim){.tag = MO_CORE_PRIM_TEXT, .as.text = MO_CORE_TEXT_OP_BYTE_COUNT},
         text);
-    count =
-        unary(b, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_TO_TEXT},
-              count);
+    count = lower_cps_unary(
+        b, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_TO_TEXT},
+        count);
     e->as.let_.body =
         text_concat(b, text_concat(b, text_value(b, label), count),
                     text_concat(b, text_value(b, ":"), text_concat(b, text, text_value(b, ","))));
@@ -1548,7 +814,7 @@ static void finish_task(struct body *b, struct task t) {
         if (k->at + 1 == spec->condition_count)
             e->as.if_.then_ = lower_int(p, 0);
         else {
-            struct continuation *next = continuation(b, K_PROMISE);
+            struct continuation *next = lower_cps_continuation(b, K_PROMISE);
             next->at = k->at + 1;
             emit(b, spec->conditions[next->at].expression, t.state, next, &e->as.if_.then_);
         }
@@ -1566,7 +832,7 @@ static void finish_task(struct body *b, struct task t) {
         }
         k->arguments.items[k->values[k->at].slot] = value;
         if (k->at + 1 < spec->value_count) {
-            struct continuation *next = continuation(b, K_ANCHOR);
+            struct continuation *next = lower_cps_continuation(b, K_ANCHOR);
             *next = *k;
             next->at++;
             emit(b, next->values[next->at].expression, t.state, next, out);
@@ -1586,7 +852,7 @@ static void finish_task(struct body *b, struct task t) {
             *out = e;
             out = &e->as.let_.body;
         }
-        *out = jump(b, k, t.value);
+        *out = lower_cps_jump(b, k, t.value);
         return;
     }
     if (k->kind == K_SELECT) {
@@ -1605,8 +871,9 @@ static void finish_task(struct body *b, struct task t) {
         mo_core_expr *out = &e->as.let_.body;
         if (k->diagnostic) {
             mo_core_expr failure = lower_expr(p, MO_CORE_EXPR_FAIL);
-            failure->as.fail = detail_field(b, "input ", type(b, row(b, k->row->operands[0])->type),
-                                            lower_var(p, e->as.let_.name));
+            failure->as.fail = detail_field(
+                b, "input ", lower_cps_type(b, lower_cps_row(b, k->row->operands[0])->type),
+                lower_var(p, e->as.let_.name));
             /* Share failures only inside the saved input's lexical scope. */
             t.row = (uint32_t)(k->row - b->source->items);
             k->else_ = share_target(b, t, failure, &out);
@@ -1631,14 +898,14 @@ static void finish_task(struct body *b, struct task t) {
     if (k->kind == K_TEXT) {
         p->span = k->row->syntax->span;
         const struct mo_ability_implementation *proof =
-            ability(b, k->row, MO_SOURCE_TEXT, k->row->operands[k->at]);
+            lower_cps_ability(b, k->row, MO_SOURCE_TEXT, k->row->operands[k->at]);
         mo_core_expr e = let(b, lower_fresh(p),
                              lower_to_text(p, proof, &b->instance->substitution, b->instance->owner,
                                            b->instance->depth, t.value));
         *t.out = e;
         k->arguments.items[2 * k->at + 1] = lower_var(p, e->as.let_.name);
         if (k->at + 1 < k->row->operand_count) {
-            struct continuation *next = continuation(b, K_TEXT);
+            struct continuation *next = lower_cps_continuation(b, K_TEXT);
             *next = *k;
             next->at++;
             emit(b, k->row->operands[next->at], t.state, next, &e->as.let_.body);
@@ -1646,7 +913,7 @@ static void finish_task(struct body *b, struct task t) {
             p->span = k->row->syntax->span;
             mo_core_expr text = k->arguments.items[k->arguments.count - 1];
             for (size_t i = k->arguments.count - 1; i != 0; i--) {
-                mo_core_expr_list args = arguments(b, 2);
+                mo_core_expr_list args = lower_cps_arguments(b, 2);
                 args.items[0] = k->arguments.items[i - 1];
                 args.items[1] = text;
                 text = lower_prim(p,
@@ -1660,7 +927,8 @@ static void finish_task(struct body *b, struct task t) {
     }
     if (k->kind == K_OPTION || k->kind == K_TRY) {
         p->span = k->row->syntax->span;
-        bool result = type(b, row(b, k->row->operands[0])->type)->tag == MO_CORE_TY_RESULT;
+        bool result = lower_cps_type(b, lower_cps_row(b, k->row->operands[0])->type)->tag ==
+                      MO_CORE_TY_RESULT;
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
         e->as.case_.expr = t.value;
         e->as.case_.arms.count = 2;
@@ -1678,7 +946,7 @@ static void finish_task(struct body *b, struct task t) {
             emit(b, k->row->operands[1], t.state, k->next, &none->body);
         else {
             const struct mo_checked_try *checked = k->row->try_;
-            mo_core_ty enclosing = type(b, checked->result);
+            mo_core_ty enclosing = lower_cps_type(b, checked->result);
             mo_core_expr error = NULL;
             if (result) {
                 none->names.count = 1;
@@ -1693,7 +961,7 @@ static void finish_task(struct body *b, struct task t) {
                 wrapped->as.con.ctor =
                     lower_text(p, checked->wrapper.symbol == NULL ? checked->wrapper.builtin
                                                                   : checked->wrapper.symbol->name);
-                wrapped->as.con.args = arguments(b, 1);
+                wrapped->as.con.args = lower_cps_arguments(b, 1);
                 wrapped->as.con.args.items[0] = error;
                 error = wrapped;
             }
@@ -1702,11 +970,11 @@ static void finish_task(struct body *b, struct task t) {
             failure->as.con.ctor =
                 lower_text(p, checked->failure.symbol == NULL ? checked->failure.builtin
                                                               : checked->failure.symbol->name);
-            failure->as.con.args = arguments(b, result ? 1 : 0);
+            failure->as.con.args = lower_cps_arguments(b, result ? 1 : 0);
             if (result)
                 failure->as.con.args.items[0] = error;
             MO_ASSERT(t.state.return_ != NULL);
-            none->body = jump(b, t.state.return_, failure);
+            none->body = lower_cps_jump(b, t.state.return_, failure);
         }
         return;
     }
@@ -1719,7 +987,7 @@ static void finish_task(struct body *b, struct task t) {
         }
         struct continuation *next = k->next;
         if (k->at + 1 < k->row->operand_count) {
-            next = continuation(b, K_SEQUENCE);
+            next = lower_cps_continuation(b, K_SEQUENCE);
             *next = *k;
             next->at++;
         }
@@ -1770,7 +1038,7 @@ static void finish_task(struct body *b, struct task t) {
                 continue;
             for (uint32_t i = k->at + 1 + skip; i < k->row->operand_count; i++) {
                 lower_work(p, 1);
-                const struct mo_checked_expression *later = row(b, k->row->operands[i]);
+                const struct mo_checked_expression *later = lower_cps_row(b, k->row->operands[i]);
                 if (later->operand_count != 0 || later->lambda != NULL)
                     direct = false;
             }
@@ -1785,21 +1053,21 @@ static void finish_task(struct body *b, struct task t) {
         k->arguments.items[k->at] = lower_var(p, k->name);
     }
     if ((size_t)k->at + 1 < k->arguments.count) {
-        struct continuation *next = continuation(b, K_ARGUMENTS);
+        struct continuation *next = lower_cps_continuation(b, K_ARGUMENTS);
         *next = *k;
         next->at++;
         next->name = lower_fresh(p);
         emit(b, k->row->operands[next->at + skip], t.state, next, out);
     } else {
         p->span = k->row->syntax->span;
-        mo_core_expr value = application(b, k->row, k->arguments);
+        mo_core_expr value = lower_cps_application(b, k->row, k->arguments);
         if (k->diagnostic) {
             MO_ASSERT(k->row->operation == MO_T_EQ && k->arguments.count == 2);
             mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
             e->as.if_.cond = value;
             e->as.if_.then_ = k->then_;
             e->as.if_.else_ = lower_expr(p, MO_CORE_EXPR_FAIL);
-            mo_core_ty operand = type(b, row(b, k->row->operands[0])->type);
+            mo_core_ty operand = lower_cps_type(b, lower_cps_row(b, k->row->operands[0])->type);
             mo_core_expr left = detail_field(b, "left ", operand, k->arguments.items[0]);
             mo_core_expr right = detail_field(b, "right ", operand, k->arguments.items[1]);
             e->as.if_.else_->as.fail = text_concat(b, left, right);
@@ -1821,15 +1089,15 @@ static void require_concrete_proofs(struct body *b, uint32_t count,
 
 static void row_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
-    const struct mo_checked_expression *r = row(b, t.row);
-    enum mo_syntax_kind tag = kind(r);
+    const struct mo_checked_expression *r = lower_cps_row(b, t.row);
+    enum mo_syntax_kind tag = lower_cps_kind(r);
     require_concrete_proofs(b, r->ability_count, r->abilities);
     if (tag == MO_S_TEXT_INTERPOLATED) {
         MO_ASSERT(r->operand_count != 0 && r->syntax->count == 2 * r->operand_count + 1);
-        struct continuation *k = continuation(b, K_TEXT);
+        struct continuation *k = lower_cps_continuation(b, K_TEXT);
         k->row = r;
         k->next = t.continuation;
-        k->arguments = arguments(b, r->syntax->count);
+        k->arguments = lower_cps_arguments(b, r->syntax->count);
         for (uint32_t i = 0; i < r->syntax->count; i += 2)
             k->arguments.items[i] = lower_text_part(p, r->syntax, i);
         emit(b, r->operands[0], t.state, k, t.out);
@@ -1837,7 +1105,7 @@ static void row_task(struct body *b, struct task t) {
     }
     if (r->try_ != NULL) {
         require_concrete_proofs(b, r->try_->ability_count, r->try_->abilities);
-        struct continuation *k = continuation(b, K_TRY);
+        struct continuation *k = lower_cps_continuation(b, K_TRY);
         k->row = r;
         k->next = t.continuation;
         emit(b, r->operands[0], t.state, k, t.out);
@@ -1845,8 +1113,8 @@ static void row_task(struct body *b, struct task t) {
     }
     if (r->or_kind == MO_CHECK_OR_OPTION) {
         mo_core_expr *out = t.out;
-        struct continuation *done = branch_join(b, t, type(b, r->type), &out);
-        struct continuation *k = continuation(b, K_OPTION);
+        struct continuation *done = branch_join(b, t, lower_cps_type(b, r->type), &out);
+        struct continuation *k = lower_cps_continuation(b, K_OPTION);
         k->row = r;
         k->next = done;
         emit(b, r->operands[0], t.state, k, out);
@@ -1858,7 +1126,7 @@ static void row_task(struct body *b, struct task t) {
         else {
             struct continuation *k = t.continuation;
             if (r->operand_count > 1) {
-                k = continuation(b, K_SEQUENCE);
+                k = lower_cps_continuation(b, K_SEQUENCE);
                 k->row = r;
                 k->at = 1;
                 k->next = t.continuation;
@@ -1873,7 +1141,7 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     if (tag == MO_S_BIND || tag == MO_S_VAR || tag == MO_S_ADD_ASSIGN || tag == MO_S_SUB_ASSIGN) {
-        struct continuation *k = continuation(b, K_BIND);
+        struct continuation *k = lower_cps_continuation(b, K_BIND);
         k->binding = r->binding;
         k->row = r;
         k->next = t.continuation;
@@ -1881,7 +1149,7 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     if (r->match != NULL) {
-        struct continuation *k = continuation(b, K_MATCH);
+        struct continuation *k = lower_cps_continuation(b, K_MATCH);
         k->row = r;
         k->next = t.continuation;
         emit(b, r->match->scrutinee, t.state, k, t.out);
@@ -1892,7 +1160,7 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     if (tag == MO_S_FOR) {
-        struct continuation *k = continuation(b, K_FOR);
+        struct continuation *k = lower_cps_continuation(b, K_FOR);
         k->row = r;
         k->next = t.continuation;
         emit(b, r->operands[0], t.state, k, t.out);
@@ -1900,12 +1168,14 @@ static void row_task(struct body *b, struct task t) {
     }
     if (r->pattern != NULL) {
         mo_core_expr *out = t.out;
-        struct continuation *done = branch_join(b, t, type(b, r->type), &out);
-        struct continuation *k = continuation(b, K_PATTERN);
+        struct continuation *done = branch_join(b, t, lower_cps_type(b, r->type), &out);
+        struct continuation *k = lower_cps_continuation(b, K_PATTERN);
         k->pattern = r->pattern;
         emit(b, r->operands[0], t.state, k, out);
-        k->then_ = done->kind == K_END ? lower_bool(p, true) : jump(b, done, lower_bool(p, true));
-        k->else_ = done->kind == K_END ? lower_bool(p, false) : jump(b, done, lower_bool(p, false));
+        k->then_ = done->kind == K_END ? lower_bool(p, true)
+                                       : lower_cps_jump(b, done, lower_bool(p, true));
+        k->else_ = done->kind == K_END ? lower_bool(p, false)
+                                       : lower_cps_jump(b, done, lower_bool(p, false));
         return;
     }
     if (tag == MO_S_ASSERT) {
@@ -1931,7 +1201,7 @@ static void row_task(struct body *b, struct task t) {
                                  : tag == MO_S_BREAK ? t.state.loop->break_
                                                      : t.state.loop->continue_;
         MO_ASSERT(k != NULL);
-        struct continuation *exit = continuation(b, K_JUMP);
+        struct continuation *exit = lower_cps_continuation(b, K_JUMP);
         *exit = *k;
         exit->row = r;
         k = exit;
@@ -1950,17 +1220,17 @@ static void row_task(struct body *b, struct task t) {
             if (value)
                 emit(b, r->operands[1], t.state, k, &select->as.if_.then_);
             else
-                select->as.if_.then_ = jump(b, k, lower_unit(p));
+                select->as.if_.then_ = lower_cps_jump(b, k, lower_unit(p));
         } else if (value)
             emit(b, r->operands[0], t.state, k, t.out);
         else
-            *t.out = jump(b, k, lower_unit(p));
+            *t.out = lower_cps_jump(b, k, lower_unit(p));
         return;
     }
     if (tag == MO_S_IF || tag == MO_S_LINE_IF || r->operation == MO_T_AND ||
         r->operation == MO_T_OR || r->operation == MO_T_IMPLIES) {
         mo_core_expr *out = t.out;
-        struct continuation *k = branch_join(b, t, type(b, r->type), &out);
+        struct continuation *k = branch_join(b, t, lower_cps_type(b, r->type), &out);
         if (tag == MO_S_IF || tag == MO_S_LINE_IF) {
             /* An iterative else-if chain, with all branch outputs arena-held. */
             size_t pairs = r->operand_count / 2;
@@ -2000,22 +1270,24 @@ static void row_task(struct body *b, struct task t) {
         static const struct mo_source_type text = {
             .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_STOP);
-        e->as.stop = lower_literal(p, s, type(b, &text), false)->as.lit->as.text;
+        e->as.stop = lower_literal(p, s, lower_cps_type(b, &text), false)->as.lit->as.text;
         *t.out = e;
         return;
     }
     if (tag == MO_S_INT || tag == MO_S_DECIMAL || tag == MO_S_CHAR || tag == MO_S_TEXT ||
         tag == MO_S_TRUE || tag == MO_S_FALSE ||
         (r->native != NULL && strcmp(r->native, "Unit") == 0)) {
-        finish(b, lower_literal(p, r->syntax, type(b, r->type), false), t.state, t.continuation,
-               t.out);
+        finish(b, lower_literal(p, r->syntax, lower_cps_type(b, r->type), false), t.state,
+               t.continuation, t.out);
         return;
     }
     if (r->operation == MO_T_MINUS && r->operand_count == 1 &&
-        (kind(row(b, r->operands[0])) == MO_S_INT ||
-         kind(row(b, r->operands[0])) == MO_S_DECIMAL)) {
-        finish(b, lower_literal(p, row(b, r->operands[0])->syntax, type(b, r->type), true), t.state,
-               t.continuation, t.out);
+        (lower_cps_kind(lower_cps_row(b, r->operands[0])) == MO_S_INT ||
+         lower_cps_kind(lower_cps_row(b, r->operands[0])) == MO_S_DECIMAL)) {
+        finish(b,
+               lower_literal(p, lower_cps_row(b, r->operands[0])->syntax,
+                             lower_cps_type(b, r->type), true),
+               t.state, t.continuation, t.out);
         return;
     }
     if (r->binding != NULL && r->operand_count == 0) {
@@ -2031,7 +1303,7 @@ static void row_task(struct body *b, struct task t) {
             const struct mo_checked_binding *parameter = r->lambda->parameters[i];
             e->as.lam.params.items[i] = (struct mo_core_param){
                 parameter == NULL ? lower_fresh(p) : binding_name(b, parameter),
-                type(b, r->type)->as.fn.params.items[i]};
+                lower_cps_type(b, r->type)->as.fn.params.items[i]};
             if (parameter != NULL)
                 binder(b, e, i, parameter);
         }
@@ -2047,16 +1319,17 @@ static void row_task(struct body *b, struct task t) {
             body = &snapshot->as.let_.body;
         }
         if (returns(b, r->lambda->body)) {
-            struct continuation *ret = continuation(b, K_JUMP);
+            struct continuation *ret = lower_cps_continuation(b, K_JUMP);
             ret->result = true;
             ret->name = lower_fresh(p);
-            mo_core_expr return_join = join(b, ret, type(b, r->type)->as.fn.ret);
+            mo_core_expr return_join =
+                lower_cps_join(b, ret, lower_cps_type(b, r->type)->as.fn.ret);
             return_join->as.join.body = lower_var(p, return_join->as.join.params.items[0].name);
             *body = return_join;
-            emit(b, r->lambda->body, (struct state){.return_ = ret}, continuation(b, K_END),
-                 &return_join->as.join.rest);
+            emit(b, r->lambda->body, (struct state){.return_ = ret},
+                 lower_cps_continuation(b, K_END), &return_join->as.join.rest);
         } else
-            emit(b, r->lambda->body, (struct state){0}, continuation(b, K_END), body);
+            emit(b, r->lambda->body, (struct state){0}, lower_cps_continuation(b, K_END), body);
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }
@@ -2067,42 +1340,43 @@ static void row_task(struct body *b, struct task t) {
         return;
     }
     bool qualified = r->native != NULL && r->receiver == UINT32_MAX &&
-                     (strchr(r->native, '.') != NULL || ability_native(r));
+                     (strchr(r->native, '.') != NULL || lower_cps_ability_native(r));
     if (r->operand_count == 0 && ((r->symbol != NULL && r->symbol->declaration->kind == MO_S_FN) ||
                                   (qualified && r->type->kind == MO_SOURCE_FUNCTION))) {
-        mo_core_ty signature = type(b, r->type);
+        mo_core_ty signature = lower_cps_type(b, r->type);
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_LAM);
         e->as.lam.params.count = signature->as.fn.params.count;
         e->as.lam.params.items = LOWER_NEW(p, struct mo_core_param, e->as.lam.params.count);
-        mo_core_expr_list args = arguments(b, e->as.lam.params.count);
+        mo_core_expr_list args = lower_cps_arguments(b, e->as.lam.params.count);
         for (size_t i = 0; i < e->as.lam.params.count; i++) {
             mo_core_string name = lower_fresh(p);
             e->as.lam.params.items[i] =
                 (struct mo_core_param){name, signature->as.fn.params.items[i]};
             args.items[i] = lower_var(p, name);
         }
-        e->as.lam.body = application(b, r, args);
+        e->as.lam.body = lower_cps_application(b, r, args);
         ((struct lower_node *)e)->closure =
             lower_concat(p, b->instance->meta.name, ".ref.", lower_number(p, t.row));
         finish(b, e, t.state, t.continuation, t.out);
         return;
     }
-    uint32_t skip = direct_function(b, r) ? 1 : 0;
+    uint32_t skip = lower_cps_direct_function(b, r) ? 1 : 0;
     /* An ordinary namespace call retains its native function-value callee;
      * a native receiver dot call has only the receiver and explicit arguments. */
     if (qualified && r->operand_count != 0 &&
-        row(b, r->operands[0])->type->kind == MO_SOURCE_FUNCTION)
+        lower_cps_row(b, r->operands[0])->type->kind == MO_SOURCE_FUNCTION)
         skip = 1;
     if (r->operand_count == skip) {
-        finish(b, application(b, r, arguments(b, 0)), t.state, t.continuation, t.out);
+        finish(b, lower_cps_application(b, r, lower_cps_arguments(b, 0)), t.state, t.continuation,
+               t.out);
         return;
     }
-    struct continuation *k = continuation(b, K_ARGUMENTS);
+    struct continuation *k = lower_cps_continuation(b, K_ARGUMENTS);
     k->row = r;
     k->skip = skip;
     k->next = t.continuation;
     k->name = lower_fresh(p);
-    k->arguments = arguments(b, r->operand_count - skip);
+    k->arguments = lower_cps_arguments(b, r->operand_count - skip);
     emit(b, r->operands[skip], t.state, k, t.out);
 }
 
@@ -2124,15 +1398,15 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         LOWER_NEW(p, struct mo_core_name, instance->fun.params.count);
     for (size_t i = 0; i < instance->fun.params.count; i++) {
         const struct mo_checked_binding *parameter = parameters[i];
-        instance->fun.params.items[i] =
-            (struct mo_core_param){binding_name(&b, parameter), type(&b, parameter->type)};
+        instance->fun.params.items[i] = (struct mo_core_param){binding_name(&b, parameter),
+                                                               lower_cps_type(&b, parameter->type)};
         instance->meta.body.params.items[i] =
             (struct mo_core_name){true, lower_text(p, parameter->name)};
     }
     const struct mo_checked_spec *spec = instance->spec;
     if (spec != NULL && spec->kind == MO_SPEC_ANCHOR) {
         MO_ASSERT(spec->value_count != 0);
-        struct continuation *k = continuation(&b, K_ANCHOR);
+        struct continuation *k = lower_cps_continuation(&b, K_ANCHOR);
         struct anchor_value *values = LOWER_NEW(p, struct anchor_value, spec->value_count);
         for (uint32_t i = 0; i < spec->value_count; i++) {
             values[i] = (struct anchor_value){spec->values[i], i};
@@ -2141,12 +1415,12 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         }
         qsort(values, spec->value_count, sizeof *values, anchor_order);
         k->values = values;
-        k->arguments = arguments(&b, spec->value_count);
+        k->arguments = lower_cps_arguments(&b, spec->value_count);
         emit(&b, values[0].expression, (struct state){0}, k, &instance->fun.body);
     } else if (spec != NULL && spec->kind == MO_SPEC_PROMISE) {
         MO_ASSERT(instance->spec->condition_count != 0);
         emit(&b, instance->spec->conditions[0].expression, (struct state){0},
-             continuation(&b, K_PROMISE), &instance->fun.body);
+             lower_cps_continuation(&b, K_PROMISE), &instance->fun.body);
     } else if (instance->fun.kind == MO_CORE_EXAMPLE) {
         p->span = instance->spec->syntax->span;
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
@@ -2159,22 +1433,23 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
                                .value = e,
                                .diagnostic = true});
     } else if (returns(&b, b.source->root)) {
-        struct continuation *ret = continuation(&b, K_JUMP);
+        struct continuation *ret = lower_cps_continuation(&b, K_JUMP);
         ret->result = true;
         ret->name = lower_fresh(p);
-        mo_core_expr e = join(&b, ret, instance->fun.ret);
+        mo_core_expr e = lower_cps_join(&b, ret, instance->fun.ret);
         e->as.join.body = lower_var(p, e->as.join.params.items[0].name);
         instance->fun.body = e;
-        emit(&b, b.source->root, (struct state){.return_ = ret}, continuation(&b, K_END),
+        emit(&b, b.source->root, (struct state){.return_ = ret}, lower_cps_continuation(&b, K_END),
              &e->as.join.rest);
     } else
-        emit(&b, b.source->root, (struct state){0}, continuation(&b, K_END), &instance->fun.body);
+        emit(&b, b.source->root, (struct state){0}, lower_cps_continuation(&b, K_END),
+             &instance->fun.body);
     while (b.tasks != NULL) {
         lower_work(p, 1);
         struct task t = *b.tasks;
         b.tasks = t.next;
         if (t.kind == TASK_ROW || t.kind == TASK_CONDITION)
-            p->span = row(&b, t.row)->syntax->span;
+            p->span = lower_cps_row(&b, t.row)->syntax->span;
         else if (t.kind == TASK_FINISH && t.value != NULL)
             p->span = ((struct lower_node *)t.value)->span.value;
         if (t.kind == TASK_ROW)
@@ -2186,12 +1461,12 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
                 t.then_ = t.value->as.if_.then_;
                 t.else_ = t.value->as.if_.else_;
             }
-            const struct mo_checked_expression *r = row(&b, t.row);
-            while (kind(r) == MO_S_GROUP || kind(r) == MO_S_EXPR_STMT) {
+            const struct mo_checked_expression *r = lower_cps_row(&b, t.row);
+            while (lower_cps_kind(r) == MO_S_GROUP || lower_cps_kind(r) == MO_S_EXPR_STMT) {
                 lower_work(p, 1);
                 MO_ASSERT(r->operand_count == 1 && r->operands[0] < t.row);
                 t.row = r->operands[0];
-                r = row(&b, t.row);
+                r = lower_cps_row(&b, t.row);
             }
             p->span = r->syntax->span;
             require_concrete_proofs(&b, r->ability_count, r->abilities);
@@ -2222,16 +1497,16 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
                                        .else_ = t.else_,
                                        .diagnostic = t.diagnostic});
             } else if (t.diagnostic && r->operation == MO_T_EQ) {
-                struct continuation *k = continuation(&b, K_ARGUMENTS);
+                struct continuation *k = lower_cps_continuation(&b, K_ARGUMENTS);
                 k->row = r;
-                k->arguments = arguments(&b, 2);
+                k->arguments = lower_cps_arguments(&b, 2);
                 k->name = lower_fresh(p);
                 k->then_ = t.then_;
                 k->diagnostic = true;
                 emit(&b, r->operands[0], t.state, k, t.out);
             } else {
                 struct continuation *k =
-                    continuation(&b, r->pattern == NULL ? K_SELECT : K_PATTERN);
+                    lower_cps_continuation(&b, r->pattern == NULL ? K_SELECT : K_PATTERN);
                 k->then_ = t.then_;
                 k->else_ = t.else_;
                 k->pattern = r->pattern;

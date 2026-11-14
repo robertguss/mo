@@ -1032,7 +1032,7 @@ comparison lower and run (#189, MO-116). Qualified `T.to_text` and `T.compare`,
 called or taken as values, lower through the same Text or Order proof as the dot
 form for every type with the ability (#208, D285).
 `docs/status/golden-gaps.md` distinguishes working routes without golden
-programs from other gaps; `src/lower/expressions.c` owns native dispatch.
+programs from other gaps; `src/lower/applications.c` owns native dispatch.
 
 Numeric immediates fold unary minus before building Core scalars, including
 Int's minimum. Float literals convert in a private C numeric locale with
