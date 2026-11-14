@@ -1740,13 +1740,14 @@ or flag.
 | `check` | one entry file | `--json`, `--emit=core`, `--emit=bytecode` |
 | `emit` | one entry file | `-o FILE` (required) |
 | `run` | one entry file, then program arguments | `--max-stack`, `--max-depth`, `--max-heap`, before the file |
-| `test` | one entry file | `--json`, repeatable `--only NAME`, `--in MODULE`, `--list`, `--max-stack`, `--max-depth`, `--max-heap`, `--calls`, `--seconds` |
+| `test` | one entry file | `--json`, repeatable `--only NAME`, `--in MODULE`, `--list`, `--max-stack`, `--max-depth`, `--max-heap`, `--calls`, `--seconds`, `--strength DIR` |
 | `format`, `fix` | one or more files | none |
 | `guide` | none | `--reference` |
 
 `--json` and `--emit` cannot be combined. Test selections may combine:
 `--only`'s names are intersected with `--in`'s module. `--list` accepts
-budgets but will not consume them. Source-inventory matching precedes execution
+budgets but will not consume them. `--strength DIR` runs a fixed plan over the
+whole program and takes no `--list`, `--only`, `--in` or `--calls`. Source-inventory matching precedes execution
 and JSON publication, as described below. Limits are
 positive ASCII decimal integers without signs, spaces or fractions; leading
 zeros are accepted. Byte sizes accept bare bytes or the exact suffixes `B`,
@@ -2363,7 +2364,9 @@ records may be added, and readers ignore what they don't know.
   `title` and its `edits`, applied together, each edit a `span` and the `text`
   that replaces it.
 - **`test`**, one per example, promise, test and recovery check, written by
-  `--list`: `name`, `kind` and `span`, as in `result`.
+  `--list`: `name`, `kind` and `span`, as in `result`. Under `--list --json`, a
+  promise or example (service promises included; `kind` is `"promise"`) adds
+  `digest`, 64 lowercase hexadecimal digits; a test or recovery check omits it.
 - **`result`**, one per example, promise, test and recovery check run: `name`,
   its full name (`bytecode.md` section 3.5, `<Module>.service.recovery`, or
   `<Module>.service.promise.N`);
@@ -2393,6 +2396,21 @@ records may be added, and readers ignore what they don't know.
   or stopped one adds `steps`, whose failing step carries `broke`, the
   promise's name; `before` and `after`, the states around that step; and `line`,
   the false line, or `defect` for a body that stopped.
+- **`strength`**, one per `mo test --json --strength DIR`, written after the
+  original program's `result` records and before `totals`. The line is
+  `{"record":"strength","version":1,"set":<DIR>,"counted_file":<bool>,"original":"passed"|"failed","versions":[...],"counts":{...},"killed":<n>,"scored":<n>,"rate":<number>|null,"partial":<bool>}`.
+  `version` is the integer 1 (not format `"1.0"`). `set` is the `--strength`
+  path as given, JSON-string-escaped. `counted_file` is whether `DIR` held a
+  `counted` file. `original` is `"passed"` or `"failed"`. Each `versions`
+  element is `{"name":...,"sha256":"<64 lowercase hex>","outcome":"<class>"}`
+  and, when `outcome` is `"invalid"`, `"reason":...`. `outcome` is one of
+  `invalid`, `changes_intent`, `killed_by_promise`, `killed_by_example`,
+  `killed_by_both`, `survived`, `defect`, `unfinished`, `not_counted`.
+  `counts` has those nine keys in that order. `rate` is a JSON number to four
+  decimal places, or `null` when `scored` is 0. `partial` is `false` only when
+  the original passed and no version is `unfinished`; otherwise `true`. If the
+  original failed, `versions` is `[]`, `killed` and `scored` are 0, `rate` is
+  `null`, and `partial` is `true`.
 - **`totals`**, always last: `errors`, the diagnostics written, and
   `dropped`, those found past the limits a run keeps
   (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;
