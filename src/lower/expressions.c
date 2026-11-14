@@ -10,10 +10,6 @@ static void push(struct body *b, struct task task) {
     t->next = b->tasks;
     b->tasks = t;
 }
-static const struct mo_checked_expression *lower_cps_row(struct body *b, uint32_t index) {
-    MO_ASSERT(index < b->source->count);
-    return &b->source->items[index];
-}
 static bool returns(struct body *b, uint32_t root) {
     bool *seen = LOWER_NEW(b->p, bool, b->source->count);
     seen[root] = true;
@@ -34,9 +30,6 @@ static bool returns(struct body *b, uint32_t root) {
         }
     }
     return false;
-}
-static mo_core_ty lower_cps_type(struct body *b, const struct mo_source_type *source) {
-    return lower_type(b->p, source, &b->instance->substitution);
 }
 static mo_core_string binding_name(struct body *b, const struct mo_checked_binding *binding) {
     MO_ASSERT(binding >= b->source->bindings &&

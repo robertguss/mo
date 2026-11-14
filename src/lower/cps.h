@@ -73,4 +73,12 @@ struct body {
     struct task *tasks;
 };
 
+static inline const struct mo_checked_expression *lower_cps_row(struct body *b, uint32_t index) {
+    MO_ASSERT(index < b->source->count);
+    return &b->source->items[index];
+}
+static inline mo_core_ty lower_cps_type(struct body *b, const struct mo_source_type *source) {
+    return lower_type(b->p, source, &b->instance->substitution);
+}
+
 #endif
