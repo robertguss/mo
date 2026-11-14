@@ -411,7 +411,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (argc < 2)
         return refuse(out, error,
                       "expected a command: check, run, test, format, fix, guide, emit, serve, "
-                      "fetch, push, replay, query, rehearse, history or intent",
+                      "fetch, push, review, replay, query, rehearse, history or intent",
                       NULL, NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];

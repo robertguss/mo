@@ -248,7 +248,7 @@ def main():
         serve(binary, legacy_source, legacy, preserved, "--adopt", tool="list",
               arguments={"filter": {"case": "AllJobs"}, "after": "0", "limit": "10"})
         with sqlite3.connect(legacy_db) as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
             assert db.execute("SELECT ordinal FROM program").fetchone()[0] == 1
             assert db.execute("SELECT record FROM previous_snapshots WHERE ordinal=1").fetchone()[0] == original_snapshot
             assert db.execute("SELECT old_source FROM upgrades WHERE ordinal=1").fetchone()[0] == bytes(32)

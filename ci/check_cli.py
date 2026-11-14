@@ -4489,8 +4489,10 @@ def emit_command(binary):
     for flag in ("--json", "--emit=core", "--max-heap", "--list"):
         args = ["emit", flag, *(["1GiB"] if flag == "--max-heap" else []), good, "-o", "a.bc"]
         mistake(args, f'flag is not accepted by this command: "{flag}"')
-    for command in ("check", "run", "test", "format", "fix"):
+    for command in ("check", "run", "format", "fix"):
         mistake([command, "-o", "a.bc", good], f'flag is not accepted by this command: "-o"')
+    for args in (["-o", "a.bc"], ["--bundle"], ["--bundle", "--list"], ["--list", "-o", "a.bc"]):
+        mistake(["test", *args, good], 'test writes an item list only as --bundle --list -o FILE: "test"')
     assert not (root / "a.bc").exists()
 
 
@@ -4632,8 +4634,8 @@ def check(binary):
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or intent): "bad\\x0a\\x09\\xc3\\xbf"')
-    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or intent')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, review, replay, query, rehearse, history or intent): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, review, replay, query, rehearse, history or intent')
     mistake(["push", "main.mo", "--url", "http://127.0.0.1:1/mcp"], 'usage: mo push FILE --url URL --base DIGEST --token-env NAME --upgrade-token-env NAME [--migrate Module.function] [--json]: "push"')
     for args, message in (
             (["replay", good, "--data", "state"], 'replay needs --failure ID: "replay"'),
