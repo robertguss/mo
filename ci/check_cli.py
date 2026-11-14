@@ -1384,6 +1384,7 @@ def intent_command(binary):
                      ("removed", "Main.clamp.example.3", None),
                      ("added", None, "Main.within.promise.1")], changes
     moved, edited, removed, added = changes
+    assert added["approved"] is False and "approved" not in edited, added
     assert [(r["name"], r["before"]) for r in moved["reads"]] == [
         ("Main.limit", None), ("Main.within", None)], moved
     assert moved["reads"][0]["after"] == "limit = 10\n", moved
@@ -1397,7 +1398,7 @@ def intent_command(binary):
     for line in ("moved Main.within.example.1 to Main.clamp.example.3\n",
                  "edited Main.clamp.promise.1\n", '    promise "the result stays within the limit"\n',
                  '    promise "the result never leaves the limit"\n',
-                 "removed Main.clamp.example.3\n", "added Main.within.promise.1\n",
+                 "removed Main.clamp.example.3\n", "added, unapproved Main.within.promise.1\n",
                  "intent: 2 unchanged, 1 edited, 1 removed, 1 added, 1 moved\n"):
         assert line in text, (line, text)
     constant, end = intent_records(binary, [f"{INTENT}/limit/main.mo", "--against",

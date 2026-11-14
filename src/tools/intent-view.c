@@ -223,7 +223,7 @@ static void change(struct out *o, enum change kind, const struct mo_intent_item 
     if (o->json) {
         put(o, "{\"record\":\"change\",\"change\":\"");
         put(o, change_names[kind]);
-        put(o, "\"");
+        put(o, kind == ADDED ? "\",\"approved\":false" : "\"");
         if (before != NULL) {
             put(o, ",\"before\":{");
             json_item(o, before);
@@ -244,7 +244,7 @@ static void change(struct out *o, enum change kind, const struct mo_intent_item 
         return;
     }
     const struct mo_intent_item *shown = before != NULL ? before : after;
-    put(o, change_names[kind]);
+    put(o, kind == ADDED ? "added, unapproved" : change_names[kind]);
     put(o, " ");
     put_name(o, shown->name);
     if (before != NULL && after != NULL && strcmp(before->name, after->name) != 0) {
