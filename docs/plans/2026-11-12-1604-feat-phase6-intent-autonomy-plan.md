@@ -424,9 +424,17 @@ Waits on: PR2, needed before this group can start, because the measurement cover
   - The committed manifest matches the SHA-256 of every file in both halves.
 - **Verification:** `bash ci/check.sh gcc` passes, and the C changes build with clang and pass under the sanitizers. `bash ci/check.sh drivers static` passes for the guide edit. `docs/status/phase6-run.md` holds the first measurement, the measurement after strengthening and every held-back measurement, with Robert's answer to each.
 
-### PR4: Readable intent and the lock
+### PR4a: Readable intent
 
 Waits on: PR3, merge order only.
+
+Split from PR4 with Robert on 2026-11-14. Carries U4's first approach step, the listing and the difference, as `mo intent FILE [--against OLD] [--json]`, and the two difference scenarios. With no approvals yet, an added item is shown as added, not as unapproved.
+
+### PR4b: The lock
+
+Waits on: PR4a, needed before this group can start, because the store keeps the item list and the review shows the difference PR4a builds.
+
+Carries U4's approach steps 2 to 6 and its other test scenarios, including the unapproved marking of an added item.
 
 ### U4. Intent listing, the version-3 store and approvals
 
@@ -460,7 +468,7 @@ Waits on: PR3, merge order only.
 
 ### PR5: The review door
 
-Waits on: PR4, needed before this group can start, because the door reads the store and the approvals PR4 creates.
+Waits on: PR4b, needed before this group can start, because the door reads the store and the approvals PR4b creates.
 
 ### U5. The decision, held upgrades, Robert's answer and the proof on the task queue
 

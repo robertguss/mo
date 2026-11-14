@@ -10,17 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct text {
-    const uint8_t *bytes;
-    size_t length;
-};
-
-struct entry {
-    const char *module;
-    const char *name;
-    struct text text;
-};
-
 struct walker {
     struct mo_arena *arena;
     const struct mo_program *program;
@@ -31,7 +20,7 @@ struct walker {
     uint32_t *marks;
     uint32_t *reach;
     uint32_t reach_count;
-    struct text *texts;
+    struct mo_intent_text *texts;
     struct mo_module_syntax **parsed;
     const struct mo_syntax *subject;
     uint32_t mark;
@@ -182,8 +171,8 @@ static uint32_t display_width(const uint8_t *bytes, size_t length) {
     return (uint32_t)width;
 }
 
-static struct text canonical(struct walker *w, const struct mo_syntax *original) {
-    struct text out = {NULL, 0};
+static struct mo_intent_text canonical(struct walker *w, const struct mo_syntax *original) {
+    struct mo_intent_text out = {NULL, 0};
     uint32_t file = original->span.file;
     if (w->parsed[file] == NULL) {
         w->parsed[file] = mo_parse(w->arena, w->program->set->sources, file, &w->diags);
@@ -222,8 +211,29 @@ static struct text canonical(struct walker *w, const struct mo_syntax *original)
     return out;
 }
 
+static const char *symbol_name(struct walker *w, uint32_t module, const struct mo_symbol *f) {
+    const struct mo_program *p = w->program;
+    const struct mo_module_scope *scope = &p->interfaces->scopes[f->module];
+    const struct mo_symbol *group =
+        f->receiver == UINT32_MAX ? NULL
+                                  : mo_find_symbol(scope, (const uint8_t *)f->name, f->name_length);
+    MO_ASSERT(f->receiver == UINT32_MAX || group != NULL);
+    const char *receiver =
+        group != NULL && group->overload_count > 1 ? scope->symbols[f->receiver].name : NULL;
+    size_t length = strlen(p->set->names[module]) + 1 + strlen(f->name) +
+                    (receiver != NULL ? 1 + strlen(receiver) : 0) + 1;
+    char *out = array(w, length, 1, 1);
+    if (out == NULL)
+        return NULL;
+    int n = receiver != NULL
+                ? snprintf(out, length, "%s.%s@%s", p->set->names[module], f->name, receiver)
+                : snprintf(out, length, "%s.%s", p->set->names[module], f->name);
+    MO_ASSERT(n >= 0 && (size_t)n + 1 == length);
+    return out;
+}
+
 static int by_name(const void *a, const void *b) {
-    const struct entry *x = a, *y = b;
+    const struct mo_intent_read *x = a, *y = b;
     int c = strcmp(x->module, y->module);
     if (c == 0)
         c = strcmp(x->name, y->name);
@@ -248,10 +258,10 @@ static void text_field(struct mo_sha256 *h, const char *text) {
     field(h, text, strlen(text));
 }
 
-static void digest(struct walker *w, const char *owner, const char *kind,
-                   const struct mo_syntax *syntax, uint8_t out[32]) {
+static void digest(struct walker *w, struct mo_intent_item *item, const struct mo_syntax *syntax) {
     close_reach(w);
-    struct entry *entries = array(w, w->reach_count, sizeof *entries, _Alignof(struct entry));
+    struct mo_intent_read *entries =
+        array(w, w->reach_count, sizeof *entries, _Alignof(struct mo_intent_read));
     for (uint32_t i = 0; w->ok && i < w->reach_count; i++) {
         uint32_t index = w->reach[i];
         uint32_t m = 0;
@@ -261,51 +271,56 @@ static void digest(struct walker *w, const char *owner, const char *kind,
             &w->program->interfaces->scopes[m].symbols[index - w->offsets[m]];
         if (w->texts[index].bytes == NULL)
             w->texts[index] = canonical(w, symbol->declaration);
-        entries[i] = (struct entry){w->program->set->names[m], symbol->name, w->texts[index]};
+        entries[i] = (struct mo_intent_read){w->program->set->names[m], symbol->name,
+                                             symbol_name(w, m, symbol), w->texts[index]};
+        w->ok = w->ok && entries[i].label != NULL;
     }
-    struct text own = w->ok ? canonical(w, syntax) : (struct text){NULL, 0};
+    item->text = w->ok ? canonical(w, syntax) : (struct mo_intent_text){NULL, 0};
     if (!w->ok)
         return;
     qsort(entries, w->reach_count, sizeof *entries, by_name);
+    item->reads = entries;
+    item->read_count = w->reach_count;
     struct mo_sha256 h;
     mo_sha256_init(&h);
     uint8_t version = MO_INTENT_DIGEST_VERSION;
     mo_sha256_update(&h, &version, 1);
-    text_field(&h, owner);
-    text_field(&h, kind);
-    field(&h, own.bytes, own.length);
+    text_field(&h, item->owner);
+    text_field(&h, item->kind);
+    field(&h, item->text.bytes, item->text.length);
     for (uint32_t i = 0; i < w->reach_count; i++) {
         text_field(&h, entries[i].module);
         text_field(&h, entries[i].name);
         field(&h, entries[i].text.bytes, entries[i].text.length);
     }
-    mo_sha256_finish(&h, out);
+    mo_sha256_finish(&h, item->digest);
+}
+
+static const char *display_name(struct walker *w, const struct mo_intent_item *item) {
+    const char *word = item->spec->kind == MO_SPEC_EXAMPLE ? "example" : "promise";
+    size_t length = strlen(item->owner) + strlen(word) + 13;
+    char *out = array(w, length, 1, 1);
+    if (out == NULL)
+        return NULL;
+    int n = snprintf(out, length, "%s.%s.%u", item->owner, word, (unsigned)item->spec->number);
+    MO_ASSERT(n >= 0 && (size_t)n < length);
+    return out;
+}
+
+static void describe(struct walker *w, struct mo_intent_item *item,
+                     const struct mo_checked_spec *spec, const char *owner, const char *kind) {
+    *item = (struct mo_intent_item){.spec = spec, .owner = owner, .kind = kind};
+    if (owner == NULL)
+        return;
+    item->name = display_name(w, item);
+    if (item->name != NULL)
+        digest(w, item, spec->syntax);
 }
 
 static void begin(struct walker *w, const struct mo_syntax *subject) {
     w->mark++;
     w->reach_count = 0;
     w->subject = subject;
-}
-
-static const char *function_owner(struct walker *w, uint32_t module, const struct mo_symbol *f) {
-    const struct mo_program *p = w->program;
-    const struct mo_module_scope *scope = &p->interfaces->scopes[f->module];
-    const struct mo_symbol *group = mo_find_symbol(scope, (const uint8_t *)f->name, f->name_length);
-    MO_ASSERT(group != NULL);
-    const char *receiver = f->receiver != UINT32_MAX && group->overload_count > 1
-                               ? scope->symbols[f->receiver].name
-                               : NULL;
-    size_t length = strlen(p->set->names[module]) + 1 + strlen(f->name) +
-                    (receiver != NULL ? 1 + strlen(receiver) : 0) + 1;
-    char *out = array(w, length, 1, 1);
-    if (out == NULL)
-        return NULL;
-    int n = receiver != NULL
-                ? snprintf(out, length, "%s.%s@%s", p->set->names[module], f->name, receiver)
-                : snprintf(out, length, "%s.%s", p->set->names[module], f->name);
-    MO_ASSERT(n >= 0 && (size_t)n + 1 == length);
-    return out;
 }
 
 static bool prepare(struct walker *w) {
@@ -322,7 +337,7 @@ static bool prepare(struct walker *w) {
     w->data = array(w, n, sizeof(uint32_t), _Alignof(uint32_t));
     w->marks = array(w, n, sizeof(uint32_t), _Alignof(uint32_t));
     w->reach = array(w, n, sizeof(uint32_t), _Alignof(uint32_t));
-    w->texts = array(w, n, sizeof *w->texts, _Alignof(struct text));
+    w->texts = array(w, n, sizeof *w->texts, _Alignof(struct mo_intent_text));
     w->parsed =
         array(w, p->set->sources->count, sizeof *w->parsed, _Alignof(struct mo_module_syntax *));
     if (!w->ok)
@@ -330,7 +345,7 @@ static bool prepare(struct walker *w) {
     for (uint32_t i = 0; i < n; i++) {
         w->functions[i] = w->constants[i] = w->data[i] = UINT32_MAX;
         w->marks[i] = 0;
-        w->texts[i] = (struct text){NULL, 0};
+        w->texts[i] = (struct mo_intent_text){NULL, 0};
     }
     memset(w->parsed, 0, p->set->sources->count * sizeof *w->parsed);
     for (uint32_t i = 0; i < p->function_count; i++) {
@@ -389,13 +404,8 @@ bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
         walk_body(w, &spec->body);
         for (uint32_t a = first[i]; a != UINT32_MAX; a = anchors[a])
             walk_body(w, &program->specs[a].body);
-        const char *owner = function_owner(w, spec->module, subject);
-        struct mo_intent_item *item = &out->items[out->count];
-        item->spec = spec;
-        if (owner != NULL)
-            digest(w, owner, spec->kind == MO_SPEC_PROMISE ? "promise" : "example", spec->syntax,
-                   item->digest);
-        out->count++;
+        describe(w, &out->items[out->count++], spec, symbol_name(w, spec->module, subject),
+                 spec->kind == MO_SPEC_PROMISE ? "promise" : "example");
     }
     for (uint32_t i = 0; w->ok && i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
@@ -414,9 +424,7 @@ bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
             walk_body(w, &promise->spec.body);
             for (uint32_t a = 0; a < promise->anchor_count; a++)
                 walk_body(w, &promise->anchors[a].body);
-            struct mo_intent_item *item = &out->items[out->count++];
-            item->spec = &promise->spec;
-            digest(w, owner, "service promise", promise->spec.syntax, item->digest);
+            describe(w, &out->items[out->count++], &promise->spec, owner, "service promise");
         }
     }
 done:
