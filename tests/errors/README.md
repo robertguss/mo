@@ -31,7 +31,7 @@ The bound follows the syntax that `src/syntax/parser.c` produces:
   postfix expression. Descending through that ladder retains at most ten
   expression frames before reaching a primary expression.
 - Repeated binary operators, prefixes and postfix steps form flat child
-  arrays. Inference walks those arrays in loops, not nested `infer` calls.
+  arrays. Inference walks those arrays in loops, not nested `infer_expression` calls.
 - Restarting the ladder requires a group, collection, call argument, lambda,
   conditional, case, loop or interpolation. Each enters a parser nesting
   level. Statement sequences and their statement or binding wrappers add
