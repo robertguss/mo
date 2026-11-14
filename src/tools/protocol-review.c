@@ -33,8 +33,7 @@ static bool head(struct review_reply *out, const struct mo_store_review *r, bool
 }
 
 static bool field(struct mo_buffer *json, const char *key, struct mo_bundle_span value) {
-    return mo_buffer_append_text(json, key) &&
-           mo_render_json_text(json, value.bytes, value.length);
+    return mo_buffer_append_text(json, key) && mo_render_json_text(json, value.bytes, value.length);
 }
 
 static bool indented(struct mo_buffer *text, struct mo_bundle_span value) {

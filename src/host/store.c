@@ -1975,11 +1975,15 @@ static enum mo_store_status read_approvals(struct mo_store *s, struct mo_arena *
     out->approved_count = count;
     return finish(stmt, result);
 }
+static bool text_valid(sqlite3_stmt *stmt, int column) {
+    const unsigned char *text = sqlite3_column_text(stmt, column);
+    size_t length = (size_t)sqlite3_column_bytes(stmt, column);
+    return sqlite3_column_type(stmt, column) == SQLITE_TEXT && text != NULL &&
+           length <= MO_LIMIT_INTENT_LIST_BYTES && memchr(text, 0, length) == NULL;
+}
 static const char *copy_text(struct history_copy *c, sqlite3_stmt *stmt, int column) {
     const unsigned char *text = sqlite3_column_text(stmt, column);
     size_t length = (size_t)sqlite3_column_bytes(stmt, column);
-    if (text == NULL || length > MO_LIMIT_INTENT_LIST_BYTES || memchr(text, 0, length) != NULL)
-        return NULL;
     char *copy = mo_arena_allocate(&c->out->arena, length + 1, 1);
     if (copy != NULL) {
         memcpy(copy, text, length);
@@ -2033,6 +2037,7 @@ static enum mo_store_status copy_decisions(struct mo_store *s, struct history_co
         const unsigned char *setting = sqlite3_column_text(stmt, 4);
         if (sqlite3_column_type(stmt, 0) != SQLITE_INTEGER || sqlite3_column_int64(stmt, 0) <= 0 ||
             sqlite3_column_type(stmt, 1) != SQLITE_INTEGER || !blob_size(stmt, 3, 32) ||
+            !text_valid(stmt, 2) || sqlite3_column_bytes(stmt, 2) == 0 || !text_valid(stmt, 5) ||
             setting == NULL ||
             (strcmp((const char *)setting, "everything") != 0 &&
              strcmp((const char *)setting, "intent") != 0)) {
@@ -2046,21 +2051,21 @@ static enum mo_store_status copy_decisions(struct mo_store *s, struct history_co
             h->review_truncated = true;
             continue;
         }
-        struct mo_store_history_decision *node = mo_arena_allocate(
-            &h->arena, sizeof *node, _Alignof(struct mo_store_history_decision));
+        struct mo_store_history_decision *node =
+            mo_arena_allocate(&h->arena, sizeof *node, _Alignof(struct mo_store_history_decision));
         if (node == NULL) {
             status = MO_STORE_MEMORY;
             break;
         }
-        *node = (struct mo_store_history_decision){
-            .sequence = (uint64_t)sqlite3_column_int64(stmt, 0),
-            .time = sqlite3_column_int64(stmt, 1),
-            .intent = setting[0] == 'i',
-            .kind = copy_text(c, stmt, 2),
-            .detail = copy_text(c, stmt, 5)};
+        *node =
+            (struct mo_store_history_decision){.sequence = (uint64_t)sqlite3_column_int64(stmt, 0),
+                                               .time = sqlite3_column_int64(stmt, 1),
+                                               .intent = setting[0] == 'i',
+                                               .kind = copy_text(c, stmt, 2),
+                                               .detail = copy_text(c, stmt, 5)};
         memcpy(node->base, sqlite3_column_blob(stmt, 3), 32);
-        if (node->kind == NULL || node->detail == NULL || node->kind[0] == 0) {
-            status = MO_STORE_CORRUPT;
+        if (node->kind == NULL || node->detail == NULL) {
+            status = MO_STORE_MEMORY;
             break;
         }
         *tail = node;
