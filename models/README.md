@@ -98,8 +98,9 @@ The review door is the `Door` constant. With it off, every staged candidate acti
 push names a migration, which is the model as it stood before the door; `Swap.cfg` and the
 first three negative controls run that way. `SwapDoor.cfg` turns it on with message 2 alone
 and at most two approvals: each push may name a migration, program 2 edits approved item `q`
-into `q2`, and program 3 keeps it and adds `r`. TLC explores about 63,000 distinct states,
-depth 21, in about three seconds. The door with all three messages explores about 7 million
+into `q2` on the same owner, and program 3 keeps it and adds `r` on a new owner, which a yes
+leaves unapproved. TLC explores about 102,000 distinct
+states, depth 21, in about three seconds. The door with all three messages explores about 7 million
 states and is not a configuration; the door touches messages only through the boundary, which
 message 2 alone exercises.
 
@@ -180,4 +181,5 @@ unattended path as on the path after a yes. Temporary reachability invariants co
 `SwapDoor.cfg` reaches an unattended activation, one after an approval, a yes on an edited
 item and on a migration, two yes activations in one run, a removed-tool reply after a yes, a
 stale commit on each path, a recheck, a held push replacing a pending upgrade while another
-candidate is staged, and a pending upgrade surviving a crash.
+candidate is staged, a pending upgrade surviving a crash, an edited item approved by a yes, and
+an item added on a new owner left unapproved after a yes.

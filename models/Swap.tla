@@ -113,10 +113,12 @@ Stale == /\ phase = "up" /\ slot.st = "commit" /\ ~Current /\ slot' = NoSlot
          /\ UNCHANGED <<durable, setting, approved, aver, phase, live, uncertain, mailbox, unsent,
                         client, done>>
 Boundary == phase = "up" /\ slot.st = "commit" /\ Current /\ unsent = {}
-\* A yes approves the items the review showed, edited and added; every activation retires the
-\* approvals the candidate lacks.
-Granted == IF slot.how = "yes" THEN (approved \cap Items(slot.cand)) \cup
-                                    (Items(slot.cand) \ Items(prog))
+\* The review shows each approved item the candidate lacks beside the candidate's new items on
+\* the same owner; a yes approves those, and every activation retires the approvals the candidate
+\* lacks.
+Owner(i) == IF i \in {"q", "q2"} THEN "f" ELSE i
+Shown(c) == {i \in Items(c) \ Items(prog) : \E j \in approved \ Items(c) : Owner(j) = Owner(i)}
+Granted == IF slot.how = "yes" THEN (approved \cap Items(slot.cand)) \cup Shown(slot.cand)
            ELSE approved \cap Items(slot.cand)
 \* The activation transaction: program row, ordinal, upgrade record, migrated snapshot at the
 \* head under the candidate's key, tail deleted, approvals and the review record; the upgrade
