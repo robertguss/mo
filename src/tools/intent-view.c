@@ -15,7 +15,7 @@ enum { SHORT_DIGEST = 6 };
 struct out {
     FILE *file;
     bool json, ok;
-    struct mo_buffer buffer, scratch;
+    struct mo_buffer buffer;
 };
 
 static void put(struct out *o, const char *text) {
@@ -29,14 +29,6 @@ static void put_text(struct out *o, const void *bytes, size_t length) {
 
 static void put_name(struct out *o, const char *name) {
     put_text(o, name, strlen(name));
-}
-
-static void put_read_name(struct out *o, const struct mo_intent_read *read) {
-    mo_buffer_clear(&o->scratch);
-    o->ok = o->ok && mo_buffer_append_text(&o->scratch, read->module) &&
-            mo_buffer_append_byte(&o->scratch, '.') &&
-            mo_buffer_append_text(&o->scratch, read->name);
-    put_text(o, o->scratch.bytes, o->scratch.length);
 }
 
 static void put_digest(struct out *o, const struct mo_intent_item *item, size_t bytes) {
@@ -76,7 +68,7 @@ static void json_item(struct out *o, const struct mo_intent_item *item) {
     put(o, ",\"reads\":[");
     for (uint32_t i = 0; i < item->read_count; i++) {
         put(o, i == 0 ? "" : ",");
-        put_read_name(o, &item->reads[i]);
+        put_name(o, item->reads[i].label);
     }
     put(o, "]");
 }
@@ -84,7 +76,7 @@ static void json_item(struct out *o, const struct mo_intent_item *item) {
 static void text_reads(struct out *o, const char *first, const struct mo_intent_item *item) {
     for (uint32_t i = 0; i < item->read_count; i++) {
         put(o, i == 0 ? first : ", ");
-        put_read_name(o, &item->reads[i]);
+        put_name(o, item->reads[i].label);
     }
     put(o, item->read_count == 0 ? "" : "\n");
 }
@@ -93,19 +85,32 @@ static bool example(const struct mo_intent_item *item) {
     return item->spec->kind == MO_SPEC_EXAMPLE;
 }
 
-static void list_row(struct out *o, const struct mo_intent_item *previous,
-                     const struct mo_intent_item *item) {
-    if (previous == NULL || !example(previous) || strcmp(previous->owner, item->owner) != 0) {
-        put(o, previous == NULL ? "examples " : "\nexamples ");
-        put_name(o, item->owner);
-        put(o, "\n");
+static bool same_table(const struct mo_intent_item *a, const struct mo_intent_item *b) {
+    return example(a) && example(b) && strcmp(a->owner, b->owner) == 0;
+}
+
+static bool tabled(const struct mo_intent *intent, uint32_t at) {
+    for (uint32_t i = 0; i < at; i++)
+        if (same_table(&intent->items[i], &intent->items[at]))
+            return true;
+    return false;
+}
+
+static void table(struct out *o, const struct mo_intent *intent, uint32_t first) {
+    put(o, "examples ");
+    put_name(o, intent->items[first].owner);
+    put(o, "\n");
+    for (uint32_t i = first; i < intent->count; i++) {
+        const struct mo_intent_item *item = &intent->items[i];
+        if (!same_table(item, &intent->items[first]))
+            continue;
+        put(o, "  ");
+        put_name(o, item->name);
+        put(o, " ");
+        put_digest(o, item, SHORT_DIGEST);
+        lines(o, "  ", "    ", item->text);
+        text_reads(o, "    reads ", item);
     }
-    put(o, "  ");
-    put_name(o, item->name);
-    put(o, " ");
-    put_digest(o, item, SHORT_DIGEST);
-    lines(o, "  ", "    ", item->text);
-    text_reads(o, "    reads ", item);
 }
 
 static void list(struct out *o, const struct mo_intent *intent) {
@@ -115,8 +120,11 @@ static void list(struct out *o, const struct mo_intent *intent) {
             put(o, "{\"record\":\"item\",");
             json_item(o, item);
             put(o, "}\n");
+        } else if (example(item) && tabled(intent, i)) {
+            continue;
         } else if (example(item)) {
-            list_row(o, i == 0 ? NULL : &intent->items[i - 1], item);
+            put(o, i == 0 ? "" : "\n");
+            table(o, intent, i);
         } else {
             put(o, i == 0 ? "" : "\n");
             put_name(o, item->kind);
@@ -159,9 +167,12 @@ static enum change fits(enum pass pass, const struct mo_intent_item *a,
     MO_UNREACHABLE();
 }
 
-static int by_read(const struct mo_intent_read *a, const struct mo_intent_read *b) {
-    int c = strcmp(a->module, b->module);
-    return c != 0 ? c : strcmp(a->name, b->name);
+static const struct mo_intent_read *find_read(const struct mo_intent_item *item,
+                                              const char *label) {
+    for (uint32_t i = 0; i < item->read_count; i++)
+        if (strcmp(item->reads[i].label, label) == 0)
+            return &item->reads[i];
+    return NULL;
 }
 
 static void changed_read(struct out *o, const struct mo_intent_read *before,
@@ -169,7 +180,7 @@ static void changed_read(struct out *o, const struct mo_intent_read *before,
     const struct mo_intent_read *named = before != NULL ? before : after;
     if (o->json) {
         put(o, *first ? "{\"name\":" : ",{\"name\":");
-        put_read_name(o, named);
+        put_name(o, named->label);
         const struct mo_intent_read *sides[2] = {before, after};
         for (uint32_t s = 0; s < 2; s++) {
             put(o, s == 0 ? ",\"before\":" : ",\"after\":");
@@ -181,12 +192,12 @@ static void changed_read(struct out *o, const struct mo_intent_read *before,
         put(o, "}");
     } else {
         put(o, before == NULL ? "  now reads " : after == NULL ? "  no longer reads " : "  ");
-        put_read_name(o, named);
+        put_name(o, named->label);
         put(o, before == NULL || after == NULL ? "\n" : " before\n");
         lines(o, "    ", "    ", (before != NULL ? before : after)->text);
         if (before != NULL && after != NULL) {
             put(o, "  ");
-            put_read_name(o, named);
+            put_name(o, named->label);
             put(o, " after\n");
             lines(o, "    ", "    ", after->text);
         }
@@ -197,20 +208,14 @@ static void changed_read(struct out *o, const struct mo_intent_read *before,
 static void changed_reads(struct out *o, const struct mo_intent_item *a,
                           const struct mo_intent_item *b) {
     bool first = true;
-    uint32_t i = 0, j = 0;
-    while (o->ok && (i < a->read_count || j < b->read_count)) {
-        const struct mo_intent_read *x = i < a->read_count ? &a->reads[i] : NULL;
-        const struct mo_intent_read *y = j < b->read_count ? &b->reads[j] : NULL;
-        int c = x == NULL ? 1 : y == NULL ? -1 : by_read(x, y);
-        if (c < 0)
-            changed_read(o, x, NULL, &first);
-        else if (c > 0)
-            changed_read(o, NULL, y, &first);
-        else if (!same_text(x->text, y->text))
-            changed_read(o, x, y, &first);
-        i += c <= 0;
-        j += c >= 0;
+    for (uint32_t i = 0; i < a->read_count; i++) {
+        const struct mo_intent_read *y = find_read(b, a->reads[i].label);
+        if (y == NULL || !same_text(a->reads[i].text, y->text))
+            changed_read(o, &a->reads[i], y, &first);
     }
+    for (uint32_t j = 0; j < b->read_count; j++)
+        if (find_read(a, b->reads[j].label) == NULL)
+            changed_read(o, NULL, &b->reads[j], &first);
 }
 
 static void change(struct out *o, enum change kind, const struct mo_intent_item *before,
@@ -242,7 +247,7 @@ static void change(struct out *o, enum change kind, const struct mo_intent_item 
     put(o, change_names[kind]);
     put(o, " ");
     put_name(o, shown->name);
-    if (kind == MOVED) {
+    if (before != NULL && after != NULL && strcmp(before->name, after->name) != 0) {
         put(o, " to ");
         put_name(o, after->name);
     }
@@ -374,7 +379,6 @@ void mo_intent_show(const struct mo_cli *cli, struct mo_arena *arena,
     }
     struct out o = {.file = output, .json = cli->json, .ok = true};
     mo_buffer_init(&o.buffer, MO_CLI_DIAGNOSTIC_SIZE);
-    mo_buffer_init(&o.scratch, MO_CLI_DIAGNOSTIC_SIZE);
     if (cli->against != NULL)
         against(cli, &o, arena, library, &now, diags);
     else {
@@ -382,6 +386,5 @@ void mo_intent_show(const struct mo_cli *cli, struct mo_arena *arena,
         if (!o.ok)
             report(diags, "the intent listing could not be written", NULL);
     }
-    mo_buffer_free(&o.scratch);
     mo_buffer_free(&o.buffer);
 }

@@ -1412,6 +1412,30 @@ def intent_command(binary):
     missing = run(binary, ["intent", f"{INTENT}/before/main.mo", "--against",
                            f"{INTENT}/missing/main.mo"], 1)
     assert b"the --against program does not check" in missing.stderr, missing
+    assert "  now reads Main.limit\n    limit = 10\n" in run(binary, [
+        "intent", f"{INTENT}/after/main.mo", "--against", f"{INTENT}/before/main.mo"], 0
+    ).stdout.decode()
+    assert "  no longer reads Main.limit\n    limit = 10\n" in run(binary, [
+        "intent", f"{INTENT}/before/main.mo", "--against", f"{INTENT}/after/main.mo"], 0
+    ).stdout.decode()
+    rows, end = intent_records(binary, [f"{INTENT}/rows-before/main.mo"])
+    assert rows[0]["reads"] == ["Main.P", "Main.Q", "Main.score@P", "Main.score@Q"], rows
+    text = run(binary, ["intent", f"{INTENT}/rows-before/main.mo"], 0).stdout.decode()
+    assert text.count("examples Main.double\n") == 1, text
+    assert text.index("double(3) == 6") < text.index("promise Main.double.promise.1"), text
+    changes, end = intent_records(binary, [f"{INTENT}/rows-after/main.mo", "--against",
+                                           f"{INTENT}/rows-before/main.mo"])
+    assert (end["unchanged"], end["edited"]) == (3, 2), end
+    assert [(r["name"], r["before"].split("\n")[0], r["after"].split("\n")[0])
+            for r in changes[0]["reads"]] == [
+        ("Main.score@P", "fn score(p: P) : Int", "fn score(z: P) : Int")], changes[0]
+    text = run(binary, ["intent", f"{INTENT}/rows-after/main.mo", "--against",
+                        f"{INTENT}/rows-before/main.mo"], 0).stdout.decode()
+    assert "edited Main.double.example.1 to Main.double.example.3\n" in text, text
+    service, end = intent_records(binary, ["services/task-queue/main.mo"])
+    promised = [r for r in service if r["kind"] == "service promise"]
+    assert promised and all(r["owner"] == "Main.service" for r in promised), service
+    assert promised[0]["name"] == "Main.service.promise.1", promised
 
 
 def fix_command(binary):

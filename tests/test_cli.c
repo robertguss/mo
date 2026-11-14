@@ -192,6 +192,21 @@ static void parse_fetch(void) {
                  "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
 }
 
+static void parse_intent(void) {
+    struct mo_cli cli;
+    const char *error;
+    const char *happy[] = {"mo", "intent", "new.mo", "--against", "old.mo", "--json"};
+    CHECK(mo_cli_parse(6, happy, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_INTENT && cli.file_count == 1 && cli.json);
+    CHECK(strcmp(mo_cli_file(&cli, 0), "new.mo") == 0 && strcmp(cli.against, "old.mo") == 0);
+    const char *two[] = {"mo", "intent", "a.mo", "b.mo"};
+    refused(4, two, "command takes exactly one file: \"b.mo\"");
+    const char *none[] = {"mo", "intent"};
+    refused(2, none, "command needs a file: \"intent\"");
+    const char *check[] = {"mo", "check", "--against", "old.mo", "f.mo"};
+    refused(5, check, "flag is not accepted by this command: \"--against\"");
+}
+
 static void parse_serve(void) {
     struct mo_cli cli;
     const char *error;
@@ -850,6 +865,7 @@ int main(int argc, char *argv[]) {
     parse_rehearsal();
     parse_commands();
     parse_serve();
+    parse_intent();
     parse_fetch();
     parse_offline();
     limit_values();

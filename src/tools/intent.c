@@ -211,6 +211,27 @@ static struct mo_intent_text canonical(struct walker *w, const struct mo_syntax 
     return out;
 }
 
+static const char *symbol_name(struct walker *w, uint32_t module, const struct mo_symbol *f) {
+    const struct mo_program *p = w->program;
+    const struct mo_module_scope *scope = &p->interfaces->scopes[f->module];
+    const struct mo_symbol *group =
+        f->receiver == UINT32_MAX ? NULL
+                                  : mo_find_symbol(scope, (const uint8_t *)f->name, f->name_length);
+    MO_ASSERT(f->receiver == UINT32_MAX || group != NULL);
+    const char *receiver =
+        group != NULL && group->overload_count > 1 ? scope->symbols[f->receiver].name : NULL;
+    size_t length = strlen(p->set->names[module]) + 1 + strlen(f->name) +
+                    (receiver != NULL ? 1 + strlen(receiver) : 0) + 1;
+    char *out = array(w, length, 1, 1);
+    if (out == NULL)
+        return NULL;
+    int n = receiver != NULL
+                ? snprintf(out, length, "%s.%s@%s", p->set->names[module], f->name, receiver)
+                : snprintf(out, length, "%s.%s", p->set->names[module], f->name);
+    MO_ASSERT(n >= 0 && (size_t)n + 1 == length);
+    return out;
+}
+
 static int by_name(const void *a, const void *b) {
     const struct mo_intent_read *x = a, *y = b;
     int c = strcmp(x->module, y->module);
@@ -250,8 +271,9 @@ static void digest(struct walker *w, struct mo_intent_item *item, const struct m
             &w->program->interfaces->scopes[m].symbols[index - w->offsets[m]];
         if (w->texts[index].bytes == NULL)
             w->texts[index] = canonical(w, symbol->declaration);
-        entries[i] =
-            (struct mo_intent_read){w->program->set->names[m], symbol->name, w->texts[index]};
+        entries[i] = (struct mo_intent_read){w->program->set->names[m], symbol->name,
+                                             symbol_name(w, m, symbol), w->texts[index]};
+        w->ok = w->ok && entries[i].label != NULL;
     }
     item->text = w->ok ? canonical(w, syntax) : (struct mo_intent_text){NULL, 0};
     if (!w->ok)
@@ -299,26 +321,6 @@ static void begin(struct walker *w, const struct mo_syntax *subject) {
     w->mark++;
     w->reach_count = 0;
     w->subject = subject;
-}
-
-static const char *function_owner(struct walker *w, uint32_t module, const struct mo_symbol *f) {
-    const struct mo_program *p = w->program;
-    const struct mo_module_scope *scope = &p->interfaces->scopes[f->module];
-    const struct mo_symbol *group = mo_find_symbol(scope, (const uint8_t *)f->name, f->name_length);
-    MO_ASSERT(group != NULL);
-    const char *receiver = f->receiver != UINT32_MAX && group->overload_count > 1
-                               ? scope->symbols[f->receiver].name
-                               : NULL;
-    size_t length = strlen(p->set->names[module]) + 1 + strlen(f->name) +
-                    (receiver != NULL ? 1 + strlen(receiver) : 0) + 1;
-    char *out = array(w, length, 1, 1);
-    if (out == NULL)
-        return NULL;
-    int n = receiver != NULL
-                ? snprintf(out, length, "%s.%s@%s", p->set->names[module], f->name, receiver)
-                : snprintf(out, length, "%s.%s", p->set->names[module], f->name);
-    MO_ASSERT(n >= 0 && (size_t)n + 1 == length);
-    return out;
 }
 
 static bool prepare(struct walker *w) {
@@ -402,7 +404,7 @@ bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
         walk_body(w, &spec->body);
         for (uint32_t a = first[i]; a != UINT32_MAX; a = anchors[a])
             walk_body(w, &program->specs[a].body);
-        describe(w, &out->items[out->count++], spec, function_owner(w, spec->module, subject),
+        describe(w, &out->items[out->count++], spec, symbol_name(w, spec->module, subject),
                  spec->kind == MO_SPEC_PROMISE ? "promise" : "example");
     }
     for (uint32_t i = 0; w->ok && i < program->service_count; i++) {

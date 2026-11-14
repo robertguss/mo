@@ -1,0 +1,44 @@
+module Main
+
+struct P
+  value: Int
+end
+
+struct Q
+  value: Int
+end
+
+fn score(p: P) : Int
+  p.value
+end
+
+fn score(q: Q) : Int
+  q.value
+end
+
+fn total(n: Int) : Int
+  examples
+    total(1) == P(value: 1).score + Q(value: 1).score
+  end
+
+  P(value: n).score + Q(value: n).score
+end
+
+fn double(n: Int) : Int
+  examples
+    double(1) == 2
+    double(2) == 4
+  end
+
+  promise "the result is even"
+    result % 2 == 0
+    allows n: 1, result: 2
+    forbids n: 1, result: 3
+  end
+
+  examples
+    double(3) == 6
+  end
+
+  n * 2
+end

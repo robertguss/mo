@@ -14,6 +14,7 @@ struct mo_intent_text {
 struct mo_intent_read {
     const char *module;
     const char *name;
+    const char *label;
     struct mo_intent_text text;
 };
 
