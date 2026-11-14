@@ -1,0 +1,17 @@
+error E0091: count makes an anonymous function capture a capability  tests/errors/e0091-service-promise/main.mo:9:25
+
+  9 |     after >= before and count(empty_consoles()) == 1
+    |                         ^^^^^ count makes an anonymous function capture a capability
+
+  --> tests/errors/e0091-service-promise/main.mo:23:1
+  23 | fn count(items: List(T)) : Int
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  24 |   f = fn(extra) items.size + extra end
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  25 |   f(1)
+     | ^^^^^^
+  26 | end
+     | ^^^ captures its parameter
+
+This generic function's anonymous functions capture a value of this type argument, and anonymous functions can't capture capabilities, or values holding them (reference 11.4).
+
