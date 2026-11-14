@@ -12,43 +12,6 @@ MAX_FILES = 4096
 
 
 class Bundle:
-    def __init__(self, root, capture, *, evaluation_endpoint=None):
-        import origin_identity
-        from trace_storage import TraceLines
-        if type(capture) is not origin_identity.Capture or capture.manifest is None:
-            origin_identity.reject()
-        if (capture.directory / 'consumed').exists():
-            origin_identity.reject()
-        self.root = Path(root)
-        self.collector, self.uid = capture.collector, capture.session_uid
-        self.session = capture.session
-        self.files = {}
-        self.total = 0
-        pin, raw = origin_identity.protected(capture.directory / 'manifest.json', self.collector, self.uid, private=True)
-        if pin != capture.manifest: origin_identity.reject()
-        manifest = json.loads(raw)
-        self.root.mkdir(mode=0o700)
-        self.facts = dict(capture=manifest, loader=capture.loader,
-                          runtime_valid=capture.runtime_valid, mappings={})
-        for role in ('binary', 'trace', 'proxy_log', 'stdout', 'stderr', 'tcp_snapshot'):
-            if role in manifest:
-                self.add(role, manifest[role]['path'], expected=manifest[role], executable=role == 'binary')
-        if capture.loader:
-            self.add('loader', capture.loader['path'], expected=capture.loader)
-        # Record actual mappings while original paths still exist; no later inference.
-        snapshot = json.loads((self.root / 'tcp_snapshot').read_bytes()) if 'tcp_snapshot' in self.files else None
-        parsed = origin_identity.origin_trace.parse_trace(TraceLines(self.root / 'trace'),
-            session_id=self.session, tcp_snapshots=snapshot['snapshots'] if snapshot else (),
-            evaluation_endpoint=evaluation_endpoint)
-        for direction in ('requests', 'responses'):
-            for receipt in parsed[direction]:
-                for path in receipt['sender'].get('executable_mappings', []):
-                    # Anonymous/JIT code is preserved in the trace but cannot
-                    # acquire a protected mapping pin or native push identity.
-                    if path is not None and path not in self.facts['mappings']:
-                        pin, _ = identity.protected(path, self.collector, self.uid)
-                        self.facts['mappings'][path] = pin
-
     def add(self, role, source, *, expected=None, executable=False):
         if len(self.files) >= MAX_FILES or role in self.files or '/' in role or role.startswith('.'):
             identity.reject()
@@ -93,12 +56,6 @@ class Bundle:
             self.total = total
             raise
         self.facts[role] = members
-
-    def finish(self, facts):
-        identity.atomic_private(self.root / 'manifest.json', dict(version=1,
-            session=self.session, session_uid=self.uid, collector=self.collector,
-            files=self.files, provenance=self.facts, launch=facts, qualified=False,
-            publication_excluded=True))
 
 
 def verify(root, session_id, session_uid):

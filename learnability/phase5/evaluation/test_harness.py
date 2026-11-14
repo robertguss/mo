@@ -19,34 +19,6 @@ class RunnerTests(unittest.TestCase):
                 setup.assert_called_once_with(installed, 'mo', 'claude', 'codex')
                 sudo.assert_called_once_with('chmod', '0555', installed.bin / 'mo')
 
-    def test_agent_dictionary_cannot_supply_origin(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            log = Path(tmp) / 'log'
-            log.write_text('')
-            with self.assertRaisesRegex(ValueError, 'collector Capture required'):
-                h.proxy.match('codex', log, log, capture={'qualified': True})
-
-    def test_provider_tls_is_excluded_from_http_reconstruction(self):
-        from origin_trace import parse_trace
-        from test_origin_trace import line
-        trace = line(b'\x16\x03\x01provider tls').replace(':80]', ':443]')
-        parsed = parse_trace(trace, evaluation_endpoint='127.0.0.1:80')
-        self.assertEqual(parsed['requests'], [])
-        self.assertEqual(parsed['responses'], [])
-
-    def test_resumed_vfork_registers_actual_child(self):
-        trace = '\n'.join([
-            '10 execve("/bin/sh", ["sh"], []) = 0',
-            '10 vfork( <unfinished ...>',
-            '11 execve("/bin/true", ["true"], []) = 0',
-            '10 <... vfork resumed>) = 11',
-            '11 +++ exited with 0 +++',
-            '10 +++ exited with 0 +++', ''])
-        import origin_observer
-        self.assertTrue(origin_observer.process_integrity(trace)['process_completeness_verified'])
-        truncated = trace.replace('10 <... vfork resumed>) = 11\n', '')
-        self.assertFalse(origin_observer.process_integrity(truncated)['process_completeness_verified'])
-
     def test_native_occurrences_are_consumed_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             stream, log = Path(tmp) / 'stream', Path(tmp) / 'log'
@@ -83,17 +55,6 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(Path(h.grader.fixture.__file__).parent, h.HERE)
         self.assertEqual(Path(h.p4.fixture.__file__).parent.name, 'phase4')
         self.assertIs(h.grader.fixture.proxy, h.proxy)
-
-    def test_collector_imports_no_tracer_module(self):
-        import subprocess
-        import sys
-        tracer = ['origin_controls', 'origin_descriptors', 'origin_identity', 'origin_join',
-                  'origin_observer', 'origin_trace', 'observation', 'trace_storage']
-        loaded = subprocess.run([sys.executable, '-I', '-c',
-            'import json, sys; sys.path.insert(0, sys.argv[1]); import harness; '
-            'print(json.dumps(sorted(set(sys.argv[2:]) & set(sys.modules))))', str(h.HERE), *tracer],
-            capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(loaded.stdout), [])
 
     def test_launch_carries_both_credentials_and_stops_at_the_limit(self):
         from types import SimpleNamespace

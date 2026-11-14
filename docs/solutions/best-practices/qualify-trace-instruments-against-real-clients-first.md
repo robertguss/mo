@@ -38,8 +38,8 @@ because the fixtures encoded the author's model of the client, and the parser en
 
 Qualification shortened the tail but did not end it: experiment 3's first scored slot still hit an
 unrecognised behaviour (resumed `sendfile` calls) and stopped. Experiment 4 (#325) then graded on
-the outcome of the upgrade instead, and the collector now launches clients untraced; the tracer
-modules remain in the tree, unused.
+the outcome of the upgrade instead, and the collector now launches clients untraced; the unused
+tracer was deleted.
 
 ## Guidance
 

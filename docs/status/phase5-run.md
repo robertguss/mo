@@ -185,7 +185,7 @@ is not itself an implemented independent regrader.
 
 Capability inspection and retained failures are in
 [model provenance](../../learnability/phase5/evaluation/model-provenance-development.md),
-[origin observation](../../learnability/phase5/evaluation/origin-observation-development.md),
+learnability/phase5/evaluation/origin-observation-development.md,
 [grading](../../learnability/phase5/evaluation/grading-development.md), and
 [integration](../../learnability/phase5/evaluation/integration-development.md).
 These repairs do not complete the follow-up plan or satisfy the release gate.
@@ -204,7 +204,7 @@ publication. Nine live transfer controls passed, including successful direct
 positioned I/O on a proven regular file. Protected publication regrading and
 actual-model coverage remain incomplete; development stub results cannot replace
 those requirements. Detailed failures, corrections and verification are retained
-in [transfer classification](../../learnability/phase5/evaluation/transfer-classification-development.md).
+in learnability/phase5/evaluation/transfer-classification-development.md.
 
 The complete protected collector rerun passed all five development cases
 (native, curl, urllib, timeout and injected cleanup-reporting failure): two
