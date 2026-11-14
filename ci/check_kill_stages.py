@@ -23,7 +23,7 @@ def main():
     # Unique executable source anchors: fail closed when source changes.
     sites = [
         ('upload', 'src/tools/protocol-upgrade.c', 'enum mo_upload_status status = mo_upload_page('),
-        ('compiled_staged', 'src/tools/upgrade.c', 'u->staged = mo_upgrade_compile_end('),
+        ('compiled_staged', 'src/tools/upgrade-live.c', 'u->staged = mo_upgrade_compile_end('),
         ('ordinary_call', 'src/vm/execute.c', 'uint32_t head = fn->code[f->pc], op = head & MO_OPCODE_MASK;'),
         ('migration', 'src/tools/upgrade.c',
          'enum mo_outcome result = mo_call(process, selected, &argument, 1, &value, &defect);'),
