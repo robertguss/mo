@@ -8,6 +8,7 @@ enum mo_intent_kind { MO_INTENT_PROMISE, MO_INTENT_EXAMPLE, MO_INTENT_SERVICE_PR
 struct mo_intent_entry {
     const uint8_t *digest;
     enum mo_intent_kind kind;
+    bool reached;
     struct mo_bundle_span owner, name, text;
     uint32_t read_count;
     struct mo_binary reads;

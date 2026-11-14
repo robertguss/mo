@@ -366,6 +366,31 @@ static bool prepare(struct walker *w) {
     return true;
 }
 
+static void served(struct walker *w, struct mo_intent *out) {
+    const struct mo_program *p = w->program;
+    begin(w, NULL);
+    for (uint32_t i = 0; i < p->service_count; i++) {
+        const struct mo_checked_service *service = &p->services[i];
+        if (service->module != 0)
+            continue;
+        walk_body(w, &service->initializer);
+        for (uint32_t t = 0; t < service->tool_count; t++)
+            visit(w, p->functions[service->tools[t].function].signature->function);
+        for (uint32_t t = 0; t < service->timer_count; t++) {
+            visit(w, p->functions[service->timers[t].function].signature->function);
+            walk_body(w, &service->timers[t].interval);
+        }
+    }
+    close_reach(w);
+    for (uint32_t i = 0; w->ok && i < out->count; i++) {
+        struct mo_intent_item *item = &out->items[i];
+        uint32_t f = item->spec->subject;
+        const struct mo_symbol *subject =
+            f == UINT32_MAX ? NULL : p->functions[f].signature->function;
+        item->reached = subject == NULL || w->marks[symbol_index(w, subject)] == w->mark;
+    }
+}
+
 bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
                      struct mo_intent *out) {
     MO_ASSERT(program->set->sources != NULL);
@@ -429,6 +454,8 @@ bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
             describe(w, &out->items[out->count++], &promise->spec, owner, "service promise");
         }
     }
+    if (w->ok)
+        served(w, out);
 done:
     mo_diags_free(&w->diags);
     if (w->ok)
@@ -459,6 +486,7 @@ bool mo_intent_list_write(const struct mo_intent *intent, struct mo_buffer *out)
         while (strcmp(mo_intent_kind_name((enum mo_intent_kind)kind), item->kind) != 0)
             kind++;
         ok = mo_buffer_append(out, item->digest, 32) && mo_buffer_append_byte(out, kind) &&
+             mo_buffer_append_byte(out, item->reached) &&
              list_text(out, item->owner, strlen(item->owner)) &&
              list_text(out, item->name, strlen(item->name)) &&
              list_text(out, item->text.bytes, item->text.length) &&

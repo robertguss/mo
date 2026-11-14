@@ -34,6 +34,7 @@
 struct digests {
     uint32_t count;
     uint8_t items[8][32];
+    bool reached[8];
 };
 
 static struct digests digests_of(const char *source) {
@@ -55,8 +56,10 @@ static struct digests digests_of(const char *source) {
     if (program != NULL && mo_intent_items(&arena, program, &intent)) {
         MO_ASSERT(intent.count <= 8);
         out.count = intent.count;
-        for (uint32_t i = 0; i < intent.count; i++)
+        for (uint32_t i = 0; i < intent.count; i++) {
             memcpy(out.items[i], intent.items[i].digest, 32);
+            out.reached[i] = intent.items[i].reached;
+        }
     } else
         CHECK(false);
     mo_arena_free(&arena);
@@ -71,7 +74,7 @@ static bool same(const uint8_t *a, const uint8_t *b) {
 
 static void identity(void) {
     struct digests base = digests_of(BASE CLAMP(HEADER, CLAMP_PROMISES, BODY));
-    CHECK(base.count == 3);
+    CHECK(base.count == 3 && !base.reached[0] && !base.reached[1] && !base.reached[2]);
     CHECK(!same(base.items[0], base.items[1]) && !same(base.items[1], base.items[2]));
 
     struct digests again = digests_of(BASE CLAMP(HEADER, CLAMP_PROMISES, BODY));
@@ -119,12 +122,30 @@ static void service(void) {
         digests_of(SERVICE("before.all?(fn(m) after.contains?(m) end)", "numbers.size + 1"));
     CHECK(base.count == 1 && handler.count == 1 && helper.count == 1);
     CHECK(same(handler.items[0], base.items[0]) && !same(helper.items[0], base.items[0]));
+    CHECK(base.reached[0]);
+}
+
+#define REACH(initial, handler)                                                                    \
+    "module Main\n\nservice\n  state Int = " initial "\n  tools add\n"                             \
+    "  token from env \"TOKEN\"\nend\n\n"                                                          \
+    "fn bump(n: Int) : Int\n  examples\n    bump(1) == 2\n  end\n\n  n + 1\nend\n\n"               \
+    "fn twice(n: Int) : Int\n  bump(bump(n))\nend\n\n"                                             \
+    "fn add(state: Int, _now: Time) : (Int, Int)\n  (" handler ", state)\nend\n"
+
+static void reach(void) {
+    struct digests through = digests_of(REACH("0", "twice(state)"));
+    struct digests dropped = digests_of(REACH("0", "state + 1"));
+    struct digests initial = digests_of(REACH("bump(0)", "state + 1"));
+    CHECK(through.count == 1 && dropped.count == 1 && initial.count == 1);
+    CHECK(through.reached[0] && !dropped.reached[0] && initial.reached[0]);
+    CHECK(same(through.items[0], dropped.items[0]));
 }
 
 static void run_tests(void *unused) {
     (void)unused;
     identity();
     service();
+    reach();
 }
 
 int main(void) {

@@ -40,7 +40,8 @@ static void items(struct mo_buffer *b, const char *letters) {
     for (uint32_t i = 0; i < count; i++) {
         uint8_t digest[32];
         memset(digest, letters[i], 32);
-        CHECK(mo_buffer_append(b, digest, 32) && mo_buffer_append_byte(b, 0));
+        CHECK(mo_buffer_append(b, digest, 32) && mo_buffer_append_byte(b, 0) &&
+              mo_buffer_append_byte(b, 1));
         for (unsigned j = 0; j < 3; j++)
             CHECK(mo_binary_write(b, 1, 4) && mo_buffer_append_byte(b, (uint8_t)letters[i]));
         CHECK(mo_binary_write(b, 0, 4));

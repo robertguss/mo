@@ -25,6 +25,7 @@ struct mo_intent_item {
     uint32_t read_count;
     struct mo_intent_read *reads;
     uint8_t digest[32];
+    bool reached;
 };
 
 struct mo_intent {

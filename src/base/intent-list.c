@@ -20,14 +20,16 @@ bool mo_intent_list_read_name(struct mo_binary *reads, struct mo_bundle_span *ou
 bool mo_intent_list_next(struct mo_binary *cursor, struct mo_intent_entry *out) {
     struct mo_binary in = *cursor;
     struct mo_intent_entry next;
-    const uint8_t *kind;
+    const uint8_t *kind, *reached;
     uint64_t reads;
     if (!mo_binary_read(&in, 32, &next.digest) || !mo_binary_read(&in, 1, &kind) ||
-        *kind >= sizeof kinds / sizeof *kinds || !text(&in, &next.owner) ||
-        !text(&in, &next.name) || !text(&in, &next.text) || !mo_binary_uint(&in, 4, &reads) ||
+        *kind >= sizeof kinds / sizeof *kinds || !mo_binary_read(&in, 1, &reached) ||
+        *reached > 1 || !text(&in, &next.owner) || !text(&in, &next.name) ||
+        !text(&in, &next.text) || !mo_binary_uint(&in, 4, &reads) ||
         reads > MO_LIMIT_INTENT_LIST_BYTES)
         return false;
     next.kind = (enum mo_intent_kind)kind[0];
+    next.reached = *reached == 1;
     next.read_count = (uint32_t)reads;
     next.reads = in;
     struct mo_bundle_span name;

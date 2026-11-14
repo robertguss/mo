@@ -16,7 +16,7 @@ enum { REVIEW_PENDING = 7 };
 enum { PAGE_BYTES = MO_LIMIT_MCP_RESPONSE_BYTES / 4 - 256 };
 enum { DIFFERENCE_BYTES = 2 * MO_LIMIT_INTENT_LIST_BYTES };
 enum {
-    DOOR_BYTES = MO_STORE_REVIEW_READ_BYTES + 3 * MO_LIMIT_INTENT_ITEMS * 32 +
+    DOOR_BYTES = MO_STORE_REVIEW_READ_BYTES + 5 * MO_LIMIT_INTENT_ITEMS * 32 +
                  MO_LIMIT_INTENT_ITEMS * (int)sizeof(struct mo_bundle_span) + DIFFERENCE_BYTES +
                  MO_LIMIT_BUNDLE_BYTES + MO_LIMIT_UPGRADE_MIGRATION_NAME +
                  12 * MO_ARENA_CHUNK_HEADER
@@ -24,8 +24,8 @@ enum {
 
 struct door_view {
     struct mo_buffer text;
-    uint8_t (*approve)[32];
-    uint32_t approve_count;
+    uint8_t (*approve)[32], (*retire)[32];
+    uint32_t approve_count, retire_count;
     bool keeps;
 };
 
@@ -33,7 +33,9 @@ static int digest_order(const void *a, const void *b) {
     return memcmp(a, b, 32);
 }
 
-static uint8_t (*sorted(struct mo_arena *arena, const struct mo_intent_list *list))[32] {
+static uint8_t (*sorted(struct mo_arena *arena, const struct mo_intent_list *list, bool reached,
+                        uint32_t *count))[32] {
+    *count = 0;
     uint8_t(*digests)[32] =
         mo_arena_allocate_array(arena, list->count == 0 ? 1 : list->count, 32, _Alignof(uint8_t));
     if (digests == NULL)
@@ -42,9 +44,10 @@ static uint8_t (*sorted(struct mo_arena *arena, const struct mo_intent_list *lis
     struct mo_intent_entry entry;
     for (uint32_t i = 0; i < list->count; i++) {
         MO_ASSERT(mo_intent_list_next(&cursor, &entry));
-        memcpy(digests[i], entry.digest, 32);
+        if (entry.reached || !reached)
+            memcpy(digests[(*count)++], entry.digest, 32);
     }
-    qsort(digests, list->count, 32, digest_order);
+    qsort(digests, *count, 32, digest_order);
     return digests;
 }
 
@@ -87,31 +90,42 @@ static bool same_owner(const struct mo_bundle_span *owners, uint32_t count,
 
 static bool difference(struct mo_arena *arena, const struct mo_store_review *r,
                        const struct mo_intent_list *candidate, struct door_view *out) {
-    uint8_t(*has)[32] = sorted(arena, candidate);
-    uint8_t(*had)[32] = sorted(arena, &r->items);
+    uint32_t has_count, reached_count, had_count;
+    uint8_t(*has)[32] = sorted(arena, candidate, false, &has_count);
+    uint8_t(*reached)[32] = sorted(arena, candidate, true, &reached_count);
+    uint8_t(*had)[32] = sorted(arena, &r->items, false, &had_count);
     struct mo_bundle_span *owners =
         mo_arena_allocate_array(arena, r->approved_count == 0 ? 1 : r->approved_count,
                                 sizeof *owners, _Alignof(struct mo_bundle_span));
     out->approve = mo_arena_allocate_array(arena, candidate->count == 0 ? 1 : candidate->count, 32,
                                            _Alignof(uint8_t));
-    out->approve_count = 0;
-    bool ok = has != NULL && had != NULL && owners != NULL && out->approve != NULL;
+    out->retire = mo_arena_allocate_array(arena, r->approved_count == 0 ? 1 : r->approved_count, 32,
+                                          _Alignof(uint8_t));
+    out->approve_count = out->retire_count = 0;
+    bool ok = has != NULL && reached != NULL && had != NULL && owners != NULL &&
+              out->approve != NULL && out->retire != NULL;
     uint32_t lacking = 0;
+    out->keeps = true;
     struct mo_binary cursor = mo_intent_list_first(&r->items);
     struct mo_intent_entry e;
     for (uint32_t i = 0; ok && i < r->items.count; i++) {
         MO_ASSERT(mo_intent_list_next(&cursor, &e));
-        if (mo_store_review_approved(r, e.digest) &&
-            !listed((const uint8_t(*)[32])has, candidate->count, e.digest)) {
+        if (!mo_store_review_approved(r, e.digest))
+            continue;
+        if (!listed((const uint8_t(*)[32])has, has_count, e.digest)) {
             owners[lacking++] = e.owner;
             ok = entry(&out->text, "lacks", &e);
+            out->keeps = false;
+        } else if (!listed((const uint8_t(*)[32])reached, reached_count, e.digest)) {
+            memcpy(out->retire[out->retire_count++], e.digest, 32);
+            ok = entry(&out->text, "not reached", &e);
+            out->keeps = false;
         }
     }
-    out->keeps = lacking == 0;
     cursor = mo_intent_list_first(candidate);
     for (uint32_t i = 0; ok && i < candidate->count; i++) {
         MO_ASSERT(mo_intent_list_next(&cursor, &e));
-        if (!listed((const uint8_t(*)[32])had, r->items.count, e.digest) &&
+        if (!listed((const uint8_t(*)[32])had, had_count, e.digest) &&
             same_owner(owners, lacking, e.owner)) {
             memcpy(out->approve[out->approve_count++], e.digest, 32);
             ok = entry(&out->text, "added", &e);
@@ -309,7 +323,7 @@ bool mo_protocol_door_activation(struct mo_protocol_server *s,
     mo_arena_init(arena, DOOR_BYTES);
     struct door_view view;
     mo_buffer_init(&view.text, DIFFERENCE_BYTES);
-    view.approve_count = 0;
+    view.approve_count = view.retire_count = 0;
     struct mo_store_review r = {0};
     struct mo_intent_list items;
     bool ok = mo_store_review_read(s->store, arena, &r) == MO_STORE_OK && r.reviewed &&
@@ -330,6 +344,8 @@ bool mo_protocol_door_activation(struct mo_protocol_server *s,
         activation->approval_version = r.version;
         activation->approve = (const uint8_t(*)[32])view.approve;
         activation->approve_count = view.approve_count;
+        activation->retire = (const uint8_t(*)[32])view.retire;
+        activation->retire_count = view.retire_count;
     }
     mo_buffer_free(&view.text);
     return ok;

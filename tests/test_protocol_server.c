@@ -1348,7 +1348,8 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
     for (uint8_t letter = 'A'; letter <= 'B'; letter++) {
         uint8_t item[32];
         memset(item, letter, sizeof item);
-        MO_ASSERT(mo_buffer_append(&items, item, sizeof item) && mo_buffer_append_byte(&items, 0));
+        MO_ASSERT(mo_buffer_append(&items, item, sizeof item) && mo_buffer_append_byte(&items, 0) &&
+                  mo_buffer_append_byte(&items, 1));
         for (unsigned j = 0; j < 2; j++)
             MO_ASSERT(mo_binary_write(&items, 1, 4) && mo_buffer_append_byte(&items, letter));
         uint32_t length = letter == 'B' ? 9000 : 1;

@@ -206,7 +206,7 @@ Approvals live in the data folder, in tables added beside Phase 5's:
 
 | Table | Holds |
 | --- | --- |
-| `items` | One row: the active program's activation ordinal and its item list in MOIL v1 (`src/base/intent-list.h`): each item's digest, kind, owner, display name, text and the declarations it reads |
+| `items` | One row: the active program's activation ordinal and its item list in MOIL v1 (`src/base/intent-list.h`): each item's digest, kind, whether its owner is reached, owner, display name, text and the declarations it reads |
 | `approvals` | Approved digests, each with the approval-set version that wrote it and how: first approval, or the review id of a yes |
 | `review` | One row: the review setting and the approval-set version |
 | `pending` | At most one held upgrade: review id, base and candidate digests, migration name, approval-set version, the intent difference, the bundle |
@@ -376,7 +376,7 @@ pending the answer is E1436.
   then activates it at the next boundary through Phase 5's activation
   transaction. The same transaction approves every candidate item the review
   showed, edited and added, and retires the approved digests the candidate
-  lacks. If the base or the approval-set version changed while it was
+  lacks or showed `not reached`. If the base or the approval-set version changed while it was
   rechecked, the upgrade is stale instead and the answer is recorded as refused
   after a yes.
 - **No** drops the pending upgrade and records the answer.

@@ -211,6 +211,8 @@ struct mo_store_activation {
     uint64_t approval_version;
     const uint8_t (*approve)[32];
     uint32_t approve_count;
+    const uint8_t (*retire)[32];
+    uint32_t retire_count;
 };
 enum mo_store_activation_status {
     MO_STORE_ACTIVATED,

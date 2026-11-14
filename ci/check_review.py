@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Approvals, the review setting and the review door on a real mo serve, driven through mo push,
 mo review and raw MCP calls: who may approve, stale and absent items, held, replaced, stale and
-answered upgrades, restarts, activations, conversion of a v0.2.0 folder and SIGKILL during
-approvals."""
+answered upgrades, a handler that stops calling an approved function, restarts, activations,
+conversion of a v0.2.0 folder and SIGKILL during approvals."""
 import http.client
 import json
 import pathlib
@@ -251,6 +251,40 @@ def door(binary, base):
     assert answered_by == [("activated", 1), ("activated", 1), ("yes", 0), ("yes", 1)], answered_by
 
 
+def unreached(binary, base):
+    data = base / "unreached"
+    data.mkdir()
+    names = iter(range(100))
+    calls = "(bump(state), bump(state))"
+
+    def source(handler):
+        return write(base, f"reach{next(names)}", A.replace(calls, handler))
+
+    service = Service(binary, data, source(calls))
+    program, _, marks = items(binary, service)
+    review(binary, service, "--base", program, *(arg for d in marks for arg in ("--approve", d)))
+    assert push(binary, service, source("(bump(state), state)"), program).returncode == 0
+    after, _, now = items(binary, service)
+    assert after != program and now == dict.fromkeys(marks, "approved"), now
+    assert status(service)["decisions"][0]["kind"] == "activated"
+
+    program = after
+    waiting = held(binary, service, source("(state + 1, state)"), program)
+    shown = tool(service, "mo-review-pending", headers=APPROVE_HEADER)["structuredContent"]
+    lines = [line for line in shown["difference"].splitlines() if not line.startswith("  ")]
+    assert shown["review"] == waiting and len(lines) == len(marks) == 2, shown
+    assert {line.removeprefix("not reached ").split()[0] for line in lines} == set(marks), shown
+    text, _ = review(binary, service, "--yes", waiting)
+    assert text.startswith("upgrade accepted"), text
+    after, _, now = items(binary, service)
+    assert after != program and now == dict.fromkeys(marks, "unapproved"), now
+
+    assert push(binary, service, source("(state + 2, state)"), after).returncode == 0
+    kinds = [d["kind"] for d in status(service)["decisions"]]
+    assert kinds[:3] == ["activated", "yes", "held"], kinds
+    assert service.stop() == 0
+
+
 def migration(binary, base):
     data = base / "migration"
     data.mkdir()
@@ -347,11 +381,12 @@ def main(binary):
         base = pathlib.Path(directory)
         main_flow(binary, base)
         door(binary, base)
+        unreached(binary, base)
         migration(binary, base)
         conversion(binary, base)
         killed_approvals(binary, base)
-    print("review: approvals, the setting, credentials, held and answered upgrades, restarts, "
-          "activation, v0.2.0 conversion and kills during approvals passed")
+    print("review: approvals, the setting, credentials, held and answered upgrades, unreached "
+          "items, restarts, activation, v0.2.0 conversion and kills during approvals passed")
 
 
 if __name__ == "__main__":

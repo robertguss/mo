@@ -444,6 +444,15 @@ bool store_door_decided(struct mo_store *s, const struct mo_store_activation *a)
                                      SQLITE_OK);
         added += ok ? sqlite3_changes(s->db) : 0;
     }
+    for (uint32_t i = 0; ok && i < a->retire_count; i++) {
+        sqlite3_stmt *stmt = NULL;
+        const void *blobs[] = {a->retire[i]};
+        const int sizes[] = {32};
+        ok = sqlite3_prepare_v2(s->db, "DELETE FROM approvals WHERE digest=?1", -1, &stmt, NULL) ==
+                 SQLITE_OK &&
+             step_done(stmt, bind_blobs(stmt, 1, blobs, sizes, 1));
+        added += ok ? sqlite3_changes(s->db) : 0;
+    }
     return ok && (added == 0 || store_exec(s, "UPDATE review SET version=version+1 WHERE id=1")) &&
            store_decide(s, d);
 }
