@@ -65,4 +65,10 @@ bool store_decide(struct mo_store *s, int64_t time, const char *kind, const uint
 bool store_review_write(struct mo_store *s, const struct mo_store_program *p);
 bool store_not_version_two(struct mo_store *s);
 
+enum table_state { TABLE_FAILED, TABLE_ABSENT, TABLE_SAME, TABLE_DIFFERENT };
+
+enum table_state store_table_state(struct mo_store *s, const struct store_table *t, int *code);
+bool store_write_blob(struct mo_store *s, const char *sql, uint64_t seq,
+                      const struct mo_buffer *bytes);
+
 #endif

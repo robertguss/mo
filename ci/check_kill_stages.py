@@ -27,7 +27,7 @@ def main():
         ('ordinary_call', 'src/vm/execute.c', 'uint32_t head = fn->code[f->pc], op = head & MO_OPCODE_MASK;'),
         ('migration', 'src/tools/upgrade.c',
          'enum mo_outcome result = mo_call(process, selected, &argument, 1, &value, &defect);'),
-        ('transaction_interior', 'src/host/store.c',
+        ('transaction_interior', 'src/host/store-programs.c',
          'bool base_read = store_current_head(s, &head, &empty) == MO_STORE_OK && !empty &&'),
         ('postcommit_before_reply', 'src/tools/protocol-upgrade.c',
          'PAUSE_START(committed_at);'),
