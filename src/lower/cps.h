@@ -81,4 +81,22 @@ static inline mo_core_ty lower_cps_type(struct body *b, const struct mo_source_t
     return lower_type(b->p, source, &b->instance->substitution);
 }
 
+struct continuation *lower_cps_continuation(struct body *b, enum continuation_kind kind);
+mo_core_expr_list lower_cps_arguments(struct body *b, size_t count);
+mo_core_expr lower_cps_projection(struct body *b, mo_core_expr value, size_t index);
+mo_core_expr lower_cps_jump(struct body *b, struct continuation *k, mo_core_expr value);
+mo_core_expr lower_cps_join(struct body *b, struct continuation *k, mo_core_ty result);
+mo_core_expr lower_cps_field_read(struct body *b, mo_core_ty base, mo_core_expr value,
+                                  uint32_t field);
+mo_core_expr lower_cps_unary(struct body *b, struct mo_core_prim prim, mo_core_expr value);
+enum mo_syntax_kind lower_cps_kind(const struct mo_checked_expression *r);
+const struct mo_ability_implementation *lower_cps_ability(struct body *b,
+                                                          const struct mo_checked_expression *r,
+                                                          enum mo_source_ability wanted,
+                                                          uint32_t operand);
+bool lower_cps_ability_native(const struct mo_checked_expression *r);
+bool lower_cps_direct_function(struct body *b, const struct mo_checked_expression *r);
+mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expression *r,
+                                   mo_core_expr_list args);
+
 #endif
