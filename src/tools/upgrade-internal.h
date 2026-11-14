@@ -1,6 +1,7 @@
 #ifndef MO_UPGRADE_INTERNAL_H
 #define MO_UPGRADE_INTERNAL_H
 
+#include "base/compile-metadata.h"
 #include "host/host.h"
 #include "tools/upgrade.h"
 
@@ -61,5 +62,13 @@ bool mo_upgrade_migration_state(const struct upgrade_image *old, const struct up
                                 const char *migration, const uint8_t *bytes, size_t length,
                                 struct mo_buffer *out, struct upgrade_report *report,
                                 bool rehearsal);
+
+int mo_upgrade_show_report(const struct mo_cli *cli, FILE *output, FILE *errors,
+                           const struct upgrade_report *report);
+bool mo_upgrade_compile_image(const struct mo_buffer *bundle, const struct mo_buffer *old,
+                              const char *migration, const struct mo_buffer *context,
+                              struct upgrade_image *out, struct upgrade_report *report);
+bool mo_upgrade_program_metadata(const struct mo_store_program *program,
+                                 struct mo_compile_metadata *out);
 
 #endif
