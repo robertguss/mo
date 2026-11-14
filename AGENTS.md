@@ -51,11 +51,12 @@ ci/wait-for-results FILE [TIMEOUT]  # wait for a detached ci/check.sh run (see W
 - Locally, `ci/check.sh` skips checks whose tool is missing and says so in its summary; with `CI=1`
   a missing tool fails. A skip is not a pass.
 - The `drivers` group runs Python black-box checks against the built executables
-  (`ci/check_cli.py` for CLI text/JSON goldens, `ci/check_golden.py`, `ci/check_unicode16.py`, …);
-  the `lean` group builds Mo Core in Lean and compares the executables with it
-  (`ci/check_lower_source.py`, `ci/check_core_differential.py`, …); the `bench` group runs
-  benchmark v0, the three Mo-written tools and the learnability calculators. CLI behaviour changes
-  usually need an edit to `ci/check_cli.py` or the goldens under `tests/cli/`. The groups that
+  (`ci/check_cli.py` and its `ci/cli_*.py` topic modules for CLI text/JSON goldens,
+  `ci/check_golden.py`, `ci/check_unicode16.py`, …); the `lean` group builds Mo Core in Lean and
+  compares the executables with it (`ci/check_lower_source.py`, `ci/check_core_differential.py`,
+  …); the `bench` group runs benchmark v0, the three Mo-written tools and the learnability
+  calculators. CLI behaviour changes usually need an edit to the `ci/cli_*.py` module for that
+  topic, to `check()` in `ci/check_cli.py`, or to the goldens under `tests/cli/`. The groups that
   drive built executables drive the first one found; `MO_ALL_DRIVERS=1` drives every one built.
 
 ## Checks and merging
@@ -177,7 +178,7 @@ Adding a library function typically touches its `check` signature (`src/check/si
   result is a bug to fix or list in `docs/status/golden-gaps.md`, never a new expectation.
 - `docs/agent-guide.md` (`mo guide`) tells agents what this build does. A change to what a `mo`
   command does, or to which forms are unfinished, updates the guide in the same PR;
-  `guide_claims` in `ci/check_cli.py` runs the guide's program and checks each claim it makes.
+  `guide_claims` in `ci/cli_guide.py` runs the guide's program and checks each claim it makes.
 - `grammar/mo.y` is an instrument, not the compiler: the real parser is hand-written in
   `src/syntax/`, and a fuzz target checks both accept and reject the same inputs. Bison refuses any
   conflict, which keeps the grammar unambiguous.

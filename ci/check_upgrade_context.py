@@ -7,7 +7,7 @@ import signal
 import sqlite3
 import sys
 import tempfile
-from check_cli import Served
+from cli_common import Served
 from check_upgrades import OLD, NEW, TOKEN, run, serve
 
 
