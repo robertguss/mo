@@ -140,6 +140,23 @@ static MO_MUST_USE const char *name(struct compiler *c, mo_core_string s) {
     p[s.length] = 0;
     return p;
 }
+static MO_MUST_USE uint32_t suffixed_name(struct compiler *c, mo_core_string base,
+                                          const char *suffix) {
+    size_t extra = strlen(suffix);
+    if (!name_valid(c, base))
+        return MO_NO_INDEX;
+    if (base.length > MO_LIMIT_STRING_SIZE - extra) {
+        if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
+                     "Generated initializer name exceeds MO_LIMIT_STRING_SIZE."))
+            return MO_NO_INDEX;
+    }
+    char *bytes = allocate(c, base.length + extra, 1);
+    if (bytes == NULL)
+        return MO_NO_INDEX;
+    memcpy(bytes, base.bytes, base.length);
+    memcpy(bytes + base.length, suffix, extra);
+    return string(c, (mo_core_string){bytes, base.length + extra});
+}
 static MO_MUST_USE uint32_t type_result(struct compiler *c, enum mo_type_problem status,
                                         uint32_t id) {
     if (status == MO_TYPES_OK)
@@ -962,8 +979,6 @@ static MO_MUST_USE uint32_t variable(struct compiler *c, struct function *f, mo_
     entry->value = r;
     return r;
 }
-static MO_MUST_USE uint32_t suffixed_name(struct compiler *c, mo_core_string base,
-                                          const char *suffix);
 static MO_MUST_USE struct node *prepare(struct compiler *c, struct function *f, mo_core_expr expr,
                                         uint32_t expected, unsigned depth);
 /* Only inference failures need a later context. Resolve them once, without retrying the Core
@@ -3194,23 +3209,6 @@ static MO_MUST_USE bool declarations(struct compiler *c) {
             return false;
     }
     return c->error == 0;
-}
-static MO_MUST_USE uint32_t suffixed_name(struct compiler *c, mo_core_string base,
-                                          const char *suffix) {
-    size_t extra = strlen(suffix);
-    if (!name_valid(c, base))
-        return MO_NO_INDEX;
-    if (base.length > MO_LIMIT_STRING_SIZE - extra) {
-        if (!problem(c, MO_CODE_BYTECODE_TOO_BIG,
-                     "Generated initializer name exceeds MO_LIMIT_STRING_SIZE."))
-            return MO_NO_INDEX;
-    }
-    char *bytes = allocate(c, base.length + extra, 1);
-    if (bytes == NULL)
-        return MO_NO_INDEX;
-    memcpy(bytes, base.bytes, base.length);
-    memcpy(bytes + base.length, suffix, extra);
-    return string(c, (mo_core_string){bytes, base.length + extra});
 }
 static MO_MUST_USE bool globals(struct compiler *c) {
     const struct mo_core *p = c->core;
