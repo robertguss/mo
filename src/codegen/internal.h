@@ -154,9 +154,12 @@ MO_MUST_USE uint32_t codegen_register_add(struct compiler *c, struct function *f
 void codegen_function_init(struct function *f);
 MO_MUST_USE struct node *codegen_prepare(struct compiler *c, struct function *f, mo_core_expr expr,
                                          uint32_t expected, unsigned depth);
+MO_MUST_USE bool codegen_abilities_valid(struct compiler *c);
 MO_MUST_USE bool codegen_operation_owned(const struct node *n, uint32_t slot);
+MO_MUST_USE bool codegen_borrow_infer(struct compiler *c);
 MO_MUST_USE bool codegen_live_charge(struct compiler *c, struct function *f, uint64_t count);
 MO_MUST_USE bool codegen_operand_owned(struct compiler *c, const struct node *n, uint32_t i);
+MO_MUST_USE bool codegen_live_infer(struct compiler *c, struct function *f);
 MO_MUST_USE struct mo_bytecode_span codegen_span(struct compiler *c, struct mo_core_span s);
 MO_MUST_USE bool codegen_debug_add(struct compiler *c);
 MO_MUST_USE uint32_t codegen_emit(struct compiler *c, struct function *f,
