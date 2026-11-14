@@ -81,7 +81,7 @@ Parked until a phase needs them: generated function-valued inputs in
 spinning when file descriptors run out, which did not reproduce in the kill
 loop; smaller `mo fix` edits for service adapters; the checker crash
 on an interpolated `stop`; gcc sanitize, fuzz and a bounded arena proof in the
-nightly; running a `.bc` file that `mo emit` wrote (Phase 5); `mo test
+nightly; running a `.bc` file that `mo emit` wrote; `mo test
 --strength` (Phase 6); Fil-C compatibility (Phase 7).
 
 ## Alongside every phase
