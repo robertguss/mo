@@ -147,16 +147,30 @@ MO_MUST_USE uint32_t codegen_type_result(struct compiler *c, enum mo_type_proble
                                          uint32_t id);
 MO_MUST_USE uint32_t codegen_scalar(struct compiler *c, enum mo_type_kind kind);
 MO_MUST_USE uint32_t codegen_type(struct compiler *c, mo_core_ty t, unsigned depth);
+MO_MUST_USE uint32_t codegen_selector(mo_core_natural number);
 MO_MUST_USE uint32_t codegen_constant(struct compiler *c, struct mo_bytecode_constant value);
 MO_MUST_USE uint32_t codegen_register_add(struct compiler *c, struct function *f, uint32_t ty,
                                           uint32_t original);
 void codegen_function_init(struct function *f);
 MO_MUST_USE struct node *codegen_prepare(struct compiler *c, struct function *f, mo_core_expr expr,
                                          uint32_t expected, unsigned depth);
+MO_MUST_USE bool codegen_operation_owned(const struct node *n, uint32_t slot);
+MO_MUST_USE bool codegen_live_charge(struct compiler *c, struct function *f, uint64_t count);
+MO_MUST_USE bool codegen_operand_owned(struct compiler *c, const struct node *n, uint32_t i);
+MO_MUST_USE struct mo_bytecode_span codegen_span(struct compiler *c, struct mo_core_span s);
+MO_MUST_USE bool codegen_debug_add(struct compiler *c);
 MO_MUST_USE uint32_t codegen_emit(struct compiler *c, struct function *f,
                                   struct mo_core_span source, enum mo_opcode op,
                                   const uint32_t *fixed, uint32_t n, const uint32_t *variable,
                                   uint32_t count);
+MO_MUST_USE bool codegen_named(struct compiler *c, struct function *f, uint32_t reg, uint32_t start,
+                               uint32_t end);
+void codegen_owner_add(struct function *f, uint32_t r);
+MO_MUST_USE bool codegen_initialize(struct compiler *c, struct function *f, uint32_t reg,
+                                    unsigned depth);
+MO_MUST_USE bool codegen_reachable_walk(struct function *f, const struct node *n, unsigned depth);
+MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct node *n, bool tail,
+                                  unsigned depth, bool *live);
 MO_MUST_USE bool codegen_entry_valid(struct compiler *c);
 MO_MUST_USE bool codegen_declarations(struct compiler *c);
 MO_MUST_USE bool codegen_globals(struct compiler *c);
