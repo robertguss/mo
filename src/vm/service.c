@@ -1,58 +1,10 @@
-#include "vm/internal.h"
+#include "vm/service-internal.h"
 
 #include <string.h>
 
 #include "base/binary.h"
-#include "base/export.h"
 #include "base/failure.h"
 #include "base/log-record.h"
-#include "base/runtime-identity.h"
-
-struct service_message {
-    struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS - 2];
-    int64_t arrival;
-    uint64_t id;
-    size_t argument_bytes;
-    bool argument_bytes_available;
-    uint32_t handler;
-    bool timer;
-};
-
-struct service_timer {
-    mo_u128 next;
-    uint64_t interval;
-    bool waiting;
-};
-
-struct mo_service_loop {
-    struct mo_arena arena;
-    struct mo_process *process;
-    const struct mo_bytecode_service *descriptor;
-    struct mo_service_hooks hooks;
-    struct mo_cell state;
-    struct service_message mailbox[MO_LIMIT_SERVICE_MAILBOX];
-    struct service_timer *timers;
-    uint64_t failures[MO_LIMIT_SERVICE_FAILURES];
-    uint64_t restarts[MO_LIMIT_SERVICE_RESTARTS];
-    uint64_t last_clock;
-    struct mo_store *store;
-    uint64_t sequence, image_key, restore_key, snapshot_sequence, encoded_sequence;
-    struct mo_buffer current_encoding;
-    struct mo_service_message_summary log[MO_LIMIT_SERVICE_SNAPSHOT_MESSAGES];
-    uint32_t log_count;
-    struct mo_service_event_summary events[MO_LIMIT_SERVICE_EVENTS];
-    uint64_t event_number;
-    uint32_t event_head, event_count;
-    uint32_t head, count, failure_count, restart_count;
-    uint64_t capture_id;
-    const char *capture_refusal;
-    bool capture_unsafe;
-    bool running;
-    /* Live upgrades applied in this process, and a prepared replacement's deferred answers. */
-    uint64_t epoch;
-    uint64_t removed[MO_LIMIT_SERVICE_MAILBOX];
-    uint32_t removed_count, dropped;
-};
 
 const char *mo_service_status_text(enum mo_service_status status) {
     switch (status) {
@@ -104,14 +56,14 @@ bool mo_service_budgets_match(const struct mo_failure_record *record,
     return true;
 }
 
-static struct mo_service_time sample_clock(struct mo_service_loop *s) {
+struct mo_service_time mo_service_clock(struct mo_service_loop *s) {
     struct mo_service_time time = s->hooks.clock(s->hooks.context);
     MO_ASSERT(time.elapsed >= s->last_clock);
     s->last_clock = time.elapsed;
     return time;
 }
 
-static struct mo_bytecode_string without_module_or_overload(struct mo_bytecode_string name) {
+struct mo_bytecode_string mo_service_short_name(struct mo_bytecode_string name) {
     uint32_t start = 0, end = 0;
     while (end != name.length && name.bytes[end] != '@')
         if (name.bytes[end++] == '.')
@@ -119,7 +71,8 @@ static struct mo_bytecode_string without_module_or_overload(struct mo_bytecode_s
     return (struct mo_bytecode_string){end - start, name.bytes + start};
 }
 
-static struct mo_bytecode_string handler_name(const struct mo_service_loop *s, uint32_t function) {
+struct mo_bytecode_string mo_service_handler_name(const struct mo_service_loop *s,
+                                                  uint32_t function) {
     const struct mo_bytecode_service *service = s->descriptor;
     if (function == MO_NO_INDEX || function == service->start)
         return (struct mo_bytecode_string){0};
@@ -130,19 +83,19 @@ static struct mo_bytecode_string handler_name(const struct mo_service_loop *s, u
         }
     const struct mo_bytecode *file = s->process->file;
     MO_ASSERT(function < file->function_count);
-    return without_module_or_overload(file->strings[file->functions[function].name]);
+    return mo_service_short_name(file->strings[file->functions[function].name]);
 }
 
-static void record_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
-                         enum mo_service_status reason, struct mo_service_time time,
-                         const struct mo_defect *defect, uint32_t handler, uint32_t restart,
-                         const struct mo_service_upgrade *upgrade) {
+void mo_service_record_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
+                             enum mo_service_status reason, struct mo_service_time time,
+                             const struct mo_defect *defect, uint32_t handler, uint32_t restart,
+                             const struct mo_service_upgrade *upgrade) {
     struct mo_service_event event = {.kind = kind,
                                      .reason = reason,
                                      .time = time,
                                      .defect = defect,
                                      .function = MO_NO_INDEX,
-                                     .handler = handler_name(s, handler),
+                                     .handler = mo_service_handler_name(s, handler),
                                      .restart = restart,
                                      .upgrade = upgrade};
     if (kind == MO_SERVICE_FAILURE) {
@@ -172,13 +125,13 @@ static void record_event(struct mo_service_loop *s, enum mo_service_event_kind k
 static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
                       enum mo_service_status reason, struct mo_service_time time,
                       const struct mo_defect *defect, uint32_t handler, uint32_t restart) {
-    record_event(s, kind, reason, time, defect, handler, restart, NULL);
+    mo_service_record_event(s, kind, reason, time, defect, handler, restart, NULL);
 }
 
 /* Service processes have no external capabilities. Every transferred value is
  * either still owned by a frame or already dropped by the interpreter. The
  * service retains its own state/argument references across this unwind. */
-static void finish_call(struct mo_process *p) {
+void mo_service_finish_call(struct mo_process *p) {
     while (p->depth != 0) {
         struct mo_vm_frame *frame = mo_vm_frame(p);
         const struct mo_bytecode_function *fn = &p->file->functions[frame->function];
@@ -211,9 +164,9 @@ static bool work_remaining(void *context) {
 }
 
 /* The work budget: MO_LIMIT_SERVICE_WORK instructions run, and the poll after them cancels. */
-static enum mo_service_status invoke(struct mo_process *p, uint32_t function,
-                                     const struct mo_cell *arguments, uint32_t count,
-                                     struct mo_cell *out, struct mo_defect *defect) {
+enum mo_service_status mo_service_invoke(struct mo_process *p, uint32_t function,
+                                         const struct mo_cell *arguments, uint32_t count,
+                                         struct mo_cell *out, struct mo_defect *defect) {
     uint64_t remaining = (uint64_t)MO_LIMIT_SERVICE_WORK + 1;
     enum mo_controlled_outcome outcome =
         mo_call_controlled(p, function, arguments, count, work_remaining, &remaining, out, defect);
@@ -294,7 +247,8 @@ void mo_service_call_handler(struct mo_process *p, const struct mo_bytecode_serv
             values[i] = mo_value_dup(p->heap, fn->parameters[i].type, values[i]);
     *call = (struct mo_service_call){
         .function = function, .type = fn->result_type, .saved = MO_SAVED_OK};
-    call->status = invoke(p, function, values, fn->parameter_count, &call->value, &call->defect);
+    call->status =
+        mo_service_invoke(p, function, values, fn->parameter_count, &call->value, &call->defect);
     call->returned = call->status == MO_SERVICE_OK;
     struct mo_cell next;
     if (!call->returned || !replacement(p, service, timer, handler, call->type, call->value, &next))
@@ -409,7 +363,7 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
             r->failed_function = call.function;
         if (call.returned)
             mo_value_drop(heap, call.type, call.value);
-        finish_call(s->process);
+        mo_service_finish_call(s->process);
     }
     for (uint32_t i = 0; i < built; i++)
         mo_value_drop(heap, tool->argument_types[i], m.arguments[i]);
@@ -496,7 +450,7 @@ static bool persist(struct mo_service_loop *s, const struct service_message *m,
     return ok;
 }
 
-static struct service_message *append(struct mo_service_loop *s) {
+struct service_message *mo_service_append(struct mo_service_loop *s) {
     MO_ASSERT(s->count < MO_LIMIT_SERVICE_MAILBOX);
     uint32_t index = (s->head + s->count++) % MO_LIMIT_SERVICE_MAILBOX;
     return &s->mailbox[index];
@@ -524,7 +478,8 @@ static void poll_timers(struct mo_service_loop *s, struct mo_service_time time) 
         }
         if (first == MO_NO_INDEX)
             break;
-        *append(s) = (struct service_message){.arrival = time.now, .handler = first, .timer = true};
+        *mo_service_append(s) =
+            (struct service_message){.arrival = time.now, .handler = first, .timer = true};
         s->timers[first].waiting = true;
         advance_timer(&s->timers[first], time.elapsed);
     }
@@ -585,7 +540,8 @@ static enum mo_service_status open_service(const struct mo_image *image, uint32_
     uint32_t failed_function = s->descriptor->start;
     for (uint32_t i = 0; i < s->descriptor->timer_count; i++) {
         failed_function = s->descriptor->timers[i].interval;
-        status = invoke(s->process, s->descriptor->timers[i].interval, NULL, 0, &value, &defect);
+        status = mo_service_invoke(s->process, s->descriptor->timers[i].interval, NULL, 0, &value,
+                                   &defect);
         if (status != MO_SERVICE_OK)
             break;
         int64_t interval = mo_cell_get_duration(value);
@@ -605,7 +561,7 @@ static enum mo_service_status open_service(const struct mo_image *image, uint32_
         status = recover(s, &found, &s->state, &snapshot_due, &failed_function, &failed_sequence);
     if (status == MO_SERVICE_OK && !found) {
         failed_function = s->descriptor->start;
-        status = invoke(s->process, s->descriptor->start, NULL, 0, &s->state, &defect);
+        status = mo_service_invoke(s->process, s->descriptor->start, NULL, 0, &s->state, &defect);
     }
     if (status == MO_SERVICE_OK && !found && store != NULL) {
         struct mo_cell original = s->state;
@@ -626,14 +582,15 @@ static enum mo_service_status open_service(const struct mo_image *image, uint32_
         replace_encoding(s, &encoded, s->sequence);
     }
     mo_buffer_free(&encoded);
-    struct mo_service_time time = sample_clock(s);
+    struct mo_service_time time = mo_service_clock(s);
     if (status != MO_SERVICE_OK) {
         const struct mo_service_event event = {.kind = MO_SERVICE_FAILURE,
                                                .reason = status,
                                                .time = time,
                                                .defect = defect.reason == NULL ? NULL : &defect,
                                                .function = failed_function,
-                                               .handler = handler_name(s, failed_function),
+                                               .handler =
+                                                   mo_service_handler_name(s, failed_function),
                                                .replay_sequence = failed_sequence};
         s->hooks.event(&event, s->hooks.context);
         mo_service_free(s);
@@ -736,7 +693,7 @@ enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
         return MO_SERVICE_DOWN;
     if (s->count == MO_LIMIT_SERVICE_MAILBOX)
         return MO_SERVICE_BUSY;
-    struct mo_service_time time = sample_clock(s);
+    struct mo_service_time time = mo_service_clock(s);
     struct service_message message = {.arrival = time.now, .handler = tool, .id = id};
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
@@ -759,7 +716,7 @@ enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
         message.argument_bytes_available
             ? payload - MO_LOG_RECORD_HEADER_BYTES - count * MO_LOG_RECORD_LENGTH_BYTES
             : 0;
-    *append(s) = message;
+    *mo_service_append(s) = message;
     mo_buffer_free(&encoded);
     return MO_SERVICE_OK;
 }
@@ -787,7 +744,7 @@ static void drain(struct mo_service_loop *s, bool keep) {
     for (uint32_t i = 0; i < old_count; i++) {
         struct service_message message = s->mailbox[(head + i) % MO_LIMIT_SERVICE_MAILBOX];
         if (keep && !message.timer) {
-            *append(s) = message;
+            *mo_service_append(s) = message;
             continue;
         }
         if (!message.timer) {
@@ -799,267 +756,6 @@ static void drain(struct mo_service_loop *s, bool keep) {
     }
     if (!keep)
         s->head = (head + old_count) % MO_LIMIT_SERVICE_MAILBOX;
-}
-
-static bool capture_string(struct mo_buffer *out, const char *text) {
-    return mo_failure_text(out, text, strlen(text));
-}
-
-struct captured_variables {
-    struct mo_buffer *context;
-    struct mo_heap *heap;
-    const struct mo_defect_frame *top;
-    bool unavailable;
-};
-static bool capture_variable(const struct mo_defect_variable *v, void *context) {
-    struct captured_variables *c = context;
-    if (v->frame != c->top)
-        return false;
-    struct mo_buffer value;
-    mo_buffer_init(&value, MO_LIMIT_FAILURE_VALUE_BYTES);
-    bool rendered = mo_value_print_literal(c->heap, v->type, v->value, &value);
-    bool ok = mo_buffer_append_text(c->context, "variable ") &&
-              mo_buffer_append(c->context, v->name, v->name_length) &&
-              mo_buffer_append_text(c->context, rendered ? " available: " : " unavailable: ") &&
-              (!rendered || mo_buffer_append(c->context, value.bytes, value.length)) &&
-              mo_buffer_append_byte(c->context, '\n');
-    c->unavailable = c->unavailable || !rendered;
-    mo_buffer_free(&value);
-    return ok;
-}
-
-/* The store binds the id; the payload must decode once it does. */
-static bool capture_readable(struct mo_buffer *message) {
-    struct mo_failure_record record;
-    message->bytes[MO_FAILURE_ID_OFFSET] = 1;
-    bool readable = mo_failure_read(message->bytes, message->length, &record);
-    message->bytes[MO_FAILURE_ID_OFFSET] = 0;
-    return readable;
-}
-
-static struct mo_failure_slice slice(const char *text) {
-    return (struct mo_failure_slice){(const uint8_t *)text, strlen(text)};
-}
-
-struct mo_signature mo_service_signature(const struct mo_service_call *call) {
-    MO_ASSERT(call->status == MO_SERVICE_MEMORY || call->status == MO_SERVICE_WORK ||
-              call->status == MO_SERVICE_DEFECT);
-    const struct mo_defect *defect = &call->defect;
-    /* A returned handler failed only in its new state's saved copy; the size limits are named. */
-    bool state_size =
-        call->returned && call->saved != MO_SAVED_OK && call->saved != MO_SAVED_MEMORY;
-    bool work = call->status == MO_SERVICE_WORK;
-    struct mo_signature signature = {
-        .function = defect->frames == NULL ? call->function : defect->frames->function,
-        .file = defect->reason == NULL ? MO_NO_INDEX : defect->span.file,
-        .start = defect->reason == NULL ? 0 : defect->span.start,
-        .end = defect->reason == NULL ? 0 : defect->span.end};
-    if (state_size) {
-        signature.class = MO_SIGNATURE_STATE_SIZE;
-        signature.reason = slice("saved state size");
-        bool depth = call->saved == MO_SAVED_DEPTH, nodes = call->saved == MO_SAVED_NODES;
-        signature.limit = slice(depth   ? "MO_LIMIT_SAVED_DEPTH"
-                                : nodes ? "MO_LIMIT_SAVED_NODES"
-                                        : "MO_LIMIT_SAVED_BYTES");
-        signature.limit_value = depth   ? MO_LIMIT_SAVED_DEPTH
-                                : nodes ? MO_LIMIT_SAVED_NODES
-                                        : MO_LIMIT_SAVED_BYTES;
-    } else if (work) {
-        signature.class = MO_SIGNATURE_WORK;
-        signature.reason = slice("work limit");
-        signature.limit = slice("MO_LIMIT_SERVICE_WORK");
-        signature.limit_value = MO_LIMIT_SERVICE_WORK;
-    } else {
-        bool memory = call->status == MO_SERVICE_MEMORY || defect->limit_name != NULL;
-        signature.class = memory ? MO_SIGNATURE_MEMORY : MO_SIGNATURE_DEFECT;
-        signature.reason = slice(defect->reason == NULL ? "native memory" : defect->reason);
-        signature.limit = slice(defect->limit_name == NULL
-                                    ? (call->status == MO_SERVICE_MEMORY ? "native allocation" : "")
-                                    : defect->limit_name);
-        signature.limit_value = defect->limit;
-    }
-    return signature;
-}
-
-struct mo_frame_walk mo_process_frames(const struct mo_process *process) {
-    MO_ASSERT(process != NULL);
-    return (struct mo_frame_walk){process, process->depth == 0 ? SIZE_MAX : process->top};
-}
-
-bool mo_process_frame_next(struct mo_frame_walk *walk, struct mo_defect_frame *out) {
-    MO_ASSERT(walk != NULL && out != NULL);
-    if (walk->offset == SIZE_MAX)
-        return false;
-    const struct mo_process *p = walk->process;
-    MO_ASSERT(walk->offset < p->capacity);
-    const struct mo_vm_frame *f = (const struct mo_vm_frame *)(p->stack + walk->offset);
-    *out = (struct mo_defect_frame){
-        .function = f->function, .pc = f->pc, .span = mo_vm_span(p->file, f->function, f->pc)};
-    walk->offset = f->previous;
-    return true;
-}
-
-enum mo_failure_context mo_service_context(struct mo_process *p, const struct mo_defect *defect,
-                                           struct mo_buffer *out) {
-    enum mo_failure_context status = MO_FAILURE_CONTEXT_COMPLETE;
-    /* Walk live frames before normal cleanup, including cancelled calls. */
-    struct mo_frame_walk walk = mo_process_frames(p);
-    struct mo_defect_frame frame;
-    unsigned frames = 0;
-    bool truncated = false;
-    while (mo_process_frame_next(&walk, &frame)) {
-        if (frames == MO_LIMIT_FAILURE_FRAMES) {
-            truncated = true;
-            break;
-        }
-        bool ok =
-            mo_buffer_append_text(out, "frame ") && mo_buffer_append_uint(out, frame.function) &&
-            mo_buffer_append_text(out, " file ") && mo_buffer_append_uint(out, frame.span.file) &&
-            mo_buffer_append_text(out, " span ") && mo_buffer_append_uint(out, frame.span.start) &&
-            mo_buffer_append_text(out, "..") && mo_buffer_append_uint(out, frame.span.end) &&
-            mo_buffer_append_byte(out, '\n');
-        if (!ok) {
-            status = MO_FAILURE_CONTEXT_UNAVAILABLE;
-            break;
-        }
-        frames++;
-    }
-    if (defect->frames != NULL && defect->process != NULL) {
-        struct captured_variables variables = {out, p->heap, defect->frames, false};
-        enum mo_defect_variables_result visited =
-            mo_visit_defect_variables(p, defect, MO_LIMIT_FAILURE_VARIABLES,
-                                      MO_LIMIT_FAILURE_CONTEXT_WORK, capture_variable, &variables);
-        truncated = truncated || visited != MO_DEFECT_VARIABLES_COMPLETE || variables.unavailable;
-    } else if (!mo_buffer_append_text(out, "variables unavailable\n"))
-        status = MO_FAILURE_CONTEXT_UNAVAILABLE;
-    else
-        truncated = true;
-    /* Unavailable is never downgraded to truncated. */
-    if (truncated && status == MO_FAILURE_CONTEXT_COMPLETE)
-        status = MO_FAILURE_CONTEXT_TRUNCATED;
-    return status;
-}
-
-static void capture_failure(struct mo_service_loop *s, const struct service_message *m,
-                            const struct mo_service_call *call) {
-    s->capture_id = 0;
-    s->capture_unsafe = false;
-    s->capture_refusal = "out of memory for the record";
-    if (s->store == NULL || s->current_encoding.length == 0) {
-        s->capture_refusal = "persistent state unavailable";
-        return;
-    }
-    struct mo_buffer metadata, context, kind;
-    mo_buffer_init(&metadata, MO_LIMIT_FAILURE_MESSAGE_BYTES);
-    mo_buffer_init(&context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
-    /* An over-long kind still fits here, so its refusal names the kind, not memory. */
-    mo_buffer_init(&kind, MO_LIMIT_FAILURE_MESSAGE_BYTES);
-    struct mo_bytecode_string name = handler_name(s, call->function);
-    uint32_t count = m->timer ? 0 : s->descriptor->tools[m->handler].argument_count;
-    bool readonly = !m->timer && s->descriptor->tools[m->handler].read_only;
-    struct mo_signature signature = mo_service_signature(call);
-    uint8_t class = (uint8_t)signature.class;
-    enum mo_failure_context context_status =
-        mo_service_context(s->process, &call->defect, &context);
-    bool ok = mo_binary_write(&metadata, MO_FAILURE_VERSION, 1) &&
-              mo_binary_write(&metadata, 0, MO_FAILURE_ID_BYTES) &&
-              mo_binary_write(&metadata, s->sequence, 8) &&
-              mo_binary_write(&metadata, (uint64_t)m->arrival, 8) &&
-              mo_binary_write(&metadata, m->timer, 1) &&
-              mo_binary_write(&metadata, m->handler, 4) &&
-              mo_failure_text(&metadata, name.bytes, name.length) &&
-              mo_binary_write(&metadata, readonly, 1) && mo_binary_write(&metadata, count, 4);
-    for (uint32_t i = 0; ok && i < count; i++) {
-        size_t at = metadata.length;
-        ok = mo_binary_write(&metadata, 0, 4);
-        size_t start = metadata.length;
-        if (ok) {
-            enum mo_saved_status encoded = mo_value_encode_diagnostic(
-                s->process->heap, s->descriptor->tools[m->handler].argument_types[i],
-                m->arguments[i], &metadata);
-            if (encoded != MO_SAVED_OK) {
-                s->capture_refusal = encoded == MO_SAVED_MEMORY ? "out of memory for the record"
-                                     : readonly                 ? "arguments could not be encoded"
-                                                                : "too large to record";
-                ok = false;
-            }
-        }
-        if (ok)
-            for (unsigned j = 0; j < 4; j++)
-                metadata.bytes[at + j] = (uint8_t)((metadata.length - start) >> (8 * j));
-    }
-    size_t tail = 10 + 4 + signature.reason.length + 4 + signature.limit.length + 16 + 48 + 32 + 4 +
-                  strlen(mo_runtime_build_label()) + 32 + 1 + 4 + context.length;
-    if (ok && tail > metadata.limit - metadata.length) {
-        s->capture_refusal = "too large to record";
-        ok = false;
-    }
-    uint8_t build[32], schema[32];
-    if (ok && (!mo_runtime_identity(build) ||
-               !mo_export_schema(s->current_encoding.bytes, s->current_encoding.length, schema))) {
-        s->capture_refusal = "runtime identity unavailable";
-        ok = false;
-    }
-    ok = ok && mo_binary_write(&metadata, 1, 1) && mo_binary_write(&metadata, class, 1) &&
-         mo_failure_text(&metadata, signature.reason.bytes, signature.reason.length) &&
-         mo_failure_text(&metadata, signature.limit.bytes, signature.limit.length) &&
-         mo_binary_write(&metadata, signature.limit_value, 8) &&
-         mo_binary_write(&metadata, signature.function, 4) &&
-         mo_binary_write(&metadata, signature.file, 4) &&
-         mo_binary_write(&metadata, signature.start, 4) &&
-         mo_binary_write(&metadata, signature.end, 4) &&
-         mo_binary_write(&metadata, MO_LIMIT_SERVICE_WORK, 8) &&
-         mo_binary_write(&metadata, s->process->limits.heap_size, 8) &&
-         mo_binary_write(&metadata, s->process->limits.stack_size, 8) &&
-         mo_binary_write(&metadata, s->process->limits.call_depth, 8) &&
-         mo_binary_write(&metadata, MO_LIMIT_SAVED_BYTES, 8) &&
-         mo_binary_write(&metadata, s->image_key, 8) && mo_buffer_append(&metadata, build, 32) &&
-         capture_string(&metadata, mo_runtime_build_label()) &&
-         mo_buffer_append(&metadata, schema, 32) &&
-         mo_binary_write(&metadata, (uint64_t)context_status, 1) &&
-         mo_failure_text(&metadata, context.bytes, context.length);
-    ok = ok && mo_buffer_append(&kind, name.bytes, name.length) &&
-         mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, class) &&
-         mo_buffer_append_byte(&kind, ':') &&
-         mo_buffer_append(&kind, signature.reason.bytes, signature.reason.length) &&
-         mo_buffer_append_byte(&kind, ':') &&
-         mo_buffer_append(&kind, signature.limit.bytes, signature.limit.length);
-    if (ok && class == 0)
-        ok = mo_buffer_append_byte(&kind, ':') &&
-             mo_buffer_append_uint(&kind, signature.function) &&
-             mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, signature.file) &&
-             mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, signature.start) &&
-             mo_buffer_append_byte(&kind, ':') && mo_buffer_append_uint(&kind, signature.end);
-    ok = ok && mo_buffer_append_byte(&kind, 0);
-    if (ok && kind.length - 1 > MO_LIMIT_FAILURE_KIND_BYTES) {
-        s->capture_refusal = "failure kind too long";
-        ok = false;
-    }
-    if (ok && metadata.length > MO_LIMIT_FAILURE_RECORD_BYTES - MO_LIMIT_FAILURE_ENVELOPE_BYTES -
-                                    s->current_encoding.length) {
-        s->capture_refusal = "too large to record";
-        ok = false;
-    }
-    if (ok && !capture_readable(&metadata)) {
-        s->capture_refusal = "record failed validation";
-        ok = false;
-    }
-    if (ok) {
-        struct mo_store_record state = {MO_STORE_FAILURE_STATE, s->sequence, s->image_key,
-                                        s->current_encoding.bytes, s->current_encoding.length};
-        struct mo_store_record message = {MO_STORE_FAILURE_MESSAGE, s->sequence, s->image_key,
-                                          metadata.bytes, metadata.length};
-        enum mo_store_capture_status result =
-            mo_store_capture(s->store, (const char *)kind.bytes, &state, &message, &s->capture_id);
-        s->capture_refusal = result == MO_STORE_CAPTURE_OK        ? NULL
-                             : result == MO_STORE_CAPTURE_DAMAGED ? "diagnostic records damaged"
-                             : result == MO_STORE_CAPTURE_UNSAFE  ? "store outcome uncertain"
-                                                                  : "the store refused the record";
-        s->capture_unsafe = result == MO_STORE_CAPTURE_UNSAFE;
-    }
-    mo_buffer_free(&metadata);
-    mo_buffer_free(&context);
-    mo_buffer_free(&kind);
 }
 
 static void supervise(struct mo_service_loop *s, enum mo_service_status reason,
@@ -1084,7 +780,7 @@ bool mo_service_step(struct mo_service_loop *s) {
     MO_ASSERT(s != NULL);
     if (!s->running)
         return false;
-    poll_timers(s, sample_clock(s));
+    poll_timers(s, mo_service_clock(s));
     if (s->count == 0)
         return false;
     struct service_message message = s->mailbox[s->head];
@@ -1110,10 +806,10 @@ bool mo_service_step(struct mo_service_loop *s) {
     s->capture_refusal = NULL;
     s->capture_unsafe = false;
     uint32_t handler = call.function;
-    struct mo_service_time time = sample_clock(s);
+    struct mo_service_time time = mo_service_clock(s);
     if (returned) {
         if (reply.status != MO_SERVICE_OK) {
-            capture_failure(s, &message, &call);
+            mo_service_capture_failure(s, &message, &call);
             log_event(s, MO_SERVICE_FAILURE, reply.status, time, NULL, handler, 0);
         } else if (reply.updated && !persist(s, &message, &encoded)) {
             mo_value_drop(s->process->heap, s->descriptor->state_type, call.state);
@@ -1130,7 +826,7 @@ bool mo_service_step(struct mo_service_loop *s) {
             s->state = call.state;
         }
     } else {
-        capture_failure(s, &message, &call);
+        mo_service_capture_failure(s, &message, &call);
         reply.defect = call.defect.reason == NULL ? NULL : &call.defect;
         log_event(s, MO_SERVICE_FAILURE, reply.status, time, reply.defect, handler, 0);
     }
@@ -1145,7 +841,7 @@ bool mo_service_step(struct mo_service_loop *s) {
     s->hooks.reply(&reply, s->hooks.context);
     if (returned)
         mo_value_drop(s->process->heap, reply.type, result);
-    finish_call(s->process);
+    mo_service_finish_call(s->process);
     drop_message(s, &message);
     if (!returned || reply.status == MO_SERVICE_MEMORY) {
         if (s->capture_unsafe)
@@ -1242,260 +938,11 @@ bool mo_service_log_entry(const struct mo_service_loop *s, uint32_t index,
     return true;
 }
 
-enum mo_store_status mo_service_failures(const struct mo_service_loop *s,
-                                         bool (*consume)(const struct mo_store_failure *, void *),
-                                         void *context) {
-    return s->store == NULL ? MO_STORE_IO : mo_store_failures(s->store, consume, context);
-}
-
-enum mo_store_status mo_service_failure_catalog(const struct mo_service_loop *s, uint64_t after,
-                                                bool (*consume)(const struct mo_store_failure *,
-                                                                void *),
-                                                void *context, uint32_t *omitted) {
-    return s->store == NULL ? MO_STORE_IO
-                            : mo_store_failure_catalog(s->store, after, consume, context, omitted);
-}
-
-bool mo_service_failure_export(const struct mo_service_loop *s, uint64_t id,
-                               struct mo_buffer *out) {
-    return s->store != NULL && mo_store_failure_export(s->store, id, out);
-}
-
-struct failure_pin {
-    uint64_t failure, now;
-    struct mo_export_pin *pin;
-    struct mo_export_identity identity;
-    bool found;
-};
-static bool pin_failure(const struct mo_store_failure *record, void *context) {
-    struct failure_pin *p = context;
-    if (record->id != p->failure)
-        return true;
-    struct mo_failure_record metadata;
-    if (!mo_failure_read(record->message.bytes, record->message.length, &metadata) ||
-        metadata.id != record->id)
-        return false;
-    char label[MO_LIMIT_EXPORT_LABEL_BYTES + 1];
-    memcpy(label, metadata.label.bytes, metadata.label.length);
-    label[metadata.label.length] = 0;
-    p->identity.label = label;
-    memcpy(p->identity.build, metadata.build, 32);
-    p->identity.program = metadata.program ^ ((uint64_t)p->identity.service << 32);
-    p->identity.sequence = record->state.sequence;
-    p->identity.encoded_sequence = record->state.sequence;
-    /* One failure pin at a time: release the old one only once its replacement is found. */
-    mo_export_release(p->pin);
-    p->found =
-        mo_export_create_failure(p->pin, &p->identity, record->state.bytes, record->state.length,
-                                 record->message.bytes, record->message.length, p->now);
-    return p->found;
-}
-bool mo_service_pin_failure(const struct mo_service_loop *s, uint64_t failure,
-                            struct mo_export_pin *pin, const struct mo_export_identity *identity,
-                            uint64_t now) {
-    struct failure_pin context = {failure, now, pin, *identity, false};
-    return s->store != NULL &&
-           mo_store_failure_get(s->store, failure, pin_failure, &context) == MO_STORE_OK &&
-           context.found;
-}
-
-static struct mo_bytecode_string function_name(const struct mo_bytecode *file, uint32_t function) {
-    MO_ASSERT(function < file->function_count);
-    return without_module_or_overload(file->strings[file->functions[function].name]);
-}
-
-static bool same_name(struct mo_bytecode_string a, struct mo_bytecode_string b) {
-    return a.length == b.length && memcmp(a.bytes, b.bytes, a.length) == 0;
-}
-
-static uint32_t timer_named(const struct mo_bytecode *file, const struct mo_bytecode_service *d,
-                            struct mo_bytecode_string name) {
-    for (uint32_t i = 0; i < d->timer_count; i++)
-        if (same_name(function_name(file, d->timers[i].function), name))
-            return i;
-    return MO_NO_INDEX;
-}
-
-static uint32_t tool_named(const struct mo_bytecode *file, const struct mo_bytecode_service *d,
-                           struct mo_bytecode_string name) {
-    for (uint32_t i = 0; i < d->tool_count; i++)
-        if (same_name(file->strings[d->tools[i].name], name))
-            return i;
-    return MO_NO_INDEX;
-}
-
-/* A queued call keeps its place when the new program has a tool of the same name whose
- * argument types accept the saved encoding of each argument; otherwise it is answered later. */
-static enum mo_service_swap_status readmit(struct mo_service_loop *old,
-                                           struct mo_service_loop *next,
-                                           const struct service_message *m) {
-    const struct mo_bytecode *from = old->process->file, *to = next->process->file;
-    if (m->timer) {
-        uint32_t timer =
-            timer_named(to, next->descriptor,
-                        function_name(from, old->descriptor->timers[m->handler].function));
-        if (timer == MO_NO_INDEX) {
-            next->dropped++;
-            return MO_SERVICE_SWAP_READY;
-        }
-        *append(next) = (struct service_message){.arrival = m->arrival,
-                                                 .handler = timer,
-                                                 .timer = true,
-                                                 .argument_bytes_available = true};
-        next->timers[timer].waiting = true;
-        return MO_SERVICE_SWAP_READY;
-    }
-    const struct mo_bytecode_service_tool *was = &old->descriptor->tools[m->handler];
-    uint32_t tool = tool_named(to, next->descriptor, from->strings[was->name]);
-    const struct mo_bytecode_service_tool *now =
-        tool == MO_NO_INDEX ? NULL : &next->descriptor->tools[tool];
-    struct service_message moved = *m;
-    moved.handler = tool;
-    bool kept = now != NULL && now->argument_count == was->argument_count;
-    uint32_t decoded = 0;
-    struct mo_buffer encoded;
-    mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
-    enum mo_service_swap_status status = MO_SERVICE_SWAP_READY;
-    while (kept && decoded < was->argument_count) {
-        mo_buffer_clear(&encoded);
-        if (!mo_value_encode(old->process->heap, was->argument_types[decoded],
-                             m->arguments[decoded], &encoded)) {
-            status = MO_SERVICE_SWAP_MEMORY;
-            break;
-        }
-        kept = mo_value_decode(next->process->heap, now->argument_types[decoded], encoded.bytes,
-                               encoded.length, &moved.arguments[decoded]);
-        decoded += kept;
-    }
-    mo_buffer_free(&encoded);
-    if (kept && status == MO_SERVICE_SWAP_READY) {
-        *append(next) = moved;
-        return status;
-    }
-    for (uint32_t i = 0; i < decoded; i++)
-        mo_value_drop(next->process->heap, now->argument_types[i], moved.arguments[i]);
-    if (status == MO_SERVICE_SWAP_READY)
-        next->removed[next->removed_count++] = m->id;
-    return status;
-}
-
-enum mo_service_swap_status mo_service_swap_prepare(struct mo_service_loop *old,
-                                                    const struct mo_image *image, uint32_t index,
-                                                    const uint8_t *state, size_t length,
-                                                    struct mo_service_loop **out) {
-    MO_ASSERT(old != NULL && image != NULL && out != NULL && (state != NULL || length == 0));
-    *out = NULL;
-    if (!old->running)
-        return MO_SERVICE_SWAP_STOPPED;
-    const struct mo_bytecode *file = mo_image_bytecode(image);
-    MO_ASSERT(index < file->service_count);
-    struct mo_arena arena;
-    mo_arena_init(&arena, MO_LIMIT_SERVICE_METADATA);
-    struct mo_service_loop *s =
-        mo_arena_allocate(&arena, sizeof *s, _Alignof(struct mo_service_loop));
-    if (s == NULL) {
-        mo_arena_free(&arena);
-        return MO_SERVICE_SWAP_MEMORY;
-    }
-    *s = (struct mo_service_loop){.descriptor = &file->services[index],
-                                  .hooks = old->hooks,
-                                  .store = old->store,
-                                  .image_key = mo_image_key(image, index),
-                                  .restore_key = mo_image_key(image, index),
-                                  .sequence = old->sequence,
-                                  .snapshot_sequence = old->sequence,
-                                  .encoded_sequence = old->sequence,
-                                  .last_clock = old->last_clock,
-                                  .event_number = old->event_number,
-                                  .event_head = old->event_head,
-                                  .event_count = old->event_count,
-                                  .failure_count = old->failure_count,
-                                  .restart_count = old->restart_count,
-                                  .epoch = old->epoch + 1};
-    memcpy(s->events, old->events, sizeof s->events);
-    memcpy(s->failures, old->failures, sizeof s->failures);
-    memcpy(s->restarts, old->restarts, sizeof s->restarts);
-    mo_buffer_init(&s->current_encoding, MO_LIMIT_SAVED_BYTES);
-    s->timers = mo_arena_allocate_array(&arena, s->descriptor->timer_count, sizeof *s->timers,
-                                        _Alignof(struct service_timer));
-    s->arena = arena;
-    struct mo_limits limits = mo_service_limits();
-    if (s->timers == NULL || (s->process = mo_process_new(image, &limits)) == NULL) {
-        mo_service_free(s);
-        return MO_SERVICE_SWAP_MEMORY;
-    }
-    memset(s->timers, 0, s->descriptor->timer_count * sizeof *s->timers);
-    enum mo_service_swap_status status = MO_SERVICE_SWAP_READY;
-    for (uint32_t i = 0; status == MO_SERVICE_SWAP_READY && i < s->descriptor->timer_count; i++) {
-        struct mo_cell value;
-        struct mo_defect defect;
-        enum mo_service_status called =
-            invoke(s->process, s->descriptor->timers[i].interval, NULL, 0, &value, &defect);
-        int64_t interval = called == MO_SERVICE_OK ? mo_cell_get_duration(value) : 0;
-        if (called != MO_SERVICE_OK)
-            finish_call(s->process);
-        if (interval <= 0)
-            status = MO_SERVICE_SWAP_INTERVAL;
-        else {
-            s->timers[i].interval = (uint64_t)interval;
-            /* A kept timer keeps its next due time; a new one is due now, as at a start. */
-            uint32_t was = timer_named(old->process->file, old->descriptor,
-                                       function_name(file, s->descriptor->timers[i].function));
-            s->timers[i].next = was == MO_NO_INDEX ? old->last_clock : old->timers[was].next;
-        }
-    }
-    if (status == MO_SERVICE_SWAP_READY &&
-        !mo_value_decode(s->process->heap, s->descriptor->state_type, state, length, &s->state))
-        status = MO_SERVICE_SWAP_STATE;
-    else if (status == MO_SERVICE_SWAP_READY)
-        s->running = true;
-    if (status == MO_SERVICE_SWAP_READY && s->store != NULL &&
-        !mo_buffer_append(&s->current_encoding, state, length))
-        status = MO_SERVICE_SWAP_MEMORY;
-    for (uint32_t i = 0; status == MO_SERVICE_SWAP_READY && i < old->count; i++)
-        status = readmit(old, s, &old->mailbox[(old->head + i) % MO_LIMIT_SERVICE_MAILBOX]);
-    if (status != MO_SERVICE_SWAP_READY) {
-        mo_service_free(s);
-        return status;
-    }
-    *out = s;
-    return MO_SERVICE_SWAP_READY;
-}
-
-void mo_service_swap_finish(struct mo_service_loop *old, struct mo_service_loop *next,
-                            const struct mo_service_upgrade *upgrade) {
-    MO_ASSERT(old != NULL && next != NULL && upgrade != NULL && next->epoch == old->epoch + 1);
-    struct mo_service_upgrade note = *upgrade;
-    note.accepted = true;
-    note.code = 0;
-    note.answered = next->removed_count;
-    note.dropped = next->dropped;
-    for (uint32_t i = 0; i < next->removed_count; i++) {
-        struct mo_service_response reply = {.id = next->removed[i], .status = MO_SERVICE_REMOVED};
-        next->hooks.reply(&reply, next->hooks.context);
-    }
-    next->removed_count = 0;
-    next->dropped = 0;
-    record_event(next, MO_SERVICE_UPGRADE, MO_SERVICE_OK, sample_clock(next), NULL, MO_NO_INDEX, 0,
-                 &note);
-    mo_service_free(old);
-}
-
-void mo_service_swap_abandon(struct mo_service_loop *next) {
-    mo_service_free(next);
-}
-
-void mo_service_note_upgrade(struct mo_service_loop *s, const struct mo_service_upgrade *upgrade) {
-    MO_ASSERT(s != NULL && upgrade != NULL && !upgrade->accepted && upgrade->code != 0);
-    record_event(s, MO_SERVICE_UPGRADE, MO_SERVICE_OK, sample_clock(s), NULL, MO_NO_INDEX, 0,
-                 upgrade);
-}
-
 void mo_service_stop(struct mo_service_loop *s, enum mo_service_status reason) {
     MO_ASSERT(s != NULL && reason != MO_SERVICE_OK);
     if (!s->running)
         return;
     s->running = false;
-    log_event(s, MO_SERVICE_STOP, reason, sample_clock(s), NULL, MO_NO_INDEX, 0);
+    log_event(s, MO_SERVICE_STOP, reason, mo_service_clock(s), NULL, MO_NO_INDEX, 0);
     drain(s, false);
 }

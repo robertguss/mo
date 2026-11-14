@@ -73,7 +73,7 @@ src/heap/      the runtime type table and layouts (types.h); values, cells, heap
 src/prim/      the primitives of prims.def
 src/host/      capabilities, real and fake, and the runtime's service store
 src/vm/        processes, the interpreter, calls and frames, stops, defect reports
-               and the in-process service loop (service.c)
+               and the in-process service loop (service*.c)
 src/tools/     the mo command: check, run, test, format, fix, emit, serve and guide;
                diagnostics as text and JSON
 lib/           the standard library written in Mo (condition 4 of D207)

@@ -50,6 +50,7 @@ MAIN_SOURCE := src/tools/main.c
 LIB_SOURCES := $(filter-out $(MAIN_SOURCE),$(sort $(wildcard src/*/*.c)))
 LIB_SOURCES += vendor/sqlite/sqlite3.c
 STORE_SOURCES := $(filter src/host/store.c src/host/store-%.c,$(LIB_SOURCES))
+SERVICE_LOOP_SOURCES := $(filter src/vm/service.c src/vm/service-%.c,$(LIB_SOURCES))
 BASE_SOURCES := $(filter src/base/%,$(LIB_SOURCES))
 # build/sources lists the C files of src/, and is rewritten only when one is added or removed:
 # removing a file changes no other prerequisite of the programs that linked it.
@@ -467,7 +468,7 @@ $(BUILD)/debug/tests/test_listener_faults.test: $(BUILD)/debug/tests/test_listen
 $(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_listener_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/sanitize/listener-faults/listener.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c src/vm/service.c src/tools/protocol-upgrade.c
+PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c $(SERVICE_LOOP_SOURCES) src/tools/protocol-upgrade.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
@@ -496,11 +497,11 @@ $(BUILD)/sanitize/protocol-server-faults/tools/protocol-request.o: src/tools/pro
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_scratch_resize=mo_protocol_server_fault_resize -c $< -o $@
 
-$(BUILD)/debug/protocol-server-faults/vm/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+$(BUILD)/debug/protocol-server-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
 
-$(BUILD)/sanitize/protocol-server-faults/vm/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+$(BUILD)/sanitize/protocol-server-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
 
@@ -542,7 +543,7 @@ $(BUILD)/sanitize/tests/test_lower.test: $(BUILD)/sanitize/tests/test_lower.o $(
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 # Only the service test substitutes allocation at its arena, process and heap boundaries.
-SERVICE_FAULT_SOURCES := src/vm/service.c src/vm/process.c src/heap/heap.c
+SERVICE_FAULT_SOURCES := $(SERVICE_LOOP_SOURCES) src/vm/process.c src/heap/heap.c
 SERVICE_FAULT_RENAMES := -Dcalloc=mo_service_fault_calloc -Drealloc=mo_service_fault_realloc \
 	-Dmo_arena_allocate=mo_service_fault_allocate -Dmo_arena_allocate_array=mo_service_fault_array
 $(BUILD)/debug/service-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
@@ -570,13 +571,13 @@ $(BUILD)/debug/tests/test_service_store.o: tests/test_service_store.c Makefile $
 $(BUILD)/sanitize/tests/test_service_store.o: tests/test_service_store.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) $(STORE_TEST_LIMITS) -c $< -o $@
-$(BUILD)/debug/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+$(BUILD)/debug/store-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -Dmo_buffer_append=mo_service_fault_buffer_append -c $< -o $@
 $(BUILD)/debug/store-faults/host/%.o: src/host/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(STORE_TEST_LIMITS) $(STORE_FAULT_RENAMES) -c $< -o $@
-$(BUILD)/sanitize/store-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+$(BUILD)/sanitize/store-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_store_fault_call -Dmo_process_free=mo_store_fault_process_free -Dmo_buffer_append=mo_service_fault_buffer_append -c $< -o $@
 $(BUILD)/sanitize/store-faults/host/%.o: src/host/%.c Makefile $(SOURCE_LIST)
@@ -588,22 +589,22 @@ $(BUILD)/debug/store-faults/simulation.o: src/vm/simulation.c Makefile $(SOURCE_
 $(BUILD)/sanitize/store-faults/simulation.o: src/vm/simulation.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_service_open=mo_simulation_observe_open -Dmo_service_send=mo_simulation_observe_send -Dmo_value_case=mo_simulation_fault_case -c $< -o $@
-$(BUILD)/debug/tests/test_service_store.test: $(BUILD)/debug/tests/test_service_store.o $(call objects,$(BUILD)/debug,$(filter-out src/vm/service.c src/vm/simulation.c $(STORE_SOURCES),$(LIB_SOURCES))) $(BUILD)/debug/store-faults/service.o $(patsubst src/%.c,$(BUILD)/debug/store-faults/%.o,$(STORE_SOURCES)) $(BUILD)/debug/store-faults/simulation.o
+$(BUILD)/debug/tests/test_service_store.test: $(BUILD)/debug/tests/test_service_store.o $(call objects,$(BUILD)/debug,$(filter-out $(SERVICE_LOOP_SOURCES) src/vm/simulation.c $(STORE_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/store-faults/%.o,$(SERVICE_LOOP_SOURCES)) $(patsubst src/%.c,$(BUILD)/debug/store-faults/%.o,$(STORE_SOURCES)) $(BUILD)/debug/store-faults/simulation.o
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
-$(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_service_store.o $(call objects,$(BUILD)/sanitize,$(filter-out src/vm/service.c src/vm/simulation.c $(STORE_SOURCES),$(LIB_SOURCES))) $(BUILD)/sanitize/store-faults/service.o $(patsubst src/%.c,$(BUILD)/sanitize/store-faults/%.o,$(STORE_SOURCES)) $(BUILD)/sanitize/store-faults/simulation.o
+$(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_service_store.o $(call objects,$(BUILD)/sanitize,$(filter-out $(SERVICE_LOOP_SOURCES) src/vm/simulation.c $(STORE_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/store-faults/%.o,$(SERVICE_LOOP_SOURCES)) $(patsubst src/%.c,$(BUILD)/sanitize/store-faults/%.o,$(STORE_SOURCES)) $(BUILD)/sanitize/store-faults/simulation.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 # The recovery check's negative control: only this test's service.c reaches the store through a
 # double that can drop or repeat the newest log record a load hands to recovery.
-$(BUILD)/debug/recovery-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+$(BUILD)/debug/recovery-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_recovery_fault_call -c $< -o $@
-$(BUILD)/sanitize/recovery-faults/service.o: src/vm/service.c Makefile $(SOURCE_LIST)
+$(BUILD)/sanitize/recovery-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_call=mo_recovery_fault_call -c $< -o $@
-$(BUILD)/debug/tests/test_recovery_faults.test: $(BUILD)/debug/tests/test_recovery_faults.o $(call objects,$(BUILD)/debug,$(filter-out src/vm/service.c,$(LIB_SOURCES))) $(BUILD)/debug/recovery-faults/service.o
+$(BUILD)/debug/tests/test_recovery_faults.test: $(BUILD)/debug/tests/test_recovery_faults.o $(call objects,$(BUILD)/debug,$(filter-out $(SERVICE_LOOP_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/recovery-faults/%.o,$(SERVICE_LOOP_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
-$(BUILD)/sanitize/tests/test_recovery_faults.test: $(BUILD)/sanitize/tests/test_recovery_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/vm/service.c,$(LIB_SOURCES))) $(BUILD)/sanitize/recovery-faults/service.o
+$(BUILD)/sanitize/tests/test_recovery_faults.test: $(BUILD)/sanitize/tests/test_recovery_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out $(SERVICE_LOOP_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/recovery-faults/%.o,$(SERVICE_LOOP_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
 # Only this test substitutes the resolver's native calls and lowers host read

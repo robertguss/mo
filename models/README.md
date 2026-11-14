@@ -112,7 +112,7 @@ swapping was not implemented in C, so those rows name the design, not a regressi
 | Open / Stage / StageRefuse | an upload slot opens only on the active base; pages arrive; the last page stages a compiled candidate or refuses |
 | CommitRequest | commit names the base again and is checked against the active program |
 | Committed / Refused / Uncertain | `mo_store_activate` in `src/host/store.c`, `MO_STORE_ACTIVATED`, `MO_STORE_ACTIVATION_REFUSED` with confirmed rollback, `MO_STORE_ACTIVATION_UNSAFE`; enabled only at a message boundary (no reply pending) |
-| Crash / Restart | restart reads the program row, restores the snapshot and replays the tail with that program; `serve_upgrade` in `src/tools/upgrade.c` reports `candidate source is already active` and never reruns a migration |
+| Crash / Restart | restart reads the program row, restores the snapshot and replays the tail with that program; `serve_upgrade` in `src/tools/upgrade-commands.c` reports `candidate source is already active` and never reruns a migration |
 
 A push of the active candidate, or of a stale base, is answered without changing anything, so
 those pushes are stuttering steps; the base guard on `Open` and `CommitRequest` is what stops
