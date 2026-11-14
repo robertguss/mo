@@ -1581,9 +1581,6 @@ static MO_MUST_USE struct node *codegen_prepare(struct compiler *c, struct funct
     return c->error == 0 ? n : NULL;
 }
 
-static MO_MUST_USE bool codegen_reference(struct compiler *c, uint32_t type_id) {
-    return type_id != MO_NO_INDEX && mo_type_is_reference(&c->types, type_id);
-}
 static MO_MUST_USE bool codegen_abilities_valid(struct compiler *c) {
     MO_ASSERT(c->types.finished);
     uint8_t *flags = mo_bytecode_abilities(&c->arena, c->types.items, c->types.count);
@@ -1612,9 +1609,6 @@ static MO_MUST_USE bool codegen_abilities_valid(struct compiler *c) {
         }
     }
     return true;
-}
-static MO_MUST_USE uint32_t codegen_flow_id(struct function *f, uint32_t r) {
-    return r == MO_NO_INDEX ? MO_NO_INDEX : ((struct reg *)f->regs.items)[r].flow;
 }
 static MO_MUST_USE bool codegen_operation_owned(const struct node *n, uint32_t slot) {
     if (n->operation.opcode == MO_OP_SIM)
@@ -1767,21 +1761,6 @@ static MO_MUST_USE bool codegen_live_charge(struct compiler *c, struct function 
                                "Reference liveness exceeds MO_LIMIT_CODEGEN_LIVE_WORK.");
     f->live_work += count;
     return true;
-}
-static MO_MUST_USE uint32_t codegen_live_position(const struct live_set *live, uint32_t r) {
-    uint32_t lo = 0, hi = live->count;
-    while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2;
-        if (live->items[mid] < r)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    return lo;
-}
-static MO_MUST_USE bool codegen_live_has(const struct live_set *live, uint32_t r) {
-    uint32_t at = codegen_live_position(live, r);
-    return at < live->count && live->items[at] == r;
 }
 static MO_MUST_USE bool live_reserve(struct compiler *c, struct function *f, struct live_set *live,
                                      uint32_t count) {

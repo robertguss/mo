@@ -105,4 +105,26 @@ struct compiler {
     size_t bigint_work;
 };
 
+static inline MO_MUST_USE bool codegen_reference(struct compiler *c, uint32_t type_id) {
+    return type_id != MO_NO_INDEX && mo_type_is_reference(&c->types, type_id);
+}
+static inline MO_MUST_USE uint32_t codegen_flow_id(struct function *f, uint32_t r) {
+    return r == MO_NO_INDEX ? MO_NO_INDEX : ((struct reg *)f->regs.items)[r].flow;
+}
+static inline MO_MUST_USE uint32_t codegen_live_position(const struct live_set *live, uint32_t r) {
+    uint32_t lo = 0, hi = live->count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (live->items[mid] < r)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+static inline MO_MUST_USE bool codegen_live_has(const struct live_set *live, uint32_t r) {
+    uint32_t at = codegen_live_position(live, r);
+    return at < live->count && live->items[at] == r;
+}
+
 #endif
