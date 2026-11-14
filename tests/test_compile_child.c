@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "host/host.h"
 #include "test.h"
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -34,7 +35,9 @@ int main(void) {
     MO_ASSERT(snprintf(errors, sizeof errors, "%s/errors", dir) > 0);
     FILE *script = fopen(exe, "w");
     MO_ASSERT(script != NULL);
-    MO_ASSERT(fputs("#!/bin/sh\ncase \"$2\" in\n"
+    MO_ASSERT(fputs("#!/bin/sh\nif [ \"$1\" = test ]; then\n"
+                    "  [ ! -e \"/proc/$$/fd/$2\" ] && [ -z \"$MO_LIST_CANARY\" ] || exit 1\n"
+                    "  printf list > \"$6\"; exit 0\nfi\ncase \"$2\" in\n"
                     "ok) printf image > \"$4\";;\n"
                     "diagnostic) echo refused >&2; exit 1;;\n"
                     "crash) kill -SEGV $$;;\n"
@@ -83,6 +86,14 @@ int main(void) {
     CHECK(mo_compile_start(exe, "ok", output, errors, NULL, NULL, NULL, 100, &child) ==
           MO_COMPILE_IO);
     CHECK(unlink(errors) == 0);
+    int held = open(dir, O_RDONLY | O_DIRECTORY);
+    MO_ASSERT(held > 2 && setenv("MO_LIST_CANARY", "1", 1) == 0);
+    char number[16];
+    MO_ASSERT(snprintf(number, sizeof number, "%d", held) > 0);
+    CHECK(mo_list_start(exe, number, output, errors, NULL, NULL, 100, &child) ==
+          MO_COMPILE_RUNNING);
+    CHECK(complete(&child) == MO_COMPILE_OK);
+    CHECK(close(held) == 0 && unlink(errors) == 0);
     CHECK(unlink(output) == 0 && unlink(exe) == 0 && rmdir(dir) == 0);
     return mo_test_report("compiler child");
 }
