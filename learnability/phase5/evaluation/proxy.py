@@ -159,7 +159,7 @@ def is_push(command, depth=0):
     return False
 
 
-def match(client, stream, log, *, capture=None, session_id=None, evaluation_endpoint=None):
+def match(client, stream, log):
     """Reconcile completed native occurrences; shell traffic needs independent evidence.
 
     Command text, request headers and arbitrary origin fields are never evidence.
@@ -169,34 +169,7 @@ def match(client, stream, log, *, capture=None, session_id=None, evaluation_endp
     origins = {}
     unanswered = []
     observation = False
-    if capture is not None:
-        import origin_identity
-        import origin_join
-        from protected_regrade import ReplayReceipt
-        if type(capture) not in (origin_identity.Capture, ReplayReceipt):
-            raise ValueError('collector Capture required')
-        evidence = capture.consume(session_id, evaluation_endpoint=evaluation_endpoint)
-        if evidence['integrity']['process_completeness_verified'] is not True:
-            raise ValueError('incomplete process capture')
-        if evidence['proxy_rows'] != rows:
-            raise ValueError('sealed proxy log differs')
-        joined = origin_join.join(evidence['trace'], rows)
-        unanswered = joined['unanswered']
-        requests = {(r['connection_ordinal'], r['request_ordinal']): r
-                    for r in evidence['trace']['requests']}
-        for observation in joined['observations']:
-            receipt = requests[observation['connection_ordinal'], observation['request_ordinal']]
-            origins[observation['request_seq']] = receipt
-
     provenance = dict(qualified=False, reason='no collector capture')
-    if capture is not None:
-        import observation as u3
-        from model_adapter import session_provenance
-        observation = u3.validate(evidence, rows, origins, stream.read_bytes())
-        try:
-            provenance = session_provenance(client, evidence, stream.read_bytes())
-        except Exception as error:
-            provenance = dict(qualified=False, reason='provenance evaluation error: ' + type(error).__name__)
     responses = {}
     for row in rows:
         if row.get('direction') == 'response':
