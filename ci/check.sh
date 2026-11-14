@@ -228,6 +228,8 @@ if have python3; then
 				python3 ci/check_upgrade_live.py "$driver"
 			later "Remote upgrades: proxy, tunnel and rate retry ($driver)" \
 				python3 ci/check_upgrade_remote.py "$driver"
+			later "Approvals and the review setting on a real service ($driver)" \
+				python3 ci/check_review.py "$driver"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
 			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
