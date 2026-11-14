@@ -1384,6 +1384,7 @@ def intent_command(binary):
                      ("removed", "Main.clamp.example.3", None),
                      ("added", None, "Main.within.promise.1")], changes
     moved, edited, removed, added = changes
+    assert added["approved"] is False and "approved" not in edited, added
     assert [(r["name"], r["before"]) for r in moved["reads"]] == [
         ("Main.limit", None), ("Main.within", None)], moved
     assert moved["reads"][0]["after"] == "limit = 10\n", moved
@@ -1397,7 +1398,7 @@ def intent_command(binary):
     for line in ("moved Main.within.example.1 to Main.clamp.example.3\n",
                  "edited Main.clamp.promise.1\n", '    promise "the result stays within the limit"\n',
                  '    promise "the result never leaves the limit"\n',
-                 "removed Main.clamp.example.3\n", "added Main.within.promise.1\n",
+                 "removed Main.clamp.example.3\n", "added, unapproved Main.within.promise.1\n",
                  "intent: 2 unchanged, 1 edited, 1 removed, 1 added, 1 moved\n"):
         assert line in text, (line, text)
     constant, end = intent_records(binary, [f"{INTENT}/limit/main.mo", "--against",
@@ -1729,6 +1730,7 @@ SERVE_TOOL_PAGE = 32
 SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export", "mo-failures"]
 # Listed after the views; they need the upgrade credential and change the service.
 SERVE_UPGRADE_NAMES = ["mo-upgrade-open", "mo-upgrade-page", "mo-upgrade-commit"]
+SERVE_REVIEW_NAMES = ["mo-intent-items", "mo-intent-approve", "mo-review-setting"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -1993,7 +1995,7 @@ def serve_command(binary):
             assert served.post(SERVE_INITIALIZED, token)[0] == 202
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES
+            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES
             assert all(tool["inputSchema"]["type"] == "object" for tool in tools), tools
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
             assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
@@ -2158,7 +2160,7 @@ def serve_command(binary):
                 {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"cursor": cursor}}),
                 token)
             assert status == 200, body
-            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES, body
+            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES, body
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
 
         with serving() as served:
@@ -2253,7 +2255,7 @@ def serve_command(binary):
         with serving(entry, imported) as served:
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES, body
+            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES, body
             look = SERVE_READ.replace('"read"', '"look"')
             assert serve_structured(served.post(look, token)) == {"value": "31"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
@@ -4082,11 +4084,13 @@ def guide_claims(binary):
             "folder or an artifact without starting the service, as Diagnose a failure offline "
             "says.") in guide
     assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
-    # ci/check_upgrade_live.py exercises the live-upgrade claims through mo serve and mo push.
-    for name in SERVE_UPGRADE_NAMES:
+    # ci/check_upgrade_live.py and ci/check_review.py exercise these claims through mo serve,
+    # mo push and mo review.
+    for name in SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES:
         assert f"`{name}`" in guide
     for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest.",
-                     "Only the nine operator views are read-only;",
+                     "Only the nine operator views and `mo-intent-items` are read-only;",
+                     "In this build approvals and the setting are recorded but do not yet gate an upgrade",
                      "any other URL is refused before either credential is read.",
                      "Pushing the active program again reports `already active` and changes "
                      "nothing",
@@ -4130,7 +4134,7 @@ def guide_claims(binary):
     result = run(binary, ["query", "tests/errors/e1413/main.mo", "nothing", "--export",
                           "tests/errors/missing.moex"], 2)
     assert result.stderr == b"mo query: no function of that name in that module\n", result
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history` and `mo intent`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo review`, `mo replay`, `mo query`, `mo history` and `mo intent`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -4485,8 +4489,10 @@ def emit_command(binary):
     for flag in ("--json", "--emit=core", "--max-heap", "--list"):
         args = ["emit", flag, *(["1GiB"] if flag == "--max-heap" else []), good, "-o", "a.bc"]
         mistake(args, f'flag is not accepted by this command: "{flag}"')
-    for command in ("check", "run", "test", "format", "fix"):
+    for command in ("check", "run", "format", "fix"):
         mistake([command, "-o", "a.bc", good], f'flag is not accepted by this command: "-o"')
+    for args in (["-o", "a.bc"], ["--bundle"], ["--bundle", "--list"], ["--list", "-o", "a.bc"]):
+        mistake(["test", *args, good], 'test writes an item list only as --bundle --list -o FILE: "test"')
     assert not (root / "a.bc").exists()
 
 
@@ -4628,8 +4634,8 @@ def check(binary):
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or intent): "bad\\x0a\\x09\\xc3\\xbf"')
-    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or intent')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, review, replay, query, rehearse, history or intent): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, review, replay, query, rehearse, history or intent')
     mistake(["push", "main.mo", "--url", "http://127.0.0.1:1/mcp"], 'usage: mo push FILE --url URL --base DIGEST --token-env NAME --upgrade-token-env NAME [--migrate Module.function] [--json]: "push"')
     for args, message in (
             (["replay", good, "--data", "state"], 'replay needs --failure ID: "replay"'),

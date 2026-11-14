@@ -333,7 +333,7 @@ enum mo_fetch_read_status mo_fetch_read(struct mo_image *image, uint32_t functio
 
 struct fetch_endpoint {
     uint64_t failure;
-    const char *host, *port, *token;
+    const char *host, *port, *token, *header;
     uint64_t end, last_sent;
 };
 static int request_page(struct fetch_endpoint *endpoint, const char *id, size_t offset) {
@@ -583,7 +583,7 @@ int mo_fetch(const struct mo_cli *cli, FILE *errors) {
 struct push_reply {
     bool failed, rate_limited;
     struct mo_buffer text, json;
-    char slot[33];
+    char slot[33], next[21];
 };
 
 static bool push_read(struct mo_image *image, uint32_t function, const struct mo_buffer *wire,
@@ -613,7 +613,7 @@ static bool push_read(struct mo_image *image, uint32_t function, const struct mo
                 const uint8_t *text = mo_value_data(item, &length);
                 out->rate_limited = length == 12 && memcmp(text, "rate_limited", 12) == 0;
             }
-            ok = mo_list_size(output) == 4;
+            ok = mo_list_size(output) == 5;
             struct mo_cell item;
             size_t size;
             const uint8_t *bytes;
@@ -633,6 +633,13 @@ static bool push_read(struct mo_image *image, uint32_t function, const struct mo
                 if (ok) {
                     memcpy(out->slot, bytes, size);
                     out->slot[size] = 0;
+                }
+                MO_ASSERT(mo_list_get(output, 4, &item));
+                bytes = mo_value_data(item, &size);
+                ok = ok && size < sizeof out->next;
+                if (ok) {
+                    memcpy(out->next, bytes, size);
+                    out->next[size] = 0;
                 }
             }
             ok = ok || out->rate_limited;
@@ -666,20 +673,21 @@ static bool push_call_once(struct fetch_endpoint *e, const char *upgrade, const 
                   strlen(tool) + strlen(arguments);
     int n = snprintf(head, sizeof head, "POST /mcp HTTP/1.1\r\nHost: %s:%s\r\n",
                      strcmp(e->host, "::1") == 0 ? "[::1]" : e->host, e->port);
-    bool ok = n > 0 && (size_t)n < sizeof head && mo_buffer_append(&request, head, (size_t)n) &&
-              mo_buffer_append_text(&request, "Authorization: Bearer ") &&
-              mo_buffer_append_text(&request, e->token) &&
-              mo_buffer_append_text(&request, "\r\nMo-Upgrade-Authorization: Bearer ") &&
-              mo_buffer_append_text(&request, upgrade) &&
-              mo_buffer_append_text(&request,
-                                    "\r\nContent-Type: application/json\r\nMCP-Protocol-Version: "
-                                    "2025-11-25\r\nConnection: close\r\nContent-Length: ") &&
-              mo_buffer_append_uint(&request, body) &&
-              mo_buffer_append_text(&request, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":"
-                                              "\"tools/call\",\"params\":{\"name\":\"") &&
-              mo_buffer_append_text(&request, tool) &&
-              mo_buffer_append_text(&request, "\",\"arguments\":") &&
-              mo_buffer_append_text(&request, arguments) && mo_buffer_append_text(&request, "}}");
+    bool ok =
+        n > 0 && (size_t)n < sizeof head && mo_buffer_append(&request, head, (size_t)n) &&
+        mo_buffer_append_text(&request, "Authorization: Bearer ") &&
+        mo_buffer_append_text(&request, e->token) && mo_buffer_append_text(&request, "\r\n") &&
+        mo_buffer_append_text(&request, e->header) &&
+        mo_buffer_append_text(&request, ": Bearer ") && mo_buffer_append_text(&request, upgrade) &&
+        mo_buffer_append_text(&request,
+                              "\r\nContent-Type: application/json\r\nMCP-Protocol-Version: "
+                              "2025-11-25\r\nConnection: close\r\nContent-Length: ") &&
+        mo_buffer_append_uint(&request, body) &&
+        mo_buffer_append_text(&request, "\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":"
+                                        "\"tools/call\",\"params\":{\"name\":\"") &&
+        mo_buffer_append_text(&request, tool) &&
+        mo_buffer_append_text(&request, "\",\"arguments\":") &&
+        mo_buffer_append_text(&request, arguments) && mo_buffer_append_text(&request, "}}");
     int fd = ok ? connect_local(e->host, e->port, e->end) : -1;
     ok = fd >= 0 && send_request(fd, (const char *)request.bytes, request.length, e->end);
     mo_host_wipe(request.bytes, request.length);
@@ -766,6 +774,23 @@ static int push_failure(const struct mo_cli *cli, FILE *output, FILE *errors, co
     return ok ? status : 1;
 }
 
+static uint32_t reader(struct mo_image *image) {
+    struct mo_limits limits = mo_limits_default();
+    limits.heap_size = MO_LIMIT_EXPORT_SCRATCH;
+    struct mo_defect initialization;
+    if (image == NULL || mo_image_init(image, &limits, &initialization) != MO_RETURNED)
+        return MO_NO_INDEX;
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    uint32_t function = MO_NO_INDEX;
+    for (uint32_t i = 0; i < file->function_count; i++) {
+        const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
+        if (name->length == 16 && memcmp(name->bytes, "McpFetch.upgrade", 16) == 0)
+            function = i;
+    }
+    MO_ASSERT(function != MO_NO_INDEX);
+    return function;
+}
+
 static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, const char *host,
                         const char *port, uint64_t end) {
     uint8_t base[32];
@@ -805,22 +830,16 @@ static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, co
     }
     candidate[64] = 0;
     image = mo_protocol_build();
-    struct mo_limits limits = mo_limits_default();
-    limits.heap_size = MO_LIMIT_EXPORT_SCRATCH;
-    struct mo_defect initialization;
-    uint32_t function = MO_NO_INDEX;
-    if (image == NULL || mo_image_init(image, &limits, &initialization) != MO_RETURNED) {
+    uint32_t function = reader(image);
+    if (function == MO_NO_INDEX) {
         status = push_failure(cli, output, errors, "reader unavailable", 1);
         goto done;
     }
-    const struct mo_bytecode *file = mo_image_bytecode(image);
-    for (uint32_t i = 0; i < file->function_count; i++) {
-        const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
-        if (name->length == 16 && memcmp(name->bytes, "McpFetch.upgrade", 16) == 0)
-            function = i;
-    }
-    MO_ASSERT(function != MO_NO_INDEX);
-    struct fetch_endpoint endpoint = {.host = host, .port = port, .token = token, .end = end};
+    struct fetch_endpoint endpoint = {.host = host,
+                                      .port = port,
+                                      .token = token,
+                                      .header = "Mo-Upgrade-Authorization",
+                                      .end = end};
     struct push_reply reply = {0};
     mo_buffer_init(&reply.text, MO_LIMIT_FETCH_RECEIVE_BYTES);
     mo_buffer_init(&reply.json, MO_LIMIT_FETCH_RECEIVE_BYTES);
@@ -904,37 +923,116 @@ done:
     return status;
 }
 
-struct push_work {
+static int review_failure(FILE *errors, const char *message, int status) {
+    (void)fprintf(errors, "mo review: %s\n", message);
+    return status;
+}
+
+static int review_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, const char *host,
+                          const char *port, uint64_t end) {
+    uint8_t digest[32];
+    if (cli->approve_count != 0 && (cli->push_base == NULL || !unhex(cli->push_base, digest, 32)))
+        return review_failure(errors,
+                              "--approve needs --base with the 64-digit lowercase source digest "
+                              "of the active program",
+                              2);
+    for (uint32_t i = 0; i < cli->approve_count; i++)
+        if (!unhex(cli->approve[i], digest, 32))
+            return review_failure(errors, "--approve needs 64-digit lowercase item digests", 2);
+    const char *token = NULL, *approval = NULL;
+    if (!credential(cli->fetch_token, &token) || !credential(cli->approval_token, &approval))
+        return review_failure(errors, "token unavailable or invalid", 1);
+    struct mo_image *image = mo_protocol_build();
+    uint32_t function = reader(image);
+    if (function == MO_NO_INDEX) {
+        if (image != NULL)
+            mo_image_free(image);
+        return review_failure(errors, "reader unavailable", 1);
+    }
+    struct fetch_endpoint endpoint = {.host = host,
+                                      .port = port,
+                                      .token = token,
+                                      .header = "Mo-Approval-Authorization",
+                                      .end = end};
+    struct push_reply reply = {0};
+    mo_buffer_init(&reply.text, MO_LIMIT_FETCH_RECEIVE_BYTES);
+    mo_buffer_init(&reply.json, MO_LIMIT_FETCH_RECEIVE_BYTES);
+    const char *tool = cli->items             ? "mo-intent-items"
+                       : cli->setting != NULL ? "mo-review-setting"
+                                              : "mo-intent-approve";
+    char arguments[256];
+    int status = 0;
+    bool more = true;
+    for (uint32_t i = 0; status == 0 && more; i++) {
+        int n =
+            cli->items ? snprintf(arguments, sizeof arguments, "{\"offset\":%s}",
+                                  i == 0 ? "0" : reply.next)
+            : cli->setting != NULL
+                ? snprintf(arguments, sizeof arguments, "{\"setting\":\"%s\"}", cli->setting)
+                : snprintf(arguments, sizeof arguments, "{\"program\":\"%s\",\"digest\":\"%s\"}",
+                           cli->push_base, cli->approve[i]);
+        mo_buffer_clear(&reply.text);
+        mo_buffer_clear(&reply.json);
+        if (n <= 0 || (size_t)n >= sizeof arguments ||
+            !push_call(&endpoint, approval, tool, arguments, image, function, &reply))
+            status = review_failure(errors,
+                                    "the service did not answer; run mo review --items to see "
+                                    "what it recorded",
+                                    1);
+        else
+            status = push_report(cli, output, errors, &reply);
+        more = cli->items ? reply.next[0] != 0 : i + 1 < cli->approve_count;
+    }
+    mo_buffer_free(&reply.text);
+    mo_buffer_free(&reply.json);
+    mo_image_free(image);
+    return status;
+}
+
+struct client_work {
     const struct mo_cli *cli;
     FILE *output, *errors;
     const char *host, *port;
     uint64_t end;
+    int (*attempt)(const struct mo_cli *, FILE *, FILE *, const char *, const char *, uint64_t);
     int status;
 };
-static void push_run(void *context) {
-    struct push_work *w = context;
-    w->status = push_attempt(w->cli, w->output, w->errors, w->host, w->port, w->end);
+static void client_run(void *context) {
+    struct client_work *w = context;
+    w->status = w->attempt(w->cli, w->output, w->errors, w->host, w->port, w->end);
 }
 
-int mo_push(const struct mo_cli *cli, FILE *output, FILE *errors) {
+static int client(const struct mo_cli *cli, FILE *output, FILE *errors, const char *command,
+                  int (*attempt)(const struct mo_cli *, FILE *, FILE *, const char *, const char *,
+                                 uint64_t)) {
     uint64_t started = now();
     if (started == UINT64_MAX || started > UINT64_MAX - MO_LIMIT_FETCH_US)
         return 1;
     char host[10], port[6];
-    /* The destination is checked before either credential is read. */
+    /* The destination is checked before any credential is read. */
     if (!url(cli->push_url, host, port)) {
-        (void)fputs("mo push: expected a plain HTTP loopback URL with numeric port and /mcp\n",
-                    errors);
+        (void)fprintf(errors,
+                      "mo %s: expected a plain HTTP loopback URL with numeric port and /mcp\n",
+                      command);
         return 2;
     }
     cancelled = 0;
     struct fetch_timer timer = {0};
-    struct push_work work = {cli, output, errors, host, port, started + MO_LIMIT_FETCH_US, 1};
+    struct client_work work = {cli,     output, errors, host, port, started + MO_LIMIT_FETCH_US,
+                               attempt, 1};
     bool armed = timer_start(&timer, work.end);
-    if (armed && mo_with_stack(MO_SOURCE_STACK_SIZE, push_run, &work) != 0)
+    if (armed && mo_with_stack(MO_SOURCE_STACK_SIZE, client_run, &work) != 0)
         work.status = 1;
     timer_stop(&timer);
     if (!armed)
-        (void)fputs("mo push: could not configure deadline\n", errors);
+        (void)fprintf(errors, "mo %s: could not configure deadline\n", command);
     return armed ? work.status : 1;
+}
+
+int mo_push(const struct mo_cli *cli, FILE *output, FILE *errors) {
+    return client(cli, output, errors, "push", push_attempt);
+}
+
+int mo_review(const struct mo_cli *cli, FILE *output, FILE *errors) {
+    return client(cli, output, errors, "review", review_attempt);
 }

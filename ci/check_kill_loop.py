@@ -45,6 +45,7 @@ import time
 from check_task_queue import ALL_JOBS, FOLDER, TOKEN, Queue
 
 UPGRADE_TOKEN = 'KillLoopUpgradeCredential0123'
+APPROVAL_TOKEN = 'KillLoopApprovalCredential0123'
 
 
 SHORT_SEED = 1
@@ -72,8 +73,10 @@ class KillableQueue(Queue):
     def __init__(self, binary, data, source):
         self.process = subprocess.Popen(
             [str(binary), 'serve', *([str(source)] if source else []), '--port', '0', '--data',
-             str(data), '--upgrade-token-env', 'QUEUE_UPGRADE'],
-            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN},
+             str(data), '--upgrade-token-env', 'QUEUE_UPGRADE', '--approval-token-env',
+             'QUEUE_APPROVAL'],
+            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN,
+                 'QUEUE_APPROVAL': APPROVAL_TOKEN},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         try:
             self.port = self.listening()

@@ -35,6 +35,8 @@ struct mo_intent {
 MO_MUST_USE bool mo_intent_items(struct mo_arena *arena, const struct mo_program *program,
                                  struct mo_intent *out);
 
+MO_MUST_USE bool mo_intent_list_write(const struct mo_intent *intent, struct mo_buffer *out);
+
 void mo_intent_show(const struct mo_cli *cli, struct mo_arena *arena,
                     const struct mo_program *program, const char *library, FILE *output,
                     struct mo_diags *diags);

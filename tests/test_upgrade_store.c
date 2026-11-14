@@ -1,10 +1,16 @@
+#define _POSIX_C_SOURCE 200809L
 #include "base/binary.h"
 #include "base/export.h"
 #include "base/sha256.h"
 #include "heap_fixture.h"
 #include "host/host.h"
 #include "test.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+static const uint8_t no_items[] = {'M', 'O', 'I', 'L', 1, 1, 0, 0, 0, 0};
 
 static void bundle(struct mo_buffer *b, unsigned version, struct mo_store_program *p) {
     b->length = 0;
@@ -27,6 +33,82 @@ static bool snapshot(const struct mo_store_record *record, void *context) {
           memcmp(record->bytes, expected->bytes, record->length) == 0);
     return true;
 }
+static void items(struct mo_buffer *b, const char *letters) {
+    uint32_t count = (uint32_t)strlen(letters);
+    b->length = 0;
+    CHECK(mo_buffer_append(b, "MOIL\1\1", 6) && mo_binary_write(b, count, 4));
+    for (uint32_t i = 0; i < count; i++) {
+        uint8_t digest[32];
+        memset(digest, letters[i], 32);
+        CHECK(mo_buffer_append(b, digest, 32) && mo_buffer_append_byte(b, 0));
+        for (unsigned j = 0; j < 3; j++)
+            CHECK(mo_binary_write(b, 1, 4) && mo_buffer_append_byte(b, (uint8_t)letters[i]));
+        CHECK(mo_binary_write(b, 0, 4));
+    }
+}
+static bool approved(const struct mo_store_review *r, char letter) {
+    for (uint32_t i = 0; i < r->approved_count; i++)
+        if (r->approved[i][0] == (uint8_t)letter)
+            return true;
+    return false;
+}
+static void review(const struct mo_store_record *state, struct mo_store_activation activation) {
+    char dir[] = "/tmp/mo-review-XXXXXX", path[256];
+    MO_ASSERT(mkdtemp(dir) != NULL);
+    MO_ASSERT(snprintf(path, sizeof path, "%s/state.db", dir) > 0);
+    struct mo_buffer old_items, new_items;
+    mo_buffer_init(&old_items, MO_LIMIT_INTENT_LIST_BYTES);
+    mo_buffer_init(&new_items, MO_LIMIT_INTENT_LIST_BYTES);
+    items(&old_items, "AB");
+    items(&new_items, "BC");
+    activation.previous.items = old_items.bytes;
+    activation.previous.items_size = old_items.length;
+    activation.candidate.items = new_items.bytes;
+    activation.candidate.items_size = new_items.length;
+    const uint8_t *old = activation.previous.source, *next = activation.candidate.source;
+    uint8_t a[32], b[32], c[32];
+    memset(a, 'A', 32);
+    memset(b, 'B', 32);
+    memset(c, 'C', 32);
+    struct mo_arena arena;
+    mo_arena_init(&arena, 16 << 20);
+    struct mo_store_review r;
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    CHECK(mo_store_program_record(store, &activation.previous, state) == MO_STORE_OK);
+    CHECK(mo_store_review_read(store, &arena, &r) == MO_STORE_OK && r.reviewed && !r.intent &&
+          r.version == 0 && r.approved_count == 0 && r.items.count == 2);
+    CHECK(mo_store_approve(store, old, a, 1) == MO_STORE_REVIEW_OK);
+    CHECK(mo_store_approve(store, old, a, 2) == MO_STORE_REVIEW_OK);
+    CHECK(mo_store_approve(store, next, b, 3) == MO_STORE_REVIEW_STALE);
+    CHECK(mo_store_approve(store, old, c, 4) == MO_STORE_REVIEW_ABSENT);
+    CHECK(mo_store_approve(store, old, b, 5) == MO_STORE_REVIEW_OK);
+    CHECK(mo_store_set_review(store, true, 6) == MO_STORE_REVIEW_OK);
+    mo_store_close(store);
+    CHECK(mo_store_open(path, &store) == MO_STORE_OK);
+    CHECK(mo_store_review_read(store, &arena, &r) == MO_STORE_OK && r.intent && r.version == 2 &&
+          r.approved_count == 2 && approved(&r, 'A') && approved(&r, 'B'));
+    CHECK(mo_store_activate(store, &activation) == MO_STORE_ACTIVATED);
+    CHECK(mo_store_review_read(store, &arena, &r) == MO_STORE_OK && r.intent && r.version == 3 &&
+          r.approved_count == 1 && approved(&r, 'B') && memcmp(r.program.source, next, 32) == 0);
+    CHECK(mo_store_approve(store, old, b, 7) == MO_STORE_REVIEW_STALE);
+    CHECK(mo_store_approve(store, next, c, 8) == MO_STORE_REVIEW_OK);
+    mo_store_close(store);
+    CHECK(unlink(path) == 0 && rmdir(dir) == 0);
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    CHECK(mo_store_program_record(store, &activation.previous, state) == MO_STORE_OK);
+    unsigned toggles = 0;
+    enum mo_store_review_status status = MO_STORE_REVIEW_OK;
+    while (status == MO_STORE_REVIEW_OK && toggles <= MO_LIMIT_REVIEW_RECORDS)
+        status = mo_store_set_review(store, toggles++ % 2 == 0, 9);
+    CHECK(status == MO_STORE_REVIEW_FULL && toggles == MO_LIMIT_REVIEW_RECORDS + 1);
+    CHECK(mo_store_approve(store, old, a, 10) == MO_STORE_REVIEW_FULL);
+    CHECK(mo_store_review_read(store, &arena, &r) == MO_STORE_OK && r.approved_count == 0);
+    mo_store_close(store);
+    mo_arena_free(&arena);
+    mo_buffer_free(&old_items);
+    mo_buffer_free(&new_items);
+}
 int main(void) {
     struct heap_fixture f;
     heap_fixture_init(&f);
@@ -42,8 +124,12 @@ int main(void) {
     static const uint8_t empty_context[13] = {'M', 'O', 'C', 'C', 1};
     old.context = empty_context;
     old.context_size = sizeof empty_context;
+    old.items = no_items;
+    old.items_size = sizeof no_items;
     next.context = empty_context;
     next.context_size = sizeof empty_context;
+    next.items = no_items;
+    next.items_size = sizeof no_items;
     struct mo_sha256 context_hash;
     mo_sha256_init(&context_hash);
     mo_sha256_update(&context_hash, empty_context, sizeof empty_context);
@@ -117,7 +203,7 @@ int main(void) {
     CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, snapshot, &activation.candidate_state) ==
           MO_STORE_OK);
     CHECK(mo_store_activate(store, &activation) == MO_STORE_ACTIVATION_REFUSED);
-    /* An ordinary snapshot preserves user_version=2 and the active source. */
+    /* An ordinary snapshot preserves the store version and the active source. */
     CHECK(mo_store_call(store, MO_STORE_SNAPSHOT, &activation.candidate_state, NULL, NULL) ==
           MO_STORE_OK);
     CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, snapshot, &activation.candidate_state) ==
@@ -152,6 +238,7 @@ int main(void) {
     CHECK(mo_store_call(store, MO_STORE_LOAD, NULL, snapshot, &adoption.candidate_state) ==
           MO_STORE_OK);
     mo_store_close(store);
+    review(&state, activation);
     mo_arena_free(&copies);
     mo_buffer_free(&saved);
     mo_buffer_free(&old_bundle);

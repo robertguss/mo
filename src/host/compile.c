@@ -27,13 +27,15 @@ void mo_compile_cancel(struct mo_compile_child *child) {
     (void)reap(child->pid, &status, 0);
     child->pid = 0;
 }
-enum mo_compile_status mo_compile_start(const char *executable, const char *entry,
-                                        const char *output, const char *diagnostics,
-                                        const char *old_bundle, const char *migration,
-                                        const char *context, uint64_t now,
-                                        struct mo_compile_child *child) {
-    MO_ASSERT(child != NULL && child->pid == 0);
-    if (now > UINT64_MAX - MO_LIMIT_UPGRADE_COMPILE_WALL_US)
+struct child_limits {
+    rlim_t memory, cpu;
+    uint64_t wall;
+};
+static enum mo_compile_status spawn(const char *const *arguments, unsigned count,
+                                    const char *diagnostics, struct child_limits limits,
+                                    uint64_t now, struct mo_compile_child *child) {
+    MO_ASSERT(child != NULL && child->pid == 0 && count < 16 && arguments[count] == NULL);
+    if (now > UINT64_MAX - limits.wall)
         return MO_COMPILE_IO;
     int errors = open(diagnostics, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (errors < 0)
@@ -48,38 +50,62 @@ enum mo_compile_status mo_compile_start(const char *executable, const char *entr
         int input = open("/dev/null", O_RDWR);
         if (input < 0 || dup2(input, STDIN_FILENO) < 0 || dup2(input, STDOUT_FILENO) < 0 ||
             dup2(errors, STDERR_FILENO) < 0 ||
-            (!MO_UPGRADE_COMPILE_ASAN && !limit(RLIMIT_AS, MO_LIMIT_UPGRADE_COMPILE_MEMORY)) ||
-            !limit(RLIMIT_CPU, MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS) || !limit(RLIMIT_CORE, 0))
+            (!MO_UPGRADE_COMPILE_ASAN && !limit(RLIMIT_AS, limits.memory)) ||
+            !limit(RLIMIT_CPU, limits.cpu) || !limit(RLIMIT_CORE, 0))
             _exit(125);
         for (int fd = 3; fd < descriptors; fd++)
             (void)close(fd);
-        const char *arguments[16] = {executable, "emit", entry, "-o", output, "--bundle"};
-        unsigned at = 6;
-        if (old_bundle != NULL) {
-            arguments[at++] = "--old-bundle";
-            arguments[at++] = old_bundle;
-        }
-        if (migration != NULL) {
-            arguments[at++] = "--migrate";
-            arguments[at++] = migration;
-        }
-        if (context != NULL) {
-            arguments[at++] = "--context";
-            arguments[at++] = context;
-        }
-        arguments[at] = NULL;
-        /* execv does not mutate argument strings. POSIX predates const. */
         char *mutable[16];
-        for (unsigned i = 0; i <= at; i++)
+        for (unsigned i = 0; i <= count; i++)
             memcpy(&mutable[i], &arguments[i], sizeof mutable[i]);
-        execv(executable, mutable);
+        static char *const empty[] = {NULL};
+        execve(arguments[0], mutable, empty);
         _exit(125);
     }
     (void)close(errors);
     if (pid < 0)
         return MO_COMPILE_IO;
-    *child = (struct mo_compile_child){pid, now + MO_LIMIT_UPGRADE_COMPILE_WALL_US};
+    *child = (struct mo_compile_child){pid, now + limits.wall};
     return MO_COMPILE_RUNNING;
+}
+static unsigned upgrade_inputs(const char **arguments, unsigned at, const char *old_bundle,
+                               const char *migration, const char *context) {
+    if (old_bundle != NULL) {
+        arguments[at++] = "--old-bundle";
+        arguments[at++] = old_bundle;
+    }
+    if (migration != NULL) {
+        arguments[at++] = "--migrate";
+        arguments[at++] = migration;
+    }
+    if (context != NULL) {
+        arguments[at++] = "--context";
+        arguments[at++] = context;
+    }
+    arguments[at] = NULL;
+    return at;
+}
+enum mo_compile_status mo_compile_start(const char *executable, const char *entry,
+                                        const char *output, const char *diagnostics,
+                                        const char *old_bundle, const char *migration,
+                                        const char *context, uint64_t now,
+                                        struct mo_compile_child *child) {
+    const char *arguments[16] = {executable, "emit", entry, "-o", output, "--bundle"};
+    unsigned count = upgrade_inputs(arguments, 6, old_bundle, migration, context);
+    struct child_limits limits = {MO_LIMIT_UPGRADE_COMPILE_MEMORY,
+                                  MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS,
+                                  MO_LIMIT_UPGRADE_COMPILE_WALL_US};
+    return spawn(arguments, count, diagnostics, limits, now, child);
+}
+enum mo_compile_status mo_list_start(const char *executable, const char *bundle, const char *output,
+                                     const char *diagnostics, const char *old_bundle,
+                                     const char *context, uint64_t now,
+                                     struct mo_compile_child *child) {
+    const char *arguments[16] = {executable, "test", bundle, "--bundle", "--list", "-o", output};
+    unsigned count = upgrade_inputs(arguments, 7, old_bundle, NULL, context);
+    struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
+                                  MO_LIMIT_CHECK_WALL_US};
+    return spawn(arguments, count, diagnostics, limits, now, child);
 }
 enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now) {
     MO_ASSERT(child != NULL && child->pid > 0);

@@ -1,0 +1,7 @@
+{main}
+--port
+0
+--data
+tests/errors/e1434
+--upgrade-token-env
+MO_SERVICE_TEST_UPGRADE_TOKEN

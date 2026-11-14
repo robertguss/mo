@@ -96,7 +96,10 @@ fn names() : List(Text)
     "mo-failures",
     "mo-upgrade-open",
     "mo-upgrade-page",
-    "mo-upgrade-commit"
+    "mo-upgrade-commit",
+    "mo-intent-items",
+    "mo-intent-approve",
+    "mo-review-setting"
   ]
 end
 
@@ -106,6 +109,9 @@ fn upgrade_kind(index: Int) : Int
     Some("mo-upgrade-open"): 1
     Some("mo-upgrade-page"): 2
     Some("mo-upgrade-commit"): 3
+    Some("mo-intent-items"): 4
+    Some("mo-intent-approve"): 5
+    Some("mo-review-setting"): 6
     Some(_) | None: 0
   end
 end
@@ -127,6 +133,9 @@ fn arguments_of(index: Int) : List(Text)
     Some("mo-upgrade-open"): ["base", "candidate", "total", "migration"]
     Some("mo-upgrade-page"): ["slot", "index", "offset", "total", "bytes"]
     Some("mo-upgrade-commit"): ["slot", "base"]
+    Some("mo-intent-items"): ["offset"]
+    Some("mo-intent-approve"): ["program", "digest"]
+    Some("mo-review-setting"): ["setting"]
     Some(_) | None: []
   end
 end
@@ -137,6 +146,7 @@ fn required_of(index: Int) : List(Text)
     Some("mo-upgrade-open"): ["base", "candidate", "total"]
     Some("mo-upgrade-page"): ["slot", "index", "offset", "total", "bytes"]
     Some("mo-upgrade-commit"): ["slot", "base"]
+    Some("mo-intent-approve"): ["program", "digest"]
     Some(_) | None: []
   end
 end
@@ -163,7 +173,10 @@ fn catalog() : List(Json.Json)
     "Retained failure records, oldest first; after selects a later page. Capture refusals remain in mo-supervisor.",
     "Reserve the single upload slot for a canonical MOSB bundle (at most 1048576 bytes), naming base and candidate SHA-256 digests and total bytes. Optional migration names a pure function. Returns slot; expires after 60 seconds without progress. Does not activate. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
     "Write the next page to slot: zero-based consecutive index and byte offset, unchanged total, padded base64 bytes. Each decoded page is 8192 bytes except the shorter final page. Final page verifies the candidate digest and starts compilation, without activation. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
-    "Commit slot against base SHA-256: waits for compilation, then replaces the program and migrates state at a message boundary in one transaction. Returns the shared activation report with committed ordinal; refusal preserves the old program and state. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE."
+    "Commit slot against base SHA-256: waits for compilation, then replaces the program and migrates state at a message boundary in one transaction. Returns the shared activation report with committed ordinal; refusal preserves the old program and state. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
+    "The active program's items, one page from offset: digest, kind, owner, name, sentence, the declarations it reads and whether it is approved, with the review setting. A truncated page names the next offset. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
+    "Approve one item: program is the active program's SHA-256 and digest an item it has. Approvals do not yet gate an upgrade. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
+    "Read the review setting, or set it to everything or intent. The setting does not yet gate an upgrade. Requires the service token and Mo-Approval-Authorization: Bearer VALUE."
   ]
   tool_names = names()
   integer = Json.Object({"type": Json.String("integer"), "minimum": Json.int(0)})
@@ -185,17 +198,19 @@ fn catalog() : List(Json.Json)
         }) else if key == "export" or key == "slot": Json.Object({
           "type": Json.String("string"),
           "pattern": Json.String("^[0-9a-f]{32}$")
-        }) else if key == "base" or key == "candidate": Json.Object({
-          "type": Json.String("string"),
-          "pattern": Json.String("^[0-9a-f]{64}$")
-        }) else if key == "migration": Json.Object({
-          "type": Json.String("string"),
-          "minLength": Json.int(1),
-          "maxLength": Json.int(255)
-        }) else if key == "bytes": Json.Object({
-          "type": Json.String("string"),
-          "maxLength": Json.int(page_text())
-        }) else: integer
+        }) else if key == "base" or key == "candidate" or key == "program" or key == "digest": Json
+          .Object({"type": Json.String("string"), "pattern": Json.String("^[0-9a-f]{64}$")}) else if key ==
+          "migration": Json.Object({
+            "type": Json.String("string"),
+            "minLength": Json.int(1),
+            "maxLength": Json.int(255)
+          }) else if key == "setting": Json.Object({
+            "type": Json.String("string"),
+            "enum": Json.Array([Json.String("everything"), Json.String("intent")])
+          }) else if key == "bytes": Json.Object({
+            "type": Json.String("string"),
+            "maxLength": Json.int(page_text())
+          }) else: integer
       )
     end
     name = tool_names.get(i) or stop "view name"
@@ -211,12 +226,12 @@ fn catalog() : List(Json.Json)
           "additionalProperties": Json.Boolean(false)
         }),
         "annotations": Json.Object(
-          if kind != 0: {
+          if kind != 0 and kind != 4: {
             "readOnlyHint": Json.Boolean(false),
             "destructiveHint": Json.Boolean(kind == 3),
             "idempotentHint": Json.Boolean(false),
             "openWorldHint": Json.Boolean(false)
-          } else if name == "mo-export": {
+          } else if name == "mo-export" or kind == 4: {
             "readOnlyHint": Json.Boolean(true),
             "idempotentHint": Json.Boolean(true),
             "openWorldHint": Json.Boolean(false)
@@ -263,7 +278,11 @@ fn valid(index: Int, arguments: Json.Json) : Bool
           Json.Null | Json.Boolean(_) | Json.Array(_) | Json.Object(_): return false
         end
       end
-    else if key == "base" or key == "candidate" or key == "slot"
+    else if key == "base" or
+      key == "candidate" or
+      key == "slot" or
+      key == "program" or
+      key == "digest"
       case value
         Json.String(text): return false if not hex?(text, if key == "slot": 32 else: 64)
         Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
@@ -275,6 +294,8 @@ fn valid(index: Int, arguments: Json.Json) : Bool
           return false if key == "migration" and text == ""
         Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
       end
+    else if key == "setting"
+      return false if value != Json.String("everything") and value != Json.String("intent")
     else if index == 7 and key == "kind"
       return false if value != Json.String("state") and value != Json.String("failure")
     else if index == 7 and key == "export"
@@ -306,13 +327,25 @@ fn valid(index: Int, arguments: Json.Json) : Bool
 end
 
 ## Validated upgrade-tool arguments as text, "" where absent: base, candidate, total, migration,
-## slot, index, offset, bytes. The native side parses digits and hex again.
+## slot, index, offset, bytes, program, digest, setting. The native side parses digits and hex again.
 fn upgrade_arguments(arguments: Json.Json) : List(Text)
   fields = case arguments
     Json.Object(value): value
     Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
   end
-  ["base", "candidate", "total", "migration", "slot", "index", "offset", "bytes"].map(fn(key)
+  [
+    "base",
+    "candidate",
+    "total",
+    "migration",
+    "slot",
+    "index",
+    "offset",
+    "bytes",
+    "program",
+    "digest",
+    "setting"
+  ].map(fn(key)
     case fields.get(key)
       Some(Json.String(text)): text
       Some(Json.Number(n)): Json.Number(n).to_text

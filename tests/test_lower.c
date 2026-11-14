@@ -2007,7 +2007,7 @@ static void test_embedded_protocol(void *entry) {
             strcmp(mo_protocol_sources[i].path, "runtime/mcp-views.mo") == 0) {
             /* Append an ordinary view after the upgrades. Dispatch and catalog annotations
              * must classify its name, not assume every later index is an upgrade. */
-            const char marker[] = "    \"mo-upgrade-commit\"\n";
+            const char marker[] = "    \"mo-review-setting\"\n";
             size_t prefix = 0;
             while (prefix + sizeof marker - 1 <= size &&
                    memcmp(bytes + prefix, marker, sizeof marker - 1) != 0)
@@ -2018,7 +2018,7 @@ static void test_embedded_protocol(void *entry) {
             mo_buffer_init(&names, MO_LIMIT_INPUT_BYTES);
             MO_ASSERT(mo_buffer_append(&names, bytes, prefix) &&
                       mo_buffer_append_text(
-                          &names, "    \"mo-upgrade-commit\",\n    \"mo-future-view\"\n") &&
+                          &names, "    \"mo-review-setting\",\n    \"mo-future-view\"\n") &&
                       mo_buffer_append(&names, at + sizeof marker - 1,
                                        size - prefix - (sizeof marker - 1)));
             const char stop[] = "stop \"view description\"";

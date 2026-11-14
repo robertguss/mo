@@ -134,7 +134,15 @@ fn inspection()
     bytes = octets("POST #{target} HTTP/1.1\r\nHost: #{host}\r\nContent-Length: -1\r\n\r\n")
     require(
       HttpPolicy.inspect(bytes, head(bytes), ["localhost"]) ==
-        Ok(HttpPolicy.Access(bearer: None, upgrade: None, session: None, stream: false))
+        Ok(
+          HttpPolicy.Access(
+            bearer: None,
+            upgrade: None,
+            session: None,
+            stream: false,
+            approval: None
+          )
+        )
     )
   end
   for auth in ["Bearer canary", "bEaReR  canary"]

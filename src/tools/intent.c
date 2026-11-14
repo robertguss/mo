@@ -2,6 +2,8 @@
 
 #include "tools/intent.h"
 
+#include "base/binary.h"
+#include "base/intent-list.h"
 #include "base/sha256.h"
 #include "prim/prim.h"
 #include "syntax/format.h"
@@ -432,4 +434,38 @@ done:
     if (w->ok)
         MO_ASSERT(out->count == count);
     return w->ok;
+}
+
+static bool list_text(struct mo_buffer *out, const void *bytes, size_t length) {
+    return mo_binary_write(out, length, 4) && mo_buffer_append(out, bytes, length);
+}
+
+static bool old_program(const struct mo_intent_item *item) {
+    return strncmp(item->owner, "UpgradeOld.", 11) == 0;
+}
+
+bool mo_intent_list_write(const struct mo_intent *intent, struct mo_buffer *out) {
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < intent->count; i++)
+        count += !old_program(&intent->items[i]);
+    bool ok = count <= MO_LIMIT_INTENT_ITEMS && mo_buffer_append(out, "MOIL\1", 5) &&
+              mo_buffer_append_byte(out, MO_INTENT_DIGEST_VERSION) &&
+              mo_binary_write(out, count, 4);
+    for (uint32_t i = 0; ok && i < intent->count; i++) {
+        const struct mo_intent_item *item = &intent->items[i];
+        if (old_program(item))
+            continue;
+        uint8_t kind = 0;
+        while (strcmp(mo_intent_kind_name((enum mo_intent_kind)kind), item->kind) != 0)
+            kind++;
+        ok = mo_buffer_append(out, item->digest, 32) && mo_buffer_append_byte(out, kind) &&
+             list_text(out, item->owner, strlen(item->owner)) &&
+             list_text(out, item->name, strlen(item->name)) &&
+             list_text(out, item->text.bytes, item->text.length) &&
+             mo_binary_write(out, item->read_count, 4);
+        for (uint32_t r = 0; ok && r < item->read_count; r++)
+            ok = list_text(out, item->reads[r].label, strlen(item->reads[r].label));
+    }
+    struct mo_intent_list checked;
+    return ok && mo_intent_list_read(out->bytes, out->length, &checked);
 }

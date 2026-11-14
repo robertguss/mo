@@ -3,6 +3,7 @@
 #define MO_HOST_H
 
 #include "base/hostops.h"
+#include "base/intent-list.h"
 #include "heap/heap.h"
 
 #define MO_HOST_PRIVATE_TYPES 6
@@ -120,6 +121,10 @@ MO_MUST_USE enum mo_compile_status mo_compile_start(const char *executable, cons
                                                     const char *old_bundle, const char *migration,
                                                     const char *context, uint64_t now,
                                                     struct mo_compile_child *child);
+MO_MUST_USE enum mo_compile_status mo_list_start(const char *executable, const char *bundle,
+                                                 const char *output, const char *diagnostics,
+                                                 const char *old_bundle, const char *context,
+                                                 uint64_t now, struct mo_compile_child *child);
 MO_MUST_USE enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now);
 void mo_compile_cancel(struct mo_compile_child *child);
 
@@ -183,12 +188,15 @@ struct mo_store_program {
     size_t bundle_size;
     const uint8_t *context;
     size_t context_size;
+    const uint8_t *items;
+    size_t items_size;
 };
 struct mo_store_activation {
     struct mo_store_program previous, candidate;
     struct mo_store_record previous_state, candidate_state;
     const char *migration, *report_json;
     size_t migration_size, report_size;
+    int64_t time;
 };
 enum mo_store_activation_status {
     MO_STORE_ACTIVATED,
@@ -212,6 +220,35 @@ mo_store_activate(struct mo_store *store, const struct mo_store_activation *acti
  * stored snapshot; candidate_state is at the current head. Legacy adoption has no
  * previous program, uses zero old source (unavailable), and installs ordinal 1.
  * Recorded rebuilds retain the previous program and increment its ordinal. */
+struct mo_store_review {
+    bool reviewed, intent;
+    uint64_t version;
+    struct mo_store_program program;
+    struct mo_intent_list items;
+    uint8_t (*approved)[32];
+    uint32_t approved_count;
+};
+enum mo_store_review_status {
+    MO_STORE_REVIEW_OK,
+    MO_STORE_REVIEW_STALE,
+    MO_STORE_REVIEW_ABSENT,
+    MO_STORE_REVIEW_FULL,
+    MO_STORE_REVIEW_FAILED
+};
+enum {
+    MO_STORE_REVIEW_READ_BYTES =
+        MO_LIMIT_INTENT_LIST_BYTES + 2 * MO_LIMIT_INTENT_ITEMS * 32 + 3 * MO_ARENA_CHUNK_HEADER
+};
+MO_MUST_USE enum mo_store_status
+mo_store_review_read(struct mo_store *store, struct mo_arena *arena, struct mo_store_review *out);
+MO_MUST_USE bool mo_store_review_approved(const struct mo_store_review *review,
+                                          const uint8_t digest[32]);
+const char *mo_store_setting_name(bool intent);
+MO_MUST_USE enum mo_store_review_status mo_store_approve(struct mo_store *store,
+                                                         const uint8_t program[32],
+                                                         const uint8_t digest[32], int64_t time);
+MO_MUST_USE enum mo_store_review_status mo_store_set_review(struct mo_store *store, bool intent,
+                                                            int64_t time);
 MO_MUST_USE enum mo_store_activation_status
 mo_store_adopt(struct mo_store *store, const struct mo_store_activation *activation, bool legacy);
 
@@ -320,6 +357,19 @@ struct mo_store_history_program {
     struct mo_store_history_program *next;
     struct mo_store_program program; /* identities only; bundle/context pointers are NULL */
 };
+struct mo_store_history_approval {
+    struct mo_store_history_approval *next;
+    uint8_t digest[32];
+    uint64_t version;
+};
+struct mo_store_history_decision {
+    struct mo_store_history_decision *next;
+    uint64_t sequence;
+    int64_t time;
+    uint8_t base[32];
+    bool intent;
+    const char *kind, *detail;
+};
 struct mo_store_history {
     struct mo_arena arena;
     bool has_program;
@@ -328,6 +378,11 @@ struct mo_store_history {
     struct mo_store_history_upgrade *upgrades;
     uint64_t upgrade_count;
     bool upgrades_truncated;
+    bool reviewed, review_intent;
+    uint64_t review_version, decision_count;
+    struct mo_store_history_approval *approvals;
+    struct mo_store_history_decision *decisions;
+    bool review_truncated;
     bool recovered;      /* opened read-write and rolled a journal back */
     bool failure_tables; /* false for a store from before failure capture */
     bool has_snapshot;   /* false only for a store a first start never finished */
