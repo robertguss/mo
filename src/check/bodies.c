@@ -18,7 +18,7 @@
 
 /* The reason for an unknown name, called or dot-called, that another language uses for a length
  * (reference appendix C), or NULL. */
-static const char *length_habit(const struct mo_syntax *name) {
+static const char *infer_length_habit(const struct mo_syntax *name) {
     return infer_compare_text(name, "len") == 0 || infer_compare_text(name, "length") == 0
                ? "The library has no len or length: a list's length is list.size, and a text's "
                  "is text.char_count or text.byte_count (reference 3.4)."
@@ -71,8 +71,8 @@ static MO_MUST_USE struct name_slot *insert(struct name_slot *s, struct name_slo
     return s;
 }
 
-static MO_MUST_USE struct name_slot *slot(struct inference *p, const struct mo_syntax *name,
-                                          bool create) {
+static MO_MUST_USE struct name_slot *infer_slot(struct inference *p, const struct mo_syntax *name,
+                                                bool create) {
     struct name_slot *at = p->names;
     while (at != NULL) {
         int order = infer_compare_name(name, at->name);
@@ -102,11 +102,11 @@ static MO_MUST_USE bool record_binding(struct inference *p, const struct mo_synt
     return true;
 }
 
-static MO_MUST_USE bool bind(struct inference *p, const struct mo_syntax *name, struct term *type,
-                             bool variable) {
+static MO_MUST_USE bool infer_bind(struct inference *p, const struct mo_syntax *name,
+                                   struct term *type, bool variable) {
     if (name->kind == MO_S_UNDERSCORE)
         return record_binding(p, name, type, variable);
-    struct name_slot *s = slot(p, name, true);
+    struct name_slot *s = infer_slot(p, name, true);
     if (s == NULL)
         return false;
     if (s->active != NULL)
@@ -140,7 +140,7 @@ static MO_MUST_USE bool bind(struct inference *p, const struct mo_syntax *name, 
     return true;
 }
 
-static MO_MUST_USE bool leave(struct inference *p, struct local *mark) {
+static MO_MUST_USE bool infer_leave(struct inference *p, struct local *mark) {
     while (p->locals != mark) {
         struct local *l = p->locals;
         if (!l->used && l->name->text[0] != '_') {
@@ -194,9 +194,9 @@ static MO_MUST_USE bool capture_local(struct inference *p, struct local *local,
     return true;
 }
 
-static MO_MUST_USE bool capture_write(struct inference *p, struct local *local,
-                                      const struct mo_syntax *syntax,
-                                      const struct mo_syntax *target) {
+static MO_MUST_USE bool infer_capture_write(struct inference *p, struct local *local,
+                                            const struct mo_syntax *syntax,
+                                            const struct mo_syntax *target) {
     if (!p->checked)
         return true;
     struct capture_write *write =
@@ -208,8 +208,8 @@ static MO_MUST_USE bool capture_write(struct inference *p, struct local *local,
     return true;
 }
 
-static MO_MUST_USE bool capture_path(struct inference *p, const struct mo_syntax *group,
-                                     uint32_t arm) {
+static MO_MUST_USE bool infer_capture_path(struct inference *p, const struct mo_syntax *group,
+                                           uint32_t arm) {
     if (!p->checked)
         return true;
     struct capture_path *path = infer_allocate(p, 1, sizeof(*path), _Alignof(struct capture_path));
@@ -220,8 +220,9 @@ static MO_MUST_USE bool capture_path(struct inference *p, const struct mo_syntax
     return true;
 }
 
-static MO_MUST_USE const struct mo_symbol *
-find_symbol(const struct mo_module_scope *scope, const struct mo_syntax *name, uint32_t *count) {
+static MO_MUST_USE const struct mo_symbol *infer_find_symbol(const struct mo_module_scope *scope,
+                                                             const struct mo_syntax *name,
+                                                             uint32_t *count) {
     const struct mo_symbol *s =
         mo_find_symbol(scope, name->text, name->span.end - name->span.start);
     if (s != NULL)
@@ -260,8 +261,8 @@ MO_MUST_USE bool infer_visible_data(struct inference *p, const struct mo_symbol 
     return true;
 }
 
-static MO_MUST_USE const struct mo_field_signature *find_field(const struct mo_data_signature *data,
-                                                               const struct mo_syntax *name) {
+static MO_MUST_USE const struct mo_field_signature *
+infer_find_field(const struct mo_data_signature *data, const struct mo_syntax *name) {
     if (data->unnamed)
         return NULL;
     uint32_t lo = 0, hi = data->count;
@@ -296,7 +297,7 @@ static MO_MUST_USE uint32_t find_alias(const struct mo_module_scope *scope,
 /* The module a call prefix names: a use alias, or a library module always in
  * scope. *alias is the alias index, or UINT32_MAX. */
 static MO_MUST_USE const struct mo_module_scope *
-prefix_module(struct inference *p, const struct mo_syntax *prefix, uint32_t *alias) {
+infer_prefix_module(struct inference *p, const struct mo_syntax *prefix, uint32_t *alias) {
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
     uint32_t lo = find_alias(scope, prefix);
     *alias = UINT32_MAX;
@@ -317,8 +318,8 @@ prefix_module(struct inference *p, const struct mo_syntax *prefix, uint32_t *ali
 }
 
 /* Credit the use line a prefix went through. */
-static MO_MUST_USE bool use_alias(struct inference *p, uint32_t alias,
-                                  const struct mo_syntax *name) {
+static MO_MUST_USE bool infer_use_alias(struct inference *p, uint32_t alias,
+                                        const struct mo_syntax *name) {
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
     if (alias == UINT32_MAX ||
         mo_use_import(p->signatures, p->function->function->module, scope->aliases[alias].origin))
@@ -329,10 +330,10 @@ static MO_MUST_USE bool use_alias(struct inference *p, uint32_t alias,
     return false;
 }
 
-static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
-                                                      const struct mo_syntax *name,
-                                                      const struct mo_syntax *prefix,
-                                                      uint32_t *count) {
+static MO_MUST_USE const struct mo_symbol *infer_definition(struct inference *p,
+                                                            const struct mo_syntax *name,
+                                                            const struct mo_syntax *prefix,
+                                                            uint32_t *count) {
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
     if (name->kind == MO_S_QUALIFIED) {
         prefix = name->children[0];
@@ -340,14 +341,14 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
     }
     if (prefix != NULL) {
         uint32_t alias;
-        const struct mo_module_scope *target = prefix_module(p, prefix, &alias);
+        const struct mo_module_scope *target = infer_prefix_module(p, prefix, &alias);
         if (p->failed)
             return NULL;
         if (target != NULL && name->kind == MO_S_NAME && prefix->kind == MO_S_CAPNAME) {
             /* Red.f with both a used module Red and a case Red in scope could call either. Look
              * the case up without definition, which would count an import of Red as used. */
             uint32_t meanings = 0;
-            const struct mo_symbol *other = find_symbol(scope, prefix, &meanings);
+            const struct mo_symbol *other = infer_find_symbol(scope, prefix, &meanings);
             uint32_t low = 0, high = scope->imported_count;
             while (other == NULL && low < high) {
                 uint32_t mid = low + (high - low) / 2;
@@ -371,7 +372,7 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
         }
         if (target == NULL) {
             uint32_t meanings = 0;
-            const struct mo_symbol *type = definition(p, prefix, NULL, &meanings);
+            const struct mo_symbol *type = infer_definition(p, prefix, NULL, &meanings);
             size_t length = prefix->span.end - prefix->span.start;
             bool parameter = length == 1 && prefix->text[0] >= 'A' && prefix->text[0] <= 'Z' &&
                              (p->function->type->parameters &
@@ -384,7 +385,7 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             (void)reported;
             return NULL;
         }
-        const struct mo_symbol *s = find_symbol(target, name, count);
+        const struct mo_symbol *s = infer_find_symbol(target, name, count);
         if (s != NULL && s->owner != UINT32_MAX) {
             const struct mo_symbol *owner = &p->interfaces->scopes[s->module].symbols[s->owner];
             if (owner->exported && !infer_visible_data(p, owner))
@@ -399,11 +400,11 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
             (void)reported;
             return NULL;
         }
-        if (!use_alias(p, alias, name))
+        if (!infer_use_alias(p, alias, name))
             return NULL;
         return s;
     }
-    const struct mo_symbol *s = find_symbol(scope, name, count);
+    const struct mo_symbol *s = infer_find_symbol(scope, name, count);
     if (s != NULL)
         return s;
     uint32_t lo = 0, hi = scope->imported_count;
@@ -427,15 +428,15 @@ static MO_MUST_USE const struct mo_symbol *definition(struct inference *p,
     return scope->imported[lo].symbols;
 }
 
-static MO_MUST_USE struct value builtin_construct(struct inference *p,
-                                                  const struct mo_builtin_case *data,
-                                                  const struct mo_syntax *args,
-                                                  struct term *expected);
+static MO_MUST_USE struct value infer_builtin_construct(struct inference *p,
+                                                        const struct mo_builtin_case *data,
+                                                        const struct mo_syntax *args,
+                                                        struct term *expected);
 
 /* Whether the capitalized name before a dot is a case, a value as in Equal.to_text, rather than a
  * module or type qualifier as in Int.compare (reference 5.4). A module alias keeps the qualifier.
  */
-static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_syntax *name) {
+static MO_MUST_USE bool infer_case_receiver(struct inference *p, const struct mo_syntax *name) {
     if (name->kind != MO_S_CAPNAME)
         return false;
     const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->function->module];
@@ -447,7 +448,7 @@ static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_synta
     if (builtin != NULL)
         return builtin->count == 0;
     uint32_t count = 0;
-    const struct mo_symbol *s = definition(p, name, NULL, &count);
+    const struct mo_symbol *s = infer_definition(p, name, NULL, &count);
     if (s == NULL || s->declaration->kind != MO_S_CASE_DECL)
         return false;
     const struct mo_data_signature *data = infer_data_type(p, s);
@@ -457,8 +458,9 @@ static MO_MUST_USE bool case_receiver(struct inference *p, const struct mo_synta
 /* Whether T.f, where T names both a type and its only value (Unit), is the
  * qualified form (D297): called with the receiver plus f's own arguments, or
  * compare without a call, which the dot form can't be. args is NULL for no call. */
-static MO_MUST_USE bool type_reading(const struct mo_syntax *prefix, const struct mo_syntax *name,
-                                     const struct mo_syntax *call) {
+static MO_MUST_USE bool infer_type_reading(const struct mo_syntax *prefix,
+                                           const struct mo_syntax *name,
+                                           const struct mo_syntax *call) {
     uint32_t arity = 0;
     if (mo_builtin_type(prefix, &arity) == NULL)
         return false;
@@ -471,8 +473,9 @@ static MO_MUST_USE bool type_reading(const struct mo_syntax *prefix, const struc
     return (args == NULL ? 0u : args->count) == (compare ? 2u : 1u);
 }
 
-static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
-                                      size_t length, const struct mo_syntax *declaration) {
+static MO_MUST_USE bool infer_missing_field(struct inference *p, struct mo_span span,
+                                            const uint8_t *name, size_t length,
+                                            const struct mo_syntax *declaration) {
     char *message = infer_allocate(p, 256, 1, 1);
     if (message == NULL)
         return false;
@@ -488,7 +491,7 @@ static MO_MUST_USE bool missing_field(struct inference *p, struct mo_span span, 
 }
 
 static MO_MUST_USE const struct mo_native_signature *
-native_definition(struct inference *p, const char *module, const struct mo_syntax *name) {
+infer_native_definition(struct inference *p, const char *module, const struct mo_syntax *name) {
     for (uint32_t i = 0; i < p->interfaces->count; i++) {
         if (!infer_work(p))
             return NULL;
@@ -496,7 +499,7 @@ native_definition(struct inference *p, const char *module, const struct mo_synta
         if (!scope->library || scope->name == NULL || strcmp(scope->name, module) != 0)
             continue;
         uint32_t count = 0;
-        const struct mo_symbol *s = find_symbol(scope, name, &count);
+        const struct mo_symbol *s = infer_find_symbol(scope, name, &count);
         if (s != NULL && s->declaration->kind == MO_S_FN &&
             (s->module == p->function->function->module || s->exported))
             return NULL;
@@ -509,9 +512,9 @@ native_definition(struct inference *p, const char *module, const struct mo_synta
     return NULL;
 }
 
-static MO_MUST_USE struct value function_value(struct inference *p,
-                                               const struct mo_source_type *type,
-                                               const uint8_t requirements[26]) {
+static MO_MUST_USE struct value infer_function_value(struct inference *p,
+                                                     const struct mo_source_type *type,
+                                                     const uint8_t requirements[26]) {
     struct term *parameters[26] = {NULL};
     struct value out =
         infer_graph(p, (struct value){.type = infer_annotation(p, type, parameters, 0)}, 0);
@@ -533,8 +536,8 @@ static MO_MUST_USE struct value function_value(struct inference *p,
     return out;
 }
 
-static MO_MUST_USE struct value native_identifier(struct inference *p,
-                                                  const struct mo_native_signature *signature) {
+static MO_MUST_USE struct value
+infer_native_identifier(struct inference *p, const struct mo_native_signature *signature) {
     if (signature->spec_only && !p->spec) {
         bool observes = strcmp(signature->name, "printed") == 0 ||
                         strcmp(signature->name, "printed_errors") == 0;
@@ -554,7 +557,7 @@ static MO_MUST_USE struct value native_identifier(struct inference *p,
         (void)reported;
         return (struct value){0};
     }
-    struct value out = function_value(p, signature->type, signature->requirements);
+    struct value out = infer_function_value(p, signature->type, signature->requirements);
     if (p->checked && out.type != NULL)
         out.graph->output.native = signature->qualified;
     return out;
@@ -580,7 +583,7 @@ MO_MUST_USE struct value infer_declared_function(struct inference *p, const stru
         p->failed = p->fatal = p->unavailable = true;
         return (struct value){0};
     }
-    struct value out = function_value(p, signature->type, signature->requirements);
+    struct value out = infer_function_value(p, signature->type, signature->requirements);
     out.symbol = s;
     return out;
 }
@@ -610,8 +613,10 @@ MO_MUST_USE const struct mo_symbol *infer_select_overload(struct inference *p,
     return NULL;
 }
 
-static MO_MUST_USE struct value deferred_function(struct inference *p, const struct mo_syntax *name,
-                                                  const struct mo_symbol *group, uint32_t count) {
+static MO_MUST_USE struct value infer_deferred_function(struct inference *p,
+                                                        const struct mo_syntax *name,
+                                                        const struct mo_symbol *group,
+                                                        uint32_t count) {
     struct dispatch *pending = infer_allocate(p, 1, sizeof(*pending), _Alignof(struct dispatch));
     struct value out = infer_graph(p, (struct value){.type = infer_fresh(p, 0)}, 0);
     if (pending == NULL || out.type == NULL)
@@ -628,8 +633,8 @@ static MO_MUST_USE struct value deferred_function(struct inference *p, const str
     return out;
 }
 
-static MO_MUST_USE const struct mo_module_scope *type_scope(struct inference *p,
-                                                            struct term *type) {
+static MO_MUST_USE const struct mo_module_scope *infer_type_scope(struct inference *p,
+                                                                  struct term *type) {
     if (type->shape.declaration != NULL)
         return &p->interfaces->scopes[type->shape.module];
     if (type->shape.kind != MO_SOURCE_NAMED)
@@ -644,8 +649,8 @@ static MO_MUST_USE const struct mo_module_scope *type_scope(struct inference *p,
     return NULL;
 }
 
-static MO_MUST_USE struct value ability_function(struct inference *p, struct value receiver,
-                                                 const struct mo_syntax *name);
+static MO_MUST_USE struct value infer_ability_function(struct inference *p, struct value receiver,
+                                                       const struct mo_syntax *name);
 
 /* T.to_text and T.compare (D285, reference 5.4) go through the ability, so a
  * customizer applies exposed or not (9.2). T is a type always in scope, a
@@ -657,7 +662,7 @@ static MO_MUST_USE struct value qualified_ability(struct inference *p,
     uint32_t arity = 0, alias;
     const char *builtin = mo_builtin_type(prefix, &arity);
     const struct mo_module_scope *module =
-        builtin != NULL ? NULL : prefix_module(p, prefix, &alias);
+        builtin != NULL ? NULL : infer_prefix_module(p, prefix, &alias);
     size_t length = prefix->span.end - prefix->span.start;
     uint32_t bit = length == 1 && prefix->text[0] >= 'A' && prefix->text[0] <= 'Z'
                        ? UINT32_C(1) << (unsigned)(prefix->text[0] - 'A')
@@ -669,14 +674,14 @@ static MO_MUST_USE struct value qualified_ability(struct inference *p,
         for (uint32_t i = 0; type != NULL && i < arity; i++)
             type->arguments[i] = infer_fresh(p, 0);
     } else if (module != NULL) {
-        if (!use_alias(p, alias, name))
+        if (!infer_use_alias(p, alias, name))
             return (struct value){0};
         type = infer_fresh(p, 0);
     } else if ((p->function->type->parameters & bit) != 0) {
         type = infer_annotation(p, infer_parameter_type(p->function->type, bit), NULL, 0);
     } else {
         uint32_t count = 0;
-        const struct mo_symbol *s = definition(p, prefix, NULL, &count);
+        const struct mo_symbol *s = infer_definition(p, prefix, NULL, &count);
         if (p->failed)
             return (struct value){0};
         const struct mo_nominal_signature *nominal =
@@ -686,7 +691,7 @@ static MO_MUST_USE struct value qualified_ability(struct inference *p,
                 : mo_nominal_signature_by_symbol(p->signatures, s);
         if (nominal == NULL) {
             /* Report an unknown prefix as any other qualified name does. */
-            if (definition(p, name, prefix, &count) == NULL && !p->failed) {
+            if (infer_definition(p, name, prefix, &count) == NULL && !p->failed) {
                 bool reported = infer_unfinished(p);
                 (void)reported;
             }
@@ -697,7 +702,7 @@ static MO_MUST_USE struct value qualified_ability(struct inference *p,
     }
     if (p->failed || type == NULL)
         return (struct value){0};
-    struct value out = ability_function(p, (struct value){.type = type}, name);
+    struct value out = infer_ability_function(p, (struct value){.type = type}, name);
     if (out.graph != NULL && module != NULL) {
         struct ability_module *owner =
             infer_allocate(p, 1, sizeof(*owner), _Alignof(struct ability_module));
@@ -709,19 +714,20 @@ static MO_MUST_USE struct value qualified_ability(struct inference *p,
     return out;
 }
 
-static MO_MUST_USE struct value simulation_call(struct inference *p, const struct mo_syntax *name,
-                                                const struct mo_syntax *args);
+static MO_MUST_USE struct value infer_simulation_call(struct inference *p,
+                                                      const struct mo_syntax *name,
+                                                      const struct mo_syntax *args);
 
-static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_syntax *node,
-                                           const struct mo_syntax *prefix) {
+static MO_MUST_USE struct value infer_identifier(struct inference *p, const struct mo_syntax *node,
+                                                 const struct mo_syntax *prefix) {
     if (node->kind == MO_S_QUALIFIED) {
         prefix = node->children[0];
         node = node->children[1];
     }
     if (prefix != NULL && infer_compare_text(prefix, "Simulation") == 0)
-        return simulation_call(p, node, NULL);
+        return infer_simulation_call(p, node, NULL);
     if (prefix == NULL && node->kind == MO_S_NAME) {
-        struct name_slot *s = slot(p, node, false);
+        struct name_slot *s = infer_slot(p, node, false);
         if (s != NULL && s->active != NULL) {
             if (p->checked && s->active->function != p->lambda) {
                 if (!capture_local(p, s->active, node->span))
@@ -734,12 +740,12 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
     }
     const struct mo_builtin_case *builtin = prefix == NULL ? mo_builtin_case_by_name(node) : NULL;
     if (builtin != NULL)
-        return builtin_construct(p, builtin, NULL, NULL);
+        return infer_builtin_construct(p, builtin, NULL, NULL);
     if (prefix != NULL &&
         (infer_compare_text(node, "to_text") == 0 || infer_compare_text(node, "compare") == 0))
         return qualified_ability(p, prefix, node);
     uint32_t count = 0;
-    const struct mo_symbol *s = definition(p, node, prefix, &count);
+    const struct mo_symbol *s = infer_definition(p, node, prefix, &count);
     if (p->failed)
         return (struct value){0};
     if (s == NULL) {
@@ -748,7 +754,7 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
                 const struct mo_native_signature *native = &p->signatures->native[i];
                 if (infer_compare_text(prefix, native->module) == 0 &&
                     infer_compare_text(node, native->name) == 0)
-                    return native_identifier(p, native);
+                    return infer_native_identifier(p, native);
             }
         }
         if (prefix != NULL) {
@@ -761,14 +767,14 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
             bool reported = infer_unfinished(p);
             (void)reported;
         } else {
-            struct name_slot *entry = slot(p, node, false);
+            struct name_slot *entry = infer_slot(p, node, false);
             if (entry != NULL && entry->expired != NULL && p->error.code == MO_CODE_UNUSED_NAME &&
                 p->error_unused == entry->expired) {
                 /* An attempted read outside the binding's scope explains why
                  * it looked unused. Report that use, not a destructive rename. */
                 p->error.code = 0;
             }
-            const char *habit = entry == NULL ? length_habit(node) : NULL;
+            const char *habit = entry == NULL ? infer_length_habit(node) : NULL;
             bool reported = infer_problem(
                 p, MO_CODE_NAME_UNKNOWN, node->span, "a name isn't visible in this block",
                 habit != NULL ? habit
@@ -801,8 +807,8 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         }
         const struct mo_syntax *field = data->by_index[0]->name;
         bool reported =
-            missing_field(p, node->span, field == NULL ? NULL : field->text,
-                          field == NULL ? 0 : field->span.end - field->span.start, field);
+            infer_missing_field(p, node->span, field == NULL ? NULL : field->text,
+                                field == NULL ? 0 : field->span.end - field->span.start, field);
         (void)reported;
         return (struct value){0};
     }
@@ -813,7 +819,7 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
         return (struct value){0};
     }
     if (prefix == NULL && node->kind == MO_S_NAME) {
-        struct name_slot *entry = slot(p, node, true);
+        struct name_slot *entry = infer_slot(p, node, true);
         if (entry == NULL)
             return (struct value){0};
         if (entry->local_name != NULL) {
@@ -848,7 +854,7 @@ static MO_MUST_USE struct value identifier(struct inference *p, const struct mo_
             p, (struct value){.type = infer_annotation(p, value->type, NULL, 0), .symbol = s}, 0);
     }
     if (count > 1)
-        return deferred_function(p, node, s, count);
+        return infer_deferred_function(p, node, s, count);
     return infer_declared_function(p, s);
 }
 
@@ -864,7 +870,7 @@ static MO_MUST_USE struct value infer_as(struct inference *p, const struct mo_sy
     return v;
 }
 
-static MO_MUST_USE struct value discard(struct inference *p, const struct mo_syntax *node) {
+static MO_MUST_USE struct value infer_discard(struct inference *p, const struct mo_syntax *node) {
     struct value v = infer_expression(p, node, NULL);
     if (v.type != NULL) {
         p->last->discarded = !v.never;
@@ -873,15 +879,15 @@ static MO_MUST_USE struct value discard(struct inference *p, const struct mo_syn
     return v;
 }
 
-static MO_MUST_USE bool lambda_argument(const struct mo_syntax *node) {
+static MO_MUST_USE bool infer_lambda_argument(const struct mo_syntax *node) {
     while (node->kind == MO_S_GROUP)
         node = node->children[0];
     return node->kind == MO_S_LAMBDA;
 }
 
 /* Constraint order must never become evaluation order in output metadata. */
-static void order_notes(struct inference *p, struct note *before, const struct note_range *ranges,
-                        uint32_t count) {
+static void infer_order_notes(struct inference *p, struct note *before,
+                              const struct note_range *ranges, uint32_t count) {
     for (uint32_t i = 0; i < count; i++) {
         if (before == NULL)
             p->notes = ranges[i].first;
@@ -895,7 +901,7 @@ static void order_notes(struct inference *p, struct note *before, const struct n
 }
 
 static MO_MUST_USE struct term *
-builtin_type(struct inference *p, const struct mo_builtin_case *data, struct term *expected) {
+infer_builtin_type(struct inference *p, const struct mo_builtin_case *data, struct term *expected) {
     struct term *type = infer_native(p, data->type, data->parameters);
     if (type == NULL)
         return NULL;
@@ -929,11 +935,11 @@ MO_MUST_USE struct term *infer_builtin_part(struct inference *p, const struct mo
                         0);
 }
 
-static MO_MUST_USE struct value builtin_construct(struct inference *p,
-                                                  const struct mo_builtin_case *data,
-                                                  const struct mo_syntax *args,
-                                                  struct term *expected) {
-    struct term *type = builtin_type(p, data, expected);
+static MO_MUST_USE struct value infer_builtin_construct(struct inference *p,
+                                                        const struct mo_builtin_case *data,
+                                                        const struct mo_syntax *args,
+                                                        struct term *expected) {
+    struct term *type = infer_builtin_type(p, data, expected);
     if (type == NULL)
         return (struct value){0};
     if ((args == NULL ? 0 : args->count) < data->count) {
@@ -948,8 +954,8 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
                 continue;
             const char *name = data->fields[i];
             bool reported =
-                missing_field(p, args == NULL ? p->span : args->span, (const uint8_t *)name,
-                              name == NULL ? 0 : strlen(name), NULL);
+                infer_missing_field(p, args == NULL ? p->span : args->span, (const uint8_t *)name,
+                                    name == NULL ? 0 : strlen(name), NULL);
             (void)reported;
             return (struct value){0};
         }
@@ -1013,8 +1019,10 @@ static MO_MUST_USE struct value builtin_construct(struct inference *p,
     return out;
 }
 
-static MO_MUST_USE struct value construct(struct inference *p, const struct mo_data_signature *data,
-                                          const struct mo_syntax *args, struct term *expected) {
+static MO_MUST_USE struct value infer_construct(struct inference *p,
+                                                const struct mo_data_signature *data,
+                                                const struct mo_syntax *args,
+                                                struct term *expected) {
     if (!infer_visible_data(p, data->type->declaration))
         return (struct value){0};
     struct term *parameters[26] = {NULL};
@@ -1041,7 +1049,7 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
         const struct mo_syntax *arg = args->children[i];
         const struct mo_field_signature *field =
             data->unnamed && arg->kind != MO_S_NAMED_ARG ? &data->fields[0]
-            : arg->kind == MO_S_NAMED_ARG                ? find_field(data, arg->children[0])
+            : arg->kind == MO_S_NAMED_ARG                ? infer_find_field(data, arg->children[0])
                                                          : NULL;
         if (field == NULL || seen[field->index]) {
             bool reported =
@@ -1060,8 +1068,9 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
         if (seen[i])
             continue;
         const struct mo_syntax *name = data->by_index[i]->name;
-        bool reported = missing_field(p, args->span, name == NULL ? NULL : name->text,
-                                      name == NULL ? 0 : name->span.end - name->span.start, name);
+        bool reported =
+            infer_missing_field(p, args->span, name == NULL ? NULL : name->text,
+                                name == NULL ? 0 : name->span.end - name->span.start, name);
         (void)reported;
         return (struct value){0};
     }
@@ -1071,7 +1080,7 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
         for (uint32_t i = 0; i < args->count; i++) {
             const struct mo_syntax *arg = args->children[i];
             const struct mo_syntax *value = data->unnamed ? arg : arg->children[1];
-            if (lambda_argument(value) != (pass != 0))
+            if (infer_lambda_argument(value) != (pass != 0))
                 continue;
             struct term *wanted = infer_annotation(p, selected[i]->type, parameters, 0);
             if (wanted == NULL)
@@ -1099,16 +1108,17 @@ static MO_MUST_USE struct value construct(struct inference *p, const struct mo_d
             never = never || v.never;
         }
     }
-    order_notes(p, before, ranges, args->count);
+    infer_order_notes(p, before, ranges, args->count);
     out.never = never;
     return out;
 }
 
-static MO_MUST_USE struct value call(struct inference *p, struct value callee,
-                                     const struct mo_syntax *args, const struct value *receiver);
+static MO_MUST_USE struct value infer_call(struct inference *p, struct value callee,
+                                           const struct mo_syntax *args,
+                                           const struct value *receiver);
 
-static MO_MUST_USE struct value ability_function(struct inference *p, struct value receiver,
-                                                 const struct mo_syntax *name) {
+static MO_MUST_USE struct value infer_ability_function(struct inference *p, struct value receiver,
+                                                       const struct mo_syntax *name) {
     bool text = infer_compare_text(name, "to_text") == 0;
     struct term *type = infer_make_type(p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
                                                                    .name = "fn",
@@ -1156,29 +1166,31 @@ MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
             }
             return out;
         }
-        const struct mo_native_signature *signature = native_definition(p, type->shape.name, name);
+        const struct mo_native_signature *signature =
+            infer_native_definition(p, type->shape.name, name);
         if (signature != NULL)
-            return native_identifier(p, signature);
+            return infer_native_identifier(p, signature);
     }
     const struct mo_data_signature *data = type->variable || type->shape.declaration == NULL
                                                ? NULL
                                                : infer_data_type(p, type->shape.declaration);
-    const struct mo_field_signature *field = data == NULL ? NULL : find_field(data, name);
+    const struct mo_field_signature *field = data == NULL ? NULL : infer_find_field(data, name);
     bool visible = data != NULL && (type->shape.module == p->function->function->module ||
                                     type->shape.declaration->insides);
     if ((field == NULL || !visible) &&
         (infer_compare_text(name, "to_text") == 0 || infer_compare_text(name, "compare") == 0))
-        return ability_function(p, v, name);
+        return infer_ability_function(p, v, name);
     if (field == NULL || !visible) {
         uint32_t count = 0;
-        const struct mo_module_scope *owner = type_scope(p, type);
+        const struct mo_module_scope *owner = infer_type_scope(p, type);
         if (p->failed)
             return (struct value){0};
-        const struct mo_symbol *method = owner == NULL ? NULL : find_symbol(owner, name, &count);
+        const struct mo_symbol *method =
+            owner == NULL ? NULL : infer_find_symbol(owner, name, &count);
         bool plausible = method != NULL && method->declaration->kind == MO_S_FN &&
                          (method->module == p->function->function->module || method->exported);
         if (!plausible) {
-            method = definition(p, name, NULL, &count);
+            method = infer_definition(p, name, NULL, &count);
             plausible = method != NULL && method->declaration->kind == MO_S_FN;
         }
         if (plausible) {
@@ -1189,7 +1201,7 @@ MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
         }
     }
     if (type->shape.declaration == NULL) {
-        const char *habit = length_habit(name);
+        const char *habit = infer_length_habit(name);
         if (infer_named(type, "Simulation"))
             habit = "Simulation operations are called through the module, as in "
                     "Simulation.crash(sim), not as dot calls (reference 12.4).";
@@ -1258,17 +1270,17 @@ MO_MUST_USE bool infer_empty_dot_call(struct inference *p, const struct mo_synta
     return false;
 }
 
-static MO_MUST_USE struct value field_value(struct inference *p, struct value receiver,
-                                            const struct mo_syntax *name,
-                                            const struct mo_syntax *syntax,
-                                            const struct mo_syntax *site, bool *called) {
+static MO_MUST_USE struct value infer_field_value(struct inference *p, struct value receiver,
+                                                  const struct mo_syntax *name,
+                                                  const struct mo_syntax *syntax,
+                                                  const struct mo_syntax *site, bool *called) {
     if (receiver.type == NULL)
         return receiver;
     const struct mo_syntax *args = site == NULL ? NULL : site->children[0];
     if (infer_root(receiver.type)->variable) {
         *called = true;
         uint32_t count = args == NULL ? 0u : args->count;
-        struct value out = deferred_function(p, name, NULL, count);
+        struct value out = infer_deferred_function(p, name, NULL, count);
         if (out.type == NULL)
             return out;
         struct dispatch *pending = out.dispatch;
@@ -1308,11 +1320,12 @@ static MO_MUST_USE struct value field_value(struct inference *p, struct value re
             return (struct value){0};
         resolved.note = p->last;
     }
-    return call(p, resolved, args, &receiver);
+    return infer_call(p, resolved, args, &receiver);
 }
 
-static MO_MUST_USE struct value simulation_call(struct inference *p, const struct mo_syntax *name,
-                                                const struct mo_syntax *args) {
+static MO_MUST_USE struct value infer_simulation_call(struct inference *p,
+                                                      const struct mo_syntax *name,
+                                                      const struct mo_syntax *args) {
     static const struct {
         const char *name, *qualified;
         enum mo_sim_operation operation;
@@ -1390,7 +1403,7 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
                                ? infer_compare_text(prefix, own->name) == 0
                                : path != NULL && path->count == 1 &&
                                      infer_compare_name(prefix, path->children[0]) == 0;
-            scope = current ? own : prefix_module(p, prefix, &alias);
+            scope = current ? own : infer_prefix_module(p, prefix, &alias);
         }
         const struct mo_checked_service *service = NULL;
         if (scope != NULL && program != NULL) {
@@ -1432,7 +1445,7 @@ static MO_MUST_USE struct value simulation_call(struct inference *p, const struc
             (void)kept;
             return (struct value){0};
         }
-        if (!use_alias(p, alias, prefix))
+        if (!infer_use_alias(p, alias, prefix))
             return (struct value){0};
     }
     if (args->count != count)
@@ -1497,8 +1510,8 @@ bad_arguments : {
 }
 }
 
-static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_syntax *node,
-                                         struct term *expected) {
+static MO_MUST_USE struct value infer_sequence(struct inference *p, const struct mo_syntax *node,
+                                               struct term *expected) {
     struct value last = {.type = infer_native(p, "Unit", 0)};
     struct value emitted = infer_graph(p, last, node->count);
     if (emitted.type == NULL)
@@ -1521,8 +1534,9 @@ static MO_MUST_USE struct value sequence(struct inference *p, const struct mo_sy
     return last;
 }
 
-static MO_MUST_USE struct value call(struct inference *p, struct value callee,
-                                     const struct mo_syntax *args, const struct value *receiver) {
+static MO_MUST_USE struct value infer_call(struct inference *p, struct value callee,
+                                           const struct mo_syntax *args,
+                                           const struct value *receiver) {
     if (callee.type == NULL)
         return (struct value){0};
     struct term *t = infer_root(callee.type);
@@ -1545,7 +1559,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     if (t->shape.kind != MO_SOURCE_FUNCTION) {
         if (callee.binding != NULL) {
             uint32_t count = 0;
-            const struct mo_symbol *symbol = definition(p, callee.binding, NULL, &count);
+            const struct mo_symbol *symbol = infer_definition(p, callee.binding, NULL, &count);
             if (symbol != NULL && symbol->declaration->kind == MO_S_FN) {
                 bool reported =
                     infer_problem(p, MO_CODE_BIND_REPEATED, p->span,
@@ -1620,7 +1634,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     struct note *before = p->last;
     for (unsigned pass = 0; pass < 2; pass++) {
         for (uint32_t i = 0; i < count; i++) {
-            if (lambda_argument(args->children[i]) != (pass != 0))
+            if (infer_lambda_argument(args->children[i]) != (pass != 0))
                 continue;
             struct note *previous = p->last;
             struct value arg = infer_as(p, args->children[i], infer_argument(p, t, i + offset),
@@ -1636,7 +1650,7 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     }
     /* Constraint solving may visit lambdas last; metadata retains written order
      * so this never suggests reordering evaluation to downstream consumers. */
-    order_notes(p, before, ranges, count);
+    infer_order_notes(p, before, ranges, count);
     if (!p->checked)
         result.type = infer_argument(p, t, t->shape.count - 1);
     result.callee = callee.note;
@@ -1644,11 +1658,12 @@ static MO_MUST_USE struct value call(struct inference *p, struct value callee,
     return result;
 }
 
-static MO_MUST_USE struct value condition(struct inference *p, const struct mo_syntax *node,
-                                          bool keep);
+static MO_MUST_USE struct value infer_condition(struct inference *p, const struct mo_syntax *node,
+                                                bool keep);
 
-static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token op, struct value a,
-                                       const struct mo_syntax *right, struct term *expected) {
+static MO_MUST_USE struct value infer_binary(struct inference *p, enum mo_syntax_token op,
+                                             struct value a, const struct mo_syntax *right,
+                                             struct term *expected) {
     if (a.type == NULL)
         return (struct value){0};
     bool logical = op == MO_T_AND || op == MO_T_OR || op == MO_T_IMPLIES;
@@ -1798,7 +1813,8 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
         }
     }
     if (b.type == NULL)
-        b = logical ? condition(p, right, op == MO_T_AND) : infer_expression(p, right, right_type);
+        b = logical ? infer_condition(p, right, op == MO_T_AND)
+                    : infer_expression(p, right, right_type);
     if (b.type == NULL)
         return (struct value){0};
     struct value out = infer_graph(
@@ -1812,8 +1828,8 @@ static MO_MUST_USE struct value binary(struct inference *p, enum mo_syntax_token
     return out;
 }
 
-static MO_MUST_USE struct value propagate(struct inference *p, struct value input,
-                                          struct term *expected) {
+static MO_MUST_USE struct value infer_propagate(struct inference *p, struct value input,
+                                                struct term *expected) {
     if (input.type == NULL)
         return input;
     enum mo_syntax_kind owner = p->function->function->declaration->kind;
@@ -1895,7 +1911,7 @@ match_pattern(struct inference *p, const struct mo_syntax *node, struct term *ty
 
 static MO_MUST_USE bool pattern_bind(struct inference *p, const struct mo_syntax *node,
                                      struct term *type, uint32_t group, uint32_t alternative) {
-    struct name_slot *entry = node->kind == MO_S_NAME ? slot(p, node, false) : NULL;
+    struct name_slot *entry = node->kind == MO_S_NAME ? infer_slot(p, node, false) : NULL;
     struct local *local = entry == NULL ? NULL : entry->active;
     if (alternative > 1 && node->kind != MO_S_UNDERSCORE &&
         (local == NULL || local->pattern_group != group))
@@ -1912,7 +1928,7 @@ static MO_MUST_USE bool pattern_bind(struct inference *p, const struct mo_syntax
         return infer_record(
             p, node, (struct value){.type = type, .binding = local->name, .bound = local->binding});
     } else {
-        if (!bind(p, node, type, false))
+        if (!infer_bind(p, node, type, false))
             return false;
         if (node->kind != MO_S_UNDERSCORE) {
             local = p->locals;
@@ -1923,16 +1939,16 @@ static MO_MUST_USE bool pattern_bind(struct inference *p, const struct mo_syntax
     return true;
 }
 
-static MO_MUST_USE bool pattern(struct inference *p, const struct mo_syntax *node,
-                                struct term *type, uint32_t group, uint32_t alternative,
-                                struct mo_match_pattern **out);
+static MO_MUST_USE bool infer_pattern(struct inference *p, const struct mo_syntax *node,
+                                      struct term *type, uint32_t group, uint32_t alternative,
+                                      struct mo_match_pattern **out);
 
 static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax *node,
                                      struct term *type, uint32_t group, uint32_t alternative,
                                      struct mo_match_pattern **out) {
     *out = NULL;
     if (node->kind == MO_S_GROUP)
-        return pattern(p, node->children[0], type, group, alternative, out);
+        return infer_pattern(p, node->children[0], type, group, alternative, out);
     if (node->kind == MO_S_UNDERSCORE || node->kind == MO_S_NAME)
         return pattern_bind(p, node, type, group, alternative);
     if (node->kind == MO_S_TUPLE) {
@@ -1953,8 +1969,8 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
         if (*out == NULL)
             return false;
         for (uint32_t i = 0; i < node->count; i++)
-            if (!pattern(p, node->children[i], tuple->arguments[i], group, alternative,
-                         &(*out)->items[i]))
+            if (!infer_pattern(p, node->children[i], tuple->arguments[i], group, alternative,
+                               &(*out)->items[i]))
                 return false;
         return infer_record(p, node, (struct value){.type = type});
     }
@@ -1974,11 +1990,13 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
         if (rest)
             length--;
         for (uint32_t i = 0; i < length; i++)
-            if (!pattern(p, node->children[i], list->arguments[0], group, alternative, &parts[i]))
+            if (!infer_pattern(p, node->children[i], list->arguments[0], group, alternative,
+                               &parts[i]))
                 return false;
         struct mo_match_pattern *tail = NULL;
         if (rest) {
-            if (!pattern(p, node->children[length]->children[0], type, group, alternative, &tail))
+            if (!infer_pattern(p, node->children[length]->children[0], type, group, alternative,
+                               &tail))
                 return false;
         } else {
             tail = match_pattern(p, node, type, 3, 2, 0, "[]");
@@ -2014,7 +2032,7 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
         if (prefix != NULL)
             builtin = NULL;
         if (builtin != NULL) {
-            struct term *nominal = builtin_type(p, builtin, type);
+            struct term *nominal = infer_builtin_type(p, builtin, type);
             if (nominal == NULL)
                 return false;
             bool unnamed = builtin->count != 0 && builtin->fields[0] == NULL;
@@ -2043,15 +2061,15 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
                         NULL);
                 seen[index] = true;
                 struct term *field = infer_builtin_part(p, builtin, nominal, index);
-                if (field == NULL || !pattern(p, unnamed ? arg : arg->children[1], field, group,
-                                              alternative, &(*out)->items[index]))
+                if (field == NULL || !infer_pattern(p, unnamed ? arg : arg->children[1], field,
+                                                    group, alternative, &(*out)->items[index]))
                     return false;
             }
             return infer_record(p, node,
                                 (struct value){.type = type, .builtin_case = builtin->name});
         }
         uint32_t count = 0;
-        const struct mo_symbol *symbol = definition(p, name, prefix, &count);
+        const struct mo_symbol *symbol = infer_definition(p, name, prefix, &count);
         if (p->failed)
             return false;
         const struct mo_data_signature *data = symbol == NULL ? NULL : infer_data_type(p, symbol);
@@ -2091,7 +2109,7 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
             const struct mo_syntax *arg = args->children[i];
             const struct mo_field_signature *field = data->unnamed ? &data->fields[0]
                                                      : arg->kind == MO_S_NAMED_ARG
-                                                         ? find_field(data, arg->children[0])
+                                                         ? infer_find_field(data, arg->children[0])
                                                          : NULL;
             if (!data->unnamed && data->count == 1 && args->count == 1 &&
                 arg->kind != MO_S_NAMED_ARG) {
@@ -2127,8 +2145,8 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
             seen[field->index] = true;
             struct term *field_type = infer_annotation(p, field->type, parameters, 0);
             if (field_type == NULL ||
-                !pattern(p, data->unnamed ? arg : arg->children[1], field_type, group, alternative,
-                         &(*out)->items[field->index]))
+                !infer_pattern(p, data->unnamed ? arg : arg->children[1], field_type, group,
+                               alternative, &(*out)->items[field->index]))
                 return false;
             p->last->output.field = field;
         }
@@ -2160,9 +2178,9 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
     return *out != NULL;
 }
 
-static MO_MUST_USE bool pattern(struct inference *p, const struct mo_syntax *node,
-                                struct term *type, uint32_t group, uint32_t alternative,
-                                struct mo_match_pattern **out) {
+static MO_MUST_USE bool infer_pattern(struct inference *p, const struct mo_syntax *node,
+                                      struct term *type, uint32_t group, uint32_t alternative,
+                                      struct mo_match_pattern **out) {
     if (!infer_work(p))
         return false;
     MO_ASSERT(p->pattern_depth < MO_LIMIT_NESTING_DEPTH);
@@ -2173,8 +2191,8 @@ static MO_MUST_USE bool pattern(struct inference *p, const struct mo_syntax *nod
     return ok;
 }
 
-static MO_MUST_USE struct value condition(struct inference *p, const struct mo_syntax *node,
-                                          bool keep) {
+static MO_MUST_USE struct value infer_condition(struct inference *p, const struct mo_syntax *node,
+                                                bool keep) {
     bool previous = p->keep_patterns;
     p->keep_patterns = keep;
     struct term *boolean = infer_native(p, "Bool", 0);
@@ -2184,8 +2202,8 @@ static MO_MUST_USE struct value condition(struct inference *p, const struct mo_s
     return v;
 }
 
-static MO_MUST_USE struct value match(struct inference *p, const struct mo_syntax *node,
-                                      struct term *expected) {
+static MO_MUST_USE struct value infer_match(struct inference *p, const struct mo_syntax *node,
+                                            struct term *expected) {
     struct value input = infer_expression(p, node->children[0], NULL);
     struct term *result = expected == NULL ? infer_fresh(p, 0) : expected;
     if (input.type == NULL || result == NULL)
@@ -2232,7 +2250,7 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
         uint32_t group = ++p->pattern_group;
         for (uint32_t j = 0; j < alternatives->count; j++) {
             struct mo_match_pattern *normalized = NULL;
-            if (!pattern(p, alternatives->children[j], input.type, group, j + 1, &normalized))
+            if (!infer_pattern(p, alternatives->children[j], input.type, group, j + 1, &normalized))
                 return (struct value){0};
             if (normalized == NULL && check->catch_all == NULL)
                 check->catch_all = alternatives->children[j];
@@ -2255,7 +2273,7 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
             emitted.graph->match->arms[i] = (struct mo_checked_arm){
                 .syntax = arm, .pattern_count = alternatives->count, .guard = UINT32_MAX};
         if (arm->children[1] != NULL) {
-            struct value guard = condition(p, arm->children[1], true);
+            struct value guard = infer_condition(p, arm->children[1], true);
             if (guard.type == NULL)
                 return guard;
             if (p->checked) {
@@ -2263,10 +2281,10 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
                 emitted.graph->operands[operand++] = guard.note;
             }
         }
-        if (!capture_path(p, node, i))
+        if (!infer_capture_path(p, node, i))
             return (struct value){0};
         struct value body = infer_expression(p, arm->children[2], result);
-        if (body.type == NULL || !leave(p, mark))
+        if (body.type == NULL || !infer_leave(p, mark))
             return (struct value){0};
         p->capture_path = old_path;
         if (p->checked) {
@@ -2281,8 +2299,8 @@ static MO_MUST_USE struct value match(struct inference *p, const struct mo_synta
     return emitted;
 }
 
-static MO_MUST_USE struct value conditional(struct inference *p, const struct mo_syntax *node,
-                                            struct term *expected) {
+static MO_MUST_USE struct value infer_conditional(struct inference *p, const struct mo_syntax *node,
+                                                  struct term *expected) {
     const struct mo_syntax *parts = node->children[2];
     bool has_else = parts->count != 0 && parts->children[parts->count - 1]->kind == MO_S_ELSE;
     struct term *result =
@@ -2305,11 +2323,11 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
     if (p->checked)
         emitted.graph->operands[operand++] = test.note;
     struct capture_path *old_path = p->capture_path;
-    if (!capture_path(p, node, 0))
+    if (!infer_capture_path(p, node, 0))
         return (struct value){0};
     struct value branch = has_else ? infer_as(p, node->children[1], result, p->node_expectation)
-                                   : discard(p, node->children[1]);
-    if (branch.type == NULL || !leave(p, mark))
+                                   : infer_discard(p, node->children[1]);
+    if (branch.type == NULL || !infer_leave(p, mark))
         return (struct value){0};
     p->capture_path = old_path;
     if (p->checked)
@@ -2327,10 +2345,10 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
                 emitted.graph->operands[operand++] = test.note;
         }
         const struct mo_syntax *body = part->children[part->kind == MO_S_ELSE ? 0 : 1];
-        if (!capture_path(p, node, i + 1))
+        if (!infer_capture_path(p, node, i + 1))
             return (struct value){0};
-        branch = has_else ? infer_as(p, body, result, p->node_expectation) : discard(p, body);
-        if (branch.type == NULL || !leave(p, mark))
+        branch = has_else ? infer_as(p, body, result, p->node_expectation) : infer_discard(p, body);
+        if (branch.type == NULL || !infer_leave(p, mark))
             return (struct value){0};
         p->capture_path = old_path;
         if (p->checked)
@@ -2344,12 +2362,12 @@ static MO_MUST_USE struct value conditional(struct inference *p, const struct mo
     return emitted;
 }
 
-static MO_MUST_USE bool binder(struct inference *p, const struct mo_syntax *node,
-                               struct term *type) {
+static MO_MUST_USE bool infer_binder(struct inference *p, const struct mo_syntax *node,
+                                     struct term *type) {
     if (node->kind == MO_S_BINDER)
-        return binder(p, node->children[0], type);
+        return infer_binder(p, node->children[0], type);
     if (node->kind != MO_S_TUPLE)
-        return bind(p, node, type, false);
+        return infer_bind(p, node, type, false);
     struct term *tuple = infer_make_type(
         p, (struct mo_source_type){
                .kind = MO_SOURCE_TUPLE, .name = "()", .module = UINT32_MAX, .count = node->count});
@@ -2363,7 +2381,7 @@ static MO_MUST_USE bool binder(struct inference *p, const struct mo_syntax *node
     if (!infer_unify(p, tuple, type, 0))
         return false;
     for (uint32_t i = 0; i < node->count; i++)
-        if (!binder(p, node->children[i], tuple->arguments[i]))
+        if (!infer_binder(p, node->children[i], tuple->arguments[i]))
             return false;
     return true;
 }
@@ -2395,14 +2413,14 @@ MO_MUST_USE struct term *infer_tuple_part(struct inference *p, struct term *t,
     return infer_argument(p, t, at);
 }
 
-static MO_MUST_USE struct value position(struct inference *p, struct value v,
-                                         const struct mo_syntax *index) {
+static MO_MUST_USE struct value infer_position(struct inference *p, struct value v,
+                                               const struct mo_syntax *index) {
     if (v.type == NULL)
         return v;
     struct term *t = infer_root(v.type);
     if (t->variable) {
         /* A later use may settle the tuple's type (reference 5.1); solved with the dispatches. */
-        struct value out = deferred_function(p, index, NULL, 0);
+        struct value out = infer_deferred_function(p, index, NULL, 0);
         if (out.type == NULL)
             return out;
         out.dispatch->receiver = v;
@@ -2426,7 +2444,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                                            struct term *expected) {
     switch (node->kind) {
     case MO_S_SEQUENCE:
-        return sequence(p, node, expected);
+        return infer_sequence(p, node, expected);
     case MO_S_EXPR_STMT:
     case MO_S_GROUP:
         return infer_as(p, node->children[0], expected, p->node_expectation);
@@ -2449,15 +2467,15 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_NAME:
     case MO_S_CAPNAME:
     case MO_S_QUALIFIED:
-        return identifier(p, node, NULL);
+        return infer_identifier(p, node, NULL);
     case MO_S_FIELD_ACCESS: {
         if (node->children[0]->kind == MO_S_CAPNAME &&
-            (!case_receiver(p, node->children[0]) ||
-             type_reading(node->children[0], node->children[1], NULL)))
-            return identifier(p, node->children[1], node->children[0]);
+            (!infer_case_receiver(p, node->children[0]) ||
+             infer_type_reading(node->children[0], node->children[1], NULL)))
+            return infer_identifier(p, node->children[1], node->children[0]);
         bool called;
-        return field_value(p, infer_expression(p, node->children[0], NULL), node->children[1], node,
-                           NULL, &called);
+        return infer_field_value(p, infer_expression(p, node->children[0], NULL), node->children[1],
+                                 node, NULL, &called);
     }
     case MO_S_INT:
         return (struct value){.type = infer_fresh(p, INT | BIG | BYTE | DECIMAL | FLOAT)};
@@ -2484,7 +2502,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                         fields = fields && base->children[i]->kind == MO_S_FIELD_ACCESS;
                 base = base->children[0];
             }
-            struct name_slot *entry = base->kind == MO_S_NAME ? slot(p, base, false) : NULL;
+            struct name_slot *entry = base->kind == MO_S_NAME ? infer_slot(p, base, false) : NULL;
             struct local *variable = entry == NULL ? NULL : entry->active;
             if (!fields || variable == NULL || !variable->variable ||
                 variable->function != p->lambda) {
@@ -2506,7 +2524,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 (void)reported;
                 return (struct value){0};
             }
-            if (!capture_write(p, variable, node, name))
+            if (!infer_capture_write(p, variable, node, name))
                 return (struct value){0};
             variable->version++;
             struct value target = infer_expression(p, name, NULL);
@@ -2516,8 +2534,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             struct value rhs =
                 node->kind == MO_S_BIND
                     ? infer_expression(p, node->children[1], target.type)
-                    : binary(p, node->kind == MO_S_ADD_ASSIGN ? MO_T_PLUS : MO_T_MINUS, target,
-                             node->children[1], target.type);
+                    : infer_binary(p, node->kind == MO_S_ADD_ASSIGN ? MO_T_PLUS : MO_T_MINUS,
+                                   target, node->children[1], target.type);
             if (rhs.type == NULL)
                 return (struct value){0};
             if (p->checked && node->kind != MO_S_BIND) {
@@ -2544,7 +2562,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             (void)reported;
             return (struct value){0};
         }
-        struct name_slot *s = name->kind == MO_S_NAME ? slot(p, name, false) : NULL;
+        struct name_slot *s = name->kind == MO_S_NAME ? infer_slot(p, name, false) : NULL;
         struct local *l = s == NULL ? NULL : s->active;
         bool assignment = l != NULL && l->variable && node->kind != MO_S_VAR;
         if (l != NULL && !assignment) {
@@ -2608,7 +2626,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             (void)reported;
             return (struct value){0};
         }
-        if (assignment && !capture_write(p, l, node, name))
+        if (assignment && !infer_capture_write(p, l, node, name))
             return (struct value){0};
         if (assignment)
             l->version++;
@@ -2624,8 +2642,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct value rhs;
         if (assignment && node->kind != MO_S_BIND) {
             l->used = true;
-            rhs = binary(p, node->kind == MO_S_ADD_ASSIGN ? MO_T_PLUS : MO_T_MINUS, target,
-                         node->children[1], l->type);
+            rhs = infer_binary(p, node->kind == MO_S_ADD_ASSIGN ? MO_T_PLUS : MO_T_MINUS, target,
+                               node->children[1], l->type);
         } else
             rhs = infer_expression(p, node->children[1], assignment ? l->type : NULL);
         if (rhs.type == NULL)
@@ -2635,8 +2653,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 return (struct value){0};
             rhs.note = p->last;
         }
-        if (!assignment &&
-            !(node->kind == MO_S_VAR ? bind(p, name, rhs.type, true) : binder(p, name, rhs.type)))
+        if (!assignment && !(node->kind == MO_S_VAR ? infer_bind(p, name, rhs.type, true)
+                                                    : infer_binder(p, name, rhs.type)))
             return (struct value){0};
         if (!assignment && node->kind == MO_S_BIND && name->kind == MO_S_NAME)
             p->locals->statement = true;
@@ -2663,20 +2681,20 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             node->token == MO_T_AND || node->token == MO_T_OR || node->token == MO_T_IMPLIES;
         struct local *mark = p->locals;
         struct value left = logical && node->token != MO_T_OR
-                                ? condition(p, node->children[0], true)
+                                ? infer_condition(p, node->children[0], true)
                                 : infer_expression(p, node->children[0], NULL);
-        struct value result = binary(p, node->token, left, node->children[1], expected);
-        if (result.type == NULL || (logical && node->token != MO_T_AND && !leave(p, mark)))
+        struct value result = infer_binary(p, node->token, left, node->children[1], expected);
+        if (result.type == NULL || (logical && node->token != MO_T_AND && !infer_leave(p, mark)))
             return (struct value){0};
         return result;
     }
     case MO_S_BINARY_CHAIN: {
         enum mo_syntax_token op = node->children[1]->token;
-        struct value result = op == MO_T_AND ? condition(p, node->children[0], true)
+        struct value result = op == MO_T_AND ? infer_condition(p, node->children[0], true)
                                              : infer_expression(p, node->children[0], NULL);
         for (uint32_t i = 1; i < node->count && result.type != NULL; i += 2) {
-            result = binary(p, node->children[i]->token, result, node->children[i + 1],
-                            i + 2 == node->count ? expected : NULL);
+            result = infer_binary(p, node->children[i]->token, result, node->children[i + 1],
+                                  i + 2 == node->count ? expected : NULL);
             if (p->checked && result.type != NULL && i + 2 < node->count) {
                 if (!infer_record(p, node->children[i], result))
                     return (struct value){0};
@@ -2689,30 +2707,31 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         const struct mo_syntax *callee = node->children[0];
         const struct mo_builtin_case *builtin = mo_builtin_case_by_name(callee);
         if (builtin != NULL)
-            return builtin_construct(p, builtin, node->children[1], expected);
+            return infer_builtin_construct(p, builtin, node->children[1], expected);
         if (callee->kind == MO_S_CAPNAME || callee->kind == MO_S_QUALIFIED) {
             uint32_t count = 0;
-            const struct mo_symbol *symbol = definition(p, callee, NULL, &count);
+            const struct mo_symbol *symbol = infer_definition(p, callee, NULL, &count);
             if (p->failed)
                 return (struct value){0};
             const struct mo_data_signature *data =
                 symbol == NULL ? NULL : infer_data_type(p, symbol);
             if (data != NULL)
-                return construct(p, data, node->children[1], expected);
+                return infer_construct(p, data, node->children[1], expected);
         }
-        return call(p, infer_expression(p, node->children[0], NULL), node->children[1], NULL);
+        return infer_call(p, infer_expression(p, node->children[0], NULL), node->children[1], NULL);
     }
     case MO_S_POSITION:
-        return position(p, infer_expression(p, node->children[0], NULL), node->children[1]);
+        return infer_position(p, infer_expression(p, node->children[0], NULL), node->children[1]);
     case MO_S_POSTFIX: {
-        bool qualified = node->children[0]->kind == MO_S_CAPNAME &&
-                         (node->children[1]->kind == MO_S_QUALIFIED ||
-                          (node->children[1]->kind == MO_S_FIELD_ACCESS &&
-                           (!case_receiver(p, node->children[0]) ||
-                            type_reading(node->children[0], node->children[1]->children[0],
-                                         node->count > 2 && node->children[2]->kind == MO_S_CALL
-                                             ? node->children[2]
-                                             : NULL))));
+        bool qualified =
+            node->children[0]->kind == MO_S_CAPNAME &&
+            (node->children[1]->kind == MO_S_QUALIFIED ||
+             (node->children[1]->kind == MO_S_FIELD_ACCESS &&
+              (!infer_case_receiver(p, node->children[0]) ||
+               infer_type_reading(node->children[0], node->children[1]->children[0],
+                                  node->count > 2 && node->children[2]->kind == MO_S_CALL
+                                      ? node->children[2]
+                                      : NULL))));
         uint32_t start = qualified ? 2u : 1u;
         const struct mo_syntax *name =
             qualified ? node->children[1]->children[0] : node->children[0];
@@ -2728,23 +2747,24 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             start < node->count && node->children[start]->kind == MO_S_CALL) {
             uint32_t count = 0;
             const struct mo_symbol *symbol =
-                definition(p, name, qualified ? node->children[0] : NULL, &count);
+                infer_definition(p, name, qualified ? node->children[0] : NULL, &count);
             if (p->failed)
                 return (struct value){0};
             data = symbol == NULL ? NULL : infer_data_type(p, symbol);
         }
         struct value v =
-            simulation
-                ? simulation_call(p, name,
-                                  start < node->count && node->children[start]->kind == MO_S_CALL
-                                      ? node->children[start]->children[0]
-                                      : NULL)
-            : builtin != NULL ? builtin_construct(p, builtin, node->children[start]->children[0],
-                                                  start + 1 == node->count ? expected : NULL)
-            : data != NULL    ? construct(p, data, node->children[start]->children[0],
-                                       start + 1 == node->count ? expected : NULL)
-            : qualified       ? identifier(p, node->children[1]->children[0], node->children[0])
-                              : infer_expression(p, node->children[0], NULL);
+            simulation ? infer_simulation_call(p, name,
+                                               start < node->count &&
+                                                       node->children[start]->kind == MO_S_CALL
+                                                   ? node->children[start]->children[0]
+                                                   : NULL)
+            : builtin != NULL
+                ? infer_builtin_construct(p, builtin, node->children[start]->children[0],
+                                          start + 1 == node->count ? expected : NULL)
+            : data != NULL ? infer_construct(p, data, node->children[start]->children[0],
+                                             start + 1 == node->count ? expected : NULL)
+            : qualified    ? infer_identifier(p, node->children[1]->children[0], node->children[0])
+                           : infer_expression(p, node->children[0], NULL);
         if (simulation || data != NULL || builtin != NULL)
             start++;
         if (p->checked && v.type != NULL && v.note == NULL && start < node->count) {
@@ -2757,15 +2777,15 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         for (uint32_t i = start; i < node->count && v.type != NULL; i++) {
             const struct mo_syntax *step = node->children[i];
             if (step->kind == MO_S_POSITION)
-                v = position(p, v, step->children[0]);
+                v = infer_position(p, v, step->children[0]);
             else if (step->kind == MO_S_CALL)
-                v = call(p, v, step->children[0], NULL);
+                v = infer_call(p, v, step->children[0], NULL);
             else if (step->kind == MO_S_FIELD_ACCESS) {
                 const struct mo_syntax *site = NULL;
                 if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
                     site = node->children[i + 1];
                 bool called;
-                v = field_value(p, v, step->children[0], step, site, &called);
+                v = infer_field_value(p, v, step->children[0], step, site, &called);
                 if (called && site != NULL)
                     i++;
             } else {
@@ -2831,15 +2851,15 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         p->lambda++;
         p->result = fn->arguments[parameters->count];
         for (uint32_t i = 0; i < parameters->count; i++) {
-            if (!bind(p, parameters->children[i], fn->arguments[i], false))
+            if (!infer_bind(p, parameters->children[i], fn->arguments[i], false))
                 return (struct value){0};
             if (p->checked)
                 emitted.graph->lambda->parameters[i] = p->last->binding;
         }
         struct value body = infer_named(p->result, "Unit")
-                                ? discard(p, node->children[1])
+                                ? infer_discard(p, node->children[1])
                                 : infer_as(p, node->children[1], p->result, MO_CODE_RESULT_TYPE);
-        if (body.type == NULL || !leave(p, mark))
+        if (body.type == NULL || !infer_leave(p, mark))
             return (struct value){0};
         p->result = old_result;
         p->lambda_frame = old_frame;
@@ -2852,13 +2872,14 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     }
     case MO_S_IF:
     case MO_S_LINE_IF:
-        return conditional(p, node, expected);
+        return infer_conditional(p, node, expected);
     case MO_S_CASE:
-        return match(p, node, expected);
+        return infer_match(p, node, expected);
     case MO_S_IS: {
         struct value input = infer_expression(p, node->children[0], NULL);
         struct mo_match_pattern *normalized = NULL;
-        if (input.type == NULL || !pattern(p, node->children[1], input.type, 0, 1, &normalized))
+        if (input.type == NULL ||
+            !infer_pattern(p, node->children[1], input.type, 0, 1, &normalized))
             return (struct value){0};
         struct value out = infer_graph(
             p, (struct value){.type = infer_native(p, "Bool", 0), .never = input.never}, 1);
@@ -2870,7 +2891,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         struct local *mark = p->locals;
         struct value guard = {0};
         if (node->children[1] != NULL) {
-            guard = condition(p, node->children[1], true);
+            guard = infer_condition(p, node->children[1], true);
             if (guard.type == NULL)
                 return guard;
         }
@@ -2878,7 +2899,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                                  ? (struct value){.type = infer_native(p, "Unit", 0)}
                                  : infer_as(p, node->children[0], p->result, MO_CODE_RESULT_TYPE);
         if (value.type == NULL || !infer_unify_as(p, value.type, p->result, MO_CODE_RESULT_TYPE) ||
-            !leave(p, mark))
+            !infer_leave(p, mark))
             return (struct value){0};
         uint32_t count =
             (node->children[0] == NULL ? 0u : 1u) + (node->children[1] == NULL ? 0u : 1u);
@@ -2910,7 +2931,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         return out;
     }
     case MO_S_ASSERT: {
-        struct value test = condition(p, node->children[0], true);
+        struct value test = infer_condition(p, node->children[0], true);
         if (test.type == NULL)
             return (struct value){0};
         struct value out = infer_graph(p, (struct value){.type = infer_native(p, "Unit", 0)}, 1);
@@ -2934,7 +2955,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (node->kind == MO_S_WHILE)
                 p->capture_loop = loop;
         }
-        struct value test = node->kind == MO_S_WHILE ? condition(p, node->children[0], true)
+        struct value test = node->kind == MO_S_WHILE ? infer_condition(p, node->children[0], true)
                                                      : infer_expression(p, node->children[1], NULL);
         if (test.type == NULL)
             return (struct value){0};
@@ -2969,7 +2990,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                               "For walks a list, map, set or range (reference 7.5).", NULL);
                 (void)reported;
             }
-            if (element == NULL || !binder(p, node->children[0], element))
+            if (element == NULL || !infer_binder(p, node->children[0], element))
                 return (struct value){0};
             const struct mo_syntax *name = node->children[0];
             while (name->kind == MO_S_BINDER)
@@ -2981,10 +3002,10 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         p->loops++;
         struct term *unit = infer_native(p, "Unit", 0);
         struct value body =
-            unit == NULL ? (struct value){0} : discard(p, node->children[body_index]);
+            unit == NULL ? (struct value){0} : infer_discard(p, node->children[body_index]);
         p->loops--;
         p->capture_loop = old_loop;
-        if (body.type == NULL || !leave(p, mark))
+        if (body.type == NULL || !infer_leave(p, mark))
             return (struct value){0};
         struct value out = infer_graph(p, (struct value){.type = unit, .bound = binding}, 2);
         if (p->checked && out.type != NULL) {
@@ -3059,7 +3080,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 const struct mo_syntax *key = part->children[0];
                 while (key->kind == MO_S_GROUP)
                     key = key->children[0];
-                struct name_slot *name = key->kind == MO_S_NAME ? slot(p, key, false) : NULL;
+                struct name_slot *name = key->kind == MO_S_NAME ? infer_slot(p, key, false) : NULL;
                 if (versions != NULL)
                     versions[i] = name != NULL && name->active != NULL && name->active->variable
                                       ? name->active->version
@@ -3089,7 +3110,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_TRY: {
         struct value input = infer_expression(p, node->children[0], NULL);
         p->span = (struct mo_span){node->span.file, node->span.start, node->span.start + 3};
-        return propagate(p, input, expected);
+        return infer_propagate(p, input, expected);
     }
     case MO_S_NEGATE:
     case MO_S_NOT:
@@ -3111,7 +3132,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                                                                 : MO_T_MINUS;
             if (op == MO_T_TRY) {
                 p->span = node->children[i - 1]->span;
-                v = propagate(p, v, i == 1 ? expected : NULL);
+                v = infer_propagate(p, v, i == 1 ? expected : NULL);
                 if (v.type == NULL)
                     return v;
                 if (p->checked && i != 1) {
@@ -3266,7 +3287,7 @@ static MO_MUST_USE struct value infer_expression(struct inference *p, const stru
     p->node_expectation = saved;
     p->keep_patterns = keep;
     p->span = node->span;
-    if (v.type == NULL || (propagates && !keep && !leave(p, mark)) ||
+    if (v.type == NULL || (propagates && !keep && !infer_leave(p, mark)) ||
         (expected != NULL && !v.never && !infer_unify(p, v.type, expected, 0)))
         return (struct value){0};
     if (p->checked && (node->kind == MO_S_EXPR_STMT || node->kind == MO_S_GROUP)) {
@@ -3322,7 +3343,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         goto failed;
     }
     struct value instance =
-        anchor ? function_value(&p, signature->type, signature->requirements)
+        anchor ? infer_function_value(&p, signature->type, signature->requirements)
                : (struct value){.type = infer_annotation(&p, signature->type, NULL, 0)};
     struct term *fn = instance.type;
     if (fn == NULL)
@@ -3361,7 +3382,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         struct term *type = infer_argument(&p, fn, i);
         const struct mo_syntax *name =
             i < parameters->count ? parameters->children[i]->children[0] : inputs[i]->children[0];
-        if (type == NULL || !bind(&p, name, type, false))
+        if (type == NULL || !infer_bind(&p, name, type, false))
             goto failed;
         if (promise && p.locals != NULL)
             p.locals->used = true; /* A promise need not mention every subject parameter. */
@@ -3409,7 +3430,7 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
             }
         }
     } else if (spec != NULL)
-        v = test ? discard(&p, written->children[1])
+        v = test ? infer_discard(&p, written->children[1])
                  : infer_as(&p, written, p.result, MO_CODE_CONDITION_TYPE);
     else if (service)
         v = infer_as(&p, syntax->children[syntax->kind == MO_S_SERVICE_STATE ? 1 : 0], p.result,
@@ -3418,9 +3439,9 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         v = infer_as(&p, syntax->children[1], p.result, MO_CODE_RESULT_TYPE);
     else
         v = infer_named(p.result, "Unit")
-                ? discard(&p, syntax->children[5])
+                ? infer_discard(&p, syntax->children[5])
                 : infer_as(&p, syntax->children[5], p.result, MO_CODE_RESULT_TYPE);
-    if (v.type == NULL || !leave(&p, NULL))
+    if (v.type == NULL || !infer_leave(&p, NULL))
         goto failed;
     if (!infer_finish_dispatches(&p) || !infer_finish_wrapping(&p))
         goto failed;
