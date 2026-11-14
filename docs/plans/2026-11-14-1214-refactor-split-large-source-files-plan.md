@@ -576,6 +576,8 @@ This is a separate PR because Robert reviews each PR, and 6,105 moved lines fill
 
 ### PR5: Split the store test into programs
 
+**Dropped on 2026-11-14 by Robert.** `tests/test_service_store.c` stays one program. It reorganizes one test file and unblocks nothing. This group, its unit and its Verification Contract rows are not done.
+
 Waits on: PR2, needed before this group can start, because its Makefile rules use the lists U1 and U8 create.
 
 This is a separate PR because Robert reviews each PR, and 4,106 moved test lines on top of PR2 would be too large to review in one sitting.
@@ -710,6 +712,8 @@ These are review items left for the author. They do not block implementation.
 
   If all six pull requests are committed now, roughly half the work is in files the upgrade door does not touch. That work is justified only by size and churn, so it competes with Phase 6 features for Robert's review time without unblocking anything. The scope reviewer also questioned whether the store test split is worth doing at all. Robert decides whether the code generator, lowering, body checker, store test and CLI driver splits are committed now or reconsidered after the door merges.
 
+  Resolved 2026-11-14: the code generator, lowering, body checker and CLI driver splits were merged (#346, #348, #345). The store test split was dropped.
+
 - **Check that each fault build links every fault object and no ordinary one** — Implementation Units, store and service fault lists (P1, adversarial-document-reviewer via cross-model peer, confidence 75)
 
   The undefined-symbol proof shows that the fault objects reference no raw renamed symbol. It does not show that the test's link line actually uses them. If a link rule still names an ordinary store or service object, the test links that object and loses its fault coverage without any check noticing.
@@ -718,4 +722,5 @@ These are review items left for the author. They do not block implementation.
 - **Show that the split store test runs its checks, not just that it contains them** — Implementation Units, store test split (P2, whole-document cross-model peer, confidence 75)
 
   Counting `CHECK(` lines proves the lines moved but not that each one runs. A section left out of a program's runner keeps its lines, passes the count, and silently stops running.
+  Moot: the store test split was dropped.
   Change: add a check that every section function in each split program is called from that program's runner, for example by listing the section names called in each runner and comparing their union with the original runner's list.
