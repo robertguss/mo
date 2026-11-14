@@ -6,6 +6,8 @@
 #include "test.h"
 #include <string.h>
 
+static const uint8_t no_items[] = {'M', 'O', 'I', 'L', 1, 1, 0, 0, 0, 0};
+
 static void bundle(struct mo_buffer *b, unsigned version, struct mo_store_program *p) {
     b->length = 0;
     CHECK(mo_buffer_append(b, "MOSB\1", 5));
@@ -42,8 +44,12 @@ int main(void) {
     static const uint8_t empty_context[13] = {'M', 'O', 'C', 'C', 1};
     old.context = empty_context;
     old.context_size = sizeof empty_context;
+    old.items = no_items;
+    old.items_size = sizeof no_items;
     next.context = empty_context;
     next.context_size = sizeof empty_context;
+    next.items = no_items;
+    next.items_size = sizeof no_items;
     struct mo_sha256 context_hash;
     mo_sha256_init(&context_hash);
     mo_sha256_update(&context_hash, empty_context, sizeof empty_context);

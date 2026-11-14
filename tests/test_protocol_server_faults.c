@@ -512,7 +512,9 @@ static void activation_outcomes(void) {
                                            .bundle = old_bundle.bytes,
                                            .bundle_size = old_bundle.length,
                                            .context = context.bytes,
-                                           .context_size = context.length};
+                                           .context_size = context.length,
+                                           .items = no_items,
+                                           .items_size = sizeof no_items};
         MO_ASSERT(mo_type_schema_digest(mo_process_heap(process), state_type, program.schema));
         mo_process_free(process);
         struct mo_sha256 hash;

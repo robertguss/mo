@@ -22,6 +22,8 @@
 #include <time.h>
 #include <unistd.h>
 
+static const uint8_t no_items[] = {'M', 'O', 'I', 'L', 1, 1, 0, 0, 0, 0};
+
 static unsigned crash_point, log_steps, simulation_appends;
 static bool check_recovery_heap, refuse_store_allocation, refuse_cache_copy;
 static unsigned recovery_heap_checks;
@@ -3536,7 +3538,9 @@ static void first_program_atomic(struct mo_image *image, const char *path) {
                                        .bundle = bundle.bytes,
                                        .bundle_size = bundle.length,
                                        .context = context,
-                                       .context_size = sizeof context};
+                                       .context_size = sizeof context,
+                                       .items = no_items,
+                                       .items_size = sizeof no_items};
     struct mo_sha256 hash;
     mo_sha256_init(&hash);
     mo_sha256_update(&hash, bundle.bytes, bundle.length);
@@ -3651,7 +3655,9 @@ static void activation_faults(struct mo_image *image, const char *path) {
                                                 .bundle = bundles[i].bytes,
                                                 .bundle_size = bundles[i].length,
                                                 .context = context,
-                                                .context_size = sizeof context};
+                                                .context_size = sizeof context,
+                                                .items = no_items,
+                                                .items_size = sizeof no_items};
         struct mo_sha256 hash;
         mo_sha256_init(&hash);
         mo_sha256_update(&hash, bundles[i].bytes, bundles[i].length);

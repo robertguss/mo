@@ -224,7 +224,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
      ON(RUN) | ON(TEST) | ON(QUERY)},
     {FLAG_CALLS, "--calls", false, false, VALUE_COUNT, UINT32_MAX, ON(TEST)},
     {FLAG_SECONDS, "--seconds", false, false, VALUE_COUNT, UINT32_MAX, ON(TEST)},
-    {FLAG_OUTPUT, "-o", false, false, VALUE_TEXT, 0, ON(EMIT)},
+    {FLAG_OUTPUT, "-o", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(TEST)},
     {FLAG_PORT, "--port", false, false, VALUE_PORT, 0, ON(SERVE)},
     {FLAG_DATA, "--data", false, false, VALUE_TEXT, 0, ON(SERVE) | ON(REPLAY) | ON(QUERY)},
     {FLAG_ALLOW_HOST, "--allow-host", false, false, VALUE_TEXT, 0, ON(SERVE)},
@@ -234,14 +234,15 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_FIX, "--fix", false, false, VALUE_TEXT, 0, ON(REPLAY)},
     {FLAG_RECOVER, "--recover", false, false, VALUE_NONE, 0, ON(REPLAY) | ON(QUERY) | ON(HISTORY)},
     {FLAG_MAX_WORK, "--max-work", false, false, VALUE_COUNT, UINT64_MAX, ON(QUERY)},
-    {FLAG_BUNDLE, "--bundle", false, false, VALUE_NONE, 0, ON(EMIT)},
+    {FLAG_BUNDLE, "--bundle", false, false, VALUE_NONE, 0, ON(EMIT) | ON(TEST)},
     {FLAG_UPGRADE_FROM, "--upgrade-from", false, false, VALUE_TEXT, 0, ON(CHECK)},
-    {FLAG_OLD_BUNDLE, "--old-bundle", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(REHEARSE)},
+    {FLAG_OLD_BUNDLE, "--old-bundle", false, false, VALUE_TEXT, 0,
+     ON(EMIT) | ON(TEST) | ON(REHEARSE)},
     {FLAG_MIGRATE, "--migrate", false, false, VALUE_TEXT, 0,
      ON(CHECK) | ON(SERVE) | ON(EMIT) | ON(REHEARSE) | ON(PUSH)},
     {FLAG_UPGRADE, "--upgrade", false, false, VALUE_NONE, 0, ON(SERVE)},
     {FLAG_ADOPT, "--adopt", false, false, VALUE_NONE, 0, ON(SERVE)},
-    {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(REHEARSE)},
+    {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(TEST) | ON(REHEARSE)},
     {FLAG_ARTIFACT, "--artifact", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
     {FLAG_CANDIDATE, "--candidate", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
     {FLAG_URL, "--url", false, false, VALUE_TEXT, 0, ON(PUSH)},
@@ -540,6 +541,10 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "--recover reads a data folder, not --export", "--recover", NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
+    if (out->command == MO_COMMAND_TEST && (out->output != NULL || out->source_bundle) &&
+        (!out->list || out->output == NULL || !out->source_bundle || out->json))
+        return refuse(out, error, "test writes an item list only as --bundle --list -o FILE",
+                      command, NULL);
     if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_PORT)) == 0)
         return refuse(out, error, "serve needs --port N", command, NULL);
     if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_DATA)) == 0)

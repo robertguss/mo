@@ -528,7 +528,8 @@ static void activate(struct mo_protocol_server *s) {
         .migration = migration,
         .migration_size = strlen(migration),
         .report_json = report,
-        .report_size = report_size};
+        .report_size = report_size,
+        .time = s->now.wall_us};
     PAUSE_START(commit);
     enum mo_store_activation_status stored =
         report == NULL ? MO_STORE_ACTIVATION_REFUSED : mo_store_activate(s->store, &activation);

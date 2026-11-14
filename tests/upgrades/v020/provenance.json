@@ -1,0 +1,10 @@
+{
+  "tag": "v0.2.0",
+  "commit": "3b91e55b2dcb1ca3c3dca06fbdb6d1ab3e699af5",
+  "binary_sha256": "8a63d9008a504bf1df1bf14a792acd62fad87bc562b9a4f5aa54818aefde8dd8",
+  "database_sha256": "7cbfb427345c2733c48c54af371709da9ac42a653b6c47de52a5d8f98ab8ae87",
+  "user_version": 2,
+  "program_ordinal": 1,
+  "upgrade_ordinals": [1],
+  "build": "make -j8 CC=gcc; default debug flags, Linux x86_64"
+}

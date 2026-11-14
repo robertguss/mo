@@ -10,6 +10,7 @@ uint64_t mo_pause_attempt;
 #include "base/compile-context.h"
 #include "base/compile-metadata.h"
 #include "base/failure.h"
+#include "base/intent-list.h"
 #include "base/runtime-identity.h"
 #include "base/sha256.h"
 #include "base/stack.h"
@@ -17,6 +18,7 @@ uint64_t mo_pause_attempt;
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "tools/embedded.h"
+#include "tools/intent.h"
 #include "tools/offline.h"
 #include "tools/run.h"
 #include "vm/vm.h"
@@ -243,6 +245,16 @@ static bool save_context(const struct mo_sources *sources, const char *migration
     mo_buffer_free(&bytes);
     return ok;
 }
+static bool list_items(struct mo_arena *arena, const struct mo_program *program,
+                       const char *output) {
+    struct mo_intent intent;
+    struct mo_buffer list;
+    mo_buffer_init(&list, MO_LIMIT_INTENT_LIST_BYTES);
+    bool ok = mo_intent_items(arena, program, &intent) && mo_intent_list_write(&intent, &list) &&
+              write_file_bytes(output, list.bytes, list.length);
+    mo_buffer_free(&list);
+    return ok;
+}
 struct compile_bundle_work {
     const struct mo_cli *cli;
     FILE *output, *errors;
@@ -322,6 +334,13 @@ static void compile_bundle(void *context) {
     struct mo_program *program =
         set == NULL || mo_diags_any(&diags) ? NULL : mo_check(&arena, set, &diags);
     ok = program != NULL && !mo_diags_any(&diags);
+    bool listing = work->cli->command == MO_COMMAND_TEST;
+    if (listing) {
+        if (ok && !list_items(&arena, program, work->cli->output))
+            (void)upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
+                                "the program's intent items exceed their limits");
+        ok = false;
+    }
     if (ok && selected_migration == retained_migration && retained_migration[0] != 0) {
         bool present = false;
         for (uint32_t i = 0; i < program->function_count; i++) {
@@ -381,7 +400,7 @@ static void compile_bundle(void *context) {
     bool runtime_diagnostic = metadata_status == MO_UPGRADE_METADATA_INITIALIZER ||
                               metadata_status == MO_UPGRADE_METADATA_TIMER;
     mo_buffer_free(&metadata);
-    if (!ok && !runtime_diagnostic && !mo_diags_any(&diags))
+    if (!ok && !listing && !runtime_diagnostic && !mo_diags_any(&diags))
         (void)upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
                             "bundle compilation failed");
     work->status = runtime_diagnostic
@@ -408,7 +427,7 @@ struct upgrade_image {
     const struct mo_image *running; /* a live service's image, borrowed in place of image */
     uint32_t service;
     struct mo_store_program program;
-    struct mo_buffer context;
+    struct mo_buffer context, items;
     bool schema_synthesized;
 };
 struct upgrade_report {
@@ -530,6 +549,12 @@ static uint64_t monotonic_us(void) {
         return UINT64_MAX;
     return (uint64_t)now.tv_sec * UINT64_C(1000000) + (uint64_t)now.tv_nsec / 1000;
 }
+static int64_t wall_us(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_REALTIME, &now) != 0)
+        return 0;
+    return (int64_t)now.tv_sec * INT64_C(1000000) + now.tv_nsec / 1000;
+}
 static bool write_file_bytes(const char *path, const uint8_t *bytes, size_t length) {
     FILE *file = fopen(path, "wb");
     if (file == NULL)
@@ -540,9 +565,10 @@ static bool write_file_bytes(const char *path, const uint8_t *bytes, size_t leng
 struct compile_job {
     char folder[sizeof "/tmp/mo-upgrade-XXXXXX"];
     char source[128], previous[128], image[128], diagnostics[128], input_context[128],
-        output_context[128];
+        output_context[128], items[128], list_diagnostics[128];
+    const char *compiler;
     struct mo_compile_child child;
-    bool scratch;
+    bool scratch, listing, has_old, has_context;
 };
 static void compile_cleanup(struct compile_job *job) {
     if (!job->scratch)
@@ -555,6 +581,8 @@ static void compile_cleanup(struct compile_job *job) {
     (void)unlink(job->previous);
     (void)unlink(job->image);
     (void)unlink(job->diagnostics);
+    (void)unlink(job->items);
+    (void)unlink(job->list_diagnostics);
     (void)rmdir(job->folder);
     job->scratch = false;
 }
@@ -574,7 +602,13 @@ static bool compile_begin(const char *compiler, const struct mo_buffer *bundle,
     int d = snprintf(job->diagnostics, sizeof job->diagnostics, "%s/diagnostics", job->folder);
     int e = snprintf(job->input_context, sizeof job->input_context, "%s/input.mocc", job->folder);
     int f = snprintf(job->output_context, sizeof job->output_context, "%s.mocc", job->image);
-    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && f > 0);
+    int g = snprintf(job->items, sizeof job->items, "%s/items.moil", job->folder);
+    int h = snprintf(job->list_diagnostics, sizeof job->list_diagnostics, "%s/list-diagnostics",
+                     job->folder);
+    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && f > 0 && g > 0 && h > 0);
+    job->compiler = compiler;
+    job->has_old = old != NULL;
+    job->has_context = context != NULL;
     bool ok =
         write_file_bytes(job->source, bundle->bytes, bundle->length) &&
         (old == NULL || write_file_bytes(job->previous, old->bytes, old->length)) &&
@@ -592,16 +626,35 @@ static bool compile_begin(const char *compiler, const struct mo_buffer *bundle,
     return refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
                           "compiler child could not start");
 }
+static enum mo_compile_status compile_poll(struct compile_job *job) {
+    uint64_t now = monotonic_us();
+    enum mo_compile_status status = mo_compile_poll(&job->child, now);
+    if (status != MO_COMPILE_OK || job->listing)
+        return status;
+    job->listing = true;
+    status = mo_list_start(job->compiler, job->source, job->items, job->list_diagnostics,
+                           job->has_old ? job->previous : NULL,
+                           job->has_context ? job->input_context : NULL, now, &job->child);
+    return status == MO_COMPILE_RUNNING ? status : MO_COMPILE_IO;
+}
+static void image_buffers_init(struct upgrade_image *image) {
+    mo_buffer_init(&image->context, MO_LIMIT_BUNDLE_BYTES);
+    mo_buffer_init(&image->items, MO_LIMIT_INTENT_LIST_BYTES);
+}
+static void image_buffers_free(struct upgrade_image *image) {
+    mo_buffer_free(&image->context);
+    mo_buffer_free(&image->items);
+}
 static bool compile_end(struct compile_job *job, enum mo_compile_status status,
                         const struct mo_buffer *bundle, struct upgrade_image *out,
                         struct upgrade_report *report) {
-    mo_buffer_init(&out->context, MO_LIMIT_BUNDLE_BYTES);
+    image_buffers_init(out);
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     bool ok = true;
     report->compilation = status;
     if (status != MO_COMPILE_OK) {
-        FILE *errors = fopen(job->diagnostics, "rb");
+        FILE *errors = fopen(job->listing ? job->list_diagnostics : job->diagnostics, "rb");
         report->detail[0] = 0;
         if (errors != NULL) {
             size_t n = fread(report->detail, 1, sizeof report->detail - 1, errors);
@@ -635,6 +688,15 @@ static bool compile_end(struct compile_job *job, enum mo_compile_status status,
                             "compiler context failed validation");
         goto done;
     }
+    struct mo_intent_list items;
+    if (!file_bytes(job->items, MO_LIMIT_INTENT_LIST_BYTES, &out->items) ||
+        !mo_intent_list_read(out->items.bytes, out->items.length, &items)) {
+        ok = refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                            "the candidate's intent item list failed validation");
+        goto done;
+    }
+    out->program.items = out->items.bytes;
+    out->program.items_size = out->items.length;
     out->program.context = out->context.bytes;
     out->program.context_size = out->context.length;
     struct mo_sha256 context_hash;
@@ -697,12 +759,12 @@ static bool compile_image(const struct mo_buffer *bundle, const struct mo_buffer
                           struct upgrade_image *out, struct upgrade_report *report) {
     struct compile_job job = {0};
     if (!compile_begin("/proc/self/exe", bundle, old, migration, context, &job, report)) {
-        mo_buffer_init(&out->context, MO_LIMIT_BUNDLE_BYTES);
+        image_buffers_init(out);
         return false;
     }
     enum mo_compile_status status = MO_COMPILE_RUNNING;
     while (status == MO_COMPILE_RUNNING) {
-        status = mo_compile_poll(&job.child, monotonic_us());
+        status = compile_poll(&job);
         if (status == MO_COMPILE_RUNNING) {
             struct timespec delay = {0, 10000000};
             (void)nanosleep(&delay, NULL);
@@ -929,8 +991,8 @@ static void check_upgrade(void *context) {
     mo_sources_free(&sources);
     mo_diags_free(&diags);
     mo_buffer_free(&report.differences);
-    mo_buffer_free(&old.context);
-    mo_buffer_free(&next.context);
+    image_buffers_free(&old);
+    image_buffers_free(&next);
     mo_buffer_free(&old_bundle);
     mo_buffer_free(&candidate);
     mo_buffer_free(&recorded_context);
@@ -1234,7 +1296,7 @@ static void live_free_buffers(struct mo_live_upgrade *u) {
     compile_cleanup(&u->job);
     if (u->next.image != NULL)
         mo_image_free(u->next.image);
-    mo_buffer_free(&u->next.context);
+    image_buffers_free(&u->next);
     mo_buffer_free(&u->report.differences);
     mo_buffer_free(&u->bundle);
     mo_buffer_free(&u->previous);
@@ -1261,7 +1323,7 @@ struct mo_live_upgrade *mo_live_start(const char *compiler, const struct mo_stor
     mo_buffer_init(&u->context, MO_LIMIT_BUNDLE_BYTES);
     mo_buffer_init(&u->migrated, MO_LIMIT_SAVED_BYTES);
     mo_buffer_init(&u->json, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
-    mo_buffer_init(&u->next.context, MO_LIMIT_BUNDLE_BYTES);
+    image_buffers_init(&u->next);
     mo_buffer_init(&u->report.differences, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
     struct mo_sha256 hash;
     mo_sha256_init(&hash);
@@ -1298,11 +1360,11 @@ struct mo_live_upgrade *mo_live_start(const char *compiler, const struct mo_stor
 bool mo_live_poll(struct mo_live_upgrade *u) {
     if (!u->compiling)
         return true;
-    enum mo_compile_status status = mo_compile_poll(&u->job.child, monotonic_us());
+    enum mo_compile_status status = compile_poll(&u->job);
     if (status == MO_COMPILE_RUNNING)
         return false;
     u->compiling = false;
-    mo_buffer_free(&u->next.context);
+    image_buffers_free(&u->next);
     u->staged = compile_end(&u->job, status, &u->bundle, &u->next, &u->report);
     return true;
 }
@@ -1562,7 +1624,7 @@ static void serve_upgrade(void *context) {
         &report);
     if (!compiled_candidate && fallback_state && requested_migration != NULL &&
         schema_only_metadata(&recorded, &schema_fallback)) {
-        mo_buffer_free(&next.context);
+        image_buffers_free(&next);
         report.code = 0;
         compiled_candidate =
             compile_image(&candidate, &schema_fallback, requested_migration, NULL, &next, &report);
@@ -1680,7 +1742,8 @@ static void serve_upgrade(void *context) {
             .migration = cli->migration == NULL ? "" : cli->migration,
             .migration_size = cli->migration == NULL ? 0 : strlen(cli->migration),
             .report_json = (const char *)json.bytes,
-            .report_size = json.length};
+            .report_size = json.length,
+            .time = wall_us()};
         if (mo_store_activate(store, &activation) != MO_STORE_ACTIVATED) {
             (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                                  "activation failed; reopen the folder before retrying");
@@ -1720,7 +1783,8 @@ static void serve_upgrade(void *context) {
                                                  .migration = "adopted",
                                                  .migration_size = 7,
                                                  .report_json = (const char *)json.bytes,
-                                                 .report_size = json.length};
+                                                 .report_size = json.length,
+                                                 .time = wall_us()};
         if (mo_store_adopt(store, &activation, !found) != MO_STORE_ACTIVATED) {
             (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                                  "verified adoption failed; reopen the folder before retrying");
@@ -1769,8 +1833,8 @@ cleanup_serve:
         mo_image_free(next.image);
     mo_buffer_free(&candidate);
     mo_buffer_free(&report.differences);
-    mo_buffer_free(&old.context);
-    mo_buffer_free(&next.context);
+    image_buffers_free(&old);
+    image_buffers_free(&next);
     mo_buffer_free(&head.original);
     mo_buffer_free(&schema_fallback);
     mo_buffer_free(&migrated);
@@ -1883,8 +1947,8 @@ static void rehearse_upgrade(void *context) {
         mo_image_free(old.image);
     if (next.image != NULL)
         mo_image_free(next.image);
-    mo_buffer_free(&old.context);
-    mo_buffer_free(&next.context);
+    image_buffers_free(&old);
+    image_buffers_free(&next);
     mo_buffer_free(&report.differences);
     mo_buffer_free(&artifact);
     mo_buffer_free(&old_bundle);

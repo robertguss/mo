@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+static const uint8_t no_items[] = {'M', 'O', 'I', 'L', 1, 1, 0, 0, 0, 0};
+
 static const char source[] =
     "module Main\n"
     "service\n state Int = 0\n tools add, read, reject, fail, large, grow, work\n"
@@ -1343,7 +1345,9 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
                                        .bundle = bundle.bytes,
                                        .bundle_size = bundle.length,
                                        .context = context,
-                                       .context_size = sizeof context};
+                                       .context_size = sizeof context,
+                                       .items = no_items,
+                                       .items_size = sizeof no_items};
     struct mo_sha256 hash;
     mo_sha256_init(&hash);
     mo_sha256_update(&hash, bundle.bytes, bundle.length);
