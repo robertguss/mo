@@ -178,24 +178,30 @@ def killed_approvals(binary, base):
     folder = write(base, "queue", source)
     shutil.copy(root / "services/task-queue/job-queue.mo", folder.parent)
     rng = random.Random(1)
-    counts = []
+    counts, total = [], None
     for _ in range(3):
         service = Service(binary, data, folder)
         program, _, marks = items(binary, service)
+        total = total or len(marks)
         pending = [d for d, mark in marks.items() if mark == "unapproved"]
-        assert pending, marks
+        assert len(pending) > 1, marks
+        reached = threading.Event()
+        kill_after = rng.randint(1, max(1, len(pending) // 3))
 
         def approve():
-            for digest in pending:
+            for done, digest in enumerate(pending, 1):
                 try:
                     tool(service, "mo-intent-approve", headers=APPROVE_HEADER, program=program,
                          digest=digest)
                 except (OSError, http.client.HTTPException, AssertionError):
                     return
+                if done == kill_after:
+                    reached.set()
 
         worker = threading.Thread(target=approve)
         worker.start()
-        time.sleep(rng.uniform(0.05, 0.4))
+        assert reached.wait(60)
+        time.sleep(rng.uniform(0, 0.01))
         service.kill()
         worker.join()
         with sqlite3.connect(data / "service.sqlite") as connection:
@@ -208,7 +214,7 @@ def killed_approvals(binary, base):
             approved, decided, version)
         assert sorted(approved.values()) == list(range(1, version + 1)), approved
         counts.append(version)
-    assert any(0 < count < 41 for count in counts), counts
+    assert all(0 < count < total for count in counts), counts
 
 
 def main(binary):

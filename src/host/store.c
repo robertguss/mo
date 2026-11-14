@@ -2219,7 +2219,7 @@ enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t p
                                              const uint8_t digest[32], int64_t time) {
     MO_ASSERT(s != NULL);
     struct mo_arena arena;
-    mo_arena_init(&arena, MO_LIMIT_INTENT_LIST_BYTES + MO_LIMIT_INTENT_ITEMS * 32 + 4096);
+    mo_arena_init(&arena, MO_STORE_REVIEW_READ_BYTES);
     struct mo_store_review review;
     enum mo_store_review_status result = review_begin(s, &arena, &review);
     if (result == MO_STORE_REVIEW_OK) {
@@ -2252,7 +2252,7 @@ enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t p
 enum mo_store_review_status mo_store_set_review(struct mo_store *s, bool intent, int64_t time) {
     MO_ASSERT(s != NULL);
     struct mo_arena arena;
-    mo_arena_init(&arena, MO_LIMIT_INTENT_LIST_BYTES + MO_LIMIT_INTENT_ITEMS * 32 + 4096);
+    mo_arena_init(&arena, MO_STORE_REVIEW_READ_BYTES);
     struct mo_store_review review;
     enum mo_store_review_status result = review_begin(s, &arena, &review);
     if (result == MO_STORE_REVIEW_OK && review.intent == intent)

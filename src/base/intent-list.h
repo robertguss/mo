@@ -26,6 +26,6 @@ struct mo_binary mo_intent_list_first(const struct mo_intent_list *list);
 MO_MUST_USE bool mo_intent_list_next(struct mo_binary *cursor, struct mo_intent_entry *out);
 MO_MUST_USE bool mo_intent_list_read_name(struct mo_binary *reads, struct mo_bundle_span *out);
 const char *mo_intent_kind_name(enum mo_intent_kind kind);
-bool mo_intent_list_has(const struct mo_intent_list *list, const uint8_t digest[32]);
+MO_MUST_USE bool mo_intent_list_has(const struct mo_intent_list *list, const uint8_t digest[32]);
 
 #endif

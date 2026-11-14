@@ -1343,14 +1343,18 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
               mo_buffer_append(&bundle, source_text_for_upgrade, strlen(source_text_for_upgrade)));
     static const uint8_t context[13] = {'M', 'O', 'C', 'C', 1};
     struct mo_buffer items;
-    mo_buffer_init(&items, 1024);
+    mo_buffer_init(&items, 16384);
     MO_ASSERT(mo_buffer_append(&items, "MOIL\1\1", 6) && mo_binary_write(&items, 2, 4));
     for (uint8_t letter = 'A'; letter <= 'B'; letter++) {
         uint8_t item[32];
         memset(item, letter, sizeof item);
         MO_ASSERT(mo_buffer_append(&items, item, sizeof item) && mo_buffer_append_byte(&items, 0));
-        for (unsigned j = 0; j < 3; j++)
+        for (unsigned j = 0; j < 2; j++)
             MO_ASSERT(mo_binary_write(&items, 1, 4) && mo_buffer_append_byte(&items, letter));
+        uint32_t length = letter == 'B' ? 9000 : 1;
+        MO_ASSERT(mo_binary_write(&items, length, 4));
+        for (uint32_t j = 0; j < length; j++)
+            MO_ASSERT(mo_buffer_append_byte(&items, letter));
         MO_ASSERT(mo_binary_write(&items, 1, 4) && mo_binary_write(&items, 4, 4) &&
                   mo_buffer_append(&items, "Main", 4));
     }
@@ -1462,7 +1466,8 @@ static void review_tools(void) {
     review_call(&f, review_auth, "mo-intent-items", "{\"offset\":0}", out, sizeof out);
     CHECK(strstr(out, "\"approved\":true") != NULL && strstr(out, "\"approved\":false") != NULL);
     review_call(&f, review_auth, "mo-intent-items", "{\"offset\":1}", out, sizeof out);
-    CHECK(strstr(out, a) == NULL && strstr(out, "\"approved\":false") != NULL);
+    CHECK(strstr(out, a) == NULL && strstr(out, "\"approved\":false,\"clipped\":true") != NULL &&
+          strstr(out, "\"truncated\"") == NULL);
     n = snprintf(arguments, sizeof arguments, "{\"program\":\"%s\",\"digest\":\"%s\"}", other, a);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
     review_call(&f, review_auth, "mo-intent-approve", arguments, out, sizeof out);

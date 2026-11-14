@@ -235,6 +235,10 @@ enum mo_store_review_status {
     MO_STORE_REVIEW_FULL,
     MO_STORE_REVIEW_FAILED
 };
+enum {
+    MO_STORE_REVIEW_READ_BYTES =
+        MO_LIMIT_INTENT_LIST_BYTES + 2 * MO_LIMIT_INTENT_ITEMS * 32 + 3 * MO_ARENA_CHUNK_HEADER
+};
 MO_MUST_USE enum mo_store_status
 mo_store_review_read(struct mo_store *store, struct mo_arena *arena, struct mo_store_review *out);
 MO_MUST_USE bool mo_store_review_approved(const struct mo_store_review *review,

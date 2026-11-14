@@ -49,7 +49,7 @@ static bool indented(struct mo_buffer *text, struct mo_bundle_span value) {
 }
 
 static bool item(struct review_reply *out, const struct mo_store_review *r,
-                 const struct mo_intent_entry *e) {
+                 const struct mo_intent_entry *e, bool whole) {
     char digest[65];
     mo_protocol_hex(e->digest, 32, digest);
     const char *kind = mo_intent_kind_name(e->kind);
@@ -62,10 +62,15 @@ static bool item(struct review_reply *out, const struct mo_store_review *r,
               mo_buffer_append(text, digest, 64) && mo_buffer_append_byte(text, ' ') &&
               mo_buffer_append_text(text, kind) && mo_buffer_append_byte(text, ' ') &&
               mo_render_terminal_text(text, e->name.bytes, e->name.length) &&
-              indented(text, e->text) && field(json, ",\"owner\":", e->owner) &&
-              field(json, ",\"name\":", e->name) && field(json, ",\"text\":", e->text) &&
-              mo_buffer_append_text(json, mark ? ",\"approved\":true,\"reads\":["
-                                               : ",\"approved\":false,\"reads\":[");
+              field(json, ",\"owner\":", e->owner) && field(json, ",\"name\":", e->name);
+    if (!whole)
+        return ok &&
+               mo_buffer_append_text(json, mark ? ",\"approved\":true,\"clipped\":true}"
+                                                : ",\"approved\":false,\"clipped\":true}") &&
+               mo_buffer_append_text(text, "\n  too large for a review page; mo intent shows it\n");
+    ok = ok && indented(text, e->text) && field(json, ",\"text\":", e->text) &&
+         mo_buffer_append_text(json, mark ? ",\"approved\":true,\"reads\":["
+                                          : ",\"approved\":false,\"reads\":[");
     struct mo_binary reads = e->reads;
     struct mo_bundle_span name;
     for (uint32_t i = 0; ok && i < e->read_count; i++)
@@ -92,7 +97,12 @@ static bool page(struct review_reply *out, const struct mo_store_review *r, uint
             continue;
         one.json.length = 0;
         one.text.length = 0;
-        ok = item(&one, r, &e);
+        ok = item(&one, r, &e, true);
+        if (!ok) {
+            one.json.length = 0;
+            one.text.length = 0;
+            ok = item(&one, r, &e, false);
+        }
         if (!ok || out->json.length + one.json.length + sizeof tail > PAGE_BYTES ||
             out->text.length + one.text.length > PAGE_BYTES)
             break;
@@ -207,9 +217,8 @@ void mo_protocol_review_call(struct mo_protocol_server *s, struct protocol_conne
         return;
     }
     struct mo_arena arena;
-    mo_arena_init(&arena, sizeof(struct upgrade_arguments) +
-                              2 * (MO_LIMIT_INTENT_LIST_BYTES + MO_LIMIT_INTENT_ITEMS * 32) +
-                              8 * MO_ARENA_CHUNK_HEADER);
+    mo_arena_init(&arena, sizeof(struct upgrade_arguments) + MO_ARENA_CHUNK_HEADER +
+                              2 * (size_t)MO_STORE_REVIEW_READ_BYTES);
     struct upgrade_arguments *a =
         mo_arena_allocate(&arena, sizeof *a, _Alignof(struct upgrade_arguments));
     if (a == NULL || !mo_protocol_upgrade_arguments(s, c, a))
