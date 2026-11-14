@@ -14,7 +14,7 @@
 struct push_reply {
     bool failed, rate_limited;
     struct mo_buffer text, json;
-    char slot[33], next[21];
+    char slot[33], next[21], review[65];
 };
 
 static bool push_read(struct mo_image *image, uint32_t function, const struct mo_buffer *wire,
@@ -44,7 +44,7 @@ static bool push_read(struct mo_image *image, uint32_t function, const struct mo
                 const uint8_t *text = mo_value_data(item, &length);
                 out->rate_limited = length == 12 && memcmp(text, "rate_limited", 12) == 0;
             }
-            ok = mo_list_size(output) == 5;
+            ok = mo_list_size(output) == 6;
             struct mo_cell item;
             size_t size;
             const uint8_t *bytes;
@@ -71,6 +71,13 @@ static bool push_read(struct mo_image *image, uint32_t function, const struct mo
                 if (ok) {
                     memcpy(out->next, bytes, size);
                     out->next[size] = 0;
+                }
+                MO_ASSERT(mo_list_get(output, 5, &item));
+                bytes = mo_value_data(item, &size);
+                ok = ok && (size == 0 || size == 64);
+                if (ok) {
+                    memcpy(out->review, bytes, size);
+                    out->review[size] = 0;
                 }
             }
             ok = ok || out->rate_limited;
@@ -183,7 +190,7 @@ static int push_report(const struct mo_cli *cli, FILE *output, FILE *errors,
                    ? true
                    : fputc('\n', stream) != EOF) &&
               fflush(stream) == 0;
-    return ok && !r->failed ? 0 : 1;
+    return !ok || r->failed ? 1 : r->review[0] != 0 ? 3 : 0;
 }
 
 /* A failure on the client's side: the message on the error stream, or with --json a report on
@@ -371,6 +378,8 @@ static int review_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, 
     for (uint32_t i = 0; i < cli->approve_count; i++)
         if (!mo_fetch_unhex(cli->approve[i], digest, 32))
             return review_failure(errors, "--approve needs 64-digit lowercase item digests", 2);
+    if (cli->answer != NULL && !mo_fetch_unhex(cli->review, digest, 32))
+        return review_failure(errors, "--yes and --no need the 64-digit lowercase review id", 2);
     const char *token = NULL, *approval = NULL;
     if (!credential(cli->fetch_token, &token) || !credential(cli->approval_token, &approval))
         return review_failure(errors, "token unavailable or invalid", 1);
@@ -391,6 +400,7 @@ static int review_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, 
     mo_buffer_init(&reply.json, MO_LIMIT_FETCH_RECEIVE_BYTES);
     const char *tool = cli->items             ? "mo-intent-items"
                        : cli->setting != NULL ? "mo-review-setting"
+                       : cli->answer != NULL  ? "mo-review-answer"
                                               : "mo-intent-approve";
     char arguments[256];
     int status = 0;
@@ -401,6 +411,9 @@ static int review_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, 
                                   i == 0 ? "0" : reply.next)
             : cli->setting != NULL
                 ? snprintf(arguments, sizeof arguments, "{\"setting\":\"%s\"}", cli->setting)
+            : cli->answer != NULL
+                ? snprintf(arguments, sizeof arguments, "{\"review\":\"%s\",\"answer\":\"%s\"}",
+                           cli->review, cli->answer)
                 : snprintf(arguments, sizeof arguments, "{\"program\":\"%s\",\"digest\":\"%s\"}",
                            cli->push_base, cli->approve[i]);
         mo_buffer_clear(&reply.text);

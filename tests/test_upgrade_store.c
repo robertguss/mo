@@ -109,6 +109,69 @@ static void review(const struct mo_store_record *state, struct mo_store_activati
     mo_buffer_free(&old_items);
     mo_buffer_free(&new_items);
 }
+static bool newest_kind(const struct mo_store_decision *d, void *context) {
+    char *kind = context;
+    if (kind[0] == 0)
+        (void)snprintf(kind, 16, "%s", d->kind);
+    return true;
+}
+static void door(const struct mo_store_record *state, struct mo_store_activation activation) {
+    struct mo_buffer old_items, new_items;
+    mo_buffer_init(&old_items, MO_LIMIT_INTENT_LIST_BYTES);
+    mo_buffer_init(&new_items, MO_LIMIT_INTENT_LIST_BYTES);
+    items(&old_items, "AB");
+    items(&new_items, "BC");
+    activation.previous.items = old_items.bytes;
+    activation.previous.items_size = old_items.length;
+    activation.candidate.items = new_items.bytes;
+    activation.candidate.items_size = new_items.length;
+    uint8_t a[32], c[1][32];
+    memset(a, 'A', 32);
+    memset(c, 'C', 32);
+    struct mo_store_pending held = {.migration = "",
+                                    .version = 1,
+                                    .bundle = activation.candidate.bundle,
+                                    .bundle_size = activation.candidate.bundle_size};
+    memset(held.review, 'R', 32);
+    memcpy(held.base, activation.previous.source, 32);
+    memcpy(held.candidate, activation.candidate.source, 32);
+    struct mo_store_decision decision = {.kind = "held", .has_candidate = true, .has_review = true};
+    memcpy(decision.base, held.base, 32);
+    memcpy(decision.candidate, held.candidate, 32);
+    memcpy(decision.review, held.review, 32);
+    struct mo_arena arena;
+    mo_arena_init(&arena, 16 << 20);
+    struct mo_store_review r;
+    struct mo_store_pending read;
+    bool found = false;
+    char kind[16] = "";
+    struct mo_store *store = NULL;
+    CHECK(mo_store_open(NULL, &store) == MO_STORE_OK);
+    CHECK(mo_store_program_record(store, &activation.previous, state) == MO_STORE_OK);
+    CHECK(mo_store_approve(store, held.base, a, 1) == MO_STORE_REVIEW_OK);
+    CHECK(mo_store_hold(store, &held, &decision) == MO_STORE_REVIEW_OK);
+    decision.kind = "yes";
+    activation.decision = &decision;
+    activation.approve = (const uint8_t(*)[32])c;
+    activation.approve_count = 1;
+    CHECK(mo_store_activate(store, &activation) == MO_STORE_ACTIVATION_REFUSED);
+    CHECK(mo_store_review_read(store, &arena, &r) == MO_STORE_OK && r.version == 1 &&
+          r.approved_count == 1 && approved(&r, 'A') &&
+          memcmp(r.program.source, held.base, 32) == 0);
+    CHECK(mo_store_pending_read(store, &arena, &read, &found) == MO_STORE_OK && found &&
+          memcmp(read.review, held.review, 32) == 0 && read.difference_size == 0);
+    activation.approval_version = 1;
+    CHECK(mo_store_activate(store, &activation) == MO_STORE_ACTIVATED);
+    CHECK(mo_store_review_read(store, &arena, &r) == MO_STORE_OK && r.version == 3 &&
+          r.approved_count == 1 && approved(&r, 'C') &&
+          memcmp(r.program.source, held.candidate, 32) == 0);
+    CHECK(mo_store_pending_read(store, &arena, &read, &found) == MO_STORE_OK && !found);
+    CHECK(mo_store_decisions(store, newest_kind, kind) == MO_STORE_OK && strcmp(kind, "yes") == 0);
+    mo_store_close(store);
+    mo_arena_free(&arena);
+    mo_buffer_free(&old_items);
+    mo_buffer_free(&new_items);
+}
 int main(void) {
     struct heap_fixture f;
     heap_fixture_init(&f);
@@ -239,6 +302,7 @@ int main(void) {
           MO_STORE_OK);
     mo_store_close(store);
     review(&state, activation);
+    door(&state, activation);
     mo_arena_free(&copies);
     mo_buffer_free(&saved);
     mo_buffer_free(&old_bundle);

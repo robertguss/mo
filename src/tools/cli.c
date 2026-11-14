@@ -196,6 +196,8 @@ enum flag_id {
     FLAG_ITEMS,
     FLAG_APPROVE,
     FLAG_SETTING,
+    FLAG_YES,
+    FLAG_NO,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -261,6 +263,8 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_ITEMS, "--items", false, false, VALUE_NONE, 0, ON(REVIEW)},
     {FLAG_APPROVE, "--approve", false, true, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_SETTING, "--setting", false, false, VALUE_TEXT, 0, ON(REVIEW)},
+    {FLAG_YES, "--yes", false, false, VALUE_TEXT, 0, ON(REVIEW)},
+    {FLAG_NO, "--no", false, false, VALUE_TEXT, 0, ON(REVIEW)},
 };
 #undef ON
 
@@ -298,6 +302,12 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         if (strcmp(operand, "everything") != 0 && strcmp(operand, "intent") != 0)
             return refuse(out, error, "--setting takes everything or intent", arg, operand);
         out->setting = operand;
+        break;
+    case FLAG_YES:
+    case FLAG_NO:
+        out->answer = id == FLAG_YES ? "yes" : "no";
+        out->review = operand;
+        out->answers++;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -546,14 +556,14 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (out->command == MO_COMMAND_REVIEW &&
         (out->file_count != 0 || out->push_url == NULL || out->fetch_token == NULL ||
          out->approval_token == NULL ||
-         (out->items ? 1 : 0) + (out->approve_count != 0 ? 1 : 0) +
-                 (out->setting != NULL ? 1 : 0) !=
+         (out->items ? 1u : 0u) + (out->approve_count != 0 ? 1u : 0u) +
+                 (out->setting != NULL ? 1u : 0u) + out->answers !=
              1))
-        return refuse(
-            out, error,
-            "usage: mo review --url URL --token-env NAME --approval-token-env NAME "
-            "(--items | --base PROGRAM --approve DIGEST... | --setting everything|intent)",
-            command, NULL);
+        return refuse(out, error,
+                      "usage: mo review --url URL --token-env NAME --approval-token-env NAME "
+                      "(--items | --base PROGRAM --approve DIGEST... | --setting everything|intent "
+                      "| --yes ID | --no ID)",
+                      command, NULL);
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
     if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&

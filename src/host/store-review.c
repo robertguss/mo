@@ -1,3 +1,4 @@
+#include "base/utf8.h"
 #include "host/store-internal.h"
 
 #include <stdlib.h>
@@ -95,19 +96,21 @@ static int64_t review_count(struct mo_store *s, const char *sql) {
     return store_finish(stmt, MO_STORE_OK) == MO_STORE_OK ? n : -1;
 }
 
-bool store_decide(struct mo_store *s, int64_t time, const char *kind, const uint8_t base[32],
-                  const char *setting, const char *detail) {
+bool store_decide(struct mo_store *s, const struct mo_store_decision *d) {
     sqlite3_stmt *stmt = NULL;
-    if (sqlite3_prepare_v2(s->db, "INSERT INTO decisions VALUES(NULL,?1,?2,?3,x'',x'',?4,0,?5)", -1,
+    if (sqlite3_prepare_v2(s->db, "INSERT INTO decisions VALUES(NULL,?1,?2,?3,?4,?5,?6,?7,?8)", -1,
                            &stmt, NULL) != SQLITE_OK)
         return false;
-    const void *blobs[] = {base};
-    const int sizes[] = {32};
-    bool bound = sqlite3_bind_int64(stmt, 1, time) == SQLITE_OK &&
-                 sqlite3_bind_text(stmt, 2, kind, -1, SQLITE_STATIC) == SQLITE_OK &&
-                 bind_blobs(stmt, 3, blobs, sizes, 1) &&
-                 sqlite3_bind_text(stmt, 4, setting, -1, SQLITE_STATIC) == SQLITE_OK &&
-                 sqlite3_bind_text(stmt, 5, detail, -1, SQLITE_STATIC) == SQLITE_OK;
+    const void *blobs[] = {d->base, d->candidate, d->review};
+    const int sizes[] = {32, d->has_candidate ? 32 : 0, d->has_review ? 32 : 0};
+    bool bound = sqlite3_bind_int64(stmt, 1, d->time) == SQLITE_OK &&
+                 sqlite3_bind_text(stmt, 2, d->kind, -1, SQLITE_STATIC) == SQLITE_OK &&
+                 bind_blobs(stmt, 3, blobs, sizes, 3) &&
+                 sqlite3_bind_text(stmt, 6, mo_store_setting_name(d->intent), -1, SQLITE_STATIC) ==
+                     SQLITE_OK &&
+                 sqlite3_bind_int(stmt, 7, d->unattended) == SQLITE_OK &&
+                 sqlite3_bind_text(stmt, 8, d->detail == NULL ? "" : d->detail, -1,
+                                   SQLITE_STATIC) == SQLITE_OK;
     return step_done(stmt, bound);
 }
 
@@ -215,8 +218,15 @@ enum mo_store_status mo_store_review_read(struct mo_store *s, struct mo_arena *a
         result = store_read_setting(s, &next);
     if (result == MO_STORE_OK)
         result = read_approvals(s, arena, &next);
-    if (result == MO_STORE_OK)
+    int64_t records = result == MO_STORE_OK ? review_count(s, "SELECT count(*) FROM decisions") : 0;
+    int64_t pending = result == MO_STORE_OK ? review_count(s, "SELECT count(*) FROM pending") : 0;
+    if (records < 0 || pending < 0)
+        result = MO_STORE_IO;
+    if (result == MO_STORE_OK) {
+        next.records = (uint64_t)records;
+        next.pending = pending != 0;
         *out = next;
+    }
     return result;
 }
 
@@ -284,16 +294,14 @@ static enum mo_store_review_status review_end(struct mo_store *s,
 }
 
 static enum mo_store_review_status review_begin(struct mo_store *s, struct mo_arena *arena,
-                                                struct mo_store_review *review) {
+                                                struct mo_store_review *review, bool drops) {
     if (s->unsafe || !store_exec(s, "BEGIN IMMEDIATE"))
         return MO_STORE_REVIEW_FAILED;
     if (mo_store_review_read(s, arena, review) != MO_STORE_OK || !review->reviewed)
         return review_end(s, MO_STORE_REVIEW_FAILED);
-    int64_t count = review_count(s, "SELECT count(*) FROM decisions");
-    if (count < 0)
-        return review_end(s, MO_STORE_REVIEW_FAILED);
-    return count >= MO_LIMIT_REVIEW_RECORDS ? review_end(s, MO_STORE_REVIEW_FULL)
-                                            : MO_STORE_REVIEW_OK;
+    uint64_t rows = drops && review->pending ? 2 : 1;
+    return review->records + rows > MO_LIMIT_REVIEW_RECORDS ? review_end(s, MO_STORE_REVIEW_FULL)
+                                                            : MO_STORE_REVIEW_OK;
 }
 
 enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t program[32],
@@ -302,7 +310,7 @@ enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t p
     struct mo_arena arena;
     mo_arena_init(&arena, MO_STORE_REVIEW_READ_BYTES);
     struct mo_store_review review;
-    enum mo_store_review_status result = review_begin(s, &arena, &review);
+    enum mo_store_review_status result = review_begin(s, &arena, &review, true);
     if (result == MO_STORE_REVIEW_OK) {
         char text[65];
         hex(digest, 32, text);
@@ -313,6 +321,9 @@ enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t p
         else if (mo_store_review_approved(&review, digest))
             result = review_end(s, MO_STORE_REVIEW_OK);
         else {
+            struct mo_store_decision decision = {
+                .kind = "approval", .detail = text, .intent = review.intent, .time = time};
+            memcpy(decision.base, program, 32);
             sqlite3_stmt *stmt = NULL;
             const void *blobs[] = {digest};
             const int sizes[] = {32};
@@ -323,8 +334,7 @@ enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t p
                                     sqlite3_bind_int64(
                                         stmt, 2, (sqlite3_int64)review.version + 1) == SQLITE_OK) &&
                 store_exec(s, "UPDATE review SET version=version+1 WHERE id=1") &&
-                store_decide(s, time, "approval", program, mo_store_setting_name(review.intent),
-                             text);
+                store_decide(s, &decision) && store_drop_stale(s, time);
             result = review_end(s, ok ? MO_STORE_REVIEW_OK : MO_STORE_REVIEW_FAILED);
         }
     }
@@ -337,19 +347,268 @@ enum mo_store_review_status mo_store_set_review(struct mo_store *s, bool intent,
     struct mo_arena arena;
     mo_arena_init(&arena, MO_STORE_REVIEW_READ_BYTES);
     struct mo_store_review review;
-    enum mo_store_review_status result = review_begin(s, &arena, &review);
+    enum mo_store_review_status result = review_begin(s, &arena, &review, false);
     if (result == MO_STORE_REVIEW_OK && review.intent == intent)
         result = review_end(s, MO_STORE_REVIEW_OK);
     else if (result == MO_STORE_REVIEW_OK) {
         const char *setting = mo_store_setting_name(intent);
+        struct mo_store_decision decision = {.kind = "setting", .intent = intent, .time = time};
+        memcpy(decision.base, review.program.source, 32);
         sqlite3_stmt *stmt = NULL;
         bool ok =
             sqlite3_prepare_v2(s->db, "UPDATE review SET setting=?1 WHERE id=1", -1, &stmt, NULL) ==
                 SQLITE_OK &&
             step_done(stmt, sqlite3_bind_text(stmt, 1, setting, -1, SQLITE_STATIC) == SQLITE_OK) &&
-            store_decide(s, time, "setting", review.program.source, setting, "");
+            store_decide(s, &decision);
         result = review_end(s, ok ? MO_STORE_REVIEW_OK : MO_STORE_REVIEW_FAILED);
     }
     mo_arena_free(&arena);
     return result;
+}
+
+struct pending_head {
+    uint8_t review[32], base[32], candidate[32];
+};
+
+static enum mo_store_status pending_head(struct mo_store *s, struct pending_head *out,
+                                         bool *found) {
+    sqlite3_stmt *stmt = NULL;
+    int code = sqlite3_prepare_v2(s->db, "SELECT review,base,candidate FROM pending WHERE id=1", -1,
+                                  &stmt, NULL);
+    if (code != SQLITE_OK)
+        return store_sqlite_status(code);
+    int step = sqlite3_step(stmt);
+    enum mo_store_status result = MO_STORE_OK;
+    *found = step == SQLITE_ROW;
+    if (step != SQLITE_ROW && step != SQLITE_DONE)
+        result = store_sqlite_status(step);
+    else if (*found && (!store_blob_size(stmt, 0, 32) || !store_blob_size(stmt, 1, 32) ||
+                        !store_blob_size(stmt, 2, 32)))
+        result = MO_STORE_CORRUPT;
+    else if (*found) {
+        memcpy(out->review, sqlite3_column_blob(stmt, 0), 32);
+        memcpy(out->base, sqlite3_column_blob(stmt, 1), 32);
+        memcpy(out->candidate, sqlite3_column_blob(stmt, 2), 32);
+    }
+    return store_finish(stmt, result);
+}
+
+static bool decide_pending(struct mo_store *s, const char *kind, const struct pending_head *head,
+                           int64_t time) {
+    struct mo_store_review setting = {0};
+    struct mo_store_decision d = {
+        .kind = kind, .has_candidate = true, .has_review = true, .time = time};
+    memcpy(d.base, head->base, 32);
+    memcpy(d.candidate, head->candidate, 32);
+    memcpy(d.review, head->review, 32);
+    if (store_read_setting(s, &setting) != MO_STORE_OK)
+        return false;
+    d.intent = setting.intent;
+    return store_exec(s, "DELETE FROM pending") && store_decide(s, &d);
+}
+
+bool store_drop_stale(struct mo_store *s, int64_t time) {
+    struct pending_head head;
+    bool found = false;
+    return pending_head(s, &head, &found) == MO_STORE_OK &&
+           (!found || decide_pending(s, "stale", &head, time));
+}
+
+bool store_door_decided(struct mo_store *s, const struct mo_store_activation *a) {
+    const struct mo_store_decision *d = a->decision;
+    if (d == NULL)
+        return true;
+    struct mo_store_review review = {0};
+    struct pending_head head;
+    bool found = false;
+    int64_t records = review_count(s, "SELECT count(*) FROM decisions");
+    if (records < 0 || store_read_setting(s, &review) != MO_STORE_OK ||
+        pending_head(s, &head, &found) != MO_STORE_OK || review.version != a->approval_version)
+        return false;
+    bool own = d->has_review && found && memcmp(head.review, d->review, 32) == 0;
+    if ((d->has_review && !own) ||
+        (uint64_t)records + (found && !own ? 2u : 1u) > MO_LIMIT_REVIEW_RECORDS)
+        return false;
+    bool ok = !own || store_exec(s, "DELETE FROM pending");
+    int added = 0;
+    for (uint32_t i = 0; ok && i < a->approve_count; i++) {
+        sqlite3_stmt *stmt = NULL;
+        const void *blobs[] = {a->approve[i], d->review};
+        const int sizes[] = {32, 32};
+        ok = sqlite3_prepare_v2(s->db,
+                                "INSERT INTO approvals VALUES(?1,?3,?2) ON CONFLICT(digest) DO "
+                                "NOTHING",
+                                -1, &stmt, NULL) == SQLITE_OK &&
+             step_done(stmt, bind_blobs(stmt, 1, blobs, sizes, 2) &&
+                                 sqlite3_bind_int64(stmt, 3, (sqlite3_int64)review.version + 1) ==
+                                     SQLITE_OK);
+        added += ok ? sqlite3_changes(s->db) : 0;
+    }
+    return ok && (added == 0 || store_exec(s, "UPDATE review SET version=version+1 WHERE id=1")) &&
+           store_decide(s, d);
+}
+
+enum mo_store_review_status mo_store_hold(struct mo_store *s, const struct mo_store_pending *p,
+                                          const struct mo_store_decision *d) {
+    MO_ASSERT(s != NULL && p != NULL && d != NULL);
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_STORE_REVIEW_READ_BYTES);
+    struct mo_store_review review;
+    enum mo_store_review_status result = review_begin(s, &arena, &review, true);
+    if (result == MO_STORE_REVIEW_OK &&
+        (memcmp(review.program.source, p->base, 32) != 0 || review.version != p->version))
+        result = review_end(s, MO_STORE_REVIEW_STALE);
+    else if (result == MO_STORE_REVIEW_OK) {
+        struct pending_head head;
+        bool found = false;
+        sqlite3_stmt *stmt = NULL;
+        const void *blobs[] = {p->review, p->base, p->candidate};
+        const int sizes[] = {32, 32, 32};
+        bool ok =
+            pending_head(s, &head, &found) == MO_STORE_OK &&
+            (!found || decide_pending(s, "replaced", &head, d->time)) &&
+            sqlite3_prepare_v2(s->db, "INSERT INTO pending VALUES(1,?1,?2,?3,?4,?5,?6,?7)", -1,
+                               &stmt, NULL) == SQLITE_OK &&
+            step_done(
+                stmt,
+                bind_blobs(stmt, 1, blobs, sizes, 3) &&
+                    sqlite3_bind_text(stmt, 4, p->migration, -1, SQLITE_STATIC) == SQLITE_OK &&
+                    sqlite3_bind_int64(stmt, 5, (sqlite3_int64)p->version) == SQLITE_OK &&
+                    sqlite3_bind_text(stmt, 6,
+                                      p->difference_size > 0 ? (const char *)p->difference : "",
+                                      (int)p->difference_size, SQLITE_STATIC) == SQLITE_OK &&
+                    sqlite3_bind_blob(stmt, 7, p->bundle, (int)p->bundle_size, SQLITE_STATIC) ==
+                        SQLITE_OK) &&
+            store_decide(s, d);
+        result = review_end(s, ok ? MO_STORE_REVIEW_OK : MO_STORE_REVIEW_FAILED);
+    }
+    mo_arena_free(&arena);
+    return result;
+}
+
+enum mo_store_review_status mo_store_decide(struct mo_store *s, const struct mo_store_decision *d,
+                                            const uint8_t *drop) {
+    MO_ASSERT(s != NULL && d != NULL);
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_STORE_REVIEW_READ_BYTES);
+    struct mo_store_review review;
+    enum mo_store_review_status result = review_begin(s, &arena, &review, false);
+    if (result == MO_STORE_REVIEW_OK) {
+        struct pending_head head;
+        bool found = false;
+        bool ok = pending_head(s, &head, &found) == MO_STORE_OK &&
+                  (drop == NULL || !found || memcmp(head.review, drop, 32) != 0 ||
+                   store_exec(s, "DELETE FROM pending")) &&
+                  store_decide(s, d);
+        result = review_end(s, ok ? MO_STORE_REVIEW_OK : MO_STORE_REVIEW_FAILED);
+    }
+    mo_arena_free(&arena);
+    return result;
+}
+
+static const void *copy_column(sqlite3_stmt *stmt, int column, struct mo_arena *arena,
+                               size_t *size) {
+    *size = (size_t)sqlite3_column_bytes(stmt, column);
+    const void *bytes = sqlite3_column_blob(stmt, column);
+    uint8_t *copy = mo_arena_allocate(arena, *size + 1, 1);
+    if (copy == NULL || (bytes == NULL && *size != 0))
+        return NULL;
+    if (*size != 0)
+        memcpy(copy, bytes, *size);
+    copy[*size] = 0;
+    return copy;
+}
+
+enum mo_store_status mo_store_pending_read(struct mo_store *s, struct mo_arena *arena,
+                                           struct mo_store_pending *out, bool *found) {
+    MO_ASSERT(s != NULL && arena != NULL && out != NULL && found != NULL);
+    sqlite3_stmt *stmt = NULL;
+    int code = sqlite3_prepare_v2(s->db,
+                                  "SELECT review,base,candidate,migration,version,difference,"
+                                  "bundle FROM pending WHERE id=1",
+                                  -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return store_sqlite_status(code);
+    int step = sqlite3_step(stmt);
+    enum mo_store_status result = MO_STORE_OK;
+    *found = step == SQLITE_ROW;
+    struct mo_store_pending next = {0};
+    size_t migration = 0;
+    if (step != SQLITE_ROW && step != SQLITE_DONE)
+        result = store_sqlite_status(step);
+    else if (*found &&
+             (!store_blob_size(stmt, 0, 32) || !store_blob_size(stmt, 1, 32) ||
+              !store_blob_size(stmt, 2, 32) || sqlite3_column_type(stmt, 3) != SQLITE_TEXT ||
+              sqlite3_column_bytes(stmt, 3) > MO_LIMIT_UPGRADE_MIGRATION_NAME ||
+              sqlite3_column_type(stmt, 4) != SQLITE_INTEGER || sqlite3_column_int64(stmt, 4) < 0 ||
+              sqlite3_column_type(stmt, 5) != SQLITE_TEXT ||
+              sqlite3_column_bytes(stmt, 5) > 2 * MO_LIMIT_INTENT_LIST_BYTES ||
+              sqlite3_column_type(stmt, 6) != SQLITE_BLOB || sqlite3_column_bytes(stmt, 6) == 0 ||
+              sqlite3_column_bytes(stmt, 6) > MO_LIMIT_BUNDLE_BYTES))
+        result = MO_STORE_CORRUPT;
+    else if (*found) {
+        memcpy(next.review, sqlite3_column_blob(stmt, 0), 32);
+        memcpy(next.base, sqlite3_column_blob(stmt, 1), 32);
+        memcpy(next.candidate, sqlite3_column_blob(stmt, 2), 32);
+        next.version = (uint64_t)sqlite3_column_int64(stmt, 4);
+        next.migration = copy_column(stmt, 3, arena, &migration);
+        next.difference = copy_column(stmt, 5, arena, &next.difference_size);
+        next.bundle = copy_column(stmt, 6, arena, &next.bundle_size);
+        if (next.migration == NULL || next.difference == NULL || next.bundle == NULL)
+            result = MO_STORE_MEMORY;
+        else if (memchr(next.migration, 0, migration) != NULL ||
+                 !mo_utf8_valid((const uint8_t *)next.migration, migration) ||
+                 !mo_utf8_valid(next.difference, next.difference_size))
+            result = MO_STORE_CORRUPT;
+    }
+    if (result == MO_STORE_OK && *found)
+        *out = next;
+    return store_finish(stmt, result);
+}
+
+enum mo_store_status mo_store_decisions(struct mo_store *s,
+                                        bool (*consume)(const struct mo_store_decision *, void *),
+                                        void *context) {
+    MO_ASSERT(s != NULL && consume != NULL);
+    sqlite3_stmt *stmt = NULL;
+    int code = sqlite3_prepare_v2(s->db,
+                                  "SELECT time,kind,base,candidate,review,setting,unattended,"
+                                  "detail FROM decisions ORDER BY seq DESC",
+                                  -1, &stmt, NULL);
+    if (code != SQLITE_OK)
+        return store_sqlite_status(code);
+    enum mo_store_status result = MO_STORE_OK;
+    int step = SQLITE_DONE;
+    bool more = true;
+    while (more && result == MO_STORE_OK && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
+        const unsigned char *kind = sqlite3_column_text(stmt, 1);
+        const unsigned char *setting = sqlite3_column_text(stmt, 5);
+        const unsigned char *detail = sqlite3_column_text(stmt, 7);
+        int candidate = sqlite3_column_bytes(stmt, 3), review = sqlite3_column_bytes(stmt, 4);
+        if (sqlite3_column_type(stmt, 0) != SQLITE_INTEGER || kind == NULL || detail == NULL ||
+            setting == NULL || !store_blob_size(stmt, 2, 32) ||
+            sqlite3_column_type(stmt, 3) != SQLITE_BLOB || (candidate != 0 && candidate != 32) ||
+            sqlite3_column_type(stmt, 4) != SQLITE_BLOB || (review != 0 && review != 32) ||
+            !mo_utf8_valid(kind, (size_t)sqlite3_column_bytes(stmt, 1)) ||
+            !mo_utf8_valid(detail, (size_t)sqlite3_column_bytes(stmt, 7))) {
+            result = MO_STORE_CORRUPT;
+            break;
+        }
+        struct mo_store_decision d = {.kind = (const char *)kind,
+                                      .detail = (const char *)detail,
+                                      .has_candidate = candidate == 32,
+                                      .has_review = review == 32,
+                                      .intent = setting[0] == 'i',
+                                      .unattended = sqlite3_column_int64(stmt, 6) != 0,
+                                      .time = sqlite3_column_int64(stmt, 0)};
+        memcpy(d.base, sqlite3_column_blob(stmt, 2), 32);
+        if (d.has_candidate)
+            memcpy(d.candidate, sqlite3_column_blob(stmt, 3), 32);
+        if (d.has_review)
+            memcpy(d.review, sqlite3_column_blob(stmt, 4), 32);
+        more = consume(&d, context);
+    }
+    if (result == MO_STORE_OK && more && step != SQLITE_DONE)
+        result = store_sqlite_status(step);
+    return store_finish(stmt, result);
 }

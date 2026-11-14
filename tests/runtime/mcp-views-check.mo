@@ -141,12 +141,15 @@ fn main() : Int
   next = page.get("next") or stop "next page"
   require(McpViews.valid(7, next))
   require(McpViews.failure_id(next) == 7)
-  require(McpViews.names().size == 15)
+  require(McpViews.names().size == 18)
   require(McpViews.upgrade_kind(-1) == 0)
-  require(McpViews.upgrade_kind(15) == 0)
+  require(McpViews.upgrade_kind(18) == 0)
   require(McpViews.upgrade_kind(12) == 4)
   require(McpViews.upgrade_kind(13) == 5)
   require(McpViews.upgrade_kind(14) == 6)
+  require(McpViews.upgrade_kind(15) == 7)
+  require(McpViews.upgrade_kind(16) == 8)
+  require(McpViews.upgrade_kind(17) == 9)
   digest = "c".repeat(64)
   require(McpViews.valid(12, Json.Object({"offset": Json.int(3)})))
   require(
@@ -165,10 +168,34 @@ fn main() : Int
   require(McpViews.valid(14, Json.Object({})))
   require(McpViews.valid(14, Json.Object({"setting": Json.String("intent")})))
   require(not McpViews.valid(14, Json.Object({"setting": Json.String("never")})))
+  require(McpViews.valid(15, Json.Object({})))
+  require(not McpViews.valid(15, Json.Object({"review": Json.String(digest)})))
+  require(
+    McpViews.valid(16, Json.Object({"review": Json.String(digest), "answer": Json.String("yes")}))
+  )
+  require(not McpViews.valid(16, Json.Object({"review": Json.String(digest)})))
+  require(
+    not McpViews.valid(
+      16,
+      Json.Object({"review": Json.String(digest), "answer": Json.String("maybe")})
+    )
+  )
+  require(
+    not McpViews.valid(
+      16,
+      Json.Object({"review": Json.String("C".repeat(64)), "answer": Json.String("no")})
+    )
+  )
+  require(McpViews.valid(17, Json.Object({})))
   require(
     McpViews.upgrade_arguments(
       Json.Object({"program": Json.String(digest), "setting": Json.String("intent")})
-    ).drop(8) == [digest, "", "intent"]
+    ).drop(8) == [digest, "", "intent", "", ""]
+  )
+  require(
+    McpViews.upgrade_arguments(
+      Json.Object({"review": Json.String(digest), "answer": Json.String("no")})
+    ).drop(11) == [digest, "no"]
   )
   for i in 0..9
     require(McpViews.upgrade_kind(i) == 0)
@@ -245,7 +272,21 @@ fn main() : Int
   )
   require(not McpViews.valid(11, Json.Object({"slot": Json.String(up_slot)})))
   require(
-    McpViews.upgrade_arguments(up_page) == ["", "", "3", "", up_slot, "0", "0", "YWJj", "", "", ""]
+    McpViews.upgrade_arguments(up_page) == [
+      "",
+      "",
+      "3",
+      "",
+      up_slot,
+      "0",
+      "0",
+      "YWJj",
+      "",
+      "",
+      "",
+      "",
+      ""
+    ]
   )
   require(McpViews.names().contains?("mo-export"))
   require(McpViews.names().contains?("mo-failures"))
@@ -281,7 +322,9 @@ fn main() : Int
         Some(
           Json.Object(
             if fields.get("name") == Some(Json.String("mo-export")) or
-              fields.get("name") == Some(Json.String("mo-intent-items")): {
+              fields.get("name") == Some(Json.String("mo-intent-items")) or
+              fields.get("name") == Some(Json.String("mo-review-pending")) or
+              fields.get("name") == Some(Json.String("mo-upgrade-status")): {
                 "readOnlyHint": Json.Boolean(true),
                 "idempotentHint": Json.Boolean(true),
                 "openWorldHint": Json.Boolean(false)
@@ -289,10 +332,12 @@ fn main() : Int
               fields.get("name") == Some(Json.String("mo-upgrade-page")) or
               fields.get("name") == Some(Json.String("mo-upgrade-commit")) or
               fields.get("name") == Some(Json.String("mo-intent-approve")) or
-              fields.get("name") == Some(Json.String("mo-review-setting")): {
+              fields.get("name") == Some(Json.String("mo-review-setting")) or
+              fields.get("name") == Some(Json.String("mo-review-answer")): {
                 "readOnlyHint": Json.Boolean(false),
                 "destructiveHint": Json.Boolean(
-                  fields.get("name") == Some(Json.String("mo-upgrade-commit"))
+                  fields.get("name") == Some(Json.String("mo-upgrade-commit")) or
+                    fields.get("name") == Some(Json.String("mo-review-answer"))
                 ),
                 "idempotentHint": Json.Boolean(false),
                 "openWorldHint": Json.Boolean(false)

@@ -146,8 +146,9 @@ fn read(wire: Text) : List(Text)
   ]
 end
 
-## A closed upgrade-tool result: the error flag, the text rendering, the structured report and
-## the slot an open names ("" otherwise). Empty refuses the reply as malformed.
+## A closed upgrade-tool result: the error flag, the text rendering, the structured report, the
+## slot an open names, the next page offset and the review id of a held push ("" otherwise). Empty
+## refuses the reply as malformed.
 fn upgrade(wire: Text) : List(Text)
   fields = case envelope(wire)
     Some(value): value
@@ -187,12 +188,14 @@ fn upgrade(wire: Text) : List(Text)
   end
   return [] if rendered == "!"
   slot = text(structured, "slot")
+  review = text(structured, "review")
   [
     if failed: "true" else: "false",
     rendered,
     structured.to_text,
     if slot == "!": "" else: slot,
-    next_offset(structured)
+    next_offset(structured),
+    if review == "!": "" else: review
   ]
 end
 

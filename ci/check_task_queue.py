@@ -191,7 +191,9 @@ def catalog(queue):
                                                 'mo-supervisor', 'mo-log', 'mo-export', 'mo-failures',
                                                 'mo-upgrade-open', 'mo-upgrade-page',
                                                 'mo-upgrade-commit', 'mo-intent-items',
-                                                'mo-intent-approve', 'mo-review-setting'], tools
+                                                'mo-intent-approve', 'mo-review-setting',
+                                                'mo-review-pending', 'mo-review-answer',
+                                                'mo-upgrade-status'], tools
     for tool in tools:
         assert 0 < len(tool['description']) <= DESCRIPTION_LIMIT, tool['name']
     schemas = {tool['name']: tool['inputSchema'] for tool in tools}

@@ -52,9 +52,9 @@ struct mo_cli {
      * credentials' environment names; serve reads upgrade_token and approval_token. */
     const char *push_url, *push_base, *upgrade_token, *approval_token;
     bool items;
-    const char *setting;
+    const char *setting, *answer, *review;
     const char *approve[MO_CLI_ARGUMENTS];
-    uint32_t approve_count;
+    uint32_t approve_count, answers;
     uint64_t fetch_failure;
     const char *module;
     const char *output; /* emit's -o file */

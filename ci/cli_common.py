@@ -69,7 +69,8 @@ SERVE_TOOL_PAGE = 32
 SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export", "mo-failures"]
 # Listed after the views; they need the upgrade credential and change the service.
 SERVE_UPGRADE_NAMES = ["mo-upgrade-open", "mo-upgrade-page", "mo-upgrade-commit"]
-SERVE_REVIEW_NAMES = ["mo-intent-items", "mo-intent-approve", "mo-review-setting"]
+SERVE_REVIEW_NAMES = ["mo-intent-items", "mo-intent-approve", "mo-review-setting",
+                      "mo-review-pending", "mo-review-answer", "mo-upgrade-status"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count

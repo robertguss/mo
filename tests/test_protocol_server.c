@@ -325,12 +325,12 @@ bool mo_protocol_routing_sources(struct mo_sources *sources, const char *path, c
     mo_buffer_init(&names, MO_LIMIT_FILE_SIZE);
     mo_buffer_init(&catalog, MO_LIMIT_FILE_SIZE);
     mo_buffer_init(&renderer, MO_LIMIT_FILE_SIZE);
-    replace_fixture(&names, bytes, length, "    \"mo-review-setting\"\n",
-                    "    \"mo-review-setting\",\n    \"mo-future-view\"\n");
+    replace_fixture(&names, bytes, length, "    \"mo-upgrade-status\"\n",
+                    "    \"mo-upgrade-status\",\n    \"mo-future-view\"\n");
     replace_fixture(&catalog, names.bytes, names.length, "stop \"view description\"",
                     "\"fixture appended view\"");
     replace_fixture(&renderer, catalog.bytes, catalog.length, "  stats = observation.stats\n",
-                    "  if index == 15\n"
+                    "  if index == 18\n"
                     "    return Json.Object({\"appended_view\": Json.Boolean(true)})\n"
                     "  end\n  stats = observation.stats\n");
     bool added =
