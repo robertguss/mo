@@ -224,7 +224,7 @@ void mo_protocol_upgrade_call(struct mo_protocol_server *server,
 struct upgrade_arguments {
     char base[65], candidate[65], total[21], migration[MO_LIMIT_UPGRADE_MIGRATION_NAME + 1],
         slot[33], index[21], offset[21], program[65], digest[65], setting[11], review[65],
-        answer[4];
+        answer[4], source[8];
     char bytes[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
 };
 MO_MUST_USE bool mo_protocol_upgrade_arguments(struct mo_protocol_server *server,

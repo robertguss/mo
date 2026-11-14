@@ -198,6 +198,8 @@ enum flag_id {
     FLAG_SETTING,
     FLAG_YES,
     FLAG_NO,
+    FLAG_OUT,
+    FLAG_REVIEW,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -265,6 +267,8 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_SETTING, "--setting", false, false, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_YES, "--yes", false, false, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_NO, "--no", false, false, VALUE_TEXT, 0, ON(REVIEW)},
+    {FLAG_OUT, "--out", false, false, VALUE_TEXT, 0, ON(REVIEW)},
+    {FLAG_REVIEW, "--review", false, false, VALUE_TEXT, 0, ON(SERVE)},
 };
 #undef ON
 
@@ -308,6 +312,12 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         out->answer = id == FLAG_YES ? "yes" : "no";
         out->review = operand;
         out->answers++;
+        break;
+    case FLAG_OUT:
+        out->output = operand;
+        break;
+    case FLAG_REVIEW:
+        out->review = operand;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -557,12 +567,13 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         (out->file_count != 0 || out->push_url == NULL || out->fetch_token == NULL ||
          out->approval_token == NULL ||
          (out->items ? 1u : 0u) + (out->approve_count != 0 ? 1u : 0u) +
-                 (out->setting != NULL ? 1u : 0u) + out->answers !=
+                 (out->setting != NULL ? 1u : 0u) + (out->output != NULL ? 1u : 0u) +
+                 out->answers !=
              1))
         return refuse(out, error,
                       "usage: mo review --url URL --token-env NAME --approval-token-env NAME "
-                      "(--items | --base PROGRAM --approve DIGEST... | --setting everything|intent "
-                      "| --yes ID | --no ID)",
+                      "(--out DIR | --items | --base PROGRAM --approve DIGEST... | --setting "
+                      "everything|intent | --yes ID | --no ID)",
                       command, NULL);
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
@@ -614,6 +625,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                       "usage: mo push FILE --url URL --base DIGEST --token-env NAME "
                       "--upgrade-token-env NAME [--migrate Module.function] [--json]",
                       command, NULL);
+    if (out->command == MO_COMMAND_SERVE && out->review != NULL && !out->upgrade)
+        return refuse(out, error, "--review needs --upgrade", "--review", NULL);
     if (out->migration != NULL && out->command != MO_COMMAND_PUSH &&
         !(out->upgrade || out->upgrade_from != NULL || out->old_bundle != NULL ||
           out->compile_context != NULL))

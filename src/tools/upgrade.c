@@ -335,9 +335,9 @@ done:
     return ok;
 }
 bool mo_upgrade_compile_image(const struct mo_buffer *bundle, const struct mo_buffer *old,
-                              const char *migration, const struct mo_buffer *context,
+                              const char *migration, const struct mo_buffer *context, bool check,
                               struct upgrade_image *out, struct upgrade_report *report) {
-    struct compile_job job = {0};
+    struct compile_job job = {.check = check};
     if (!mo_upgrade_compile_begin("/proc/self/exe", bundle, old, migration, context, &job,
                                   report)) {
         mo_upgrade_image_buffers_init(out);

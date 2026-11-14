@@ -1,6 +1,7 @@
 #ifndef MO_TOOLS_UPGRADE_H
 #define MO_TOOLS_UPGRADE_H
 #include "check/check.h"
+#include "host/host.h"
 #include "tools/tools.h"
 MO_MUST_USE int mo_upgrade_emit(const struct mo_cli *cli, FILE *output, FILE *errors);
 MO_MUST_USE int mo_upgrade_serve(const struct mo_cli *cli, FILE *output, FILE *errors);
@@ -71,5 +72,25 @@ void mo_live_free(struct mo_live_upgrade *upgrade);
 MO_MUST_USE bool mo_live_refusal(struct mo_buffer *out, bool json, uint16_t code, const char *class,
                                  const char *message, const uint8_t *base, const uint8_t *candidate,
                                  const char *migration);
+
+enum { MO_DOOR_DIFFERENCE_BYTES = 2 * MO_LIMIT_INTENT_LIST_BYTES };
+enum {
+    MO_DOOR_BYTES = MO_STORE_REVIEW_READ_BYTES + 5 * MO_LIMIT_INTENT_ITEMS * 32 +
+                    MO_LIMIT_INTENT_ITEMS * (int)sizeof(struct mo_bundle_span) +
+                    MO_DOOR_DIFFERENCE_BYTES + MO_LIMIT_BUNDLE_BYTES +
+                    MO_LIMIT_UPGRADE_MIGRATION_NAME + 12 * MO_ARENA_CHUNK_HEADER
+};
+struct mo_door_view {
+    struct mo_buffer text;
+    uint8_t (*approve)[32], (*retire)[32];
+    uint32_t approve_count, retire_count;
+    bool keeps;
+};
+MO_MUST_USE bool mo_door_difference(struct mo_arena *arena, const struct mo_store_review *review,
+                                    const struct mo_intent_list *candidate,
+                                    struct mo_door_view *out);
+MO_MUST_USE bool mo_door_lines(struct mo_buffer *out, const uint8_t *bytes, size_t length);
+void mo_door_review_id(const uint8_t base[32], const uint8_t candidate[32], const char *migration,
+                       uint64_t version, const uint8_t *text, size_t size, uint8_t out[32]);
 
 #endif

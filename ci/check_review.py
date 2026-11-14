@@ -2,11 +2,15 @@
 """Approvals, the review setting and the review door on a real mo serve, driven through mo push,
 mo review and raw MCP calls: who may approve, stale and absent items, held, replaced, stale and
 answered upgrades, a handler that stops calling an approved function, restarts, activations,
-conversion of a v0.2.0 folder and SIGKILL during approvals."""
+conversion of a v0.2.0 folder, reading a held upgrade's source, checked restarts and SIGKILL
+during approvals."""
+import base64
 import http.client
+import http.server
 import json
 import pathlib
 import random
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -50,6 +54,8 @@ end
 '''
 B = A.replace("bumping never lowers the number", "bumping never ever lowers the number")
 APPROVE_HEADER = {"Mo-Approval-Authorization": f"Bearer {APPROVAL}"}
+PAD = "".join(f"# filler line {i:04} {'x' * 60}\n" for i in range(300))
+SHOWN = re.compile(r"error E1435: .*--review ([0-9a-f]{64})")
 
 
 def review(binary, service, *args, credential="APPROVAL", status=0):
@@ -375,6 +381,123 @@ def killed_approvals(binary, base):
     assert all(0 < count < total for count in counts), counts
 
 
+class Faulty(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        page = json.loads(body).get("params", {}).get("name") == "mo-review-source"
+        self.server.pages += page
+        if page and self.server.pages == 2 and self.server.fault is not None:
+            self.server.fault()
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.upstream, timeout=60)
+        headers = {k: v for k, v in self.headers.items() if k.lower() not in
+                   ("host", "content-length", "connection")}
+        connection.request("POST", "/mcp", body, headers)
+        response = connection.getresponse()
+        data = response.read()
+        connection.close()
+        if page and self.server.pages == 1 and self.server.tamper:
+            reply = json.loads(data)
+            shown = reply["result"]["structuredContent"]
+            raw = bytearray(base64.b64decode(shown["bytes"]))
+            raw[-1] ^= 1
+            shown["bytes"] = base64.b64encode(raw).decode()
+            data = json.dumps(reply).encode()
+        self.send_response(response.status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+def source_review(binary, base):
+    data = base / "source"
+    data.mkdir()
+    service = Service(binary, data, write(base, "s1", A))
+    program, _, marks = items(binary, service)
+    review(binary, service, "--base", program, *(arg for d in marks for arg in ("--approve", d)))
+    candidate = B + PAD
+    waiting = held(binary, service, write(base, "s2", candidate), program)
+    out = base / "source-out"
+    text, _ = review(binary, service, "--out", str(out))
+    lines = text.splitlines()
+    assert lines[0] == f"base {program}" and lines[-3:] == [
+        f"pending source in {out}/pending", f"active source in {out}/active",
+        f"review {waiting}"], lines
+    assert any(line.startswith("lacks ") for line in lines[:-3]), lines
+    assert (out / "pending/main.mo").read_text() == candidate
+    assert (out / "active/main.mo").read_text() == A
+    stale = tool(service, "mo-review-source", headers=APPROVE_HEADER, review="0" * 64,
+                 source="pending")
+    refused(stale, "E1435")
+    assert waiting in stale["content"][0]["text"], stale
+
+    replacement = write(base, "s3", candidate.replace("never ever", "always never"))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Faulty)
+    server.upstream = service.port
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    proxy = type("Proxy", (), {"port": server.server_address[1]})
+    try:
+        for fault, tamper, said in ((lambda: held(binary, service, replacement, program), False,
+                                     "changed or did not arrive whole"),
+                                    (None, True, "does not match the review id")):
+            server.pages, server.fault, server.tamper = 0, fault, tamper
+            out = base / f"source-{said.split()[0]}"
+            text, error = review(binary, proxy, "--out", str(out), status=1)
+            assert said in error and "\nreview " not in "\n" + text, (text, error)
+            assert server.pages >= 2 and not (out / "pending").exists(), server.pages
+        assert "error E1435:" in review(binary, service, "--yes", waiting, status=1)[1]
+        current = pending(service)
+        assert current != waiting
+        text, _ = review(binary, service, "--out", str(base / "source-again"))
+        assert text.endswith(f"review {current}\n"), text
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert service.stop() == 0
+
+
+def checked_restart(binary, base):
+    data = base / "restart"
+    data.mkdir()
+    service = Service(binary, data, write(base, "r1", A))
+    program, _, marks = items(binary, service)
+    review(binary, service, "--base", program, *(arg for d in marks for arg in ("--approve", d)))
+    stale = held(binary, service, write(base, "r2", B), program)
+    assert service.stop() == 0
+    edited = write(base, "r3", A.replace("result >= n - slack", "result + slack >= n"))
+    serve = [binary, "serve", str(edited), "--data", str(data), "--port", "0", *live.SECRETS,
+             "--upgrade"]
+    first = subprocess.run(serve, capture_output=True, timeout=300, env=ENV)
+    error = first.stderr.decode()
+    shown = SHOWN.search(error)
+    assert first.returncode == 1 and shown and error.index("lacks ") < shown.start(), first
+    service = Service(binary, data, edited, ["--upgrade", "--review", shown.group(1)],
+                      setting=None)
+    after, _, now = items(binary, service)
+    assert after != program and len(now) == 2 and set(now.values()) == {"approved"}, now
+    report = status(service)
+    assert report["pending"] is None, report
+    kinds = [d["kind"] for d in report["decisions"]]
+    assert kinds[:4] == ["stale", "restart", "refused", "held"], kinds
+    assert report["decisions"][0]["review"] == stale, report
+    assert report["decisions"][1]["review"] == shown.group(1), report
+    assert report["decisions"][2]["detail"] == "E1435", report
+    assert service.stop() == 0
+
+    broken = write(base, "r4", A + live.BROKEN[len(live.V2):])
+    failed = subprocess.run([*serve[:2], str(broken), *serve[3:]], capture_output=True,
+                            timeout=300, env=ENV)
+    error = failed.stderr.decode()
+    assert failed.returncode == 1 and error.startswith("error E1433:"), failed
+    assert "failed Main.below.promise.1" in error, error
+    service = Service(binary, data, setting=None)
+    assert items(binary, service)[0] == after
+    assert service.stop() == 0
+
+
 def main(binary):
     binary = str(pathlib.Path(binary).resolve())
     with tempfile.TemporaryDirectory() as directory:
@@ -384,9 +507,12 @@ def main(binary):
         unreached(binary, base)
         migration(binary, base)
         conversion(binary, base)
+        source_review(binary, base)
+        checked_restart(binary, base)
         killed_approvals(binary, base)
     print("review: approvals, the setting, credentials, held and answered upgrades, unreached "
-          "items, restarts, activation, v0.2.0 conversion and kills during approvals passed")
+          "items, restarts, activation, v0.2.0 conversion, held source, checked restarts and kills "
+          "during approvals passed")
 
 
 if __name__ == "__main__":

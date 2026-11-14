@@ -49,14 +49,14 @@ bool mo_protocol_upgrade_arguments(struct mo_protocol_server *s, struct protocol
     struct mo_cell json = mo_value_field(fields, 2), list;
     if (!mo_protocol_invoke(s, c, PF_UPGRADE_ARGUMENTS, &json, &list))
         return false;
-    char *targets[] = {out->base,    out->candidate, out->total, out->migration, out->slot,
-                       out->index,   out->offset,    out->bytes, out->program,   out->digest,
-                       out->setting, out->review,    out->answer};
+    char *targets[] = {out->base,    out->candidate, out->total,  out->migration, out->slot,
+                       out->index,   out->offset,    out->bytes,  out->program,   out->digest,
+                       out->setting, out->review,    out->answer, out->source};
     const size_t sizes[] = {sizeof out->base,      sizeof out->candidate, sizeof out->total,
                             sizeof out->migration, sizeof out->slot,      sizeof out->index,
                             sizeof out->offset,    sizeof out->bytes,     sizeof out->program,
                             sizeof out->digest,    sizeof out->setting,   sizeof out->review,
-                            sizeof out->answer};
+                            sizeof out->answer,    sizeof out->source};
     enum { FIELDS = sizeof sizes / sizeof *sizes };
     bool ok = mo_list_size(list) == FIELDS;
     for (uint32_t i = 0; ok && i < FIELDS; i++) {

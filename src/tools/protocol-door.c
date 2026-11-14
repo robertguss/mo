@@ -1,7 +1,7 @@
 #define _DEFAULT_SOURCE
 #include "base/codes.h"
 #include "base/intent-list.h"
-#include "base/sha256.h"
+#include "base/upload.h"
 #include "base/utf8.h"
 #include "tools/protocol-server.h"
 #include "tools/tools.h"
@@ -12,145 +12,8 @@
 #include <string.h>
 #include <sys/random.h>
 
-enum { REVIEW_PENDING = 7 };
+enum { REVIEW_PENDING = 7, REVIEW_SOURCE = 10 };
 enum { PAGE_BYTES = MO_LIMIT_MCP_RESPONSE_BYTES / 4 - 256 };
-enum { DIFFERENCE_BYTES = 2 * MO_LIMIT_INTENT_LIST_BYTES };
-enum {
-    DOOR_BYTES = MO_STORE_REVIEW_READ_BYTES + 5 * MO_LIMIT_INTENT_ITEMS * 32 +
-                 MO_LIMIT_INTENT_ITEMS * (int)sizeof(struct mo_bundle_span) + DIFFERENCE_BYTES +
-                 MO_LIMIT_BUNDLE_BYTES + MO_LIMIT_UPGRADE_MIGRATION_NAME +
-                 12 * MO_ARENA_CHUNK_HEADER
-};
-
-struct door_view {
-    struct mo_buffer text;
-    uint8_t (*approve)[32], (*retire)[32];
-    uint32_t approve_count, retire_count;
-    bool keeps;
-};
-
-static int digest_order(const void *a, const void *b) {
-    return memcmp(a, b, 32);
-}
-
-static uint8_t (*sorted(struct mo_arena *arena, const struct mo_intent_list *list, bool reached,
-                        uint32_t *count))[32] {
-    *count = 0;
-    uint8_t(*digests)[32] =
-        mo_arena_allocate_array(arena, list->count == 0 ? 1 : list->count, 32, _Alignof(uint8_t));
-    if (digests == NULL)
-        return NULL;
-    struct mo_binary cursor = mo_intent_list_first(list);
-    struct mo_intent_entry entry;
-    for (uint32_t i = 0; i < list->count; i++) {
-        MO_ASSERT(mo_intent_list_next(&cursor, &entry));
-        if (entry.reached || !reached)
-            memcpy(digests[(*count)++], entry.digest, 32);
-    }
-    qsort(digests, *count, 32, digest_order);
-    return digests;
-}
-
-static bool listed(const uint8_t (*digests)[32], uint32_t count, const uint8_t *digest) {
-    return bsearch(digest, digests, count, 32, digest_order) != NULL;
-}
-
-static bool entry(struct mo_buffer *out, const char *mark, const struct mo_intent_entry *e) {
-    char digest[65];
-    mo_protocol_hex(e->digest, 32, digest);
-    bool ok = mo_buffer_append_text(out, mark) && mo_buffer_append_byte(out, ' ') &&
-              mo_buffer_append(out, digest, 64) && mo_buffer_append_byte(out, ' ') &&
-              mo_buffer_append_text(out, mo_intent_kind_name(e->kind)) &&
-              mo_buffer_append_byte(out, ' ') &&
-              mo_buffer_append(out, e->name.bytes, e->name.length);
-    for (size_t at = 0; ok && at < e->text.length;) {
-        const uint8_t *end = memchr(e->text.bytes + at, '\n', e->text.length - at);
-        size_t length = end == NULL ? e->text.length - at : (size_t)(end - e->text.bytes) - at;
-        ok =
-            mo_buffer_append_text(out, "\n  ") && mo_buffer_append(out, e->text.bytes + at, length);
-        at += length + 1;
-    }
-    struct mo_binary reads = e->reads;
-    struct mo_bundle_span name;
-    for (uint32_t i = 0; ok && i < e->read_count; i++)
-        ok = mo_intent_list_read_name(&reads, &name) &&
-             mo_buffer_append_text(out, i == 0 ? "\n  reads " : ", ") &&
-             mo_buffer_append(out, name.bytes, name.length);
-    return ok && mo_buffer_append_byte(out, '\n');
-}
-
-static bool same_owner(const struct mo_bundle_span *owners, uint32_t count,
-                       struct mo_bundle_span owner) {
-    for (uint32_t i = 0; i < count; i++)
-        if (owners[i].length == owner.length &&
-            memcmp(owners[i].bytes, owner.bytes, owner.length) == 0)
-            return true;
-    return false;
-}
-
-static bool difference(struct mo_arena *arena, const struct mo_store_review *r,
-                       const struct mo_intent_list *candidate, struct door_view *out) {
-    uint32_t has_count, reached_count, had_count;
-    uint8_t(*has)[32] = sorted(arena, candidate, false, &has_count);
-    uint8_t(*reached)[32] = sorted(arena, candidate, true, &reached_count);
-    uint8_t(*had)[32] = sorted(arena, &r->items, false, &had_count);
-    struct mo_bundle_span *owners =
-        mo_arena_allocate_array(arena, r->approved_count == 0 ? 1 : r->approved_count,
-                                sizeof *owners, _Alignof(struct mo_bundle_span));
-    out->approve = mo_arena_allocate_array(arena, candidate->count == 0 ? 1 : candidate->count, 32,
-                                           _Alignof(uint8_t));
-    out->retire = mo_arena_allocate_array(arena, r->approved_count == 0 ? 1 : r->approved_count, 32,
-                                          _Alignof(uint8_t));
-    out->approve_count = out->retire_count = 0;
-    bool ok = has != NULL && reached != NULL && had != NULL && owners != NULL &&
-              out->approve != NULL && out->retire != NULL;
-    uint32_t lacking = 0;
-    out->keeps = true;
-    struct mo_binary cursor = mo_intent_list_first(&r->items);
-    struct mo_intent_entry e;
-    for (uint32_t i = 0; ok && i < r->items.count; i++) {
-        MO_ASSERT(mo_intent_list_next(&cursor, &e));
-        if (!mo_store_review_approved(r, e.digest))
-            continue;
-        if (!listed((const uint8_t(*)[32])has, has_count, e.digest)) {
-            owners[lacking++] = e.owner;
-            ok = entry(&out->text, "lacks", &e);
-            out->keeps = false;
-        } else if (!listed((const uint8_t(*)[32])reached, reached_count, e.digest)) {
-            memcpy(out->retire[out->retire_count++], e.digest, 32);
-            ok = entry(&out->text, "not reached", &e);
-            out->keeps = false;
-        }
-    }
-    cursor = mo_intent_list_first(candidate);
-    for (uint32_t i = 0; ok && i < candidate->count; i++) {
-        MO_ASSERT(mo_intent_list_next(&cursor, &e));
-        if (!listed((const uint8_t(*)[32])had, had_count, e.digest) &&
-            same_owner(owners, lacking, e.owner)) {
-            memcpy(out->approve[out->approve_count++], e.digest, 32);
-            ok = entry(&out->text, "added", &e);
-        }
-    }
-    return ok;
-}
-
-static void review_id(const uint8_t base[32], const uint8_t candidate[32], const char *migration,
-                      uint64_t version, const uint8_t *text, size_t size, uint8_t out[32]) {
-    uint8_t numbers[24];
-    uint64_t values[] = {strlen(migration), version, size};
-    for (size_t i = 0; i < 24; i++)
-        numbers[i] = (uint8_t)(values[i / 8] >> (56 - 8 * (i % 8)));
-    struct mo_sha256 hash;
-    mo_sha256_init(&hash);
-    mo_sha256_update(&hash, base, 32);
-    mo_sha256_update(&hash, candidate, 32);
-    mo_sha256_update(&hash, numbers, 8);
-    mo_sha256_update(&hash, migration, strlen(migration));
-    mo_sha256_update(&hash, numbers + 8, 16);
-    mo_sha256_update(&hash, text, size);
-    mo_sha256_finish(&hash, out);
-}
-
 static const char *migration_of(const struct protocol_upgrade *u) {
     return u->has_migration ? u->migration : "";
 }
@@ -207,7 +70,7 @@ static bool held_reply(struct mo_protocol_server *s, struct protocol_connection 
 }
 
 static enum door_outcome hold(struct mo_protocol_server *s, struct protocol_connection *caller,
-                              const struct mo_store_review *r, const struct door_view *view) {
+                              const struct mo_store_review *r, const struct mo_door_view *view) {
     struct protocol_upgrade *u = &s->upgrade;
     const struct mo_store_program *candidate = mo_live_program(u->live);
     struct mo_store_pending pending = {.migration = migration_of(u),
@@ -271,16 +134,16 @@ enum door_outcome mo_protocol_door_decide(struct mo_protocol_server *s,
                                           struct protocol_connection *caller) {
     struct protocol_upgrade *u = &s->upgrade;
     struct mo_arena arena;
-    mo_arena_init(&arena, DOOR_BYTES);
-    struct door_view view;
-    mo_buffer_init(&view.text, DIFFERENCE_BYTES);
+    mo_arena_init(&arena, MO_DOOR_BYTES);
+    struct mo_door_view view;
+    mo_buffer_init(&view.text, MO_DOOR_DIFFERENCE_BYTES);
     struct mo_store_review r = {0};
     struct mo_intent_list items;
     const struct mo_store_program *candidate = mo_live_program(u->live);
     enum door_outcome outcome = DOOR_REFUSED;
     if (mo_store_review_read(s->store, &arena, &r) != MO_STORE_OK || !r.reviewed ||
         !mo_intent_list_read(candidate->items, candidate->items_size, &items) ||
-        !difference(&arena, &r, &items, &view))
+        !mo_door_difference(&arena, &r, &items, &view))
         outcome = door_refuse(u, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                               "the data folder's review tables could not be read");
     else if (memcmp(r.program.source, u->base, 32) != 0) {
@@ -299,8 +162,8 @@ enum door_outcome mo_protocol_door_decide(struct mo_protocol_server *s,
         u->would = view.keeps && !u->has_migration;
         u->approval_version = r.version;
         uint8_t id[32];
-        review_id(r.program.source, candidate->source, migration_of(u), r.version, view.text.bytes,
-                  view.text.length, id);
+        mo_door_review_id(r.program.source, candidate->source, migration_of(u), r.version,
+                          view.text.bytes, view.text.length, id);
         if (u->yes)
             outcome = recheck(s, &arena, id, r.intent);
         else if (u->intent && u->would)
@@ -320,16 +183,16 @@ bool mo_protocol_door_activation(struct mo_protocol_server *s,
                                  struct mo_store_activation *activation,
                                  struct mo_store_decision *decision, struct mo_arena *arena) {
     struct protocol_upgrade *u = &s->upgrade;
-    mo_arena_init(arena, DOOR_BYTES);
-    struct door_view view;
-    mo_buffer_init(&view.text, DIFFERENCE_BYTES);
+    mo_arena_init(arena, MO_DOOR_BYTES);
+    struct mo_door_view view;
+    mo_buffer_init(&view.text, MO_DOOR_DIFFERENCE_BYTES);
     view.approve_count = view.retire_count = 0;
     struct mo_store_review r = {0};
     struct mo_intent_list items;
     bool ok = mo_store_review_read(s->store, arena, &r) == MO_STORE_OK && r.reviewed &&
               mo_intent_list_read(activation->candidate.items, activation->candidate.items_size,
                                   &items) &&
-              (!u->yes || difference(arena, &r, &items, &view));
+              (!u->yes || mo_door_difference(arena, &r, &items, &view));
     if (!ok)
         mo_live_refuse(u->live, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                        "the data folder's review tables could not be read");
@@ -497,28 +360,75 @@ static void dropped_reply(struct mo_protocol_server *s, struct protocol_connecti
     mo_buffer_free(&text);
 }
 
-static void answer(struct mo_protocol_server *s, struct protocol_connection *c,
-                   const struct upgrade_arguments *a, const struct mo_store_review *r,
-                   const struct mo_store_pending *p, bool found) {
-    uint8_t named[32], current[32];
-    MO_ASSERT(mo_protocol_unhex(a->review, named, 32));
+static bool named(struct mo_protocol_server *s, struct protocol_connection *c,
+                  const struct upgrade_arguments *a, const struct mo_store_review *r,
+                  const struct mo_store_pending *p, bool found) {
+    uint8_t id[32], current[32];
+    MO_ASSERT(mo_protocol_unhex(a->review, id, 32));
     if (!found) {
         mo_protocol_upgrade_refuse(s, c, MO_CODE_REVIEW_NOT_PENDING, "review",
                                    "no upgrade is pending", NULL);
-        return;
+        return false;
     }
-    review_id(r->program.source, p->candidate, p->migration, r->version, p->difference,
-              p->difference_size, current);
-    if (memcmp(named, p->review, 32) != 0 || memcmp(current, p->review, 32) != 0) {
-        char hex[65], message[192];
-        mo_protocol_hex(p->review, 32, hex);
-        int n = snprintf(message, sizeof message,
-                         "the review id is not the pending upgrade's; the pending review id is %s",
-                         hex);
-        MO_ASSERT(n > 0 && (size_t)n < sizeof message);
-        mo_protocol_upgrade_refuse(s, c, MO_CODE_REVIEW_MISMATCH, "review", message, NULL);
-        return;
-    }
+    mo_door_review_id(r->program.source, p->candidate, p->migration, r->version, p->difference,
+                      p->difference_size, current);
+    if (memcmp(id, p->review, 32) == 0 && memcmp(current, p->review, 32) == 0)
+        return true;
+    char hex[65], message[192];
+    mo_protocol_hex(p->review, 32, hex);
+    int n =
+        snprintf(message, sizeof message,
+                 "the review id is not the pending upgrade's; the pending review id is %s", hex);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof message);
+    mo_protocol_upgrade_refuse(s, c, MO_CODE_REVIEW_MISMATCH, "review", message, NULL);
+    return false;
+}
+
+static void source_page(struct mo_protocol_server *s, struct protocol_connection *c,
+                        const struct upgrade_arguments *a, const struct mo_store_pending *p) {
+    const struct protocol_upgrade *u = &s->upgrade;
+    bool pending = strcmp(a->source, "pending") == 0;
+    MO_ASSERT(pending || u->active_found);
+    const uint8_t *bundle = pending ? p->bundle : u->active.bundle;
+    size_t total = pending ? p->bundle_size : u->active.bundle_size;
+    uint64_t offset = 0;
+    if (a->offset[0] != 0 && !mo_protocol_decimal(a->offset, &offset))
+        offset = UINT64_MAX;
+    size_t at = offset < total ? (size_t)offset : total;
+    size_t length =
+        total - at < MO_LIMIT_UPGRADE_PAGE_BYTES ? total - at : MO_LIMIT_UPGRADE_PAGE_BYTES;
+    char bytes[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
+    mo_upload_text(bundle + at, length, bytes);
+    struct mo_buffer json, text;
+    mo_buffer_init(&json, MO_LIMIT_UPGRADE_PAGE_TEXT + 512);
+    mo_buffer_init(&text, 256);
+    bool ok = append_hex(&json, "{\"version\":1,\"review\":\"", p->review) &&
+              mo_buffer_append_text(&json, "\",\"source\":\"") &&
+              mo_buffer_append_text(&json, pending ? "pending" : "active") &&
+              mo_buffer_append_text(&json, "\",\"offset\":") && mo_buffer_append_uint(&json, at) &&
+              mo_buffer_append_text(&json, ",\"total\":") && mo_buffer_append_uint(&json, total) &&
+              mo_buffer_append_text(&json, ",\"bytes\":\"") &&
+              mo_buffer_append_text(&json, bytes) && mo_buffer_append_byte(&json, '"') &&
+              (at + length == total ||
+               (mo_buffer_append_text(&json, ",\"next\":{\"offset\":") &&
+                mo_buffer_append_uint(&json, at + length) && mo_buffer_append_byte(&json, '}'))) &&
+              mo_buffer_append_byte(&json, '}') &&
+              mo_buffer_append_text(&text,
+                                    pending ? "pending source, bytes " : "active source, bytes ") &&
+              mo_buffer_append_uint(&text, at) && mo_buffer_append_text(&text, " to ") &&
+              mo_buffer_append_uint(&text, at + length) && mo_buffer_append_text(&text, " of ") &&
+              mo_buffer_append_uint(&text, total) && mo_buffer_append_byte(&text, '\n');
+    if (ok)
+        mo_protocol_upgrade_reply(s, c, &json, &text, false);
+    else
+        mo_protocol_fallback(s, c, PE_MEMORY, EFFECT_NONE);
+    mo_buffer_free(&json);
+    mo_buffer_free(&text);
+}
+
+static void answer(struct mo_protocol_server *s, struct protocol_connection *c,
+                   const struct upgrade_arguments *a, const struct mo_store_review *r,
+                   const struct mo_store_pending *p) {
     if (strcmp(a->answer, "yes") == 0) {
         if (s->upgrade.open)
             mo_protocol_upgrade_refuse(s, c, MO_CODE_UPGRADE_BUSY, "busy",
@@ -554,7 +464,7 @@ static void answer(struct mo_protocol_server *s, struct protocol_connection *c,
 void mo_protocol_door_call(struct mo_protocol_server *s, struct protocol_connection *c,
                            uint32_t kind, const struct upgrade_arguments *a) {
     struct mo_arena arena;
-    mo_arena_init(&arena, DOOR_BYTES);
+    mo_arena_init(&arena, MO_DOOR_BYTES);
     struct mo_store_review r = {0};
     struct mo_store_pending p = {0};
     bool found = false;
@@ -564,8 +474,12 @@ void mo_protocol_door_call(struct mo_protocol_server *s, struct protocol_connect
                                    "the data folder's review tables could not be read", NULL);
     else if (kind == REVIEW_PENDING)
         pending_reply(s, c, &p, found);
-    else
-        answer(s, c, a, &r, &p, found);
+    else if (named(s, c, a, &r, &p, found)) {
+        if (kind == REVIEW_SOURCE)
+            source_page(s, c, a, &p);
+        else
+            answer(s, c, a, &r, &p);
+    }
     mo_arena_free(&arena);
 }
 
@@ -629,7 +543,7 @@ void mo_protocol_door_status(struct mo_protocol_server *s, struct protocol_conne
         return;
     }
     struct mo_arena arena;
-    mo_arena_init(&arena, DIFFERENCE_BYTES + MO_LIMIT_BUNDLE_BYTES +
+    mo_arena_init(&arena, MO_DOOR_DIFFERENCE_BYTES + MO_LIMIT_BUNDLE_BYTES +
                               MO_LIMIT_UPGRADE_MIGRATION_NAME + 4 * MO_ARENA_CHUNK_HEADER);
     struct mo_store_pending p = {0};
     bool found = false;

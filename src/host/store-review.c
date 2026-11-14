@@ -264,11 +264,13 @@ static bool retire_approvals(struct mo_store *s, const struct mo_store_program *
     return ok;
 }
 
+static bool review_ready(struct mo_store *s) {
+    return review_tables_ready(s) &&
+           store_exec(s, "INSERT INTO review VALUES(1,'everything',0) ON CONFLICT(id) DO NOTHING");
+}
+
 bool store_review_write(struct mo_store *s, const struct mo_store_program *p) {
-    return review_tables_ready(s) && write_items(s, p) &&
-           store_exec(s,
-                      "INSERT INTO review VALUES(1,'everything',0) ON CONFLICT(id) DO NOTHING") &&
-           retire_approvals(s, p);
+    return review_ready(s) && write_items(s, p) && retire_approvals(s, p);
 }
 
 bool store_not_version_two(struct mo_store *s) {
@@ -421,13 +423,15 @@ bool store_door_decided(struct mo_store *s, const struct mo_store_activation *a)
     struct mo_store_review review = {0};
     struct pending_head head;
     bool found = false;
+    if (!review_ready(s))
+        return false;
     int64_t records = review_count(s, "SELECT count(*) FROM decisions");
     if (records < 0 || store_read_setting(s, &review) != MO_STORE_OK ||
         pending_head(s, &head, &found) != MO_STORE_OK || review.version != a->approval_version)
         return false;
-    bool own = d->has_review && found && memcmp(head.review, d->review, 32) == 0;
-    if ((d->has_review && !own) ||
-        (uint64_t)records + (found && !own ? 2u : 1u) > MO_LIMIT_REVIEW_RECORDS)
+    bool yes = strcmp(d->kind, "yes") == 0;
+    bool own = yes && found && memcmp(head.review, d->review, 32) == 0;
+    if ((yes && !own) || (uint64_t)records + (found && !own ? 2u : 1u) > MO_LIMIT_REVIEW_RECORDS)
         return false;
     bool ok = !own || store_exec(s, "DELETE FROM pending");
     int added = 0;

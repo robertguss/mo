@@ -66,8 +66,12 @@ bool mo_upgrade_migration_state(const struct upgrade_image *old, const struct up
 int mo_upgrade_show_report(const struct mo_cli *cli, FILE *output, FILE *errors,
                            const struct upgrade_report *report);
 bool mo_upgrade_compile_image(const struct mo_buffer *bundle, const struct mo_buffer *old,
-                              const char *migration, const struct mo_buffer *context,
+                              const char *migration, const struct mo_buffer *context, bool check,
                               struct upgrade_image *out, struct upgrade_report *report);
+bool mo_upgrade_restart_door(const struct mo_cli *cli, struct mo_store *store,
+                             struct mo_arena *arena, struct mo_store_activation *activation,
+                             struct mo_store_decision *decision, FILE *errors,
+                             struct upgrade_report *report);
 bool mo_upgrade_program_metadata(const struct mo_store_program *program,
                                  struct mo_compile_metadata *out);
 

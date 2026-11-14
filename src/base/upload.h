@@ -34,4 +34,5 @@ MO_MUST_USE enum mo_upload_status mo_upload_page(struct mo_upload *upload, uint6
  * *written and out are unspecified. */
 MO_MUST_USE bool mo_upload_base64(const uint8_t *text, size_t length, uint8_t *out, size_t capacity,
                                   size_t *written);
+void mo_upload_text(const uint8_t *bytes, size_t length, char *out);
 #endif

@@ -5,7 +5,13 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { REVIEW_ITEMS = 4, REVIEW_APPROVE = 5, REVIEW_SETTING = 6, REVIEW_ANSWER = 8 };
+enum {
+    REVIEW_ITEMS = 4,
+    REVIEW_APPROVE = 5,
+    REVIEW_SETTING = 6,
+    UPGRADE_STATUS = 9,
+    REVIEW_SOURCE = 10
+};
 enum { PAGE_BYTES = MO_LIMIT_MCP_RESPONSE_BYTES / 4 - 256 };
 
 struct review_reply {
@@ -207,7 +213,7 @@ static void answer(struct mo_protocol_server *s, struct protocol_connection *c, 
 
 void mo_protocol_review_call(struct mo_protocol_server *s, struct protocol_connection *c,
                              uint32_t kind) {
-    MO_ASSERT(kind >= REVIEW_ITEMS && kind <= REVIEW_ANSWER);
+    MO_ASSERT(kind >= REVIEW_ITEMS && kind <= REVIEW_SOURCE && kind != UPGRADE_STATUS);
     if (!s->approval_enabled || !c->approval_authorized) {
         mo_protocol_upgrade_refuse(s, c, MO_CODE_UPGRADE_CREDENTIAL, "credential",
                                    s->approval_enabled

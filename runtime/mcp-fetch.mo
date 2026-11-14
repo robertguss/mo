@@ -147,8 +147,10 @@ fn read(wire: Text) : List(Text)
 end
 
 ## A closed upgrade-tool result: the error flag, the text rendering, the structured report, the
-## slot an open names, the next page offset and the review id of a held push ("" otherwise). Empty
-## refuses the reply as malformed.
+## slot an open names, the next page offset, the review id of a held push, and a held upgrade's
+## base and candidate digests, migration, approval version, intent difference, whether it is
+## clipped, and a source page's total and bytes ("" where absent). Empty refuses the reply as
+## malformed.
 fn upgrade(wire: Text) : List(Text)
   fields = case envelope(wire)
     Some(value): value
@@ -187,16 +189,34 @@ fn upgrade(wire: Text) : List(Text)
     Some(_) | None: return []
   end
   return [] if rendered == "!"
-  slot = text(structured, "slot")
-  review = text(structured, "review")
   [
     if failed: "true" else: "false",
     rendered,
     structured.to_text,
-    if slot == "!": "" else: slot,
+    present(structured, "slot"),
     next_offset(structured),
-    if review == "!": "" else: review
+    present(structured, "review"),
+    present(structured, "base_source"),
+    present(structured, "candidate_source"),
+    present(structured, "migration"),
+    present(structured, "approval_version"),
+    present(structured, "difference"),
+    if clipped(structured): "true" else: "false",
+    present(structured, "total"),
+    present(structured, "bytes")
   ]
+end
+
+fn present(structured: Json.Json, key: Text) : Text
+  value = text(structured, key)
+  if value == "!": "" else: value
+end
+
+fn clipped(structured: Json.Json) : Bool
+  case structured
+    Json.Object(fields): fields.get("clipped") == Some(Json.Boolean(true))
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): false
+  end
 end
 
 fn next_offset(structured: Json.Json) : Text

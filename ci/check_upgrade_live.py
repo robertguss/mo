@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import pathlib
+import re
 import select
 import signal
 import socket
@@ -525,7 +526,12 @@ def budget_then_restart(binary, root):
         assert service.value("read") == "v1:4"
     finally:
         service.stop()
-    service = Service(binary, data, slow, ["--upgrade", "--migrate", "migrate"])
+    restart = ["--upgrade", "--migrate", "migrate"]
+    held = subprocess.run([binary, "serve", str(slow), "--data", str(data), "--port", "0",
+                           *SECRETS, *restart], env=ENV, capture_output=True, timeout=300)
+    shown = re.search(rb"error E1435: .*--review ([0-9a-f]{64})", held.stderr)
+    assert held.returncode == 1 and shown, held
+    service = Service(binary, data, slow, [*restart, "--review", shown.group(1).decode()])
     try:
         assert service.value("read") == "v3:slow:4"
     finally:

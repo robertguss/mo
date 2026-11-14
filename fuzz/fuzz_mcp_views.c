@@ -86,7 +86,7 @@ static void upgrades(struct mo_process *process, struct mo_image *image, const u
         return;
     if (invoke(process, image, reader, &text, &result)) {
         uint32_t count = mo_list_size(result);
-        MO_ASSERT(count == 0 || count == 1 || count == 4);
+        MO_ASSERT(count == 0 || count == 1 || count == 14);
         mo_value_drop(heap, file->functions[reader].result_type, result);
     }
     if (invoke(process, image, parse, &text, &result)) {
@@ -95,12 +95,12 @@ static void upgrades(struct mo_process *process, struct mo_image *image, const u
             struct mo_cell json = mo_cell_get_payload(result);
             if (mo_case_shape(mo_image_types(image), type, 0) == MO_CASE_BOXED)
                 json = mo_value_field(json, 0);
-            for (int64_t index = 9; index <= 11; index++) {
+            for (int64_t index = 9; index <= 18; index++) {
                 struct mo_cell args[] = {mo_cell_int(index), json}, checked;
                 if (invoke(process, image, valid, args, &checked) && mo_cell_get_bool(checked)) {
                     struct mo_cell fields;
                     if (invoke(process, image, extract, &json, &fields)) {
-                        MO_ASSERT(mo_list_size(fields) == 8);
+                        MO_ASSERT(mo_list_size(fields) == 14);
                         mo_value_drop(heap, file->functions[extract].result_type, fields);
                     }
                 }

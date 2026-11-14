@@ -102,7 +102,8 @@ fn names() : List(Text)
     "mo-review-setting",
     "mo-review-pending",
     "mo-review-answer",
-    "mo-upgrade-status"
+    "mo-upgrade-status",
+    "mo-review-source"
   ]
 end
 
@@ -118,6 +119,7 @@ fn upgrade_kind(index: Int) : Int
     Some("mo-review-pending"): 7
     Some("mo-review-answer"): 8
     Some("mo-upgrade-status"): 9
+    Some("mo-review-source"): 10
     Some(_) | None: 0
   end
 end
@@ -143,6 +145,7 @@ fn arguments_of(index: Int) : List(Text)
     Some("mo-intent-approve"): ["program", "digest"]
     Some("mo-review-setting"): ["setting"]
     Some("mo-review-answer"): ["review", "answer"]
+    Some("mo-review-source"): ["review", "source", "offset"]
     Some(_) | None: []
   end
 end
@@ -155,6 +158,7 @@ fn required_of(index: Int) : List(Text)
     Some("mo-upgrade-commit"): ["slot", "base"]
     Some("mo-intent-approve"): ["program", "digest"]
     Some("mo-review-answer"): ["review", "answer"]
+    Some("mo-review-source"): ["review", "source"]
     Some(_) | None: []
   end
 end
@@ -187,7 +191,8 @@ fn catalog() : List(Json.Json)
     "Read the review setting, or set it to everything or intent. Under everything every push is held; under intent a push that keeps every approved item and names no migration activates. A change never decides an upgrade already held. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
     "The held upgrade: its review id, base and candidate digests, migration, approval version and intent difference. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
     "Answer the held upgrade named by review, yes or no. Yes compiles and checks it again, then activates it at a message boundary and approves the items its review showed; no drops it. Any other review id changes nothing. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
-    "The held upgrade's review id and state, and the latest review decisions, without source. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE."
+    "The held upgrade's review id and state, and the latest review decisions, without source. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
+    "One page of the held upgrade's source bundle, or the active program's, from offset: padded base64 bytes, each page 8192 bytes except the last. Served only while review is the held upgrade's id. Requires the service token and Mo-Approval-Authorization: Bearer VALUE."
   ]
   tool_names = names()
   integer = Json.Object({"type": Json.String("integer"), "minimum": Json.int(0)})
@@ -226,6 +231,9 @@ fn catalog() : List(Json.Json)
           }) else if key == "answer": Json.Object({
             "type": Json.String("string"),
             "enum": Json.Array([Json.String("yes"), Json.String("no")])
+          }) else if key == "source": Json.Object({
+            "type": Json.String("string"),
+            "enum": Json.Array([Json.String("pending"), Json.String("active")])
           }) else if key == "bytes": Json.Object({
             "type": Json.String("string"),
             "maxLength": Json.int(page_text())
@@ -245,12 +253,12 @@ fn catalog() : List(Json.Json)
           "additionalProperties": Json.Boolean(false)
         }),
         "annotations": Json.Object(
-          if kind != 0 and kind != 4 and kind != 7 and kind != 9: {
+          if kind != 0 and kind != 4 and kind != 7 and kind != 9 and kind != 10: {
             "readOnlyHint": Json.Boolean(false),
             "destructiveHint": Json.Boolean(kind == 3 or kind == 8),
             "idempotentHint": Json.Boolean(false),
             "openWorldHint": Json.Boolean(false)
-          } else if name == "mo-export" or kind == 4 or kind == 7 or kind == 9: {
+          } else if name == "mo-export" or kind == 4 or kind == 7 or kind == 9 or kind == 10: {
             "readOnlyHint": Json.Boolean(true),
             "idempotentHint": Json.Boolean(true),
             "openWorldHint": Json.Boolean(false)
@@ -318,6 +326,8 @@ fn valid(index: Int, arguments: Json.Json) : Bool
       return false if value != Json.String("everything") and value != Json.String("intent")
     else if key == "answer"
       return false if value != Json.String("yes") and value != Json.String("no")
+    else if key == "source"
+      return false if value != Json.String("pending") and value != Json.String("active")
     else if index == 7 and key == "kind"
       return false if value != Json.String("state") and value != Json.String("failure")
     else if index == 7 and key == "export"
@@ -345,12 +355,15 @@ fn valid(index: Int, arguments: Json.Json) : Bool
     return false if offset % 8192 != 0 or offset >= 17825792
     return false if fields.get("export") == None and offset != 0
   end
+  if names().get(index) == Some("mo-review-source")
+    return false if (argument(fields, "offset") or 0) % 8192 != 0
+  end
   true
 end
 
 ## Validated upgrade-tool arguments as text, "" where absent: base, candidate, total, migration,
-## slot, index, offset, bytes, program, digest, setting, review, answer. The native side parses digits
-## and hex again.
+## slot, index, offset, bytes, program, digest, setting, review, answer, source. The native side
+## parses digits and hex again.
 fn upgrade_arguments(arguments: Json.Json) : List(Text)
   fields = case arguments
     Json.Object(value): value
@@ -369,7 +382,8 @@ fn upgrade_arguments(arguments: Json.Json) : List(Text)
     "digest",
     "setting",
     "review",
-    "answer"
+    "answer",
+    "source"
   ].map(fn(key)
     case fields.get(key)
       Some(Json.String(text)): text

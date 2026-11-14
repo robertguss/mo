@@ -4,10 +4,10 @@ use McpFetch
 use Json
 
 fn main() : Int
-  if McpViews.names().get(18) != Some("mo-future-view")
+  if McpViews.names().get(19) != Some("mo-future-view")
     stop "fixture did not append its view"
   end
-  if McpViews.upgrade_kind(18) != 0
+  if McpViews.upgrade_kind(19) != 0
     stop "appended ordinary view routed as upgrade"
   end
   if McpViews.upgrade_kind(9) != 1 or
@@ -18,7 +18,8 @@ fn main() : Int
     McpViews.upgrade_kind(14) != 6 or
     McpViews.upgrade_kind(15) != 7 or
     McpViews.upgrade_kind(16) != 8 or
-    McpViews.upgrade_kind(17) != 9
+    McpViews.upgrade_kind(17) != 9 or
+    McpViews.upgrade_kind(18) != 10
     stop "upgrade names lost their routing"
   end
   var seen_future = false

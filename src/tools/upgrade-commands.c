@@ -99,10 +99,10 @@ static void check_upgrade(void *context) {
     }
     if (ok)
         ok = mo_upgrade_compile_image(&old_bundle, NULL, NULL, folder ? &recorded_context : NULL,
-                                      &old, &report) &&
+                                      false, &old, &report) &&
              mo_upgrade_compile_image(
                  &candidate, folder && work->cli->migration == NULL ? NULL : &old_bundle,
-                 work->cli->migration, folder ? &recorded_context : NULL, &next, &report) &&
+                 work->cli->migration, folder ? &recorded_context : NULL, false, &next, &report) &&
              mo_upgrade_compare_programs(&old, &next, work->cli->migration, &report);
     if (!ok && mo_diags_any(&diags)) {
         const struct mo_diag *first = diags.count == 0 ? NULL : &diags.items[0];
@@ -207,8 +207,9 @@ struct serve_upgrade_work {
 static void serve_upgrade(void *context) {
     struct serve_upgrade_work *work = context;
     const struct mo_cli *cli = work->cli;
-    struct mo_arena arena;
+    struct mo_arena arena, door;
     mo_arena_init(&arena, MO_LIMIT_UPGRADE_RESTART_HEAP);
+    mo_arena_init(&door, MO_DOOR_BYTES);
     struct mo_sources sources = {0};
     struct mo_diags diags;
     if (!mo_diags_init(&diags)) {
@@ -332,7 +333,7 @@ static void serve_upgrade(void *context) {
     struct mo_buffer fallback = {0};
     bool fallback_state = false;
     if (changed &&
-        !mo_upgrade_compile_image(&previous, NULL, NULL, &retained_context, &old, &report)) {
+        !mo_upgrade_compile_image(&previous, NULL, NULL, &retained_context, false, &old, &report)) {
         struct mo_compile_metadata metadata;
         if (head.snapshot.sequence != head.sequence ||
             !mo_upgrade_program_metadata(&recorded, &metadata)) {
@@ -360,14 +361,14 @@ static void serve_upgrade(void *context) {
         : fallback_state            ? &fallback
                                     : &previous,
         requested_migration,
-        found && (!fallback_state || requested_migration == NULL) ? &retained_context : NULL, &next,
-        &report);
+        found && (!fallback_state || requested_migration == NULL) ? &retained_context : NULL,
+        changed, &next, &report);
     if (!compiled_candidate && fallback_state && requested_migration != NULL &&
         schema_only_metadata(&recorded, &schema_fallback)) {
         mo_upgrade_image_buffers_free(&next);
         report.code = 0;
-        compiled_candidate = mo_upgrade_compile_image(&candidate, &schema_fallback,
-                                                      requested_migration, NULL, &next, &report);
+        compiled_candidate = mo_upgrade_compile_image(
+            &candidate, &schema_fallback, requested_migration, NULL, true, &next, &report);
         old.schema_synthesized = compiled_candidate;
     }
     if (!compiled_candidate) {
@@ -491,6 +492,10 @@ static void serve_upgrade(void *context) {
             .report_json = (const char *)json.bytes,
             .report_size = json.length,
             .time = wall_us()};
+        struct mo_store_decision decision;
+        if (!mo_upgrade_restart_door(cli, store, &door, &activation, &decision, work->errors,
+                                     &report))
+            goto done;
         if (mo_store_activate(store, &activation) != MO_STORE_ACTIVATED) {
             (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                                     "activation failed; reopen the folder before retrying");
@@ -588,6 +593,7 @@ cleanup_serve:
     mo_buffer_free(&json);
     mo_sources_free(&sources);
     mo_diags_free(&diags);
+    mo_arena_free(&door);
     mo_arena_free(&arena);
 }
 int mo_upgrade_serve(const struct mo_cli *cli, FILE *output, FILE *errors) {
@@ -666,7 +672,7 @@ static void rehearse_upgrade(void *context) {
     }
     const struct mo_buffer *retained = cli->compile_context == NULL ? NULL : &recorded_context;
     if (ok)
-        ok = mo_upgrade_compile_image(&old_bundle, NULL, NULL, retained, &old, &report);
+        ok = mo_upgrade_compile_image(&old_bundle, NULL, NULL, retained, false, &old, &report);
     if (ok &&
         (old.program.image != input.identity.program || old.service != input.identity.service ||
          memcmp(old.program.schema, input.schema, 32) != 0)) {
@@ -681,7 +687,7 @@ static void rehearse_upgrade(void *context) {
     if (ok)
         ok = mo_upgrade_compile_image(
                  &candidate, retained != NULL && cli->migration == NULL ? NULL : &old_bundle,
-                 cli->migration, retained, &next, &report) &&
+                 cli->migration, retained, false, &next, &report) &&
              mo_upgrade_compare_programs(&old, &next, cli->migration, &report) &&
              mo_upgrade_migration_state(&old, &next, cli->migration, input.state.bytes,
                                         input.state.length, &migrated, &report, true);

@@ -1120,8 +1120,14 @@ end
             while line and not line.startswith(b"mo serve: listening"):
                 line = super().announcement()
             return line
+    restart = ("--upgrade", "--migrate", "Main.migrate")
+    held = subprocess.run([str(binary), "serve", str(source), "--port", "0", "--data",
+                           str(owned_data), *restart], env=env, cwd=upgraded,
+                          capture_output=True, timeout=300)
+    shown = re.search(rb"error E1435: .*--review ([0-9a-f]{64})", held.stderr)
+    assert held.returncode == 1 and shown, held
     served = Upgraded(binary, source, owned_data, env, upgraded,
-                    extra=("--upgrade", "--migrate", "Main.migrate"))
+                    extra=(*restart, "--review", shown.group(1).decode()))
     context_export = folder / "context.moex"
     try:
         result = subprocess.run([str(binary), "fetch", f"http://127.0.0.1:{served.port}/mcp",

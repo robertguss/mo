@@ -193,7 +193,7 @@ def catalog(queue):
                                                 'mo-upgrade-commit', 'mo-intent-items',
                                                 'mo-intent-approve', 'mo-review-setting',
                                                 'mo-review-pending', 'mo-review-answer',
-                                                'mo-upgrade-status'], tools
+                                                'mo-upgrade-status', 'mo-review-source'], tools
     for tool in tools:
         assert 0 < len(tool['description']) <= DESCRIPTION_LIMIT, tool['name']
     schemas = {tool['name']: tool['inputSchema'] for tool in tools}

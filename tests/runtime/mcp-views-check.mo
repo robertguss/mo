@@ -141,15 +141,16 @@ fn main() : Int
   next = page.get("next") or stop "next page"
   require(McpViews.valid(7, next))
   require(McpViews.failure_id(next) == 7)
-  require(McpViews.names().size == 18)
+  require(McpViews.names().size == 19)
   require(McpViews.upgrade_kind(-1) == 0)
-  require(McpViews.upgrade_kind(18) == 0)
+  require(McpViews.upgrade_kind(19) == 0)
   require(McpViews.upgrade_kind(12) == 4)
   require(McpViews.upgrade_kind(13) == 5)
   require(McpViews.upgrade_kind(14) == 6)
   require(McpViews.upgrade_kind(15) == 7)
   require(McpViews.upgrade_kind(16) == 8)
   require(McpViews.upgrade_kind(17) == 9)
+  require(McpViews.upgrade_kind(18) == 10)
   digest = "c".repeat(64)
   require(McpViews.valid(12, Json.Object({"offset": Json.int(3)})))
   require(
@@ -187,15 +188,22 @@ fn main() : Int
     )
   )
   require(McpViews.valid(17, Json.Object({})))
+  source = {"review": Json.String(digest), "source": Json.String("pending")}
+  require(McpViews.valid(18, Json.Object(source)))
+  require(McpViews.valid(18, Json.Object(source.set("offset", Json.int(8192)))))
+  require(not McpViews.valid(18, Json.Object(source.set("offset", Json.int(100)))))
+  require(not McpViews.valid(18, Json.Object(source.set("source", Json.String("other")))))
+  require(not McpViews.valid(18, Json.Object({"source": Json.String("active")})))
+  require(McpViews.upgrade_arguments(Json.Object(source)).drop(11) == [digest, "", "pending"])
   require(
     McpViews.upgrade_arguments(
       Json.Object({"program": Json.String(digest), "setting": Json.String("intent")})
-    ).drop(8) == [digest, "", "intent", "", ""]
+    ).drop(8) == [digest, "", "intent", "", "", ""]
   )
   require(
     McpViews.upgrade_arguments(
       Json.Object({"review": Json.String(digest), "answer": Json.String("no")})
-    ).drop(11) == [digest, "no"]
+    ).drop(11) == [digest, "no", ""]
   )
   for i in 0..9
     require(McpViews.upgrade_kind(i) == 0)
@@ -285,6 +293,7 @@ fn main() : Int
       "",
       "",
       "",
+      "",
       ""
     ]
   )
@@ -324,7 +333,8 @@ fn main() : Int
             if fields.get("name") == Some(Json.String("mo-export")) or
               fields.get("name") == Some(Json.String("mo-intent-items")) or
               fields.get("name") == Some(Json.String("mo-review-pending")) or
-              fields.get("name") == Some(Json.String("mo-upgrade-status")): {
+              fields.get("name") == Some(Json.String("mo-upgrade-status")) or
+              fields.get("name") == Some(Json.String("mo-review-source")): {
                 "readOnlyHint": Json.Boolean(true),
                 "idempotentHint": Json.Boolean(true),
                 "openWorldHint": Json.Boolean(false)
