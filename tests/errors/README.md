@@ -20,8 +20,8 @@ bug to fix.
 
 ## E1106 is a defensive guard, not a source-reachable diagnostic
 
-`infer` in `src/check/bodies.c` reports E1106 at 4,104 simultaneously active
-inference frames. `MO_LIMIT_SOURCE_INFERENCE_DEPTH` deliberately allows
+`infer_expression` in `src/check/infer.c` reports E1106 at 4,104
+simultaneously active inference frames. `MO_LIMIT_SOURCE_INFERENCE_DEPTH` deliberately allows
 16 frames per parser nesting level plus eight outer wrappers. The parser
 allows only 256 levels, including the function declaration.
 
@@ -31,7 +31,7 @@ The bound follows the syntax that `src/syntax/parser.c` produces:
   postfix expression. Descending through that ladder retains at most ten
   expression frames before reaching a primary expression.
 - Repeated binary operators, prefixes and postfix steps form flat child
-  arrays. Inference walks those arrays in loops, not nested `infer` calls.
+  arrays. Inference walks those arrays in loops, not nested `infer_expression` calls.
 - Restarting the ladder requires a group, collection, call argument, lambda,
   conditional, case, loop or interpolation. Each enters a parser nesting
   level. Statement sequences and their statement or binding wrappers add
