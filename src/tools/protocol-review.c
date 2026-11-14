@@ -32,12 +32,21 @@ static bool head(struct review_reply *out, const struct mo_store_review *r, bool
            mo_buffer_append(&out->text, text, (size_t)m);
 }
 
-static bool span(struct mo_buffer *json, struct mo_buffer *text, const char *key,
-                 const char *separator, struct mo_bundle_span value) {
+static bool field(struct mo_buffer *json, const char *key, struct mo_bundle_span value) {
     return mo_buffer_append_text(json, key) &&
-           mo_render_json_text(json, value.bytes, value.length) &&
-           mo_buffer_append_text(text, separator) &&
-           mo_render_terminal_text(text, value.bytes, value.length);
+           mo_render_json_text(json, value.bytes, value.length);
+}
+
+static bool indented(struct mo_buffer *text, struct mo_bundle_span value) {
+    bool ok = true;
+    for (size_t at = 0; ok && at < value.length;) {
+        const uint8_t *end = memchr(value.bytes + at, '\n', value.length - at);
+        size_t length = end == NULL ? value.length - at : (size_t)(end - value.bytes) - at;
+        ok = mo_buffer_append_text(text, "\n  ") &&
+             mo_render_terminal_text(text, value.bytes + at, length);
+        at += length + 1;
+    }
+    return ok;
 }
 
 static bool approved(const struct mo_store_review *r, const uint8_t *digest) {
@@ -59,9 +68,10 @@ static bool item(struct review_reply *out, const struct mo_store_review *r,
               mo_render_json_text(json, kind, strlen(kind)) &&
               mo_buffer_append_text(text, mark ? "approved   " : "unapproved ") &&
               mo_buffer_append(text, digest, 64) && mo_buffer_append_byte(text, ' ') &&
-              mo_buffer_append_text(text, kind) && span(json, text, ",\"owner\":", " ", e->owner) &&
-              span(json, text, ",\"name\":", ".", e->name) &&
-              span(json, text, ",\"text\":", ": ", e->text) &&
+              mo_buffer_append_text(text, kind) && mo_buffer_append_byte(text, ' ') &&
+              mo_render_terminal_text(text, e->name.bytes, e->name.length) &&
+              indented(text, e->text) && field(json, ",\"owner\":", e->owner) &&
+              field(json, ",\"name\":", e->name) && field(json, ",\"text\":", e->text) &&
               mo_buffer_append_text(json, mark ? ",\"approved\":true,\"reads\":["
                                                : ",\"approved\":false,\"reads\":[");
     struct mo_binary reads = e->reads;

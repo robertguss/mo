@@ -2228,7 +2228,7 @@ enum mo_store_review_status mo_store_set_review(struct mo_store *s, bool intent,
             sqlite3_prepare_v2(s->db, "UPDATE review SET setting=?1 WHERE id=1", -1, &stmt, NULL) ==
                 SQLITE_OK &&
             step_done(stmt, sqlite3_bind_text(stmt, 1, setting, -1, SQLITE_STATIC) == SQLITE_OK) &&
-            decide(s, time, "setting", review.program.source, setting, setting);
+            decide(s, time, "setting", review.program.source, setting, "");
         result = review_end(s, ok ? MO_STORE_REVIEW_OK : MO_STORE_REVIEW_FAILED);
     }
     mo_arena_free(&arena);
