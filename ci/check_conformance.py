@@ -12,7 +12,9 @@ EVIDENCE = ("accepts", "gap", "drivers", "cost", "untestable")
 
 
 def has_test(path, name):
-    """Whether the driver at path defines, and for Python also calls, the test called name."""
+    """Whether the driver at path defines, and for Python also calls, the test called name.
+
+    A ci/cli_*.py module's test is called from ci/check_cli.py."""
     text = path.read_text()
     if path.name == "Makefile":
         return re.search(rf"^{name}:", text, re.M) is not None
@@ -23,6 +25,9 @@ def has_test(path, name):
         return path.parent.name == "lib" and re.search(rf"^fn {name}\(", text, re.M) is not None
     if path.suffix == ".py":
         defined = re.search(rf"^\s*def {name}\(", text, re.M) is not None
+        if path.parent.name == "ci" and path.name.startswith("cli_"):
+            caller = path.with_name("check_cli.py").read_text()
+            return defined and re.search(rf"\b{name}\(", caller) is not None
         return defined and len(re.findall(rf"\b{name}\(", text)) > 1
     return False
 
