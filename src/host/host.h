@@ -237,6 +237,9 @@ enum mo_store_review_status {
 };
 MO_MUST_USE enum mo_store_status
 mo_store_review_read(struct mo_store *store, struct mo_arena *arena, struct mo_store_review *out);
+MO_MUST_USE bool mo_store_review_approved(const struct mo_store_review *review,
+                                          const uint8_t digest[32]);
+const char *mo_store_setting_name(bool intent);
 MO_MUST_USE enum mo_store_review_status mo_store_approve(struct mo_store *store,
                                                          const uint8_t program[32],
                                                          const uint8_t digest[32], int64_t time);

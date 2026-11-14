@@ -238,9 +238,6 @@ static void programs_text(struct history_output *o) {
 static void put_hex(struct history_output *o, const uint8_t digest[32]) {
     o->ok = o->ok && mo_offline_hex(o->out, digest, 32);
 }
-static const char *setting_name(bool intent) {
-    return intent ? "intent" : "everything";
-}
 static void review_json(struct history_output *o) {
     const struct mo_store_history *h = o->h;
     if (!h->reviewed) {
@@ -248,7 +245,7 @@ static void review_json(struct history_output *o) {
         return;
     }
     put(o, ",\"review\":{\"setting\":\"");
-    put(o, setting_name(h->review_intent));
+    put(o, mo_store_setting_name(h->review_intent));
     put(o, "\",\"approval_version\":");
     put_quoted(o, h->review_version);
     put(o, ",\"approvals\":[");
@@ -270,7 +267,7 @@ static void review_json(struct history_output *o) {
         put(o, ",\"program\":\"");
         put_hex(o, d->base);
         put(o, "\",\"setting\":\"");
-        put(o, setting_name(d->intent));
+        put(o, mo_store_setting_name(d->intent));
         put(o, "\",\"detail\":");
         put_json(o, d->detail, strlen(d->detail));
         put(o, "}");
@@ -286,7 +283,7 @@ static void review_text(struct history_output *o) {
         return;
     }
     put(o, "review setting: ");
-    put(o, setting_name(h->review_intent));
+    put(o, mo_store_setting_name(h->review_intent));
     put(o, "; approval version ");
     put_uint(o, h->review_version);
     put(o, "\n");
@@ -307,7 +304,7 @@ static void review_text(struct history_output *o) {
         put(o, " us, program ");
         put_hex(o, d->base);
         put(o, ", setting ");
-        put(o, setting_name(d->intent));
+        put(o, mo_store_setting_name(d->intent));
         if (d->detail[0] != 0) {
             put(o, ", ");
             put_safe(o, d->detail, strlen(d->detail));

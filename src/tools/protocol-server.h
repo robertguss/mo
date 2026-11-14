@@ -233,7 +233,6 @@ void mo_protocol_upgrade_refuse(struct mo_protocol_server *server,
                                 const char *class, const char *message, const uint8_t *candidate);
 MO_MUST_USE bool mo_protocol_unhex(const char *text, uint8_t *out, size_t length);
 MO_MUST_USE bool mo_protocol_decimal(const char *text, uint64_t *out);
-/* Review tools (kinds 4 to 6), called for an authenticated operator call. */
 void mo_protocol_review_call(struct mo_protocol_server *server,
                              struct protocol_connection *connection, uint32_t kind);
 /* Slot expiry, compilation progress and the boundary swap, after each service step. */

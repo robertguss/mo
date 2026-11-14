@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sqlite3.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -1950,6 +1951,32 @@ static enum mo_store_status read_setting(struct mo_store *s, struct mo_store_rev
     }
     return finish(stmt, result);
 }
+static int digest_order(const void *a, const void *b) {
+    return memcmp(a, b, 32);
+}
+static uint8_t (*sorted_digests(struct mo_arena *arena, const struct mo_intent_list *list))[32] {
+    uint8_t(*digests)[32] =
+        mo_arena_allocate_array(arena, list->count == 0 ? 1 : list->count, 32, _Alignof(uint8_t));
+    if (digests == NULL)
+        return NULL;
+    struct mo_binary cursor = mo_intent_list_first(list);
+    struct mo_intent_entry entry;
+    for (uint32_t i = 0; i < list->count; i++) {
+        MO_ASSERT(mo_intent_list_next(&cursor, &entry));
+        memcpy(digests[i], entry.digest, 32);
+    }
+    qsort(digests, list->count, 32, digest_order);
+    return digests;
+}
+static bool listed(const uint8_t (*digests)[32], uint32_t count, const void *digest) {
+    return bsearch(digest, digests, count, 32, digest_order) != NULL;
+}
+bool mo_store_review_approved(const struct mo_store_review *review, const uint8_t digest[32]) {
+    return listed((const uint8_t(*)[32])review->approved, review->approved_count, digest);
+}
+const char *mo_store_setting_name(bool intent) {
+    return intent ? "intent" : "everything";
+}
 static enum mo_store_status read_approvals(struct mo_store *s, struct mo_arena *arena,
                                            struct mo_store_review *out) {
     sqlite3_stmt *stmt = NULL;
@@ -1959,12 +1986,13 @@ static enum mo_store_status read_approvals(struct mo_store *s, struct mo_arena *
         return failure(code);
     uint8_t(*approved)[32] =
         mo_arena_allocate_array(arena, MO_LIMIT_INTENT_ITEMS, 32, _Alignof(uint8_t));
-    enum mo_store_status result = approved == NULL ? MO_STORE_MEMORY : MO_STORE_OK;
+    uint8_t(*items)[32] = sorted_digests(arena, &out->items);
+    enum mo_store_status result = approved == NULL || items == NULL ? MO_STORE_MEMORY : MO_STORE_OK;
     uint32_t count = 0;
     int step = SQLITE_DONE;
     while (result == MO_STORE_OK && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
         if (count == MO_LIMIT_INTENT_ITEMS || !blob_size(stmt, 0, 32) ||
-            !mo_intent_list_has(&out->items, sqlite3_column_blob(stmt, 0)))
+            !listed((const uint8_t(*)[32])items, out->items.count, sqlite3_column_blob(stmt, 0)))
             result = MO_STORE_CORRUPT;
         else
             memcpy(approved[count++], sqlite3_column_blob(stmt, 0), 32);
@@ -2125,13 +2153,17 @@ static bool retire_approvals(struct mo_store *s, const struct mo_store_program *
     if (!mo_intent_list_read(p->items, p->items_size, &list) ||
         sqlite3_prepare_v2(s->db, "SELECT digest FROM approvals", -1, &stmt, NULL) != SQLITE_OK)
         return false;
-    uint8_t retired[MO_LIMIT_INTENT_ITEMS][32];
+    struct mo_arena arena;
+    mo_arena_init(&arena, 2 * (size_t)MO_LIMIT_INTENT_ITEMS * 32 + 4 * MO_ARENA_CHUNK_HEADER);
+    uint8_t(*items)[32] = sorted_digests(&arena, &list);
+    uint8_t(*retired)[32] =
+        mo_arena_allocate_array(&arena, MO_LIMIT_INTENT_ITEMS, 32, _Alignof(uint8_t));
     uint32_t count = 0;
-    bool ok = true;
-    int step;
+    bool ok = items != NULL && retired != NULL;
+    int step = SQLITE_DONE;
     while (ok && (step = sqlite3_step(stmt)) == SQLITE_ROW) {
         ok = count < MO_LIMIT_INTENT_ITEMS && blob_size(stmt, 0, 32);
-        if (ok && !mo_intent_list_has(&list, sqlite3_column_blob(stmt, 0)))
+        if (ok && !listed((const uint8_t(*)[32])items, list.count, sqlite3_column_blob(stmt, 0)))
             memcpy(retired[count++], sqlite3_column_blob(stmt, 0), 32);
     }
     ok = finish(stmt, ok && step == SQLITE_DONE ? MO_STORE_OK : MO_STORE_CORRUPT) == MO_STORE_OK;
@@ -2143,7 +2175,9 @@ static bool retire_approvals(struct mo_store *s, const struct mo_store_program *
                  SQLITE_OK &&
              step_done(stmt, bind_blobs(stmt, 1, blobs, sizes, 1));
     }
-    return ok && (count == 0 || exec(s, "UPDATE review SET version=version+1 WHERE id=1"));
+    ok = ok && (count == 0 || exec(s, "UPDATE review SET version=version+1 WHERE id=1"));
+    mo_arena_free(&arena);
+    return ok;
 }
 static bool review_write(struct mo_store *s, const struct mo_store_program *p) {
     return review_tables_ready(s) && write_items(s, p) &&
@@ -2189,16 +2223,13 @@ enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t p
     struct mo_store_review review;
     enum mo_store_review_status result = review_begin(s, &arena, &review);
     if (result == MO_STORE_REVIEW_OK) {
-        bool approved = false;
-        for (uint32_t i = 0; i < review.approved_count; i++)
-            approved |= memcmp(review.approved[i], digest, 32) == 0;
         char text[65];
         hex(digest, 32, text);
         if (memcmp(review.program.source, program, 32) != 0)
             result = review_end(s, MO_STORE_REVIEW_STALE);
         else if (!mo_intent_list_has(&review.items, digest))
             result = review_end(s, MO_STORE_REVIEW_ABSENT);
-        else if (approved)
+        else if (mo_store_review_approved(&review, digest))
             result = review_end(s, MO_STORE_REVIEW_OK);
         else {
             sqlite3_stmt *stmt = NULL;
@@ -2211,7 +2242,7 @@ enum mo_store_review_status mo_store_approve(struct mo_store *s, const uint8_t p
                                     sqlite3_bind_int64(
                                         stmt, 2, (sqlite3_int64)review.version + 1) == SQLITE_OK) &&
                 exec(s, "UPDATE review SET version=version+1 WHERE id=1") &&
-                decide(s, time, "approval", program, review.intent ? "intent" : "everything", text);
+                decide(s, time, "approval", program, mo_store_setting_name(review.intent), text);
             result = review_end(s, ok ? MO_STORE_REVIEW_OK : MO_STORE_REVIEW_FAILED);
         }
     }
@@ -2227,7 +2258,7 @@ enum mo_store_review_status mo_store_set_review(struct mo_store *s, bool intent,
     if (result == MO_STORE_REVIEW_OK && review.intent == intent)
         result = review_end(s, MO_STORE_REVIEW_OK);
     else if (result == MO_STORE_REVIEW_OK) {
-        const char *setting = intent ? "intent" : "everything";
+        const char *setting = mo_store_setting_name(intent);
         sqlite3_stmt *stmt = NULL;
         bool ok =
             sqlite3_prepare_v2(s->db, "UPDATE review SET setting=?1 WHERE id=1", -1, &stmt, NULL) ==

@@ -15,7 +15,7 @@ struct review_reply {
 static bool head(struct review_reply *out, const struct mo_store_review *r, bool program_line) {
     char program[65], json[256], text[256];
     mo_protocol_hex(r->program.source, 32, program);
-    const char *setting = r->intent ? "intent" : "everything";
+    const char *setting = mo_store_setting_name(r->intent);
     unsigned long long version = (unsigned long long)r->version;
     int n = snprintf(json, sizeof json,
                      "{\"version\":1,\"program\":\"%s\",\"setting\":\"%s\",\"approval_version\":"
@@ -48,19 +48,12 @@ static bool indented(struct mo_buffer *text, struct mo_bundle_span value) {
     return ok;
 }
 
-static bool approved(const struct mo_store_review *r, const uint8_t *digest) {
-    for (uint32_t i = 0; i < r->approved_count; i++)
-        if (memcmp(r->approved[i], digest, 32) == 0)
-            return true;
-    return false;
-}
-
 static bool item(struct review_reply *out, const struct mo_store_review *r,
                  const struct mo_intent_entry *e) {
     char digest[65];
     mo_protocol_hex(e->digest, 32, digest);
     const char *kind = mo_intent_kind_name(e->kind);
-    bool mark = approved(r, e->digest);
+    bool mark = mo_store_review_approved(r, e->digest);
     struct mo_buffer *json = &out->json, *text = &out->text;
     bool ok = mo_buffer_append_text(json, "{\"digest\":\"") && mo_buffer_append(json, digest, 64) &&
               mo_buffer_append_text(json, "\",\"kind\":") &&
