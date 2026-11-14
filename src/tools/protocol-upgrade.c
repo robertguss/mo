@@ -14,7 +14,7 @@
 
 enum { UPGRADE_OPEN = 1, UPGRADE_PAGE = 2, UPGRADE_COMMIT = 3 };
 
-static bool unhex(const char *text, uint8_t *out, size_t length) {
+bool mo_protocol_unhex(const char *text, uint8_t *out, size_t length) {
     if (strlen(text) != 2 * length)
         return false;
     for (size_t i = 0; i < 2 * length; i++) {
@@ -30,7 +30,7 @@ static bool unhex(const char *text, uint8_t *out, size_t length) {
     return true;
 }
 
-static bool decimal(const char *text, uint64_t *out) {
+bool mo_protocol_decimal(const char *text, uint64_t *out) {
     uint64_t n = 0;
     if (text[0] == 0 || (text[0] == '0' && text[1] != 0))
         return false;
@@ -43,27 +43,22 @@ static bool decimal(const char *text, uint64_t *out) {
     return true;
 }
 
-/* Text fields of a validated call: base, candidate, total, migration, slot, index, offset, bytes.
- */
-struct upgrade_arguments {
-    char base[65], candidate[65], total[21], migration[MO_LIMIT_UPGRADE_MIGRATION_NAME + 1],
-        slot[33], index[21], offset[21];
-    char bytes[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
-};
-
-static bool arguments(struct mo_protocol_server *s, struct protocol_connection *c,
-                      struct upgrade_arguments *out) {
+bool mo_protocol_upgrade_arguments(struct mo_protocol_server *s, struct protocol_connection *c,
+                                   struct upgrade_arguments *out) {
     struct mo_cell fields = mo_cell_get_payload(c->action);
     struct mo_cell json = mo_value_field(fields, 2), list;
     if (!mo_protocol_invoke(s, c, PF_UPGRADE_ARGUMENTS, &json, &list))
         return false;
-    char *targets[] = {out->base, out->candidate, out->total,  out->migration,
-                       out->slot, out->index,     out->offset, out->bytes};
+    char *targets[] = {out->base,    out->candidate, out->total,  out->migration,
+                       out->slot,    out->index,     out->offset, out->bytes,
+                       out->program, out->digest,    out->setting};
     const size_t sizes[] = {sizeof out->base,      sizeof out->candidate, sizeof out->total,
                             sizeof out->migration, sizeof out->slot,      sizeof out->index,
-                            sizeof out->offset,    sizeof out->bytes};
-    bool ok = mo_list_size(list) == 8;
-    for (uint32_t i = 0; ok && i < 8; i++) {
+                            sizeof out->offset,    sizeof out->bytes,     sizeof out->program,
+                            sizeof out->digest,    sizeof out->setting};
+    enum { FIELDS = sizeof sizes / sizeof *sizes };
+    bool ok = mo_list_size(list) == FIELDS;
+    for (uint32_t i = 0; ok && i < FIELDS; i++) {
         struct mo_cell item;
         MO_ASSERT(mo_list_get(list, i, &item));
         size_t size;
@@ -142,6 +137,18 @@ static void refuse(struct mo_protocol_server *s, struct protocol_connection *c, 
     mo_buffer_free(&text);
 }
 
+void mo_protocol_upgrade_refuse(struct mo_protocol_server *s, struct protocol_connection *c,
+                                uint16_t code, const char *class, const char *message,
+                                const uint8_t *candidate) {
+    refuse(s, c, code, class, message, candidate);
+}
+
+void mo_protocol_upgrade_reply(struct mo_protocol_server *s, struct protocol_connection *c,
+                               const struct mo_buffer *json, const struct mo_buffer *text,
+                               bool refused) {
+    reply(s, c, json, text, refused, EFFECT_NONE);
+}
+
 static void close_slot(struct mo_protocol_server *s) {
     struct protocol_upgrade *u = &s->upgrade;
     mo_live_free(u->live);
@@ -178,8 +185,8 @@ static void open_slot(struct mo_protocol_server *s, struct protocol_connection *
     struct protocol_upgrade *u = &s->upgrade;
     uint8_t base[32], candidate[32];
     uint64_t total;
-    if (!unhex(a->base, base, 32) || !unhex(a->candidate, candidate, 32) ||
-        !decimal(a->total, &total)) {
+    if (!mo_protocol_unhex(a->base, base, 32) || !mo_protocol_unhex(a->candidate, candidate, 32) ||
+        !mo_protocol_decimal(a->total, &total)) {
         refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "bundle", "invalid upload arguments", NULL);
         return;
     }
@@ -250,8 +257,8 @@ static void page(struct mo_protocol_server *s, struct protocol_connection *c,
                  const struct upgrade_arguments *a) {
     struct protocol_upgrade *u = &s->upgrade;
     uint64_t index, offset, total;
-    if (!slot_named(u, a->slot) || !decimal(a->index, &index) || !decimal(a->offset, &offset) ||
-        !decimal(a->total, &total)) {
+    if (!slot_named(u, a->slot) || !mo_protocol_decimal(a->index, &index) ||
+        !mo_protocol_decimal(a->offset, &offset) || !mo_protocol_decimal(a->total, &total)) {
         refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload",
                "no open upload slot has this id; it may have closed; open a new one with "
                "mo-upgrade-open",
@@ -343,7 +350,7 @@ static void commit(struct mo_protocol_server *s, struct protocol_connection *c,
                    const struct upgrade_arguments *a) {
     struct protocol_upgrade *u = &s->upgrade;
     uint8_t base[32];
-    if (!slot_named(u, a->slot) || !unhex(a->base, base, 32)) {
+    if (!slot_named(u, a->slot) || !mo_protocol_unhex(a->base, base, 32)) {
         refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload",
                "no open upload slot has this id; it may have closed; open a new one with "
                "mo-upgrade-open",
@@ -386,7 +393,7 @@ void mo_protocol_upgrade_call(struct mo_protocol_server *s, struct protocol_conn
     mo_arena_init(&arena, sizeof(struct upgrade_arguments) + MO_ARENA_CHUNK_HEADER);
     struct upgrade_arguments *a =
         mo_arena_allocate(&arena, sizeof *a, _Alignof(struct upgrade_arguments));
-    if (a == NULL || !arguments(s, c, a)) {
+    if (a == NULL || !mo_protocol_upgrade_arguments(s, c, a)) {
         mo_arena_free(&arena);
         mo_protocol_fallback(s, c, c->work_left == 0 ? PE_WORK : PE_MEMORY, EFFECT_NONE);
         return;
@@ -673,6 +680,7 @@ void mo_protocol_upgrade_free(struct mo_protocol_server *s) {
 
 enum mo_protocol_server_status mo_protocol_server_upgrades(struct mo_protocol_server *s,
                                                            const struct mo_bearer *credential,
+                                                           const struct mo_bearer *approval,
                                                            const char *compiler) {
     MO_ASSERT(s != NULL && compiler != NULL);
     struct mo_arena arena;
@@ -688,5 +696,8 @@ enum mo_protocol_server_status mo_protocol_server_upgrades(struct mo_protocol_se
     s->upgrade_enabled = credential != NULL;
     if (credential != NULL)
         s->upgrade_bearer = *credential;
+    s->approval_enabled = approval != NULL;
+    if (approval != NULL)
+        s->approval_bearer = *approval;
     return MO_PROTOCOL_SERVER_OK;
 }

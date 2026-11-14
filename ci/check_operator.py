@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 
-from check_cli import SERVE_OPERATOR_NAMES as NAMES, SERVE_UPGRADE_NAMES, Served, serve_events, serve_supervised
+from check_cli import SERVE_OPERATOR_NAMES as NAMES, SERVE_UPGRADE_NAMES, SERVE_REVIEW_NAMES, Served, serve_events, serve_supervised
 
 TOKEN = "OperatorViewCanary"
 VIEW_BYTES = 6144
@@ -266,12 +266,17 @@ def failure_records(binary):
 def private_state(rpc, call):
     status, body = rpc("tools/list", {})
     tools = body["result"]["tools"]
-    assert status == 200 and [tool["name"] for tool in tools] == ["mo_state", *NAMES, *SERVE_UPGRADE_NAMES]
+    assert status == 200 and [tool["name"] for tool in tools] == ["mo_state", *NAMES, *SERVE_UPGRADE_NAMES, *SERVE_REVIEW_NAMES]
     assert "annotations" not in tools[0]
     for tool in tools[1:]:
         expected = {"readOnlyHint": True, "idempotentHint": True}
-        if tool["name"] == "mo-export":
+        if tool["name"] in ("mo-export", "mo-intent-items"):
             expected["openWorldHint"] = False
+        if tool["name"] in SERVE_REVIEW_NAMES:
+            assert "Mo-Approval-Authorization: Bearer VALUE" in tool["description"], tool
+        if tool["name"] in SERVE_REVIEW_NAMES[1:]:
+            expected = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False,
+                        "destructiveHint": False}
         if tool["name"] in SERVE_UPGRADE_NAMES:
             assert "Mo-Upgrade-Authorization: Bearer VALUE" in tool["description"], tool
             assert len(tool["description"].encode()) <= 512

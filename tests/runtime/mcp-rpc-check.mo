@@ -184,7 +184,7 @@ fn methods()
     require(McpRpc.method(input, ["echo"], "0123456789abcdef") == expected)
   end
   for cursor in [
-    "14.0123456789abcdef",
+    "17.0123456789abcdef",
     "00.0123456789abcdef",
     "-0.0123456789abcdef",
     "+1.0123456789abcdef",

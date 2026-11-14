@@ -26,6 +26,7 @@ enum mo_command {
     MO_COMMAND_REHEARSE,
     MO_COMMAND_PUSH,
     MO_COMMAND_INTENT,
+    MO_COMMAND_REVIEW,
 };
 
 #define MO_EXIT_SERVICE_STOPPED 69
@@ -46,9 +47,13 @@ struct mo_cli {
     uint32_t calls, sequences, seconds;
     const char *strength, *against;
     const char *fetch_url, *fetch_token;
-    /* push: the loopback endpoint, the expected active source digest and the two credentials'
-     * environment names; serve reads upgrade_token for its upgrade credential. */
-    const char *push_url, *push_base, *upgrade_token;
+    /* push and review: the loopback endpoint, the expected active source digest and the
+     * credentials' environment names; serve reads upgrade_token and approval_token. */
+    const char *push_url, *push_base, *upgrade_token, *approval_token;
+    bool items;
+    const char *setting;
+    const char *approve[MO_CLI_ARGUMENTS];
+    uint32_t approve_count;
     uint64_t fetch_failure;
     const char *module;
     const char *output; /* emit's -o file */
@@ -120,6 +125,7 @@ MO_MUST_USE enum mo_fetch_read_status mo_fetch_read(struct mo_image *image, uint
                                                     struct mo_export_page *out);
 MO_MUST_USE int mo_fetch(const struct mo_cli *cli, FILE *errors);
 MO_MUST_USE int mo_push(const struct mo_cli *cli, FILE *output, FILE *errors);
+MO_MUST_USE int mo_review(const struct mo_cli *cli, FILE *output, FILE *errors);
 /* Whole checking and the certified lowering/runtime pipeline run inside one
  * explicit source-stack call. Owns no borrowed data after returning. */
 MO_MUST_USE int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors);

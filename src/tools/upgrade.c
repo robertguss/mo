@@ -1515,6 +1515,12 @@ static void serve_upgrade(void *context) {
         (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         goto done;
     }
+    struct mo_bearer upgrade_secret, approval_secret;
+    bool secrets = mo_serve_secrets(cli, NULL, &diags, &upgrade_secret, &approval_secret);
+    mo_host_wipe(&upgrade_secret, sizeof upgrade_secret);
+    mo_host_wipe(&approval_secret, sizeof approval_secret);
+    if (!secrets)
+        goto done;
     /* Capture original files before opening a new database. UpgradeOld placeholders
      * only resolve imports here; the child needs validated recorded context to type them. */
     if (cli->file_count != 0 &&
@@ -1693,6 +1699,11 @@ static void serve_upgrade(void *context) {
         (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         goto done;
     }
+    secrets = mo_serve_secrets(cli, environment, &diags, &upgrade_secret, &approval_secret);
+    mo_host_wipe(&upgrade_secret, sizeof upgrade_secret);
+    mo_host_wipe(&approval_secret, sizeof approval_secret);
+    if (!secrets)
+        goto done;
     const struct upgrade_image *recovery = changed ? &old : &next;
     if (!found && head.found && head.image != next.program.image && !cli->adopt) {
         (void)refuse_upgrade(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "adoption",

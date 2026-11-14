@@ -4,30 +4,34 @@ use McpFetch
 use Json
 
 fn main() : Int
-  if McpViews.names().get(12) != Some("mo-future-view")
+  if McpViews.names().get(15) != Some("mo-future-view")
     stop "fixture did not append its view"
   end
-  if McpViews.upgrade_kind(12) != 0
+  if McpViews.upgrade_kind(15) != 0
     stop "appended ordinary view routed as upgrade"
   end
   if McpViews.upgrade_kind(9) != 1 or
     McpViews.upgrade_kind(10) != 2 or
-    McpViews.upgrade_kind(11) != 3
+    McpViews.upgrade_kind(11) != 3 or
+    McpViews.upgrade_kind(12) != 4 or
+    McpViews.upgrade_kind(13) != 5 or
+    McpViews.upgrade_kind(14) != 6
     stop "upgrade names lost their routing"
   end
   var seen_future = false
   for tool in McpViews.catalog()
     fields = case tool
       Json.Object(value): value
-      Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_):
-        stop "catalog tool"
+      Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): stop "catalog tool"
     end
     name = fields.get("name")
     annotations = fields.get("annotations")
     if name == Some(Json.String("mo-future-view"))
       seen_future = true
       if annotations !=
-        Some(Json.Object({"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)}))
+        Some(
+          Json.Object({"readOnlyHint": Json.Boolean(true), "idempotentHint": Json.Boolean(true)})
+        )
         stop "appended view lost readOnlyHint"
       end
     else if name == Some(Json.String("mo-upgrade-open")) or

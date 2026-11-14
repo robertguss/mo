@@ -72,3 +72,4 @@ E1428	tests/errors/README.md	UNREACHABLE: mo serve exits when its supervisor sto
 E1429	ci/check_upgrade_fallback.py	recorded source compilation failure names the recording build before explicit schema-backed fallback
 E1430	ci/check_upgrades.py	different source without explicit upgrade refuses and preserves the folder
 E1431	tests/test_service_store.c	two retained programs with one image key, build and schema but different sources are reported as an ambiguous match
+E1437	tests/test_protocol_server.c	the review record holds 65,536 decisions; a service reaches the limit only after that many approvals and setting changes, which the unit test writes straight into the store

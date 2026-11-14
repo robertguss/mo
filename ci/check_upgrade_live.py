@@ -20,7 +20,9 @@ import time
 
 TOKEN = "LiveServiceToken0123456789"
 UPGRADE = "LiveUpgradeCredential9876543210"
-ENV = {**os.environ, "TOKEN": TOKEN, "UPGRADE": UPGRADE}
+APPROVAL = "LiveApprovalCredential0123456789"
+ENV = {**os.environ, "TOKEN": TOKEN, "UPGRADE": UPGRADE, "APPROVAL": APPROVAL}
+SECRETS = ["--upgrade-token-env", "UPGRADE", "--approval-token-env", "APPROVAL"]
 
 V1 = '''module Main
 service
@@ -136,7 +138,7 @@ def digests(binary, old, new):
 class Service:
     def __init__(self, binary, data, source=None, flags=(), credential=True):
         args = [binary, "serve", *([str(source)] if source else []), "--data", str(data),
-                "--port", "0", *(["--upgrade-token-env", "UPGRADE"] if credential else []), *flags]
+                "--port", "0", *(SECRETS if credential else []), *flags]
         self.errors = tempfile.TemporaryFile()
         self.process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=self.errors,
                                         env=ENV, bufsize=0)
@@ -259,7 +261,7 @@ def assert_no_secrets(*texts):
     for text in texts:
         if isinstance(text, bytes):
             text = text.decode(errors="replace")
-        assert TOKEN not in text and UPGRADE not in text, text
+        assert TOKEN not in text and UPGRADE not in text and APPROVAL not in text, text
 
 
 def folder_bytes(data):
@@ -282,12 +284,17 @@ def start_refusals(binary, root):
     data = pathlib.Path(root) / "refusals"
     data.mkdir()
     source = write(root, "refusals-src", V1)
-    for value, words in [(TOKEN, b"equals the service token"), ("short", b"shorter than 16")]:
+    cases = [(SECRETS[:2], {}, b"E1434: mo serve was given --upgrade-token-env"),
+             (SECRETS, {"UPGRADE": "short"}, b"E1409: mo serve could not use the upgrade"),
+             (SECRETS, {"UPGRADE": TOKEN}, b"E1434: mo serve could not start: two of"),
+             (SECRETS, {"APPROVAL": TOKEN}, b"E1434: mo serve could not start: two of"),
+             (SECRETS, {"APPROVAL": UPGRADE}, b"E1434: mo serve could not start: two of")]
+    for i, (flags, changed, words) in enumerate(cases):
         result = subprocess.run([binary, "serve", str(source), "--data", str(data), "--port", "0",
-                                 "--upgrade-token-env", "UPGRADE"], capture_output=True,
-                                timeout=60, env={**ENV, "UPGRADE": value})
+                                 *flags], capture_output=True, timeout=60, env={**ENV, **changed})
         assert result.returncode == 1 and words in result.stderr, result
         assert_no_secrets(result.stdout, result.stderr)
+        assert i >= 2 or not any(data.iterdir()), list(data.iterdir())
 
 
 def adds(service, stop, acknowledged, errors):

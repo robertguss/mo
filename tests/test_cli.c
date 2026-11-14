@@ -283,7 +283,7 @@ static void parse_serve(void) {
     const char *what[] = {"mo", "what"};
     refused(2, what,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, "
-            "push, replay, query, rehearse, history or intent): \"what\"");
+            "push, review, replay, query, rehearse, history or intent): \"what\"");
 }
 
 #define OFFLINE(expected, ...)                                                                     \

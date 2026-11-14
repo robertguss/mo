@@ -126,15 +126,24 @@ static bool authenticate(struct mo_protocol_server *s, struct protocol_connectio
     bool session_named = header_span(s, c, fields->fields[2].type, mo_value_field(record, 2),
                                      &session_start, &session_length);
     bool streaming = mo_cell_get_bool(mo_value_field(record, 3));
+    size_t approval_start = 0, approval_length = 0;
+    bool approval = header_span(s, c, fields->fields[4].type, mo_value_field(record, 4),
+                                &approval_start, &approval_length);
     union mo_listener_result result;
     enum mo_listener_status status =
         mo_listener_call(s->listener, MO_LISTENER_AUTH, &request, &result);
+    bool admitted = status == MO_LISTENER_OK && result.authenticated && upgrade != approval;
     c->upgrade_authorized =
-        status == MO_LISTENER_OK && result.authenticated && upgrade && s->upgrade_enabled &&
+        admitted && upgrade && s->upgrade_enabled &&
         mo_bearer_check(&s->upgrade_bearer, c->input + upgrade_start, upgrade_length);
-    /* Neither credential outlives this check; nothing below reads them. */
+    c->approval_authorized =
+        admitted && approval && s->approval_enabled &&
+        mo_bearer_check(&s->approval_bearer, c->input + approval_start, approval_length);
+    /* No credential outlives this check; nothing below reads them. */
     mo_host_wipe(c->input + upgrade_start, upgrade_length);
     memset(c->input + upgrade_start, 'x', upgrade_length);
+    mo_host_wipe(c->input + approval_start, approval_length);
+    memset(c->input + approval_start, 'x', approval_length);
     mo_host_wipe(c->input + request.auth.start, request.auth.length);
     memset(c->input + request.auth.start, 'x', request.auth.length);
     if (status != MO_LISTENER_OK || !result.authenticated) {

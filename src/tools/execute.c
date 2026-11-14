@@ -460,6 +460,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         return mo_fetch(cli, errors);
     if (cli->command == MO_COMMAND_PUSH)
         return mo_push(cli, output, errors);
+    if (cli->command == MO_COMMAND_REVIEW)
+        return mo_review(cli, output, errors);
     if (cli->command == MO_COMMAND_HISTORY)
         return mo_history(cli, output, errors);
     if (cli->command == MO_COMMAND_VERSION) {

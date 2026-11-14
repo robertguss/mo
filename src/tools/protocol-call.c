@@ -159,6 +159,10 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
             return;
         }
         int64_t upgrade = mo_cell_get_int(kind);
+        if (upgrade >= 4) {
+            mo_protocol_review_call(s, c, (uint32_t)upgrade);
+            return;
+        }
         if (upgrade != 0) {
             mo_protocol_upgrade_call(s, c, (uint32_t)upgrade);
             return;

@@ -86,20 +86,70 @@ static void log_event(const struct mo_service_event *event, void *context) {
         (void)fprintf(log->errors, "  record unavailable: %s\n", event->record_unavailable);
 }
 
-static void refuse(struct mo_diags *diags, const char *what, const char *subject,
-                   const char *reason) {
+static void refuse_as(struct mo_diags *diags, enum mo_code code, const char *what,
+                      const char *subject, const char *reason) {
     char message[MO_CLI_ARGUMENT_SIZE + 1024];
     int written = subject == NULL ? snprintf(message, sizeof message, "%s: %s", what, reason)
                                   : snprintf(message, sizeof message, "%s %.*s: %s", what,
                                              (int)(MO_CLI_ARGUMENT_SIZE + sizeof MO_DATA_FILE),
                                              subject, reason);
     MO_ASSERT(written > 0);
-    struct mo_diag diag = {.code = MO_CODE_TOOL_SERVICE_START,
-                           .message = message,
-                           .primary = {.span = {.file = UINT32_MAX}}};
+    struct mo_diag diag = {
+        .code = (uint16_t)code, .message = message, .primary = {.span = {.file = UINT32_MAX}}};
     bool added = mo_diags_add(diags, &diag);
     if (!added)
         MO_ASSERT(mo_diags_any(diags));
+}
+
+static void refuse(struct mo_diags *diags, const char *what, const char *subject,
+                   const char *reason) {
+    refuse_as(diags, MO_CODE_TOOL_SERVICE_START, what, subject, reason);
+}
+
+static bool secret(struct mo_diags *diags, const char *name, const char *what,
+                   struct mo_bearer *out) {
+    if (name == NULL || (mo_bearer_read(out, name) && out->length >= 16))
+        return true;
+    mo_host_wipe(out, sizeof *out);
+    refuse(diags, what, name, "it is missing, invalid or shorter than 16 bytes");
+    return false;
+}
+
+static bool same(const struct mo_bearer *a, const struct mo_bearer *b) {
+    return mo_bearer_check(a, b->bytes, b->length);
+}
+
+bool mo_serve_secrets(const struct mo_cli *cli, const char *token, struct mo_diags *diags,
+                      struct mo_bearer *upgrade, struct mo_bearer *approval) {
+    mo_host_wipe(upgrade, sizeof *upgrade);
+    mo_host_wipe(approval, sizeof *approval);
+    if (cli->upgrade_token != NULL && cli->approval_token == NULL) {
+        refuse_as(diags, MO_CODE_SERVE_CREDENTIALS, "mo serve was given --upgrade-token-env", NULL,
+                  "live upgrades also need --approval-token-env NAME");
+        return false;
+    }
+    bool read = secret(diags, cli->upgrade_token,
+                       "mo serve could not use the upgrade credential from environment variable",
+                       upgrade) &&
+                secret(diags, cli->approval_token,
+                       "mo serve could not use the approval credential from environment variable",
+                       approval);
+    if (read && token != NULL && cli->approval_token != NULL) {
+        struct mo_bearer service = {0};
+        bool known = mo_bearer_read(&service, token);
+        read = !(known && (same(&service, upgrade) || same(&service, approval))) &&
+               !same(upgrade, approval);
+        mo_host_wipe(&service, sizeof service);
+        if (!read)
+            refuse_as(diags, MO_CODE_SERVE_CREDENTIALS, "mo serve could not start", NULL,
+                      "two of the service token, the upgrade credential and the approval "
+                      "credential are equal");
+    }
+    if (!read) {
+        mo_host_wipe(upgrade, sizeof *upgrade);
+        mo_host_wipe(approval, sizeof *approval);
+    }
+    return read;
 }
 
 static const char *server_refusal(enum mo_protocol_server_status status,
@@ -192,23 +242,9 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
         refuse(diags, "mo serve could not read the token's variable name", NULL, "out of memory");
         goto done;
     }
-    /* The upgrade credential must be long and differ from the service token, whatever the
-     * variable names; both copies are wiped once compared. */
-    struct mo_bearer upgrade = {0}, service_token = {0};
-    if (cli->upgrade_token != NULL) {
-        bool read = mo_bearer_read(&upgrade, cli->upgrade_token) && upgrade.length >= 16;
-        bool same = read && mo_bearer_read(&service_token, (const char *)name.bytes) &&
-                    mo_bearer_check(&service_token, (const uint8_t *)upgrade.bytes, upgrade.length);
-        mo_host_wipe(&service_token, sizeof service_token);
-        if (!read || same) {
-            mo_host_wipe(&upgrade, sizeof upgrade);
-            refuse(diags, "mo serve could not use the upgrade credential from environment variable",
-                   cli->upgrade_token,
-                   read ? "it equals the service token"
-                        : "it is missing, invalid or shorter than 16 bytes");
-            goto done;
-        }
-    }
+    struct mo_bearer upgrade = {0}, approval = {0};
+    if (!mo_serve_secrets(cli, (const char *)name.bytes, diags, &upgrade, &approval))
+        goto done;
     struct mo_listener_config config = {.port = cli->port};
     enum mo_listener_status opened = mo_listener_open(&config, (const char *)name.bytes, &listener);
     if (opened != MO_LISTENER_OK) {
@@ -247,8 +283,10 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
         image, service, store, listener, authorities, authority_count, &events, &server);
     if (built == MO_PROTOCOL_SERVER_OK)
         built = mo_protocol_server_upgrades(server, cli->upgrade_token == NULL ? NULL : &upgrade,
+                                            cli->approval_token == NULL ? NULL : &approval,
                                             "/proc/self/exe");
     mo_host_wipe(&upgrade, sizeof upgrade);
+    mo_host_wipe(&approval, sizeof approval);
     if (built != MO_PROTOCOL_SERVER_OK) {
         refuse(diags, "mo serve could not start the service", NULL, server_refusal(built, &log));
         goto done;

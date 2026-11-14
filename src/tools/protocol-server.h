@@ -100,7 +100,7 @@ struct protocol_connection {
     size_t stream_size, session;
     uint64_t epoch; /* program epoch whose catalog this request borrowed */
     bool borrowed;
-    bool reply_ready, retained, authenticated, upgrade_authorized;
+    bool reply_ready, retained, authenticated, upgrade_authorized, approval_authorized;
 };
 
 /* The program a live upgrade replaced, kept until nothing borrows it: requests that began
@@ -161,8 +161,8 @@ struct mo_protocol_server {
     struct protocol_connection connections[MO_LIMIT_MCP_CONNECTIONS];
     struct protocol_session sessions[MO_LIMIT_MCP_SESSIONS];
     struct protocol_bytes stream_head, list_changed;
-    struct mo_bearer upgrade_bearer;
-    bool upgrade_enabled;
+    struct mo_bearer upgrade_bearer, approval_bearer;
+    bool upgrade_enabled, approval_enabled;
     /* The current program's epoch, its image when the server owns it, and the process
      * holding its descriptor and catalog (the initial catalog lives in catalog_process). */
     uint64_t epoch;
@@ -216,6 +216,26 @@ void mo_protocol_respond(struct mo_protocol_server *server, struct protocol_conn
 /* Upgrade tools, called for an authenticated operator call; the reply may wait for commit. */
 void mo_protocol_upgrade_call(struct mo_protocol_server *server,
                               struct protocol_connection *connection, uint32_t kind);
+/* Text fields of a validated upgrade or review call, "" where absent. */
+struct upgrade_arguments {
+    char base[65], candidate[65], total[21], migration[MO_LIMIT_UPGRADE_MIGRATION_NAME + 1],
+        slot[33], index[21], offset[21], program[65], digest[65], setting[11];
+    char bytes[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
+};
+MO_MUST_USE bool mo_protocol_upgrade_arguments(struct mo_protocol_server *server,
+                                               struct protocol_connection *connection,
+                                               struct upgrade_arguments *out);
+void mo_protocol_upgrade_reply(struct mo_protocol_server *server,
+                               struct protocol_connection *connection, const struct mo_buffer *json,
+                               const struct mo_buffer *text, bool refused);
+void mo_protocol_upgrade_refuse(struct mo_protocol_server *server,
+                                struct protocol_connection *connection, uint16_t code,
+                                const char *class, const char *message, const uint8_t *candidate);
+MO_MUST_USE bool mo_protocol_unhex(const char *text, uint8_t *out, size_t length);
+MO_MUST_USE bool mo_protocol_decimal(const char *text, uint64_t *out);
+/* Review tools (kinds 4 to 6), called for an authenticated operator call. */
+void mo_protocol_review_call(struct mo_protocol_server *server,
+                             struct protocol_connection *connection, uint32_t kind);
 /* Slot expiry, compilation progress and the boundary swap, after each service step. */
 void mo_protocol_upgrade_poll(struct mo_protocol_server *server);
 /* The latest time the poll may sleep to while an upgrade is in progress. */

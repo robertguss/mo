@@ -229,11 +229,12 @@ static const struct abi_case catalog_option[] = {{.name = "None"},
                                                  {"Some", 1, {{NULL, ABI_CATALOG}}}};
 
 static const struct abi_case access[] = {{"Access",
-                                          4,
+                                          5,
                                           {{"bearer", ABI_SPAN_OPTION},
                                            {"upgrade", ABI_SPAN_OPTION},
                                            {"session", ABI_SPAN_OPTION},
-                                           {"stream", ABI_BOOL}}}};
+                                           {"stream", ABI_BOOL},
+                                           {"approval", ABI_SPAN_OPTION}}}};
 static const struct abi_case inspection[] = {{"Ok", 1, {{NULL, ABI_ACCESS}}},
                                              {"Error", 1, {{NULL, ABI_INT}}}};
 static const struct abi_case body_plan[] = {

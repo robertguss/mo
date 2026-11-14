@@ -192,6 +192,10 @@ enum flag_id {
     FLAG_UPGRADE_TOKEN_ENV,
     FLAG_STRENGTH,
     FLAG_AGAINST,
+    FLAG_APPROVAL_TOKEN_ENV,
+    FLAG_ITEMS,
+    FLAG_APPROVE,
+    FLAG_SETTING,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -245,13 +249,18 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(TEST) | ON(REHEARSE)},
     {FLAG_ARTIFACT, "--artifact", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
     {FLAG_CANDIDATE, "--candidate", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
-    {FLAG_URL, "--url", false, false, VALUE_TEXT, 0, ON(PUSH)},
-    {FLAG_BASE, "--base", false, false, VALUE_TEXT, 0, ON(PUSH)},
-    {FLAG_TOKEN_ENV, "--token-env", false, false, VALUE_TEXT, 0, ON(PUSH)},
+    {FLAG_URL, "--url", false, false, VALUE_TEXT, 0, ON(PUSH) | ON(REVIEW)},
+    {FLAG_BASE, "--base", false, false, VALUE_TEXT, 0, ON(PUSH) | ON(REVIEW)},
+    {FLAG_TOKEN_ENV, "--token-env", false, false, VALUE_TEXT, 0, ON(PUSH) | ON(REVIEW)},
     {FLAG_UPGRADE_TOKEN_ENV, "--upgrade-token-env", false, false, VALUE_TEXT, 0,
      ON(SERVE) | ON(PUSH)},
     {FLAG_STRENGTH, "--strength", false, false, VALUE_TEXT, 0, ON(TEST)},
     {FLAG_AGAINST, "--against", false, false, VALUE_TEXT, 0, ON(INTENT)},
+    {FLAG_APPROVAL_TOKEN_ENV, "--approval-token-env", false, false, VALUE_TEXT, 0,
+     ON(SERVE) | ON(REVIEW)},
+    {FLAG_ITEMS, "--items", false, false, VALUE_NONE, 0, ON(REVIEW)},
+    {FLAG_APPROVE, "--approve", false, true, VALUE_TEXT, 0, ON(REVIEW)},
+    {FLAG_SETTING, "--setting", false, false, VALUE_TEXT, 0, ON(REVIEW)},
 };
 #undef ON
 
@@ -275,6 +284,20 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_UPGRADE_TOKEN_ENV:
         out->upgrade_token = operand;
+        break;
+    case FLAG_APPROVAL_TOKEN_ENV:
+        out->approval_token = operand;
+        break;
+    case FLAG_ITEMS:
+        out->items = true;
+        break;
+    case FLAG_APPROVE:
+        out->approve[out->approve_count++] = operand;
+        break;
+    case FLAG_SETTING:
+        if (strcmp(operand, "everything") != 0 && strcmp(operand, "intent") != 0)
+            return refuse(out, error, "--setting takes everything or intent", arg, operand);
+        out->setting = operand;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -430,7 +453,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                  {"emit", MO_COMMAND_EMIT},         {"serve", MO_COMMAND_SERVE},
                  {"replay", MO_COMMAND_REPLAY},     {"query", MO_COMMAND_QUERY},
                  {"rehearse", MO_COMMAND_REHEARSE}, {"history", MO_COMMAND_HISTORY},
-                 {"push", MO_COMMAND_PUSH},         {"intent", MO_COMMAND_INTENT}};
+                 {"push", MO_COMMAND_PUSH},         {"intent", MO_COMMAND_INTENT},
+                 {"review", MO_COMMAND_REVIEW}};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
         if (strcmp(command, names[c].name) == 0)
@@ -439,7 +463,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(
             out, error,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, "
-            "fetch, push, replay, query, rehearse, history or intent)",
+            "fetch, push, review, replay, query, rehearse, history or intent)",
             command, NULL);
     out->command = names[c].command;
     bool flags = true;
@@ -519,11 +543,22 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             break;
         }
     }
+    if (out->command == MO_COMMAND_REVIEW &&
+        (out->file_count != 0 || out->push_url == NULL || out->fetch_token == NULL ||
+         out->approval_token == NULL ||
+         (out->items ? 1 : 0) + (out->approve_count != 0 ? 1 : 0) +
+                 (out->setting != NULL ? 1 : 0) !=
+             1))
+        return refuse(
+            out, error,
+            "usage: mo review --url URL --token-env NAME --approval-token-env NAME "
+            "(--items | --base PROGRAM --approve DIGEST... | --setting everything|intent)",
+            command, NULL);
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
     if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&
-        out->command != MO_COMMAND_REHEARSE && out->file_count == 0 &&
-        !(out->command == MO_COMMAND_REPLAY && out->data != NULL))
+        out->command != MO_COMMAND_REHEARSE && out->command != MO_COMMAND_REVIEW &&
+        out->file_count == 0 && !(out->command == MO_COMMAND_REPLAY && out->data != NULL))
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_QUERY && out->file_count != 2)
         return refuse(out, error, "query needs a file and a function", command, NULL);

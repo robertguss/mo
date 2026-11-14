@@ -1729,6 +1729,7 @@ SERVE_TOOL_PAGE = 32
 SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export", "mo-failures"]
 # Listed after the views; they need the upgrade credential and change the service.
 SERVE_UPGRADE_NAMES = ["mo-upgrade-open", "mo-upgrade-page", "mo-upgrade-commit"]
+SERVE_REVIEW_NAMES = ["mo-intent-items", "mo-intent-approve", "mo-review-setting"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -1993,7 +1994,7 @@ def serve_command(binary):
             assert served.post(SERVE_INITIALIZED, token)[0] == 202
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES
+            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES
             assert all(tool["inputSchema"]["type"] == "object" for tool in tools), tools
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
             assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
@@ -2158,7 +2159,7 @@ def serve_command(binary):
                 {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"cursor": cursor}}),
                 token)
             assert status == 200, body
-            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES, body
+            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES, body
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
 
         with serving() as served:
@@ -2253,7 +2254,7 @@ def serve_command(binary):
         with serving(entry, imported) as served:
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES, body
+            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES, body
             look = SERVE_READ.replace('"read"', '"look"')
             assert serve_structured(served.post(look, token)) == {"value": "31"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
@@ -4083,7 +4084,7 @@ def guide_claims(binary):
             "says.") in guide
     assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
     # ci/check_upgrade_live.py exercises the live-upgrade claims through mo serve and mo push.
-    for name in SERVE_UPGRADE_NAMES:
+    for name in SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES:
         assert f"`{name}`" in guide
     for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest.",
                      "Only the nine operator views are read-only;",

@@ -26,6 +26,10 @@ MO_MUST_USE int mo_run_program(const struct mo_cli *cli, const struct mo_program
                                const struct mo_core *core, const struct mo_buffer *wire,
                                const struct mo_sources *sources, FILE *output, FILE *errors,
                                struct mo_diags *diags);
+struct mo_bearer;
+MO_MUST_USE bool mo_serve_secrets(const struct mo_cli *cli, const char *token,
+                                  struct mo_diags *diags, struct mo_bearer *upgrade,
+                                  struct mo_bearer *approval);
 MO_MUST_USE int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image,
                                uint32_t service, FILE *output, FILE *errors, struct mo_diags *diags,
                                struct mo_store *held_store);

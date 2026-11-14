@@ -6,6 +6,7 @@
 #include <time.h>
 #include <unistd.h>
 
+static const uint8_t no_items[] = {'M', 'O', 'I', 'L', 1, 1, 0, 0, 0, 0};
 static struct mo_protocol_server *fault_server;
 static uint64_t admitted_before;
 static bool exhaust_reply, record_resizes, fail_append;
@@ -536,7 +537,7 @@ static void activation_outcomes(void) {
                                          &f.server) == MO_PROTOCOL_SERVER_OK);
         struct mo_bearer bearer = {.length = 23};
         memcpy(bearer.bytes, "UpgradeCanary0123456789", 23);
-        CHECK(mo_protocol_server_upgrades(f.server, &bearer, exe) == MO_PROTOCOL_SERVER_OK);
+        CHECK(mo_protocol_server_upgrades(f.server, &bearer, NULL, exe) == MO_PROTOCOL_SERVER_OK);
         char base[65], candidate[65], arguments[16384], out[32768];
         hex64(program.source, base);
         uint8_t digest[32];

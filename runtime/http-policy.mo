@@ -9,6 +9,7 @@ struct Access
   upgrade: Option(Http.Span)
   session: Option(Http.Span)
   stream: Bool
+  approval: Option(Http.Span)
 end
 
 enum BodyPlan
@@ -110,19 +111,23 @@ fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result
   return Error(405) if not stream and not equal?(bytes, head.method, "POST")
   sessions = values(bytes, head, "mcp-session-id")
   return Error(400) if sessions.size > 1
-  upgrades = values(bytes, head, "mo-upgrade-authorization")
-  upgrade = case upgrades.get(0)
-    Some(value): if upgrades.size == 1: Http.bearer_value(bytes, value) else: None
-    None: None
-  end
   Ok(
     Access(
       bearer: Http.bearer_span(bytes, head),
-      upgrade: upgrade,
+      upgrade: single_bearer(bytes, head, "mo-upgrade-authorization"),
       session: sessions.get(0),
-      stream: stream
+      stream: stream,
+      approval: single_bearer(bytes, head, "mo-approval-authorization")
     )
   )
+end
+
+fn single_bearer(bytes: List(Byte), head: Http.Head, name: Text) : Option(Http.Span)
+  found = values(bytes, head, name)
+  case found.get(0)
+    Some(value): if found.size == 1: Http.bearer_value(bytes, value) else: None
+    None: None
+  end
 end
 
 fn space(bytes: List(Byte), start: Int, finish: Int) : Int

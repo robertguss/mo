@@ -187,5 +187,26 @@ fn upgrade(wire: Text) : List(Text)
   end
   return [] if rendered == "!"
   slot = text(structured, "slot")
-  [if failed: "true" else: "false", rendered, structured.to_text, if slot == "!": "" else: slot]
+  [
+    if failed: "true" else: "false",
+    rendered,
+    structured.to_text,
+    if slot == "!": "" else: slot,
+    next_offset(structured)
+  ]
+end
+
+fn next_offset(structured: Json.Json) : Text
+  page = case structured
+    Json.Object(fields): fields.get("next") or Json.Null
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): Json.Null
+  end
+  case page
+    Json.Object(fields):
+      case fields.get("offset")
+        Some(Json.Number(n)): Json.Number(n).to_text
+        Some(_) | None: ""
+      end
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): ""
+  end
 end
