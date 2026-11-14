@@ -423,7 +423,11 @@ class Run:
             body = body.replace('  next_id: Int\n', '  next_id: Int\n  revision: Int\n')
             body = body.replace('Queue(jobs:', 'Queue(revision: 1, jobs:')
             body += ("\nfn restore(jobs: Map(Int, Job), next_id: Int, revision: Int) : Queue\n"
-                     "  Queue(jobs: jobs, next_id: next_id, revision: revision)\nend\n")
+                     "  kept = jobs.values.map(fn(job) (job.id, job) end).to_map\n"
+                     "  top = case jobs.values.map(fn(job) job.id + 1 end).max\n"
+                     "    Some(id): id\n    None: next_id\n  end\n"
+                     "  return Queue(jobs: kept, next_id: top, revision: revision) if top > next_id\n"
+                     "  Queue(jobs: kept, next_id: next_id, revision: revision)\nend\n")
             queue.write_text(body)
             self.upgrades.append(folder)
         folder = self.root / 'oversized'

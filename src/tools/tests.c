@@ -456,7 +456,7 @@ static void mo_test_program(const struct mo_cli *cli, const struct mo_program *p
                                         .limit = cli->limits.heap_size,
                                         .span.file = MO_NO_INDEX};
             result.outcome = MO_STOPPED;
-        } else if (cli->strength == NULL)
+        } else if (!cli->door_plan)
             result.outcome = mo_call(process, function, NULL, 0, &value, &defect);
         else {
             struct mo_deadline deadline;

@@ -107,6 +107,16 @@ enum mo_compile_status mo_list_start(const char *executable, const char *bundle,
                                   MO_LIMIT_CHECK_WALL_US};
     return spawn(arguments, count, diagnostics, limits, now, child);
 }
+enum mo_compile_status mo_check_start(const char *executable, const char *bundle,
+                                      const char *diagnostics, const char *old_bundle,
+                                      const char *context, uint64_t now,
+                                      struct mo_compile_child *child) {
+    const char *arguments[16] = {executable, "test", bundle, "--bundle"};
+    unsigned count = upgrade_inputs(arguments, 4, old_bundle, NULL, context);
+    struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
+                                  MO_LIMIT_CHECK_WALL_US};
+    return spawn(arguments, count, diagnostics, limits, now, child);
+}
 enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now) {
     MO_ASSERT(child != NULL && child->pid > 0);
     int status;

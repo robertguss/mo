@@ -30,10 +30,10 @@ struct upgrade_report {
 struct compile_job {
     char folder[sizeof "/tmp/mo-upgrade-XXXXXX"];
     char source[128], previous[128], image[128], diagnostics[128], input_context[128],
-        output_context[128], items[128], list_diagnostics[128];
+        output_context[128], items[128], list_diagnostics[128], check_diagnostics[128];
     const char *compiler;
     struct mo_compile_child child;
-    bool scratch, listing, has_old, has_context;
+    bool scratch, listing, check, checking, has_old, has_context;
 };
 
 bool mo_upgrade_error(struct mo_diags *diags, uint16_t code, const char *message);

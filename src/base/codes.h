@@ -308,6 +308,7 @@
     X(1430, UPGRADE_SOURCE_MISMATCH, NULL)                                                         \
     X(1431, UPGRADE_AMBIGUOUS_PROGRAM, NULL)                                                       \
     X(1432, PLAN_UNFINISHED, NULL)                                                                 \
+    X(1433, CHECKS_FAILED, NULL)                                                                   \
     X(1434, SERVE_CREDENTIALS, NULL)                                                               \
     X(1437, REVIEW_FULL, NULL)
 

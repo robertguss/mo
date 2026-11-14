@@ -111,6 +111,16 @@ fn tick(state: Counter, _now: Time) : Counter
   state
 end
 '''
+BROKEN = V2 + '''
+fn below(n: Int) : Int
+  promise "the result is never negative"
+    result >= 0
+    allows n: 5, result: 4
+    forbids n: 0, result: -1
+  end
+  n - 1
+end
+'''
 # Within the checked-restart budget, beyond the live one.
 SLOW = V3.replace('''fn migrate(old: Int) : Counter
   Counter(value: old, label: "migrated")''', '''fn migrate(old: Int) : Counter
@@ -334,8 +344,9 @@ def bundle_bytes(source):
 def main_flow(binary, root):
     data = pathlib.Path(root) / "main"
     data.mkdir()
-    v1, v2, v3, slow = (write(root, name, text) for name, text in
-                        [("v1", V1), ("v2", V2), ("v3", V3), ("slow", SLOW)])
+    v1, v2, v3, slow, broken = (write(root, name, text) for name, text in
+                                [("v1", V1), ("v2", V2), ("v3", V3), ("slow", SLOW),
+                                 ("broken", BROKEN)])
     base1, digest2 = digests(binary, v1, v2)
     _, digest3 = digests(binary, v2, v3)
     service = Service(binary, data, v1)
@@ -417,6 +428,12 @@ def main_flow(binary, root):
         refused = push(binary, service, slow, digest2, "--migrate", "migrate", "--json")
         report = json.loads(refused.stdout)
         assert refused.returncode == 1 and report["code"] == "E1424", report
+        assert service.value("read").startswith("v2:")
+        # A candidate that breaks its own promise is refused by the door's checks.
+        failed = push(binary, service, broken, digest2, "--json")
+        report = json.loads(failed.stdout)
+        assert failed.returncode == 1 and report["code"] == "E1433", report
+        assert "failed Main.below.promise.1" in report["message"], report
         assert service.value("read").startswith("v2:")
         assert all(stream.events(0.3) == [] for stream in streams)
         counted = len(acknowledged)

@@ -451,6 +451,10 @@ def emit_command(binary):
         mistake(args, f'flag is not accepted by this command: "{flag}"')
     for command in ("check", "run", "format", "fix"):
         mistake([command, "-o", "a.bc", good], f'flag is not accepted by this command: "-o"')
-    for args in (["-o", "a.bc"], ["--bundle"], ["--bundle", "--list"], ["--list", "-o", "a.bc"]):
+    for args in (["-o", "a.bc"], ["--bundle", "--list"], ["--list", "-o", "a.bc"]):
         mistake(["test", *args, good], 'test writes an item list only as --bundle --list -o FILE: "test"')
+    for args in (["--json"], ["--calls", "5"], ["--seconds", "5"], ["--strength", "x"], ["-o", "a.bc"]):
+        mistake(["test", "--bundle", *args, good],
+                "test --bundle without --list runs the door's checks over the whole bundle; it takes "
+                'no -o, --json, --only, --in, --calls, --seconds or --strength: "--bundle"')
     assert not (root / "a.bc").exists()

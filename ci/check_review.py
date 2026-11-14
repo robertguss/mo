@@ -25,16 +25,17 @@ service
 end
 
 fn bump(n: Int) : Int
-  promise "bumping raises the number"
-    result > n
+  promise "bumping never lowers the number"
+    result >= n
     allows n: 1, result: 2
-    forbids n: 1, result: 1
+    forbids n: 1, result: 0
   end
 
   examples
     bump(1) == 2
   end
 
+  return n if n >= 1000
   n + 1
 end
 
@@ -42,7 +43,7 @@ fn add(state: Int, _now: Time) : (Int, Int)
   (bump(state), bump(state))
 end
 '''
-B = A.replace("bumping raises the number", "bumping always raises the number")
+B = A.replace("bumping never lowers the number", "bumping never ever lowers the number")
 APPROVE_HEADER = {"Mo-Approval-Authorization": f"Bearer {APPROVAL}"}
 
 

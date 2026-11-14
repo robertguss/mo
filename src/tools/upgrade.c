@@ -139,6 +139,7 @@ void mo_upgrade_compile_cleanup(struct compile_job *job) {
     (void)unlink(job->diagnostics);
     (void)unlink(job->items);
     (void)unlink(job->list_diagnostics);
+    (void)unlink(job->check_diagnostics);
     (void)rmdir(job->folder);
     job->scratch = false;
 }
@@ -161,7 +162,9 @@ bool mo_upgrade_compile_begin(const char *compiler, const struct mo_buffer *bund
     int g = snprintf(job->items, sizeof job->items, "%s/items.moil", job->folder);
     int h = snprintf(job->list_diagnostics, sizeof job->list_diagnostics, "%s/list-diagnostics",
                      job->folder);
-    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && f > 0 && g > 0 && h > 0);
+    int i = snprintf(job->check_diagnostics, sizeof job->check_diagnostics, "%s/check-diagnostics",
+                     job->folder);
+    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && f > 0 && g > 0 && h > 0 && i > 0);
     job->compiler = compiler;
     job->has_old = old != NULL;
     job->has_context = context != NULL;
@@ -186,12 +189,19 @@ bool mo_upgrade_compile_begin(const char *compiler, const struct mo_buffer *bund
 enum mo_compile_status mo_upgrade_compile_poll(struct compile_job *job) {
     uint64_t now = monotonic_us();
     enum mo_compile_status status = mo_compile_poll(&job->child, now);
-    if (status != MO_COMPILE_OK || job->listing)
+    if (status != MO_COMPILE_OK || job->checking || (job->listing && !job->check))
         return status;
-    job->listing = true;
-    status = mo_list_start(job->compiler, job->source, job->items, job->list_diagnostics,
-                           job->has_old ? job->previous : NULL,
-                           job->has_context ? job->input_context : NULL, now, &job->child);
+    const char *old = job->has_old ? job->previous : NULL;
+    const char *context = job->has_context ? job->input_context : NULL;
+    if (job->listing) {
+        job->checking = true;
+        status = mo_check_start(job->compiler, job->source, job->check_diagnostics, old, context,
+                                now, &job->child);
+    } else {
+        job->listing = true;
+        status = mo_list_start(job->compiler, job->source, job->items, job->list_diagnostics, old,
+                               context, now, &job->child);
+    }
     return status == MO_COMPILE_RUNNING ? status : MO_COMPILE_IO;
 }
 void mo_upgrade_image_buffers_init(struct upgrade_image *image) {
@@ -211,7 +221,10 @@ bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status stat
     bool ok = true;
     report->compilation = status;
     if (status != MO_COMPILE_OK) {
-        FILE *errors = fopen(job->listing ? job->list_diagnostics : job->diagnostics, "rb");
+        FILE *errors = fopen(job->checking  ? job->check_diagnostics
+                             : job->listing ? job->list_diagnostics
+                                            : job->diagnostics,
+                             "rb");
         report->detail[0] = 0;
         if (errors != NULL) {
             size_t n = fread(report->detail, 1, sizeof report->detail - 1, errors);
@@ -224,10 +237,20 @@ bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status stat
                                                     : MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC;
         if (strstr(report->detail, "E1422:") != NULL)
             code = MO_CODE_UPGRADE_MIGRATION_SIGNATURE;
-        ok = mo_upgrade_refuse(report, code, status == MO_COMPILE_BUDGET ? "budget" : "compile",
-                               report->detail[0] != 0
-                                   ? report->detail
-                                   : "compiler child failed or exceeded its budget");
+        if (job->checking)
+            code = status == MO_COMPILE_DIAGNOSTIC && strstr(report->detail, "E1433:") != NULL
+                       ? MO_CODE_CHECKS_FAILED
+                       : MO_CODE_PLAN_UNFINISHED;
+        const char *class = job->checking                 ? "check"
+                            : status == MO_COMPILE_BUDGET ? "budget"
+                                                          : "compile";
+        const char *detail = report->detail;
+        if (job->checking && strncmp(detail, "error E143", 10) == 0)
+            detail += strlen(detail) < sizeof "error E1433: " ? 0 : sizeof "error E1433: " - 1;
+        ok = mo_upgrade_refuse(report, code, class,
+                               detail[0] != 0  ? detail
+                               : job->checking ? "the checks did not finish inside their limits"
+                                               : "compiler child failed or exceeded its budget");
         goto done;
     }
     struct mo_load_error error;

@@ -125,6 +125,10 @@ MO_MUST_USE enum mo_compile_status mo_list_start(const char *executable, const c
                                                  const char *output, const char *diagnostics,
                                                  const char *old_bundle, const char *context,
                                                  uint64_t now, struct mo_compile_child *child);
+MO_MUST_USE enum mo_compile_status mo_check_start(const char *executable, const char *bundle,
+                                                  const char *diagnostics, const char *old_bundle,
+                                                  const char *context, uint64_t now,
+                                                  struct mo_compile_child *child);
 MO_MUST_USE enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now);
 void mo_compile_cancel(struct mo_compile_child *child);
 

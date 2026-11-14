@@ -576,7 +576,18 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "--recover reads a data folder, not --export", "--recover", NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
-    if (out->command == MO_COMMAND_TEST && (out->output != NULL || out->source_bundle) &&
+    uint64_t planned = (UINT64_C(1) << FLAG_LIST) | (UINT64_C(1) << FLAG_ONLY) |
+                       (UINT64_C(1) << FLAG_IN) | (UINT64_C(1) << FLAG_CALLS);
+    bool checks = out->command == MO_COMMAND_TEST && out->source_bundle && !out->list;
+    if (checks && (out->output != NULL || out->json || out->strength != NULL ||
+                   (seen & (planned | (UINT64_C(1) << FLAG_SECONDS))) != 0))
+        return refuse(out, error,
+                      "test --bundle without --list runs the door's checks over the whole bundle; "
+                      "it takes no -o, --json, --only, --in, --calls, --seconds or --strength",
+                      "--bundle", NULL);
+    if (checks)
+        out->seconds = (uint32_t)(MO_LIMIT_CHECK_WALL_US / UINT64_C(1000000));
+    if (out->command == MO_COMMAND_TEST && !checks && (out->output != NULL || out->source_bundle) &&
         (!out->list || out->output == NULL || !out->source_bundle || out->json))
         return refuse(out, error, "test writes an item list only as --bundle --list -o FILE",
                       command, NULL);
@@ -606,16 +617,15 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "--old-bundle needs --bundle", "--old-bundle", NULL);
     if (out->json && out->emit != MO_EMIT_NONE)
         return refuse(out, error, "--json and --emit cannot be combined", "--json", "--emit");
-    uint64_t planned = (UINT64_C(1) << FLAG_LIST) | (UINT64_C(1) << FLAG_ONLY) |
-                       (UINT64_C(1) << FLAG_IN) | (UINT64_C(1) << FLAG_CALLS);
     if (out->strength != NULL && (seen & planned) != 0)
         return refuse(out, error,
                       "--strength runs a fixed plan over the whole program; it takes no --list, "
                       "--only, --in or --calls",
                       "--strength", NULL);
-    if (out->strength != NULL)
+    out->door_plan = out->strength != NULL || checks;
+    if (out->door_plan)
         out->calls = MO_DOOR_PLAN_INPUTS;
-    out->sequences = out->strength != NULL ? MO_DOOR_PLAN_SEQUENCES : out->calls;
+    out->sequences = out->door_plan ? MO_DOOR_PLAN_SEQUENCES : out->calls;
     return true;
 }
 
