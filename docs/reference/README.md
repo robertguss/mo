@@ -1508,7 +1508,9 @@ recovery check's full name is its service module's, then `service.recovery`,
 and a service promise's its service module's, then `service.promise` and its
 number (section 12.5). `--only NAME` runs the one with that full name, and can be given more
 than once; `--in MODULE` runs one module's, still checking the whole program;
-and `--list` prints the full names without running anything. A selection that
+and `--list` prints the full names without running anything. `--strength DIR`
+measures how many of the wrong versions in `DIR` the program's promises and
+examples kill; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
 matches nothing is a mistake in the command.
 
 `mo run` and `mo test` limit what a program uses: `--max-stack` sets the bytes

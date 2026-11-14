@@ -1,6 +1,6 @@
 # Promise strength from natural mutants
 
-Status: Design proposal (16 Oct 2026, task `MO-66` / `S1`), amended for Phase 6 by section 15, which takes precedence where the two differ. Not yet implemented.
+Status: **2026-11-14.** Section 15 is what this build does (`src/tools/strength.c`); sections 1-14 are the older function-scoped proposal; section 15 takes precedence.
 
 ## 1. Purpose and scope
 
