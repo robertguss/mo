@@ -20,8 +20,8 @@ bug to fix.
 
 ## E1106 is a defensive guard, not a source-reachable diagnostic
 
-`infer` in `src/check/bodies.c` reports E1106 at 4,104 simultaneously active
-inference frames. `MO_LIMIT_SOURCE_INFERENCE_DEPTH` deliberately allows
+`infer_expression` in `src/check/infer.c` reports E1106 at 4,104
+simultaneously active inference frames. `MO_LIMIT_SOURCE_INFERENCE_DEPTH` deliberately allows
 16 frames per parser nesting level plus eight outer wrappers. The parser
 allows only 256 levels, including the function declaration.
 

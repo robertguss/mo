@@ -286,6 +286,110 @@ MO_MUST_USE int infer_compare_text(const struct mo_syntax *a, const char *b);
 MO_MUST_USE const struct mo_source_type *infer_parameter_type(const struct mo_source_type *type,
                                                               uint32_t bit);
 
+const char *infer_length_habit(const struct mo_syntax *name);
+MO_MUST_USE struct name_slot *infer_slot(struct inference *p, const struct mo_syntax *name,
+                                         bool create);
+MO_MUST_USE bool infer_bind(struct inference *p, const struct mo_syntax *name, struct term *type,
+                            bool variable);
+MO_MUST_USE bool infer_leave(struct inference *p, struct local *mark);
+MO_MUST_USE bool infer_capture_write(struct inference *p, struct local *local,
+                                     const struct mo_syntax *syntax,
+                                     const struct mo_syntax *target);
+MO_MUST_USE bool infer_capture_path(struct inference *p, const struct mo_syntax *group,
+                                    uint32_t arm);
+MO_MUST_USE const struct mo_symbol *infer_find_symbol(const struct mo_module_scope *scope,
+                                                      const struct mo_syntax *name,
+                                                      uint32_t *count);
+MO_MUST_USE const struct mo_data_signature *infer_data_type(struct inference *p,
+                                                            const struct mo_symbol *symbol);
+MO_MUST_USE bool infer_visible_data(struct inference *p, const struct mo_symbol *owner);
+MO_MUST_USE const struct mo_field_signature *infer_find_field(const struct mo_data_signature *data,
+                                                              const struct mo_syntax *name);
+MO_MUST_USE const struct mo_module_scope *
+infer_prefix_module(struct inference *p, const struct mo_syntax *prefix, uint32_t *alias);
+MO_MUST_USE bool infer_use_alias(struct inference *p, uint32_t alias, const struct mo_syntax *name);
+MO_MUST_USE const struct mo_symbol *infer_definition(struct inference *p,
+                                                     const struct mo_syntax *name,
+                                                     const struct mo_syntax *prefix,
+                                                     uint32_t *count);
+MO_MUST_USE bool infer_case_receiver(struct inference *p, const struct mo_syntax *name);
+MO_MUST_USE bool infer_type_reading(const struct mo_syntax *prefix, const struct mo_syntax *name,
+                                    const struct mo_syntax *call);
+MO_MUST_USE bool infer_missing_field(struct inference *p, struct mo_span span, const uint8_t *name,
+                                     size_t length, const struct mo_syntax *declaration);
+MO_MUST_USE const struct mo_native_signature *
+infer_native_definition(struct inference *p, const char *module, const struct mo_syntax *name);
+MO_MUST_USE struct value infer_function_value(struct inference *p,
+                                              const struct mo_source_type *type,
+                                              const uint8_t requirements[26]);
+MO_MUST_USE struct value infer_native_identifier(struct inference *p,
+                                                 const struct mo_native_signature *signature);
+MO_MUST_USE struct value infer_declared_function(struct inference *p, const struct mo_symbol *s);
+MO_MUST_USE const struct mo_symbol *infer_select_overload(struct inference *p,
+                                                          const struct mo_symbol *group,
+                                                          uint32_t count, struct term *receiver);
+MO_MUST_USE struct value infer_deferred_function(struct inference *p, const struct mo_syntax *name,
+                                                 const struct mo_symbol *group, uint32_t count);
+MO_MUST_USE const struct mo_module_scope *infer_type_scope(struct inference *p, struct term *type);
+MO_MUST_USE struct value infer_identifier(struct inference *p, const struct mo_syntax *node,
+                                          const struct mo_syntax *prefix);
+MO_MUST_USE struct value infer_as(struct inference *p, const struct mo_syntax *node,
+                                  struct term *expected, uint16_t code);
+MO_MUST_USE struct value infer_discard(struct inference *p, const struct mo_syntax *node);
+MO_MUST_USE bool infer_lambda_argument(const struct mo_syntax *node);
+void infer_order_notes(struct inference *p, struct note *before, const struct note_range *ranges,
+                       uint32_t count);
+
+MO_MUST_USE struct term *infer_builtin_type(struct inference *p, const struct mo_builtin_case *data,
+                                            struct term *expected);
+MO_MUST_USE uint32_t infer_builtin_field(const struct mo_builtin_case *data,
+                                         const struct mo_syntax *arg);
+MO_MUST_USE struct term *infer_builtin_part(struct inference *p, const struct mo_builtin_case *data,
+                                            struct term *type, uint32_t index);
+MO_MUST_USE struct value infer_builtin_construct(struct inference *p,
+                                                 const struct mo_builtin_case *data,
+                                                 const struct mo_syntax *args,
+                                                 struct term *expected);
+MO_MUST_USE struct value infer_construct(struct inference *p, const struct mo_data_signature *data,
+                                         const struct mo_syntax *args, struct term *expected);
+MO_MUST_USE struct value infer_ability_function(struct inference *p, struct value receiver,
+                                                const struct mo_syntax *name);
+MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
+                                      const struct mo_syntax *name, bool *called);
+bool infer_receiver_only(struct term *type);
+MO_MUST_USE bool infer_empty_dot_call(struct inference *p, const struct mo_syntax *site);
+MO_MUST_USE struct value infer_field_value(struct inference *p, struct value receiver,
+                                           const struct mo_syntax *name,
+                                           const struct mo_syntax *syntax,
+                                           const struct mo_syntax *site, bool *called);
+MO_MUST_USE struct value infer_simulation_call(struct inference *p, const struct mo_syntax *name,
+                                               const struct mo_syntax *args);
+MO_MUST_USE struct value infer_sequence(struct inference *p, const struct mo_syntax *node,
+                                        struct term *expected);
+MO_MUST_USE struct value infer_call(struct inference *p, struct value callee,
+                                    const struct mo_syntax *args, const struct value *receiver);
+MO_MUST_USE struct value infer_binary(struct inference *p, enum mo_syntax_token op, struct value a,
+                                      const struct mo_syntax *right, struct term *expected);
+MO_MUST_USE struct value infer_propagate(struct inference *p, struct value input,
+                                         struct term *expected);
+
+MO_MUST_USE bool infer_pattern(struct inference *p, const struct mo_syntax *node, struct term *type,
+                               uint32_t group, uint32_t alternative, struct mo_match_pattern **out);
+MO_MUST_USE struct value infer_condition(struct inference *p, const struct mo_syntax *node,
+                                         bool keep);
+MO_MUST_USE struct value infer_match(struct inference *p, const struct mo_syntax *node,
+                                     struct term *expected);
+MO_MUST_USE struct value infer_conditional(struct inference *p, const struct mo_syntax *node,
+                                           struct term *expected);
+MO_MUST_USE bool infer_binder(struct inference *p, const struct mo_syntax *node, struct term *type);
+MO_MUST_USE struct term *infer_tuple_part(struct inference *p, struct term *t,
+                                          const struct mo_syntax *index, uint32_t *part);
+MO_MUST_USE struct value infer_position(struct inference *p, struct value v,
+                                        const struct mo_syntax *index);
+
+MO_MUST_USE struct value infer_expression(struct inference *p, const struct mo_syntax *node,
+                                          struct term *expected);
+
 MO_MUST_USE const struct mo_source_type *infer_finish_type(struct inference *p, struct term *t,
                                                            uint32_t depth);
 MO_MUST_USE bool infer_finish_notes(struct inference *p, struct mo_inferred_expression *items);
@@ -312,23 +416,5 @@ MO_MUST_USE bool infer_finish_dispatches(struct inference *p);
 MO_MUST_USE bool infer_anchor_inputs(struct inference *p, const struct mo_syntax *anchor,
                                      const struct mo_syntax *parameters, uint32_t count,
                                      const struct mo_syntax **inputs);
-
-MO_MUST_USE const struct mo_data_signature *infer_data_type(struct inference *p,
-                                                            const struct mo_symbol *symbol);
-MO_MUST_USE bool infer_visible_data(struct inference *p, const struct mo_symbol *owner);
-MO_MUST_USE struct value infer_declared_function(struct inference *p, const struct mo_symbol *s);
-MO_MUST_USE const struct mo_symbol *infer_select_overload(struct inference *p,
-                                                          const struct mo_symbol *group,
-                                                          uint32_t count, struct term *receiver);
-MO_MUST_USE uint32_t infer_builtin_field(const struct mo_builtin_case *data,
-                                         const struct mo_syntax *arg);
-MO_MUST_USE struct term *infer_builtin_part(struct inference *p, const struct mo_builtin_case *data,
-                                            struct term *type, uint32_t index);
-MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
-                                      const struct mo_syntax *name, bool *called);
-bool infer_receiver_only(struct term *type);
-MO_MUST_USE bool infer_empty_dot_call(struct inference *p, const struct mo_syntax *site);
-MO_MUST_USE struct term *infer_tuple_part(struct inference *p, struct term *t,
-                                          const struct mo_syntax *index, uint32_t *part);
 
 #endif
