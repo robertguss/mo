@@ -30,7 +30,7 @@ uint64_t mo_pause_attempt;
 #include <time.h>
 #include <unistd.h>
 
-static bool upgrade_error(struct mo_diags *diags, uint16_t code, const char *message) {
+static bool mo_upgrade_error(struct mo_diags *diags, uint16_t code, const char *message) {
     bool added = mo_diags_add(
         diags,
         &(struct mo_diag){.code = code, .message = message, .primary.span.file = UINT32_MAX});
@@ -41,7 +41,7 @@ static const char *library_path(void) {
     struct stat info;
     return stat(mo_library_path, &info) != 0 && errno == ENOENT ? NULL : mo_library_path;
 }
-static bool file_bytes(const char *path, size_t limit, struct mo_buffer *out) {
+static bool mo_upgrade_file_bytes(const char *path, size_t limit, struct mo_buffer *out) {
     FILE *file = fopen(path, "rb");
     if (file == NULL)
         return false;
@@ -98,8 +98,8 @@ bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo
         if (reserved(set->names[i])) {
             if (migration && i != 0)
                 continue;
-            ok = upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
-                               "UpgradeOld is reserved for recorded state types");
+            ok = mo_upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
+                                  "UpgradeOld is reserved for recorded state types");
             break;
         }
         const struct mo_source *source = &sources->files[set->modules[i]->span.file];
@@ -129,8 +129,8 @@ bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo
     if (!ok) {
         out->length = start;
         if (!mo_diags_any(diags))
-            (void)upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_SIZE,
-                                "source bundle exceeds its admission limits");
+            (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_SIZE,
+                                   "source bundle exceeds its admission limits");
     }
     mo_arena_free(&arena);
     return ok;
@@ -156,8 +156,8 @@ static bool load_bundle_bytes(const uint8_t *bytes, size_t length, struct mo_sou
                                       bundle.files[i].source.length, &file, &error);
         }
     }
-    return ok || upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
-                               "source bundle is malformed or unreadable");
+    return ok || mo_upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
+                                  "source bundle is malformed or unreadable");
 }
 struct mo_module_set *mo_upgrade_source_set(struct mo_arena *arena, const char *path,
                                             const char *library, struct mo_sources *sources,
@@ -169,8 +169,8 @@ struct mo_module_set *mo_upgrade_source_set(struct mo_arena *arena, const char *
         /* Keep the original sources on a load error so diagnostics retain their spans. */
         mo_sources_free(sources);
         if (!mo_sources_init(sources))
-            (void)upgrade_error(diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
-                                "source replay could not allocate its bundled sources");
+            (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
+                                   "source replay could not allocate its bundled sources");
         else if (load_bundle_bytes(bundle.bytes, bundle.length, sources, diags))
             set = mo_load_bundle_sources(arena, sources, library, diags);
     }
@@ -181,20 +181,20 @@ struct mo_module_set *mo_upgrade_source_set(struct mo_arena *arena, const char *
 static bool load_bundle(const char *path, struct mo_sources *sources, struct mo_diags *diags) {
     struct mo_buffer bytes;
     mo_buffer_init(&bytes, MO_LIMIT_BUNDLE_BYTES);
-    bool ok = file_bytes(path, MO_LIMIT_BUNDLE_BYTES, &bytes);
+    bool ok = mo_upgrade_file_bytes(path, MO_LIMIT_BUNDLE_BYTES, &bytes);
     if (ok)
         ok = load_bundle_bytes(bytes.bytes, bytes.length, sources, diags);
     else
-        (void)upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
-                            "source bundle is malformed or unreadable");
+        (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
+                               "source bundle is malformed or unreadable");
     mo_buffer_free(&bytes);
     return ok;
 }
-static bool write_file_bytes(const char *path, const uint8_t *bytes, size_t length);
+static bool mo_upgrade_write_file_bytes(const char *path, const uint8_t *bytes, size_t length);
 static bool inject_context(const char *path, struct mo_sources *sources, struct mo_buffer *storage,
                            char migration[MO_LIMIT_UPGRADE_MIGRATION_NAME + 1]) {
     struct mo_compile_context context;
-    if (!file_bytes(path, MO_LIMIT_BUNDLE_BYTES, storage) ||
+    if (!mo_upgrade_file_bytes(path, MO_LIMIT_BUNDLE_BYTES, storage) ||
         !mo_compile_context_read(storage->bytes, storage->length, &context))
         return false;
     memcpy(migration, context.migration.bytes, context.migration.length);
@@ -241,7 +241,7 @@ static bool save_context(const struct mo_sources *sources, const char *migration
     char path[MO_CLI_ARGUMENT_SIZE + 6];
     int written = snprintf(path, sizeof path, "%s.mocc", output);
     ok = ok && written > 0 && (size_t)written < sizeof path &&
-         write_file_bytes(path, bytes.bytes, bytes.length);
+         mo_upgrade_write_file_bytes(path, bytes.bytes, bytes.length);
     mo_buffer_free(&bytes);
     return ok;
 }
@@ -251,7 +251,7 @@ static bool list_items(struct mo_arena *arena, const struct mo_program *program,
     struct mo_buffer list;
     mo_buffer_init(&list, MO_LIMIT_INTENT_LIST_BYTES);
     bool ok = mo_intent_items(arena, program, &intent) && mo_intent_list_write(&intent, &list) &&
-              write_file_bytes(output, list.bytes, list.length);
+              mo_upgrade_write_file_bytes(output, list.bytes, list.length);
     mo_buffer_free(&list);
     return ok;
 }
@@ -288,7 +288,7 @@ static void compile_bundle(void *context) {
     struct mo_buffer old_wire;
     mo_buffer_init(&old_wire, MO_LIMIT_BUNDLE_BYTES);
     if (ok && work->cli->old_bundle != NULL) {
-        ok = file_bytes(work->cli->old_bundle, MO_LIMIT_BUNDLE_BYTES, &old_wire);
+        ok = mo_upgrade_file_bytes(work->cli->old_bundle, MO_LIMIT_BUNDLE_BYTES, &old_wire);
         bool metadata_input =
             ok && old_wire.length >= 5 && memcmp(old_wire.bytes, "MOCS\1", 5) == 0;
         if (metadata_input) {
@@ -329,16 +329,16 @@ static void compile_bundle(void *context) {
     if (set != NULL)
         for (uint32_t i = 0; i < set->count; i++)
             if (set->modules[i]->span.file < candidate_count && reserved(set->names[i]))
-                (void)upgrade_error(&diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
-                                    "candidate declares the reserved UpgradeOld namespace");
+                (void)mo_upgrade_error(&diags, MO_CODE_UPGRADE_BUNDLE_FORMAT,
+                                       "candidate declares the reserved UpgradeOld namespace");
     struct mo_program *program =
         set == NULL || mo_diags_any(&diags) ? NULL : mo_check(&arena, set, &diags);
     ok = program != NULL && !mo_diags_any(&diags);
     bool listing = work->cli->command == MO_COMMAND_TEST;
     if (listing) {
         if (ok && !list_items(&arena, program, work->cli->output))
-            (void)upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
-                                "the program's intent items exceed their limits");
+            (void)mo_upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
+                                   "the program's intent items exceed their limits");
         ok = false;
     }
     if (ok && selected_migration == retained_migration && retained_migration[0] != 0) {
@@ -401,8 +401,8 @@ static void compile_bundle(void *context) {
                               metadata_status == MO_UPGRADE_METADATA_TIMER;
     mo_buffer_free(&metadata);
     if (!ok && !listing && !runtime_diagnostic && !mo_diags_any(&diags))
-        (void)upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
-                            "bundle compilation failed");
+        (void)mo_upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
+                               "bundle compilation failed");
     work->status = runtime_diagnostic
                        ? (metadata_status == MO_UPGRADE_METADATA_INITIALIZER ? 70 : 69)
                        : mo_write_diagnostics(work->output, work->errors, false, MO_COMMAND_EMIT,
@@ -443,8 +443,8 @@ struct upgrade_report {
     uint8_t old_schema[32], new_schema[32];
     bool compared, implementation_changed, rehearsal, state_valid;
 };
-static bool refuse_upgrade(struct upgrade_report *r, uint16_t code, const char *class,
-                           const char *message) {
+static bool mo_upgrade_refuse(struct upgrade_report *r, uint16_t code, const char *class,
+                              const char *message) {
     r->code = code;
     r->class = class;
     r->message = message;
@@ -455,8 +455,8 @@ static bool append_digest(struct mo_buffer *out, const uint8_t *digest, bool pre
                          mo_buffer_append_byte(out, '"')
                    : mo_buffer_append(out, "null", 4);
 }
-static bool report_json(struct mo_buffer *out, const struct upgrade_report *r,
-                        const char *migration) {
+static bool mo_upgrade_report_json(struct mo_buffer *out, const struct upgrade_report *r,
+                                   const char *migration) {
     char prefix[256];
     int n = snprintf(prefix, sizeof prefix, "{\"version\":1,\"status\":\"%s\",\"code\":",
                      r->code != 0        ? "refused"
@@ -513,7 +513,7 @@ static bool report_json(struct mo_buffer *out, const struct upgrade_report *r,
             mo_buffer_append_text(out, r->state_valid ? "true" : "false");
     return ok && mo_buffer_append_byte(out, '}');
 }
-static bool report_text(struct mo_buffer *text, const struct upgrade_report *report) {
+static bool mo_upgrade_report_text(struct mo_buffer *text, const struct upgrade_report *report) {
     char prefix[80];
     int n = snprintf(prefix, sizeof prefix,
                      report->code != 0   ? "error E%04u: "
@@ -532,13 +532,13 @@ static bool report_text(struct mo_buffer *text, const struct upgrade_report *rep
         ok = ok && mo_buffer_append_text(text, "\n  rehearsal is not upgrade acceptance");
     return ok && mo_buffer_append_byte(text, '\n');
 }
-static int show_report(const struct mo_cli *cli, FILE *output, FILE *errors,
-                       const struct upgrade_report *report) {
+static int mo_upgrade_show_report(const struct mo_cli *cli, FILE *output, FILE *errors,
+                                  const struct upgrade_report *report) {
     struct mo_buffer text;
     mo_buffer_init(&text, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
-    bool ok = cli->json
-                  ? report_json(&text, report, cli->migration) && mo_buffer_append_byte(&text, '\n')
-                  : report_text(&text, report);
+    bool ok = cli->json ? mo_upgrade_report_json(&text, report, cli->migration) &&
+                              mo_buffer_append_byte(&text, '\n')
+                        : mo_upgrade_report_text(&text, report);
     ok = ok && mo_offline_flush(cli->json || report->code == 0 ? output : errors, &text);
     mo_buffer_free(&text);
     return ok && report->code == 0 ? 0 : 1;
@@ -555,7 +555,7 @@ static int64_t wall_us(void) {
         return 0;
     return (int64_t)now.tv_sec * INT64_C(1000000) + now.tv_nsec / 1000;
 }
-static bool write_file_bytes(const char *path, const uint8_t *bytes, size_t length) {
+static bool mo_upgrade_write_file_bytes(const char *path, const uint8_t *bytes, size_t length) {
     FILE *file = fopen(path, "wb");
     if (file == NULL)
         return false;
@@ -570,7 +570,7 @@ struct compile_job {
     struct mo_compile_child child;
     bool scratch, listing, has_old, has_context;
 };
-static void compile_cleanup(struct compile_job *job) {
+static void mo_upgrade_compile_cleanup(struct compile_job *job) {
     if (!job->scratch)
         return;
     if (job->child.pid != 0)
@@ -587,14 +587,14 @@ static void compile_cleanup(struct compile_job *job) {
     job->scratch = false;
 }
 /* Writes the inputs and starts the child; false is a refusal already in report. */
-static bool compile_begin(const char *compiler, const struct mo_buffer *bundle,
-                          const struct mo_buffer *old, const char *migration,
-                          const struct mo_buffer *context, struct compile_job *job,
-                          struct upgrade_report *report) {
+static bool mo_upgrade_compile_begin(const char *compiler, const struct mo_buffer *bundle,
+                                     const struct mo_buffer *old, const char *migration,
+                                     const struct mo_buffer *context, struct compile_job *job,
+                                     struct upgrade_report *report) {
     memcpy(job->folder, "/tmp/mo-upgrade-XXXXXX", sizeof job->folder);
     if (mkdtemp(job->folder) == NULL)
-        return refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                              "cannot create compiler scratch directory");
+        return mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                                 "cannot create compiler scratch directory");
     job->scratch = true;
     int a = snprintf(job->source, sizeof job->source, "%s/source.mosb", job->folder);
     int b = snprintf(job->previous, sizeof job->previous, "%s/old.mosb", job->folder);
@@ -610,9 +610,10 @@ static bool compile_begin(const char *compiler, const struct mo_buffer *bundle,
     job->has_old = old != NULL;
     job->has_context = context != NULL;
     bool ok =
-        write_file_bytes(job->source, bundle->bytes, bundle->length) &&
-        (old == NULL || write_file_bytes(job->previous, old->bytes, old->length)) &&
-        (context == NULL || write_file_bytes(job->input_context, context->bytes, context->length));
+        mo_upgrade_write_file_bytes(job->source, bundle->bytes, bundle->length) &&
+        (old == NULL || mo_upgrade_write_file_bytes(job->previous, old->bytes, old->length)) &&
+        (context == NULL ||
+         mo_upgrade_write_file_bytes(job->input_context, context->bytes, context->length));
     enum mo_compile_status status =
         ok ? mo_compile_start(compiler, job->source, job->image, job->diagnostics,
                               old == NULL ? NULL : job->previous, migration,
@@ -622,11 +623,11 @@ static bool compile_begin(const char *compiler, const struct mo_buffer *bundle,
     report->compilation = status;
     if (status == MO_COMPILE_RUNNING)
         return true;
-    compile_cleanup(job);
-    return refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                          "compiler child could not start");
+    mo_upgrade_compile_cleanup(job);
+    return mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                             "compiler child could not start");
 }
-static enum mo_compile_status compile_poll(struct compile_job *job) {
+static enum mo_compile_status mo_upgrade_compile_poll(struct compile_job *job) {
     uint64_t now = monotonic_us();
     enum mo_compile_status status = mo_compile_poll(&job->child, now);
     if (status != MO_COMPILE_OK || job->listing)
@@ -637,18 +638,18 @@ static enum mo_compile_status compile_poll(struct compile_job *job) {
                            job->has_context ? job->input_context : NULL, now, &job->child);
     return status == MO_COMPILE_RUNNING ? status : MO_COMPILE_IO;
 }
-static void image_buffers_init(struct upgrade_image *image) {
+static void mo_upgrade_image_buffers_init(struct upgrade_image *image) {
     mo_buffer_init(&image->context, MO_LIMIT_BUNDLE_BYTES);
     mo_buffer_init(&image->items, MO_LIMIT_INTENT_LIST_BYTES);
 }
-static void image_buffers_free(struct upgrade_image *image) {
+static void mo_upgrade_image_buffers_free(struct upgrade_image *image) {
     mo_buffer_free(&image->context);
     mo_buffer_free(&image->items);
 }
-static bool compile_end(struct compile_job *job, enum mo_compile_status status,
-                        const struct mo_buffer *bundle, struct upgrade_image *out,
-                        struct upgrade_report *report) {
-    image_buffers_init(out);
+static bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status status,
+                                   const struct mo_buffer *bundle, struct upgrade_image *out,
+                                   struct upgrade_report *report) {
+    mo_upgrade_image_buffers_init(out);
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     bool ok = true;
@@ -667,32 +668,32 @@ static bool compile_end(struct compile_job *job, enum mo_compile_status status,
                                                     : MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC;
         if (strstr(report->detail, "E1422:") != NULL)
             code = MO_CODE_UPGRADE_MIGRATION_SIGNATURE;
-        ok =
-            refuse_upgrade(report, code, status == MO_COMPILE_BUDGET ? "budget" : "compile",
-                           report->detail[0] != 0 ? report->detail
-                                                  : "compiler child failed or exceeded its budget");
+        ok = mo_upgrade_refuse(report, code, status == MO_COMPILE_BUDGET ? "budget" : "compile",
+                               report->detail[0] != 0
+                                   ? report->detail
+                                   : "compiler child failed or exceeded its budget");
         goto done;
     }
     struct mo_load_error error;
-    ok = file_bytes(job->image, MO_LIMIT_BYTECODE_SIZE, &wire);
+    ok = mo_upgrade_file_bytes(job->image, MO_LIMIT_BYTECODE_SIZE, &wire);
     out->image = ok ? mo_load(wire.bytes, wire.length, &error) : NULL;
     if (out->image == NULL) {
-        ok = refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                            "compiler output failed verification");
+        ok = mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                               "compiler output failed verification");
         goto done;
     }
     struct mo_compile_context checked_context;
-    if (!file_bytes(job->output_context, MO_LIMIT_BUNDLE_BYTES, &out->context) ||
+    if (!mo_upgrade_file_bytes(job->output_context, MO_LIMIT_BUNDLE_BYTES, &out->context) ||
         !mo_compile_context_read(out->context.bytes, out->context.length, &checked_context)) {
-        ok = refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                            "compiler context failed validation");
+        ok = mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                               "compiler context failed validation");
         goto done;
     }
     struct mo_intent_list items;
-    if (!file_bytes(job->items, MO_LIMIT_INTENT_LIST_BYTES, &out->items) ||
+    if (!mo_upgrade_file_bytes(job->items, MO_LIMIT_INTENT_LIST_BYTES, &out->items) ||
         !mo_intent_list_read(out->items.bytes, out->items.length, &items)) {
-        ok = refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                            "the candidate's intent item list failed validation");
+        ok = mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                               "the candidate's intent item list failed validation");
         goto done;
     }
     out->program.items = out->items.bytes;
@@ -709,8 +710,8 @@ static bool compile_end(struct compile_job *job, enum mo_compile_status status,
         if (file->services[i].module == 0)
             out->service = i;
     if (out->service == UINT32_MAX) {
-        ok = refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                            "entry module declares no service");
+        ok = mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                               "entry module declares no service");
         goto done;
     }
     struct mo_limits limits = mo_service_limits();
@@ -718,8 +719,8 @@ static bool compile_end(struct compile_job *job, enum mo_compile_status status,
     struct mo_defect defect;
     if (mo_image_init_bounded(out->image, &limits, MO_LIMIT_UPGRADE_RESTART_WORK, &defect) !=
         MO_RETURNED) {
-        ok = refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                            "candidate initialization failed");
+        ok = mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                               "candidate initialization failed");
         goto done;
     }
     struct mo_process *process = mo_process_new(out->image, &limits);
@@ -728,8 +729,8 @@ static bool compile_end(struct compile_job *job, enum mo_compile_status status,
                                out->program.schema);
     mo_process_free(process);
     if (!ok) {
-        (void)refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                             "candidate state schema is unavailable");
+        (void)mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                                "candidate state schema is unavailable");
         goto done;
     }
     struct mo_sha256 hash;
@@ -742,8 +743,8 @@ static bool compile_end(struct compile_job *job, enum mo_compile_status status,
     mo_runtime_identity_init();
     ok = mo_runtime_identity(out->program.build);
     if (!ok)
-        (void)refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                             "build identity is unavailable");
+        (void)mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                                "build identity is unavailable");
 done:
     if (!ok) {
         if (out->image != NULL)
@@ -751,29 +752,30 @@ done:
         out->image = NULL;
     }
     mo_buffer_free(&wire);
-    compile_cleanup(job);
+    mo_upgrade_compile_cleanup(job);
     return ok;
 }
-static bool compile_image(const struct mo_buffer *bundle, const struct mo_buffer *old,
-                          const char *migration, const struct mo_buffer *context,
-                          struct upgrade_image *out, struct upgrade_report *report) {
+static bool mo_upgrade_compile_image(const struct mo_buffer *bundle, const struct mo_buffer *old,
+                                     const char *migration, const struct mo_buffer *context,
+                                     struct upgrade_image *out, struct upgrade_report *report) {
     struct compile_job job = {0};
-    if (!compile_begin("/proc/self/exe", bundle, old, migration, context, &job, report)) {
-        image_buffers_init(out);
+    if (!mo_upgrade_compile_begin("/proc/self/exe", bundle, old, migration, context, &job,
+                                  report)) {
+        mo_upgrade_image_buffers_init(out);
         return false;
     }
     enum mo_compile_status status = MO_COMPILE_RUNNING;
     while (status == MO_COMPILE_RUNNING) {
-        status = compile_poll(&job);
+        status = mo_upgrade_compile_poll(&job);
         if (status == MO_COMPILE_RUNNING) {
             struct timespec delay = {0, 10000000};
             (void)nanosleep(&delay, NULL);
         }
     }
-    return compile_end(&job, status, bundle, out, report);
+    return mo_upgrade_compile_end(&job, status, bundle, out, report);
 }
-static bool program_metadata(const struct mo_store_program *program,
-                             struct mo_compile_metadata *out) {
+static bool mo_upgrade_program_metadata(const struct mo_store_program *program,
+                                        struct mo_compile_metadata *out) {
     struct mo_compile_context context;
     if (!mo_compile_context_read(program->context, program->context_size, &context) ||
         context.metadata.length == 0 ||
@@ -807,7 +809,8 @@ static bool difference(struct mo_buffer *out, const char *kind, struct mo_bundle
 static bool descriptor_differences(const struct upgrade_image *old,
                                    const struct upgrade_image *next, struct mo_buffer *out) {
     struct mo_compile_metadata a, b;
-    if (!program_metadata(&old->program, &a) || !program_metadata(&next->program, &b))
+    if (!mo_upgrade_program_metadata(&old->program, &a) ||
+        !mo_upgrade_program_metadata(&next->program, &b))
         return false;
     bool ok = mo_buffer_append_byte(out, '[');
     uint32_t changes = 0;
@@ -847,8 +850,9 @@ static bool descriptor_differences(const struct upgrade_image *old,
     }
     return ok && mo_buffer_append_byte(out, ']');
 }
-static bool compare_programs(const struct upgrade_image *old, const struct upgrade_image *next,
-                             const char *migration, struct upgrade_report *report) {
+static bool mo_upgrade_compare_programs(const struct upgrade_image *old,
+                                        const struct upgrade_image *next, const char *migration,
+                                        struct upgrade_report *report) {
     memcpy(report->base, old->program.source, 32);
     memcpy(report->candidate, next->program.source, 32);
     report->have_base = report->have_candidate = true;
@@ -858,19 +862,20 @@ static bool compare_programs(const struct upgrade_image *old, const struct upgra
     report->implementation_changed = old->program.image != next->program.image;
     mo_buffer_init(&report->differences, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
     if (!descriptor_differences(old, next, &report->differences))
-        return refuse_upgrade(report, MO_CODE_UPGRADE_COMPILE_BUDGET, "budget",
-                              "descriptor comparison exceeded its work or report bound");
+        return mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_BUDGET, "budget",
+                                 "descriptor comparison exceeded its work or report bound");
     struct mo_compile_metadata a, b;
-    if (!program_metadata(&old->program, &a) || !program_metadata(&next->program, &b))
-        return refuse_upgrade(report, MO_CODE_UPGRADE_INVALID_VALUE, "compile",
-                              "recorded descriptor is invalid");
+    if (!mo_upgrade_program_metadata(&old->program, &a) ||
+        !mo_upgrade_program_metadata(&next->program, &b))
+        return mo_upgrade_refuse(report, MO_CODE_UPGRADE_INVALID_VALUE, "compile",
+                                 "recorded descriptor is invalid");
     if (span_order(a.token, b.token) != 0) {
         int n =
             snprintf(report->detail, sizeof report->detail,
                      "token from env changed from %.*s to %.*s", (int)a.token.length,
                      (const char *)a.token.bytes, (int)b.token.length, (const char *)b.token.bytes);
         MO_ASSERT(n > 0);
-        return refuse_upgrade(report, MO_CODE_UPGRADE_CHANGED_ACCESS, "access", report->detail);
+        return mo_upgrade_refuse(report, MO_CODE_UPGRADE_CHANGED_ACCESS, "access", report->detail);
     }
     if (memcmp(old->program.schema, next->program.schema, 32) != 0 && migration == NULL) {
         struct mo_buffer detail;
@@ -884,9 +889,9 @@ static bool compare_programs(const struct upgrade_image *old, const struct upgra
         if (ok)
             memcpy(report->detail, detail.bytes, detail.length);
         mo_buffer_free(&detail);
-        return refuse_upgrade(report, MO_CODE_UPGRADE_MISSING_MIGRATION, "migration",
-                              ok ? report->detail
-                                 : "state schema changed; a migration is required");
+        return mo_upgrade_refuse(report, MO_CODE_UPGRADE_MISSING_MIGRATION, "migration",
+                                 ok ? report->detail
+                                    : "state schema changed; a migration is required");
     }
     report->class = "compatible";
     report->message = migration == NULL ? "state schema unchanged; candidate is compatible"
@@ -915,15 +920,15 @@ static bool recorded_check_input(const char *folder, struct mo_buffer *bundle,
                         mo_buffer_append_byte(&message, 0);
         if (rendered)
             memcpy(report->detail, message.bytes, message.length);
-        (void)refuse_upgrade(report,
-                             status == MO_STORE_FOLDER_OWNED ? MO_CODE_UPGRADE_BUSY
-                             : status == MO_STORE_FOLDER_OK && !found
-                                 ? MO_CODE_UPGRADE_SOURCE_MISMATCH
-                                 : MO_CODE_UPGRADE_INVALID_VALUE,
-                             "store",
-                             rendered ? report->detail
-                             : found  ? "recorded program exceeds the check memory bound"
-                                      : "this folder has no recorded program");
+        (void)mo_upgrade_refuse(report,
+                                status == MO_STORE_FOLDER_OWNED ? MO_CODE_UPGRADE_BUSY
+                                : status == MO_STORE_FOLDER_OK && !found
+                                    ? MO_CODE_UPGRADE_SOURCE_MISMATCH
+                                    : MO_CODE_UPGRADE_INVALID_VALUE,
+                                "store",
+                                rendered ? report->detail
+                                : found  ? "recorded program exceeds the check memory bound"
+                                         : "this folder has no recorded program");
         mo_buffer_free(&message);
     }
     mo_arena_free(&arena);
@@ -966,23 +971,24 @@ static void check_upgrade(void *context) {
         report.have_base = report.have_candidate = true;
     }
     if (ok)
-        ok = compile_image(&old_bundle, NULL, NULL, folder ? &recorded_context : NULL, &old,
-                           &report) &&
-             compile_image(&candidate, folder && work->cli->migration == NULL ? NULL : &old_bundle,
-                           work->cli->migration, folder ? &recorded_context : NULL, &next,
-                           &report) &&
-             compare_programs(&old, &next, work->cli->migration, &report);
+        ok = mo_upgrade_compile_image(&old_bundle, NULL, NULL, folder ? &recorded_context : NULL,
+                                      &old, &report) &&
+             mo_upgrade_compile_image(
+                 &candidate, folder && work->cli->migration == NULL ? NULL : &old_bundle,
+                 work->cli->migration, folder ? &recorded_context : NULL, &next, &report) &&
+             mo_upgrade_compare_programs(&old, &next, work->cli->migration, &report);
     if (!ok && mo_diags_any(&diags)) {
         const struct mo_diag *first = diags.count == 0 ? NULL : &diags.items[0];
-        (void)refuse_upgrade(&report,
-                             first != NULL && first->code >= 1414 && first->code <= 1431
-                                 ? first->code
-                                 : MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
-                             "compile", first == NULL ? "source bundling failed" : first->message);
+        (void)mo_upgrade_refuse(&report,
+                                first != NULL && first->code >= 1414 && first->code <= 1431
+                                    ? first->code
+                                    : MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
+                                "compile",
+                                first == NULL ? "source bundling failed" : first->message);
     } else if (!ok && report.code == 0)
-        (void)refuse_upgrade(&report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                             "source compilation failed");
-    work->status = show_report(work->cli, work->output, work->errors, &report);
+        (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
+                                "source compilation failed");
+    work->status = mo_upgrade_show_report(work->cli, work->output, work->errors, &report);
     if (old.image != NULL)
         mo_image_free(old.image);
     if (next.image != NULL)
@@ -991,8 +997,8 @@ static void check_upgrade(void *context) {
     mo_sources_free(&sources);
     mo_diags_free(&diags);
     mo_buffer_free(&report.differences);
-    image_buffers_free(&old);
-    image_buffers_free(&next);
+    mo_upgrade_image_buffers_free(&old);
+    mo_upgrade_image_buffers_free(&next);
     mo_buffer_free(&old_bundle);
     mo_buffer_free(&candidate);
     mo_buffer_free(&recorded_context);
@@ -1060,7 +1066,7 @@ static int hex_digit(uint8_t c) {
 }
 static bool schema_only_metadata(const struct mo_store_program *program, struct mo_buffer *out) {
     struct mo_compile_metadata metadata;
-    if (!program_metadata(program, &metadata))
+    if (!mo_upgrade_program_metadata(program, &metadata))
         return false;
     return mo_buffer_append(out, "MOCS\1", 5) && mo_binary_write(out, metadata.token.length, 4) &&
            mo_buffer_append(out, metadata.token.bytes, metadata.token.length) &&
@@ -1071,9 +1077,10 @@ static bool schema_only_metadata(const struct mo_store_program *program, struct 
            mo_binary_write(out, metadata.timer_count, 4) &&
            mo_buffer_append(out, metadata.timers.bytes, metadata.timers.length);
 }
-static bool migration_state(const struct upgrade_image *old, const struct upgrade_image *next,
-                            const char *migration, const uint8_t *bytes, size_t length,
-                            struct mo_buffer *out, struct upgrade_report *report, bool rehearsal) {
+static bool mo_upgrade_migration_state(const struct upgrade_image *old,
+                                       const struct upgrade_image *next, const char *migration,
+                                       const uint8_t *bytes, size_t length, struct mo_buffer *out,
+                                       struct upgrade_report *report, bool rehearsal) {
     const struct mo_bytecode *file = mo_image_bytecode(next->image);
     const struct mo_bytecode_service *service = &file->services[next->service];
     struct mo_limits limits = mo_service_limits();
@@ -1108,7 +1115,7 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
             root = old_types->items[old_file->services[old->service].state_type].name;
         } else {
             struct mo_compile_metadata metadata = {0};
-            if (!program_metadata(&old->program, &metadata))
+            if (!mo_upgrade_program_metadata(&old->program, &metadata))
                 ok = false;
             struct mo_binary schema = {metadata.schema.bytes, metadata.schema.length, 0};
             uint64_t tag, n;
@@ -1220,14 +1227,14 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
             ok = result == MO_RETURNED;
             owned = ok;
             if (!ok)
-                (void)refuse_upgrade(report,
-                                     (work == 0 || defect.memory || defect.limit_name != NULL)
-                                         ? MO_CODE_UPGRADE_MIGRATION_BUDGET
-                                         : MO_CODE_UPGRADE_MIGRATION_TRAP,
-                                     (work == 0 || defect.memory || defect.limit_name != NULL)
-                                         ? "budget"
-                                         : "migration",
-                                     "migration did not return");
+                (void)mo_upgrade_refuse(report,
+                                        (work == 0 || defect.memory || defect.limit_name != NULL)
+                                            ? MO_CODE_UPGRADE_MIGRATION_BUDGET
+                                            : MO_CODE_UPGRADE_MIGRATION_TRAP,
+                                        (work == 0 || defect.memory || defect.limit_name != NULL)
+                                            ? "budget"
+                                            : "migration",
+                                        "migration did not return");
         }
     }
     if (ok) {
@@ -1259,8 +1266,8 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
             mo_call(process, service->timers[i].interval, NULL, 0, &interval, &defect);
         ok = result == MO_RETURNED && mo_cell_get_duration(interval) > 0;
         if (!ok)
-            (void)refuse_upgrade(report, MO_CODE_UPGRADE_TIMER_INTERVAL, "timer",
-                                 "candidate timer interval is invalid or exceeded its budget");
+            (void)mo_upgrade_refuse(report, MO_CODE_UPGRADE_TIMER_INTERVAL, "timer",
+                                    "candidate timer interval is invalid or exceeded its budget");
     }
     PAUSE_END(timers, "timer_validation", !timers_started ? "not_run" : ok ? "ok" : "refused");
     if (timers_started) {
@@ -1268,7 +1275,7 @@ static bool migration_state(const struct upgrade_image *old, const struct upgrad
         vm_work += before_timers - work;
     }
     if (!ok && report->code == 0)
-        (void)refuse_upgrade(
+        (void)mo_upgrade_refuse(
             report, work == 0 ? MO_CODE_UPGRADE_MIGRATION_BUDGET : MO_CODE_UPGRADE_INVALID_VALUE,
             work == 0 ? "budget" : "migration",
             "migrated state failed exact saved-value validation");
@@ -1293,10 +1300,10 @@ struct mo_live_upgrade {
 };
 
 static void live_free_buffers(struct mo_live_upgrade *u) {
-    compile_cleanup(&u->job);
+    mo_upgrade_compile_cleanup(&u->job);
     if (u->next.image != NULL)
         mo_image_free(u->next.image);
-    image_buffers_free(&u->next);
+    mo_upgrade_image_buffers_free(&u->next);
     mo_buffer_free(&u->report.differences);
     mo_buffer_free(&u->bundle);
     mo_buffer_free(&u->previous);
@@ -1323,7 +1330,7 @@ struct mo_live_upgrade *mo_live_start(const char *compiler, const struct mo_stor
     mo_buffer_init(&u->context, MO_LIMIT_BUNDLE_BYTES);
     mo_buffer_init(&u->migrated, MO_LIMIT_SAVED_BYTES);
     mo_buffer_init(&u->json, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
-    image_buffers_init(&u->next);
+    mo_upgrade_image_buffers_init(&u->next);
     mo_buffer_init(&u->report.differences, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
     struct mo_sha256 hash;
     mo_sha256_init(&hash);
@@ -1346,26 +1353,26 @@ struct mo_live_upgrade *mo_live_start(const char *compiler, const struct mo_stor
     }
     struct mo_bundle checked;
     if (!mo_bundle_read(bundle, size, &checked))
-        (void)refuse_upgrade(&u->report, MO_CODE_UPGRADE_BUNDLE_FORMAT, "bundle",
-                             "source bundle is malformed");
+        (void)mo_upgrade_refuse(&u->report, MO_CODE_UPGRADE_BUNDLE_FORMAT, "bundle",
+                                "source bundle is malformed");
     else
         /* A tool-only candidate inherits the recorded context; a migration also gets the old
          * bundle so the child generates its input types from the running program. */
-        u->compiling =
-            compile_begin(compiler, &u->bundle, u->has_migration ? &u->previous : NULL,
-                          u->has_migration ? u->migration : NULL, &u->context, &u->job, &u->report);
+        u->compiling = mo_upgrade_compile_begin(
+            compiler, &u->bundle, u->has_migration ? &u->previous : NULL,
+            u->has_migration ? u->migration : NULL, &u->context, &u->job, &u->report);
     return u;
 }
 
 bool mo_live_poll(struct mo_live_upgrade *u) {
     if (!u->compiling)
         return true;
-    enum mo_compile_status status = compile_poll(&u->job);
+    enum mo_compile_status status = mo_upgrade_compile_poll(&u->job);
     if (status == MO_COMPILE_RUNNING)
         return false;
     u->compiling = false;
-    image_buffers_free(&u->next);
-    u->staged = compile_end(&u->job, status, &u->bundle, &u->next, &u->report);
+    mo_upgrade_image_buffers_free(&u->next);
+    u->staged = mo_upgrade_compile_end(&u->job, status, &u->bundle, &u->next, &u->report);
     return true;
 }
 
@@ -1385,9 +1392,9 @@ bool mo_live_admit(struct mo_live_upgrade *u, const struct mo_image *running, ui
     mo_buffer_free(&u->report.differences);
     mo_buffer_clear(&u->migrated);
     const char *migration = u->has_migration ? u->migration : NULL;
-    bool ok =
-        compare_programs(&old, &u->next, migration, &u->report) &&
-        migration_state(&old, &u->next, migration, state, length, &u->migrated, &u->report, true);
+    bool ok = mo_upgrade_compare_programs(&old, &u->next, migration, &u->report) &&
+              mo_upgrade_migration_state(&old, &u->next, migration, state, length, &u->migrated,
+                                         &u->report, true);
     if (ok) {
         u->report.class = "compatible";
         u->report.message = migration == NULL ? "upgrade activated; state schema unchanged"
@@ -1398,7 +1405,7 @@ bool mo_live_admit(struct mo_live_upgrade *u, const struct mo_image *running, ui
 
 void mo_live_refuse(struct mo_live_upgrade *u, uint16_t code, const char *class,
                     const char *message) {
-    (void)refuse_upgrade(&u->report, code, class, message);
+    (void)mo_upgrade_refuse(&u->report, code, class, message);
     u->report.activated = false;
 }
 
@@ -1409,7 +1416,7 @@ const char *mo_live_activation(struct mo_live_upgrade *u, uint64_t ordinal, uint
     u->report.head = head;
     u->next.program.ordinal = ordinal;
     mo_buffer_clear(&u->json);
-    if (!report_json(&u->json, &u->report, u->has_migration ? u->migration : NULL))
+    if (!mo_upgrade_report_json(&u->json, &u->report, u->has_migration ? u->migration : NULL))
         return NULL;
     *size = u->json.length;
     return (const char *)u->json.bytes;
@@ -1440,8 +1447,8 @@ const char *mo_live_migration(const struct mo_live_upgrade *u) {
 }
 
 bool mo_live_report(const struct mo_live_upgrade *u, bool json, struct mo_buffer *out) {
-    return json ? report_json(out, &u->report, u->has_migration ? u->migration : NULL)
-                : report_text(out, &u->report);
+    return json ? mo_upgrade_report_json(out, &u->report, u->has_migration ? u->migration : NULL)
+                : mo_upgrade_report_text(out, &u->report);
 }
 
 void mo_live_free(struct mo_live_upgrade *u) {
@@ -1465,7 +1472,7 @@ bool mo_live_refusal(struct mo_buffer *out, bool json, uint16_t code, const char
         r.have_candidate = true;
     }
     r.already_active = code == 0;
-    return json ? report_json(out, &r, migration) : report_text(out, &r);
+    return json ? mo_upgrade_report_json(out, &r, migration) : mo_upgrade_report_text(out, &r);
 }
 
 struct serve_upgrade_work {
@@ -1503,7 +1510,7 @@ static void serve_upgrade(void *context) {
         int written = snprintf(report.detail, sizeof report.detail,
                                "mo serve could not watch for stop signals: %s", strerror(errno));
         MO_ASSERT(written > 0);
-        (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
+        (void)mo_upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         goto done;
     }
     int folder_status = stat(cli->data, &info);
@@ -1512,7 +1519,7 @@ static void serve_upgrade(void *context) {
                                "mo serve can't use the data folder %s: %s", cli->data,
                                strerror(folder_status != 0 ? errno : ENOTDIR));
         MO_ASSERT(written > 0);
-        (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
+        (void)mo_upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         goto done;
     }
     struct mo_bearer upgrade_secret, approval_secret;
@@ -1531,7 +1538,8 @@ static void serve_upgrade(void *context) {
     enum mo_store_status opened = mo_store_open_wait(path, &store);
     (void)umask(mask);
     if (opened != MO_STORE_OK) {
-        (void)refuse_upgrade(&report, MO_CODE_UPGRADE_BUSY, "store", mo_store_status_text(opened));
+        (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_BUSY, "store",
+                                mo_store_status_text(opened));
         work->status = opened == MO_STORE_BUSY ? MO_EXIT_STORE_BUSY : 1;
         if (opened == MO_STORE_BUSY)
             (void)fprintf(work->errors,
@@ -1542,7 +1550,7 @@ static void serve_upgrade(void *context) {
                                    "mo serve could not open saved state at %s: %s", path,
                                    mo_store_status_text(opened));
             MO_ASSERT(written > 0);
-            (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
+            (void)mo_upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         }
         goto cleanup_serve;
     }
@@ -1550,14 +1558,14 @@ static void serve_upgrade(void *context) {
     bool found;
     if (mo_store_program_read(store, &arena, &recorded, &found) != MO_STORE_OK ||
         mo_store_call(store, MO_STORE_LOAD, NULL, read_restart_head, &head) != MO_STORE_OK) {
-        (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
-                             "recorded program or saved state is invalid");
+        (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
+                                "recorded program or saved state is invalid");
         goto done;
     }
     if (cli->file_count == 0 &&
         (!found || !mo_buffer_append(&candidate, recorded.bundle, recorded.bundle_size))) {
-        (void)refuse_upgrade(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "source",
-                             "this folder has no recorded program; provide a source file");
+        (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "source",
+                                "this folder has no recorded program; provide a source file");
         goto done;
     }
     struct mo_buffer previous = {0}, retained_context = {0};
@@ -1593,16 +1601,18 @@ static void serve_upgrade(void *context) {
         if (written)
             memcpy(report.detail, reason.bytes, reason.length);
         mo_buffer_free(&reason);
-        (void)refuse_upgrade(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "source",
-                             written ? report.detail : "source differs; use --upgrade");
+        (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "source",
+                                written ? report.detail : "source differs; use --upgrade");
         goto done;
     }
     struct mo_buffer fallback = {0};
     bool fallback_state = false;
-    if (changed && !compile_image(&previous, NULL, NULL, &retained_context, &old, &report)) {
+    if (changed &&
+        !mo_upgrade_compile_image(&previous, NULL, NULL, &retained_context, &old, &report)) {
         struct mo_compile_metadata metadata;
-        if (head.snapshot.sequence != head.sequence || !program_metadata(&recorded, &metadata)) {
-            (void)refuse_upgrade(
+        if (head.snapshot.sequence != head.sequence ||
+            !mo_upgrade_program_metadata(&recorded, &metadata)) {
+            (void)mo_upgrade_refuse(
                 &report, MO_CODE_UPGRADE_RECORDED_COMPILE, "compile",
                 "recorded source cannot compile and its log tail cannot be replayed");
             goto done;
@@ -1620,7 +1630,7 @@ static void serve_upgrade(void *context) {
         report.code = 0;
     }
     const char *requested_migration = changed ? cli->migration : NULL;
-    bool compiled_candidate = compile_image(
+    bool compiled_candidate = mo_upgrade_compile_image(
         &candidate,
         requested_migration == NULL ? NULL
         : fallback_state            ? &fallback
@@ -1630,10 +1640,10 @@ static void serve_upgrade(void *context) {
         &report);
     if (!compiled_candidate && fallback_state && requested_migration != NULL &&
         schema_only_metadata(&recorded, &schema_fallback)) {
-        image_buffers_free(&next);
+        mo_upgrade_image_buffers_free(&next);
         report.code = 0;
-        compiled_candidate =
-            compile_image(&candidate, &schema_fallback, requested_migration, NULL, &next, &report);
+        compiled_candidate = mo_upgrade_compile_image(&candidate, &schema_fallback,
+                                                      requested_migration, NULL, &next, &report);
         old.schema_synthesized = compiled_candidate;
     }
     if (!compiled_candidate) {
@@ -1644,8 +1654,9 @@ static void serve_upgrade(void *context) {
             if (fputs(report.detail, work->errors) == EOF)
                 work->status = 1;
             if (service_failure)
-                (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START,
-                                    "mo serve could not start the service: service handler failed");
+                (void)mo_upgrade_error(
+                    &diags, MO_CODE_TOOL_SERVICE_START,
+                    "mo serve could not start the service: service handler failed");
             goto cleanup_serve;
         }
         if (found && !changed) {
@@ -1670,13 +1681,13 @@ static void serve_upgrade(void *context) {
             if (written)
                 memcpy(report.detail, reason.bytes, reason.length);
             mo_buffer_free(&reason);
-            (void)refuse_upgrade(&report, MO_CODE_UPGRADE_RECORDED_COMPILE, "compile",
-                                 written ? report.detail : "recorded source could not compile");
+            (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_RECORDED_COMPILE, "compile",
+                                    written ? report.detail : "recorded source could not compile");
         }
         goto done;
     }
     if (changed) {
-        if (!compare_programs(&old, &next, cli->migration, &report))
+        if (!mo_upgrade_compare_programs(&old, &next, cli->migration, &report))
             goto done;
     }
     const struct mo_bytecode *next_file = mo_image_bytecode(next.image);
@@ -1696,7 +1707,7 @@ static void serve_upgrade(void *context) {
                                "is missing or invalid",
                                environment);
         MO_ASSERT(written > 0);
-        (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
+        (void)mo_upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         goto done;
     }
     secrets = mo_serve_secrets(cli, environment, &diags, &upgrade_secret, &approval_secret);
@@ -1706,8 +1717,8 @@ static void serve_upgrade(void *context) {
         goto done;
     const struct upgrade_image *recovery = changed ? &old : &next;
     if (!found && head.found && head.image != next.program.image && !cli->adopt) {
-        (void)refuse_upgrade(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "adoption",
-                             "legacy image differs; explicit --adopt requires verified replay");
+        (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "adoption",
+                                "legacy image differs; explicit --adopt requires verified replay");
         goto done;
     }
     struct mo_service_hooks hooks = {restart_clock, restart_reply, restart_event, work->errors};
@@ -1722,10 +1733,10 @@ static void serve_upgrade(void *context) {
                                    "mo serve could not start the service: %s",
                                    mo_service_status_text(recovered));
             MO_ASSERT(written > 0);
-            (void)upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
+            (void)mo_upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         } else
-            (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "replay",
-                                 mo_service_status_text(recovered));
+            (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "replay",
+                                    mo_service_status_text(recovered));
         goto done;
     }
     const uint8_t *bytes = head.snapshot.bytes;
@@ -1736,13 +1747,14 @@ static void serve_upgrade(void *context) {
         MO_STORE_STATE, fallback_state ? head.sequence : mo_service_observe(staged).sequence,
         next.program.image, bytes, length};
     if (changed) {
-        if (!migration_state(&old, &next, cli->migration, bytes, length, &migrated, &report, false))
+        if (!mo_upgrade_migration_state(&old, &next, cli->migration, bytes, length, &migrated,
+                                        &report, false))
             goto done;
         next.program.ordinal = recorded.ordinal + 1;
         report.ordinal = next.program.ordinal;
         report.head = snapshot.sequence;
         report.activated = true;
-        if (!report_json(&json, &report, cli->migration))
+        if (!mo_upgrade_report_json(&json, &report, cli->migration))
             goto done;
         struct mo_store_activation activation = {
             .previous = recorded,
@@ -1756,11 +1768,11 @@ static void serve_upgrade(void *context) {
             .report_size = json.length,
             .time = wall_us()};
         if (mo_store_activate(store, &activation) != MO_STORE_ACTIVATED) {
-            (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
-                                 "activation failed; reopen the folder before retrying");
+            (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
+                                    "activation failed; reopen the folder before retrying");
             goto done;
         }
-        if (show_report(cli, work->output, work->errors, &report) != 0)
+        if (mo_upgrade_show_report(cli, work->output, work->errors, &report) != 0)
             goto done;
     }
     bool adopted = !changed && head.found &&
@@ -1778,7 +1790,7 @@ static void serve_upgrade(void *context) {
         report.activated = true;
         report.ordinal = next.program.ordinal;
         report.head = snapshot.sequence;
-        if (!report_json(&json, &report, NULL))
+        if (!mo_upgrade_report_json(&json, &report, NULL))
             goto done;
         struct mo_store_program previous_program = found ? recorded : (struct mo_store_program){0};
         if (!found) {
@@ -1797,17 +1809,17 @@ static void serve_upgrade(void *context) {
                                                  .report_size = json.length,
                                                  .time = wall_us()};
         if (mo_store_adopt(store, &activation, !found) != MO_STORE_ACTIVATED) {
-            (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
-                                 "verified adoption failed; reopen the folder before retrying");
+            (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
+                                    "verified adoption failed; reopen the folder before retrying");
             goto done;
         }
-        if (show_report(cli, work->output, work->errors, &report) != 0)
+        if (mo_upgrade_show_report(cli, work->output, work->errors, &report) != 0)
             goto done;
     } else if (!changed && !found) {
         next.program.ordinal = 0;
         if (mo_store_program_record(store, &next.program, &snapshot) != MO_STORE_OK) {
-            (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
-                                 "program recording failed; reopen the folder before retrying");
+            (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
+                                    "program recording failed; reopen the folder before retrying");
             goto done;
         }
     }
@@ -1817,7 +1829,7 @@ static void serve_upgrade(void *context) {
         report.message = "candidate source is already active";
         report.ordinal = recorded.ordinal;
         report.head = snapshot.sequence;
-        if (show_report(cli, work->output, work->errors, &report) != 0)
+        if (mo_upgrade_show_report(cli, work->output, work->errors, &report) != 0)
             goto done;
     }
     mo_service_free(staged);
@@ -1828,9 +1840,9 @@ static void serve_upgrade(void *context) {
 done:
     if (!mo_diags_any(&diags)) {
         if (report.code == 0)
-            (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "restart",
-                                 "restart preparation failed");
-        work->status = show_report(cli, work->output, work->errors, &report);
+            (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "restart",
+                                    "restart preparation failed");
+        work->status = mo_upgrade_show_report(cli, work->output, work->errors, &report);
     }
 cleanup_serve:
     if (mo_diags_any(&diags))
@@ -1844,8 +1856,8 @@ cleanup_serve:
         mo_image_free(next.image);
     mo_buffer_free(&candidate);
     mo_buffer_free(&report.differences);
-    image_buffers_free(&old);
-    image_buffers_free(&next);
+    mo_upgrade_image_buffers_free(&old);
+    mo_upgrade_image_buffers_free(&next);
     mo_buffer_free(&head.original);
     mo_buffer_free(&schema_fallback);
     mo_buffer_free(&migrated);
@@ -1900,7 +1912,7 @@ static void rehearse_upgrade(void *context) {
     bool ok = rehearsal_bytes(cli->artifact, MO_LIMIT_EXPORT_BYTES, &artifact) &&
               mo_export_read(artifact.bytes, artifact.length, &input) && input.identity.kind == 1;
     if (!ok)
-        (void)refuse_upgrade(&report, MO_CODE_UPGRADE_INVALID_VALUE, "artifact", report.message);
+        (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "artifact", report.message);
     uint8_t build[32];
     if (ok && mo_offline_build(input.identity.build, input.label, build) != MO_OFFLINE_BUILD_SAME) {
         struct mo_buffer detail;
@@ -1913,8 +1925,9 @@ static void rehearse_upgrade(void *context) {
         if (rendered)
             memcpy(report.detail, detail.bytes, detail.length);
         mo_buffer_free(&detail);
-        ok = refuse_upgrade(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "build",
-                            rendered ? report.detail : "export build is unavailable or different");
+        ok = mo_upgrade_refuse(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "build",
+                               rendered ? report.detail
+                                        : "export build is unavailable or different");
     }
     if (ok) {
         struct mo_compile_context parsed;
@@ -1924,12 +1937,12 @@ static void rehearse_upgrade(void *context) {
               (rehearsal_bytes(cli->compile_context, MO_LIMIT_BUNDLE_BYTES, &recorded_context) &&
                mo_compile_context_read(recorded_context.bytes, recorded_context.length, &parsed)));
         if (!ok)
-            (void)refuse_upgrade(&report, MO_CODE_UPGRADE_BUNDLE_FORMAT, "bundle",
-                                 "bundle or compilation context cannot be read or validated");
+            (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_BUNDLE_FORMAT, "bundle",
+                                    "bundle or compilation context cannot be read or validated");
     }
     const struct mo_buffer *retained = cli->compile_context == NULL ? NULL : &recorded_context;
     if (ok)
-        ok = compile_image(&old_bundle, NULL, NULL, retained, &old, &report);
+        ok = mo_upgrade_compile_image(&old_bundle, NULL, NULL, retained, &old, &report);
     if (ok &&
         (old.program.image != input.identity.program || old.service != input.identity.service ||
          memcmp(old.program.schema, input.schema, 32) != 0)) {
@@ -1939,27 +1952,27 @@ static void rehearse_upgrade(void *context) {
                          (unsigned long long)input.identity.program,
                          (unsigned long long)old.program.image);
         MO_ASSERT(n > 0);
-        ok = refuse_upgrade(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "program", report.detail);
+        ok = mo_upgrade_refuse(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "program", report.detail);
     }
     if (ok)
-        ok = compile_image(&candidate,
-                           retained != NULL && cli->migration == NULL ? NULL : &old_bundle,
-                           cli->migration, retained, &next, &report) &&
-             compare_programs(&old, &next, cli->migration, &report) &&
-             migration_state(&old, &next, cli->migration, input.state.bytes, input.state.length,
-                             &migrated, &report, true);
+        ok = mo_upgrade_compile_image(
+                 &candidate, retained != NULL && cli->migration == NULL ? NULL : &old_bundle,
+                 cli->migration, retained, &next, &report) &&
+             mo_upgrade_compare_programs(&old, &next, cli->migration, &report) &&
+             mo_upgrade_migration_state(&old, &next, cli->migration, input.state.bytes,
+                                        input.state.length, &migrated, &report, true);
     if (ok) {
         report.state_valid = true;
         report.head = input.identity.sequence;
         report.message = "migrated state is valid; rehearsal is not upgrade acceptance";
     }
-    work->status = show_report(cli, work->output, work->errors, &report);
+    work->status = mo_upgrade_show_report(cli, work->output, work->errors, &report);
     if (old.image != NULL)
         mo_image_free(old.image);
     if (next.image != NULL)
         mo_image_free(next.image);
-    image_buffers_free(&old);
-    image_buffers_free(&next);
+    mo_upgrade_image_buffers_free(&old);
+    mo_upgrade_image_buffers_free(&next);
     mo_buffer_free(&report.differences);
     mo_buffer_free(&artifact);
     mo_buffer_free(&old_bundle);
@@ -1980,8 +1993,8 @@ struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, const char *
                                             struct mo_sources *sources, struct mo_diags *diags) {
     char path[MO_CLI_ARGUMENT_SIZE + sizeof "/" MO_DATA_FILE];
     if (!mo_offline_store_path(folder, path, sizeof path)) {
-        (void)upgrade_error(diags, MO_CODE_UPGRADE_SOURCE_MISMATCH,
-                            "the data folder path is too long");
+        (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_SOURCE_MISMATCH,
+                               "the data folder path is too long");
         return NULL;
     }
     struct mo_store_history_pair pair;
@@ -2014,7 +2027,7 @@ struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, const char *
                      (unsigned)matches, (unsigned long long)failure);
     MO_ASSERT(n >= 0 && (size_t)n < sizeof message);
     if (n > 0)
-        (void)upgrade_error(
+        (void)mo_upgrade_error(
             diags, distinct ? MO_CODE_UPGRADE_AMBIGUOUS_PROGRAM : MO_CODE_UPGRADE_SOURCE_MISMATCH,
             message);
     else {
@@ -2032,8 +2045,8 @@ struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, const char *
         }
         set = ok ? mo_load_bundle_sources(arena, sources, library, diags) : NULL;
         if (!ok && !mo_diags_any(diags))
-            (void)upgrade_error(diags, MO_CODE_UPGRADE_INVALID_VALUE,
-                                "the retained program or its context is invalid");
+            (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_INVALID_VALUE,
+                                   "the retained program or its context is invalid");
     }
     mo_arena_free(&copies);
     return set;
