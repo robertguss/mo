@@ -104,14 +104,14 @@ bool mo_service_budgets_match(const struct mo_failure_record *record,
     return true;
 }
 
-static struct mo_service_time sample_clock(struct mo_service_loop *s) {
+static struct mo_service_time mo_service_clock(struct mo_service_loop *s) {
     struct mo_service_time time = s->hooks.clock(s->hooks.context);
     MO_ASSERT(time.elapsed >= s->last_clock);
     s->last_clock = time.elapsed;
     return time;
 }
 
-static struct mo_bytecode_string without_module_or_overload(struct mo_bytecode_string name) {
+static struct mo_bytecode_string mo_service_short_name(struct mo_bytecode_string name) {
     uint32_t start = 0, end = 0;
     while (end != name.length && name.bytes[end] != '@')
         if (name.bytes[end++] == '.')
@@ -119,7 +119,8 @@ static struct mo_bytecode_string without_module_or_overload(struct mo_bytecode_s
     return (struct mo_bytecode_string){end - start, name.bytes + start};
 }
 
-static struct mo_bytecode_string handler_name(const struct mo_service_loop *s, uint32_t function) {
+static struct mo_bytecode_string mo_service_handler_name(const struct mo_service_loop *s,
+                                                         uint32_t function) {
     const struct mo_bytecode_service *service = s->descriptor;
     if (function == MO_NO_INDEX || function == service->start)
         return (struct mo_bytecode_string){0};
@@ -130,19 +131,19 @@ static struct mo_bytecode_string handler_name(const struct mo_service_loop *s, u
         }
     const struct mo_bytecode *file = s->process->file;
     MO_ASSERT(function < file->function_count);
-    return without_module_or_overload(file->strings[file->functions[function].name]);
+    return mo_service_short_name(file->strings[file->functions[function].name]);
 }
 
-static void record_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
-                         enum mo_service_status reason, struct mo_service_time time,
-                         const struct mo_defect *defect, uint32_t handler, uint32_t restart,
-                         const struct mo_service_upgrade *upgrade) {
+static void mo_service_record_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
+                                    enum mo_service_status reason, struct mo_service_time time,
+                                    const struct mo_defect *defect, uint32_t handler,
+                                    uint32_t restart, const struct mo_service_upgrade *upgrade) {
     struct mo_service_event event = {.kind = kind,
                                      .reason = reason,
                                      .time = time,
                                      .defect = defect,
                                      .function = MO_NO_INDEX,
-                                     .handler = handler_name(s, handler),
+                                     .handler = mo_service_handler_name(s, handler),
                                      .restart = restart,
                                      .upgrade = upgrade};
     if (kind == MO_SERVICE_FAILURE) {
@@ -172,13 +173,13 @@ static void record_event(struct mo_service_loop *s, enum mo_service_event_kind k
 static void log_event(struct mo_service_loop *s, enum mo_service_event_kind kind,
                       enum mo_service_status reason, struct mo_service_time time,
                       const struct mo_defect *defect, uint32_t handler, uint32_t restart) {
-    record_event(s, kind, reason, time, defect, handler, restart, NULL);
+    mo_service_record_event(s, kind, reason, time, defect, handler, restart, NULL);
 }
 
 /* Service processes have no external capabilities. Every transferred value is
  * either still owned by a frame or already dropped by the interpreter. The
  * service retains its own state/argument references across this unwind. */
-static void finish_call(struct mo_process *p) {
+static void mo_service_finish_call(struct mo_process *p) {
     while (p->depth != 0) {
         struct mo_vm_frame *frame = mo_vm_frame(p);
         const struct mo_bytecode_function *fn = &p->file->functions[frame->function];
@@ -211,9 +212,9 @@ static bool work_remaining(void *context) {
 }
 
 /* The work budget: MO_LIMIT_SERVICE_WORK instructions run, and the poll after them cancels. */
-static enum mo_service_status invoke(struct mo_process *p, uint32_t function,
-                                     const struct mo_cell *arguments, uint32_t count,
-                                     struct mo_cell *out, struct mo_defect *defect) {
+static enum mo_service_status mo_service_invoke(struct mo_process *p, uint32_t function,
+                                                const struct mo_cell *arguments, uint32_t count,
+                                                struct mo_cell *out, struct mo_defect *defect) {
     uint64_t remaining = (uint64_t)MO_LIMIT_SERVICE_WORK + 1;
     enum mo_controlled_outcome outcome =
         mo_call_controlled(p, function, arguments, count, work_remaining, &remaining, out, defect);
@@ -294,7 +295,8 @@ void mo_service_call_handler(struct mo_process *p, const struct mo_bytecode_serv
             values[i] = mo_value_dup(p->heap, fn->parameters[i].type, values[i]);
     *call = (struct mo_service_call){
         .function = function, .type = fn->result_type, .saved = MO_SAVED_OK};
-    call->status = invoke(p, function, values, fn->parameter_count, &call->value, &call->defect);
+    call->status =
+        mo_service_invoke(p, function, values, fn->parameter_count, &call->value, &call->defect);
     call->returned = call->status == MO_SERVICE_OK;
     struct mo_cell next;
     if (!call->returned || !replacement(p, service, timer, handler, call->type, call->value, &next))
@@ -409,7 +411,7 @@ static bool restore_record(const struct mo_store_record *record, void *context) 
             r->failed_function = call.function;
         if (call.returned)
             mo_value_drop(heap, call.type, call.value);
-        finish_call(s->process);
+        mo_service_finish_call(s->process);
     }
     for (uint32_t i = 0; i < built; i++)
         mo_value_drop(heap, tool->argument_types[i], m.arguments[i]);
@@ -496,7 +498,7 @@ static bool persist(struct mo_service_loop *s, const struct service_message *m,
     return ok;
 }
 
-static struct service_message *append(struct mo_service_loop *s) {
+static struct service_message *mo_service_append(struct mo_service_loop *s) {
     MO_ASSERT(s->count < MO_LIMIT_SERVICE_MAILBOX);
     uint32_t index = (s->head + s->count++) % MO_LIMIT_SERVICE_MAILBOX;
     return &s->mailbox[index];
@@ -524,7 +526,8 @@ static void poll_timers(struct mo_service_loop *s, struct mo_service_time time) 
         }
         if (first == MO_NO_INDEX)
             break;
-        *append(s) = (struct service_message){.arrival = time.now, .handler = first, .timer = true};
+        *mo_service_append(s) =
+            (struct service_message){.arrival = time.now, .handler = first, .timer = true};
         s->timers[first].waiting = true;
         advance_timer(&s->timers[first], time.elapsed);
     }
@@ -585,7 +588,8 @@ static enum mo_service_status open_service(const struct mo_image *image, uint32_
     uint32_t failed_function = s->descriptor->start;
     for (uint32_t i = 0; i < s->descriptor->timer_count; i++) {
         failed_function = s->descriptor->timers[i].interval;
-        status = invoke(s->process, s->descriptor->timers[i].interval, NULL, 0, &value, &defect);
+        status = mo_service_invoke(s->process, s->descriptor->timers[i].interval, NULL, 0, &value,
+                                   &defect);
         if (status != MO_SERVICE_OK)
             break;
         int64_t interval = mo_cell_get_duration(value);
@@ -605,7 +609,7 @@ static enum mo_service_status open_service(const struct mo_image *image, uint32_
         status = recover(s, &found, &s->state, &snapshot_due, &failed_function, &failed_sequence);
     if (status == MO_SERVICE_OK && !found) {
         failed_function = s->descriptor->start;
-        status = invoke(s->process, s->descriptor->start, NULL, 0, &s->state, &defect);
+        status = mo_service_invoke(s->process, s->descriptor->start, NULL, 0, &s->state, &defect);
     }
     if (status == MO_SERVICE_OK && !found && store != NULL) {
         struct mo_cell original = s->state;
@@ -626,14 +630,15 @@ static enum mo_service_status open_service(const struct mo_image *image, uint32_
         replace_encoding(s, &encoded, s->sequence);
     }
     mo_buffer_free(&encoded);
-    struct mo_service_time time = sample_clock(s);
+    struct mo_service_time time = mo_service_clock(s);
     if (status != MO_SERVICE_OK) {
         const struct mo_service_event event = {.kind = MO_SERVICE_FAILURE,
                                                .reason = status,
                                                .time = time,
                                                .defect = defect.reason == NULL ? NULL : &defect,
                                                .function = failed_function,
-                                               .handler = handler_name(s, failed_function),
+                                               .handler =
+                                                   mo_service_handler_name(s, failed_function),
                                                .replay_sequence = failed_sequence};
         s->hooks.event(&event, s->hooks.context);
         mo_service_free(s);
@@ -736,7 +741,7 @@ enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
         return MO_SERVICE_DOWN;
     if (s->count == MO_LIMIT_SERVICE_MAILBOX)
         return MO_SERVICE_BUSY;
-    struct mo_service_time time = sample_clock(s);
+    struct mo_service_time time = mo_service_clock(s);
     struct service_message message = {.arrival = time.now, .handler = tool, .id = id};
     struct mo_buffer encoded;
     mo_buffer_init(&encoded, MO_LIMIT_SAVED_BYTES);
@@ -759,7 +764,7 @@ enum mo_service_status mo_service_send(struct mo_service_loop *s, uint32_t tool,
         message.argument_bytes_available
             ? payload - MO_LOG_RECORD_HEADER_BYTES - count * MO_LOG_RECORD_LENGTH_BYTES
             : 0;
-    *append(s) = message;
+    *mo_service_append(s) = message;
     mo_buffer_free(&encoded);
     return MO_SERVICE_OK;
 }
@@ -787,7 +792,7 @@ static void drain(struct mo_service_loop *s, bool keep) {
     for (uint32_t i = 0; i < old_count; i++) {
         struct service_message message = s->mailbox[(head + i) % MO_LIMIT_SERVICE_MAILBOX];
         if (keep && !message.timer) {
-            *append(s) = message;
+            *mo_service_append(s) = message;
             continue;
         }
         if (!message.timer) {
@@ -940,8 +945,8 @@ enum mo_failure_context mo_service_context(struct mo_process *p, const struct mo
     return status;
 }
 
-static void capture_failure(struct mo_service_loop *s, const struct service_message *m,
-                            const struct mo_service_call *call) {
+static void mo_service_capture_failure(struct mo_service_loop *s, const struct service_message *m,
+                                       const struct mo_service_call *call) {
     s->capture_id = 0;
     s->capture_unsafe = false;
     s->capture_refusal = "out of memory for the record";
@@ -954,7 +959,7 @@ static void capture_failure(struct mo_service_loop *s, const struct service_mess
     mo_buffer_init(&context, MO_LIMIT_FAILURE_CONTEXT_BYTES);
     /* An over-long kind still fits here, so its refusal names the kind, not memory. */
     mo_buffer_init(&kind, MO_LIMIT_FAILURE_MESSAGE_BYTES);
-    struct mo_bytecode_string name = handler_name(s, call->function);
+    struct mo_bytecode_string name = mo_service_handler_name(s, call->function);
     uint32_t count = m->timer ? 0 : s->descriptor->tools[m->handler].argument_count;
     bool readonly = !m->timer && s->descriptor->tools[m->handler].read_only;
     struct mo_signature signature = mo_service_signature(call);
@@ -1084,7 +1089,7 @@ bool mo_service_step(struct mo_service_loop *s) {
     MO_ASSERT(s != NULL);
     if (!s->running)
         return false;
-    poll_timers(s, sample_clock(s));
+    poll_timers(s, mo_service_clock(s));
     if (s->count == 0)
         return false;
     struct service_message message = s->mailbox[s->head];
@@ -1110,10 +1115,10 @@ bool mo_service_step(struct mo_service_loop *s) {
     s->capture_refusal = NULL;
     s->capture_unsafe = false;
     uint32_t handler = call.function;
-    struct mo_service_time time = sample_clock(s);
+    struct mo_service_time time = mo_service_clock(s);
     if (returned) {
         if (reply.status != MO_SERVICE_OK) {
-            capture_failure(s, &message, &call);
+            mo_service_capture_failure(s, &message, &call);
             log_event(s, MO_SERVICE_FAILURE, reply.status, time, NULL, handler, 0);
         } else if (reply.updated && !persist(s, &message, &encoded)) {
             mo_value_drop(s->process->heap, s->descriptor->state_type, call.state);
@@ -1130,7 +1135,7 @@ bool mo_service_step(struct mo_service_loop *s) {
             s->state = call.state;
         }
     } else {
-        capture_failure(s, &message, &call);
+        mo_service_capture_failure(s, &message, &call);
         reply.defect = call.defect.reason == NULL ? NULL : &call.defect;
         log_event(s, MO_SERVICE_FAILURE, reply.status, time, reply.defect, handler, 0);
     }
@@ -1145,7 +1150,7 @@ bool mo_service_step(struct mo_service_loop *s) {
     s->hooks.reply(&reply, s->hooks.context);
     if (returned)
         mo_value_drop(s->process->heap, reply.type, result);
-    finish_call(s->process);
+    mo_service_finish_call(s->process);
     drop_message(s, &message);
     if (!returned || reply.status == MO_SERVICE_MEMORY) {
         if (s->capture_unsafe)
@@ -1301,7 +1306,7 @@ bool mo_service_pin_failure(const struct mo_service_loop *s, uint64_t failure,
 
 static struct mo_bytecode_string function_name(const struct mo_bytecode *file, uint32_t function) {
     MO_ASSERT(function < file->function_count);
-    return without_module_or_overload(file->strings[file->functions[function].name]);
+    return mo_service_short_name(file->strings[file->functions[function].name]);
 }
 
 static bool same_name(struct mo_bytecode_string a, struct mo_bytecode_string b) {
@@ -1338,10 +1343,10 @@ static enum mo_service_swap_status readmit(struct mo_service_loop *old,
             next->dropped++;
             return MO_SERVICE_SWAP_READY;
         }
-        *append(next) = (struct service_message){.arrival = m->arrival,
-                                                 .handler = timer,
-                                                 .timer = true,
-                                                 .argument_bytes_available = true};
+        *mo_service_append(next) = (struct service_message){.arrival = m->arrival,
+                                                            .handler = timer,
+                                                            .timer = true,
+                                                            .argument_bytes_available = true};
         next->timers[timer].waiting = true;
         return MO_SERVICE_SWAP_READY;
     }
@@ -1369,7 +1374,7 @@ static enum mo_service_swap_status readmit(struct mo_service_loop *old,
     }
     mo_buffer_free(&encoded);
     if (kept && status == MO_SERVICE_SWAP_READY) {
-        *append(next) = moved;
+        *mo_service_append(next) = moved;
         return status;
     }
     for (uint32_t i = 0; i < decoded; i++)
@@ -1429,11 +1434,11 @@ enum mo_service_swap_status mo_service_swap_prepare(struct mo_service_loop *old,
     for (uint32_t i = 0; status == MO_SERVICE_SWAP_READY && i < s->descriptor->timer_count; i++) {
         struct mo_cell value;
         struct mo_defect defect;
-        enum mo_service_status called =
-            invoke(s->process, s->descriptor->timers[i].interval, NULL, 0, &value, &defect);
+        enum mo_service_status called = mo_service_invoke(
+            s->process, s->descriptor->timers[i].interval, NULL, 0, &value, &defect);
         int64_t interval = called == MO_SERVICE_OK ? mo_cell_get_duration(value) : 0;
         if (called != MO_SERVICE_OK)
-            finish_call(s->process);
+            mo_service_finish_call(s->process);
         if (interval <= 0)
             status = MO_SERVICE_SWAP_INTERVAL;
         else {
@@ -1476,8 +1481,8 @@ void mo_service_swap_finish(struct mo_service_loop *old, struct mo_service_loop 
     }
     next->removed_count = 0;
     next->dropped = 0;
-    record_event(next, MO_SERVICE_UPGRADE, MO_SERVICE_OK, sample_clock(next), NULL, MO_NO_INDEX, 0,
-                 &note);
+    mo_service_record_event(next, MO_SERVICE_UPGRADE, MO_SERVICE_OK, mo_service_clock(next), NULL,
+                            MO_NO_INDEX, 0, &note);
     mo_service_free(old);
 }
 
@@ -1487,8 +1492,8 @@ void mo_service_swap_abandon(struct mo_service_loop *next) {
 
 void mo_service_note_upgrade(struct mo_service_loop *s, const struct mo_service_upgrade *upgrade) {
     MO_ASSERT(s != NULL && upgrade != NULL && !upgrade->accepted && upgrade->code != 0);
-    record_event(s, MO_SERVICE_UPGRADE, MO_SERVICE_OK, sample_clock(s), NULL, MO_NO_INDEX, 0,
-                 upgrade);
+    mo_service_record_event(s, MO_SERVICE_UPGRADE, MO_SERVICE_OK, mo_service_clock(s), NULL,
+                            MO_NO_INDEX, 0, upgrade);
 }
 
 void mo_service_stop(struct mo_service_loop *s, enum mo_service_status reason) {
@@ -1496,6 +1501,6 @@ void mo_service_stop(struct mo_service_loop *s, enum mo_service_status reason) {
     if (!s->running)
         return;
     s->running = false;
-    log_event(s, MO_SERVICE_STOP, reason, sample_clock(s), NULL, MO_NO_INDEX, 0);
+    log_event(s, MO_SERVICE_STOP, reason, mo_service_clock(s), NULL, MO_NO_INDEX, 0);
     drain(s, false);
 }

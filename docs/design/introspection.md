@@ -377,7 +377,7 @@ for defects. It is stored as text in the `kind` column.
 Order, at the point where `mo_service_step` sees a failed call today:
 
 1. **Context, before cleanup.** The frames are still live: the event hook already runs before
-   `finish_call` unwinds them (`src/vm/service.c`). For a defect, the existing defect frames are
+   `mo_service_finish_call` unwinds them (`src/vm/service.c`). For a defect, the existing defect frames are
    used. For a work-limit cancellation, which fabricates no defect, the runtime walks the
    process's live frames the same way. Frames and top-frame variables are rendered as text
    into a buffer of at most `MO_LIMIT_FAILURE_CONTEXT_BYTES` (64 KiB, the defect report's size),
@@ -386,7 +386,7 @@ Order, at the point where `mo_service_step` sees a failed call today:
    levels deep, and BigInt text is built there too. After a heap exhaustion such a value comes
    out `unavailable` and the context is `truncated`. The frames and the replay inputs are
    unaffected.
-2. **Cleanup.** `finish_call` runs as today, releasing the handler's frames and garbage. The
+2. **Cleanup.** `mo_service_finish_call` runs as today, releasing the handler's frames and garbage. The
    pre-call arguments stay alive: the message still owns them.
 3. **Encoding.** The pre-call state's encoding is already in hand (below). Arguments of an
    updating tool were encoded at admission; the runtime now keeps those bytes with the queued
