@@ -321,7 +321,7 @@ CREATE TABLE failure_state(id INTEGER PRIMARY KEY, record BLOB NOT NULL) STRICT;
 ```
 
 `user_version` stays 1, and the existing tables and their records are unchanged. The store's
-check is by table name (`src/host/store.c`, `table`), so a Phase 3 binary opening a Phase 4 store
+check is by table name (`src/host/store.c`, `store_table_ready`), so a Phase 3 binary opening a Phase 4 store
 ignores the new tables, and a Phase 4 binary opening a Phase 3 store creates them.
 
 A record is two framed blobs bound to one id, in two rows inserted, with any evictions, in one
@@ -603,8 +603,8 @@ flags. Each is a named limit in `src/base/limits.h`.
 
 ## 9. Reading a stopped data folder
 
-`mo history` and `mo replay --data` use a new reader in `host/store.c`, never `mo_service_open`,
-which can run timers and take snapshots.
+`mo history` and `mo replay --data` use a new reader in `host/store-history.c`, never
+`mo_service_open`, which can run timers and take snapshots.
 
 - It opens `DIR/service.sqlite` read-only, never creates it, and never waits for a lock. It
   classifies the folder by SQLite's result code, never by whether a `-journal` file exists: a

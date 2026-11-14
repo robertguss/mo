@@ -78,7 +78,7 @@ src/tools/     the mo command: check, run, test, format, fix, emit, serve and gu
                diagnostics as text and JSON
 lib/           the standard library written in Mo (condition 4 of D207)
 vendor/sqlite/ SQLite, unmodified and pinned (vendor/sqlite/README.md); only
-               src/host/store.c includes it, and it allocates through base
+               the src/host/store*.c files include it, and it allocates through base
 ```
 
 Every module uses `base`. Beyond that, each uses only the modules listed here:
