@@ -128,6 +128,7 @@ static inline MO_MUST_USE bool codegen_live_has(const struct live_set *live, uin
 }
 
 MO_MUST_USE bool codegen_problem(struct compiler *c, uint16_t code, const char *reason);
+MO_MUST_USE bool codegen_unsupported(struct compiler *c, const char *reason);
 MO_MUST_USE void *codegen_allocate(struct compiler *c, size_t count, size_t width);
 MO_MUST_USE void *codegen_append(struct compiler *c, struct vector *v, uint32_t n, uint32_t limit,
                                  uint16_t code);
@@ -147,10 +148,18 @@ MO_MUST_USE uint32_t codegen_type_result(struct compiler *c, enum mo_type_proble
                                          uint32_t id);
 MO_MUST_USE uint32_t codegen_scalar(struct compiler *c, enum mo_type_kind kind);
 MO_MUST_USE uint32_t codegen_type(struct compiler *c, mo_core_ty t, unsigned depth);
+MO_MUST_USE uint32_t codegen_simulation_signature(struct compiler *c,
+                                                  const struct mo_core_sim_op *op);
 MO_MUST_USE uint32_t codegen_selector(mo_core_natural number);
+MO_MUST_USE uint32_t codegen_operation_signature(struct compiler *c,
+                                                 const struct mo_codegen_operation *op,
+                                                 const mo_core_ty variables[4]);
 MO_MUST_USE uint32_t codegen_constant(struct compiler *c, struct mo_bytecode_constant value);
+MO_MUST_USE uint32_t codegen_literal(struct compiler *c, mo_core_lit lit, uint32_t *ty);
 MO_MUST_USE uint32_t codegen_register_add(struct compiler *c, struct function *f, uint32_t ty,
                                           uint32_t original);
+MO_MUST_USE uint32_t codegen_binding_name(struct function *f, uint32_t node, uint32_t slot);
+MO_MUST_USE uint32_t codegen_constructor(struct compiler *c, uint32_t ty, mo_core_string key);
 void codegen_function_init(struct function *f);
 MO_MUST_USE struct node *codegen_prepare(struct compiler *c, struct function *f, mo_core_expr expr,
                                          uint32_t expected, unsigned depth);
