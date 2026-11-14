@@ -12,9 +12,7 @@ EVIDENCE = ("accepts", "gap", "drivers", "cost", "untestable")
 
 
 def has_test(path, name):
-    """Whether the driver at path defines, and for Python also calls, the test called name.
-
-    A ci/cli_*.py module's test is called from ci/check_cli.py."""
+    """Whether the driver at path defines, and for Python also calls, the test called name."""
     text = path.read_text()
     if path.name == "Makefile":
         return re.search(rf"^{name}:", text, re.M) is not None
