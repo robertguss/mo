@@ -6,9 +6,11 @@
 #include <stdio.h>
 #include <string.h>
 
-enum change { UNCHANGED, EDITED, MOVED, REMOVED, ADDED, CHANGES };
-static const char *const change_names[CHANGES] = {"unchanged", "edited", "moved", "removed",
-                                                  "added"};
+enum change { UNCHANGED, EDITED, REMOVED, ADDED, MOVED, CHANGES };
+static const char *const change_names[CHANGES] = {"unchanged", "edited", "removed", "added",
+                                                  "moved"};
+enum pass { SAME_DIGEST, SAME_TEXT, OTHER_OWNER, SAME_OWNER, PASSES };
+enum { SHORT_DIGEST = 6 };
 
 struct out {
     FILE *file;
@@ -68,7 +70,7 @@ static void json_item(struct out *o, const struct mo_intent_item *item) {
     put(o, ",\"owner\":");
     put_name(o, item->owner);
     put(o, ",\"digest\":\"");
-    put_digest(o, item, 32);
+    put_digest(o, item, sizeof item->digest);
     put(o, "\",\"text\":");
     put_text(o, item->text.bytes, item->text.length);
     put(o, ",\"reads\":[");
@@ -91,6 +93,21 @@ static bool example(const struct mo_intent_item *item) {
     return item->spec->kind == MO_SPEC_EXAMPLE;
 }
 
+static void list_row(struct out *o, const struct mo_intent_item *previous,
+                     const struct mo_intent_item *item) {
+    if (previous == NULL || !example(previous) || strcmp(previous->owner, item->owner) != 0) {
+        put(o, previous == NULL ? "examples " : "\nexamples ");
+        put_name(o, item->owner);
+        put(o, "\n");
+    }
+    put(o, "  ");
+    put_name(o, item->name);
+    put(o, " ");
+    put_digest(o, item, SHORT_DIGEST);
+    lines(o, "  ", "    ", item->text);
+    text_reads(o, "    reads ", item);
+}
+
 static void list(struct out *o, const struct mo_intent *intent) {
     for (uint32_t i = 0; o->ok && i < intent->count; i++) {
         const struct mo_intent_item *item = &intent->items[i];
@@ -99,25 +116,14 @@ static void list(struct out *o, const struct mo_intent *intent) {
             json_item(o, item);
             put(o, "}\n");
         } else if (example(item)) {
-            const struct mo_intent_item *previous = i == 0 ? NULL : &intent->items[i - 1];
-            if (previous == NULL || !example(previous) || strcmp(previous->owner, item->owner)) {
-                put(o, i == 0 ? "examples " : "\nexamples ");
-                put_name(o, item->owner);
-                put(o, "\n");
-            }
-            put(o, "  ");
-            put_name(o, item->name);
-            put(o, " ");
-            put_digest(o, item, 6);
-            lines(o, "  ", "    ", item->text);
-            text_reads(o, "    reads ", item);
+            list_row(o, i == 0 ? NULL : &intent->items[i - 1], item);
         } else {
             put(o, i == 0 ? "" : "\n");
             put_name(o, item->kind);
             put(o, " ");
             put_name(o, item->name);
             put(o, " ");
-            put_digest(o, item, 6);
+            put_digest(o, item, SHORT_DIGEST);
             put(o, "\n");
             lines(o, "  ", "  ", item->text);
             text_reads(o, "  reads ", item);
@@ -134,16 +140,23 @@ static bool same_text(struct mo_intent_text a, struct mo_intent_text b) {
     return a.length == b.length && (a.length == 0 || memcmp(a.bytes, b.bytes, a.length) == 0);
 }
 
-static enum change fits(uint32_t pass, const struct mo_intent_item *a,
+static enum change fits(enum pass pass, const struct mo_intent_item *a,
                         const struct mo_intent_item *b) {
+    if (pass == SAME_DIGEST)
+        return memcmp(a->digest, b->digest, sizeof a->digest) == 0 ? UNCHANGED : CHANGES;
     bool owner = strcmp(a->owner, b->owner) == 0, kind = strcmp(a->kind, b->kind) == 0;
-    if (pass == 0)
-        return memcmp(a->digest, b->digest, 32) == 0 ? UNCHANGED : CHANGES;
-    if (pass == 1)
+    switch (pass) {
+    case SAME_TEXT:
         return owner && kind && same_text(a->text, b->text) ? EDITED : CHANGES;
-    if (pass == 2)
+    case OTHER_OWNER:
         return kind && same_text(a->text, b->text) ? MOVED : CHANGES;
-    return owner && kind ? EDITED : CHANGES;
+    case SAME_OWNER:
+        return owner && kind ? EDITED : CHANGES;
+    case SAME_DIGEST:
+    case PASSES:
+        break;
+    }
+    MO_UNREACHABLE();
 }
 
 static int by_read(const struct mo_intent_read *a, const struct mo_intent_read *b) {
@@ -250,6 +263,30 @@ static void change(struct out *o, enum change kind, const struct mo_intent_item 
     flush(o);
 }
 
+static void summary(struct out *o, const uint32_t counts[CHANGES], uint32_t items) {
+    if (o->json) {
+        put(o, "{\"record\":\"intent\",\"items\":");
+        o->ok = o->ok && mo_buffer_append_uint(&o->buffer, items);
+        for (uint32_t c = 0; c < CHANGES; c++) {
+            put(o, ",\"");
+            put(o, change_names[c]);
+            put(o, "\":");
+            o->ok = o->ok && mo_buffer_append_uint(&o->buffer, counts[c]);
+        }
+        put(o, "}\n");
+    } else {
+        put(o, "intent: ");
+        for (uint32_t c = 0; c < CHANGES; c++) {
+            put(o, c == 0 ? "" : ", ");
+            o->ok = o->ok && mo_buffer_append_uint(&o->buffer, counts[c]);
+            put(o, " ");
+            put(o, change_names[c]);
+        }
+        put(o, "\n");
+    }
+    flush(o);
+}
+
 static void compare(struct out *o, struct mo_arena *arena, const struct mo_intent *old,
                     const struct mo_intent *now) {
     uint32_t *partner = mo_arena_allocate_array(arena, old->count == 0 ? 1 : old->count,
@@ -265,7 +302,7 @@ static void compare(struct out *o, struct mo_arena *arena, const struct mo_inten
     for (uint32_t i = 0; i < old->count; i++)
         partner[i] = UINT32_MAX;
     memset(taken, 0, now->count * sizeof *taken);
-    for (uint32_t pass = 0; pass < 4; pass++)
+    for (enum pass pass = SAME_DIGEST; pass < PASSES; pass++)
         for (uint32_t i = 0; i < old->count; i++)
             for (uint32_t j = 0; partner[i] == UINT32_MAX && j < now->count; j++)
                 if (!taken[j] &&
@@ -286,26 +323,7 @@ static void compare(struct out *o, struct mo_arena *arena, const struct mo_inten
             counts[ADDED]++;
             change(o, ADDED, NULL, &now->items[j]);
         }
-    if (o->json) {
-        put(o, "{\"record\":\"intent\",\"items\":");
-        o->ok = o->ok && mo_buffer_append_uint(&o->buffer, now->count);
-    } else
-        put(o, "intent: ");
-    for (uint32_t c = 0; c < CHANGES; c++) {
-        static const uint32_t order[CHANGES] = {UNCHANGED, EDITED, REMOVED, ADDED, MOVED};
-        put(o, o->json ? ",\"" : c == 0 ? "" : ", ");
-        if (!o->json) {
-            o->ok = o->ok && mo_buffer_append_uint(&o->buffer, counts[order[c]]);
-            put(o, " ");
-        }
-        put(o, change_names[order[c]]);
-        if (o->json) {
-            put(o, "\":");
-            o->ok = o->ok && mo_buffer_append_uint(&o->buffer, counts[order[c]]);
-        }
-    }
-    put(o, o->json ? "}\n" : "\n");
-    flush(o);
+    summary(o, counts, now->count);
 }
 
 static void report(struct mo_diags *diags, const char *message, const char *detail) {
