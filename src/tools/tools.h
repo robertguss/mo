@@ -25,6 +25,7 @@ enum mo_command {
     MO_COMMAND_HISTORY,
     MO_COMMAND_REHEARSE,
     MO_COMMAND_PUSH,
+    MO_COMMAND_INTENT,
 };
 
 #define MO_EXIT_SERVICE_STOPPED 69
@@ -43,7 +44,7 @@ struct mo_cli {
     const char *upgrade_from, *old_bundle, *migration, *compile_context, *candidate;
     struct mo_limits limits;
     uint32_t calls, sequences, seconds;
-    const char *strength;
+    const char *strength, *against;
     const char *fetch_url, *fetch_token;
     /* push: the loopback endpoint, the expected active source digest and the two credentials'
      * environment names; serve reads upgrade_token for its upgrade credential. */

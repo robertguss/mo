@@ -184,6 +184,14 @@ rows leaves a row's text and digest unchanged and changes which case it checks;
 when the row still passes, the change activates. A change to a library module or the toolchain can
 change what an item means with its digest unchanged.
 
+`mo intent FILE` lists the items, and `mo intent FILE --against OLD` shows the
+intent difference between two programs. Items pair in this order: an equal
+digest is unchanged; the same owner, kind and text is edited through a
+declaration it reads; the same kind and text under another owner is moved; what
+is left pairs by order within one owner and kind, as edited. Anything still
+unpaired is removed or added. The pairing only arranges what is shown; the
+digest stays the identity.
+
 ## Promise strength
 
 [Promise strength](promise-strength.md) is amended for this phase: the measured

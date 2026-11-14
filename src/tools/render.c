@@ -1428,6 +1428,8 @@ static const char *command_name(enum mo_command command) {
         return "query";
     case MO_COMMAND_HISTORY:
         return "history";
+    case MO_COMMAND_INTENT:
+        return "intent";
     case MO_COMMAND_RUN:
     case MO_COMMAND_FORMAT:
     case MO_COMMAND_FIX:

@@ -161,6 +161,10 @@ static void execute_pipeline(void *argument) {
         (void)added;
         return;
     }
+    if (cli->command == MO_COMMAND_INTENT) {
+        mo_intent_show(cli, arena, program, library, work->output, diags);
+        return;
+    }
     /* Test observations are separate from the compiler's anchor checks. */
     if (cli->command == MO_COMMAND_TEST && cli->strength != NULL) {
         struct mo_strength_run run = {

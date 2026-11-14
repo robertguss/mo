@@ -1349,6 +1349,71 @@ def strength_checks(binary):
     assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
 
 
+INTENT = "tests/cli/intent"
+CLAMP_PROMISE = ('promise "{}"\n  within(result)\n  allows n: 3, result: 3\n'
+                 '  forbids n: 20, result: 20\nend\n')
+
+
+def intent_records(binary, args, status=0):
+    items = records(run(binary, ["intent", "--json", *args], status), "intent")
+    assert items[-2]["record"] == "intent", items
+    return items[1:-2], items[-2]
+
+
+def intent_command(binary):
+    listed, end = intent_records(binary, [f"{INTENT}/before/main.mo"])
+    assert end == {"record": "intent", "items": 5}, end
+    assert [(r["record"], r["name"], r["kind"], r["owner"], r["text"], r["reads"]) for r in listed] == [
+        ("item", "Main.within.example.1", "example", "Main.within", "within(3)\n", []),
+        ("item", "Main.clamp.promise.1", "promise", "Main.clamp",
+         CLAMP_PROMISE.format("the result stays within the limit"), ["Main.limit", "Main.within"]),
+        ("item", "Main.clamp.example.1", "example", "Main.clamp", "clamp(3) == 3\n", []),
+        ("item", "Main.clamp.example.2", "example", "Main.clamp", "clamp(20) == limit\n",
+         ["Main.limit"]),
+        ("item", "Main.clamp.example.3", "example", "Main.clamp", "clamp(-1) == 0\n", [])], listed
+    tested = without_time(run(binary, ["test", "--list", "--json", f"{INTENT}/before/main.mo"], 0))
+    assert [r["digest"] for r in tested[1:-1]] == [r["digest"] for r in listed], tested
+    changes, end = intent_records(binary, [f"{INTENT}/after/main.mo", "--against",
+                                           f"{INTENT}/before/main.mo"])
+    assert end == {"record": "intent", "items": 5, "unchanged": 2, "edited": 1, "removed": 1,
+                   "added": 1, "moved": 1}, end
+    shown = [(r["change"], r.get("before", {}).get("name"), r.get("after", {}).get("name"))
+             for r in changes]
+    assert shown == [("moved", "Main.within.example.1", "Main.clamp.example.3"),
+                     ("edited", "Main.clamp.promise.1", "Main.clamp.promise.1"),
+                     ("removed", "Main.clamp.example.3", None),
+                     ("added", None, "Main.within.promise.1")], changes
+    moved, edited, removed, added = changes
+    assert [(r["name"], r["before"]) for r in moved["reads"]] == [
+        ("Main.limit", None), ("Main.within", None)], moved
+    assert moved["reads"][0]["after"] == "limit = 10\n", moved
+    assert (edited["before"]["text"], edited["after"]["text"], edited["reads"]) == (
+        CLAMP_PROMISE.format("the result stays within the limit"),
+        CLAMP_PROMISE.format("the result never leaves the limit"), []), edited
+    assert (removed["before"]["text"], "after" in removed) == ("clamp(-1) == 0\n", False), removed
+    assert added["after"]["text"].startswith('promise "zero is always within"\n'), added
+    text = run(binary, ["intent", f"{INTENT}/after/main.mo", "--against",
+                        f"{INTENT}/before/main.mo"], 0).stdout.decode()
+    for line in ("moved Main.within.example.1 to Main.clamp.example.3\n",
+                 "edited Main.clamp.promise.1\n", '    promise "the result stays within the limit"\n',
+                 '    promise "the result never leaves the limit"\n',
+                 "removed Main.clamp.example.3\n", "added Main.within.promise.1\n",
+                 "intent: 2 unchanged, 1 edited, 1 removed, 1 added, 1 moved\n"):
+        assert line in text, (line, text)
+    constant, end = intent_records(binary, [f"{INTENT}/limit/main.mo", "--against",
+                                            f"{INTENT}/before/main.mo"])
+    assert (end["unchanged"], end["edited"]) == (3, 2), end
+    assert [(r["change"], r["after"]["name"], r["reads"]) for r in constant] == [
+        (change, name, [{"name": "Main.limit", "before": "limit = 10\n", "after": "limit = 12\n"}])
+        for change, name in (("edited", "Main.clamp.promise.1"),
+                             ("edited", "Main.clamp.example.2"))], constant
+    text = run(binary, ["intent", f"{INTENT}/before/main.mo"], 0).stdout.decode()
+    assert "examples Main.clamp\n" in text and "  reads Main.limit, Main.within\n" in text, text
+    missing = run(binary, ["intent", f"{INTENT}/before/main.mo", "--against",
+                           f"{INTENT}/missing/main.mo"], 1)
+    assert b"the --against program does not check" in missing.stderr, missing
+
+
 def fix_command(binary):
     """`mo fix` applies every fix offered alone, checks again, and reports what is left (MO-48)."""
     with tempfile.TemporaryDirectory(prefix='mo-fix-') as directory:
@@ -4007,6 +4072,9 @@ def guide_claims(binary):
     assert ("A wrong version that stops is kept out of the rate, and so is one that does not check "
             "or changes a digest, unless a `counted` file in `DIR` lists it: a listed one stays in "
             "the rate as not killed.") in guide
+    assert ("`mo intent FILE --against OLD` shows how the intent changed since the program `OLD`: "
+            "items edited, with both texts, removed, added and moved to another function, and for "
+            "an edited or moved item each declaration it reads that changed, before and after.") in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 2, "the guide has exactly one Mo program"
     program = blocks[1].split("```\n", 1)[0]
@@ -4038,7 +4106,7 @@ def guide_claims(binary):
     result = run(binary, ["query", "tests/errors/e1413/main.mo", "nothing", "--export",
                           "tests/errors/missing.moex"], 2)
     assert result.stderr == b"mo query: no function of that name in that module\n", result
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query` and `mo history`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history` and `mo intent`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -4429,6 +4497,7 @@ def check(binary):
     recovery_checks(binary)
     service_promise_checks(binary)
     strength_checks(binary)
+    intent_command(binary)
     imported_constants(binary)
     fix_command(binary)
     items = records(run(faults, ["--json"], 1), "check")
@@ -4535,8 +4604,8 @@ def check(binary):
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse or history): "bad\\x0a\\x09\\xc3\\xbf"')
-    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse or history')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or intent): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or intent')
     mistake(["push", "main.mo", "--url", "http://127.0.0.1:1/mcp"], 'usage: mo push FILE --url URL --base DIGEST --token-env NAME --upgrade-token-env NAME [--migrate Module.function] [--json]: "push"')
     for args, message in (
             (["replay", good, "--data", "state"], 'replay needs --failure ID: "replay"'),

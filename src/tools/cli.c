@@ -191,6 +191,7 @@ enum flag_id {
     FLAG_TOKEN_ENV,
     FLAG_UPGRADE_TOKEN_ENV,
     FLAG_STRENGTH,
+    FLAG_AGAINST,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -209,7 +210,8 @@ static uint32_t command_bit(enum mo_command command) {
 }
 static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_JSON, "--json", false, false, VALUE_NONE, 0,
-     ON(CHECK) | ON(TEST) | ON(REPLAY) | ON(QUERY) | ON(HISTORY) | ON(REHEARSE) | ON(PUSH)},
+     ON(CHECK) | ON(TEST) | ON(REPLAY) | ON(QUERY) | ON(HISTORY) | ON(REHEARSE) | ON(PUSH) |
+         ON(INTENT)},
     {FLAG_LIST, "--list", false, false, VALUE_NONE, 0, ON(TEST)},
     {FLAG_REFERENCE, "--reference", false, false, VALUE_NONE, 0, ON(GUIDE)},
     {FLAG_ONLY, "--only", false, true, VALUE_TEXT, 0, ON(TEST)},
@@ -248,6 +250,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_UPGRADE_TOKEN_ENV, "--upgrade-token-env", false, false, VALUE_TEXT, 0,
      ON(SERVE) | ON(PUSH)},
     {FLAG_STRENGTH, "--strength", false, false, VALUE_TEXT, 0, ON(TEST)},
+    {FLAG_AGAINST, "--against", false, false, VALUE_TEXT, 0, ON(INTENT)},
 };
 #undef ON
 
@@ -274,6 +277,9 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
+        break;
+    case FLAG_AGAINST:
+        out->against = operand;
         break;
     case FLAG_CONTEXT:
         out->compile_context = operand;
@@ -381,7 +387,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (argc < 2)
         return refuse(out, error,
                       "expected a command: check, run, test, format, fix, guide, emit, serve, "
-                      "fetch, push, replay, query, rehearse or history",
+                      "fetch, push, replay, query, rehearse, history or intent",
                       NULL, NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];
@@ -423,7 +429,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                  {"emit", MO_COMMAND_EMIT},         {"serve", MO_COMMAND_SERVE},
                  {"replay", MO_COMMAND_REPLAY},     {"query", MO_COMMAND_QUERY},
                  {"rehearse", MO_COMMAND_REHEARSE}, {"history", MO_COMMAND_HISTORY},
-                 {"push", MO_COMMAND_PUSH}};
+                 {"push", MO_COMMAND_PUSH},         {"intent", MO_COMMAND_INTENT}};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
         if (strcmp(command, names[c].name) == 0)
@@ -432,7 +438,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(
             out, error,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, "
-            "fetch, push, replay, query, rehearse or history)",
+            "fetch, push, replay, query, rehearse, history or intent)",
             command, NULL);
     out->command = names[c].command;
     bool flags = true;
@@ -496,7 +502,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         if (out->file_count != 0 &&
             (out->command == MO_COMMAND_CHECK || out->command == MO_COMMAND_TEST ||
              out->command == MO_COMMAND_EMIT || out->command == MO_COMMAND_SERVE ||
-             out->command == MO_COMMAND_REPLAY || out->command == MO_COMMAND_PUSH))
+             out->command == MO_COMMAND_REPLAY || out->command == MO_COMMAND_PUSH ||
+             out->command == MO_COMMAND_INTENT))
             return refuse(out, error, "command takes exactly one file", arg, NULL);
         if (out->file_count != 0 && out->command == MO_COMMAND_HISTORY)
             return refuse(out, error, "history takes exactly one data folder", arg, NULL);
