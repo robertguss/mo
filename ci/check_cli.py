@@ -4084,11 +4084,13 @@ def guide_claims(binary):
             "folder or an artifact without starting the service, as Diagnose a failure offline "
             "says.") in guide
     assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
-    # ci/check_upgrade_live.py exercises the live-upgrade claims through mo serve and mo push.
+    # ci/check_upgrade_live.py and ci/check_review.py exercise these claims through mo serve,
+    # mo push and mo review.
     for name in SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES:
         assert f"`{name}`" in guide
     for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest.",
-                     "Only the nine operator views are read-only;",
+                     "Only the nine operator views and `mo-intent-items` are read-only;",
+                     "In this build approvals and the setting are recorded but do not yet gate an upgrade",
                      "any other URL is refused before either credential is read.",
                      "Pushing the active program again reports `already active` and changes "
                      "nothing",
@@ -4132,7 +4134,7 @@ def guide_claims(binary):
     result = run(binary, ["query", "tests/errors/e1413/main.mo", "nothing", "--export",
                           "tests/errors/missing.moex"], 2)
     assert result.stderr == b"mo query: no function of that name in that module\n", result
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history` and `mo intent`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo review`, `mo replay`, `mo query`, `mo history` and `mo intent`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",

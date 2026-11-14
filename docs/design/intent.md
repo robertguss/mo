@@ -206,7 +206,7 @@ Approvals live in the data folder, in tables added beside Phase 5's:
 
 | Table | Holds |
 | --- | --- |
-| `items` | Each active and retained program's item list: digest, owner, kind, display name, reach, digest version |
+| `items` | One row: the active program's activation ordinal and its item list in MOIL v1 (`src/base/intent-list.h`): each item's digest, kind, owner, display name, text and the declarations it reads |
 | `approvals` | Approved digests, each with the approval-set version that wrote it and how: first approval, or the review id of a yes |
 | `review` | One row: the review setting and the approval-set version |
 | `pending` | At most one held upgrade: review id, base and candidate digests, migration name, approval-set version, the intent difference, the bundle |
@@ -264,7 +264,7 @@ Tools that need the service token and the approval credential:
 | Tool | Does |
 | --- | --- |
 | `mo-intent-items` | Pages the active program's items: digest, display name, kind, approved or not, sentence, reach |
-| `mo-intent-approve` | Approves listed digests of the active program, a first approval |
+| `mo-intent-approve` | Approves one digest of the active program, which the call names by its source digest: a first approval |
 | `mo-review-setting` | Reads or sets the review setting |
 | `mo-review-pending` | The pending review id, its intent difference and digests |
 | `mo-review-source` | Pages the pending or the active source bundle, given the pending review id |
@@ -277,7 +277,9 @@ NAME`, loopback only, like `mo push`:
   writes the pending and active source trees under `--out DIR` for the code
   difference, and prints the review id;
 - `--items` lists every item with its mark and reach;
-- `--approve DIGEST…` approves items;
+- `--base PROGRAM --approve DIGEST…` approves items of the active program
+  `PROGRAM`, one `mo-intent-approve` call each; a `PROGRAM` that is not the
+  active one, or a digest it lacks, is E1416;
 - `--setting everything|intent` changes the setting;
 - `--yes ID` and `--no ID` answer the pending upgrade.
 
@@ -298,8 +300,9 @@ not by pushing again, which would replace the pending upgrade.
 The compile child (`src/host/compile.c`) lowers no promises or tests. A second
 child, the same executable running `mo test --bundle FILE`, follows it:
 
-1. **Listing mode** (`--list --json`) compiles the bundle and runs nothing. It
-   reports the candidate's item list with digests. The door decides from this
+1. **Listing mode** (`mo test FILE --bundle --list -o OUT`) compiles the bundle
+   and runs nothing. It writes the candidate's item list to `OUT` in MOIL v1,
+   which the service reads with `mo_intent_list_read` and stores as it is. The door decides from this
    list for every program, so its input never comes from a process that has run
    candidate code.
 2. **Check mode** runs every promise, service promise, example and test the
@@ -311,8 +314,9 @@ imports. Tests in a module the served program does not import, such as the task
 queue's `queue-tests.mo`, are the agent's to run; under the door, the service's
 guarantees are service promises in its entry module.
 
-The child gets no descriptor on the store, and the service's three secrets are
-removed from its environment. The server polls it where it polls the compile
+The child gets no descriptor beyond its standard streams, so none on the
+store, and runs with an empty environment, so none of the service's three
+secrets. The server polls it where it polls the compile
 child, in `mo_protocol_upgrade_poll`, and the upload slot stays busy while it
 runs. Its limits are under Limits. A failed check is E1433 and an unfinished
 plan is E1432; both refuse the push and leave the old program serving. A first

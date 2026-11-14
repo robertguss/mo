@@ -216,9 +216,31 @@ that hold the old token get 401 until they restart.
 
 ## Upgrade
 
-A queue started with `--upgrade-token-env NAME` (a second secret of at least 16
-bytes, different from the queue token, kept in the same environment file) accepts a
-live upgrade over loopback on its host without stopping:
+A queue started with `--upgrade-token-env QUEUE_UPGRADE --approval-token-env
+QUEUE_APPROVAL` accepts a live upgrade over loopback on its host without stopping.
+Both are secrets of at least 16 bytes, different from each other and from the queue
+token; `mo serve` refuses to start with the first and without the second (E1434).
+The upgrade credential is kept in the environment file. The approval credential is
+Robert's: it goes in a root-only file of its own, never in the file clients copy and
+never on a machine where agents run, and the unit gains a second
+`EnvironmentFile=/etc/task-queue/approval` line:
+
+```sh
+sudo sh -c 'umask 077; python3 -c "import secrets; print(\"QUEUE_APPROVAL=\" + secrets.token_urlsafe(32))" > /etc/task-queue/approval'
+```
+
+Robert lists the active program's items, approves them and sets the review setting
+from his own login on the host, with `mo review` and one of `--items`,
+`--base PROGRAM --approve DIGEST...` or `--setting everything|intent`. Approvals and
+the setting do not yet gate an upgrade.
+
+```sh
+sudo sh -c '. /etc/task-queue/env; . /etc/task-queue/approval; export QUEUE_TOKEN QUEUE_APPROVAL
+  exec "$1" review --url http://127.0.0.1:8000/mcp --token-env QUEUE_TOKEN \
+  --approval-token-env QUEUE_APPROVAL --items' sh /opt/mo/$SHA/build/gcc/debug/mo
+```
+
+An agent pushes with the service token and the upgrade credential:
 
 ```sh
 mo push NEW/main.mo --url http://127.0.0.1:8000/mcp --base DIGEST \
