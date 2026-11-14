@@ -21,12 +21,12 @@
 #include <time.h>
 #include <unistd.h>
 
-static volatile sig_atomic_t cancelled;
+static volatile sig_atomic_t mo_fetch_cancelled;
 static void cancel(int number) {
     (void)number;
-    cancelled = 1;
+    mo_fetch_cancelled = 1;
 }
-static uint64_t now(void) {
+static uint64_t mo_fetch_now(void) {
     struct timespec t;
     if (clock_gettime(CLOCK_MONOTONIC, &t) != 0)
         return UINT64_MAX;
@@ -80,7 +80,7 @@ static void timer_stop(struct fetch_timer *timer) {
     MO_ASSERT(sigprocmask(SIG_SETMASK, &timer->mask, NULL) == 0);
 }
 static bool ready(int fd, short events, uint64_t end) {
-    while (!cancelled && now() < end) {
+    while (!mo_fetch_cancelled && mo_fetch_now() < end) {
         struct pollfd p = {.fd = fd, .events = events};
         int n = poll(&p, 1, 100);
         if (n > 0)
@@ -125,7 +125,7 @@ static bool url(const char *s, char host[10], char port[6]) {
     port[n] = 0;
     return n != 0 && value > 0 && value <= 65535 && strcmp(s, "/mcp") == 0;
 }
-static int connect_local(const char *host, const char *port, uint64_t end) {
+static int mo_fetch_connect_local(const char *host, const char *port, uint64_t end) {
     struct addrinfo hints = {.ai_family = AF_UNSPEC,
                              .ai_socktype = SOCK_STREAM,
                              .ai_flags = AI_NUMERICSERV | AI_NUMERICHOST},
@@ -165,10 +165,10 @@ static int connect_local(const char *host, const char *port, uint64_t end) {
     }
     freeaddrinfo(addresses);
     if (fd < 0 && strcmp(host, "localhost") == 0)
-        return connect_local("::1", port, end);
+        return mo_fetch_connect_local("::1", port, end);
     return fd;
 }
-static bool send_request(int fd, const char *request, size_t length, uint64_t end) {
+static bool mo_fetch_send_request(int fd, const char *request, size_t length, uint64_t end) {
     size_t at = 0;
     while (at < length && ready(fd, POLLOUT, end)) {
         ssize_t n = send(fd, request + at, length - at, MSG_NOSIGNAL);
@@ -180,7 +180,7 @@ static bool send_request(int fd, const char *request, size_t length, uint64_t en
     return at == length;
 }
 
-static bool receive_response(int fd, struct mo_buffer *wire, uint64_t end) {
+static bool mo_fetch_receive_response(int fd, struct mo_buffer *wire, uint64_t end) {
     uint8_t bytes[4096];
     while (ready(fd, POLLIN, end)) {
         ssize_t n = recv(fd, bytes, sizeof bytes, 0);
@@ -208,7 +208,7 @@ static bool decimal(const char *s, uint64_t *out) {
     *out = n;
     return true;
 }
-static bool unhex(const char *s, uint8_t *out, size_t n) {
+static bool mo_fetch_unhex(const char *s, uint8_t *out, size_t n) {
     static const char alphabet[] = "0123456789abcdef";
     if (strlen(s) != n * 2)
         return false;
@@ -302,7 +302,7 @@ enum mo_fetch_read_status mo_fetch_read(struct mo_image *image, uint32_t functio
         struct mo_export_page page = {0};
         uint64_t numbers[6];
         uint8_t checksum[8];
-        ok = unhex(fields[0], page.id, 16) && unhex(fields[7], checksum, 8);
+        ok = mo_fetch_unhex(fields[0], page.id, 16) && mo_fetch_unhex(fields[7], checksum, 8);
         for (size_t i = 0; ok && i < 6; i++)
             ok = decimal(fields[i + 1], &numbers[i]);
         ok = ok && numbers[4] >= MO_EXPORT_FIXED_BYTES && numbers[4] <= SIZE_MAX &&
@@ -320,7 +320,7 @@ enum mo_fetch_read_status mo_fetch_read(struct mo_image *image, uint32_t functio
             for (size_t i = 0; i < 8; i++)
                 page.checksum = (page.checksum << 8) | checksum[i];
             ok = mo_binary_checksum(page.bytes, page.length) == page.checksum &&
-                 (page.final ? unhex(fields[8], page.digest, 32) : fields[8][0] == 0);
+                 (page.final ? mo_fetch_unhex(fields[8], page.digest, 32) : fields[8][0] == 0);
             if (ok) {
                 *out = page;
                 status = MO_FETCH_PAGE;
@@ -338,13 +338,13 @@ struct fetch_endpoint {
 };
 static int request_page(struct fetch_endpoint *endpoint, const char *id, size_t offset) {
     uint64_t interval = UINT64_C(1000000) / MO_LIMIT_MCP_RATE + 5000;
-    uint64_t elapsed = now() - endpoint->last_sent;
+    uint64_t elapsed = mo_fetch_now() - endpoint->last_sent;
     if (endpoint->last_sent != 0 && elapsed < interval) {
         struct timespec pause = {.tv_nsec = (long)((interval - elapsed) * 1000)};
         if (nanosleep(&pause, NULL) != 0 && errno != EINTR)
             return -1;
     }
-    if (cancelled || now() >= endpoint->end)
+    if (mo_fetch_cancelled || mo_fetch_now() >= endpoint->end)
         return -1;
     char body[512], request[2048];
     int n;
@@ -369,7 +369,7 @@ static int request_page(struct fetch_endpoint *endpoint, const char *id, size_t 
                      selector, id, offset);
     if (n <= 0 || (size_t)n >= sizeof body)
         return -1;
-    int fd = connect_local(endpoint->host, endpoint->port, endpoint->end);
+    int fd = mo_fetch_connect_local(endpoint->host, endpoint->port, endpoint->end);
     if (fd < 0)
         return -1;
     n = snprintf(request, sizeof request,
@@ -378,15 +378,15 @@ static int request_page(struct fetch_endpoint *endpoint, const char *id, size_t 
                  "close\r\nContent-Length: %zu\r\n\r\n%s",
                  strcmp(endpoint->host, "::1") == 0 ? "[::1]" : endpoint->host, endpoint->port,
                  endpoint->token, strlen(body), body);
-    bool ok =
-        n > 0 && (size_t)n < sizeof request && send_request(fd, request, (size_t)n, endpoint->end);
+    bool ok = n > 0 && (size_t)n < sizeof request &&
+              mo_fetch_send_request(fd, request, (size_t)n, endpoint->end);
     for (size_t i = 0; i < sizeof request; i++)
         ((volatile char *)request)[i] = 0;
     if (!ok) {
         (void)close(fd);
         return -1;
     }
-    endpoint->last_sent = now();
+    endpoint->last_sent = mo_fetch_now();
     return fd;
 }
 
@@ -440,7 +440,7 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
     size_t path_size = output_size + 64;
     char *temporary = mo_arena_allocate(&arena, path_size, 1);
     int fd = -1;
-    bool ok = temporary != NULL && function != MO_NO_INDEX && now() < end;
+    bool ok = temporary != NULL && function != MO_NO_INDEX && mo_fetch_now() < end;
     if (ok) {
         int n = snprintf(temporary, path_size, "%s.mo-fetch-%ld", cli->output, (long)getpid());
         ok = n > 0 && (size_t)n < path_size;
@@ -449,7 +449,7 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
     (void)sigemptyset(&action.sa_mask);
     bool sigint_set = sigaction(SIGINT, &action, &old_int) == 0;
     bool sigterm_set = sigaction(SIGTERM, &action, &old_term) == 0;
-    ok = ok && sigint_set && sigterm_set && !cancelled && now() < end;
+    ok = ok && sigint_set && sigterm_set && !mo_fetch_cancelled && mo_fetch_now() < end;
     if (ok) {
         fd = open(temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         ok = fd >= 0 && fchmod(fd, 0600) == 0;
@@ -467,7 +467,7 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
     struct fetch_endpoint endpoint = {
         .failure = cli->fetch_failure, .host = host, .port = port, .token = token, .end = end};
     int pending = -1;
-    while (ok && !cancelled && now() < end) {
+    while (ok && !mo_fetch_cancelled && mo_fetch_now() < end) {
         int socket_fd =
             pending >= 0 ? pending : request_page(&endpoint, export_id, consumer.offset);
         pending = -1;
@@ -481,7 +481,7 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
         wire.bytes = mo_arena_allocate(&wire.arena, wire.limit, 1);
         if (wire.bytes != NULL)
             wire.capacity = wire.limit;
-        ok = receive_response(socket_fd, &wire, end);
+        ok = mo_fetch_receive_response(socket_fd, &wire, end);
         (void)close(socket_fd);
         bool lookahead_failed = false;
         size_t expected_length, count;
@@ -508,12 +508,12 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
     }
     if (pending >= 0)
         (void)close(pending);
-    ok = ok && consumer.complete && !cancelled && now() < end;
+    ok = ok && consumer.complete && !mo_fetch_cancelled && mo_fetch_now() < end;
     ok = ok && consumer.kind == (cli->fetch_failure == 0 ? 1 : 2) &&
          consumer.failure_id == cli->fetch_failure;
     size_t written = 0;
     while (ok && written < consumer.total) {
-        if (cancelled || now() >= end) {
+        if (mo_fetch_cancelled || mo_fetch_now() >= end) {
             ok = false;
             break;
         }
@@ -530,8 +530,8 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
             ok = false;
     }
     if (ok) {
-        ok = !cancelled && now() < end && link(temporary, cli->output) == 0;
-        if (ok && (cancelled || now() >= end)) {
+        ok = !mo_fetch_cancelled && mo_fetch_now() < end && link(temporary, cli->output) == 0;
+        if (ok && (mo_fetch_cancelled || mo_fetch_now() >= end)) {
             if (unlink(cli->output) != 0)
                 (void)fputs("mo fetch: late publication cleanup failed\n", errors);
             ok = false;
@@ -560,7 +560,7 @@ static int fetch_attempt(const struct mo_cli *cli, FILE *errors, const char *hos
 }
 
 int mo_fetch(const struct mo_cli *cli, FILE *errors) {
-    uint64_t started = now();
+    uint64_t started = mo_fetch_now();
     if (started == UINT64_MAX || started > UINT64_MAX - MO_LIMIT_FETCH_US)
         return 1;
     uint64_t end = started + MO_LIMIT_FETCH_US;
@@ -570,7 +570,7 @@ int mo_fetch(const struct mo_cli *cli, FILE *errors) {
                     errors);
         return 2;
     }
-    cancelled = 0;
+    mo_fetch_cancelled = 0;
     struct fetch_timer timer = {0};
     bool armed = timer_start(&timer, end);
     int status = armed ? fetch_attempt(cli, errors, host, port, end) : 1;
@@ -654,13 +654,13 @@ static bool push_call_once(struct fetch_endpoint *e, const char *upgrade, const 
                            const char *arguments, struct mo_image *image, uint32_t function,
                            struct push_reply *out) {
     uint64_t interval = UINT64_C(1000000) / MO_LIMIT_MCP_RATE + 5000;
-    uint64_t elapsed = now() - e->last_sent;
+    uint64_t elapsed = mo_fetch_now() - e->last_sent;
     if (e->last_sent != 0 && elapsed < interval) {
         struct timespec pause = {.tv_nsec = (long)((interval - elapsed) * 1000)};
         if (nanosleep(&pause, NULL) != 0 && errno != EINTR)
             return false;
     }
-    if (cancelled || now() >= e->end)
+    if (mo_fetch_cancelled || mo_fetch_now() >= e->end)
         return false;
     struct mo_buffer request, wire;
     mo_buffer_init(&request, MO_LIMIT_MCP_INGRESS_BYTES);
@@ -688,13 +688,13 @@ static bool push_call_once(struct fetch_endpoint *e, const char *upgrade, const 
         mo_buffer_append_text(&request, tool) &&
         mo_buffer_append_text(&request, "\",\"arguments\":") &&
         mo_buffer_append_text(&request, arguments) && mo_buffer_append_text(&request, "}}");
-    int fd = ok ? connect_local(e->host, e->port, e->end) : -1;
-    ok = fd >= 0 && send_request(fd, (const char *)request.bytes, request.length, e->end);
+    int fd = ok ? mo_fetch_connect_local(e->host, e->port, e->end) : -1;
+    ok = fd >= 0 && mo_fetch_send_request(fd, (const char *)request.bytes, request.length, e->end);
     mo_host_wipe(request.bytes, request.length);
     mo_buffer_free(&request);
     if (ok) {
-        e->last_sent = now();
-        ok = receive_response(fd, &wire, e->end) && push_read(image, function, &wire, out);
+        e->last_sent = mo_fetch_now();
+        ok = mo_fetch_receive_response(fd, &wire, e->end) && push_read(image, function, &wire, out);
     }
     if (fd >= 0)
         (void)close(fd);
@@ -794,7 +794,7 @@ static uint32_t reader(struct mo_image *image) {
 static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, const char *host,
                         const char *port, uint64_t end) {
     uint8_t base[32];
-    if (!unhex(cli->push_base, base, 32))
+    if (!mo_fetch_unhex(cli->push_base, base, 32))
         return push_failure(cli, output, errors,
                             "--base needs the 64-digit lowercase source digest of the active "
                             "program",
@@ -931,13 +931,14 @@ static int review_failure(FILE *errors, const char *message, int status) {
 static int review_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, const char *host,
                           const char *port, uint64_t end) {
     uint8_t digest[32];
-    if (cli->approve_count != 0 && (cli->push_base == NULL || !unhex(cli->push_base, digest, 32)))
+    if (cli->approve_count != 0 &&
+        (cli->push_base == NULL || !mo_fetch_unhex(cli->push_base, digest, 32)))
         return review_failure(errors,
                               "--approve needs --base with the 64-digit lowercase source digest "
                               "of the active program",
                               2);
     for (uint32_t i = 0; i < cli->approve_count; i++)
-        if (!unhex(cli->approve[i], digest, 32))
+        if (!mo_fetch_unhex(cli->approve[i], digest, 32))
             return review_failure(errors, "--approve needs 64-digit lowercase item digests", 2);
     const char *token = NULL, *approval = NULL;
     if (!credential(cli->fetch_token, &token) || !credential(cli->approval_token, &approval))
@@ -1002,10 +1003,11 @@ static void client_run(void *context) {
     w->status = w->attempt(w->cli, w->output, w->errors, w->host, w->port, w->end);
 }
 
-static int client(const struct mo_cli *cli, FILE *output, FILE *errors, const char *command,
-                  int (*attempt)(const struct mo_cli *, FILE *, FILE *, const char *, const char *,
-                                 uint64_t)) {
-    uint64_t started = now();
+static int mo_fetch_client(const struct mo_cli *cli, FILE *output, FILE *errors,
+                           const char *command,
+                           int (*attempt)(const struct mo_cli *, FILE *, FILE *, const char *,
+                                          const char *, uint64_t)) {
+    uint64_t started = mo_fetch_now();
     if (started == UINT64_MAX || started > UINT64_MAX - MO_LIMIT_FETCH_US)
         return 1;
     char host[10], port[6];
@@ -1016,7 +1018,7 @@ static int client(const struct mo_cli *cli, FILE *output, FILE *errors, const ch
                       command);
         return 2;
     }
-    cancelled = 0;
+    mo_fetch_cancelled = 0;
     struct fetch_timer timer = {0};
     struct client_work work = {cli,     output, errors, host, port, started + MO_LIMIT_FETCH_US,
                                attempt, 1};
@@ -1030,9 +1032,9 @@ static int client(const struct mo_cli *cli, FILE *output, FILE *errors, const ch
 }
 
 int mo_push(const struct mo_cli *cli, FILE *output, FILE *errors) {
-    return client(cli, output, errors, "push", push_attempt);
+    return mo_fetch_client(cli, output, errors, "push", push_attempt);
 }
 
 int mo_review(const struct mo_cli *cli, FILE *output, FILE *errors) {
-    return client(cli, output, errors, "review", review_attempt);
+    return mo_fetch_client(cli, output, errors, "review", review_attempt);
 }
