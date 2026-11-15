@@ -125,6 +125,10 @@ MO_MUST_USE enum mo_compile_status mo_list_start(const char *executable, const c
                                                  const char *output, const char *diagnostics,
                                                  const char *old_bundle, const char *context,
                                                  uint64_t now, struct mo_compile_child *child);
+MO_MUST_USE enum mo_compile_status mo_check_start(const char *executable, const char *bundle,
+                                                  const char *diagnostics, const char *old_bundle,
+                                                  const char *context, uint64_t now,
+                                                  struct mo_compile_child *child);
 MO_MUST_USE enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now);
 void mo_compile_cancel(struct mo_compile_child *child);
 
@@ -191,12 +195,24 @@ struct mo_store_program {
     const uint8_t *items;
     size_t items_size;
 };
+struct mo_store_decision {
+    const char *kind, *detail;
+    uint8_t base[32], candidate[32], review[32];
+    bool has_candidate, has_review, intent, unattended;
+    int64_t time;
+};
 struct mo_store_activation {
     struct mo_store_program previous, candidate;
     struct mo_store_record previous_state, candidate_state;
     const char *migration, *report_json;
     size_t migration_size, report_size;
     int64_t time;
+    const struct mo_store_decision *decision;
+    uint64_t approval_version;
+    const uint8_t (*approve)[32];
+    uint32_t approve_count;
+    const uint8_t (*retire)[32];
+    uint32_t retire_count;
 };
 enum mo_store_activation_status {
     MO_STORE_ACTIVATED,
@@ -221,8 +237,8 @@ mo_store_activate(struct mo_store *store, const struct mo_store_activation *acti
  * previous program, uses zero old source (unavailable), and installs ordinal 1.
  * Recorded rebuilds retain the previous program and increment its ordinal. */
 struct mo_store_review {
-    bool reviewed, intent;
-    uint64_t version;
+    bool reviewed, intent, pending;
+    uint64_t version, records;
     struct mo_store_program program;
     struct mo_intent_list items;
     uint8_t (*approved)[32];
@@ -249,6 +265,26 @@ MO_MUST_USE enum mo_store_review_status mo_store_approve(struct mo_store *store,
                                                          const uint8_t digest[32], int64_t time);
 MO_MUST_USE enum mo_store_review_status mo_store_set_review(struct mo_store *store, bool intent,
                                                             int64_t time);
+struct mo_store_pending {
+    uint8_t review[32], base[32], candidate[32];
+    const char *migration;
+    uint64_t version;
+    const uint8_t *difference, *bundle;
+    size_t difference_size, bundle_size;
+};
+MO_MUST_USE enum mo_store_review_status mo_store_hold(struct mo_store *store,
+                                                      const struct mo_store_pending *pending,
+                                                      const struct mo_store_decision *decision);
+MO_MUST_USE enum mo_store_status mo_store_pending_read(struct mo_store *store,
+                                                       struct mo_arena *arena,
+                                                       struct mo_store_pending *out, bool *found);
+MO_MUST_USE enum mo_store_review_status mo_store_decide(struct mo_store *store,
+                                                        const struct mo_store_decision *decision,
+                                                        const uint8_t *drop);
+MO_MUST_USE enum mo_store_status
+mo_store_decisions(struct mo_store *store,
+                   bool (*consume)(const struct mo_store_decision *decision, void *context),
+                   void *context);
 MO_MUST_USE enum mo_store_activation_status
 mo_store_adopt(struct mo_store *store, const struct mo_store_activation *activation, bool legacy);
 

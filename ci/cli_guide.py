@@ -48,9 +48,11 @@ def guide_claims(binary):
     # mo push and mo review.
     for name in SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES:
         assert f"`{name}`" in guide
-    for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest.",
-                     "Only the nine operator views and `mo-intent-items` are read-only;",
-                     "In this build approvals and the setting are recorded but do not yet gate an upgrade",
+    for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest; exit 3 means the push is held for review.",
+                     "Only the nine operator views, `mo-intent-items`, `mo-review-pending`, "
+                     "`mo-review-source` and `mo-upgrade-status` are read-only;",
+                     "An ID that is not the held upgrade's is E1435, which names the current one, "
+                     "and nothing held is E1436.",
                      "any other URL is refused before either credential is read.",
                      "Pushing the active program again reports `already active` and changes "
                      "nothing",
@@ -451,6 +453,10 @@ def emit_command(binary):
         mistake(args, f'flag is not accepted by this command: "{flag}"')
     for command in ("check", "run", "format", "fix"):
         mistake([command, "-o", "a.bc", good], f'flag is not accepted by this command: "-o"')
-    for args in (["-o", "a.bc"], ["--bundle"], ["--bundle", "--list"], ["--list", "-o", "a.bc"]):
+    for args in (["-o", "a.bc"], ["--bundle", "--list"], ["--list", "-o", "a.bc"]):
         mistake(["test", *args, good], 'test writes an item list only as --bundle --list -o FILE: "test"')
+    for args in (["--json"], ["--calls", "5"], ["--seconds", "5"], ["--strength", "x"], ["-o", "a.bc"]):
+        mistake(["test", "--bundle", *args, good],
+                "test --bundle without --list runs the door's checks over the whole bundle; it takes "
+                'no -o, --json, --only, --in, --calls, --seconds or --strength: "--bundle"')
     assert not (root / "a.bc").exists()

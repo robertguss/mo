@@ -11,7 +11,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct mo_binary cursor = mo_intent_list_first(&list);
     for (uint32_t i = 0; i < list.count; i++) {
         struct mo_intent_entry entry;
-        bool next = mo_intent_list_next(&cursor, &entry);
+        bool next = mo_intent_list_next(&list, &cursor, &entry);
         MO_ASSERT(next && mo_intent_list_has(&list, entry.digest));
         MO_ASSERT(entry.owner.length != 0 && entry.name.length != 0 && entry.text.length != 0);
         (void)mo_intent_kind_name(entry.kind);

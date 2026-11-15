@@ -30,10 +30,10 @@ struct upgrade_report {
 struct compile_job {
     char folder[sizeof "/tmp/mo-upgrade-XXXXXX"];
     char source[128], previous[128], image[128], diagnostics[128], input_context[128],
-        output_context[128], items[128], list_diagnostics[128];
+        output_context[128], items[128], list_diagnostics[128], check_diagnostics[128];
     const char *compiler;
     struct mo_compile_child child;
-    bool scratch, listing, has_old, has_context;
+    bool scratch, listing, check, checking, has_old, has_context;
 };
 
 bool mo_upgrade_error(struct mo_diags *diags, uint16_t code, const char *message);
@@ -66,8 +66,12 @@ bool mo_upgrade_migration_state(const struct upgrade_image *old, const struct up
 int mo_upgrade_show_report(const struct mo_cli *cli, FILE *output, FILE *errors,
                            const struct upgrade_report *report);
 bool mo_upgrade_compile_image(const struct mo_buffer *bundle, const struct mo_buffer *old,
-                              const char *migration, const struct mo_buffer *context,
+                              const char *migration, const struct mo_buffer *context, bool check,
                               struct upgrade_image *out, struct upgrade_report *report);
+bool mo_upgrade_restart_door(const struct mo_cli *cli, struct mo_store *store,
+                             struct mo_arena *arena, struct mo_store_activation *activation,
+                             struct mo_store_decision *decision, FILE *errors,
+                             struct upgrade_report *report);
 bool mo_upgrade_program_metadata(const struct mo_store_program *program,
                                  struct mo_compile_metadata *out);
 

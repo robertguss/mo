@@ -1,0 +1,173 @@
+{
+  "set": 1,
+  "session": "phase6-planted-changes-1",
+  "program": {
+    "main.mo": "16b70c69db2a8b23d91fac276be555870414b492eb4fcbe1cdb3fd76ca6d8b02",
+    "job-queue.mo": "056bd2d4a1d8d5e7c1b511ae5d13b1545db575013a95acc459fd2c0b8d2318fd"
+  },
+  "changes": [
+    {
+      "id": "p01",
+      "kind": "intent",
+      "what": "Changes a list example row to page two jobs after id 1, so its expected value becomes ([2, 3], None).",
+      "files": {
+        "main.mo": "20b4aa4c9cd772c4656bb9172bfa9d29b9ea04bf7180c62c1ad19a84b7e862b7"
+      }
+    },
+    {
+      "id": "p02",
+      "kind": "fix",
+      "what": "Renames the local variable bytes to size in the body of submit.",
+      "files": {
+        "main.mo": "eac10ace7b3fb2d62e44429b03366797b7eaee736a532bd5903984cd8d2538c2"
+      }
+    },
+    {
+      "id": "p03",
+      "kind": "fix",
+      "what": "Restructures the body of JobQueue.expire to filter the ended leases before releasing them.",
+      "files": {
+        "job-queue.mo": "446df7d75a8cd49b93a9a85fbad8fdd21e5d508bc6125f0702311272454eef46"
+      }
+    },
+    {
+      "id": "p04",
+      "kind": "intent",
+      "what": "Rewords the service promise \"no job is ever lost\" to \"no job is ever dropped from the queue\".",
+      "files": {
+        "main.mo": "e00627d7676a6ec1c65ba6dd12d32e154e0bb53615bd26c191024eb9eaa8ab67"
+      }
+    },
+    {
+      "id": "p05",
+      "kind": "intent",
+      "what": "Moves the expiry loop into a new exposed JobQueue.return_ended and points the expire timer at it, so the service no longer calls JobQueue.expire.",
+      "files": {
+        "job-queue.mo": "92b900fae9eb059d772b02c6e1bb738b233aa5a14651c4c17bdcaf0bbdf86bc0",
+        "main.mo": "d259976b0fa52bda570c230fb3fe32da5b9cdb03cb066ae3ea5f1655fb0334c9"
+      }
+    },
+    {
+      "id": "p06",
+      "kind": "fix",
+      "what": "Has the stats handler take total from the job list's size instead of summing the four counters.",
+      "files": {
+        "main.mo": "8baf91828552441441ac5b83b1911d3711db00eb9b9f8c56776ea8b6a67ea6f8"
+      }
+    },
+    {
+      "id": "p07",
+      "kind": "fix",
+      "what": "Adds a test to job-queue.mo that expiry leaves ready, done and dead jobs alone.",
+      "files": {
+        "job-queue.mo": "e53c30fbbf764fb95130a0efc68d6cd856e83ad37faa7721f4b5255258378d2c"
+      }
+    },
+    {
+      "id": "p08",
+      "kind": "intent",
+      "what": "Raises max_page_jobs, which the list promise reads, from 100 to 250.",
+      "files": {
+        "main.mo": "8a973954de3f3207e1143e7a93783104c18781dd7f6e6d307a3c6aa79add7a32"
+      }
+    },
+    {
+      "id": "p09",
+      "kind": "intent",
+      "what": "Has JobQueue.lease find the oldest ready job through jobs(queue), a body that main.mo's leased_job anchor reads.",
+      "files": {
+        "job-queue.mo": "1a527fd5ab4fb58a6ab8d907bd1b399c477e41079835b4540f714e17f4941306"
+      }
+    },
+    {
+      "id": "p10",
+      "kind": "fix",
+      "what": "Rewrites the acknowledge handler's body with Result.map instead of try.",
+      "files": {
+        "main.mo": "28bf1cea671506b7f13ba9555eaf40a6ef2cbd8fd179340508be3ec7f8b2330c"
+      }
+    },
+    {
+      "id": "p11",
+      "kind": "fix",
+      "what": "Has the list handler reuse matching and deletes its duplicate filter helper shown?.",
+      "files": {
+        "main.mo": "8c28349dc22b449b6c5ddf57e72370d6cc0644d5b5f64ed176b45c90de518f7d"
+      }
+    },
+    {
+      "id": "p12",
+      "kind": "intent",
+      "what": "Rewrites the comparison in current?, the helper the heartbeat, acknowledge and fail promises call, as now < until.",
+      "files": {
+        "main.mo": "86d3496c1c699403c65fbc40a1e0fd01e7188570aceaa8490d1ac93c34b4c1cd"
+      }
+    },
+    {
+      "id": "p13",
+      "kind": "intent",
+      "what": "Adds a line to the stats promise requiring total to equal the sum of the four state counts.",
+      "files": {
+        "main.mo": "b8c0640317e5005e17267cfd5f78e4beff0046a5f6f4af6db463df7bea671bc5"
+      }
+    },
+    {
+      "id": "p14",
+      "kind": "fix",
+      "what": "Names the heartbeat renewal in JobQueue.heartbeat's body with a new renewal constant instead of the literal 30.minutes.",
+      "files": {
+        "job-queue.mo": "8a02d4b09e433bb1491c8353d558bf6d711ce2def9931bc8763c47a68a445dda"
+      }
+    },
+    {
+      "id": "p15",
+      "kind": "intent",
+      "what": "Removes the service promise \"a finished job stays as it finished\" and its now unused helper finished?.",
+      "files": {
+        "main.mo": "17c23c72923af2ee72fce329d20b80c15a3a22d6040372254f280d65e2d7adf9"
+      }
+    },
+    {
+      "id": "p16",
+      "kind": "fix",
+      "what": "Rewords the doc comments of the lease and stats tools.",
+      "files": {
+        "main.mo": "9e090de3a638f23b520a05414c5023029ed265f236af029b3c7d16ec41d9e9cc"
+      }
+    },
+    {
+      "id": "p17",
+      "kind": "intent",
+      "what": "Deletes the JobQueue.lease example row that a zero-length lease is refused with BadLease.",
+      "files": {
+        "job-queue.mo": "8897113b395e0a0b9ce030e35537d79db61aa12ee4009d27a8af10c1a1a26875"
+      }
+    },
+    {
+      "id": "p18",
+      "kind": "fix",
+      "what": "Adds a read-only peek tool that shows the oldest ready job without leasing it.",
+      "files": {
+        "main.mo": "90c50969d4743a5fd0361d32c87c80ac8765adefb4c19d15c6f5c1ed3f8a8e3d"
+      }
+    },
+    {
+      "id": "p19",
+      "kind": "intent",
+      "what": "Renames submit's unused time parameter from _now to _at, changing the signature its promises and examples are about.",
+      "files": {
+        "main.mo": "592e4339d2826ef16ca9718511ca575d8f5b92bf1d6f20037024c0e8eda7a10b"
+      },
+      "corrected_kind": "fix",
+      "correction": "The coordinator's brief told the writer that an item's content includes the signature of the function it is about. The approved identity leaves the subject's signature out, as Robert settled on 2026-11-13, so renaming submit's unused parameter changes no approved item. Found by the first full proof run on 2026-11-14."
+    },
+    {
+      "id": "p20",
+      "kind": "fix",
+      "what": "Rewrites the body of JobQueue.fail with Result.map instead of try.",
+      "files": {
+        "job-queue.mo": "a82afa22c1d6c93717309188e7450ed1c9b11b86bce3994110d1a756fbc0b744"
+      }
+    }
+  ]
+}

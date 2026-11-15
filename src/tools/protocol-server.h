@@ -128,6 +128,10 @@ struct protocol_upgrade {
     struct mo_arena active_arena;
     struct mo_store_program active;
     bool active_found;
+    bool decided, yes, intent, would;
+    uint8_t review[32];
+    uint64_t approval_version;
+    char message[192];
 };
 
 struct protocol_session {
@@ -219,7 +223,8 @@ void mo_protocol_upgrade_call(struct mo_protocol_server *server,
 /* Text fields of a validated upgrade or review call, "" where absent. */
 struct upgrade_arguments {
     char base[65], candidate[65], total[21], migration[MO_LIMIT_UPGRADE_MIGRATION_NAME + 1],
-        slot[33], index[21], offset[21], program[65], digest[65], setting[11];
+        slot[33], index[21], offset[21], program[65], digest[65], setting[11], review[65],
+        answer[4], source[8];
     char bytes[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
 };
 MO_MUST_USE bool mo_protocol_upgrade_arguments(struct mo_protocol_server *server,
@@ -235,6 +240,19 @@ MO_MUST_USE bool mo_protocol_unhex(const char *text, uint8_t *out, size_t length
 MO_MUST_USE bool mo_protocol_decimal(const char *text, uint64_t *out);
 void mo_protocol_review_call(struct mo_protocol_server *server,
                              struct protocol_connection *connection, uint32_t kind);
+void mo_protocol_door_call(struct mo_protocol_server *server,
+                           struct protocol_connection *connection, uint32_t kind,
+                           const struct upgrade_arguments *arguments);
+void mo_protocol_door_status(struct mo_protocol_server *server,
+                             struct protocol_connection *connection);
+enum door_outcome { DOOR_PROCEED, DOOR_REFUSED, DOOR_HELD };
+MO_MUST_USE enum door_outcome mo_protocol_door_decide(struct mo_protocol_server *server,
+                                                      struct protocol_connection *caller);
+MO_MUST_USE bool mo_protocol_door_activation(struct mo_protocol_server *server,
+                                             struct mo_store_activation *activation,
+                                             struct mo_store_decision *decision,
+                                             struct mo_arena *arena);
+void mo_protocol_door_refused(struct mo_protocol_server *server, uint16_t code);
 /* Slot expiry, compilation progress and the boundary swap, after each service step. */
 void mo_protocol_upgrade_poll(struct mo_protocol_server *server);
 /* The latest time the poll may sleep to while an upgrade is in progress. */

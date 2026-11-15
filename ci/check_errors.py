@@ -9,8 +9,8 @@ tests/errors/ holds one folder per case, named eNNNN or eNNNN-variant. A case ha
 subcommand), `args` (its arguments, one per line, {main} for main.mo) and `stdout` (what the
 command prints, empty by default). Every diagnostic in it must carry the
 case's code, so a case never passes because of a different mistake. A case whose source is too
-big to commit has a file `generated` naming its generator below; the source is then written to a
-temporary folder and checked as `main.mo` from inside it.
+big to commit, or is a source bundle, has a file `generated` naming its generator below; the input
+is then written to a temporary folder and the command runs from inside it.
 
 Codes that no source program can raise (Core text, bytecode, internal failures) are listed in
 tests/errors/unit.tsv with the unit test that pins each one. An UNREACHABLE reason instead names
@@ -161,6 +161,17 @@ def generate_format_limit(folder):
     write_lines(folder, "module Main\nfn run() : Int\n  [\n" + ",\n".join(["[1,2,3]"] * 100000) + "\n].size\nend\n")
 
 
+def generate_failing_bundle(folder):
+    source = b"module Main\n\nfn double(n: Int) : Int\n  examples\n    double(2) == 5\n  end\n\n  n * 2\nend\n"
+    entry = b"main.mo"
+
+    def field(data):
+        return len(data).to_bytes(4, "little") + data
+
+    (folder / "main.mosb").write_bytes(b"MOSB\x01" + field(entry) + (1).to_bytes(4, "little")
+                                       + field(entry) + field(source))
+
+
 GENERATORS = {
     "file-too-big": generate_file_too_big,
     "program-too-big": generate_program_too_big,
@@ -184,6 +195,7 @@ GENERATORS = {
     "lower-work": generate_lower_work,
     "lower-depth": generate_lower_depth,
     "format-limit": generate_format_limit,
+    "failing-bundle": generate_failing_bundle,
 }
 
 

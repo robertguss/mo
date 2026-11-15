@@ -529,6 +529,7 @@ static void activation_outcomes(void) {
         struct mo_store_record first = {MO_STORE_STATE, 0, program.image, saved.bytes,
                                         saved.length};
         MO_ASSERT(mo_store_program_record(f.store, &program, &first) == MO_STORE_OK);
+        MO_ASSERT(mo_store_set_review(f.store, true, 1) == MO_STORE_REVIEW_OK);
         mo_buffer_free(&saved);
         struct event_log log = {0};
         const char *authorities[] = {"localhost"};

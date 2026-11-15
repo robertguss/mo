@@ -1,93 +1,144 @@
 ----------------------------- MODULE Swap -----------------------------
 EXTENDS Naturals, Sequences, FiniteSets
-CONSTANTS Bug, Programs, Messages, MaxUpgrades
+CONSTANTS Bug, Door, Programs, Messages, MaxUpgrades, MaxApprovals
 VARIABLES prog, ord, upgrades, snap, snapKey, tail,
+          setting, approved, aver, pending,
           phase, live, uncertain, mailbox, unsent, slot,
-          submitted, acked, removed
+          submitted, acked, removed, done
 durable == <<prog, ord, upgrades, snap, snapKey, tail>>
+door == <<setting, approved, aver, pending>>
 volatile == <<phase, live, uncertain, mailbox, unsent, slot>>
 client == <<submitted, acked, removed>>
-vars == <<durable, volatile, client>>
+vars == <<durable, door, volatile, client, done>>
 
 \* Message 2 calls a tool that program 2 removes and program 3 restores.
 Tool(m) == IF m = 2 THEN "b" ELSE "a"
 Has(p, m) == Tool(m) = "a" \/ p # 2
+Items(p) == CASE p = 1 -> {"p", "q"} [] p = 2 -> {"p", "q2"} [] OTHER -> {"p", "q", "r"}
 Queued == {mailbox[i] : i \in DOMAIN mailbox}
-NoSlot == [st |-> "none", base |-> 0, cand |-> 0]
+NoRid == <<0, 0, FALSE, 0>>
+Rids == Programs \X Programs \X BOOLEAN \X (0..(MaxApprovals + MaxUpgrades))
+NoSlot == [st |-> "none", base |-> 0, cand |-> 0, mig |-> FALSE, aver |-> 0, how |-> "none",
+           rid |-> NoRid]
 \* Restart restores snap and replays the tail; History is what that replay applies.
 History == snap \o [i \in DOMAIN tail |-> tail[i][1]]
 Count(m) == Cardinality({i \in DOMAIN History : History[i] = m})
 \* The negative control for conservation answers removed tools before the outcome is known.
 Early == IF Bug = "conservation" THEN {m \in Queued : ~Has(slot.cand, m)} ELSE {}
+Keeps(c) == approved \subseteq Items(c)
+Names(id) == IF Bug = "rid" THEN pending # NoRid /\ id[2] = pending[2] ELSE pending = id
+Current == slot.base = prog /\ (Bug = "version" \/ slot.aver = aver)
 
 Init == /\ prog = 1 /\ ord = 0 /\ upgrades = <<>> /\ snap = <<>> /\ snapKey = 1
-        /\ tail = <<>> /\ phase = "up" /\ live = 1 /\ uncertain = FALSE
+        /\ tail = <<>> /\ setting = "everything" /\ approved = {} /\ aver = 0
+        /\ pending = NoRid /\ phase = "up" /\ live = 1 /\ uncertain = FALSE
         /\ mailbox = <<>> /\ unsent = {} /\ slot = NoSlot
-        /\ submitted = {} /\ acked = {} /\ removed = {}
+        /\ submitted = {} /\ acked = {} /\ removed = {} /\ done = <<>>
 
 Submit == /\ phase = "up" /\ \E m \in Messages \ submitted :
                 /\ mailbox' = Append(mailbox, m) /\ submitted' = submitted \cup {m}
-          /\ UNCHANGED <<durable, phase, live, uncertain, unsent, slot, acked, removed>>
+          /\ UNCHANGED <<durable, door, phase, live, uncertain, unsent, slot, acked, removed,
+                         done>>
 \* One message per step: apply under the live program and append its record in one commit.
 Handle == /\ phase = "up" /\ mailbox # <<>> /\ Has(live, Head(mailbox))
           /\ tail' = Append(tail, <<Head(mailbox), live>>)
           /\ mailbox' = Tail(mailbox) /\ unsent' = unsent \cup {Head(mailbox)}
-          /\ UNCHANGED <<prog, ord, upgrades, snap, snapKey, phase, live, uncertain, slot,
-                         client>>
+          /\ UNCHANGED <<prog, ord, upgrades, snap, snapKey, door, phase, live, uncertain, slot,
+                         client, done>>
 \* The live program lacks the tool: error reply, no record, no effect.
 HandleRemoved == /\ phase = "up" /\ mailbox # <<>> /\ ~Has(live, Head(mailbox))
                  /\ mailbox' = Tail(mailbox) /\ removed' = removed \cup {Head(mailbox)}
-                 /\ UNCHANGED <<durable, phase, live, uncertain, unsent, slot, submitted,
-                                acked>>
+                 /\ UNCHANGED <<durable, door, phase, live, uncertain, unsent, slot, submitted,
+                                acked, done>>
 Reply == /\ phase = "up" /\ \E m \in unsent : unsent' = unsent \ {m} /\ acked' = acked \cup {m}
-         /\ UNCHANGED <<durable, phase, live, uncertain, mailbox, slot, submitted, removed>>
+         /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, slot, submitted, removed,
+                        done>>
 Snapshot == /\ phase = "up" /\ tail # <<>> /\ snap' = History /\ tail' = <<>>
-            /\ UNCHANGED <<prog, ord, upgrades, snapKey, volatile, client>>
+            /\ UNCHANGED <<prog, ord, upgrades, snapKey, door, volatile, client, done>>
 \* An upload opens only on the active base; an already-active candidate or a stale base is
-\* answered without any change, so those pushes are stuttering steps.
+\* answered without any change, so those pushes are stuttering steps. A busy slot refuses.
 Open == /\ phase = "up" /\ slot.st = "none" /\ ord < MaxUpgrades
-        /\ \E c \in Programs \ {prog} : slot' = [st |-> "open", base |-> prog, cand |-> c]
-        /\ UNCHANGED <<durable, phase, live, uncertain, mailbox, unsent, client>>
+        /\ \E c \in Programs \ {prog}, m \in IF Door THEN BOOLEAN ELSE {FALSE} :
+              slot' = [NoSlot EXCEPT !.st = "open", !.base = prog, !.cand = c, !.mig = m]
+        /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
 Stage == /\ phase = "up" /\ slot.st = "open" /\ slot' = [slot EXCEPT !.st = "staged"]
-         /\ UNCHANGED <<durable, phase, live, uncertain, mailbox, unsent, client>>
+         /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
 StageRefuse == /\ phase = "up" /\ slot.st = "open" /\ slot' = NoSlot
-               /\ UNCHANGED <<durable, phase, live, uncertain, mailbox, unsent, client>>
-CommitRequest == /\ phase = "up" /\ slot.st = "staged" /\ slot.base = prog
-                 /\ slot' = [slot EXCEPT !.st = "commit"]
-                 /\ UNCHANGED <<durable, phase, live, uncertain, mailbox, unsent, client>>
-Boundary == phase = "up" /\ slot.st = "commit" /\ slot.base = prog /\ unsent = {}
+               /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client,
+                              done>>
+Decide == /\ phase = "up" /\ slot.st = "staged" /\ slot.base = prog
+          /\ IF ~Door \/ (setting = "intent" /\ Keeps(slot.cand) /\ ~slot.mig)
+             THEN /\ slot' = [slot EXCEPT !.st = "commit", !.aver = aver, !.how = "auto"]
+                  /\ UNCHANGED pending
+             ELSE /\ pending' = <<prog, slot.cand, slot.mig, aver>> /\ slot' = NoSlot
+          /\ UNCHANGED <<durable, setting, approved, aver, phase, live, uncertain, mailbox,
+                         unsent, client, done>>
+Yes == /\ phase = "up" /\ slot.st = "none" /\ \E id \in Rids :
+            /\ Names(id)
+            /\ slot' = [st |-> "recheck", base |-> pending[1], cand |-> pending[2],
+                        mig |-> pending[3], aver |-> pending[4], how |-> "yes", rid |-> id]
+       /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
+Recheck == /\ phase = "up" /\ slot.st = "recheck" /\ slot' = [slot EXCEPT !.st = "commit"]
+           /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
+RecheckRefuse == /\ phase = "up" /\ slot.st = "recheck" /\ slot' = NoSlot /\ pending' = NoRid
+                 /\ UNCHANGED <<durable, setting, approved, aver, phase, live, uncertain,
+                                mailbox, unsent, client, done>>
+No == /\ phase = "up" /\ \E id \in Rids : pending = id /\ pending # NoRid
+      /\ pending' = NoRid
+      /\ UNCHANGED <<durable, setting, approved, aver, volatile, client, done>>
+Approve == /\ phase = "up" /\ aver < MaxApprovals /\ \E i \in Items(prog) \ approved :
+                 approved' = approved \cup {i}
+           /\ aver' = aver + 1 /\ pending' = NoRid
+           /\ UNCHANGED <<durable, setting, volatile, client, done>>
+Setting == /\ Door /\ phase = "up" /\ setting' = IF setting = "intent" THEN "everything" ELSE "intent"
+           /\ UNCHANGED <<durable, approved, aver, pending, volatile, client, done>>
+Stale == /\ phase = "up" /\ slot.st = "commit" /\ ~Current /\ slot' = NoSlot
+         /\ IF slot.how = "yes" THEN pending' = NoRid ELSE UNCHANGED pending
+         /\ UNCHANGED <<durable, setting, approved, aver, phase, live, uncertain, mailbox, unsent,
+                        client, done>>
+Boundary == phase = "up" /\ slot.st = "commit" /\ Current /\ unsent = {}
+Owner(i) == IF i \in {"q", "q2"} THEN "f" ELSE i
+Shown(c) == {i \in Items(c) \ Items(prog) : \E j \in approved \ Items(c) : Owner(j) = Owner(i)}
+Granted == IF slot.how = "yes" THEN (approved \cap Items(slot.cand)) \cup Shown(slot.cand)
+           ELSE approved \cap Items(slot.cand)
 \* The activation transaction: program row, ordinal, upgrade record, migrated snapshot at the
-\* head under the candidate's key, tail deleted; the upgrade record retains the previous program.
+\* head under the candidate's key, tail deleted, approvals and the review record; the upgrade
 Activated == /\ prog' = slot.cand /\ ord' = ord + 1
              /\ upgrades' = Append(upgrades, <<ord + 1, prog, slot.cand>>)
              /\ snapKey' = slot.cand
              \* The negative control migrates the old snapshot and keeps the old tail to replay.
              /\ IF Bug = "cross" THEN UNCHANGED <<snap, tail>>
                 ELSE snap' = History /\ tail' = <<>>
+             /\ approved' = Granted /\ aver' = IF Granted = approved THEN aver ELSE aver + 1
+             /\ pending' = NoRid
+             /\ done' = Append(done, [how |-> slot.how, rid |-> slot.rid, mig |-> slot.mig,
+                                      keeps |-> Keeps(slot.cand),
+                                      bound |-> <<prog, slot.cand, slot.mig, aver>>])
 \* Queued messages stay in order ahead of later arrivals; removed tools are answered by Handle.
 Committed == /\ Boundary /\ Activated /\ live' = slot.cand /\ slot' = NoSlot
              /\ removed' = removed \cup Early
-             /\ UNCHANGED <<phase, uncertain, mailbox, unsent, submitted, acked>>
+             /\ UNCHANGED <<setting, phase, uncertain, mailbox, unsent, submitted, acked>>
 Refused == /\ Boundary /\ slot' = NoSlot /\ removed' = removed \cup Early
-           /\ UNCHANGED <<durable, phase, live, uncertain, mailbox, unsent, submitted, acked>>
+           /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, submitted,
+                          acked, done>>
 \* COMMIT reported an error: either store is possible and the service stops.
 Uncertain == /\ Boundary /\ uncertain' = TRUE /\ removed' = removed \cup Early
              /\ \/ Activated
-                \/ UNCHANGED durable
+                \/ UNCHANGED <<durable, approved, aver, pending, done>>
              /\ IF Bug = "authority"
                 THEN UNCHANGED <<phase, live, mailbox, unsent>> /\ slot' = NoSlot
                 ELSE phase' = "down" /\ mailbox' = <<>> /\ unsent' = {} /\ slot' = NoSlot
                      /\ live' = live
-             /\ UNCHANGED <<submitted, acked>>
+             /\ UNCHANGED <<setting, submitted, acked>>
 Crash == /\ phase = "up" /\ phase' = "down" /\ mailbox' = <<>> /\ unsent' = {}
          /\ slot' = NoSlot
-         /\ UNCHANGED <<durable, live, uncertain, client>>
-\* Restart reads the program row; the migration is never rerun.
+         /\ UNCHANGED <<durable, door, live, uncertain, client, done>>
+\* Restart reads the program row and keeps the pending upgrade; the migration is never rerun.
 Restart == /\ phase = "down" /\ phase' = "up" /\ live' = prog /\ uncertain' = FALSE
-           /\ UNCHANGED <<durable, mailbox, unsent, slot, client>>
+           /\ UNCHANGED <<durable, door, mailbox, unsent, slot, client, done>>
 Next == Submit \/ Handle \/ HandleRemoved \/ Reply \/ Snapshot \/ Open \/ Stage
-        \/ StageRefuse \/ CommitRequest \/ Committed \/ Refused \/ Uncertain \/ Crash
-        \/ Restart
+        \/ StageRefuse \/ Decide \/ Yes \/ Recheck \/ RecheckRefuse \/ No \/ Approve
+        \/ Setting \/ Stale \/ Committed \/ Refused \/ Uncertain \/ Crash \/ Restart
 Spec == Init /\ [][Next]_vars
 
 SingleAuthority == /\ phase = "up" => live = prog
@@ -99,4 +150,7 @@ NoCrossUpgradeRecord == /\ snapKey = prog
 MessageConservation == /\ \A m \in Messages : Count(m) <= 1
                        /\ \A m \in acked : Count(m) = 1
                        /\ \A m \in removed : Count(m) = 0
+NoUnreviewedIntent == \A i \in DOMAIN done :
+                          done[i].how = "auto" => done[i].keeps /\ ~done[i].mig
+YesNamesCandidate == \A i \in DOMAIN done : done[i].how = "yes" => done[i].rid = done[i].bound
 =============================================================================

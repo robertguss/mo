@@ -229,7 +229,7 @@ if have python3; then
 			later "Remote upgrades: proxy, tunnel and rate retry ($driver)" \
 				python3 ci/check_upgrade_remote.py "$driver"
 			later "Approvals and the review setting on a real service ($driver)" \
-				python3 ci/check_review.py "$driver"
+				python3 ci/check_review.py "$driver" "$(dirname "${drivers[0]}")/mo-checks-fail"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
 			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
@@ -241,6 +241,9 @@ if have python3; then
 				python3 ci/check_kill_loop.py "$driver" --kills "${MO_KILL_COUNT:-15}" \
 				--seed "${MO_KILL_SEED:-1}" --keep
 		done
+		later "Review door: planted changes and wrong versions under both settings, and the bypassed build fails (${drivers[0]})" \
+			python3 ci/check_door.py "${drivers[0]}" learnability/phase6/door/planted \
+			--bypass "$(dirname "${drivers[0]}")/mo-door-bypass"
 		for driver in "${drivers[@]}"; do
 			later "Reference examples: check every block and run complete programs ($driver)" \
 				python3 ci/check_reference_examples.py "$driver"

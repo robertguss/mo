@@ -59,6 +59,23 @@ bool mo_upload_base64(const uint8_t *text, size_t length, uint8_t *out, size_t c
     return true;
 }
 
+void mo_upload_text(const uint8_t *bytes, size_t length, char *out) {
+    MO_ASSERT((bytes != NULL || length == 0) && out != NULL);
+    static const char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t at = 0;
+    for (size_t i = 0; i < length; i += 3) {
+        uint32_t a = bytes[i], b = i + 1 < length ? bytes[i + 1] : 0,
+                 c = i + 2 < length ? bytes[i + 2] : 0;
+        uint32_t triple = (a << 16) | (b << 8) | c;
+        out[at++] = alphabet[(triple >> 18) & 63];
+        out[at++] = alphabet[(triple >> 12) & 63];
+        out[at++] = i + 1 < length ? alphabet[(triple >> 6) & 63] : '=';
+        out[at++] = i + 2 < length ? alphabet[triple & 63] : '=';
+    }
+    out[at] = 0;
+}
+
 void mo_upload_init(struct mo_upload *upload, uint8_t *bytes, size_t total) {
     MO_ASSERT(upload != NULL && bytes != NULL);
     MO_ASSERT(total > 0 && total <= MO_LIMIT_BUNDLE_BYTES);

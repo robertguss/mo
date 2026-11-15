@@ -60,8 +60,9 @@ struct store_table {
 
 bool store_table_ready(struct mo_store *s, const struct store_table *t);
 bool store_items_valid(const struct mo_store_program *p);
-bool store_decide(struct mo_store *s, int64_t time, const char *kind, const uint8_t base[32],
-                  const char *setting, const char *detail);
+bool store_decide(struct mo_store *s, const struct mo_store_decision *d);
+bool store_door_decided(struct mo_store *s, const struct mo_store_activation *a);
+bool store_drop_stale(struct mo_store *s, int64_t time);
 bool store_review_write(struct mo_store *s, const struct mo_store_program *p);
 bool store_not_version_two(struct mo_store *s);
 

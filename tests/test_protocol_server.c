@@ -209,7 +209,7 @@ static void empty_continue(struct fixture_server *f) {
 static void wire(void *context) {
     (void)context;
     struct fixture_server f = start();
-    char output[16384];
+    char output[32768];
     request(&f,
             "{\"jsonrpc\":\"2.0\",\"id\":-0,\"method\":\"initialize\",\"params\":{"
             "\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{"
@@ -325,12 +325,12 @@ bool mo_protocol_routing_sources(struct mo_sources *sources, const char *path, c
     mo_buffer_init(&names, MO_LIMIT_FILE_SIZE);
     mo_buffer_init(&catalog, MO_LIMIT_FILE_SIZE);
     mo_buffer_init(&renderer, MO_LIMIT_FILE_SIZE);
-    replace_fixture(&names, bytes, length, "    \"mo-review-setting\"\n",
-                    "    \"mo-review-setting\",\n    \"mo-future-view\"\n");
+    replace_fixture(&names, bytes, length, "    \"mo-review-source\"\n",
+                    "    \"mo-review-source\",\n    \"mo-future-view\"\n");
     replace_fixture(&catalog, names.bytes, names.length, "stop \"view description\"",
                     "\"fixture appended view\"");
     replace_fixture(&renderer, catalog.bytes, catalog.length, "  stats = observation.stats\n",
-                    "  if index == 15\n"
+                    "  if index == 19\n"
                     "    return Json.Object({\"appended_view\": Json.Boolean(true)})\n"
                     "  end\n  stats = observation.stats\n");
     bool added =
@@ -1344,11 +1344,12 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
     static const uint8_t context[13] = {'M', 'O', 'C', 'C', 1};
     struct mo_buffer items;
     mo_buffer_init(&items, 16384);
-    MO_ASSERT(mo_buffer_append(&items, "MOIL\1\1", 6) && mo_binary_write(&items, 2, 4));
+    MO_ASSERT(mo_buffer_append(&items, "MOIL\2\1", 6) && mo_binary_write(&items, 2, 4));
     for (uint8_t letter = 'A'; letter <= 'B'; letter++) {
         uint8_t item[32];
         memset(item, letter, sizeof item);
-        MO_ASSERT(mo_buffer_append(&items, item, sizeof item) && mo_buffer_append_byte(&items, 0));
+        MO_ASSERT(mo_buffer_append(&items, item, sizeof item) && mo_buffer_append_byte(&items, 0) &&
+                  mo_buffer_append_byte(&items, 1));
         for (unsigned j = 0; j < 2; j++)
             MO_ASSERT(mo_binary_write(&items, 1, 4) && mo_buffer_append_byte(&items, letter));
         uint32_t length = letter == 'B' ? 9000 : 1;

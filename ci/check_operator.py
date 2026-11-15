@@ -270,16 +270,18 @@ def private_state(rpc, call):
     assert "annotations" not in tools[0]
     for tool in tools[1:]:
         expected = {"readOnlyHint": True, "idempotentHint": True}
-        if tool["name"] in ("mo-export", "mo-intent-items"):
+        if tool["name"] in ("mo-export", "mo-intent-items", "mo-review-pending",
+                            "mo-upgrade-status", "mo-review-source"):
             expected["openWorldHint"] = False
-        if tool["name"] in SERVE_REVIEW_NAMES:
+        if tool["name"] in SERVE_REVIEW_NAMES and tool["name"] != "mo-upgrade-status":
             assert "Mo-Approval-Authorization: Bearer VALUE" in tool["description"], tool
-        if tool["name"] in SERVE_REVIEW_NAMES[1:]:
+        if tool["name"] in ("mo-intent-approve", "mo-review-setting", "mo-review-answer"):
             expected = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False,
-                        "destructiveHint": False}
-        if tool["name"] in SERVE_UPGRADE_NAMES:
+                        "destructiveHint": tool["name"] == "mo-review-answer"}
+        if tool["name"] in (*SERVE_UPGRADE_NAMES, "mo-upgrade-status"):
             assert "Mo-Upgrade-Authorization: Bearer VALUE" in tool["description"], tool
             assert len(tool["description"].encode()) <= 512
+        if tool["name"] in SERVE_UPGRADE_NAMES:
             expected = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False,
                         "destructiveHint": tool["name"] == "mo-upgrade-commit"}
         assert tool["annotations"] == expected, tool

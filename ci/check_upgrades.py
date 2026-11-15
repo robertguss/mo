@@ -5,6 +5,7 @@ import http.client
 import json
 import os
 import pathlib
+import re
 import select
 import signal
 import shutil
@@ -69,7 +70,12 @@ def serve(binary, source, data, expected, *flags, tool="read", arguments=None):
                 byte = process.stdout.read(1)
                 if not byte:
                     errors.seek(0)
-                    raise AssertionError((args, process.poll(), errors.read()))
+                    stderr = errors.read()
+                    shown = re.search(rb"error E1435: .*--review ([0-9a-f]{64})", stderr)
+                    if shown and process.wait(timeout=30) == 1 and "--review" not in flags:
+                        return serve(binary, source, data, expected, *flags, "--review",
+                                     shown.group(1).decode(), tool=tool, arguments=arguments)
+                    raise AssertionError((args, process.poll(), stderr))
                 line += byte
                 if byte == b"\n":
                     prefix = b"mo serve: listening on http://127.0.0.1:"

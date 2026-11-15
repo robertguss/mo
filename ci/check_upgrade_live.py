@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import pathlib
+import re
 import select
 import signal
 import socket
@@ -111,6 +112,26 @@ fn tick(state: Counter, _now: Time) : Counter
   state
 end
 '''
+BROKEN = V2 + '''
+fn below(n: Int) : Int
+  promise "the result is never negative"
+    result >= 0
+    allows n: 5, result: 4
+    forbids n: 0, result: -1
+  end
+  n - 1
+end
+'''
+UNFINISHED = V2 + '''
+fn twice(xs: List(Int), f: fn(Int) : Int) : List(Int)
+  promise "keeps the length"
+    result.size == xs.size
+    allows xs: [1], f: fn(x) x end, result: [1]
+    forbids xs: [1], f: fn(x) x end, result: []
+  end
+  xs.map(fn(x) f(f(x)) end)
+end
+'''
 # Within the checked-restart budget, beyond the live one.
 SLOW = V3.replace('''fn migrate(old: Int) : Counter
   Counter(value: old, label: "migrated")''', '''fn migrate(old: Int) : Counter
@@ -136,12 +157,13 @@ def digests(binary, old, new):
 
 
 class Service:
-    def __init__(self, binary, data, source=None, flags=(), credential=True):
+    def __init__(self, binary, data, source=None, flags=(), credential=True, setting="intent",
+                 cwd=None):
         args = [binary, "serve", *([str(source)] if source else []), "--data", str(data),
                 "--port", "0", *(SECRETS if credential else []), *flags]
         self.errors = tempfile.TemporaryFile()
         self.process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=self.errors,
-                                        env=ENV, bufsize=0)
+                                        env=ENV, bufsize=0, cwd=cwd)
         self.port, self.output = None, b""
         deadline = time.monotonic() + 60
         while self.port is None and time.monotonic() < deadline:
@@ -159,6 +181,9 @@ class Service:
                 if line.startswith("mo serve: listening on http://127.0.0.1:"):
                     self.port = int(line.rsplit(":", 1)[1].split("/")[0])
         assert self.port is not None, (self.output, self.stderr())
+        if credential and setting is not None:
+            result = review(binary, self.port, "--setting", setting)
+            assert result.returncode == 0, result
 
     def stderr(self):
         self.errors.seek(0)
@@ -249,12 +274,24 @@ class Stream:
         self.socket.close()
 
 
+def review(binary, port, *args, approval="APPROVAL"):
+    return subprocess.run([binary, "review", "--url", f"http://127.0.0.1:{port}/mcp",
+                           "--token-env", "TOKEN", "--approval-token-env", approval, *args],
+                          capture_output=True, timeout=300, env=ENV)
+
+
 def push(binary, service, source, base, *flags, upgrade=UPGRADE, url=None):
     env = {**ENV, "UPGRADE": upgrade}
     return subprocess.run([binary, "push", str(source), "--url",
                            url or f"http://127.0.0.1:{service.port}/mcp", "--base", base,
                            "--token-env", "TOKEN", "--upgrade-token-env", "UPGRADE", *flags],
                           capture_output=True, timeout=120, env=env)
+
+
+def answered(binary, service, source, base, *flags):
+    held = push(binary, service, source, base, *flags)
+    assert held.returncode == 3 and held.stdout.startswith(b"held "), held
+    return review(binary, service.port, "--yes", held.stdout.split()[1].decode())
 
 
 def assert_no_secrets(*texts):
@@ -334,8 +371,10 @@ def bundle_bytes(source):
 def main_flow(binary, root):
     data = pathlib.Path(root) / "main"
     data.mkdir()
-    v1, v2, v3, slow = (write(root, name, text) for name, text in
-                        [("v1", V1), ("v2", V2), ("v3", V3), ("slow", SLOW)])
+    v1, v2, v3, slow, broken, unfinished = (
+        write(root, name, text) for name, text in
+        [("v1", V1), ("v2", V2), ("v3", V3), ("slow", SLOW), ("broken", BROKEN),
+         ("unfinished", UNFINISHED)])
     base1, digest2 = digests(binary, v1, v2)
     _, digest3 = digests(binary, v2, v3)
     service = Service(binary, data, v1)
@@ -414,16 +453,23 @@ def main_flow(binary, root):
         same = push(binary, service, v2, digest2)
         assert same.returncode == 0 and b"already active" in same.stdout, same
         # A migration over the live budget is refused; the old program keeps serving.
-        refused = push(binary, service, slow, digest2, "--migrate", "migrate", "--json")
-        report = json.loads(refused.stdout)
-        assert refused.returncode == 1 and report["code"] == "E1424", report
+        refused = answered(binary, service, slow, digest2, "--migrate", "migrate")
+        assert refused.returncode == 1 and refused.stderr.startswith(b"error E1424:"), refused
+        assert service.value("read").startswith("v2:")
+        failed = push(binary, service, broken, digest2, "--json")
+        report = json.loads(failed.stdout)
+        assert failed.returncode == 1 and report["code"] == "E1433", report
+        assert "failed Main.below.promise.1" in report["message"], report
+        assert service.value("read").startswith("v2:")
+        partial = push(binary, service, unfinished, digest2, "--json")
+        report = json.loads(partial.stdout)
+        assert partial.returncode == 1 and report["code"] == "E1432", report
+        assert report["class"] == "check" and "cannot generate inputs" in report["message"], report
         assert service.value("read").startswith("v2:")
         assert all(stream.events(0.3) == [] for stream in streams)
         counted = len(acknowledged)
-        migrated = push(binary, service, v3, digest2, "--migrate", "migrate", "--json")
-        report = json.loads(migrated.stdout)
-        assert migrated.returncode == 0 and report["ordinal"] == "2", report
-        assert int(report["vm_work"]) > 0 and report["migration"] == "migrate", report
+        migrated = answered(binary, service, v3, digest2, "--migrate", "migrate")
+        assert migrated.returncode == 0 and b"upgrade accepted" in migrated.stdout, migrated
         assert service.value("read") == f"v3:migrated:{counted}"
         for stream in streams:
             stream.close()
@@ -491,12 +537,17 @@ def budget_then_restart(binary, root):
     service = Service(binary, data, v1)
     try:
         assert service.value("add", amount="4") == "4"
-        refused = push(binary, service, slow, base1, "--migrate", "migrate", "--json")
-        assert refused.returncode == 1 and json.loads(refused.stdout)["code"] == "E1424"
+        refused = answered(binary, service, slow, base1, "--migrate", "migrate")
+        assert refused.returncode == 1 and refused.stderr.startswith(b"error E1424:"), refused
         assert service.value("read") == "v1:4"
     finally:
         service.stop()
-    service = Service(binary, data, slow, ["--upgrade", "--migrate", "migrate"])
+    restart = ["--upgrade", "--migrate", "migrate"]
+    held = subprocess.run([binary, "serve", str(slow), "--data", str(data), "--port", "0",
+                           *SECRETS, *restart], env=ENV, capture_output=True, timeout=300)
+    shown = re.search(rb"error E1435: .*--review ([0-9a-f]{64})", held.stderr)
+    assert held.returncode == 1 and shown, held
+    service = Service(binary, data, slow, [*restart, "--review", shown.group(1).decode()])
     try:
         assert service.value("read") == "v3:slow:4"
     finally:
@@ -511,9 +562,8 @@ def back_to_back(binary, root):
     service = Service(binary, data, v1)
     try:
         first = push(binary, service, v2, base1, "--json")
-        second = push(binary, service, v3, digest2, "--migrate", "migrate", "--json")
-        a, b = json.loads(first.stdout), json.loads(second.stdout)
-        assert (a["ordinal"], b["ordinal"]) == ("1", "2") and a["head"] == b["head"], (a, b)
+        second = answered(binary, service, v3, digest2, "--migrate", "migrate")
+        assert json.loads(first.stdout)["ordinal"] == "1" and second.returncode == 0, second
         assert service.value("read") == "v3:migrated:0"
     finally:
         service.stop()

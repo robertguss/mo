@@ -232,6 +232,15 @@ class Run:
             self.fail(f'mo serve did not start on {self.folder}: {error}')
         if not self.started:
             self.started, self.born = True, time.monotonic()
+            if self.review('--setting', 'intent').returncode != 0:
+                self.fail('the review setting could not be set to intent')
+
+    def review(self, *args):
+        return subprocess.run(
+            [str(self.binary), 'review', '--url', f'http://127.0.0.1:{self.queue.port}/mcp',
+             '--token-env', 'QUEUE_TOKEN', '--approval-token-env', 'QUEUE_APPROVAL', *args],
+            capture_output=True, timeout=300, check=False,
+            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_APPROVAL': APPROVAL_TOKEN})
 
     def kill(self):
         assert self.started, 'never kill before the first listening line of a folder'
@@ -423,7 +432,11 @@ class Run:
             body = body.replace('  next_id: Int\n', '  next_id: Int\n  revision: Int\n')
             body = body.replace('Queue(jobs:', 'Queue(revision: 1, jobs:')
             body += ("\nfn restore(jobs: Map(Int, Job), next_id: Int, revision: Int) : Queue\n"
-                     "  Queue(jobs: jobs, next_id: next_id, revision: revision)\nend\n")
+                     "  kept = jobs.values.map(fn(job) (job.id, job) end).to_map\n"
+                     "  top = case jobs.values.map(fn(job) job.id + 1 end).max\n"
+                     "    Some(id): id\n    None: next_id\n  end\n"
+                     "  return Queue(jobs: kept, next_id: top, revision: revision) if top > next_id\n"
+                     "  Queue(jobs: kept, next_id: next_id, revision: revision)\nend\n")
             queue.write_text(body)
             self.upgrades.append(folder)
         folder = self.root / 'oversized'
@@ -461,6 +474,8 @@ class Run:
              '--token-env', 'QUEUE_TOKEN', '--upgrade-token-env', 'QUEUE_UPGRADE', '--json'],
             capture_output=True, timeout=300, check=False,
             env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN})
+        if out['result'].returncode == 3:
+            out['result'] = self.review('--yes', json.loads(out['result'].stdout)['review'])
 
     def upgrade(self, target=None, killing=None, stale=False, load=True):
         """Pushes the next variant, or the invalid one, while calls go on; may kill mid-push."""
@@ -503,8 +518,12 @@ class Run:
             return
         pusher.join(timeout=300)
         result = out['result']
-        reports = [json.loads(line) for line in result.stdout.splitlines()]
-        report = next((item for item in reports if 'code' in item or 'ordinal' in item), {})
+        if result.args[1] == 'review':
+            report = ({'code': result.stderr.decode()[6:11]} if result.returncode else
+                      {'ordinal': str(self.ordinal + 1)})
+        else:
+            reports = [json.loads(line) for line in result.stdout.splitlines()]
+            report = next((item for item in reports if 'code' in item or 'ordinal' in item), {})
         if refusal is not None:
             self.invalid += 1
             if result.returncode != 1 or report.get('code') != refusal:

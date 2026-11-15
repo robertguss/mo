@@ -6,11 +6,13 @@
 #include "base/compile-metadata.h"
 #include "base/failure.h"
 #include "base/stack.h"
+#include "base/utf8.h"
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "tools/embedded.h"
 #include "tools/intent.h"
 #include "tools/offline.h"
+#include "tools/tests.h"
 #include "tools/upgrade-internal.h"
 #include <errno.h>
 #include <stdlib.h>
@@ -241,6 +243,52 @@ static bool list_items(struct mo_arena *arena, const struct mo_program *program,
     mo_buffer_free(&list);
     return ok;
 }
+static void run_checks(struct mo_arena *arena, const struct mo_cli *cli,
+                       const struct mo_program *program, const struct mo_sources *sources,
+                       struct mo_diags *diags) {
+    struct mo_diags run;
+    if (!mo_diags_init(&run)) {
+        (void)mo_upgrade_error(diags, MO_CODE_PLAN_UNFINISHED, "the plan did not finish");
+        return;
+    }
+    FILE *results = tmpfile();
+    struct mo_test_totals totals = {0};
+    struct mo_test_selection *selection =
+        results == NULL ? NULL : mo_select_tests(arena, program, cli, &run);
+    if (selection != NULL)
+        mo_run_tests(cli, arena, program, sources, selection, results, &run, &totals);
+    bool failed = totals.failed != 0 || totals.stopped != 0;
+    for (uint32_t i = 0; i < run.count; i++)
+        failed = failed || run.items[i].code == MO_CODE_TOOL_TEST_INITIALIZATION;
+    char line[512] = "", chunk[sizeof line];
+    bool start = true;
+    if (failed && results != NULL && fseek(results, 0, SEEK_SET) == 0)
+        while (line[0] == 0 && fgets(chunk, sizeof chunk, results) != NULL) {
+            size_t n = strlen(chunk);
+            if (start && (strncmp(chunk, "failed ", 7) == 0 || strncmp(chunk, "stopped ", 8) == 0))
+                memcpy(line, chunk, n + 1);
+            start = n != 0 && chunk[n - 1] == '\n';
+        }
+    size_t length = strcspn(line, "\n");
+    while (length != 0 && !mo_utf8_valid((const uint8_t *)line, length))
+        length--;
+    line[length] = 0;
+    const char *reason = line[0] != 0      ? line
+                         : run.count != 0  ? run.items[0].message
+                         : results == NULL ? "the checks' results could not be kept"
+                                           : "a check did not finish";
+    struct mo_diag diag = {.code = failed ? MO_CODE_CHECKS_FAILED : MO_CODE_PLAN_UNFINISHED,
+                           .message =
+                               failed ? "the door's checks failed" : "the plan did not finish",
+                           .primary = {{UINT32_MAX, 0, 0}, reason}};
+    if (failed || run.count != 0 || run.dropped != 0 || selection == NULL) {
+        bool added = mo_diags_add(diags, &diag);
+        (void)added;
+    }
+    if (results != NULL)
+        (void)fclose(results);
+    mo_diags_free(&run);
+}
 struct compile_bundle_work {
     const struct mo_cli *cli;
     FILE *output, *errors;
@@ -322,7 +370,9 @@ static void compile_bundle(void *context) {
     ok = program != NULL && !mo_diags_any(&diags);
     bool listing = work->cli->command == MO_COMMAND_TEST;
     if (listing) {
-        if (ok && !list_items(&arena, program, work->cli->output))
+        if (ok && !work->cli->list)
+            run_checks(&arena, work->cli, program, &sources, &diags);
+        else if (ok && !list_items(&arena, program, work->cli->output))
             (void)mo_upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
                                    "the program's intent items exceed their limits");
         ok = false;

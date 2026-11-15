@@ -1658,11 +1658,12 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   boundary; calls remain direct. Candidates are source bundles compiled by the
   serving build and verified before activation. [upgrades.md](upgrades.md) is
   the design.
-- **Intent and the review door (Phase 6, approved; service promises implemented):** service
+- **Intent and the review door (Phase 6, implemented):** service
   promises lower to plain spec functions checked by the tools on the recovery check's generated
   sequences, so Mo Core, Lean and the bytecode do not change. Each promise and
-  example row has a content digest the store's approvals refer to, and a second
-  child runs a candidate's checks before the door decides. [intent.md](intent.md)
+  example row has a content digest the store's approvals refer to, and child
+  processes list and check a candidate before the door decides
+  (`src/tools/door.c`, `protocol-door.c`, `upgrade-door.c`). [intent.md](intent.md)
   is the design.
 - **In-place demands (Phase 7):** the in-place check of D26 runs on Core, where
   the full-3c checker's rules apply.
@@ -2477,7 +2478,7 @@ among them:
 | Compiler | every Core program the Core checker accepts compiles to bytecode the verifier accepts: a property run on every Core program above |
 | Verifier and loader | arbitrary and mutated files; disassembling then assembling gives the same bytes |
 | Library | `mo test` on the library's own examples, promises and tests; the trusted primitives against their oracles (4.5) |
-| Services | `mo test` recovery checks; `ci/check_task_queue.py` over loopback; `ci/check_kill_loop.py` SIGKILLs a real `mo serve` |
+| Services | `mo test` recovery checks; `ci/check_task_queue.py` over loopback; `ci/check_kill_loop.py` SIGKILLs a real `mo serve`; `ci/check_door.py` pushes the frozen planted changes and wrong versions through the review door under both settings, and must fail against `mo-door-bypass`, a build whose decision activates every candidate that passes its checks (`tests/door_bypass.c`) |
 | Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, lexical path containment, path resolution after normalize, hash-table probing, reference count updates |
 | The whole toolchain | a golden corpus of programs with their expected output and exit status, and Phase 2's agent benchmark |
 | The reference | `tests/conformance/rules.tsv`, which maps every reference block to golden programs, exact errors, other drivers, cost tests or an untestable reason, and fails on an unmapped or changed block; `sort`'s n log n cost is measured by counting VM instructions (`tests/test_lower.c`, D294) |

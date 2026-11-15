@@ -94,6 +94,16 @@ two activations. Message 2 calls a tool that program 2 removes and program 3 res
 restarts and snapshots are unbounded; none of them grows the state. TLC explores about 29,000
 distinct states, depth 20, in about a second.
 
+The review door is the `Door` constant. With it off, every staged candidate activates and no
+push names a migration, which is the model as it stood before the door; `Swap.cfg` and the
+first three negative controls run that way. `SwapDoor.cfg` turns it on with message 2 alone
+and at most two approvals: each push may name a migration, program 2 edits approved item `q`
+into `q2` on the same owner, and program 3 keeps it and adds `r` on a new owner, which a yes
+leaves unapproved. TLC explores about 102,000 distinct
+states, depth 21, in about three seconds. The door with all three messages explores about 7 million
+states and is not a configuration; the door touches messages only through the boundary, which
+message 2 alone exercises.
+
 The durable store is the program row (`prog`, `ord`), the append-only upgrade table, the
 snapshot with its key and the log tail, where each record carries the key of the program that
 appended it. `History` is what a restart replays: the snapshot followed by the tail. Everything
@@ -113,6 +123,10 @@ swapping was not implemented in C, so those rows name the design, not a regressi
 | CommitRequest | commit names the base again and is checked against the active program |
 | Committed / Refused / Uncertain | `mo_store_activate` in `src/host/store.c`, `MO_STORE_ACTIVATED`, `MO_STORE_ACTIVATION_REFUSED` with confirmed rollback, `MO_STORE_ACTIVATION_UNSAFE`; enabled only at a message boundary (no reply pending) |
 | Crash / Restart | restart reads the program row, restores the snapshot and replays the tail with that program; `serve_upgrade` in `src/tools/upgrade-commands.c` reports `candidate source is already active` and never reruns a migration |
+| Decide | the decision on the event loop after the checks pass: activate under `intent` when every approved item is kept and no migration is named, otherwise store the pending upgrade under its review id and release the slot |
+| Yes / Recheck / RecheckRefuse / No | Robert's answer names a review id; only an exact match rechecks the stored bundle; a failed recheck or a no drops the pending upgrade |
+| Approve / Setting | a first approval writes `approvals`, raises the approval-set version and makes the pending upgrade stale; a change of setting leaves a held upgrade held |
+| Stale | the base or the approval-set version moved between the decision and the boundary: nothing activates |
 
 A push of the active candidate, or of a stale base, is answered without changing anything, so
 those pushes are stuttering steps; the base guard on `Open` and `CommitRequest` is what stops
@@ -128,6 +142,11 @@ call to a removed tool reaches `HandleRemoved` under the new program.
   appears exactly once, and a message answered `tool removed by upgrade` never appears.
 - `NoCrossUpgradeRecord`: the snapshot and every tail record carry the durable program's key,
   so replay never applies a record under a program other than the one that appended it.
+- `NoUnreviewedIntent`: an activation without a person keeps every approved item and names no
+  migration, judged against the approvals at the moment it commits.
+- `YesNamesCandidate`: an activation after a yes binds exactly the review id that yes named:
+  the base it replaced, the candidate, the migration and the approval-set version it committed
+  under.
 
 Each invariant has a negative control, selected by the `Bug` constant, that must produce its
 named counterexample:
@@ -137,6 +156,8 @@ named counterexample:
 | `SwapBadAuthority.cfg` | `authority` | the old program keeps serving after an uncertain commit | `SingleAuthority` |
 | `SwapBadConservation.cfg` | `conservation` | removed-tool replies are sent before the outcome is known; a refusal leaves the queue intact and the old program applies the answered call | `MessageConservation` |
 | `SwapBadCrossRecord.cfg` | `cross` | the activation keeps the old snapshot and tail, only rewriting the key | `NoCrossUpgradeRecord` |
+| `SwapBadVersion.cfg` | `version` | the commit checks the base but not the approval-set version | `NoUnreviewedIntent` |
+| `SwapBadReview.cfg` | `rid` | a yes matches the pending upgrade on its candidate alone | `YesNamesCandidate` |
 
 These checks do not prove the C code, SQLite durability or atomic commit (an assumption, as in
 the capture model), behaviour on power loss, or any wall-clock budget for the boundary or the
@@ -151,3 +172,14 @@ breaks only the key. Temporary reachability invariants confirmed that the passin
 reaches a second activation, a removed-tool reply under program 2, a call to the restored tool
 appended under program 3, an uncertain commit both durable and not, a re-admitted queue after
 commit, and a crash with an applied but unacknowledged message.
+
+Finding from the door's model: a decision under `intent` reads the approvals before the
+boundary, and Robert can approve an item in between. If the commit checks only the base, a
+candidate that drops the newly approved item activates without him (`SwapBadVersion.cfg`). The
+activation transaction therefore checks the approval-set version as well as the base, on the
+unattended path as on the path after a yes. Temporary reachability invariants confirmed that
+`SwapDoor.cfg` reaches an unattended activation, one after an approval, a yes on an edited
+item and on a migration, two yes activations in one run, a removed-tool reply after a yes, a
+stale commit on each path, a recheck, a held push replacing a pending upgrade while another
+candidate is staged, a pending upgrade surviving a crash, an edited item approved by a yes, and
+an item added on a new owner left unapproved after a yes.

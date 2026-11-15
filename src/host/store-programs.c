@@ -498,6 +498,8 @@ activate(struct mo_store *s, const struct mo_store_activation *a, bool adoption,
     int version = -1;
     struct adoption_snapshot original = {.expected = &a->previous_state};
     struct saved_head saved;
+    struct mo_store_decision conversion = {.kind = "conversion", .time = a->time};
+    memcpy(conversion.base, a->previous.source, 32);
     bool verified_snapshot = !adoption || (store_load_snapshot(s, &saved, compare_adoption_snapshot,
                                                                &original) == MO_STORE_OK &&
                                            original.matched);
@@ -511,9 +513,8 @@ activate(struct mo_store *s, const struct mo_store_activation *a, bool adoption,
                          &previous) &&
         retain_programs(s, a->candidate.ordinal) && replace_snapshot(s, &candidate, head) &&
         write_program(s, replace_program, &a->candidate, a->candidate.ordinal) &&
-        write_upgrade(s, a) && store_review_write(s, &a->candidate) &&
-        (version != 2 ||
-         store_decide(s, a->time, "conversion", a->previous.source, "everything", ""));
+        write_upgrade(s, a) && store_door_decided(s, a) && store_review_write(s, &a->candidate) &&
+        store_drop_stale(s, a->time) && (version != 2 || store_decide(s, &conversion));
     if (ok) {
         if (store_exec(s, "COMMIT"))
             result = MO_STORE_ACTIVATED;

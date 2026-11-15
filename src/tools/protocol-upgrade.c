@@ -49,13 +49,14 @@ bool mo_protocol_upgrade_arguments(struct mo_protocol_server *s, struct protocol
     struct mo_cell json = mo_value_field(fields, 2), list;
     if (!mo_protocol_invoke(s, c, PF_UPGRADE_ARGUMENTS, &json, &list))
         return false;
-    char *targets[] = {out->base,    out->candidate, out->total,  out->migration,
-                       out->slot,    out->index,     out->offset, out->bytes,
-                       out->program, out->digest,    out->setting};
+    char *targets[] = {out->base,    out->candidate, out->total,  out->migration, out->slot,
+                       out->index,   out->offset,    out->bytes,  out->program,   out->digest,
+                       out->setting, out->review,    out->answer, out->source};
     const size_t sizes[] = {sizeof out->base,      sizeof out->candidate, sizeof out->total,
                             sizeof out->migration, sizeof out->slot,      sizeof out->index,
                             sizeof out->offset,    sizeof out->bytes,     sizeof out->program,
-                            sizeof out->digest,    sizeof out->setting};
+                            sizeof out->digest,    sizeof out->setting,   sizeof out->review,
+                            sizeof out->answer,    sizeof out->source};
     enum { FIELDS = sizeof sizes / sizeof *sizes };
     bool ok = mo_list_size(list) == FIELDS;
     for (uint32_t i = 0; ok && i < FIELDS; i++) {
@@ -156,6 +157,8 @@ static void close_slot(struct mo_protocol_server *s) {
     mo_buffer_free(&u->bytes);
     u->open = false;
     u->compiling = false;
+    u->decided = false;
+    u->yes = false;
     u->waiting = SIZE_MAX;
     mo_host_wipe(u->slot, sizeof u->slot);
 }
@@ -537,9 +540,14 @@ static void activate(struct mo_protocol_server *s) {
         .report_json = report,
         .report_size = report_size,
         .time = s->now.wall_us};
+    struct mo_store_decision decision;
+    struct mo_arena door;
     PAUSE_START(commit);
+    bool decided = report != NULL && mo_protocol_door_activation(s, &activation, &decision, &door);
     enum mo_store_activation_status stored =
-        report == NULL ? MO_STORE_ACTIVATION_REFUSED : mo_store_activate(s->store, &activation);
+        decided ? mo_store_activate(s->store, &activation) : MO_STORE_ACTIVATION_REFUSED;
+    if (report != NULL)
+        mo_arena_free(&door);
     PAUSE_START(committed_at);
     /* Capture boundary end before diagnostic I/O and before cleanup. */
     PAUSE_AT(boundary, committed_at, "boundary_to_commit",
@@ -560,7 +568,7 @@ static void activate(struct mo_protocol_server *s) {
             mo_live_refuse(live, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                            "the activation outcome is unknown; the service stopped; restart it "
                            "to see which program is active");
-        } else
+        } else if (mo_live_code(live) == 0)
             mo_live_refuse(live, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                            "the activation transaction was rolled back; the old program serves");
         return;
@@ -639,9 +647,22 @@ void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
     struct protocol_connection *caller = c->phase == PS_UPGRADE ? c : NULL;
     if (!mo_live_staged(u->live)) {
         refuse(s, NULL, mo_live_code(u->live), "compile", "", u->candidate);
+        if (u->yes)
+            mo_protocol_door_refused(s, mo_live_code(u->live));
         finish_commit(s, caller, false);
         close_slot(s);
         return;
+    }
+    if (!u->decided) {
+        enum door_outcome outcome = mo_protocol_door_decide(s, caller);
+        if (outcome == DOOR_REFUSED) {
+            refuse(s, NULL, mo_live_code(u->live), "", "", u->candidate);
+            finish_commit(s, caller, false);
+        }
+        if (outcome != DOOR_PROCEED) {
+            close_slot(s);
+            return;
+        }
     }
     /* Two programs at most: events and earlier requests keep the previous one; the boundary
      * waits until no request borrows it, and the activation then releases it. */
@@ -653,8 +674,10 @@ void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
     } else
         activate(s);
     bool activated = mo_live_code(u->live) == 0;
-    if (!activated)
+    if (!activated) {
         refuse(s, NULL, mo_live_code(u->live), "", "", u->candidate);
+        mo_protocol_door_refused(s, mo_live_code(u->live));
+    }
     finish_commit(s, caller, activated);
     close_slot(s);
     if (activated)

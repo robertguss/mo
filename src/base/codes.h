@@ -308,7 +308,10 @@
     X(1430, UPGRADE_SOURCE_MISMATCH, NULL)                                                         \
     X(1431, UPGRADE_AMBIGUOUS_PROGRAM, NULL)                                                       \
     X(1432, PLAN_UNFINISHED, NULL)                                                                 \
+    X(1433, CHECKS_FAILED, NULL)                                                                   \
     X(1434, SERVE_CREDENTIALS, NULL)                                                               \
+    X(1435, REVIEW_MISMATCH, NULL)                                                                 \
+    X(1436, REVIEW_NOT_PENDING, NULL)                                                              \
     X(1437, REVIEW_FULL, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */

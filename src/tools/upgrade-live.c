@@ -73,12 +73,14 @@ struct mo_live_upgrade *mo_live_start(const char *compiler, const struct mo_stor
     if (!mo_bundle_read(bundle, size, &checked))
         (void)mo_upgrade_refuse(&u->report, MO_CODE_UPGRADE_BUNDLE_FORMAT, "bundle",
                                 "source bundle is malformed");
-    else
+    else {
+        u->job.check = true;
         /* A tool-only candidate inherits the recorded context; a migration also gets the old
          * bundle so the child generates its input types from the running program. */
         u->compiling = mo_upgrade_compile_begin(
             compiler, &u->bundle, u->has_migration ? &u->previous : NULL,
             u->has_migration ? u->migration : NULL, &u->context, &u->job, &u->report);
+    }
     return u;
 }
 

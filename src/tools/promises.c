@@ -594,7 +594,7 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
         interrupted(diags, observation, &deadline);
         known = best.process != NULL;
     }
-    bool cut = calls == 0 || (cli->strength != NULL && best.process == NULL && calls < cli->calls);
+    bool cut = calls == 0 || (cli->door_plan && best.process == NULL && calls < cli->calls);
     if (known && cut && deadline.state == MO_DEADLINE_EXPIRED) {
         interrupted(diags, observation, &deadline);
         known = false;

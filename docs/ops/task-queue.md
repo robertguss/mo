@@ -231,8 +231,11 @@ sudo sh -c 'umask 077; python3 -c "import secrets; print(\"QUEUE_APPROVAL=\" + s
 
 Robert lists the active program's items, approves them and sets the review setting
 from his own login on the host, with `mo review` and one of `--items`,
-`--base PROGRAM --approve DIGEST...` or `--setting everything|intent`. Approvals and
-the setting do not yet gate an upgrade.
+`--base PROGRAM --approve DIGEST...` or `--setting everything|intent`. A queue
+starts on `everything`, where every upgrade waits for him. Under `intent` a push
+activates without him only when it keeps every approved item, the queue still
+calls the function each one is about, and it names no migration; any other push
+waits.
 
 ```sh
 sudo sh -c '. /etc/task-queue/env; . /etc/task-queue/approval; export QUEUE_TOKEN QUEUE_APPROVAL
@@ -248,12 +251,39 @@ mo push NEW/main.mo --url http://127.0.0.1:8000/mcp --base DIGEST \
 ```
 
 `DIGEST` is the active program's source digest (`base_source` from
-`mo check NEW/main.mo --upgrade-from OLD/main.mo --json`). Exit 0 means the queue
-runs the new program; repeating the push reports `already active`. A refusal leaves
-the old program serving. A migration the live budget refuses can still use the
-checked restart below. With an upgrade-capable unit, `ExecStart` names only the
-folder (`mo serve --data /var/lib/task-queue --port 8000 ...`), so a restart runs
-whichever program was last activated.
+`mo check NEW/main.mo --upgrade-from OLD/main.mo --json`). The queue compiles the
+candidate and runs its promises, examples and tests in child processes while it
+keeps serving. Exit 0 means the queue runs the new program; repeating the push
+reports `already active`. Exit 3 means the push is held: it printed `held ID`,
+and the old program serves until Robert answers. The agent learns what became
+of it from `mo-upgrade-status`, under the same two secrets, not by pushing
+again, which would replace the held push. Exit 1 is a refusal and leaves the old
+program serving; E1433 names a check that failed and E1432 a check plan that did
+not finish. A migration the live budget refuses can still use the checked
+restart below. With an upgrade-capable unit, `ExecStart` names only the folder
+(`mo serve --data /var/lib/task-queue --port 8000 ...`), so a restart runs
+whichever program was last activated, and keeps a held push held.
+
+Robert reads a held push from his login on the host. `--out` takes a folder
+that does not exist yet:
+
+```sh
+sudo sh -c '. /etc/task-queue/env; . /etc/task-queue/approval; export QUEUE_TOKEN QUEUE_APPROVAL
+  exec "$1" review --url http://127.0.0.1:8000/mcp --token-env QUEUE_TOKEN \
+  --approval-token-env QUEUE_APPROVAL --out "$2"' sh /opt/mo/$SHA/build/gcc/debug/mo ~/review
+```
+
+It prints the intent difference: each approved item the push lacks, each one
+whose function the queue no longer calls (`not reached`), and the items it adds
+on the same owner. It writes the held source to `~/review/pending` and the
+active source to `~/review/active`, owned by root, and prints `review ID` last;
+read the code difference with `sudo diff -r ~/review/active ~/review/pending`.
+It offers no ID when the held push changes while it reads. Robert then runs the
+same command with `--yes ID` or `--no ID` in place of `--out "$2"`. A yes checks
+the held push again, activates it between two messages and approves the items
+the difference showed; a no drops it. An ID that is not the held push's is
+E1435, which names the current one, and nothing held is E1436. A later held
+push replaces the earlier one, and an activation or an approval makes it stale.
 
 The deployed queue above is retired. For a queue running an upgrade-capable build,
 a stopped-service checked restart on its host also works. Build the new pinned tree with Install step 2,
@@ -277,12 +307,19 @@ can also be used as `--upgrade-from OLD/main.mo` when it needs no retained conte
 For the first start of the new version, set the unit's `ExecStart` to the new
 executable and candidate source with `--upgrade`, retaining its port, data folder,
 allowed host and environment file. Include `--migrate Module.function` if needed.
-Run `sudo systemctl daemon-reload` and start the unit. A successful checked restart
-validates the migrated state and commits it with the recorded program. A migration
-refusal leaves the previous program and state authoritative; inspect the refusal
-instead of repeatedly restarting the unit.
+Run `sudo systemctl daemon-reload` and start the unit. The checked restart runs
+the same checks as a push and refuses a failure with E1433 or E1432. The review
+setting then decides as it does for a push. When it would hold the push, the
+journal shows the intent difference and `error E1435: ... restart with --review
+ID to activate it`, and the unit stops with status 1. Robert reads the
+difference, adds `--review ID` to `ExecStart` and starts the unit again; the ID
+changes whenever the base, the candidate, the migration or the approvals do. A successful
+checked restart validates the migrated state, commits it with the recorded
+program, approves what a yes would have, and makes a held push stale. A
+migration refusal leaves the previous program and state authoritative; inspect
+the refusal instead of repeatedly restarting the unit.
 
-After success, remove the source argument, `--upgrade` and `--migrate` from
+After success, remove the source argument, `--upgrade`, `--migrate` and `--review` from
 `ExecStart`, leaving `mo serve --data /var/lib/task-queue --port 8000` and the
 existing allowed-host option. Reload the unit. Later starts compile the recorded
 source and its retained generated declaration context; they do not rerun the
@@ -489,8 +526,9 @@ listener binds only `127.0.0.1`; stop SSH after use.
 
 Direct pushes and pushes through this forward use the same upload and activation
 path and print identical acceptance/refusal text. Exit 0 means the candidate is
-active (including already active), 1 means refusal or client failure, and 2 means
-invalid usage, URL or base digest. A transport failure after commit may leave its
+active (including already active), 1 means refusal or client failure, 2 means
+invalid usage, URL or base digest, and 3 means the push is held for Robert's
+review, as Upgrade says. A transport failure after commit may leave its
 outcome unknown; repeat the same candidate to resolve it without reapplying a
 migration. Transient no-effect rate refusals are retried within the command's
 deadline. Sustained starvation can leave the slot busy until its idle expiry.

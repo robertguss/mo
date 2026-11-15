@@ -35,7 +35,9 @@ def main():
                               ("ExportBadRelease", "NoReleasedRead"),
                               ("Swap", None), ("SwapBadAuthority", "SingleAuthority"),
                               ("SwapBadConservation", "MessageConservation"),
-                              ("SwapBadCrossRecord", "NoCrossUpgradeRecord")]:
+                              ("SwapBadCrossRecord", "NoCrossUpgradeRecord"), ("SwapDoor", None),
+                              ("SwapBadVersion", "NoUnreviewedIntent"),
+                              ("SwapBadReview", "YesNamesCandidate")]:
         module = next(m for m in ("Capture", "Export", "Swap") if config.startswith(m))
         command = ["java", "-XX:+UseParallelGC", "-Xmx512m", "-cp", str(jar.resolve()),
                    "tlc2.TLC", "-workers", "1", "-seed", "1", "-metadir", str(out / config),
