@@ -1,9 +1,11 @@
 # Model checks
 
-Run `bash ci/check.sh models`. Java and the TLA+ tools v1.8.0 jar are required.
-Download `https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar`
+Run `bash ci/check.sh models`. Java and the TLA+ tools v1.7.4 jar (TLC 2.19) are required.
+Download `https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar`
 to `build/models/tla2tools.jar`, or set `TLA2TOOLS_JAR`. The runner verifies SHA-256
-`e20447644bfabd29d6bd0fc2c0eb1473fb301c1a0e4dfe1961938ce5a191edbf` before execution.
+`936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88` before execution.
+v1.7.4 is the newest stable release; the `v1.8.0` and `rolling` assets are rebuilt over time,
+so no digest of theirs stays downloadable.
 Missing tools are a local skip and fail under `CI=1`; a skip is not evidence.
 Logs and generated counterexample traces remain under `build/models/`.
 
