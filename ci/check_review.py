@@ -2,8 +2,8 @@
 """Approvals, the review setting and the review door on a real mo serve, driven through mo push,
 mo review and raw MCP calls: who may approve, stale and absent items, held, replaced, stale and
 answered upgrades, a handler that stops calling an approved function, restarts, activations,
-conversion of a v0.2.0 folder, reading a held upgrade's source, checked restarts and SIGKILL
-during approvals."""
+conversion of a v0.2.0 folder, reading a held upgrade's source, checked restarts, a yes on a
+build whose checks now fail, and SIGKILL during approvals."""
 import base64
 import http.client
 import http.server
@@ -498,7 +498,25 @@ def checked_restart(binary, base):
     assert service.stop() == 0
 
 
-def main(binary):
+def failed_recheck(failing, base):
+    data = base / "recheck"
+    data.mkdir()
+    service = Service(failing, data, write(base, "f1", A), cwd=base)
+    program, _, marks = items(failing, service)
+    review(failing, service, "--base", program, *(arg for d in marks for arg in ("--approve", d)))
+    waiting = held(failing, service, write(base, "f2", B), program)
+    (base / "checks-fail").touch()
+    _, error = review(failing, service, "--yes", waiting, status=1)
+    assert error.startswith("error E1433:") and "failed this build's checks" in error, error
+    report = status(service)
+    latest = report["decisions"][0]
+    assert report["pending"] is None and items(failing, service)[0] == program, report
+    assert latest["kind"] == "refused" and latest["review"] == waiting, latest
+    assert latest["detail"] == "E1433", latest
+    assert service.stop() == 0
+
+
+def main(binary, failing):
     binary = str(pathlib.Path(binary).resolve())
     with tempfile.TemporaryDirectory() as directory:
         base = pathlib.Path(directory)
@@ -509,11 +527,12 @@ def main(binary):
         conversion(binary, base)
         source_review(binary, base)
         checked_restart(binary, base)
+        failed_recheck(str(pathlib.Path(failing).resolve()), base)
         killed_approvals(binary, base)
     print("review: approvals, the setting, credentials, held and answered upgrades, unreached "
           "items, restarts, activation, v0.2.0 conversion, held source, checked restarts and kills "
-          "during approvals passed")
+          "during approvals, and a yes refused when the checks now fail passed")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(*sys.argv[1:])

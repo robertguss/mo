@@ -17,16 +17,18 @@ bool mo_intent_list_read_name(struct mo_binary *reads, struct mo_bundle_span *ou
     return text(reads, out);
 }
 
-bool mo_intent_list_next(struct mo_binary *cursor, struct mo_intent_entry *out) {
+bool mo_intent_list_next(const struct mo_intent_list *list, struct mo_binary *cursor,
+                         struct mo_intent_entry *out) {
     struct mo_binary in = *cursor;
     struct mo_intent_entry next;
-    const uint8_t *kind, *reached;
+    static const uint8_t always = 1;
+    const uint8_t *kind, *reached = &always;
     uint64_t reads;
     if (!mo_binary_read(&in, 32, &next.digest) || !mo_binary_read(&in, 1, &kind) ||
-        *kind >= sizeof kinds / sizeof *kinds || !mo_binary_read(&in, 1, &reached) ||
-        *reached > 1 || !text(&in, &next.owner) || !text(&in, &next.name) ||
-        !text(&in, &next.text) || !mo_binary_uint(&in, 4, &reads) ||
-        reads > MO_LIMIT_INTENT_LIST_BYTES)
+        *kind >= sizeof kinds / sizeof *kinds ||
+        (list->format == 2 && !mo_binary_read(&in, 1, &reached)) || *reached > 1 ||
+        !text(&in, &next.owner) || !text(&in, &next.name) || !text(&in, &next.text) ||
+        !mo_binary_uint(&in, 4, &reads) || reads > MO_LIMIT_INTENT_LIST_BYTES)
         return false;
     next.kind = (enum mo_intent_kind)kind[0];
     next.reached = *reached == 1;
@@ -46,20 +48,21 @@ struct mo_binary mo_intent_list_first(const struct mo_intent_list *list) {
 }
 
 bool mo_intent_list_read(const uint8_t *bytes, size_t length, struct mo_intent_list *out) {
-    if (length < 10 || length > MO_LIMIT_INTENT_LIST_BYTES || memcmp(bytes, "MOIL\1", 5) != 0 ||
-        bytes[5] == 0)
+    if (length < 10 || length > MO_LIMIT_INTENT_LIST_BYTES || memcmp(bytes, "MOIL", 4) != 0 ||
+        (bytes[4] != 1 && bytes[4] != 2) || bytes[5] == 0)
         return false;
     struct mo_binary in = {bytes, length, 6};
     uint64_t count;
     if (!mo_binary_uint(&in, 4, &count) || count > MO_LIMIT_INTENT_ITEMS)
         return false;
+    struct mo_intent_list list = {bytes, length, bytes[4], bytes[5], (uint32_t)count};
     struct mo_intent_entry entry;
     for (uint64_t i = 0; i < count; i++)
-        if (!mo_intent_list_next(&in, &entry))
+        if (!mo_intent_list_next(&list, &in, &entry))
             return false;
     if (in.position != length)
         return false;
-    *out = (struct mo_intent_list){bytes, length, bytes[5], (uint32_t)count};
+    *out = list;
     return true;
 }
 
@@ -67,7 +70,7 @@ bool mo_intent_list_has(const struct mo_intent_list *list, const uint8_t digest[
     struct mo_binary cursor = mo_intent_list_first(list);
     struct mo_intent_entry entry;
     for (uint32_t i = 0; i < list->count; i++) {
-        MO_ASSERT(mo_intent_list_next(&cursor, &entry));
+        MO_ASSERT(mo_intent_list_next(list, &cursor, &entry));
         if (memcmp(entry.digest, digest, 32) == 0)
             return true;
     }

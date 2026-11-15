@@ -133,7 +133,7 @@ $(BUILD)/debug/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o \
 $(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
 
 # The test executables without running them, for ci/check.sh's drivers, bench and lean groups.
-test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo $(BUILD)/debug/mo-door-bypass
+test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo $(BUILD)/debug/mo-door-bypass $(BUILD)/debug/mo-checks-fail
 sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 
 # Each test runs as its own target, so make -j runs them side by side (they share
@@ -494,6 +494,13 @@ $(BUILD)/debug/door-bypass/tools/protocol-upgrade.o: src/tools/protocol-upgrade.
 	$(CC) $(COMMON) $(DEBUG) -Dmo_protocol_door_decide=mo_door_bypass_decide -c $< -o $@
 
 $(BUILD)/debug/mo-door-bypass: $(call objects,$(BUILD)/debug,$(filter-out src/tools/protocol-upgrade.c,$(LIB_SOURCES)) $(MAIN_SOURCE) tests/door_bypass.c) $(BUILD)/debug/door-bypass/tools/protocol-upgrade.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/debug/checks-fail/tools/upgrade-bundle.o: src/tools/upgrade-bundle.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_run_tests=mo_checks_fail_run -c $< -o $@
+
+$(BUILD)/debug/mo-checks-fail: $(call objects,$(BUILD)/debug,$(filter-out src/tools/upgrade-bundle.c,$(LIB_SOURCES)) $(MAIN_SOURCE) tests/checks_fail.c) $(BUILD)/debug/checks-fail/tools/upgrade-bundle.o
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)

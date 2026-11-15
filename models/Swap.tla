@@ -14,10 +14,8 @@ vars == <<durable, door, volatile, client, done>>
 \* Message 2 calls a tool that program 2 removes and program 3 restores.
 Tool(m) == IF m = 2 THEN "b" ELSE "a"
 Has(p, m) == Tool(m) = "a" \/ p # 2
-\* Program 2 edits item q into q2; program 3 keeps q and adds r.
 Items(p) == CASE p = 1 -> {"p", "q"} [] p = 2 -> {"p", "q2"} [] OTHER -> {"p", "q", "r"}
 Queued == {mailbox[i] : i \in DOMAIN mailbox}
-\* A review id binds the base, the candidate, the migration and the approval-set version.
 NoRid == <<0, 0, FALSE, 0>>
 Rids == Programs \X Programs \X BOOLEAN \X (0..(MaxApprovals + MaxUpgrades))
 NoSlot == [st |-> "none", base |-> 0, cand |-> 0, mig |-> FALSE, aver |-> 0, how |-> "none",
@@ -28,9 +26,7 @@ Count(m) == Cardinality({i \in DOMAIN History : History[i] = m})
 \* The negative control for conservation answers removed tools before the outcome is known.
 Early == IF Bug = "conservation" THEN {m \in Queued : ~Has(slot.cand, m)} ELSE {}
 Keeps(c) == approved \subseteq Items(c)
-\* The negative control for the yes matches the pending upgrade on its candidate alone.
 Names(id) == IF Bug = "rid" THEN pending # NoRid /\ id[2] = pending[2] ELSE pending = id
-\* The negative control for the version lets a commit through after an approval changed.
 Current == slot.base = prog /\ (Bug = "version" \/ slot.aver = aver)
 
 Init == /\ prog = 1 /\ ord = 0 /\ upgrades = <<>> /\ snap = <<>> /\ snapKey = 1
@@ -65,24 +61,18 @@ Open == /\ phase = "up" /\ slot.st = "none" /\ ord < MaxUpgrades
         /\ \E c \in Programs \ {prog}, m \in IF Door THEN BOOLEAN ELSE {FALSE} :
               slot' = [NoSlot EXCEPT !.st = "open", !.base = prog, !.cand = c, !.mig = m]
         /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
-\* The last page arrives, the candidate compiles and passes its checks, and its items are listed.
 Stage == /\ phase = "up" /\ slot.st = "open" /\ slot' = [slot EXCEPT !.st = "staged"]
          /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
-\* A compile error, a failed check or an unfinished plan refuses the push.
 StageRefuse == /\ phase = "up" /\ slot.st = "open" /\ slot' = NoSlot
                /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client,
                               done>>
-\* The decision reads the active program, the setting and the approvals at this moment. Without
-\* the door every staged candidate activates, as in Phase 5.
 Decide == /\ phase = "up" /\ slot.st = "staged" /\ slot.base = prog
           /\ IF ~Door \/ (setting = "intent" /\ Keeps(slot.cand) /\ ~slot.mig)
              THEN /\ slot' = [slot EXCEPT !.st = "commit", !.aver = aver, !.how = "auto"]
                   /\ UNCHANGED pending
-             \* A held push replaces any pending upgrade and releases the slot.
              ELSE /\ pending' = <<prog, slot.cand, slot.mig, aver>> /\ slot' = NoSlot
           /\ UNCHANGED <<durable, setting, approved, aver, phase, live, uncertain, mailbox,
                          unsent, client, done>>
-\* Robert answers yes with any review id; only one naming the pending upgrade starts a recheck.
 Yes == /\ phase = "up" /\ slot.st = "none" /\ \E id \in Rids :
             /\ Names(id)
             /\ slot' = [st |-> "recheck", base |-> pending[1], cand |-> pending[2],
@@ -90,39 +80,29 @@ Yes == /\ phase = "up" /\ slot.st = "none" /\ \E id \in Rids :
        /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
 Recheck == /\ phase = "up" /\ slot.st = "recheck" /\ slot' = [slot EXCEPT !.st = "commit"]
            /\ UNCHANGED <<durable, door, phase, live, uncertain, mailbox, unsent, client, done>>
-\* The stored candidate fails on this build: refused after a yes, and the pending upgrade dropped.
 RecheckRefuse == /\ phase = "up" /\ slot.st = "recheck" /\ slot' = NoSlot /\ pending' = NoRid
                  /\ UNCHANGED <<durable, setting, approved, aver, phase, live, uncertain,
                                 mailbox, unsent, client, done>>
 No == /\ phase = "up" /\ \E id \in Rids : pending = id /\ pending # NoRid
       /\ pending' = NoRid
       /\ UNCHANGED <<durable, setting, approved, aver, volatile, client, done>>
-\* A first approval of an item of the active program; any write to approvals makes the pending
-\* upgrade stale.
 Approve == /\ phase = "up" /\ aver < MaxApprovals /\ \E i \in Items(prog) \ approved :
                  approved' = approved \cup {i}
            /\ aver' = aver + 1 /\ pending' = NoRid
            /\ UNCHANGED <<durable, setting, volatile, client, done>>
-\* A later change of the setting never decides an upgrade already held.
 Setting == /\ Door /\ phase = "up" /\ setting' = IF setting = "intent" THEN "everything" ELSE "intent"
            /\ UNCHANGED <<durable, approved, aver, pending, volatile, client, done>>
-\* The base or the approval-set version moved before the boundary: nothing activates, and a yes
-\* in flight is recorded as refused and its pending upgrade dropped.
 Stale == /\ phase = "up" /\ slot.st = "commit" /\ ~Current /\ slot' = NoSlot
          /\ IF slot.how = "yes" THEN pending' = NoRid ELSE UNCHANGED pending
          /\ UNCHANGED <<durable, setting, approved, aver, phase, live, uncertain, mailbox, unsent,
                         client, done>>
 Boundary == phase = "up" /\ slot.st = "commit" /\ Current /\ unsent = {}
-\* The review shows each approved item the candidate lacks beside the candidate's new items on
-\* the same owner; a yes approves those, and every activation retires the approvals the candidate
-\* lacks.
 Owner(i) == IF i \in {"q", "q2"} THEN "f" ELSE i
 Shown(c) == {i \in Items(c) \ Items(prog) : \E j \in approved \ Items(c) : Owner(j) = Owner(i)}
 Granted == IF slot.how = "yes" THEN (approved \cap Items(slot.cand)) \cup Shown(slot.cand)
            ELSE approved \cap Items(slot.cand)
 \* The activation transaction: program row, ordinal, upgrade record, migrated snapshot at the
 \* head under the candidate's key, tail deleted, approvals and the review record; the upgrade
-\* record retains the previous program, and a pending upgrade is dropped as stale.
 Activated == /\ prog' = slot.cand /\ ord' = ord + 1
              /\ upgrades' = Append(upgrades, <<ord + 1, prog, slot.cand>>)
              /\ snapKey' = slot.cand
@@ -170,9 +150,7 @@ NoCrossUpgradeRecord == /\ snapKey = prog
 MessageConservation == /\ \A m \in Messages : Count(m) <= 1
                        /\ \A m \in acked : Count(m) = 1
                        /\ \A m \in removed : Count(m) = 0
-\* No candidate that changes approved intent, or names a migration, activates without a yes.
 NoUnreviewedIntent == \A i \in DOMAIN done :
                           done[i].how = "auto" => done[i].keeps /\ ~done[i].mig
-\* A yes activates only the candidate its review id names, on the base and approvals it binds.
 YesNamesCandidate == \A i \in DOMAIN done : done[i].how = "yes" => done[i].rid = done[i].bound
 =============================================================================

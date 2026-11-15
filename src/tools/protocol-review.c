@@ -98,7 +98,7 @@ static bool page(struct review_reply *out, const struct mo_store_review *r, uint
     struct mo_intent_entry e;
     uint32_t at = 0, shown = 0;
     for (; ok && at < r->items.count; at++) {
-        MO_ASSERT(mo_intent_list_next(&cursor, &e));
+        MO_ASSERT(mo_intent_list_next(&r->items, &cursor, &e));
         if (at < offset)
             continue;
         one.json.length = 0;

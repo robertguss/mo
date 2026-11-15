@@ -1344,7 +1344,7 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
     static const uint8_t context[13] = {'M', 'O', 'C', 'C', 1};
     struct mo_buffer items;
     mo_buffer_init(&items, 16384);
-    MO_ASSERT(mo_buffer_append(&items, "MOIL\1\1", 6) && mo_binary_write(&items, 2, 4));
+    MO_ASSERT(mo_buffer_append(&items, "MOIL\2\1", 6) && mo_binary_write(&items, 2, 4));
     for (uint8_t letter = 'A'; letter <= 'B'; letter++) {
         uint8_t item[32];
         memset(item, letter, sizeof item);

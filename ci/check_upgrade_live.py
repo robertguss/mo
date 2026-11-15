@@ -122,6 +122,16 @@ fn below(n: Int) : Int
   n - 1
 end
 '''
+UNFINISHED = V2 + '''
+fn twice(xs: List(Int), f: fn(Int) : Int) : List(Int)
+  promise "keeps the length"
+    result.size == xs.size
+    allows xs: [1], f: fn(x) x end, result: [1]
+    forbids xs: [1], f: fn(x) x end, result: []
+  end
+  xs.map(fn(x) f(f(x)) end)
+end
+'''
 # Within the checked-restart budget, beyond the live one.
 SLOW = V3.replace('''fn migrate(old: Int) : Counter
   Counter(value: old, label: "migrated")''', '''fn migrate(old: Int) : Counter
@@ -147,12 +157,13 @@ def digests(binary, old, new):
 
 
 class Service:
-    def __init__(self, binary, data, source=None, flags=(), credential=True, setting="intent"):
+    def __init__(self, binary, data, source=None, flags=(), credential=True, setting="intent",
+                 cwd=None):
         args = [binary, "serve", *([str(source)] if source else []), "--data", str(data),
                 "--port", "0", *(SECRETS if credential else []), *flags]
         self.errors = tempfile.TemporaryFile()
         self.process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=self.errors,
-                                        env=ENV, bufsize=0)
+                                        env=ENV, bufsize=0, cwd=cwd)
         self.port, self.output = None, b""
         deadline = time.monotonic() + 60
         while self.port is None and time.monotonic() < deadline:
@@ -360,9 +371,10 @@ def bundle_bytes(source):
 def main_flow(binary, root):
     data = pathlib.Path(root) / "main"
     data.mkdir()
-    v1, v2, v3, slow, broken = (write(root, name, text) for name, text in
-                                [("v1", V1), ("v2", V2), ("v3", V3), ("slow", SLOW),
-                                 ("broken", BROKEN)])
+    v1, v2, v3, slow, broken, unfinished = (
+        write(root, name, text) for name, text in
+        [("v1", V1), ("v2", V2), ("v3", V3), ("slow", SLOW), ("broken", BROKEN),
+         ("unfinished", UNFINISHED)])
     base1, digest2 = digests(binary, v1, v2)
     _, digest3 = digests(binary, v2, v3)
     service = Service(binary, data, v1)
@@ -448,6 +460,11 @@ def main_flow(binary, root):
         report = json.loads(failed.stdout)
         assert failed.returncode == 1 and report["code"] == "E1433", report
         assert "failed Main.below.promise.1" in report["message"], report
+        assert service.value("read").startswith("v2:")
+        partial = push(binary, service, unfinished, digest2, "--json")
+        report = json.loads(partial.stdout)
+        assert partial.returncode == 1 and report["code"] == "E1432", report
+        assert report["class"] == "check" and "cannot generate inputs" in report["message"], report
         assert service.value("read").startswith("v2:")
         assert all(stream.events(0.3) == [] for stream in streams)
         counted = len(acknowledged)

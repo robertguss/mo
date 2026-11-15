@@ -148,7 +148,7 @@ static uint8_t (*sorted_digests(struct mo_arena *arena, const struct mo_intent_l
     struct mo_binary cursor = mo_intent_list_first(list);
     struct mo_intent_entry entry;
     for (uint32_t i = 0; i < list->count; i++) {
-        MO_ASSERT(mo_intent_list_next(&cursor, &entry));
+        MO_ASSERT(mo_intent_list_next(list, &cursor, &entry));
         memcpy(digests[i], entry.digest, 32);
     }
     qsort(digests, list->count, 32, digest_order);

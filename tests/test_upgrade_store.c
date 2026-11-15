@@ -36,7 +36,7 @@ static bool snapshot(const struct mo_store_record *record, void *context) {
 static void items(struct mo_buffer *b, const char *letters) {
     uint32_t count = (uint32_t)strlen(letters);
     b->length = 0;
-    CHECK(mo_buffer_append(b, "MOIL\1\1", 6) && mo_binary_write(b, count, 4));
+    CHECK(mo_buffer_append(b, "MOIL\2\1", 6) && mo_binary_write(b, count, 4));
     for (uint32_t i = 0; i < count; i++) {
         uint8_t digest[32];
         memset(digest, letters[i], 32);

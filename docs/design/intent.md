@@ -208,7 +208,7 @@ Approvals live in the data folder, in tables added beside Phase 5's:
 
 | Table | Holds |
 | --- | --- |
-| `items` | One row: the active program's activation ordinal and its item list in MOIL v1 (`src/base/intent-list.h`): each item's digest, kind, whether its owner is reached, owner, display name, text and the declarations it reads |
+| `items` | One row: the active program's activation ordinal and its item list in MOIL format 2 (`src/base/intent-list.h`): each item's digest, kind, whether its owner is reached (format 1 lists from earlier builds carry no such byte and read as reached), owner, display name, text and the declarations it reads |
 | `approvals` | Approved digests, each with the approval-set version that wrote it and how: first approval, or the review id of a yes |
 | `review` | One row: the review setting and the approval-set version |
 | `pending` | At most one held upgrade: review id, base and candidate digests, migration name, approval-set version, the intent difference, the bundle |
@@ -309,7 +309,7 @@ The compile child (`src/host/compile.c`) lowers no promises or tests. A second
 child, the same executable running `mo test --bundle FILE`, follows it:
 
 1. **Listing mode** (`mo test FILE --bundle --list -o OUT`) compiles the bundle
-   and runs nothing. It writes the candidate's item list to `OUT` in MOIL v1,
+   and runs nothing. It writes the candidate's item list to `OUT` in MOIL format 2,
    which the service reads with `mo_intent_list_read` and stores as it is. The door decides from this
    list for every program, so its input never comes from a process that has run
    candidate code.

@@ -475,7 +475,7 @@ bool mo_intent_list_write(const struct mo_intent *intent, struct mo_buffer *out)
     uint32_t count = 0;
     for (uint32_t i = 0; i < intent->count; i++)
         count += !old_program(&intent->items[i]);
-    bool ok = count <= MO_LIMIT_INTENT_ITEMS && mo_buffer_append(out, "MOIL\1", 5) &&
+    bool ok = count <= MO_LIMIT_INTENT_ITEMS && mo_buffer_append(out, "MOIL\2", 5) &&
               mo_buffer_append_byte(out, MO_INTENT_DIGEST_VERSION) &&
               mo_binary_write(out, count, 4);
     for (uint32_t i = 0; ok && i < intent->count; i++) {

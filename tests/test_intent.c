@@ -1,10 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "base/intent-list.h"
 #include "base/limits.h"
 #include "base/stack.h"
 #include "check/check.h"
 #include "test.h"
 #include "tools/intent.h"
+#include "tools/upgrade.h"
 
 #include <string.h>
 
@@ -37,7 +39,7 @@ struct digests {
     bool reached[8];
 };
 
-static struct digests digests_of(const char *source) {
+static struct digests items_of(const char *source, struct mo_buffer *list) {
     struct digests out = {0};
     struct mo_sources sources;
     struct mo_diags diags;
@@ -60,12 +62,18 @@ static struct digests digests_of(const char *source) {
             memcpy(out.items[i], intent.items[i].digest, 32);
             out.reached[i] = intent.items[i].reached;
         }
+        if (list != NULL)
+            CHECK(mo_intent_list_write(&intent, list));
     } else
         CHECK(false);
     mo_arena_free(&arena);
     mo_diags_free(&diags);
     mo_sources_free(&sources);
     return out;
+}
+
+static struct digests digests_of(const char *source) {
+    return items_of(source, NULL);
 }
 
 static bool same(const uint8_t *a, const uint8_t *b) {
@@ -141,11 +149,80 @@ static void reach(void) {
     CHECK(same(through.items[0], dropped.items[0]));
 }
 
+#define SMALL                                                                                      \
+    "  promise \"stays small\"\n    result <= n + 1\n"                                             \
+    "    allows n: 1, result: 2\n    forbids n: 1, result: 5\n  end\n\n"
+#define TWICE(promises, handler)                                                                   \
+    "module Main\n\nservice\n  state Int = 0\n  tools add\n"                                       \
+    "  token from env \"TOKEN\"\nend\n\nfn bump(n: Int) : Int\n" promises "  n + 1\nend\n\n"       \
+    "fn add(state: Int, _now: Time) : (Int, Int)\n  (" handler ", state)\nend\n"
+
+static uint32_t marks(const struct mo_buffer *text, const char *mark) {
+    uint32_t count = 0;
+    for (size_t at = 0; at < text->length; at++)
+        count += at == 0 || text->bytes[at - 1] == '\n'
+                     ? strncmp((const char *)text->bytes + at, mark, strlen(mark)) == 0
+                     : 0;
+    return count;
+}
+
+static void duplicates(void) {
+    struct mo_buffer active, lacking, unreached;
+    mo_buffer_init(&active, MO_LIMIT_INTENT_LIST_BYTES);
+    mo_buffer_init(&lacking, MO_LIMIT_INTENT_LIST_BYTES);
+    mo_buffer_init(&unreached, MO_LIMIT_INTENT_LIST_BYTES);
+    struct digests twice = items_of(TWICE(SMALL SMALL, "bump(state)"), &active);
+    (void)items_of(TWICE("", "bump(state)"), &lacking);
+    (void)items_of(TWICE(SMALL SMALL, "state + 1"), &unreached);
+    CHECK(twice.count == 2 && same(twice.items[0], twice.items[1]));
+    struct mo_store_review r = {.reviewed = true, .approved = &twice.items[0], .approved_count = 1};
+    CHECK(mo_intent_list_read(active.bytes, active.length, &r.items));
+    const struct mo_buffer *candidates[] = {&lacking, &unreached};
+    for (unsigned i = 0; i < 2; i++) {
+        struct mo_intent_list candidate;
+        struct mo_arena arena;
+        struct mo_door_view view;
+        mo_arena_init(&arena, MO_DOOR_BYTES);
+        mo_buffer_init(&view.text, MO_DOOR_DIFFERENCE_BYTES);
+        CHECK(mo_intent_list_read(candidates[i]->bytes, candidates[i]->length, &candidate) &&
+              mo_door_difference(&arena, &r, &candidate, &view));
+        CHECK(!view.keeps && view.approve_count == 0);
+        CHECK(marks(&view.text, i == 0 ? "lacks " : "not reached ") == 2);
+        CHECK(view.retire_count == (i == 0 ? 0 : 2));
+        mo_buffer_free(&view.text);
+        mo_arena_free(&arena);
+    }
+    mo_buffer_free(&active);
+    mo_buffer_free(&lacking);
+    mo_buffer_free(&unreached);
+}
+
+static void earlier_list(void) {
+    struct mo_buffer v1;
+    mo_buffer_init(&v1, 256);
+    uint8_t digest[32];
+    memset(digest, 'q', 32);
+    CHECK(mo_buffer_append(&v1, "MOIL\1\1", 6) && mo_binary_write(&v1, 1, 4) &&
+          mo_buffer_append(&v1, digest, 32) && mo_buffer_append_byte(&v1, 0));
+    for (unsigned j = 0; j < 3; j++)
+        CHECK(mo_binary_write(&v1, 1, 4) && mo_buffer_append_byte(&v1, (uint8_t) "fnt"[j]));
+    CHECK(mo_binary_write(&v1, 0, 4));
+    struct mo_intent_list list;
+    struct mo_intent_entry entry;
+    CHECK(mo_intent_list_read(v1.bytes, v1.length, &list) && list.count == 1);
+    struct mo_binary cursor = mo_intent_list_first(&list);
+    CHECK(mo_intent_list_next(&list, &cursor, &entry) && entry.reached && entry.text.length == 1 &&
+          entry.text.bytes[0] == 't');
+    mo_buffer_free(&v1);
+}
+
 static void run_tests(void *unused) {
     (void)unused;
     identity();
     service();
     reach();
+    duplicates();
+    earlier_list();
 }
 
 int main(void) {
