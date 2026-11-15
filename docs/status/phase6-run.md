@@ -116,8 +116,8 @@ type. That is follow-on work, not part of this measurement.
 
 ## The review door's proof on the task queue
 
-Run on 2026-11-15 on the debug build of commit `7d36bd5c`, which holds every C change of the door,
-with `ci/check_door.py`:
+Run on 2026-11-15 on the debug build of commit `42442b1f`, the last commit with code, with
+`ci/check_door.py`:
 
 ```sh
 python3 ci/check_door.py build/gcc/debug/mo learnability/phase6/door/planted --all \
@@ -144,8 +144,8 @@ the strength set, 11 counted as killed and one as survived.
 
 Each run answered one held push with `mo review --yes ID` and one with `--no ID`, and the old
 program answered every call made during every push. For every case that passed its checks, the
-door's classification equalled the declared kind. The working-half run took 428 seconds, and
-the held-back run 468.
+door's classification equalled the declared kind. The working-half run took 492 seconds, and
+the held-back run 510.
 
 The control: the same cases against `mo-door-bypass`, a build whose push decision activates
 every candidate that passes its checks. It failed as required, with exactly one mismatch for
