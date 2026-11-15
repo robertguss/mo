@@ -16,6 +16,8 @@ import threading
 from check_upgrade_live import (Service, V1, V2, V3, TOKEN, UPGRADE, ENV, push, review,
                                 write, digests, assert_no_secrets)
 
+RELAY = pathlib.Path(__file__).resolve().parent.parent / "docs/ops/live-relay.py"
+
 
 class Relay(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
@@ -167,14 +169,12 @@ def tunnel(binary):
         base, _ = digests(binary, old, new)
         data = pathlib.Path(root) / "data"
         data.mkdir()
-        relay = Relay(("127.0.0.1", 0), Forward)
-        forwarded = relay.server_address[1]
-        service = Service(binary, data, old, flags=("--allow-host", f"127.0.0.1:{forwarded}"),
-                          setting="everything")
-        relay.upstream = service.port
-        thread = threading.Thread(target=relay.serve_forever, daemon=True)
-        thread.start()
+        service = Service(binary, data, old, setting="everything")
+        relay = subprocess.Popen([sys.executable, str(RELAY), "0",
+                                  f"http://127.0.0.1:{service.port}"],
+                                 stdout=subprocess.PIPE, text=True)
         try:
+            forwarded = int(relay.stdout.readline().rsplit(":", 1)[1].split("/")[0])
             assert service.value("add", amount="5") == "5"
             held = push(binary, service, new, base, url=f"http://127.0.0.1:{forwarded}/mcp")
             assert held.returncode == 3 and held.stdout.startswith(b"held "), held
@@ -198,11 +198,10 @@ def tunnel(binary):
             assert seen[0][0].rstrip().endswith(b"review " + held.stdout.split()[1]), seen[0][0]
             assert_no_secrets(held.stdout, held.stderr, seen[0][0])
         finally:
-            relay.shutdown()
-            relay.server_close()
-            thread.join()
+            relay.kill()
+            relay.wait()
             service.stop()
-    print("tunnel: review listing, held source and state export match direct")
+    print("relay: push, review listing, held source and state export match direct")
 
 
 if __name__ == "__main__":
