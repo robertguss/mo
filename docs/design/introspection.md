@@ -15,9 +15,10 @@ An agent operating a running Mo service gets three instruments, each with a narr
 
 1. **Live views.** Built-in operator tools on the service's existing MCP endpoint show its state,
    mailbox, timers, memory, supervisor events, retained failures and committed messages since the
-   last snapshot. A token holder can read them. They never change the service. The one
-   exception is the live upgrade tools (`docs/design/upgrades.md`), which replace the program and
-   require a second credential the service token never stands in for.
+   last snapshot. A token holder can read them. They never change the service. The
+   exceptions are the live upgrade tools (`docs/design/upgrades.md`), which replace the program and
+   require a second credential the service token never stands in for, and the review door's
+   writing tools (`docs/design/intent.md`), which require a third.
 2. **Offline queries.** The service exports bounded, identified bytes of its state, or of one
    retained failure, to a private file. The agent runs a pure Mo function over that file on its
    own side. The service never runs caller-written code.
@@ -111,6 +112,26 @@ never authorizes an upgrade. All three carry `readOnlyHint: false`,
 `destructiveHint: true`. Their descriptions and schemas specify the page fields,
 base/candidate digests and slot lifetime. See `upgrades.md` for the shared reports.
 Remote pushes use the SSH local-forward procedure in `../ops/task-queue.md`.
+
+The review door's tools follow, in this order ([intent.md](intent.md)):
+
+| Wire name | Credential beside the service token | Does | Annotations |
+| --- | --- | --- | --- |
+| `mo-intent-items` | approval | Pages the active program's items and the review setting | read-only |
+| `mo-intent-approve` | approval | Approves one item of the active program | writes |
+| `mo-review-setting` | approval | Reads or sets the review setting | writes |
+| `mo-review-pending` | approval | The held upgrade's review id, digests, migration, approval-set version and intent difference | read-only |
+| `mo-review-answer` | approval | Answers the held upgrade yes or no, naming its review id | writes, destructive |
+| `mo-upgrade-status` | upgrade | The held upgrade's review id and state, and the latest review decisions, without source | read-only |
+| `mo-review-source` | approval | Pages the held or the active source bundle while the review id it names is held | read-only |
+
+Read-only tools carry `readOnlyHint: true`, `idempotentHint: true` and
+`openWorldHint: false`; the others carry `readOnlyHint: false`,
+`idempotentHint: false` and `openWorldHint: false`, and `mo-review-answer` also
+`destructiveHint: true`. A request carrying both the upgrade and the approval
+credential is refused with E1414. So the service token reads the views, the
+upgrade credential pushes and reads the door's state, and only the approval
+credential approves, changes the setting, answers a held upgrade or reads source.
 
 ### 3.2 Dispatch
 
@@ -1158,10 +1179,10 @@ child limits crashes and stalls but shares the host identity, files and secrets:
 its compiler is part of the upgrade credential's trusted base. Write access to
 the data folder confers the authority to replace the running program.
 
-Phase 6's approved design adds [the review door](intent.md), not yet implemented: a third
-secret, the approval credential, held only on the service's host; a second
-child that runs the candidate's checks there under limits but without
-operating-system confinement; and a version-3 folder holding approvals. Write
-access to the data folder then confers approval authority too, and a
+Phase 6 adds [the review door](intent.md): a third secret, the approval
+credential, held only on the service's host; check children that run the
+candidate's checks there under limits but without operating-system
+confinement; and a version-3 folder holding approvals. Write access to the data
+folder confers approval authority too, and a
 memory-safety defect in the compiler or the VM that pushed source can reach is a
 way around the door without a shell.

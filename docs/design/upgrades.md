@@ -6,8 +6,10 @@ message boundary, the upload tools, MCP streams and `mo push` (see Live
 implementation below). M5 finalizes the operator catalog and documents the loopback-tunnel remote procedure.
 The feasibility evidence, including failed assumptions and corrected results, is
 in [the preflight](../../learnability/phase5/preflight/README.md).
-Phase 6's approved design adds [the review door](intent.md) to this path: checks before
-activation, approvals, a held outcome and a third credential.
+Phase 6 puts [the review door](intent.md) on this path: checks before
+activation, approvals, a held outcome and a third credential. A push that
+passes its checks no longer always activates; The review door below says what
+changed.
 
 ## Authority and lifecycle
 
@@ -25,8 +27,9 @@ checked before either environment variable is read. Remote operators use a
 loopback tunnel; this phase does not add a TLS client. `mo serve --data DIR`
 runs the recorded source. `mo serve FILE --data DIR` records the first program
 in an empty folder; a different source in an existing folder requires
-`--upgrade [--migrate Module.function]`. A checked restart has a larger migration
-budget but the same validation and transaction rules.
+`--upgrade [--migrate Module.function] [--review ID]`. A checked restart has a
+larger migration budget but the same checks, decision, validation and
+transaction rules.
 
 The explicit legacy-adoption flag is `--adopt`. With no program row, an exact
 image-key match permits adoption; otherwise adoption requires that flag and
@@ -334,6 +337,55 @@ M4 builds the live path with these decisions; each is pinned by a test named in
   active and previous programs by image key, build and schema; distinct sources
   among the matches are E1431.
 
+## The review door
+
+Phase 6 puts the [review door](intent.md) between a compiled candidate and the
+boundary. The push path is now:
+
+1. **Checks.** After the compile child, two more children run the same
+   executable on the bundle: `mo test FILE --bundle --list -o OUT` writes the
+   candidate's item list, and `mo test FILE --bundle` runs every promise,
+   service promise, example and test the served program carries under the
+   door's plan. Each has an empty environment, no descriptor beyond its standard
+   streams, and the limits `MO_LIMIT_CHECK_MEMORY`, `MO_LIMIT_CHECK_CPU_SECONDS`
+   and `MO_LIMIT_CHECK_WALL_US`. A failed check is E1433 and an unfinished plan
+   is E1432; either refuses the push and the old program keeps serving. The
+   upload slot stays busy while they run.
+2. **Decision.** On the event loop (`src/tools/protocol-door.c`), from the
+   active program, its approvals, the review setting and the approval-set
+   version read at that moment. Under `intent`, a candidate that keeps every
+   approved item, with the item's owner still reached, and names no migration
+   goes on to the boundary. Every other push is held; under `everything`, every
+   push is.
+3. **Hold.** A held push is stored with its bundle under its review id, the
+   upload slot is released, and `mo push` exits 3 and prints `held ID`. A later
+   held push replaces it, any activation or approval makes it stale, and a
+   restart keeps it.
+4. **Boundary.** The activation transaction checks the approval-set version read
+   at the decision as well as the base, on the unattended path and after a yes.
+   An approval between the decision and the boundary refuses the activation
+   with E1416 and nothing activates. The swap model found this
+   (`models/README.md`). The same transaction writes the decision row and the
+   approvals a yes adds and retires.
+
+Robert's yes through `mo-review-answer` sends the stored bundle through the same
+three children and the same decision again. The decision must recompute the
+review id the yes named; then the upgrade goes on to the boundary. A yes whose
+recheck fails, and a no, drop the held upgrade. Every outcome after the
+decision is a row in the review record. A push refused by its compile or its
+checks writes no row.
+
+The checked restart, `mo serve FILE --data DIR --upgrade [--migrate M]
+[--review ID]`, runs the listing and check children too and refuses a failure
+with E1433 or E1432. It then computes the same intent difference and review id
+(`src/tools/upgrade-door.c`). When a push would be held, under either setting,
+it prints the difference on standard error and refuses with E1435 unless
+`--review` names that id. That refusal writes a `refused` row and leaves a held
+upgrade held. An activation writes a `restart` row, approves and retires what a
+yes on the same difference would, and drops a held upgrade as stale. The
+difference and the review id come from `src/tools/door.c`, shared by the
+server, `mo review` and the restart.
+
 ## Proposed host interface and stored representation
 
 These declarations specify the boundary to implement; they are not current API.
@@ -390,10 +442,13 @@ identifies the activation that installed it. The upgrade table is append-only;
 retention deletes only previous program/snapshot rows.
 
 Reports use versioned JSON with `version: 1`, `status` (`accepted`, `refused`,
-`already_active`), `code` (null on success), `class`, `message`, `base_source`,
+`already_active`, `held`), `code` (null on success), `class`, `message`, `base_source`,
 `candidate_source`, `active_source`, and `migration`. Digests are lowercase hex;
 unavailable identities are null. Accepted reports also carry `ordinal` and
-`head` as decimal strings, avoiding JSON integer precision loss. The text
+`head` as decimal strings, avoiding JSON integer precision loss. A held report
+carries only `version`, `status`, `code`, `class` (`review`), `message`,
+`review`, `base_source`, `candidate_source`, `migration` and
+`intent_would_activate`. The text
 renderer uses the same class/message fields and prints every descriptor difference.
 After both programs are compared, reports also contain `old_schema`, `new_schema`,
 `implementation_changed` and the complete `differences` array. A refusal before
@@ -470,12 +525,17 @@ These are implementation gates, not claims about the current binary.
 
 ## Remote operator decisions
 
-The three upgrade tools remain the only operator tools that change the service.
-Their catalog descriptions specify both credentials, the slot lifecycle and the
-page protocol. Native dispatch resolves the operation from the catalog name,
-not from an index range; adding another view does not make it an upgrade tool.
+The three upgrade tools remain the only tools an agent's credentials can use to
+change the service. The review tools that write, `mo-intent-approve`,
+`mo-review-setting` and `mo-review-answer`, need the approval credential
+instead ([intent.md](intent.md)). The catalog descriptions specify the
+credentials, the slot lifecycle and the page protocol. Native dispatch resolves
+the operation from the catalog name, not from an index range; adding another
+view does not make it an upgrade tool.
 
-No active-bundle read tool is added in this milestone. A bundle and digest alone
+No active-bundle read tool is added for agents. `mo-review-source` pages the
+active bundle, under the approval credential and only while an upgrade is held,
+so that Robert can read the code difference. A bundle and digest alone
 would not let an agent rehearse every active version: a retained migration body
 also needs its separate MOCC compilation context. A useful remote source-export
 contract must carry that context, preserve source identity and page bounded,

@@ -1,8 +1,10 @@
 # Intent and the review door
 
-Status: approved by Robert on 2026-11-13 as Phase 6's design. Nothing here is
-implemented yet. The feasibility evidence, with its commands and raw
-outputs, is in [the preflight](../../learnability/phase6/preflight/README.md).
+Status: approved by Robert on 2026-11-13 as Phase 6's design, and built. Where
+the build settled something this text got wrong or left open, the text says so
+with "Settled in the build"; no approved rule changed. The feasibility evidence,
+with its commands and raw outputs, is in
+[the preflight](../../learnability/phase6/preflight/README.md).
 [Whole-program upgrades](upgrades.md) remains the contract this extends; where
 the two differ, this document describes the change.
 
@@ -263,7 +265,7 @@ Tools that need the service token and the approval credential:
 
 | Tool | Does |
 | --- | --- |
-| `mo-intent-items` | Pages the active program's items: digest, display name, kind, approved or not, sentence, reach |
+| `mo-intent-items` | Pages the active program's items: digest, display name, kind, owner, approved or not, sentence, the declarations it reads |
 | `mo-intent-approve` | Approves one digest of the active program, which the call names by its source digest: a first approval |
 | `mo-review-setting` | Reads or sets the review setting |
 | `mo-review-pending` | The pending review id, its intent difference and digests |
@@ -276,7 +278,7 @@ NAME`, loopback only, like `mo push`:
 - with no action it prints the pending upgrade's intent difference first, then
   writes the pending and active source trees under `--out DIR` for the code
   difference, and prints the review id;
-- `--items` lists every item with its mark and reach;
+- `--items` lists every item with its mark;
 - `--base PROGRAM --approve DIGEST…` approves items of the active program
   `PROGRAM`, one `mo-intent-approve` call each; a `PROGRAM` that is not the
   active one, or a digest it lacks, is E1416;
@@ -287,6 +289,12 @@ Before it offers a yes, the client recomputes the review id from what it was
 shown and checks that each source tree it received hashes to the digest that id
 binds. An agent that alternates two candidates cannot have Robert read one and
 approve the other.
+
+Settled in the build: whether an item's owner is reached is shown only where it
+decides something, in the decision and in the intent difference as
+`not reached`. `mo-intent-items` and `--items` do not show it. `--out DIR`
+writes `DIR/pending` and `DIR/active`, which must not exist yet, and offers no
+review id when the intent difference does not fit one page.
 
 ## What agents see
 
@@ -322,6 +330,9 @@ runs. Its limits are under Limits. A failed check is E1433 and an unfinished
 plan is E1432; both refuse the push and leave the old program serving. A first
 start runs listing mode alone; a checked restart runs both.
 
+Settled in the build: the two modes run as two children, one after the other,
+after the compile child, and each gets the check child's limits.
+
 ## The decision
 
 The door decides on the event loop after the checks return, from values read at
@@ -333,6 +344,12 @@ owner is reached from the service, and the push names no migration. Otherwise
 it is held. The intent difference marks an approved item whose owner is no
 longer reached `not reached`. A later change of the setting
 never decides an upgrade already held.
+
+Settled in the build, from the swap model (`models/README.md`): an approval can
+land between the decision and the boundary, so the activation transaction
+checks the approval-set version read at the decision as well as the base, on
+the unattended path as after a yes. If either changed, nothing activates and
+the push is refused with E1416.
 
 ```mermaid
 stateDiagram-v2
@@ -366,6 +383,13 @@ owner that the active program lacks, marked `added`. Declarations an item reads
 are shown with the item. The code difference comes after, from the two source
 trees.
 
+Settled in the build: each entry is one line of mark, digest, kind and display
+name, then the item's text, then `reads` and the names of the declarations it
+reads. The marks are `lacks`, `not reached` and `added`. An edited item shows
+as its old content marked `lacks` and its new content marked `added`. An item
+added on an owner with no approved item the candidate lacks is not shown, and
+a yes leaves it unapproved.
+
 A service holds one pending upgrade. A later held push replaces it, and any
 activation or other write to `approvals` makes it stale; each is recorded. Robert's answer names the
 review id; the service recomputes it and acts only on an exact match, otherwise
@@ -394,6 +418,13 @@ prints the difference and the review id and refuses with E1435, unless
 `--review` names that id. It always writes a decision row and drops a pending upgrade as stale.
 The review id here shows that the operator saw the change; it is no authority
 check, since a shell on the host is the stated limit.
+
+Settled in the build, where the text above was loose: a restart refused by its
+checks writes no row, as a refused push writes none. A restart refused with
+E1435 writes a `refused` row and leaves a pending upgrade held. Only an
+activation writes a `restart` row and drops a pending upgrade as stale. An
+activation with `--review` approves the added items its difference showed and
+retires the approvals of the items it showed `not reached`, as a yes does.
 
 ## Codes
 
@@ -487,13 +518,19 @@ rule for every service behind the door.
   it, and a yes activates only the candidate it names. Each invariant gets a
   negative-control configuration that must violate it. The nightly does not run
   the `models` group, so it runs by hand when the door is built and at the close.
-- `ci/check_kill_loop.py`'s variant table gains planted changes of three kinds:
-  fixes that leave approved intent unchanged, changes that edit or remove it,
-  and frozen wrong versions that leave it unchanged. Each declares its expected
-  outcome under both settings and is run through real `mo serve`, `mo push` and
-  `mo review`. Every change of the second kind waits; under `intent` no change of
-  the first kind does; every wrong version the strength record counts as killed
-  is refused. A build with the decision bypassed must fail the run.
+- Planted changes of three kinds: fixes that leave approved intent unchanged,
+  changes that edit or remove it, and frozen wrong versions that leave it
+  unchanged. Each declares its expected outcome under both settings and is run
+  through real `mo serve`, `mo push` and `mo review`. Every change of the second
+  kind waits; under `intent` no change of the first kind does; every wrong
+  version the strength record counts as killed is refused. A build with the
+  decision bypassed must fail the run. Settled in the build: `ci/check_door.py`
+  runs them, not `ci/check_kill_loop.py`'s variant table. The planted changes
+  are frozen in `learnability/phase6/door/planted/`. The bypassed build is
+  `mo-door-bypass` (`tests/door_bypass.c`), whose decision sends every candidate
+  that passes its checks to the boundary; its run must fail with one mismatch
+  for each push expected to be held. The drivers group runs a short set; `--all`
+  runs every case.
 - The version-3 store, the review id and the approval tools get unit tests, an
   errors fixture per code, and fuzz seeds for every new reader.
 
