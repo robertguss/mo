@@ -7,6 +7,9 @@ started at 2026-11-02 13:18 UTC, was abandoned, not completed.
 `docs/status/phase3-run.md` records the teardown. The rest of this runbook
 stays as the record of how the queue was deployed.
 
+The queue runs again behind the review door in the live stage; [the live
+service runbook](live-service.md) gives what differs from the steps below.
+
 Mo's task queue (`services/task-queue/main.mo`) ran under systemd on a
 dedicated exe.dev VM, from a pinned build, behind the VM's public HTTPS route.
 Agent threads reached it at `https://VM.exe.xyz/mcp` with a bearer token. The
