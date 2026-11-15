@@ -157,7 +157,9 @@
       "what": "Renames submit's unused time parameter from _now to _at, changing the signature its promises and examples are about.",
       "files": {
         "main.mo": "592e4339d2826ef16ca9718511ca575d8f5b92bf1d6f20037024c0e8eda7a10b"
-      }
+      },
+      "corrected_kind": "fix",
+      "correction": "The coordinator's brief told the writer that an item's content includes the signature of the function it is about. The approved identity leaves the subject's signature out, as Robert settled on 2026-11-13, so renaming submit's unused parameter changes no approved item. Found by the first full proof run on 2026-11-14."
     },
     {
       "id": "p20",
