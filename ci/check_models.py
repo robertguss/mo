@@ -8,8 +8,8 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SHA256 = "e20447644bfabd29d6bd0fc2c0eb1473fb301c1a0e4dfe1961938ce5a191edbf"
-URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
+SHA256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
+URL = "https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar"
 
 
 def main():
@@ -39,9 +39,10 @@ def main():
                               ("SwapBadVersion", "NoUnreviewedIntent"),
                               ("SwapBadReview", "YesNamesCandidate")]:
         module = next(m for m in ("Capture", "Export", "Swap") if config.startswith(m))
+        shutil.copyfile(ROOT / "models" / (config + ".cfg"), out / (config + ".cfg"))
         command = ["java", "-XX:+UseParallelGC", "-Xmx512m", "-cp", str(jar.resolve()),
                    "tlc2.TLC", "-workers", "1", "-seed", "1", "-metadir", str(out / config),
-                   "-config", str(ROOT / "models" / (config + ".cfg")),
+                   "-config", str(out / (config + ".cfg")),
                    str(out / (module + ".tla"))]
         result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, timeout=120)
