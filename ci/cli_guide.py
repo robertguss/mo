@@ -44,8 +44,8 @@ def guide_claims(binary):
             "folder or an artifact without starting the service, as Diagnose a failure offline "
             "says.") in guide
     assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
-    # ci/check_upgrade_live.py and ci/check_review.py exercise these claims through mo serve,
-    # mo push and mo review.
+    # ci/check_upgrade_live.py, ci/check_review.py and ci/check_upgrade_remote.py exercise these
+    # claims through mo serve, mo push, mo review and mo fetch.
     for name in SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES:
         assert f"`{name}`" in guide
     for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest; exit 3 means the push is held for review.",
@@ -57,7 +57,9 @@ def guide_claims(binary):
                      "Pushing the active program again reports `already active` and changes "
                      "nothing",
                      "neither credential appears in output, events or the data folder.",
-                     "a new GET replaces it."):
+                     "a new GET replaces it.",
+                     "fetch an export with `mo fetch`, and replay or query a fetched export with "
+                     "the same `mo` build and the deployed source."):
         assert sentence in guide, f"docs/agent-guide.md no longer says: {sentence}"
     assert ("A wrong version that stops is kept out of the rate, and so is one that does not check "
             "or changes a digest, unless a `counted` file in `DIR` lists it: a listed one stays in "
