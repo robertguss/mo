@@ -113,3 +113,59 @@ Robert's answer, 2026-11-14: accepted. Two limits stand beside the acceptance:
 make every fix to them an intent change. The better fix is an input generator that builds
 queues reaching rarer states, such as Dead jobs, which would help every promise over a hidden
 type. That is follow-on work, not part of this measurement.
+
+## The review door's proof on the task queue
+
+Run on 2026-11-15 on the debug build of commit `7d36bd5c`, which holds every C change of the door,
+with `ci/check_door.py`:
+
+```sh
+python3 ci/check_door.py build/gcc/debug/mo learnability/phase6/door/planted --all \
+  --bypass build/gcc/debug/mo-door-bypass
+python3 ci/check_door.py build/gcc/debug/mo learnability/phase6/door/planted --all \
+  --wrong /home/exedev/code/mo-strength-held-back/set-1 \
+  learnability/phase6/strength/results/5-held-back.json --bypass build/gcc/debug/mo-door-bypass
+```
+
+The plan is fixed, so there is no seed (`seed=none`). Each run serves the task queue, approves all
+41 of its items through `mo review`, and pushes every case under both settings from a copy of
+that state, through real `mo serve`, `mo push` and `mo review`. The cases are the 20 frozen
+planted changes in `learnability/phase6/door/planted/` and the 12 wrong versions of one half of
+the strength set, 11 counted as killed and one as survived.
+
+| Cases | `intent` | `everything` |
+| --- | --- | --- |
+| 11 fixes | 11 activated | 11 held |
+| 9 intent changes | 9 held | 9 held |
+| 11 killed wrong versions, working half | 11 refused, E1433 | 11 refused, E1433 |
+| `w11`, survived, working half | activated | held |
+| 11 killed wrong versions, held-back half | 11 refused, E1433 | 11 refused, E1433 |
+| `w20`, survived, held-back half | refused, E1433 | refused, E1433 |
+
+Each run answered one held push with `mo review --yes ID` and one with `--no ID`, and the old
+program answered every call made during every push. For every case that passed its checks, the
+door's classification equalled the declared kind. The working-half run took 428 seconds, and
+the held-back run 468.
+
+The control: the same cases against `mo-door-bypass`, a build whose push decision activates
+every candidate that passes its checks. It failed as required, with exactly one mismatch for
+each push the door held: 30 in the working-half run and 29 in the held-back run. Each run passes
+only if that control fails.
+
+Two failures from earlier full runs that day are kept:
+
+- **`p19` was declared with the wrong kind.** It renames `submit`'s unused parameter. The door
+  held nothing, and the first run failed on it. The brief the door's session gave the
+  planted-change session said an item's content includes its subject's signature. The approved
+  identity leaves the
+  subject's signature out, as Robert settled on 2026-11-13, so `p19` changes no approved item.
+  The error was in that brief, not in the door. The manifest keeps the writer's `kind` and adds
+  `corrected_kind` with the reason.
+- **`w20` was refused although the strength record counts it as survived.** The strength measure
+  runs promises and examples. The door also runs the program's tests, and `JobQueue.test.4`
+  fails on `w20`. The driver had expected every survivor to behave as a fix. It now accepts a
+  refusal with E1433 or the fix outcome for a survivor. Every killed version must still be
+  refused.
+
+The drivers group runs a short version: two planted changes of each kind, two killed wrong
+versions and one survivor, under both settings, with the control.
