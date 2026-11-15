@@ -245,8 +245,9 @@ bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status stat
                             : status == MO_COMPILE_BUDGET ? "budget"
                                                           : "compile";
         const char *detail = report->detail;
-        if (job->checking && strncmp(detail, "error E143", 10) == 0)
-            detail += strlen(detail) < sizeof "error E1433: " ? 0 : sizeof "error E1433: " - 1;
+        size_t prefix = sizeof "error E1433: " - 1;
+        if (job->checking && strncmp(detail, "error E143", 10) == 0 && strlen(detail) > prefix)
+            detail += prefix;
         ok = mo_upgrade_refuse(report, code, class,
                                detail[0] != 0  ? detail
                                : job->checking ? "the checks did not finish inside their limits"

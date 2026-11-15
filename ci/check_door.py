@@ -59,9 +59,6 @@ def sha256(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
-# A wrong version replaces named functions of the measured program, as `mo test --strength`
-# applies it: a function keeps its signature, promises and examples, and takes the body.
-
 def header_end(lines, at):
     depth = 0
     while True:
@@ -76,7 +73,6 @@ def header_end(lines, at):
 
 
 def functions(lines):
-    """Each top-level function's name and the index of its first and last line."""
     return [(line[3:].split('(')[0], at, lines.index('end', at))
             for at, line in enumerate(lines) if line.startswith('fn ')]
 
@@ -129,8 +125,6 @@ class Proof:
         with self.lock:
             self.problems.append((tag, text))
 
-    # The cases.
-
     def planted(self, folder):
         manifest = json.loads((folder / 'manifest.json').read_text())
         for name in PROGRAM:
@@ -165,8 +159,6 @@ class Proof:
             cases.append(Case(path.stem, 'wrong', out, version['outcome'].startswith('killed')))
         return cases
 
-    # Processes.
-
     def review(self, queue, *args):
         return subprocess.run(
             [str(self.binary), 'review', '--url', f'http://127.0.0.1:{queue.port}/mcp',
@@ -196,7 +188,6 @@ class Proof:
         return body['result']['structuredContent']
 
     def snapshot(self):
-        """Folders holding the served task queue with every item approved, one per setting."""
         folders = {}
         data = self.root / 'approved-everything'
         data.mkdir()
@@ -231,10 +222,7 @@ class Proof:
         assert result.returncode == 0 and report['base_source'] == self.base, report
         return report['candidate_source']
 
-    # One push.
-
     def push(self, case, setting, folder, answer):
-        """The outcome of pushing `case`, and the door's classification when it decided one."""
         data = self.root / 'runs' / f'{case.name}-{setting}'
         shutil.copytree(folder, data)
         candidate = self.candidate(case)
@@ -303,8 +291,6 @@ class Proof:
             return
         with self.lock:
             self.answered[answer] += 1
-
-    # The run.
 
     def go(self, folders):
         self.answered = collections.Counter()

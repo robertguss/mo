@@ -444,7 +444,6 @@ def main_flow(binary, root):
         refused = answered(binary, service, slow, digest2, "--migrate", "migrate")
         assert refused.returncode == 1 and refused.stderr.startswith(b"error E1424:"), refused
         assert service.value("read").startswith("v2:")
-        # A candidate that breaks its own promise is refused by the door's checks.
         failed = push(binary, service, broken, digest2, "--json")
         report = json.loads(failed.stdout)
         assert failed.returncode == 1 and report["code"] == "E1433", report

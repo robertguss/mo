@@ -66,14 +66,8 @@ bool mo_upgrade_restart_door(const struct mo_cli *cli, struct mo_store *store,
             (r.reviewed && mo_store_decide(store, decision, NULL) != MO_STORE_REVIEW_OK))
             (void)mo_upgrade_refuse(report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                                     "the refused restart could not be shown or recorded");
-    } else {
-        activation->decision = decision;
-        activation->approval_version = r.version;
-        activation->approve = (const uint8_t(*)[32])view.approve;
-        activation->approve_count = view.approve_count;
-        activation->retire = (const uint8_t(*)[32])view.retire;
-        activation->retire_count = view.retire_count;
-    }
+    } else
+        mo_door_activate(activation, decision, r.version, &view);
     mo_buffer_free(&hex);
     mo_buffer_free(&view.text);
     return ok;

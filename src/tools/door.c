@@ -136,3 +136,13 @@ bool mo_door_lines(struct mo_buffer *out, const uint8_t *bytes, size_t length) {
     }
     return ok;
 }
+
+void mo_door_activate(struct mo_store_activation *activation, struct mo_store_decision *decision,
+                      uint64_t version, const struct mo_door_view *view) {
+    activation->decision = decision;
+    activation->approval_version = version;
+    activation->approve = (const uint8_t(*)[32])view->approve;
+    activation->approve_count = view->approve_count;
+    activation->retire = (const uint8_t(*)[32])view->retire;
+    activation->retire_count = view->retire_count;
+}

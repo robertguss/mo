@@ -38,30 +38,30 @@ static enum door_outcome door_refuse(struct protocol_upgrade *u, uint16_t code, 
     return DOOR_REFUSED;
 }
 
+static bool append_hex(struct mo_buffer *out, const char *before, const uint8_t *digest) {
+    char hex[65];
+    mo_protocol_hex(digest, 32, hex);
+    return mo_buffer_append_text(out, before) && mo_buffer_append(out, hex, 64);
+}
+
 static bool held_reply(struct mo_protocol_server *s, struct protocol_connection *c,
                        const struct protocol_upgrade *u) {
-    char id[65], base[65], candidate[65];
-    mo_protocol_hex(u->review, 32, id);
-    mo_protocol_hex(u->base, 32, base);
-    mo_protocol_hex(u->candidate, 32, candidate);
     struct mo_buffer json, text;
     mo_buffer_init(&json, PAGE_BYTES);
     mo_buffer_init(&text, PAGE_BYTES);
-    bool ok = mo_buffer_append_text(&json, "{\"version\":1,\"status\":\"held\",\"code\":null,"
-                                           "\"class\":\"review\",\"message\":\"the upgrade waits "
-                                           "for review\",\"review\":\"") &&
-              mo_buffer_append(&json, id, 64) &&
-              mo_buffer_append_text(&json, "\",\"base_source\":\"") &&
-              mo_buffer_append(&json, base, 64) &&
-              mo_buffer_append_text(&json, "\",\"candidate_source\":\"") &&
-              mo_buffer_append(&json, candidate, 64) &&
+    bool ok = append_hex(&json,
+                         "{\"version\":1,\"status\":\"held\",\"code\":null,"
+                         "\"class\":\"review\",\"message\":\"the upgrade waits "
+                         "for review\",\"review\":\"",
+                         u->review) &&
+              append_hex(&json, "\",\"base_source\":\"", u->base) &&
+              append_hex(&json, "\",\"candidate_source\":\"", u->candidate) &&
               mo_buffer_append_text(&json, "\",\"migration\":") &&
               (u->has_migration ? mo_render_json_text(&json, u->migration, strlen(u->migration))
                                 : mo_buffer_append_text(&json, "null")) &&
               mo_buffer_append_text(&json, u->would ? ",\"intent_would_activate\":true}"
                                                     : ",\"intent_would_activate\":false}") &&
-              mo_buffer_append_text(&text, "held ") && mo_buffer_append(&text, id, 64) &&
-              mo_buffer_append_byte(&text, '\n');
+              append_hex(&text, "held ", u->review) && mo_buffer_append_byte(&text, '\n');
     if (ok && c != NULL)
         mo_protocol_upgrade_reply(s, c, &json, &text, false);
     mo_buffer_free(&json);
@@ -203,12 +203,7 @@ bool mo_protocol_door_activation(struct mo_protocol_server *s,
     }
     if (ok) {
         *decision = row(u, u->yes ? "yes" : "activated", u->intent, s->now.wall_us);
-        activation->decision = decision;
-        activation->approval_version = r.version;
-        activation->approve = (const uint8_t(*)[32])view.approve;
-        activation->approve_count = view.approve_count;
-        activation->retire = (const uint8_t(*)[32])view.retire;
-        activation->retire_count = view.retire_count;
+        mo_door_activate(activation, decision, r.version, &view);
     }
     mo_buffer_free(&view.text);
     return ok;
@@ -232,23 +227,6 @@ void mo_protocol_door_refused(struct mo_protocol_server *s, uint16_t code) {
         MO_ASSERT(recorded != MO_STORE_REVIEW_STALE && recorded != MO_STORE_REVIEW_ABSENT);
     }
     mo_arena_free(&arena);
-}
-
-static bool append_hex(struct mo_buffer *out, const char *before, const uint8_t *digest) {
-    char hex[65];
-    mo_protocol_hex(digest, 32, hex);
-    return mo_buffer_append_text(out, before) && mo_buffer_append(out, hex, 64);
-}
-
-static bool append_lines(struct mo_buffer *out, const uint8_t *bytes, size_t length) {
-    bool ok = true;
-    for (size_t at = 0; ok && at < length;) {
-        const uint8_t *end = memchr(bytes + at, '\n', length - at);
-        size_t line = end == NULL ? length - at : (size_t)(end - bytes) - at;
-        ok = mo_render_terminal_text(out, bytes + at, line) && mo_buffer_append_byte(out, '\n');
-        at += line + 1;
-    }
-    return ok;
 }
 
 static const char *pending_state(const struct protocol_upgrade *u,
@@ -283,7 +261,7 @@ static bool pending_view(struct mo_buffer *json, struct mo_buffer *text,
              : mo_render_terminal_text(text, p->migration, strlen(p->migration))) &&
         mo_buffer_append_text(text, "\napproval version ") &&
         mo_buffer_append_uint(text, p->version) && mo_buffer_append_byte(text, '\n') &&
-        append_lines(text, p->difference, shown) &&
+        mo_door_lines(text, p->difference, shown) &&
         (shown == p->difference_size ||
          mo_buffer_append_text(text, "the intent difference is clipped here\n"));
     return ok;
