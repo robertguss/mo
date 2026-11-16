@@ -5,14 +5,18 @@ import http.server
 import json
 import pathlib
 import select
+import shutil
 import socket
 import socketserver
+import subprocess
 import sys
 import tempfile
 import threading
 
-from check_upgrade_live import (Service, V1, V2, V3, TOKEN, UPGRADE, push, write,
-                                digests, assert_no_secrets)
+from check_upgrade_live import (Service, V1, V2, V3, TOKEN, UPGRADE, ENV, push, review,
+                                write, digests, assert_no_secrets)
+
+RELAY = pathlib.Path(__file__).resolve().parent.parent / "docs/ops/live-relay.py"
 
 
 class Relay(socketserver.ThreadingTCPServer):
@@ -152,5 +156,54 @@ def run(binary):
     print("remote upgrades: direct/proxy/forward reports match; credentials and rate retry passed")
 
 
+def tree(folder):
+    return {str(path.relative_to(folder)): path.read_bytes()
+            for path in sorted(pathlib.Path(folder).rglob("*")) if path.is_file()}
+
+
+def tunnel(binary):
+    binary = str(pathlib.Path(binary).resolve())
+    with tempfile.TemporaryDirectory() as root:
+        old, new = write(root, "old", V1), write(root, "new", V2)
+        query = write(root, "query", V1 + "\nfn total(state: Int) : Int\n  state\nend\n")
+        base, _ = digests(binary, old, new)
+        data = pathlib.Path(root) / "data"
+        data.mkdir()
+        service = Service(binary, data, old, setting="everything")
+        relay = subprocess.Popen([sys.executable, str(RELAY), "0",
+                                  f"http://127.0.0.1:{service.port}"],
+                                 stdout=subprocess.PIPE, text=True)
+        try:
+            forwarded = int(relay.stdout.readline().rsplit(":", 1)[1].split("/")[0])
+            assert service.value("add", amount="5") == "5"
+            held = push(binary, service, new, base, url=f"http://127.0.0.1:{forwarded}/mcp")
+            assert held.returncode == 3 and held.stdout.startswith(b"held "), held
+            seen = []
+            for port in (service.port, forwarded):
+                out, state = pathlib.Path(root) / "review", pathlib.Path(root) / "state.moex"
+                listed = review(binary, port, "--out", str(out))
+                assert listed.returncode == 0, listed
+                fetched = subprocess.run([binary, "fetch", f"http://127.0.0.1:{port}/mcp",
+                                          "--export", "state", "--out", str(state),
+                                          "--token-env", "TOKEN"],
+                                         capture_output=True, timeout=300, env=ENV)
+                assert fetched.returncode == 0, fetched
+                queried = subprocess.run([binary, "query", str(query), "total", "--export",
+                                          str(state)], capture_output=True, timeout=60)
+                assert queried.stdout == b"5\n", queried
+                seen.append((listed.stdout, tree(out), queried.stdout))
+                shutil.rmtree(out)
+                state.unlink()
+            assert seen[0] == seen[1], "tunnel changed a review listing or an export"
+            assert seen[0][0].rstrip().endswith(b"review " + held.stdout.split()[1]), seen[0][0]
+            assert_no_secrets(held.stdout, held.stderr, seen[0][0])
+        finally:
+            relay.kill()
+            relay.wait()
+            service.stop()
+    print("relay: push, review listing, held source and state export match direct")
+
+
 if __name__ == "__main__":
     run(sys.argv[1])
+    tunnel(sys.argv[1])

@@ -482,8 +482,13 @@ version. At about 20 seconds a run that is well under an hour, run by hand.
 ## Access in the live stage
 
 A service behind the door runs on its own host. Agents reach it only through its
-endpoint, over an SSH account that may forward the service port and do nothing
-else. They have no shell on the host and no access to its data folder.
+endpoint: the host's public HTTPS route, which forwards the service port and no
+other, and a loopback relay on the agent's side, since `mo push`, `mo fetch` and
+`mo review` speak plain HTTP to loopback only. No key an agent holds opens a
+shell on the host. An SSH account limited to forwarding was the first design,
+and exe.dev cannot provide one: its SSH proxy logs into the VM with its own key,
+so a restriction on the agent's key never reaches the VM's sshd. Agents have no
+shell on the host and no access to its data folder.
 Restarting the service on a new program, and starting it in a fresh data
 folder, are Robert's alone. Through the endpoint an agent can read the live
 views, push, read the door's state, fetch, and replay or query a fetched export

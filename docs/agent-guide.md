@@ -267,6 +267,12 @@ Robert approves a program's intent items one by one; an agent cannot. The approv
 
 A held upgrade waits for Robert. `mo-review-pending` shows its review id and its intent difference: each approved item it lacks, each approved item whose function no tool, timer or state initializer calls any more, marked `not reached`, beside the items it adds on the same owner. `mo review ... --yes ID` compiles and checks it again, activates it between two messages, approves the edited and added items it showed and drops the approval of each item it showed `not reached`; `--no ID` drops it and leaves the old program serving. `mo review ... --out DIR` prints the intent difference, writes the held source tree to `DIR/pending` and the active one to `DIR/active`, and prints `review ID` last; it offers no id when the held upgrade changes while it reads or the source does not hash to the digests the id binds. An ID that is not the held upgrade's is E1435, which names the current one, and nothing held is E1436. A later held push replaces the earlier one, and any activation, including a checked restart, or approval makes it stale, so its ID answers nothing; a setting change leaves it held, and a restart without `--upgrade` keeps it. `mo-upgrade-status`, under the service token and the upgrade credential, shows the held upgrade's id and state and the latest decisions, without source.
 
+## Work on a service behind the door
+
+A service behind the door runs on its own host, and you reach it only through its endpoint, over a tunnel that reaches its port and nothing else. You have no shell on the host and no access to its data folder. Through the tunnel you can call its tools and operator views, push with `mo push`, read the door's state with `mo-upgrade-status`, fetch an export with `mo fetch`, and replay or query a fetched export with the same `mo` build and the deployed source. `mo history`, replay and query on the data folder, the journal's failure reports, and anything after the service stops need the host, so they need Robert, and so do a restart on a new program and a start in a fresh data folder. When the service stops, tell Robert; you cannot restart it. Never ask for the approval credential or keep it in your shell or client configuration.
+
+The lock does not protect against a shell on the service's host or write access to its data folder, which carry approval authority as well as upgrade authority. Nor does it protect against a memory-safety defect in the compiler or the VM that pushed source can reach, a change to a library module or the toolchain that changes what an approved item means while its digest stays the same, or a defect outside the generated sequences the door checks on every push. Tests are not approved intent.
+
 ## Work in this loop
 
 Follow these steps.
@@ -297,7 +303,7 @@ Section 12 shows the form of a spec. When the task is a program, read section 11
 ### Fetch a private state artifact on the service host
 
 Run `mo fetch http://127.0.0.1:8080/mcp --export state --out state.moex --token-env SERVICE_TOKEN`
-on the host running the persistent service. The destination must not exist (including a symlink).
+on the host running the persistent service, or through a tunnel to its port. The destination must not exist (including a symlink).
 The command accepts plain HTTP loopback URLs only, ignores proxies and refuses redirects.
 It verifies one complete export generation and publishes a mode-0600 artifact. A failed or
 interrupted attempt removes its temporary file; retry creates a new generation. The largest
