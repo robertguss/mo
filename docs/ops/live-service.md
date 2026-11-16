@@ -33,12 +33,30 @@ Restarting the service on a new program, starting it in a fresh data folder,
 `mo history`, replay and query on the data folder, and the journal are Robert's.
 The agent guide's "Work on a service behind the door" states the same rule.
 
-## Before the host exists
+## The deployment
 
-The development VM's exe.dev key must not open a shell on the host. Robert
-scopes it to that VM from his own machine, by removing it with
-`ssh exe.dev ssh-key remove` and adding the same public key back with
-`ssh exe.dev ssh-key add --vm=DEVELOPMENT_VM`.
+The host is `mo-queue`, serving at `https://mo-queue.exe.xyz/mcp` since
+2026-11-16 from `main` at `816a647322759a1bdb164f42000fe5e053a2f624`. Its `mo`
+has sha256 `ce1018cdeab28fecd9d968c9a874ba57530a4b6ba3cbea35cf81ae4a6da2c48f`.
+
+An agent built it with the development VM's exe.dev key, which opens a shell on
+every VM of Robert's account. The development VM is not on that account, so the
+key cannot be limited to it with `ssh-key add --vm=`. Once the host runs, Robert
+removes the key from his own machine with `ssh exe.dev ssh-key remove NAME`,
+then replaces the approval credential on the host before any approval exists:
+
+```sh
+sudo sh -c 'umask 077; python3 -c "import secrets; print(\"QUEUE_APPROVAL=\" + secrets.token_urlsafe(32))" > /etc/task-queue/approval'
+sudo systemctl restart task-queue
+```
+
+The credential written at install time was read once onto the development VM,
+into one `mo review` process, to check the review listing through the relay; no
+approval was ever made with it.
+
+The VM image also runs exe.dev's Shelley coding agent at
+`https://mo-queue.shelley.exe.xyz`, behind Robert's exe.dev login. It has a
+shell on the host, so no agent is ever pointed at it.
 
 ## Install
 
@@ -96,6 +114,11 @@ mo push NEW/main.mo --url http://127.0.0.1:8000/mcp --base DIGEST \
 mo fetch http://127.0.0.1:8000/mcp --export state --out state.moex --token-env QUEUE_TOKEN
 ```
 
+An export records the exact `mo` executable that wrote it, and the build bakes
+in its own path, so replay and query need the deployed build at the deployed
+path. The development VM builds it with the Install's step 2 and the deployed
+`SHA`; gcc 13.3.0 on both VMs gives the same sha256.
+
 A held push exits 3 and prints `held ID`. The agent follows it with
 `mo-upgrade-status`, never by pushing again, and tells Robert the id.
 
@@ -128,10 +151,10 @@ Each check is run once on the deployed host and its result recorded here.
 | Check | Result |
 | --- | --- |
 | The development VM's key cannot open a shell on the host: `ssh $HOST true` from it is refused. | not yet run |
-| A port other than the service's is not reachable through the public route. | not yet run |
-| The development VM's shells and client configuration hold no `QUEUE_APPROVAL`. | not yet run |
-| `mo fetch` through the relay returns the same state as a fetch on the host. | not yet run |
-| The review listing through the relay matches the one on the host. | not yet run |
+| A port other than the service's is not reachable through the public route. | 2026-11-16: a server on the host's port 3000 serving a marker page; `https://mo-queue.exe.xyz:3000/` from the development VM answered 307 to exe.dev's login, without the marker. Port 8000 answered 401. |
+| The development VM's shells and client configuration hold no `QUEUE_APPROVAL`. | 2026-11-16: `~/.config/task-queue/env.sh` holds `QUEUE_TOKEN` and `QUEUE_UPGRADE` only; no shell variable, `~/.config`, `~/.zshenv` or `~/.claude.json` names it. |
+| `mo fetch` through the relay returns the same state as a fetch on the host. | 2026-11-16: after one job was submitted, `mo query` with a `payloads` function returned the same list over both exports. The query needed the deployed build (above). |
+| The review listing through the relay matches the one on the host. | 2026-11-16: `mo review --items` gave the same 342 lines both ways, so exe.dev's proxy passes `Mo-Approval-Authorization`. The host cannot reach its own public route, so this ran from the development VM. |
 | A failure fetched through the relay replays off the host with the same `mo` build and the deployed source. | not yet run |
 | A push from the agents' side is held on the host, and `mo-upgrade-status` shows it pending. | not yet run |
 | One held push is answered by Robert on the host, and the decision shows in `mo history`. | not yet run |
