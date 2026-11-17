@@ -2,7 +2,7 @@
 
 The evidence behind [Mo talks to the outside world](../../../docs/design/outside-world.md). Each
 prototype is throwaway. None changes a file under `src/` in the repository, and each `run.sh`
-builds what it needs from a clean export of 2b6335c3 or from its own folder.
+builds what it needs from a clean export of a named commit or from its own folder.
 
 Host for every number below, unless a line says otherwise: an exe.dev VM, 8 vCPUs of an AMD EPYC
 9554P, 31 GiB, Ubuntu 24.04.4, Linux 6.12.113, gcc 13.3.0.
@@ -13,13 +13,24 @@ Host for every number below, unless a line says otherwise: an exe.dev VM, 8 vCPU
 
 - The bar was committed before any measurement: 2.0 s of wall time and 256 MiB of heap for one
   `mo run` that fetches about 1 MiB of JSON and parses it, on the debug build.
-- **The wall-time bar is missed: 5.61 s with `Content-Length` and 5.83 s chunked. The heap bar is
-  met: 37.0 MiB.**
-- The miss is `Json.parse`, which exists today: 109,677,820 of 109,685,165 instructions. HTTP
-  parsed in Mo adds 7,345 instructions, or 95,999 when the response is chunked.
+- **The first measurement missed the wall-time bar: 5.61 s with `Content-Length` and 5.83 s
+  chunked.** The miss was `Json.parse`: 109,677,820 of 109,685,165 instructions.
+- **With the faster parser both bars are met: 1.74 s and 1.78 s, and 41.7 MiB of heap.** HTTP
+  parsed in Mo adds 7,392 instructions, or about 97,000 when the response is chunked.
 - The prototype adds two `Bytes` operations, `slice` and `join`. Without them the same fetch
-  takes 14.04 s.
-- A 100 KiB response takes 0.63 s. An optimized build takes 2.16 s for 1 MiB.
+  takes 8.88 s.
+- A 100 KiB response takes 0.27 s. An optimized build takes 0.82 s for 1 MiB.
+
+## A faster `Json.parse`
+
+[json-parse/](json-parse/README.md): `bash learnability/phase7/preflight/json-parse/run.sh`
+
+- `Json.parse` in `lib/json.mo` reads a string with no escape and no control character as one
+  piece. It is still Mo, with no new primitive.
+- The 1 MiB body takes 28,250,591 instructions, down from 109,677,820.
+- The old parser and the new one print the same line for each of 8,111 documents, most of them
+  malformed.
+- A document made mostly of numbers, or of strings with escapes, gains little.
 
 ## Confinement of a child
 
@@ -52,4 +63,4 @@ Host for every number below, unless a line says otherwise: an exe.dev VM, 8 vCPU
 - TLS of any kind.
 - SQLite through a capability. `src/host/store.c` already runs the same SQLite build for the
   service store.
-- A JSON parser that reads text through primitives.
+- A JSON parser that reads text through a new primitive.

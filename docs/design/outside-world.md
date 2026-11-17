@@ -10,8 +10,9 @@ in `lib/`, written in Mo on top of the network capability. A program can look th
 response without declaring types first. The children that `mo serve` starts to compile and check
 pushed source run under operating-system confinement.
 
-One measurement missed the bar that was written down before it. It is the first decision in the
-list, and the level of the network capability is not fixed until Robert has made it.
+The first measurement missed the bar that was written down before it, because of `Json.parse`.
+Robert asked for a faster parser in this step. The parser in `lib/json.mo` was reworked in Mo,
+and the second measurement meets the bar. It is the first decision in the list.
 
 ## A spike in Mo
 
@@ -223,8 +224,8 @@ needs two more, and the prototype measured them:
 | `bytes.slice(from, to)` | `fn(Bytes, Int, Int) : Bytes` | The bytes from index `from` up to, not including, `to`. An index past the end is the end, as with `List.take`. A negative index is a bug. |
 | `Bytes.join(parts)` | `fn(List(Bytes)) : Bytes` | All the parts, in order, as one value. |
 
-Without them the same fetch copies each byte into a list. It takes 2.5 to 2.8 times the
-instructions and up to 2.3 times the heap.
+Without them the same fetch copies each byte into a list. It takes 6.8 to 8.1 times the
+instructions and up to 2.0 times the heap.
 
 Both are primitives: rows in `src/base/prims.def`, rows in `docs/design/library.md`, and Lean
 counterparts with their safety proofs. They go at the end of `prims.def`, because primitive
@@ -478,32 +479,31 @@ about 1 MiB of JSON over a connection, parses HTTP in Mo and calls `Json.parse`,
 
 | Figure | Bar | `Content-Length` | Chunked | Result |
 | --- | --- | --- | --- | --- |
-| Wall time | 2.0 s | 5.61 s | 5.83 s | **Missed** |
-| Heap peak | 256 MiB | 37.0 MiB | 37.0 MiB | Met |
+| Wall time, first measurement | 2.0 s | 5.61 s | 5.83 s | **Missed** |
+| Wall time, with the faster parser | 2.0 s | 1.74 s | 1.78 s | Met |
+| Heap peak, with the faster parser | 256 MiB | 41.7 MiB | 41.7 MiB | Met |
 
-The miss is not caused by the choice the bar was written to test. `Json.parse` alone, on the
-same body read from a file, takes 5.36 seconds and 109,677,820 instructions. The whole fetch
-takes 109,685,165. HTTP parsed in Mo is the difference: 7,345 instructions, or 95,999 when the
-response is chunked. That is under 0.1% of the instructions.
+The miss was not caused by the choice the bar was written to test. In the first measurement
+`Json.parse` alone, on the same body read from a file, took 5.36 seconds and 109,677,820
+instructions, and the whole fetch took 109,685,165. `Json.parse` turned the text into a
+`List(Char)` and read one cell at a time, at about 105 instructions for each byte.
 
-`Json.parse` turns the text into a `List(Char)` and reads one cell at a time, at about 105
-instructions for each byte. It costs the same for a file as for a response, and it costs that
-today.
+The bar file says a miss stops the design step until Robert chooses. He asked for a faster
+parser in this step. `Json.parse` now cuts the text at its quotes with `text.split`, and reads
+a string with no escape and no control character as one piece. Every other string takes the
+walk it took before, so every result and every error is the same. The parser is still Mo, with
+no new primitive. It takes 28,250,591 instructions for the same body, about 27 for each byte.
 
-A 100 KiB response takes 0.63 seconds. An optimized build takes 2.16 seconds for 1 MiB, which
-also misses.
+HTTP parsed in Mo adds 7,392 instructions to that, or about 97,000 when the response is
+chunked. That is under 0.4% of the instructions.
 
-The bar file says a miss stops the design step until Robert chooses. The choices:
+A 100 KiB response takes 0.27 seconds. An optimized build takes 0.82 seconds for 1 MiB.
 
-1. **Approve the connection level, and record the parser's speed as a known cost.** The spike
-   runs with it. JSON parsing becomes the first measured workload of the phase about speed,
-   which was waiting for a real program to measure. This is the recommendation: the level costs
-   under 0.1% of the instructions, the usual response is inside a second, and a parser tuned now is tuned without
-   the programs that would show what matters.
-2. **Rework the parser in this phase**, on primitives that scan `Text` without a list. How much
-   that gains is not measured.
-3. **Move JSON parsing into C**, with a fuzz target. It would meet the bar. It is new C that
-   reads network bytes where Mo can do the job, which the phase's safety rule is against.
+The gain is for strings with no escape. A document made mostly of numbers, or of strings with
+escapes, parses about as slowly as before: 8.1 and 8.9 seconds for documents of 1.2 and 1.7 MB
+([json-parse/](../../learnability/phase7/preflight/json-parse/README.md)). Those wait for the
+phase about speed. A parser in C would be new C that reads network bytes where Mo can do the
+job, which the phase's safety rule is against.
 
 ## Where a capability is written down
 
@@ -597,7 +597,7 @@ and not before:
   name.
 - Lookup that gives a decimal or a float by path.
 - Confinement of `mo serve` itself and of `mo run`.
-- A faster JSON parser, unless Robert chooses otherwise.
+- A faster parse of a document made mostly of numbers or of strings with escapes.
 
 ## Decisions for Robert
 
@@ -606,8 +606,8 @@ the plan left open. The rest came up in this step. Each needs his yes or a chang
 
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
-| 1 | The 1 MiB fetch missed the wall-time bar, because of `Json.parse`. | Approve the connection level, record the parser's speed, and make it the first workload of the phase about speed. | Rework the parser now, or move it into C. |
-| 2 | The level of the network capability. | A connection, with HTTP in Mo. The level itself costs under 0.1% of the instructions. | An HTTP request as the operation, with HTTP parsed in C. |
+| 1 | The 1 MiB fetch first missed the wall-time bar, because of `Json.parse`. Robert asked for a faster parser in this step. | Accept the reworked parser in `lib/json.mo`, which meets the bar in Mo. Documents of numbers or of strings with escapes stay slow, and become the first workload of the phase about speed. | A primitive in C that scans text, for those documents, in this phase. |
+| 2 | The level of the network capability. | A connection, with HTTP in Mo. The level itself costs under 0.4% of the instructions. | An HTTP request as the operation, with HTTP parsed in C. |
 | 3 | The fake's level, and how a test builds it. | The same level as the capability. `Http.replies` builds it from requests and responses, and the match is exact. | A fake that matches on method and URL only, which needs HTTP parsing outside Mo. |
 | 4 | Lean's model. | Neither capability is modelled. Runs that reach one leave the comparison. | Model the fakes in Lean, as `Files` is. |
 | 5 | What a program's database may do. | What SQLite allows by default, except opening any other file. | The service store's stricter rules. |

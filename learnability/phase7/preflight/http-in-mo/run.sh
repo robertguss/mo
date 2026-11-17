@@ -3,11 +3,11 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
-base=2b6335c3
+base=$(git -C "$repo" rev-parse --short=8 "${BASE:-2b6335c3}")
 port=${PORT:-18123}
 runs=${RUNS:-5}
 work=$(mktemp -d)
-out="$here/out"
+out="$here/${OUT:-out}"
 mkdir -p "$out"
 
 git -C "$repo" archive "$base" | tar -x -C "$work"

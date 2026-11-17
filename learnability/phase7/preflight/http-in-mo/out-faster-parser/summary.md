@@ -1,0 +1,22 @@
+| Build | Variant | Case | Runs | Exits | Wall, median (min to max) | Instructions | Heap peak | Max RSS |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| debug | proposed | fixed-1048576 | 5 | 0 | 1.74 s (1.71 to 1.75) | 28,257,983 | 41.7 MiB | 62 MiB |
+| debug | proposed | chunked-1048576 | 5 | 0 | 1.78 s (1.76 to 1.85) | 28,347,913 | 41.7 MiB | 62 MiB |
+| debug | today | fixed-1048576 | 5 | 0 | 8.88 s (8.78 to 9.12) | 192,954,774 | 60.0 MiB | 82 MiB |
+| debug | today | chunked-1048576 | 5 | 0 | 10.64 s (10.54 to 11.39) | 228,736,667 | 84.0 MiB | 98 MiB |
+| debug | parse-only | file-1048576 | 5 | 0 | 1.70 s (1.70 to 1.71) | 28,250,591 | 41.7 MiB | 61 MiB |
+| debug | proposed | fixed-102400 | 5 | 0 | 0.27 s (0.24 to 0.29) | 2,758,514 | 4.8 MiB | 23 MiB |
+| debug | proposed | chunked-102400 | 5 | 0 | 0.28 s (0.27 to 0.31) | 2,768,608 | 4.8 MiB | 23 MiB |
+| debug | today | fixed-102400 | 5 | 0 | 0.95 s (0.94 to 0.98) | 18,878,564 | 7.5 MiB | 26 MiB |
+| debug | today | chunked-102400 | 5 | 0 | 1.12 s (1.12 to 1.16) | 22,379,635 | 10.5 MiB | 27 MiB |
+| debug | parse-only | file-102400 | 5 | 0 | 0.25 s (0.24 to 0.28) | 2,752,040 | 4.8 MiB | 22 MiB |
+| optimized | proposed | fixed-1048576 | 5 | 0 | 0.82 s (0.79 to 0.82) | 28,257,983 | 41.7 MiB | 61 MiB |
+| optimized | proposed | chunked-1048576 | 5 | 0 | 0.80 s (0.77 to 0.82) | 28,347,391 | 41.7 MiB | 61 MiB |
+| optimized | today | fixed-1048576 | 5 | 0 | 3.49 s (3.35 to 3.91) | 192,954,774 | 60.0 MiB | 81 MiB |
+| optimized | today | chunked-1048576 | 5 | 0 | 4.25 s (4.13 to 4.33) | 228,736,746 | 84.0 MiB | 97 MiB |
+| optimized | parse-only | file-1048576 | 5 | 0 | 0.75 s (0.73 to 0.79) | 28,250,591 | 41.7 MiB | 60 MiB |
+| optimized | proposed | fixed-102400 | 5 | 0 | 0.17 s (0.15 to 0.21) | 2,758,514 | 4.8 MiB | 22 MiB |
+| optimized | proposed | chunked-102400 | 5 | 0 | 0.16 s (0.14 to 0.18) | 2,768,260 | 4.8 MiB | 22 MiB |
+| optimized | today | fixed-102400 | 5 | 0 | 0.43 s (0.40 to 0.51) | 18,878,564 | 7.5 MiB | 25 MiB |
+| optimized | today | chunked-102400 | 5 | 0 | 0.49 s (0.48 to 0.63) | 22,379,635 | 10.5 MiB | 26 MiB |
+| optimized | parse-only | file-102400 | 5 | 0 | 0.17 s (0.14 to 0.20) | 2,752,040 | 4.8 MiB | 21 MiB |
