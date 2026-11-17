@@ -547,6 +547,8 @@ Waits on: PR5, needed before this group can start, because the live service runs
 
 Waits on: PR6, and on the live service having run for the minimum of real use Robert set.
 
+Changed by Robert on 2026-11-17: the minimum of real use no longer gates this group. Steps 1, 2 and 4 below are replaced by automated evidence and a verdict of "not yet judged", as `docs/ops/live-service.md` records under Robert's choices; the setting stays `everything`, and real use through the door is the open work the run record names.
+
 ### U7. Changes through the door, the planted change, Robert's verdict and the release
 
 - **Goal:** Agents change the live service through the door, Robert gives his verdict from the record, and v0.3 is released.
