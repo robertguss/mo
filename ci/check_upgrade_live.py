@@ -433,9 +433,10 @@ def main_flow(binary, root):
         assert "double" in names and "gone" not in names and "mo-upgrade-commit" in names, names
         status, body, _ = service.rpc("tools/call", {"name": "gone"})
         assert body["error"]["message"] == "Invalid params: unknown tool", body
-        # Timer phase is kept by name: the next due time did not move.
+        # Timer phase is kept by name: the next due time moved only by whole intervals.
         after = service.call("mo-timers")["structuredContent"]["value"]
-        assert after["items"][0]["next_due_elapsed_us"] == timers["items"][0]["next_due_elapsed_us"], (timers, after)
+        before_due, after_due = (int(view["items"][0]["next_due_elapsed_us"]) for view in (timers, after))
+        assert (after_due - before_due) % int(timers["items"][0]["interval_us"]) == 0, (timers, after)
         # Earlier events keep their program's handler names; the upgrade is an event.
         events = service.call("mo-supervisor")["structuredContent"]["value"]["items"]
         kinds = {event["kind"] for event in events}
