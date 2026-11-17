@@ -10,8 +10,8 @@
  * layout lookup both use. The three passes that drive them are not proved (cbmc/README.md).
  *
  * Every file here is one the validator accepts: each index the verifier follows is inside its
- * table. The tables are small (a few types, functions, layouts, constants and globals, and short
- * code), and every value in them is any value the validator allows. */
+ * table. The tables are small (a few types, functions, layouts, constants, globals and services,
+ * and short code), and every value in them is any value the validator allows. */
 #include "bytecode/verify.c"
 #include "bytecode/verify-instruction.c"
 
@@ -165,7 +165,7 @@ static struct mo_type_field *any_fields(uint32_t n) {
  * them (a pass that did would fail its proof on the null table). */
 static void any_type(struct mo_type *t, uint32_t functions, bool contents) {
     *t = (struct mo_type){.kind = (enum mo_type_kind)any_count(MO_TYPE_CAPABILITY),
-                          .capability = (enum mo_capability)any_count(MO_CAP_RANDOM),
+                          .capability = (enum mo_capability)any_count(MO_CAP_SIMULATION),
                           .name = "type",
                           .defined = nondet_bool(),
                           .reference = nondet_bool(),
@@ -229,6 +229,22 @@ static void any_function(struct mo_bytecode_function *fn, uint32_t index,
     fn->code = NULL;
 }
 
+static struct mo_bytecode_service *any_services(uint32_t n) {
+    struct mo_bytecode_service *services = TABLE(struct mo_bytecode_service, ENTRIES, n);
+    for (uint32_t i = 0; i < n; i++) {
+        services[i].tool_count = any_count(ENTRIES);
+        struct mo_bytecode_service_tool *tools =
+            TABLE(struct mo_bytecode_service_tool, ENTRIES, services[i].tool_count);
+        for (uint32_t j = 0; j < services[i].tool_count; j++) {
+            tools[j].argument_count = any_count(ENTRIES);
+            tools[j].argument_types = any_indices(tools[j].argument_count, TYPES);
+            tools[j].result_type = any_below(TYPES);
+        }
+        services[i].tools = tools;
+    }
+    return services;
+}
+
 /* A file the validator accepted, the verifier's tables over it, and the function verified. */
 struct world {
     struct mo_bytecode *file;
@@ -240,7 +256,7 @@ struct world {
     uint32_t index;
 };
 
-/* Any world; contents says whether its types and layouts have their tables. */
+/* Any world; contents says whether its types, layouts and services have their tables. */
 static struct world any_world(bool contents) {
     struct world w;
     struct mo_bytecode *f = NEW(struct mo_bytecode, 1);
@@ -305,6 +321,8 @@ static struct world any_world(bool contents) {
         globals[i].type = any_below(TYPES);
     }
     f->globals = globals;
+    f->service_count = any_count(ENTRIES);
+    f->services = contents ? any_services(f->service_count) : NULL;
 
     w.file = f;
     w.types = NEW(struct mo_types, 1);
