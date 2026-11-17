@@ -22,6 +22,20 @@ Recorded on 2026-11-15.
   the VM with its own key, so no restriction on an agent's key reaches the VM's
   sshd, and any key an agent held would open a shell.
 
+Changed on 2026-11-17.
+
+- The minimum of real use no longer gates the phase. Fourteen days without
+  other development costs more than the record is worth now. Phase 6 closes on
+  automated evidence instead: the door's proof run, the kill loop, the
+  simulation and review checks, the models, the CBMC proofs and long fuzz runs,
+  recorded in [the run record](../status/phase6-run.md).
+- That evidence shows the door's mechanism works. It does not show how Robert
+  judges real changes, so his verdict on the setting is "not yet judged", the
+  setting stays `everything`, and real use through the door is open work.
+- The host stays up. Its first approvals and the access checks marked "not yet
+  run" below wait until that work resumes; until then the development VM's key
+  is still on the account and no change is pushed at the host.
+
 ## Who can do what
 
 | Who | Reaches | Holds |
