@@ -50,6 +50,12 @@ struct Halt
   problem: JsonProblem
 end
 
+struct Source
+  chars: List(Char)
+  closed: List(Text)
+  specials: List(Text)
+end
+
 ## The JSON value the text holds, with nothing but white space around it.
 fn parse(text: Text) : Result(Json, JsonError)
   examples
@@ -66,11 +72,31 @@ fn parse(text: Text) : Result(Json, JsonError)
   end
 
   chars = text.chars
-  document(chars).map_error(fn(halt) located(chars, halt) end)
+  parts = text.split("\"")
+  source = Source(chars: chars, closed: parts.take(parts.size - 1), specials: specials(text))
+  document(source).map_error(fn(halt) located(chars, halt) end)
 end
 
-fn document(chars: List(Char)) : Result(Json, Halt)
-  (value, after) = try value_at(chars, skip_space(chars, 0), 0)
+fn specials(text: Text) : List(Text)
+  var found = []
+  for code in 0..32
+    case code.to_char
+      Some(c):
+        if text.contains?(c.to_text)
+          found = found.append(c.to_text)
+        end
+      None: stop "a code below 32 is a character"
+    end
+  end
+  if text.contains?("\\")
+    found = found.append("\\")
+  end
+  found
+end
+
+fn document(source: Source) : Result(Json, Halt)
+  chars = source.chars
+  (value, after, _) = try value_at(source, skip_space(chars, 0), 0, 0)
   rest = skip_space(chars, after)
   case chars.get(rest)
     Some(c): Error(Halt(at: rest, problem: Unexpected(found: c)))
@@ -108,7 +134,15 @@ fn unexpected(chars: List(Char), at: Int) : Halt
 end
 
 ## JSON's white space: space, tab, line feed and carriage return.
-fn skip_space(chars: List(Char), from: Int) : Int
+fn skip_space(chars: List(Char), at: Int) : Int
+  if (chars.get(at) or 'x').code > 32
+    at
+  else
+    skip_spaces(chars, at)
+  end
+end
+
+fn skip_spaces(chars: List(Char), from: Int) : Int
   var at = from
   while true
     case chars.get(at)
@@ -120,46 +154,84 @@ fn skip_space(chars: List(Char), from: Int) : Int
 end
 
 ## The value starting at a character that isn't white space, inside `depth` arrays and
-## objects, and the position after it. Arrays and objects nest at most 128 deep (reference 14).
-fn value_at(chars: List(Char), at: Int, depth: Int) : Result((Json, Int), Halt)
+## objects, the position after it, and the quotes up to there. `seen` is the number of quotes
+## before `at`. Arrays and objects nest at most 128 deep (reference 14).
+fn value_at(source: Source, at: Int, seen: Int, depth: Int) : Result((Json, Int, Int), Halt)
+  if source.chars.get(at) == Some('"')
+    (text, after, passed) = try string_at(source, at, seen)
+    Ok((String(text), after, passed))
+  else
+    unquoted_value_at(source, at, seen, depth)
+  end
+end
+
+fn unquoted_value_at(source: Source, at: Int, seen: Int, depth: Int) : Result(
+  (Json, Int, Int),
+  Halt
+)
+  chars = source.chars
   case chars.get(at)
     None: Error(ended(chars))
-    Some('n'): word_at(chars, at, "null", Null)
-    Some('t'): word_at(chars, at, "true", Boolean(true))
-    Some('f'): word_at(chars, at, "false", Boolean(false))
-    Some('"'):
-      (text, after) = try string_at(chars, at)
-      Ok((String(text), after))
+    Some('n'): word_at(chars, at, seen, "null", Null)
+    Some('t'): word_at(chars, at, seen, "true", Boolean(true))
+    Some('f'): word_at(chars, at, seen, "false", Boolean(false))
     Some('['):
       return Error(Halt(at: at, problem: TooDeep)) if depth >= 128
-      array_at(chars, at, depth + 1)
+      array_at(source, at, seen, depth + 1)
     Some('{'):
       return Error(Halt(at: at, problem: TooDeep)) if depth >= 128
-      object_at(chars, at, depth + 1)
-    Some(c) if c == '-' or c.ascii_digit?: number_at(chars, at)
+      object_at(source, at, seen, depth + 1)
+    Some(c) if c == '-' or c.ascii_digit?: number_at(chars, at, seen)
     Some(c): Error(Halt(at: at, problem: Unexpected(found: c)))
   end
 end
 
-fn word_at(chars: List(Char), at: Int, word: Text, value: Json) : Result((Json, Int), Halt)
+fn word_at(chars: List(Char), at: Int, seen: Int, word: Text, value: Json) : Result(
+  (Json, Int, Int),
+  Halt
+)
   var next = at
   for wanted in word.chars
     return Error(unexpected(chars, next)) if chars.get(next) != Some(wanted)
     next += 1
   end
-  Ok((value, next))
+  Ok((value, next, seen))
 end
 
-## A string's text, from its opening quote at `quote`, and the position after its closing quote.
-fn string_at(chars: List(Char), quote: Int) : Result((Text, Int), Halt)
+## A string's text, from its opening quote at `quote`, the position after its closing quote, and
+## the quotes up to there. The text between two quotes is the string when nothing in it is
+## special.
+fn string_at(source: Source, quote: Int, seen: Int) : Result((Text, Int, Int), Halt)
+  case source.closed.get(seen + 1)
+    Some(part) if source.specials.empty? or plain?(part, source.specials): Ok((
+      part,
+      quote + part.char_count + 2,
+      seen + 2
+    ))
+    Some(_) | None: walked_string_at(source.chars, quote, seen)
+  end
+end
+
+fn plain?(part: Text, specials: List(Text)) : Bool
+  for special in specials
+    return false if part.contains?(special)
+  end
+  true
+end
+
+fn walked_string_at(chars: List(Char), quote: Int, seen: Int) : Result((Text, Int, Int), Halt)
   var read = []
   var at = quote + 1
+  var passed = seen + 1
   while true
     c = try chars.get(at).or_fail(ended(chars))
     if c == '"'
-      return Ok((Text.from_chars(read), at + 1))
+      return Ok((Text.from_chars(read), at + 1, passed + 1))
     else if c == '\\'
       (plain, after) = try escape_at(chars, at)
+      if plain == '"' and after == at + 2
+        passed += 1
+      end
       read = read.append(plain)
       at = after
     else if c.code < 32
@@ -169,7 +241,7 @@ fn string_at(chars: List(Char), quote: Int) : Result((Text, Int), Halt)
       at += 1
     end
   end
-  Ok((Text.from_chars(read), at))
+  Ok((Text.from_chars(read), at, passed))
 end
 
 ## The character an escape at `at` stands for, and the position after it. A `\u` escape of a
@@ -228,7 +300,7 @@ end
 
 ## A number: an optional minus, an integer part with no leading zero, then an optional fraction
 ## and exponent.
-fn number_at(chars: List(Char), start: Int) : Result((Json, Int), Halt)
+fn number_at(chars: List(Char), start: Int, seen: Int) : Result((Json, Int, Int), Halt)
   var at = start
   if chars.get(at) == Some('-')
     at += 1
@@ -249,7 +321,7 @@ fn number_at(chars: List(Char), start: Int) : Result((Json, Int), Halt)
     at = try digits_at(chars, at)
   end
   return Error(Halt(at: at, problem: BadNumber)) if digit_at?(chars, at)
-  Ok((Number(JsonNumber(text: slice(chars, start, at))), at))
+  Ok((Number(JsonNumber(text: slice(chars, start, at))), at, seen))
 end
 
 ## The characters from `start` up to `after` as a text. Unlike `drop`, it doesn't copy the rest of
@@ -283,44 +355,50 @@ fn digit_at?(chars: List(Char), at: Int) : Bool
 end
 
 ## The rest of an array, from its opening bracket.
-fn array_at(chars: List(Char), bracket: Int, depth: Int) : Result((Json, Int), Halt)
+fn array_at(source: Source, bracket: Int, quotes: Int, depth: Int) : Result((Json, Int, Int), Halt)
+  chars = source.chars
   var items = []
   var at = skip_space(chars, bracket + 1)
-  return Ok((Array(items), at + 1)) if chars.get(at) == Some(']')
+  var seen = quotes
+  return Ok((Array(items), at + 1, seen)) if chars.get(at) == Some(']')
   while true
-    (item, after) = try value_at(chars, at, depth)
+    (item, after, passed) = try value_at(source, at, seen, depth)
     items = items.append(item)
+    seen = passed
     next = skip_space(chars, after)
     case chars.get(next)
       Some(','): at = skip_space(chars, next + 1)
-      Some(']'): return Ok((Array(items), next + 1))
+      Some(']'): return Ok((Array(items), next + 1, seen))
       Some(_) | None: return Error(unexpected(chars, next))
     end
   end
-  Ok((Array(items), at))
+  Ok((Array(items), at, seen))
 end
 
 ## The rest of an object, from its opening brace. A key given twice is an error.
-fn object_at(chars: List(Char), brace: Int, depth: Int) : Result((Json, Int), Halt)
+fn object_at(source: Source, brace: Int, quotes: Int, depth: Int) : Result((Json, Int, Int), Halt)
+  chars = source.chars
   var fields = {}
   var at = skip_space(chars, brace + 1)
-  return Ok((Object(fields), at + 1)) if chars.get(at) == Some('}')
+  var seen = quotes
+  return Ok((Object(fields), at + 1, seen)) if chars.get(at) == Some('}')
   while true
     return Error(unexpected(chars, at)) if chars.get(at) != Some('"')
-    (key, after_key) = try string_at(chars, at)
+    (key, after_key, after_quotes) = try string_at(source, at, seen)
     return Error(Halt(at: at, problem: DuplicateKey(key: key))) if fields.has?(key)
     colon = skip_space(chars, after_key)
     return Error(unexpected(chars, colon)) if chars.get(colon) != Some(':')
-    (value, after) = try value_at(chars, skip_space(chars, colon + 1), depth)
+    (value, after, passed) = try value_at(source, skip_space(chars, colon + 1), after_quotes, depth)
     fields = fields.set(key, value)
+    seen = passed
     next = skip_space(chars, after)
     case chars.get(next)
       Some(','): at = skip_space(chars, next + 1)
-      Some('}'): return Ok((Object(fields), next + 1))
+      Some('}'): return Ok((Object(fields), next + 1, seen))
       Some(_) | None: return Error(unexpected(chars, next))
     end
   end
-  Ok((Object(fields), at))
+  Ok((Object(fields), at, seen))
 end
 
 ## The number n.
@@ -589,6 +667,17 @@ test "escapes, surrogate pairs and lone surrogates"
   assert problem_at("\"\\u12g4\"") == (1, 2, "BadEscape")
   assert problem_at("\"\\u12") == (1, 6, "UnexpectedEnd")
   assert problem_at("\"\\") == (1, 3, "UnexpectedEnd")
+end
+
+test "a string with an escape leaves the strings after it as they are"
+  assert parse("[\"a\\\"b\", \"c\", \"d\\\\\", \"e\"]").map(fn(json) json.to_text end) ==
+    Ok("[\"a\\\"b\",\"c\",\"d\\\\\",\"e\"]")
+  assert parse("{\"k\\\"\": \"v\", \"w\": \"x\\u0022y\", \"z\": \"\"}").map(
+    fn(json) json.to_text end
+  ) ==
+    Ok("{\"k\\\"\":\"v\",\"w\":\"x\\\"y\",\"z\":\"\"}")
+  assert problem_at("[\"a\", \"b\nc\"]") == (1, 9, "Unexpected(found: '\\n')")
+  assert problem_at("[\"a\\\"\", \"b") == (1, 11, "UnexpectedEnd")
 end
 
 test "arrays and objects nest 128 deep"
