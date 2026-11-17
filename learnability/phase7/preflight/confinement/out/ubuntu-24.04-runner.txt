@@ -1,0 +1,107 @@
+host: ubuntu-24.04-runner
+kernel: 7.0.0-1017-azure
+system: Ubuntu 24.04.5 LTS
+compiler: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+security modules: lockdown,capability,landlock,yama,apparmor,ima,evm
+kernel.unprivileged_userns_clone: 1
+kernel.apparmor_restrict_unprivileged_userns: 1
+kernel.yama.ptrace_scope: 1
+seccomp actions: kill_process kill_thread trap errno user_notif trace log allow
+
+mechanism: none
+need  execute and load the C library     ok
+need  read the executable itself         ok
+need  read the library folder            ok
+need  read an earlier child's output     ok
+try   change an earlier child's output   ALLOWED
+need  create a file in its scratch folder ok
+need  read it back                       ok
+need  open /dev/null                     ok
+try   open a file outside                ALLOWED
+try   create a file outside              ALLOWED
+try   read the service's data folder     ALLOWED
+try   read /etc/passwd                   ALLOWED
+try   connect over TCP to loopback       ALLOWED
+try   send a UDP datagram                ALLOWED
+try   connect to a Unix socket by path   ALLOWED
+try   connect to an abstract Unix socket ALLOWED
+try   signal its parent                  ALLOWED
+try   read its parent's memory           refused (Operation not permitted)
+try   open its parent's memory file      refused (Permission denied)
+result: NOT confined
+exit: 1
+
+mechanism: landlock
+landlock abi: 8
+need  execute and load the C library     ok
+need  read the executable itself         ok
+need  read the library folder            ok
+need  read an earlier child's output     ok
+try   change an earlier child's output   refused (Permission denied)
+need  create a file in its scratch folder ok
+need  read it back                       ok
+need  open /dev/null                     ok
+try   open a file outside                refused (Permission denied)
+try   create a file outside              refused (Permission denied)
+try   read the service's data folder     refused (Permission denied)
+try   read /etc/passwd                   refused (Permission denied)
+try   connect over TCP to loopback       refused (Permission denied)
+try   send a UDP datagram                ALLOWED
+try   connect to a Unix socket by path   ALLOWED
+try   connect to an abstract Unix socket refused (Operation not permitted)
+try   signal its parent                  refused (Operation not permitted)
+try   read its parent's memory           refused (Operation not permitted)
+try   open its parent's memory file      refused (Permission denied)
+result: NOT confined
+exit: 1
+
+mechanism: seccomp
+need  execute and load the C library     ok
+need  read the executable itself         ok
+need  read the library folder            ok
+need  read an earlier child's output     ok
+try   change an earlier child's output   ALLOWED
+need  create a file in its scratch folder ok
+need  read it back                       ok
+need  open /dev/null                     ok
+try   open a file outside                ALLOWED
+try   create a file outside              ALLOWED
+try   read the service's data folder     ALLOWED
+try   read /etc/passwd                   ALLOWED
+try   connect over TCP to loopback       refused (Operation not permitted)
+try   send a UDP datagram                refused (Operation not permitted)
+try   connect to a Unix socket by path   refused (Operation not permitted)
+try   connect to an abstract Unix socket refused (Operation not permitted)
+try   signal its parent                  refused (Operation not permitted)
+try   read its parent's memory           refused (Operation not permitted)
+try   open its parent's memory file      refused (Permission denied)
+result: NOT confined
+exit: 1
+
+mechanism: landlock+seccomp
+landlock abi: 8
+need  execute and load the C library     ok
+need  read the executable itself         ok
+need  read the library folder            ok
+need  read an earlier child's output     ok
+try   change an earlier child's output   refused (Permission denied)
+need  create a file in its scratch folder ok
+need  read it back                       ok
+need  open /dev/null                     ok
+try   open a file outside                refused (Permission denied)
+try   create a file outside              refused (Permission denied)
+try   read the service's data folder     refused (Permission denied)
+try   read /etc/passwd                   refused (Permission denied)
+try   connect over TCP to loopback       refused (Operation not permitted)
+try   send a UDP datagram                refused (Operation not permitted)
+try   connect to a Unix socket by path   refused (Operation not permitted)
+try   connect to an abstract Unix socket refused (Operation not permitted)
+try   signal its parent                  refused (Operation not permitted)
+try   read its parent's memory           refused (Operation not permitted)
+try   open its parent's memory file      refused (Permission denied)
+result: confined
+exit: 0
+
+mechanism: namespaces
+unavailable: setgroups: Permission denied
+exit: 2

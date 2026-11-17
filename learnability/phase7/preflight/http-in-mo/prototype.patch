@@ -1,0 +1,236 @@
+diff --color -ruN a/src/base/prims.def b/src/base/prims.def
+--- a/src/base/prims.def	2026-11-17 19:47:33.000000000 +0000
++++ b/src/base/prims.def	2026-11-17 19:49:08.504025417 +0000
+@@ -225,4 +225,7 @@
+ PRIM(UNICODE16_LETTER,          "Unicode16", "letter?",            "fn(Char) : Bool",                            "b",   "")
+ PRIM(UNICODE16_DIGIT,           "Unicode16", "digit?",             "fn(Char) : Bool",                            "b",   "")
+ 
++PRIM(BYTES_SLICE,               "Bytes",     "slice",              "fn(Bytes, Int, Int) : Bytes",                "bbb", "")
++PRIM(BYTES_JOIN,                "Bytes",     "join",               "fn(List(Bytes)) : Bytes",                    "b",   "")
++
+ #undef PRIM
+diff --color -ruN a/src/core/check.c b/src/core/check.c
+--- a/src/core/check.c	2026-11-17 19:47:33.000000000 +0000
++++ b/src/core/check.c	2026-11-17 19:49:08.504025417 +0000
+@@ -680,6 +680,10 @@
+             return sig(O(S(BYTE)), 2, S(BYTES), S(INT), NULL);
+         case MO_CORE_BYTES_OP_DECODE_UTF8:
+             return sig(O(S(TEXT)), 1, S(BYTES), NULL, NULL);
++        case MO_CORE_BYTES_OP_SLICE:
++            return sig(S(BYTES), 3, S(BYTES), S(INT), S(INT));
++        case MO_CORE_BYTES_OP_JOIN:
++            return sig(S(BYTES), 1, L(S(BYTES)), NULL, NULL);
+         }
+         break;
+     case MO_CORE_PRIM_UNICODE16:
+diff --color -ruN a/src/core/ops.def b/src/core/ops.def
+--- a/src/core/ops.def	2026-11-17 19:47:33.000000000 +0000
++++ b/src/core/ops.def	2026-11-17 19:49:08.504025417 +0000
+@@ -44,7 +44,7 @@
+     X(REPEAT, "repeat") X(PAD_LEFT, "padLeft") X(PAD_RIGHT, "padRight") X(LOWER, "lower") \
+     X(UPPER, "upper") X(TO_INT, "toInt") X(TO_DECIMAL, "toDecimal") X(TO_FLOAT, "toFloat") \
+     X(JOIN, "join") X(BYTES, "bytes")
+-#define MO_CORE_BYTES_OPS(X) X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8")
++#define MO_CORE_BYTES_OPS(X) X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8") X(SLICE, "slice") X(JOIN, "join")
+ #define MO_CORE_UNICODE_OPS(X) \
+     X(GRAPHEMES, "graphemes") X(DISPLAY_WIDTH, "displayWidth") X(NORMALIZE_NFC, "normalizeNfc") \
+     X(LOWERCASE, "lowercase") X(UPPERCASE, "uppercase") X(LETTER, "letter") X(DIGIT, "digit")
+diff --color -ruN a/src/host/real-files.c b/src/host/real-files.c
+--- a/src/host/real-files.c	2026-11-17 19:47:33.000000000 +0000
++++ b/src/host/real-files.c	2026-11-17 19:49:08.504025417 +0000
+@@ -5,6 +5,9 @@
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <string.h>
++#include <arpa/inet.h>
++#include <netinet/in.h>
++#include <sys/socket.h>
+ #include <unistd.h>
+ 
+ static void release(intptr_t handle) {
+@@ -380,10 +383,73 @@
+     return outcome;
+ }
+ 
++static int prototype_socket = -1;
++
++static MO_MUST_USE enum mo_host_outcome prototype_connection(struct mo_host *host,
++                                                            struct mo_heap *heap,
++                                                            uint32_t operation, uint32_t type,
++                                                            const struct mo_cell *args,
++                                                            struct mo_cell *out) {
++    struct mo_file_error problem = {.status = FILE_OK};
++    struct mo_cell value = mo_cell_unit();
++    bool made = false;
++    if (prototype_socket < 0) {
++        size_t length;
++        const uint8_t *target = mo_value_data(args[1], &length);
++        unsigned port = 0;
++        for (size_t i = 4; i < length; i++)
++            port = port * 10 + (unsigned)(target[i] - '0');
++        struct sockaddr_in address;
++        memset(&address, 0, sizeof address);
++        address.sin_family = AF_INET;
++        address.sin_port = htons((uint16_t)port);
++        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
++        prototype_socket = socket(AF_INET, SOCK_STREAM, 0);
++        if (prototype_socket < 0 ||
++            connect(prototype_socket, (const struct sockaddr *)&address, sizeof address) != 0)
++            problem = mo_host_errno(errno);
++    }
++    if (problem.status == FILE_OK && operation == MO_HOST_FILES_WRITE_TEXT)
++        problem = write_file(prototype_socket, args[2], true);
++    else if (problem.status == FILE_OK) {
++        static uint8_t buffer[65536];
++        ssize_t n;
++        do {
++            n = read(prototype_socket, buffer, sizeof buffer);
++        } while (n < 0 && errno == EINTR);
++        if (n < 0)
++            problem = mo_host_errno(errno);
++        else {
++            if (n == 0) {
++                (void)close(prototype_socket);
++                prototype_socket = -1;
++            }
++            if (!mo_value_bytes(heap, buffer, (size_t)n, &value))
++                return MO_HOST_OUT_OF_MEMORY;
++            made = true;
++        }
++    }
++    if (problem.status != FILE_OK)
++        return mo_host_file_error(host, heap, type, args[1], problem, out);
++    enum mo_host_outcome outcome = mo_host_file_ok(host, heap, type, value, out);
++    if (made) {
++        uint32_t payload =
++            host->types->types.items[type].cases[mo_host_tag(host, type, "Ok")].fields[0].type;
++        mo_value_drop(heap, payload, value);
++    }
++    return outcome;
++}
++
+ enum mo_host_outcome mo_host_real_files_call(struct mo_host *host, struct mo_heap *heap,
+                                              uint32_t operation, uint32_t type,
+                                              const struct mo_cell *args, struct mo_cell *out,
+                                              struct mo_host_error *error) {
++    if (operation == MO_HOST_FILES_WRITE_TEXT || operation == MO_HOST_FILES_READ_BYTES) {
++        size_t length;
++        const uint8_t *bytes = mo_value_data(args[1], &length);
++        if (length > 4 && memcmp(bytes, "tcp:", 4) == 0)
++            return prototype_connection(host, heap, operation, type, args, out);
++    }
+     char local[MO_LIMIT_HOST_PATH_SIZE] = "";
+     char *path = local;
+     struct mo_scratch scratch;
+diff --color -ruN a/src/lower/applications.c b/src/lower/applications.c
+--- a/src/lower/applications.c	2026-11-17 19:47:33.000000000 +0000
++++ b/src/lower/applications.c	2026-11-17 19:49:08.504025417 +0000
+@@ -265,7 +265,9 @@
+             enum mo_core_bytes_op operation;
+         } bytes[] = {{"Bytes.size", MO_CORE_BYTES_OP_SIZE},
+                      {"Bytes.get", MO_CORE_BYTES_OP_GET},
+-                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8}};
++                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8},
++                     {"Bytes.slice", MO_CORE_BYTES_OP_SLICE},
++                     {"Bytes.join", MO_CORE_BYTES_OP_JOIN}};
+         for (size_t i = 0; i < sizeof bytes / sizeof bytes[0]; i++) {
+             lower_work(p, 1);
+             if (strcmp(r->native, bytes[i].name) == 0)
+diff --color -ruN a/src/prim/prim.c b/src/prim/prim.c
+--- a/src/prim/prim.c	2026-11-17 19:47:33.000000000 +0000
++++ b/src/prim/prim.c	2026-11-17 19:49:08.504025417 +0000
+@@ -202,6 +202,8 @@
+     case MO_PRIM_BYTES_SIZE:
+     case MO_PRIM_BYTES_GET:
+     case MO_PRIM_BYTES_DECODE_UTF8:
++    case MO_PRIM_BYTES_SLICE:
++    case MO_PRIM_BYTES_JOIN:
+         status = mo_prim_text(&call, &result);
+         break;
+     case MO_PRIM_LIST_EMPTY:
+diff --color -ruN a/src/prim/text.c b/src/prim/text.c
+--- a/src/prim/text.c	2026-11-17 19:47:33.000000000 +0000
++++ b/src/prim/text.c	2026-11-17 19:49:08.504025417 +0000
+@@ -368,7 +368,54 @@
+     return status;
+ }
+ 
++static MO_MUST_USE enum mo_prim_status prototype_bytes(struct mo_prim_call *c,
++                                                       struct mo_cell *out) {
++    if (c->id == MO_PRIM_BYTES_SLICE) {
++        struct text bytes = view(c->args[0]);
++        int64_t size = (int64_t)bytes.length;
++        int64_t start = mo_cell_get_int(c->args[1]), end = mo_cell_get_int(c->args[2]);
++        start = start < 0 ? 0 : start > size ? size : start;
++        end = end < start ? start : end > size ? size : end;
++        const uint8_t *from = start == end ? (const uint8_t *)"" : bytes.bytes + start;
++        return mo_value_bytes(c->heap, from, (size_t)(end - start), out) ? MO_PRIM_RETURNED
++                                                                         : MO_PRIM_OUT_OF_MEMORY;
++    }
++    uint32_t count = mo_list_size(c->args[0]);
++    size_t length = 0;
++    for (uint32_t i = 0; i < count; i++) {
++        struct mo_cell part;
++        MO_ASSERT(mo_list_get(c->args[0], i, &part));
++        length += view(part).length;
++        if (!mo_prim_bytes_fit(c, length))
++            return MO_PRIM_OUT_OF_MEMORY;
++    }
++    if (length == 0)
++        return mo_value_bytes(c->heap, (const uint8_t *)"", 0, out) ? MO_PRIM_RETURNED
++                                                                    : MO_PRIM_OUT_OF_MEMORY;
++    struct mo_scratch scratch;
++    mo_scratch_init(&scratch, c->heap);
++    uint8_t *joined = mo_scratch_resize(&scratch, NULL, 0, length);
++    enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
++    if (joined != NULL) {
++        size_t at = 0;
++        for (uint32_t i = 0; i < count; i++) {
++            struct mo_cell part;
++            MO_ASSERT(mo_list_get(c->args[0], i, &part));
++            struct text piece = view(part);
++            if (piece.length != 0)
++                memcpy(joined + at, piece.bytes, piece.length);
++            at += piece.length;
++        }
++        if (mo_value_bytes(c->heap, joined, length, out))
++            status = MO_PRIM_RETURNED;
++    }
++    mo_scratch_free(&scratch);
++    return status;
++}
++
+ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
++    if (c->id == MO_PRIM_BYTES_SLICE || c->id == MO_PRIM_BYTES_JOIN)
++        return prototype_bytes(c, out);
+     if (c->id == MO_PRIM_TEXT_STRUCTURAL)
+         return mo_prim_print(c, c->params[0], c->args[0], out);
+     if (c->id == MO_PRIM_TEXT_TO_INT || c->id == MO_PRIM_TEXT_TO_DECIMAL ||
+diff --color -ruN a/src/tools/run.c b/src/tools/run.c
+--- a/src/tools/run.c	2026-11-17 19:47:33.000000000 +0000
++++ b/src/tools/run.c	2026-11-17 19:50:49.274834077 +0000
+@@ -7,6 +7,7 @@
+ 
+ #include <errno.h>
+ #include <fcntl.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ 
+@@ -336,8 +337,16 @@
+         }
+     }
+     struct mo_cell result;
++    bool prototype_stats = getenv("MO_PROTOTYPE_STATS") != NULL;
++    if (prototype_stats)
++        mo_process_instruction_limit(process, UINT64_MAX / 2);
+     outcome = mo_call_main(process, main, have_args ? &args : NULL, have_env ? &env : NULL, folder,
+                            NULL, &result, &defect);
++    if (prototype_stats)
++        (void)fprintf(errors, "prototype: instructions %llu heap_peak_bytes %zu\n",
++                      (unsigned long long)(UINT64_MAX / 2 -
++                                           mo_process_instructions_remaining(process)),
++                      mo_heap_peak(heap));
+     if (outcome == MO_RETURNED) {
+         int64_t value = mo_cell_get_int(result);
+         MO_ASSERT(value >= 0 && value <= 255);
