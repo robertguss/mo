@@ -35,9 +35,10 @@ cp "$here/differ.mo" "$here/../http-in-mo/parse-only/parse.mo" "$work/"
         echo "corpus result: the two parsers print the same line for every document"
     else
         echo "corpus result: DIFFERENT"
+        different=1
     fi
     echo "columns: parser shape bytes run exit user_seconds instructions heap_peak_bytes output"
-    for shape in compact pretty escapes numbers; do
+    for shape in compact one-escape pretty escapes numbers; do
         for side in old new; do
             for run in $(seq "$runs"); do
                 status=0
@@ -50,3 +51,4 @@ cp "$here/differ.mo" "$here/../http-in-mo/parse-only/parse.mo" "$work/"
     done
 } >"$here/out/results.txt"
 cat "$here/out/results.txt"
+exit "${different:-0}"

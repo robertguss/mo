@@ -53,7 +53,7 @@ end
 struct Source
   chars: List(Char)
   closed: List(Text)
-  specials: List(Text)
+  controls: List(Text)
 end
 
 ## The JSON value the text holds, with nothing but white space around it.
@@ -73,11 +73,11 @@ fn parse(text: Text) : Result(Json, JsonError)
 
   chars = text.chars
   parts = text.split("\"")
-  source = Source(chars: chars, closed: parts.take(parts.size - 1), specials: specials(text))
+  source = Source(chars: chars, closed: parts.take(parts.size - 1), controls: controls(text))
   document(source).map_error(fn(halt) located(chars, halt) end)
 end
 
-fn specials(text: Text) : List(Text)
+fn controls(text: Text) : List(Text)
   var found = []
   for code in 0..32
     case code.to_char
@@ -87,9 +87,6 @@ fn specials(text: Text) : List(Text)
         end
       None: stop "a code below 32 is a character"
     end
-  end
-  if text.contains?("\\")
-    found = found.append("\\")
   end
   found
 end
@@ -199,22 +196,20 @@ fn word_at(chars: List(Char), at: Int, seen: Int, word: Text, value: Json) : Res
 end
 
 ## A string's text, from its opening quote at `quote`, the position after its closing quote, and
-## the quotes up to there. The text between two quotes is the string when nothing in it is
-## special.
+## the quotes up to there. The text between two quotes is the string when it holds no backslash
+## and no control character.
 fn string_at(source: Source, quote: Int, seen: Int) : Result((Text, Int, Int), Halt)
   case source.closed.get(seen + 1)
-    Some(part) if source.specials.empty? or plain?(part, source.specials): Ok((
-      part,
-      quote + part.char_count + 2,
-      seen + 2
-    ))
+    Some(part) if not part.contains?("\\") and (
+      source.controls.empty? or clean?(part, source.controls)
+    ): Ok((part, quote + part.char_count + 2, seen + 2))
     Some(_) | None: walked_string_at(source.chars, quote, seen)
   end
 end
 
-fn plain?(part: Text, specials: List(Text)) : Bool
-  for special in specials
-    return false if part.contains?(special)
+fn clean?(part: Text, controls: List(Text)) : Bool
+  for control in controls
+    return false if part.contains?(control)
   end
   true
 end

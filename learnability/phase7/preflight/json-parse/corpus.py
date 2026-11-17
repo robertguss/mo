@@ -1,4 +1,4 @@
-import random, sys
+import itertools, random, sys
 SEP = "\x1d"
 hand = r'''
 ""
@@ -96,6 +96,19 @@ for _ in range(3000):
         elif at < len(text):
             del text[at]
     docs.append("".join(text))
+for length in range(8):
+    for marks in itertools.product('"\\a[],', repeat=length):
+        docs.append("".join(marks))
+pieces = ['"', "\\", "a", "[", "]", ",", "\\u0022", ":", "{", "}", "\n", "\x00", "\x1f", "\x7f", "e\u0301", " "]
+for length in range(1, 5):
+    for parts in itertools.product(pieces, repeat=length):
+        docs.append("".join(parts))
+frames = ['[%s,"z"]', '{"k":%s,"z":"y"}', '{%s:1,"z":"y"}', '["p",%s,"q\\\\",%s,"r"]']
+inside = ['"', "\\", '\\"', "a", "\\u0022", "\\\\", "\x00", "\x1f", "\x7f", "\t", "e\u0301", "\U0001F468\u200d\U0001F469", "\\ud83d\\ude00", " "]
+for frame in frames:
+    for length in range(4):
+        for parts in itertools.product(inside, repeat=length):
+            docs.append(frame.replace("%s", '"' + "".join(parts) + '"'))
 assert all(SEP not in d for d in docs)
 sys.stdout.buffer.write(SEP.join(docs).encode())
 sys.stderr.write(f"{len(docs)} documents\n")
