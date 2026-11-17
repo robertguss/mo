@@ -70,7 +70,7 @@ proofs=(
 	"sections|array blob types layout_entry constants word indices functions module_entry file_entry debug_entry service_entry scratch|sections.0:/4,sections.1:/12,sections.2:/12,sections.3:/16,sections.4:/5,sections.5:/36,sections.6:/28,mo_bytecode_names_init.0:/4|64"
 	"decode|allocate sections|mo_bytecode_decode_info.0:9,fnv1a.0:+,mo_bytecode_decode_info.1:/4,mo_bytecode_decode_info.2:/4,memcmp.0:5|"
 	"arena_allocate||||arena.c"
-	"arena_allocate_array|mo_arena_allocate|||arena.c"
+	"arena_allocate_array|mo_arena_allocate|harness_arena_allocate_array.0:14||arena.c"
 	"arena_resize||||arena.c"
 	"arena_copy||||arena.c"
 	"arena_copy_text||strlen.0:9||arena.c"
