@@ -15,8 +15,8 @@ execution: code
 - **Objective:** Robert can use Mo for his everyday API work. He starts a small Mo project, calls a real API over HTTPS, looks through what comes back, keeps it in SQLite and runs the program as a command-line tool. An agent can do the same from Mo's own guidance.
 - **Means:** A network capability with a fake, an HTTP client library that ships with `mo`, a SQLite capability, a command that starts a project, a mo-lang skill, and operating-system confinement of the compile and check children (KTD1, KTD3, KTD5, KTD6).
 - **Authority:** `docs/ROADMAP.md`, the language reference and `AGENTS.md` govern. Robert approves every change to Mo's language and toolchain surface: reference text, commands and error codes. This plan is the phase overview. Each milestone gets its own brainstorm and plan, which start from the requirements here and do not reopen the decisions below. The framework, MoDB and performance are context, not active scope.
-- **Execution profile:** Seven groups of pull requests, one for each milestone, each reviewed and merged by Robert as `AGENTS.md` requires. A milestone's own plan decides whether its group is one pull request or more. U1 is a design step he approves before any code.
-- **Stop conditions:** Stop and ask Robert when a unit needs a change to the Product Contract, when U1's measurement shows HTTP written in Mo is too slow for a realistic response, when no confinement mechanism works on both the development host and the nightly's host, or when the nightly is red.
+- **Execution profile:** Seven groups of pull requests, one for each milestone, each reviewed and merged by Robert as `AGENTS.md` requires. A milestone's own plan decides whether its group is one pull request or more. U1 is a design step he approves before any code other than U1's own throwaway prototypes.
+- **Stop conditions:** Stop and ask Robert when a unit needs a change to the Product Contract, when U1's measurement of HTTP written in Mo misses the bar written down before it ran, when no confinement mechanism works on both the development host and the nightly's host, or when the nightly is red.
 - **Who finishes:** Agents build each unit and open its pull requests. Robert approves the design, merges each pull request, does the spike and gives the answer that closes the phase.
 - **Open blockers:** None. U1 puts the open design questions and every item under Assumptions to Robert before any code.
 - **Product Contract preservation:** Requirements, key decisions, flows and acceptance examples are unchanged. Planning changed three things: M5 now merges after M3 in the milestone table, Dependencies and Assumptions says what planning read about the hosts, and Outstanding Questions gained one question each for M1 and M2. Planning also added to Scope Boundaries the mechanisms it considered and did not build.
@@ -161,6 +161,7 @@ Considered and not built:
 - Putting `lib/` inside the `mo` executable (KTD3). Nothing in this phase needs it. A standalone executable would.
 - Confinement of a program under `mo run`. It runs as its user, as any script does, and R11 limits the C that touches network bytes. A defect that the new fuzz targets find in that C would change this.
 - Redirects followed for the caller, retries, cookies, proxies and connection reuse in the client. R3 lists what a call covers, and Robert's spike (R17) shows which of these he misses.
+- U1 handing each unit its diagnostic codes and named limits ahead of time. Each milestone's plan takes the next free ones, and a clash between two units is fixed when the second one rebases.
 
 ### Dependencies and Assumptions
 
@@ -217,11 +218,11 @@ This plan covers Phase 7 only. The list below is the current understanding of th
 
 ### Key Technical Decisions
 
-- KTD1. **A new capability is built the way `Files` is, and it takes a new number.** `src/base/hostops.def` gives each operation one row, which the checker, the code generator, the verifier, the VM and the host all read. About ten lists outside that table are kept by hand: the `mo_capability` enum in `src/heap/types.h`, `MO_CAPABILITY_COUNT` in `src/base/capabilities.h`, arrays sized `MO_CAP_RANDOM + 1` in five files, the type names in `src/check/signatures.c`, the name lists in `src/lower/types.c` and `src/codegen/types.c`, the dispatch in `src/host/host.c`, the fake factories in `src/tools/fakes.h` that promise generation uses, and the capability lists in `docs/design/bytecode.md`. Bytecode encodes the enum's numbers, so no existing number changes. U3 and U5 edit the same lists, so U5 merges after U3. U1 writes the full list of places. It also gives each unit its diagnostic codes and named limits, so that units built at the same time never take the same code. Governs R1, R5, R7, R8.
+- KTD1. **A new capability is built the way `Files` is, and it takes a new number.** `src/base/hostops.def` gives each operation one row, which the checker, the code generator, the verifier, the VM and the host all read. About ten lists outside that table are kept by hand: the `mo_capability` enum in `src/heap/types.h`, `MO_CAPABILITY_COUNT` in `src/base/capabilities.h`, arrays sized `MO_CAP_RANDOM + 1` in five files, the type names in `src/check/signatures.c`, the name lists in `src/lower/types.c` and `src/codegen/types.c`, the dispatch in `src/host/host.c`, the fake factories in `src/tools/fakes.h` that promise generation uses, and the capability lists in `docs/design/bytecode.md`. Bytecode encodes the enum's numbers, so no existing number changes. U3 and U5 edit the same lists, so U5 merges after U3. U1 writes the full list of places. Governs R1, R5, R7, R8.
 - KTD2. **The real side of each capability is new C in `src/host/`.** `make deps` lets `vm` use `bytecode`, `heap`, `prim` and `host` only, so nothing in `src/tools/` can serve a capability. `src/tools/fetch.c` also accepts loopback addresses only and looks up no names. Sockets, name lookup and the calls into the TLS library therefore go in `src/host/`, and each piece that reads bytes from outside gets a fuzz target (R11). Governs R1, R4, R11.
 - KTD3. **The client ships the way `lib/` ships today.** The build records the path of the checkout's `lib/` folder in the executable (`ci/embed_docs.py`), every `mo` command loads every file in that folder, and each library module's name is reserved. A module added to `lib/` therefore needs nothing installed, for a `mo` that stays in the tree it was built in. A user program cannot `use` a module in `runtime/`, so any HTTP parsing the client shares with `mo serve` moves into `lib/` or is written again there. U1 decides which. Governs R2.
-- KTD4. **Each new capability operation is also a Mo Core operation, so Lean's side changes with it.** Capability operations lower to Mo Core IO operations (`src/lower/applications.c`), and `ci/check_host.py` fails when a `HOSTOP` row has no Mo Core counterpart. The repository holds two precedents. `Files` is modelled in Lean in full. `Simulation` stops Lean with "not modeled by mocore", and the comparison between the VM and Lean leaves out only the runs that reach it. U1 chooses between them for each capability (Assumptions). Governs R1, R7.
-- KTD5. **Confinement goes in at the one place the children are started, and its control is a build without it.** `spawn()` in `src/host/compile.c` starts all three child runs: the compile, the listing of intent items and the checks. Confining there covers R12's two children and the listing run. What a child uses today sets what it may reach: it executes `/proc/self/exe`, reads the `lib/` folder, reads and writes its own folder under `/tmp/mo-upgrade-XXXXXX`, opens `/dev/null`, and uses no network. R13's control is a second build of that file with the confinement call renamed away at compile time, which is how the Makefile builds its fault tests. The check runs a probe program as the child through the same `spawn()`. It must pass on the normal build and fail on the control build. Governs R12, R13.
+- KTD4. **Each new capability operation is also a Mo Core operation, so Lean's side changes with it.** Capability operations lower to Mo Core IO operations (`src/lower/applications.c`), and `ci/check_host.py` fails when a `HOSTOP` row has no modelled Mo Core counterpart. The repository holds two precedents. `Files` is modelled in Lean in full. `Simulation` stops Lean with "not modeled by mocore", and the comparison between the VM and Lean leaves out only the runs that reach it. `Simulation` is not cheap to copy. Its operations are `SIMOP` rows with a lowering of their own, and they still needed Core types, a Core operation form, Lean syntax and a new Core text version. A `HOSTOP` row left unmodelled also needs `ci/check_host.py` to list it as an operation that stops outside the model. U1 chooses between the two for each capability (Assumptions). Governs R1, R7.
+- KTD5. **Confinement goes in at the one place the children are started, and its control is a build without it.** `spawn()` in `src/host/compile.c` starts all three child runs: the compile, the listing of intent items and the checks. Confining there covers R12's two children and the listing run. What a child uses today sets what it may reach. It executes `/proc/self/exe` and also reads it, because every command except `check` hashes its own executable (`src/base/runtime-identity.c`). It loads the dynamic loader, libc and libm, because `mo` is linked dynamically. It reads the `lib/` folder, reads and writes its own folder under `/tmp/mo-upgrade-XXXXXX`, opens `/dev/null`, and uses no network. A sanitizer build also reads files under `/proc/self`. Inside the scratch folder one more rule holds: no child can change what an earlier child wrote. The parent reads `image.bc` and `items.moil` only after the check child has exited (`src/tools/upgrade.c`), so today a check child taken over through a VM defect could replace both and pass the door. Confinement cannot stop a child from forging its own output, so a check child taken over that way can still report a pass, and the threat model keeps saying so. R13's control is a second build of that file with the confinement call renamed away at compile time, which is how the Makefile builds its fault tests. The check runs a probe program as the child through the same `spawn()`. It must pass on the normal build and fail on the control build. Governs R12, R13.
 - KTD6. **The SQLite capability uses the SQLite already built into `mo`, beside the service store and apart from it.** `vendor/sqlite` is linked into every build with extension loading compiled out, and `src/host/store.c` sets up its allocator once for the whole process under one memory budget. The capability's code sits beside the store in `src/host/`, shares that setup and takes named limits of its own. The store's own rules stay the store's: it refuses `:memory:`, turns triggers and views off and limits a statement to 4,096 bytes, and none of these applies to a program's database unless U1 says so. Governs R7, R8.
 - KTD7. **Exploring a response is Mo code in `lib/json.mo`.** The module parses and pretty-prints, and it has no way to take a value out by key, index or path. `examples/json-query.mo` has that function, `at_path`, beside its own copy of the `Json` type and parser from before the library existed. U3 adds lookup to the library and reduces the example to a program that uses it. Governs R6.
 
@@ -264,17 +265,17 @@ flowchart TB
 
 Planning made these calls without Robert's confirmation. U1 puts each to him.
 
-- The network capability works at the level of a connection, and HTTP is written in Mo. R11 points this way, and TLS then sits under the connection, so one Mo client serves HTTP and HTTPS. The cost is interpreter time. `Bytes` has `size`, `get` and `decode_utf8` and nothing that builds or slices, and the HTTP code in `runtime/` holds a body as a list with one cell for each byte. U1 measures a response of realistic size before Robert approves the level.
+- The network capability works at the level of a connection, and HTTP is written in Mo. R11 points this way, and TLS then sits under the connection, so one Mo client serves HTTP and HTTPS. The cost is interpreter time. `Bytes` has `size`, `get` and `decode_utf8` and nothing that builds or slices, and the HTTP code in `runtime/` holds a body as a list with one cell for each byte. A body must also become `Text` before `Json.parse` can read it, and no operation today slices or joins `Bytes` or turns a list of bytes into text. U1's prototype therefore settles which `Bytes` operations the client needs, and it measures a response of realistic size before Robert approves the level.
 - The fake stands at the same level as the capability, and the client library gives a test a way to build it from requests and their responses. F2 then reads as request and response and never as raw bytes. Fake state may hold only texts, bytes, and lists, sets and maps of them (`docs/design/bytecode.md`).
 - Lean models neither capability and treats both as it treats `Simulation` (KTD4). A run that reaches the network or SQLite, real or fake, drops out of the comparison between the VM and Lean. The client's parsing functions take plain values and stay in it.
-- A program's SQLite database allows what SQLite allows by default, apart from extension loading, which the build leaves out (KTD6).
+- A program's SQLite database allows what SQLite allows by default, with two exceptions. Extension loading is left out of the build (KTD6). No statement opens a file other than the one the capability opened, so `ATTACH` and `VACUUM INTO` are refused, and a database in memory keeps its temporary storage in memory. Without the second exception a test in pushed code could build a database in memory and read or write the host's files from the check child.
 - The mo-lang skill lives in this repository, so a change to the guide and the matching change to the skill go in one pull request (R14).
 - Each capability's pull request updates `docs/agent-guide.md` for what it adds, as `AGENTS.md` requires. U6 adds the worked spike and the project command (R15).
 - The evaluation takes the form of the Phase 1 and 2 rounds, in which agents write programs that hidden tests grade, under Phase 5's rules for the gate, the freeze and publication (R16).
 
 ### System-Wide Impact
 
-- **Shared contracts:** capability operations, the bytecode document's capability list, and Mo Core with its Lean side (KTD1, KTD4). Primitives change too if the client needs new `Bytes` operations, and each new primitive needs a row in `docs/design/library.md` and a Lean counterpart.
+- **Shared contracts:** capability operations, the bytecode document's capability list, and Mo Core with its Lean side (KTD1, KTD4). Primitives probably change too, because the client needs `Bytes` operations that do not exist (Assumptions), and each new primitive needs a row in `docs/design/library.md` and a Lean counterpart.
 - **The `mo` surface:** one new command, two capability types, their fakes and new library modules. The reference changes in sections 10.3, 11, 12.4, 13.4, 14 and 15, and Robert approves that text.
 - **Pinned text:** `ci/check_cli.py` pins the message that lists every command, and `ci/cli_guide.py` checks the guide's command list and library module list.
 - **Limits:** every HTTP limit in `src/base/limits.h` is sized for MCP, at 1 KiB of headers and 32 KiB of response. The client needs named limits of its own.
@@ -286,10 +287,10 @@ Planning made these calls without Robert's confirmation. U1 puts each to him.
 
 | Risk | What the plan does about it |
 | --- | --- |
-| HTTP written in Mo is too slow for a real response, at one list cell for each byte. | U1 measures before the level is fixed. If it is too slow, U1 proposes which `Bytes` operations to add or which part moves to C with a fuzz target, as R11 allows. |
+| HTTP written in Mo is too slow for a real response, at one list cell for each byte. | U1 writes down the bar and then measures, before the level is fixed. If the measurement misses the bar, U1 proposes which `Bytes` operations to add or which part moves to C with a fuzz target, as R11 allows. |
 | The confinement mechanism is not allowed on a host that must run the check. | Read on 2026-11-17, with no mechanism tried: the development host runs Ubuntu 24.04 on kernel 6.12, lists Landlock among its security modules, offers seccomp filters and loads no AppArmor. The nightly's image, `ubuntu-24.04`, ships AppArmor's restriction on unprivileged user namespaces switched on. U1 tries each candidate on both hosts. |
 | TLS is outside C that R11 cannot cover, and it must be kept current. R17's spike needs HTTPS, so M4 is on the path to the close. | M4 has its own brainstorm, which starts from the line in `docs/design/implementation.md` that names "OpenSSL or BoringSSL, through the small trusted core". U3 ships HTTP first, so only the TLS work waits on that choice. |
-| A check passes without testing anything (class 6 in `docs/status/agent-mistakes.md`). | U2, U3, U4, U5 and U7 each carry a control that must fail. |
+| A check passes without testing anything (class 6 in `docs/status/agent-mistakes.md`). | U2 and U7 each carry a control that must fail. In U3, U4 and U5 each refusal is paired with the same request succeeding, and the test checks which error came back. |
 | A check that needs Lean is skipped on the development host and read as a pass (class 3). | U3 and U5 run `bash ci/check.sh lean`, and a skip is not a pass. |
 | A library function is built in C where Mo would do (class 2). | KTD7 and the first Assumption put parsing in Mo. U1's list says which operations are host operations and why. |
 | SQLite opens its own files by path, outside the containment that `Files` gets from `src/host/path.c`. | This is M1's question about the capability's authority (Outstanding Questions). U5 builds what U1 decides. |
@@ -314,15 +315,16 @@ Waits on: nothing in this plan. v0.3 is tagged first (Dependencies and Assumptio
 - **Files:** a new design document under `docs/design/`, `docs/ROADMAP.md`, `docs/reference/README.md` (section 15), `docs/design/architecture.md` (section 9), `docs/design/implementation.md`, `docs/design/services.md`, `docs/design/sandbox-properties.md`; prototype sources and results under `learnability/phase7/preflight/`.
 - **Approach:**
   1. Write F1 as a Mo program and F2 as a Mo test, in the forms the design proposes. Robert reads these first.
-  2. Write the design document: the two capability types with their operations and fakes, the client's functions and its module name, lookup in `Json`, the authority of the SQLite capability, what a confined child may reach and what `mo serve` does where confinement is unavailable, the codes and named limits for each unit, and the list of places KTD1 names.
-  3. Prototype a request over a plain connection with HTTP parsed in Mo, and record time and memory for a JSON response of about 1 MiB.
-  4. Try each candidate confinement mechanism on the development host and on an `ubuntu-24.04` GitHub runner, with a probe that opens a file outside its scratch folder and opens a connection.
+  2. Write the design document: the two capability types with their operations and fakes, the client's functions and its module name, lookup in `Json`, the authority of the SQLite capability, what a confined child may reach and what `mo serve` does where confinement is unavailable, and the list of places KTD1 names.
+  3. Write down the wall time and heap peak that a JSON response of about 1 MiB must stay under, from the request to a parsed `Json`. Then prototype that request over a plain connection with HTTP parsed in Mo, and record both figures.
+  4. Try each candidate confinement mechanism on the development host and on an `ubuntu-24.04` GitHub runner, with a probe that makes every attempt U2's first test scenario lists.
   5. Change the roadmap (R19) and the documents that still give "Phase 7" its old meaning, and bring the roadmap's "Now" section up to date.
   6. Obtain Robert's approval of the design, of each Assumption and of the new text for section 15 of the reference.
 - **Patterns to follow:** Phase 6's design step, `docs/design/intent.md` with its prototypes under `learnability/phase6/preflight/`.
 - **Test scenarios:**
   - The F1 program and the F2 test in the design document are complete Mo source in the proposed forms, and each names the requirement it shows.
-  - The prototype fetches a response of about 1 MiB from a local server, and the record gives wall time, work and heap peak.
+  - The bar for the 1 MiB response is committed before the commit that holds its measurement.
+  - The prototype fetches a response of about 1 MiB from a local server, and the record gives wall time, work and heap peak beside the bar.
   - On each host, each candidate mechanism has a recorded result for the probe: refused, allowed, or unavailable with the error.
   - Outside `docs/plans/` and the records of earlier phases, no document still calls speed or in-place demands "Phase 7".
 - **Verification:** Robert has approved the design document. Each measurement has a command, inputs and a result, or a recorded blocker. `bash ci/check.sh drivers static` passes after the edit to the reference.
@@ -339,17 +341,19 @@ Waits on: PR1, needed before this group can start, because Robert approves there
 - **Files:** `src/host/compile.c`, `src/host/host.h`, `src/tools/upgrade.c`, `src/tools/serve.c`, `src/base/codes.h`, `Makefile`, `tests/test_compile_child.c`, a new driver under `ci/`, `tests/errors/`, `.github/workflows/nightly.yml`, `docs/design/sandbox-properties.md`, `docs/design/intent.md`, `docs/design/upgrades.md`, `docs/design/architecture.md`, and `docs/agent-guide.md` if `mo serve` behaves differently.
 - **Approach:**
   1. Apply the mechanism M2's brainstorm picks inside `spawn()`, after the limits and before `execve` (KTD5).
-  2. Add the probe child and the control build.
-  3. Build the answer to M2's second question under Outstanding Questions, with its diagnostic.
-  4. Rewrite the paragraphs that say the children run without confinement.
+  2. Make each child's output safe from the children that run after it (KTD5).
+  3. Add the probe child and the control build.
+  4. Build the answer to M2's second question under Outstanding Questions, with its diagnostic.
+  5. Rewrite the paragraphs that say the children run without confinement. Keep, in amended form, the entry in `docs/design/intent.md` under "What the lock does not protect against": a memory-safety defect can still make a child forge its own output.
 - **Patterns to follow:** `STORE_FAULT_RENAMES` in the Makefile, for a second build made by renaming at compile time; the `openat2` probe in `src/host/path.c`, for finding out whether a host supports a feature; the child modes in `tests/test_compile_child.c`.
 - **Test scenarios:**
-  - Covers AE4. On the normal build the probe child fails to open a file outside its scratch folder, fails to read the service's data folder and fails to connect to a listener on loopback.
+  - Covers AE4. On the normal build the probe child fails at each of these: opening a file outside its scratch folder, creating one there, reading the service's data folder, connecting over TCP to a listener on loopback, sending a UDP datagram, connecting to a Unix socket the check set up, and signalling its parent.
   - Covers AE4. On the control build the same probe succeeds at each, and the check reports a failure.
+  - A probe run as the check child cannot change `image.bc` or `items.moil`.
   - A real upgrade compiles, lists and checks under confinement: the existing upgrade drivers pass unchanged.
   - A candidate that uses a library module compiles, which shows the child still reads `lib/`.
   - On a host without the mechanism, `mo serve` does what U1's design says and prints the diagnostic.
-- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers` pass. The confinement check runs in the nightly on `ubuntu-24.04` and is not skipped there. No design document still says the children run unconfined.
+- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers` pass. `make CC=clang` and `make sanitize CC=clang` pass. The confinement check runs in the nightly on `ubuntu-24.04` and is not skipped there. No design document still says the children run unconfined, and `docs/design/intent.md` still lists a child's forged output as something the lock does not protect against.
 
 ### PR3: HTTP
 
@@ -399,7 +403,7 @@ Waits on: PR3, needed before this group can start, because TLS goes under the co
   3. Verify the certificate chain and the host name by default, against the trust store M4's brainstorm names.
   4. Fuzz the C that passes bytes between the socket and the library.
 - **Test scenarios:**
-  - Covers AE2. A local server presents an expired certificate: the program receives an error and no part of the response.
+  - Covers AE2. A local server presents an expired certificate: the program receives an error that names the certificate and no part of the response.
   - Covers AE2. A local server presents a certificate for another host name: the program receives an error and no part of the response.
   - A certificate signed by an unknown issuer gives an error.
   - A local server whose certificate chains to a root the check supplies answers, and the response equals the one the same server gives over plain HTTP.
@@ -421,7 +425,7 @@ Waits on: PR1, needed before this group can start. PR3, merge order only, becaus
 - **Approach:**
   1. Add the capability type and its operations as U1 designed them (KTD1, KTD4): open with the authority U1 decided, run a statement with parameters, read rows.
   2. Turn SQLite's integer, real, text, blob and null into Mo values as the design states.
-  3. Add the in-memory form as a constructor that only tests, examples and promises may call (R8).
+  3. Add the in-memory form as a constructor that only tests, examples and promises may call (R8), and refuse every statement that would open another file (Assumptions).
   4. Give the capability named limits of its own (KTD6).
   5. Update the reference, the library map, the bytecode document and the guide.
 - **Patterns to follow:** `src/host/store.c`, for opening a database, setting limits and sharing the allocator; `STORE_FAULT_RENAMES`, for tests in which `sqlite3_step` fails; `Files.in_memory`, for a constructor only tests may call.
@@ -431,6 +435,7 @@ Waits on: PR1, needed before this group can start. PR3, merge order only, becaus
   - A statement with a syntax error returns an error value with SQLite's message, and the program continues.
   - Covers F2. A test with a database in memory passes and leaves no file.
   - Two in-memory databases in one test share no rows.
+  - `ATTACH` and `VACUUM INTO` with a path each return an error value, on a database in memory and on a database file, and no file is created.
   - `mo check` rejects a program whose `main` does not list the capability and whose code opens a database.
   - A path outside the capability's authority is refused as U1's design says.
   - A corrupt database file gives an error value, and the fuzz corpus holds one.
@@ -462,7 +467,7 @@ Waits on: PR3 and PR5, needed before this group can start, because the guide's w
   - The message for an unknown command lists the new command.
   - The guide's spike program runs under `guide_claims` with a fake network and a database in memory.
   - A program that lists the arguments, the console, the network and SQLite, run through `mo run` with two arguments, receives both, and the shell sees the exit status the program returned.
-- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers static` pass. The skill names `mo guide` and `mo guide --reference` and states no language rule of its own. One fresh agent session, given only the skill, writes a program that passes `mo check`.
+- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers static` pass. `make CC=clang` and `make sanitize CC=clang` pass. The skill names `mo guide` and `mo guide --reference` and states no language rule of its own. One fresh agent session, given only the skill, writes a program that passes `mo check`.
 
 ### PR7: The spike, the evaluation and v0.4
 
@@ -498,7 +503,7 @@ Waits on: PR4 and PR6, needed before this group can start. PR2 merges before the
 | `bash ci/check.sh gcc` | Before every pull request. Its last line goes in the pull request body. | The build and every unit test. |
 | `bash ci/check.sh drivers static` | Once in each pull request that edits `docs/agent-guide.md`, `docs/reference/README.md` or `docs/design/library.md`. | Goldens, guide claims, the executable grammar, module rules, the library map, format and fuzz seeds. |
 | `make CC=clang` and `make sanitize CC=clang` | U2 to U6, which change C code. | The change builds under both compilers and runs clean under ASan and UBSan. |
-| `bash ci/check.sh lean` | U3 and U5. | Mo Core in Lean still matches the executables, and every `HOSTOP` row has its counterpart. |
+| `bash ci/check.sh lean` | U3 and U5. | Mo Core in Lean still matches the executables, and every `HOSTOP` row is either modelled or listed as stopping outside the model (KTD4). |
 | `make fuzz-smoke` | U3, U4 and U5. | Each fuzz target runs briefly on its seeds. |
 | The confinement check, on the normal build and on the control build | U2, and then the nightly. | AE4. |
 | `bash ci/check.sh cbmc` and the long fuzz runs | U7, by hand, as `AGENTS.md` sets for a phase boundary. | The proofs and fuzz targets over the phase's changes. |
