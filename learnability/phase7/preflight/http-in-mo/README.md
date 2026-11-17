@@ -7,10 +7,11 @@ network capability works at the level of a connection, and HTTP is parsed in Mo.
 
 Verdict: **both bars are met, on the second measurement.** The first measurement missed the
 wall-time bar, and the miss was not in the HTTP code: `Json.parse` in `lib/json.mo` took all but
-0.1% of the work. The parser was then reworked in Mo (4968cc2d,
-[json-parse/](../json-parse/README.md)), and the same runs were taken again on that commit.
+0.1% of the work. The parser was then reworked in Mo (4968cc2d and e683663d,
+[json-parse/](../json-parse/README.md)), and the same runs were taken again on e683663d.
 HTTP parsed in Mo adds 7,392 instructions to a 1 MiB response with `Content-Length` and about
-97,000 to a chunked one, out of 28.3 million.
+96,000 to a chunked one, out of 28.8 million. The margin is small: the slower median is 6% under
+the bar.
 
 ## Results beside the bar
 
@@ -19,7 +20,7 @@ Median of five runs of the whole `mo run`, debug build, 1 MiB body (1,048,867 by
 | Figure | Bar | `Content-Length` | Chunked | Result |
 | --- | --- | --- | --- | --- |
 | Wall time, first measurement (2b6335c3) | 2.0 s | 5.61 s | 5.83 s | **Missed** |
-| Wall time, faster parser (4968cc2d) | 2.0 s | 1.74 s | 1.78 s | Met |
+| Wall time, faster parser (e683663d) | 2.0 s | 1.88 s | 1.84 s | Met |
 | Heap peak, first measurement | 256 MiB | 37.0 MiB | 37.0 MiB | Met |
 | Heap peak, faster parser | 256 MiB | 41.7 MiB | 41.7 MiB | Met |
 
@@ -27,27 +28,27 @@ Where the time goes, on the same body and the same build:
 
 | Run | First measurement | Faster parser |
 | --- | --- | --- |
-| Fetch over the connection, parse HTTP in Mo, `Json.parse` | 5.61 s, 109,685,165 instructions | 1.74 s, 28,257,983 instructions |
-| The same, chunked | 5.83 s, 109,773,819 | 1.78 s, 28,347,913 |
-| `Json.parse` alone, body read from a file | 5.36 s, 109,677,820 | 1.70 s, 28,250,591 |
+| Fetch over the connection, parse HTTP in Mo, `Json.parse` | 5.61 s, 109,685,165 instructions | 1.88 s, 28,849,911 instructions |
+| The same, chunked | 5.83 s, 109,773,819 | 1.84 s, 28,938,565 |
+| `Json.parse` alone, body read from a file | 5.36 s, 109,677,820 | 1.73 s, 28,842,519 |
 | A program that prints one line | 0.08 s | |
 
 In the first measurement `Json.parse` ran about 105 instructions for each byte of the body. It
-turned the text into a `List(Char)` and read one cell at a time. It now runs about 27. The debug
+turned the text into a `List(Char)` and read one cell at a time. It now runs about 28. The debug
 build runs about 20 million instructions a second.
 
 The cases the bar file lists with no bar, with the faster parser:
 
 | Case | Debug build | Optimized build |
 | --- | --- | --- |
-| 1 MiB, `Content-Length` | 1.74 s | 0.82 s |
-| 1 MiB, chunked | 1.78 s | 0.80 s |
-| 1 MiB, `Json.parse` alone | 1.70 s | 0.75 s |
-| 100 KiB, `Content-Length` | 0.27 s | 0.17 s |
-| 100 KiB, chunked | 0.28 s | 0.16 s |
-| 100 KiB, `Json.parse` alone | 0.25 s | 0.17 s |
-| 1 MiB, `Content-Length`, with only the `Bytes` operations Mo has today | 8.88 s, 60 MiB heap | 3.49 s |
-| 1 MiB, chunked, with only the `Bytes` operations Mo has today | 10.64 s, 84 MiB heap | 4.25 s |
+| 1 MiB, `Content-Length` | 1.88 s | 0.80 s |
+| 1 MiB, chunked | 1.84 s | 0.85 s |
+| 1 MiB, `Json.parse` alone | 1.73 s | 0.74 s |
+| 100 KiB, `Content-Length` | 0.27 s | 0.16 s |
+| 100 KiB, chunked | 0.27 s | 0.18 s |
+| 100 KiB, `Json.parse` alone | 0.25 s | 0.15 s |
+| 1 MiB, `Content-Length`, with only the `Bytes` operations Mo has today | 9.10 s, 60 MiB heap | 3.43 s |
+| 1 MiB, chunked, with only the `Bytes` operations Mo has today | 10.70 s, 84 MiB heap | 4.14 s |
 
 Every row of every run, with its exit status, is in [out/runs.txt](out/runs.txt) for the first
 measurement and [out-faster-parser/runs.txt](out-faster-parser/runs.txt) for the second. The
@@ -64,7 +65,7 @@ instructions, and the second measurement includes it.
   receiving the response, finding the end of the headers, reading the status line and the
   headers, and removing the chunk framing is under 0.4% of the work.
 - **The two proposed operations are needed.** Without them the same program copies each byte into
-  a list and decodes UTF-8 in Mo. That takes 6.8 to 8.1 times the instructions and up to 2.0 times
+  a list and decodes UTF-8 in Mo. That takes 6.7 to 7.9 times the instructions and up to 2.0 times
   the heap.
 - **The JSON parser was the cost, and it was the same cost for a file.** A program that reads a
   1 MiB JSON file gains as much as a fetch does.
@@ -85,7 +86,7 @@ instructions, and the second measurement includes it.
 | `run.sh` | Exports a commit from git into a temporary folder (2b6335c3, or `BASE`), applies the patch, builds debug and optimized, and runs every case five times. It writes to `out/`, or to the folder `OUT` names. |
 
 Run it with `bash learnability/phase7/preflight/http-in-mo/run.sh` for the first measurement, and
-with `BASE=HEAD OUT=out-faster-parser` in front for the second, which was taken at 4968cc2d. It
+with `BASE=HEAD OUT=out-faster-parser` in front for the second, which was taken at e683663d. It
 takes about ten minutes, and uses port 18123 unless `PORT` is set.
 
 ## What this does not show

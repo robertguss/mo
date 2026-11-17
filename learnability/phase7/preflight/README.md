@@ -15,11 +15,11 @@ Host for every number below, unless a line says otherwise: an exe.dev VM, 8 vCPU
   `mo run` that fetches about 1 MiB of JSON and parses it, on the debug build.
 - **The first measurement missed the wall-time bar: 5.61 s with `Content-Length` and 5.83 s
   chunked.** The miss was `Json.parse`: 109,677,820 of 109,685,165 instructions.
-- **With the faster parser both bars are met: 1.74 s and 1.78 s, and 41.7 MiB of heap.** HTTP
-  parsed in Mo adds 7,392 instructions, or about 97,000 when the response is chunked.
+- **With the faster parser both bars are met: 1.88 s and 1.84 s, and 41.7 MiB of heap.** HTTP
+  parsed in Mo adds 7,392 instructions, or about 96,000 when the response is chunked.
 - The prototype adds two `Bytes` operations, `slice` and `join`. Without them the same fetch
-  takes 8.88 s.
-- A 100 KiB response takes 0.27 s. An optimized build takes 0.82 s for 1 MiB.
+  takes 9.10 s.
+- A 100 KiB response takes 0.27 s. An optimized build takes 0.80 s for 1 MiB.
 
 ## A faster `Json.parse`
 
@@ -27,10 +27,11 @@ Host for every number below, unless a line says otherwise: an exe.dev VM, 8 vCPU
 
 - `Json.parse` in `lib/json.mo` reads a string with no escape and no control character as one
   piece. It is still Mo, with no new primitive.
-- The 1 MiB body takes 28,250,591 instructions, down from 109,677,820.
-- The old parser and the new one print the same line for each of 8,111 documents, most of them
-  malformed.
-- A document made mostly of numbers, or of strings with escapes, gains little.
+- The 1 MiB body takes 28,842,519 instructions, down from 109,677,820.
+- The old parser and the new one print the same line for each of 425,758 documents, most of
+  them malformed.
+- A document made mostly of numbers, or of strings with escapes, gains little. A document
+  under about 25 bytes costs a little more than before.
 
 ## Confinement of a child
 

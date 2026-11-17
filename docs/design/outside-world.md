@@ -224,7 +224,7 @@ needs two more, and the prototype measured them:
 | `bytes.slice(from, to)` | `fn(Bytes, Int, Int) : Bytes` | The bytes from index `from` up to, not including, `to`. An index past the end is the end, as with `List.take`. A negative index is a bug. |
 | `Bytes.join(parts)` | `fn(List(Bytes)) : Bytes` | All the parts, in order, as one value. |
 
-Without them the same fetch copies each byte into a list. It takes 6.8 to 8.1 times the
+Without them the same fetch copies each byte into a list. It takes 6.7 to 7.9 times the
 instructions and up to 2.0 times the heap.
 
 Both are primitives: rows in `src/base/prims.def`, rows in `docs/design/library.md`, and Lean
@@ -480,7 +480,7 @@ about 1 MiB of JSON over a connection, parses HTTP in Mo and calls `Json.parse`,
 | Figure | Bar | `Content-Length` | Chunked | Result |
 | --- | --- | --- | --- | --- |
 | Wall time, first measurement | 2.0 s | 5.61 s | 5.83 s | **Missed** |
-| Wall time, with the faster parser | 2.0 s | 1.74 s | 1.78 s | Met |
+| Wall time, with the faster parser | 2.0 s | 1.88 s | 1.84 s | Met |
 | Heap peak, with the faster parser | 256 MiB | 41.7 MiB | 41.7 MiB | Met |
 
 The miss was not caused by the choice the bar was written to test. In the first measurement
@@ -492,17 +492,18 @@ The bar file says a miss stops the design step until Robert chooses. He asked fo
 parser in this step. `Json.parse` now cuts the text at its quotes with `text.split`, and reads
 a string with no escape and no control character as one piece. Every other string takes the
 walk it took before, so every result and every error is the same. The parser is still Mo, with
-no new primitive. It takes 28,250,591 instructions for the same body, about 27 for each byte.
+no new primitive. It takes 28,842,519 instructions for the same body, about 28 for each byte.
 
-HTTP parsed in Mo adds 7,392 instructions to that, or about 97,000 when the response is
+HTTP parsed in Mo adds 7,392 instructions to that, or about 96,000 when the response is
 chunked. That is under 0.4% of the instructions.
 
-A 100 KiB response takes 0.27 seconds. An optimized build takes 0.82 seconds for 1 MiB.
+The margin is small: the slower of the two medians is 6% under the bar. A 100 KiB response
+takes 0.27 seconds. An optimized build takes 0.80 seconds for 1 MiB.
 
 The gain is for strings with no escape. A document made mostly of numbers, or of strings with
-escapes, parses about as slowly as before: 8.1 and 8.9 seconds for documents of 1.2 and 1.7 MB
-([json-parse/](../../learnability/phase7/preflight/json-parse/README.md)). Those wait for the
-phase about speed. A parser in C would be new C that reads network bytes where Mo can do the
+escapes, parses about as slowly as before: 8.3 and 9.0 seconds for documents of 1.2 and 1.7 MB
+([json-parse/](../../learnability/phase7/preflight/json-parse/README.md)). A document printed
+with an indent takes 2.9 seconds for 1.4 MB. Those wait for the phase about speed. A parser in C would be new C that reads network bytes where Mo can do the
 job, which the phase's safety rule is against.
 
 ## Where a capability is written down
