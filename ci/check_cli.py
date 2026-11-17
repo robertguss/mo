@@ -226,7 +226,7 @@ def check(binary):
     run(binary, ["format", good, good], 0)
     run(binary, ["fix", good, good], 0)
     for version in ("--version", "-V"):
-        assert run(binary, [version], 0).stdout == b"mo 0.2.0\n"
+        assert run(binary, [version], 0).stdout == b"mo 0.3.0\n"
     read_fd, write_fd = os.pipe()
     os.close(read_fd)
     try:

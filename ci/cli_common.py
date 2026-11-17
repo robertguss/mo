@@ -33,7 +33,7 @@ def records(result, command):
     lines = result.stdout.decode("utf-8").splitlines()
     assert result.stdout.endswith(b"\n")
     items = [json.loads(line) for line in lines]
-    assert items[0] == {"record": "version", "format": "1.0", "mo": "0.2.0", "command": command}
+    assert items[0] == {"record": "version", "format": "1.0", "mo": "0.3.0", "command": command}
     assert items[-1]["record"] == "totals"
     assert items[-1]["status"] == result.returncode
     assert items[-1]["errors"] == sum(item["record"] == "diagnostic" for item in items)
