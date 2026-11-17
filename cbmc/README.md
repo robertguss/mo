@@ -156,8 +156,8 @@ runs these proofs for 64-bit targets).
 
 `verify.c` proves the verifier's transfer functions: what it does with **any one instruction of
 any opcode**, with any operands the validator accepts, in any small file the validator accepts.
-A file has three types, two functions, up to two layouts, constants and globals, up to three
-registers per function, and up to eight code words; the function verified is the first; and a
+A file has three types, two functions, up to two layouts, constants, globals and services (each
+with up to two tools), up to three registers per function, and up to eight code words; the function verified is the first; and a
 variable operand list has up to three operands, one more than any table, so every count check
 can fail.
 
@@ -168,14 +168,15 @@ can fail.
 | `lookup` | `mo_verify_layout_lookup`: any answer is a layout of that type and tag, and in sorted keys a layout that is there is found |
 
 The proofs assume what the validator (`src/bytecode/validate.c`) checks: every operand inside the
-table its kind names, every target an instruction start, an environment type names a closure, and
-a function's parameters have its registers' types. `step` assumes what `ownership` gives it: each
+table its kind names, every target an instruction start, an environment type names a closure, a
+function's parameters have its registers' types, and a service tool's argument and result types
+are inside the type table. `step` assumes what `ownership` gives it: each
 block runs once, so no register is yet marked as used by the instruction, and a visit keeps the
 readable mask matching the states. Its operands' access modes come from the real `access`, which
 `step`'s proof runs but does not specify. Two library checks are not proved, and may accept or
 refuse anything: `mo_bytecode_signature` (`src/bytecode/signature.c`), only asserted to be given
-decoded types, and `mo_bytecode_ordering`. `step`'s files have no parameter, field or case tables,
-which it never reads; a read would fail the proof.
+decoded types, and `mo_bytecode_ordering`. `step`'s files have no parameter, field, case or
+service tables, which it never reads; a read would fail the proof.
 
 Not proved: the three passes that drive these functions (`graph`, `cases`, `ownership`) and
 `function`, which runs them. Their loops over blocks and edges, even for eight code words, give

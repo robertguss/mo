@@ -269,24 +269,26 @@ void harness_arena_allocate_array(void) {
     struct mo_arena a;
     any_arena(&a);
     size_t count = nondet_size();
-    /* Any element size for the overflow check, and the element sizes of Mo's tables (and some
-     * that are not powers of two) for the block: with any element size, proving that the block
-     * holds count * element_size bytes asks CBMC to show two 64-bit products equal, which it
-     * cannot do in reasonable time. */
-    bool any_size = nondet_bool();
-    size_t sizes[] = {0, 1, 2, 3, 4, 8, 12, 16, 24, 40, 48, 64, 4096};
-    size_t choice = nondet_size();
-    __CPROVER_assume(choice < sizeof sizes / sizeof sizes[0]);
-    size_t element_size = any_size ? nondet_size() : sizes[choice];
     size_t alignment = any_alignment();
-    unsigned char *block = mo_arena_allocate_array(&a, count, element_size, alignment);
-    if (block != NULL) {
+    /* Any element size for the overflow check, and the element sizes of Mo's tables (and some
+     * that are not powers of two) for the block, each as a constant: with any element size,
+     * proving that the block holds count * element_size bytes asks CBMC to show two 64-bit
+     * products equal, which it cannot do in reasonable time. */
+    size_t any_size = nondet_size();
+    unsigned char *any_block = mo_arena_allocate_array(&a, count, any_size, alignment);
+    if (any_block != NULL) {
         /* CBMC's own overflow test: a test by division is as slow as the one arena.c avoids. */
-        __CPROVER_assert(!__CPROVER_overflow_mult(count, element_size),
+        __CPROVER_assert(!__CPROVER_overflow_mult(count, any_size),
                          "a table whose size wraps is refused");
-        __CPROVER_assert(aligned(block, alignment) &&
-                             (any_size || __CPROVER_w_ok(block, count * element_size)),
-                         "a block for the whole table");
+        __CPROVER_assert(aligned(any_block, alignment), "an aligned block");
+    }
+    size_t sizes[] = {0, 1, 2, 3, 4, 8, 12, 16, 24, 40, 48, 64, 4096};
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; i++) {
+        unsigned char *block = mo_arena_allocate_array(&a, count, sizes[i], alignment);
+        if (block != NULL) {
+            __CPROVER_assert(aligned(block, alignment) && __CPROVER_w_ok(block, count * sizes[i]),
+                             "a block for the whole table");
+        }
     }
     reached_end();
 }
