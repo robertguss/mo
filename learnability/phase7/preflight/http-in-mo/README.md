@@ -49,14 +49,20 @@ Every row of every run, with its exit status, is in [out/runs.txt](out/runs.txt)
 medians with their ranges are in [out/summary.md](out/summary.md). All 100 runs exit 0 and print
 the same line for the same body.
 
+The two fetch programs gained a usage line after these runs, so that `mo run` with no arguments
+ends: the format check runs every tracked program that way. The runs were not taken again,
+because the host was busy with other work. A part of a run on the busy host counted
+109,685,212 instructions for the first row of the second table, 47 more, and its times were
+not kept.
+
 ## What the numbers say
 
 - **The level of the capability costs almost nothing.** With `Bytes.slice` and `Bytes.join`,
   receiving the response, finding the end of the headers, reading the status line and the
   headers, and removing the chunk framing is under 0.1% of the work.
 - **The two proposed operations are needed.** Without them the same program copies each byte into
-  a list and decodes UTF-8 in Mo. That takes 2.5 times the instructions and up to 2.3 times the
-  heap.
+  a list and decodes UTF-8 in Mo. That takes 2.5 to 2.8 times the instructions and up to 2.3 times
+  the heap.
 - **The JSON parser is the cost, and it is the same cost for a file.** A program that reads a
   1 MiB JSON file today waits as long.
 - **The usual case is inside a second.** A 100 KiB response takes 0.63 s on the debug build.

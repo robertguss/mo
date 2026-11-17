@@ -14,6 +14,9 @@ need  read the executable itself         ok
 need  read the library folder            ok
 need  read an earlier child's output     ok
 try   change an earlier child's output   ALLOWED
+need  read an input its parent wrote     ok
+try   change an input its parent wrote   ALLOWED
+try   add a file beside the inputs       ALLOWED
 need  create a file in its scratch folder ok
 need  read it back                       ok
 need  open /dev/null                     ok
@@ -26,6 +29,7 @@ try   send a UDP datagram                ALLOWED
 try   connect to a Unix socket by path   ALLOWED
 try   connect to an abstract Unix socket ALLOWED
 try   signal its parent                  ALLOWED
+try   queue a signal to its parent       ALLOWED
 try   read its parent's memory           ALLOWED
 try   open its parent's memory file      ALLOWED
 result: NOT confined
@@ -38,6 +42,9 @@ need  read the executable itself         ok
 need  read the library folder            ok
 need  read an earlier child's output     ok
 try   change an earlier child's output   refused (Permission denied)
+need  read an input its parent wrote     ok
+try   change an input its parent wrote   refused (Permission denied)
+try   add a file beside the inputs       refused (Permission denied)
 need  create a file in its scratch folder ok
 need  read it back                       ok
 need  open /dev/null                     ok
@@ -50,6 +57,7 @@ try   send a UDP datagram                ALLOWED
 try   connect to a Unix socket by path   ALLOWED
 try   connect to an abstract Unix socket refused (Operation not permitted)
 try   signal its parent                  refused (Operation not permitted)
+try   queue a signal to its parent       refused (Operation not permitted)
 try   read its parent's memory           refused (Operation not permitted)
 try   open its parent's memory file      refused (Permission denied)
 result: NOT confined
@@ -61,6 +69,9 @@ need  read the executable itself         ok
 need  read the library folder            ok
 need  read an earlier child's output     ok
 try   change an earlier child's output   ALLOWED
+need  read an input its parent wrote     ok
+try   change an input its parent wrote   ALLOWED
+try   add a file beside the inputs       ALLOWED
 need  create a file in its scratch folder ok
 need  read it back                       ok
 need  open /dev/null                     ok
@@ -73,6 +84,7 @@ try   send a UDP datagram                refused (Operation not permitted)
 try   connect to a Unix socket by path   refused (Operation not permitted)
 try   connect to an abstract Unix socket refused (Operation not permitted)
 try   signal its parent                  refused (Operation not permitted)
+try   queue a signal to its parent       refused (Operation not permitted)
 try   read its parent's memory           refused (Operation not permitted)
 try   open its parent's memory file      ALLOWED
 result: NOT confined
@@ -85,6 +97,9 @@ need  read the executable itself         ok
 need  read the library folder            ok
 need  read an earlier child's output     ok
 try   change an earlier child's output   refused (Permission denied)
+need  read an input its parent wrote     ok
+try   change an input its parent wrote   refused (Permission denied)
+try   add a file beside the inputs       refused (Permission denied)
 need  create a file in its scratch folder ok
 need  read it back                       ok
 need  open /dev/null                     ok
@@ -97,6 +112,36 @@ try   send a UDP datagram                refused (Operation not permitted)
 try   connect to a Unix socket by path   refused (Operation not permitted)
 try   connect to an abstract Unix socket refused (Operation not permitted)
 try   signal its parent                  refused (Operation not permitted)
+try   queue a signal to its parent       refused (Operation not permitted)
+try   read its parent's memory           refused (Operation not permitted)
+try   open its parent's memory file      refused (Permission denied)
+result: confined
+exit: 0
+
+mechanism: landlock3+seccomp
+landlock abi: 6
+landlock abi used: 3
+need  execute and load the C library     ok
+need  read the executable itself         ok
+need  read the library folder            ok
+need  read an earlier child's output     ok
+try   change an earlier child's output   refused (Permission denied)
+need  read an input its parent wrote     ok
+try   change an input its parent wrote   refused (Permission denied)
+try   add a file beside the inputs       refused (Permission denied)
+need  create a file in its scratch folder ok
+need  read it back                       ok
+need  open /dev/null                     ok
+try   open a file outside                refused (Permission denied)
+try   create a file outside              refused (Permission denied)
+try   read the service's data folder     refused (Permission denied)
+try   read /etc/passwd                   refused (Permission denied)
+try   connect over TCP to loopback       refused (Operation not permitted)
+try   send a UDP datagram                refused (Operation not permitted)
+try   connect to a Unix socket by path   refused (Operation not permitted)
+try   connect to an abstract Unix socket refused (Operation not permitted)
+try   signal its parent                  refused (Operation not permitted)
+try   queue a signal to its parent       refused (Operation not permitted)
 try   read its parent's memory           refused (Operation not permitted)
 try   open its parent's memory file      refused (Permission denied)
 result: confined
@@ -108,6 +153,9 @@ need  read the executable itself         ok
 need  read the library folder            ok
 need  read an earlier child's output     ok
 try   change an earlier child's output   refused (Read-only file system)
+need  read an input its parent wrote     ok
+try   change an input its parent wrote   refused (Read-only file system)
+try   add a file beside the inputs       refused (Read-only file system)
 need  create a file in its scratch folder ok
 need  read it back                       ok
 need  open /dev/null                     ok
@@ -120,6 +168,7 @@ try   send a UDP datagram                refused (Network is unreachable)
 try   connect to a Unix socket by path   refused (No such file or directory)
 try   connect to an abstract Unix socket refused (Connection refused)
 try   signal its parent                  refused (No such process)
+try   queue a signal to its parent       refused (No such process)
 try   read its parent's memory           refused (No such process)
 try   open its parent's memory file      refused (No such file or directory)
 result: confined

@@ -26,10 +26,11 @@ Host for every number below, unless a line says otherwise: an exe.dev VM, 8 vCPU
 [confinement/](confinement/README.md): `bash learnability/phase7/preflight/confinement/run.sh NAME`
 
 - A probe makes every attempt a taken-over child might: files outside its folder, an earlier
-  child's output, the service's data, TCP, UDP, two kinds of Unix socket, a signal to its parent
-  and two reads of its parent's memory.
+  child's output, the inputs its parent wrote, the service's data, TCP, UDP, two kinds of Unix
+  socket, a signal to its parent sent two ways, and two reads of its parent's memory.
 - Landlock and a seccomp filter together refuse every attempt, on the development host and on a
-  GitHub-hosted `ubuntu-24.04` runner, with no privilege and no setup.
+  GitHub-hosted `ubuntu-24.04` runner, with no privilege and no setup. They still do with
+  Landlock held back to what a 6.2 kernel offers.
 - Landlock alone leaves UDP and Unix sockets with a path. A seccomp filter alone leaves every
   file.
 - Namespaces confine on the development host and cannot be set up on the runner.

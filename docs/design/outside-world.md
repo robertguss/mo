@@ -192,6 +192,8 @@ bytes a connection sends to the bytes it then receives.
 - With an entry, `receive` hands out the reply, at most `most` bytes at a time, and then the
   end.
 - A fake never opens a socket and never reads a clock. `within` is ignored.
+- `connect_secure`, when the HTTPS milestone adds it, answers from the same map. A fake does no
+  TLS, so a test of an `https` URL states the request as plain bytes.
 
 A test does not write these bytes. `Http.replies` builds the map from requests and responses
 (below). The client writes a request the same way every time, so the match is exact: a test
@@ -221,8 +223,8 @@ needs two more, and the prototype measured them:
 | `bytes.slice(from, to)` | `fn(Bytes, Int, Int) : Bytes` | The bytes from index `from` up to, not including, `to`. An index past the end is the end, as with `List.take`. A negative index is a bug. |
 | `Bytes.join(parts)` | `fn(List(Bytes)) : Bytes` | All the parts, in order, as one value. |
 
-Without them the same fetch copies each byte into a list. It takes 2.5 times the instructions
-and up to 2.3 times the heap.
+Without them the same fetch copies each byte into a list. It takes 2.5 to 2.8 times the
+instructions and up to 2.3 times the heap.
 
 Both are primitives: rows in `src/base/prims.def`, rows in `docs/design/library.md`, and Lean
 counterparts with their safety proofs. They go at the end of `prims.def`, because primitive
@@ -255,6 +257,7 @@ end
 
 enum HttpError
   BadUrl(url: Text)
+  BadHeader(name: Text)
   Unreachable(NetworkError)
   BadResponse(reason: Text)
   NotJson(JsonError)
@@ -289,6 +292,8 @@ What `send` does:
   connection, and asks for no compression. Robert's spike shows which of these he misses.
 - A URL is `http://` or `https://`, a host, an optional port, a path and a query. Anything else
   is `BadUrl`. Until the HTTPS milestone is built, an `https` URL is an error that says so.
+- A header whose name or value holds a line break is `BadHeader`, and nothing is sent. A token
+  read from a file with its last newline would otherwise add a line to the request.
 - The response's headers may take 64 KiB and its body 16 MiB. Past either, the result is
   `BadResponse` or `TooLarge`. Both are constants in `lib/http.mo`.
 
@@ -366,6 +371,11 @@ second rule about paths: `path` is checked as every `Files` path is, and one tha
 folder gives `Error(OutsideFolder(path))`. SQLite's journal files sit beside the database, in
 the same folder.
 
+`Files` opens a file beneath its folder and follows no symbolic link. SQLite opens a database
+by its path, and its journals by paths it builds. The SQLite milestone must show that a
+symbolic link in the folder that points outside it gives `OutsideFolder` for the database and
+for its journals, as it does for a file.
+
 A `Sqlite` holds the database it opened and can open no other file:
 
 - `ATTACH` and `VACUUM INTO` are refused with `NotPermitted`.
@@ -415,22 +425,31 @@ What a child may reach:
 | Access | What |
 | --- | --- |
 | Read and execute | `/usr`, `/lib`, `/lib64`, `/etc/ld.so.cache` and the `mo` executable |
-| Read | The `lib/` folder, and the output of the children that ran before it |
+| Read | The `lib/` folder, and the inputs the parent wrote for it: the pushed bundle, the running bundle and the upgrade's context |
 | Read and write | Its own output folder, and `/dev/null` |
 | Nothing | Every other file, every socket, and a signal to or a trace of any other process |
+
+The inputs sit in a folder no child can write. Today they sit in the one scratch folder. If
+they stayed where a child writes, the compile child could replace the bundle that the check
+child then reads.
 
 A sanitizer build also reads files under `/proc/self`. The confinement milestone adds what that
 build needs and no more.
 
-The seccomp filter is a list of refused system calls: sockets, signals to another process,
-tracing, reading another process's memory, `io_uring`, namespaces and mounting. A list of
+The seccomp filter is a list of refused system calls: sockets, signals to another process
+(`kill`, `tkill`, `tgkill` at another process, `rt_sigqueueinfo`, `rt_tgsigqueueinfo` and
+`pidfd_send_signal`), tracing, reading another process's memory, `io_uring`, mounting, and new
+namespaces by `unshare`, `setns`, or `clone` and `clone3` with a namespace flag. The probe's
+filter has all of these except the two `clone` rules. Landlock scopes signals only from kernel
+6.12, so on an older kernel the filter is the one thing that stops them. A list of
 allowed calls would be stricter. It must name every call the C library and a sanitizer make,
 and Landlock already covers files, so the refused list is the proposal.
 
 **Each child gets its own output folder.** Today all three share one scratch folder, and the
 parent reads `image.bc` and `items.moil` only after the check child has exited. A check child
 taken over through a VM defect could replace both and pass the door. With a folder for each
-child, a later child can read what an earlier one wrote and cannot change it.
+child, no child can change what another wrote. No child reads another's output today: the
+listing and the checks read the pushed bundle, as the compile does.
 
 **On a host that cannot confine, `mo serve` refuses to accept an upgrade.** macOS has neither
 mechanism, and neither do old kernels and some containers. The server says so when it starts,
@@ -441,7 +460,8 @@ are not confined.
 **The control is a build without the confinement.** A second build of `compile.c` has the
 confinement call renamed away at compile time, which is how the Makefile builds its fault
 tests. The check runs a probe program as the child through the same `spawn()`. It must pass on
-the normal build and fail on the control build.
+the normal build and fail on the control build. Its attempts are the preflight probe's, the
+queued signal and the parent's inputs among them.
 
 What confinement does not do:
 
@@ -464,7 +484,7 @@ about 1 MiB of JSON over a connection, parses HTTP in Mo and calls `Json.parse`,
 The miss is not caused by the choice the bar was written to test. `Json.parse` alone, on the
 same body read from a file, takes 5.36 seconds and 109,677,820 instructions. The whole fetch
 takes 109,685,165. HTTP parsed in Mo is the difference: 7,345 instructions, or 95,999 when the
-response is chunked. That is under 0.1%.
+response is chunked. That is under 0.1% of the instructions.
 
 `Json.parse` turns the text into a `List(Char)` and reads one cell at a time, at about 105
 instructions for each byte. It costs the same for a file as for a response, and it costs that
@@ -478,7 +498,7 @@ The bar file says a miss stops the design step until Robert chooses. The choices
 1. **Approve the connection level, and record the parser's speed as a known cost.** The spike
    runs with it. JSON parsing becomes the first measured workload of the phase about speed,
    which was waiting for a real program to measure. This is the recommendation: the level costs
-   under 0.1%, the usual response is inside a second, and a parser tuned now is tuned without
+   under 0.1% of the instructions, the usual response is inside a second, and a parser tuned now is tuned without
    the programs that would show what matters.
 2. **Rework the parser in this phase**, on primitives that scan `Text` without a list. How much
    that gains is not measured.
@@ -587,7 +607,7 @@ the plan left open. The rest came up in this step. Each needs his yes or a chang
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
 | 1 | The 1 MiB fetch missed the wall-time bar, because of `Json.parse`. | Approve the connection level, record the parser's speed, and make it the first workload of the phase about speed. | Rework the parser now, or move it into C. |
-| 2 | The level of the network capability. | A connection, with HTTP in Mo. The level itself costs under 0.1%. | An HTTP request as the operation, with HTTP parsed in C. |
+| 2 | The level of the network capability. | A connection, with HTTP in Mo. The level itself costs under 0.1% of the instructions. | An HTTP request as the operation, with HTTP parsed in C. |
 | 3 | The fake's level, and how a test builds it. | The same level as the capability. `Http.replies` builds it from requests and responses, and the match is exact. | A fake that matches on method and URL only, which needs HTTP parsing outside Mo. |
 | 4 | Lean's model. | Neither capability is modelled. Runs that reach one leave the comparison. | Model the fakes in Lean, as `Files` is. |
 | 5 | What a program's database may do. | What SQLite allows by default, except opening any other file. | The service store's stricter rules. |

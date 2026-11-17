@@ -20,7 +20,7 @@ show() {
     show "kernel.apparmor_restrict_unprivileged_userns" /proc/sys/kernel/apparmor_restrict_unprivileged_userns
     show "kernel.yama.ptrace_scope" /proc/sys/kernel/yama/ptrace_scope
     show "seccomp actions" /proc/sys/kernel/seccomp/actions_avail
-    for mechanism in none landlock seccomp landlock+seccomp namespaces; do
+    for mechanism in none landlock seccomp landlock+seccomp landlock3+seccomp namespaces; do
         echo
         "$work/confine" "$mechanism"
         echo "exit: $?"

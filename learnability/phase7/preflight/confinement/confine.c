@@ -33,6 +33,7 @@
 #endif
 
 static char base[256], self[4096];
+static long newest_abi = 1000;
 
 static int unavailable(const char *step) {
     printf("unavailable: %s: %s\n", step, strerror(errno));
@@ -85,6 +86,10 @@ static int landlock(void) {
     if (abi < 0)
         return unavailable("landlock_create_ruleset");
     printf("landlock abi: %ld\n", abi);
+    if (abi > newest_abi) {
+        abi = newest_abi;
+        printf("landlock abi used: %ld\n", abi);
+    }
     uint64_t fs = (1u << 13) - 1;
     if (abi >= 2)
         fs |= 1u << 13;
@@ -105,8 +110,8 @@ static int landlock(void) {
     for (size_t i = 0; i < sizeof shared / sizeof *shared; i++)
         if (allow(ruleset, shared[i], read_only, fs) != 0)
             return -1;
-    const char *mine[] = {"lib", "earlier"};
-    for (size_t i = 0; i < 2; i++) {
+    const char *mine[] = {"lib", "earlier", "inputs"};
+    for (size_t i = 0; i < 3; i++) {
         snprintf(path, sizeof path, "%s/%s", base, mine[i]);
         if (allow(ruleset, path, FS_READ_FILE | FS_READ_DIR, fs) != 0)
             return -1;
@@ -122,8 +127,8 @@ static int landlock(void) {
     return 0;
 }
 
-#define DENY(number)                                                                             \
-    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (number), 0, 1),                                         \
+#define DENY(number)                                                                               \
+    BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (number), 0, 1),                                           \
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM)
 
 static int seccomp(void) {
@@ -143,6 +148,8 @@ static int seccomp(void) {
         DENY(SYS_sendmmsg),
         DENY(SYS_kill),
         DENY(SYS_tkill),
+        DENY(SYS_rt_sigqueueinfo),
+        DENY(SYS_rt_tgsigqueueinfo),
         DENY(SYS_ptrace),
         DENY(SYS_process_vm_readv),
         DENY(SYS_process_vm_writev),
@@ -228,10 +235,10 @@ static int namespaces(void) {
     for (size_t i = 0; i < sizeof shared / sizeof *shared; i++)
         if (bind_at(root, shared[i], true) != 0)
             return -1;
-    const char *mine[] = {"lib", "earlier", "scratch"};
-    for (size_t i = 0; i < 3; i++) {
+    const char *mine[] = {"lib", "earlier", "inputs", "scratch"};
+    for (size_t i = 0; i < 4; i++) {
         snprintf(path, sizeof path, "%s/%s", base, mine[i]);
-        if (bind_at(root, path, i < 2) != 0)
+        if (bind_at(root, path, i < 3) != 0)
             return -1;
     }
     if (bind_at(root, "/dev/null", false) != 0)
@@ -268,8 +275,8 @@ static bool can_open(const char *folder, const char *name, int flags) {
     if (fd < 0)
         return false;
     char byte = 'x';
-    bool worked = (flags & O_ACCMODE) == O_RDONLY ? read(fd, &byte, 1) >= 0
-                                                 : write(fd, &byte, 1) == 1;
+    bool worked =
+        (flags & O_ACCMODE) == O_RDONLY ? read(fd, &byte, 1) >= 0 : write(fd, &byte, 1) == 1;
     int number = errno;
     (void)close(fd);
     errno = number;
@@ -300,6 +307,10 @@ static int probe(char **argv) {
     snprintf(path, sizeof path, "%s/earlier", base);
     need("read an earlier child's output", can_open(path, "image.bc", O_RDONLY));
     attempt("change an earlier child's output", can_open(path, "image.bc", O_WRONLY));
+    snprintf(path, sizeof path, "%s/inputs", base);
+    need("read an input its parent wrote", can_open(path, "source.mosb", O_RDONLY));
+    attempt("change an input its parent wrote", can_open(path, "source.mosb", O_WRONLY));
+    attempt("add a file beside the inputs", can_open(path, "new", O_WRONLY | O_CREAT));
     snprintf(path, sizeof path, "%s/scratch", base);
     need("create a file in its scratch folder", can_open(path, "out", O_WRONLY | O_CREAT));
     need("read it back", can_open(path, "out", O_RDONLY));
@@ -332,9 +343,11 @@ static int probe(char **argv) {
                         (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + strlen(name))));
 
     attempt("signal its parent", kill(parent, 0) == 0);
+    siginfo_t queued = {.si_code = SI_QUEUE};
+    attempt("queue a signal to its parent", syscall(SYS_rt_sigqueueinfo, parent, 0, &queued) == 0);
     char word[8];
-    struct iovec to = {word, sizeof word}, from = {(void *)(uintptr_t)strtoull(argv[6], NULL, 16),
-                                                   sizeof word};
+    struct iovec to = {word, sizeof word},
+                 from = {(void *)(uintptr_t)strtoull(argv[6], NULL, 16), sizeof word};
     attempt("read its parent's memory", process_vm_readv(parent, &to, 1, &from, 1, 0) > 0);
     snprintf(path, sizeof path, "/proc/%d/mem", (int)parent);
     int memory = open(path, O_RDONLY);
@@ -349,17 +362,20 @@ int main(int argc, char **argv) {
     if (argc == 7 && strcmp(argv[1], "--probe") == 0)
         return probe(argv);
     if (argc != 2) {
-        fprintf(stderr, "usage: confine none|landlock|seccomp|landlock+seccomp|namespaces\n");
+        fprintf(stderr, "usage: confine none|landlock|seccomp|landlock+seccomp|"
+                        "landlock3+seccomp|namespaces\n");
         return 3;
     }
+    if (strncmp(argv[1], "landlock3", 9) == 0)
+        newest_abi = 3;
     ssize_t length = readlink("/proc/self/exe", self, sizeof self - 1);
     snprintf(base, sizeof base, "/tmp/mo-confine-XXXXXX");
     if (length < 0 || mkdtemp(base) == NULL)
         return 3;
     char path[512];
-    const char *folders[] = {"scratch", "earlier", "lib", "outside", "data"};
-    const char *files[] = {NULL, "image.bc", "list.mo", "secret", "store.sqlite"};
-    for (size_t i = 0; i < 5; i++) {
+    const char *folders[] = {"scratch", "earlier", "lib", "outside", "data", "inputs"};
+    const char *files[] = {NULL, "image.bc", "list.mo", "secret", "store.sqlite", "source.mosb"};
+    for (size_t i = 0; i < 6; i++) {
         snprintf(path, sizeof path, "%s/%s", base, folders[i]);
         if (mkdir(path, 0700) != 0)
             return 3;
@@ -414,8 +430,8 @@ int main(int argc, char **argv) {
             applied = seccomp();
         if (applied != 0)
             _exit(2);
-        char *arguments[] = {"confine", "--probe", base, tcp_text, udp_text, pid_text, address,
-                             NULL};
+        char *arguments[] = {"confine", "--probe", base,    tcp_text,
+                             udp_text,  pid_text,  address, NULL};
         char *environment[] = {NULL};
         execve("/proc/self/exe", arguments, environment);
         printf("unavailable: execve: %s\n", strerror(errno));

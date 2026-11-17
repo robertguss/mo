@@ -7,8 +7,16 @@ module Fetch
 use Json
 
 fn main(args: Args, console: Console, files: Files) : Int
-  target = "tcp:#{args.list.get(0) or "8123"}"
-  case fetch(files, target, args.list.get(1) or "/fixed/1048576")
+  case args.list
+    [port, path]: report(console, files, port, path)
+    _:
+      console.error("usage: fetch PORT PATH")
+      2
+  end
+end
+
+fn report(console: Console, files: Files, port: Text, path: Text) : Int
+  case fetch(files, "tcp:#{port}", path)
     Error(reason):
       console.error("fetch: #{reason}")
       1
@@ -62,8 +70,10 @@ end
 fn header_end(bytes: List(Int)) : Option(Int)
   var at = 0
   while at + 3 < bytes.size
-    if at_or(bytes, at) == 13 and at_or(bytes, at + 1) == 10 and at_or(bytes, at + 2) == 13 and
-        at_or(bytes, at + 3) == 10
+    if at_or(bytes, at) == 13 and
+      at_or(bytes, at + 1) == 10 and
+      at_or(bytes, at + 2) == 13 and
+      at_or(bytes, at + 3) == 10
       return Some(at)
     end
     at += 1

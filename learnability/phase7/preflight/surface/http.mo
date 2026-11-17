@@ -34,6 +34,7 @@ end
 
 enum HttpError
   BadUrl(url: Text)
+  BadHeader(name: Text)
   Unreachable(NetworkError)
   BadResponse(reason: Text)
   NotJson(Json.JsonError)
