@@ -96,6 +96,6 @@ A pull request merges when Robert says so.
 | --- | --- |
 | Miri on the raw-memory core | AddressSanitizer and UndefinedBehaviorSanitizer on every test run; ThreadSanitizer is not a gate |
 | Kani proofs | CBMC, the engine underneath Kani, on small C functions |
-| Cranelift for machine code (Phase 7) | A C code generator such as MIR, or copy-and-patch as CPython does |
+| Cranelift for machine code (Phase 8) | A C code generator such as MIR, or copy-and-patch as CPython does |
 | rustls | OpenSSL or BoringSSL, through the small trusted core |
 | The Rust MCP SDK | MCP written in Mo |
