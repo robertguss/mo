@@ -206,6 +206,7 @@ Outside this work:
 - Failing a run for a function that no check runs and that has no mutant. R5 speaks only of mutants.
 - Requiring a function's own promise or example to kill one of its mutants, so that an example that says nothing would not satisfy R13.
 - Refusing `--against` when the previous version equals the new one. A one-line change gets round it, so it closes nothing.
+- Putting a previous check's helpers into the new program beside it, so that a check whose helper changed gets a real answer in the change summary. KTD13 lists such a check as could not be compared. The extra machinery waits until that list proves too noisy.
 - A cache between runs. R11 allows one and nothing needs it yet, so AE10 holds because two runs do the same work.
 - Running mutants on several cores.
 
@@ -264,7 +265,7 @@ Product Contract preservation: requirements, key decisions, flows and acceptance
 - KTD3. **A full run has no clock.** Every promise runs its 200 inputs and every service its 200 sequences to the end, the counts plain `mo test` uses today. Today a promise stops after 2 seconds and passes on the inputs it reached, so one mutant could die on a fast machine and survive on a slow one. Input seeds already come from each check's name. (R2, AE10)
 **Mutants and kills**
 
-- KTD4. **A mutant is one text change in one module's source, and the whole program is checked again.** `--strength` already works this way: `apply` and `measure_one` in `src/tools/strength.c` splice a replacement into a module, then load, check and run the program. The change is found in the syntax tree and stays inside a function's code, which is child 5 of an `fn` node. It never touches the spec block, a `test` block or a service's promises (R1, R4). A changed program that does not check is not a mutant and is not counted.
+- KTD4. **A mutant is one text change in one module's source, and the whole program is checked again.** `--strength` already works this way: `apply` and `measure_one` in `src/tools/strength.c` splice a replacement into a module, then load, check and run the program. The change is found in the syntax tree and stays inside a function's code, which is child 5 of an `fn` node. It never touches the spec block, a `test` block or a service's promises (R1, R4). A changed program that the checker rejects is not a mutant, and the totals say how many were dropped that way. A changed program that fails to load for any other reason is a defect in the toolchain and fails the run, so a loading fault can never empty the gate. `--strength` leaves library modules out of the sources it rebuilds, and a library module's copy held in memory clashes with the library's own (E0037). So when the file under test is a library module, the gate loads each changed program through `mo_load_program_sources`, which takes a library flag for each source.
 - KTD5. **The first table of kinds is small, and it is frozen before the proof.** The rows are: a comparison moved to its boundary (`<` to `<=`), a comparison negated (`==` to `!=`, `<` to `>=`), `and` swapped with `or`, a `not` removed, an arithmetic operator swapped (`+` with `-`, `*` with `/`), a Bool literal flipped, and an Int literal raised by one. With no exceptions (R7), dropping a row is the only way to be rid of a kind of mutant nothing can kill, and such mutants were measured at 2% to 47% of all mutants by kind in C programs. U8 counts survivors by row on the repository's programs, and Robert approves the table as reference text.
 - KTD6. **A mutant is killed when a check that passed on the program does not pass on the mutant.** That means the check fails, stops on a runtime fault, has an anchor fail or runs out of steps, or the program no longer starts, which the report counts under its own heading, start. The step limit is a multiple of the steps the same check used on the program, so the result does not depend on the machine. A recovery check counts as a check here, and the report gives its kind beside promise, example and test. A mutant run stops at the first failing input and does not shrink it. (R2, R3)
 - KTD7. **Each mutant runs only against the checks that ran its function.** While the checks run on the unchanged program, the VM records which functions each check entered. A check that never entered a function cannot notice a change to it. Those checks run cheapest first by the steps they used, with ties broken by name, and the run stops at the first kill. A function entered while the program starts, or while a promise's anchors are checked, counts as run by every check. A function no check entered has every mutant reported as a survivor with nothing run (R5). Checks reach the outside world only through fakes (reference 12.4), so the record is the same on every run.
@@ -277,9 +278,9 @@ Product Contract preservation: requirements, key decisions, flows and acceptance
 **The previous version**
 
 - KTD10. **`--against OLD` takes the previous version's copy of FILE.** R9's folder is the one OLD sits in. `mo intent FILE --against OLD` already has this shape and already loads a second program (`src/tools/intent-view.c`). When FILE is a library module, OLD's folder is also the library the previous version loads from, because a library module outside its library does not load (E0037).
-- KTD11. **The shorter run tries a function when its code changed or a check that ran it changed.** Its code changed when its canonical text differs or the function is new. A check that ran it changed when that check is gone, has a different full name or canonical text, or no longer runs the function. Canonical text is the formatted, comment-free text the intent digest already uses (`src/tools/intent.c`). The full name is compared because input seeds come from it. A function no check runs is always reported. This is R9 as written: a function is not retried because something it calls changed. (R9, AE4, AE5)
-- KTD12. **The previous version's digest is the source digest `mo push` already computes** over a program's source bundle (`src/tools/push.c`). One version of a program then has one digest everywhere in `mo`. (R10, R17, R28)
-- KTD13. **The change summary sorts each check by its result on the previous code and on the new code.** The table under High-Level Technical Design gives every case. A check found in only one version is put into the other program on its own: a `test` block into its module, an example row or a promise into the spec block of the same function, a service promise into the service block. When that program does not check, its first diagnostic is the reason given. One check that no longer compiles then never hides another. (R15, R16, AE9)
+- KTD11. **The shorter run tries a function when its code changed or a check that ran it changed.** Its code changed when its canonical text differs or the function is new. A check that ran it changed when that check is gone, has a different full name or canonical text, reads a helper that changed, or no longer runs the function. A helper is a function or constant that only checks use: no tool, timer, start value, exposed function or `main` reaches it. `src/tools/intent.c` already walks what a declaration reads and what a service reaches. Without the helper rule an agent could weaken `acknowledged?` in `queue-tests.mo`, leave every test's text alone, and have every function of the service carried over. Canonical text is the formatted, comment-free text the intent digest already uses (`src/tools/intent.c`). The full name is compared because input seeds come from it. A function is not retried because something it calls changed, which is R9 as written. A function no check runs is reported on every run, shorter or full, because R5 says its mutants survive. It is not counted among the functions carried over. (R5, R9, AE4, AE5)
+- KTD12. **The previous version's digest is the source digest `mo push` already computes** over a program's source bundle (`src/tools/push.c`). One version of a program then has one digest everywhere in `mo`. `mo push` cannot build a bundle whose entry is a library module: the bundle leaves library modules out and then finds no entry. For a library module the digest is therefore SHA-256 over the same bundle format, holding every module file of the previous library with OLD as the entry. (R10, R17, R28)
+- KTD13. **The change summary sorts each check by its result on the previous code and on the new code.** The table under High-Level Technical Design gives every case. A check found in only one version is put into the other program on its own: a `test` block into its module, an example row or a promise into the spec block of the same function, a service promise into the service block. When that program does not check, its first diagnostic is the reason given. One check that no longer compiles then never hides another. A check with the same name and text in both versions that reads a helper which changed (KTD11) is listed as could not be compared, and the reason names the helper. Its text is the same and what it tests may not be. (R15, R16, AE9)
 
 **Reports, the interim option and the repository**
 
@@ -327,6 +328,8 @@ How the change summary sorts a check:
 | both versions, same name and text | passes | passes | counted as passing on both |
 | both versions, same name and text | fails | passes | newly true |
 | both versions, same name and text | passes | fails | no longer true, and the run fails on the check itself |
+| both versions, same name and text | fails | fails | not listed, and the run fails on the check itself |
+| both versions, same name and text, and a helper it reads changed | any | any | could not be compared: the helper is named. This row comes before the four above |
 | the previous version only | passes | passes | counted as passing on both |
 | the previous version only | passes | fails | no longer true |
 | the previous version only | passes | does not check | could not be compared, with the first diagnostic |
@@ -334,6 +337,7 @@ How the change summary sorts a check:
 | the new version only | fails | passes | newly true |
 | the new version only | passes | passes | counted as passing on both |
 | the new version only | does not check | passes | about something new |
+| the new version only | any | fails | not listed, and the run fails on the check itself |
 
 ### Assumptions
 
@@ -347,15 +351,18 @@ Scoping confirmation was off for this plan, so these choices were made without a
 - A step promise does not satisfy R13 for a tool (KTD9).
 - The gates sit behind `--gates` until PR5 (KTD15).
 - An example that says nothing satisfies R13. The first bullet of Dependencies / Assumptions already covers checks that do not say what Robert wants.
+- A run with `--calls`, `--seconds` or a `--max` limit is not gated, and it exits 0 when its checks pass (KTD2). R27 names only runs that select checks or modules. A script that reads only the exit status sees a pass, and the printed line is what says the gates did not run.
+- A check that reads a changed helper counts as changed, and the change summary lists it as could not be compared (KTD11, KTD13). The document review of 2026-11-18 added this. Editing a helper that many tests share lists every one of them.
+- A function that no check runs fails a shorter run as well as a full one (KTD11).
 
 ### Risks
 
 | Risk | What limits it |
 | --- | --- |
 | Mutants nothing can kill, with no exceptions allowed. Every tool surveyed that supports a zero-survivor rule also has a way to skip one mutant. | The small table (KTD5), the count by row in U8, and the stop rule in the Goal Capsule. |
-| Cost. Nothing is measured yet. The nightly has about 40 of its 120 minutes free, and today it runs plain `mo test` on the same programs from several checks and three builds, one of them about five times slower. | KTD7 keeps each mutant to the checks that can notice it. U12 measures before PR5. KTD18 keeps the full run to one check on one build. |
+| Cost. Nothing is measured yet. The nightly has about 40 of its 120 minutes free, and today it runs plain `mo test` on the same programs from several checks and three builds, one of them about five times slower. | KTD7 keeps each mutant to the checks that can notice it. U12 measures before PR5. KTD18 keeps the full run to one check on one build. Measured on 2026-11-18: one test, the full-queue test, takes 66 of the task queue's 73 seconds and runs nearly every handler. It is the last check tried for those functions, so each of their survivors costs about a minute. A cheaper test of the full queue is the first lever if the cost hurts. |
 | A shorter run passes where a full run would not: something a function calls changed, the previous version never passed a full run, or the table changed since it did. | The result says it is not the full run (R28), and the nightly runs the full one (R29). For a program outside the repository, only a plain `mo test` is a pass. |
-| The table's blind spots. Code outside function bodies, `case` patterns and Text literals are never changed, and a function with nothing the table changes has no mutant. An agent can rewrite code into those forms. | U8 counts the functions with no mutant. R23 measures the table against mistakes an agent made. New rows follow that evidence. |
+| The table's blind spots. Code outside function bodies, `case` patterns and Text literals are never changed, and a function with nothing the table changes has no mutant. An agent can rewrite code into those forms. | U8 counts the functions with no mutant before anything is fitted. U10 and U11 count them again after fitting and name each function that lost all its mutants, which is where an agent working under the gate would show this. R23 measures the table against mistakes an agent made. New rows follow that evidence. |
 | The table was chosen by someone who had read what the wrong versions changed. | The table is frozen and its commit recorded before the proof's first run. A row added afterwards is recorded beside the result it affects. |
 | A hook in the VM's call path. | It is off unless a harness turns it on, as `mo_process_instruction_limit` is. `tests/test_vm.c` and `fuzz/fuzz_vm.c` run with it off and on. |
 | Merge conflicts with Phase 7 in `src/base/codes.h`, `tests/errors/` and `ci/check_cli.py`. | Each PR is rebased on `main` and re-run before it merges. Code numbers are taken late (KTD14). |
@@ -381,6 +388,7 @@ None of these blocks PR1. Each is a default Robert can change at the review name
 
 - The multiple and the floor of the step limit in KTD6, as named limits in `src/base/limits.h`.
 - Whether the VM records entered functions for a process or for an image, and how anchor evaluation and start-up code are attributed to checks.
+- Whether a check's step count includes the steps its service's handlers and timers run. A service runs them in its own process, which the caller's step limit does not reach. The service's own work limit already ends a handler that loops.
 - How the position of a plain binary operator is found. The public syntax node holds the operator's kind and its two operands, not its span.
 - The wording of every report and the code numbers.
 - Whether checks found in only one version are put into the other program one at a time from the start, or in a batch that falls back to one at a time.
@@ -417,7 +425,7 @@ Waits on: nothing.
 - **Goal:** The test runner can do what the gates need: run with no clock, hand back each check's result and the steps it used, record the functions it entered, run a named set of checks, and stop at the first check that does not pass.
 - **Requirements:** R2, R3, R5. KTD3, KTD6, KTD7.
 - **Dependencies:** none.
-- **Files:** `src/vm/vm.h`, `src/vm/execute.c`, `src/vm/process.c`, `src/tools/tests.c`, `src/tools/tests.h`, `src/tools/promises.c`, `src/tools/service-tests.c`, `src/tools/tools.h`, `tests/test_vm.c`, `tests/test_gates.c` (new).
+- **Files:** `src/vm/vm.h`, `src/vm/execute.c`, `src/vm/process.c`, `src/tools/tests.c`, `src/tools/tests.h`, `src/tools/promises.c`, `src/tools/service-tests.c`, `src/tools/tools.h`, `tests/test_vm.c`, `tests/test_gates.c` (new), `fuzz/fuzz_vm.c`.
 - **Approach:**
   1. Add a harness hook to the VM beside `mo_process_instruction_limit` that records each function entered. It is off by default.
   2. Give the runner a gated mode: the fixed plan with no deadline, one result for each observation handed to the caller, the steps each used, a step limit for each, and a stop at the first one that does not pass. With the mode off, plain `mo test` behaves as today.
@@ -432,7 +440,8 @@ Waits on: nothing.
   - A check given a step limit below the steps it used: the outcome is "ran out of steps", and a function that loops forever ends the same way.
   - Three checks of which the second fails, with the stop on: the third does not run.
   - The mode off: the output for `tests/cli/test/main.mo` matches its golden files byte for byte.
-- **Verification:** The new tests pass with gcc, with clang and under the sanitizers, and no existing golden file changes.
+  - `fuzz/fuzz_vm.c` runs each input with the record off and with it on, and the call gives the same result both times.
+- **Verification:** The new tests pass with gcc, with clang and under the sanitizers, `make fuzz-smoke` passes, and no existing golden file changes.
 
 ### U2. Make mutants from a module's source
 
@@ -462,8 +471,8 @@ Waits on: nothing.
 - **Files:** `src/tools/gates.c` (new), `src/tools/gates.h` (new), `src/tools/gates-render.c` (new), `src/tools/execute.c`, `src/tools/cli.c`, `src/tools/tools.h`, `src/base/codes.h`, `src/base/limits.h`, `tests/errors/` (one case for the new code), `tests/cli/gates/` (new), `ci/cli_gates.py` (new), `ci/check_cli.py`, `ci/cli_guide.py`, `fuzz/fuzz_cli.dict`, `docs/agent-guide.md`, `docs/reference/README.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`.
 - **Approach:**
   1. Run the checks in the gated mode of U1. If one fails, report as today and stop.
-  2. For each mutant of U2: build the changed sources, load and check the program, drop it if it does not check, then run the checks that entered its function, cheapest first, up to the first kill.
-  3. Report each survivor with its function's full name, the position, the kind, the original and changed text, and whether any check ran the function. Report the counts by kind of check in the totals.
+  2. For each mutant of U2: build the changed sources, load and check the program, drop it and count it if the checker rejects it, then run the checks that entered its function, cheapest first, up to the first kill. A library module under test is loaded as KTD4 says. A load that fails for any reason other than the checker's fails the run.
+  3. Report each survivor with its function's full name, the position, the kind, the original and changed text, and whether any check ran the function. Report the counts by kind of check and the number dropped in the totals.
   4. Refuse `--gates` with `--list`, `--bundle` or `--strength`.
   5. Add `--gates` to the guide, to section 13.4 of the reference and to the flag table in `ci/cli_guide.py`.
 - **Patterns to follow:** `measure_one` in `src/tools/strength.c` for the loop that reloads and runs with quiet output; E1432 in the same file for a run that fails with no failed check; `ci/cli_intent.py` for a topic module of driver checks.
@@ -476,7 +485,8 @@ Waits on: nothing.
   - A failing check on the unchanged program: reported as today, and no mutant is tried.
   - A mutant that loops forever: killed as out of steps, and the run ends.
   - A mutant that divides by zero: killed.
-  - A mutant that does not check, such as `-` between two Texts: not counted.
+  - A mutant that does not check, such as `-` between two Texts: not tried, and the totals count one dropped.
+  - A library module as the file under test, such as `lib/option.mo`: its mutants are tried, at least one is killed, and none is dropped.
   - A helper that a promise's anchors read: its mutant makes an anchor fail and is counted as killed by a promise.
   - A program with no functions: no mutants, exit 0.
   - Two runs with `--json`: the same records in the same order once `microseconds` is left out.
@@ -527,7 +537,7 @@ Waits on: PR1, which must merge before this group can start, because U6 runs the
   1. Accept `--against` for `test`, and refuse it with any option of the "not gated" and "unchanged" rows of the table above.
   2. Load and check OLD in its own arena. For a library module, load it with its folder as the library.
   3. Run the previous version's checks in the gated mode to get what each one ran.
-  4. Pair functions and checks by full name, compare canonical text, and select by KTD11.
+  4. Pair functions and checks by full name, compare canonical text and the helpers each check reads, and select by KTD11.
   5. Print the count carried over, the digest of KTD12 and "not the full run".
 - **Patterns to follow:** the second load in `src/tools/intent-view.c`; canonical text in `src/tools/intent.c`, exported and not copied; the bundle digest in `src/tools/push.c`.
 - **Test scenarios:**
@@ -537,13 +547,14 @@ Waits on: PR1, which must merge before this group can start, because U6 runs the
   - Only a comment and the layout changed: no mutant is tried.
   - A promise added above another, so the second one's number shifts: the function they belong to is tried again.
   - A new function, and a renamed one: both are tried.
-  - An unchanged function that no check runs: still reported as a survivor.
+  - An unchanged function that no check runs: still reported as a survivor, and not counted as carried over.
+  - A helper that only tests call is changed to return `true`, and every test keeps its text: every function those tests ran is tried again.
   - OLD is the same as FILE: nothing is tried, everything is carried over, and the result says it is not the full run.
   - OLD does not exist: a mistake in the command, exit 2. OLD does not check: one error giving its first diagnostic, exit 1, and nothing else runs.
-  - A library module with OLD in a copy of the previous `lib/`: it loads and the run works.
+  - A library module with OLD in a copy of the previous `lib/`: it loads, the run works, and the digest printed equals the digest of the bundle built by hand from that folder's files.
   - `--against` with `--only`, `--in`, `--calls`, `--seconds`, a `--max` limit, `--list`, `--bundle` or `--strength`: refused.
   - The two folders before and after a run: byte for byte the same, and nothing written beside them.
-  - The digest printed equals the one `mo push` computes for the same folder.
+  - For a program that is not a library module, the digest printed equals the one `mo push` computes for the same folder.
 - **Verification:** The scenarios pass, the fuzz target holds for any two sources, and a search of `src/` still finds no call to git.
 
 ### U7. The change summary
@@ -564,7 +575,9 @@ Waits on: PR1, which must merge before this group can start, because U6 runs the
   - Two previous checks, one that no longer compiles and one that fails: each is listed on its own.
   - A service promise found only in the previous version: run against the new service and sorted.
   - A previous example of one overload: put into the same overload.
-  - The new version fails one of its own checks: the summary is still printed and lists it as no longer true, and the exit status of 1 comes from the check.
+  - The new version fails a check that the previous version passed: the summary is still printed and lists it as no longer true, and the exit status of 1 comes from the check.
+  - A check that fails on both versions, and a new check that fails on the new code: neither is listed, and the exit status of 1 comes from the check.
+  - A helper that only tests call is changed to return `true`, and every test keeps its text: each test that reads it is listed as could not be compared, and the reason names the helper.
   - A rename that also changes behaviour: listed only as could not be compared. This pins the stated limit.
   - The summary gives the previous version's digest, and `--json` gives one record for each entry.
 - **Verification:** The scenarios pass, and a run of F2 on a real change to an example program reads correctly to someone who has not seen the code.
@@ -594,7 +607,7 @@ Waits on: PR1 and PR2, which must merge before this group can start, because the
 - **Requirements:** R23. KTD17.
 - **Dependencies:** none.
 - **Files:** `src/tools/strength.c`, `src/tools/render.c`, `src/tools/tests.c`, `src/tools/tools.h`, `tests/cli/strength/`, `tests/cli/strength-builder/`, `ci/cli_intent.py`, `docs/design/promise-strength.md`, `docs/reference/README.md`, `docs/agent-guide.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`.
-- **Approach:** Stop dropping tests from the checks a wrong version runs against. Count a failed test apart from failed promises and examples. A version that a promise or an example kills keeps its existing outcome.
+- **Approach:** Stop dropping tests from the checks a wrong version runs against. Count a failed test apart from failed promises and examples. A version that a promise or an example kills keeps its existing outcome. A test then runs under the deadline `--strength` already gives each check, which is `--seconds` and 2 by default.
 - **Patterns to follow:** `classify` and `intent_checks` in `src/tools/strength.c`.
 - **Test scenarios:**
   - A wrong version that only a test kills: its outcome is killed by a test, the existing rate does not move, and the any-check total rises by one.
@@ -602,6 +615,7 @@ Waits on: PR1 and PR2, which must merge before this group can start, because the
   - The existing fixtures: the same rates, with the record's version one higher.
   - A wrong version that changes what an intent item reads: still named as changing intent and not counted.
   - A file under test whose tests sit in a module the wrong version does not replace: the tests still run against it.
+  - A test that runs longer than `--seconds`: the run is unfinished, as an interrupted check is today, and nothing is counted as killed.
 - **Verification:** The driver checks in `ci/cli_intent.py` pass with the new outcome, and `docs/design/promise-strength.md` describes it.
 
 ### U10. The measurement
@@ -611,14 +625,16 @@ Waits on: PR1 and PR2, which must merge before this group can start, because the
 - **Dependencies:** U6, U8, U9.
 - **Files:** `docs/status/trust-gates-run.md`, `learnability/trust-gates/manifest.json` (new), `learnability/trust-gates/fitted/` (new), `learnability/trust-gates/results/`, `learnability/trust-gates/transcript/` (new).
 - **Approach:**
-  1. Take `main.mo`, `job-queue.mo` and `queue-tests.mo` from commit `1389bdfb` and check their hashes against `learnability/phase6/strength/manifest.json`.
-  2. Start a fresh agent session that cannot read the repository. It holds those three files, a built `mo` with its library, and what `mo guide` prints. Its task is to make `mo test --gates queue-tests.mo` pass, and it may use `--against` the frozen copy. Keep its transcript and a log of each survivor: how it was resolved, any it judged no check could kill, and any that only one particular call sequence killed.
-  3. Run `--strength` on the fitted program with the working half and then the held-back folder the Phase 6 manifest names. Record the kills by kind of check and for each half, and each uncountable version by name.
-  4. Write the results beside the predictions, including a wrong prediction. State the limits: the held-back half was already used in Phase 6, no wrong version touches `submit`, `lease`, `acknowledge` or `fail`, the count measures both gates together, and the table's author had read what the wrong versions changed.
-  5. Have someone other than the fitting session count again from the result files. Record Robert's answer.
+  1. Take `main.mo`, `job-queue.mo` and `queue-tests.mo` from commit `1389bdfb`. Check `main.mo` and `job-queue.mo` against the hashes in `learnability/phase6/strength/manifest.json`. That manifest does not hash `queue-tests.mo`, so record all three hashes in `learnability/trust-gates/manifest.json` before the first run.
+  2. Measure the frozen program before anything is fitted. Write a prediction, then run `--strength` on it through `queue-tests.mo` with the working half and with the held-back folder. Phase 6 measured through `main.mo` with tests left out, so its 3 of 12 is no baseline for a count that includes tests, and the frozen program already has 23 of them. Without this run, a high count for the fitted program could be the tests' doing and not the gate's. The fitting session never sees these results.
+  3. Start a fresh agent session that cannot read the repository. It holds those three files, a built `mo` with its library, and what `mo guide` prints. Its task is to make `mo test --gates queue-tests.mo` pass, and it may use `--against` the frozen copy. Keep its transcript and a log of each survivor: how it was resolved, any it judged no check could kill, and any that only one particular call sequence killed.
+  4. Run `--strength` on the fitted program with the working half and then the held-back folder the Phase 6 manifest names. Record the kills by kind of check and for each half beside the counts of step 2, and each uncountable version by name. Every `--strength` run here sets `--seconds` to at least four times the slowest check of the program it measures, and the record gives the value. One test of the task queue takes about a minute on a debug build, and under the default of 2 seconds the run would not finish.
+  5. Record the number of mutants and the number of functions with no mutant for the frozen program and for the fitted one, and name each function that lost all its mutants during fitting.
+  6. Write the results beside the predictions, including a wrong prediction. State the limits: the held-back half was already used in Phase 6, no wrong version touches `submit`, `lease`, `acknowledge` or `fail`, the count measures both gates together, the table's author had read what the wrong versions changed, and `--strength` runs 1,000 call sequences for each service where the gate runs 200.
+  7. Have someone other than the fitting session count again from the result files. Record Robert's answer.
 - **Execution note:** Leave every file the manifest hashes unchanged once the first run has started, as `docs/solutions/workflow-issues/keep-freeze-hashed-files-unchanged-after-a-rehearsal.md` says.
 - **Test scenarios:** Test expectation: none -- a measurement. Its evidence is the record and the kept result files.
-- **Verification:** The record holds the predictions, the counts for each half by kind, the fitting log's two counts for R24, the limits and Robert's answer.
+- **Verification:** The record holds the predictions, the counts for each half by kind for the frozen program and for the fitted one, the mutant counts before and after fitting, the fitting log's two counts for R24, the limits and Robert's answer.
 
 ### PR4: The repository's programs
 
@@ -630,12 +646,12 @@ Waits on: PR3, which must merge before this group can start, because the program
 - **Requirements:** R18. KTD16.
 - **Dependencies:** U8.
 - **Files:** `lib/*.mo`, `examples/*.mo`, `services/task-queue/*.mo`, `ci/check_task_queue.py`, `ci/cli_guide.py`, `tests/golden/sample-*-tests/stdout`, `learnability/trust-gates/fitting-log.md` (new), `docs/status/trust-gates-run.md`.
-- **Approach:** For each program, run the gate and resolve each report: a promise or an example for missing intent, and a new check or simpler code for a survivor. Prefer a new check to a code change in `lib/json.mo`, `lib/list.mo`, `lib/option.mo` and `lib/result.mo`, which are compiled into the toolchain. Use `--against` the version on `main` while working, and finish each program with a full run. Log each survivor that no check could kill and each that only one call sequence killed, for R24. Update the counts that `ci/check_task_queue.py`, `ci/cli_guide.py` and the sample golden cases pin.
+- **Approach:** For each program, run the gate and resolve each report: a promise or an example for missing intent, and a new check or simpler code for a survivor. Prefer a new check to a code change in `lib/json.mo`, `lib/list.mo`, `lib/option.mo` and `lib/result.mo`, which are compiled into the toolchain. Use `--against` the version on `main` while working, and finish each program with a full run. Log each survivor that no check could kill and each that only one call sequence killed, for R24. Record for each program the number of mutants and the number of functions with no mutant before and after fitting, and name each function that lost all its mutants. Update the counts that `ci/check_task_queue.py`, `ci/cli_guide.py` and the sample golden cases pin.
 - **Test scenarios:**
   - Each of the 12 library modules, the 12 examples and `queue-tests.mo`: `mo test --gates` exits 0.
   - Each program's own checks still pass under plain `mo test`.
   - `ci/check_task_queue.py` passes with its new counts, and its planted fault still fails the service promise it names.
-- **Verification:** `bash ci/check.sh drivers` passes, and the fitting log gives the two counts of R24.
+- **Verification:** `bash ci/check.sh drivers` passes, and the fitting log gives the two counts of R24 and the mutant counts before and after.
 
 ### U12. The repository's full run and its cost
 
@@ -664,7 +680,7 @@ Waits on: PR4, which must merge before this group can start, because every progr
 - **Approach:**
   1. Make the full run the default and delete `--gates` from the code, the flag table, the fuzz dictionary and every document.
   2. Write section 12's account of mutants, the table of kinds, kills, stated intent and the change summary, and section 13.4's account of the full run, the shorter run, the runs on which the gates do not run and the loss of the 2-second clock on a full run.
-  3. Teach the same in the guide, including that only a plain `mo test` is a pass and that the gates cover the file under test and what it imports.
+  3. Teach the same in the guide, including that only a plain `mo test` is a pass and that the gates cover the file under test and the program's own modules it imports. A library module is gated only when `mo test` runs on that module (R1).
   4. Say in `docs/design/promise-strength.md` that mutants are gated and wrong versions stay a measurement, and in `docs/design/intent.md` that the door's check is unchanged (R26).
 - **Test scenarios:**
   - The program of AE1 under plain `mo test`: exit 1 with the survivor.
@@ -750,3 +766,15 @@ For each PR:
 - `.github/workflows/nightly.yml` and the nightly of 18 November 2026: 77 minutes of 120, with the `drivers` group near 50.
 - `docs/status/phase6-run.md` and `learnability/phase6/strength/`: the shape of a measurement with predictions written first.
 - Mutation testing practice: the default kinds of PIT and Mull; Yao, Harman and Jia (ICSE 2014) on how many mutants of each kind nothing can kill; PIT's use of what each test ran, cheapest first and stopping at the first kill; PIT's and Stryker's accounts of what a result kept from an earlier run can miss.
+
+---
+
+## Deferred / Open Questions
+
+These are items a document review left for Robert. They do not block PR1.
+
+### From 2026-11-18 review
+
+- **Nothing runs the full run before a change merges** — Verification Contract, and U12 (the repository's full run and its cost) (P1, adversarial-document-reviewer, confidence 75)
+
+  A pull request whose shorter run passed can merge while a full run would fail. An agent's everyday pass is the shorter run with `--against`, and the full run sits only in `ci/check_gates.py` in the `drivers` group, which AGENTS.md leaves to the nightly. The nightly runs after the merge. So a version with a surviving mutant can reach `main`, which the second success criterion rules out for the client library of Phase 7's M3. The shorter run misses a survivor when something a function calls changed (KTD11 leaves that to the full run), or when the previous version never passed a full run. The decision is Robert's because it changes "Checks and merging" in AGENTS.md, which today says not to run more groups than `gcc`. The review recommends this rule, added to AGENTS.md by U13: a pull request that changes a Mo program the nightly gates runs plain `mo test` on each changed program and puts the last line in its body. What it costs is known once U12 has measured the full run.
