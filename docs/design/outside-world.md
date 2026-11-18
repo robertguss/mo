@@ -605,6 +605,8 @@ and not before:
 Rows 2 to 5, 12 and 13 are calls the plan made without him. Rows 7, 8, 10 and 11 are questions
 the plan left open. The rest came up in this step. Each needs his yes or a change.
 
+Robert's answers so far: row 2, yes (18 November 2026).
+
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
 | 1 | The 1 MiB fetch first missed the wall-time bar, because of `Json.parse`. Robert asked for a faster parser in this step. | Accept the reworked parser in `lib/json.mo`, which meets the bar in Mo. Documents of numbers or of strings with escapes stay slow, and become the first workload of the phase about speed. | A primitive in C that scans text, for those documents, in this phase. |
