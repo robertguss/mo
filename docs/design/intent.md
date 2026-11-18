@@ -501,7 +501,7 @@ rule for every service behind the door.
 
 - A shell on the service's host, or write access to its data folder, is
   approval authority as well as upgrade authority. Only the upgrade children are
-  confined by the operating system; `mo serve` itself is not.
+  confined by the operating system. `mo serve` itself is not.
 - The check child runs candidate code on the host under limits and the
   confinement in [outside-world.md](outside-world.md#confinement-of-the-children).
   It cannot change what another child wrote, but a memory-safety defect in the
