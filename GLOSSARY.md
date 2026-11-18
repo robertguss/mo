@@ -26,3 +26,7 @@ The rule that a program's checks fail while one of its mutants survives.
 
 **Behaviour change**:
 A check of the previous version of a program that the new version fails.
+
+**Change summary**:
+The account of a change in terms of checks: those no longer true, those newly true, those about
+something new, and those that could not be compared.
