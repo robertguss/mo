@@ -100,7 +100,9 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
  * Each handle belongs to at most one live service. Only success writes out. */
 /* Candidate compiler subprocess. Paths and executable are absolute; tools owns a private
  * bundle directory and validates the emitted image. Poll never blocks unless it must reap
- * a child it has just killed. The child shares the service's OS identity, not a sandbox. */
+ * a child it has just killed. Where the host can confine, the child runs confined by Landlock
+ * and a seccomp filter: it reads the compiler, its library and its inputs, and writes only
+ * its own folder. */
 struct mo_compile_child {
     int pid;
     uint64_t deadline;
@@ -109,6 +111,7 @@ struct mo_compiler {
     const char *executable;
     const char *library;
 };
+MO_MUST_USE bool mo_compile_can_confine(void);
 enum mo_compile_status {
     MO_COMPILE_RUNNING,
     MO_COMPILE_OK,

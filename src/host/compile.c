@@ -1,5 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
-#include "host/host.h"
+#include "host/internal.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -31,12 +31,13 @@ struct child_limits {
     rlim_t memory, cpu;
     uint64_t wall;
 };
-static enum mo_compile_status spawn(const char *folder, const char *const *arguments,
+static enum mo_compile_status spawn(const struct mo_compiler *compiler, const char *folder,
+                                    const char *const reads[3], const char *const *arguments,
                                     unsigned count, const char *diagnostics,
                                     struct child_limits limits, uint64_t now,
                                     struct mo_compile_child *child) {
     MO_ASSERT(child != NULL && child->pid == 0 && folder != NULL && count < 16 &&
-              arguments[count] == NULL);
+              arguments[0] == compiler->executable && arguments[count] == NULL);
     if (now > UINT64_MAX - limits.wall)
         return MO_COMPILE_IO;
     int errors = open(diagnostics, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
@@ -47,6 +48,7 @@ static enum mo_compile_status spawn(const char *folder, const char *const *argum
         (void)close(errors);
         return MO_COMPILE_IO;
     }
+    bool confine = mo_compile_can_confine();
     pid_t pid = fork();
     if (pid == 0) {
         int input = open("/dev/null", O_RDWR);
@@ -57,7 +59,7 @@ static enum mo_compile_status spawn(const char *folder, const char *const *argum
             _exit(125);
         for (int fd = 3; fd < descriptors; fd++)
             (void)close(fd);
-        if (chdir(folder) != 0)
+        if (chdir(folder) != 0 || (confine && !mo_compile_confine(compiler, folder, reads)))
             _exit(125);
         char *mutable[16];
         for (unsigned i = 0; i <= count; i++)
@@ -99,7 +101,8 @@ enum mo_compile_status mo_compile_start(const struct mo_compiler *compiler, cons
     struct child_limits limits = {MO_LIMIT_UPGRADE_COMPILE_MEMORY,
                                   MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS,
                                   MO_LIMIT_UPGRADE_COMPILE_WALL_US};
-    return spawn(folder, arguments, count, diagnostics, limits, now, child);
+    const char *reads[3] = {entry, old_bundle, context};
+    return spawn(compiler, folder, reads, arguments, count, diagnostics, limits, now, child);
 }
 enum mo_compile_status mo_list_start(const struct mo_compiler *compiler, const char *folder,
                                      const char *bundle, const char *output,
@@ -111,7 +114,8 @@ enum mo_compile_status mo_list_start(const struct mo_compiler *compiler, const c
     unsigned count = upgrade_inputs(arguments, 7, old_bundle, NULL, context);
     struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
                                   MO_LIMIT_CHECK_WALL_US};
-    return spawn(folder, arguments, count, diagnostics, limits, now, child);
+    const char *reads[3] = {bundle, old_bundle, context};
+    return spawn(compiler, folder, reads, arguments, count, diagnostics, limits, now, child);
 }
 enum mo_compile_status mo_check_start(const struct mo_compiler *compiler, const char *folder,
                                       const char *bundle, const char *diagnostics,
@@ -121,7 +125,8 @@ enum mo_compile_status mo_check_start(const struct mo_compiler *compiler, const 
     unsigned count = upgrade_inputs(arguments, 4, old_bundle, NULL, context);
     struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
                                   MO_LIMIT_CHECK_WALL_US};
-    return spawn(folder, arguments, count, diagnostics, limits, now, child);
+    const char *reads[3] = {bundle, old_bundle, context};
+    return spawn(compiler, folder, reads, arguments, count, diagnostics, limits, now, child);
 }
 enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now) {
     MO_ASSERT(child != NULL && child->pid > 0);
