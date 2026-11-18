@@ -338,13 +338,14 @@ Waits on: PR1, needed before this group can start, because Robert approves there
 - **Goal:** A compile, listing or check child reaches only what it needs, and a check shows it.
 - **Requirements:** R12, R13; KTD5; AE4.
 - **Dependencies:** U1.
-- **Files:** `src/host/compile.c`, `src/host/host.h`, `src/tools/upgrade.c`, `src/tools/serve.c`, `src/base/codes.h`, `Makefile`, `tests/test_compile_child.c`, a new driver under `ci/`, `tests/errors/`, `.github/workflows/nightly.yml`, `docs/design/sandbox-properties.md`, `docs/design/intent.md`, `docs/design/upgrades.md`, `docs/design/architecture.md`, and `docs/agent-guide.md` if `mo serve` behaves differently.
+- **Files:** `src/host/compile.c`, `src/host/host.h`, `src/tools/upgrade.c`, `src/tools/serve.c`, `src/base/codes.h`, `Makefile`, `tests/test_compile_child.c`, a new driver under `ci/`, `tests/errors/`, `cbmc/prove.sh`, `cbmc/README.md`, `.github/workflows/nightly.yml`, `docs/design/sandbox-properties.md`, `docs/design/intent.md`, `docs/design/upgrades.md`, `docs/design/architecture.md`, and `docs/agent-guide.md` if `mo serve` behaves differently.
 - **Approach:**
   1. Apply the mechanism M2's brainstorm picks inside `spawn()`, after the limits and before `execve` (KTD5).
   2. Make each child's output safe from the children that run after it (KTD5).
   3. Add the probe child and the control build.
   4. Build the answer to M2's second question under Outstanding Questions, with its diagnostic.
   5. Rewrite the paragraphs that say the children run without confinement. Keep, in amended form, the entry in `docs/design/intent.md` under "What the lock does not protect against": a memory-safety defect can still make a child forge its own output.
+  6. Give the CBMC proofs a planted-bug control. `cbmc/prove.sh` plants one named defect in a proved function and fails when the proof still passes. The reach check shows that a proof runs the code. It does not show that the proof would catch a defect. Start with the proofs of path containment and resolution, which keep a program inside its folder. A planted defect that changes no behaviour is listed with its reason. Robert asked for this on 18 November 2026, after `make mutate` in his `safe-c` repository.
 - **Patterns to follow:** `STORE_FAULT_RENAMES` in the Makefile, for a second build made by renaming at compile time; the `openat2` probe in `src/host/path.c`, for finding out whether a host supports a feature; the child modes in `tests/test_compile_child.c`.
 - **Test scenarios:**
   - Covers AE4. On the normal build the probe child fails at each of these: opening a file outside its scratch folder, creating one there, reading the service's data folder, connecting over TCP to a listener on loopback, sending a UDP datagram, connecting to a Unix socket the check set up, and signalling its parent.
@@ -353,7 +354,8 @@ Waits on: PR1, needed before this group can start, because Robert approves there
   - A real upgrade compiles, lists and checks under confinement: the existing upgrade drivers pass unchanged.
   - A candidate that uses a library module compiles, which shows the child still reads `lib/`.
   - On a host without the mechanism, `mo serve` does what U1's design says and prints the diagnostic.
-- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers` pass. `make CC=clang` and `make sanitize CC=clang` pass. The confinement check runs in the nightly on `ubuntu-24.04` and is not skipped there. No design document still says the children run unconfined, and `docs/design/intent.md` still lists a child's forged output as something the lock does not protect against.
+  - Each planted defect makes its proof fail, and the same proof passes with the defect taken out.
+- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers` pass. `bash ci/check.sh cbmc`, run by hand, passes with the planted-bug control in it. `make CC=clang` and `make sanitize CC=clang` pass. The confinement check runs in the nightly on `ubuntu-24.04` and is not skipped there. No design document still says the children run unconfined, and `docs/design/intent.md` still lists a child's forged output as something the lock does not protect against.
 
 ### PR3: HTTP
 
