@@ -13,7 +13,7 @@ import sys
 import tempfile
 import threading
 
-from check_upgrade_live import (Service, V1, V2, V3, TOKEN, UPGRADE, ENV, push, review,
+from check_upgrade_live import (Service, V1, V2, V3, UPGRADE, ENV, push, review,
                                 write, digests, assert_no_secrets)
 
 RELAY = pathlib.Path(__file__).resolve().parent.parent / "docs/ops/live-relay.py"
