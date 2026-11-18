@@ -500,11 +500,15 @@ rule for every service behind the door.
 ## What the lock does not protect against
 
 - A shell on the service's host, or write access to its data folder, is
-  approval authority as well as upgrade authority. Mo has no operating-system
-  confinement.
-- The check child runs candidate code on the host under limits, not in a
-  sandbox. A memory-safety defect in the compiler or the VM that pushed source
-  can reach is a way around the door without a shell.
+  approval authority as well as upgrade authority. Only the upgrade children are
+  confined by the operating system; `mo serve` itself is not.
+- The check child runs candidate code on the host under limits and the
+  confinement in [outside-world.md](outside-world.md#confinement-of-the-children).
+  It cannot change what another child wrote, but a memory-safety defect in the
+  compiler or the VM that pushed source can reach can still make a child forge
+  its own output, such as a check that reports a pass. That is a way around the
+  door without a shell. Under `--unconfined` the children are not confined at
+  all.
 - A change to a library module or to the toolchain can change what an approved
   item means while its digest stays the same.
 - The door checks the same generated sequences on every push, so a defect

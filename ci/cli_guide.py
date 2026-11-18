@@ -57,6 +57,7 @@ def guide_claims(binary):
                      "any other URL is refused before either credential is read.",
                      "Pushing the active program again reports `already active` and changes "
                      "nothing",
+                     "Where the host can confine, `--unconfined` changes nothing.",
                      "neither credential appears in output, events or the data folder.",
                      "a new GET replaces it.",
                      "fetch an export with `mo fetch`, and replay or query a fetched export with "
