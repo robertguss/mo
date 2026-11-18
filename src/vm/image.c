@@ -48,7 +48,8 @@ static MO_MUST_USE bool constant(struct mo_process *p, const struct mo_bytecode_
 
 static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
                                               const struct mo_limits *limits, bool bounded,
-                                              uint64_t instructions, struct mo_defect *defect_out) {
+                                              uint64_t instructions, struct mo_vm_trace *trace,
+                                              struct mo_defect *defect_out) {
     MO_ASSERT(image != NULL && limits != NULL && defect_out != NULL);
     struct mo_vm_image *runtime = mo_image_runtime(image);
     if (runtime != NULL) {
@@ -72,6 +73,7 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
         return MO_STOPPED;
     }
     runtime->outcome = MO_STOPPED;
+    runtime->trace = trace;
     struct mo_type *storage = (struct mo_type *)(runtime + 1);
     mo_host_prepare_types(&runtime->host_types, source, storage);
     runtime->constants = (struct mo_cell *)((uint8_t *)storage + type_bytes);
@@ -135,7 +137,13 @@ static MO_MUST_USE enum mo_outcome initialize(struct mo_image *image,
 
 enum mo_outcome mo_image_init(struct mo_image *image, const struct mo_limits *limits,
                               struct mo_defect *defect_out) {
-    return initialize(image, limits, false, 0, defect_out);
+    return initialize(image, limits, false, 0, NULL, defect_out);
+}
+
+enum mo_outcome mo_image_init_traced(struct mo_image *image, const struct mo_limits *limits,
+                                     struct mo_vm_trace *trace, struct mo_defect *defect_out) {
+    MO_ASSERT(trace != NULL);
+    return initialize(image, limits, false, 0, trace, defect_out);
 }
 
 bool mo_image_global(const struct mo_image *image, uint32_t global, struct mo_cell *out) {
@@ -150,5 +158,5 @@ bool mo_image_global(const struct mo_image *image, uint32_t global, struct mo_ce
 
 enum mo_outcome mo_image_init_bounded(struct mo_image *image, const struct mo_limits *limits,
                                       uint64_t instructions, struct mo_defect *defect_out) {
-    return initialize(image, limits, true, instructions, defect_out);
+    return initialize(image, limits, true, instructions, NULL, defect_out);
 }

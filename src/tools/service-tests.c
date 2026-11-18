@@ -233,9 +233,11 @@ static bool failed(struct run *w, uint32_t item, struct mo_recovery_result *foun
     if (check)
         set_judges(w, found->verdict.check);
     struct mo_recovery_hooks hooks = {NULL, check ? judge_step : NULL, w};
-    uint32_t runs = mo_recovery_shrink(w->recovery, &found->sequence, found->outcome,
-                                       check ? &hooks : NULL, found->verdict);
-    (void)runs;
+    if (!w->cli->gated) {
+        uint32_t runs = mo_recovery_shrink(w->recovery, &found->sequence, found->outcome,
+                                           check ? &hooks : NULL, found->verdict);
+        (void)runs;
+    }
     for (uint32_t i = 0; i < MO_CLI_RECOVERY_STEPS; i++)
         w->types_kept[i] = MO_NO_INDEX;
     w->last = true;
@@ -337,7 +339,7 @@ static bool search(struct run *w) {
         add(&base, found.resume);
         first = found.ordinal;
         mo_recovery_result_free(w->recovery, &found);
-        if (!more)
+        if (!more || w->cli->gated)
             return written;
     }
 }

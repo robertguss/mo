@@ -440,7 +440,9 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
     uint32_t subject = file->debug[function].subject;
     const struct mo_bytecode_function *ordinary = &file->functions[subject];
     struct mo_deadline deadline;
-    if (!mo_deadline_start(&deadline, cli->seconds)) {
+    if (cli->gated)
+        mo_deadline_none(&deadline);
+    else if (!mo_deadline_start(&deadline, cli->seconds)) {
         interrupted(diags, observation, &deadline);
         return true;
     }
@@ -526,7 +528,7 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
         if (!resolved)
             break;
     }
-    if (known && best.process != NULL && best.condition != 0) {
+    if (known && best.process != NULL && best.condition != 0 && !cli->gated) {
         struct mo_input_shrinker shrinker;
         mo_input_shrink_init(&shrinker, &inputs, MO_CLI_PROMISE_SHRINK_CALLS);
         struct mo_builder_shrinker builder_shrinker;

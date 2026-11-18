@@ -46,6 +46,7 @@ struct mo_cli {
     struct mo_limits limits;
     uint32_t calls, sequences, seconds;
     bool door_plan;
+    bool gated;
     const char *strength, *against;
     const char *fetch_url, *fetch_token;
     /* push and review: the loopback endpoint, the expected active source digest and the

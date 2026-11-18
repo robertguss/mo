@@ -64,6 +64,9 @@ void mo_vm_enter(struct mo_process *process, uint32_t function, const struct mo_
                  uint32_t next) {
     MO_ASSERT(function < process->file->function_count);
     const struct mo_bytecode_function *fn = &process->file->functions[function];
+    const struct mo_vm_trace *trace = process->runtime->trace;
+    if (trace != NULL && trace->entered != NULL)
+        trace->entered[function] = true;
     size_t previous = process->depth == 0 ? SIZE_MAX : process->top;
     size_t offset = process->used;
     if (tail) {

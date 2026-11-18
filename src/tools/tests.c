@@ -370,11 +370,253 @@ static uint64_t microseconds(struct timespec start, struct timespec end) {
     return seconds * 1000000 + (uint64_t)nanos / 1000;
 }
 
+static bool run_one(const struct mo_cli *cli, const struct mo_program *program,
+                    struct mo_image *image, const struct mo_sources *sources,
+                    const struct mo_observation *observation, uint32_t count, uint32_t function,
+                    FILE *output, struct mo_diags *diags, struct mo_test_totals *totals) {
+    if (observation->source == NULL)
+        return mo_test_service(cli, program, image, sources, observation, count, function, output,
+                               diags, totals);
+    if (observation->source->kind == MO_SPEC_PROMISE)
+        return mo_test_promise(cli, program, image, sources, observation, function, output, diags,
+                               totals);
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    struct timespec start, end;
+    if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
+        mo_test_report_error(diags, "could not measure test execution",
+                             observation->source->syntax->span, strerror(errno));
+        return false;
+    }
+    errno = 0;
+    struct mo_process *process = mo_process_new(image, &cli->limits);
+    struct mo_cell value;
+    struct mo_defect defect;
+    struct mo_test_result result = {.observation = observation,
+                                    .file = file,
+                                    .process = process,
+                                    .defect = &defect,
+                                    .line.file = UINT32_MAX};
+    if (process == NULL) {
+        defect = (struct mo_defect){.reason = "running out of memory",
+                                    .limit_name = errno == ENOSPC ? "--max-heap" : NULL,
+                                    .limit = cli->limits.heap_size,
+                                    .span.file = MO_NO_INDEX};
+        result.outcome = MO_STOPPED;
+    } else if (!cli->door_plan || cli->gated)
+        result.outcome = mo_call(process, function, NULL, 0, &value, &defect);
+    else {
+        struct mo_deadline deadline;
+        enum mo_controlled_outcome outcome =
+            mo_deadline_start(&deadline, cli->seconds)
+                ? mo_call_controlled(process, function, NULL, 0, mo_deadline_running, &deadline,
+                                     &value, &defect)
+                : MO_CONTROL_CANCELLED;
+        if (outcome == MO_CONTROL_CANCELLED) {
+            mo_test_report_error(diags, "example interrupted before its outcome was known",
+                                 observation->source->syntax->span, observation->name);
+            mo_process_free(process);
+            return true;
+        }
+        result.outcome = outcome == MO_CONTROL_RETURNED ? MO_RETURNED
+                         : outcome == MO_CONTROL_FAILED ? MO_FAILED
+                                                        : MO_STOPPED;
+    }
+    switch (result.outcome) {
+    case MO_RETURNED:
+        totals->passed++;
+        mo_value_drop(mo_process_heap(process), file->functions[function].result_type, value);
+        /* Verified bytecode releases every reference it acquires (bytecode 4.2). */
+        MO_ASSERT(mo_heap_objects(mo_process_heap(process)) == 0);
+        break;
+    case MO_FAILED:
+        totals->failed++;
+        totals->failed_examples += observation->source->kind == MO_SPEC_EXAMPLE;
+        if (observation->source->kind == MO_SPEC_TEST)
+            result.line = assertion_span(observation->source,
+                                         mo_runtime_span(file, sources, defect.span.file,
+                                                         defect.span.start, defect.span.end));
+        break;
+    case MO_STOPPED:
+        totals->stopped++;
+        break;
+    }
+    bool shown = false;
+    if (clock_gettime(CLOCK_MONOTONIC, &end) == 0) {
+        result.microseconds = microseconds(start, end);
+        shown = mo_write_test_result(output, cli->json, sources, &result);
+    }
+    mo_process_free(process);
+    if (!shown)
+        mo_test_report_error(diags, "test result could not be rendered or written completely",
+                             observation->source->syntax->span, observation->name);
+    return shown;
+}
+
+struct gate {
+    struct mo_gated_run *run;
+    struct mo_vm_trace trace;
+    uint32_t *order, *owner;
+};
+
+static void exhausted(struct mo_diags *diags) {
+    mo_test_report_error(diags, "gated checks exceed tool resources",
+                         (struct mo_span){UINT32_MAX, 0, 0}, NULL);
+}
+
+static bool named(const struct mo_observation *observation, const char *name) {
+    const struct mo_lowered_promise *instance = observation->instance;
+    if (instance == NULL)
+        return strcmp(observation->name, name) == 0;
+    size_t length = strlen(name);
+    return instance->name.length == length && memcmp(instance->name.bytes, name, length) == 0;
+}
+
+static bool plan(struct mo_arena *arena, struct mo_arena *scratch,
+                 const struct mo_test_selection *selection, struct gate *g,
+                 struct mo_diags *diags) {
+    struct mo_gated_run *run = g->run;
+    if (run->checks == NULL) {
+        run->count = selection->count;
+        run->checks = mo_arena_allocate_array(arena, run->count, sizeof(*run->checks),
+                                              _Alignof(struct mo_gated_check));
+        for (uint32_t i = 0; run->checks != NULL && i < run->count; i++) {
+            const struct mo_observation *observation = &selection->items[i];
+            const struct mo_lowered_promise *instance = observation->instance;
+            const char *name = observation->name;
+            if (instance != NULL) {
+                char *copy = mo_arena_allocate(arena, instance->name.length + 1, 1);
+                if (copy == NULL) {
+                    exhausted(diags);
+                    return false;
+                }
+                memcpy(copy, instance->name.bytes, instance->name.length);
+                copy[instance->name.length] = '\0';
+                name = copy;
+            }
+            run->checks[i] = (struct mo_gated_check){
+                .name = name, .kind = mo_observation_kind(observation), .limit = UINT64_MAX};
+        }
+    }
+    g->order = run->checks == NULL ? NULL
+                                   : mo_arena_allocate_array(scratch, run->count, sizeof(*g->order),
+                                                             _Alignof(uint32_t));
+    if (g->order == NULL) {
+        exhausted(diags);
+        return false;
+    }
+    size_t work = MO_CLI_TEST_WORK;
+    for (uint32_t k = 0; k < run->count; k++) {
+        uint32_t i = 0;
+        for (; i < selection->count && !named(&selection->items[i], run->checks[k].name); i++)
+            if (work-- == 0) {
+                exhausted(diags);
+                return false;
+            }
+        if (i == selection->count) {
+            mo_test_report_error(diags, "a planned check is not in the program",
+                                 (struct mo_span){UINT32_MAX, 0, 0}, run->checks[k].name);
+            return false;
+        }
+        g->order[k] = i;
+    }
+    return true;
+}
+
+static uint32_t *owners(struct mo_arena *scratch, const struct mo_bytecode *file,
+                        const struct mo_program *program, const struct mo_sources *sources) {
+    uint32_t *owner =
+        mo_arena_allocate_array(scratch, file->function_count, sizeof(*owner), _Alignof(uint32_t));
+    for (uint32_t b = 0; owner != NULL && b < file->function_count; b++) {
+        owner[b] = MO_NO_INDEX;
+        if (file->functions[b].spec_code)
+            continue;
+        const struct mo_bytecode_debug *debug = &file->debug[b];
+        struct mo_span code = mo_runtime_span(file, sources, debug->file, debug->start, debug->end);
+        for (uint32_t i = 0; owner[b] == MO_NO_INDEX && i < program->function_count; i++) {
+            struct mo_span span = program->functions[i].signature->function->declaration->span;
+            if (span.file == code.file && span.start <= code.start && code.end <= span.end)
+                owner[b] = i;
+        }
+    }
+    return owner;
+}
+
+static bool *flags(struct mo_arena *arena, size_t count) {
+    bool *out = mo_arena_allocate_array(arena, count, sizeof(bool), _Alignof(bool));
+    if (out != NULL)
+        memset(out, 0, count * sizeof(bool));
+    return out;
+}
+
+static bool prepare(struct mo_arena *arena, struct mo_arena *scratch,
+                    const struct mo_bytecode *file, const struct mo_program *program,
+                    const struct mo_sources *sources, const struct mo_test_selection *selection,
+                    struct gate *g, struct mo_diags *diags) {
+    struct mo_gated_run *run = g->run;
+    g->trace = (struct mo_vm_trace){NULL, 0, run->start_limit};
+    if (!plan(arena, scratch, selection, g, diags))
+        return false;
+    if (!run->record)
+        return true;
+    g->trace.entered = flags(scratch, file->function_count);
+    g->owner = owners(scratch, file, program, sources);
+    run->start_entered = flags(arena, program->function_count);
+    bool ready = g->trace.entered != NULL && g->owner != NULL && run->start_entered != NULL;
+    for (uint32_t k = 0; ready && k < run->count; k++)
+        ready = (run->checks[k].entered = flags(arena, program->function_count)) != NULL;
+    if (!ready)
+        exhausted(diags);
+    return ready;
+}
+
+static void attribute(const struct gate *g, uint32_t count, bool *out) {
+    for (uint32_t b = 0; b < count; b++)
+        if (g->trace.entered[b] && g->owner[b] != MO_NO_INDEX)
+            out[g->owner[b]] = true;
+}
+
+static void run_plan(const struct mo_cli *cli, const struct mo_program *program,
+                     struct mo_image *image, const struct mo_sources *sources,
+                     const struct mo_test_selection *selection, const uint32_t *functions,
+                     FILE *output, struct mo_diags *diags, struct mo_test_totals *totals,
+                     struct gate *g) {
+    struct mo_gated_run *run = g->run;
+    uint32_t count = mo_image_bytecode(image)->function_count;
+    for (uint32_t k = 0; k < run->count; k++) {
+        struct mo_gated_check *check = &run->checks[k];
+        uint32_t i = g->order[k];
+        g->trace.steps = 0;
+        g->trace.limit = check->limit;
+        if (run->record)
+            memset(g->trace.entered, 0, count * sizeof(bool));
+        struct mo_test_totals before = *totals;
+        bool more = run_one(cli, program, image, sources, &selection->items[i], 1, functions[i],
+                            output, diags, totals);
+        check->steps = g->trace.steps;
+        if (check->steps > check->limit)
+            check->outcome = MO_CHECK_OUT_OF_STEPS;
+        else if (totals->passed != before.passed)
+            check->outcome = MO_CHECK_PASSED;
+        else if (totals->failed != before.failed)
+            check->outcome = MO_CHECK_FAILED;
+        else if (totals->stopped != before.stopped)
+            check->outcome = MO_CHECK_STOPPED;
+        else
+            return;
+        if (run->record)
+            attribute(g, count, check->entered);
+        run->ran = k + 1;
+        if (!more || (run->stop && check->outcome != MO_CHECK_PASSED))
+            return;
+    }
+}
+
 /* Selection has passed generator preflight and is nonempty. Never enters main. */
-static void mo_test_program(const struct mo_cli *cli, const struct mo_program *program,
+static void mo_test_program(const struct mo_cli *cli, struct mo_arena *arena,
+                            const struct mo_program *program,
                             const struct mo_test_selection *selection, const struct mo_buffer *wire,
                             const struct mo_sources *sources, FILE *output, struct mo_diags *diags,
-                            struct mo_test_totals *totals) {
+                            struct mo_test_totals *totals, struct gate *g) {
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
@@ -392,11 +634,14 @@ static void mo_test_program(const struct mo_cli *cli, const struct mo_program *p
                              (struct mo_span){UINT32_MAX, 0, 0}, NULL);
         goto done;
     }
+    if (g != NULL && !prepare(arena, &scratch, file, program, sources, selection, g, diags))
+        goto done;
     bool anchors = mo_program_has_anchors(program);
     struct mo_defect defect;
     enum mo_outcome initialized =
-        anchors ? mo_image_init_bounded(image, &cli->limits, MO_CLI_ANCHOR_INSTRUCTIONS, &defect)
-                : mo_image_init(image, &cli->limits, &defect);
+        g != NULL ? mo_image_init_traced(image, &cli->limits, &g->trace, &defect)
+        : anchors ? mo_image_init_bounded(image, &cli->limits, MO_CLI_ANCHOR_INSTRUCTIONS, &defect)
+                  : mo_image_init(image, &cli->limits, &defect);
     if (initialized != MO_RETURNED) {
         struct mo_buffer report;
         mo_buffer_init(&report, MO_LIMIT_DEFECT_TEXT_SIZE + 1);
@@ -412,109 +657,40 @@ static void mo_test_program(const struct mo_cli *cli, const struct mo_program *p
         bool added = mo_diags_add(diags, &diag);
         (void)added;
         mo_buffer_free(&report);
-        goto done;
     }
-    if (!mo_check_anchors(image, cli, sources, program, diags))
+    bool started =
+        initialized == MO_RETURNED && mo_check_anchors(image, cli, sources, program, diags);
+    if (g != NULL) {
+        g->run->started = started;
+        g->run->start_steps = g->trace.steps;
+        if (g->run->record)
+            attribute(g, file->function_count, g->run->start_entered);
+    }
+    if (!started)
         goto done;
-    for (uint32_t i = 0; i < selection->count; i++) {
-        const struct mo_observation *observation = &selection->items[i];
-        uint32_t function = functions[i];
-        if (observation->source == NULL) {
+    if (g != NULL)
+        run_plan(cli, program, image, sources, selection, functions, output, diags, totals, g);
+    else
+        for (uint32_t i = 0; i < selection->count;) {
+            const struct mo_observation *observation = &selection->items[i];
             uint32_t count = 1;
-            while (i + count < selection->count &&
+            while (observation->source == NULL && i + count < selection->count &&
                    selection->items[i + count].service == observation->service)
                 count++;
-            if (!mo_test_service(cli, program, image, sources, observation, count, function, output,
-                                 diags, totals))
+            if (!run_one(cli, program, image, sources, observation, count, functions[i], output,
+                         diags, totals))
                 break;
-            i += count - 1;
-            continue;
+            i += count;
         }
-        if (observation->source->kind == MO_SPEC_PROMISE) {
-            if (!mo_test_promise(cli, program, image, sources, observation, function, output, diags,
-                                 totals))
-                break;
-            continue;
-        }
-        struct timespec start, end;
-        if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
-            mo_test_report_error(diags, "could not measure test execution",
-                                 observation->source->syntax->span, strerror(errno));
-            break;
-        }
-        errno = 0;
-        struct mo_process *process = mo_process_new(image, &cli->limits);
-        struct mo_cell value;
-        struct mo_test_result result = {.observation = observation,
-                                        .file = file,
-                                        .process = process,
-                                        .defect = &defect,
-                                        .line.file = UINT32_MAX};
-        if (process == NULL) {
-            defect = (struct mo_defect){.reason = "running out of memory",
-                                        .limit_name = errno == ENOSPC ? "--max-heap" : NULL,
-                                        .limit = cli->limits.heap_size,
-                                        .span.file = MO_NO_INDEX};
-            result.outcome = MO_STOPPED;
-        } else if (!cli->door_plan)
-            result.outcome = mo_call(process, function, NULL, 0, &value, &defect);
-        else {
-            struct mo_deadline deadline;
-            enum mo_controlled_outcome outcome =
-                mo_deadline_start(&deadline, cli->seconds)
-                    ? mo_call_controlled(process, function, NULL, 0, mo_deadline_running, &deadline,
-                                         &value, &defect)
-                    : MO_CONTROL_CANCELLED;
-            if (outcome == MO_CONTROL_CANCELLED) {
-                mo_test_report_error(diags, "example interrupted before its outcome was known",
-                                     observation->source->syntax->span, observation->name);
-                mo_process_free(process);
-                continue;
-            }
-            result.outcome = outcome == MO_CONTROL_RETURNED ? MO_RETURNED
-                             : outcome == MO_CONTROL_FAILED ? MO_FAILED
-                                                            : MO_STOPPED;
-        }
-        switch (result.outcome) {
-        case MO_RETURNED:
-            totals->passed++;
-            mo_value_drop(mo_process_heap(process), file->functions[function].result_type, value);
-            /* Verified bytecode releases every reference it acquires (bytecode 4.2). */
-            MO_ASSERT(mo_heap_objects(mo_process_heap(process)) == 0);
-            break;
-        case MO_FAILED:
-            totals->failed++;
-            totals->failed_examples += observation->source->kind == MO_SPEC_EXAMPLE;
-            if (observation->source->kind == MO_SPEC_TEST)
-                result.line = assertion_span(observation->source,
-                                             mo_runtime_span(file, sources, defect.span.file,
-                                                             defect.span.start, defect.span.end));
-            break;
-        case MO_STOPPED:
-            totals->stopped++;
-            break;
-        }
-        bool shown = false;
-        if (clock_gettime(CLOCK_MONOTONIC, &end) == 0) {
-            result.microseconds = microseconds(start, end);
-            shown = mo_write_test_result(output, cli->json, sources, &result);
-        }
-        mo_process_free(process);
-        if (!shown) {
-            mo_test_report_error(diags, "test result could not be rendered or written completely",
-                                 observation->source->syntax->span, observation->name);
-            break;
-        }
-    }
 done:
     mo_arena_free(&scratch);
     mo_image_free(image);
 }
 
-void mo_run_tests(const struct mo_cli *cli, struct mo_arena *arena,
-                  const struct mo_program *program, const struct mo_sources *sources,
-                  const struct mo_test_selection *selection, FILE *output, struct mo_diags *diags,
-                  struct mo_test_totals *totals) {
+static void run_tests(const struct mo_cli *cli, struct mo_arena *arena,
+                      const struct mo_program *program, const struct mo_sources *sources,
+                      const struct mo_test_selection *selection, FILE *output,
+                      struct mo_diags *diags, struct mo_test_totals *totals, struct gate *g) {
     /* Closed declarations can refuse before lowering. Generic inputs need the concrete uses
      * retained below; both passes precede execution. */
     if (!mo_promises_supported(program, selection, diags))
@@ -533,8 +709,29 @@ void mo_run_tests(const struct mo_cli *cli, struct mo_arena *arena,
     if (selection == NULL || !mo_promises_supported(program, selection, diags) ||
         !mo_compile_services(core, &services, &wire, diags))
         goto done;
-    mo_test_program(cli, program, selection, &wire, sources, output, diags, totals);
+    mo_test_program(cli, arena, program, selection, &wire, sources, output, diags, totals, g);
 done:
     mo_buffer_free(&wire);
     mo_arena_free(&lowered);
+}
+
+void mo_run_tests(const struct mo_cli *cli, struct mo_arena *arena,
+                  const struct mo_program *program, const struct mo_sources *sources,
+                  const struct mo_test_selection *selection, FILE *output, struct mo_diags *diags,
+                  struct mo_test_totals *totals) {
+    run_tests(cli, arena, program, sources, selection, output, diags, totals, NULL);
+}
+
+void mo_run_gated(const struct mo_cli *cli, struct mo_arena *arena,
+                  const struct mo_program *program, const struct mo_sources *sources,
+                  const struct mo_test_selection *selection, FILE *output, struct mo_diags *diags,
+                  struct mo_test_totals *totals, struct mo_gated_run *run) {
+    struct mo_cli gated = *cli;
+    gated.gated = true;
+    run->started = false;
+    run->start_steps = 0;
+    run->start_entered = NULL;
+    run->ran = 0;
+    struct gate g = {.run = run};
+    run_tests(&gated, arena, program, sources, selection, output, diags, totals, &g);
 }

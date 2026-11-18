@@ -17,8 +17,14 @@ bool mo_deadline_start(struct mo_deadline *deadline, uint32_t seconds) {
     return true;
 }
 
+void mo_deadline_none(struct mo_deadline *deadline) {
+    *deadline = (struct mo_deadline){.none = true};
+}
+
 bool mo_deadline_running(void *context) {
     struct mo_deadline *deadline = context;
+    if (deadline->none)
+        return true;
     if (deadline->state != MO_DEADLINE_ACTIVE)
         return false;
     struct timespec now;
