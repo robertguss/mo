@@ -15,6 +15,8 @@ execution: code
 - **Objective:** Robert can rely on a Mo program that an agent wrote without reading its code. A passing `mo test` means the program's checks notice a change to its code and its public surface states what it is for. Each change comes with an account of what it altered, in terms of checks.
 - **Means:** Three additions to `mo test`: the mutation gate, a rule that every exposed function and service tool has a promise or an example, and the change summary. A measurement on the task queue shows how far to trust the gate.
 - **Authority:** `docs/reference/README.md` and `AGENTS.md` govern. Robert approves every change to Mo's language and toolchain surface: reference text, commands and error codes. `GLOSSARY.md` holds the vocabulary this plan uses: check, mutant, wrong version, survivor, mutation gate, behaviour change and change summary.
+- **Execution profile:** Five pull requests, PR1 to PR5, in the order given under Implementation Units. An agent builds each one. Robert reviews and merges each, and approves the reference text, option names and error codes it carries.
+- **Stop and ask Robert when:** a mutant survives that neither a new check, simpler code nor dropping its kind resolves (R7); the measured full run misses R30; a file that a freeze hashes would have to change; or the reference and this plan disagree.
 - **Open blockers:** None.
 
 ---
@@ -191,12 +193,28 @@ Outside this work:
 - Changes to how wrong versions and `mo test --strength` work, beyond what R23 needs.
 - Process ideas that sit outside the language, such as a second agent judging the first one's work.
 
+#### Deferred to Follow-Up Work
+
+- Fitting `tools/*.mo` to the gates. They hold 812 lines of function code and no promise, which is more than `lib/` and the task queue together.
+- A kind of change that replaces a whole function body with a plain value of its type. U8 counts the functions that have no mutant, and that count is the case for or against it.
+- An optimised build of `mo` for the repository's full run. The Makefile has no release target today.
+
+#### Considered and not built
+
+- Making all mutants in one compiled program and switching one on at run time. It is measured elsewhere at four to five times faster than checking the program again for each mutant, but it changes lowering, codegen, the VM and the contract with the Lean evaluator. The numbers of U12 would reopen it.
+- Dropping a mutant whose bytecode equals the program's. It would remove some mutants that nothing can kill. U8 shows whether such mutants appear.
+- Failing a run for a function that no check runs and that has no mutant. R5 speaks only of mutants.
+- Requiring a function's own promise or example to kill one of its mutants, so that an example that says nothing would not satisfy R13.
+- Refusing `--against` when the previous version equals the new one. A one-line change gets round it, so it closes nothing.
+- A cache between runs. R11 allows one and nothing needs it yet, so AE10 holds because two runs do the same work.
+- Running mutants on several cores.
+
 ### Dependencies / Assumptions
 
 - A passing gate shows that a program's code is pinned by its checks. It does not show that the checks say what Robert wants. R13 and the change summary narrow that gap and do not close it.
 - Phase 7's plan does not yet say that M3 waits for this work. That plan is on `main` and another session is working from it.
 - The repository holds what was written from the wrong versions: the working half and its mistakes in `learnability/phase6/strength/`, each survivor in `docs/status/phase6-run.md`, and the intent strengthened against them in `services/task-queue/`. R22 therefore needs the fitting agent to work in a folder that holds only the frozen task queue, a built `mo` and Mo's own guidance, and its transcript is kept. The held-back half is kept outside the repository, as `learnability/phase6/strength/README.md` records.
-- Unverified: the frozen task queue still compiles with today's `mo`.
+- Checked on 2026-11-18: the frozen task queue is commit `1389bdfb`. Its `main.mo` and `job-queue.mo` hash to the values in the manifest, and a `mo` built from `main` passes its 28 checks. `queue-tests.mo` has not changed since that commit.
 - Unverified: what the gate costs. One pass of the task queue's checks takes about 68 seconds on a debug build, and a crude count gives about 650 places to change, so a run with no savings is on the order of ten hours. Stopping at the first kill and running only the checks that reach a change should cut that by a large factor that nobody has measured. The nightly has 120 minutes for all its groups. If the measured full run of R24 does not meet R30, the work stops and Robert decides.
 - Unverified: mutants that nothing can kill are rare enough for R7 to hold. If the repository's programs meet one that neither a new check, simpler code nor dropping that kind of change resolves, the work stops and Robert decides.
 
@@ -207,17 +225,17 @@ Outside this work:
 
 Resolve Before Planning: none.
 
-Deferred to Planning:
+Deferred to Planning, each now answered in the Planning Contract:
 
-- Which kinds of change the toolchain makes to produce a mutant.
-- How a mutant that makes a check run without finishing is counted.
-- How a shorter run decides that a function or its checks changed. The digest of an intent item in `docs/design/intent.md`, which covers the declarations the item reads, is the nearest existing rule.
-- How a previous check that no longer compiles is reported one check at a time, and not as a whole file.
-- The error codes and the wording of each report.
-- How `mo test --strength` counts a kill by a test for R23 while its existing rate stays readable.
-- In what order the gates are built, the repository's programs fitted and the gates turned on by default.
-- How the 51 golden cases that run `mo test` change.
-- Which file the task queue is gated and measured through. Its tests are in `queue-tests.mo`, which `main.mo` does not import, and `mo test --strength` runs `main.mo`.
+- Which kinds of change the toolchain makes to produce a mutant: KTD5.
+- How a mutant that makes a check run without finishing is counted: KTD6.
+- How a shorter run decides that a function or its checks changed: KTD11.
+- How a previous check that no longer compiles is reported one check at a time: KTD13.
+- The error codes and the wording of each report: KTD14. Robert approves both when PR1 and PR2 are reviewed.
+- How `mo test --strength` counts a kill by a test for R23: KTD17.
+- In what order the gates are built, the repository's programs fitted and the gates turned on by default: the order of PR1 to PR5, and KTD15.
+- How the 51 golden cases that run `mo test` change: U14.
+- Which file the task queue is gated and measured through: KTD16.
 
 ### Sources / Research
 
@@ -230,3 +248,505 @@ Deferred to Planning:
 - `ci/check_cli.py`, `ci/check_golden.py` and `ci/check_lib.py`: where the repository's checks run `mo test`.
 - `AGENTS.md`, "Checks and merging": the treatment a claim about what Mo guarantees gets.
 - Two outside projects were read for this work: Robert Martin's `ub-mode`, whose mutation, coverage and duplication tools fail a build, and Cursor's `pstack`, for the rules that a check which has never failed proves nothing and that the author of a change does not loosen its gate.
+
+---
+
+## Planning Contract
+
+Product Contract preservation: requirements, key decisions, flows and acceptance examples are unchanged. Planning answered the questions under Deferred to Planning, replaced one unverified assumption with what was checked, and added to Scope Boundaries the follow-up work and the mechanisms it considered and did not build.
+
+### Key Technical Decisions
+
+**Where the gates run and what a full run is**
+
+- KTD1. **The gates live in the test branch of `execute_pipeline` in `src/tools/execute.c`, above `mo_run_tests`.** The review door's check child and `--strength` call `mo_run_tests` directly, so both stay as they are and R26 needs no special case.
+- KTD2. **A full run is `mo test FILE` with no option except `--json`.** `--against OLD` makes it the shorter run. Any other option makes it a run on which the gates do not run, and the result says so. That covers the selectors of R27 and also `--calls`, `--seconds`, `--max-stack`, `--max-depth` and `--max-heap`: each changes what a check does, and a tightened limit could turn a borderline mutant into a kill. `--against` with any of them is a mistake in the command. (R7, R27)
+- KTD3. **A full run has no clock.** Every promise runs its 200 inputs and every service its 200 sequences to the end, the counts plain `mo test` uses today. Today a promise stops after 2 seconds and passes on the inputs it reached, so one mutant could die on a fast machine and survive on a slow one. Input seeds already come from each check's name. (R2, AE10)
+**Mutants and kills**
+
+- KTD4. **A mutant is one text change in one module's source, and the whole program is checked again.** `--strength` already works this way: `apply` and `measure_one` in `src/tools/strength.c` splice a replacement into a module, then load, check and run the program. The change is found in the syntax tree and stays inside a function's code, which is child 5 of an `fn` node. It never touches the spec block, a `test` block or a service's promises (R1, R4). A changed program that does not check is not a mutant and is not counted.
+- KTD5. **The first table of kinds is small, and it is frozen before the proof.** The rows are: a comparison moved to its boundary (`<` to `<=`), a comparison negated (`==` to `!=`, `<` to `>=`), `and` swapped with `or`, a `not` removed, an arithmetic operator swapped (`+` with `-`, `*` with `/`), a Bool literal flipped, and an Int literal raised by one. With no exceptions (R7), dropping a row is the only way to be rid of a kind of mutant nothing can kill, and such mutants were measured at 2% to 47% of all mutants by kind in C programs. U8 counts survivors by row on the repository's programs, and Robert approves the table as reference text.
+- KTD6. **A mutant is killed when a check that passed on the program does not pass on the mutant.** That means the check fails, stops on a runtime fault, has an anchor fail or runs out of steps, or the program no longer starts, which the report counts under its own heading, start. The step limit is a multiple of the steps the same check used on the program, so the result does not depend on the machine. A recovery check counts as a check here, and the report gives its kind beside promise, example and test. A mutant run stops at the first failing input and does not shrink it. (R2, R3)
+- KTD7. **Each mutant runs only against the checks that ran its function.** While the checks run on the unchanged program, the VM records which functions each check entered. A check that never entered a function cannot notice a change to it. Those checks run cheapest first by the steps they used, with ties broken by name, and the run stops at the first kill. A function entered while the program starts, or while a promise's anchors are checked, counts as run by every check. A function no check entered has every mutant reported as a survivor with nothing run (R5). Checks reach the outside world only through fakes (reference 12.4), so the record is the same on every run.
+
+**The stages and stated intent**
+
+- KTD8. **A full run goes in three stages and stops at the first that fails:** the checks, then stated intent, then the mutants. Cheap failures come first, and a long mutant run never sits behind a failure already known.
+- KTD9. **What "has a promise or an example" means in R13.** An exposed function needs a promise or an example in its own spec block, one overload at a time. A service tool needs a service promise written `on` that tool, or a promise or example on its handler. A step promise does not count for a tool, because one sentence about every step would then satisfy every tool. A function that is both exposed and a tool must meet both rules.
+
+**The previous version**
+
+- KTD10. **`--against OLD` takes the previous version's copy of FILE.** R9's folder is the one OLD sits in. `mo intent FILE --against OLD` already has this shape and already loads a second program (`src/tools/intent-view.c`). When FILE is a library module, OLD's folder is also the library the previous version loads from, because a library module outside its library does not load (E0037).
+- KTD11. **The shorter run tries a function when its code changed or a check that ran it changed.** Its code changed when its canonical text differs or the function is new. A check that ran it changed when that check is gone, has a different full name or canonical text, or no longer runs the function. Canonical text is the formatted, comment-free text the intent digest already uses (`src/tools/intent.c`). The full name is compared because input seeds come from it. A function no check runs is always reported. This is R9 as written: a function is not retried because something it calls changed. (R9, AE4, AE5)
+- KTD12. **The previous version's digest is the source digest `mo push` already computes** over a program's source bundle (`src/tools/push.c`). One version of a program then has one digest everywhere in `mo`. (R10, R17, R28)
+- KTD13. **The change summary sorts each check by its result on the previous code and on the new code.** The table under High-Level Technical Design gives every case. A check found in only one version is put into the other program on its own: a `test` block into its module, an example row or a promise into the spec block of the same function, a service promise into the service block. When that program does not check, its first diagnostic is the reason given. One check that no longer compiles then never hides another. (R15, R16, AE9)
+
+**Reports, the interim option and the repository**
+
+- KTD14. **The output keeps its shape.** The totals line and the `totals` record stay last. In text, the gate's lines come before the totals line. In JSON, each survivor and each change-summary entry is a new kind of record, and the `totals` record gains the mutant counts by kind of check and a field saying whether the gates ran, ran shorter or did not run. A survivor and a missing intent each raise a new error code, which is what makes the run exit 1. Code numbers are taken when the code is written, because Phase 7 is adding codes at the same time. (R3, R6, R10, R27, R28)
+- KTD15. **Until R30 is met, the gates run only with `--gates`.** The guide documents the option, as AGENTS.md requires for anything a `mo` command does. PR5 makes the gates the default and deletes it. `--against` is new, so it needs no interim form. (R30)
+- KTD16. **The task queue is gated and measured through `services/task-queue/queue-tests.mo`.** It imports `Main` and `JobQueue`, so one run covers all three modules and all 69 checks. A run on `main.mo` would not see the tests. (R18, R22, R29)
+- KTD17. **`--strength` gains one outcome: killed by a test only.** Its existing rate keeps counting kills by promises and examples, and a second total counts kills by any check. The record's version goes up by one. (R23)
+- KTD18. **The repository's full run is one check, `ci/check_gates.py`, on the first driver.** It runs each program of R29 once and prints each one's time. Other checks that run the same programs for another claim may select with `--in` when the measured time requires it. (R29, R30)
+
+### High-Level Technical Design
+
+One run of `mo test`:
+
+```mermaid
+flowchart TD
+  A["mo test FILE"] --> B{"options"}
+  B -->|"a selector, --calls, --seconds or a --max limit"| C["run the checks as today and say the gates did not run"]
+  B -->|"none, --json or --against OLD"| D["run every check on the fixed plan, recording steps and functions entered"]
+  D --> E{"every check passes"}
+  E -->|"no"| F["report as today, exit 1"]
+  E -->|"yes"| G{"every exposed function and tool states intent"}
+  G -->|"no"| H["one error for each, exit 1"]
+  G -->|"yes"| I["make the mutants: all of them, or with --against those KTD11 selects"]
+  I --> J["for each mutant: check the program again, run the checks that entered its function cheapest first, stop at the first kill"]
+  J --> K{"a mutant survives"}
+  K -->|"yes"| L["one error for each survivor, exit 1"]
+  K -->|"no"| M["exit 0"]
+```
+
+With `--against`, the change summary is printed once the checks have run on both versions, whatever the later stages find.
+
+What each kind of run does:
+
+| Run | Options | Checks | Stated intent | Mutants | What the result adds |
+| --- | --- | --- | --- | --- | --- |
+| Full | none, or `--json` | all, on the fixed plan | applied | all | mutant counts by kind of check, each survivor |
+| Shorter | `--against OLD`, with or without `--json` | all, on the fixed plan, on both versions | applied | of the functions KTD11 selects | the same, plus the functions carried over, the digest, "not the full run" and the change summary |
+| Not gated | `--only`, `--in`, `--calls`, `--seconds` or a `--max` limit | as today | not applied | none | "the gates did not run" |
+| Unchanged | `--list`, `--bundle`, `--strength` | as today | not applied | none | nothing |
+
+How the change summary sorts a check:
+
+| The check is in | On the previous code | On the new code | Listed as |
+| --- | --- | --- | --- |
+| both versions, same name and text | passes | passes | counted as passing on both |
+| both versions, same name and text | fails | passes | newly true |
+| both versions, same name and text | passes | fails | no longer true, and the run fails on the check itself |
+| the previous version only | passes | passes | counted as passing on both |
+| the previous version only | passes | fails | no longer true |
+| the previous version only | passes | does not check | could not be compared, with the first diagnostic |
+| the previous version only | fails | any | could not be compared: the previous version did not pass it |
+| the new version only | fails | passes | newly true |
+| the new version only | passes | passes | counted as passing on both |
+| the new version only | does not check | passes | about something new |
+
+### Assumptions
+
+Scoping confirmation was off for this plan, so these choices were made without asking. Each is Robert's to overturn.
+
+- `tools/*.mo` and the Phase 4 grader's frozen programs are not fitted here. R18 lists `lib/`, `examples/` and the task queue. From PR5 the checks that run them select with `--in`, so the gates do not run on them and their output says so.
+- The fitting agent of R22 makes the frozen task queue pass both gates, because stated intent comes before the mutants (KTD8). Six of its seven tools have no intent today. The record says the count measures both gates together.
+- A recovery check can kill a mutant (KTD6). `GLOSSARY.md` gains that sentence under Check.
+- A check removed from the new version that the new code still passes is counted as passing on both and is not listed. R15 has no list for it.
+- `--against` names the previous version by its copy of FILE (KTD10), where R9 says a folder.
+- A step promise does not satisfy R13 for a tool (KTD9).
+- The gates sit behind `--gates` until PR5 (KTD15).
+- An example that says nothing satisfies R13. The first bullet of Dependencies / Assumptions already covers checks that do not say what Robert wants.
+
+### Risks
+
+| Risk | What limits it |
+| --- | --- |
+| Mutants nothing can kill, with no exceptions allowed. Every tool surveyed that supports a zero-survivor rule also has a way to skip one mutant. | The small table (KTD5), the count by row in U8, and the stop rule in the Goal Capsule. |
+| Cost. Nothing is measured yet. The nightly has about 40 of its 120 minutes free, and today it runs plain `mo test` on the same programs from several checks and three builds, one of them about five times slower. | KTD7 keeps each mutant to the checks that can notice it. U12 measures before PR5. KTD18 keeps the full run to one check on one build. |
+| A shorter run passes where a full run would not: something a function calls changed, the previous version never passed a full run, or the table changed since it did. | The result says it is not the full run (R28), and the nightly runs the full one (R29). For a program outside the repository, only a plain `mo test` is a pass. |
+| The table's blind spots. Code outside function bodies, `case` patterns and Text literals are never changed, and a function with nothing the table changes has no mutant. An agent can rewrite code into those forms. | U8 counts the functions with no mutant. R23 measures the table against mistakes an agent made. New rows follow that evidence. |
+| The table was chosen by someone who had read what the wrong versions changed. | The table is frozen and its commit recorded before the proof's first run. A row added afterwards is recorded beside the result it affects. |
+| A hook in the VM's call path. | It is off unless a harness turns it on, as `mo_process_instruction_limit` is. `tests/test_vm.c` and `fuzz/fuzz_vm.c` run with it off and on. |
+| Merge conflicts with Phase 7 in `src/base/codes.h`, `tests/errors/` and `ci/check_cli.py`. | Each PR is rebased on `main` and re-run before it merges. Code numbers are taken late (KTD14). |
+| PR5 touches 51 golden cases and about 70 plain `mo test` calls in the drivers. | U14 states one rule for all of them, and the hand-written golden results double as an independent check of U2. |
+
+### Alternatives Considered
+
+- **Working out from the source which checks reach a function,** by extending the walker in `src/tools/intent.c`. It would need no VM change. It misses what a check runs without naming: a `Simulation` test runs timers and the start value, and a promise over a hidden type calls its module's exposed functions to build inputs. Each miss would be a survivor no check can fix. KTD7 records what ran.
+- **Changing Mo Core or the checked program in place of the source.** Lowering turns one source operator into different shapes by type and copies a generic function once for each type, and it accepts only a program `mo_check` passed. A source change goes through the whole pipeline the way a real edit would.
+- **Retrying every function that a changed function or check could affect.** It is the sound rule. In a service, one service promise runs every handler, so a one-line change would retry nearly everything and AE4 could not hold. KTD11 follows R9 as written and leaves the rest to the full run.
+- **Turning the gates on in the first PR.** R30 forbids it before the cost is measured, and it would put the C code, about thirty fitted programs and every fixture in one review.
+
+### Open Questions
+
+None of these blocks PR1. Each is a default Robert can change at the review named.
+
+- Should `tools/*.mo` be fitted in this work? Default: no, as a follow-up. Decided at PR4.
+- Does `--against` take the previous copy of FILE, or its folder? Default: the file, to match `mo intent`. Decided at PR2.
+- May Phase 7's M3 start once PR4 has merged? The nightly holds `lib/` to the gates from then on, though an agent still has to pass `--gates` itself. Default: M3 waits for PR5. Decided at PR4.
+- Should a check that was removed and still passes be listed in the change summary? Default: no. Decided at PR2.
+
+### Deferred to Implementation
+
+- The multiple and the floor of the step limit in KTD6, as named limits in `src/base/limits.h`.
+- Whether the VM records entered functions for a process or for an image, and how anchor evaluation and start-up code are attributed to checks.
+- How the position of a plain binary operator is found. The public syntax node holds the operator's kind and its two operands, not its span.
+- The wording of every report and the code numbers.
+- Whether checks found in only one version are put into the other program one at a time from the start, or in a batch that falls back to one at a time.
+- How the fitting session of U10 is kept from the repository: the learnability harness's work-folder isolation if it hides the checkout, a fresh machine if not.
+- Whether any check compares `learnability/phase4/grade.py` with `learnability/phase4/freeze.json`. If one does, stop and ask Robert before editing it.
+
+---
+
+## Implementation Units
+
+| Unit | Title | Main files | Depends on |
+| --- | --- | --- | --- |
+| U1 | Run the checks on a fixed plan and record what each one ran | `src/vm/`, `src/tools/tests.c` | none |
+| U2 | Make mutants from a module's source | `src/tools/mutants.c` | none |
+| U3 | The mutation gate under `--gates` | `src/tools/gates.c`, `src/tools/execute.c` | U1, U2 |
+| U4 | The stated-intent rule | `src/tools/gates.c` | U3 |
+| U5 | Record that Phase 7's M3 waits | the Phase 7 plan | none |
+| U6 | The shorter run | `src/tools/previous.c`, `src/tools/cli.c` | U3 |
+| U7 | The change summary | `src/tools/changes.c` | U6 |
+| U8 | The dry run and the frozen table | `docs/status/trust-gates-run.md` | U3, U4 |
+| U9 | `--strength` counts a kill by a test | `src/tools/strength.c` | none |
+| U10 | The measurement | `learnability/trust-gates/` | U6, U8, U9 |
+| U11 | Fit the repository's programs | `lib/`, `examples/`, `services/task-queue/` | U8 |
+| U12 | The repository's full run and its cost | `ci/check_gates.py` | U11 |
+| U13 | The gates on by default, and the documents | `src/tools/cli.c`, `docs/reference/README.md` | U12 |
+| U14 | Golden cases and drivers | `tests/golden/`, `ci/` | U13 |
+
+### PR1: The gates, run with `--gates`
+
+Waits on: nothing.
+
+### U1. Run the checks on a fixed plan and record what each one ran
+
+- **Goal:** The test runner can do what the gates need: run with no clock, hand back each check's result and the steps it used, record the functions it entered, run a named set of checks, and stop at the first check that does not pass.
+- **Requirements:** R2, R3, R5. KTD3, KTD6, KTD7.
+- **Dependencies:** none.
+- **Files:** `src/vm/vm.h`, `src/vm/execute.c`, `src/vm/process.c`, `src/tools/tests.c`, `src/tools/tests.h`, `src/tools/promises.c`, `src/tools/service-tests.c`, `src/tools/tools.h`, `tests/test_vm.c`, `tests/test_gates.c` (new).
+- **Approach:**
+  1. Add a harness hook to the VM beside `mo_process_instruction_limit` that records each function entered. It is off by default.
+  2. Give the runner a gated mode: the fixed plan with no deadline, one result for each observation handed to the caller, the steps each used, a step limit for each, and a stop at the first one that does not pass. With the mode off, plain `mo test` behaves as today.
+  3. Map each bytecode function to the source function whose span holds it, so the copies of a generic function and the closures inside a function count as that function.
+- **Patterns to follow:** `mo_process_instruction_limit` and `mo_call_controlled` in `src/vm/vm.h`; `door_plan` in `src/tools/cli.c` and `src/tools/promises.c`.
+- **Test scenarios:**
+  - Two functions with one example each: the record for the first example names only the function it calls.
+  - A generic function used at two types: both copies are recorded as the one source function.
+  - A test that starts a service with `Simulation.start` and advances the clock: the record holds the timer function and the tool handler the test never names.
+  - A promise over a type exposed without its insides: the record holds the exposed functions that built its inputs.
+  - The same program run twice: the same step counts and the same records.
+  - A check given a step limit below the steps it used: the outcome is "ran out of steps", and a function that loops forever ends the same way.
+  - Three checks of which the second fails, with the stop on: the third does not run.
+  - The mode off: the output for `tests/cli/test/main.mo` matches its golden files byte for byte.
+- **Verification:** The new tests pass with gcc, with clang and under the sanitizers, and no existing golden file changes.
+
+### U2. Make mutants from a module's source
+
+- **Goal:** Given a checked program, list every mutant with its module, function, position, kind, original text and replacement, and give the changed source for each.
+- **Requirements:** R1, R4. KTD4, KTD5.
+- **Dependencies:** none.
+- **Files:** `src/tools/mutants.c` (new), `src/tools/mutants.h` (new), `tests/test_mutants.c` (new), `fuzz/fuzz_mutants.c` (new), `fuzz/corpus/fuzz_mutants/` (new).
+- **Approach:** Hold the table of kinds as data, one row for each kind, so that dropping a kind removes one row. Walk the code of each `fn` in the modules `mo test` runs checks for, which includes a library module when it is the file under test. List mutants in source order.
+- **Patterns to follow:** `apply` and `body_start` in `src/tools/strength.c`; the text edits of `mo fix` in `src/tools/fix.c`; the copy of a declaration's syntax in `src/tools/intent.c`.
+- **Test scenarios:**
+  - A function whose code is `a < b`: exactly two mutants, `a <= b` and `a >= b`, each at the operator's line and column.
+  - A function with `==` in its example rows and `<` in its promise: no mutant inside the spec block.
+  - A `test` block holding `1 + 1 == 2`, and a service block with promises: no mutant in either.
+  - A `#` comment holding `<` between the two operands of a `>`: the operator changes and the comment does not.
+  - A Text literal holding `==`: unchanged.
+  - A program that imports a library module: no mutant in the library module. The same library module as the file under test: its functions have mutants.
+  - Two overloads of one name: each has its own mutants, named with its receiver.
+  - A function that builds a Text and has nothing the table changes: no mutant.
+  - Every mutant of every example under `examples/`: its source differs from the original in one span, and it parses.
+- **Verification:** The tests pass, and the fuzz target holds for any source that checks: every mutant parses and differs from the source in one span inside a function's code.
+
+### U3. The mutation gate under `--gates`
+
+- **Goal:** `mo test --gates FILE` tries every mutant, reports each survivor and exits 1 while one survives.
+- **Requirements:** R1 to R8, R27. KTD1, KTD2, KTD6, KTD7, KTD8, KTD14, KTD15. Covers AE1, AE2, AE3, AE11.
+- **Dependencies:** U1, U2.
+- **Files:** `src/tools/gates.c` (new), `src/tools/gates.h` (new), `src/tools/gates-render.c` (new), `src/tools/execute.c`, `src/tools/cli.c`, `src/tools/tools.h`, `src/base/codes.h`, `src/base/limits.h`, `tests/errors/` (one case for the new code), `tests/cli/gates/` (new), `ci/cli_gates.py` (new), `ci/check_cli.py`, `ci/cli_guide.py`, `fuzz/fuzz_cli.dict`, `docs/agent-guide.md`, `docs/reference/README.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`.
+- **Approach:**
+  1. Run the checks in the gated mode of U1. If one fails, report as today and stop.
+  2. For each mutant of U2: build the changed sources, load and check the program, drop it if it does not check, then run the checks that entered its function, cheapest first, up to the first kill.
+  3. Report each survivor with its function's full name, the position, the kind, the original and changed text, and whether any check ran the function. Report the counts by kind of check in the totals.
+  4. Refuse `--gates` with `--list`, `--bundle` or `--strength`.
+  5. Add `--gates` to the guide, to section 13.4 of the reference and to the flag table in `ci/cli_guide.py`.
+- **Patterns to follow:** `measure_one` in `src/tools/strength.c` for the loop that reloads and runs with quiet output; E1432 in the same file for a run that fails with no failed check; `ci/cli_intent.py` for a topic module of driver checks.
+- **Test scenarios:**
+  - Covers AE1. A function compares with `<` and no check tells `<` from `<=`: exit 1, and the survivor names the function, the line and `<` to `<=`.
+  - Covers AE2. A mutant only a test kills: counted as killed, and the totals show one kill by a test.
+  - Covers AE3. A function no check runs, with two places the table changes: both survive, each is marked as run by no check, and no mutant run is made for them.
+  - Covers AE11. A program with a survivor, run with `--only` naming one check: no mutant is tried, the result says the gates did not run, and the exit status is 0. The same holds for `--in`, `--calls 10`, `--seconds 5` and `--max-depth`.
+  - Every mutant killed: exit 0, and the counts by kind add up to the number tried.
+  - A failing check on the unchanged program: reported as today, and no mutant is tried.
+  - A mutant that loops forever: killed as out of steps, and the run ends.
+  - A mutant that divides by zero: killed.
+  - A mutant that does not check, such as `-` between two Texts: not counted.
+  - A helper that a promise's anchors read: its mutant makes an anchor fail and is counted as killed by a promise.
+  - A program with no functions: no mutants, exit 0.
+  - Two runs with `--json`: the same records in the same order once `microseconds` is left out.
+  - `--gates` with `--strength`, `--bundle` or `--list`: a mistake in the command, exit 2.
+  - No `--gates`: every existing golden file and driver check passes unchanged.
+- **Verification:** The scenarios pass through `ci/cli_gates.py`, and `ci/check_door.py` passes unchanged, which shows R26.
+
+### U4. The stated-intent rule
+
+- **Goal:** Under `--gates`, a run fails when an exposed function or a service tool states no intent, and names each one.
+- **Requirements:** R13, R14. KTD8, KTD9. Covers AE6.
+- **Dependencies:** U3.
+- **Files:** `src/tools/gates.c`, `src/tools/gates-render.c`, `src/base/codes.h`, `tests/errors/` (one case for the new code), `ci/cli_gates.py`, `docs/agent-guide.md`, `docs/reference/README.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`.
+- **Approach:** Read exposure from each function's symbol and the tools from each service. A spec whose subject is the function, or a service promise whose tool is the tool, is the intent. The error gives the full name with its receiver, the declaration's position, which rule it broke and what would meet it.
+- **Test scenarios:**
+  - Covers AE6. An exposed function with a test and no promise or example: exit 1 and an error naming it. A private function with neither: nothing reported.
+  - A `main` with no promise and no example: nothing reported.
+  - Two exposed overloads of one name, one with an example: the error names the other, with its receiver.
+  - A tool with a service promise `on` it: accepted. A tool covered only by a step promise: reported. A tool whose handler has an example: accepted.
+  - A function that is exposed and a tool, with only an `on` promise: reported under the exposed rule.
+  - Three functions without intent: three errors in one run, and no mutant is tried.
+  - The same program under `mo check` and `mo run`: unchanged.
+  - A library module as the file under test, with a bare exposed function: reported.
+  - A run with `--in`: the rule is not applied.
+- **Verification:** The scenarios pass, and the error case under `tests/errors/` matches `mo test --gates` exactly.
+
+### U5. Record that Phase 7's M3 waits
+
+- **Goal:** The Phase 7 plan says that M3 depends on this plan.
+- **Requirements:** the second success criterion, and the second bullet of Dependencies / Assumptions.
+- **Dependencies:** none.
+- **Files:** `docs/plans/2026-11-17-1900-feat-phase7-outside-world-plan.md`.
+- **Approach:** Add this plan to M3's dependencies in the milestone table, with one sentence in Dependencies and Assumptions.
+- **Test scenarios:** Test expectation: none -- a change to a plan document.
+- **Verification:** The milestone table names this plan beside M3.
+
+### PR2: The previous version
+
+Waits on: PR1, which must merge before this group can start, because U6 runs the gate of U3. It is its own PR because Robert reviews each PR (AGENTS.md, "Checks and merging") and PR1 with these two units would be too much for one sitting.
+
+### U6. The shorter run
+
+- **Goal:** `mo test FILE --against OLD` tries only the mutants KTD11 selects, and says how many functions it carried over, the previous version's digest and that it is not the full run.
+- **Requirements:** R9, R10, R11, R12, R28. F1. KTD2, KTD10, KTD11, KTD12. Covers AE4, AE5, AE10.
+- **Dependencies:** U3.
+- **Files:** `src/tools/previous.c` (new), `src/tools/previous.h` (new), `src/tools/cli.c`, `src/tools/gates.c`, `src/tools/gates-render.c`, `src/tools/intent.c`, `src/tools/intent.h`, `src/tools/push.c`, `tests/cli/against/` (new), `ci/cli_gates.py`, `ci/cli_guide.py`, `fuzz/fuzz_previous.c` (new), `fuzz/corpus/fuzz_previous/` (new), `fuzz/fuzz_cli.dict`, `docs/agent-guide.md`, `docs/reference/README.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`.
+- **Approach:**
+  1. Accept `--against` for `test`, and refuse it with any option of the "not gated" and "unchanged" rows of the table above.
+  2. Load and check OLD in its own arena. For a library module, load it with its folder as the library.
+  3. Run the previous version's checks in the gated mode to get what each one ran.
+  4. Pair functions and checks by full name, compare canonical text, and select by KTD11.
+  5. Print the count carried over, the digest of KTD12 and "not the full run".
+- **Patterns to follow:** the second load in `src/tools/intent-view.c`; canonical text in `src/tools/intent.c`, exported and not copied; the bundle digest in `src/tools/push.c`.
+- **Test scenarios:**
+  - Covers AE4. One function's code differs: only its mutants are tried, and the result gives the number carried over, the digest and "not the full run".
+  - Covers AE5. A function did not change and a test that ran it was removed: its mutants are tried again.
+  - Covers AE10. The same program and previous version run twice: the same result. No cache exists, so there is no second path to compare.
+  - Only a comment and the layout changed: no mutant is tried.
+  - A promise added above another, so the second one's number shifts: the function they belong to is tried again.
+  - A new function, and a renamed one: both are tried.
+  - An unchanged function that no check runs: still reported as a survivor.
+  - OLD is the same as FILE: nothing is tried, everything is carried over, and the result says it is not the full run.
+  - OLD does not exist: a mistake in the command, exit 2. OLD does not check: one error giving its first diagnostic, exit 1, and nothing else runs.
+  - A library module with OLD in a copy of the previous `lib/`: it loads and the run works.
+  - `--against` with `--only`, `--in`, `--calls`, `--seconds`, a `--max` limit, `--list`, `--bundle` or `--strength`: refused.
+  - The two folders before and after a run: byte for byte the same, and nothing written beside them.
+  - The digest printed equals the one `mo push` computes for the same folder.
+- **Verification:** The scenarios pass, the fuzz target holds for any two sources, and a search of `src/` still finds no call to git.
+
+### U7. The change summary
+
+- **Goal:** With `--against`, `mo test` prints the change summary of R15, and nothing in it changes the exit status.
+- **Requirements:** R15, R16, R17. F2. KTD13, KTD14. Covers AE7, AE8, AE9.
+- **Dependencies:** U6.
+- **Files:** `src/tools/changes.c` (new), `src/tools/changes.h` (new), `src/tools/gates-render.c`, `tests/cli/against/`, `ci/cli_gates.py`, `fuzz/fuzz_previous.c`, `docs/agent-guide.md`, `docs/reference/README.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`, `GLOSSARY.md`.
+- **Approach:** Reuse the results U6 already has for checks that are the same in both versions. For a check in one version only, build the other program with that check put in, as KTD13 says, and run it on the fixed plan. Sort each check by the table under High-Level Technical Design. Print the summary before the gate's lines.
+- **Patterns to follow:** the splice in `src/tools/strength.c`; the pairing of items in `src/tools/intent-view.c`.
+- **Test scenarios:**
+  - Covers AE7. A fix whose new check fails on the previous version and passes on the new one: listed as newly true.
+  - Covers AE8. A check of the previous version that the new code fails, removed from the new version: listed as no longer true, and the exit status is 0 when the gates pass.
+  - Covers AE9. A private function renamed, and a previous test that names it: listed as could not be compared with the diagnostic as the reason, and the exit status is unchanged.
+  - A check that is the same in both versions, failed before and passes now: newly true.
+  - A new check that names a new function: about something new.
+  - A new check that the previous code also passes: counted as passing on both, and the count is right.
+  - Two previous checks, one that no longer compiles and one that fails: each is listed on its own.
+  - A service promise found only in the previous version: run against the new service and sorted.
+  - A previous example of one overload: put into the same overload.
+  - The new version fails one of its own checks: the summary is still printed and lists it as no longer true, and the exit status of 1 comes from the check.
+  - A rename that also changes behaviour: listed only as could not be compared. This pins the stated limit.
+  - The summary gives the previous version's digest, and `--json` gives one record for each entry.
+- **Verification:** The scenarios pass, and a run of F2 on a real change to an example program reads correctly to someone who has not seen the code.
+
+### PR3: The table of kinds and the proof
+
+Waits on: PR1 and PR2, which must merge before this group can start, because the dry run and the fitting session run their commands. It is its own PR because the proof is a deliverable in its own right, a record Robert reads.
+
+### U8. The dry run and the frozen table
+
+- **Goal:** The table of kinds is settled on evidence from the repository's own programs and frozen before the proof.
+- **Requirements:** R21, R24. KTD5.
+- **Dependencies:** U3, U4.
+- **Files:** `docs/status/trust-gates-run.md` (new), `learnability/trust-gates/README.md` (new), `learnability/trust-gates/results/` (new), `src/tools/mutants.c`, `tests/test_mutants.c`, `docs/reference/README.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`.
+- **Approach:**
+  1. Write the predictions for the proof and for this dry run, with the date, before the gate runs on any version of the task queue.
+  2. Run `mo test --gates` on each library module, each example and `queue-tests.mo` as they stand. Record for each program the functions, the functions with no mutant, the mutants by row, the kills by row and by kind of check, the survivors by row and the wall time.
+  3. Read a sample of survivors from each row and judge whether a check could kill each. Drop a row whose survivors mostly cannot be killed.
+  4. Put the table to Robert as reference text. Record the commit that freezes it.
+- **Execution note:** Start any run that may outlast the tool session detached, as `docs/solutions/workflow-issues/launch-scored-runs-detached-from-the-agent-session.md` says.
+- **Test scenarios:** Test expectation: none for the record. A row added or dropped changes the scenarios of U2 in the same commit.
+- **Verification:** The record holds dated predictions, the counts by row and Robert's approval of the table.
+
+### U9. `--strength` counts a kill by a test
+
+- **Goal:** `mo test --strength` reports a wrong version that only a test kills, and its existing rate stays as it was.
+- **Requirements:** R23. KTD17.
+- **Dependencies:** none.
+- **Files:** `src/tools/strength.c`, `src/tools/render.c`, `src/tools/tests.c`, `src/tools/tools.h`, `tests/cli/strength/`, `tests/cli/strength-builder/`, `ci/cli_intent.py`, `docs/design/promise-strength.md`, `docs/reference/README.md`, `docs/agent-guide.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`.
+- **Approach:** Stop dropping tests from the checks a wrong version runs against. Count a failed test apart from failed promises and examples. A version that a promise or an example kills keeps its existing outcome.
+- **Patterns to follow:** `classify` and `intent_checks` in `src/tools/strength.c`.
+- **Test scenarios:**
+  - A wrong version that only a test kills: its outcome is killed by a test, the existing rate does not move, and the any-check total rises by one.
+  - A wrong version that a promise and a test both kill: killed by a promise, as today.
+  - The existing fixtures: the same rates, with the record's version one higher.
+  - A wrong version that changes what an intent item reads: still named as changing intent and not counted.
+  - A file under test whose tests sit in a module the wrong version does not replace: the tests still run against it.
+- **Verification:** The driver checks in `ci/cli_intent.py` pass with the new outcome, and `docs/design/promise-strength.md` describes it.
+
+### U10. The measurement
+
+- **Goal:** The record states how many of the 24 wrong versions a program fitted only to the gates kills.
+- **Requirements:** R21, R22, R23, R24, R25. F4. KTD16, KTD17.
+- **Dependencies:** U6, U8, U9.
+- **Files:** `docs/status/trust-gates-run.md`, `learnability/trust-gates/manifest.json` (new), `learnability/trust-gates/fitted/` (new), `learnability/trust-gates/results/`, `learnability/trust-gates/transcript/` (new).
+- **Approach:**
+  1. Take `main.mo`, `job-queue.mo` and `queue-tests.mo` from commit `1389bdfb` and check their hashes against `learnability/phase6/strength/manifest.json`.
+  2. Start a fresh agent session that cannot read the repository. It holds those three files, a built `mo` with its library, and what `mo guide` prints. Its task is to make `mo test --gates queue-tests.mo` pass, and it may use `--against` the frozen copy. Keep its transcript and a log of each survivor: how it was resolved, any it judged no check could kill, and any that only one particular call sequence killed.
+  3. Run `--strength` on the fitted program with the working half and then the held-back folder the Phase 6 manifest names. Record the kills by kind of check and for each half, and each uncountable version by name.
+  4. Write the results beside the predictions, including a wrong prediction. State the limits: the held-back half was already used in Phase 6, no wrong version touches `submit`, `lease`, `acknowledge` or `fail`, the count measures both gates together, and the table's author had read what the wrong versions changed.
+  5. Have someone other than the fitting session count again from the result files. Record Robert's answer.
+- **Execution note:** Leave every file the manifest hashes unchanged once the first run has started, as `docs/solutions/workflow-issues/keep-freeze-hashed-files-unchanged-after-a-rehearsal.md` says.
+- **Test scenarios:** Test expectation: none -- a measurement. Its evidence is the record and the kept result files.
+- **Verification:** The record holds the predictions, the counts for each half by kind, the fitting log's two counts for R24, the limits and Robert's answer.
+
+### PR4: The repository's programs
+
+Waits on: PR3, which must merge before this group can start, because the programs are fitted to the table PR3 freezes. It is its own PR because Robert reviews each PR and this one changes about thirty Mo programs.
+
+### U11. Fit the repository's programs
+
+- **Goal:** Every library module, every example and the task queue pass `mo test --gates`.
+- **Requirements:** R18. KTD16.
+- **Dependencies:** U8.
+- **Files:** `lib/*.mo`, `examples/*.mo`, `services/task-queue/*.mo`, `ci/check_task_queue.py`, `ci/cli_guide.py`, `tests/golden/sample-*-tests/stdout`, `learnability/trust-gates/fitting-log.md` (new), `docs/status/trust-gates-run.md`.
+- **Approach:** For each program, run the gate and resolve each report: a promise or an example for missing intent, and a new check or simpler code for a survivor. Prefer a new check to a code change in `lib/json.mo`, `lib/list.mo`, `lib/option.mo` and `lib/result.mo`, which are compiled into the toolchain. Use `--against` the version on `main` while working, and finish each program with a full run. Log each survivor that no check could kill and each that only one call sequence killed, for R24. Update the counts that `ci/check_task_queue.py`, `ci/cli_guide.py` and the sample golden cases pin.
+- **Test scenarios:**
+  - Each of the 12 library modules, the 12 examples and `queue-tests.mo`: `mo test --gates` exits 0.
+  - Each program's own checks still pass under plain `mo test`.
+  - `ci/check_task_queue.py` passes with its new counts, and its planted fault still fails the service promise it names.
+- **Verification:** `bash ci/check.sh drivers` passes, and the fitting log gives the two counts of R24.
+
+### U12. The repository's full run and its cost
+
+- **Goal:** The nightly runs the full run on the repository's programs and fails on a survivor, and the record holds the times R30 needs.
+- **Requirements:** R24, R29, R30. F3. KTD18.
+- **Dependencies:** U11.
+- **Files:** `ci/check_gates.py` (new), `ci/check.sh`, `docs/status/trust-gates-run.md`.
+- **Approach:** The check runs `mo test --gates` on each program of R29 with the first driver, fails on any survivor and prints each program's time. It also proves itself: given a copy of one fitted program with a check removed, it must fail. Record the full-run times for the task queue, the library and the examples, a shorter run's time for a one-function change to each, and the `drivers` group's wall time before and after.
+- **Patterns to follow:** the planted fault in `ci/check_task_queue.py`; the `later` lines of the `drivers` group in `ci/check.sh`.
+- **Test scenarios:**
+  - Every fitted program passes.
+  - A copy of `examples/wc.mo` with one test removed: the check fails and names a survivor.
+  - A tool missing from `PATH` is a skip and not a pass, as `ci/check.sh` already reports.
+- **Verification:** One nightly run on `main` passes with the check in it, and the record gives the times beside the nightly's free time. Robert reads them and says whether R30 is met.
+
+### PR5: On by default
+
+Waits on: PR4, which must merge before this group can start, because every program the fixtures run must already pass. It is its own PR because Robert reviews each PR and this one rewrites 51 golden cases and most of the drivers. It merges when Robert has read the times of U12 and the record of U10.
+
+### U13. The gates on by default, and the documents
+
+- **Goal:** Plain `mo test` runs the gates, `--gates` is gone, and the documents describe what the toolchain does.
+- **Requirements:** R20, R30. KTD2, KTD3, KTD15.
+- **Dependencies:** U12.
+- **Files:** `src/tools/cli.c`, `src/tools/execute.c`, `src/tools/gates.c`, `ci/check_gates.py`, `ci/cli_gates.py`, `ci/cli_guide.py`, `fuzz/fuzz_cli.dict`, `docs/reference/README.md`, `tests/conformance/reference.tsv`, `tests/conformance/rules.tsv`, `docs/agent-guide.md`, `docs/design/promise-strength.md`, `docs/design/intent.md`, `GLOSSARY.md`.
+- **Approach:**
+  1. Make the full run the default and delete `--gates` from the code, the flag table, the fuzz dictionary and every document.
+  2. Write section 12's account of mutants, the table of kinds, kills, stated intent and the change summary, and section 13.4's account of the full run, the shorter run, the runs on which the gates do not run and the loss of the 2-second clock on a full run.
+  3. Teach the same in the guide, including that only a plain `mo test` is a pass and that the gates cover the file under test and what it imports.
+  4. Say in `docs/design/promise-strength.md` that mutants are gated and wrong versions stay a measurement, and in `docs/design/intent.md` that the door's check is unchanged (R26).
+- **Test scenarios:**
+  - The program of AE1 under plain `mo test`: exit 1 with the survivor.
+  - `mo test --gates`: a mistake in the command.
+  - `mo guide` and `mo guide --reference` print the two files byte for byte.
+  - Every claim the guide makes about `mo test` holds when `guide_claims` runs it.
+- **Verification:** `bash ci/check.sh drivers static` passes, and a search of the repository finds no `--gates`.
+
+### U14. Golden cases and drivers
+
+- **Goal:** Every fixture that runs plain `mo test` records what the reference now requires.
+- **Requirements:** R19. KTD14, KTD18.
+- **Dependencies:** U13, in the same PR.
+- **Files:** `tests/golden/*/stdout` and `status` for the 51 cases whose command is `test`, `tests/cli/`, `tests/errors/`, `ci/check_format.py`, `ci/check_lib.py`, `ci/check_golden.py`, `ci/check_cli.py`, `ci/cli_programs.py`, `ci/cli_intent.py`, `ci/cli_runner.py`, `ci/cli_fixtures.py`, `ci/cli_serve.py`, `ci/cli_common.py`, `ci/check_tools.py`, `learnability/phase4/grade.py`, `learnability/harness/test_session.py`, `docs/status/golden-gaps.md`.
+- **Approach:**
+  1. Write each golden result by hand from section 12 of the reference: list the program's mutants from the table, decide which its checks kill, and write the output. Never copy a run. Where a run disagrees, find out which is wrong, and fix the toolchain or list the case in `docs/status/golden-gaps.md`.
+  2. Keep each driver's program and rewrite what it expects (R19). A driver whose claim is about something else, and whose program has several modules to cover, may select with `--in`.
+  3. Teach `test_output` in `ci/check_format.py` to ignore the positions in survivor lines, and raise the limits in `ci/check_format.py`, `ci/check_lib.py` and `ci/check_golden.py` to what U12 measured.
+  4. Make `ci/check_tools.py` and the Phase 4 grader select with `--in`, subject to the last item under Deferred to Implementation.
+- **Test scenarios:**
+  - Each of the 51 golden cases matches its hand-written result.
+  - `ci/check_format.py` passes for a program with survivors, before and after formatting.
+  - `tests/cli/library/main.mo`, whose two exposed functions state no intent: its driver expects two missing-intent errors and exit 1.
+  - The guide's counter service, which U13 gives a promise `on` each tool: `guide_claims` expects the lines the reference now requires.
+  - `tests/lower-source/service-simulation/main.mo`, which its checks run with `--calls 10`: the only change is the line saying the gates did not run.
+  - `ci/check_tools.py` passes, and its output says the gates did not run.
+- **Verification:** `MO_ALL_DRIVERS=1 bash ci/check.sh gcc clang sanitize drivers static bench` passes, and the PR body lists every golden case where a run disagreed with the hand-written result and what was done.
+
+---
+
+## Verification Contract
+
+| When | Command | What it shows |
+| --- | --- | --- |
+| Every PR | `bash ci/check.sh gcc` | The build and every unit test. Its last line goes in the PR body. |
+| Every PR with C changes | `make CC=clang` and `make sanitize CC=clang` | gcc and clang warn about different things, and the new tests hold under ASan and UBSan. |
+| PR1, PR2 | `make fuzz-smoke` | The new fuzz targets run and their seeds load. |
+| Any PR that edits the guide or the reference | `bash ci/check.sh drivers static`, once | The embedded documents, the conformance snapshot, the guide's claims and the grammar. |
+| PR4 | `bash ci/check.sh drivers` | The fitted programs pass every driver, and `ci/check_gates.py` passes with its control. |
+| PR5 | `MO_ALL_DRIVERS=1 bash ci/check.sh gcc clang sanitize drivers static bench` | The default holds on all three builds and in the benchmark drivers it changes. |
+| One test file while working | `make -j8 build/gcc/debug/tests/test_mutants.test.run CC=gcc` | One unit test file. |
+
+Every run of `ci/check.sh` is started detached and waited on with `ci/wait-for-results`, as AGENTS.md says. A skip for a missing tool is not a pass.
+
+Each acceptance example is covered by a named scenario: AE1, AE2, AE3 and AE11 in U3, AE6 in U4, AE4, AE5 and AE10 in U6, and AE7, AE8 and AE9 in U7.
+
+---
+
+## Definition of Done
+
+For the whole plan:
+
+- Plain `mo test` runs both gates, and `--gates` appears nowhere in the repository.
+- `lib/`, `examples/` and the task queue pass the full run, and the nightly has passed with `ci/check_gates.py` in it.
+- `docs/status/trust-gates-run.md` holds the predictions, the count of wrong versions killed for each half, the numbers of R24, the limits and Robert's answer.
+- The reference, the guide, `docs/design/promise-strength.md` and `GLOSSARY.md` describe what the toolchain does, and Robert has approved the reference text, the option names and the error codes.
+- The Phase 7 plan says M3 waits for this work.
+- No code from an approach that was tried and dropped is left in the diff.
+
+For each PR:
+
+| PR | Done when |
+| --- | --- |
+| PR1 | `mo test --gates` meets AE1, AE2, AE3, AE6 and AE11, plain `mo test` is unchanged, and the door's check is unchanged. |
+| PR2 | `mo test --against` meets AE4, AE5 and AE7 to AE10, and writes nothing. |
+| PR3 | The table is frozen with Robert's approval, and the record holds the measurement and his answer. |
+| PR4 | Every program of R29 passes `--gates`, the nightly runs the check, and the record holds the times. |
+| PR5 | The gates are the default, every fixture matches the reference, and the full set of groups passes on all three builds. |
+
+---
+
+## Planning Sources
+
+- `src/tools/execute.c`, the test branch of `execute_pipeline`: where plain `mo test`, `--list` and `--strength` part ways. `src/tools/upgrade-bundle.c`, `run_checks`: the door's check child.
+- `src/tools/tests.c`, `mo_select_tests` and `mo_test_program`: how checks are found, named and run. The loop has no early exit and returns totals only.
+- `src/tools/promises.c` and `src/tools/cli.c`: the 2-second promise deadline, `door_plan`, and the fixed counts in `src/base/limits.h`.
+- `src/vm/vm.h`: `mo_call_controlled`, `mo_process_instruction_limit` and `mo_process_instructions_remaining`. The VM has no record of functions entered today.
+- `src/tools/strength.c`: `apply`, `body_start`, `measure_one`, `intent_checks` and `classify`.
+- `src/tools/intent.c`: canonical text and the intent digest. `src/tools/intent-view.c`: `--against OLD` for `mo intent`.
+- `src/check/check.h`: `mo_symbol.exported`, `mo_checked_spec.subject`, a service's tools and a service promise's tool.
+- `ci/deps.sh`: what `src/tools` may include. `src/lower/lower.h`: lowering accepts only a program `mo_check` passed.
+- `ci/check_conformance.py`: every reference paragraph is snapshotted in `tests/conformance/reference.tsv`.
+- `.github/workflows/nightly.yml` and the nightly of 18 November 2026: 77 minutes of 120, with the `drivers` group near 50.
+- `docs/status/phase6-run.md` and `learnability/phase6/strength/`: the shape of a measurement with predictions written first.
+- Mutation testing practice: the default kinds of PIT and Mull; Yao, Harman and Jia (ICSE 2014) on how many mutants of each kind nothing can kill; PIT's use of what each test ran, cheapest first and stopping at the first kill; PIT's and Stryker's accounts of what a result kept from an earlier run can miss.
