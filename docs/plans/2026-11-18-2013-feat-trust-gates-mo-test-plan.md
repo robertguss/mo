@@ -40,7 +40,7 @@ Trust also builds over time, change by change. Today a change arrives as a diff 
 - **A surviving mutant fails `mo test`.** A report can be ignored and a gate cannot. (session-settled: user-approved — chosen over a kill-rate report as `docs/design/promise-strength.md` gives for wrong versions: a report leaves weak checks able to pass) Governs R1, R2.
 - **Tests count as kills.** Effects such as what `main` prints are checked only in tests today, so a gate limited to promises and examples could not pass for programs that mostly act. (session-settled: user-approved — chosen over counting only promises and examples: that would need a new form for stating effects first) Governs R3.
 - **Tests stay the agent's to change.** The mutation gate already fails when a test is loosened far enough to let a mutant through. (session-settled: user-approved — chosen over locking tests the way promises are locked: every refactor would wait for Robert, and outside a running service there is nowhere to hold an approval)
-- **Outside a running service Mo stores nothing between runs.** Anything Mo writes on a machine where agents run, an agent can rewrite, so a stored result would be a claim and not evidence. (session-settled: user-approved — chosen over a store for each program that only a credential held elsewhere can change: the review door that would be its model has not yet been used for a real approval) Governs R11, R12.
+- **Outside a running service Mo stores nothing that a later run relies on.** Anything Mo writes on a machine where agents run, an agent can rewrite, so a stored result would be a claim and not evidence. (session-settled: user-approved — chosen over a store for each program that only a credential held elsewhere can change: the review door that would be its model has not yet been used for a real approval) Governs R11, R12.
 - **Plain `mo test` tries every mutant, and naming a previous version shortens the run.** The rigorous run needs nothing but the program. (session-settled: user-directed — chosen over a full run every time: a gate that takes hours is too slow to use while writing code) Governs R8, R9, R10.
 - **The first version has no exceptions.** An exception is where an agent that wants a pass would go first. (session-settled: user-approved — chosen over exceptions written in the source with a reason: nobody has yet seen which mutants of a Mo program cannot be killed) Governs R7.
 - **An exposed function or service tool with no promise and no example fails `mo test`.** Promises and examples are what Robert can read and approve, and the task queue's survivors sat where there were none. (session-settled: user-approved — chosen over leaving it to the mutation gate: tests alone can kill every mutant and leave nothing readable) Governs R13, R14.
@@ -101,6 +101,10 @@ This plan covers the gates in `mo test` and their proof. The rest of this list i
 - R18. The library modules in `lib/`, the programs in `examples/` and the task queue pass both gates before the gates are on by default.
 - R19. A fixture or golden case that exists to show something else keeps its program, and its recorded result is rewritten by hand to what the reference now requires.
 
+**The review door**
+
+- R26. The review door's check of a pushed program runs the checks it runs today under today's limits. It tries no mutants and does not apply R13 until the door has its own plan, so R7 and R8 do not reach it.
+
 **Documents**
 
 - R20. Sections 12 and 13.4 of the reference describe the gates and the change summary, `docs/agent-guide.md` teaches them, and `docs/design/promise-strength.md` says that mutants are gated while wrong versions stay a measurement.
@@ -108,7 +112,7 @@ This plan covers the gates in `mo test` and their proof. The rest of this list i
 **The proof**
 
 - R21. The predictions are written before the first run, and every result is kept, including a weak one.
-- R22. The measured program is the task queue as frozen before its intent was strengthened. An agent that has never seen the wrong versions makes it pass the mutation gate, using only what the gate reports.
+- R22. The measured program is the task queue as frozen before its intent was strengthened. An agent that has seen neither the wrong versions nor anything written from them makes it pass the mutation gate, using only what the gate reports.
 - R23. The measurement counts how many of the 24 wrong versions the fitted program kills, with any check able to kill, by kind of check and for each half of the set.
 - R24. The same run records the time of the full run and of a shorter run, the number of mutants nothing could kill, and the number of survivors that only a rare call sequence could kill.
 - R25. No number decides whether the gate is kept.
@@ -178,7 +182,7 @@ Outside this work:
 
 - A passing gate shows that a program's code is pinned by its checks. It does not show that the checks say what Robert wants. R13 and the change summary narrow that gap and do not close it.
 - Phase 7's plan does not yet say that M3 waits for this work. That plan is on `main` and another session is working from it.
-- The held-back half of the wrong versions is kept outside the repository, as `learnability/phase6/strength/README.md` records. The working half is in the repository, so R22 needs the fitting agent kept from it.
+- The repository holds what was written from the wrong versions: the working half and its mistakes in `learnability/phase6/strength/`, each survivor in `docs/status/phase6-run.md`, and the intent strengthened against them in `services/task-queue/`. R22 therefore needs the fitting agent to work in a folder that holds only the frozen task queue, a built `mo` and Mo's own guidance, and its transcript is kept. The held-back half is kept outside the repository, as `learnability/phase6/strength/README.md` records.
 - Unverified: the frozen task queue still compiles with today's `mo`.
 - Unverified: what the gate costs. One pass of the task queue's checks takes about 68 seconds on a debug build, and a crude count gives about 650 places to change, so a run with no savings is on the order of ten hours. Stopping at the first kill and running only the checks that reach a change should cut that by a large factor that nobody has measured.
 - Unverified: mutants that nothing can kill are rare enough for R7 to hold. If the repository's programs meet one that neither a new check, simpler code nor dropping that kind of change resolves, the work stops and Robert decides.
