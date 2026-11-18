@@ -379,6 +379,8 @@ Waits on: PR1, needed before this group can start, because the capability's oper
   - Covers AE1. `mo check` rejects a program whose `main` lists only `Console` and whose code calls the client.
   - Covers AE3. A test whose fake holds one response gets that response for the first request and an error for a second, different request, and no socket is opened.
   - Covers F2. A function that calls an API passes its test with a fake network.
+  - Two programs that add the same headers in a different order send the same bytes, and one fake answers both.
+  - A request that differs from the fake's by one header gets an error whose reason names that header.
   - A request to a local server with a method, headers, a query and a body arrives as sent, and the status, headers and body of the answer come back as values.
   - A server that never answers gives a timeout error after the time the program set.
   - A refused connection, an unknown host and a response cut off part way each return their own error value, and none stops the program.

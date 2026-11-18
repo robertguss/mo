@@ -190,6 +190,8 @@ bytes a connection sends to the bytes it then receives.
 - What a connection sends is collected. The first `receive` looks up everything sent so far.
 - With no entry, `receive` gives `Error(Broken(...))`, and the reason quotes the first line of
   what was sent, so a test that fails says which request had no reply.
+- When the fake holds a reply for a request with the same first line, that reason must also show
+  what differs. A test that fails over one header says which header.
 - With an entry, `receive` hands out the reply, at most `most` bytes at a time, and then the
   end.
 - A fake never opens a socket and never reads a clock. `within` is ignored.
@@ -197,8 +199,13 @@ bytes a connection sends to the bytes it then receives.
   TLS, so a test of an `https` URL states the request as plain bytes.
 
 A test does not write these bytes. `Http.replies` builds the map from requests and responses
-(below). The client writes a request the same way every time, so the match is exact: a test
-states the whole request, headers included, and a program that sends anything else gets an error.
+(below). The client writes a request the same way every time, in whatever order the program
+added its headers, so the match is exact: a test states the whole request, headers included, and
+a program that sends anything else gets an error.
+
+Exact matching can make tests brittle: a program that adds one header changes every test that
+states that request. Robert's spike shows whether that is too brittle in real use. If it is,
+this decision is taken again.
 
 The fake's state is the map, and for each connection the bytes sent and a position. That is
 within the rule for fake state in `docs/design/bytecode.md`: numbers, texts, bytes, and lists,
@@ -286,6 +293,9 @@ end
 What `send` does:
 
 - It speaks HTTP/1.1, opens one connection for each request and asks the server to close it.
+- It writes its own headers first, in a fixed order. The program's headers follow, sorted by
+  name without regard to case. Two headers with the same name keep the order the program gave
+  them. So the order of `header` calls never changes what is sent.
 - It reads a response with `Content-Length`, with chunked transfer encoding, or ended by the
   close of the connection.
 - A status of 404 or 500 is a response. It is not an error.
@@ -605,7 +615,8 @@ and not before:
 Rows 2 to 5, 12 and 13 are calls the plan made without him. Rows 7, 8, 10 and 11 are questions
 the plan left open. The rest came up in this step. Each needs his yes or a change.
 
-Robert's answers so far: row 2, yes (18 November 2026).
+Robert's answers so far, on 18 November 2026: row 2, yes. Row 3, yes, with headers written
+sorted by name and a mismatch reason that shows what differs.
 
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
