@@ -377,7 +377,7 @@ def main_flow(binary, root):
          ("unfinished", UNFINISHED)])
     base1, digest2 = digests(binary, v1, v2)
     _, digest3 = digests(binary, v2, v3)
-    service = Service(binary, data, v1)
+    service = Service(binary, data, v1, ("--unconfined",))
     outputs = []
     try:
         first, second = service.session(), service.session()
@@ -419,6 +419,7 @@ def main_flow(binary, root):
         assert accepted.returncode == 0, accepted
         report = json.loads(accepted.stdout)
         assert report["status"] == "accepted" and report["ordinal"] == "1", report
+        assert "confined" not in report and "mo serve: upgrades:" not in service.stderr(), report
         assert report["candidate_source"] == digest2 and report["active_source"] == digest2
         assert {"kind": "tool", "name": "double", "change": "added"} in report["differences"]
         assert {"kind": "tool", "name": "gone", "change": "removed"} in report["differences"]

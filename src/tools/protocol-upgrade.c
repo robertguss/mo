@@ -336,7 +336,7 @@ static void page(struct mo_protocol_server *s, struct protocol_connection *c,
         refuse(s, c, MO_CODE_UPGRADE_BUNDLE_FORMAT, "upload", message, candidate);
         return;
     }
-    u->live = mo_live_start(&u->compiler, &u->active, u->bytes.bytes, u->upload.total,
+    u->live = mo_live_start(&u->compiler, u->children, &u->active, u->bytes.bytes, u->upload.total,
                             u->has_migration ? u->migration : NULL);
     if (u->live == NULL) {
         close_slot(s);
@@ -704,7 +704,8 @@ void mo_protocol_upgrade_free(struct mo_protocol_server *s) {
 enum mo_protocol_server_status mo_protocol_server_upgrades(struct mo_protocol_server *s,
                                                            const struct mo_bearer *credential,
                                                            const struct mo_bearer *approval,
-                                                           const struct mo_compiler *compiler) {
+                                                           const struct mo_compiler *compiler,
+                                                           enum mo_upgrade_children children) {
     MO_ASSERT(s != NULL && compiler != NULL);
     struct mo_arena arena;
     mo_arena_init_confidential(&arena, MO_LIMIT_UPGRADE_RESTART_HEAP);
@@ -716,6 +717,7 @@ enum mo_protocol_server_status mo_protocol_server_upgrades(struct mo_protocol_se
     if (!ok)
         return read == MO_STORE_OK ? MO_PROTOCOL_SERVER_MEMORY : MO_PROTOCOL_SERVER_SERVICE;
     s->upgrade.compiler = *compiler;
+    s->upgrade.children = children;
     s->upgrade_enabled = credential != NULL;
     if (credential != NULL)
         s->upgrade_bearer = *credential;

@@ -28,6 +28,19 @@ bool mo_upgrade_refuse(struct upgrade_report *r, uint16_t code, const char *clas
     r->message = message;
     return false;
 }
+enum mo_upgrade_children mo_upgrade_children(bool unconfined) {
+    return mo_compile_can_confine() ? MO_CHILDREN_CONFINED
+           : unconfined             ? MO_CHILDREN_UNCONFINED
+                                    : MO_CHILDREN_REFUSED;
+}
+bool mo_upgrade_children_accept(enum mo_upgrade_children children, struct upgrade_report *report) {
+    report->unconfined = children == MO_CHILDREN_UNCONFINED;
+    return children != MO_CHILDREN_REFUSED ||
+           mo_upgrade_refuse(
+               report, MO_CODE_UPGRADE_UNCONFINED, "confinement",
+               "this host cannot confine the compile children, so mo serve accepts "
+               "no upgrade; start it with --unconfined to accept upgrades unconfined");
+}
 static bool append_digest(struct mo_buffer *out, const uint8_t *digest, bool present) {
     return present ? mo_buffer_append_byte(out, '"') && mo_offline_hex(out, digest, 32) &&
                          mo_buffer_append_byte(out, '"')
@@ -89,6 +102,8 @@ bool mo_upgrade_report_json(struct mo_buffer *out, const struct upgrade_report *
             ok &&
             mo_buffer_append_text(out, ",\"rehearsal\":true,\"accepted\":false,\"state_valid\":") &&
             mo_buffer_append_text(out, r->state_valid ? "true" : "false");
+    if (r->unconfined)
+        ok = ok && mo_buffer_append_text(out, ",\"confined\":false");
     return ok && mo_buffer_append_byte(out, '}');
 }
 bool mo_upgrade_report_text(struct mo_buffer *text, const struct upgrade_report *report) {
@@ -108,6 +123,9 @@ bool mo_upgrade_report_text(struct mo_buffer *text, const struct upgrade_report 
                                              : "\n  implementation unchanged");
     if (report->rehearsal)
         ok = ok && mo_buffer_append_text(text, "\n  rehearsal is not upgrade acceptance");
+    if (report->unconfined)
+        ok = ok && mo_buffer_append_text(
+                       text, "\n  the compile children were not confined (--unconfined)");
     return ok && mo_buffer_append_byte(text, '\n');
 }
 int mo_upgrade_show_report(const struct mo_cli *cli, FILE *output, FILE *errors,

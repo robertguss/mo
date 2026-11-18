@@ -20,6 +20,7 @@ flags = {
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
+    "--unconfined": ([], {"serve"}),
     "--emit=core": ([], {"check"}),
     "--emit=bytecode": ([], {"check"}),
     "--failure": (["1"], {"replay", "query"}),

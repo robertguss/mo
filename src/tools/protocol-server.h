@@ -125,6 +125,7 @@ struct protocol_upgrade {
     struct mo_live_upgrade *live;
     size_t waiting; /* connection slot of the commit call, or SIZE_MAX */
     struct mo_compiler compiler;
+    enum mo_upgrade_children children;
     struct mo_arena active_arena;
     struct mo_store_program active;
     bool active_found;

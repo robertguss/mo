@@ -541,8 +541,8 @@ static void activation_outcomes(void) {
         memcpy(bearer.bytes, "UpgradeCanary0123456789", 23);
         struct mo_compiler compiler = mo_upgrade_compiler();
         compiler.executable = exe;
-        CHECK(mo_protocol_server_upgrades(f.server, &bearer, NULL, &compiler) ==
-              MO_PROTOCOL_SERVER_OK);
+        CHECK(mo_protocol_server_upgrades(f.server, &bearer, NULL, &compiler,
+                                          MO_CHILDREN_CONFINED) == MO_PROTOCOL_SERVER_OK);
         char base[65], candidate[65], arguments[16384], out[32768];
         hex64(program.source, base);
         uint8_t digest[32];

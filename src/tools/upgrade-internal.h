@@ -24,7 +24,7 @@ struct upgrade_report {
     size_t heap_peak, encoded_bytes;
     struct mo_buffer differences;
     uint8_t old_schema[32], new_schema[32];
-    bool compared, implementation_changed, rehearsal, state_valid;
+    bool compared, implementation_changed, rehearsal, state_valid, unconfined;
 };
 
 struct compile_job {
@@ -43,6 +43,8 @@ bool mo_upgrade_write_file_bytes(const char *path, const uint8_t *bytes, size_t 
 
 bool mo_upgrade_refuse(struct upgrade_report *r, uint16_t code, const char *class,
                        const char *message);
+MO_MUST_USE bool mo_upgrade_children_accept(enum mo_upgrade_children children,
+                                            struct upgrade_report *report);
 bool mo_upgrade_report_json(struct mo_buffer *out, const struct upgrade_report *r,
                             const char *migration);
 bool mo_upgrade_report_text(struct mo_buffer *text, const struct upgrade_report *report);

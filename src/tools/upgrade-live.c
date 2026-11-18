@@ -31,6 +31,7 @@ static void live_free_buffers(struct mo_live_upgrade *u) {
 }
 
 struct mo_live_upgrade *mo_live_start(const struct mo_compiler *compiler,
+                                      enum mo_upgrade_children children,
                                       const struct mo_store_program *active, const uint8_t *bundle,
                                       size_t size, const char *migration) {
     MO_ASSERT(compiler != NULL && active != NULL && bundle != NULL);
@@ -70,6 +71,8 @@ struct mo_live_upgrade *mo_live_start(const struct mo_compiler *compiler,
         mo_live_free(u);
         return NULL;
     }
+    if (!mo_upgrade_children_accept(children, &u->report))
+        return u;
     struct mo_bundle checked;
     if (!mo_bundle_read(bundle, size, &checked))
         (void)mo_upgrade_refuse(&u->report, MO_CODE_UPGRADE_BUNDLE_FORMAT, "bundle",

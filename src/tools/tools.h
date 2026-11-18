@@ -41,7 +41,7 @@ struct mo_cli {
     enum mo_command command;
     enum mo_emit emit;
     bool json, list, reference;
-    bool source_bundle, upgrade, adopt;
+    bool source_bundle, upgrade, adopt, unconfined;
     const char *upgrade_from, *old_bundle, *migration, *compile_context, *candidate;
     struct mo_limits limits;
     uint32_t calls, sequences, seconds;
