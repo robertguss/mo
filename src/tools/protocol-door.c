@@ -302,7 +302,7 @@ static void start_yes(struct mo_protocol_server *s, struct protocol_connection *
         mo_protocol_fallback(s, c, PE_INTERNAL, EFFECT_NONE);
         return;
     }
-    u->live = mo_live_start(u->compiler, &u->active, p->bundle, p->bundle_size,
+    u->live = mo_live_start(&u->compiler, &u->active, p->bundle, p->bundle_size,
                             p->migration[0] == 0 ? NULL : p->migration);
     if (u->live == NULL) {
         mo_protocol_fallback(s, c, PE_MEMORY, EFFECT_NONE);

@@ -500,7 +500,11 @@ $(BUILD)/debug/checks-fail/tools/upgrade-bundle.o: src/tools/upgrade-bundle.c Ma
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_run_tests=mo_checks_fail_run -c $< -o $@
 
-$(BUILD)/debug/mo-checks-fail: $(call objects,$(BUILD)/debug,$(filter-out src/tools/upgrade-bundle.c,$(LIB_SOURCES)) $(MAIN_SOURCE) tests/checks_fail.c) $(BUILD)/debug/checks-fail/tools/upgrade-bundle.o
+$(BUILD)/debug/checks-fail/tools/upgrade.o: src/tools/upgrade.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_check_start=mo_checks_fail_start -c $< -o $@
+
+$(BUILD)/debug/mo-checks-fail: $(call objects,$(BUILD)/debug,$(filter-out src/tools/upgrade-bundle.c src/tools/upgrade.c,$(LIB_SOURCES)) $(MAIN_SOURCE) tests/checks_fail.c) $(BUILD)/debug/checks-fail/tools/upgrade-bundle.o $(BUILD)/debug/checks-fail/tools/upgrade.o
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)

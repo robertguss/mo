@@ -5,6 +5,7 @@
 #include "base/codes.h"
 #include "host/host.h"
 #include "tools/protocol.h"
+#include "tools/upgrade.h"
 #include "vm/vm.h"
 
 #include <errno.h>
@@ -279,12 +280,13 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     const char *authorities[] = {numeric, named, cli->allow_host};
     size_t authority_count = cli->allow_host == NULL ? 2 : 3;
     const struct mo_protocol_events events = {log_event, &log};
+    struct mo_compiler compiler = mo_upgrade_compiler();
     enum mo_protocol_server_status built = mo_protocol_server_new(
         image, service, store, listener, authorities, authority_count, &events, &server);
     if (built == MO_PROTOCOL_SERVER_OK)
-        built = mo_protocol_server_upgrades(server, cli->upgrade_token == NULL ? NULL : &upgrade,
-                                            cli->approval_token == NULL ? NULL : &approval,
-                                            "/proc/self/exe");
+        built =
+            mo_protocol_server_upgrades(server, cli->upgrade_token == NULL ? NULL : &upgrade,
+                                        cli->approval_token == NULL ? NULL : &approval, &compiler);
     mo_host_wipe(&upgrade, sizeof upgrade);
     mo_host_wipe(&approval, sizeof approval);
     if (built != MO_PROTOCOL_SERVER_OK) {

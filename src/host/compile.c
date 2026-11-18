@@ -31,10 +31,12 @@ struct child_limits {
     rlim_t memory, cpu;
     uint64_t wall;
 };
-static enum mo_compile_status spawn(const char *const *arguments, unsigned count,
-                                    const char *diagnostics, struct child_limits limits,
-                                    uint64_t now, struct mo_compile_child *child) {
-    MO_ASSERT(child != NULL && child->pid == 0 && count < 16 && arguments[count] == NULL);
+static enum mo_compile_status spawn(const char *folder, const char *const *arguments,
+                                    unsigned count, const char *diagnostics,
+                                    struct child_limits limits, uint64_t now,
+                                    struct mo_compile_child *child) {
+    MO_ASSERT(child != NULL && child->pid == 0 && folder != NULL && count < 16 &&
+              arguments[count] == NULL);
     if (now > UINT64_MAX - limits.wall)
         return MO_COMPILE_IO;
     int errors = open(diagnostics, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
@@ -55,6 +57,8 @@ static enum mo_compile_status spawn(const char *const *arguments, unsigned count
             _exit(125);
         for (int fd = 3; fd < descriptors; fd++)
             (void)close(fd);
+        if (chdir(folder) != 0)
+            _exit(125);
         char *mutable[16];
         for (unsigned i = 0; i <= count; i++)
             memcpy(&mutable[i], &arguments[i], sizeof mutable[i]);
@@ -85,37 +89,39 @@ static unsigned upgrade_inputs(const char **arguments, unsigned at, const char *
     arguments[at] = NULL;
     return at;
 }
-enum mo_compile_status mo_compile_start(const char *executable, const char *entry,
-                                        const char *output, const char *diagnostics,
-                                        const char *old_bundle, const char *migration,
-                                        const char *context, uint64_t now,
+enum mo_compile_status mo_compile_start(const struct mo_compiler *compiler, const char *folder,
+                                        const char *entry, const char *output,
+                                        const char *diagnostics, const char *old_bundle,
+                                        const char *migration, const char *context, uint64_t now,
                                         struct mo_compile_child *child) {
-    const char *arguments[16] = {executable, "emit", entry, "-o", output, "--bundle"};
+    const char *arguments[16] = {compiler->executable, "emit", entry, "-o", output, "--bundle"};
     unsigned count = upgrade_inputs(arguments, 6, old_bundle, migration, context);
     struct child_limits limits = {MO_LIMIT_UPGRADE_COMPILE_MEMORY,
                                   MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS,
                                   MO_LIMIT_UPGRADE_COMPILE_WALL_US};
-    return spawn(arguments, count, diagnostics, limits, now, child);
+    return spawn(folder, arguments, count, diagnostics, limits, now, child);
 }
-enum mo_compile_status mo_list_start(const char *executable, const char *bundle, const char *output,
+enum mo_compile_status mo_list_start(const struct mo_compiler *compiler, const char *folder,
+                                     const char *bundle, const char *output,
                                      const char *diagnostics, const char *old_bundle,
                                      const char *context, uint64_t now,
                                      struct mo_compile_child *child) {
-    const char *arguments[16] = {executable, "test", bundle, "--bundle", "--list", "-o", output};
+    const char *arguments[16] = {
+        compiler->executable, "test", bundle, "--bundle", "--list", "-o", output};
     unsigned count = upgrade_inputs(arguments, 7, old_bundle, NULL, context);
     struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
                                   MO_LIMIT_CHECK_WALL_US};
-    return spawn(arguments, count, diagnostics, limits, now, child);
+    return spawn(folder, arguments, count, diagnostics, limits, now, child);
 }
-enum mo_compile_status mo_check_start(const char *executable, const char *bundle,
-                                      const char *diagnostics, const char *old_bundle,
-                                      const char *context, uint64_t now,
+enum mo_compile_status mo_check_start(const struct mo_compiler *compiler, const char *folder,
+                                      const char *bundle, const char *diagnostics,
+                                      const char *old_bundle, const char *context, uint64_t now,
                                       struct mo_compile_child *child) {
-    const char *arguments[16] = {executable, "test", bundle, "--bundle"};
+    const char *arguments[16] = {compiler->executable, "test", bundle, "--bundle"};
     unsigned count = upgrade_inputs(arguments, 4, old_bundle, NULL, context);
     struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
                                   MO_LIMIT_CHECK_WALL_US};
-    return spawn(arguments, count, diagnostics, limits, now, child);
+    return spawn(folder, arguments, count, diagnostics, limits, now, child);
 }
 enum mo_compile_status mo_compile_poll(struct mo_compile_child *child, uint64_t now) {
     MO_ASSERT(child != NULL && child->pid > 0);

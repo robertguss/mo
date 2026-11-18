@@ -30,8 +30,9 @@ static void live_free_buffers(struct mo_live_upgrade *u) {
     mo_buffer_free(&u->json);
 }
 
-struct mo_live_upgrade *mo_live_start(const char *compiler, const struct mo_store_program *active,
-                                      const uint8_t *bundle, size_t size, const char *migration) {
+struct mo_live_upgrade *mo_live_start(const struct mo_compiler *compiler,
+                                      const struct mo_store_program *active, const uint8_t *bundle,
+                                      size_t size, const char *migration) {
     MO_ASSERT(compiler != NULL && active != NULL && bundle != NULL);
     struct mo_arena arena;
     mo_arena_init(&arena, sizeof(struct mo_live_upgrade) + MO_ARENA_CHUNK_HEADER);

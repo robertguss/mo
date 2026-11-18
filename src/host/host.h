@@ -105,6 +105,10 @@ struct mo_compile_child {
     int pid;
     uint64_t deadline;
 };
+struct mo_compiler {
+    const char *executable;
+    const char *library;
+};
 enum mo_compile_status {
     MO_COMPILE_RUNNING,
     MO_COMPILE_OK,
@@ -116,16 +120,19 @@ enum mo_compile_status {
     MO_COMPILE_CRASH,
     MO_COMPILE_IO
 };
-MO_MUST_USE enum mo_compile_status mo_compile_start(const char *executable, const char *entry,
+MO_MUST_USE enum mo_compile_status mo_compile_start(const struct mo_compiler *compiler,
+                                                    const char *folder, const char *entry,
                                                     const char *output, const char *diagnostics,
                                                     const char *old_bundle, const char *migration,
                                                     const char *context, uint64_t now,
                                                     struct mo_compile_child *child);
-MO_MUST_USE enum mo_compile_status mo_list_start(const char *executable, const char *bundle,
+MO_MUST_USE enum mo_compile_status mo_list_start(const struct mo_compiler *compiler,
+                                                 const char *folder, const char *bundle,
                                                  const char *output, const char *diagnostics,
                                                  const char *old_bundle, const char *context,
                                                  uint64_t now, struct mo_compile_child *child);
-MO_MUST_USE enum mo_compile_status mo_check_start(const char *executable, const char *bundle,
+MO_MUST_USE enum mo_compile_status mo_check_start(const struct mo_compiler *compiler,
+                                                  const char *folder, const char *bundle,
                                                   const char *diagnostics, const char *old_bundle,
                                                   const char *context, uint64_t now,
                                                   struct mo_compile_child *child);

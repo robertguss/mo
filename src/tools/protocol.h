@@ -38,9 +38,10 @@ void mo_protocol_server_free(struct mo_protocol_server *server);
  * every upgrade call must carry, approval the third that every review call must carry, compiler
  * the executable that compiles candidates. Reads the active program row. */
 struct mo_bearer;
+struct mo_compiler;
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_upgrades(struct mo_protocol_server *server, const struct mo_bearer *credential,
-                            const struct mo_bearer *approval, const char *compiler);
+                            const struct mo_bearer *approval, const struct mo_compiler *compiler);
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_poll(struct mo_protocol_server *server, uint64_t until_us);
 void mo_protocol_server_stop_accepting(struct mo_protocol_server *server);

@@ -1400,9 +1400,10 @@ static struct fixture_server start_secrets(struct event_log *log, uint8_t digest
                      door = {.length = approval == NULL ? 0 : strlen(approval)};
     memcpy(bearer.bytes, upgrade == NULL ? "" : upgrade, bearer.length);
     memcpy(door.bytes, approval == NULL ? "" : approval, door.length);
+    const struct mo_compiler compiler = {"/bin/false", NULL};
     CHECK(mo_protocol_server_upgrades(f.server, upgrade == NULL ? NULL : &bearer,
                                       approval == NULL ? NULL : &door,
-                                      "/bin/false") == MO_PROTOCOL_SERVER_OK);
+                                      &compiler) == MO_PROTOCOL_SERVER_OK);
     return f;
 }
 

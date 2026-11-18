@@ -124,7 +124,7 @@ struct protocol_upgrade {
     uint64_t touched, wait_deadline;
     struct mo_live_upgrade *live;
     size_t waiting; /* connection slot of the commit call, or SIZE_MAX */
-    const char *compiler;
+    struct mo_compiler compiler;
     struct mo_arena active_arena;
     struct mo_store_program active;
     bool active_found;
