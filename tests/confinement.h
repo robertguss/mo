@@ -161,8 +161,10 @@ static int probe(int argc, char **argv) {
     int ends[2];
     MO_ASSERT(pipe(ends) == 0);
     attempt("make its parent a pipe's owner", fcntl(ends[0], F_SETOWN, parent) == 0);
-    attempt("make its parent a pipe's owner by ioctl", ioctl(ends[1], FIOSETOWN, &parent) == 0);
     MO_ASSERT(close(ends[0]) == 0 && close(ends[1]) == 0);
+    bool paired = socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, ends) == 0;
+    attempt("make its parent a socket's owner", paired && ioctl(ends[0], FIOSETOWN, &parent) == 0);
+    MO_ASSERT(!paired || (close(ends[0]) == 0 && close(ends[1]) == 0));
     struct rlimit limits;
     attempt("read its parent's limits", prlimit(parent, RLIMIT_NOFILE, NULL, &limits) == 0);
     errno = 0;

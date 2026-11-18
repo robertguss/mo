@@ -468,6 +468,21 @@ $(BUILD)/debug/tests/test_listener_faults.test: $(BUILD)/debug/tests/test_listen
 $(BUILD)/sanitize/tests/test_listener_faults.test: $(BUILD)/sanitize/tests/test_listener_faults.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/listener.c,$(LIB_SOURCES))) $(BUILD)/sanitize/listener-faults/listener.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+# The confinement control: spawn() calls a stub in place of the confinement.
+$(BUILD)/debug/confine-control/compile.o: src/host/compile.c tests/confine_control.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(DEBUG) -Dmo_compile_confine=mo_confine_control -include tests/confine_control.h -c $< -o $@
+
+$(BUILD)/sanitize/confine-control/compile.o: src/host/compile.c tests/confine_control.h Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_compile_confine=mo_confine_control -include tests/confine_control.h -c $< -o $@
+
+$(BUILD)/debug/tests/test_confinement_control.test: $(BUILD)/debug/tests/test_confinement_control.o $(call objects,$(BUILD)/debug,$(filter-out src/host/compile.c,$(LIB_SOURCES))) $(BUILD)/debug/confine-control/compile.o
+	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/sanitize/tests/test_confinement_control.test: $(BUILD)/sanitize/tests/test_confinement_control.o $(call objects,$(BUILD)/sanitize,$(filter-out src/host/compile.c,$(LIB_SOURCES))) $(BUILD)/sanitize/confine-control/compile.o
+	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
 PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c $(SERVICE_LOOP_SOURCES) src/tools/protocol-upgrade.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
