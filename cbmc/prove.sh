@@ -8,7 +8,8 @@
 # Each proof checks one function against its specification, with the functions it calls
 # replaced by their models (cbmc/README.md).
 #
-#   bash cbmc/prove.sh [proof...]           with no names, every proof
+#   bash cbmc/prove.sh [proof...]           with no names, every proof; then each planted
+#                                           defect of a proof that passed, which must fail it
 #   bash cbmc/prove.sh --reach [proof...]   check instead that every block of each proved
 #                                           function, and the end of its harness, runs on
 #                                           some input
@@ -23,6 +24,7 @@ default_input=${MO_CBMC_INPUT:-32}
 build=build/cbmc
 mkdir -p "$build"
 reach=
+planted_source=
 if [[ "${1:-}" == --reach ]]; then
 	reach=1
 	shift
@@ -110,6 +112,18 @@ proofs=(
 	"table_union|mo_table_info mo_table_slots mo_table_hashes mo_table_live|union_slots.0:3,union_slots.1:129,union_slots.2:4||table.c|--unwind 9"
 	"resolve_portable||portable.5:10,portable.4:5,replay.0:5,opened.0:4,memcpy.0:9||resolve.c|--unwind 9"
 	"resolve_kernel|portable|||resolve-kernel.c|--object-bits 10 --unwind 17"
+)
+
+planted=(
+	parent-at-root normalize src/host/files.c 'if (written == 0)' 'if (0)'
+	absolute-path normalize src/host/files.c 'if (n == 0 || (end == length - 1' 'if ((end == length - 1'
+	parent-prefix normalize src/host/files.c 'n == 2 && bytes[at]' 'n >= 2 && bytes[at]'
+	parent-at-root resolve_portable src/host/path.c 'if (strcmp(component, "..") == 0) {' 'if (strcmp(component, "..") == 0 && depth != 0) {'
+	follow-links resolve_portable src/host/path.c 'open_flags | O_NOFOLLOW, 0666' 'open_flags, 0666'
+	link-length resolve_portable src/host/path.c 'rest >= sizeof pending' 'rest > sizeof pending'
+	not-beneath resolve_kernel src/host/path.c 'RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS |' 'RESOLVE_NO_MAGICLINKS |'
+	path-length resolve_kernel src/host/path.c 'if (strlen(path) >= MO_LIMIT_HOST_PATH_SIZE)' 'if (strlen(path) > MO_LIMIT_HOST_PATH_SIZE)'
+	reopen-creates resolve_kernel src/host/path.c 'open(retained, flags(mode) & ~O_CREAT)' 'open(retained, flags(mode))'
 )
 
 checks=(--bounds-check --pointer-check --pointer-overflow-check --signed-overflow-check
@@ -237,8 +251,8 @@ run() {
 			options+=("$option")
 		fi
 	done
-	if ! goto-cc -std=c17 -Isrc -DMO_CBMC_INPUT="$n" --function "$harness" "$source" \
-		-o "$entry" >>"$log" 2>&1; then
+	if ! goto-cc -std=c17 ${planted_source:+-I"$planted_source"} -Isrc -DMO_CBMC_INPUT="$n" \
+		--function "$harness" "$source" -o "$entry" >>"$log" 2>&1; then
 		echo "FAILED $name: $source does not compile; see $log"
 		return 1
 	fi
@@ -314,7 +328,8 @@ run() {
 	fi
 	# Every loop bound carries an unwinding assertion, so a bound too small fails the proof
 	# rather than hiding paths.
-	cbmc "$instrumented" "${checks[@]}" "${options[@]}" --unwind "$unwind" --unwinding-assertions \
+	cbmc "$instrumented" "${checks[@]}" "${options[@]}" ${planted_source:+--stop-on-fail} \
+		--unwind "$unwind" --unwinding-assertions \
 		--unwindset "$unwindset" >>"$log" 2>&1 || status=$?
 	if ((status == 0)); then
 		echo "proved $name ($((SECONDS - start))s$inputs)"
@@ -327,11 +342,41 @@ run() {
 	fi
 }
 
+plant() {
+	local defect=$1 proof=$2 file=$3 original=$4 replacement=$5 text rest row output status=0
+	local build=$build/planted/$proof-$defect
+	local planted_source=$build/src
+	text=$(<"$file")
+	rest=${text//"$original"/}
+	if [[ -z "$original" ]] || ((${#text} - ${#rest} != ${#original})); then
+		echo "FAILED planted $defect: $file holds its text other than exactly once: $original"
+		return 1
+	fi
+	mkdir -p "$planted_source/$(dirname "${file#src/}")"
+	printf '%s\n' "${text/"$original"/"$replacement"}" >"$planted_source/${file#src/}"
+	for row in "${proofs[@]}"; do
+		if [[ ${row%%|*} == "$proof" ]]; then break; fi
+	done
+	output=$(run "$row") || status=$?
+	if ((status != 0)) && grep -qx 'VERIFICATION FAILED' "$build/$proof.log"; then
+		echo "caught planted $defect: $proof fails on" \
+			"\"$(sed -n '/^Violated property:$/{n;n;s/^ *//;p;q}' "$build/$proof.log")\""
+	elif ((status == 0)); then
+		echo "FAILED planted $defect: $proof still passes with it; see $build/$proof.log"
+		return 1
+	else
+		echo "FAILED planted $defect: $output"
+		return 1
+	fi
+}
+
 jobs=${MO_CBMC_JOBS:-1}
 wanted=" $* "
 names=()
+all=()
 for proof in "${proofs[@]}"; do
 	name=${proof%%|*}
+	all+=("$name")
 	if [[ -n "$*" && "$wanted" != *" $name "* ]]; then continue; fi
 	names+=("$name")
 done
@@ -357,6 +402,42 @@ else
 		cat "$build/$name${reach:+.reach}.out"
 		if [[ $(cat "$build/$name${reach:+.reach}.status") != 0 ]]; then failed+=("$name"); fi
 	done
+fi
+if [[ -z "$reach" ]]; then
+	if ((${#planted[@]} % 5)); then
+		echo "FAILED planted: each row has a name, a proof, a file, a text and its replacement"
+		failed+=(planted)
+	fi
+	rows=()
+	for ((i = 0; i + 4 < ${#planted[@]}; i += 5)); do
+		defect=${planted[i]}
+		proof=${planted[i + 1]}
+		if [[ " ${all[*]} " != *" $proof "* ]]; then
+			echo "FAILED planted $defect: there is no proof $proof"
+			failed+=("$proof-$defect")
+		elif [[ " ${names[*]} " == *" $proof "* && " ${failed[*]} " != *" $proof "* ]]; then
+			rows+=("$i")
+		fi
+	done
+	mkdir -p "$build/planted"
+	for i in "${rows[@]}"; do
+		key=${planted[i + 1]}-${planted[i]}
+		if ((jobs == 1)); then
+			plant "${planted[@]:i:5}" || failed+=("$key")
+			continue
+		fi
+		while (($(jobs -rp | wc -l) >= jobs)); do wait -n || true; done
+		(plant "${planted[@]:i:5}" >"$build/planted/$key.out" 2>&1 && echo 0 || echo 1) \
+			>"$build/planted/$key.status" &
+	done
+	if ((jobs > 1)); then
+		wait
+		for i in "${rows[@]}"; do
+			key=${planted[i + 1]}-${planted[i]}
+			cat "$build/planted/$key.out"
+			if [[ $(cat "$build/planted/$key.status") != 0 ]]; then failed+=("$key"); fi
+		done
+	fi
 fi
 if ((${#failed[@]})); then
 	echo "error: ${#failed[@]} CBMC proof(s) failed: ${failed[*]}" >&2
