@@ -169,3 +169,80 @@ Two failures from earlier full runs that day are kept:
 
 The drivers group runs a short version: two planted changes of each kind, two killed wrong
 versions and one survivor, under both settings, with the control.
+
+## Release evidence for v0.3
+
+Run on 2026-11-18 on `main` at `2b6335c3e8c14c8c16c489adae830e71ab4d1c32`, in a worktree of its
+own. `git diff --stat cb59735d HEAD -- src ci cbmc fuzz tests services Makefile` printed nothing:
+the one commit after `cb59735d`, which set the version, is a plan document, so this is the 0.3.0
+code tree. `bash ci/check.sh gcc` ended with `check.sh finished: pass`, and
+`build/gcc/debug/mo --version` printed `mo 0.3.0`. The `gcc` group does not build the two control
+executables, so they were built with
+`make -j8 build/gcc/debug/mo-door-bypass build/gcc/debug/mo-checks-fail CC=gcc`.
+
+Two jobs then ran side by side on the development VM (8 vCPUs, gcc 13.3.0, clang 18.1.3,
+CBMC 5.95.1), so every duration below was measured under the other job's load. The first ran
+these in order, and each exited 0:
+
+| Check | Command | Result | Seconds |
+| --- | --- | --- | --- |
+| Door proof, working half | `python3 ci/check_door.py build/gcc/debug/mo learnability/phase6/door/planted --all --bypass build/gcc/debug/mo-door-bypass` | pass; the control failed with its 30 expected mismatches | 954 |
+| Door proof, held-back half | the same with `--wrong /home/exedev/code/mo-strength-held-back/set-1 learnability/phase6/strength/results/5-held-back.json` before `--bypass` | pass; the control failed with its 29 expected mismatches | 995 |
+| Simulation | `python3 ci/check_simulation.py build/gcc/debug/mo` | pass | 25 |
+| Task queue | `python3 ci/check_task_queue.py build/gcc/debug/mo` | pass | 88 |
+| Review | `python3 ci/check_review.py build/gcc/debug/mo build/gcc/debug/mo-checks-fail` | pass | 127 |
+| Kill loop | `python3 ci/check_kill_loop.py build/gcc/debug/mo --kills 500 --seed 2026111701` | pass; 500 kills, 20 of them during a commit | 3,583 |
+| Models | `python3 ci/check_models.py` | pass; 18 configurations | 24 |
+| CBMC | `bash ci/check.sh cbmc` | pass; 75 proofs and 75 reach checks, none skipped | 2,141 |
+
+The second job was `make --no-print-directory fuzz-smoke FUZZ_SECONDS=300`: 43 targets in 44
+runs of 300 seconds each, since `fuzz_bytecode_io` runs with a small and a large input limit. It
+exited 0 after 13,468 seconds, with 131,154,382 inputs executed in all and no crash, timeout or
+leak artifact. Four targets are slow and ran few inputs: `fuzz_protocol_server` 116,
+`fuzz_mcp_rpc` 1,171, `fuzz_strength` 1,756 and `fuzz_fetch` 1,889. For those, 300 seconds is a
+thin run.
+
+**The door.** Both runs have `seed=none`, 32 cases, 41 approved items and 64 pushes, with one held
+push answered yes and one answered no. Every outcome equals the table in the section above:
+11 fixes activated under `intent` and held under `everything`, 9 intent changes held under both,
+and 11 killed wrong versions refused under both, in each half. `w11` activated under `intent` and
+was held under `everything`; `w20` was refused under both. The door's part took 463 seconds in
+the working-half run and 482 in the held-back run; the bypassed build's part took 474 and 497.
+
+**The kill loop.** Seed 2026111701, 15 data folders, 24,258 calls: 23,931 answered, 65 refused
+and 327 unknown (a lost reply or an `unknown` effect), each of which reconciled as applied in
+full or not at all. Of the 500 kills, 426 came during calls, 73 during a push and one after a
+migration. Twenty left a transaction half written: `mo history` reported `recovery required` for
+those 20 folders and read the other 480, then read all 20 after their restart. Of 136 pushes, 44
+activated, and 19 invalid ones were refused: E1426 16 times, and E1423, E1417 and E1416 once
+each. The driver prints `internal_stage_coverage=unobserved`: it does not see which internal
+stage each kill landed in.
+
+**The models.** The pinned `tla2tools.jar` (v1.7.4, sha256 `936a2620…0e88`) checked `Capture`,
+`Export`, `ExportProgress`, `Swap` and `SwapDoor`, which passed, and 13 negative configurations,
+each of which produced the counterexample it must. For the door those are `SwapBadVersion`
+(`NoUnreviewedIntent`) and `SwapBadReview` (`YesNamesCandidate`).
+
+**The nightly.** The latest run,
+[44131355230](https://github.com/robertguss/mo/actions/runs/44131355230), checked `cb59735d` on
+2026-11-17 and passed. The two before it, on 2026-11-15 and 2026-11-16, failed on the
+live-upgrade check's timer assertion under the sanitizer build, which #355 fixed. No nightly has
+run on `2b6335c3` yet; its code is the same.
+
+No check failed in this run. Failures from before it stay on record: `p19` and `w20` in the
+section above, the two red nightlies, and two CBMC failures repaired on 2026-11-17 in #356. One was a verifier proof whose harness never reached the simulation instruction, so its
+reach check failed; the other was an array allocation proof that no longer finished.
+
+### Verdict
+
+This evidence shows the door's mechanism: it holds what changes approved intent, lets a fix
+through under `intent`, refuses what the intent kills, and a build without the decision fails the
+same run. It does not show how Robert judges real changes, because he has judged none through the
+door. His verdict on the setting is "not yet judged", and the setting stays `everything`.
+
+Open work:
+
+- Real use through the door on the live host: agents changing the task queue with `mo push`.
+- Robert's first approvals on the live host.
+- The four access checks marked "not yet run" in [the live service runbook](../ops/live-service.md).
+- Removing the development VM's exe.dev key from Robert's account.
