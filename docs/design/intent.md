@@ -105,9 +105,7 @@ table, beside the image.
 ### A fixed plan
 
 A verdict comes from a plan fixed by counts and by seeds derived from names,
-never from how far a clock let the search get. Today every search also stops at
-`--seconds`, 2 by default, and on this project's development host the recovery
-check reaches 173 of its 200 sequences in those 2 seconds and reports a pass.
+never from how far a clock let the search get.
 
 A service's sequences run to the end of their plan: `--calls` sequences, 200 by
 default, each seeded from the service's name and its ordinal. `--seconds` no
@@ -518,11 +516,11 @@ rule for every service behind the door.
 
 ## Models and proof obligations
 
-- `models/Swap.tla` gains hold, replace, yes, no and stale, with two invariants:
+- `models/Swap.tla` has hold, replace, yes, no and stale, with two invariants:
   no candidate that changes approved intent activates without a yes that names
-  it, and a yes activates only the candidate it names. Each invariant gets a
+  it, and a yes activates only the candidate it names. Each invariant has a
   negative-control configuration that must violate it. The nightly does not run
-  the `models` group, so it runs by hand when the door is built and at the close.
+  the `models` group, so it runs by hand.
 - Planted changes of three kinds: fixes that leave approved intent unchanged,
   changes that edit or remove it, and frozen wrong versions that leave it
   unchanged. Each declares its expected outcome under both settings and is run
@@ -536,7 +534,7 @@ rule for every service behind the door.
   that passes its checks to the boundary; its run must fail with one mismatch
   for each push expected to be held. The drivers group runs a short set; `--all`
   runs every case.
-- The version-3 store, the review id and the approval tools get unit tests, an
+- The version-3 store, the review id and the approval tools have unit tests, an
   errors fixture per code, and fuzz seeds for every new reader.
 
 ## Decisions settled with Robert

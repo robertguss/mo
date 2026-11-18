@@ -20,7 +20,7 @@ first:
 
 - **Intent lives in the language.** People state what a program must do, as
   promises and example tables. The toolchain checks programs and runs their
-  tests. The approval workflow for protected intent is planned for Phase 6.
+  tests. The approval workflow for protected intent is built.
 - **A runtime agents can operate.** Agents can look inside a running Mo
   service through authenticated, bounded operator views. Pure queries run
   offline over exported state. Failure replay reconstructs a recorded case
