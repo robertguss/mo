@@ -91,6 +91,53 @@ little memory can run out: on 14 processors and 16 GB, the kernel killed `step`'
 reach check. A proof or reach check whose `cbmc` is killed says so, and names the command that
 reruns it alone; it is not a failed proof.
 
+## Planted defects
+
+The reach check shows that a proof runs the code. It does not show that the proof would notice a
+mistake in that code. Planted defects show that. Each row of the `planted` table in `prove.sh`
+names a defect, the proof it must break, a source file, an exact text in that file, and the text
+that replaces it. The text must occur exactly once in the file. Otherwise the row fails, so a
+change to the source cannot quietly turn a row into a check of nothing. A row also fails when it
+names a proof the proof table does not have.
+
+`bash cbmc/prove.sh` runs the planted rows after the proofs. A row runs only when its proof has
+just passed on the real source. It copies the file to `build/cbmc/planted/<proof>-<defect>/src/`,
+replaces the text in the copy, and runs the proof again with that copy first on the include path.
+The file in `src/` never changes. The row passes only when CBMC says `VERIFICATION FAILED`, and it
+prints the property that failed. When the proof still passes, the run fails and names the defect.
+A copy that does not compile also fails the run. `--stop-on-fail` ends each planted run at its
+first failed property. `bash cbmc/prove.sh normalize` runs one proof and its rows. `--reach` runs
+no rows. `make cbmc` and `ci/check.sh cbmc` run them with the proofs.
+
+| Defect | Proof | What it plants | Property that fails |
+| --- | --- | --- | --- |
+| `parent-at-root` | `normalize` | A `..` with nothing before it is skipped, not refused, so `../a` becomes `a`. | refuses an empty, absolute, or escaping path |
+| `absolute-path` | `normalize` | An empty component is accepted, so `/a` and `a//a` pass. | refuses an empty, absolute, or escaping path |
+| `parent-prefix` | `normalize` | Any component that starts with `..`, such as `..a`, is read as `..`. | accepts a contained relative path |
+| `parent-at-root` | `resolve_portable` | A `..` at the root goes to the OS, not to the refusal. | never asks the OS for a parent |
+| `follow-links` | `resolve_portable` | A component is opened without `O_NOFOLLOW`. | pins every component without links |
+| `link-length` | `resolve_portable` | A link expansion one byte too long for the buffer is let through. | move stays inside its buffers |
+| `not-beneath` | `resolve_kernel` | `openat2` runs without `RESOLVE_BENEATH`. | always requires beneath-root resolution without magic links |
+| `path-length` | `resolve_kernel` | A path as long as the buffer is let through. | opens a relative path from the retained root |
+| `reopen-creates` | `resolve_kernel` | The `/proc/self/fd/` reopen keeps `O_CREAT`. | reopening cannot create a pathname |
+
+These defects were tried and are not rows, because the proof passes with them. The first two change
+nothing that matters. The third is a real defect that the proof cannot see.
+
+- `normalize` with `while (written > 1 && ...` in place of `while (written != 0 && ...` when `..`
+  removes a component. It changes nothing. The output never starts with `/`, so with one byte left
+  the real loop removes it, and with the change the line after the loop removes it.
+- `resolve_kernel` with `if (0)` in place of `if (errno == EXDEV)`. The kernel's refusal of an
+  escape is then not returned, and the path goes to the portable resolver. That resolver never
+  asks the OS for a parent and opens only from descriptors that come from the root, which
+  `resolve_portable` proves. Only the layer that refuses changes.
+- `resolve_portable` with `if (size == 0)` in place of `if (size == 0 || target[0] == '/')`. An
+  absolute link such as `/etc/passwd` is then read from the link's own folder, not refused. The
+  program stays inside its folder, because every open still starts from a descriptor that came
+  from the root, and that is what the proof checks. The proof does not check where a link leads.
+  `test_real_files` in `tests/test_host.c` does. On the portable path it expects `NotAllowed` for
+  an absolute link, and it fails with this defect.
+
 ## What the proofs assume
 
 These neighbours are models, each with its own checks:
