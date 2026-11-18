@@ -106,7 +106,7 @@ Each milestone gets its own brainstorm and plan.
 | M6. The project command, the guide and the mo-lang skill | R9, R10, R14, R15 | M3, M5 |
 | M7. Robert's spike, the agent evaluation and v0.4 | R16, R17, R18 | M4, M6 |
 
-M3 ends with a second pull request, in which Lean models the fake network (U8). Two more units came from Robert's request for rigor on 18 November 2026: the nightly runs the proofs and the fuzzers (U9), and Lean proves the capability promise (U10).
+M3 ends with a second pull request, in which Lean models the fake network (U8). Two more units came from Robert's request for rigor on 18 November 2026: the nightly runs the proofs and the fuzzers (U9), and Lean proves the capability promise (U10). His answer on the slow JSON documents adds scanning primitives for `Json.parse` (U11).
 
 M2 touches the service side and nothing else in the phase does. It can run alongside M3 to M6.
 
@@ -151,7 +151,7 @@ Deferred for later:
 - More than one request at a time, streaming bodies, HTTP/2 and WebSockets.
 - A standalone executable for a Mo program, and an interactive prompt.
 - Packages, which stay with "Ecosystem".
-- Performance: a release build target, interpreter speed, machine code and in-place demands.
+- Performance: a release build target, interpreter speed, machine code and in-place demands. The one exception is U11.
 - Fil-C compatibility and the question of rewriting the C core.
 - Confinement of `mo serve` itself. R12 covers its two children.
 - MoDB and the abilities its design asks for, such as reading and writing bytes at a position in a file, and hashing.
@@ -262,12 +262,15 @@ flowchart TB
   U3 --> U8[U8 Lean models the fake network]
   U1 --> U9[U9 nightly proofs and fuzzers]
   U8 --> U10[U10 Lean proves the capability promise]
+  U1 --> U11[U11 scanning primitives for Json.parse]
+  U3 -.->|merge order only| U11
   U4 --> U7[U7 spike, evaluation, v0.4]
   U6 --> U7
   U2 -.->|before the release| U7
   U8 -.->|before the release| U7
   U9 -.->|before the release| U7
   U10 -.->|before the release| U7
+  U11 -.->|before the release| U7
 ```
 
 ### Assumptions
@@ -465,6 +468,30 @@ Waits on: PR8, needed before this group can start, because the theorems must cov
   - With the planted hole in the model, `make formal` fails at the capability theorem.
 - **Verification:** `bash ci/check.sh lean` passes, and the group is not skipped. Robert's approval of the statements is recorded in the pull request.
 
+### PR11: Scanning primitives for `Json.parse`
+
+Waits on: PR1, needed before this group can start. PR3, merge order only, because both add primitives at the end of `src/base/prims.def` and both change `lib/json.mo`.
+
+### U11. Scanning primitives make `Json.parse` faster on numbers and escapes
+
+- **Goal:** A document made mostly of numbers, or of strings with escapes, parses faster, and the new C is small, pure and proved.
+- **Requirements:** R11; Robert's answer of 18 November 2026 on the first decision of the design document.
+- **Dependencies:** U1. Merges after U3.
+- **Files:** `src/base/prims.def`, `src/prim/`, `src/check/signatures.c`, `src/lower/applications.c`, `lib/json.mo`, `formal/MoCore/`, `cbmc/`, `fuzz/` with `fuzz/corpus/`, `tests/test_prim.c`, `tests/lower-source/`, `docs/design/library.md`, `docs/reference/README.md`, `docs/design/outside-world.md`, `learnability/phase7/preflight/json-parse/`.
+- **Approach:**
+  1. Count the instructions of each function on the numbers and the escapes documents, as the first parser work did for the plain document. Name the smallest primitives that remove the cost. No one has made this count, so the primitives are not chosen yet.
+  2. Write down the instruction count expected for each shape before building. A miss is recorded, and Robert decides.
+  3. Add each primitive at the end of `src/base/prims.def`. It is a pure function of its arguments: it reads no file and no socket, and it keeps no state. Give it a counterpart in Lean with its safety proof, a CBMC proof, a fuzz target with seeds and an oracle in `tests/test_prim.c`.
+  4. Change `lib/json.mo` to use them. The parser stays in Mo, and every result and every error stays the same.
+  5. Measure each shape, and an input on each side of every new guard, and the smallest documents. Record what got slower.
+- **Patterns to follow:** `text.split` and `text.contains?`, for a text primitive from the table to its Lean counterpart; `learnability/phase7/preflight/json-parse/run.sh`, for the comparison of two parsers on the corpus and the count for each shape; `docs/solutions/best-practices/measure-a-fast-path-on-both-sides-of-its-guard.md`.
+- **Test scenarios:**
+  - The old and the new parser print the same line for each of the 425,758 documents of the corpus.
+  - Each primitive agrees with its oracle on empty text, on text of one character, on a position at the end and past the end, and on characters outside ASCII.
+  - Each primitive's CBMC proof passes for every input up to its bound, and a planted defect makes it fail.
+  - The numbers and the escapes documents take fewer instructions than before, and no shape in `run.sh` takes more.
+- **Verification:** `bash ci/check.sh gcc`, `bash ci/check.sh drivers static` and `bash ci/check.sh lean` pass. `make CC=clang`, `make sanitize CC=clang`, `make fuzz-smoke` and `make cbmc` pass. The record in `learnability/phase7/preflight/json-parse/` holds the expected and the measured count for each shape.
+
 ### PR4: HTTPS
 
 Waits on: PR3, needed before this group can start, because TLS goes under the connection PR3 adds.
@@ -549,13 +576,13 @@ Waits on: PR3 and PR5, needed before this group can start, because the guide's w
 
 ### PR7: The spike, the evaluation and v0.4
 
-Waits on: PR4 and PR6, needed before this group can start. PR2, PR8, PR9 and PR10 merge before the release.
+Waits on: PR4 and PR6, needed before this group can start. PR2, PR8, PR9, PR10 and PR11 merge before the release.
 
 ### U7. Robert's spike, the agent evaluation and the release
 
 - **Goal:** Robert has done one real spike and given his answer, the evaluation is published, and v0.4 is released.
 - **Requirements:** R16, R17, R18; F1, F3; AE5.
-- **Dependencies:** U4, U6, and U2, U8, U9 and U10 before the release.
+- **Dependencies:** U4, U6, and U2, U8, U9, U10 and U11 before the release.
 - **Files:** `learnability/phase7/` (protocol, tasks, freeze and results), `docs/status/phase7-run.md` (new), `src/tools/cli.c` and `src/base/runtime-identity.c` (`MO_VERSION`), `README.md`, `docs/ROADMAP.md`, `docs/agent-guide.md`, and the goldens under `tests/cli/` that print the version.
 - **Approach:**
   1. Write the protocol: the tasks, the clients, the gate, and how a session reaches an API without the live internet. Robert approves it before any scored session.
@@ -581,8 +608,8 @@ Waits on: PR4 and PR6, needed before this group can start. PR2, PR8, PR9 and PR1
 | `bash ci/check.sh gcc` | Before every pull request. Its last line goes in the pull request body. | The build and every unit test. |
 | `bash ci/check.sh drivers static` | Once in each pull request that edits `docs/agent-guide.md`, `docs/reference/README.md` or `docs/design/library.md`. | Goldens, guide claims, the executable grammar, module rules, the library map, format and fuzz seeds. |
 | `make CC=clang` and `make sanitize CC=clang` | U2 to U6, which change C code. | The change builds under both compilers and runs clean under ASan and UBSan. |
-| `bash ci/check.sh lean` | U3, U5, U8 and U10. | Mo Core in Lean still matches the executables, and every `HOSTOP` row is either modelled or listed as stopping outside the model (KTD4). |
-| `make fuzz-smoke` | U3, U4 and U5. | Each fuzz target runs briefly on its seeds. |
+| `bash ci/check.sh lean` | U3, U5, U8, U10 and U11. | Mo Core in Lean still matches the executables, and every `HOSTOP` row is either modelled or listed as stopping outside the model (KTD4). |
+| `make fuzz-smoke` | U3, U4, U5 and U11. | Each fuzz target runs briefly on its seeds. |
 | The confinement check, on the normal build and on the control build | U2, and then the nightly. | AE4. |
 | `bash ci/check.sh cbmc` and the long fuzz runs | U7, by hand, as `AGENTS.md` sets for a phase boundary. | The proofs and fuzz targets over the phase's changes. |
 | The agent evaluation | U7. | Recorded with its gate, freeze and every session in `docs/status/phase7-run.md`. |
@@ -615,3 +642,4 @@ A skipped check is not a pass. The nightly runs the wider groups on `main`, and 
 | U8 | A program that calls an API through a fake network gives the same output on the VM and in Lean, and random sequences of operations on the fake agree with the model. |
 | U9 | A dispatch of the nightly is green with the `cbmc` and `fuzz` groups in it and no skip, and no document still says they run only by hand. |
 | U10 | Robert has approved the statements, every proof checks with no `sorry` and no axiom, and the planted hole breaks the proof. |
+| U11 | Both parsers agree on the whole corpus, each primitive has its Lean counterpart, CBMC proof and fuzz target, and the record holds the expected and the measured count for each shape. |

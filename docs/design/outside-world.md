@@ -540,8 +540,15 @@ takes 0.27 seconds. An optimized build takes 0.80 seconds for 1 MiB.
 The gain is for strings with no escape. A document made mostly of numbers, or of strings with
 escapes, parses about as slowly as before: 8.3 and 9.0 seconds for documents of 1.2 and 1.7 MB
 ([json-parse/](../../learnability/phase7/preflight/json-parse/README.md)). A document printed
-with an indent takes 2.9 seconds for 1.4 MB. Those wait for the phase about speed. A parser in C would be new C that reads network bytes where Mo can do the
-job, which the phase's safety rule is against.
+with an indent takes 2.9 seconds for 1.4 MB.
+
+Robert chose not to leave those for the phase about speed. This phase adds primitives in C that
+scan text, and `Json.parse` uses them. The parser stays in Mo. A parser in C would be new C
+that reads network bytes where Mo can do the job, which the phase's safety rule is against. A
+scanning primitive is a small pure function of its arguments, as `text.split` is. Each one gets
+a counterpart in Lean with its safety proof, a CBMC proof, a fuzz target and an oracle test.
+Which primitives, and how much they gain, is measured first: no one has counted where those
+documents spend their instructions.
 
 ## Where a capability is written down
 
@@ -662,7 +669,6 @@ and not before:
 - A `Sqlite` narrowed to a folder inside the one the program was started in.
 - Lookup that gives a decimal or a float by path.
 - Confinement of `mo serve` itself and of `mo run`.
-- A faster parse of a document made mostly of numbers or of strings with escapes.
 
 ## Decisions for Robert
 
@@ -672,11 +678,12 @@ the plan left open. The rest came up in this step. Each needs his yes or a chang
 Robert's answers so far, on 18 November 2026: row 2, yes. Row 3, yes, with headers written
 sorted by name and a mismatch reason that shows what differs. Row 7, changed: a `Sqlite`
 capability of its own, in place of `files.sqlite(path)`. Rows 5, 6, 10
-and 11, yes. Row 4, changed: Lean models the fake network.
+and 11, yes. Row 4, changed: Lean models the fake network. Rows 8, 9, 12, 13 and 15, yes. Row 1,
+changed: scanning primitives in C in this phase, for the documents that are still slow.
 
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
-| 1 | The 1 MiB fetch first missed the wall-time bar, because of `Json.parse`. Robert asked for a faster parser in this step. | Accept the reworked parser in `lib/json.mo`, which meets the bar in Mo. Documents of numbers or of strings with escapes stay slow, and become the first workload of the phase about speed. | A primitive in C that scans text, for those documents, in this phase. |
+| 1 | The 1 MiB fetch first missed the wall-time bar, because of `Json.parse`. Robert asked for a faster parser in this step. | Accept the reworked parser in `lib/json.mo`, which meets the bar in Mo. For documents of numbers or of strings with escapes, add primitives in C that scan text, in this phase. | Leave those documents for the phase about speed. |
 | 2 | The level of the network capability. | A connection, with HTTP in Mo. The level itself costs under 0.4% of the instructions. | An HTTP request as the operation, with HTTP parsed in C. |
 | 3 | The fake's level, and how a test builds it. | The same level as the capability. `Http.replies` builds it from requests and responses, and the match is exact. | A fake that matches on method and URL only, which needs HTTP parsing outside Mo. |
 | 4 | Lean's model. | Lean models the fake network, in a pull request of its own after the capability lands. It does not model SQLite. | Neither capability is modelled, and a run that reaches one leaves the comparison. |
