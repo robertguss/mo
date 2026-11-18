@@ -642,6 +642,11 @@ and not before:
 - **The SQLite capability** follows the same rule. A program opens a database only with a
   `Sqlite` that `main` lists.
 - **A service still holds no capability.** It cannot call out, and it cannot open a database.
+- **Lean proves the capability promise on the model.** P7 has tests and fuzzing behind it
+  today, and no theorem. The phase adds theorems about Mo Core: a program changes the world
+  only through a capability it holds, and `main` holds only what it lists. Robert approves the
+  statements before any proof is written. The theorems are about the model. The C VM is still
+  compared with Lean by test, and SQLite and the real network stay outside the model.
 
 ## What this leaves out
 

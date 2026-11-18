@@ -106,7 +106,7 @@ Each milestone gets its own brainstorm and plan.
 | M6. The project command, the guide and the mo-lang skill | R9, R10, R14, R15 | M3, M5 |
 | M7. Robert's spike, the agent evaluation and v0.4 | R16, R17, R18 | M4, M6 |
 
-M3 ends with a second pull request, in which Lean models the fake network (U8).
+M3 ends with a second pull request, in which Lean models the fake network (U8). Two more units came from Robert's request for rigor on 18 November 2026: the nightly runs the proofs and the fuzzers (U9), and Lean proves the capability promise (U10).
 
 M2 touches the service side and nothing else in the phase does. It can run alongside M3 to M6.
 
@@ -157,6 +157,7 @@ Deferred for later:
 - MoDB and the abilities its design asks for, such as reading and writing bytes at a position in a file, and hashing.
 - Data a service keeps outside its one saved state, and the task queue's limit of 5,000 jobs.
 - Real use through the review door, which is Phase 6's open work.
+- A rigor track of its own, which Robert asked for on 18 November 2026. It gets a brainstorm after this design is approved. Its first items: planted bugs for the test suite as well as for the proofs, a proof in Lean that the step from Mo Core to bytecode keeps a program's meaning, and proofs of the VM loop and the heap for every input.
 
 Considered and not built:
 
@@ -259,10 +260,14 @@ flowchart TB
   U3 --> U6[U6 project command, guide, skill]
   U5 --> U6
   U3 --> U8[U8 Lean models the fake network]
+  U1 --> U9[U9 nightly proofs and fuzzers]
+  U8 --> U10[U10 Lean proves the capability promise]
   U4 --> U7[U7 spike, evaluation, v0.4]
   U6 --> U7
   U2 -.->|before the release| U7
   U8 -.->|before the release| U7
+  U9 -.->|before the release| U7
+  U10 -.->|before the release| U7
 ```
 
 ### Assumptions
@@ -418,6 +423,48 @@ Waits on: PR3, needed before this group can start, because the model follows the
   - A run that reaches the real network still stops Lean with "not modeled by mocore".
 - **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh lean` pass, and the `lean` group is not skipped. `make formal` checks every proof.
 
+### PR9: The nightly runs the proofs and the fuzzers
+
+Waits on: PR1, needed before this group can start. It can run alongside every other group.
+
+### U9. The nightly runs the proofs and the fuzzers
+
+- **Goal:** A proof or a fuzz target that breaks is found the next morning, and not at the next phase boundary.
+- **Requirements:** gap 3 of `docs/design/sandbox-properties.md` ("Fuzzing and CBMC do not run on their own").
+- **Dependencies:** U1.
+- **Files:** `.github/workflows/nightly.yml`, `ci/check.sh`, `AGENTS.md`, `docs/design/sandbox-properties.md`, `docs/design/implementation.md`, `cbmc/README.md`.
+- **Approach:**
+  1. Measure how long the `cbmc` group and the `fuzz` group take on the runner.
+  2. Add both to the nightly with `CI=1`, so a missing tool fails. Give them a job of their own if the nightly's job would pass its 120 minutes.
+  3. Run the long fuzz, five minutes for each target, as often as the measurement allows, and keep its corpus between runs.
+  4. Rewrite the lines that say these run by hand: `AGENTS.md` "Checks and merging", gap 3 of `docs/design/sandbox-properties.md`, and condition 2 of `docs/design/implementation.md`.
+- **Test scenarios:**
+  - A dispatch of the nightly on a branch with one proof broken on purpose is red, and its log names the proof.
+  - A nightly on a runner without CBMC fails. It does not skip.
+- **Verification:** One dispatch of the nightly is green, and its log shows that the `cbmc` and `fuzz` groups ran with no skip.
+
+### PR10: Lean proves the capability promise
+
+Waits on: PR8, needed before this group can start, because the theorems must cover the fake network.
+
+### U10. Lean proves the capability promise
+
+- **Goal:** "A program touches only what `main` lists" is a theorem about Mo Core, and not only a tested property.
+- **Requirements:** property P7 of `docs/design/sandbox-properties.md`; KTD4.
+- **Dependencies:** U8.
+- **Files:** a new file in `formal/MoCore/`, `formal/MoCore/Theorems.lean`, `formal/MoCore.lean`, `docs/design/sandbox-properties.md`, `docs/design/outside-world.md`.
+- **Approach:**
+  1. Write each statement in plain words and in Lean, with no proof, and stop for Robert's approval. A proof of the wrong statement is worth nothing, so the statements are his to approve.
+  2. The statements to propose: an evaluation changes the world only through an operation on a capability value it holds. Code that holds no capability leaves the world as it was, and its result does not depend on the world. `main` is handed only the capabilities it lists. `within` and `read_only` give a capability that reaches no more than the one they came from. Only spec code makes a fake.
+  3. Prove each, with no `sorry` and no new axiom.
+  4. Plant a hole in the model, an operation that touches the world with no capability, and show that the proof then fails.
+  5. Say in P7 what the theorems cover and what they do not. They are about Mo Core in Lean. The C VM is compared with Lean by test. SQLite and the real network stop outside the model.
+- **Patterns to follow:** `formal/MoCore/Theorems.lean` and `Safety.lean`, for a theorem about every evaluation; `formal/MoCore/Verdict.lean`, which proves that a weaker rule is unsound (`verdictRevisedOnly_unsound`), for a planted hole.
+- **Test scenarios:**
+  - `make formal` checks every proof, and `formal/` holds no `sorry` and no `axiom`.
+  - With the planted hole in the model, `make formal` fails at the capability theorem.
+- **Verification:** `bash ci/check.sh lean` passes, and the group is not skipped. Robert's approval of the statements is recorded in the pull request.
+
 ### PR4: HTTPS
 
 Waits on: PR3, needed before this group can start, because TLS goes under the connection PR3 adds.
@@ -502,13 +549,13 @@ Waits on: PR3 and PR5, needed before this group can start, because the guide's w
 
 ### PR7: The spike, the evaluation and v0.4
 
-Waits on: PR4 and PR6, needed before this group can start. PR2 and PR8 merge before the release.
+Waits on: PR4 and PR6, needed before this group can start. PR2, PR8, PR9 and PR10 merge before the release.
 
 ### U7. Robert's spike, the agent evaluation and the release
 
 - **Goal:** Robert has done one real spike and given his answer, the evaluation is published, and v0.4 is released.
 - **Requirements:** R16, R17, R18; F1, F3; AE5.
-- **Dependencies:** U4, U6, and U2 and U8 before the release.
+- **Dependencies:** U4, U6, and U2, U8, U9 and U10 before the release.
 - **Files:** `learnability/phase7/` (protocol, tasks, freeze and results), `docs/status/phase7-run.md` (new), `src/tools/cli.c` and `src/base/runtime-identity.c` (`MO_VERSION`), `README.md`, `docs/ROADMAP.md`, `docs/agent-guide.md`, and the goldens under `tests/cli/` that print the version.
 - **Approach:**
   1. Write the protocol: the tasks, the clients, the gate, and how a session reaches an API without the live internet. Robert approves it before any scored session.
@@ -534,7 +581,7 @@ Waits on: PR4 and PR6, needed before this group can start. PR2 and PR8 merge bef
 | `bash ci/check.sh gcc` | Before every pull request. Its last line goes in the pull request body. | The build and every unit test. |
 | `bash ci/check.sh drivers static` | Once in each pull request that edits `docs/agent-guide.md`, `docs/reference/README.md` or `docs/design/library.md`. | Goldens, guide claims, the executable grammar, module rules, the library map, format and fuzz seeds. |
 | `make CC=clang` and `make sanitize CC=clang` | U2 to U6, which change C code. | The change builds under both compilers and runs clean under ASan and UBSan. |
-| `bash ci/check.sh lean` | U3, U5 and U8. | Mo Core in Lean still matches the executables, and every `HOSTOP` row is either modelled or listed as stopping outside the model (KTD4). |
+| `bash ci/check.sh lean` | U3, U5, U8 and U10. | Mo Core in Lean still matches the executables, and every `HOSTOP` row is either modelled or listed as stopping outside the model (KTD4). |
 | `make fuzz-smoke` | U3, U4 and U5. | Each fuzz target runs briefly on its seeds. |
 | The confinement check, on the normal build and on the control build | U2, and then the nightly. | AE4. |
 | `bash ci/check.sh cbmc` and the long fuzz runs | U7, by hand, as `AGENTS.md` sets for a phase boundary. | The proofs and fuzz targets over the phase's changes. |
@@ -566,3 +613,5 @@ A skipped check is not a pass. The nightly runs the wider groups on `main`, and 
 | U6 | A project made by the one command checks, tests and runs unchanged, and `mo guide` teaches the spike. |
 | U7 | Robert's answer and the evaluation's result are recorded, and v0.4 is released. |
 | U8 | A program that calls an API through a fake network gives the same output on the VM and in Lean, and random sequences of operations on the fake agree with the model. |
+| U9 | A dispatch of the nightly is green with the `cbmc` and `fuzz` groups in it and no skip, and no document still says they run only by hand. |
+| U10 | Robert has approved the statements, every proof checks with no `sorry` and no axiom, and the planted hole breaks the proof. |
