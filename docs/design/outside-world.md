@@ -68,9 +68,12 @@ enum Halt
   Unexpected(Text)
 end
 
-fn main(args: Args, env: Env, console: Console, network: Network, files: Files) : Result(Unit, Halt)
+fn main(args: Args, env: Env, console: Console, network: Network, sqlite: Sqlite) : Result(
+  Unit,
+  Halt
+)
   repo = try args.list.first.or_fail(Usage)
-  database = try files.sqlite("issues.db")
+  database = try sqlite.open("issues.db")
   saved = try sync(network, database, repo, env.get("API_TOKEN") or "")
   console.print("saved #{saved} open issues")
   found = try database.query("select number, title from issues order by number", [])
@@ -81,7 +84,7 @@ fn main(args: Args, env: Env, console: Console, network: Network, files: Files) 
 end
 
 ## Fetches the open issues of `repo` and saves each one. Gives the number saved.
-fn sync(network: Network, database: Sqlite, repo: Text, token: Text) : Result(Int, Halt)
+fn sync(network: Network, database: Sqlite.Database, repo: Text, token: Text) : Result(Int, Halt)
   url = "https://api.example.com/repos/#{repo}/issues"
   call = Http.get(url).query("state", "open").header("Authorization", "Bearer #{token}")
   response = try call.send(network)
@@ -108,7 +111,7 @@ end
 What it shows:
 
 - Values come out of an unknown response by path: `int_at("number")`, `text_at("title")`.
-- The program opens a SQLite database through `Files`, a capability `main` lists. Statements
+- The program opens a SQLite database through `Sqlite`, a capability `main` lists. Statements
   take their values as parameters, and rows come back as Mo values.
 - It runs as a command-line tool: `mo run issues.mo mo/mo`, with arguments and an exit status
   as programs have today.
@@ -121,7 +124,7 @@ test "sync saves each open issue, with no network"
   url = "https://api.example.com/repos/mo/mo/issues"
   asked = Http.get(url).query("state", "open").header("Authorization", "Bearer t0ken")
   network = Network.fake(Http.replies([(asked, Http.reply(200, page))]))
-  database = Sqlite.in_memory()
+  assert Sqlite.fake().open("issues.db") is Ok(database)
   assert sync(network, database, "mo/mo", "t0ken") == Ok(2)
   assert database.query("select title from issues order by number", []) is Ok(found)
   assert found.rows == [[Sqlite.String("Crash on empty input")], [Sqlite.String("Slow start")]]
@@ -129,7 +132,8 @@ end
 
 test "a request the fake holds no reply for is an error"
   network = Network.fake(Http.replies([]))
-  assert sync(network, Sqlite.in_memory(), "mo/mo", "t0ken") is Error(Call(_))
+  assert Sqlite.fake().open("issues.db") is Ok(database)
+  assert sync(network, database, "mo/mo", "t0ken") is Error(Call(_))
 end
 ```
 
@@ -139,7 +143,8 @@ What it shows:
   and a response and never as raw bytes.
 - A request the fake holds no reply for is an error the program receives, and no real
   connection is made.
-- The database in the test is in memory. Only tests, examples and promises can make one.
+- The database in the test is in memory. It comes from a fake `Sqlite`, which only tests,
+  examples and promises can make.
 
 ## The network capability
 
@@ -339,14 +344,16 @@ before the library existed. It becomes a short program that uses the library.
 
 ## The SQLite capability
 
-A program opens a database through `Files`:
+Two types are new, as for the network. `Sqlite` is the capability `main` lists.
+`Sqlite.Database` is one open database. A program gets a `Sqlite.Database` only from a `Sqlite`,
+and `main` cannot list one.
 
 | Operation | Signature | What it does |
 | --- | --- | --- |
-| `files.sqlite(path)` | `fn(Files, Text) : Result(Sqlite, SqliteError)` | Opens the database file at `path`, and creates it when it is absent. |
-| `Sqlite.in_memory()` | `fn() : Sqlite` | A database in memory. Only tests, examples and promises may call it. |
-| `database.run(statement, values)` | `fn(Sqlite, Text, List(Sqlite.Value)) : Result(Unit, SqliteError)` | Runs one statement and gives no rows. |
-| `database.query(statement, values)` | `fn(Sqlite, Text, List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)` | Runs one statement and gives its rows. |
+| `sqlite.open(path)` | `fn(Sqlite, Text) : Result(Sqlite.Database, SqliteError)` | Opens the database file at `path`, and creates it when it is absent. |
+| `Sqlite.fake()` | `fn() : Sqlite` | A `Sqlite` that keeps its databases in memory. Only tests, examples and promises may call it. |
+| `database.run(statement, values)` | `fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Unit, SqliteError)` | Runs one statement and gives no rows. |
+| `database.query(statement, values)` | `fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)` | Runs one statement and gives its rows. |
 
 ```mo
 enum Value
@@ -376,18 +383,31 @@ is `SqlFailed`. `Value` has a text form, so a row can be printed.
 
 ### Authority
 
-The authority is the folder that the `Files` reaches. A program that holds a `Files` can
-already read and write every file in that folder, so a database in it adds nothing. There is no
-second rule about paths: `path` is checked as every `Files` path is, and one that leaves the
-folder gives `Error(OutsideFolder(path))`. SQLite's journal files sit beside the database, in
-the same folder.
+`Sqlite` is a capability of its own. `mo run` hands the program a `Sqlite` bounded by the
+folder the program was started in, which is the folder that its `Files` reaches. There is no
+second rule about paths: `path` is checked as every `Files` path is, by the same code, and one
+that leaves the folder gives `Error(OutsideFolder(path))`. SQLite's journal files sit beside
+the database, in the same folder.
+
+Robert chose this over `files.sqlite(path)`, which the first draft proposed:
+
+- `main` shows that a program keeps a database.
+- A program can hold a database without holding every file in the folder.
+- A database that is not a file, such as Postgres, could never come from `Files`.
+
+A program that lists `Sqlite` and no `Files` reaches every SQLite database in the folder, and
+can make new ones. It reads no other file, because SQLite refuses a file that is not a
+database. An empty file counts as a new database.
+
+Each database that Mo supports later keeps this shape where it can: open, `run`, `query`,
+values and rows.
 
 `Files` opens a file beneath its folder and follows no symbolic link. SQLite opens a database
 by its path, and its journals by paths it builds. The SQLite milestone must show that a
 symbolic link in the folder that points outside it gives `OutsideFolder` for the database and
 for its journals, as it does for a file.
 
-A `Sqlite` holds the database it opened and can open no other file:
+A `Sqlite.Database` holds the one file it opened, and no statement opens another:
 
 - `ATTACH` and `VACUUM INTO` are refused with `NotPermitted`.
 - Extension loading is already left out of the build.
@@ -399,7 +419,9 @@ use it to read or write the host's files from inside the check child.
 Everything else SQLite does by default is allowed: triggers, views, transactions written as
 statements. The service store's own rules stay the store's.
 
-`ReadFiles` gets no `sqlite` in this phase.
+A fake keeps its databases in memory and touches no file. Two opens of one path on one fake
+give the same database, as two handles on one `Files.in_memory` share their files. Two fakes
+share nothing. `OutsideFolder` is given for the same paths as on the real capability.
 
 One hole is known. SQL can read the clock (`datetime('now')`) and draw random numbers
 (`random()`), and the program needs no `Clock` or `Random` to do it. It is on the list of
@@ -409,8 +431,13 @@ decisions.
 
 The capability uses the SQLite already linked into every `mo`, and its code sits beside the
 service store in `src/host/`. It shares the store's allocator setup, which is made once for the
-process under one memory budget. A `Sqlite` owns its database handle and closes it when the
-program drops the last reference.
+process under one memory budget. A `Sqlite.Database` owns its database handle and closes it
+when the program drops the last reference.
+
+A fake must keep a database between two opens of its path. The rule for a fake's state in
+`docs/design/bytecode.md` allows numbers, texts, bytes and collections of them, and an open
+database is none of those. The SQLite milestone chooses between a change to that rule and a
+fake that stores each database as bytes.
 
 | Limit | Value | When passed |
 | --- | --- | --- |
@@ -531,7 +558,7 @@ bound, and still skips `Simulation`.
 | --- | --- |
 | `base` | The count in `capabilities.h` and the names in `capabilities.c`; named limits in `limits.h` |
 | `heap` | The `mo_capability` enum and the range check in `types.c` |
-| `check` | Names always in scope (`modules.c`); built-in types and their arity (`signatures.c`); the rule for `main`'s parameters (`program.c`), which must keep `Connection` and `Sqlite` out as it keeps `Simulation` out |
+| `check` | Names always in scope (`modules.c`); built-in types and their arity (`signatures.c`); the rule for `main`'s parameters (`program.c`), which must keep `Connection` and `Sqlite.Database` out as it keeps `Simulation` out |
 | `lower` | Name to Core tag (`types.c`); the table from `Files.read_text` to a Core operation (`applications.c`) |
 | `core` | Capability tags and the operations outside the list (`core.h`); `MO_CORE_IO_OPS` (`ops.def`); names, the operation codec and the capability-state record (`text_schema.def`); the typing of each operation (`check.c`); the Core text version |
 | `codegen` | Core tag to capability number and the signature parser (`types.c`); the rows that must stay in `MO_CORE_IO_OPS` order (`operations.c`) |
@@ -572,7 +599,8 @@ The client's parsing functions take plain values and stay inside the comparison.
 `Network`, `Connection`, `Sqlite`, `NetworkError` and `SqliteError` become type names that are
 always in scope, as `Files` and `FileError` are. `Http` becomes a library module's name. A
 program that declares any of the six stops compiling. No program in the repository does, apart
-from `runtime/http.mo`.
+from `runtime/http.mo`. `Sqlite.Database`, `Sqlite.Value` and `Sqlite.Rows` are written with the
+module's name in front, so they take no name from a program.
 
 The cases of the new enums are not always in scope. `FileError`'s are, which is why no program
 may have a case called `NotFound` or `Failed`. Doing the same here would take `Refused`,
@@ -593,6 +621,8 @@ and not before:
 - **The network capability** changes property P7. A program reaches the network only with a
   `Network` that `main` lists. A program under `mo run` is not confined: it runs as its user, as
   any script does.
+- **The SQLite capability** follows the same rule. A program opens a database only with a
+  `Sqlite` that `main` lists.
 - **A service still holds no capability.** It cannot call out, and it cannot open a database.
 
 ## What this leaves out
@@ -606,6 +636,7 @@ and not before:
 - A fake that gives a different reply to the same request the second time.
 - A database opened read-only, the number of rows a statement changed, and columns read by
   name.
+- A `Sqlite` narrowed to a folder inside the one the program was started in.
 - Lookup that gives a decimal or a float by path.
 - Confinement of `mo serve` itself and of `mo run`.
 - A faster parse of a document made mostly of numbers or of strings with escapes.
@@ -616,7 +647,8 @@ Rows 2 to 5, 12 and 13 are calls the plan made without him. Rows 7, 8, 10 and 11
 the plan left open. The rest came up in this step. Each needs his yes or a change.
 
 Robert's answers so far, on 18 November 2026: row 2, yes. Row 3, yes, with headers written
-sorted by name and a mismatch reason that shows what differs.
+sorted by name and a mismatch reason that shows what differs. Row 7, changed: a `Sqlite`
+capability of its own, in place of `files.sqlite(path)`.
 
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
@@ -626,7 +658,7 @@ sorted by name and a mismatch reason that shows what differs.
 | 4 | Lean's model. | Neither capability is modelled. Runs that reach one leave the comparison. | Model the fakes in Lean, as `Files` is. |
 | 5 | What a program's database may do. | What SQLite allows by default, except opening any other file. | The service store's stricter rules. |
 | 6 | SQL can read the clock and draw random numbers with no `Clock` or `Random`. | Record it in the threat model, and decide in the SQLite milestone whether to refuse those functions. | Refuse them from the start. |
-| 7 | The authority of the SQLite capability. | From `Files`: `files.sqlite(path)`, bounded by that folder. | A `Sqlite` capability on `main` with its own rule about paths. |
+| 7 | The authority of the SQLite capability. | A `Sqlite` capability on `main`: `sqlite.open(path)`, bounded by the folder the program was started in, with the path check that `Files` uses. | From `Files`: `files.sqlite(path)`. |
 | 8 | The client's module name. | `Http`, with the runtime's module renamed. | `HttpClient`, with the runtime left alone. |
 | 9 | `Bytes.slice` and `Bytes.join` as new primitives. | Add both. | |
 | 10 | The confinement mechanism. | Landlock and a seccomp filter together. | |

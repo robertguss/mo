@@ -31,7 +31,7 @@ parameters passed to SQLite as a list of values.
   capability types. The entry is called `spike` in `look.mo` and `tool` in `issues.mo`. The
   design shows both as `main`.
 - **The real types need no `use` line.** A capability type is always in scope. Here `Network` and
-  `Sqlite` are imported, and `sqlite` and the lookup functions with them.
+  `Sqlite` are imported, and the lookup functions with them.
 
 ## What the checker taught the design
 

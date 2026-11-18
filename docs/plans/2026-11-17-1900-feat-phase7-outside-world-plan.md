@@ -438,7 +438,7 @@ Waits on: PR1, needed before this group can start. PR3, merge order only, becaus
   - A parameter that holds SQL text is stored as text, and the table it names is still there.
   - A statement with a syntax error returns an error value with SQLite's message, and the program continues.
   - Covers F2. A test with a database in memory passes and leaves no file.
-  - Two in-memory databases in one test share no rows.
+  - Two fakes in one test share no rows, and two opens of one path on one fake reach the same rows.
   - `ATTACH` and `VACUUM INTO` with a path each return an error value, on a database in memory and on a database file, and no file is created.
   - `mo check` rejects a program whose `main` does not list the capability and whose code opens a database.
   - A path outside the capability's authority is refused as U1's design says.

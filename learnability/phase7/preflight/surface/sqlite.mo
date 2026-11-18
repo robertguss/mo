@@ -1,9 +1,13 @@
-## A stand-in for the proposed Sqlite capability type and its values.
+## A stand-in for the proposed Sqlite capability type, the database it opens and its values.
 module Sqlite
-expose Sqlite, Value(..), Rows(..), SqliteError(..), sqlite, in_memory, run, query, to_text
+expose Sqlite, Database, Value(..), Rows(..), SqliteError(..), open, fake, run, query, to_text
 
 struct Sqlite
   name: Text
+end
+
+struct Database
+  path: Text
 end
 
 enum Value
@@ -25,19 +29,19 @@ enum SqliteError
   SqlFailed(message: Text)
 end
 
-fn sqlite(_files: Files, _path: Text) : Result(Sqlite, SqliteError)
-  stop "a stand-in"
+fn open(_sqlite: Sqlite, path: Text) : Result(Database, SqliteError)
+  Ok(Database(path: path))
 end
 
-fn in_memory() : Sqlite
+fn fake() : Sqlite
   Sqlite(name: "")
 end
 
-fn run(_database: Sqlite, _statement: Text, _values: List(Value)) : Result(Unit, SqliteError)
+fn run(_database: Database, _statement: Text, _values: List(Value)) : Result(Unit, SqliteError)
   stop "a stand-in"
 end
 
-fn query(_database: Sqlite, _statement: Text, _values: List(Value)) : Result(Rows, SqliteError)
+fn query(_database: Database, _statement: Text, _values: List(Value)) : Result(Rows, SqliteError)
   stop "a stand-in"
 end
 
