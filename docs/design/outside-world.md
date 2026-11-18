@@ -1,9 +1,9 @@
 # Mo talks to the outside world
 
-Status: proposed on 2026-11-17 as Phase 7's design. Robert has not approved it, and nothing in
-it is built. Every choice below that is his to make is in
-[Decisions for Robert](#decisions-for-robert), each with a recommendation. The evidence, with its
-commands and raw outputs, is in [the preflight](../../learnability/phase7/preflight/README.md).
+Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. Nothing
+in it is built. Every choice that was his to make is in
+[Decisions for Robert](#decisions-for-robert), with his answer. The evidence, with its commands
+and raw outputs, is in [the preflight](../../learnability/phase7/preflight/README.md).
 
 A Mo program gets two new capabilities: the network and a SQLite database. An HTTP client ships
 in `lib/`, written in Mo on top of the network capability. A program can look through a JSON
@@ -673,15 +673,17 @@ and not before:
 ## Decisions for Robert
 
 Rows 2 to 5, 12 and 13 are calls the plan made without him. Rows 7, 8, 10 and 11 are questions
-the plan left open. The rest came up in this step. Each needs his yes or a change.
+the plan left open. The rest came up in this step.
 
-Robert's answers so far, on 18 November 2026: row 2, yes. Row 3, yes, with headers written
-sorted by name and a mismatch reason that shows what differs. Row 7, changed: a `Sqlite`
-capability of its own, in place of `files.sqlite(path)`. Rows 5, 6, 10
-and 11, yes. Row 4, changed: Lean models the fake network. Rows 8, 9, 12, 13 and 15, yes. Row 1,
-changed: scanning primitives in C in this phase, for the documents that are still slow.
+Robert answered every row on 18 November 2026. The table shows each row as he decided it.
 
-| # | Decision | Recommendation | The other choice |
+- He accepted rows 2, 5, 6 and 8 to 15 as proposed.
+- He accepted row 3 with two additions: the client writes headers sorted by name, and a
+  mismatch reason shows what differs.
+- He changed three rows. Row 1 proposed to leave the slow documents for the phase about speed.
+  Row 4 proposed that Lean model neither capability. Row 7 proposed `files.sqlite(path)`.
+
+| # | Decision | Decided | The other choice |
 | --- | --- | --- | --- |
 | 1 | The 1 MiB fetch first missed the wall-time bar, because of `Json.parse`. Robert asked for a faster parser in this step. | Accept the reworked parser in `lib/json.mo`, which meets the bar in Mo. For documents of numbers or of strings with escapes, add primitives in C that scan text, in this phase. | Leave those documents for the phase about speed. |
 | 2 | The level of the network capability. | A connection, with HTTP in Mo. The level itself costs under 0.4% of the instructions. | An HTTP request as the operation, with HTTP parsed in C. |
