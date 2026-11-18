@@ -1106,9 +1106,6 @@ static bool state_literal(const struct mo_test_result *result, const struct mo_b
     return printed;
 }
 
-static void stopped_result(struct writer *w, const struct mo_sources *sources,
-                           const struct mo_test_result *result, bool json);
-
 static void recovery_failed(struct writer *w, const struct mo_sources *sources,
                             const struct mo_test_result *result, bool json) {
     const struct mo_recovery_report *report = result->recovery;

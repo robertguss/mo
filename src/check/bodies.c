@@ -1,9 +1,7 @@
 #include "check/abilities.h"
 #include "check/check.h"
 #include "check/checked.h"
-#include "check/data.h"
 #include "check/infer.h"
-#include "check/patterns.h"
 
 #include "base/codes.h"
 #include "base/limits.h"

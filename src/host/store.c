@@ -4,21 +4,12 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sqlite3.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
 #include "base/binary.h"
-#include "base/bundle.h"
-#include "base/compile-context.h"
-#include "base/compile-metadata.h"
 #include "base/export.h"
-#include "base/failure.h"
-#include "base/intent-list.h"
-#include "base/log-record.h"
-#include "base/sha256.h"
 #include "base/store-memory.h"
-#include "base/utf8.h"
 
 #define CACHE_PRAGMA "PRAGMA cache_size=-" TEXT_OF(MO_LIMIT_STORE_CACHE_KIB) ";"
 
