@@ -648,7 +648,7 @@ the plan left open. The rest came up in this step. Each needs his yes or a chang
 
 Robert's answers so far, on 18 November 2026: row 2, yes. Row 3, yes, with headers written
 sorted by name and a mismatch reason that shows what differs. Row 7, changed: a `Sqlite`
-capability of its own, in place of `files.sqlite(path)`.
+capability of its own, in place of `files.sqlite(path)`. Rows 5 and 6, yes.
 
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
