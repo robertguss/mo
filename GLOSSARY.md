@@ -23,3 +23,6 @@ A mutant or wrong version that every check of the program still passes.
 
 **Mutation gate**:
 The rule that a program's checks fail while one of its mutants survives.
+
+**Behaviour change**:
+A check of the previous version of a program that the new version fails.
