@@ -302,7 +302,8 @@ These are not guaranteed today.
    found when they next run.
 4. **No operating-system confinement.** Nothing in `src` installs seccomp, pledge, Landlock or a
    similar filter. A bug in the C runtime is not contained by one. Capabilities are the only
-   boundary the toolchain provides.
+   boundary the toolchain provides. Phase 7's proposed design confines the children that
+   `mo serve` starts ([outside-world.md](outside-world.md)). It is not built.
 5. **No concurrency checking.** ThreadSanitizer is not a gate (`implementation.md`, condition 1);
    property P7's process-wide signal handling and any future threads need their own review.
 6. **Concurrent changes to the filesystem** are outside P8.

@@ -1665,7 +1665,7 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   processes list and check a candidate before the door decides
   (`src/tools/door.c`, `protocol-door.c`, `upgrade-door.c`). [intent.md](intent.md)
   is the design.
-- **In-place demands (Phase 7):** the in-place check of D26 runs on Core, where
+- **In-place demands (Phase 8):** the in-place check of D26 runs on Core, where
   the full-3c checker's rules apply.
 
 ## 10. The tools

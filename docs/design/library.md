@@ -547,7 +547,7 @@ new for it: it parses and prints with text and list primitives.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
-| `Json.parse(text)` | Mo | `lib/json.mo` | a parser over `text.chars`, with the nesting limit of reference 14 |
+| `Json.parse(text)` | Mo | `lib/json.mo` | a parser over `text.chars`, with the nesting limit of reference 14; a string with no escape and no control character is read whole, from `text.split` at the quotes |
 | `json.to_text`, `json.pretty` | Mo | `lib/json.mo` | |
 | `Json.int(n)`, `Json.decimal(d)`, `Json.float(f)` | Mo | `lib/json.mo` | |
 | `to_int`, `to_decimal`, `to_float` and `to_text` on a `JsonNumber` | Mo | `lib/json.mo` | the parser has already checked JSON's own number syntax; `to_float` is `Text.to_float` on the number's text, and `to_int` and `to_decimal` first write it without its exponent, so `1.5e1` is the `Int` 15 |

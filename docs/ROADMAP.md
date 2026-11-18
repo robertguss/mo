@@ -12,14 +12,20 @@ step for anything a Mo user would notice.
 | 4. Agents can see inside it | A runtime agents can operate | **v0.1**, the first public release |
 | 5. It evolves while running | Typed live upgrades | **v0.2** |
 | 6. Intent and autonomy | People approve intent; agents ship the rest | v0.3 |
-| 7. Fast | Fast enough for serious services | v0.4 |
-| 8. Ecosystem | Others build and share | 1.0 |
+| 7. Outside world | Programs call APIs and keep data in SQLite | v0.4 |
+| 8. Fast | Fast enough for serious services | |
+| 9. Ecosystem | Others build and share | 1.0 |
 
 Phases 0 to 5 are finished. Robert approved v0.2.0 and the close of Phase 5 on
 2026-11-11; annotated tag `v0.2.0` is `3b91e55b` and matches the evaluation
 freeze's build inputs.
 
 ## Now
+
+Phase 7, Mo talks to the outside world, is at its design step. The [proposed
+design](design/outside-world.md) waits for Robert's approval, with the prototypes it rests on in
+`learnability/phase7/preflight/`. Nothing it describes is implemented yet. The phase's plan is
+`docs/plans/2026-11-17-1900-feat-phase7-outside-world-plan.md`.
 
 Phase 6, Intent and autonomy, follows the approved design for [intent and the
 review door](design/intent.md), with the prototypes it rests on in
@@ -82,7 +88,7 @@ spinning when file descriptors run out, which did not reproduce in the kill
 loop; smaller `mo fix` edits for service adapters; the checker crash
 on an interpolated `stop`; gcc sanitize, fuzz and a bounded arena proof in the
 nightly; running a `.bc` file that `mo emit` wrote; `mo test
---strength` (Phase 6); Fil-C compatibility (Phase 7).
+--strength` (Phase 6); Fil-C compatibility (no phase yet).
 
 ## Alongside every phase
 

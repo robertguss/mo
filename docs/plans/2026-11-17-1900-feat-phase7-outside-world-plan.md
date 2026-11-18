@@ -15,7 +15,7 @@ execution: code
 - **Objective:** Robert can use Mo for his everyday API work. He starts a small Mo project, calls a real API over HTTPS, looks through what comes back, keeps it in SQLite and runs the program as a command-line tool. An agent can do the same from Mo's own guidance.
 - **Means:** A network capability with a fake, an HTTP client library that ships with `mo`, a SQLite capability, a command that starts a project, a mo-lang skill, and operating-system confinement of the compile and check children (KTD1, KTD3, KTD5, KTD6).
 - **Authority:** `docs/ROADMAP.md`, the language reference and `AGENTS.md` govern. Robert approves every change to Mo's language and toolchain surface: reference text, commands and error codes. This plan is the phase overview. Each milestone gets its own brainstorm and plan, which start from the requirements here and do not reopen the decisions below. The framework, MoDB and performance are context, not active scope.
-- **Execution profile:** Seven groups of pull requests, one for each milestone, each reviewed and merged by Robert as `AGENTS.md` requires. A milestone's own plan decides whether its group is one pull request or more. U1 is a design step he approves before any code other than U1's own throwaway prototypes.
+- **Execution profile:** Eleven groups of pull requests, one for each of the seven milestones and four that Robert added on 18 November 2026 (U8 to U11), each reviewed and merged by Robert as `AGENTS.md` requires. A milestone's own plan decides whether its group is one pull request or more. U1 is a design step he approves before any code other than U1's own throwaway prototypes.
 - **Stop conditions:** Stop and ask Robert when a unit needs a change to the Product Contract, when U1's measurement of HTTP written in Mo misses the bar written down before it ran, when no confinement mechanism works on both the development host and the nightly's host, or when the nightly is red.
 - **Who finishes:** Agents build each unit and open its pull requests. Robert approves the design, merges each pull request, does the spike and gives the answer that closes the phase.
 - **Open blockers:** None. U1 puts the open design questions and every item under Assumptions to Robert before any code.
@@ -106,6 +106,8 @@ Each milestone gets its own brainstorm and plan.
 | M6. The project command, the guide and the mo-lang skill | R9, R10, R14, R15 | M3, M5 |
 | M7. Robert's spike, the agent evaluation and v0.4 | R16, R17, R18 | M4, M6 |
 
+M3 ends with a second pull request, in which Lean models the fake network (U8). Two more units came from Robert's request for rigor on 18 November 2026: the nightly runs the proofs and the fuzzers (U9), and Lean proves the capability promise (U10). His answer on the slow JSON documents adds scanning primitives for `Json.parse` (U11).
+
 M2 touches the service side and nothing else in the phase does. It can run alongside M3 to M6.
 
 ### Actors
@@ -149,12 +151,13 @@ Deferred for later:
 - More than one request at a time, streaming bodies, HTTP/2 and WebSockets.
 - A standalone executable for a Mo program, and an interactive prompt.
 - Packages, which stay with "Ecosystem".
-- Performance: a release build target, interpreter speed, machine code and in-place demands.
+- Performance: a release build target, interpreter speed, machine code and in-place demands. The one exception is U11.
 - Fil-C compatibility and the question of rewriting the C core.
 - Confinement of `mo serve` itself. R12 covers its two children.
 - MoDB and the abilities its design asks for, such as reading and writing bytes at a position in a file, and hashing.
 - Data a service keeps outside its one saved state, and the task queue's limit of 5,000 jobs.
 - Real use through the review door, which is Phase 6's open work.
+- A rigor track of its own, which Robert asked for on 18 November 2026. It gets a brainstorm after this design is approved. Its first items: planted bugs for the test suite as well as for the proofs, a proof in Lean that the step from Mo Core to bytecode keeps a program's meaning, and proofs of the VM loop and the heap for every input.
 
 Considered and not built:
 
@@ -221,7 +224,7 @@ This plan covers Phase 7 only. The list below is the current understanding of th
 - KTD1. **A new capability is built the way `Files` is, and it takes a new number.** `src/base/hostops.def` gives each operation one row, which the checker, the code generator, the verifier, the VM and the host all read. About ten lists outside that table are kept by hand: the `mo_capability` enum in `src/heap/types.h`, `MO_CAPABILITY_COUNT` in `src/base/capabilities.h`, arrays sized `MO_CAP_RANDOM + 1` in five files, the type names in `src/check/signatures.c`, the name lists in `src/lower/types.c` and `src/codegen/types.c`, the dispatch in `src/host/host.c`, the fake factories in `src/tools/fakes.h` that promise generation uses, and the capability lists in `docs/design/bytecode.md`. Bytecode encodes the enum's numbers, so no existing number changes. U3 and U5 edit the same lists, so U5 merges after U3. U1 writes the full list of places. Governs R1, R5, R7, R8.
 - KTD2. **The real side of each capability is new C in `src/host/`.** `make deps` lets `vm` use `bytecode`, `heap`, `prim` and `host` only, so nothing in `src/tools/` can serve a capability. `src/tools/fetch.c` also accepts loopback addresses only and looks up no names. Sockets, name lookup and the calls into the TLS library therefore go in `src/host/`, and each piece that reads bytes from outside gets a fuzz target (R11). Governs R1, R4, R11.
 - KTD3. **The client ships the way `lib/` ships today.** The build records the path of the checkout's `lib/` folder in the executable (`ci/embed_docs.py`), every `mo` command loads every file in that folder, and each library module's name is reserved. A module added to `lib/` therefore needs nothing installed, for a `mo` that stays in the tree it was built in. A user program cannot `use` a module in `runtime/`, so any HTTP parsing the client shares with `mo serve` moves into `lib/` or is written again there. U1 decides which. Governs R2.
-- KTD4. **Each new capability operation is also a Mo Core operation, so Lean's side changes with it.** Capability operations lower to Mo Core IO operations (`src/lower/applications.c`), and `ci/check_host.py` fails when a `HOSTOP` row has no modelled Mo Core counterpart. The repository holds two precedents. `Files` is modelled in Lean in full. `Simulation` stops Lean with "not modeled by mocore", and the comparison between the VM and Lean leaves out only the runs that reach it. `Simulation` is not cheap to copy. Its operations are `SIMOP` rows with a lowering of their own, and they still needed Core types, a Core operation form, Lean syntax and a new Core text version. A `HOSTOP` row left unmodelled also needs `ci/check_host.py` to list it as an operation that stops outside the model. U1 chooses between the two for each capability (Assumptions). Governs R1, R7.
+- KTD4. **Each new capability operation is also a Mo Core operation, so Lean's side changes with it.** Capability operations lower to Mo Core IO operations (`src/lower/applications.c`), and `ci/check_host.py` fails when a `HOSTOP` row has no modelled Mo Core counterpart. The repository holds two precedents. `Files` is modelled in Lean in full. `Simulation` stops Lean with "not modeled by mocore", and the comparison between the VM and Lean leaves out only the runs that reach it. `Simulation` is not cheap to copy. Its operations are `SIMOP` rows with a lowering of their own, and they still needed Core types, a Core operation form, Lean syntax and a new Core text version. A `HOSTOP` row left unmodelled also needs `ci/check_host.py` to list it as an operation that stops outside the model. U1 chooses between the two for each capability (Assumptions). Robert chose on 18 November 2026: Lean models the fake network (U8), and SQLite stops outside the model. Governs R1, R7.
 - KTD5. **Confinement goes in at the one place the children are started, and its control is a build without it.** `spawn()` in `src/host/compile.c` starts all three child runs: the compile, the listing of intent items and the checks. Confining there covers R12's two children and the listing run. What a child uses today sets what it may reach. It executes `/proc/self/exe` and also reads it, because every command except `check` hashes its own executable (`src/base/runtime-identity.c`). It loads the dynamic loader, libc and libm, because `mo` is linked dynamically. It reads the `lib/` folder, reads and writes its own folder under `/tmp/mo-upgrade-XXXXXX`, opens `/dev/null`, and uses no network. A sanitizer build also reads files under `/proc/self`. Inside the scratch folder one more rule holds: no child can change what an earlier child wrote. The parent reads `image.bc` and `items.moil` only after the check child has exited (`src/tools/upgrade.c`), so today a check child taken over through a VM defect could replace both and pass the door. Confinement cannot stop a child from forging its own output, so a check child taken over that way can still report a pass, and the threat model keeps saying so. R13's control is a second build of that file with the confinement call renamed away at compile time, which is how the Makefile builds its fault tests. The check runs a probe program as the child through the same `spawn()`. It must pass on the normal build and fail on the control build. Governs R12, R13.
 - KTD6. **The SQLite capability uses the SQLite already built into `mo`, beside the service store and apart from it.** `vendor/sqlite` is linked into every build with extension loading compiled out, and `src/host/store.c` sets up its allocator once for the whole process under one memory budget. The capability's code sits beside the store in `src/host/`, shares that setup and takes named limits of its own. The store's own rules stay the store's: it refuses `:memory:`, turns triggers and views off and limits a statement to 4,096 bytes, and none of these applies to a program's database unless U1 says so. Governs R7, R8.
 - KTD7. **Exploring a response is Mo code in `lib/json.mo`.** The module parses and pretty-prints, and it has no way to take a value out by key, index or path. `examples/json-query.mo` has that function, `at_path`, beside its own copy of the `Json` type and parser from before the library existed. U3 adds lookup to the library and reduces the example to a program that uses it. Governs R6.
@@ -256,9 +259,18 @@ flowchart TB
   U3 -.->|merge order only| U5
   U3 --> U6[U6 project command, guide, skill]
   U5 --> U6
+  U3 --> U8[U8 Lean models the fake network]
+  U1 --> U9[U9 nightly proofs and fuzzers]
+  U8 --> U10[U10 Lean proves the capability promise]
+  U1 --> U11[U11 scanning primitives for Json.parse]
+  U3 -.->|merge order only| U11
   U4 --> U7[U7 spike, evaluation, v0.4]
   U6 --> U7
   U2 -.->|before the release| U7
+  U8 -.->|before the release| U7
+  U9 -.->|before the release| U7
+  U10 -.->|before the release| U7
+  U11 -.->|before the release| U7
 ```
 
 ### Assumptions
@@ -267,7 +279,7 @@ Planning made these calls without Robert's confirmation. U1 puts each to him.
 
 - The network capability works at the level of a connection, and HTTP is written in Mo. R11 points this way, and TLS then sits under the connection, so one Mo client serves HTTP and HTTPS. The cost is interpreter time. `Bytes` has `size`, `get` and `decode_utf8` and nothing that builds or slices, and the HTTP code in `runtime/` holds a body as a list with one cell for each byte. A body must also become `Text` before `Json.parse` can read it, and no operation today slices or joins `Bytes` or turns a list of bytes into text. U1's prototype therefore settles which `Bytes` operations the client needs, and it measures a response of realistic size before Robert approves the level.
 - The fake stands at the same level as the capability, and the client library gives a test a way to build it from requests and their responses. F2 then reads as request and response and never as raw bytes. Fake state may hold only texts, bytes, and lists, sets and maps of them (`docs/design/bytecode.md`).
-- Lean models neither capability and treats both as it treats `Simulation` (KTD4). A run that reaches the network or SQLite, real or fake, drops out of the comparison between the VM and Lean. The client's parsing functions take plain values and stay in it.
+- Lean models the fake network, in a pull request of its own after the capability lands (U8, KTD4). It models neither the real network nor SQLite, and treats both as it treats `Simulation`: a run that reaches one drops out of the comparison between the VM and Lean. The client's parsing functions take plain values and stay in it.
 - A program's SQLite database allows what SQLite allows by default, with two exceptions. Extension loading is left out of the build (KTD6). No statement opens a file other than the one the capability opened, so `ATTACH` and `VACUUM INTO` are refused, and a database in memory keeps its temporary storage in memory. Without the second exception a test in pushed code could build a database in memory and read or write the host's files from the check child.
 - The mo-lang skill lives in this repository, so a change to the guide and the matching change to the skill go in one pull request (R14).
 - Each capability's pull request updates `docs/agent-guide.md` for what it adds, as `AGENTS.md` requires. U6 adds the worked spike and the project command (R15).
@@ -338,13 +350,14 @@ Waits on: PR1, needed before this group can start, because Robert approves there
 - **Goal:** A compile, listing or check child reaches only what it needs, and a check shows it.
 - **Requirements:** R12, R13; KTD5; AE4.
 - **Dependencies:** U1.
-- **Files:** `src/host/compile.c`, `src/host/host.h`, `src/tools/upgrade.c`, `src/tools/serve.c`, `src/base/codes.h`, `Makefile`, `tests/test_compile_child.c`, a new driver under `ci/`, `tests/errors/`, `.github/workflows/nightly.yml`, `docs/design/sandbox-properties.md`, `docs/design/intent.md`, `docs/design/upgrades.md`, `docs/design/architecture.md`, and `docs/agent-guide.md` if `mo serve` behaves differently.
+- **Files:** `src/host/compile.c`, `src/host/host.h`, `src/tools/upgrade.c`, `src/tools/serve.c`, `src/base/codes.h`, `Makefile`, `tests/test_compile_child.c`, a new driver under `ci/`, `tests/errors/`, `cbmc/prove.sh`, `cbmc/README.md`, `.github/workflows/nightly.yml`, `docs/design/sandbox-properties.md`, `docs/design/intent.md`, `docs/design/upgrades.md`, `docs/design/architecture.md`, and `docs/agent-guide.md` if `mo serve` behaves differently.
 - **Approach:**
   1. Apply the mechanism M2's brainstorm picks inside `spawn()`, after the limits and before `execve` (KTD5).
   2. Make each child's output safe from the children that run after it (KTD5).
   3. Add the probe child and the control build.
   4. Build the answer to M2's second question under Outstanding Questions, with its diagnostic.
   5. Rewrite the paragraphs that say the children run without confinement. Keep, in amended form, the entry in `docs/design/intent.md` under "What the lock does not protect against": a memory-safety defect can still make a child forge its own output.
+  6. Give the CBMC proofs a planted-bug control. `cbmc/prove.sh` plants one named defect in a proved function and fails when the proof still passes. The reach check shows that a proof runs the code. It does not show that the proof would catch a defect. Start with the proofs of path containment and resolution, which keep a program inside its folder. A planted defect that changes no behaviour is listed with its reason. Robert asked for this on 18 November 2026, after `make mutate` in his `safe-c` repository.
 - **Patterns to follow:** `STORE_FAULT_RENAMES` in the Makefile, for a second build made by renaming at compile time; the `openat2` probe in `src/host/path.c`, for finding out whether a host supports a feature; the child modes in `tests/test_compile_child.c`.
 - **Test scenarios:**
   - Covers AE4. On the normal build the probe child fails at each of these: opening a file outside its scratch folder, creating one there, reading the service's data folder, connecting over TCP to a listener on loopback, sending a UDP datagram, connecting to a Unix socket the check set up, and signalling its parent.
@@ -353,7 +366,8 @@ Waits on: PR1, needed before this group can start, because Robert approves there
   - A real upgrade compiles, lists and checks under confinement: the existing upgrade drivers pass unchanged.
   - A candidate that uses a library module compiles, which shows the child still reads `lib/`.
   - On a host without the mechanism, `mo serve` does what U1's design says and prints the diagnostic.
-- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers` pass. `make CC=clang` and `make sanitize CC=clang` pass. The confinement check runs in the nightly on `ubuntu-24.04` and is not skipped there. No design document still says the children run unconfined, and `docs/design/intent.md` still lists a child's forged output as something the lock does not protect against.
+  - Each planted defect makes its proof fail, and the same proof passes with the defect taken out.
+- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh drivers` pass. `bash ci/check.sh cbmc`, run by hand, passes with the planted-bug control in it. `make CC=clang` and `make sanitize CC=clang` pass. The confinement check runs in the nightly on `ubuntu-24.04` and is not skipped there. No design document still says the children run unconfined, and `docs/design/intent.md` still lists a child's forged output as something the lock does not protect against.
 
 ### PR3: HTTP
 
@@ -377,6 +391,8 @@ Waits on: PR1, needed before this group can start, because the capability's oper
   - Covers AE1. `mo check` rejects a program whose `main` lists only `Console` and whose code calls the client.
   - Covers AE3. A test whose fake holds one response gets that response for the first request and an error for a second, different request, and no socket is opened.
   - Covers F2. A function that calls an API passes its test with a fake network.
+  - Two programs that add the same headers in a different order send the same bytes, and one fake answers both.
+  - A request that differs from the fake's by one header gets an error whose reason names that header.
   - A request to a local server with a method, headers, a query and a body arrives as sent, and the status, headers and body of the answer come back as values.
   - A server that never answers gives a timeout error after the time the program set.
   - A refused connection, an unknown host and a response cut off part way each return their own error value, and none stops the program.
@@ -386,6 +402,95 @@ Waits on: PR1, needed before this group can start, because the capability's oper
   - A seed with a malformed status line is refused with no crash, and every fuzz target runs on its seeds.
   - Each new code has its case under `tests/errors/`.
 - **Verification:** `bash ci/check.sh gcc`, `bash ci/check.sh drivers static` and `bash ci/check.sh lean` pass. `make CC=clang`, `make sanitize CC=clang` and `make fuzz-smoke` pass. `mo guide` describes the capability and the client.
+
+### PR8: Lean models the fake network
+
+Waits on: PR3, needed before this group can start, because the model follows the fake that PR3 builds.
+
+### U8. Lean models the fake network
+
+- **Goal:** A program that calls an API through a fake network is compared between the VM and Lean for its whole run.
+- **Requirements:** KTD4; F2.
+- **Dependencies:** U3.
+- **Files:** `formal/MoCore/Value.lean`, `formal/MoCore/Prim.lean`, `formal/MoCore/PrimSafety.lean`, `formal/MoCore/Syntax.lean`, `formal/MoCore/Text/`, `formal/TEXT.md`, `formal/TRANSLATION.md`, `src/core/text_schema.def`, `ci/check_host.py`, `tests/core/`, `docs/design/bytecode.md`.
+- **Approach:**
+  1. Add the fake network's state to Lean's capability state: the map of replies, and for each connection the bytes sent and a position.
+  2. Give `connect`, `send` and `receive` on a fake their evaluation in Lean, and prove that each keeps values well-typed, as the other operations are proved.
+  3. Take the fake network's rows out of the set in `ci/check_host.py` that stops outside the model. The real network's rows stay in it.
+  4. Write down each odd case the model had to decide, in the design document's section on the fake, and make the C fake agree.
+- **Patterns to follow:** the fake for `Files` in `formal/MoCore/Prim.lean` and `Value.lean`, for a fake with state that handles share; `ci/check_host.py`, for random sequences of operations on a fake and on the model.
+- **Test scenarios:**
+  - Random sequences of `connect`, `send` and `receive` give the same results and the same state on the C fake and on the model.
+  - A program that sends a request through the client and reads a JSON reply gives the same output on the VM and in Lean.
+  - A `receive` before any `send`, a `send` after the reply has started, and a `connect` to a peer the fake lacks each give the same result on both.
+  - A run that reaches the real network still stops Lean with "not modeled by mocore".
+- **Verification:** `bash ci/check.sh gcc` and `bash ci/check.sh lean` pass, and the `lean` group is not skipped. `make formal` checks every proof.
+
+### PR9: The nightly runs the proofs and the fuzzers
+
+Waits on: PR1, needed before this group can start. It can run alongside every other group.
+
+### U9. The nightly runs the proofs and the fuzzers
+
+- **Goal:** A proof or a fuzz target that breaks is found the next morning, and not at the next phase boundary.
+- **Requirements:** gap 3 of `docs/design/sandbox-properties.md` ("Fuzzing and CBMC do not run on their own").
+- **Dependencies:** U1.
+- **Files:** `.github/workflows/nightly.yml`, `ci/check.sh`, `AGENTS.md`, `docs/design/sandbox-properties.md`, `docs/design/implementation.md`, `cbmc/README.md`.
+- **Approach:**
+  1. Measure how long the `cbmc` group and the `fuzz` group take on the runner.
+  2. Add both to the nightly with `CI=1`, so a missing tool fails. Give them a job of their own if the nightly's job would pass its 120 minutes.
+  3. Run the long fuzz, five minutes for each target, as often as the measurement allows, and keep its corpus between runs.
+  4. Rewrite the lines that say these run by hand: `AGENTS.md` "Checks and merging", gap 3 of `docs/design/sandbox-properties.md`, and condition 2 of `docs/design/implementation.md`.
+- **Test scenarios:**
+  - A dispatch of the nightly on a branch with one proof broken on purpose is red, and its log names the proof.
+  - A nightly on a runner without CBMC fails. It does not skip.
+- **Verification:** One dispatch of the nightly is green, and its log shows that the `cbmc` and `fuzz` groups ran with no skip.
+
+### PR10: Lean proves the capability promise
+
+Waits on: PR8, needed before this group can start, because the theorems must cover the fake network.
+
+### U10. Lean proves the capability promise
+
+- **Goal:** "A program touches only what `main` lists" is a theorem about Mo Core, and not only a tested property.
+- **Requirements:** property P7 of `docs/design/sandbox-properties.md`; KTD4.
+- **Dependencies:** U8.
+- **Files:** a new file in `formal/MoCore/`, `formal/MoCore/Theorems.lean`, `formal/MoCore.lean`, `docs/design/sandbox-properties.md`, `docs/design/outside-world.md`.
+- **Approach:**
+  1. Write each statement in plain words and in Lean, with no proof, and stop for Robert's approval. A proof of the wrong statement is worth nothing, so the statements are his to approve.
+  2. The statements to propose: an evaluation changes the world only through an operation on a capability value it holds. Code that holds no capability leaves the world as it was, and its result does not depend on the world. `main` is handed only the capabilities it lists. `within` and `read_only` give a capability that reaches no more than the one they came from. Only spec code makes a fake.
+  3. Prove each, with no `sorry` and no new axiom.
+  4. Plant a hole in the model, an operation that touches the world with no capability, and show that the proof then fails.
+  5. Say in P7 what the theorems cover and what they do not. They are about Mo Core in Lean. The C VM is compared with Lean by test. SQLite and the real network stop outside the model.
+- **Patterns to follow:** `formal/MoCore/Theorems.lean` and `Safety.lean`, for a theorem about every evaluation; `formal/MoCore/Verdict.lean`, which proves that a weaker rule is unsound (`verdictRevisedOnly_unsound`), for a planted hole.
+- **Test scenarios:**
+  - `make formal` checks every proof, and `formal/` holds no `sorry` and no `axiom`.
+  - With the planted hole in the model, `make formal` fails at the capability theorem.
+- **Verification:** `bash ci/check.sh lean` passes, and the group is not skipped. Robert's approval of the statements is recorded in the pull request.
+
+### PR11: Scanning primitives for `Json.parse`
+
+Waits on: PR1, needed before this group can start. PR3, merge order only, because both add primitives at the end of `src/base/prims.def` and both change `lib/json.mo`.
+
+### U11. Scanning primitives make `Json.parse` faster on numbers and escapes
+
+- **Goal:** A document made mostly of numbers, or of strings with escapes, parses faster, and the new C is small, pure and proved.
+- **Requirements:** R11; Robert's answer of 18 November 2026 on the first decision of the design document.
+- **Dependencies:** U1. Merges after U3.
+- **Files:** `src/base/prims.def`, `src/prim/`, `src/check/signatures.c`, `src/lower/applications.c`, `lib/json.mo`, `formal/MoCore/`, `cbmc/`, `fuzz/` with `fuzz/corpus/`, `tests/test_prim.c`, `tests/lower-source/`, `docs/design/library.md`, `docs/reference/README.md`, `docs/design/outside-world.md`, `learnability/phase7/preflight/json-parse/`.
+- **Approach:**
+  1. Count the instructions of each function on the numbers and the escapes documents, as the first parser work did for the plain document. Name the smallest primitives that remove the cost. No one has made this count, so the primitives are not chosen yet.
+  2. Write down the instruction count expected for each shape before building. A miss is recorded, and Robert decides.
+  3. Add each primitive at the end of `src/base/prims.def`. It is a pure function of its arguments: it reads no file and no socket, and it keeps no state. Give it a counterpart in Lean with its safety proof, a CBMC proof, a fuzz target with seeds and an oracle in `tests/test_prim.c`.
+  4. Change `lib/json.mo` to use them. The parser stays in Mo, and every result and every error stays the same.
+  5. Measure each shape, and an input on each side of every new guard, and the smallest documents. Record what got slower.
+- **Patterns to follow:** `text.split` and `text.contains?`, for a text primitive from the table to its Lean counterpart; `learnability/phase7/preflight/json-parse/run.sh`, for the comparison of two parsers on the corpus and the count for each shape; `docs/solutions/best-practices/measure-a-fast-path-on-both-sides-of-its-guard.md`.
+- **Test scenarios:**
+  - The old and the new parser print the same line for each of the 425,758 documents of the corpus.
+  - Each primitive agrees with its oracle on empty text, on text of one character, on a position at the end and past the end, and on characters outside ASCII.
+  - Each primitive's CBMC proof passes for every input up to its bound, and a planted defect makes it fail.
+  - The numbers and the escapes documents take fewer instructions than before, and no shape in `run.sh` takes more.
+- **Verification:** `bash ci/check.sh gcc`, `bash ci/check.sh drivers static` and `bash ci/check.sh lean` pass. `make CC=clang`, `make sanitize CC=clang`, `make fuzz-smoke` and `make cbmc` pass. The record in `learnability/phase7/preflight/json-parse/` holds the expected and the measured count for each shape.
 
 ### PR4: HTTPS
 
@@ -434,7 +539,7 @@ Waits on: PR1, needed before this group can start. PR3, merge order only, becaus
   - A parameter that holds SQL text is stored as text, and the table it names is still there.
   - A statement with a syntax error returns an error value with SQLite's message, and the program continues.
   - Covers F2. A test with a database in memory passes and leaves no file.
-  - Two in-memory databases in one test share no rows.
+  - Two fakes in one test share no rows, and two opens of one path on one fake reach the same rows.
   - `ATTACH` and `VACUUM INTO` with a path each return an error value, on a database in memory and on a database file, and no file is created.
   - `mo check` rejects a program whose `main` does not list the capability and whose code opens a database.
   - A path outside the capability's authority is refused as U1's design says.
@@ -471,13 +576,13 @@ Waits on: PR3 and PR5, needed before this group can start, because the guide's w
 
 ### PR7: The spike, the evaluation and v0.4
 
-Waits on: PR4 and PR6, needed before this group can start. PR2 merges before the release.
+Waits on: PR4 and PR6, needed before this group can start. PR2, PR8, PR9, PR10 and PR11 merge before the release.
 
 ### U7. Robert's spike, the agent evaluation and the release
 
 - **Goal:** Robert has done one real spike and given his answer, the evaluation is published, and v0.4 is released.
 - **Requirements:** R16, R17, R18; F1, F3; AE5.
-- **Dependencies:** U4, U6, and U2 before the release.
+- **Dependencies:** U4, U6, and U2, U8, U9, U10 and U11 before the release.
 - **Files:** `learnability/phase7/` (protocol, tasks, freeze and results), `docs/status/phase7-run.md` (new), `src/tools/cli.c` and `src/base/runtime-identity.c` (`MO_VERSION`), `README.md`, `docs/ROADMAP.md`, `docs/agent-guide.md`, and the goldens under `tests/cli/` that print the version.
 - **Approach:**
   1. Write the protocol: the tasks, the clients, the gate, and how a session reaches an API without the live internet. Robert approves it before any scored session.
@@ -503,8 +608,8 @@ Waits on: PR4 and PR6, needed before this group can start. PR2 merges before the
 | `bash ci/check.sh gcc` | Before every pull request. Its last line goes in the pull request body. | The build and every unit test. |
 | `bash ci/check.sh drivers static` | Once in each pull request that edits `docs/agent-guide.md`, `docs/reference/README.md` or `docs/design/library.md`. | Goldens, guide claims, the executable grammar, module rules, the library map, format and fuzz seeds. |
 | `make CC=clang` and `make sanitize CC=clang` | U2 to U6, which change C code. | The change builds under both compilers and runs clean under ASan and UBSan. |
-| `bash ci/check.sh lean` | U3 and U5. | Mo Core in Lean still matches the executables, and every `HOSTOP` row is either modelled or listed as stopping outside the model (KTD4). |
-| `make fuzz-smoke` | U3, U4 and U5. | Each fuzz target runs briefly on its seeds. |
+| `bash ci/check.sh lean` | U3, U5, U8, U10 and U11. | Mo Core in Lean still matches the executables, and every `HOSTOP` row is either modelled or listed as stopping outside the model (KTD4). |
+| `make fuzz-smoke` | U3, U4, U5 and U11. | Each fuzz target runs briefly on its seeds. |
 | The confinement check, on the normal build and on the control build | U2, and then the nightly. | AE4. |
 | `bash ci/check.sh cbmc` and the long fuzz runs | U7, by hand, as `AGENTS.md` sets for a phase boundary. | The proofs and fuzz targets over the phase's changes. |
 | The agent evaluation | U7. | Recorded with its gate, freeze and every session in `docs/status/phase7-run.md`. |
@@ -534,3 +639,7 @@ A skipped check is not a pass. The nightly runs the wider groups on `main`, and 
 | U5 | A program writes rows to a database file and reads them back as Mo values, and its test passes with a database in memory. |
 | U6 | A project made by the one command checks, tests and runs unchanged, and `mo guide` teaches the spike. |
 | U7 | Robert's answer and the evaluation's result are recorded, and v0.4 is released. |
+| U8 | A program that calls an API through a fake network gives the same output on the VM and in Lean, and random sequences of operations on the fake agree with the model. |
+| U9 | A dispatch of the nightly is green with the `cbmc` and `fuzz` groups in it and no skip, and no document still says they run only by hand. |
+| U10 | Robert has approved the statements, every proof checks with no `sorry` and no axiom, and the planted hole breaks the proof. |
+| U11 | Both parsers agree on the whole corpus, each primitive has its Lean counterpart, CBMC proof and fuzz target, and the record holds the expected and the measured count for each shape. |
