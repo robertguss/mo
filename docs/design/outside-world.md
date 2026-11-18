@@ -581,17 +581,35 @@ Two costs are not on the plan's list:
 
 ## Lean and Mo Core
 
-Lean models neither capability, as it does not model `Simulation`. Each operation is still a Mo
-Core operation with a type in Lean, so Core programs that use it are checked. Evaluating one
-stops Lean with "not modeled by mocore", and a run that reaches the network or SQLite, real or
-fake, drops out of the comparison between the VM and Lean.
+**Lean models the fake network.** Robert chose this over a model of neither capability. The
+fake is a map from the bytes sent to the bytes received, with three operations, and Lean
+already models fakes with more state. The model gives three things:
 
-The operations stay ordinary rows in `hostops.def`, and `ci/check_host.py` gains a named set of
-rows that stop outside the model. `Simulation` took the other road, a separate family of rows
+- A program that calls an API stays in the comparison between the VM and Lean for its whole
+  run. Without the model a run leaves the comparison at its first `connect`, so
+  `request.send` would never be compared from start to end.
+- `ci/check_host.py` runs random sequences of `connect`, `send` and `receive` on the C fake
+  and on the model, as it does for the other fakes.
+- The fake gets an exact definition. The model must say what each odd case gives, such as a
+  `receive` before any `send`, and a `send` after the reply has started.
+
+The real network is not modelled. A run that reaches it stops Lean with "not modeled by
+mocore", as a run that reaches `Simulation` does.
+
+The model is a pull request of its own, after the one that adds the capability. Until it
+merges, the fake's operations also stop outside the model.
+
+**Lean does not model SQLite**, real or fake. A model would need an SQL engine in Lean. Each
+SQLite operation is still a Mo Core operation with a type in Lean, so Core programs that use it
+are checked, and a run that reaches one drops out of the comparison.
+
+All of these operations are ordinary rows in `hostops.def`, and `ci/check_host.py` gains a
+named set of rows that stop outside the model. The pull request for the model takes the fake
+network's rows out of that set. `Simulation` took the other road, a separate family of rows
 with its own lowering, and that plumbing is larger. The Core text version goes up, as it did
 for `Simulation`.
 
-The client's parsing functions take plain values and stay inside the comparison. So do
+The client's parsing functions take plain values and are compared in every case. So are
 `Bytes.slice`, `Bytes.join` and the JSON lookup.
 
 ## Names this takes
@@ -649,14 +667,14 @@ the plan left open. The rest came up in this step. Each needs his yes or a chang
 Robert's answers so far, on 18 November 2026: row 2, yes. Row 3, yes, with headers written
 sorted by name and a mismatch reason that shows what differs. Row 7, changed: a `Sqlite`
 capability of its own, in place of `files.sqlite(path)`. Rows 5, 6, 10
-and 11, yes.
+and 11, yes. Row 4, changed: Lean models the fake network.
 
 | # | Decision | Recommendation | The other choice |
 | --- | --- | --- | --- |
 | 1 | The 1 MiB fetch first missed the wall-time bar, because of `Json.parse`. Robert asked for a faster parser in this step. | Accept the reworked parser in `lib/json.mo`, which meets the bar in Mo. Documents of numbers or of strings with escapes stay slow, and become the first workload of the phase about speed. | A primitive in C that scans text, for those documents, in this phase. |
 | 2 | The level of the network capability. | A connection, with HTTP in Mo. The level itself costs under 0.4% of the instructions. | An HTTP request as the operation, with HTTP parsed in C. |
 | 3 | The fake's level, and how a test builds it. | The same level as the capability. `Http.replies` builds it from requests and responses, and the match is exact. | A fake that matches on method and URL only, which needs HTTP parsing outside Mo. |
-| 4 | Lean's model. | Neither capability is modelled. Runs that reach one leave the comparison. | Model the fakes in Lean, as `Files` is. |
+| 4 | Lean's model. | Lean models the fake network, in a pull request of its own after the capability lands. It does not model SQLite. | Neither capability is modelled, and a run that reaches one leaves the comparison. |
 | 5 | What a program's database may do. | What SQLite allows by default, except opening any other file. | The service store's stricter rules. |
 | 6 | SQL can read the clock and draw random numbers with no `Clock` or `Random`. | Record it in the threat model, and decide in the SQLite milestone whether to refuse those functions. | Refuse them from the start. |
 | 7 | The authority of the SQLite capability. | A `Sqlite` capability on `main`: `sqlite.open(path)`, bounded by the folder the program was started in, with the path check that `Files` uses. | From `Files`: `files.sqlite(path)`. |
