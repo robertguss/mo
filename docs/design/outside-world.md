@@ -1,7 +1,7 @@
 # Mo talks to the outside world
 
-Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. Nothing
-in it is built. Every choice that was his to make is in
+Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. The
+confinement of the children is built, as [As built](#as-built) says. Nothing else in it is built. Every choice that was his to make is in
 [Decisions for Robert](#decisions-for-robert), with his answer. The evidence, with its commands
 and raw outputs, is in [the preflight](../../learnability/phase7/preflight/README.md).
 
@@ -506,6 +506,37 @@ What confinement does not do:
 - A child can still forge its own output. A check child taken over can report a pass.
 - It does not confine `mo serve` itself, or a program under `mo run` or `mo test`.
 - It does not protect against a defect in the kernel.
+
+### As built
+
+- **The floor is Landlock ABI 3, which is Linux 6.2.** ABI 3 handles truncation, so a child
+  cannot cut a file that it may only read. On ABI 4 and later, Landlock also refuses TCP bind
+  and connect. On ABI 6, it also scopes abstract Unix sockets and signals. The code asks for no
+  more than ABI 6.
+- **The refused list is longer than the probe's.** It adds `tkill`, `pidfd_open`,
+  `pidfd_getfd`, `process_madvise`, `kcmp`, `perf_event_open`, the new mount calls, changes to
+  priority and scheduling, the key calls, System V IPC and POSIX message queues. Argument rules
+  refuse `kill` and `tgkill` at another process, `prlimit64` on another process, `fcntl` with
+  `F_SETOWN` or `F_SETOWN_EX`, `ioctl` with `FIOSETOWN` or `SIOCSPGRP`, and `clone` with a
+  namespace flag. `clone3` gets `ENOSYS`, so the C library uses `clone`. The filter kills a call
+  from another architecture and an x32 call.
+- **A sanitizer build allows `ptrace` and reads `/proc/self`.** LeakSanitizer traces its own
+  threads. Landlock still refuses a trace of a process outside the child's domain. Every other
+  build refuses `ptrace`.
+- **Each child has its own folder.** The folders are `compile/`, `list/` and `check/` in the
+  upgrade's scratch folder. The inputs stay in the scratch folder itself, which no child can
+  write. The parent opens each diagnostics file there and gives it to the child as its standard
+  error. The child changes to its folder, then confines itself, then runs `execve`. A failure at
+  any step stops the child before `execve`, and the parent reads that as an I/O failure.
+- **The check child makes its results file in its own folder.** It used `tmpfile`, which writes
+  in `/tmp`. It now uses `mkstemp` in its folder and removes the name at once.
+- **The check is two tests.** `tests/test_confinement.c` runs a probe as the child through
+  `spawn()`. Nine things the probe needs must work, and 30 attempts must be refused.
+  `tests/test_confinement_control.c` runs the same probe from a build of `compile.c` without
+  the confinement. There every attempt must succeed, and a confinement that fails must stop the
+  child.
+- **The policy is one value.** `mo serve` decides once whether upgrades are confined,
+  unconfined or refused. A refused upgrade is E1438.
 
 ## What the measurement found
 

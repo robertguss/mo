@@ -300,18 +300,25 @@ These are not guaranteed today.
 3. **Fuzzing and CBMC do not run on their own.** They run only when someone
    runs them (`AGENTS.md`, "Checks and merging"). A regression in them is
    found when they next run.
-4. **No operating-system confinement.** Nothing in `src` installs seccomp, pledge, Landlock or a
-   similar filter. A bug in the C runtime is not contained by one. Capabilities are the only
-   boundary the toolchain provides. Phase 7's proposed design confines the children that
-   `mo serve` starts ([outside-world.md](outside-world.md)). It is not built.
+4. **Operating-system confinement covers only the upgrade children.** The three children that
+   `mo serve` starts for each upgrade (the compile, the listing and the checks) run under
+   Landlock and a seccomp filter where the kernel has Landlock ABI 3 or later
+   ([outside-world.md](outside-world.md#confinement-of-the-children)). `mo serve` itself,
+   `mo run` and `mo test` are not confined. A bug in the C runtime there is not contained, and
+   capabilities are the only boundary. On a host that cannot confine, `mo serve` accepts no
+   upgrade unless it was started with `--unconfined`, and then it says so at start and in every
+   upgrade report.
 5. **No concurrency checking.** ThreadSanitizer is not a gate (`implementation.md`, condition 1);
    property P7's process-wide signal handling and any future threads need their own review.
 6. **Concurrent changes to the filesystem** are outside P8.
 7. **The upgrade credential reaches the compiler.** A live upgrade compiles network input in a
-   child process with the service's identity, files and secrets under CPU, memory and wall
-   limits, and loads its output through the verifier. The child contains crashes and stalls but
-   not a memory-safety exploit of the compiler front end, so the upgrade credential's authority
-   is bounded only by the compiler's memory safety; long front-end fuzz runs are the evidence.
+   child process under CPU, memory and wall limits and the confinement of gap 4, and loads its
+   output through the verifier. The child has an empty environment and no descriptor on the
+   store. It reads the compiler, its library and its inputs, and writes only its own folder. A
+   memory-safety exploit of the compiler front end can still forge the child's own output, so
+   the verifier and the checks stay the bound on what it produces; long front-end fuzz runs are
+   the evidence. Under `--unconfined` the child also reaches every file the service's user can,
+   and the credential's authority is then bounded only by the compiler's memory safety.
    Write access to a data folder also equals upgrade authority, since the folder records the
    program a restart runs. The upload page reader (`src/base/upload.c`) is untrusted-input code
    with CBMC proofs and a fuzz target.
@@ -358,16 +365,19 @@ Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
 describes. Activation atomically records the source bundle, migrated snapshot and
 program identities in a version-2 folder that older readers refuse. The upgrade
 operator tools change the service and require a separate credential. A compiler
-child limits crashes and stalls but shares the host identity, files and secrets:
-its compiler is part of the upgrade credential's trusted base. Write access to
-the data folder confers the authority to replace the running program.
+child limits crashes and stalls, and where the host can confine it reaches only
+the compiler, its library, its inputs and its own folder. A child taken over can
+still forge its own output, so its compiler is part of the upgrade credential's
+trusted base. Write access to the data folder confers the authority to replace
+the running program.
 
 [The review door](intent.md) adds a third secret, the approval credential, held
 only on the service's host; a second child that runs the candidate's checks
-there under limits but without operating-system confinement; and a version-3
-folder holding approvals. Write access to the data folder therefore confers
+there under the same limits and confinement; and a version-3 folder holding
+approvals. Write access to the data folder therefore confers
 approval authority too, and a memory-safety defect in the compiler or the VM
-that pushed source can reach is a way around the door without a shell. A
+that pushed source can reach can make a check child report a pass: a way around
+the door without a shell. A
 service behind the door keeps agents off its host: they reach it only through a
 tunnel limited to its port, as [the live service runbook](../ops/live-service.md)
 sets up. The full list of what the lock does not protect against is in the

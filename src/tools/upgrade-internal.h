@@ -24,14 +24,15 @@ struct upgrade_report {
     size_t heap_peak, encoded_bytes;
     struct mo_buffer differences;
     uint8_t old_schema[32], new_schema[32];
-    bool compared, implementation_changed, rehearsal, state_valid;
+    bool compared, implementation_changed, rehearsal, state_valid, unconfined;
 };
 
 struct compile_job {
     char folder[sizeof "/tmp/mo-upgrade-XXXXXX"];
     char source[128], previous[128], image[128], diagnostics[128], input_context[128],
-        output_context[128], items[128], list_diagnostics[128], check_diagnostics[128];
-    const char *compiler;
+        output_context[128], items[128], list_diagnostics[128], check_diagnostics[128],
+        compile_folder[128], list_folder[128], check_folder[128];
+    struct mo_compiler compiler;
     struct mo_compile_child child;
     bool scratch, listing, check, checking, has_old, has_context;
 };
@@ -42,11 +43,13 @@ bool mo_upgrade_write_file_bytes(const char *path, const uint8_t *bytes, size_t 
 
 bool mo_upgrade_refuse(struct upgrade_report *r, uint16_t code, const char *class,
                        const char *message);
+MO_MUST_USE bool mo_upgrade_children_accept(enum mo_upgrade_children children,
+                                            struct upgrade_report *report);
 bool mo_upgrade_report_json(struct mo_buffer *out, const struct upgrade_report *r,
                             const char *migration);
 bool mo_upgrade_report_text(struct mo_buffer *text, const struct upgrade_report *report);
 void mo_upgrade_compile_cleanup(struct compile_job *job);
-bool mo_upgrade_compile_begin(const char *compiler, const struct mo_buffer *bundle,
+bool mo_upgrade_compile_begin(const struct mo_compiler *compiler, const struct mo_buffer *bundle,
                               const struct mo_buffer *old, const char *migration,
                               const struct mo_buffer *context, struct compile_job *job,
                               struct upgrade_report *report);

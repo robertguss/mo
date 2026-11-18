@@ -183,6 +183,7 @@ enum flag_id {
     FLAG_MIGRATE,
     FLAG_UPGRADE,
     FLAG_ADOPT,
+    FLAG_UNCONFINED,
     FLAG_CONTEXT,
     FLAG_ARTIFACT,
     FLAG_CANDIDATE,
@@ -250,6 +251,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
      ON(CHECK) | ON(SERVE) | ON(EMIT) | ON(REHEARSE) | ON(PUSH)},
     {FLAG_UPGRADE, "--upgrade", false, false, VALUE_NONE, 0, ON(SERVE)},
     {FLAG_ADOPT, "--adopt", false, false, VALUE_NONE, 0, ON(SERVE)},
+    {FLAG_UNCONFINED, "--unconfined", false, false, VALUE_NONE, 0, ON(SERVE)},
     {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(TEST) | ON(REHEARSE)},
     {FLAG_ARTIFACT, "--artifact", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
     {FLAG_CANDIDATE, "--candidate", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
@@ -345,6 +347,9 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_ADOPT:
         out->adopt = true;
+        break;
+    case FLAG_UNCONFINED:
+        out->unconfined = true;
         break;
     case FLAG_JSON:
         out->json = true;

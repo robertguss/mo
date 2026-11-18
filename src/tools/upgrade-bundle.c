@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 bool mo_upgrade_error(struct mo_diags *diags, uint16_t code, const char *message) {
     bool added = mo_diags_add(
@@ -29,6 +30,9 @@ bool mo_upgrade_error(struct mo_diags *diags, uint16_t code, const char *message
 static const char *library_path(void) {
     struct stat info;
     return stat(mo_library_path, &info) != 0 && errno == ENOENT ? NULL : mo_library_path;
+}
+struct mo_compiler mo_upgrade_compiler(void) {
+    return (struct mo_compiler){"/proc/self/exe", library_path()};
 }
 bool mo_upgrade_file_bytes(const char *path, size_t limit, struct mo_buffer *out) {
     FILE *file = fopen(path, "rb");
@@ -251,7 +255,16 @@ static void run_checks(struct mo_arena *arena, const struct mo_cli *cli,
         (void)mo_upgrade_error(diags, MO_CODE_PLAN_UNFINISHED, "the plan did not finish");
         return;
     }
-    FILE *results = tmpfile();
+    char name[] = "mo-results-XXXXXX";
+    int fd = mkstemp(name);
+    FILE *results = fd < 0 ? NULL : fdopen(fd, "w+");
+    if (fd >= 0 && (unlink(name) != 0 || results == NULL)) {
+        if (results != NULL)
+            (void)fclose(results);
+        else
+            (void)close(fd);
+        results = NULL;
+    }
     struct mo_test_totals totals = {0};
     struct mo_test_selection *selection =
         results == NULL ? NULL : mo_select_tests(arena, program, cli, &run);

@@ -1175,14 +1175,15 @@ Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
 describes. Activation atomically records the source bundle, migrated snapshot and
 program identities in a version-2 folder that older readers refuse. The upgrade
 operator tools change the service and require a separate credential. A compiler
-child limits crashes and stalls but shares the host identity, files and secrets:
-its compiler is part of the upgrade credential's trusted base. Write access to
+child limits crashes and stalls, and where the host can confine it reaches only
+its compiler, library, inputs and own folder; a child taken over can still forge
+its own output, so its compiler is part of the upgrade credential's trusted base. Write access to
 the data folder confers the authority to replace the running program.
 
 Phase 6 adds [the review door](intent.md): a third secret, the approval
 credential, held only on the service's host; check children that run the
-candidate's checks there under limits but without operating-system
-confinement; and a version-3 folder holding approvals. Write access to the data
+candidate's checks there under the same limits and confinement; and a
+version-3 folder holding approvals. Write access to the data
 folder confers approval authority too, and a
 memory-safety defect in the compiler or the VM that pushed source can reach is a
 way around the door without a shell.

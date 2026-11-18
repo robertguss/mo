@@ -35,7 +35,8 @@ int main(void) {
     MO_ASSERT(snprintf(errors, sizeof errors, "%s/errors", dir) > 0);
     FILE *script = fopen(exe, "w");
     MO_ASSERT(script != NULL);
-    MO_ASSERT(fputs("#!/bin/sh\n[ -z \"$MO_CHILD_CANARY\" ] || exit 1\nif [ \"$1\" = test ]; then\n"
+    MO_ASSERT(fputs("#!/bin/sh\n[ -z \"$MO_CHILD_CANARY\" ] && [ -x compiler ] || exit 1\nif [ "
+                    "\"$1\" = test ]; then\n"
                     "  [ ! -e \"/proc/$$/fd/$2\" ] || exit 1\n"
                     "  [ \"$4\" != --list ] || { printf list > \"$6\"; exit 0; }\n"
                     "  " MEMORY_CHECK "test \"$(ulimit -t)\" = 120 && test \"$(ulimit -c)\" = 0\n"
@@ -52,6 +53,7 @@ int main(void) {
                     script) >= 0);
     MO_ASSERT(fclose(script) == 0 && chmod(exe, 0700) == 0 &&
               setenv("MO_CHILD_CANARY", "1", 1) == 0);
+    const struct mo_compiler compiler = {exe, NULL};
     const char *modes[] = {"ok", "diagnostic", "crash", "limits", "initializer", "service"};
     const enum mo_compile_status expected[] = {MO_COMPILE_OK,          MO_COMPILE_DIAGNOSTIC,
                                                MO_COMPILE_CRASH,       MO_COMPILE_OK,
@@ -59,8 +61,8 @@ int main(void) {
     for (size_t i = 0; i < sizeof modes / sizeof *modes; i++) {
         /* This deadline status is rendered as E1420 by upgrade admission. */
         struct mo_compile_child child = {0};
-        CHECK(mo_compile_start(exe, modes[i], output, errors, NULL, NULL, NULL, 100, &child) ==
-              MO_COMPILE_RUNNING);
+        CHECK(mo_compile_start(&compiler, dir, modes[i], output, errors, NULL, NULL, NULL, 100,
+                               &child) == MO_COMPILE_RUNNING);
         MO_ASSERT(child.pid > 0);
         CHECK(complete(&child) == expected[i]);
         CHECK(child.pid == 0);
@@ -75,29 +77,30 @@ int main(void) {
         CHECK(unlink(errors) == 0);
     }
     struct mo_compile_child child = {0};
-    CHECK(mo_compile_start(exe, "hang", output, errors, NULL, NULL, NULL, 100, &child) ==
+    CHECK(mo_compile_start(&compiler, dir, "hang", output, errors, NULL, NULL, NULL, 100, &child) ==
           MO_COMPILE_RUNNING);
     CHECK(mo_compile_poll(&child, 100 + MO_LIMIT_UPGRADE_COMPILE_WALL_US) == MO_COMPILE_BUDGET);
     CHECK(child.pid == 0);
     CHECK(unlink(errors) == 0);
-    CHECK(mo_compile_start(exe, "hang", output, errors, NULL, NULL, NULL, 100, &child) ==
+    CHECK(mo_compile_start(&compiler, dir, "hang", output, errors, NULL, NULL, NULL, 100, &child) ==
           MO_COMPILE_RUNNING);
     mo_compile_cancel(&child);
     CHECK(child.pid == 0);
     mo_compile_cancel(&child);
     /* Existing diagnostics cannot be overwritten. */
-    CHECK(mo_compile_start(exe, "ok", output, errors, NULL, NULL, NULL, 100, &child) ==
+    CHECK(mo_compile_start(&compiler, dir, "ok", output, errors, NULL, NULL, NULL, 100, &child) ==
           MO_COMPILE_IO);
     CHECK(unlink(errors) == 0);
     int held = open(dir, O_RDONLY | O_DIRECTORY);
     MO_ASSERT(held > 2);
     char number[16];
     MO_ASSERT(snprintf(number, sizeof number, "%d", held) > 0);
-    CHECK(mo_list_start(exe, number, output, errors, NULL, NULL, 100, &child) ==
+    CHECK(mo_list_start(&compiler, dir, number, output, errors, NULL, NULL, 100, &child) ==
           MO_COMPILE_RUNNING);
     CHECK(complete(&child) == MO_COMPILE_OK);
     CHECK(unlink(errors) == 0);
-    CHECK(mo_check_start(exe, number, errors, NULL, NULL, 100, &child) == MO_COMPILE_RUNNING);
+    CHECK(mo_check_start(&compiler, dir, number, errors, NULL, NULL, 100, &child) ==
+          MO_COMPILE_RUNNING);
     CHECK(complete(&child) == MO_COMPILE_OK);
     CHECK(close(held) == 0 && unlink(errors) == 0);
     CHECK(unlink(output) == 0 && unlink(exe) == 0 && rmdir(dir) == 0);

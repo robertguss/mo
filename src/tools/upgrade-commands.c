@@ -330,6 +330,8 @@ static void serve_upgrade(void *context) {
                                 written ? report.detail : "source differs; use --upgrade");
         goto done;
     }
+    if (changed && !mo_upgrade_children_accept(mo_upgrade_children(cli->unconfined), &report))
+        goto done;
     struct mo_buffer fallback = {0};
     bool fallback_state = false;
     if (changed &&

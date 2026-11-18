@@ -3,6 +3,9 @@
 #include "check/check.h"
 #include "host/host.h"
 #include "tools/tools.h"
+MO_MUST_USE struct mo_compiler mo_upgrade_compiler(void);
+enum mo_upgrade_children { MO_CHILDREN_CONFINED, MO_CHILDREN_UNCONFINED, MO_CHILDREN_REFUSED };
+MO_MUST_USE enum mo_upgrade_children mo_upgrade_children(bool unconfined);
 MO_MUST_USE int mo_upgrade_emit(const struct mo_cli *cli, FILE *output, FILE *errors);
 MO_MUST_USE int mo_upgrade_serve(const struct mo_cli *cli, FILE *output, FILE *errors);
 MO_MUST_USE int mo_upgrade_rehearse(const struct mo_cli *cli, FILE *output, FILE *errors);
@@ -43,7 +46,8 @@ MO_MUST_USE struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, 
  * running program and migrates the state current at the boundary under the live limits. */
 struct mo_live_upgrade;
 struct mo_store_program;
-MO_MUST_USE struct mo_live_upgrade *mo_live_start(const char *compiler,
+MO_MUST_USE struct mo_live_upgrade *mo_live_start(const struct mo_compiler *compiler,
+                                                  enum mo_upgrade_children children,
                                                   const struct mo_store_program *active,
                                                   const uint8_t *bundle, size_t size,
                                                   const char *migration);

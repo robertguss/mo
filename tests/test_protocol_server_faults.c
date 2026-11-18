@@ -1,6 +1,7 @@
 #define MO_PROTOCOL_SERVER_FAULT_TEST
 #define MO_PROTOCOL_SERVER_UPGRADE_TEST
 #include "test_protocol_server.c"
+#include "tools/upgrade.h"
 
 #include <errno.h>
 #include <time.h>
@@ -538,7 +539,10 @@ static void activation_outcomes(void) {
                                          &f.server) == MO_PROTOCOL_SERVER_OK);
         struct mo_bearer bearer = {.length = 23};
         memcpy(bearer.bytes, "UpgradeCanary0123456789", 23);
-        CHECK(mo_protocol_server_upgrades(f.server, &bearer, NULL, exe) == MO_PROTOCOL_SERVER_OK);
+        struct mo_compiler compiler = mo_upgrade_compiler();
+        compiler.executable = exe;
+        CHECK(mo_protocol_server_upgrades(f.server, &bearer, NULL, &compiler,
+                                          MO_CHILDREN_CONFINED) == MO_PROTOCOL_SERVER_OK);
         char base[65], candidate[65], arguments[16384], out[32768];
         hex64(program.source, base);
         uint8_t digest[32];

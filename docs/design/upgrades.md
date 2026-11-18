@@ -82,9 +82,13 @@ address-space bound, 10 CPU seconds and a 15-second wall deadline. Poll it
 without blocking the service; kill and reap an expired child. Compile before
 requesting a boundary. ASan test builds omit only the virtual-address bound because sanitizer shadow
 reservations exceed it; production retains that bound, and all builds retain
-CPU and wall limits. The child shares the host identity and is not an OS
-sandbox. The verifier checks its output, but does not protect host secrets
-from a compiler memory-safety exploit. Long front-end fuzz runs are required.
+CPU and wall limits. Where the host can confine, each child runs in its own
+folder under Landlock and a seccomp filter
+([outside-world.md](outside-world.md#confinement-of-the-children)): it reads the
+compiler, its library and its inputs, and writes only its folder. A child taken
+over can still forge its own output, which the verifier checks. On a host that
+cannot confine, `mo serve` accepts no upgrade unless started with
+`--unconfined`. Long front-end fuzz runs are required.
 The child probe also compiles the real service to bytecode text and emits a
 generic program to binary. The service-only image transport and verifier
 integration remain an implementation obligation.

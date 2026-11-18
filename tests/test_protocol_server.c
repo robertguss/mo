@@ -1386,7 +1386,8 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
 
 static struct fixture_server start_secrets(struct event_log *log, uint8_t digest[32],
                                            const char *token, const char *upgrade,
-                                           const char *approval) {
+                                           const char *approval,
+                                           enum mo_upgrade_children children) {
     struct fixture_server f = {.image = compile(source_text_for_upgrade)};
     CHECK(setenv("MO_TEST_MCP_TOKEN", token, 1) == 0);
     MO_ASSERT(mo_listener_fake("MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
@@ -1400,9 +1401,10 @@ static struct fixture_server start_secrets(struct event_log *log, uint8_t digest
                      door = {.length = approval == NULL ? 0 : strlen(approval)};
     memcpy(bearer.bytes, upgrade == NULL ? "" : upgrade, bearer.length);
     memcpy(door.bytes, approval == NULL ? "" : approval, door.length);
+    const struct mo_compiler compiler = {"/bin/false", NULL};
     CHECK(mo_protocol_server_upgrades(f.server, upgrade == NULL ? NULL : &bearer,
-                                      approval == NULL ? NULL : &door,
-                                      "/bin/false") == MO_PROTOCOL_SERVER_OK);
+                                      approval == NULL ? NULL : &door, &compiler,
+                                      children) == MO_PROTOCOL_SERVER_OK);
     return f;
 }
 
@@ -1410,7 +1412,7 @@ static struct fixture_server start_upgradable(struct event_log *log, uint8_t dig
                                               bool credential) {
     return start_secrets(log, digest, "McpSecretCanary42",
                          credential ? "UpgradeCanary0123456789" : NULL,
-                         credential ? "ApprovalCanary012345678" : NULL);
+                         credential ? "ApprovalCanary012345678" : NULL, MO_CHILDREN_CONFINED);
 }
 
 static void review_call(struct fixture_server *f, const char *fields, const char *tool,
@@ -1496,7 +1498,7 @@ static void review_tools(void) {
     memset(upgrade, 'U', MO_LIMIT_MCP_TOKEN_BYTES);
     token[MO_LIMIT_MCP_TOKEN_BYTES] = door[MO_LIMIT_MCP_TOKEN_BYTES] =
         upgrade[MO_LIMIT_MCP_TOKEN_BYTES] = 0;
-    f = start_secrets(&log, active, token, upgrade, door);
+    f = start_secrets(&log, active, token, upgrade, door, MO_CHILDREN_CONFINED);
     n = snprintf(fields, sizeof fields,
                  "Authorization: Bearer %s\r\nMo-Approval-Authorization: Bearer %s\r\n"
                  "Connection: close\r\n",
@@ -1638,6 +1640,50 @@ static void upgrade_tools(void) {
     finish(&f);
 }
 
+static void upgrade_children(void) {
+    const enum mo_upgrade_children policies[] = {MO_CHILDREN_REFUSED, MO_CHILDREN_UNCONFINED};
+    for (size_t p = 0; p < 2; p++) {
+        struct event_log log = {0};
+        uint8_t active[32], digest[32];
+        struct fixture_server f = start_secrets(&log, active, "McpSecretCanary42",
+                                                "UpgradeCanary0123456789", NULL, policies[p]);
+        struct mo_sha256 hash;
+        mo_sha256_init(&hash);
+        mo_sha256_update(&hash, (const uint8_t *)"abc", 3);
+        mo_sha256_finish(&hash, digest);
+        char base[65], candidate[65], arguments[512], out[16384], slot[33] = {0};
+        hex64(active, base);
+        hex64(digest, candidate);
+        int n = snprintf(arguments, sizeof arguments,
+                         "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":3}", base, candidate);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
+        upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+        const char *slot_at = strstr(out, "\\\"slot\\\":\\\"");
+        CHECK(slot_at != NULL);
+        if (slot_at != NULL)
+            memcpy(slot, slot_at + strlen("\\\"slot\\\":\\\""), 32);
+        n = snprintf(arguments, sizeof arguments,
+                     "{\"slot\":\"%s\",\"index\":0,\"offset\":0,\"total\":3,\"bytes\":\"YWJj\"}",
+                     slot);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
+        upgrade_call(&f, upgrade_auth, "mo-upgrade-page", arguments, out, sizeof out);
+        CHECK(strstr(out, "\\\"complete\\\":true") != NULL);
+        n = snprintf(arguments, sizeof arguments, "{\"slot\":\"%s\",\"base\":\"%s\"}", slot, base);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
+        upgrade_call(&f, upgrade_auth, "mo-upgrade-commit", arguments, out, sizeof out);
+        if (policies[p] == MO_CHILDREN_REFUSED)
+            CHECK(strstr(out, "\"code\":\"E1438\"") != NULL &&
+                  strstr(out, "start it with --unconfined") != NULL &&
+                  strstr(out, "\"confined\":false") == NULL);
+        else
+            CHECK(strstr(out, "\"code\":\"E1438\"") == NULL &&
+                  strstr(out, "source bundle is malformed") != NULL &&
+                  strstr(out, "\"confined\":false") != NULL);
+        CHECK(upgrade_events(&log, 1438) == (policies[p] == MO_CHILDREN_REFUSED ? 1u : 0u));
+        finish(&f);
+    }
+}
+
 static void run(void *context) {
     appended_view_routes_as_view();
     failure_text_arguments();
@@ -1662,6 +1708,7 @@ static void run(void *context) {
     busy();
     streams();
     upgrade_tools();
+    upgrade_children();
     review_tools();
 }
 

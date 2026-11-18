@@ -17,6 +17,7 @@ uint64_t mo_pause_attempt;
 #include "vm/vm.h"
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -26,6 +27,19 @@ bool mo_upgrade_refuse(struct upgrade_report *r, uint16_t code, const char *clas
     r->class = class;
     r->message = message;
     return false;
+}
+enum mo_upgrade_children mo_upgrade_children(bool unconfined) {
+    return mo_compile_can_confine() ? MO_CHILDREN_CONFINED
+           : unconfined             ? MO_CHILDREN_UNCONFINED
+                                    : MO_CHILDREN_REFUSED;
+}
+bool mo_upgrade_children_accept(enum mo_upgrade_children children, struct upgrade_report *report) {
+    report->unconfined = children == MO_CHILDREN_UNCONFINED;
+    return children != MO_CHILDREN_REFUSED ||
+           mo_upgrade_refuse(
+               report, MO_CODE_UPGRADE_UNCONFINED, "confinement",
+               "this host cannot confine the compile children, so mo serve accepts "
+               "no upgrade; start it with --unconfined to accept upgrades unconfined");
 }
 static bool append_digest(struct mo_buffer *out, const uint8_t *digest, bool present) {
     return present ? mo_buffer_append_byte(out, '"') && mo_offline_hex(out, digest, 32) &&
@@ -88,6 +102,8 @@ bool mo_upgrade_report_json(struct mo_buffer *out, const struct upgrade_report *
             ok &&
             mo_buffer_append_text(out, ",\"rehearsal\":true,\"accepted\":false,\"state_valid\":") &&
             mo_buffer_append_text(out, r->state_valid ? "true" : "false");
+    if (r->unconfined)
+        ok = ok && mo_buffer_append_text(out, ",\"confined\":false");
     return ok && mo_buffer_append_byte(out, '}');
 }
 bool mo_upgrade_report_text(struct mo_buffer *text, const struct upgrade_report *report) {
@@ -107,6 +123,9 @@ bool mo_upgrade_report_text(struct mo_buffer *text, const struct upgrade_report 
                                              : "\n  implementation unchanged");
     if (report->rehearsal)
         ok = ok && mo_buffer_append_text(text, "\n  rehearsal is not upgrade acceptance");
+    if (report->unconfined)
+        ok = ok && mo_buffer_append_text(
+                       text, "\n  the compile children were not confined (--unconfined)");
     return ok && mo_buffer_append_byte(text, '\n');
 }
 int mo_upgrade_show_report(const struct mo_cli *cli, FILE *output, FILE *errors,
@@ -140,11 +159,14 @@ void mo_upgrade_compile_cleanup(struct compile_job *job) {
     (void)unlink(job->items);
     (void)unlink(job->list_diagnostics);
     (void)unlink(job->check_diagnostics);
+    (void)rmdir(job->compile_folder);
+    (void)rmdir(job->list_folder);
+    (void)rmdir(job->check_folder);
     (void)rmdir(job->folder);
     job->scratch = false;
 }
 /* Writes the inputs and starts the child; false is a refusal already in report. */
-bool mo_upgrade_compile_begin(const char *compiler, const struct mo_buffer *bundle,
+bool mo_upgrade_compile_begin(const struct mo_compiler *compiler, const struct mo_buffer *bundle,
                               const struct mo_buffer *old, const char *migration,
                               const struct mo_buffer *context, struct compile_job *job,
                               struct upgrade_report *report) {
@@ -155,27 +177,33 @@ bool mo_upgrade_compile_begin(const char *compiler, const struct mo_buffer *bund
     job->scratch = true;
     int a = snprintf(job->source, sizeof job->source, "%s/source.mosb", job->folder);
     int b = snprintf(job->previous, sizeof job->previous, "%s/old.mosb", job->folder);
-    int c = snprintf(job->image, sizeof job->image, "%s/image.bc", job->folder);
+    int c = snprintf(job->compile_folder, sizeof job->compile_folder, "%s/compile", job->folder);
     int d = snprintf(job->diagnostics, sizeof job->diagnostics, "%s/diagnostics", job->folder);
     int e = snprintf(job->input_context, sizeof job->input_context, "%s/input.mocc", job->folder);
-    int f = snprintf(job->output_context, sizeof job->output_context, "%s.mocc", job->image);
-    int g = snprintf(job->items, sizeof job->items, "%s/items.moil", job->folder);
+    int f = snprintf(job->list_folder, sizeof job->list_folder, "%s/list", job->folder);
+    int g = snprintf(job->check_folder, sizeof job->check_folder, "%s/check", job->folder);
     int h = snprintf(job->list_diagnostics, sizeof job->list_diagnostics, "%s/list-diagnostics",
                      job->folder);
     int i = snprintf(job->check_diagnostics, sizeof job->check_diagnostics, "%s/check-diagnostics",
                      job->folder);
-    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && f > 0 && g > 0 && h > 0 && i > 0);
-    job->compiler = compiler;
+    int j = snprintf(job->image, sizeof job->image, "%s/image.bc", job->compile_folder);
+    int k = snprintf(job->output_context, sizeof job->output_context, "%s.mocc", job->image);
+    int l = snprintf(job->items, sizeof job->items, "%s/items.moil", job->list_folder);
+    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && f > 0 && g > 0 && h > 0 && i > 0 &&
+              j > 0 && k > 0 && l > 0);
+    job->compiler = *compiler;
     job->has_old = old != NULL;
     job->has_context = context != NULL;
     bool ok =
+        mkdir(job->compile_folder, 0700) == 0 && mkdir(job->list_folder, 0700) == 0 &&
+        mkdir(job->check_folder, 0700) == 0 &&
         mo_upgrade_write_file_bytes(job->source, bundle->bytes, bundle->length) &&
         (old == NULL || mo_upgrade_write_file_bytes(job->previous, old->bytes, old->length)) &&
         (context == NULL ||
          mo_upgrade_write_file_bytes(job->input_context, context->bytes, context->length));
     enum mo_compile_status status =
-        ok ? mo_compile_start(compiler, job->source, job->image, job->diagnostics,
-                              old == NULL ? NULL : job->previous, migration,
+        ok ? mo_compile_start(&job->compiler, job->compile_folder, job->source, job->image,
+                              job->diagnostics, old == NULL ? NULL : job->previous, migration,
                               context == NULL ? NULL : job->input_context, monotonic_us(),
                               &job->child)
            : MO_COMPILE_IO;
@@ -195,12 +223,12 @@ enum mo_compile_status mo_upgrade_compile_poll(struct compile_job *job) {
     const char *context = job->has_context ? job->input_context : NULL;
     if (job->listing) {
         job->checking = true;
-        status = mo_check_start(job->compiler, job->source, job->check_diagnostics, old, context,
-                                now, &job->child);
+        status = mo_check_start(&job->compiler, job->check_folder, job->source,
+                                job->check_diagnostics, old, context, now, &job->child);
     } else {
         job->listing = true;
-        status = mo_list_start(job->compiler, job->source, job->items, job->list_diagnostics, old,
-                               context, now, &job->child);
+        status = mo_list_start(&job->compiler, job->list_folder, job->source, job->items,
+                               job->list_diagnostics, old, context, now, &job->child);
     }
     return status == MO_COMPILE_RUNNING ? status : MO_COMPILE_IO;
 }
@@ -339,8 +367,8 @@ bool mo_upgrade_compile_image(const struct mo_buffer *bundle, const struct mo_bu
                               const char *migration, const struct mo_buffer *context, bool check,
                               struct upgrade_image *out, struct upgrade_report *report) {
     struct compile_job job = {.check = check};
-    if (!mo_upgrade_compile_begin("/proc/self/exe", bundle, old, migration, context, &job,
-                                  report)) {
+    struct mo_compiler compiler = mo_upgrade_compiler();
+    if (!mo_upgrade_compile_begin(&compiler, bundle, old, migration, context, &job, report)) {
         mo_upgrade_image_buffers_init(out);
         return false;
     }
