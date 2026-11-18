@@ -6,6 +6,9 @@ and the review door in `docs/design/intent.md`.
 
 ## Language
 
+**Check**:
+A promise, an example or a test.
+
 **Wrong version**:
 A replacement for named declarations of a program, written by an agent to represent one plausible
 mistake.
