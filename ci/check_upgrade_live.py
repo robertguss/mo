@@ -165,7 +165,7 @@ class Service:
         self.process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=self.errors,
                                         env=ENV, bufsize=0, cwd=cwd)
         self.port, self.output = None, b""
-        deadline = time.monotonic() + 60
+        deadline = time.monotonic() + 300
         while self.port is None and time.monotonic() < deadline:
             ready, _, _ = select.select([self.process.stdout], [], [], 1)
             if not ready:

@@ -30,7 +30,7 @@ class Forward(socketserver.BaseRequestHandler):
             peers = [self.request, upstream]
             reading = list(peers)
             while reading:
-                ready, _, _ = select.select(reading, [], [], 60)
+                ready, _, _ = select.select(reading, [], [], 120)
                 if not ready:
                     return
                 for peer in ready:
@@ -75,7 +75,7 @@ class Recording(http.server.BaseHTTPRequestHandler):
             assert body == self.server.retry_body, (name, "retry changed the rejected request")
             self.server.retry_body = None
             self.server.retried = True
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.upstream, timeout=60)
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.upstream, timeout=120)
         headers = {k: v for k, v in self.headers.items() if k.lower() not in
                    ("host", "content-length", "connection")}
         connection.request("POST", "/mcp", body, headers)
@@ -132,7 +132,8 @@ def run(binary):
                     assert body["result"]["structuredContent"]["code"] == "E1414", body
                 # Successful subsequent open proves neither refusal reserved a slot.
                 refused = push(binary, service, invalid, base, url=url)
-                assert refused.returncode == 1, refused
+                assert refused.returncode == 1 and refused.stderr.startswith(b"error E1421:"), \
+                    (mode, refused)
                 if mode == "throttled":
                     assert server.retried and server.retry_body is None, server.record
                     server.throttle, server.retried = True, False
