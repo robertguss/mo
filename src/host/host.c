@@ -110,8 +110,11 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
             mo_value_drop(heap, host->types->texts, args[0]);
         return result;
     }
-    if (operation == MO_HOST_ARGS_OF || operation == MO_HOST_ENV_OF) {
-        uint32_t slot = operation == MO_HOST_ARGS_OF ? host->types->texts : host->types->files;
+    if (operation == MO_HOST_ARGS_OF || operation == MO_HOST_ENV_OF ||
+        operation == MO_HOST_NETWORK_FAKE) {
+        uint32_t slot = operation == MO_HOST_ARGS_OF  ? host->types->texts
+                        : operation == MO_HOST_ENV_OF ? host->types->files
+                                                      : host->types->peers;
         enum mo_host_outcome result =
             mo_host_state_cap(host, heap, type, true, &slot, args, 1, out);
         if (result == MO_HOST_RETURNED)
@@ -216,9 +219,11 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
     *error = (struct mo_host_error){0};
     switch (initial->kind) {
     case MO_CAP_SIMULATION:
-    case MO_CAP_NETWORK:
     case MO_CAP_CONNECTION:
         MO_UNREACHABLE();
+    case MO_CAP_NETWORK:
+        return mo_host_state_cap(host, heap, type, true, &host->types->peers, &initial->as.network,
+                                 1, out);
     case MO_CAP_ARGS:
         return mo_host_state_cap(host, heap, type, true, &host->types->texts, &initial->as.args, 1,
                                  out);
@@ -278,9 +283,11 @@ bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo
     struct mo_host_fake_state result = {.kind = operations->capability};
     switch (result.kind) {
     case MO_CAP_SIMULATION:
-    case MO_CAP_NETWORK:
     case MO_CAP_CONNECTION:
         MO_UNREACHABLE();
+    case MO_CAP_NETWORK:
+        result.as.network = mo_value_dup(heap, host->types->peers, mo_state_get(info->state, 0));
+        break;
     case MO_CAP_ARGS:
         result.as.args = mo_value_dup(heap, host->types->texts, mo_state_get(info->state, 0));
         break;
@@ -326,9 +333,11 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
                              struct mo_host_fake_state *state) {
     switch (state->kind) {
     case MO_CAP_SIMULATION:
-    case MO_CAP_NETWORK:
     case MO_CAP_CONNECTION:
         MO_UNREACHABLE();
+    case MO_CAP_NETWORK:
+        mo_value_drop(heap, host->types->peers, state->as.network);
+        break;
     case MO_CAP_ARGS:
         mo_value_drop(heap, host->types->texts, state->as.args);
         break;

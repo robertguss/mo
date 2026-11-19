@@ -1,0 +1,6 @@
+passed Main.reaches?.promise.1  tests/golden/cap-network-fake/main.mo:10:3
+passed Main.test.1  tests/golden/cap-network-fake/main.mo:27:1
+passed Main.test.2  tests/golden/cap-network-fake/main.mo:41:1
+passed Main.test.3  tests/golden/cap-network-fake/main.mo:53:1
+gates: 3 mutants tried, 3 killed (0 promise, 0 example, 3 test, 0 recovery, 0 start), 0 survived, 0 dropped
+4 passed, 0 failed, 0 stopped

@@ -6,12 +6,12 @@
 #include "base/intent-list.h"
 #include "heap/heap.h"
 
-#define MO_HOST_PRIVATE_TYPES 6
+#define MO_HOST_PRIVATE_TYPES 9
 struct mo_host_types {
     struct mo_types types;
-    uint32_t integer, time, text, texts, folders, files;
+    uint32_t integer, time, text, bytes, texts, folders, files, replies, peers;
     uint32_t capabilities[MO_CAP_CONNECTION + 1];
-    uint32_t parameters[2];
+    uint32_t parameters[6];
 };
 /* Once per image. storage has source->count + MO_HOST_PRIVATE_TYPES entries;
  * it and out must remain at these addresses for the lifetime of every heap.
@@ -63,11 +63,12 @@ MO_MUST_USE enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_he
 /* Semantic backing state for C fixtures/embedders, independent of heap slots.
  * Collections are List(Text), Map(Text,Text), or Set(Text) from this heap.
  * Files and ReadFiles use the same family. Random stores four nonzero-together
- * generator words, including advanced states, not a seed. */
+ * generator words, including advanced states, not a seed. Network holds the
+ * Map(Text, Map(Bytes, Bytes)) its constructor took. */
 struct mo_host_fake_state {
     enum mo_capability kind;
     union {
-        struct mo_cell args, env;
+        struct mo_cell args, env, network;
         struct {
             struct mo_cell input, output, errors;
         } console;

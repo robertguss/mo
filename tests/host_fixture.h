@@ -205,6 +205,8 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
     case MO_HOST_FILES_REMOVE:
     case MO_HOST_FILES_MAKE_FOLDER:
         return f->result_unit;
+    case MO_HOST_NETWORK_FAKE:
+        return f->capabilities[MO_CAP_NETWORK];
     case MO_HOST_NETWORK_CONNECT:
         return f->result_connection;
     case MO_HOST_CONNECTION_SEND:

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "host/files.h"
+#include "host/network.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -18,13 +19,6 @@ struct connection {
     struct mo_host *owner;
     int descriptor;
     uint64_t deadline;
-};
-
-enum status { READY, TIMED_OUT, CLOSED, REFUSED, UNKNOWN_HOST, BROKEN, INTERNAL };
-struct problem {
-    enum status status;
-    int number;
-    const char *reason;
 };
 
 enum lookup_state { LOOKUP_FREE, LOOKUP_RUNNING, LOOKUP_DONE, LOOKUP_ABANDONED };
@@ -105,19 +99,20 @@ static MO_MUST_USE int start_thread(struct lookup *slot) {
     return result;
 }
 
-static MO_MUST_USE struct problem start_lookup(const uint8_t *host, size_t length, int64_t port,
-                                               struct lookup **out) {
+static MO_MUST_USE struct mo_network_error start_lookup(const uint8_t *host, size_t length,
+                                                        int64_t port, struct lookup **out) {
     lock();
     struct lookup *slot = NULL;
     for (uint32_t i = 0; i < MO_LIMIT_LOOKUPS && slot == NULL; i++) {
         if (lookups[i].state == LOOKUP_FREE)
             slot = &lookups[i];
     }
-    struct problem problem = {.status = READY};
+    struct mo_network_error problem = {.status = NETWORK_OK};
     if (slot == NULL)
-        problem = (struct problem){.status = BROKEN, .reason = "too many lookups still running"};
+        problem = (struct mo_network_error){.status = NETWORK_BROKEN,
+                                            .reason = "too many lookups still running"};
     else if (pipe(slot->ends) != 0)
-        problem = (struct problem){.status = BROKEN, .number = errno};
+        problem = (struct mo_network_error){.status = NETWORK_BROKEN, .number = errno};
     else {
         memcpy(slot->host, host, length);
         slot->host[length] = '\0';
@@ -131,7 +126,7 @@ static MO_MUST_USE struct problem start_lookup(const uint8_t *host, size_t lengt
         else {
             mo_host_close(slot->ends[0]);
             mo_host_close(slot->ends[1]);
-            problem = (struct problem){.status = BROKEN, .number = number};
+            problem = (struct mo_network_error){.status = NETWORK_BROKEN, .number = number};
         }
     }
     unlock();
@@ -148,31 +143,31 @@ static MO_MUST_USE bool monotonic(uint64_t *out) {
     return true;
 }
 
-static MO_MUST_USE struct problem wait_for(int fd, short events, uint64_t deadline) {
+static MO_MUST_USE struct mo_network_error wait_for(int fd, short events, uint64_t deadline) {
     for (;;) {
         uint64_t now;
         if (!monotonic(&now))
-            return (struct problem){.status = INTERNAL};
+            return (struct mo_network_error){.status = NETWORK_INTERNAL};
         if (now >= deadline)
-            return (struct problem){.status = TIMED_OUT};
+            return (struct mo_network_error){.status = NETWORK_TIMED_OUT};
         uint64_t left = (deadline - now + 999u) / 1000u;
         struct pollfd item = {.fd = fd, .events = events};
         int ready = poll(&item, 1, left > INT_MAX ? INT_MAX : (int)left);
         if (ready > 0)
-            return (struct problem){.status = READY};
+            return (struct mo_network_error){.status = NETWORK_OK};
         if (ready < 0 && errno != EINTR)
-            return (struct problem){.status = BROKEN, .number = errno};
+            return (struct mo_network_error){.status = NETWORK_BROKEN, .number = errno};
     }
 }
 
-static MO_MUST_USE struct problem finish_lookup(struct lookup *slot, uint64_t deadline,
-                                                struct lookup *out) {
-    struct problem problem = wait_for(slot->ends[0], POLLIN, deadline);
+static MO_MUST_USE struct mo_network_error finish_lookup(struct lookup *slot, uint64_t deadline,
+                                                         struct lookup *out) {
+    struct mo_network_error problem = wait_for(slot->ends[0], POLLIN, deadline);
     lock();
     if (slot->state == LOOKUP_RUNNING) {
         slot->state = LOOKUP_ABANDONED;
         unlock();
-        MO_ASSERT(problem.status != READY);
+        MO_ASSERT(problem.status != NETWORK_OK);
         return problem;
     }
     MO_ASSERT(slot->state == LOOKUP_DONE);
@@ -180,25 +175,25 @@ static MO_MUST_USE struct problem finish_lookup(struct lookup *slot, uint64_t de
     mo_host_close(slot->ends[0]);
     slot->state = LOOKUP_FREE;
     unlock();
-    if (problem.status != READY && problem.status != TIMED_OUT)
+    if (problem.status != NETWORK_OK && problem.status != NETWORK_TIMED_OUT)
         return problem;
     if (out->status == 0) {
         MO_ASSERT(out->count != 0);
-        return (struct problem){.status = READY};
+        return (struct mo_network_error){.status = NETWORK_OK};
     }
     if (out->status == EAI_NONAME)
-        return (struct problem){.status = UNKNOWN_HOST};
+        return (struct mo_network_error){.status = NETWORK_UNKNOWN_HOST};
 #ifdef EAI_NODATA
     if (out->status == EAI_NODATA)
-        return (struct problem){.status = UNKNOWN_HOST};
+        return (struct mo_network_error){.status = NETWORK_UNKNOWN_HOST};
 #endif
     if (out->status == EAI_SYSTEM)
-        return (struct problem){.status = BROKEN, .number = out->number};
-    return (struct problem){.status = BROKEN, .reason = gai_strerror(out->status)};
+        return (struct mo_network_error){.status = NETWORK_BROKEN, .number = out->number};
+    return (struct mo_network_error){.status = NETWORK_BROKEN, .reason = gai_strerror(out->status)};
 }
 
-static MO_MUST_USE struct problem open_socket(const struct lookup *found, uint64_t deadline,
-                                              int *out) {
+static MO_MUST_USE struct mo_network_error open_socket(const struct lookup *found,
+                                                       uint64_t deadline, int *out) {
     bool refused = false;
     int last = 0;
     for (uint32_t i = 0; i < found->count; i++) {
@@ -215,8 +210,8 @@ static MO_MUST_USE struct problem open_socket(const struct lookup *found, uint64
         if (number == 0 && connect(fd, address, found->lengths[i]) != 0)
             number = errno;
         if (number == EINPROGRESS || number == EINTR) {
-            struct problem problem = wait_for(fd, POLLOUT, deadline);
-            if (problem.status != READY) {
+            struct mo_network_error problem = wait_for(fd, POLLOUT, deadline);
+            if (problem.status != NETWORK_OK) {
                 mo_host_close(fd);
                 return problem;
             }
@@ -226,39 +221,41 @@ static MO_MUST_USE struct problem open_socket(const struct lookup *found, uint64
         }
         if (number == 0) {
             *out = fd;
-            return (struct problem){.status = READY};
+            return (struct mo_network_error){.status = NETWORK_OK};
         }
         mo_host_close(fd);
         refused = refused || number == ECONNREFUSED;
         last = number;
     }
-    return refused ? (struct problem){.status = REFUSED}
-                   : (struct problem){.status = BROKEN, .number = last};
+    return refused ? (struct mo_network_error){.status = NETWORK_REFUSED}
+                   : (struct mo_network_error){.status = NETWORK_BROKEN, .number = last};
 }
 
-static MO_MUST_USE struct problem send_all(const struct connection *connection,
-                                           const uint8_t *bytes, size_t length) {
+static MO_MUST_USE struct mo_network_error send_all(const struct connection *connection,
+                                                    const uint8_t *bytes, size_t length) {
     size_t sent = 0;
     while (sent < length) {
-        struct problem problem = wait_for(connection->descriptor, POLLOUT, connection->deadline);
-        if (problem.status != READY)
+        struct mo_network_error problem =
+            wait_for(connection->descriptor, POLLOUT, connection->deadline);
+        if (problem.status != NETWORK_OK)
             return problem;
         ssize_t n = send(connection->descriptor, bytes + sent, length - sent, 0);
         if (n >= 0)
             sent += (size_t)n;
         else if (errno == EPIPE || errno == ECONNRESET)
-            return (struct problem){.status = CLOSED};
+            return (struct mo_network_error){.status = NETWORK_CLOSED};
         else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
-            return (struct problem){.status = BROKEN, .number = errno};
+            return (struct mo_network_error){.status = NETWORK_BROKEN, .number = errno};
     }
-    return (struct problem){.status = READY};
+    return (struct mo_network_error){.status = NETWORK_OK};
 }
 
-static MO_MUST_USE struct problem receive_some(const struct connection *connection, uint8_t *bytes,
-                                               size_t most, size_t *count) {
+static MO_MUST_USE struct mo_network_error
+receive_some(const struct connection *connection, uint8_t *bytes, size_t most, size_t *count) {
     for (;;) {
-        struct problem problem = wait_for(connection->descriptor, POLLIN, connection->deadline);
-        if (problem.status != READY)
+        struct mo_network_error problem =
+            wait_for(connection->descriptor, POLLIN, connection->deadline);
+        if (problem.status != NETWORK_OK)
             return problem;
         ssize_t n = recv(connection->descriptor, bytes, most, 0);
         if (n >= 0) {
@@ -266,9 +263,9 @@ static MO_MUST_USE struct problem receive_some(const struct connection *connecti
             return problem;
         }
         if (errno == ECONNRESET)
-            return (struct problem){.status = CLOSED};
+            return (struct mo_network_error){.status = NETWORK_CLOSED};
         if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
-            return (struct problem){.status = BROKEN, .number = errno};
+            return (struct mo_network_error){.status = NETWORK_BROKEN, .number = errno};
     }
 }
 
@@ -279,106 +276,55 @@ static void release(intptr_t handle) {
     connection->owner->open_connections--;
 }
 
-static MO_MUST_USE uint32_t payload(const struct mo_host *host, uint32_t type, const char *name) {
-    return host->types->types.items[type].cases[mo_host_tag(host, type, name)].fields[0].type;
-}
-
-static MO_MUST_USE enum mo_host_outcome succeed(struct mo_host *host, struct mo_heap *heap,
-                                                uint32_t type, struct mo_cell value,
-                                                struct mo_cell *out) {
-    bool ok = mo_host_case(host, heap, type, "Ok", &value, 1, out);
-    mo_value_drop(heap, payload(host, type, "Ok"), value);
-    return ok ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
-}
-
-static MO_MUST_USE enum mo_host_outcome fail(struct mo_host *host, struct mo_heap *heap,
-                                             uint32_t type, struct problem problem,
-                                             struct mo_cell name, int64_t port, struct mo_cell *out,
-                                             struct mo_host_error *error) {
-    static const char *const cases[] = {[TIMED_OUT] = "TimedOut",
-                                        [CLOSED] = "Closed",
-                                        [REFUSED] = "Refused",
-                                        [UNKNOWN_HOST] = "UnknownHost",
-                                        [BROKEN] = "Broken"};
-    if (problem.status == INTERNAL) {
-        *error = (struct mo_host_error){.reason = "internal error: monotonic clock unavailable"};
-        return MO_HOST_INTERNAL;
-    }
-    MO_ASSERT(problem.status != READY);
-    struct mo_cell fields[] = {name, mo_cell_int(port)};
-    uint32_t count = problem.status == REFUSED ? 2 : problem.status == UNKNOWN_HOST ? 1 : 0;
-    if (problem.status == BROKEN) {
-        char system[256];
-        const char *reason = problem.reason;
-        if (reason == NULL)
-            reason =
-                strerror_r(problem.number, system, sizeof system) == 0 ? system : "system error";
-        if (!mo_value_text(heap, reason, strlen(reason), &fields[0]))
-            return MO_HOST_OUT_OF_MEMORY;
-        count = 1;
-    }
-    uint32_t error_type = payload(host, type, "Error");
-    struct mo_cell value;
-    bool built = mo_host_case(host, heap, error_type, cases[problem.status], fields, count, &value);
-    if (problem.status == BROKEN)
-        mo_value_drop(heap, host->types->text, fields[0]);
-    if (!built)
-        return MO_HOST_OUT_OF_MEMORY;
-    bool wrapped = mo_host_case(host, heap, type, "Error", &value, 1, out);
-    mo_value_drop(heap, error_type, value);
-    return wrapped ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
-}
-
 static MO_MUST_USE enum mo_host_outcome network_connect(struct mo_host *host, struct mo_heap *heap,
                                                         uint32_t type, const struct mo_cell *args,
                                                         struct mo_cell *out,
                                                         struct mo_host_error *error) {
     int64_t port = mo_cell_get_int(args[2]);
-    if (port < 1 || port > 65535)
-        return mo_host_bug(error, "port outside 1 to 65535");
     if (host->open_connections == MO_LIMIT_OPEN_CONNECTIONS)
         return mo_host_bug(error, "too many connections open at once");
     size_t length;
     const uint8_t *name = mo_value_data(args[1], &length);
-    struct problem problem = {.status = UNKNOWN_HOST};
+    struct mo_network_error problem = {.status = NETWORK_UNKNOWN_HOST};
     uint64_t now;
     int fd = -1;
     struct connection connection = {.owner = host};
-    if (length != 0 && length <= MO_LIMIT_HOST_NAME && memchr(name, 0, length) == NULL) {
+    if (mo_host_named(name, length)) {
         int64_t within = mo_cell_get_duration(args[3]);
         struct lookup *slot, found;
         if (!monotonic(&now))
-            problem = (struct problem){.status = INTERNAL};
+            problem = (struct mo_network_error){.status = NETWORK_INTERNAL};
         else if (within <= 0)
-            problem = (struct problem){.status = TIMED_OUT};
+            problem = (struct mo_network_error){.status = NETWORK_TIMED_OUT};
         else {
             connection.deadline =
                 (uint64_t)within > UINT64_MAX - now ? UINT64_MAX : now + (uint64_t)within;
             problem = start_lookup(name, length, port, &slot);
-            if (problem.status == READY)
+            if (problem.status == NETWORK_OK)
                 problem = finish_lookup(slot, connection.deadline, &found);
-            if (problem.status == READY)
+            if (problem.status == NETWORK_OK)
                 problem = open_socket(&found, connection.deadline, &fd);
         }
     }
-    if (problem.status != READY)
-        return fail(host, heap, type, problem, args[1], port, out, error);
+    if (problem.status != NETWORK_OK)
+        return mo_host_network_error(host, heap, type, problem, args[1], port, out, error);
     connection.descriptor = fd;
     struct mo_capability_info info = {.operations = &mo_host_operations[false][MO_CAP_CONNECTION],
                                       .release = release};
     struct mo_cell value;
-    if (!mo_value_capability_native(heap, payload(host, type, "Ok"), &info, &connection,
-                                    sizeof connection, &value)) {
+    if (!mo_value_capability_native(heap, mo_host_network_payload(host, type, "Ok"), &info,
+                                    &connection, sizeof connection, &value)) {
         mo_host_close(fd);
         return MO_HOST_OUT_OF_MEMORY;
     }
     host->open_connections++;
-    return succeed(host, heap, type, value, out);
+    return mo_host_network_ok(host, heap, type, value, out);
 }
 
-enum mo_host_outcome mo_host_network(struct mo_host *host, struct mo_heap *heap, uint32_t operation,
-                                     uint32_t type, const struct mo_cell *args, struct mo_cell *out,
-                                     struct mo_host_error *error) {
+enum mo_host_outcome mo_host_real_network_call(struct mo_host *host, struct mo_heap *heap,
+                                               uint32_t operation, uint32_t type,
+                                               const struct mo_cell *args, struct mo_cell *out,
+                                               struct mo_host_error *error) {
     if (operation == MO_HOST_NETWORK_CONNECT)
         return network_connect(host, heap, type, args, out, error);
     const struct connection *connection =
@@ -386,28 +332,26 @@ enum mo_host_outcome mo_host_network(struct mo_host *host, struct mo_heap *heap,
     if (operation == MO_HOST_CONNECTION_SEND) {
         size_t length;
         const uint8_t *bytes = mo_value_data(args[1], &length);
-        struct problem problem = send_all(connection, bytes, length);
-        if (problem.status != READY)
-            return fail(host, heap, type, problem, mo_cell_unit(), 0, out, error);
-        return succeed(host, heap, type, mo_cell_unit(), out);
+        struct mo_network_error problem = send_all(connection, bytes, length);
+        if (problem.status != NETWORK_OK)
+            return mo_host_network_error(host, heap, type, problem, mo_cell_unit(), 0, out, error);
+        return mo_host_network_ok(host, heap, type, mo_cell_unit(), out);
     }
     MO_ASSERT(operation == MO_HOST_CONNECTION_RECEIVE);
     int64_t most = mo_cell_get_int(args[1]);
-    if (most < 1 || most > MO_LIMIT_RECEIVE_BYTES)
-        return mo_host_bug(error, "most below 1 or above the receive limit");
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, heap);
     uint8_t *bytes = mo_scratch_resize(&scratch, NULL, 0, (size_t)most);
     if (bytes == NULL)
         return MO_HOST_OUT_OF_MEMORY;
     size_t count = 0;
-    struct problem problem = receive_some(connection, bytes, (size_t)most, &count);
+    struct mo_network_error problem = receive_some(connection, bytes, (size_t)most, &count);
     struct mo_cell value;
-    bool ok = problem.status != READY || mo_value_bytes(heap, bytes, count, &value);
+    bool ok = problem.status != NETWORK_OK || mo_value_bytes(heap, bytes, count, &value);
     mo_scratch_free(&scratch);
     if (!ok)
         return MO_HOST_OUT_OF_MEMORY;
-    if (problem.status != READY)
-        return fail(host, heap, type, problem, mo_cell_unit(), 0, out, error);
-    return succeed(host, heap, type, value, out);
+    if (problem.status != NETWORK_OK)
+        return mo_host_network_error(host, heap, type, problem, mo_cell_unit(), 0, out, error);
+    return mo_host_network_ok(host, heap, type, value, out);
 }

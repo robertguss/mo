@@ -365,6 +365,7 @@ inductive IoOp where
   | connect | send | receive
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
+  | networkFake
   deriving DecidableEq, Repr, Inhabited
 
 inductive SimOp where
@@ -579,6 +580,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .randomSeeded => ([.int], .cap .random)
   | .argsOf => ([.list .text], .cap .args)
   | .envOf => ([.map .text .text], .cap .env)
+  | .networkFake => ([.map .text (.map .bytes .bytes)], .cap .network)
 
 def SimOp.sig : SimOp → List Ty × Ty
   | .start _ => ([.time], .simulation)
@@ -776,7 +778,7 @@ def Prim.specOnly : Prim → Bool
   | .sim (.start _) => true
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
-  | .io .randomSeeded | .io .argsOf | .io .envOf => true
+  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake => true
   | _ => false
 
 /-! ## Lookups -/

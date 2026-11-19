@@ -292,6 +292,7 @@ def signatures():
     add("io", "connect", C("network") + "|" + T + "|" + I + "|(duration)", failed(C("connection")))
     add("io", "send", C("connection") + "|(bytes)", failed(U))
     add("io", "receive", C("connection") + "|" + I, failed("(bytes)"))
+    add("io", "networkFake", f"(map {T} (map (bytes) (bytes)))", C("network"), True)
     return table
 
 

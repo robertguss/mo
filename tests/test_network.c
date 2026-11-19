@@ -327,6 +327,154 @@ static void test_large_send(void) {
     finish(&f, capability);
 }
 
+#define ASKED "GET /a HTTP/1.1\r\nAccept: a\r\n\r\n"
+#define NO_REPLY "Error(Broken(reason: \"no reply for "
+
+static struct mo_cell fake_network(struct host_fixture *f, const char *peer,
+                                   const char *const *exchanges, uint32_t count) {
+    struct mo_cell keys[2], values[2], replies, peers, name = host_text(f, peer);
+    MO_ASSERT(count <= 2);
+    for (uint32_t i = 0; i < count; i++) {
+        const char *request = exchanges[2 * i], *reply = exchanges[2 * i + 1];
+        MO_ASSERT(mo_value_bytes(f->heap, (const uint8_t *)request, strlen(request), &keys[i]) &&
+                  mo_value_bytes(f->heap, (const uint8_t *)reply, strlen(reply), &values[i]));
+    }
+    MO_ASSERT(mo_value_map(f->heap, f->types.replies, keys, values, count, &replies) &&
+              mo_value_map(f->heap, f->types.peers, &name, &replies, 1, &peers));
+    for (uint32_t i = 0; i < count; i++) {
+        mo_value_drop(f->heap, f->bytes, keys[i]);
+        mo_value_drop(f->heap, f->bytes, values[i]);
+    }
+    mo_value_drop(f->heap, f->types.replies, replies);
+    mo_value_drop(f->heap, f->types.text, name);
+    return call(f, MO_HOST_NETWORK_FAKE, &peers);
+}
+
+static struct mo_cell asked(struct host_fixture *f, struct mo_cell capability) {
+    return opened(f, dial(f, capability, "example.org", 11, 80, 0));
+}
+
+static void test_fake_reply(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    static const char *const held[] = {ASKED, "0123456789"}, *const other[] = {ASKED, "zz"};
+    struct mo_cell capability = fake_network(&f, "example.org:80", held, 1);
+    struct mo_cell apart = fake_network(&f, "example.org:80", other, 1);
+    shows(&f, f.result_connection, dial(&f, capability, "example.org", 11, 81, 0),
+          "Error(UnknownHost(host: \"example.org\"))");
+    shows(&f, f.result_connection, dial(&f, capability, "example.com", 11, 80, 0),
+          "Error(UnknownHost(host: \"example.com\"))");
+    shows(&f, f.result_connection, dial(&f, capability, "", 0, 80, 0),
+          "Error(UnknownHost(host: \"\"))");
+    struct mo_cell first = asked(&f, capability), second = asked(&f, capability),
+                   third = asked(&f, apart);
+    CHECK(f.host.open_connections == 0);
+    sends(&f, first, "GET /a HTTP/1.1\r\n", "Ok(Unit)");
+    sends(&f, first, "", "Ok(Unit)");
+    sends(&f, first, "Accept: a\r\n\r\n", "Ok(Unit)");
+    receives(&f, first, 4, "Ok(bytes[48, 49, 50, 51])");
+    sends(&f, first, "more", "Error(Closed)");
+    sends(&f, second, ASKED, "Ok(Unit)");
+    receives(&f, second, 4, "Ok(bytes[48, 49, 50, 51])");
+    receives(&f, first, 4, "Ok(bytes[52, 53, 54, 55])");
+    receives(&f, first, 4, "Ok(bytes[56, 57])");
+    receives(&f, first, 4, "Ok(bytes[])");
+    receives(&f, first, 4, "Ok(bytes[])");
+    receives(&f, second, MO_LIMIT_RECEIVE_BYTES, "Ok(bytes[52, 53, 54, 55, 56, 57])");
+    sends(&f, third, ASKED, "Ok(Unit)");
+    receives(&f, third, 4, "Ok(bytes[122, 122])");
+    drop_connection(&f, first);
+    drop_connection(&f, second);
+    drop_connection(&f, third);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], apart);
+    finish(&f, capability);
+}
+
+static void unanswered(struct host_fixture *f, struct mo_cell capability, const char *sent,
+                       const char *expected) {
+    struct mo_cell connection = asked(f, capability);
+    if (sent != NULL)
+        sends(f, connection, sent, "Ok(Unit)");
+    receives(f, connection, 4, expected);
+    sends(f, connection, ASKED, "Error(Closed)");
+    receives(f, connection, 4, expected);
+    drop_connection(f, connection);
+}
+
+static void test_fake_no_reply(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    static const char *const held[] = {ASKED, "0123456789",
+                                       "GET /a HTTP/1.1\r\nAccept: b\r\n\r\none", "1"};
+    struct mo_cell capability = fake_network(&f, "example.org:80", held, 2);
+    unanswered(&f, capability, NULL, NO_REPLY "a connection that sent nothing\"))");
+    unanswered(&f, capability, "GET /b HTTP/1.1\r\n\r\n", NO_REPLY "\\\"GET /b HTTP/1.1\\\"\"))");
+    unanswered(&f, capability, "GET /a HTTP/1.1\r\nAccept: c\r\n\r\n",
+               NO_REPLY "\\\"GET /a HTTP/1.1\\\": sent \\\"Accept: c\\\\r\\\\n\\\", "
+                        "expected \\\"Accept: a\\\\r\\\\n\\\"\"))");
+    unanswered(&f, capability, "GET /a HTTP/1.1\r\nAccept: b\r\n\r\ntwo",
+               NO_REPLY "\\\"GET /a HTTP/1.1\\\": sent \\\"two\\\", expected \\\"one\\\"\"))");
+    unanswered(&f, capability, "GET /a HTTP/1.1\r\nAccept: a\r\n",
+               NO_REPLY "\\\"GET /a HTTP/1.1\\\": sent nothing more, "
+                        "expected \\\"\\\\r\\\\n\\\"\"))");
+    unanswered(&f, capability, ASKED "\x01\"\\\xc3\xa9",
+               NO_REPLY
+               "\\\"GET /a HTTP/1.1\\\": sent \\\"\\\\x01\\\\\\\"\\\\\\\\\\\\xc3\\\\xa9\\\", "
+               "expected nothing more\"))");
+    char line[MO_LIMIT_FAKE_QUOTE + 2], expected[MO_LIMIT_FAKE_QUOTE + 64];
+    memset(line, 'x', sizeof line - 1);
+    line[sizeof line - 1] = 0;
+    CHECK(snprintf(expected, sizeof expected, NO_REPLY "\\\"%.*s...\\\"\"))", MO_LIMIT_FAKE_QUOTE,
+                   line) < (int)sizeof expected);
+    unanswered(&f, capability, line, expected);
+    line[MO_LIMIT_FAKE_QUOTE] = 0;
+    CHECK(snprintf(expected, sizeof expected, NO_REPLY "\\\"%s\\\"\"))", line) <
+          (int)sizeof expected);
+    unanswered(&f, capability, line, expected);
+    finish(&f, capability);
+}
+
+static void test_fake_snapshot(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    static const char *const held[] = {ASKED, "0123456789"};
+    struct mo_cell capability = fake_network(&f, "example.org:80", held, 1), copy;
+    struct mo_host_fake_state state;
+    struct mo_host_error error;
+    MO_ASSERT(mo_host_fake_snapshot(&f.host, f.heap, capability, &state));
+    CHECK(state.kind == MO_CAP_NETWORK);
+    MO_ASSERT(mo_host_fake_restore(&f.host, f.heap, f.capabilities[MO_CAP_NETWORK], &state, &copy,
+                                   &error) == MO_HOST_RETURNED);
+    mo_host_fake_state_drop(&f.host, f.heap, &state);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], capability);
+    struct mo_cell connection = asked(&f, copy);
+    sends(&f, connection, ASKED, "Ok(Unit)");
+    receives(&f, connection, 10, "Ok(bytes[48, 49, 50, 51, 52, 53, 54, 55, 56, 57])");
+    shows(&f, f.result_connection, dial(&f, copy, "example.org", 11, 81, 0),
+          "Error(UnknownHost(host: \"example.org\"))");
+    drop_connection(&f, connection);
+    finish(&f, copy);
+}
+
+static void test_fake_bugs(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    static const char *const held[] = {ASKED, "0123456789"};
+    struct mo_cell capability = fake_network(&f, "example.org:80", held, 1);
+    struct mo_cell dialing[] = {capability, host_text(&f, "example.org"), mo_cell_int(0),
+                                mo_cell_duration(0)};
+    refuses(&f, MO_HOST_NETWORK_CONNECT, dialing, "port outside 1 to 65535");
+    dialing[2] = mo_cell_int(65536);
+    refuses(&f, MO_HOST_NETWORK_CONNECT, dialing, "port outside 1 to 65535");
+    mo_value_drop(f.heap, f.types.text, dialing[1]);
+    struct mo_cell receiving[] = {asked(&f, capability), mo_cell_int(0)};
+    refuses(&f, MO_HOST_CONNECTION_RECEIVE, receiving, "most below 1 or above the receive limit");
+    receiving[1] = mo_cell_int((int64_t)MO_LIMIT_RECEIVE_BYTES + 1);
+    refuses(&f, MO_HOST_CONNECTION_RECEIVE, receiving, "most below 1 or above the receive limit");
+    drop_connection(&f, receiving[0]);
+    finish(&f, capability);
+}
+
 int main(void) {
     test_round_trip();
     test_errors();
@@ -334,5 +482,9 @@ int main(void) {
     test_reset();
     test_bugs();
     test_large_send();
+    test_fake_reply();
+    test_fake_no_reply();
+    test_fake_snapshot();
+    test_fake_bugs();
     return mo_test_report("test_network");
 }

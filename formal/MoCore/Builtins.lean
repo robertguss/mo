@@ -763,7 +763,8 @@ def fakeExpressions : List (Expr × Ty) :=
    (io .filesInMemory [mapOf tText tText []], tCap .files),
    (io .clockFixed [timeE "2026-10-12T09:00:00Z"], tCap .clock),
    (io .randomSeeded [int (-1)], tCap .random),
-   (io .argsOf [strs []], tCap .args), (io .envOf [mapOf tText tText []], tCap .env)]
+   (io .argsOf [strs []], tCap .args), (io .envOf [mapOf tText tText []], tCap .env),
+   (io .networkFake [mapOf tText (tMap tBytes tBytes) []], tCap .network)]
 #guard fakeExpressions.all fun (e, t) =>
   typedAs? program [] e t true && !typedAs? program [] e t &&
   typedAs? program [] (lam [] e) (tFn [] t) true && !typedAs? program [] (lam [] e) (tFn [] t) &&
@@ -1068,6 +1069,8 @@ def networkTy (ok : Ty) : Ty := .result ok .networkError
   match run program (io op args) {} (handles [("c", .connection)]) with
   | .stopped (.outside "Network is not modeled by mocore") _ => true
   | _ => false
+#guard stops program (io .networkFake [mapOf tText (tMap tBytes tBytes) []]) (tCap .network)
+  (.outside "Network is not modeled by mocore")
 
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program

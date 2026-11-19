@@ -667,6 +667,7 @@ static void test_every_capability_operation_is_there(void) {
         {"Network", "connect"},
         {"Connection", "send"},
         {"Connection", "receive"},
+        {"Network", "fake"},
     };
     size_t count = sizeof operations / sizeof operations[0];
     for (size_t i = 0; i < count; i++) {

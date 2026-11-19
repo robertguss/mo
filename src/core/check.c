@@ -934,6 +934,12 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_IO_OP_RECEIVE:
             return sig(binary(c, MO_CORE_TY_RESULT, S(BYTES), S(NETWORK_ERROR)), 2, C(CONNECTION),
                        S(INT), NULL);
+        case MO_CORE_IO_OP_NETWORK_FAKE:
+            s = sig(
+                C(NETWORK), 1,
+                binary(c, MO_CORE_TY_MAP, S(TEXT), binary(c, MO_CORE_TY_MAP, S(BYTES), S(BYTES))),
+                NULL, NULL);
+            break;
         }
         s.spec = true;
         return s;
