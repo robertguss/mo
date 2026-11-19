@@ -356,7 +356,12 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_CLOCK_FIXED,
                                                MO_HOST_RANDOM_SEEDED,
                                                MO_HOST_ARGS_OF,
-                                               MO_HOST_ENV_OF};
+                                               MO_HOST_ENV_OF,
+                                               MO_HOST_NETWORK_CONNECT,
+                                               MO_HOST_CONNECTION_SEND,
+                                               MO_HOST_CONNECTION_RECEIVE};
+        _Static_assert(sizeof rows / sizeof rows[0] == MO_CORE_IO_OP_READ_TEXT,
+                       "one row for each Core IO operation");
         static const enum mo_host_id files[] = {MO_HOST_FILES_READ_TEXT, MO_HOST_FILES_READ_BYTES,
                                                 MO_HOST_FILES_LIST,      MO_HOST_FILES_ENTRIES,
                                                 MO_HOST_FILES_EXISTS,    MO_HOST_FILES_WITHIN};

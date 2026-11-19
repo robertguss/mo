@@ -665,10 +665,14 @@ $(BUILD)/sanitize/tests/test_host_resolver.test: $(BUILD)/sanitize/tests/test_ho
 
 # As above, substitute only the translation units owning native host calls.
 # Neither the ordinary host objects nor the fixture's heap use these wrappers.
-HOST_FAULT_SOURCES := src/host/host.c src/host/random.c src/host/console.c src/host/real-files.c
+HOST_FAULT_SOURCES := src/host/host.c src/host/random.c src/host/console.c src/host/real-files.c \
+	src/host/real-network.c
 HOST_FAULT_RENAMES := -U_FORTIFY_SOURCE -Dclock_gettime=mo_host_fault_clock -Dgetentropy=mo_host_fault_entropy \
 	-Dread=mo_host_fault_read -Dwrite=mo_host_fault_write -Dwritev=mo_host_fault_writev \
-	-Dpoll=mo_host_fault_poll -Dftruncate=mo_host_fault_truncate
+	-Dpoll=mo_host_fault_poll -Dftruncate=mo_host_fault_truncate \
+	-Dgetaddrinfo=mo_host_fault_lookup -Dpipe=mo_host_fault_pipe -Dpthread_create=mo_host_fault_thread \
+	-Dsocket=mo_host_fault_socket -Dconnect=mo_host_fault_connect -Dsend=mo_host_fault_send \
+	-Drecv=mo_host_fault_recv
 $(BUILD)/debug/host-faults/%.o: src/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(HOST_FAULT_RENAMES) -c $< -o $@

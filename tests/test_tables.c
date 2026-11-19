@@ -664,6 +664,9 @@ static void test_every_capability_operation_is_there(void) {
         {"Random", "seeded"},
         {"Args", "of"},
         {"Env", "of"},
+        {"Network", "connect"},
+        {"Connection", "send"},
+        {"Connection", "receive"},
     };
     size_t count = sizeof operations / sizeof operations[0];
     for (size_t i = 0; i < count; i++) {

@@ -288,6 +288,10 @@ def signatures():
     add("io", "randomSeeded", I, C("random"), True)
     add("io", "argsOf", L(T), C("args"), True)
     add("io", "envOf", f"(map {T} {T})", C("env"), True)
+    failed = lambda t: f"(result {t} (networkError))"
+    add("io", "connect", C("network") + "|" + T + "|" + I + "|(duration)", failed(C("connection")))
+    add("io", "send", C("connection") + "|(bytes)", failed(U))
+    add("io", "receive", C("connection") + "|" + I, failed("(bytes)"))
     return table
 
 

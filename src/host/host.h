@@ -22,7 +22,7 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
 
 struct mo_host {
     const struct mo_host_types *types;
-    uint32_t open_folders;
+    uint32_t open_folders, open_connections;
     int input, output, errors;
     bool force_fallback; /* C tests exercise the portable resolver on Linux. */
     bool started, kernel_probed, kernel_available;
@@ -30,7 +30,8 @@ struct mo_host {
 void mo_host_init(struct mo_host *host, const struct mo_host_types *types);
 /* Before running main, once per context and before starting threads. Changes
  * process-wide SIGPIPE to ignored and tries to raise the soft descriptor budget to
- * MO_LIMIT_OPEN_FOLDERS + 32 (never above its hard limit). C embedders calling
+ * MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2 * MO_LIMIT_LOOKUPS + 32 (never above
+ * its hard limit). C embedders calling
  * real Console directly must call this, or arrange SIGPIPE handling themselves.
  * A refused raise leaves the current budget; later opens report exhaustion.
  * NULL on success, otherwise a static internal-stop reason. Prints never change

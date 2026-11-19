@@ -299,7 +299,8 @@ def fuzzSeeds : List (String × Sexp) :=
    ("random_state", randomOut ⟨0, 0x8000000000000000, 0xffffffffffffffff, 0x0123456789abcdef⟩),
    ("unicode16", primOut (.unicode16 .normalizeNfc)),
    ("simulation", primOut (.sim (.send 2 3 [.int, .list .text] (.result .unit .text)))),
-   ("entries", primOut (.io (.entries true)))]
+   ("entries", primOut (.io (.entries true))),
+   ("network", primOut (.io .connect))]
 
 #guard (structural Greet.program (.list .entry)
   (.list [.con "Entry" [.text "é", .con "Folder" []]])).toOption ==

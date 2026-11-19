@@ -13,7 +13,7 @@ const char *mo_host_start(struct mo_host *host) {
     struct rlimit budget;
     if (getrlimit(RLIMIT_NOFILE, &budget) != 0)
         return "internal error: descriptor budget unavailable";
-    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + 32u;
+    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2u * MO_LIMIT_LOOKUPS + 32u;
     if (wanted > budget.rlim_max)
         wanted = budget.rlim_max;
     if (budget.rlim_cur < wanted) {
@@ -46,7 +46,8 @@ mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, ui
         [MO_CAP_READ_FILES] = {MO_CAP_READ_FILES, fake_, mo_host_files},                           \
         [MO_CAP_CLOCK] = {MO_CAP_CLOCK, fake_, mo_host_misc},                                      \
         [MO_CAP_RANDOM] = {MO_CAP_RANDOM, fake_, mo_host_misc},                                    \
-        [MO_CAP_NETWORK] = {MO_CAP_NETWORK, fake_, NULL},                                          \
+        [MO_CAP_NETWORK] = {MO_CAP_NETWORK, fake_, mo_host_network},                               \
+        [MO_CAP_CONNECTION] = {MO_CAP_CONNECTION, fake_, mo_host_network},                         \
     }
 const struct mo_host_operations mo_host_operations[2][MO_CAP_CONNECTION + 1] = {OPERATIONS(false),
                                                                                 OPERATIONS(true)};

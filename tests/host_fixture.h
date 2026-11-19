@@ -16,9 +16,10 @@ struct host_fixture {
     struct mo_heap *heap;
     struct mo_host host;
     uint32_t unit, boolean, bytes, time;
-    uint32_t capabilities[MO_CAP_RANDOM + 1];
+    uint32_t capabilities[MO_CAP_CONNECTION + 1];
     uint32_t option, file_error, result_text, result_bytes, result_unit, result_names,
         result_entries;
+    uint32_t integer, network_error, result_connection, result_sent, result_received;
     uint32_t entry, entries;
 };
 
@@ -34,10 +35,13 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
     uint32_t names = heap_intern(
         &f->source,
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &text, .parameter_count = 1});
-    for (unsigned i = 0; i <= MO_CAP_RANDOM; i++)
-        f->capabilities[i] =
-            heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
-                                                     .capability = (enum mo_capability)i});
+    f->integer = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_INT});
+    for (unsigned i = 0; i <= MO_CAP_CONNECTION; i++) {
+        if (i != MO_CAP_SIMULATION)
+            f->capabilities[i] =
+                heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
+                                                         .capability = (enum mo_capability)i});
+    }
     MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "Option(Text)", &f->option) ==
               MO_TYPES_OK);
     struct mo_type_field one = {NULL, text};
@@ -52,6 +56,18 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
                                     {.name = "NotText", .fields = fields, .field_count = 1},
                                     {.name = "Failed", .fields = fields, .field_count = 2}};
     MO_ASSERT(mo_types_define_choice(&f->source, f->file_error, errors, 4) == MO_TYPES_OK);
+    MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "NetworkError", &f->network_error) ==
+              MO_TYPES_OK);
+    struct mo_type_field refused[] = {{"host", text}, {"port", f->integer}};
+    struct mo_type_field broken = {"reason", text};
+    struct mo_type_case network_errors[] = {
+        {.name = "UnknownHost", .fields = refused, .field_count = 1},
+        {.name = "Refused", .fields = refused, .field_count = 2},
+        {.name = "TimedOut"},
+        {.name = "Closed"},
+        {.name = "Broken", .fields = &broken, .field_count = 1}};
+    MO_ASSERT(mo_types_define_choice(&f->source, f->network_error, network_errors, 5) ==
+              MO_TYPES_OK);
     uint32_t kind;
     MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "EntryKind", &kind) == MO_TYPES_OK);
     struct mo_type_case kinds[] = {
@@ -63,13 +79,17 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
     f->entries = heap_intern(
         &f->source,
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &f->entry, .parameter_count = 1});
-    uint32_t payloads[] = {text, f->bytes, f->unit, names, f->entries};
-    uint32_t *results[] = {&f->result_text, &f->result_bytes, &f->result_unit, &f->result_names,
-                           &f->result_entries};
-    for (unsigned i = 0; i < 5; i++) {
+    uint32_t payloads[] = {text,    f->bytes,   f->unit,
+                           names,   f->entries, f->capabilities[MO_CAP_CONNECTION],
+                           f->unit, f->bytes};
+    uint32_t *results[] = {&f->result_text,  &f->result_bytes,   &f->result_unit,
+                           &f->result_names, &f->result_entries, &f->result_connection,
+                           &f->result_sent,  &f->result_received};
+    for (unsigned i = 0; i < 8; i++) {
         MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "Result", results[i]) ==
                   MO_TYPES_OK);
-        struct mo_type_field ok = {NULL, payloads[i]}, error = {NULL, f->file_error};
+        struct mo_type_field ok = {NULL, payloads[i]},
+                             error = {NULL, i < 5 ? f->file_error : f->network_error};
         struct mo_type_case cases[] = {
             {.name = "Ok", .fields = &ok, .field_count = 1, .unnamed = true},
             {.name = "Error", .fields = &error, .field_count = 1, .unnamed = true}};
@@ -120,7 +140,7 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
 
 static inline void host_fixture_free(struct host_fixture *f) {
     mo_heap_free(f->heap);
-    MO_ASSERT(f->host.open_folders == 0);
+    MO_ASSERT(f->host.open_folders == 0 && f->host.open_connections == 0);
     mo_heap_image_free(f->image);
     free(f->storage);
     mo_arena_free(&f->arena);
@@ -185,6 +205,12 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
     case MO_HOST_FILES_REMOVE:
     case MO_HOST_FILES_MAKE_FOLDER:
         return f->result_unit;
+    case MO_HOST_NETWORK_CONNECT:
+        return f->result_connection;
+    case MO_HOST_CONNECTION_SEND:
+        return f->result_sent;
+    case MO_HOST_CONNECTION_RECEIVE:
+        return f->result_received;
     default:
         MO_UNREACHABLE();
     }

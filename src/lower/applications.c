@@ -379,7 +379,10 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
                   {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}},
                   {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
-                  {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}}};
+                  {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}},
+                  {"Network.connect", {MO_CORE_IO_OP_CONNECT, false}},
+                  {"Connection.send", {MO_CORE_IO_OP_SEND, false}},
+                  {"Connection.receive", {MO_CORE_IO_OP_RECEIVE, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)

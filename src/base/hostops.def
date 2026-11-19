@@ -82,6 +82,10 @@ HOSTOP(CLOCK_FIXED,            "Clock",     "fixed",          "fn(Time) : Clock"
 HOSTOP(RANDOM_INT,             "Random",    "int",            "fn(Random, Int, Int) : Int",                          "bbb", "high not greater than low",          false)
 HOSTOP(RANDOM_SEEDED,          "Random",    "seeded",         "fn(Int) : Random",                                    "b",   "",                                   true)
 
+HOSTOP(NETWORK_CONNECT,        "Network",   "connect",        "fn(Network, Text, Int, Duration) : Result(Connection, NetworkError)", "bbbb", "port outside 1 to 65535; too many connections open at once", false)
+HOSTOP(CONNECTION_SEND,        "Connection", "send",          "fn(Connection, Bytes) : Result(Unit, NetworkError)",  "bb",  "",                                   false)
+HOSTOP(CONNECTION_RECEIVE,     "Connection", "receive",       "fn(Connection, Int) : Result(Bytes, NetworkError)",   "bb",  "most below 1 or above the receive limit", false)
+
 #undef HOSTOP
 
 /* Runtime-owned store capability. No Mo type, signature or bytecode operation:

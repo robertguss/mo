@@ -398,7 +398,7 @@ static MO_MUST_USE struct type *literal(struct checker *c, mo_core_lit l) {
 /* Primitive signatures mirror Syntax.lean. Literal counts are compared to supplied arguments
  * before allocation: a hostile arbitrary-precision Nat cannot request a giant signature. */
 struct signature {
-    struct type *ret, *args[3];
+    struct type *ret, *args[4];
     struct type **selected;
     size_t count;
     bool spec, repeated;
@@ -923,6 +923,17 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_IO_OP_ENV_OF:
             s = sig(C(ENV), 1, binary(c, MO_CORE_TY_MAP, S(TEXT), S(TEXT)), NULL, NULL);
             break;
+        case MO_CORE_IO_OP_CONNECT:
+            s = sig(binary(c, MO_CORE_TY_RESULT, C(CONNECTION), S(NETWORK_ERROR)), 4, C(NETWORK),
+                    S(TEXT), S(INT));
+            s.args[3] = S(DURATION);
+            return s;
+        case MO_CORE_IO_OP_SEND:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), S(NETWORK_ERROR)), 2, C(CONNECTION),
+                       S(BYTES), NULL);
+        case MO_CORE_IO_OP_RECEIVE:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(BYTES), S(NETWORK_ERROR)), 2, C(CONNECTION),
+                       S(INT), NULL);
         }
         s.spec = true;
         return s;

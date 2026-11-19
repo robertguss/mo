@@ -773,6 +773,7 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
           | none => outside "Random exhausted its period" w
       else outside "Random.int needs low below high" w
     | none => wrongArgs "Random.int"
+  | .connect, _ | .send, _ | .receive, _ => outside "Network is not modeled by mocore" w
   | _, _ => wrongArgs "capability primitive"
 
 /-- A derived handle retains the selected fake's identity. Ordinary returned
