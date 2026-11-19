@@ -2436,7 +2436,7 @@ records may be added, and readers ignore what they don't know.
   without `outcome`, `by` or `check`.
 - **`function`**, one per function under `mo test --json --gates --list` with no
   `--only`, `--in`, `--calls`, `--seconds`, `--max-stack`, `--max-depth` or
-  `--max-heap`: `name` and `mutants`.
+  `--max-heap`: `name` and `mutants`, the count of mutants for that function.
 - **`change`**, one per check in the `--against` summary, after `result` and
   before `totals`: `change`, `"no longer true"`, `"newly true"`, `"about
   something new"` or `"could not be compared"`; `name`; and `reason` when

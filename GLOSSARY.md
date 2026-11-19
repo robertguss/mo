@@ -35,5 +35,6 @@ something new, and those that could not be compared.
 **Shorter run**:
 A gated run against the previous version of a program that tries only the mutants of functions
 whose code changed, that are new, or whose checks changed, and carries the rest over untried,
-except a function in both versions that no previous check or start ran, whose mutants are tried
-and survive only if the new run also does not enter the function.
+except a function in both versions that no previous check or start ran, whose mutants are tried.
+If the new run also never enters such a function, a mutant that still checks is reported survived
+without being run, and one the checker refuses is dropped.
