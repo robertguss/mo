@@ -147,3 +147,182 @@ unchanged, and the reference states it (section 13.4, rule 3). Reasons:
   survive. That is not a reason to drop the row, which killed 20 others.
 - A limit of this judgment: it reads the code and does not write the checks. PR4 fits these
   programs and will show whether each survivor can in fact be killed.
+
+The table was frozen at commit `5cabd4ff` (`src/tools/mutants.c` blob `bcb7a089`). Every run in
+the measurement below used a build of that commit's code.
+
+## The measurement (U10)
+
+### What was measured
+
+The task queue as committed at `1389bdfb`, before its intent was strengthened: `main.mo`,
+`job-queue.mo` and `queue-tests.mo`. `learnability/trust-gates/manifest.json` holds their hashes,
+written before the first run; `main.mo` and `job-queue.mo` match the Phase 6 manifest, and the
+copies measured and handed to the fitting session were checked against it. Every run goes
+through `queue-tests.mo` (KTD16), against the working half
+(`learnability/phase6/strength/working`) and the held-back folder the Phase 6 manifest names.
+Every `--strength` run used `--seconds 360`. The slowest check is `QueueTests.test.22`: 71.4
+seconds on the frozen program and 64.1 on the fitted one, so 360 is 5.0 and 5.6 times it. No
+run was cut short (`partial` is false in all four records).
+
+### The fitting session
+
+- **Where:** a new folder outside the repository, `/home/exedev/tg-fit-20261119`, holding
+  `toolchain/mo` (the debug gcc build of `5cabd4ff`, built from a source export inside that
+  folder so its library path points there, after which everything but the binary and `lib/`
+  was deleted), `toolchain/lib/` (the 12 library modules), `guide.txt` (what `mo guide`
+  prints), `frozen/` (the three files, read-only) and `work/` (a copy to change). No wrong
+  version, result, record or other repository file was in it.
+- **Who:** a fresh `claude -p` session (Claude Code 2.1.327, model `claude-opus-5-5`) started
+  there with `--setting-sources project`, `--strict-mcp-config` (no MCP servers) and a fresh
+  auto-memory folder. Its tools were Bash, Read, Edit, Write, NotebookEdit, ToolSearch,
+  TaskStop and ReportFindings; subagents, web search and fetch, skills, artifacts, messaging,
+  scheduling and monitoring were disallowed. Its permission mode was bypass, so it could run
+  any command.
+- **Isolation is by instruction, not enforced.** Its brief (`transcript/brief.md`) told it to
+  read, list and run only what is inside the folder. Nothing stopped its shell from reading
+  any path my user can read, the repository and the held-back folder included. I audited the
+  transcript afterwards: its 18 tool calls (17 Bash, 1 Read) name no path outside the folder
+  and no `..`. The brief also told it to keep every declaration's name and signature and never
+  to delete or weaken a check, which keeps the wrong versions countable; the transcript shows
+  it did.
+- **What it did,** in 27 minutes and 19 turns: the first full run failed stated intent for six
+  tools, so it wrote 12 examples on them in `main.mo`. The next full run left 6 survivors; it
+  wrote 4 examples on `JobQueue.submit` and `JobQueue.lease` and rewrote the test helper
+  `QueueTests.job`, whose `.jobs.first` made a page limit of 1 and 2 indistinguishable. The
+  last two full runs passed: 65 mutants tried, 65 killed (1 by a promise, 35 by examples, 19 by
+  tests, 10 at start), 1 dropped. My own two gated runs of the fitted copy also exit 0, with
+  identical mutant records. Its log (`transcript/log.md`) counts 1 survivor it judged no check
+  could kill in its original form (the helper's limit) and 0 that only one particular call
+  sequence killed.
+
+### The results
+
+| Program | Half | By promise or example | By a test only | By any check | Survived | Uncountable |
+| --- | --- | ---: | ---: | ---: | --- | ---: |
+| frozen | working | 3 | 6 | 9 of 12 | w02, w03, w09 | 0 |
+| fitted | working | 4 | 5 | 9 of 12 | w02, w03, w09 | 0 |
+| frozen | held-back | 2 | 8 | 10 of 12 | w16, w18 | 0 |
+| fitted | held-back | 5 | 5 | 10 of 12 | w16, w18 | 0 |
+
+Fitting the task queue to the gates killed no wrong version that the frozen program's own
+checks did not already kill: 19 of 24 before and 19 of 24 after, with the same five survivors.
+What changed is which check kills. Four versions that only a test killed (w01, w15, w19, w22)
+are now killed by an example the fitting wrote, and two that a promise killed (w06, w13) by an
+example as well, so the promise-and-example rate rose from 3 to 4 of 12 on the working half and
+from 2 to 5 of 12 on the held-back half.
+
+The three working-half survivors are mistakes that take several steps to show: w02 counts the
+5,000-job limit over Ready and Leased jobs only, w03 gives back only the last of several leases
+that expire in one tick, and w09 turns `fail` on a lease that is not current into a silent
+success. `Main.fail`, which w09 changes, has no mutant at all, and the 4 mutants of
+`Main.submit` and the 3 of `JobQueue.expire`, which w02 and w03 change, were all killed in the
+session's first mutant run, so the gate never asked for a check of those paths. Phase 6's hand-strengthened intent killed w02,
+w03 and w09; the gate-fitted program does not.
+
+| | Frozen | Fitted |
+| --- | ---: | ---: |
+| Mutants (boundary, negate, logic, not, arithmetic, bool, int) | 67 (11, 18, 7, 0, 6, 1, 24) | 66 (11, 18, 6, 0, 6, 1, 24) |
+| Tested functions | 35 | 35 |
+| Functions with no mutant | 17 | 17 |
+| Functions that lost all their mutants | | none |
+
+The one mutant fewer is the `or` the helper rewrite removed from `QueueTests.job`.
+
+### The numbers of R24
+
+- **Full run, task queue:** 1,015 seconds for the current `services/task-queue` (86 mutants,
+  10 service promises), from the dry run; 222 seconds for the fitted program (66 mutants, 4
+  service promises) on an idle machine, and 228 beside two `--strength` runs. Plain `mo test`
+  takes 75.5 seconds on the frozen program and 79.3 on the current one.
+- **Full run, library and examples:** 7.0 and 17.3 seconds, from the dry run.
+- **Shorter run:** 160.5 seconds for the fitted program `--against` an unchanged copy of
+  itself (18 functions carried, no mutant tried; the time is both versions' checks). Against
+  the frozen copy it carried nothing and took 306 seconds, because the fitting changed
+  `QueueTests.job`, a helper every simulation test reads, so every function's checks changed
+  (KTD11).
+- **Mutants nothing could kill:** 0 in the fitted program; the fitting session judged 1 unkillable
+  in its original form and removed the reason with a rewrite.
+- **Survivors only a rare call sequence could kill:** 0 in the fitting log. In the dry run I
+  judged one of 70 to be of that kind (`Main.current?`, `until > now`).
+
+### The predictions against the measurement
+
+- P1, partly wrong: the frozen rate by promise or example was 3 of 12 on the working half, the
+  same three versions as Phase 6's `1-before.json`, as predicted. By any check it was 9 of 12,
+  not about 5 (4 to 7), and 10 of 12 on the held-back half, not about 5 (3 to 7). I
+  underestimated the 23 tests.
+- P2, half right: the session made the gates pass, but in 27 minutes, not 2 to 5 hours.
+- P3, right in number and wrong in kind: 9 of 12 and 10 of 12 by any check are inside the
+  ranges, but none of it is new; the predicted new kills from examples on the tools did not
+  happen.
+- P4, right: no version became uncountable.
+- P5, right: one mutant fewer, the same functions with no mutant, none lost.
+- P6, half right: 1 judged unkillable (0 to 3 predicted); 0 killed only by one call sequence
+  (1 to 5 predicted).
+
+### Limits
+
+- The held-back half was already used in Phase 6, against the strengthened program
+  (`learnability/phase6/strength/results/5-held-back.json`).
+- No wrong version replaces `JobQueue.submit`, `lease`, `acknowledge` or `fail` (checked over
+  both halves), so this says nothing about how the gate covers those operations.
+- The count measures both gates together: six of the seven tools had no stated intent, and
+  the examples written for them are part of what was fitted.
+- The table's author had read what the wrong versions changed, in Phase 6 and before freezing
+  the table.
+- `--strength` runs each service check for 1,000 call sequences; the gate runs 200.
+- The fitting session's isolation is by instruction (above). It was also told it was in an
+  experiment whose integrity depended on the rule, and to keep names and signatures; a session
+  working on its own might restructure code and make wrong versions uncountable.
+- One fitting session, one program, 24 wrong versions: the numbers show what happened once,
+  not a rate to expect.
+- The predictions were written after I had read the Phase 6 results, the wrong versions'
+  mistakes in its manifest and the programs' sources.
+- Wall times are from one shared 8-core machine, several runs at a time, the debug build.
+- Someone other than the fitting session counted again: a fresh agent given only the six
+  result files (`transcript/recount.md`). Its counts agree with every number above.
+
+### The answer
+
+Decided by the agent under Robert's delegation of 2026-11-19, in place of Robert's answer:
+continue with PR4 and PR5 as planned, keep the gates behind `--gates` until R30 is measured,
+and say plainly what this measurement shows. Reasons:
+
+- On this program, passing the gates added no kill of a mistake an agent thought plausible.
+  The frozen task queue's tests already killed 19 of 24, and the five left are multi-step
+  mistakes that no one-token mutant stands for. A passing gate is therefore a floor on how
+  thoroughly a program's checks exercise its code, not evidence that they catch the mistakes
+  agents make, and the guide must not claim more.
+- The gate still did work an agent would otherwise skip: it found six tools with no stated
+  intent and six places where no check noticed a change, and it moved four kills from tests to
+  examples, which state intent where a reader looks for it. That is consistent with the Goal
+  Capsule's first half, a public surface that states what it is for.
+- R25: no number decides whether the gate is kept. The measured costs (under 4 minutes for the
+  fitted task queue, 24 seconds for the library and examples, but 17 minutes for the current
+  task queue with 10 service promises) are what R30 and U12 must weigh.
+
+## Decided under delegation
+
+Each of these was decided by the agent under Robert's delegation of 2026-11-19.
+
+- **The table of kinds** keeps all seven rows, is stated in the reference (13.4, rule 3) and
+  is frozen at `5cabd4ff` (above).
+- **The answer** in U10 step 7 (above).
+- **An instrument the plan did not ask for.** U8 needs mutants by row and by function, which
+  the gate did not report. `mo test --gates --list` now lists each mutant and each function's
+  count, and a gated `--json` run writes a `mutant` record for each mutant with its outcome,
+  kind of check and check. The plan's U3 refused `--gates` with `--list`; that refusal is
+  lifted. Text output of a gated run is unchanged.
+- **What `killed_by_test` covers.** KTD17 names a kill by a test; R23 says any check may kill.
+  A recovery check's kill also counts as `killed_by_test`, and so does a test or recovery check
+  that stops on a wrong version, as the gate counts a stopped check (found by the code review,
+  fixed in `ea0b1c19`). A check that did not finish still makes a version `unfinished`.
+- **A defect on `main` fixed here:** the intent walk's crash on recursive types (`04a62857`),
+  because it blocked U8's listings.
+- **`--seconds 360`** for every `--strength` run, at least five times the slowest check.
+- **The fitting session's setup:** `claude -p` on `claude-opus-5-5`, the tools and folder
+  described above, and a brief that kept names and signatures and forbade weakening a check.
+  It rewrote a test helper rather than adding a check or simplifying code; I accepted that as
+  within the brief's intent, since no check was weakened.
+- **The predictions** were mine, not Robert's.
