@@ -99,8 +99,11 @@ def check(binary):
     run(binary, ["check", "--emit=bytecode", library], 0)
     records(run(binary, ["check", "--json", library], 0), "check")
     assert b"E0079" in run(binary, ["run", library], 1).stderr
-    tested_lib = records(run(binary, ["test", "--json", library], 0), "test")
-    assert [(r["name"], r["outcome"]) for r in tested_lib[1:-1]] == [("Main.test.1", "passed")]
+    tested_lib = records(run(binary, ["test", "--json", library], 1), "test")
+    assert [(r["name"], r["outcome"]) for r in tested_lib if r["record"] == "result"] == [
+        ("Main.test.1", "passed")]
+    assert [r["primary"]["label"] for r in tested_lib if r["record"] == "diagnostic"] == [
+        "Main.entry: give it a promise or an example", "Main.run: give it a promise or an example"]
     test_fixture = "tests/cli/test/main.mo"
     listed_fixture = run(binary, ["test", "--json", "--list", test_fixture], 0)
     assert listed_fixture.stdout == (root / "tests/cli/test/list.golden").read_bytes()
