@@ -1,0 +1,12 @@
+Some("mo")
+Some(42)
+None
+Some(false)
+None
+None
+Some(true)
+None
+Some(1.5) None
+Some(42) None
+Some("\"by key, then by index\"")
+None
