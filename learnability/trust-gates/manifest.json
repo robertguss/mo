@@ -1,0 +1,15 @@
+{
+  "commit": "1389bdfb",
+  "recorded": "2026-11-19",
+  "files": {
+    "services/task-queue/main.mo": "c9091d348fb63fdcf67441262560d6c8d617bd57fcc0c270193d33f11a99059e",
+    "services/task-queue/job-queue.mo": "a8e2d68838edefdcc794425bb3f06367e0d49e478b1ad2746a6861b0cdaf5840",
+    "services/task-queue/queue-tests.mo": "5bfa169dfd22fd581aadfa87fd55d4275a1cc21876c927d1c87a691bf460a758"
+  },
+  "phase6_manifest_matches": [
+    "services/task-queue/job-queue.mo",
+    "services/task-queue/main.mo"
+  ],
+  "working_half": "learnability/phase6/strength/working",
+  "held_back_folder": "/home/exedev/code/mo-strength-held-back/set-1"
+}
