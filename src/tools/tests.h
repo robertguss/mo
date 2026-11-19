@@ -72,6 +72,7 @@ void mo_run_tests(const struct mo_cli *cli, struct mo_arena *arena,
 enum mo_check_outcome { MO_CHECK_PASSED, MO_CHECK_FAILED, MO_CHECK_STOPPED, MO_CHECK_OUT_OF_STEPS };
 struct mo_gated_check {
     const char *name;
+    const struct mo_observation *observation;
     const char *kind;
     uint64_t limit;
     enum mo_check_outcome outcome;
@@ -82,7 +83,7 @@ struct mo_gated_run {
     struct mo_gated_check *checks;
     uint32_t count;
     bool record, stop, shrink;
-    uint64_t start_limit;
+    uint64_t start_limit, limit;
     bool started;
     uint64_t start_steps;
     bool *start_entered;

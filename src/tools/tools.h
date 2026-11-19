@@ -96,9 +96,10 @@ MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const st
                                       bool json, struct mo_buffer *out);
 #define MO_GATE_KILL_KINDS 5
 struct mo_gate_totals {
-    bool asked, ran;
+    bool asked, ran, shorter;
     const char *skipped;
-    uint32_t tried, survived, dropped;
+    uint32_t tried, survived, dropped, carried;
+    char previous[65];
     uint32_t killed[MO_GATE_KILL_KINDS];
 };
 struct mo_test_totals {

@@ -18,6 +18,7 @@ flags = {
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
     "--gates": ([], {"test"}),
+    "--against": (["old/main.mo"], {"test"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
@@ -97,6 +98,13 @@ def guide_claims(binary):
     unstated = run(binary, ["test", "--gates", "tests/errors/e1440/main.mo"], 1)
     assert b"error E1440: an exposed function states no intent" in unstated.stderr
     assert b"gates: did not run" in unstated.stdout and b"E1439" not in unstated.stderr
+    says("`gates: not the full run: N functions carried over untried from previous version DIGEST`",
+         "then one `changes against previous version DIGEST:` line")
+    base = "tests/cli/against/base/main.mo"
+    shorter = run(binary, ["test", base, "--against", base], 0).stdout
+    assert b"gates: not the full run: 5 functions carried over untried from previous version " \
+        in shorter, shorter
+    assert b"changes against previous version " in shorter, shorter
     says("`mo replay`, `mo query` and `mo history` exit 0 when the requested result holds, 1 when "
          "it does not or a check refused, and 2 for a mistake in the command")
     assert ("The function is not generic (E1410), holds no capability or function in its "

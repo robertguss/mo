@@ -3,6 +3,7 @@
 #include "tools/gates.h"
 
 #include "base/codes.h"
+#include "tools/changes.h"
 #include "tools/mutants.h"
 
 #include <stdlib.h>
@@ -19,11 +20,13 @@ struct gate {
     FILE *quiet;
     struct mo_diags *diags;
     struct mo_gate_totals *totals;
+    const bool *tried;
+    bool *carried;
 };
 
 static const struct mo_span nowhere = {UINT32_MAX, 0, 0};
 
-static uint64_t limit(uint64_t steps) {
+uint64_t mo_gate_limit(uint64_t steps) {
     uint64_t scaled = steps > UINT64_MAX / MO_LIMIT_GATE_STEP_MULTIPLE
                           ? UINT64_MAX
                           : steps * MO_LIMIT_GATE_STEP_MULTIPLE;
@@ -44,12 +47,12 @@ static uint32_t plan(const struct gate *g, uint32_t function) {
         const struct mo_gated_check *check = &g->sorted[i];
         if (every || check->entered[function])
             g->plan[count++] = (struct mo_gated_check){
-                .name = check->name, .kind = check->kind, .limit = limit(check->steps)};
+                .name = check->name, .kind = check->kind, .limit = mo_gate_limit(check->steps)};
     }
     return count;
 }
 
-static bool started_badly(const struct mo_diags *diags) {
+bool mo_gate_start_failed(const struct mo_diags *diags) {
     for (uint32_t i = 0; i < diags->count; i++)
         if (diags->items[i].code != MO_CODE_TOOL_ANCHOR &&
             diags->items[i].code != MO_CODE_TOOL_TEST_INITIALIZATION)
@@ -100,10 +103,10 @@ static enum verdict try_mutant(const struct gate *g, const struct mo_mutant *m, 
     struct mo_gated_run run = {.checks = g->plan,
                                .count = count,
                                .stop = true,
-                               .start_limit = limit(g->first->start_steps)};
+                               .start_limit = mo_gate_limit(g->first->start_steps)};
     struct mo_test_totals totals = {0};
     mo_run_gated(g->cli, &arena, checked, &sources, selection, g->quiet, &diags, &totals, &run);
-    if (!run.started && started_badly(&diags)) {
+    if (!run.started && mo_gate_start_failed(&diags)) {
         *kind = "start";
         verdict = KILLED;
     } else if (run.started && run.ran != 0 && run.checks[run.ran - 1].outcome != MO_CHECK_PASSED) {
@@ -222,9 +225,20 @@ static const char *intent(struct mo_arena *arena, const struct mo_program *progr
     return missing ? "a function or tool states no intent" : NULL;
 }
 
+static bool carried(const struct gate *g, uint32_t function) {
+    if (g->tried == NULL || g->tried[function] ||
+        (plan(g, function) == 0 && !g->first->start_entered[function]))
+        return false;
+    if (!g->carried[function])
+        g->totals->carried++;
+    return g->carried[function] = true;
+}
+
 static bool try_all(struct gate *g, const struct mo_mutants *mutants) {
     for (uint32_t i = 0; i < mutants->count; i++) {
         const struct mo_mutant *m = &mutants->items[i];
+        if (carried(g, m->function))
+            continue;
         const char *kind = NULL;
         enum verdict verdict = try_mutant(g, m, &kind);
         switch (verdict) {
@@ -248,56 +262,96 @@ static bool try_all(struct gate *g, const struct mo_mutants *mutants) {
     return true;
 }
 
+static void try_mutants(struct gate *g, struct mo_arena *arena, const struct mo_gated_run *first,
+                        const struct mo_mutants *mutants) {
+    size_t count = first->count == 0 ? 1 : first->count;
+    g->sorted =
+        mo_arena_allocate_array(arena, count, sizeof *g->sorted, _Alignof(struct mo_gated_check));
+    g->plan =
+        mo_arena_allocate_array(arena, count, sizeof *g->plan, _Alignof(struct mo_gated_check));
+    g->carried = mo_arena_allocate_array(
+        arena, g->program->function_count == 0 ? 1 : g->program->function_count, sizeof *g->carried,
+        _Alignof(bool));
+    g->quiet = fopen("/dev/null", "w");
+    if (g->sorted == NULL || g->plan == NULL || g->carried == NULL || g->quiet == NULL) {
+        mo_test_report_error(g->diags, "the mutants could not be tried", nowhere,
+                             g->quiet == NULL ? "could not open /dev/null for their results"
+                                              : "they exceed tool resources");
+        if (g->quiet != NULL)
+            (void)fclose(g->quiet);
+        return;
+    }
+    memset(g->carried, 0, g->program->function_count * sizeof *g->carried);
+    memcpy(g->sorted, first->checks, first->count * sizeof *g->sorted);
+    qsort(g->sorted, first->count, sizeof *g->sorted, cheaper);
+    bool finished = try_all(g, mutants);
+    (void)fclose(g->quiet);
+    if (finished) {
+        g->totals->ran = true;
+        g->totals->skipped = NULL;
+    }
+}
+
+static const bool *compare(const struct mo_cli *cli, struct mo_arena *arena,
+                           struct mo_previous *old, struct mo_version *now, FILE *output,
+                           struct mo_diags *diags) {
+    if (!mo_intent_code(arena, now->program, now->run->checks, now->run->count, &now->code)) {
+        mo_test_report_error(diags, "the program's code could not be read", nowhere,
+                             "it exceeds tool resources");
+        return NULL;
+    }
+    mo_changes(cli, arena, &old->version, old->digest, now, output, diags);
+    const bool *tried = mo_previous_select(arena, &old->version, now);
+    if (tried == NULL)
+        mo_test_report_error(diags, "the changed functions could not be found", nowhere,
+                             "they exceed tool resources");
+    return tried;
+}
+
 void mo_gates(const struct mo_cli *cli, struct mo_arena *arena, const struct mo_program *program,
-              const struct mo_sources *sources, const struct mo_test_selection *selection,
-              FILE *output, struct mo_diags *diags, struct mo_test_totals *totals) {
+              const struct mo_sources *sources, const char *library,
+              const struct mo_test_selection *selection, FILE *output, struct mo_diags *diags,
+              struct mo_test_totals *totals) {
     struct mo_gate_totals *gates = &totals->gates;
     *gates = (struct mo_gate_totals){.asked = true, .skipped = "a check did not pass"};
+    struct mo_previous old;
+    bool against = cli->against != NULL;
+    if (against && !mo_previous_open(&old, cli, arena, program, library, diags)) {
+        gates->skipped = "the previous version could not be compared";
+        goto done;
+    }
     struct mo_gated_run first = {.record = true, .shrink = true, .start_limit = UINT64_MAX};
     mo_run_gated(cli, arena, program, sources, selection, output, diags, totals, &first);
-    if (!first.started || first.ran != first.count || totals->failed != 0 || totals->stopped != 0 ||
-        mo_diags_any(diags))
-        return;
+    bool ran = first.started && first.ran == first.count && !mo_diags_any(diags);
+    struct mo_version now = {.program = program, .sources = sources, .run = &first};
+    const bool *tried = against && ran ? compare(cli, arena, &old, &now, output, diags) : NULL;
+    if (!ran || totals->failed != 0 || totals->stopped != 0 || mo_diags_any(diags))
+        goto done;
     gates->skipped = intent(arena, program, diags);
     if (gates->skipped != NULL)
-        return;
+        goto done;
     struct mo_mutants mutants;
     const char *problem = mo_list_mutants(arena, program, sources, &mutants);
     gates->skipped = "a mutant could not be tried";
     if (problem != NULL) {
         mo_test_report_error(diags, "the mutants could not be listed", nowhere, problem);
-        return;
+        goto done;
     }
-    size_t count = first.count == 0 ? 1 : first.count;
-    struct gate g = {
-        .cli = cli,
-        .program = program,
-        .sources = sources,
-        .first = &first,
-        .sorted = mo_arena_allocate_array(arena, count, sizeof *g.sorted,
-                                          _Alignof(struct mo_gated_check)),
-        .plan =
-            mo_arena_allocate_array(arena, count, sizeof *g.plan, _Alignof(struct mo_gated_check)),
-        .quiet = fopen("/dev/null", "w"),
-        .diags = diags,
-        .totals = gates,
-    };
-    if (g.sorted == NULL || g.plan == NULL || g.quiet == NULL) {
-        mo_test_report_error(diags, "the mutants could not be tried", nowhere,
-                             g.quiet == NULL ? "could not open /dev/null for their results"
-                                             : "they exceed tool resources");
-        if (g.quiet != NULL)
-            (void)fclose(g.quiet);
-        return;
+    struct gate g = {.cli = cli,
+                     .program = program,
+                     .sources = sources,
+                     .first = &first,
+                     .diags = diags,
+                     .totals = gates,
+                     .tried = tried};
+    try_mutants(&g, arena, &first, &mutants);
+    if (gates->ran && against) {
+        gates->shorter = true;
+        memcpy(gates->previous, old.digest, sizeof gates->previous);
     }
-    memcpy(g.sorted, first.checks, first.count * sizeof *g.sorted);
-    qsort(g.sorted, first.count, sizeof *g.sorted, cheaper);
-    bool finished = try_all(&g, &mutants);
-    (void)fclose(g.quiet);
-    if (finished) {
-        gates->ran = true;
-        gates->skipped = NULL;
-    }
+done:
+    if (against)
+        mo_previous_close(&old);
 }
 
 bool mo_render_gates(struct mo_buffer *out, const struct mo_gate_totals *gates, bool json) {
@@ -311,7 +365,13 @@ bool mo_render_gates(struct mo_buffer *out, const struct mo_gate_totals *gates, 
                           mo_buffer_append_text(out, "\n");
     bool ok;
     if (json) {
-        ok = mo_buffer_append_text(out, ",\"gates\":\"ran\",\"mutants\":{\"tried\":") &&
+        ok = mo_buffer_append_text(out, gates->shorter ? ",\"gates\":\"ran shorter\",\"carried\":"
+                                                       : ",\"gates\":\"ran\"") &&
+             (!gates->shorter ||
+              (mo_buffer_append_uint(out, gates->carried) &&
+               mo_buffer_append_text(out, ",\"previous\":\"") &&
+               mo_buffer_append_text(out, gates->previous) && mo_buffer_append_text(out, "\""))) &&
+             mo_buffer_append_text(out, ",\"mutants\":{\"tried\":") &&
              mo_buffer_append_uint(out, gates->tried) &&
              mo_buffer_append_text(out, ",\"killed\":{");
         for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
@@ -323,7 +383,13 @@ bool mo_render_gates(struct mo_buffer *out, const struct mo_gate_totals *gates, 
                mo_buffer_append_text(out, ",\"dropped\":") &&
                mo_buffer_append_uint(out, gates->dropped) && mo_buffer_append_text(out, "}");
     }
-    ok = mo_buffer_append_text(out, "gates: ") && mo_buffer_append_uint(out, gates->tried) &&
+    ok = (!gates->shorter ||
+          (mo_buffer_append_text(out, "gates: not the full run: ") &&
+           mo_buffer_append_uint(out, gates->carried) &&
+           mo_buffer_append_text(out, gates->carried == 1 ? " function" : " functions") &&
+           mo_buffer_append_text(out, " carried over untried from previous version ") &&
+           mo_buffer_append_text(out, gates->previous) && mo_buffer_append_text(out, "\n"))) &&
+         mo_buffer_append_text(out, "gates: ") && mo_buffer_append_uint(out, gates->tried) &&
          mo_buffer_append_text(out, " mutants tried, ") && mo_buffer_append_uint(out, killed) &&
          mo_buffer_append_text(out, " killed (");
     for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
