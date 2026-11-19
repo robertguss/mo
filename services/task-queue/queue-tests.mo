@@ -23,7 +23,8 @@ fn page(sim: Simulation, filter: JobFilter, after: Int, limit: Int) : Page
 end
 
 fn job(sim: Simulation, id: Int) : Job
-  page(sim, AllJobs, id - 1, 1).jobs.first or stop "no such job"
+  return found if page(sim, AllJobs, id - 1, 1).jobs is [found]
+  stop "no such job"
 end
 
 fn stats(sim: Simulation) : Stats

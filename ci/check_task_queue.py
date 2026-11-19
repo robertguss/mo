@@ -16,9 +16,9 @@ import time
 
 FOLDER = 'services/task-queue'
 TOKEN = 'TaskQueueCanary42'
-JOB_QUEUE_RESULTS = 26
+JOB_QUEUE_RESULTS = 30
 QUEUE_TEST_RESULTS = 23
-MAIN_RESULTS = 9
+MAIN_RESULTS = 12
 SERVICE_CHECKS = [*(f'Main.service.promise.{n}' for n in range(1, 11)), 'Main.service.recovery']
 DESCRIPTION_LIMIT = 4096
 INT = {'type': 'string', 'pattern': '^-?[0-9]+$'}
