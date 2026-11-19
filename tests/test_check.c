@@ -403,7 +403,7 @@ static void samples(void) {
         MO_ASSERT(n > 0 && (size_t)n < sizeof(path));
         struct fixture f;
         init(&f, 64 << 20);
-        struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, path, NULL, &f.diags);
+        struct mo_module_set *set = mo_load_program(&f.arena, &f.sources, path, "lib", &f.diags);
         CHECK(set != NULL);
         if (set != NULL) {
             struct mo_module_interfaces *names = mo_resolve_modules(&f.arena, set, &f.diags);

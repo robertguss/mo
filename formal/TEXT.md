@@ -905,7 +905,8 @@ and shared file writes through an ordinary function. `Library.core` tests
 Lemire results, maximum-span Int intervals, entries and the D236/D237 file
 matrix; its seven Unicode16
 functions are present and checked but not called by that test. `JsonQuery.core`
-is the renamed `examples/json-query.mo` translation, module JsonQuery.
+is the translation of `examples/json-query.mo` as it stood when it held its own
+JSON parser, module JsonQuery; the example now uses `lib/json.mo`.
 `Metadata.core` exercises the full compiler envelope on a synthetic program
 returning 12; it does not assert source provenance for any Mo example.
 Wc's run returns the **Core value** `1` but the oracle

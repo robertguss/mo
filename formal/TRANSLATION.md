@@ -1068,7 +1068,8 @@ fn parse_line(line: Text, catalog: Map(Text, Item)) : Result(OrderLine, OrderErr
   end
 ```
 
-A `try` inside an expression keeps the order of evaluation; from `json-query.mo`:
+A `try` inside an expression keeps the order of evaluation; from the `JsonQuery`
+translation:
 `value = value * 16 + try hex_digit_value(digit)` inside a loop is
 
 ```
@@ -2038,8 +2039,9 @@ silently added by `runProgram`.
    world. Twelve real-entry exports remain controls; the Fakes spec export
    exercises constructor allocation, sharing, isolation and snapshots, and
    Library exercises the random vectors and folder entries. The sample
-   translation and fixture are `JsonQuery`, matching `examples/json-query.mo`
-   and `module JsonQuery`; its locally declared recursive type remains `Json`.
+   translation and fixture are `JsonQuery`, named after `examples/json-query.mo`
+   and `module JsonQuery`. They translate the example as it stood when it held
+   its own JSON parser; its locally declared recursive type remains `Json`.
 
 ## Library surface: decisions and trusted boundaries
 

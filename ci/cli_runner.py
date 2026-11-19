@@ -463,45 +463,14 @@ def runner(binary):
                                   cwd=root, input=b'{"items": [{"n": -1.50}, null]}',
                                   capture_output=True, timeout=30)
         assert json_run.returncode == 0 and json_run.stderr == b""
-        assert json_run.stdout == b"-1.5\n"
+        assert json_run.stdout == b"-1.50\n"
         json_tests = records(
-            run(binary, ["test", "--json",
-                         "--only", "JsonQuery.parse.example.1",
-                         "--only", "JsonQuery.parse.example.2",
-                         "--only", "JsonQuery.parse.example.3",
-                         "--only", "JsonQuery.parse.example.4",
-                         "--only", "JsonQuery.parse.example.5",
-                         "--only", "JsonQuery.hex_value.example.1",
-                         "--only", "JsonQuery.hex_value.example.2",
-                         "--only", "JsonQuery.hex_value.example.3",
-                         "--only", "JsonQuery.pretty.example.1",
-                         "--only", "JsonQuery.pretty.example.2",
-                         "--only", "JsonQuery.quoted.example.1",
-                         "--only", "JsonQuery.quoted.example.2",
-                         "--only", "JsonQuery.at_path.example.1",
-                         "--only", "JsonQuery.at_path.example.2",
-                         "--only", "JsonQuery.at_path.example.3",
-                         "--only", "JsonQuery.test.1",
+            run(binary, ["test", "--json", "--only", "JsonQuery.test.1",
                          "examples/json-query.mo"], 0), "test")
         assert [(r["name"], r["outcome"]) for r in json_tests[1:-1]] == [
-            ("JsonQuery.parse.example.1", "passed"),
-            ("JsonQuery.parse.example.2", "passed"),
-            ("JsonQuery.parse.example.3", "passed"),
-            ("JsonQuery.parse.example.4", "passed"),
-            ("JsonQuery.parse.example.5", "passed"),
-            ("JsonQuery.hex_value.example.1", "passed"),
-            ("JsonQuery.hex_value.example.2", "passed"),
-            ("JsonQuery.hex_value.example.3", "passed"),
-            ("JsonQuery.pretty.example.1", "passed"),
-            ("JsonQuery.pretty.example.2", "passed"),
-            ("JsonQuery.quoted.example.1", "passed"),
-            ("JsonQuery.quoted.example.2", "passed"),
-            ("JsonQuery.at_path.example.1", "passed"),
-            ("JsonQuery.at_path.example.2", "passed"),
-            ("JsonQuery.at_path.example.3", "passed"),
             ("JsonQuery.test.1", "passed")]
         assert json_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                  "passed": 16, "failed": 0, "stopped": 0, "gates": "did not run",
+                                  "passed": 1, "failed": 0, "stopped": 0, "gates": "did not run",
                                   "status": 0}
         assert run(binary, ["check", "examples/job-queue.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/job-queue.mo"], 0), "check")

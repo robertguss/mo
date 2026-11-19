@@ -1,5 +1,6 @@
 /-
-  examples/json-query.mo in Core.
+  examples/json-query.mo in Core, as the example stood when it held its own JSON
+  parser. The example now uses lib/json.mo.
 
   Exercises: a recursive choice type (`Json` holds lists and maps of itself),
   recursion, patterns on characters (lowered to chains of `==`), `try` on
