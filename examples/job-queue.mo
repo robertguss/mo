@@ -52,6 +52,11 @@ fn submit(queue: Queue, payload: Text) : (Queue, Int)
     forbids queue: empty, payload: "x", result: (empty, 1)
   end
 
+  examples
+    submit(submit(empty, "a").0, "b").1 == 2
+    submit(holding([ready(1)]), "b").1 == 2
+  end
+
   id = queue.next_id
   var after = queue
   after.jobs = after.jobs.set(id, Job(id: id, payload: payload, attempts: 0, state: Ready))
@@ -74,6 +79,9 @@ fn lease(queue: Queue, now: Time, length: Duration) : Result((Queue, Option(Job)
   examples
     lease(empty, t0, 30.seconds) == Ok((empty, None))
     lease(empty, t0, 0.seconds) == Error(BadLease(length: 0.seconds))
+    lease(empty, t0, 1.second) == Ok((empty, None))
+    lease(holding([ready(1)]), t0, 30.seconds) ==
+      Ok((holding([leased(1, t0 + 30.seconds)]), Some(leased(1, t0 + 30.seconds))))
   end
 
   return Error(BadLease(length: length)) if length <= 0.seconds
@@ -191,6 +199,7 @@ fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, QueueErr
     fail(holding([tried(1, 3)]), t0, 1, 3) == Ok(holding([dead(1)]))
     fail(holding([ready(1)]), t0, 1, 0) == Error(NotLeased(id: 1))
     fail(empty, t0, 9, 1) == Error(NoSuchJob(id: 9))
+    fail(holding([tried(1, 1)]), t0 + 30.seconds, 1, 1) == Error(NotLeased(id: 1))
   end
 
   job = try leased_job(queue, now, id, attempt)

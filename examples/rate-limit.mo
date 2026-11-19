@@ -28,6 +28,10 @@ fn new_limiter(capacity: Decimal, per_second: Decimal) : Option(Limiter)
     new_limiter(10, 2) is Some(_)
     new_limiter(0.5, 2) == None
     new_limiter(10, 0) == None
+    new_limiter(1_000_000_000, 0.001) is Some(_)
+    new_limiter(1_000_000_001, 2) == None
+    new_limiter(10, 1_000_000) is Some(_)
+    new_limiter(10, 1_000_001) == None
   end
 
   return None if capacity < 1 or capacity > 1_000_000_000
@@ -38,12 +42,12 @@ end
 fn request(limiter: Limiter, client: Text, now: Time) : (Limiter, Decision)
   promise "a client is never allowed more tokens than its bucket holds"
     result.1 is Allowed(remaining: left) implies left >= 0 and left <= limiter.capacity - 1
-    allows limiter: limiter_of(2), client: "a", now: t0, result: (
-      limiter_of(2),
+    allows limiter: two_a_second, client: "a", now: t0, result: (
+      two_a_second,
       Allowed(remaining: 1)
     )
-    forbids limiter: limiter_of(2), client: "a", now: t0, result: (
-      limiter_of(2),
+    forbids limiter: two_a_second, client: "a", now: t0, result: (
+      two_a_second,
       Allowed(remaining: 2)
     )
   end
@@ -70,6 +74,10 @@ end
 
 ## How long until a bucket holding `tokens`, less than one, holds one.
 fn wait_for_one(tokens: Decimal, per_second: Decimal) : Duration
+  examples
+    wait_for_one(0.5, 2) == 250.milliseconds
+  end
+
   wait = ((1 - tokens) * 1000 / per_second).ceil
   case wait.to_int
     Some(n): n.milliseconds
@@ -78,10 +86,7 @@ fn wait_for_one(tokens: Decimal, per_second: Decimal) : Duration
 end
 
 t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
-
-fn limiter_of(capacity: Decimal) : Limiter
-  Limiter(capacity: capacity, per_second: 2, buckets: {})
-end
+two_a_second = Limiter(capacity: 2, per_second: 2, buckets: {})
 
 test "a bucket of two allows two requests, then refills in half a second"
   assert new_limiter(2, 2) is Some(limiter)

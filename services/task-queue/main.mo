@@ -461,6 +461,11 @@ fn job_of(queue: Queue, id: Int) : Option(Job)
 end
 
 fn current?(queue: Queue, now: Time, id: Int, attempt: Int) : Bool
+  examples
+    current?(leased_job, t0 + lease_length - 1.second, 1, 1)
+    not current?(leased_job, t0 + lease_length, 1, 1)
+  end
+
   job_of(queue, id) is Some(job) and
     job.attempts == attempt and
     job.state is JobQueue.Leased(until: until) and
@@ -468,6 +473,10 @@ fn current?(queue: Queue, now: Time, id: Int, attempt: Int) : Bool
 end
 
 fn matching(queue: Queue, filter: JobFilter, after: Int) : List(Job)
+  examples
+    ids_of(matching(three_jobs, AllJobs, 1)) == [2, 3]
+  end
+
   JobQueue.jobs(queue).filter(fn(job) job.id > after and wanted?(filter, job) end)
 end
 

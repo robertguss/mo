@@ -130,3 +130,12 @@ test "no match gives status 1, and a missing file status 2"
   assert main(Args.of(["cat", "pets.txt"]), Console.fake(), files) == 1
   assert main(Args.of(["cat", "gone.txt"]), Console.fake(), files) == 2
 end
+
+test "a bad command line gives status 2 and the usage"
+  console = Console.fake()
+  assert main(Args.of(["cat"]), console, Files.in_memory({}).read_only) == 2
+  assert console.printed_errors == [
+    "find: no files to search",
+    "usage: find [--ignore-case] [--count] PHRASE FILE..."
+  ]
+end

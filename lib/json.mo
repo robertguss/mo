@@ -132,7 +132,7 @@ end
 
 ## JSON's white space: space, tab, line feed and carriage return.
 fn skip_space(chars: List(Char), at: Int) : Int
-  if (chars.get(at) or 'x').code > 32
+  if (chars.get(at) or 'x') > ' '
     at
   else
     skip_spaces(chars, at)
@@ -464,6 +464,10 @@ fn plain(number: JsonNumber) : Option((Bool, List(Char), List(Char)))
     plain(JsonNumber(text: "12.5e-3")) == Some((false, ['0'], ['0', '1', '2', '5']))
     plain(JsonNumber(text: "0.0e999999999999999999999")) == Some((false, ['0'], []))
     plain(JsonNumber(text: "1e999999999999999999999")) == None
+    plain(JsonNumber(text: "1e59")).map(fn(p) p.1.size end) == Some(60)
+    plain(JsonNumber(text: "1e60")) == None
+    plain(JsonNumber(text: "1e-61")).map(fn(p) p.2.size end) == Some(61)
+    plain(JsonNumber(text: "1e-62")) == None
   end
 
   chars = number.text.chars
@@ -498,18 +502,12 @@ fn plain(number: JsonNumber) : Option((Bool, List(Char), List(Char)))
   # No Int or Decimal has a digit 60 places either side of the point.
   return None if exponent > 60 - point or exponent < -60 - point
   point += exponent
-  var whole = []
-  var fraction = []
-  if point <= 0
-    fraction = zeros(0 - point).concat(digits)
-  else if point >= digits.size
-    whole = digits.concat(zeros(point - digits.size))
-  else
-    whole = digits.take(point)
-    fraction = digits.drop(point)
-  end
+  padded = zeros(0 - point).concat(digits).concat(zeros(point))
+  split = point.max(0)
+  whole = padded.take(split)
+  var fraction = padded.drop(split)
   var kept = fraction.size
-  while kept > 0 and fraction.get(kept - 1) == Some('0')
+  while fraction.get(kept - 1) == Some('0')
     kept -= 1
   end
   fraction = fraction.take(kept)
@@ -536,6 +534,10 @@ end
 
 ## The number as it was written.
 fn to_text(number: JsonNumber) : Text
+  examples
+    JsonNumber(text: "-2.50e+3").to_text == "-2.50e+3"
+  end
+
   number.text
 end
 
@@ -589,6 +591,7 @@ fn quoted(text: Text) : Text
     quoted("say \"hi\"\n") == "\"say \\\"hi\\\"\\n\""
     quoted("tab\tbell\u{7}/é") == "\"tab\\tbell\\u0007/é\""
     quoted("\u{1f}\u{0} ") == "\"\\u001f\\u0000 \""
+    quoted("\u{10}") == "\"\\u0010\""
   end
 
   "\"#{text.chars.map(escape_char).join("")}\""
@@ -638,6 +641,9 @@ test "reading stops at the character that can't be there"
   assert problem_at("\"abc") == (1, 5, "UnexpectedEnd")
   assert problem_at("[\n  1,\n  x\n]") == (3, 3, "Unexpected(found: 'x')")
   assert parse(" \t\r\n[\t1\r,\n2 ]\r\n").map(fn(json) json.to_text end) == Ok("[1,2]")
+  assert problem_at("\"a\u{0}b\"") == (1, 3, "Unexpected(found: '\\u{0}')")
+  assert parse("false") == Ok(Boolean(false))
+  assert problem_at("[]") == (0, 0, "parsed")
 end
 
 test "numbers follow JSON's own syntax"
@@ -651,6 +657,7 @@ test "numbers follow JSON's own syntax"
   assert problem_at("1.5x") == (1, 4, "Unexpected(found: 'x')")
   assert parse("[0, -0, 10, 1.25, -2.5E-3, 4e+2]").map(fn(json) json.to_text end) ==
     Ok("[0,-0,10,1.25,-2.5E-3,4e+2]")
+  assert parse("1e5").map(fn(json) json.to_text end) == Ok("1e5")
 end
 
 test "escapes, surrogate pairs and lone surrogates"
@@ -662,6 +669,10 @@ test "escapes, surrogate pairs and lone surrogates"
   assert problem_at("\"\\u12g4\"") == (1, 2, "BadEscape")
   assert problem_at("\"\\u12") == (1, 6, "UnexpectedEnd")
   assert problem_at("\"\\") == (1, 3, "UnexpectedEnd")
+  assert parse("\"\\uD800\\uDC00\\u00aF\"") == Ok(String("\u{10000}\u{af}"))
+  assert problem_at("\"\\uD800\\uE000\"") == (1, 2, "BadEscape")
+  assert problem_at("\"\\uDC00\\u12") == (1, 2, "BadEscape")
+  assert problem_at("\"\\ud834\\nDD1E\"") == (1, 2, "BadEscape")
 end
 
 test "a string with an escape leaves the strings after it as they are"
@@ -679,6 +690,7 @@ test "arrays and objects nest 128 deep"
   deep = "#{"[".repeat(128)}#{"]".repeat(128)}"
   assert parse(deep).map(fn(json) json.to_text end) == Ok(deep)
   assert problem_at("#{"{\"a\":".repeat(128)}{}") == (1, 641, "TooDeep")
+  assert parse("[{},{ }]").map(fn(json) json.to_text end) == Ok("[{},{}]")
   assert problem_at("[{\"a\": [1], \"b\": {\"a\": 2}, \"a\": 3}]") == (
     1,
     28,
@@ -720,4 +732,9 @@ test "objects keep the document's order, and numbers their text"
   assert parse("1.50") != parse("1.5")
   assert decimal(1.50) == decimal(1.5)
   assert parse("1.5") == Ok(decimal(1.5))
+end
+
+test "a long string with no escape is read whole, not one character at a time"
+  long = "ab ".repeat(20_000)
+  assert parse("[\n\"#{long}\"\n]") == Ok(Array([String(long)]))
 end

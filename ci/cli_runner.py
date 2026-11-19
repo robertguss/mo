@@ -75,19 +75,20 @@ def runner(binary):
             ("Find.matches.example.1", "passed"),
             ("Find.matches.example.2", "passed"),
             ("Find.test.1", "passed"),
-            ("Find.test.2", "passed")]
+            ("Find.test.2", "passed"),
+            ("Find.test.3", "passed")]
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 9, "failed": 0, "stopped": 0, "status": 0}
+                             "passed": 10, "failed": 0, "stopped": 0, "status": 0}
 
         counting = "examples/wc.mo"
         checked = run(binary, ["check", counting], 0)
         assert not checked.stdout and not checked.stderr
         single = run(binary, ["run", counting, counting], 0)
-        assert single.stdout == b"     73     276    2053 examples/wc.mo\n" and not single.stderr
+        assert single.stdout == b"     83     335    2501 examples/wc.mo\n" and not single.stderr
         missing = run(binary, ["run", counting, counting, "no-such-file.mo"], 1)
         assert missing.stdout == (
-            b"     73     276    2053 examples/wc.mo\n"
-            b"     73     276    2053 total\n"
+            b"     83     335    2501 examples/wc.mo\n"
+            b"     83     335    2501 total\n"
         ) and missing.stderr == b"wc: no-such-file.mo: no such file\n"
         items = records(run(binary, ["test", "--json", counting], 0), "test")
         assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
@@ -95,9 +96,10 @@ def runner(binary):
             ("Wc.count.example.2", "passed"),
             ("Wc.count.example.3", "passed"),
             ("Wc.row.example.1", "passed"),
-            ("Wc.test.1", "passed")]
+            ("Wc.test.1", "passed"),
+            ("Wc.test.2", "passed")]
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 5, "failed": 0, "stopped": 0, "status": 0}
+                             "passed": 6, "failed": 0, "stopped": 0, "status": 0}
 
         for parameters in ("_args: Args", "_clock: Clock, _console: Console"):
             path.write_text(f"module Main\nfn main({parameters})\nend\n")
@@ -431,7 +433,7 @@ def runner(binary):
                     (tree / "b/locked").chmod(0o755)
         todo_tests = records(run(binary, ["test", "--json", "examples/todo.mo"], 0), "test")
         assert todo_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                  "passed": 15, "failed": 0, "stopped": 0, "status": 0}
+                                  "passed": 16, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/inventory.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/inventory.mo"], 0), "check")
         inventory_run = run(binary, ["run", "examples/inventory.mo"], 0)
@@ -447,7 +449,7 @@ def runner(binary):
         inventory_tests = records(run(binary, ["test", "--json", "examples/inventory.mo"], 0),
                                   "test")
         assert inventory_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                       "passed": 10, "failed": 0, "stopped": 0, "status": 0}
+                                       "passed": 11, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/json-query.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/json-query.mo"], 0), "check")
         json_run = subprocess.run([str(binary), "run", "examples/json-query.mo", "items.0.n"],

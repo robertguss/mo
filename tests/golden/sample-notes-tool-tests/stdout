@@ -1,5 +1,8 @@
 passed NotesTool.search_notes.promise.1  examples/notes-tool.mo:35:3
-passed NotesTool.test.1  examples/notes-tool.mo:63:1
-passed NotesTool.test.2  examples/notes-tool.mo:78:1
-passed NotesTool.test.3  examples/notes-tool.mo:84:1
-4 passed, 0 failed, 0 stopped
+passed NotesTool.search_notes.example.1  examples/notes-tool.mo:46:5
+passed NotesTool.search_notes.example.2  examples/notes-tool.mo:48:5
+passed NotesTool.search_notes.example.3  examples/notes-tool.mo:50:5
+passed NotesTool.test.1  examples/notes-tool.mo:72:1
+passed NotesTool.test.2  examples/notes-tool.mo:87:1
+passed NotesTool.test.3  examples/notes-tool.mo:93:1
+7 passed, 0 failed, 0 stopped

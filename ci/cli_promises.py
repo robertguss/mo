@@ -396,7 +396,10 @@ def fake_capability_promises(binary):
     root = pathlib.Path(__file__).resolve().parent.parent
     items = records(run(binary, ['test', '--json', str(root / 'examples/notes-tool.mo')], 0), 'test')
     assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
-        ('NotesTool.search_notes.promise.1', 'passed'), ('NotesTool.test.1', 'passed'),
+        ('NotesTool.search_notes.promise.1', 'passed'),
+        ('NotesTool.search_notes.example.1', 'passed'),
+        ('NotesTool.search_notes.example.2', 'passed'),
+        ('NotesTool.search_notes.example.3', 'passed'), ('NotesTool.test.1', 'passed'),
         ('NotesTool.test.2', 'passed'), ('NotesTool.test.3', 'passed')]
 
 

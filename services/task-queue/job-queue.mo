@@ -53,6 +53,11 @@ fn submit(queue: Queue, payload: Text) : (Queue, Int)
     forbids queue: empty, payload: "x", result: (empty, 1)
   end
 
+  examples
+    submit(empty, "x") == (holding([ready(1)]), 1)
+    submit(holding([ready(1)]), "x").1 == 2
+  end
+
   id = queue.next_id
   var after = queue
   after.jobs = after.jobs.set(id, Job(id: id, payload: payload, attempts: 0, state: Ready))
@@ -75,6 +80,7 @@ fn lease(queue: Queue, now: Time, length: Duration) : Result((Queue, Option(Job)
   examples
     lease(empty, t0, 30.seconds) == Ok((empty, None))
     lease(empty, t0, 0.seconds) == Error(BadLease(length: 0.seconds))
+    lease(empty, t0, 1.second) == Ok((empty, None))
   end
 
   return Error(BadLease(length: length)) if length <= 0.seconds
@@ -265,6 +271,10 @@ end
 t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
 
 fn expired(job: Job, now: Time) : Job
+  examples
+    expired(tried(1, 3), t0 + 30.seconds) == dead(1)
+  end
+
   case job.state
     Leased(until: until): if until > now: job else: Job(
       id: job.id,

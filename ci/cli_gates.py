@@ -115,9 +115,9 @@ def gates(binary):
     items = records(library, "test")
     total = items[-1]
     killed = sum(total["mutants"]["killed"].values())
-    assert library.returncode == 1 and killed > 0, total
-    assert {r["code"] for r in items if r["record"] == "diagnostic"} == {"E1439"}, items
-    assert total["mutants"]["dropped"] == 1 and total["errors"] == total["mutants"]["survived"]
+    assert library.returncode == 0 and killed > 0 and total["mutants"]["survived"] == 0, total
+    assert not [r for r in items if r["record"] == "diagnostic"], items
+    assert total["mutants"]["dropped"] == 1 and total["errors"] == 0, total
 
 
 def unstated(items):
@@ -151,11 +151,12 @@ def stated_intent(binary):
          "Main.peek: write a service promise on peek, or give it a promise or an example")], items
     assert total["passed"] == 5 and total["gates"] == "did not run", total
 
-    library = subprocess.run([str(binary), "test", "--gates", "--json", "lib/json.mo"], cwd=root,
-                             capture_output=True, timeout=300)
-    items = records(library, "test")
-    assert library.returncode == 1 and [(h, label) for h, _, label in unstated(items)] == [
-        (exposed, "Json.to_text@JsonNumber: give it a promise or an example")], items
+    with tempfile.TemporaryDirectory() as scratch:
+        old = pathlib.Path(scratch) / "lib"
+        shutil.copytree(root / "lib", old)
+        items = records(run(binary, ["test", "--json", "lib/json.mo", "--against",
+                                     f"{old}/json.mo"], 0), "test")
+    assert not unstated(items) and items[-1]["gates"] == "ran shorter", items
 
 
 BASE = root / "tests/cli/against/base/main.mo"

@@ -100,6 +100,7 @@ fn apply(items: List(Item), command: Command) : Result(List(Item), TodoError)
     apply([milk], Done(number: 1)) == Ok([milk_done])
     apply([milk], Remove(number: 0)) == Error(NoSuchItem(number: 0))
     apply([milk], Remove(number: 2)) == Error(NoSuchItem(number: 2))
+    apply([milk_done, milk], Remove(number: 1)) == Ok([milk])
   end
 
   case command

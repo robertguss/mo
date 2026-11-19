@@ -79,8 +79,12 @@ end
 ## A column's title and cells, padded to the same width.
 fn pad_column(rows: List(T), column: Column(T)) : List(Text)
   cells = [column.title].concat(rows.map(column.cell))
-  width = cells.map(fn(cell) cell.char_count end).max or 0
-  cells.map(fn(cell) if column.numeric?: cell.pad_left(width) else: cell.pad_right(width) end)
+  case cells.map(fn(cell) cell.char_count end).max
+    Some(width): cells.map(
+      fn(cell) if column.numeric?: cell.pad_left(width) else: cell.pad_right(width) end
+    )
+    None: cells
+  end
 end
 
 kettle = Product(name: "Kettle", category: "kitchen", price: 39.90, stock: 12)
@@ -126,4 +130,16 @@ end
 
 test "the most valuable stock comes first"
   assert top_by(products, 2, stock_value) == [lamp, notebook]
+end
+
+test "the report shows the three most valuable stocks"
+  console = Console.fake()
+  main(console)
+  expected = """
+    product    category  price  stock
+    Desk lamp  office    24.50     40
+    Notebook   office     3.20    300
+    Kettle     kitchen   39.90     12
+    """
+  assert console.printed.take(2) == ["The three most valuable stocks:", expected]
 end
