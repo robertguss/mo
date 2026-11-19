@@ -229,24 +229,28 @@ STRENGTH_OUTCOMES = {
     "h-unknown.mo": "invalid"}
 
 
-def strength_record(binary, program, versions, status=0):
-    items = without_time(run(binary, ["test", "--json", program, "--strength", versions], status))
-    assert items[-2]["record"] == "strength" and items[-2]["set"] == versions, items
-    return items[-2]
+def strength_record(binary, program, versions, status=0, extra=()):
+    items = without_time(run(binary, ["test", "--json", program, "--strength", versions, *extra],
+                             status))
+    record = next(r for r in items if r["record"] == "strength")
+    assert record["set"] == versions and record["version"] == 2, items
+    return record
 
 
 def strength_checks(binary):
     versions = f"{STRENGTH}/versions"
     record = strength_record(binary, f"{STRENGTH}/main.mo", versions)
     assert {v["name"]: v["outcome"] for v in record["versions"]} == STRENGTH_OUTCOMES, record
-    assert (record["killed"], record["scored"], record["rate"], record["partial"],
-            record["counted_file"], record["original"]) == (3, 4, 0.75, False, False, "passed")
+    assert (record["killed"], record["killed_any"], record["scored"], record["rate"],
+            record["partial"], record["counted_file"], record["original"]) == (
+                3, 3, 4, 0.75, False, False, "passed")
     assert [v.get("reason") for v in record["versions"] if v["outcome"] == "invalid"] == [
         "E0078: a function's result doesn't match its signature",
         "a declaration it replaces is missing, overloaded or replaced twice"], record
     assert strength_record(binary, f"{STRENGTH}/main.mo", versions) == record
     text = run(binary, ["test", f"{STRENGTH}/main.mo", "--strength", versions], 0).stdout
-    assert (b"strength: 3 of 4 wrong versions killed (75.0%); 2 invalid, 1 changes_intent, "
+    assert (b"strength: 3 of 4 wrong versions killed (75.0%), 3 by any check; 2 invalid, "
+            b"1 changes_intent, "
             b"1 defect, 0 unfinished, 0 not_counted\n") in text, text
     source = (root / STRENGTH / "main.mo").read_text()
     with tempfile.TemporaryDirectory(prefix="mo-strength-") as directory:
@@ -293,6 +297,15 @@ def strength_checks(binary):
                                         "--seconds", "1"], 1))
     cut = next(r for r in builder if r["record"] == "strength")
     assert ([v["outcome"] for v in cut["versions"]], cut["partial"]) == (["unfinished"], True), cut
+    tests = strength_record(binary, f"{STRENGTH}-tests/checks.mo", f"{STRENGTH}-tests/versions")
+    assert {v["name"]: v["outcome"] for v in tests["versions"]} == {
+        "a-third.mo": "killed_by_test", "b-either.mo": "killed_by_promise",
+        "c-floor.mo": "survived"}, tests
+    assert (tests["killed"], tests["killed_any"], tests["scored"]) == (1, 2, 3), tests
+    slow = strength_record(binary, f"{STRENGTH}-tests/checks.mo", f"{STRENGTH}-tests/slow", 1,
+                           ["--seconds", "1"])
+    assert ([v["outcome"] for v in slow["versions"]], slow["partial"], slow["killed_any"]) == (
+        ["unfinished"], True, 0), slow
     library = without_time(run(binary, ["test", "--list", "--json", "lib/list.mo"], 0))
     assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
 

@@ -436,6 +436,7 @@ static bool run_one(const struct mo_cli *cli, const struct mo_program *program,
     case MO_FAILED:
         totals->failed++;
         totals->failed_examples += observation->source->kind == MO_SPEC_EXAMPLE;
+        totals->failed_tests += observation->source->kind == MO_SPEC_TEST;
         if (observation->source->kind == MO_SPEC_TEST)
             result.line = assertion_span(observation->source,
                                          mo_runtime_span(file, sources, defect.span.file,

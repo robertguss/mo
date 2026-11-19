@@ -22,6 +22,7 @@ enum outcome {
     KILLED_BY_PROMISE,
     KILLED_BY_EXAMPLE,
     KILLED_BY_BOTH,
+    KILLED_BY_TEST,
     SURVIVED,
     DEFECT,
     UNFINISHED,
@@ -30,14 +31,16 @@ enum outcome {
 };
 
 static const char *const names[OUTCOMES] = {
-    "invalid",  "changes_intent", "killed_by_promise", "killed_by_example", "killed_by_both",
-    "survived", "defect",         "unfinished",        "not_counted"};
+    "invalid",        "changes_intent", "killed_by_promise", "killed_by_example",
+    "killed_by_both", "killed_by_test", "survived",          "defect",
+    "unfinished",     "not_counted"};
 
 static const char *const sentences[OUTCOMES] = {"is invalid",
                                                 "changes intent",
                                                 "is killed by a promise",
                                                 "is killed by an example",
                                                 "is killed by a promise and an example",
+                                                "is killed by a test",
                                                 "survives",
                                                 "stops on a defect",
                                                 "did not finish its plan",
@@ -274,31 +277,25 @@ static bool apply(const struct measure *m, struct mo_arena *arena, struct versio
     return ok;
 }
 
-static struct mo_test_selection *intent_checks(struct mo_arena *arena,
-                                               const struct mo_program *program,
-                                               const struct mo_cli *cli, struct mo_diags *diags) {
+static struct mo_test_selection *checks(struct mo_arena *arena, const struct mo_program *program,
+                                        const struct mo_cli *cli, struct mo_diags *diags) {
     struct mo_test_selection *selection = mo_select_tests(arena, program, cli, diags);
-    if (selection == NULL)
-        return NULL;
-    uint32_t kept = 0;
-    for (uint32_t i = 0; i < selection->count; i++) {
-        const struct mo_observation *o = &selection->items[i];
-        if (o->promise != NULL || (o->source != NULL && o->source->kind != MO_SPEC_TEST))
-            selection->items[kept++] = *o;
-    }
-    selection->count = kept;
-    selection->mistake = NULL;
+    if (selection != NULL)
+        selection->mistake = NULL;
     return selection;
 }
 
 static enum outcome classify(const struct mo_test_totals *totals, const struct mo_diags *diags) {
-    bool promise = totals->failed > totals->failed_examples, example = totals->failed_examples != 0;
+    bool promise = totals->failed > totals->failed_examples + totals->failed_tests,
+         example = totals->failed_examples != 0;
     if (promise && example)
         return KILLED_BY_BOTH;
     if (promise)
         return KILLED_BY_PROMISE;
     if (example)
         return KILLED_BY_EXAMPLE;
+    if (totals->failed_tests != 0)
+        return KILLED_BY_TEST;
     bool unfinished = false;
     for (uint32_t i = 0; i < diags->count; i++)
         unfinished = unfinished || diags->items[i].code != MO_CODE_TOOL_TEST_INITIALIZATION;
@@ -383,7 +380,7 @@ static void measure_one(const struct measure *m, struct version *v, bool counted
         v->outcome = CHANGES_INTENT;
         goto done;
     }
-    struct mo_test_selection *selection = intent_checks(&arena, checked, run->cli, &diags);
+    struct mo_test_selection *selection = checks(&arena, checked, run->cli, &diags);
     struct mo_test_totals totals = {0};
     if (selection != NULL)
         mo_run_tests(run->cli, &arena, checked, &program, selection, m->quiet, &diags, &totals);
@@ -398,14 +395,15 @@ done:
 static bool render(const struct mo_strength_run *run, const struct set *set, bool original,
                    struct mo_buffer *out) {
     uint32_t counts[OUTCOMES] = {0};
-    uint32_t killed = 0, scored = 0;
+    uint32_t killed = 0, any = 0, scored = 0;
     for (uint32_t i = 0; original && i < set->count; i++) {
         const struct version *v = &set->versions[i];
         counts[v->outcome]++;
         bool kill = v->outcome == KILLED_BY_PROMISE || v->outcome == KILLED_BY_EXAMPLE ||
                     v->outcome == KILLED_BY_BOTH;
         killed += kill;
-        scored += kill || v->outcome == SURVIVED ||
+        any += kill || v->outcome == KILLED_BY_TEST;
+        scored += kill || v->outcome == KILLED_BY_TEST || v->outcome == SURVIVED ||
                   (v->listed && (v->outcome == CHANGES_INTENT || v->outcome == INVALID));
     }
     bool json = run->cli->json, ok = true;
@@ -416,7 +414,7 @@ static bool render(const struct mo_strength_run *run, const struct set *set, boo
         MO_ASSERT(n > 0 && (size_t)n < sizeof rate);
     }
     if (json) {
-        ok = mo_buffer_append_text(out, "{\"record\":\"strength\",\"version\":1,\"set\":") &&
+        ok = mo_buffer_append_text(out, "{\"record\":\"strength\",\"version\":2,\"set\":") &&
              mo_render_json_text(out, run->cli->strength, strlen(run->cli->strength)) &&
              mo_buffer_append_text(out, ",\"counted_file\":") &&
              mo_buffer_append_text(out, set->counted ? "true" : "false") &&
@@ -442,7 +440,8 @@ static bool render(const struct mo_strength_run *run, const struct set *set, boo
                  mo_buffer_append_text(out, names[i]) && mo_buffer_append_text(out, "\":") &&
                  mo_buffer_append_uint(out, counts[i]);
         ok = ok && mo_buffer_append_text(out, "},\"killed\":") &&
-             mo_buffer_append_uint(out, killed) && mo_buffer_append_text(out, ",\"scored\":") &&
+             mo_buffer_append_uint(out, killed) && mo_buffer_append_text(out, ",\"killed_any\":") &&
+             mo_buffer_append_uint(out, any) && mo_buffer_append_text(out, ",\"scored\":") &&
              mo_buffer_append_uint(out, scored) && mo_buffer_append_text(out, ",\"rate\":") &&
              mo_buffer_append_text(out, rate) && mo_buffer_append_text(out, ",\"partial\":") &&
              mo_buffer_append_text(out, original && counts[UNFINISHED] == 0 ? "false" : "true") &&
@@ -450,8 +449,8 @@ static bool render(const struct mo_strength_run *run, const struct set *set, boo
         return ok;
     }
     if (!original)
-        return mo_buffer_append_text(out, "strength: the program fails its own promises or "
-                                          "examples, so no wrong version was measured\n");
+        return mo_buffer_append_text(out, "strength: the program fails its own checks, so no "
+                                          "wrong version was measured\n");
     for (uint32_t i = 0; i < set->count; i++) {
         const struct version *v = &set->versions[i];
         ok = ok && mo_buffer_append_text(out, "strength: ") &&
@@ -466,7 +465,8 @@ static bool render(const struct mo_strength_run *run, const struct set *set, boo
          mo_buffer_append_text(out, " of ") && mo_buffer_append_uint(out, scored) &&
          mo_buffer_append_text(out, " wrong versions killed (") &&
          mo_buffer_append_text(out, scored == 0 ? "no rate" : rate) &&
-         mo_buffer_append_text(out, "); ");
+         mo_buffer_append_text(out, "), ") && mo_buffer_append_uint(out, any) &&
+         mo_buffer_append_text(out, " by any check; ");
     for (uint32_t i = 0; i < OUTCOMES; i++)
         if (i == INVALID || i == CHANGES_INTENT || i == DEFECT || i == UNFINISHED ||
             i == NOT_COUNTED)
@@ -501,7 +501,7 @@ void mo_strength(const struct mo_strength_run *run) {
     }
     uint8_t *digests = sorted_digests(run->arena, &intent);
     struct mo_test_selection *selection =
-        digests == NULL ? NULL : intent_checks(run->arena, run->program, run->cli, run->diags);
+        digests == NULL ? NULL : checks(run->arena, run->program, run->cli, run->diags);
     if (selection == NULL)
         return;
     if (run->cli->json && !(*run->version = mo_write_version(run->output, run->cli->command)))

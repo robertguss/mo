@@ -1510,7 +1510,7 @@ number (section 12.5). `--only NAME` runs the one with that full name, and can b
 than once; `--in MODULE` runs one module's, still checking the whole program;
 and `--list` prints the full names without running anything. `--strength DIR`
 measures how many of the wrong versions in `DIR` the program's promises and
-examples kill; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
+examples kill, and how many any of its checks kills; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
 matches nothing is a mistake in the command.
 
 `mo test --gates` also tries mutants. A mutant is one small change to the code

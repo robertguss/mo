@@ -213,6 +213,7 @@ static bool decide(struct run *w, uint32_t item, const char *problem, const char
     result->microseconds = elapsed(w);
     w->totals->passed += result->outcome == MO_RETURNED;
     w->totals->failed += result->outcome == MO_FAILED;
+    w->totals->failed_tests += result->outcome == MO_FAILED && observation->promise == NULL;
     w->totals->stopped += result->outcome == MO_STOPPED;
     if (mo_render_test_result(w->sources, result, w->cli->json, &w->records[item]))
         return true;
