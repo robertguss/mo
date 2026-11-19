@@ -245,6 +245,7 @@ fn sort_by_desc(items: List(T), key: fn(T) : K) : List(T) where K: Order
   examples
     ["a", "ccc", "bb"].sort_by_desc(fn(t) t.byte_count end) == ["ccc", "bb", "a"]
     [(1, "b"), (2, "z"), (1, "a")].sort_by_desc(fn(p) p.0 end) == [(2, "z"), (1, "b"), (1, "a")]
+    [3, 4, 1, 2].sort_by_desc(fn(n) n end) == [4, 3, 2, 1]
   end
 
   keyed = items.map(fn(item) (key(item), item) end)
