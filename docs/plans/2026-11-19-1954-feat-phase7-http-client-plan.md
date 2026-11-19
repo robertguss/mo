@@ -319,7 +319,7 @@ Waits on: nothing.
 - **Dependencies:** U1.
 - **Files:** `examples/json-query.mo`, `examples/README.md`, the seven cases `tests/golden/sample-json-query-*`, `ci/cli_runner.py` (the block that runs the example), `tests/test_check.c` (`samples`, which loads each example with no library), `formal/README.md`, `formal/TRANSLATION.md`, `formal/TEXT.md`.
 - **Approach:**
-  1. Rewrite the example on `Json.parse`, `path` and `pretty`. With no arguments it still prints its usage line and ends.
+  1. Rewrite the example on `Json.parse`, `path` and `pretty`. With no arguments it still prints the whole document, and with two or more it still prints its usage line and gives status 2.
   2. Rewrite each golden case by hand from the reference. Two outputs change: a number prints as it was written, so `-1.50` stays `-1.50`, and a parse error gives the library's line and column.
   3. Update the checks named in `ci/cli_runner.py`, which lists functions the example no longer has.
   4. Make `tests/test_check.c` load the library for the example.
@@ -329,7 +329,7 @@ Waits on: nothing.
   - The path case prints the value at `items.0.n`.
   - The missing-path case prints its message and gives the exit status it gave before.
   - A truncated document and a document with text after its end each give the library's error text.
-  - The usage case prints the usage line when the example runs with no argument.
+  - The usage case prints the usage line when the example runs with two arguments.
   - Covers R12. Plain `mo test examples/json-query.mo` ends with no survivor.
 - **Verification:** The seven golden cases pass. The example holds no `Json` type of its own. No document says the Lean sample matches the example as it is now.
 
