@@ -17,7 +17,7 @@ struct gate {
     const struct mo_sources *sources;
     const struct mo_gated_run *first;
     struct mo_gated_check *sorted, *plan;
-    FILE *quiet;
+    FILE *quiet, *output;
     struct mo_diags *diags;
     struct mo_gate_totals *totals;
     const bool *tried;
@@ -67,7 +67,8 @@ static void broken(const struct gate *g, const struct mo_mutant *m, const struct
     mo_test_report_error(g->diags, "a mutant could not be tried", m->span, detail);
 }
 
-static enum verdict try_mutant(const struct gate *g, const struct mo_mutant *m, const char **kind) {
+static enum verdict try_mutant(const struct gate *g, const struct mo_mutant *m, const char **kind,
+                               const char **check) {
     uint32_t count = plan(g, m->function);
     struct mo_arena arena;
     mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
@@ -111,6 +112,7 @@ static enum verdict try_mutant(const struct gate *g, const struct mo_mutant *m, 
         verdict = KILLED;
     } else if (run.started && run.ran != 0 && run.checks[run.ran - 1].outcome != MO_CHECK_PASSED) {
         *kind = run.checks[run.ran - 1].kind;
+        *check = run.checks[run.ran - 1].name;
         verdict = KILLED;
     } else if (run.started && !mo_diags_any(&diags) && run.ran == run.count)
         verdict = SURVIVED;
@@ -135,19 +137,68 @@ static void count_kill(struct mo_gate_totals *totals, const char *kind) {
     MO_UNREACHABLE();
 }
 
+static bool describe(struct mo_buffer *out, const struct mo_program *program,
+                     const struct mo_mutant *m) {
+    bool removed = m->replacement[0] == '\0';
+    return mo_append_function_name(out, program, m->function) && mo_buffer_append_text(out, ": ") &&
+           mo_buffer_append_text(out, m->kind) && mo_buffer_append_text(out, ", `") &&
+           mo_buffer_append_text(out, m->original) &&
+           mo_buffer_append_text(out, removed ? "` removed" : "` to `") &&
+           (removed ||
+            (mo_buffer_append_text(out, m->replacement) && mo_buffer_append_text(out, "`")));
+}
+
+static bool json_name(struct mo_buffer *out, const char *name) {
+    return name == NULL ? mo_buffer_append_text(out, "null")
+                        : mo_render_json_text(out, name, strlen(name));
+}
+
+static bool write_mutant(FILE *output, bool json, const struct mo_program *program,
+                         const struct mo_sources *sources, const struct mo_mutant *m,
+                         const char *outcome, const char *by, const char *check) {
+    struct mo_buffer name, out;
+    mo_buffer_init(&name, MO_CLI_DIAGNOSTIC_SIZE);
+    mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+    const char *path = sources->files[m->span.file].path;
+    bool ok;
+    if (json) {
+        ok = mo_append_function_name(&name, program, m->function) &&
+             mo_buffer_append_text(&out, "{\"record\":\"mutant\",\"function\":") &&
+             mo_render_json_text(&out, name.bytes, name.length) &&
+             mo_buffer_append_text(&out, ",\"file\":") && json_name(&out, path) &&
+             mo_buffer_append_text(&out, ",\"line\":") &&
+             mo_buffer_append_uint(&out, m->position.line) &&
+             mo_buffer_append_text(&out, ",\"column\":") &&
+             mo_buffer_append_uint(&out, m->position.column) &&
+             mo_buffer_append_text(&out, ",\"kind\":") && json_name(&out, m->kind) &&
+             mo_buffer_append_text(&out, ",\"original\":") && json_name(&out, m->original) &&
+             mo_buffer_append_text(&out, ",\"replacement\":") && json_name(&out, m->replacement);
+        if (outcome != NULL)
+            ok = ok && mo_buffer_append_text(&out, ",\"outcome\":") && json_name(&out, outcome) &&
+                 mo_buffer_append_text(&out, ",\"by\":") && json_name(&out, by) &&
+                 mo_buffer_append_text(&out, ",\"check\":") && json_name(&out, check);
+        ok = ok && mo_buffer_append_text(&out, "}\n");
+    } else {
+        ok = describe(&name, program, m) && mo_buffer_append_text(&out, "mutant ") &&
+             mo_render_terminal_text(&out, path, strlen(path)) &&
+             mo_buffer_append_text(&out, ":") && mo_buffer_append_uint(&out, m->position.line) &&
+             mo_buffer_append_text(&out, ":") && mo_buffer_append_uint(&out, m->position.column) &&
+             mo_buffer_append_text(&out, " ") &&
+             mo_render_terminal_text(&out, name.bytes, name.length) &&
+             mo_buffer_append_text(&out, "\n");
+    }
+    ok = ok && fwrite(out.bytes, 1, out.length, output) == out.length;
+    mo_buffer_free(&name);
+    mo_buffer_free(&out);
+    return ok;
+}
+
 static void survived(const struct gate *g, const struct mo_mutant *m, bool unrun) {
     struct mo_buffer detail;
     mo_buffer_init(&detail, MO_CLI_DIAGNOSTIC_SIZE);
-    bool removed = m->replacement[0] == '\0';
-    bool ok =
-        mo_append_function_name(&detail, g->program, m->function) &&
-        mo_buffer_append_text(&detail, ": ") && mo_buffer_append_text(&detail, m->kind) &&
-        mo_buffer_append_text(&detail, ", `") && mo_buffer_append_text(&detail, m->original) &&
-        mo_buffer_append_text(&detail, removed ? "` removed" : "` to `") &&
-        (removed ||
-         (mo_buffer_append_text(&detail, m->replacement) && mo_buffer_append_text(&detail, "`"))) &&
-        (!unrun || mo_buffer_append_text(&detail, "; no check runs this function")) &&
-        mo_buffer_append_byte(&detail, 0);
+    bool ok = describe(&detail, g->program, m) &&
+              (!unrun || mo_buffer_append_text(&detail, "; no check runs this function")) &&
+              mo_buffer_append_byte(&detail, 0);
     struct mo_diag diag = {.code = MO_CODE_MUTANT_SURVIVED,
                            .message = "a mutant survived: no check noticed this change",
                            .primary = {m->span, ok ? (const char *)detail.bytes : m->kind}};
@@ -239,8 +290,8 @@ static bool try_all(struct gate *g, const struct mo_mutants *mutants) {
         const struct mo_mutant *m = &mutants->items[i];
         if (carried(g, m->function))
             continue;
-        const char *kind = NULL;
-        enum verdict verdict = try_mutant(g, m, &kind);
+        const char *kind = NULL, *check = NULL;
+        enum verdict verdict = try_mutant(g, m, &kind, &check);
         switch (verdict) {
         case DROPPED:
             g->totals->dropped++;
@@ -256,6 +307,12 @@ static bool try_all(struct gate *g, const struct mo_mutants *mutants) {
             survived(g, m, verdict == UNRUN);
             break;
         case BROKEN:
+            return false;
+        }
+        static const char *const outcomes[] = {"dropped", "killed", "survived", "survived"};
+        if (g->cli->json && !write_mutant(g->output, true, g->program, g->sources, m,
+                                          outcomes[verdict], kind, check)) {
+            mo_test_report_error(g->diags, "a mutant's record could not be written", m->span, NULL);
             return false;
         }
     }
@@ -341,6 +398,7 @@ void mo_gates(const struct mo_cli *cli, struct mo_arena *arena, const struct mo_
                      .program = program,
                      .sources = sources,
                      .first = &first,
+                     .output = output,
                      .diags = diags,
                      .totals = gates,
                      .tried = tried};
@@ -399,4 +457,45 @@ bool mo_render_gates(struct mo_buffer *out, const struct mo_gate_totals *gates, 
     return ok && mo_buffer_append_text(out, "), ") && mo_buffer_append_uint(out, gates->survived) &&
            mo_buffer_append_text(out, " survived, ") &&
            mo_buffer_append_uint(out, gates->dropped) && mo_buffer_append_text(out, " dropped\n");
+}
+
+void mo_gates_list(struct mo_arena *arena, const struct mo_program *program,
+                   const struct mo_sources *sources, bool json, FILE *output,
+                   struct mo_diags *diags) {
+    struct mo_mutants mutants;
+    const char *problem = mo_list_mutants(arena, program, sources, &mutants);
+    if (problem != NULL) {
+        mo_test_report_error(diags, "the mutants could not be listed", nowhere, problem);
+        return;
+    }
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < mutants.count; i++)
+        ok = write_mutant(output, json, program, sources, &mutants.items[i], NULL, NULL, NULL);
+    for (uint32_t f = 0; ok && f < program->function_count; f++) {
+        const struct mo_symbol *symbol = program->functions[f].signature->function;
+        if (!mo_module_tested(program, symbol->module) || symbol->declaration == NULL ||
+            symbol->declaration->kind != MO_S_FN)
+            continue;
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < mutants.count; i++)
+            count += mutants.items[i].function == f;
+        struct mo_buffer name, out;
+        mo_buffer_init(&name, MO_CLI_DIAGNOSTIC_SIZE);
+        mo_buffer_init(&out, MO_CLI_DIAGNOSTIC_SIZE);
+        ok = mo_append_function_name(&name, program, f) &&
+             (json ? mo_buffer_append_text(&out, "{\"record\":\"function\",\"name\":") &&
+                         mo_render_json_text(&out, name.bytes, name.length) &&
+                         mo_buffer_append_text(&out, ",\"mutants\":") &&
+                         mo_buffer_append_uint(&out, count) && mo_buffer_append_text(&out, "}\n")
+                   : mo_buffer_append_text(&out, "function ") &&
+                         mo_render_terminal_text(&out, name.bytes, name.length) &&
+                         mo_buffer_append_text(&out, ": ") && mo_buffer_append_uint(&out, count) &&
+                         mo_buffer_append_text(&out, count == 1 ? " mutant\n" : " mutants\n")) &&
+             fwrite(out.bytes, 1, out.length, output) == out.length;
+        mo_buffer_free(&name);
+        mo_buffer_free(&out);
+    }
+    if (!ok)
+        mo_test_report_error(diags, "the mutants could not be listed", nowhere,
+                             "their records could not be written");
 }

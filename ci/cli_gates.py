@@ -47,13 +47,18 @@ def gates(binary):
     assert skipped["gates"] == "did not run" and "mutants" not in skipped, skipped
     plain = records(run(binary, ["test", "--json", SURVIVOR], 0), "test")[-1]
     assert "gates" not in plain, plain
-    for flag in (["--strength", "x"], ["--bundle"], ["--list"]):
+    for flag in (["--strength", "x"], ["--bundle"]):
         result = run(binary, ["test", "--gates", *flag, SURVIVOR], 2)
         assert result.stderr == (b"--gates runs every check and tries every mutant; it takes no "
-                                 b"--list, --bundle or --strength: \"--gates\"\n"), result.stderr
+                                 b"--bundle or --strength: \"--gates\"\n"), result.stderr
 
-    _, total = totals(binary, f"{GATES}/killed/main.mo", 0)
+    items, total = totals(binary, f"{GATES}/killed/main.mo", 0)
     mutants(total, 3, promise=1, example=1, test=1)
+    assert [(r["function"], r["kind"], r["outcome"], r["by"], r["check"]) for r in items
+            if r["record"] == "mutant"] == [
+        ("Main.both", "logic", "killed", "promise", "Main.both.promise.1"),
+        ("Main.add", "arithmetic", "killed", "example", "Main.add.example.1"),
+        ("Main.flip", "not", "killed", "test", "Main.test.1")], items
 
     items, total = totals(binary, f"{GATES}/unrun/main.mo", 1)
     assert [r["primary"]["label"] for r in items if r["record"] == "diagnostic"] == [
@@ -61,6 +66,29 @@ def gates(binary):
         "Main.neither: logic, `or` to `and`; no check runs this function",
         "Main.head: int, `0` to `1`; no check runs this function"], items
     mutants(total, 3, survived=3, dropped=1)
+    assert [(r["line"], r["column"], r["original"], r["replacement"], r["outcome"]) for r in items
+            if r["record"] == "mutant"] == [
+        (4, 3, "not", "", "survived"), (4, 10, "or", "and", "survived"),
+        (8, 12, "or", "and", "dropped"), (8, 15, "0", "1", "survived")], items
+    listing = run(binary, ["test", "--gates", "--list", f"{GATES}/unrun/main.mo"], 0)
+    assert listing.stdout.decode().splitlines() == [
+        "Main.test.1",
+        f"mutant {GATES}/unrun/main.mo:4:3 Main.neither: not, `not` removed",
+        f"mutant {GATES}/unrun/main.mo:4:10 Main.neither: logic, `or` to `and`",
+        f"mutant {GATES}/unrun/main.mo:8:12 Main.head: logic, `or` to `and`",
+        f"mutant {GATES}/unrun/main.mo:8:15 Main.head: int, `0` to `1`",
+        "function Main.neither: 2 mutants", "function Main.head: 2 mutants",
+        "function Main.main: 0 mutants"], listing.stdout
+    listed = records(run(binary, ["test", "--gates", "--list", "--json",
+                                  f"{GATES}/unrun/main.mo"], 0), "test")
+    assert [r for r in listed if r["record"] == "mutant"] == [
+        {k: v for k, v in r.items() if k not in ("outcome", "by", "check")} for r in items
+        if r["record"] == "mutant"], listed
+    assert [(r["name"], r["mutants"]) for r in listed if r["record"] == "function"] == [
+        ("Main.neither", 2), ("Main.head", 2), ("Main.main", 0)], listed
+    unlisted = run(binary, ["test", "--gates", "--list", "--only", "Main.test.1",
+                            f"{GATES}/unrun/main.mo"], 0)
+    assert unlisted.stdout == b"Main.test.1\n", unlisted.stdout
 
     failing = f"{GATES}/failing/main.mo"
     plain = run(binary, ["test", failing], 1)
@@ -191,6 +219,7 @@ def shorter_run(binary):
     for listed in (items, again):
         for r in listed:
             r.pop("microseconds", None)
+            r.pop("file", None)
             r.get("span", {}).clear()
     assert items == again
     result, digest = against(binary, base, changed, 0, json_output=False)

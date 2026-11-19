@@ -216,9 +216,11 @@ static void execute_pipeline(void *argument) {
                 if (!mo_write_test(work->output, cli->json, sources, o, digest)) {
                     tool_error(diags, MO_CODE_TOOL_PIPELINE, "test inventory could not be written",
                                NULL);
-                    break;
+                    return;
                 }
             }
+            if (cli->gates)
+                mo_gates_list(arena, program, sources, cli->json, work->output, diags);
             return;
         }
         if (cli->gates) {

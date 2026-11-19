@@ -1527,8 +1527,9 @@ the steps it took on the unchanged program, and more than 1,000,000, no longer
 passes. A mutant that survives is an error, E1439, naming the function, the
 line and the change; a mutant the checker refuses is dropped. With `--only`,
 `--in`, `--calls`, `--seconds` or a `--max` limit, `--gates` runs the checks as
-without it, tries no mutant and says the gates did not run. It takes no
-`--list`, `--bundle` or `--strength`.
+without it, tries no mutant and says the gates did not run. With `--list` it
+lists the checks, each mutant it would try and how many mutants each function
+has, without running anything. It takes no `--bundle` or `--strength`.
 
 `mo test FILE --against OLD` is a shorter gated run. `OLD` is the previous
 version's copy of the file given; for a library module, `OLD`'s folder is the
