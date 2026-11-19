@@ -262,12 +262,15 @@ static enum moved move(struct summary *s, const struct mo_version *from, uint32_
     enum moved result = UNCHECKED;
     if (*reason != NULL)
         goto done;
+    uint32_t end = at + (uint32_t)text.length;
+    if (!ready || !mo_buffer_append_byte(&text, 0)) {
+        *reason = "it could not be placed";
+        goto done;
+    }
     struct mo_mutant insert = {.module = module,
                                .span = {to->program->set->modules[module]->span.file, at, at},
                                .replacement = (const char *)text.bytes};
-    uint32_t end = at + (uint32_t)text.length;
-    if (!ready || !mo_buffer_append_byte(&text, 0) ||
-        !mo_mutant_sources(to->program, to->sources, &insert, &sources)) {
+    if (!mo_mutant_sources(to->program, to->sources, &insert, &sources)) {
         *reason = "it could not be placed";
         goto done;
     }

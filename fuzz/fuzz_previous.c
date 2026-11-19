@@ -6,12 +6,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static char root[] = "/tmp/mo-fuzz-previous-XXXXXX";
-static char now[64], old[64];
+static char now[64], folder[64], old[80];
 static FILE *quiet;
 static const char text[] = "module Main\nexpose clamp\n\n"
                            "fn clamp(n: Int) : Int\n"
@@ -30,6 +31,7 @@ static void remove_file(const char *path) {
 static void cleanup(void) {
     remove_file(now);
     remove_file(old);
+    MO_ASSERT(rmdir(folder) == 0);
     MO_ASSERT(rmdir(root) == 0);
     MO_ASSERT(fclose(quiet) == 0);
 }
@@ -42,8 +44,8 @@ static void write_file(const char *path, const uint8_t *bytes, size_t size) {
     MO_ASSERT(fclose(file) == 0);
 }
 
-static void name(char *out, size_t size, const char *file) {
-    int n = snprintf(out, size, "%s/%s", root, file);
+static void name(char *out, size_t size, const char *in, const char *file) {
+    int n = snprintf(out, size, "%s/%s", in, file);
     MO_ASSERT(n > 0 && (size_t)n < size);
 }
 
@@ -51,8 +53,10 @@ static void setup(void) {
     if (quiet != NULL)
         return;
     MO_ASSERT(mkdtemp(root) != NULL);
-    name(now, sizeof now, "main.mo");
-    name(old, sizeof old, "old.mo");
+    name(now, sizeof now, root, "main.mo");
+    name(folder, sizeof folder, root, "old");
+    name(old, sizeof old, folder, "main.mo");
+    MO_ASSERT(mkdir(folder, 0700) == 0);
     quiet = fopen("/dev/null", "w");
     MO_ASSERT(quiet != NULL);
     MO_ASSERT(atexit(cleanup) == 0);
