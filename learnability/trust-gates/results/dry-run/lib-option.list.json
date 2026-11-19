@@ -1,0 +1,9 @@
+{"record":"version","format":"1.0","mo":"0.3.0","command":"test"}
+{"record":"test","name":"Option.or_fail.example.1","kind":"example","span":{"file":"lib/option.mo","file_bytes":"6c69622f6f7074696f6e2e6d6f","start":187,"end":219,"line":7,"column":5,"end_line":7,"end_column":37},"digest":"78c2f4230a36e9b0c7c53a24be5c7d018947a75d5ae2f23bd3ac3ceb2d810611"}
+{"record":"test","name":"Option.or_fail.example.2","kind":"example","span":{"file":"lib/option.mo","file_bytes":"6c69622f6f7074696f6e2e6d6f","start":224,"end":267,"line":8,"column":5,"end_line":8,"end_column":48},"digest":"3d56c665982e52e9d792c54fa85e02c1153823a42c1ca4d426b74f3e07a5de22"}
+{"record":"test","name":"Option.map.example.1","kind":"example","span":{"file":"lib/option.mo","file_bytes":"6c69622f6f7074696f6e2e6d6f","start":473,"end":514,"line":20,"column":5,"end_line":20,"end_column":46},"digest":"fdee99455391d4cf70ae83647ebef0ad1b8ed5b1d64a68988728a4729bedf9c1"}
+{"record":"test","name":"Option.map.example.2","kind":"example","span":{"file":"lib/option.mo","file_bytes":"6c69622f6f7074696f6e2e6d6f","start":519,"end":559,"line":21,"column":5,"end_line":21,"end_column":45},"digest":"861072832e9e62282cac876f898c8c23385b589bbd5ac99366fcd443d51d56ed"}
+{"record":"test","name":"Option.map.example.3","kind":"example","span":{"file":"lib/option.mo","file_bytes":"6c69622f6f7074696f6e2e6d6f","start":564,"end":613,"line":22,"column":5,"end_line":22,"end_column":54},"digest":"c6503bb7e73306fdee60d2b84de1cbb71e94f44ae5f570ec8f228d4ea5a7c5d9"}
+{"record":"function","name":"Option.or_fail","mutants":0}
+{"record":"function","name":"Option.map","mutants":0}
+{"record":"totals","errors":0,"dropped":0,"passed":0,"failed":0,"stopped":0,"status":0}

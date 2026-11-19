@@ -1510,12 +1510,16 @@ number (section 12.5). `--only NAME` runs the one with that full name, and can b
 than once; `--in MODULE` runs one module's, still checking the whole program;
 and `--list` prints the full names without running anything. `--strength DIR`
 measures how many of the wrong versions in `DIR` the program's promises and
-examples kill; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
+examples kill, and how many any of its checks kills; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
 matches nothing is a mistake in the command.
 
 `mo test --gates` also tries mutants. A mutant is one small change to the code
-of a function in the file given or in a program module it imports, such as `<`
-made `<=` or a `not` removed. Every check runs first, with no time limit; if
+of a function in the file given or in a program module it imports, of one of
+seven kinds: a comparison moved to its boundary (`<` and `<=` swapped, and `>`
+and `>=`), a comparison negated (`==` and `!=` swapped, `<` made `>=`, `<=` made
+`>`, `>` made `<=`, `>=` made `<`), `and` and `or` swapped, a `not` removed, an
+arithmetic operator swapped (`+` and `-`, `*` and `/`), a Bool literal flipped,
+or an Int literal raised by one. Every check runs first, with no time limit; if
 one does not pass, no mutant is tried. Next, each function on the `expose` line
 of those modules, other than `main`, needs a promise or an example of its own,
 each overload on its own, and each service tool a service promise `on` it or a
@@ -1527,8 +1531,9 @@ the steps it took on the unchanged program, and more than 1,000,000, no longer
 passes. A mutant that survives is an error, E1439, naming the function, the
 line and the change; a mutant the checker refuses is dropped. With `--only`,
 `--in`, `--calls`, `--seconds` or a `--max` limit, `--gates` runs the checks as
-without it, tries no mutant and says the gates did not run. It takes no
-`--list`, `--bundle` or `--strength`.
+without it, tries no mutant and says the gates did not run. With `--list` it
+lists the checks, each mutant it would try and how many mutants each function
+has, without running anything. It takes no `--bundle` or `--strength`.
 
 `mo test FILE --against OLD` is a shorter gated run. `OLD` is the previous
 version's copy of the file given; for a library module, `OLD`'s folder is the

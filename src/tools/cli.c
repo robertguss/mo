@@ -607,10 +607,10 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "--recover reads a data folder, not --export", "--recover", NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
-    if (out->gates && (out->list || out->source_bundle || out->strength != NULL))
+    if (out->gates && (out->source_bundle || out->strength != NULL))
         return refuse(out, error,
-                      "--gates runs every check and tries every mutant; it takes no --list, "
-                      "--bundle or --strength",
+                      "--gates runs every check and tries every mutant; it takes no --bundle or "
+                      "--strength",
                       "--gates", NULL);
     uint64_t planned = (UINT64_C(1) << FLAG_LIST) | (UINT64_C(1) << FLAG_ONLY) |
                        (UINT64_C(1) << FLAG_IN) | (UINT64_C(1) << FLAG_CALLS);

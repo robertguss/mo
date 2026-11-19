@@ -1,0 +1,7 @@
+{"record":"version","format":"1.0","mo":"0.3.0","command":"test"}
+{"record":"test","name":"Files.walk.example.1","kind":"example","span":{"file":"lib/files.mo","file_bytes":"6c69622f66696c65732e6d6f","start":380,"end":688,"line":9,"column":5,"end_line":16,"end_column":9},"digest":"2ec8092cc46a73eaacfe38eca55143cf3765eda167636ad2f85f186eca6dac8f"}
+{"record":"test","name":"Files.walk.example.2","kind":"example","span":{"file":"lib/files.mo","file_bytes":"6c69622f66696c65732e6d6f","start":693,"end":819,"line":17,"column":5,"end_line":18,"end_column":79},"digest":"fb61e4dfcb75d2320d2716bc4a975dc1d6a4894778bc137150f8d5964e4cc8f0"}
+{"record":"test","name":"Files.walk.example.3","kind":"example","span":{"file":"lib/files.mo","file_bytes":"6c69622f66696c65732e6d6f","start":824,"end":863,"line":19,"column":5,"end_line":19,"end_column":44},"digest":"cb635af6ae0aa7b7b10caed74ec68573776a386d5b50cbae90f617f5a757a020"}
+{"record":"test","name":"Files.walk.example.4","kind":"example","span":{"file":"lib/files.mo","file_bytes":"6c69622f66696c65732e6d6f","start":868,"end":933,"line":20,"column":5,"end_line":20,"end_column":70},"digest":"e0b2e4f68fbfe67c39f54e965815e1fd4a9910d7cffa2d99d7984ae11d454aa2"}
+{"record":"function","name":"Files.walk","mutants":0}
+{"record":"totals","errors":0,"dropped":0,"passed":0,"failed":0,"stopped":0,"status":0}

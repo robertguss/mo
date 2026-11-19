@@ -213,7 +213,9 @@ static bool decide(struct run *w, uint32_t item, const char *problem, const char
     result->microseconds = elapsed(w);
     w->totals->passed += result->outcome == MO_RETURNED;
     w->totals->failed += result->outcome == MO_FAILED;
+    w->totals->failed_tests += result->outcome == MO_FAILED && observation->promise == NULL;
     w->totals->stopped += result->outcome == MO_STOPPED;
+    w->totals->stopped_tests += result->outcome == MO_STOPPED && observation->promise == NULL;
     if (mo_render_test_result(w->sources, result, w->cli->json, &w->records[item]))
         return true;
     mo_test_report_error(w->diags, "test result could not be rendered or written completely",

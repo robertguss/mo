@@ -104,7 +104,7 @@ struct mo_gate_totals {
 };
 struct mo_test_totals {
     uint32_t passed, failed, stopped;
-    uint32_t failed_examples;
+    uint32_t failed_examples, failed_tests, stopped_tests;
     struct mo_gate_totals gates;
     /* An offline command's own result status, which the totals report when no diagnostic
      * or failed test already makes it 1. */

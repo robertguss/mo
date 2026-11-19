@@ -1,0 +1,13 @@
+{"record":"version","format":"1.0","mo":"0.3.0","command":"test"}
+{"record":"test","name":"ReadFiles.walk.example.1","kind":"example","span":{"file":"lib/read-files.mo","file_bytes":"6c69622f726561642d66696c65732e6d6f","start":336,"end":654,"line":9,"column":5,"end_line":16,"end_column":9},"digest":"ac9dc940d33ae4139cbed934f50e0a32e60925d533bdb8108df09541b2b1a6b0"}
+{"record":"test","name":"ReadFiles.walk.example.2","kind":"example","span":{"file":"lib/read-files.mo","file_bytes":"6c69622f726561642d66696c65732e6d6f","start":659,"end":795,"line":17,"column":5,"end_line":18,"end_column":79},"digest":"7c70fc3bfe38732775fb13c03020eaec52785454a116464855d3e135d6cce2da"}
+{"record":"test","name":"ReadFiles.walk.example.3","kind":"example","span":{"file":"lib/read-files.mo","file_bytes":"6c69622f726561642d66696c65732e6d6f","start":800,"end":849,"line":19,"column":5,"end_line":19,"end_column":54},"digest":"a398cb4b52b4df0917fd6cc4ca62b0b9c707bb2497e87a6c29ee28498e90be6c"}
+{"record":"test","name":"ReadFiles.walk.example.4","kind":"example","span":{"file":"lib/read-files.mo","file_bytes":"6c69622f726561642d66696c65732e6d6f","start":854,"end":929,"line":20,"column":5,"end_line":20,"end_column":80},"digest":"0c871e4086db678f3c10d2cc68795876dc7fa9012e001af7af9eaf212affdde7"}
+{"record":"mutant","function":"ReadFiles.below","file":"lib/read-files.mo","line":44,"column":11,"kind":"negate","original":"==","replacement":"!="}
+{"record":"mutant","function":"ReadFiles.below","file":"lib/read-files.mo","line":46,"column":18,"kind":"negate","original":"==","replacement":"!="}
+{"record":"mutant","function":"ReadFiles.below","file":"lib/read-files.mo","line":46,"column":24,"kind":"logic","original":"or","replacement":"and"}
+{"record":"mutant","function":"ReadFiles.below","file":"lib/read-files.mo","line":46,"column":34,"kind":"negate","original":"==","replacement":"!="}
+{"record":"function","name":"ReadFiles.walk","mutants":0}
+{"record":"function","name":"ReadFiles.walk_below","mutants":0}
+{"record":"function","name":"ReadFiles.below","mutants":4}
+{"record":"totals","errors":0,"dropped":0,"passed":0,"failed":0,"stopped":0,"status":0}
