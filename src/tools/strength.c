@@ -277,14 +277,6 @@ static bool apply(const struct measure *m, struct mo_arena *arena, struct versio
     return ok;
 }
 
-static struct mo_test_selection *checks(struct mo_arena *arena, const struct mo_program *program,
-                                        const struct mo_cli *cli, struct mo_diags *diags) {
-    struct mo_test_selection *selection = mo_select_tests(arena, program, cli, diags);
-    if (selection != NULL)
-        selection->mistake = NULL;
-    return selection;
-}
-
 static enum outcome classify(const struct mo_test_totals *totals, const struct mo_diags *diags) {
     bool promise = totals->failed > totals->failed_examples + totals->failed_tests,
          example = totals->failed_examples != 0;
@@ -382,7 +374,7 @@ static void measure_one(const struct measure *m, struct version *v, bool counted
         v->outcome = CHANGES_INTENT;
         goto done;
     }
-    struct mo_test_selection *selection = checks(&arena, checked, run->cli, &diags);
+    struct mo_test_selection *selection = mo_select_tests(&arena, checked, run->cli, &diags);
     struct mo_test_totals totals = {0};
     if (selection != NULL)
         mo_run_tests(run->cli, &arena, checked, &program, selection, m->quiet, &diags, &totals);
@@ -503,7 +495,7 @@ void mo_strength(const struct mo_strength_run *run) {
     }
     uint8_t *digests = sorted_digests(run->arena, &intent);
     struct mo_test_selection *selection =
-        digests == NULL ? NULL : checks(run->arena, run->program, run->cli, run->diags);
+        digests == NULL ? NULL : mo_select_tests(run->arena, run->program, run->cli, run->diags);
     if (selection == NULL)
         return;
     if (run->cli->json && !(*run->version = mo_write_version(run->output, run->cli->command)))

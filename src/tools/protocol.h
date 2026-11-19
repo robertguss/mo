@@ -37,8 +37,8 @@ mo_protocol_server_new(const struct mo_image *service, uint32_t index, struct mo
 void mo_protocol_server_free(struct mo_protocol_server *server);
 /* Enables the live upgrade tools and the review tools: credential is the second bearer secret
  * every upgrade call must carry, approval the third that every review call must carry, compiler
- * the executable that compiles candidates, children whether candidates are accepted. Reads the
- * active program row. */
+ * the executable that compiles candidates, children how compile, listing and check children run
+ * (confined, unconfined, or refused). Reads the active program row. */
 struct mo_bearer;
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_upgrades(struct mo_protocol_server *server, const struct mo_bearer *credential,
