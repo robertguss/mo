@@ -233,6 +233,13 @@ static MO_MUST_USE struct mo_network_error open_socket(const struct lookup *foun
 
 static MO_MUST_USE struct mo_network_error send_all(const struct connection *connection,
                                                     const uint8_t *bytes, size_t length) {
+    if (length == 0) {
+        uint64_t now;
+        if (!monotonic(&now))
+            return (struct mo_network_error){.status = NETWORK_INTERNAL};
+        if (now >= connection->deadline)
+            return (struct mo_network_error){.status = NETWORK_TIMED_OUT};
+    }
     size_t sent = 0;
     while (sent < length) {
         struct mo_network_error problem =

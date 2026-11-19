@@ -193,6 +193,7 @@ static void test_deadline(void) {
     CHECK(send(peer, "late", 4, 0) == 4);
     receives(&f, connection, 16, "Error(TimedOut)");
     sends(&f, connection, "late", "Error(TimedOut)");
+    sends(&f, connection, "", "Error(TimedOut)");
     drop_connection(&f, connection);
     CHECK(close(peer) == 0);
 

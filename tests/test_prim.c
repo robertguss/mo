@@ -213,6 +213,11 @@ static void bytes_slice_and_join(void) {
                        args, &untouched, &reason) == MO_PRIM_OUTSIDE);
     CHECK(strcmp(reason, "Bytes.slice with a negative index") == 0);
     CHECK(mo_cell_get_int(untouched) == 41);
+    args[1] = mo_cell_int(1);
+    args[2] = mo_cell_int(-1);
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_SLICE, f.signature[MO_PRIM_BYTES_SLICE],
+                       args, &untouched, &reason) == MO_PRIM_OUTSIDE);
+    CHECK(mo_cell_get_int(untouched) == 41);
 
     struct mo_cell empty, list, joined;
     MO_ASSERT(mo_value_bytes(f.heap, (const uint8_t *)"", 0, &empty));

@@ -38,80 +38,54 @@
  * The lines follow docs/design/library.md, capability by capability. */
 
 #ifndef HOSTOP
-#error                                                                                             \
-    "Define HOSTOP(id, module, name, signature, params, bugs, spec_only) before including base/hostops.def."
+#error "Define HOSTOP(id, module, name, signature, params, bugs, spec_only) before including base/hostops.def."
 #endif
 
-/*     id                      module       name              Mo signature params bugs spec only */
-HOSTOP(ARGS_LIST, "Args", "list", "fn(Args) : List(Text)", "b", "", false)
-HOSTOP(ARGS_OF, "Args", "of", "fn(List(Text)) : Args", "o", "", true)
+/*     id                      module       name              Mo signature                                           params bugs                                  spec only */
+HOSTOP(ARGS_LIST,              "Args",      "list",           "fn(Args) : List(Text)",                               "b",   "",                                   false)
+HOSTOP(ARGS_OF,                "Args",      "of",             "fn(List(Text)) : Args",                               "o",   "",                                   true)
 
-HOSTOP(ENV_GET, "Env", "get", "fn(Env, Text) : Option(Text)", "bb", "", false)
-HOSTOP(ENV_OF, "Env", "of", "fn(Map(Text, Text)) : Env", "o", "", true)
+HOSTOP(ENV_GET,                "Env",       "get",            "fn(Env, Text) : Option(Text)",                        "bb",  "",                                   false)
+HOSTOP(ENV_OF,                 "Env",       "of",             "fn(Map(Text, Text)) : Env",                           "o",   "",                                   true)
 
-HOSTOP(CONSOLE_PRINT, "Console", "print", "fn(Console, Text)", "bb",
-       "printing to an output that is gone", false)
-HOSTOP(CONSOLE_ERROR, "Console", "error", "fn(Console, Text)", "bb",
-       "printing to an output that is gone", false)
-HOSTOP(CONSOLE_READ_LINE, "Console", "read_line", "fn(Console) : Option(Text)", "b", "", false)
-HOSTOP(CONSOLE_PRINTED, "Console", "printed", "fn(Console) : List(Text)", "b", "", true)
-HOSTOP(CONSOLE_PRINTED_ERRORS, "Console", "printed_errors", "fn(Console) : List(Text)", "b", "",
-       true)
-HOSTOP(CONSOLE_FAKE, "Console", "fake", "fn() : Console", "", "", true)
-HOSTOP(CONSOLE_FAKE_INPUT, "Console", "fake_input", "fn(List(Text)) : Console", "o", "", true)
+HOSTOP(CONSOLE_PRINT,          "Console",   "print",          "fn(Console, Text)",                                   "bb",  "printing to an output that is gone", false)
+HOSTOP(CONSOLE_ERROR,          "Console",   "error",          "fn(Console, Text)",                                   "bb",  "printing to an output that is gone", false)
+HOSTOP(CONSOLE_READ_LINE,      "Console",   "read_line",      "fn(Console) : Option(Text)",                          "b",   "",                                   false)
+HOSTOP(CONSOLE_PRINTED,        "Console",   "printed",        "fn(Console) : List(Text)",                            "b",   "",                                   true)
+HOSTOP(CONSOLE_PRINTED_ERRORS, "Console",   "printed_errors", "fn(Console) : List(Text)",                            "b",   "",                                   true)
+HOSTOP(CONSOLE_FAKE,           "Console",   "fake",           "fn() : Console",                                      "",    "",                                   true)
+HOSTOP(CONSOLE_FAKE_INPUT,     "Console",   "fake_input",     "fn(List(Text)) : Console",                            "o",   "",                                   true)
 
-HOSTOP(FILES_READ_TEXT, "Files", "read_text", "fn(Files, Text) : Result(Text, FileError)", "bb", "",
-       false)
-HOSTOP(FILES_READ_BYTES, "Files", "read_bytes", "fn(Files, Text) : Result(Bytes, FileError)", "bb",
-       "", false)
-HOSTOP(FILES_WRITE_TEXT, "Files", "write_text", "fn(Files, Text, Text) : Result(Unit, FileError)",
-       "bbb", "", false)
-HOSTOP(FILES_APPEND_TEXT, "Files", "append_text", "fn(Files, Text, Text) : Result(Unit, FileError)",
-       "bbb", "", false)
-HOSTOP(FILES_REMOVE, "Files", "remove", "fn(Files, Text) : Result(Unit, FileError)", "bb", "",
-       false)
-HOSTOP(FILES_MAKE_FOLDER, "Files", "make_folder", "fn(Files, Text) : Result(Unit, FileError)", "bb",
-       "", false)
-HOSTOP(FILES_LIST, "Files", "list", "fn(Files, Text) : Result(List(Text), FileError)", "bb", "",
-       false)
-HOSTOP(FILES_ENTRIES, "Files", "entries", "fn(Files, Text) : Result(List(Entry), FileError)", "bb",
-       "", false)
-HOSTOP(FILES_EXISTS, "Files", "exists?", "fn(Files, Text) : Bool", "bb", "", false)
-HOSTOP(FILES_WITHIN, "Files", "within", "fn(Files, Text) : Files", "bb",
-       "too many folders open at once", false)
-HOSTOP(FILES_READ_ONLY, "Files", "read_only", "fn(Files) : ReadFiles", "b",
-       "too many folders open at once", false)
-HOSTOP(FILES_IN_MEMORY, "Files", "in_memory", "fn(Map(Text, Text)) : Files", "o", "", true)
+HOSTOP(FILES_READ_TEXT,        "Files",     "read_text",      "fn(Files, Text) : Result(Text, FileError)",           "bb",  "",                                   false)
+HOSTOP(FILES_READ_BYTES,       "Files",     "read_bytes",     "fn(Files, Text) : Result(Bytes, FileError)",          "bb",  "",                                   false)
+HOSTOP(FILES_WRITE_TEXT,       "Files",     "write_text",     "fn(Files, Text, Text) : Result(Unit, FileError)",     "bbb", "",                                   false)
+HOSTOP(FILES_APPEND_TEXT,      "Files",     "append_text",    "fn(Files, Text, Text) : Result(Unit, FileError)",     "bbb", "",                                   false)
+HOSTOP(FILES_REMOVE,           "Files",     "remove",         "fn(Files, Text) : Result(Unit, FileError)",           "bb",  "",                                   false)
+HOSTOP(FILES_MAKE_FOLDER,      "Files",     "make_folder",    "fn(Files, Text) : Result(Unit, FileError)",           "bb",  "",                                   false)
+HOSTOP(FILES_LIST,             "Files",     "list",           "fn(Files, Text) : Result(List(Text), FileError)",     "bb",  "",                                   false)
+HOSTOP(FILES_ENTRIES,          "Files",     "entries",        "fn(Files, Text) : Result(List(Entry), FileError)",    "bb",  "",                                   false)
+HOSTOP(FILES_EXISTS,           "Files",     "exists?",        "fn(Files, Text) : Bool",                              "bb",  "",                                   false)
+HOSTOP(FILES_WITHIN,           "Files",     "within",         "fn(Files, Text) : Files",                             "bb",  "too many folders open at once",      false)
+HOSTOP(FILES_READ_ONLY,        "Files",     "read_only",      "fn(Files) : ReadFiles",                               "b",   "too many folders open at once",      false)
+HOSTOP(FILES_IN_MEMORY,        "Files",     "in_memory",      "fn(Map(Text, Text)) : Files",                         "o",   "",                                   true)
 
-HOSTOP(READFILES_READ_TEXT, "ReadFiles", "read_text",
-       "fn(ReadFiles, Text) : Result(Text, FileError)", "bb", "", false)
-HOSTOP(READFILES_READ_BYTES, "ReadFiles", "read_bytes",
-       "fn(ReadFiles, Text) : Result(Bytes, FileError)", "bb", "", false)
-HOSTOP(READFILES_LIST, "ReadFiles", "list", "fn(ReadFiles, Text) : Result(List(Text), FileError)",
-       "bb", "", false)
-HOSTOP(READFILES_ENTRIES, "ReadFiles", "entries",
-       "fn(ReadFiles, Text) : Result(List(Entry), FileError)", "bb", "", false)
-HOSTOP(READFILES_EXISTS, "ReadFiles", "exists?", "fn(ReadFiles, Text) : Bool", "bb", "", false)
-HOSTOP(READFILES_WITHIN, "ReadFiles", "within", "fn(ReadFiles, Text) : ReadFiles", "bb",
-       "too many folders open at once", false)
+HOSTOP(READFILES_READ_TEXT,    "ReadFiles", "read_text",      "fn(ReadFiles, Text) : Result(Text, FileError)",       "bb",  "",                                   false)
+HOSTOP(READFILES_READ_BYTES,   "ReadFiles", "read_bytes",     "fn(ReadFiles, Text) : Result(Bytes, FileError)",      "bb",  "",                                   false)
+HOSTOP(READFILES_LIST,         "ReadFiles", "list",           "fn(ReadFiles, Text) : Result(List(Text), FileError)", "bb",  "",                                   false)
+HOSTOP(READFILES_ENTRIES,      "ReadFiles", "entries",        "fn(ReadFiles, Text) : Result(List(Entry), FileError)", "bb", "",                                   false)
+HOSTOP(READFILES_EXISTS,       "ReadFiles", "exists?",        "fn(ReadFiles, Text) : Bool",                          "bb",  "",                                   false)
+HOSTOP(READFILES_WITHIN,       "ReadFiles", "within",         "fn(ReadFiles, Text) : ReadFiles",                     "bb",  "too many folders open at once",      false)
 
-HOSTOP(CLOCK_NOW, "Clock", "now", "fn(Clock) : Time", "b", "time outside the years 1 to 9999",
-       false)
-HOSTOP(CLOCK_FIXED, "Clock", "fixed", "fn(Time) : Clock", "b", "", true)
+HOSTOP(CLOCK_NOW,              "Clock",     "now",            "fn(Clock) : Time",                                    "b",   "time outside the years 1 to 9999",   false)
+HOSTOP(CLOCK_FIXED,            "Clock",     "fixed",          "fn(Time) : Clock",                                    "b",   "",                                   true)
 
-HOSTOP(RANDOM_INT, "Random", "int", "fn(Random, Int, Int) : Int", "bbb",
-       "high not greater than low", false)
-HOSTOP(RANDOM_SEEDED, "Random", "seeded", "fn(Int) : Random", "b", "", true)
+HOSTOP(RANDOM_INT,             "Random",    "int",            "fn(Random, Int, Int) : Int",                          "bbb", "high not greater than low",          false)
+HOSTOP(RANDOM_SEEDED,          "Random",    "seeded",         "fn(Int) : Random",                                    "b",   "",                                   true)
 
-HOSTOP(NETWORK_CONNECT, "Network", "connect",
-       "fn(Network, Text, Int, Duration) : Result(Connection, NetworkError)", "bbbb",
-       "port outside 1 to 65535; too many connections open at once", false)
-HOSTOP(CONNECTION_SEND, "Connection", "send", "fn(Connection, Bytes) : Result(Unit, NetworkError)",
-       "bb", "", false)
-HOSTOP(CONNECTION_RECEIVE, "Connection", "receive",
-       "fn(Connection, Int) : Result(Bytes, NetworkError)", "bb",
-       "most below 1 or above the receive limit", false)
-HOSTOP(NETWORK_FAKE, "Network", "fake", "fn(Map(Text, Map(Bytes, Bytes))) : Network", "o", "", true)
+HOSTOP(NETWORK_CONNECT,        "Network",   "connect",        "fn(Network, Text, Int, Duration) : Result(Connection, NetworkError)", "bbbb", "port outside 1 to 65535; too many connections open at once", false)
+HOSTOP(CONNECTION_SEND,        "Connection", "send",          "fn(Connection, Bytes) : Result(Unit, NetworkError)",  "bb",  "",                                   false)
+HOSTOP(CONNECTION_RECEIVE,     "Connection", "receive",       "fn(Connection, Int) : Result(Bytes, NetworkError)",   "bb",  "most below 1 or above the receive limit", false)
+HOSTOP(NETWORK_FAKE,           "Network",   "fake",           "fn(Map(Text, Map(Bytes, Bytes))) : Network",          "o",   "",                                   true)
 
 #undef HOSTOP
 
@@ -143,10 +117,10 @@ FAILUREOP(STATS, mo_store_failure_stats)
 #ifndef SIMOP
 #define SIMOP(id, module, name, spec_only)
 #endif
-SIMOP(START, "Simulation", "start", true)
-SIMOP(SEND, "Simulation", "send", false)
+SIMOP(START,   "Simulation", "start",   true)
+SIMOP(SEND,    "Simulation", "send",    false)
 SIMOP(ADVANCE, "Simulation", "advance", false)
-SIMOP(CRASH, "Simulation", "crash", false)
+SIMOP(CRASH,   "Simulation", "crash",   false)
 SIMOP(RESTART, "Simulation", "restart", false)
 #undef SIMOP
 

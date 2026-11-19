@@ -30,7 +30,7 @@ static struct io_plan reads, writes, polls;
 static bool truncate_failure;
 static int lookup_status, pipe_failure, thread_failure, socket_failure, connect_failure,
     send_failure, recv_failure;
-static bool lookup_held;
+static bool lookup_held, connect_stalls;
 static unsigned lookups_waiting;
 static pthread_mutex_t lookup_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t lookup_changed = PTHREAD_COND_INITIALIZER;
@@ -173,6 +173,13 @@ int mo_host_fault_socket(int family, int type, int protocol) {
 }
 
 int mo_host_fault_connect(int fd, const struct sockaddr *address, socklen_t length) {
+    if (connect_stalls) {
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &clock_value) == 0);
+        clock_value.tv_sec += 6;
+        clock_override = true;
+        errno = EINPROGRESS;
+        return -1;
+    }
     return fails(connect_failure) ? -1 : connect(fd, address, length);
 }
 
@@ -559,6 +566,11 @@ static void test_network(void) {
                      retried[] = {1, -ENOMEM};
     polls = (struct io_plan){.steps = exhausted, .count = 1};
     broken(&f, MO_HOST_NETWORK_CONNECT, dialing, strerror(ENOMEM));
+    settles(before);
+    CHECK(f.host.open_connections == 0);
+    connect_stalls = true;
+    network_gives(&f, MO_HOST_NETWORK_CONNECT, dialing, "Error(TimedOut)", "", "");
+    connect_stalls = clock_override = false;
     settles(before);
     CHECK(f.host.open_connections == 0);
 
