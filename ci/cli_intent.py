@@ -300,7 +300,7 @@ def strength_checks(binary):
     tests = strength_record(binary, f"{STRENGTH}-tests/checks.mo", f"{STRENGTH}-tests/versions")
     assert {v["name"]: v["outcome"] for v in tests["versions"]} == {
         "a-third.mo": "killed_by_test", "b-either.mo": "killed_by_promise",
-        "c-floor.mo": "survived", "d-zero.mo": "killed_by_test"}, tests
+        "c-floor.mo": "survived", "d-zero.mo": "killed_by_test", "e-stop.mo": "defect"}, tests
     assert (tests["killed"], tests["killed_any"], tests["scored"]) == (1, 3, 4), tests
     slow = strength_record(binary, f"{STRENGTH}-tests/checks.mo", f"{STRENGTH}-tests/slow", 1,
                            ["--seconds", "1"])

@@ -299,9 +299,11 @@ static enum outcome classify(const struct mo_test_totals *totals, const struct m
         unfinished = unfinished || diags->items[i].code != MO_CODE_TOOL_TEST_INITIALIZATION;
     if (unfinished || diags->dropped != 0)
         return UNFINISHED;
+    if (totals->stopped > totals->stopped_tests)
+        return DEFECT;
     if (totals->failed_tests != 0 || totals->stopped_tests != 0)
         return KILLED_BY_TEST;
-    return totals->stopped != 0 || diags->count != 0 ? DEFECT : SURVIVED;
+    return diags->count != 0 ? DEFECT : SURVIVED;
 }
 
 static uint8_t *sorted_digests(struct mo_arena *arena, const struct mo_intent *intent) {

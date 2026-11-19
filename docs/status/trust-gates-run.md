@@ -261,6 +261,20 @@ The one mutant fewer is the `or` the helper rewrite removed from `QueueTests.job
 - P6, half right: 1 judged unkillable (0 to 3 predicted); 0 killed only by one call sequence
   (1 to 5 predicted).
 
+### The recheck after the code review
+
+The final code review found that a wrong version on which a promise or an example stops and a
+test fails was `killed_by_test`, so scored, where before tests ran it was `defect` and kept out
+of the rate. The tool that made the four `--strength` runs above had this fault. A version now
+stays `defect` when a promise or an example stopped (`e-stop.mo` in
+`tests/cli/strength-tests/versions`). All four runs were made again with the fixed tool, into
+`learnability/trust-gates/results/strength/recheck/`.
+
+Prediction, written at 06:34 UTC on 2026-11-19, after the four runs started and before any of
+their output was read: every version keeps the outcome it had above, because each
+`killed_by_test` version above was killed by a test failing on a wrong result, and I know of
+none on which a promise or an example stops.
+
 ### Limits
 
 - The held-back half was already used in Phase 6, against the strengthened program
@@ -317,7 +331,9 @@ Each of these was decided by the agent under Robert's delegation of 2026-11-19.
 - **What `killed_by_test` covers.** KTD17 names a kill by a test; R23 says any check may kill.
   A recovery check's kill also counts as `killed_by_test`, and so does a test or recovery check
   that stops on a wrong version, as the gate counts a stopped check (found by the code review,
-  fixed in `ea0b1c19`). A check that did not finish still makes a version `unfinished`.
+  fixed in `ea0b1c19`). A check that did not finish still makes a version `unfinished`, and a
+  promise or an example that stopped still makes it `defect` (found by the final code review;
+  the recheck above).
 - **A defect on `main` fixed here:** the intent walk's crash on recursive types (`04a62857`),
   because it blocked U8's listings.
 - **`--seconds 360`** for every `--strength` run, at least five times the slowest check.
