@@ -18,6 +18,7 @@ flags = {
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
     "--gates": ([], {"test"}),
+    "--against": (["old/main.mo"], {"test"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),

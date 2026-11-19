@@ -262,7 +262,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_UPGRADE_TOKEN_ENV, "--upgrade-token-env", false, false, VALUE_TEXT, 0,
      ON(SERVE) | ON(PUSH)},
     {FLAG_STRENGTH, "--strength", false, false, VALUE_TEXT, 0, ON(TEST)},
-    {FLAG_AGAINST, "--against", false, false, VALUE_TEXT, 0, ON(INTENT)},
+    {FLAG_AGAINST, "--against", false, false, VALUE_TEXT, 0, ON(INTENT) | ON(TEST)},
     {FLAG_APPROVAL_TOKEN_ENV, "--approval-token-env", false, false, VALUE_TEXT, 0,
      ON(SERVE) | ON(REVIEW)},
     {FLAG_ITEMS, "--items", false, false, VALUE_NONE, 0, ON(REVIEW)},
@@ -618,6 +618,15 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                        (UINT64_C(1) << FLAG_CALLS) | (UINT64_C(1) << FLAG_SECONDS) |
                        (UINT64_C(1) << FLAG_MAX_STACK) | (UINT64_C(1) << FLAG_MAX_DEPTH) |
                        (UINT64_C(1) << FLAG_MAX_HEAP);
+    bool against = out->command == MO_COMMAND_TEST && out->against != NULL;
+    if (against &&
+        (out->list || out->source_bundle || out->strength != NULL || (seen & limited) != 0))
+        return refuse(out, error,
+                      "--against runs every check and tries the mutants of what changed; it takes "
+                      "no --only, --in, --calls, --seconds, --max-stack, --max-depth, --max-heap, "
+                      "--list, --bundle or --strength",
+                      "--against", NULL);
+    out->gates = out->gates || against;
     out->gates_skipped = out->gates && (seen & limited) != 0;
     out->gates = out->gates && !out->gates_skipped;
     bool checks = out->command == MO_COMMAND_TEST && out->source_bundle && !out->list;

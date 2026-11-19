@@ -16,6 +16,7 @@
 "--calls"
 "--seconds"
 "--gates"
+"--against"
 "--emit=core"
 "--emit=bytecode"
 "--reference"
