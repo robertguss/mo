@@ -48,6 +48,11 @@ def gates(binary):
     assert run(binary, ["test", "--gates", SURVIVOR], 2).stderr == b'unknown flag: "--gates"\n'
     strength = run(binary, ["test", SURVIVOR, "--strength", "tests/cli/strength/versions"], 0)
     assert b"gates" not in strength.stdout and not strength.stderr, strength
+    with tempfile.TemporaryDirectory() as scratch:
+        survivor = pathlib.Path(scratch) / "survivor.mosb"
+        survivor.write_bytes(bundle(root / "tests/errors/e1439", "main.mo", ["main.mo"]))
+        door = run(binary, ["test", "--bundle", survivor], 0)
+    assert b"gates" not in door.stdout and not door.stderr, door
 
     items, total = totals(binary, f"{GATES}/killed/main.mo", 0)
     mutants(total, 3, promise=1, example=1, test=1)
@@ -164,13 +169,17 @@ def edit(text, *pairs):
     return text
 
 
-def bundle_digest(folder, entry, files):
+def bundle(folder, entry, files):
     def field(data):
         return struct.pack("<I", len(data)) + data
     wire = b"MOSB\1" + field(entry.encode()) + struct.pack("<I", len(files))
     for name in sorted(files):
         wire += field(name.encode()) + field((folder / name).read_bytes())
-    return hashlib.sha256(wire).hexdigest()
+    return wire
+
+
+def bundle_digest(folder, entry, files):
+    return hashlib.sha256(bundle(folder, entry, files)).hexdigest()
 
 
 def snapshot(folder):
