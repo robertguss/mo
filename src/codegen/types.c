@@ -234,6 +234,9 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             fields[1] = (struct mo_type_field){"reason", text_type};
         }
         struct mo_type_field network[3] = {{0}};
+        static const struct {
+            uint32_t count, first;
+        } network_fields[5] = {{1, 0}, {2, 0}, {0, 0}, {0, 0}, {1, 2}};
         if (t->tag == MO_CORE_TY_NETWORK_ERROR) {
             uint32_t text_type = codegen_scalar(c, MO_TYPE_TEXT);
             uint32_t int_type = codegen_scalar(c, MO_TYPE_INT);
@@ -264,9 +267,9 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                 cases[i].field_count = i == 3 ? 2 : 1;
                 cases[i].fields = fields;
             }
-            if (t->tag == MO_CORE_TY_NETWORK_ERROR && i != 2 && i != 3) {
-                cases[i].field_count = i == 1 ? 2 : 1;
-                cases[i].fields = &network[i == 4 ? 2 : 0];
+            if (t->tag == MO_CORE_TY_NETWORK_ERROR && network_fields[i].count != 0) {
+                cases[i].field_count = network_fields[i].count;
+                cases[i].fields = &network[network_fields[i].first];
             }
         }
         status = mo_types_define_choice(&c->types, id, cases, n);
