@@ -1665,6 +1665,8 @@ constant stack (reference 5.3); a callee with more registers grows that frame
   processes list and check a candidate before the door decides
   (`src/tools/door.c`, `protocol-door.c`, `upgrade-door.c`). [intent.md](intent.md)
   is the design.
+- **Outside world (Phase 7):** confinement of upgrade children is built; Network,
+  SQLite and HTTP are not.
 - **In-place demands (Phase 8):** the in-place check of D26 runs on Core, where
   the full-3c checker's rules apply.
 
@@ -1696,7 +1698,8 @@ constant stack (reference 5.3); a callee with more registers grows that frame
 - **`mo test`** runs every example, every test, and every promise against
   generated inputs, or those that `--only` and `--in` choose by the names of
   `bytecode.md` section 3.5. `--list` prints the names, and `--json` gives
-  the results as 10.2 says.
+  the results as 10.2 says. `--gates` and `--against OLD` try mutants (10.2
+  and reference 13.4).
 - **`mo format`** and **`mo fix`** rewrite files in place (3.1, 3.5).
 - **`mo guide`** prints `docs/agent-guide.md`, and `mo guide --reference`
   prints `docs/reference/README.md`, both built into the toolchain so their
@@ -1741,14 +1744,18 @@ or flag.
 | `check` | one entry file | `--json`, `--emit=core`, `--emit=bytecode` |
 | `emit` | one entry file | `-o FILE` (required) |
 | `run` | one entry file, then program arguments | `--max-stack`, `--max-depth`, `--max-heap`, before the file |
-| `test` | one entry file | `--json`, repeatable `--only NAME`, `--in MODULE`, `--list`, `--max-stack`, `--max-depth`, `--max-heap`, `--calls`, `--seconds`, `--strength DIR` |
+| `test` | one entry file | `--json`, repeatable `--only NAME`, `--in MODULE`, `--list`, `--max-stack`, `--max-depth`, `--max-heap`, `--calls`, `--seconds`, `--strength DIR`, `--gates`, `--against OLD` |
 | `format`, `fix` | one or more files | none |
 | `guide` | none | `--reference` |
 
 `--json` and `--emit` cannot be combined. Test selections may combine:
 `--only`'s names are intersected with `--in`'s module. `--list` accepts
 budgets but will not consume them. `--strength DIR` runs a fixed plan over the
-whole program and takes no `--list`, `--only`, `--in` or `--calls`. Source-inventory matching precedes execution
+whole program and takes no `--list`, `--only`, `--in` or `--calls`. `--gates` runs
+every check and tries every mutant; it takes no `--bundle` or `--strength`.
+`--against OLD` runs every check and tries the mutants of what changed; it takes
+no `--only`, `--in`, `--calls`, `--seconds`, `--max-stack`, `--max-depth`,
+`--max-heap`, `--list`, `--bundle` or `--strength`. Source-inventory matching precedes execution
 and JSON publication, as described below. Limits are
 positive ASCII decimal integers without signs, spaces or fractions; leading
 zeros are accepted. Byte sizes accept bare bytes or the exact suffixes `B`,
@@ -2415,10 +2422,28 @@ records may be added, and readers ignore what they don't know.
   the original passed and no version is `unfinished`; otherwise `true`. If the
   original failed, `versions` is `[]`, `killed`, `killed_any` and `scored` are 0, `rate` is
   `null`, and `partial` is `true`.
+- **`mutant`**, one per mutant under `mo test --json --gates` or `--against`,
+  and also under `--list`: `function`; `file`; `line`; `column`; `kind`;
+  `original`; `replacement`. When the mutant is tried, not listed: `outcome`,
+  `"dropped"`, `"killed"` or `"survived"`; `by`; and `check`. The last two are
+  `null` when unused.
+- **`function`**, one per function under `mo test --json --gates --list`:
+  `name` and `mutants`.
+- **`change`**, one per check in the `--against` summary, after `result` and
+  before `totals`: `change`, `"no longer true"`, `"newly true"`, `"about
+  something new"` or `"could not be compared"`; `name`; and `reason` when
+  present.
+- **`changes`**, one per `--against` run that compared: `previous`, 64
+  lowercase hexadecimal digits; `no_longer_true`; `newly_true`;
+  `about_something_new`; `not_compared`; and `passing`.
 - **`totals`**, always last: `errors`, the diagnostics written, and
   `dropped`, those found past the limits a run keeps
   (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;
-  and `status`, the status `mo` exits with.
+  and `status`, the status `mo` exits with. When `--gates` or `--against` was
+  given, `gates` is `"ran"`, `"ran shorter"` or `"did not run"`; `"ran"` and
+  `"ran shorter"` add `mutants` with `tried`, `killed` (`promise`, `example`,
+  `test`, `recovery`, `start`), `survived` and `dropped`; `"ran shorter"` also
+  adds `carried` and `previous`.
 
 A **span** is `file`, the path of the file; `file_bytes`, its exact path bytes
 in lowercase hexadecimal; `start` and `end`, byte offsets

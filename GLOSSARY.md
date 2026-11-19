@@ -7,7 +7,7 @@ and the review door in `docs/design/intent.md`.
 ## Language
 
 **Check**:
-A promise, an example or a test.
+A promise, an example, a test or a recovery check. A start failure also kills a mutant.
 
 **Wrong version**:
 A replacement for named declarations of a program, written by an agent to represent one plausible
@@ -22,7 +22,8 @@ _Avoid_: mechanical mutant, mutation
 A mutant or wrong version that every check of the program still passes.
 
 **Mutation gate**:
-The rule that a program's checks fail while one of its mutants survives.
+The rule that a program's checks fail while one of its mutants survives. It runs under
+`mo test --gates` or `--against`.
 
 **Behaviour change**:
 A check of the previous version of a program that the new version fails.
@@ -33,4 +34,4 @@ something new, and those that could not be compared.
 
 **Shorter run**:
 A gated run against the previous version of a program that tries only the mutants of functions
-whose code changed or whose checks changed, and carries the rest over untried.
+whose code changed, that are new, or whose checks changed, and carries the rest over untried.
