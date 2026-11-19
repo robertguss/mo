@@ -20,6 +20,8 @@ the decisions. Every file a run wrote is kept, a weak result included.
   `fitted.gates-idle.json` alone), and its shorter runs against the frozen copy and against an
   unchanged copy of itself.
 - `fitted/`: the three files the fitting session handed back.
+- `fitting-log.md`: U11, how the repository's library modules, examples and task queue were
+  fitted to the gates in PR4.
 - `transcript/`: the fitting session's brief, transcript (`transcript.jsonl`, Claude Code's
   stream-json output), survivor log, run outputs and final report, and `recount.md`, the
   independent recount.

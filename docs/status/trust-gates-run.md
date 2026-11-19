@@ -1,8 +1,9 @@
-# Trust gates: the dry run and the measurement
+# Trust gates: the dry run, the measurement and the full run
 
-The record of PR3 of `docs/plans/2026-11-18-2013-feat-trust-gates-mo-test-plan.md`: U8, the dry
-run that settles the table of kinds, and U10, the measurement of how many of the 24 wrong
-versions a task queue fitted only to the gates kills. The result files are in
+The record of PR3 and PR4 of `docs/plans/2026-11-18-2013-feat-trust-gates-mo-test-plan.md`: U8,
+the dry run that settles the table of kinds; U10, the measurement of how many of the 24 wrong
+versions a task queue fitted only to the gates kills; and U11 and U12, the repository's programs
+fitted to the gates and the cost of their full run. The result files are in
 `learnability/trust-gates/`, which its `README.md` describes.
 
 Robert delegated every decision in this work on 2026-11-19 ("I trust you to make all decisions
@@ -321,6 +322,83 @@ and say plainly what this measurement shows. Reasons:
   fitted task queue, 24 seconds for the library and examples, but 17 minutes for the current
   task queue with 10 service promises) are what R30 and U12 must weigh.
 
+## The repository's programs and their full run (PR4)
+
+### Fitting (U11)
+
+On 2026-11-19, from `main` at `82b7df1f`, every program of R29 was made to pass
+`mo test --gates`: the 12 library modules, the 12 examples and
+`services/task-queue/queue-tests.mo`. `learnability/trust-gates/fitting-log.md` is the log: each
+program's survivors before and after, its mutant counts, the survivors no check could kill and
+how each survivor was killed.
+
+- 104 survivors and 4 functions with no stated intent before; none after. The dry run's 70
+  survivors are among them; the other 34 are in `lib/json.mo` and `examples/account.mo`, whose
+  mutants were not tried until they stated intent.
+- Mutants: 633 before, 616 after. Functions with no mutant: 85 of 212 before, 86 of 211 after.
+  Two functions lost all their mutants: `Inventory.pad_column` and `RateLimit.limiter_of`.
+- Nine survivors could not be killed by any check of the program as written, because they
+  change nothing a check can observe; each was resolved by simpler code. Three more in
+  `lib/json.mo` only send a string down the parser's slow walk; a test kills them by the gate's
+  step limit (the log gives the evidence), and the parser keeps its speed: 28,140,943
+  instructions on Phase 7's 1 MiB body against 28,842,519 on `main`.
+- Survivors that only one call sequence could kill: none. The one the dry run judged of that
+  kind, `Main.current?`, is killed by an example on that helper.
+- Every new check kills at least one mutant that survived, or states the intent of an exposed
+  function that had none.
+
+### The full run and its cost (U12)
+
+`ci/check_gates.py` runs `mo test --gates` on the 25 programs with the first driver, at most as
+many at a time as there are processors, prints each one's time and fails on any program that
+does not pass. It then removes the test "a total follows two or more files…" from a copy of
+`examples/wc.mo` and must see that copy fail with survivors. It runs in the `drivers` group,
+which the nightly runs.
+
+Measured on 2026-11-19 on this host (8 cores, shared, the debug gcc build), one run each, with
+nothing else running unless said:
+
+| What | Seconds |
+| --- | ---: |
+| Full run, task queue | 198.1 |
+| Full run, 12 library modules, one after another | 21.8 (`lib/json.mo` 16.6) |
+| Full run, 12 examples, one after another | 18.1 (`examples/json-query.mo` 5.3) |
+| `ci/check_gates.py`, all 25 and the control | 200.9 |
+| Shorter run, task queue, `JobQueue.lease` changed | 189.8 (5 mutants tried, 23 functions carried) |
+| Shorter run, `lib/json.mo`, `Json.hex_digit_value` changed | 4.3 (9 tried, 26 carried) |
+| Shorter run, `examples/json-query.mo`, `JsonQuery.hex_digit_value` changed | 0.8 (9 tried, 14 carried) |
+| `bash ci/check.sh drivers` on `main` (`82b7df1f`), one driver | 572 |
+| `bash ci/check.sh drivers` on this branch, one driver | 628 |
+| Plain `mo test`, task queue, for comparison | about 75 |
+
+The task queue's full run fell from 933 seconds before fitting to 198 after. A survivor costs
+the most: no check kills it, so every check that entered its function runs to the end, and the
+task queue's full-queue test alone takes about 70 seconds. Once every mutant dies, most die on
+the first cheap check. The task queue's shorter run takes about as long as its full run,
+because it runs every check on both versions first.
+
+### R30
+
+Decided by the agent under Robert's delegation of 2026-11-19: the full run meets R30, measured
+here, for PR5 to turn the gates on. Reasons:
+
+- The full run of all 25 programs takes about 3.5 minutes of wall time on one driver, and it
+  runs beside the other checks of the `drivers` group, so the group grew by 56 seconds (10%)
+  here. Its longest check is still the formatter's, at about 450 seconds; the gates' check took
+  238 inside the group. One run each, on a shared host whose load average was 3.6 when the
+  branch's run started and 1.6 when `main`'s did. The nightly of 18 November
+  took 77 of its 120 minutes, about 40 free, and runs the gates' check once, on its first
+  driver. Its runner is not this host; the first nightly on `main` after this merges gives that
+  time.
+- PR5 cannot turn the gates on by making every plain `mo test` in the drivers a full run: the
+  task queue's checks in `ci/check_task_queue.py` and elsewhere would each take over 3 minutes
+  on the debug build and several times that under the sanitizers, on three drivers. U14 already
+  plans that checks whose claim is about something else select with `--in`; PR5 must do that for
+  every plain `mo test` of the task queue, and measure the nightly again.
+- An agent working on the task queue gets no speed from `--against`, since the checks on both
+  versions take as long as the mutants. That is a cost of the shorter run, not of R30, and the
+  first lever is the one the plan names: a cheaper test of the full queue.
+
 ## Decided under delegation
 
 Each of these was decided by the agent under Robert's delegation of 2026-11-19.
@@ -347,3 +425,40 @@ Each of these was decided by the agent under Robert's delegation of 2026-11-19.
   It rewrote a test helper rather than adding a check or simplifying code; I accepted that as
   within the brief's intent, since no check was weakened.
 - **The predictions** were mine, not Robert's.
+
+In PR4:
+
+- **`lib/json.mo`'s fast paths stay.** The helper fitting it first deleted three fast paths,
+  because their mutants change only speed. That cost 72% more instructions on Phase 7's 1 MiB
+  body, past the 2-second bar, so the change was undone. The plan prefers a new check to a code
+  change in the four library modules compiled into the toolchain, and a test of one long plain
+  string kills those mutants by the gate's step limit. A test that kills by cost is weaker
+  evidence than one that kills by result: if the step multiple rises or the slow walk gets
+  cheaper, those three mutants survive again and the gate says so.
+- **Simpler code for survivors no check could kill** (R7): `Json.skip_space` compares Chars
+  instead of codes, `Json.plain` pads once instead of branching three ways and drops a redundant
+  guard, `Expenses.layout` and `Inventory.pad_column` read their widths with a `case`,
+  `RateLimit.limiter_of` is deleted and `QueueTests.job` takes its page's only job. Each behaves
+  the same for every input.
+- **Examples on the task queue's promise helpers.** `Main.current?` and `Main.matching` are
+  read only by the service promises. Examples on them kill their survivors without a service
+  sequence.
+- **The sample golden cases' expected output** for `mo test` was taken from runs, and each new
+  line was checked against the check added for it; the totals rise by exactly those checks.
+- **What `ci/cli_gates.py` pins on the library.** `lib/list.mo` now passes the gate, and no
+  library module lacks stated intent, so the check that `Json.to_text@JsonNumber` fails
+  stated intent is now a shorter run of `lib/json.mo` that passes it. The fixtures under
+  `tests/cli/gates/` still show E1440 failing.
+- **The door's proof keeps its frozen program.** The plan says to stop when a file a freeze
+  hashes would have to change. The planted set of `learnability/phase6/door/planted/` hashes the
+  task queue's `main.mo` and `job-queue.mo`, and fitting the task queue had to change both: no
+  check outside them can reach the helpers and promise helpers whose mutants survived. The
+  planted files replace whole files of that program, so with the fitted program the door read
+  two planted fixes and a wrong version as intent changes. Rather than change the frozen set,
+  `ci/check_door.py` now serves `learnability/phase6/door/program/`, the two files at the hashes
+  the manifest names (from `82b7df1f`), and its proof is unchanged: on this branch it passes, and
+  the bypassed build still fails with exactly its 7 expected mismatches.
+- **R30**, above.
+- **Phase 7's M3 waits for PR5**, the plan's default: until the gates are the default, an agent
+  writing the client must remember `--gates`.
+- **`tools/*.mo` are not fitted here**, the plan's default.
