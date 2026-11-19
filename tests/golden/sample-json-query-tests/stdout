@@ -24,4 +24,5 @@ passed JsonQuery.at_path.example.2  examples/json-query.mo:270:5
 passed JsonQuery.at_path.example.3  examples/json-query.mo:271:5
 passed JsonQuery.test.1  examples/json-query.mo:321:1
 passed JsonQuery.test.2  examples/json-query.mo:327:1
+gates: 88 mutants tried, 88 killed (0 promise, 83 example, 5 test, 0 recovery, 0 start), 0 survived, 0 dropped
 26 passed, 0 failed, 0 stopped

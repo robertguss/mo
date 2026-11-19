@@ -8,4 +8,5 @@ passed Expenses.totals.example.2  examples/expenses.mo:52:5
 passed Expenses.layout.example.1  examples/expenses.mo:65:5
 passed Expenses.test.1  examples/expenses.mo:123:1
 passed Expenses.test.2  examples/expenses.mo:132:1
+gates: 14 mutants tried, 14 killed (0 promise, 3 example, 11 test, 0 recovery, 0 start), 0 survived, 0 dropped
 10 passed, 0 failed, 0 stopped

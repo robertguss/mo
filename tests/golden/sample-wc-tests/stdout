@@ -4,4 +4,5 @@ passed Wc.count.example.3  examples/wc.mo:16:5
 passed Wc.row.example.1  examples/wc.mo:32:5
 passed Wc.test.1  examples/wc.mo:62:1
 passed Wc.test.2  examples/wc.mo:75:1
+gates: 15 mutants tried, 15 killed (0 promise, 2 example, 13 test, 0 recovery, 0 start), 0 survived, 0 dropped
 6 passed, 0 failed, 0 stopped
