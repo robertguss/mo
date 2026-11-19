@@ -542,3 +542,9 @@ In PR5:
   the last line. This resolves the review item the plan left for Robert, as the coordinator
   decided.
 
+- **`ci/check_lib.py` still runs the full run on every build.** For the first build it repeats
+  `ci/check_gates.py`. It is kept because it is the only check that runs `lib/` on the clang
+  and sanitizer builds, and its limit pays for that.
+- **No `--bundle` test was added.** The guide says `--bundle` tries no mutants. The code skips
+  the gates for a source bundle, but no driver runs a plain `mo test --bundle`. The code review
+  found this gap, and it is left for Robert to decide.
