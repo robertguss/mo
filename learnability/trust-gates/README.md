@@ -14,6 +14,7 @@ the decisions. Every file a run wrote is kept, a weak result included.
 - `results/strength/`: U10. The `--strength` records of the frozen and the fitted program
   against the working half and the held-back folder; `runs.tsv` gives each run's exit status
   and seconds.
+  `recheck/` holds the same four runs made again after the final review's fix to `--strength`.
 - `results/mutants/`: U10. `mo test --json --gates --list` of the frozen and the fitted program,
   two gated runs of the fitted program (`fitted.gates.json` beside the `--strength` runs,
   `fitted.gates-idle.json` alone), and its shorter runs against the frozen copy and against an

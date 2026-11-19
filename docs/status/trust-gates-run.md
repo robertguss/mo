@@ -275,6 +275,11 @@ their output was read: every version keeps the outcome it had above, because eac
 `killed_by_test` version above was killed by a test failing on a wrong result, and I know of
 none on which a promise or an example stops.
 
+Result: right. All 48 outcomes are the same in the four rechecks as in the runs above, with the
+same counts (`killed`, `killed_any`, `scored`, `partial`) and an empty stderr; the runs took
+1,146 to 1,254 seconds (`recheck/runs.tsv`). The tool was the debug build of `330b1666`. The
+numbers in this record therefore stand as written.
+
 ### Limits
 
 - The held-back half was already used in Phase 6, against the strengthened program
