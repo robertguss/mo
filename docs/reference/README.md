@@ -1530,6 +1530,25 @@ line and the change; a mutant the checker refuses is dropped. With `--only`,
 without it, tries no mutant and says the gates did not run. It takes no
 `--list`, `--bundle` or `--strength`.
 
+`mo test FILE --against OLD` is a shorter gated run. `OLD` is the previous
+version's copy of the file given; for a library module, `OLD`'s folder is the
+library. Both versions must check, and the checks of both run first on the
+fixed plan. A function's mutants are tried only when its code changed, it is
+new, or a check that ran it changed: that check is gone, has another full name
+or text, reads a helper that changed, or no longer runs the function. A helper
+is a function or constant that no tool, timer, start value, exposed function or
+`main` reaches. Every other function is carried over untried, except one that
+no check runs, whose mutants are tried and survive. The result says it is not
+the full run, counts the functions carried over and gives the previous
+version's digest, the SHA-256 of its source bundle as `mo push` builds it.
+Before it, a change summary lists each check no longer true, newly true, about
+something new, or that could not be compared, with the reason, and counts the
+checks that pass on both versions. A check found in one version only is put
+into the other on its own and run there. Nothing in the summary changes the
+exit status. An `OLD` that does not check is an error naming its first
+diagnostic. `--against` takes no `--only`, `--in`, `--calls`, `--seconds`, `--max`
+limit, `--list`, `--bundle` or `--strength`.
+
 `mo run` and `mo test` limit what a program uses: `--max-stack` sets the bytes
 of stack, by default 8 MiB; `--max-depth` the calls in progress at once, by
 default 10,000; and `--max-heap` the bytes of memory, by default 1 GiB. Going

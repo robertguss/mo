@@ -30,3 +30,7 @@ A check of the previous version of a program that the new version fails.
 **Change summary**:
 The account of a change in terms of checks: those no longer true, those newly true, those about
 something new, and those that could not be compared.
+
+**Shorter run**:
+A gated run against the previous version of a program that tries only the mutants of functions
+whose code changed or whose checks changed, and carries the rest over untried.
