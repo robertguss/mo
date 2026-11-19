@@ -7,6 +7,7 @@
 #include "base/sha256.h"
 #include "prim/prim.h"
 #include "syntax/format.h"
+#include "tools/tests.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +28,7 @@ struct walker {
     const struct mo_syntax *subject;
     uint32_t mark;
     uint64_t work;
-    bool ok;
+    bool own, ok;
 };
 
 static void *array(struct walker *w, size_t count, size_t size, size_t align) {
@@ -53,6 +54,10 @@ static bool tested(const struct mo_program *p, uint32_t module) {
     return module == 0 || !library(p, module);
 }
 
+static bool foreign(const struct walker *w, uint32_t module) {
+    return library(w->program, module) && !(w->own && module == 0);
+}
+
 static uint32_t symbol_index(const struct walker *w, const struct mo_symbol *symbol) {
     const struct mo_module_scope *scope = &w->program->interfaces->scopes[symbol->module];
     MO_ASSERT(symbol >= scope->symbols && symbol < scope->symbols + scope->count);
@@ -61,7 +66,7 @@ static uint32_t symbol_index(const struct walker *w, const struct mo_symbol *sym
 
 static void visit(struct walker *w, const struct mo_symbol *symbol) {
     const struct mo_program *p = w->program;
-    if (symbol == NULL || library(p, symbol->module) || !charge(w))
+    if (symbol == NULL || foreign(w, symbol->module) || !charge(w))
         return;
     if (symbol->owner != UINT32_MAX)
         symbol = &p->interfaces->scopes[symbol->module].symbols[symbol->owner];
@@ -260,29 +265,48 @@ static void text_field(struct mo_sha256 *h, const char *text) {
     field(h, text, strlen(text));
 }
 
-static void digest(struct walker *w, struct mo_intent_item *item, const struct mo_syntax *syntax) {
+static const struct mo_symbol *symbol_at(const struct walker *w, uint32_t index, uint32_t *module) {
+    uint32_t m = 0;
+    while (m + 1 < w->program->interfaces->count && w->offsets[m + 1] <= index)
+        m++;
+    *module = m;
+    return &w->program->interfaces->scopes[m].symbols[index - w->offsets[m]];
+}
+
+static struct mo_intent_text declaration_text(struct walker *w, uint32_t index) {
+    uint32_t m;
+    const struct mo_symbol *symbol = symbol_at(w, index, &m);
+    if (w->texts[index].bytes == NULL)
+        w->texts[index] = canonical(w, symbol->declaration);
+    return w->texts[index];
+}
+
+static struct mo_intent_read *collect(struct walker *w, const bool *roots, uint32_t *count) {
     close_reach(w);
     struct mo_intent_read *entries =
         array(w, w->reach_count, sizeof *entries, _Alignof(struct mo_intent_read));
+    *count = 0;
     for (uint32_t i = 0; w->ok && i < w->reach_count; i++) {
-        uint32_t index = w->reach[i];
-        uint32_t m = 0;
-        while (m + 1 < w->program->interfaces->count && w->offsets[m + 1] <= index)
-            m++;
-        const struct mo_symbol *symbol =
-            &w->program->interfaces->scopes[m].symbols[index - w->offsets[m]];
-        if (w->texts[index].bytes == NULL)
-            w->texts[index] = canonical(w, symbol->declaration);
-        entries[i] = (struct mo_intent_read){w->program->set->names[m], symbol->name,
-                                             symbol_name(w, m, symbol), w->texts[index]};
-        w->ok = w->ok && entries[i].label != NULL;
+        uint32_t index = w->reach[i], m;
+        if (roots != NULL && roots[index])
+            continue;
+        const struct mo_symbol *symbol = symbol_at(w, index, &m);
+        struct mo_intent_text text = declaration_text(w, index);
+        entries[*count] = (struct mo_intent_read){w->program->set->names[m], symbol->name,
+                                                  symbol_name(w, m, symbol), text};
+        w->ok = w->ok && entries[(*count)++].label != NULL;
     }
+    if (w->ok)
+        qsort(entries, *count, sizeof *entries, by_name);
+    return entries;
+}
+
+static void digest(struct walker *w, struct mo_intent_item *item, const struct mo_syntax *syntax) {
+    item->reads = collect(w, NULL, &item->read_count);
     item->text = w->ok ? canonical(w, syntax) : (struct mo_intent_text){NULL, 0};
     if (!w->ok)
         return;
-    qsort(entries, w->reach_count, sizeof *entries, by_name);
-    item->reads = entries;
-    item->read_count = w->reach_count;
+    const struct mo_intent_read *entries = item->reads;
     struct mo_sha256 h;
     mo_sha256_init(&h);
     uint8_t version = MO_INTENT_DIGEST_VERSION;
@@ -290,7 +314,7 @@ static void digest(struct walker *w, struct mo_intent_item *item, const struct m
     text_field(&h, item->owner);
     text_field(&h, item->kind);
     field(&h, item->text.bytes, item->text.length);
-    for (uint32_t i = 0; i < w->reach_count; i++) {
+    for (uint32_t i = 0; i < item->read_count; i++) {
         text_field(&h, entries[i].module);
         text_field(&h, entries[i].name);
         field(&h, entries[i].text.bytes, entries[i].text.length);
@@ -352,15 +376,15 @@ static bool prepare(struct walker *w) {
     memset(w->parsed, 0, p->set->sources->count * sizeof *w->parsed);
     for (uint32_t i = 0; i < p->function_count; i++) {
         const struct mo_symbol *f = p->functions[i].signature->function;
-        if (f != NULL && !library(p, f->module))
+        if (f != NULL && !foreign(w, f->module))
             w->functions[symbol_index(w, f)] = i;
     }
     for (uint32_t i = 0; i < p->constant_count; i++)
-        if (!library(p, p->constants[i].symbol->module))
+        if (!foreign(w, p->constants[i].symbol->module))
             w->constants[symbol_index(w, p->constants[i].symbol)] = i;
     for (uint32_t i = 0; i < p->signatures->data_count; i++) {
         const struct mo_symbol *d = p->signatures->data[i].type->declaration;
-        if (d != NULL && !library(p, d->module))
+        if (d != NULL && !foreign(w, d->module))
             w->data[symbol_index(w, d)] = i;
     }
     return true;
@@ -460,6 +484,82 @@ done:
     mo_diags_free(&w->diags);
     if (w->ok)
         MO_ASSERT(out->count == count);
+    return w->ok;
+}
+
+static void check_text(struct walker *w, const bool *roots, const struct mo_gated_check *check,
+                       struct mo_check_text *out) {
+    const struct mo_program *p = w->program;
+    const struct mo_observation *o = check->observation;
+    const struct mo_checked_spec *spec = o->source != NULL    ? o->source
+                                         : o->promise != NULL ? &o->promise->spec
+                                                              : NULL;
+    *out = (struct mo_check_text){{NULL, 0}, 0, NULL};
+    if (spec == NULL)
+        return;
+    begin(w, spec->subject == UINT32_MAX
+                 ? NULL
+                 : p->functions[spec->subject].signature->function->declaration);
+    walk_body(w, &spec->body);
+    if (o->promise != NULL)
+        for (uint32_t a = 0; a < o->promise->anchor_count; a++)
+            walk_body(w, &o->promise->anchors[a].body);
+    else
+        for (uint32_t s = 0; s < p->spec_count; s++)
+            if (p->specs[s].kind == MO_SPEC_ANCHOR && &p->specs[p->specs[s].promise] == spec)
+                walk_body(w, &p->specs[s].body);
+    out->reads = collect(w, roots, &out->read_count);
+    if (w->ok)
+        out->text = canonical(w, spec->syntax);
+}
+
+bool mo_intent_code(struct mo_arena *arena, const struct mo_program *program,
+                    const struct mo_gated_check *checks, uint32_t count, struct mo_texts *out) {
+    struct walker walker = {
+        .arena = arena, .program = program, .work = MO_LIMIT_INTENT_WORK, .own = true, .ok = true};
+    struct walker *w = &walker;
+    if (!mo_diags_init(&w->diags))
+        return false;
+    out->functions =
+        array(w, program->function_count, sizeof *out->functions, _Alignof(struct mo_intent_text));
+    out->checks = array(w, count, sizeof *out->checks, _Alignof(struct mo_check_text));
+    bool *roots =
+        w->ok && prepare(w) ? array(w, w->symbol_count, sizeof *roots, _Alignof(bool)) : NULL;
+    if (roots == NULL)
+        goto done;
+    begin(w, NULL);
+    for (uint32_t i = 0; i < program->service_count; i++) {
+        const struct mo_checked_service *service = &program->services[i];
+        if (!tested(program, service->module))
+            continue;
+        walk_body(w, &service->initializer);
+        for (uint32_t t = 0; t < service->tool_count; t++)
+            visit(w, program->functions[service->tools[t].function].signature->function);
+        for (uint32_t t = 0; t < service->timer_count; t++) {
+            visit(w, program->functions[service->timers[t].function].signature->function);
+            walk_body(w, &service->timers[t].interval);
+        }
+    }
+    for (uint32_t i = 0; i < program->function_count; i++) {
+        const struct mo_symbol *f = program->functions[i].signature->function;
+        if (f != NULL &&
+            ((f->exported && tested(program, f->module)) || i == program->entry.function))
+            visit(w, f);
+    }
+    close_reach(w);
+    for (uint32_t i = 0; i < w->symbol_count; i++)
+        roots[i] = w->marks[i] == w->mark;
+    for (uint32_t i = 0; w->ok && i < program->function_count; i++) {
+        const struct mo_symbol *f = program->functions[i].signature->function;
+        out->functions[i] = (struct mo_intent_text){NULL, 0};
+        if (f != NULL && f->declaration != NULL && f->declaration->kind == MO_S_FN &&
+            !foreign(w, f->module))
+            out->functions[i] = declaration_text(w, symbol_index(w, f));
+    }
+    for (uint32_t k = 0; w->ok && k < count; k++)
+        check_text(w, roots, &checks[k], &out->checks[k]);
+done:
+    mo_diags_free(&w->diags);
     return w->ok;
 }
 

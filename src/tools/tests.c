@@ -498,8 +498,10 @@ static bool order_checks(struct mo_arena *arena, struct mo_arena *scratch,
                 copy[instance->name.length] = '\0';
                 name = copy;
             }
-            run->checks[i] = (struct mo_gated_check){
-                .name = name, .kind = mo_observation_kind(observation), .limit = UINT64_MAX};
+            run->checks[i] =
+                (struct mo_gated_check){.name = name,
+                                        .kind = mo_observation_kind(observation),
+                                        .limit = run->limit == 0 ? UINT64_MAX : run->limit};
         }
     }
     g->order = run->checks == NULL ? NULL
@@ -523,6 +525,7 @@ static bool order_checks(struct mo_arena *arena, struct mo_arena *scratch,
             return false;
         }
         g->order[k] = i;
+        run->checks[k].observation = &selection->items[i];
     }
     return true;
 }

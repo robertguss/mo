@@ -59,34 +59,14 @@ struct source_file {
 static int source_order(const void *a, const void *b) {
     return strcmp(((const struct source_file *)a)->path, ((const struct source_file *)b)->path);
 }
-bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo_buffer *out,
-                       struct mo_diags *diags, struct mo_sources *sources) {
-    struct mo_arena arena;
-    mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
-    const struct mo_module_set *set =
-        migration ? mo_load_upgrade_sources(&arena, sources, path, library_path(), diags)
-                  : mo_load_program(&arena, sources, path, library_path(), diags);
-    bool ok = set != NULL && !mo_diags_any(diags);
-    if (ok && serving) {
-        const struct mo_syntax *items = set->modules[0]->tree->children[1];
-        bool declared = false;
-        for (uint32_t i = 0; i < items->count; i++)
-            declared |= items->children[i]->kind == MO_S_SERVICE;
-        if (!declared) {
-            struct mo_diag diag = {
-                .code = MO_CODE_TOOL_SERVICE_START,
-                .primary = {set->modules[0]->span, "a service block declares one (reference 11.5)"},
-                .message = "this module has no service to start"};
-            bool added = mo_diags_add(diags, &diag);
-            (void)added;
-            ok = false;
-        }
-    }
+bool mo_source_bundle(const struct mo_module_set *set, const struct mo_sources *sources,
+                      bool migration, struct mo_buffer *out, struct mo_diags *diags) {
+    bool ok = true;
     struct source_file files[MO_LIMIT_BUNDLE_FILES];
     uint32_t count = 0;
     const char *entry = NULL;
     for (uint32_t i = 0; ok && i < set->count; i++) {
-        if (set->library[i])
+        if (set->library[i] != set->library[0])
             continue;
         if (reserved(set->names[i])) {
             if (migration && i != 0)
@@ -125,6 +105,32 @@ bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo
             (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_BUNDLE_SIZE,
                                    "source bundle exceeds its admission limits");
     }
+    return ok;
+}
+bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo_buffer *out,
+                       struct mo_diags *diags, struct mo_sources *sources) {
+    struct mo_arena arena;
+    mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
+    const struct mo_module_set *set =
+        migration ? mo_load_upgrade_sources(&arena, sources, path, library_path(), diags)
+                  : mo_load_program(&arena, sources, path, library_path(), diags);
+    bool ok = set != NULL && !mo_diags_any(diags);
+    if (ok && serving) {
+        const struct mo_syntax *items = set->modules[0]->tree->children[1];
+        bool declared = false;
+        for (uint32_t i = 0; i < items->count; i++)
+            declared |= items->children[i]->kind == MO_S_SERVICE;
+        if (!declared) {
+            struct mo_diag diag = {
+                .code = MO_CODE_TOOL_SERVICE_START,
+                .primary = {set->modules[0]->span, "a service block declares one (reference 11.5)"},
+                .message = "this module has no service to start"};
+            bool added = mo_diags_add(diags, &diag);
+            (void)added;
+            ok = false;
+        }
+    }
+    ok = ok && mo_source_bundle(set, sources, migration, out, diags);
     mo_arena_free(&arena);
     return ok;
 }
