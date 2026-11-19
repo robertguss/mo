@@ -87,7 +87,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 7.3/6	lang-patterns-tuples			
 7.3/7	lang-patterns-lists,ref-operators			
 7.3/8	lang-is-and-if,lang-enum-shapes	e0067		
-7.4/1	lang-is-and-if,lang-while-is,tst-assert-is-binding,ref-operators	e0050-is-scope		
+7.4/1	lang-is-and-if,lang-while-is,ref-operators	e0050-is-scope		
 7.5/1	col-range-loops,col-map-basics,col-set-basics	e0023,e0058,e0073		
 8/1	fail-option-basics,fail-result-declared		fail-bug-stop	
 8.1/1	ref-evaluation,fail-option-basics			
@@ -154,20 +154,20 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.5/7	service-read-only	e0103-interval			ci/cli_serve.py:service_refusals,tests/test_program.c:service_inputs,tests/test_service_runtime.c:timers
 11.5/8	service-read-only	e0102,e1408			ci/cli_serve.py:service_commands,ci/cli_serve.py:service_refusals,ci/cli_guide.py:guide_claims
 11.5/9					tests/test_protocol_server.c:wire,tests/test_protocol_server.c:response_limit,tests/test_protocol_server.c:small_body_reads,tests/test_protocol_server.c:rejection_paths,tests/test_protocol_server.c:result_updates,tests/test_protocol_server_faults.c:exhausted_fallback,tests/test_protocol_server_faults.c:store_failure,tests/test_protocol_server_faults.c:preauth_failure,tests/test_protocol_server_faults.c:poll_failures,tests/test_protocol_bounds.c:header_bytes,tests/test_protocol_bounds.c:header_fields,tests/test_protocol_bounds.c:body_ceiling,tests/test_protocol_bounds.c:chunk_ceilings,tests/test_protocol_bounds.c:response_ceiling,tests/test_protocol_composites.c:output_nodes,tests/test_listener.c:real_io,tests/test_listener_faults.c:retry_accept,tests/test_lower.c:test_embedded_protocol
-12/1	tst-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
-12.1/1	tst-passing	tst-failing-example		
-12.2/1	tst-promise-holds	e0015		
-12.2/2	tst-promise-holds	e0015-sentence		
-12.2/3	tst-promise-holds	e0074-promise		
-12.2/4	tst-promise-holds	e0015,e0088,e1405,e1405-forbids		
-12.2/5	tst-promise-holds	tst-overflow-promise,tst-failing-promise			ci/cli_promises.py:promise_boundaries,ci/cli_promises.py:hidden_promises,ci/cli_promises.py:composite_promises,ci/cli_promises.py:fake_capability_promises,ci/cli_promises.py:promise_shrinking
+12/1	col-test-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
+12.1/1	col-test-passing	tst-failing-example		
+12.2/1	sample-account-tests	e0015		
+12.2/2	sample-account-tests	e0015-sentence		
+12.2/3	sample-account-tests	e0074-promise		
+12.2/4	sample-account-tests	e0015,e0088,e1405,e1405-forbids		
+12.2/5	sample-account-tests	tst-overflow-promise,tst-failing-promise			ci/cli_promises.py:promise_boundaries,ci/cli_promises.py:hidden_promises,ci/cli_promises.py:composite_promises,ci/cli_promises.py:fake_capability_promises,ci/cli_promises.py:promise_shrinking
 12.2/6					ci/cli_promises.py:hidden_promises,ci/cli_promises.py:promise_shrinking
 12.2/7					ci/cli_promises.py:hidden_promises
 12.2/8					ci/cli_promises.py:generic_promises,ci/cli_intent.py:promise_selection
 12.2/9		service-promise-restart,service-promise-result			ci/cli_intent.py:service_promise_checks,ci/check_task_queue.py:restart_fault
 12.2/10		e0107,e0107-no-tool,e0107-reserved,e1109,service-promise-result,service-promise-restart			ci/check_task_queue.py:simulation,ci/cli_intent.py:service_promise_checks
 12.2/11	mod-hidden-type,fail-result-declared	e0007-requires
-12.3/1	tst-private-names,tst-assert-is-binding,sample-job-queue-tests	tst-failing-assert		
+12.3/1	tst-private-names,sample-job-queue-tests	tst-failing-assert		
 12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes	e0098,e0098-constant,e0098-printed,e0098-simulation			ci/check_simulation.py:main
 12.4/2		e0050-simulation-dot,e0050-simulation-operation,e0055-simulation-value,e0055-simulation-start,e0055-simulation-send,e0055-simulation-advance,e0055-simulation-crash,e0055-simulation-restart,e0100-simulation-start,e0100-simulation-send			ci/check_simulation.py:main,tests/test_program.c:simulation_inputs,tests/test_service_store.c:simulation_persistence
 12.4/3					ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence
@@ -181,6 +181,19 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.5/5		service-promise-restart,service-promise-timer,service-promise-two,service-promise-work			ci/cli_intent.py:service_promise_checks,ci/check_task_queue.py:restart_fault,tests/test_recovery_faults.c:promise_after_refusal
 12.5/6					ci/cli_intent.py:recovery_checks,ci/cli_intent.py:service_promise_checks,tests/test_deadline.c:main
 12.5/7					tests/test_recovery.c:failure_report,tests/test_recovery.c:same_text,tests/test_recovery_faults.c:shrunk_failure,tests/test_recovery_faults.c:shrunk_advance,tests/test_recovery_faults.c:check_command,tests/test_recovery_faults.c:check_unrepeatable,tests/test_recovery.c:shrink_same_line
+12.6/1	col-test-passing,fail-test-results				ci/cli_gates.py:gates
+12.6/2		e1439,lang-test-passing			tests/test_mutants.c:comparison
+12.6/3	fail-test-results				tests/test_mutants.c:comparison
+12.6/4					tests/test_mutants.c:literals,ci/cli_gates.py:gates
+12.6/5					tests/test_mutants.c:literals,ci/cli_gates.py:gates
+12.6/6	fail-test-results				tests/test_mutants.c:arithmetic
+12.6/7					tests/test_mutants.c:literals
+12.6/8	col-test-passing	tst-promise-holds			tests/test_mutants.c:literals
+12.6/9	cap-console-fake,txt-test-pass				tests/test_mutants.c:specs,tests/test_mutants.c:library,ci/cli_gates.py:gates
+12.6/10	sample-job-queue-tests	e1439,tst-passing			tests/test_gates.c:step_limits,tests/test_gates.c:stop_at_first,ci/cli_gates.py:gates
+12.6/11		e1440			ci/cli_gates.py:stated_intent
+12.6/12					ci/check_gates.py:main,ci/cli_guide.py:guide_claims
+12.6/13					ci/cli_gates.py:change_summary
 13.1/1	ref-evaluation			
 13.2/1	ref-shout	tst-fake-files-bugs	fail-bug-overflow,fail-bug-divide-by-zero,fail-bug-stop,fail-bug-map-duplicate,fail-bug-take-negative,fail-bug-decimal-overflow,fail-bug-decimal-divide-by-zero,fail-bug-duration-overflow,fail-bug-duration-unit-overflow,fail-bug-time-range,fail-bug-pow-negative,fail-bug-decimal-places,fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative,fail-bug-drop-negative,fail-bug-constant-stop		ci/cli_programs.py:observations,tests/test_host.c:test_real_console,tests/test_host.c:test_real_files,tests/test_host.c:test_clock_random
 13.3/1						tests/test_prim.c:primitive_work,tests/test_heap.c:test_reuse_and_images
@@ -192,9 +205,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c
 13.3/8	txt-ordering,col-list-map-find,col-list-order-ties					measured:tests/test_lower.c:test_source_sort_work
 13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
-13.4/1	ref-shout,tst-passing				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run
+13.4/1	ref-shout,col-test-passing				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run
 13.4/2					ci/cli_intent.py:promise_selection,ci/cli_intent.py:recovery_checks,ci/cli_intent.py:strength_checks
-13.4/3		e1439,e1440			ci/cli_gates.py:gates,ci/cli_gates.py:stated_intent,ci/cli_guide.py:guide_claims
+13.4/3	col-test-passing,sample-job-queue-tests	e1439,e1440,tst-passing,tst-fake-files-bugs			ci/cli_gates.py:gates,ci/cli_gates.py:stated_intent,ci/cli_guide.py:guide_claims,tests/test_deadline.c:main
 13.4/4					ci/cli_gates.py:shorter_run,ci/cli_gates.py:change_summary,ci/cli_guide.py:guide_claims
 13.4/5	lang-recursion-tail				ci/cli_programs.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
 13.4/6		e1410,e1411,e1411-function,e1412,e1413			ci/check_offline.py:history,ci/check_offline.py:owned,ci/check_offline.py:hot_journal,ci/check_offline.py:pre_capture,ci/check_offline.py:replays,ci/check_offline.py:work_limit,ci/check_offline.py:queries,ci/cli_guide.py:guide_claims

@@ -1,5 +1,0 @@
-error E1440: a service tool states no intent  tests/golden/service-read-only/main.mo:10:4
-
-  10 | fn snapshots(state: List(Int), _now: Time) : List(List(Int))
-     |    ^^^^^^^^^ Main.snapshots: write a service promise on snapshots, or give it a promise or an example
-
