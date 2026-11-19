@@ -98,6 +98,14 @@ fn apply(store: Store, command: Command, now: Time) : (Store, Reply)
     )
   end
 
+  examples
+    apply(
+      holding("a", "1", None).put("b", Item(value: "2", expires: None)),
+      Del(keys: ["a", "c"]),
+      t0
+    ) == (holding("b", "2", None), Count(1))
+  end
+
   live = without_expired(store, now)
   case command
     Put(key: key, value: value): (put(live, key, Item(value: value, expires: None)), Okay)
@@ -147,6 +155,12 @@ fn expire(store: Store, key: Text, ttl: Int, now: Time) : (Store, Reply)
     expire(empty_store, "a", 10, t0).1 == Count(0)
     expire(holding("a", "1", None), "a", 10, t0).1 == Count(1)
     expire(holding("a", "1", None), "a", -1, t0) == (empty_store, Count(1))
+    expire(holding("a", "1", None), "a", 0, t0) == (empty_store, Count(1))
+    expire(holding("a", "1", None), "a", 1, t0) == (
+      holding("a", "1", Some(t0 + 1.second)),
+      Count(1)
+    )
+    expire(holding("a", "1", None), "a", 3_153_600_000, t0).1 == Count(1)
     expire(holding("a", "1", None), "a", 4_000_000_000, t0).1 ==
       Failure(message: "invalid expire time")
   end

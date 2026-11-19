@@ -71,3 +71,13 @@ test "a missing file is reported, and the others still counted"
   ]
   assert console.printed_errors == ["wc: gone.txt: no such file"]
 end
+
+test "a total follows two or more files, and status 0 means every file was read"
+  files = Files.in_memory({"a.txt": "one two\n", "b.txt": "three\n"}).read_only
+  one = Console.fake()
+  assert main(Args.of(["a.txt"]), one, files) == 0
+  assert one.printed == ["      1       2       8 a.txt"]
+  two = Console.fake()
+  assert main(Args.of(["a.txt", "b.txt"]), two, files) == 0
+  assert two.printed.last == Some("      2       3      14 total")
+end

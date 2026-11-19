@@ -19,14 +19,26 @@ end
 ## A new account starts empty. Outside this module an Account comes only from
 ## open, deposit, withdraw and transfer, so its balance is never negative.
 fn open(owner: Text) : Account
+  examples
+    open("alice") == alice(0)
+  end
+
   Account(owner: owner, balance: 0)
 end
 
 fn owner(account: Account) : Text
+  examples
+    owner(bob(5.00)) == "bob"
+  end
+
   account.owner
 end
 
 fn balance(account: Account) : Decimal
+  examples
+    balance(alice(12.50)) == 12.50
+  end
+
   account.balance
 end
 
@@ -42,6 +54,8 @@ fn deposit(account: Account, amount: Decimal) : Result(Account, AccountError)
     deposit(alice(10.00), 0) == Error(InvalidAmount)
     deposit(alice(10.00), -1.00) == Error(InvalidAmount)
     deposit(alice(10.00), 1_000_000_000.01) == Error(InvalidAmount)
+    deposit(alice(10.00), 0.50) == Ok(alice(10.50))
+    deposit(alice(0), 1_000_000_000.00) == Ok(alice(1_000_000_000.00))
   end
 
   return Error(InvalidAmount) if amount <= 0 or amount > max_amount
@@ -68,6 +82,8 @@ fn withdraw(account: Account, amount: Decimal) : Result(Account, AccountError)
     withdraw(alice(100.00), 100.00) == Ok(alice(0.00))
     withdraw(alice(100.00), 100.01) == Error(InsufficientFunds(short_by: 0.01))
     withdraw(alice(100.00), 0.00) == Error(InvalidAmount)
+    withdraw(alice(100.00), 0.50) == Ok(alice(99.50))
+    withdraw(alice(1_000_000_000.00), 1_000_000_000.00) == Ok(alice(0))
   end
 
   return Error(InvalidAmount) if amount <= 0 or amount > max_amount

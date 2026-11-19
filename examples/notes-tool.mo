@@ -42,6 +42,15 @@ fn search_notes(notes: ReadFiles, input: SearchInput) : Result(SearchOutput, Too
     )
   end
 
+  examples
+    search_notes(Files.in_memory({"a.md": "x\n"}).read_only, SearchInput(query: "x", limit: 1)) ==
+      Ok(SearchOutput(hits: [hit], truncated?: false))
+    search_notes(Files.in_memory({}).read_only, SearchInput(query: "x", limit: 100)) ==
+      Ok(SearchOutput(hits: [], truncated?: false))
+    search_notes(Files.in_memory({}).read_only, SearchInput(query: "x", limit: 101)) ==
+      Error(BadLimit(limit: 101))
+  end
+
   query = input.query.trim.ascii_lowercase
   return Error(EmptyQuery) if query.empty?
   return Error(BadLimit(limit: input.limit)) if input.limit < 1 or input.limit > max_limit
