@@ -52,7 +52,7 @@ def runner(binary):
             ("Greet.greeting.example.1", "passed"),
             ("Greet.greeting.example.2", "passed"), ("Greet.test.1", "passed")]
         assert gated(items)[1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 3, "failed": 0, "stopped": 0, "status": 0}
+                                   "passed": 3, "failed": 0, "stopped": 0, "status": 0}
 
         finding = "examples/find.mo"
         checked = run(binary, ["check", finding], 0)
@@ -78,7 +78,7 @@ def runner(binary):
             ("Find.test.2", "passed"),
             ("Find.test.3", "passed")]
         assert gated(items)[1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 10, "failed": 0, "stopped": 0, "status": 0}
+                                   "passed": 10, "failed": 0, "stopped": 0, "status": 0}
 
         counting = "examples/wc.mo"
         checked = run(binary, ["check", counting], 0)
@@ -99,7 +99,7 @@ def runner(binary):
             ("Wc.test.1", "passed"),
             ("Wc.test.2", "passed")]
         assert gated(items)[1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 6, "failed": 0, "stopped": 0, "status": 0}
+                                   "passed": 6, "failed": 0, "stopped": 0, "status": 0}
 
         for parameters in ("_args: Args", "_clock: Clock, _console: Console"):
             path.write_text(f"module Main\nfn main({parameters})\nend\n")
@@ -440,7 +440,7 @@ def runner(binary):
                     (tree / "b/locked").chmod(0o755)
         todo_tests = records(run(binary, ["test", "--json", "examples/todo.mo"], 0), "test")
         assert gated(todo_tests)[1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                  "passed": 16, "failed": 0, "stopped": 0, "status": 0}
+                                        "passed": 16, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/inventory.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/inventory.mo"], 0), "check")
         inventory_run = run(binary, ["run", "examples/inventory.mo"], 0)
@@ -456,7 +456,7 @@ def runner(binary):
         inventory_tests = records(run(binary, ["test", "--json", "examples/inventory.mo"], 0),
                                   "test")
         assert gated(inventory_tests)[1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                       "passed": 11, "failed": 0, "stopped": 0, "status": 0}
+                                             "passed": 11, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/json-query.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/json-query.mo"], 0), "check")
         json_run = subprocess.run([str(binary), "run", "examples/json-query.mo", "items.0.n"],

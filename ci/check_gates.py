@@ -32,8 +32,8 @@ def gated(binary, path):
 
 
 def programs():
-    return [*sorted((root / "lib").glob("*.mo")), *sorted((root / "examples").glob("*.mo")),
-            root / "services/task-queue/queue-tests.mo"]
+    return [root / "services/task-queue/queue-tests.mo", *sorted((root / "lib").glob("*.mo")),
+            *sorted((root / "examples").glob("*.mo"))]
 
 
 def control(binary):
