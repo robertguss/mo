@@ -37,6 +37,13 @@ fn parse(text: Text) : Result(Json, JsonError)
     parse("[1,") == Error(UnexpectedEnd)
     parse("[1] 2") == Error(Unexpected(at: 4))
     parse("\"caf\\u00e9\"") == Ok(String("café"))
+    parse("false") == Ok(Boolean(false))
+    parse("-1.5") == Ok(Number(-1.5))
+    parse("\"a\\nb\"") == Ok(String("a\nb"))
+    parse("\"\\u00g0\"") == Error(Unexpected(at: 3))
+    parse("\"\\x\"") == Error(Unexpected(at: 2))
+    parse("[[],2]") == Ok(Array([Array([]), Number(2)]))
+    parse("{\"a\":{},\"b\":2}") == Ok(Object({"a": Object({}), "b": Number(2)}))
   end
 
   chars = text.chars
@@ -96,6 +103,7 @@ end
 fn hex_value(digits: List(Char)) : Option(Int)
   examples
     hex_value(['0', '0', 'e', '9']) == Some(233)
+    hex_value(['a', 'b', 'C', 'f']) == Some(0xABCF)
     hex_value(['1', '2']) == None
     hex_value(['0', '0', 'g', '0']) == None
   end
@@ -223,6 +231,7 @@ fn quoted(text: Text) : Text
   examples
     quoted("say \"hi\"\n") == "\"say \\\"hi\\\"\\n\""
     quoted("tab\tbell\u{7}") == "\"tab\\tbell\\u0007\""
+    quoted("\u{10}") == "\"\\u0010\""
   end
 
   "\"#{text.chars.map(escape_char).join("")}\""
@@ -313,4 +322,16 @@ test "a path picks out one value"
   console = Console.fake_input(["{\"items\": [{\"name\": \"pen\"}]}"])
   assert main(Args.of(["items.0.name"]), console) == 0
   assert console.printed == ["\"pen\""]
+end
+
+test "a usage mistake, a bad document and a missing path each fail"
+  usage = Console.fake_input([])
+  assert main(Args.of(["a", "b"]), usage) == 2
+  assert usage.printed_errors == ["usage: json [PATH] < FILE.json"]
+  broken = Console.fake_input(["[1,"])
+  assert main(Args.of([]), broken) == 1
+  assert broken.printed_errors == ["json: the JSON ends too soon"]
+  missing = Console.fake_input(["[1]"])
+  assert main(Args.of(["3"]), missing) == 1
+  assert missing.printed_errors == ["json: nothing is at that path"]
 end
