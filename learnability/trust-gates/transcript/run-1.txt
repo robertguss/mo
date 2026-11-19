@@ -1,0 +1,83 @@
+passed QueueTests.test.1  work/queue-tests.mo:42:1
+passed QueueTests.test.2  work/queue-tests.mo:60:1
+passed QueueTests.test.3  work/queue-tests.mo:68:1
+passed QueueTests.test.4  work/queue-tests.mo:83:1
+passed QueueTests.test.5  work/queue-tests.mo:95:1
+passed QueueTests.test.6  work/queue-tests.mo:106:1
+passed QueueTests.test.7  work/queue-tests.mo:122:1
+passed QueueTests.test.8  work/queue-tests.mo:132:1
+passed QueueTests.test.9  work/queue-tests.mo:142:1
+passed QueueTests.test.10  work/queue-tests.mo:153:1
+passed QueueTests.test.11  work/queue-tests.mo:167:1
+passed QueueTests.test.12  work/queue-tests.mo:177:1
+passed QueueTests.test.13  work/queue-tests.mo:185:1
+passed QueueTests.test.14  work/queue-tests.mo:210:1
+passed QueueTests.test.15  work/queue-tests.mo:219:1
+passed QueueTests.test.16  work/queue-tests.mo:245:1
+passed QueueTests.test.17  work/queue-tests.mo:259:1
+passed QueueTests.test.18  work/queue-tests.mo:269:1
+passed QueueTests.test.19  work/queue-tests.mo:291:1
+passed QueueTests.test.20  work/queue-tests.mo:303:1
+passed QueueTests.test.21  work/queue-tests.mo:318:1
+passed QueueTests.test.22  work/queue-tests.mo:328:1
+passed QueueTests.test.23  work/queue-tests.mo:351:1
+passed JobQueue.submit.promise.1  work/job-queue.mo:50:3
+passed JobQueue.lease.promise.1  work/job-queue.mo:66:3
+passed JobQueue.lease.example.1  work/job-queue.mo:76:5
+passed JobQueue.lease.example.2  work/job-queue.mo:77:5
+passed JobQueue.heartbeat.promise.1  work/job-queue.mo:95:3
+passed JobQueue.heartbeat.promise.2  work/job-queue.mo:109:3
+passed JobQueue.acknowledge.promise.1  work/job-queue.mo:133:3
+passed JobQueue.acknowledge.promise.2  work/job-queue.mo:147:3
+passed JobQueue.fail.promise.1  work/job-queue.mo:167:3
+passed JobQueue.fail.promise.2  work/job-queue.mo:181:3
+passed JobQueue.fail.example.1  work/job-queue.mo:191:5
+passed JobQueue.fail.example.2  work/job-queue.mo:192:5
+passed JobQueue.fail.example.3  work/job-queue.mo:193:5
+passed JobQueue.fail.example.4  work/job-queue.mo:194:5
+passed JobQueue.expire.example.1  work/job-queue.mo:204:5
+passed JobQueue.expire.example.2  work/job-queue.mo:205:5
+passed JobQueue.jobs.example.1  work/job-queue.mo:220:5
+passed JobQueue.jobs.example.2  work/job-queue.mo:221:5
+passed JobQueue.jobs.example.3  work/job-queue.mo:222:5
+passed JobQueue.test.1  work/job-queue.mo:280:1
+passed JobQueue.test.2  work/job-queue.mo:294:1
+passed JobQueue.test.3  work/job-queue.mo:314:1
+passed JobQueue.test.4  work/job-queue.mo:337:1
+passed Main.service.promise.1  work/main.mo:21:3
+passed Main.service.promise.2  work/main.mo:27:3
+passed Main.service.promise.3  work/main.mo:35:3
+passed Main.service.promise.4  work/main.mo:43:3
+passed Main.service.recovery  work/main.mo:15:1
+error E1440: a service tool states no intent  work/main.mo:143:4
+
+  143 | fn lease(queue: Queue, now: Time) : Result((Queue, Option(Job)), QueueError)
+      |    ^^^^^ Main.lease: write a service promise on lease, or give it a promise or an example
+
+error E1440: a service tool states no intent  work/main.mo:159:4
+
+  159 | fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+      |    ^^^^^^^^^ Main.heartbeat: write a service promise on heartbeat, or give it a promise or an example
+
+error E1440: a service tool states no intent  work/main.mo:177:4
+
+  177 | fn acknowledge(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+      |    ^^^^^^^^^^^ Main.acknowledge: write a service promise on acknowledge, or give it a promise or an example
+
+error E1440: a service tool states no intent  work/main.mo:194:4
+
+  194 | fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result((Queue, Unit), QueueError)
+      |    ^^^^ Main.fail: write a service promise on fail, or give it a promise or an example
+
+error E1440: a service tool states no intent  work/main.mo:220:4
+
+  220 | fn list(queue: Queue, now: Time, filter: JobFilter, after: Int, limit: Int) : Result(
+      |    ^^^^ Main.list: write a service promise on list, or give it a promise or an example
+
+error E1440: a service tool states no intent  work/main.mo:244:4
+
+  244 | fn stats(queue: Queue, now: Time) : Stats
+      |    ^^^^^ Main.stats: write a service promise on stats, or give it a promise or an example
+
+gates: did not run: a function or tool states no intent
+51 passed, 0 failed, 0 stopped
