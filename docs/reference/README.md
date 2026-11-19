@@ -1428,6 +1428,59 @@ the state before the crash beside the state recovery produced; a promise
 failure marks the step that broke it, shows the states before and after that
 step, and points at the line that was false.
 
+### 12.6 Mutants and stated intent
+
+`mo test` also judges the checks themselves. A mutant is a copy of the program
+with one small change to the code of one function, which `mo test` makes on its
+own. Each change is of one of seven kinds, named in its report:
+
+- `boundary`: a comparison moved to its boundary, `<` and `<=` swapped, and `>`
+  and `>=`;
+- `negate`: a comparison negated, `==` and `!=` swapped, `<` made `>=`, `<=`
+  made `>`, `>` made `<=`, and `>=` made `<`;
+- `logic`: `and` and `or` swapped;
+- `not`: a `not` removed;
+- `arithmetic`: `+` and `-` swapped, and `*` and `/`;
+- `bool`: a Bool literal flipped;
+- `int`: an Int literal raised by one.
+
+Each operator or literal in a function's code gives one mutant. Promises,
+examples, tests, a service block and code outside a function are never
+changed. The functions changed are those of the file given and of the program
+modules it imports; a library module's functions are changed only when `mo
+test` is given that module. A mutant the checker refuses, such as `name or
+"world"` made `name and "world"`, is dropped.
+
+A mutant is killed when a check that passed on the program does not pass on
+it: the check fails, stops with a bug, has an anchor fail, or takes more than
+four times the steps it took on the program and more than 1,000,000. It is also
+killed when the program no longer starts. Any check can kill a mutant: a
+promise, an example, a test or a recovery check. A mutant runs only against the
+checks that ran its function, cheapest first, and stops at the first that kills
+it. A mutant that no check kills survives, and is an error, E1439, that names
+the function, the line and the change; when no check runs that function at
+all, the error says so.
+
+Each function on the `expose` line of the file given and of the program modules
+it imports, other than `main`, needs a promise or an example of its own, and
+each overload needs its own. Each service tool needs a service promise `on` it,
+or a promise or an example on its handler; a promise about every step does not
+count. Each one without is an error, E1440, and no mutant is tried.
+
+These two rules are the gates. So a program that passes them has every mutant
+killed and every exposed function and tool stating what it is for. That is a
+floor on how thoroughly its checks run its code. It is not evidence that the
+checks catch the mistakes a person would make.
+
+Given a previous version of the program (section 13.4), `mo test` also prints
+a change summary. It lists each check that is no longer true, newly true, about
+something new, or could not be compared, with the reason, and counts the checks
+that pass on both versions. A check found in one version only is put into the
+other on its own and run there; when that does not check, its first error is
+the reason. A check with the same name and text in both versions that reads a
+helper which changed could not be compared, and the reason names the helper.
+Nothing in the summary changes the exit status.
+
 ## 13. Running
 
 ### 13.1 Evaluation
@@ -1513,27 +1566,20 @@ measures how many of the wrong versions in `DIR` the program's promises and
 examples kill, and how many any of its checks kills; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
 matches nothing is a mistake in the command.
 
-`mo test --gates` also tries mutants. A mutant is one small change to the code
-of a function in the file given or in a program module it imports, of one of
-seven kinds: a comparison moved to its boundary (`<` and `<=` swapped, and `>`
-and `>=`), a comparison negated (`==` and `!=` swapped, `<` made `>=`, `<=` made
-`>`, `>` made `<=`, `>=` made `<`), `and` and `or` swapped, a `not` removed, an
-arithmetic operator swapped (`+` and `-`, `*` and `/`), a Bool literal flipped,
-or an Int literal raised by one. Every check runs first, with no time limit; if
-one does not pass, no mutant is tried. Next, each function on the `expose` line
-of those modules, other than `main`, needs a promise or an example of its own,
-each overload on its own, and each service tool a service promise `on` it or a
-promise or an example of its own; a promise about every step does not count.
-Each one without is an error, E1440, and no mutant is tried. Each mutant then
-runs against the checks that ran its function, cheapest first, and is killed when one of them no longer
-passes or the program no longer starts. A check that takes more than four times
-the steps it took on the unchanged program, and more than 1,000,000, no longer
-passes. A mutant that survives is an error, E1439, naming the function, the
-line and the change; a mutant the checker refuses is dropped. With `--only`,
-`--in`, `--calls`, `--seconds` or a `--max` limit, `--gates` runs the checks as
-without it, tries no mutant and says the gates did not run. With `--list` it
-lists the checks, each mutant it would try and how many mutants each function
-has, without running anything. It takes no `--bundle` or `--strength`.
+A plain `mo test FILE`, alone or with `--json`, is the full run. It runs every
+check with no time limit: each promise all of its 200 inputs and each service
+check all of its sequences. If a check does not pass, nothing more is tried.
+Next it asks each exposed function and service tool to state intent, then tries
+every mutant (section 12.6). Before the totals it counts the mutants tried,
+those killed by each kind of check and by the program no longer starting, those
+that survived and those dropped. Only a full run that exits 0 is a pass. With
+`--only`, `--in`, `--calls`, `--seconds` or a `--max` limit, `mo test` runs the
+checks it selects and nothing else, says the gates did not run, and exits 0
+when those checks pass; there each promise stops after `--seconds`, 2 by
+default, and passes on the inputs it reached. `--list` lists the checks, and
+with no selector or limit also each mutant the full run would try and how many
+mutants each function has, without running anything. `--strength` and
+`--bundle` try no mutants.
 
 `mo test FILE --against OLD` is a shorter gated run. `OLD` is the previous
 version's copy of the file given; for a library module, `OLD`'s folder is the
@@ -1546,12 +1592,8 @@ is a function or constant that no tool, timer, start value, exposed function or
 no check runs, whose mutants are tried and survive. The result says it is not
 the full run, counts the functions carried over and gives the previous
 version's digest, the SHA-256 of its source bundle as `mo push` builds it.
-Before it, a change summary lists each check no longer true, newly true, about
-something new, or that could not be compared, with the reason, and counts the
-checks that pass on both versions. A check found in one version only is put
-into the other on its own and run there. Nothing in the summary changes the
-exit status. An `OLD` that does not check is an error naming its first
-diagnostic. `--against` takes no `--only`, `--in`, `--calls`, `--seconds`, `--max`
+Before it comes the change summary (section 12.6). An `OLD` that does not check
+is an error naming its first diagnostic. `--against` takes no `--only`, `--in`, `--calls`, `--seconds`, `--max`
 limit, `--list`, `--bundle` or `--strength`.
 
 `mo run` and `mo test` limit what a program uses: `--max-stack` sets the bytes

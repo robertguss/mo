@@ -7,7 +7,7 @@ and the review door in `docs/design/intent.md`.
 ## Language
 
 **Check**:
-A promise, an example or a test.
+A promise, an example, a test or a recovery check. Any of them can kill a mutant.
 
 **Wrong version**:
 A replacement for named declarations of a program, written by an agent to represent one plausible
@@ -30,6 +30,10 @@ A check of the previous version of a program that the new version fails.
 **Change summary**:
 The account of a change in terms of checks: those no longer true, those newly true, those about
 something new, and those that could not be compared.
+
+**Full run**:
+Plain `mo test` on a program: every check, then stated intent, then every mutant. Only a
+full run that passes is a pass.
 
 **Shorter run**:
 A gated run against the previous version of a program that tries only the mutants of functions
