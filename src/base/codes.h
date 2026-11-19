@@ -314,7 +314,8 @@
     X(1436, REVIEW_NOT_PENDING, NULL)                                                              \
     X(1437, REVIEW_FULL, NULL)                                                                     \
     X(1438, UPGRADE_UNCONFINED, NULL)                                                              \
-    X(1439, MUTANT_SURVIVED, NULL)
+    X(1439, MUTANT_SURVIVED, NULL)                                                                 \
+    X(1440, INTENT_UNSTATED, NULL)
 
 /* Each code by its identifier: MO_CODE_FAILURE_IGNORED is 412, for E0412. */
 enum mo_code {

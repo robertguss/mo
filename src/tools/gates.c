@@ -151,6 +151,79 @@ static void survived(const struct gate *g, const struct mo_mutant *m, bool unrun
     mo_buffer_free(&detail);
 }
 
+static bool covered(const struct mo_program *program, uint32_t module) {
+    return module == 0 || !program->set->library[module];
+}
+
+static bool exposed(const struct mo_program *program, uint32_t function) {
+    const struct mo_symbol *symbol = program->functions[function].signature->function;
+    return symbol->exported && covered(program, symbol->module) &&
+           function != program->entry.function && symbol->declaration != NULL &&
+           symbol->declaration->kind == MO_S_FN;
+}
+
+static void unstated(struct mo_diags *diags, const struct mo_program *program, uint32_t function,
+                     bool tool) {
+    const struct mo_symbol *symbol = program->functions[function].signature->function;
+    struct mo_buffer detail;
+    mo_buffer_init(&detail, MO_CLI_DIAGNOSTIC_SIZE);
+    bool ok = mo_append_function_name(&detail, program, function) &&
+              mo_buffer_append_text(&detail, ": ") &&
+              (!tool || (mo_buffer_append_text(&detail, "write a service promise on ") &&
+                         mo_buffer_append_text(&detail, symbol->name) &&
+                         mo_buffer_append_text(&detail, ", or "))) &&
+              mo_buffer_append_text(&detail, "give it a promise or an example") &&
+              mo_buffer_append_byte(&detail, 0);
+    struct mo_diag diag = {.code = MO_CODE_INTENT_UNSTATED,
+                           .message = tool ? "a service tool states no intent"
+                                           : "an exposed function states no intent",
+                           .primary = {symbol->declaration->children[0]->span,
+                                       ok ? (const char *)detail.bytes : symbol->name}};
+    bool added = mo_diags_add(diags, &diag);
+    (void)added;
+    mo_buffer_free(&detail);
+}
+
+static const char *intent(struct mo_arena *arena, const struct mo_program *program,
+                          struct mo_diags *diags) {
+    bool *stated = mo_arena_allocate_array(
+        arena, program->function_count == 0 ? 1 : program->function_count, 1, _Alignof(bool));
+    if (stated == NULL) {
+        mo_test_report_error(diags, "stated intent could not be read", nowhere,
+                             "it exceeds tool resources");
+        return "stated intent could not be read";
+    }
+    memset(stated, 0, program->function_count);
+    for (uint32_t i = 0; i < program->spec_count; i++) {
+        const struct mo_checked_spec *spec = &program->specs[i];
+        if ((spec->kind == MO_SPEC_PROMISE || spec->kind == MO_SPEC_EXAMPLE) &&
+            spec->subject != UINT32_MAX)
+            stated[spec->subject] = true;
+    }
+    const char *missing = NULL;
+    for (uint32_t i = 0; i < program->function_count; i++)
+        if (exposed(program, i) && !stated[i]) {
+            unstated(diags, program, i, false);
+            missing = "a function or tool states no intent";
+        }
+    for (uint32_t i = 0; i < program->service_count; i++) {
+        const struct mo_checked_service *service = &program->services[i];
+        if (!covered(program, service->module))
+            continue;
+        for (uint32_t t = 0; t < service->tool_count; t++) {
+            uint32_t function = service->tools[t].function;
+            bool met = stated[function] || exposed(program, function);
+            for (uint32_t p = 0; p < service->promise_count; p++)
+                met = met || service->promises[p].tool == t;
+            if (!met) {
+                unstated(diags, program, function, true);
+                missing = "a function or tool states no intent";
+            }
+        }
+    }
+    return missing;
+}
+
 static bool try_all(struct gate *g, const struct mo_mutants *mutants) {
     for (uint32_t i = 0; i < mutants->count; i++) {
         const struct mo_mutant *m = &mutants->items[i];
@@ -186,6 +259,9 @@ void mo_gates(const struct mo_cli *cli, struct mo_arena *arena, const struct mo_
     mo_run_gated(cli, arena, program, sources, selection, output, diags, totals, &first);
     if (!first.started || first.ran != first.count || totals->failed != 0 || totals->stopped != 0 ||
         mo_diags_any(diags))
+        return;
+    gates->skipped = intent(arena, program, diags);
+    if (gates->skipped != NULL)
         return;
     struct mo_mutants mutants;
     const char *problem = mo_list_mutants(arena, program, sources, &mutants);

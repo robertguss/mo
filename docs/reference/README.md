@@ -1516,8 +1516,12 @@ matches nothing is a mistake in the command.
 `mo test --gates` also tries mutants. A mutant is one small change to the code
 of a function in the file given or in a program module it imports, such as `<`
 made `<=` or a `not` removed. Every check runs first, with no time limit; if
-one does not pass, no mutant is tried. Each mutant then runs against the checks
-that ran its function, cheapest first, and is killed when one of them no longer
+one does not pass, no mutant is tried. Next, each function on the `expose` line
+of those modules, other than `main`, needs a promise or an example of its own,
+each overload on its own, and each service tool a service promise `on` it or a
+promise or an example of its own; a promise about every step does not count.
+Each one without is an error, E1440, and no mutant is tried. Each mutant then
+runs against the checks that ran its function, cheapest first, and is killed when one of them no longer
 passes or the program no longer starts. A check that takes more than four times
 the steps it took on the unchanged program, and more than 1,000,000, no longer
 passes. A mutant that survives is an error, E1439, naming the function, the

@@ -84,3 +84,41 @@ def gates(binary):
     assert library.returncode == 1 and killed > 0, total
     assert {r["code"] for r in items if r["record"] == "diagnostic"} == {"E1439"}, items
     assert total["mutants"]["dropped"] == 1 and total["errors"] == total["mutants"]["survived"]
+
+
+def unstated(items):
+    return [(r["headline"], r["primary"]["line"], r["primary"]["label"]) for r in items
+            if r["record"] == "diagnostic"]
+
+
+def stated_intent(binary):
+    exposed = "an exposed function states no intent"
+    items, total = totals(binary, f"{GATES}/intent/main.mo", 1)
+    assert unstated(items) == [
+        (exposed, 20, "Main.size@Crate: give it a promise or an example"),
+        (exposed, 24, "Main.bare: give it a promise or an example"),
+        (exposed, 28, "Main.also_bare: give it a promise or an example")], items
+    assert {r["code"] for r in items if r["record"] == "diagnostic"} == {"E1440"}, items
+    assert total["gates"] == "did not run" and "mutants" not in total, total
+    text = run(binary, ["test", "--gates", f"{GATES}/intent/main.mo"], 1).stdout.splitlines()
+    assert text[-2] == b"gates: did not run: a function or tool states no intent", text
+    for program in ("intent", "tools"):
+        path = f"{GATES}/{program}/main.mo"
+        assert not run(binary, ["check", path], 0).stderr
+        result = run(binary, ["test", "--gates", "--in", "Main", path], 0)
+        assert not result.stderr and result.stdout.splitlines(keepends=True)[-2] == NOT_GATED
+    ran = run(binary, ["run", f"{GATES}/intent/main.mo"], 0)
+    assert not ran.stdout and not ran.stderr, ran
+
+    items, total = totals(binary, f"{GATES}/tools/main.mo", 1)
+    assert unstated(items) == [
+        (exposed, 28, "Main.add: give it a promise or an example"),
+        ("a service tool states no intent", 36,
+         "Main.peek: write a service promise on peek, or give it a promise or an example")], items
+    assert total["passed"] == 5 and total["gates"] == "did not run", total
+
+    library = subprocess.run([str(binary), "test", "--gates", "--json", "lib/json.mo"], cwd=root,
+                             capture_output=True, timeout=300)
+    items = records(library, "test")
+    assert library.returncode == 1 and unstated(items) == [
+        (exposed, 538, "Json.to_text@JsonNumber: give it a promise or an example")], items

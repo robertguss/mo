@@ -11,7 +11,7 @@ import tempfile
 
 from cli_common import records, root, run, utf8_locale
 from cli_fixtures import anchors, constants, filenames, lower_source_fixtures, source_stack
-from cli_gates import gates
+from cli_gates import gates, stated_intent
 from cli_guide import emit_command, flags, guide_claims
 from cli_intent import (
     fix_command, intent_command, promise_selection, recovery_checks, service_promise_checks,
@@ -59,6 +59,7 @@ def check(binary):
     service_promise_checks(binary)
     strength_checks(binary)
     gates(binary)
+    stated_intent(binary)
     intent_command(binary)
     imported_constants(binary)
     fix_command(binary)
