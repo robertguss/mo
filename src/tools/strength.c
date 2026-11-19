@@ -294,13 +294,13 @@ static enum outcome classify(const struct mo_test_totals *totals, const struct m
         return KILLED_BY_PROMISE;
     if (example)
         return KILLED_BY_EXAMPLE;
-    if (totals->failed_tests != 0)
-        return KILLED_BY_TEST;
     bool unfinished = false;
     for (uint32_t i = 0; i < diags->count; i++)
         unfinished = unfinished || diags->items[i].code != MO_CODE_TOOL_TEST_INITIALIZATION;
     if (unfinished || diags->dropped != 0)
         return UNFINISHED;
+    if (totals->failed_tests != 0 || totals->stopped_tests != 0)
+        return KILLED_BY_TEST;
     return totals->stopped != 0 || diags->count != 0 ? DEFECT : SURVIVED;
 }
 

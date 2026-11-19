@@ -2399,18 +2399,21 @@ records may be added, and readers ignore what they don't know.
   the false line, or `defect` for a body that stopped.
 - **`strength`**, one per `mo test --json --strength DIR`, written after the
   original program's `result` records and before `totals`. The line is
-  `{"record":"strength","version":1,"set":<DIR>,"counted_file":<bool>,"original":"passed"|"failed","versions":[...],"counts":{...},"killed":<n>,"scored":<n>,"rate":<number>|null,"partial":<bool>}`.
-  `version` is the integer 1 (not format `"1.0"`). `set` is the `--strength`
+  `{"record":"strength","version":2,"set":<DIR>,"counted_file":<bool>,"original":"passed"|"failed","versions":[...],"counts":{...},"killed":<n>,"killed_any":<n>,"scored":<n>,"rate":<number>|null,"partial":<bool>}`.
+  `version` is the integer 2 (not format `"2.0"`). `set` is the `--strength`
   path as given, JSON-string-escaped. `counted_file` is whether `DIR` held a
   `counted` file. `original` is `"passed"` or `"failed"`. Each `versions`
   element is `{"name":...,"sha256":"<64 lowercase hex>","outcome":"<class>"}`
   and, when `outcome` is `"invalid"`, `"reason":...`. `outcome` is one of
   `invalid`, `changes_intent`, `killed_by_promise`, `killed_by_example`,
-  `killed_by_both`, `survived`, `defect`, `unfinished`, `not_counted`.
-  `counts` has those nine keys in that order. `rate` is a JSON number to four
+  `killed_by_both`, `killed_by_test`, `survived`, `defect`, `unfinished`,
+  `not_counted`. `counts` has those ten keys in that order. `killed` counts the
+  versions a promise or an example kills, and `rate` is `killed` over `scored`;
+  `killed_any` adds the `killed_by_test` versions, which only a test or a
+  recovery check kills or stops. `rate` is a JSON number to four
   decimal places, or `null` when `scored` is 0. `partial` is `false` only when
   the original passed and no version is `unfinished`; otherwise `true`. If the
-  original failed, `versions` is `[]`, `killed` and `scored` are 0, `rate` is
+  original failed, `versions` is `[]`, `killed`, `killed_any` and `scored` are 0, `rate` is
   `null`, and `partial` is `true`.
 - **`totals`**, always last: `errors`, the diagnostics written, and
   `dropped`, those found past the limits a run keeps

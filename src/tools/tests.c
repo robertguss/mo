@@ -444,6 +444,7 @@ static bool run_one(const struct mo_cli *cli, const struct mo_program *program,
         break;
     case MO_STOPPED:
         totals->stopped++;
+        totals->stopped_tests += observation->source->kind == MO_SPEC_TEST;
         break;
     }
     bool shown = false;

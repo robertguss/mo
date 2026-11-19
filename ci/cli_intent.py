@@ -300,12 +300,15 @@ def strength_checks(binary):
     tests = strength_record(binary, f"{STRENGTH}-tests/checks.mo", f"{STRENGTH}-tests/versions")
     assert {v["name"]: v["outcome"] for v in tests["versions"]} == {
         "a-third.mo": "killed_by_test", "b-either.mo": "killed_by_promise",
-        "c-floor.mo": "survived"}, tests
-    assert (tests["killed"], tests["killed_any"], tests["scored"]) == (1, 2, 3), tests
+        "c-floor.mo": "survived", "d-zero.mo": "killed_by_test"}, tests
+    assert (tests["killed"], tests["killed_any"], tests["scored"]) == (1, 3, 4), tests
     slow = strength_record(binary, f"{STRENGTH}-tests/checks.mo", f"{STRENGTH}-tests/slow", 1,
                            ["--seconds", "1"])
     assert ([v["outcome"] for v in slow["versions"]], slow["partial"], slow["killed_any"]) == (
-        ["unfinished"], True, 0), slow
+        ["unfinished", "unfinished"], True, 0), slow
+    service = strength_record(binary, f"{STRENGTH}-service/main.mo", f"{STRENGTH}-service/versions")
+    assert ([v["outcome"] for v in service["versions"]], service["killed_any"],
+            service["scored"]) == (["killed_by_test"], 1, 1), service
     library = without_time(run(binary, ["test", "--list", "--json", "lib/list.mo"], 0))
     assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
 
