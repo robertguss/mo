@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The full run of mo test --gates on lib/, examples/ and the task queue, which fails on any
-survivor or function that states no intent, then the same run on a copy of examples/wc.mo with a
-test removed, which must fail and name a survivor.
+survivor, function that states no intent or run that is not the full gate, then the same run on
+a copy of examples/wc.mo with a test removed, which must fail and name a survivor.
 
 Run from any directory: python3 ci/check_gates.py MO
 """
@@ -25,9 +25,10 @@ def gated(binary, path):
     result = subprocess.run([binary, "test", "--gates", "--json", str(path)], cwd=root,
                             capture_output=True, text=True, timeout=TIMEOUT)
     records = [json.loads(line) for line in result.stdout.splitlines()]
-    problems = [f"{r['primary']['file']}:{r['primary']['line']}: {r['code']} {r['primary']['label']}"
-                for r in records if r["record"] == "diagnostic"]
-    return result.returncode, problems, result.stderr, time.monotonic() - start
+    problems = [f"{d['primary']['file']}:{d['primary']['line']}: {d['code']} "
+                f"{d['primary']['label']}" for d in records if d["record"] == "diagnostic"]
+    ran = bool(records) and records[-1]["record"] == "totals" and records[-1].get("gates") == "ran"
+    return result.returncode, problems, ran, result.stderr, time.monotonic() - start
 
 
 def programs():
@@ -42,7 +43,7 @@ def control(binary):
     with tempfile.TemporaryDirectory(prefix="mo-gates-") as directory:
         copy = pathlib.Path(directory) / "wc.mo"
         copy.write_text(source[:test.start()] + source[test.end():])
-        status, problems, stderr, _ = gated(binary, copy)
+        status, problems, _, stderr, _ = gated(binary, copy)
     assert status == 1 and not stderr, (status, stderr)
     assert problems and all(" E1439 " in p for p in problems), problems
     print(f"control: examples/wc.mo without its total test fails with {len(problems)} survivors")
@@ -55,13 +56,13 @@ def main(argv):
     paths = programs()
     failed = []
     with concurrent.futures.ThreadPoolExecutor(os.cpu_count() or 2) as pool:
-        for path, (status, problems, stderr, seconds) in zip(
+        for path, (status, problems, ran, stderr, seconds) in zip(
                 paths, pool.map(lambda p: gated(binary, p), paths)):
             name = path.relative_to(root)
             print(f"{name}: exit {status} in {seconds:.1f} s", flush=True)
             for problem in problems:
                 print(f"  {problem}")
-            if status != 0 or stderr:
+            if status != 0 or stderr or problems or not ran:
                 print(stderr, end="", file=sys.stderr)
                 failed.append(str(name))
     if failed:
