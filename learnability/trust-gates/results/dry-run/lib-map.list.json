@@ -1,0 +1,6 @@
+{"record":"version","format":"1.0","mo":"0.3.0","command":"test"}
+{"record":"test","name":"Map.update.example.1","kind":"example","span":{"file":"lib/map.mo","file_bytes":"6c69622f6d61702e6d6f","start":184,"end":236,"line":7,"column":5,"end_line":7,"end_column":57},"digest":"c96141c570343d2cabf7d60aa8d43bebe83b70c12fc0f551d628a95c85322d17"}
+{"record":"test","name":"Map.update.example.2","kind":"example","span":{"file":"lib/map.mo","file_bytes":"6c69622f6d61702e6d6f","start":241,"end":303,"line":8,"column":5,"end_line":8,"end_column":67},"digest":"3aedcefe61cf2e0d322624f4ac535c5a3c4057f21e31f7dbf4e70afcf08204ae"}
+{"record":"mutant","function":"Map.update","file":"lib/map.mo","line":11,"column":30,"kind":"logic","original":"or","replacement":"and"}
+{"record":"function","name":"Map.update","mutants":1}
+{"record":"totals","errors":0,"dropped":0,"passed":0,"failed":0,"stopped":0,"status":0}

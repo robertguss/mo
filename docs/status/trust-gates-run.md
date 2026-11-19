@@ -61,3 +61,89 @@ The programs are the 12 modules of `lib/`, the 12 programs of `examples/` and
   no mutant stay the same or change by under 5%. No function loses all its mutants.
 - P6. The fitting log has between 0 and 3 survivors the agent judged no check could kill, and
   between 1 and 5 that only one particular call sequence killed.
+
+## The dry run (U8)
+
+Run on 2026-11-19 from commit `04a62857` with the debug gcc build, one program at a time in
+two lanes: the task queue in one, the 24 library modules and examples in the other, beside the
+two frozen `--strength` runs of U10. `learnability/trust-gates/count.py` counts the table below
+from `learnability/trust-gates/results/dry-run/`; mutants made come from `--gates --list`, the
+rest from the gated run's `mutant` records.
+
+| Program | Functions | With no mutant | Mutants | Killed | Survived | Dropped | Exit | Seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| 12 library modules | 70 | 31 | 274 | 40 | 3 | 2 | 1 (`json` E1440, `list` E1439) | 7.0 |
+| 12 examples | 100 | 36 | 273 | 188 | 59 | 10 | 1 on 11 (`account` E1440) | 17.3 |
+| `services/task-queue/queue-tests.mo` | 42 | 18 | 86 | 73 | 8 | 5 | 1 (E1439) | 1,015.4 |
+| All 25 | 212 | 85 | 633 | 301 | 70 | 17 | | 1,039.7 |
+
+| Row | Made | Killed | Survived | Dropped | Survivors among those run |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| boundary | 65 | 28 | 16 | 0 | 36% |
+| negate | 130 | 76 | 1 | 0 | 1% |
+| logic | 56 | 20 | 1 | 16 | 5% |
+| not | 10 | 4 | 0 | 0 | 0% |
+| arithmetic | 111 | 51 | 10 | 1 | 16% |
+| bool | 38 | 24 | 3 | 0 | 11% |
+| int | 223 | 98 | 39 | 0 | 28% |
+
+Kills by kind of check: example 174, test 100, start 24, promise 3. On the task queue alone:
+test 29, start 22, example 21, promise 1. A "start" kill is a mutant after which the program
+no longer starts, such as one in a constant.
+
+`lib/json.mo` (229 mutants) and `examples/account.mo` (16) fail stated intent, so their mutants
+are listed but not tried; the rows' kill and survival columns leave them out. Eight library
+modules have no mutant: `set`, `text`, `time` and `unicode16` have no `fn` of their own, and
+`file-error`, `files`, `option` and `result` have no code the table changes.
+Plain `mo test` takes 75.5 seconds on the frozen task queue and 79.3 on the current one, almost
+all of it `QueueTests.test.22` (71.4 and 72.7 seconds); the gated run is 12.8 times plain.
+
+Two defects in the instruments turned up and were fixed before the table was frozen:
+
+- `mo test --list --json` crashed on `lib/json.mo` and `examples/json-query.mo`: the intent
+  walk recursed forever through the ability proofs of the recursive type `Json`. This was on
+  `main` before this branch. Commit `04a62857` stops the walk at a proof already on its path;
+  digests of every other program are byte-identical to `main`'s (checked on `lib/list.mo`,
+  `lib/option.mo`, `examples/kv.mo`, `examples/todo.mo` and both task queues). The crashed
+  listings are kept as `*.list.crashed.json`; the gated runs of both programs did not crash.
+- Review of U9 found that a wrong version whose test stopped was classed `defect` and left the
+  rate, and that a failing test hid an unfinished promise. Both were fixed in `ea0b1c19`
+  before any `--strength` run here.
+
+### The predictions against the dry run
+
+- D1, right: the checks passed on all 25.
+- D2, partly wrong: stated intent failed on 1 of 12 library modules, not at least 8; most
+  library functions with no example are not exposed or are in modules with no `fn`. It passed on
+  11 of 12 examples and on the task queue, as predicted.
+- D3, wrong: the task queue has 86 mutants, not 350 to 700, and all 25 programs 633, not 1,500
+  to 3,500. The plan's crude count of 650 counted places the table never changes.
+- D4, wrong at the edge: 85 of 212 tested functions (40.1%) have no mutant, just above the 15% to
+  40% predicted.
+- D5, partly right: the Int literal row makes the most mutants (223); negate (130) comes before
+  arithmetic (111); `not` makes the fewest (10).
+- D6, wrong: the boundary row has the highest share of survivors (36%), then Int literals
+  (28%); negate, logic and `not` are lowest, as predicted, but Bool is 11%.
+- D7, right: no row is dropped (below).
+- D8, wrong: the gated task queue took 17 minutes, under the 20 to 90 predicted; the other 24
+  programs took 24 seconds together.
+
+### The table of kinds
+
+Decided by the agent under Robert's delegation of 2026-11-19: the table keeps all seven rows
+unchanged, and the reference states it (section 13.4, rule 3). Reasons:
+
+- I read all 70 survivors, not a sample: 62 from the library and examples and 8 from the task
+  queue. Every one changes a result that some input reaches: a comparison at a limit
+  (`limit < 1`, `ttl <= 0`, `attempts >= max_attempts`), an Int literal in a width, an exit
+  status or an id, or a helper that only tests use. I judged each killable by a check. One, the
+  task queue's `until > now` made `until >= now` in `Main.current?`, can only be killed by a call
+  that arrives at the exact instant a lease ends, which takes one particular call sequence.
+- The rows with the most survivors, boundary and Int, are the ones that catch off-by-one
+  mistakes, the kind several wrong versions of the task queue make. Dropping them would remove
+  the gate's reach where it matters.
+- The logic row's 16 dropped mutants are `or` used as an Option default (`x or 0`) and `and`
+  used with `is`; the checker refuses both swaps, so they cost one check each and never
+  survive. That is not a reason to drop the row, which killed 20 others.
+- A limit of this judgment: it reads the code and does not write the checks. PR4 fits these
+  programs and will show whether each survivor can in fact be killed.
