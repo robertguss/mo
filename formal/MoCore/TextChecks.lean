@@ -112,11 +112,11 @@ def world : World :=
 
 #guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.4 (unit))",
   "(core 0.5 (unit))", "(core 0.6 (unit))", "(core 0.7 (unit))", "(core 0.8 (unit))",
-  "(core 0.9 (unit)) extra", "(core 0.9 (unit)",
-  "(core 0.9 \"\\q\")", "(core 0.9 \"\\u{d800}\")", "(core 0.9 \"\\u{110000}\")",
-  "(core 0.9 \"\\u{}\")", "(core 0.9 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.9 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.9 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+  "(core 0.10 (unit)) extra", "(core 0.10 (unit)",
+  "(core 0.10 \"\\q\")", "(core 0.10 \"\\u{d800}\")", "(core 0.10 \"\\u{110000}\")",
+  "(core 0.10 \"\\u{}\")", "(core 0.10 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.10 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.10 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 
@@ -304,6 +304,9 @@ def fuzzSeeds : List (String × Sexp) :=
 #guard (structural Greet.program (.list .entry)
   (.list [.con "Entry" [.text "é", .con "Folder" []]])).toOption ==
   some "[Entry(name: \"é\", kind: Folder)]"
+#guard (structural Greet.program (.list .networkError)
+  (.list [.con "Refused" [.text "h", .int 80], .con "TimedOut" []])).toOption ==
+  some "[Refused(host: \"h\", port: 80), TimedOut]"
 #guard ["File", "Folder", "Link", "Other"].all fun c =>
   valueFits Greet.program {} .entryKind (.con c []) &&
   !valueFits Greet.program {} .entryKind (.con c [.text "extra"])

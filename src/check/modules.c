@@ -161,7 +161,9 @@ bool mo_source_builtin(const uint8_t *name, size_t length) {
                                         "File",        "Folder",
                                         "Link",        "Other",
                                         "Simulation",  "SimulationError",
-                                        "ServiceDown", "ToolFailed"};
+                                        "ServiceDown", "ToolFailed",
+                                        "Network",     "Connection",
+                                        "NetworkError"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
         if (length == strlen(names[i]) && memcmp(name, names[i], length) == 0)
             return true;

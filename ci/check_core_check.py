@@ -254,10 +254,11 @@ def signatures():
         table.append((f"(eq {eq})", [eq, eq], "(bool)", False))
     # Structural observation has no ability requirement, even for functions and capabilities.
     for ty in [I, F, D, T, "(bytes)", "(char)", "(unit)", "(ordering)",
-               "(range)", "(time)", "(duration)", "(fileError)", "(entry)",
+               "(range)", "(time)", "(duration)", "(fileError)", "(networkError)", "(entry)",
                "(fn ((int)) (text))", '(data "undeclared")', L(T), m, se,
                O(T), R(T), "(tuple ((text) (float)))"] + [
-                   C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random"]]:
+                   C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random",
+                                  "network", "connection"]]:
         table.append((f"(structural {ty})", [ty], T, False))
     add("io", "argsList", C("args"), L(T))
     add("io", "envGet", C("env") + "|" + T, O(T))

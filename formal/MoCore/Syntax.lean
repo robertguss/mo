@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env
+  | console | files | readFiles | clock | random | args | env | network | connection
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -56,6 +56,7 @@ inductive Ty where
   | fileError
   | simulation
   | simulationError
+  | networkError
   | entry
   | entryKind
   | fn (params : List Ty) (ret : Ty)
@@ -75,6 +76,7 @@ def Ty.beq : Ty → Ty → Bool
   | .range, .range | .time, .time | .duration, .duration | .ordering, .ordering
   | .fileError, .fileError | .entry, .entry | .entryKind, .entryKind => true
   | .simulation, .simulation | .simulationError, .simulationError => true
+  | .networkError, .networkError => true
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
   | .map k v, .map k' v' => Ty.beq k k' && Ty.beq v v'
@@ -96,7 +98,7 @@ mutual
 theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
   | .int | .bigInt | .byte | .decimal | .float | .bool | .char | .text | .bytes | .unit
   | .range | .time | .duration | .ordering | .fileError | .entry | .entryKind => rfl
-  | .simulation | .simulationError => rfl
+  | .simulation | .simulationError | .networkError => rfl
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
@@ -116,7 +118,7 @@ theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
   | .int, b, h | .bigInt, b, h | .byte, b, h | .decimal, b, h | .float, b, h | .bool, b, h
   | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .range, b, h | .time, b, h
   | .duration, b, h | .ordering, b, h | .fileError, b, h
-  | .simulation, b, h | .simulationError, b, h
+  | .simulation, b, h | .simulationError, b, h | .networkError, b, h
   | .entry, b, h | .entryKind, b, h => by cases b <;> simp_all [Ty.beq]
   | .data s, b, h | .cap s, b, h => by cases b <;> simp_all [Ty.beq]
   | .tuple as, b, h => by
@@ -155,6 +157,7 @@ instance : DecidableEq Ty := fun a b =>
 def Cap.name : Cap → String
   | .console => "Console" | .files => "Files" | .readFiles => "ReadFiles"
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
+  | .network => "Network" | .connection => "Connection"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -165,6 +168,7 @@ def Ty.render : Ty → String
   | .bytes => "Bytes" | .unit => "Unit" | .range => "Range" | .time => "Time"
   | .duration => "Duration" | .ordering => "Ordering" | .fileError => "FileError"
   | .simulation => "Simulation" | .simulationError => "SimulationError"
+  | .networkError => "NetworkError"
   | .entry => "Entry" | .entryKind => "EntryKind"
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
@@ -822,6 +826,11 @@ def fileErrorCtors : List Ctor :=
   [⟨"NotFound", [("path", .text)]⟩, ⟨"NotAllowed", [("path", .text)]⟩,
    ⟨"NotText", [("path", .text)]⟩, ⟨"Failed", [("path", .text), ("reason", .text)]⟩]
 
+/-- The constructors of `NetworkError` (reference 14). -/
+def networkErrorCtors : List Ctor :=
+  [⟨"UnknownHost", [("host", .text)]⟩, ⟨"Refused", [("host", .text), ("port", .int)]⟩,
+   ⟨"TimedOut", []⟩, ⟨"Closed", []⟩, ⟨"Broken", [("reason", .text)]⟩]
+
 /-- The constructors of a type that has them: declared data types, and the
 library's always-in-scope choice types. -/
 def ctorsOf (P : Program) : Ty → Option (List Ctor)
@@ -831,6 +840,7 @@ def ctorsOf (P : Program) : Ty → Option (List Ctor)
   | .ordering => some orderingCtors
   | .fileError => some fileErrorCtors
   | .simulationError => some [⟨"ServiceDown", []⟩, ⟨"ToolFailed", []⟩]
+  | .networkError => some networkErrorCtors
   | .entry => some [⟨"Entry", [("name", .text), ("kind", .entryKind)]⟩]
   | .entryKind => some [⟨"File", []⟩, ⟨"Folder", []⟩, ⟨"Link", []⟩, ⟨"Other", []⟩]
   | _ => none

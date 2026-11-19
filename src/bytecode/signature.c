@@ -261,6 +261,30 @@ static MO_MUST_USE bool type(struct match *m, uint32_t index, unsigned depth) {
         }
         return true;
     }
+    if (word_is(start, length, "NetworkError")) {
+        static const char *const names[] = {"UnknownHost", "Refused", "TimedOut", "Closed",
+                                            "Broken"};
+        static const char *const fields[][2] = {
+            {"host", NULL}, {"host", "port"}, {NULL, NULL}, {NULL, NULL}, {"reason", NULL}};
+        if (!cases(t, names, 5) || !layouts(m, index)) {
+            return false;
+        }
+        for (uint32_t i = 0; i < 5; i++) {
+            const struct mo_type_case *c = &t->cases[i];
+            uint32_t count = fields[i][0] == NULL ? 0U : fields[i][1] == NULL ? 1U : 2U;
+            if (c->field_count != count || c->unnamed) {
+                return false;
+            }
+            for (uint32_t j = 0; j < count; j++) {
+                if (strcmp(c->fields[j].name, fields[i][j]) != 0 ||
+                    m->file->types[c->fields[j].type].kind !=
+                        (j == 1 ? MO_TYPE_INT : MO_TYPE_TEXT)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
     return false;
 }
 

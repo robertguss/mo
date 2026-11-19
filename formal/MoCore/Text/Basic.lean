@@ -4,7 +4,8 @@ namespace MoCore.Text
 
 def capTable : List (String × Cap) :=
   [("console", .console), ("files", .files), ("readFiles", .readFiles), ("clock", .clock),
-   ("random", .random), ("args", .args), ("env", .env)]
+   ("random", .random), ("args", .args), ("env", .env), ("network", .network),
+   ("connection", .connection)]
 
 def enumOut [BEq α] (table : List (String × α)) (v : α) : Sexp :=
   tag ((table.find? (fun (_, a) => a == v)).map Prod.fst |>.getD "invalid")
@@ -20,7 +21,8 @@ def tyAtoms : List (String × Ty) :=
    ("float", .float), ("bool", .bool), ("char", .char), ("text", .text), ("bytes", .bytes),
    ("unit", .unit), ("range", .range), ("time", .time), ("duration", .duration),
    ("ordering", .ordering), ("fileError", .fileError), ("entry", .entry), ("entryKind", .entryKind),
-   ("simulation", .simulation), ("simulationError", .simulationError)]
+   ("simulation", .simulation), ("simulationError", .simulationError),
+   ("networkError", .networkError)]
 
 partial def tyOut : Ty → Sexp
   | .tuple ts => tag "tuple" [seq (ts.map tyOut)]

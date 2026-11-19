@@ -726,9 +726,9 @@ static void test_host_storage(struct heap_fixture *f) {
     capability = mo_cell_int(71);
     CHECK(!mo_value_capability(p, f->list, &info, &capability));
     CHECK(mo_cell_get_int(capability) == 71);
-    const char *names[] = {"<Args>",      "<Env>",   "<Console>", "<Files>",
-                           "<ReadFiles>", "<Clock>", "<Random>"};
-    for (unsigned i = 0; i <= MO_CAP_RANDOM; i++) {
+    const char *names[] = {"<Args>",  "<Env>",    "<Console>",    "<Files>",   "<ReadFiles>",
+                           "<Clock>", "<Random>", "<Simulation>", "<Network>", "<Connection>"};
+    for (unsigned i = 0; i <= MO_CAP_CONNECTION; i++) {
         int before = released_handles;
         CHECK(mo_value_capability(p, f->capabilities[i], &info, &capability));
         expect_text(p, f->capabilities[i], capability, names[i]);

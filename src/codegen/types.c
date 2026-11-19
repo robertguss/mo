@@ -164,6 +164,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
     case MO_CORE_TY_ORDERING:
     case MO_CORE_TY_FILE_ERROR:
     case MO_CORE_TY_SIMULATION_ERROR:
+    case MO_CORE_TY_NETWORK_ERROR:
     case MO_CORE_TY_ENTRY_KIND: {
         uint32_t a = MO_NO_INDEX, b = MO_NO_INDEX;
         if (t->tag == MO_CORE_TY_OPTION)
@@ -184,6 +185,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                            : t->tag == MO_CORE_TY_ORDERING         ? "Ordering"
                            : t->tag == MO_CORE_TY_FILE_ERROR       ? "FileError"
                            : t->tag == MO_CORE_TY_SIMULATION_ERROR ? "SimulationError"
+                           : t->tag == MO_CORE_TY_NETWORK_ERROR    ? "NetworkError"
                                                                    : "EntryKind";
         struct mo_buffer buf;
         mo_buffer_init(&buf, MO_LIMIT_STRING_SIZE);
@@ -211,12 +213,15 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                                  *const ordering[] = {"Less", "Equal", "Greater"},
                                  *const entry[] = {"File", "Folder", "Link", "Other"},
                                  *const simulation_errors[] = {"ServiceDown", "ToolFailed"},
+                                 *const network_errors[] = {"UnknownHost", "Refused", "TimedOut",
+                                                            "Closed", "Broken"},
                                  *const errors[] = {"NotFound", "NotAllowed", "NotText", "Failed"};
         names = t->tag == MO_CORE_TY_OPTION             ? option
                 : t->tag == MO_CORE_TY_RESULT           ? result
                 : t->tag == MO_CORE_TY_ORDERING         ? ordering
                 : t->tag == MO_CORE_TY_FILE_ERROR       ? errors
                 : t->tag == MO_CORE_TY_SIMULATION_ERROR ? simulation_errors
+                : t->tag == MO_CORE_TY_NETWORK_ERROR    ? network_errors
                                                         : entry;
         struct mo_type_field fields[] = {{NULL, a}, {NULL, b}};
         if (t->tag == MO_CORE_TY_FILE_ERROR) {
@@ -228,10 +233,24 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             fields[0] = (struct mo_type_field){"path", text_type};
             fields[1] = (struct mo_type_field){"reason", text_type};
         }
-        struct mo_type_case cases[4] = {{0}};
-        uint32_t n = t->tag == MO_CORE_TY_ENTRY_KIND || t->tag == MO_CORE_TY_FILE_ERROR ? 4
-                     : t->tag == MO_CORE_TY_ORDERING                                    ? 3
-                                                                                        : 2;
+        struct mo_type_field network[3] = {{0}};
+        if (t->tag == MO_CORE_TY_NETWORK_ERROR) {
+            uint32_t text_type = codegen_scalar(c, MO_TYPE_TEXT);
+            uint32_t int_type = codegen_scalar(c, MO_TYPE_INT);
+            if (text_type == MO_NO_INDEX || int_type == MO_NO_INDEX ||
+                codegen_string(c, codegen_text("host")) == MO_NO_INDEX ||
+                codegen_string(c, codegen_text("port")) == MO_NO_INDEX ||
+                codegen_string(c, codegen_text("reason")) == MO_NO_INDEX)
+                return MO_NO_INDEX;
+            network[0] = (struct mo_type_field){"host", text_type};
+            network[1] = (struct mo_type_field){"port", int_type};
+            network[2] = (struct mo_type_field){"reason", text_type};
+        }
+        struct mo_type_case cases[5] = {{0}};
+        uint32_t n = t->tag == MO_CORE_TY_NETWORK_ERROR                                   ? 5
+                     : t->tag == MO_CORE_TY_ENTRY_KIND || t->tag == MO_CORE_TY_FILE_ERROR ? 4
+                     : t->tag == MO_CORE_TY_ORDERING                                      ? 3
+                                                                                          : 2;
         for (uint32_t i = 0; i < n; i++) {
             if (codegen_string(c, codegen_text(names[i])) == MO_NO_INDEX)
                 return MO_NO_INDEX;
@@ -245,10 +264,14 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                 cases[i].field_count = i == 3 ? 2 : 1;
                 cases[i].fields = fields;
             }
+            if (t->tag == MO_CORE_TY_NETWORK_ERROR && i != 2 && i != 3) {
+                cases[i].field_count = i == 1 ? 2 : 1;
+                cases[i].fields = &network[i == 4 ? 2 : 0];
+            }
         }
         status = mo_types_define_choice(&c->types, id, cases, n);
         const bool unnamed[] = {cases[0].unnamed, cases[1].unnamed, cases[2].unnamed,
-                                cases[3].unnamed};
+                                cases[3].unnamed, cases[4].unnamed};
         if (codegen_type_result(c, status, id) == MO_NO_INDEX ||
             !codegen_service_shape(
                 c, id, &(struct mo_service_shape){.case_count = n, .unnamed = unnamed}) ||
@@ -335,9 +358,9 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
     }
     case MO_CORE_TY_SIMULATION:
     case MO_CORE_TY_CAP: {
-        static const enum mo_capability caps[] = {MO_CAP_CONSOLE, MO_CAP_FILES,  MO_CAP_READ_FILES,
-                                                  MO_CAP_CLOCK,   MO_CAP_RANDOM, MO_CAP_ARGS,
-                                                  MO_CAP_ENV};
+        static const enum mo_capability caps[] = {
+            MO_CAP_CONSOLE, MO_CAP_FILES, MO_CAP_READ_FILES, MO_CAP_CLOCK,     MO_CAP_RANDOM,
+            MO_CAP_ARGS,    MO_CAP_ENV,   MO_CAP_NETWORK,    MO_CAP_CONNECTION};
         uint32_t id = MO_NO_INDEX;
         enum mo_type_problem status = mo_types_intern(
             &c->types,
@@ -405,7 +428,8 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
                      {"Result", MO_CORE_TY_RESULT},
                      {"Ordering", MO_CORE_TY_ORDERING},
                      {"Entry", MO_CORE_TY_ENTRY},
-                     {"FileError", MO_CORE_TY_FILE_ERROR}};
+                     {"FileError", MO_CORE_TY_FILE_ERROR},
+                     {"NetworkError", MO_CORE_TY_NETWORK_ERROR}};
         bool found = false;
         for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
             if (strlen(names[i].name) == length && memcmp(start, names[i].name, length) == 0) {
@@ -415,8 +439,9 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
             }
         }
         if (!found) {
-            static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
-                                               "Random",  "Args",  "Env"};
+            static const char *const caps[] = {"Console", "Files",   "ReadFiles",
+                                               "Clock",   "Random",  "Args",
+                                               "Env",     "Network", "Connection"};
             for (uint32_t i = 0; i < sizeof caps / sizeof *caps; i++)
                 if (strlen(caps[i]) == length && memcmp(start, caps[i], length) == 0) {
                     t->tag = MO_CORE_TY_CAP;

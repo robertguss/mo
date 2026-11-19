@@ -61,16 +61,22 @@ struct type {
 };
 
 static const struct type types[] = {
-    {"Unit", 0, true, false},      {"Bool", 0, true, false},       {"Int", 0, true, false},
-    {"BigInt", 0, false, false},   {"Byte", 0, true, false},       {"Decimal", 0, true, false},
-    {"Float", 0, true, false},     {"Text", 0, false, false},      {"Char", 0, true, false},
-    {"Bytes", 0, false, false},    {"List", 1, false, false},      {"Map", 2, false, false},
-    {"Set", 1, false, false},      {"Range", 0, true, false},      {"Time", 0, true, false},
-    {"Duration", 0, true, false},  {"Option", 1, false, false},    {"Result", 2, false, false},
-    {"Ordering", 0, true, false},  {"FileError", 0, false, false}, {"Entry", 0, false, false},
-    {"EntryKind", 0, true, false}, {"Args", 0, false, true},       {"Env", 0, false, true},
-    {"Console", 0, false, true},   {"Files", 0, false, true},      {"ReadFiles", 0, false, true},
-    {"Clock", 0, false, true},     {"Random", 0, false, true},
+    {"Unit", 0, true, false},       {"Bool", 0, true, false},
+    {"Int", 0, true, false},        {"BigInt", 0, false, false},
+    {"Byte", 0, true, false},       {"Decimal", 0, true, false},
+    {"Float", 0, true, false},      {"Text", 0, false, false},
+    {"Char", 0, true, false},       {"Bytes", 0, false, false},
+    {"List", 1, false, false},      {"Map", 2, false, false},
+    {"Set", 1, false, false},       {"Range", 0, true, false},
+    {"Time", 0, true, false},       {"Duration", 0, true, false},
+    {"Option", 1, false, false},    {"Result", 2, false, false},
+    {"Ordering", 0, true, false},   {"FileError", 0, false, false},
+    {"Entry", 0, false, false},     {"EntryKind", 0, true, false},
+    {"Args", 0, false, true},       {"Env", 0, false, true},
+    {"Console", 0, false, true},    {"Files", 0, false, true},
+    {"ReadFiles", 0, false, true},  {"Clock", 0, false, true},
+    {"Random", 0, false, true},     {"Network", 0, false, true},
+    {"Connection", 0, false, true}, {"NetworkError", 0, false, false},
 };
 
 /* The five abilities (reference 9.2). */

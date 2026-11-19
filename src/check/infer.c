@@ -268,7 +268,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     }
     case MO_S_CALL: {
         const struct mo_syntax *callee = node->children[0];
-        const struct mo_builtin_case *builtin = mo_builtin_case_by_name(callee);
+        const struct mo_builtin_case *builtin = mo_builtin_case_by_name(callee, NULL);
         if (builtin != NULL)
             return infer_builtin_construct(p, builtin, node->children[1], expected);
         if (callee->kind == MO_S_CAPNAME || callee->kind == MO_S_QUALIFIED) {
@@ -301,13 +301,13 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         bool simulation = qualified && infer_compare_text(node->children[0], "Simulation") == 0;
         const struct mo_data_signature *data = NULL;
         const struct mo_builtin_case *builtin =
-            !qualified && start < node->count && node->children[start]->kind == MO_S_CALL
-                ? mo_builtin_case_by_name(name)
+            start < node->count && node->children[start]->kind == MO_S_CALL
+                ? mo_builtin_case_by_name(name, qualified ? node->children[0] : NULL)
                 : NULL;
         bool ability = qualified && (infer_compare_text(name, "to_text") == 0 ||
                                      infer_compare_text(name, "compare") == 0);
-        if (!simulation && (name->kind == MO_S_CAPNAME || qualified) && !ability &&
-            start < node->count && node->children[start]->kind == MO_S_CALL) {
+        if (!simulation && builtin == NULL && (name->kind == MO_S_CAPNAME || qualified) &&
+            !ability && start < node->count && node->children[start]->kind == MO_S_CALL) {
             uint32_t count = 0;
             const struct mo_symbol *symbol =
                 infer_definition(p, name, qualified ? node->children[0] : NULL, &count);

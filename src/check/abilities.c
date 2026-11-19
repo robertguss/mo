@@ -445,6 +445,8 @@ static MO_MUST_USE bool derive_native(struct mo_ability_context *p,
         .kind = MO_SOURCE_NAMED, .module = UINT32_MAX, .name = "Text"};
     static const struct mo_source_type kind = {
         .kind = MO_SOURCE_NAMED, .module = UINT32_MAX, .name = "EntryKind"};
+    static const struct mo_source_type integer = {
+        .kind = MO_SOURCE_NAMED, .module = UINT32_MAX, .name = "Int"};
     const struct mo_builtin_case *first = mo_builtin_case_by_type(out->type->name);
     MO_ASSERT(first != NULL);
     uint32_t count = 0;
@@ -464,8 +466,10 @@ static MO_MUST_USE bool derive_native(struct mo_ability_context *p,
     for (uint32_t i = 0; i < first->cases; i++) {
         const struct mo_builtin_case *data = mo_builtin_case_by_key(first->first_key + i);
         for (uint32_t j = 0; j < data->count; j++) {
-            const struct mo_source_type *field =
-                named(out->type, "Entry") && j == 1 ? &kind : &text;
+            const struct mo_source_type *field = j == 0                               ? &text
+                                                 : named(out->type, "Entry")          ? &kind
+                                                 : strcmp(data->name, "Refused") == 0 ? &integer
+                                                                                      : &text;
             parts[at] = prove(p, field, out->ability, depth + 1);
             if (parts[at++] == NULL)
                 return false;
@@ -544,7 +548,7 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
         return derive_data(p, out, depth) ? out : NULL;
     }
     if (named(type, "Entry") || named(type, "FileError") || named(type, "Ordering") ||
-        named(type, "EntryKind") || named(type, "SimulationError"))
+        named(type, "EntryKind") || named(type, "SimulationError") || named(type, "NetworkError"))
         return derive_native(p, out, depth) ? out : NULL;
     if (type->kind == MO_SOURCE_TUPLE || type->count != 0) {
         out->kind = MO_ABILITY_DERIVED;

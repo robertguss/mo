@@ -346,7 +346,7 @@ static void derive_order(struct lowering *p, struct derived *d) {
     if (d->type->tag != MO_CORE_TY_DATA && d->type->tag != MO_CORE_TY_OPTION &&
         d->type->tag != MO_CORE_TY_RESULT && d->type->tag != MO_CORE_TY_ORDERING &&
         d->type->tag != MO_CORE_TY_FILE_ERROR && d->type->tag != MO_CORE_TY_ENTRY &&
-        d->type->tag != MO_CORE_TY_ENTRY_KIND)
+        d->type->tag != MO_CORE_TY_ENTRY_KIND && d->type->tag != MO_CORE_TY_NETWORK_ERROR)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived order shape is not lowered yet");
     mo_core_ctors ctors = lower_ctors(p, d->type);
     mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
@@ -562,7 +562,8 @@ static void derive_text(struct lowering *p, struct derived *d) {
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "FileError's text form needs the library");
     if (d->type->tag != MO_CORE_TY_DATA && d->type->tag != MO_CORE_TY_OPTION &&
         d->type->tag != MO_CORE_TY_RESULT && d->type->tag != MO_CORE_TY_ORDERING &&
-        d->type->tag != MO_CORE_TY_ENTRY && d->type->tag != MO_CORE_TY_ENTRY_KIND)
+        d->type->tag != MO_CORE_TY_ENTRY && d->type->tag != MO_CORE_TY_ENTRY_KIND &&
+        d->type->tag != MO_CORE_TY_NETWORK_ERROR)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived text shape is not lowered yet");
     mo_core_ctors ctors = lower_ctors(p, d->type);
     mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
@@ -590,10 +591,14 @@ static void derive_text(struct lowering *p, struct derived *d) {
             const struct mo_core_param *fields = NULL;
             if (d->type->tag == MO_CORE_TY_DATA)
                 fields = ctor->fields.items;
-            else if (d->type->tag == MO_CORE_TY_ENTRY) {
+            else if (d->type->tag == MO_CORE_TY_ENTRY || d->type->tag == MO_CORE_TY_NETWORK_ERROR) {
+                static const char *const entry[] = {"name", "kind"};
+                static const char *const network[][2] = {
+                    {"host"}, {"host", "port"}, {NULL}, {NULL}, {"reason"}};
                 struct mo_core_param *named = LOWER_NEW(p, struct mo_core_param, count);
                 for (size_t j = 0; j < count; j++)
-                    named[j].name = lower_text(p, j == 0 ? "name" : "kind");
+                    named[j].name =
+                        lower_text(p, d->type->tag == MO_CORE_TY_ENTRY ? entry[j] : network[i][j]);
                 fields = named;
             }
             fields_text(p, d, first, values, fields,

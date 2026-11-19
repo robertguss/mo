@@ -303,6 +303,7 @@ static MO_MUST_USE struct type *annotation(struct checker *c, mo_core_ty t, size
     case MO_CORE_TY_FILE_ERROR:
     case MO_CORE_TY_SIMULATION:
     case MO_CORE_TY_SIMULATION_ERROR:
+    case MO_CORE_TY_NETWORK_ERROR:
     case MO_CORE_TY_ENTRY:
     case MO_CORE_TY_ENTRY_KIND:
         r = scalar(c, t->tag);
@@ -1050,9 +1051,9 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         return t->constructors;
     }
     struct data *d;
-    const char *names[4] = {0};
-    struct type *fields[4][2] = {{0}};
-    size_t counts[4] = {0}, n = 0;
+    const char *names[5] = {0};
+    struct type *fields[5][2] = {{0}};
+    size_t counts[5] = {0}, n = 0;
     if (t->tag == MO_CORE_TY_OPTION) {
         n = 2;
         names[0] = "None";
@@ -1087,6 +1088,17 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         n = 2;
         names[0] = "ServiceDown";
         names[1] = "ToolFailed";
+    } else if (t->tag == MO_CORE_TY_NETWORK_ERROR) {
+        n = 5;
+        names[0] = "UnknownHost";
+        names[1] = "Refused";
+        names[2] = "TimedOut";
+        names[3] = "Closed";
+        names[4] = "Broken";
+        counts[0] = counts[4] = 1;
+        counts[1] = 2;
+        fields[0][0] = fields[1][0] = fields[4][0] = scalar(c, MO_CORE_TY_TEXT);
+        fields[1][1] = scalar(c, MO_CORE_TY_INT);
     } else if (t->tag == MO_CORE_TY_ENTRY) {
         n = 1;
         names[0] = "Entry";
@@ -1513,12 +1525,13 @@ static MO_MUST_USE bool label_name(struct mo_buffer *b, mo_core_string name) {
 }
 static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, size_t *remaining) {
     static const char *const names[] = {
-        "Int",       "BigInt", "Byte",      "Decimal", "Float",  "Bool",       "Char",
-        "Text",      "Bytes",  "Unit",      "Range",   "Time",   "Duration",   "Tuple",
-        "List",      "Map",    "Set",       "Data",    "Option", "Result",     "Ordering",
-        "FileError", "Entry",  "EntryKind", "Fn",      "Cap",    "Simulation", "SimulationError"};
-    static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
-                                       "Random",  "Args",  "Env"};
+        "Int",         "BigInt", "Byte",      "Decimal", "Float",  "Bool",       "Char",
+        "Text",        "Bytes",  "Unit",      "Range",   "Time",   "Duration",   "Tuple",
+        "List",        "Map",    "Set",       "Data",    "Option", "Result",     "Ordering",
+        "FileError",   "Entry",  "EntryKind", "Fn",      "Cap",    "Simulation", "SimulationError",
+        "NetworkError"};
+    static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",     "Random",
+                                       "Args",    "Env",   "Network",   "Connection"};
     if (*remaining == 0)
         return mo_buffer_append_text(b, "...");
     (*remaining)--;
