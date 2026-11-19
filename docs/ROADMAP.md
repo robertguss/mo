@@ -31,7 +31,7 @@ are not built. The phase's plan is
 
 Phase 6, Intent and autonomy, follows the approved design for [intent and the
 review door](design/intent.md). Service promises, `mo test --strength`, `mo
-intent`, the review door and `mo review` are implemented. v0.3 is untagged.
+intent`, the review door and `mo review` are implemented.
 See the [run record](status/phase6-run.md) and [release preparation
 notes](releases/v0.3-preparation.md).
 
