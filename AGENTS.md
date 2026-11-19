@@ -75,8 +75,8 @@ takes about five minutes; the others take under half a minute.
 
 The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
 never on pull requests or pushes. It runs `gcc clang sanitize drivers static lean bench` with
-`CI=1` and `MO_ALL_DRIVERS=1`, plus a 1,000-program VM-vs-Lean batch with a fresh, printed seed
-range each UTC day. A red nightly is the next PR, before any feature. `cbmc` and long fuzz runs
+`CI=1` and `MO_ALL_DRIVERS=1` in seven parallel jobs, the `drivers` group once for each build,
+plus a 1,000-program VM-vs-Lean batch with a fresh, printed seed range each UTC day. A red nightly is the next PR, before any feature. `cbmc` and long fuzz runs
 happen by hand at phase boundaries.
 
 `main` requires no status check (only force-pushes are blocked). A PR gets one review and merges

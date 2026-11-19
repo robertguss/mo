@@ -49,7 +49,7 @@ class Scheduling(unittest.TestCase):
     """The drivers and bench groups: which built executables they drive, and that the hidden
     tool tests and the timed check run alone, after the checks that ran side by side."""
 
-    def run_group(self, group, builds, failure="", all_drivers=True):
+    def run_group(self, group, builds, failure="", all_drivers=True, env=None):
         with tempfile.TemporaryDirectory(prefix="mo-check-scheduling-") as temporary:
             root = pathlib.Path(temporary)
             (root / "ci").mkdir()
@@ -60,7 +60,7 @@ class Scheduling(unittest.TestCase):
                          commands / "gcc", commands / "clang",
                          root / "build/gcc/debug/tests/test_format.test",
                          *[root / "build" / build / "mo" for build in builds],
-                         *[root / "build/gcc/debug/tests" / name for name in
+                         *[root / "build" / build / "tests" / name for build in builds for name in
                            ("test_bytecode_text.test", "test_codegen.test", "test_unicode16.test")]]:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(f"#!{sys.executable}\n" + COMMAND)
@@ -68,9 +68,11 @@ class Scheduling(unittest.TestCase):
             events = root / "events"
             environment = dict(os.environ, PATH=f"{commands}:{os.environ['PATH']}",
                                CI="1", EVENTS=str(events), FAIL=failure)
-            environment.pop("MO_ALL_DRIVERS", None)
+            for name in ("MO_ALL_DRIVERS", "MO_DRIVERS", "MO_SHARED_CHECKS"):
+                environment.pop(name, None)
             if all_drivers:
                 environment["MO_ALL_DRIVERS"] = "1"
+            environment.update(env or {})
             result = subprocess.run(["bash", "ci/check.sh", group], cwd=root,
                                     env=environment, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 1 if failure else 0,
@@ -81,6 +83,7 @@ class Scheduling(unittest.TestCase):
             ordinary_tools = []
             timing = []
             driven = set()
+            self.started = []
             for record in records:
                 if record["phase"] == "end":
                     del active[record["pid"]]
@@ -91,6 +94,8 @@ class Scheduling(unittest.TestCase):
                                 f"{record['name']} started during {active}")
                 active[record["pid"]] = record["kind"]
                 driven.update(arg for arg in record["args"] if arg.endswith("/mo"))
+                builds_driven = [arg for arg in record["args"] if arg.endswith(("/mo", ".test"))]
+                self.started += [(record["name"], arg) for arg in builds_driven or [None]]
                 if record["kind"] == "hidden":
                     hidden.append(record["args"])
                 elif record["kind"] == "timing":
@@ -106,6 +111,18 @@ class Scheduling(unittest.TestCase):
         hidden, tools, timing, driven = self.run_group("drivers", THREE)
         self.assertEqual((hidden, tools, timing), ([], [], [["build/gcc/debug/mo"]]))
         self.assertEqual(driven, {f"build/{build}/mo" for build in THREE})
+
+    def test_one_job_for_each_build_runs_what_one_job_for_all_builds_runs(self):
+        self.run_group("drivers", THREE)
+        whole = sorted(self.started, key=repr)
+        split = []
+        for build in THREE:
+            env = {"MO_DRIVERS": build, "MO_SHARED_CHECKS": "1" if build == THREE[0] else "0"}
+            _, _, timing, driven = self.run_group("drivers", [build], env=env)
+            self.assertEqual(driven, {f"build/{build}/mo"})
+            self.assertEqual(timing, [["build/gcc/debug/mo"]] if build == THREE[0] else [])
+            split += self.started
+        self.assertEqual(sorted(split, key=repr), whole)
 
     def test_bench_runs_the_hidden_tests_on_the_first_build_alone(self):
         hidden, tools, timing, driven = self.run_group("bench", THREE)

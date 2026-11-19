@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Every check robertguss/mo has, in order, except that the drivers, bench and lean groups run
 # their checks side by side. GitHub's nightly workflow runs gcc clang sanitize drivers static
-# lean bench on main with MO_ALL_DRIVERS=1. Before a pull request, run `bash ci/check.sh gcc`.
+# lean bench on main with MO_ALL_DRIVERS=1, split across parallel jobs. Before a pull request, run `bash ci/check.sh gcc`.
 #
 # The drivers, bench and lean groups drive built executables. By default they drive one: the debug
 # build of an installed compiler (gcc before clang), else a sanitize build of one; MO_ALL_DRIVERS=1
-# drives every one that is built, which is what the nightly run does.
+# drives every one that is built. MO_DRIVERS names the builds to make and drive instead, such as
+# "clang/sanitize", and MO_SHARED_CHECKS=0 leaves out the drivers checks that do not depend on the
+# build; the nightly workflow uses both to run the drivers group for each build in its own job.
 #
 # A check whose tool is missing is skipped with a note, and the summary at the end counts what
 # was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an
@@ -144,6 +146,12 @@ built() { # sets drivers to the built executables at $1 under build/<compiler>/<
 	# of a compiler that is not installed would be stale), else the first sanitize build of one
 	local mode compiler driver
 	drivers=()
+	if [[ -n "${MO_DRIVERS:-}" ]]; then
+		for driver in $MO_DRIVERS; do
+			if [[ -x "build/$driver/$1" ]]; then drivers+=("build/$driver/$1"); fi
+		done
+		return
+	fi
 	for mode in debug sanitize; do
 		for compiler in gcc clang; do
 			driver=build/$compiler/$mode/$1
@@ -188,7 +196,16 @@ fi
 # compiler's when MO_ALL_DRIVERS=1 (and the sanitize build too for the lean group).
 if [[ -n "$groups" ]] && { enter drivers || enter bench || enter lean; }; then
 	step "Build the test executables the checks below drive"
-	if [[ "${MO_ALL_DRIVERS:-}" == 1 ]]; then
+	if [[ -n "${MO_DRIVERS:-}" ]]; then
+		for driver in $MO_DRIVERS; do
+			if [[ "${driver#*/}" == sanitize ]]; then
+				make --no-print-directory sanitize-executables "build/${driver%/*}/debug/mo-checks-fail" \
+					CC="${driver%/*}"
+			else
+				make --no-print-directory test-executables CC="${driver%/*}"
+			fi
+		done
+	elif [[ "${MO_ALL_DRIVERS:-}" == 1 ]]; then
 		if have gcc; then make --no-print-directory test-executables CC=gcc; fi
 		if have clang; then make --no-print-directory test-executables CC=clang; fi
 		if want lean; then
@@ -206,18 +223,27 @@ if [[ -n "$groups" ]] && { enter drivers || enter bench || enter lean; }; then
 fi
 
 if enter drivers; then
+shared=${MO_SHARED_CHECKS:-1}
 if have python3; then
-	later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
-	later "Waiting on check results: running, passed, failed, killed and missing runs" \
-		python3 ci/test_wait_for_results.py
-	later "Reference conformance: every rule has programs or an explicit gap" \
-		python3 ci/check_conformance.py
-	later "Reference conformance: coverage-check regression tests" \
-		python3 ci/test_conformance.py
+	if ((shared)); then
+		later "Check runner: timed checks run alone and failures propagate" python3 ci/test_check.py
+		later "Waiting on check results: running, passed, failed, killed and missing runs" \
+			python3 ci/test_wait_for_results.py
+		later "Reference conformance: every rule has programs or an explicit gap" \
+			python3 ci/check_conformance.py
+		later "Reference conformance: coverage-check regression tests" \
+			python3 ci/test_conformance.py
+	fi
 	built mo
+	checks_fail=
+	for driver in build/{gcc,clang}/debug/mo-checks-fail; do
+		if [[ -x "$driver" ]]; then checks_fail=$driver; break; fi
+	done
 	if ((${#drivers[@]})); then
-		later "The gates: lib/, examples/ and the task queue pass mo test (${drivers[0]})" \
-			python3 ci/check_gates.py "${drivers[0]}"
+		if ((shared)); then
+			later "The gates: lib/, examples/ and the task queue pass mo test (${drivers[0]})" \
+				python3 ci/check_gates.py "${drivers[0]}"
+		fi
 		for driver in "${drivers[@]}"; do
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
 				python3 ci/check_cli.py "$driver"
@@ -231,7 +257,7 @@ if have python3; then
 			later "Remote upgrades: proxy, tunnel and rate retry ($driver)" \
 				python3 ci/check_upgrade_remote.py "$driver"
 			later "Approvals and the review setting on a real service ($driver)" \
-				python3 ci/check_review.py "$driver" "$(dirname "${drivers[0]}")/mo-checks-fail"
+				python3 ci/check_review.py "$driver" "$checks_fail"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
 			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
@@ -243,9 +269,11 @@ if have python3; then
 				python3 ci/check_kill_loop.py "$driver" --kills "${MO_KILL_COUNT:-15}" \
 				--seed "${MO_KILL_SEED:-1}" --keep
 		done
-		later "Review door: planted changes and wrong versions under both settings, and the bypassed build fails (${drivers[0]})" \
-			python3 ci/check_door.py "${drivers[0]}" learnability/phase6/door/planted \
-			--bypass "$(dirname "${drivers[0]}")/mo-door-bypass"
+		if ((shared)); then
+			later "Review door: planted changes and wrong versions under both settings, and the bypassed build fails (${drivers[0]})" \
+				python3 ci/check_door.py "${drivers[0]}" learnability/phase6/door/planted \
+				--bypass "$(dirname "${drivers[0]}")/mo-door-bypass"
+		fi
 		for driver in "${drivers[@]}"; do
 			later "Reference examples: check every block and run complete programs ($driver)" \
 				python3 ci/check_reference_examples.py "$driver"
@@ -288,7 +316,9 @@ if have python3; then
 		missing "no code generation test executable is built"
 	fi
 
-	later "Unicode 16: the pinned tables match the UCD files" python3 ci/generate_unicode16.py --check
+	if ((shared)); then
+		later "Unicode 16: the pinned tables match the UCD files" python3 ci/generate_unicode16.py --check
+	fi
 	built tests/test_unicode16.test
 	if ((${#drivers[@]})); then
 		later "Unicode 16: UCD conformance and long-text work bounds" python3 ci/check_unicode16.py "${drivers[@]}"
@@ -303,11 +333,13 @@ formatter_driver=
 for driver in build/{gcc,clang}/debug/tests/test_format.test; do
 	if [[ -x "$driver" ]]; then formatter_driver=$driver; break; fi
 done
-if [[ -n "$formatter_driver" ]]; then
-	later "The source formatter: reference, examples, library and good grammar are fixed points" \
-		"$formatter_driver" --fixed-points
-else
-	missing "no source formatter test executable is built"
+if ((shared)); then
+	if [[ -n "$formatter_driver" ]]; then
+		later "The source formatter: reference, examples, library and good grammar are fixed points" \
+			"$formatter_driver" --fixed-points
+	else
+		missing "no source formatter test executable is built"
+	fi
 fi
 report_status=0
 report || report_status=$?
@@ -318,13 +350,15 @@ for driver in build/{gcc,clang}/debug/mo; do
 	if [[ -x "$driver" ]]; then timed_driver=$driver; break; fi
 done
 timing_status=0
-if [[ -z "$timed_driver" ]]; then
-	missing "no mo command executable is built to time"
-elif have python3; then
-	step "mo check stays under 0.1 s on each sample ($timed_driver)"
-	python3 ci/check_check_time.py "$timed_driver" || timing_status=$?
-else
-	missing "python3 is not installed, so mo check is not timed"
+if ((shared)); then
+	if [[ -z "$timed_driver" ]]; then
+		missing "no mo command executable is built to time"
+	elif have python3; then
+		step "mo check stays under 0.1 s on each sample ($timed_driver)"
+		python3 ci/check_check_time.py "$timed_driver" || timing_status=$?
+	else
+		missing "python3 is not installed, so mo check is not timed"
+	fi
 fi
 if ((report_status != 0 || timing_status != 0)); then exit 1; fi
 fi
