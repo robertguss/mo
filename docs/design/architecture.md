@@ -1753,6 +1753,9 @@ or flag.
 budgets but will not consume them. `--strength DIR` runs a fixed plan over the
 whole program and takes no `--list`, `--only`, `--in` or `--calls`. `--gates` runs
 every check and tries every mutant; it takes no `--bundle` or `--strength`.
+`--gates` with `--only`, `--in`, `--calls`, `--seconds`, `--max-stack`, `--max-depth` or
+`--max-heap` is accepted but skips the gate: `totals.gates` is `"did not run"` and there is
+no `mutants` object.
 `--against OLD` runs every check and tries the mutants of what changed; it takes
 no `--only`, `--in`, `--calls`, `--seconds`, `--max-stack`, `--max-depth`,
 `--max-heap`, `--list`, `--bundle` or `--strength`. Source-inventory matching precedes execution
@@ -2422,11 +2425,13 @@ records may be added, and readers ignore what they don't know.
   the original passed and no version is `unfinished`; otherwise `true`. If the
   original failed, `versions` is `[]`, `killed`, `killed_any` and `scored` are 0, `rate` is
   `null`, and `partial` is `true`.
-- **`mutant`**, one per mutant under `mo test --json --gates` or `--against`,
-  and also under `--list`: `function`; `file`; `line`; `column`; `kind`;
-  `original`; `replacement`. When the mutant is tried, not listed: `outcome`,
-  `"dropped"`, `"killed"` or `"survived"`; `by`; and `check`. The last two are
-  `null` when unused.
+- **`mutant`**, one per mutant tried or dropped under `mo test --json --gates`
+  or `--against`: `function`; `file`; `line`; `column`; `kind`; `original`;
+  `replacement`; `outcome`, `"dropped"`, `"killed"` or `"survived"`; `by`; and
+  `check`. The last two are `null` when unused. A carried mutant under
+  `--against` has no record; `totals.carried` counts those functions. Under
+  `--json --gates --list`, one listed record per mutant, without `outcome`,
+  `by` or `check`.
 - **`function`**, one per function under `mo test --json --gates --list`:
   `name` and `mutants`.
 - **`change`**, one per check in the `--against` summary, after `result` and
