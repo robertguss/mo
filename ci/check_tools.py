@@ -46,7 +46,7 @@ def tests(mo, failures, hidden):
     for tool in ("linkcheck", "notioncopy", "tally"):
         program = TOOLS / f"{tool}.mo"
         result = run([mo, "test", "--in", tool.capitalize(), program], ROOT)
-        print(f"{tool}: mo test: {last(result.stdout)}")
+        print(f"{tool}: mo test: {last(result.stdout, 'gates')}; {last(result.stdout)}")
         if result.returncode != 0:
             failures.append(f"mo test tools/{tool}.mo exited {result.returncode}:\n"
                             f"{result.stdout}{result.stderr}")
