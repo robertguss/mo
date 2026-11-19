@@ -17,6 +17,7 @@ flags = {
     "--max-heap": (["1GiB"], {"run", "test", "query"}),
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
+    "--gates": ([], {"test"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
@@ -85,6 +86,17 @@ def guide_claims(binary):
         assert not result.stdout, (args, result.stdout)
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
+    says("Each mutant that survives is an error, E1439, \"a mutant survived: no check noticed this "
+         "change\"", "the line says `gates: did not run`")
+    survivor = run(binary, ["test", "--gates", "tests/errors/e1439/main.mo"], 1)
+    assert b"error E1439: a mutant survived: no check noticed this change" in survivor.stderr
+    assert b"gates: did not run" in run(binary, ["test", "--gates", "--in", "Main",
+                                                 "tests/errors/e1439/main.mo"], 0).stdout
+    says("Each one without is an error, E1440, \"an exposed function states no intent\" or \"a "
+         "service tool states no intent\", and no mutant is tried.")
+    unstated = run(binary, ["test", "--gates", "tests/errors/e1440/main.mo"], 1)
+    assert b"error E1440: an exposed function states no intent" in unstated.stderr
+    assert b"gates: did not run" in unstated.stdout and b"E1439" not in unstated.stderr
     says("`mo replay`, `mo query` and `mo history` exit 0 when the requested result holds, 1 when "
          "it does not or a check refused, and 2 for a mistake in the command")
     assert ("The function is not generic (E1410), holds no capability or function in its "

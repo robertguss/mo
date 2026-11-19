@@ -1,0 +1,5 @@
+error E1439: a mutant survived: no check noticed this change  tests/errors/e1439/main.mo:9:5
+
+  9 |   n < limit
+    |     ^ Main.small: boundary, `<` to `<=`
+

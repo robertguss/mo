@@ -46,6 +46,8 @@ struct mo_cli {
     struct mo_limits limits;
     uint32_t calls, sequences, seconds;
     bool door_plan;
+    bool gated, first_failure;
+    bool gates, gates_skipped;
     const char *strength, *against;
     const char *fetch_url, *fetch_token;
     /* push and review: the loopback endpoint, the expected active source digest and the
@@ -92,9 +94,17 @@ MO_MUST_USE const char *mo_version_line(void);
  * Missing files (including UINT32_MAX) are unavailable, not source indices. */
 MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag *diag,
                                       bool json, struct mo_buffer *out);
+#define MO_GATE_KILL_KINDS 5
+struct mo_gate_totals {
+    bool asked, ran;
+    const char *skipped;
+    uint32_t tried, survived, dropped;
+    uint32_t killed[MO_GATE_KILL_KINDS];
+};
 struct mo_test_totals {
     uint32_t passed, failed, stopped;
     uint32_t failed_examples;
+    struct mo_gate_totals gates;
     /* An offline command's own result status, which the totals report when no diagnostic
      * or failed test already makes it 1. */
     int status;

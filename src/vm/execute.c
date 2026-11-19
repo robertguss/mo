@@ -86,6 +86,7 @@ static const char *const host_modes[] = {
 
 enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
     MO_ASSERT(fesetround(FE_TONEAREST) == 0 && fegetround() == FE_TONEAREST);
+    struct mo_vm_trace *trace = p->runtime->trace;
     for (;;) {
         struct mo_vm_frame *f = mo_vm_frame(p);
         const struct mo_bytecode_function *fn = &p->file->functions[f->function];
@@ -103,6 +104,9 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                                   mo_cell_unit(), MO_STOPPED);
             p->instructions--;
         }
+        if (trace != NULL && trace->steps++ >= trace->limit)
+            return mo_vm_stop(p, "internal error: step limit reached", NULL, false, mo_cell_unit(),
+                              MO_STOPPED);
         uint32_t head = fn->code[f->pc], op = head & MO_OPCODE_MASK;
         uint32_t count = head >> MO_OPCODE_VARIABLE_SHIFT;
         const struct mo_opcode_info *info = mo_opcode_find(op);

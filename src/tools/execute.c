@@ -12,6 +12,7 @@
 #include "tools/embedded.h"
 #include "tools/fix.h"
 #include "tools/format.h"
+#include "tools/gates.h"
 #include "tools/intent.h"
 #include "tools/offline.h"
 #include "tools/promises.h"
@@ -216,6 +217,13 @@ static void execute_pipeline(void *argument) {
             }
             return;
         }
+        if (cli->gates) {
+            mo_gates(cli, arena, program, sources, selection, work->output, diags, &work->totals);
+            return;
+        }
+        if (cli->gates_skipped)
+            work->totals.gates = (struct mo_gate_totals){
+                .asked = true, .skipped = "the run selects checks or sets a limit"};
         mo_run_tests(cli, arena, program, sources, selection, work->output, diags, &work->totals);
         return;
     }

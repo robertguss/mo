@@ -100,7 +100,7 @@ Each milestone gets its own brainstorm and plan.
 | --- | --- | --- |
 | M1. Design step: what a spike looks like in Mo, the two capabilities and their fakes, the shape of the confinement, and the roadmap change. Robert approves it before any code. | R19, and the design of R1 to R13 | Nothing |
 | M2. Confinement of the compile and check children | R12, R13 | M1 |
-| M3. HTTP without encryption: the capability, its fake, the client library and exploring a response | R1, R2, R3, R5, R6, R11 | M1 |
+| M3. HTTP without encryption: the capability, its fake, the client library and exploring a response | R1, R2, R3, R5, R6, R11 | M1, and the trust gates in `mo test` (`docs/plans/2026-11-18-2013-feat-trust-gates-mo-test-plan.md`) |
 | M4. HTTPS | R4, R11 | M3 |
 | M5. SQLite | R7, R8 | M1, and it merges after M3 (KTD1) |
 | M6. The project command, the guide and the mo-lang skill | R9, R10, R14, R15 | M3, M5 |
@@ -171,6 +171,7 @@ Considered and not built:
 - Phase 6 closes as `docs/ops/live-service.md` records, and v0.3 is tagged before this phase's first code merges.
 - The hosts Mo is built and checked on allow the confinement mechanism that M2 picks. Planning read both hosts' kernel settings and tried no mechanism (Risks and Dependencies). `docs/design/architecture.md` notes a feature probe that treats seccomp's `EPERM` as unavailable, so some hosts restrict such calls.
 - The load measurements behind the decision on performance are from v0.2.0 at `ef37424` and were not repeated on v0.3.
+- M3 waits for the trust gates in `mo test` (`docs/plans/2026-11-18-2013-feat-trust-gates-mo-test-plan.md`): its client library is written under the gates from its first line, so it never has a version that does not meet them.
 - The agent evaluation runs detached from the agent session that starts it, as `docs/solutions/workflow-issues/launch-scored-runs-detached-from-the-agent-session.md` describes.
 
 ### Outstanding Questions

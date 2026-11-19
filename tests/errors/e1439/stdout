@@ -1,0 +1,5 @@
+passed Main.small.example.1  tests/errors/e1439/main.mo:5:5
+passed Main.small.example.2  tests/errors/e1439/main.mo:6:5
+passed Main.test.1  tests/errors/e1439/main.mo:12:1
+gates: 2 mutants tried, 1 killed (0 promise, 0 example, 1 test, 0 recovery, 0 start), 1 survived, 0 dropped
+3 passed, 0 failed, 0 stopped

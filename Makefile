@@ -216,7 +216,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 					cp "$$path" "$$corpus/$$(basename $$(dirname $$path))-$$(basename $$path)"; \
 				done; \
 			fi; \
-			if [ "$$name" = fuzz_bodies ]; then cp examples/*.mo $$corpus/; fi; \
+			if [ "$$name" = fuzz_bodies ] || [ "$$name" = fuzz_mutants ]; then cp examples/*.mo $$corpus/; fi; \
 			if [ "$$name" = fuzz_bodies ] || [ "$$name" = fuzz_program ]; then \
 				awk 'BEGIN { print "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, f: Int, g: Int, h: fn(Bool) : Int) : Bool"; for (i = 0; i < 255; i++) printf "a implies b or c and not d == e .. f + g * -h("; printf "a"; for (i = 0; i < 255; i++) printf ")"; print "\nend" }' >$$corpus/max-nesting.mo; \
 			fi; \

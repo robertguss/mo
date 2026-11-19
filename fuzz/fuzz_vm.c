@@ -1,5 +1,6 @@
 #include "vm/internal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -162,55 +163,23 @@ static void replay(const struct mo_defect *defect) {
     free(readable);
 }
 
-int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-    if (size < MO_BYTECODE_HEADER_SIZE || size > (64 << 10))
-        return 0;
-    uint8_t *wire = malloc(size);
-    if (wire == NULL)
-        return 0;
-    memcpy(wire, data, size);
-    /* Mutations of instructions/tables reach the verifier, not just checksum
-     * rejection. Execute only the image it publishes. */
-    uint64_t checksum = MO_BYTECODE_FNV_OFFSET;
-    for (size_t i = MO_BYTECODE_HEADER_SIZE; i < size; i++)
-        checksum = (checksum ^ wire[i]) * MO_BYTECODE_FNV_PRIME;
-    for (unsigned i = 0; i < 8; i++)
-        wire[12 + i] = (uint8_t)(checksum >> (8 * i));
-    struct mo_load_error error;
-    struct mo_image *image = mo_load(wire, size, &error);
-    free(wire);
-    if (image == NULL)
-        return 0;
-    uint64_t bits = 0;
-    memcpy(&bits, data + 12, 8);
-    struct mo_limits limits = mo_limits_default();
-    limits.heap_size = sizeof(struct mo_process) + (size_t)(bits % (60 << 10));
-    limits.stack_size = 64 + (size_t)((bits >> 16) % 8192);
-    limits.call_depth = 1 + (uint32_t)((bits >> 32) % 8);
-    struct mo_defect defect;
-    struct mo_limits init_limits = limits;
-    if ((bits & 1) != 0)
-        init_limits.heap_size = mo_limits_default().heap_size;
-    else
-        init_limits.heap_size = sizeof(struct mo_process) + (size_t)(bits % 4096);
-    if (mo_image_init_bounded(image, &init_limits, 512, &defect) != MO_RETURNED) {
-        replay(&defect);
-        struct mo_buffer text;
-        mo_buffer_init(&text, 1024);
-        bool rendered = mo_render_defect(NULL, &defect, &text);
-        (void)rendered;
-        mo_buffer_free(&text);
-        mo_image_free(image);
-        return 0;
-    }
+struct results {
+    enum mo_outcome outcomes[8];
+    char reasons[8][64];
+    uint32_t count;
+};
+
+static void calls(struct mo_image *image, const struct mo_limits *limits, uint64_t bits,
+                  struct results *out) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     const struct mo_types *types = mo_image_types(image);
+    struct mo_defect defect;
     uint32_t functions = file->function_count < 4 ? file->function_count : 4;
     for (uint32_t f = 0; f < functions; f++) {
         const struct mo_bytecode_function *fn = &file->functions[f];
         if (fn->kind == MO_FUNCTION_CLOSURE || fn->kind == MO_FUNCTION_INIT)
             continue;
-        struct mo_process *p = mo_process_new(image, &limits);
+        struct mo_process *p = mo_process_new(image, limits);
         if (p == NULL)
             break;
         struct mo_heap *heap = mo_process_heap(p);
@@ -230,13 +199,19 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             mo_scratch_init(&held, heap);
             if (call == 1)
                 pressure(&held, heap,
-                         limits.heap_size - sizeof(struct mo_process) - mo_heap_used(heap));
+                         limits->heap_size - sizeof(struct mo_process) - mo_heap_used(heap));
             mo_process_instruction_limit(p, 512);
             struct mo_cell result = mo_cell_int(99), unchanged = result;
             enum mo_outcome outcome = mo_call(p, f, args, n, &result, &defect);
+            MO_ASSERT(out->count < 8);
+            out->outcomes[out->count] = outcome;
+            out->reasons[out->count][0] = '\0';
             if (outcome == MO_RETURNED) {
                 mo_value_drop(heap, fn->result_type, result);
             } else {
+                int written = snprintf(out->reasons[out->count], sizeof out->reasons[0], "%s",
+                                       defect.reason != NULL ? defect.reason : "");
+                MO_ASSERT(written >= 0);
                 replay(&defect);
                 MO_ASSERT(memcmp(&result, &unchanged, sizeof result) == 0);
                 struct mo_buffer text;
@@ -245,6 +220,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 (void)rendered;
                 mo_buffer_free(&text);
             }
+            out->count++;
             mo_scratch_free(&held);
             for (uint32_t i = 0; i < n; i++)
                 if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
@@ -257,6 +233,68 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         }
         mo_process_free(p);
     }
+}
+
+int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+    if (size < MO_BYTECODE_HEADER_SIZE || size > (64 << 10))
+        return 0;
+    uint8_t *wire = malloc(size);
+    if (wire == NULL)
+        return 0;
+    memcpy(wire, data, size);
+    /* Mutations of instructions/tables reach the verifier, not just checksum
+     * rejection. Execute only the image it publishes. */
+    uint64_t checksum = MO_BYTECODE_FNV_OFFSET;
+    for (size_t i = MO_BYTECODE_HEADER_SIZE; i < size; i++)
+        checksum = (checksum ^ wire[i]) * MO_BYTECODE_FNV_PRIME;
+    for (unsigned i = 0; i < 8; i++)
+        wire[12 + i] = (uint8_t)(checksum >> (8 * i));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire, size, &error);
+    struct mo_image *traced = image == NULL ? NULL : mo_load(wire, size, &error);
+    free(wire);
+    if (image == NULL)
+        return 0;
+    MO_ASSERT(traced != NULL);
+    uint64_t bits = 0;
+    memcpy(&bits, data + 12, 8);
+    struct mo_limits limits = mo_limits_default();
+    limits.heap_size = sizeof(struct mo_process) + (size_t)(bits % (60 << 10));
+    limits.stack_size = 64 + (size_t)((bits >> 16) % 8192);
+    limits.call_depth = 1 + (uint32_t)((bits >> 32) % 8);
+    struct mo_defect defect;
+    struct mo_limits init_limits = limits;
+    if ((bits & 1) != 0)
+        init_limits.heap_size = mo_limits_default().heap_size;
+    else
+        init_limits.heap_size = sizeof(struct mo_process) + (size_t)(bits % 4096);
+    bool *entered = calloc(mo_image_bytecode(traced)->function_count + 1, sizeof(bool));
+    MO_ASSERT(entered != NULL);
+    struct mo_vm_trace trace = {entered, 0, 512};
+    enum mo_outcome started = mo_image_init_traced(traced, &init_limits, &trace, &defect);
+    if (mo_image_init_bounded(image, &init_limits, 512, &defect) != MO_RETURNED) {
+        MO_ASSERT(started != MO_RETURNED);
+        replay(&defect);
+        struct mo_buffer text;
+        mo_buffer_init(&text, 1024);
+        bool rendered = mo_render_defect(NULL, &defect, &text);
+        (void)rendered;
+        mo_buffer_free(&text);
+        mo_image_free(image);
+        mo_image_free(traced);
+        free(entered);
+        return 0;
+    }
+    MO_ASSERT(started == MO_RETURNED);
+    trace.limit = UINT64_MAX;
+    struct results off = {0}, on = {0};
+    calls(image, &limits, bits, &off);
+    calls(traced, &limits, bits, &on);
+    MO_ASSERT(off.count == on.count);
+    for (uint32_t i = 0; i < off.count; i++)
+        MO_ASSERT(off.outcomes[i] == on.outcomes[i] && strcmp(off.reasons[i], on.reasons[i]) == 0);
     mo_image_free(image);
+    mo_image_free(traced);
+    free(entered);
     return 0;
 }

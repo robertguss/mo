@@ -953,6 +953,85 @@ static void test_calls(void) {
     }
 }
 
+static void test_trace(void) {
+    struct fixture f;
+    fixture_init(&f);
+    const struct mo_parameter params[] = {{0, MO_PARAMETER_OWNED}, {0, MO_PARAMETER_OWNED}};
+    const uint32_t types[] = {0, 0, 0, 2, 0};
+    const uint32_t loop[] = {MO_OP_CONST,
+                             2,
+                             4,
+                             MO_OP_EQ_INT,
+                             3,
+                             0,
+                             2,
+                             MO_OP_BRANCH,
+                             3,
+                             11,
+                             13,
+                             MO_OP_RET,
+                             1,
+                             MO_OP_CONST,
+                             2,
+                             3,
+                             MO_OP_SUB_INT,
+                             0,
+                             0,
+                             2,
+                             MO_OP_ADD_INT,
+                             1,
+                             1,
+                             2,
+                             MO_OP_TAIL_CALL | (2u << 16),
+                             1,
+                             0,
+                             1};
+    const uint32_t caller_types[] = {0, 0, 0};
+    const uint32_t caller[] = {MO_OP_CALL | (2u << 16), 2, 1, 0, 1, MO_OP_RET, 2};
+    program(&f, 0, caller_types, 3, caller, 7, 0);
+    program(&f, 1, types, 5, loop, sizeof loop / sizeof loop[0], 0);
+    f.functions[0].parameters = params;
+    f.functions[0].parameter_count = 2;
+    f.functions[1].parameters = params;
+    f.functions[1].parameter_count = 2;
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    const struct mo_cell args[] = {mo_cell_int(10), mo_cell_int(7)};
+    struct mo_image *off = initialized(&f);
+    struct mo_image *on = load(&f.file);
+    if (off == NULL || on == NULL)
+        return;
+    bool entered[4] = {false};
+    struct mo_vm_trace trace = {entered, 0, UINT64_MAX};
+    CHECK(mo_image_init_traced(on, &limits, &trace, &defect) == MO_RETURNED);
+    struct mo_process *p = mo_process_new(off, &limits);
+    MO_ASSERT(p != NULL);
+    struct mo_cell out;
+    CHECK(mo_call(p, 0, args, 2, &out, &defect) == MO_RETURNED && mo_cell_get_int(out) == 17);
+    mo_process_free(p);
+    p = mo_process_new(on, &limits);
+    MO_ASSERT(p != NULL);
+    CHECK(mo_call(p, 0, args, 2, &out, &defect) == MO_RETURNED && mo_cell_get_int(out) == 17);
+    mo_process_free(p);
+    CHECK(entered[0] && entered[1] && !entered[2] && !entered[3]);
+    uint64_t steps = trace.steps;
+    CHECK(steps == 1 + 10 * 7 + 4 + 1);
+    for (uint64_t limit = steps - 1; limit <= steps; limit++) {
+        trace.steps = 0;
+        trace.limit = limit;
+        p = mo_process_new(on, &limits);
+        MO_ASSERT(p != NULL);
+        enum mo_outcome outcome = mo_call(p, 0, args, 2, &out, &defect);
+        CHECK(outcome == (limit == steps ? MO_RETURNED : MO_STOPPED));
+        CHECK(trace.steps == steps);
+        if (outcome == MO_STOPPED)
+            CHECK(strcmp(defect.reason, "internal error: step limit reached") == 0);
+        mo_process_free(p);
+    }
+    mo_image_free(off);
+    mo_image_free(on);
+}
+
 static void test_initialization(void) {
     struct fixture f;
     fixture_init(&f);
@@ -2872,6 +2951,7 @@ int main(int argc, char **argv) {
     test_primitives();
     test_values();
     test_calls();
+    test_trace();
     test_initialization();
     test_image_global();
     test_defects();

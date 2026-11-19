@@ -41,6 +41,7 @@ struct mo_vm_image {
     bool *set;
     enum mo_outcome outcome;
     bool ready;
+    struct mo_vm_trace *trace;
     struct mo_process initializer;
 };
 

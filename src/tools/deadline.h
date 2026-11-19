@@ -16,12 +16,14 @@ struct mo_deadline {
     long nanoseconds;
     enum mo_deadline_state state;
     int error;
+    bool none;
 };
 
 /* One absolute deadline per promise, never restarted for a call/candidate.
  * False records a clock failure. running is also the controlled-call callback;
  * false distinguishes expiry from clock failure through state/error. */
 MO_MUST_USE bool mo_deadline_start(struct mo_deadline *deadline, uint32_t seconds);
+void mo_deadline_none(struct mo_deadline *deadline);
 MO_MUST_USE bool mo_deadline_running(void *context);
 MO_MUST_USE uint64_t mo_deadline_microseconds(const struct mo_deadline *deadline);
 

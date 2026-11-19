@@ -44,6 +44,14 @@ MO_MUST_USE enum mo_outcome mo_image_init_bounded(struct mo_image *image,
                                                   const struct mo_limits *limits,
                                                   uint64_t instructions,
                                                   struct mo_defect *defect_out);
+struct mo_vm_trace {
+    bool *entered;
+    uint64_t steps, limit;
+};
+MO_MUST_USE enum mo_outcome mo_image_init_traced(struct mo_image *image,
+                                                 const struct mo_limits *limits,
+                                                 struct mo_vm_trace *trace,
+                                                 struct mo_defect *defect_out);
 /* A module constant of an initialized image, borrowed: globals are immortal, so the cell may be
  * passed to any process's calls and duplicated in its heap. False when it is not set. */
 MO_MUST_USE bool mo_image_global(const struct mo_image *image, uint32_t global,
