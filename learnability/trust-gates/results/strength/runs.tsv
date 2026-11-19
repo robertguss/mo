@@ -1,2 +1,4 @@
 frozen-held-back	/tmp/claude-1000/tg/frozen/queue-tests.mo	/home/exedev/code/mo-strength-held-back/set-1	0	1158
 frozen-working	/tmp/claude-1000/tg/frozen/queue-tests.mo	learnability/phase6/strength/working	0	1266
+fitted-held-back	learnability/trust-gates/fitted/queue-tests.mo	/home/exedev/code/mo-strength-held-back/set-1	0	1108
+fitted-working	learnability/trust-gates/fitted/queue-tests.mo	learnability/phase6/strength/working	0	1204
