@@ -2,8 +2,8 @@
 """The review door's proof on the task queue: planted changes and frozen wrong versions pushed
 through a real mo serve, mo push and mo review under both review settings.
 
-The task queue is served from services/task-queue on a fresh data folder, every item of the
-served program is approved with `mo review --base ... --approve ...`, and that state is copied
+The task queue the planted set's manifest names, kept in learnability/phase6/door/program, is
+served on a fresh data folder, every item of the served program is approved with `mo review --base ... --approve ...`, and that state is copied
 once per review setting. Each case is pushed to its own copy of that state:
 
 - a planted `intent` change, which edits or removes an approved item, is held under both settings;
@@ -44,7 +44,7 @@ import threading
 import time
 
 from check_kill_loop import APPROVAL_TOKEN, UPGRADE_TOKEN, KillableQueue
-from check_task_queue import FOLDER, TOKEN
+from check_task_queue import TOKEN
 
 ENV = {**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN,
        'QUEUE_APPROVAL': APPROVAL_TOKEN}
@@ -52,6 +52,7 @@ SETTINGS = ('intent', 'everything')
 WORKING = ('learnability/phase6/strength/working',
            'learnability/phase6/strength/results/4-after.json')
 SHORT = 2
+FOLDER = 'learnability/phase6/door/program'
 PROGRAM = ('main.mo', 'job-queue.mo')
 
 
