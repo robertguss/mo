@@ -15,7 +15,6 @@
 "--max-heap"
 "--calls"
 "--seconds"
-"--gates"
 "--against"
 "--emit=core"
 "--emit=bytecode"

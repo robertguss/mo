@@ -5,7 +5,7 @@ import resource
 import subprocess
 import tempfile
 
-from cli_common import records, root, run
+from cli_common import gated, records, root, run
 
 
 def small_stack():
@@ -48,10 +48,10 @@ def runner(binary):
         greet_text = run(binary, ["test", greeting], 0)
         assert not greet_text.stderr and greet_text.stdout.endswith(b"3 passed, 0 failed, 0 stopped\n")
         items = records(run(binary, ["test", "--json", greeting], 0), "test")
-        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+        assert [(r["name"], r["outcome"]) for r in gated(items)[0]] == [
             ("Greet.greeting.example.1", "passed"),
             ("Greet.greeting.example.2", "passed"), ("Greet.test.1", "passed")]
-        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+        assert gated(items)[1] == {"record": "totals", "errors": 0, "dropped": 0,
                              "passed": 3, "failed": 0, "stopped": 0, "status": 0}
 
         finding = "examples/find.mo"
@@ -66,7 +66,7 @@ def runner(binary):
             b"find: no phrase to find\n"
             b"usage: find [--ignore-case] [--count] PHRASE FILE...\n")
         items = records(run(binary, ["test", "--json", finding], 0), "test")
-        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+        assert [(r["name"], r["outcome"]) for r in gated(items)[0]] == [
             ("Find.parse_args.example.1", "passed"),
             ("Find.parse_args.example.2", "passed"),
             ("Find.parse_args.example.3", "passed"),
@@ -77,7 +77,7 @@ def runner(binary):
             ("Find.test.1", "passed"),
             ("Find.test.2", "passed"),
             ("Find.test.3", "passed")]
-        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+        assert gated(items)[1] == {"record": "totals", "errors": 0, "dropped": 0,
                              "passed": 10, "failed": 0, "stopped": 0, "status": 0}
 
         counting = "examples/wc.mo"
@@ -91,14 +91,14 @@ def runner(binary):
             b"     83     335    2501 total\n"
         ) and missing.stderr == b"wc: no-such-file.mo: no such file\n"
         items = records(run(binary, ["test", "--json", counting], 0), "test")
-        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+        assert [(r["name"], r["outcome"]) for r in gated(items)[0]] == [
             ("Wc.count.example.1", "passed"),
             ("Wc.count.example.2", "passed"),
             ("Wc.count.example.3", "passed"),
             ("Wc.row.example.1", "passed"),
             ("Wc.test.1", "passed"),
             ("Wc.test.2", "passed")]
-        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+        assert gated(items)[1] == {"record": "totals", "errors": 0, "dropped": 0,
                              "passed": 6, "failed": 0, "stopped": 0, "status": 0}
 
         for parameters in ("_args: Args", "_clock: Clock, _console: Console"):
@@ -130,11 +130,14 @@ def runner(binary):
                         'assert first([true, false]) == Some(true)\nend\n')
         result = run(binary, ["run", str(path), "real", "ignored"], 17)
         assert result.stdout == b"real\n" and not result.stderr
-        items = records(run(binary, ["test", "--json", str(path)], 0), "test")
-        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+        items = records(run(binary, ["test", "--json", str(path)], 1), "test")
+        assert [(r["name"], r["outcome"]) for r in items if r["record"] == "result"] == [
             ("Main.first.example.1", "passed"), ("Main.keep.promise.1", "passed"),
             ("Main.test.1", "passed")]
-        assert items[-1]["passed"] == 3 and items[-1]["errors"] == 0
+        assert [r["primary"]["label"] for r in items if r["record"] == "diagnostic"] == [
+            "Main.main: int, `17` to `18`; no check runs this function"], items
+        assert items[-1]["passed"] == 3 and items[-1]["mutants"]["survived"] == 1
+        assert items[-1]["mutants"]["tried"] == 1 and items[-1]["mutants"]["dropped"] == 1
         for name in ("core", "bytecode"):
             emitted = pathlib.Path(directory) / f"capabilities.{name}"
             emitted.write_bytes(run(binary, ["check", f"--emit={name}", str(path)], 0).stdout)
@@ -301,7 +304,8 @@ def runner(binary):
             ("Account.test.1", "passed"),
             ("Account.test.2", "passed")]
         assert account_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                     "passed": 12, "failed": 0, "stopped": 0, "status": 0}
+                                     "passed": 12, "failed": 0, "stopped": 0, "gates": "did not run",
+                                     "status": 0}
         assert run(binary, ["check", "examples/notes-tool.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/notes-tool.mo"], 0), "check")
         assert b"E0079" in run(binary, ["run", "examples/notes-tool.mo"], 1).stderr
@@ -315,7 +319,8 @@ def runner(binary):
             ("NotesTool.test.2", "passed"),
             ("NotesTool.test.3", "passed")]
         assert notes_tool_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                        "passed": 3, "failed": 0, "stopped": 0, "status": 0}
+                                        "passed": 3, "failed": 0, "stopped": 0, "gates": "did not run",
+                                        "status": 0}
         assert run(binary, ["check", "examples/rate-limit.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/rate-limit.mo"], 0), "check")
         assert b"E0079" in run(binary, ["run", "examples/rate-limit.mo"], 1).stderr
@@ -333,7 +338,8 @@ def runner(binary):
             ("RateLimit.test.1", "passed"),
             ("RateLimit.test.2", "passed")]
         assert rate_limit_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                        "passed": 5, "failed": 0, "stopped": 0, "status": 0}
+                                        "passed": 5, "failed": 0, "stopped": 0, "gates": "did not run",
+                                        "status": 0}
         assert run(binary, ["check", "examples/kv.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/kv.mo"], 0), "check")
         kv_run = subprocess.run([str(binary), "run", "examples/kv.mo"], cwd=root,
@@ -380,7 +386,8 @@ def runner(binary):
             ("Kv.test.1", "passed"),
             ("Kv.test.2", "passed")]
         assert kv_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                "passed": 17, "failed": 0, "stopped": 0, "status": 0}
+                                "passed": 17, "failed": 0, "stopped": 0, "gates": "did not run",
+                                "status": 0}
         assert run(binary, ["check", "examples/todo.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/todo.mo"], 0), "check")
         with tempfile.TemporaryDirectory() as folder:
@@ -432,7 +439,7 @@ def runner(binary):
                 finally:
                     (tree / "b/locked").chmod(0o755)
         todo_tests = records(run(binary, ["test", "--json", "examples/todo.mo"], 0), "test")
-        assert todo_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+        assert gated(todo_tests)[1] == {"record": "totals", "errors": 0, "dropped": 0,
                                   "passed": 16, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/inventory.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/inventory.mo"], 0), "check")
@@ -448,7 +455,7 @@ def runner(binary):
             b"One from each category: Kettle, Desk lamp, Doormat\n")
         inventory_tests = records(run(binary, ["test", "--json", "examples/inventory.mo"], 0),
                                   "test")
-        assert inventory_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
+        assert gated(inventory_tests)[1] == {"record": "totals", "errors": 0, "dropped": 0,
                                        "passed": 11, "failed": 0, "stopped": 0, "status": 0}
         assert run(binary, ["check", "examples/json-query.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/json-query.mo"], 0), "check")
@@ -494,7 +501,8 @@ def runner(binary):
             ("JsonQuery.at_path.example.3", "passed"),
             ("JsonQuery.test.1", "passed")]
         assert json_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                  "passed": 16, "failed": 0, "stopped": 0, "status": 0}
+                                  "passed": 16, "failed": 0, "stopped": 0, "gates": "did not run",
+                                  "status": 0}
         assert run(binary, ["check", "examples/job-queue.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/job-queue.mo"], 0), "check")
         job_queue_tests = records(
@@ -526,7 +534,8 @@ def runner(binary):
             ("JobQueue.test.3", "passed"),
             ("JobQueue.test.4", "passed")]
         assert job_queue_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                       "passed": 12, "failed": 0, "stopped": 0, "status": 0}
+                                       "passed": 12, "failed": 0, "stopped": 0, "gates": "did not run",
+                                       "status": 0}
         assert run(binary, ["check", "examples/expenses.mo"], 0).stderr == b""
         records(run(binary, ["check", "--json", "examples/expenses.mo"], 0), "check")
         with tempfile.TemporaryDirectory(prefix="mo-expenses-") as expenses_dir:
@@ -551,7 +560,8 @@ def runner(binary):
         assert [(r["name"], r["outcome"]) for r in expenses_tests[1:-1]] == [
             (name, "passed") for name in expenses_names]
         assert expenses_tests[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                                      "passed": 9, "failed": 0, "stopped": 0, "status": 0}
+                                      "passed": 9, "failed": 0, "stopped": 0, "gates": "did not run",
+                                      "status": 0}
 
         # Every source stage, including lower/Core/codegen, shares the explicit
         # source stack, while the caller has only 1 MiB. Nested arithmetic also

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The full run of mo test --gates on lib/, examples/ and the task queue, which fails on any
+"""The full run of mo test on lib/, examples/ and the task queue, which fails on any
 survivor, function that states no intent or run that is not the full gate, then the same run on
 a copy of examples/wc.mo with a test removed, which must fail and name a survivor.
 
@@ -22,7 +22,7 @@ TIMEOUT = 3600
 
 def gated(binary, path):
     start = time.monotonic()
-    result = subprocess.run([binary, "test", "--gates", "--json", str(path)], cwd=root,
+    result = subprocess.run([binary, "test", "--json", str(path)], cwd=root,
                             capture_output=True, text=True, timeout=TIMEOUT)
     records = [json.loads(line) for line in result.stdout.splitlines()]
     problems = [f"{d['primary']['file']}:{d['primary']['line']}: {d['code']} "
@@ -66,8 +66,8 @@ def main(argv):
                 print(stderr, end="", file=sys.stderr)
                 failed.append(str(name))
     if failed:
-        raise SystemExit(f"mo test --gates failed: {', '.join(failed)}")
-    print(f"all {len(paths)} programs passed mo test --gates")
+        raise SystemExit(f"mo test failed: {', '.join(failed)}")
+    print(f"all {len(paths)} programs passed mo test")
     control(binary)
 
 

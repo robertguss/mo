@@ -1535,11 +1535,12 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     }
     if (ok && buffer.length != 0)
         ok = w.ok && write_buffer(json ? output : errors, &buffer);
-    if (ok && !json && counts.gates.asked) {
+    bool counted = counts.passed != 0 || counts.failed != 0 || counts.stopped != 0;
+    if (ok && !json && counted && counts.gates.asked) {
         mo_buffer_clear(&buffer);
         ok = mo_render_gates(&buffer, &counts.gates, false) && write_buffer(output, &buffer);
     }
-    if (ok && !json && (counts.passed != 0 || counts.failed != 0 || counts.stopped != 0)) {
+    if (ok && !json && counted) {
         mo_buffer_clear(&buffer);
         unsigned_number(&w, counts.passed);
         text(&w, " passed, ");
