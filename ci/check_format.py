@@ -31,7 +31,7 @@ def diagnostic(value):
 
 def invoke(binary, folder, *args, stdin=b""):
     result = subprocess.run([str(binary), *map(str, args)], cwd=folder,
-                            input=stdin, capture_output=True, timeout=30)
+                            input=stdin, capture_output=True, timeout=120)
     assert result.returncode >= 0, f"{args}: signal {-result.returncode}"
     return result
 

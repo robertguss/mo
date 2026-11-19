@@ -201,7 +201,6 @@ enum flag_id {
     FLAG_NO,
     FLAG_OUT,
     FLAG_REVIEW,
-    FLAG_GATES,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -272,7 +271,6 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_NO, "--no", false, false, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_OUT, "--out", false, false, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_REVIEW, "--review", false, false, VALUE_TEXT, 0, ON(SERVE)},
-    {FLAG_GATES, "--gates", false, false, VALUE_NONE, 0, ON(TEST)},
 };
 #undef ON
 
@@ -322,9 +320,6 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_REVIEW:
         out->review = operand;
-        break;
-    case FLAG_GATES:
-        out->gates = true;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -607,11 +602,6 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(out, error, "--recover reads a data folder, not --export", "--recover", NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
-    if (out->gates && (out->source_bundle || out->strength != NULL))
-        return refuse(out, error,
-                      "--gates runs every check and tries every mutant; it takes no --bundle or "
-                      "--strength",
-                      "--gates", NULL);
     uint64_t planned = (UINT64_C(1) << FLAG_LIST) | (UINT64_C(1) << FLAG_ONLY) |
                        (UINT64_C(1) << FLAG_IN) | (UINT64_C(1) << FLAG_CALLS);
     uint64_t limited = (UINT64_C(1) << FLAG_ONLY) | (UINT64_C(1) << FLAG_IN) |
@@ -626,7 +616,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                       "no --only, --in, --calls, --seconds, --max-stack, --max-depth, --max-heap, "
                       "--list, --bundle or --strength",
                       "--against", NULL);
-    out->gates = out->gates || against;
+    out->gates = out->command == MO_COMMAND_TEST && !out->source_bundle && out->strength == NULL;
     out->gates_skipped = out->gates && (seen & limited) != 0;
     out->gates = out->gates && !out->gates_skipped;
     bool checks = out->command == MO_COMMAND_TEST && out->source_bundle && !out->list;

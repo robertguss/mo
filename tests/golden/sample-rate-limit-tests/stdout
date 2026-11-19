@@ -9,4 +9,5 @@ passed RateLimit.request.promise.1  examples/rate-limit.mo:43:3
 passed RateLimit.wait_for_one.example.1  examples/rate-limit.mo:78:5
 passed RateLimit.test.1  examples/rate-limit.mo:91:1
 passed RateLimit.test.2  examples/rate-limit.mo:103:1
+gates: 28 mutants tried, 28 killed (0 promise, 16 example, 12 test, 0 recovery, 0 start), 0 survived, 2 dropped
 11 passed, 0 failed, 0 stopped

@@ -122,11 +122,15 @@ class Queue:
 
 
 def simulation(binary):
-    result = subprocess.run([str(binary), 'test', '--json', f'{FOLDER}/queue-tests.mo'],
-                            capture_output=True, text=True, timeout=1800)
-    assert result.returncode == 0 and not result.stderr, result
-    records = [json.loads(line) for line in result.stdout.splitlines()]
-    tests = [r for r in records if r['record'] == 'result']
+    tests = []
+    for module in ('JobQueue', 'QueueTests', 'Main'):
+        result = subprocess.run([str(binary), 'test', '--json', '--in', module,
+                                 f'{FOLDER}/queue-tests.mo'],
+                                capture_output=True, text=True, timeout=1800)
+        assert result.returncode == 0 and not result.stderr, result
+        records = [json.loads(line) for line in result.stdout.splitlines()]
+        assert records[-1]['gates'] == 'did not run', records[-1]
+        tests += [r for r in records if r['record'] == 'result']
     assert all(r['outcome'] == 'passed' for r in tests), tests
     modules = collections.Counter(r['name'].split('.')[0] for r in tests)
     assert modules == {'JobQueue': JOB_QUEUE_RESULTS, 'QueueTests': QUEUE_TEST_RESULTS,

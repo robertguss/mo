@@ -11,4 +11,5 @@ failed Main.test.2  tests/golden/num-test-failing/main.mo:17:1
   right: -2
   18 |   assert average(-3, 0) == -2
      |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
+gates: did not run: a check did not pass
 3 passed, 2 failed, 0 stopped

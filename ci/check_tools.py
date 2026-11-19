@@ -3,10 +3,11 @@
 
 Run from any directory: python3 ci/check_tools.py MO [--no-hidden]
 
-For each tool, its own tests (`mo test`) and its frozen hidden tests (bench/tools/grade.py) must
-pass. The hidden tests carry the frozen tasks' time limits, which were set for one gcc debug
-build, so ci/check.sh runs them only with its first executable and passes --no-hidden for the
-others (slower clang and sanitizer builds). Then each does its job here, as tools/README.md describes:
+For each tool, its own tests (`mo test --in`, since the tools are not fitted to the gates) and its
+frozen hidden tests (bench/tools/grade.py) must pass. The hidden tests carry the frozen tasks' time
+limits, which were set for one gcc debug build, so ci/check.sh runs them only with its first
+executable and passes --no-hidden for the others (slower clang and sanitizer builds). Then each
+does its job here, as tools/README.md describes:
 
   - linkcheck over every tracked Markdown file: no broken link;
   - tally over each recorded learnability round's session logs: the same table, byte for byte,
@@ -44,8 +45,8 @@ def reference(tool):
 def tests(mo, failures, hidden):
     for tool in ("linkcheck", "notioncopy", "tally"):
         program = TOOLS / f"{tool}.mo"
-        result = run([mo, "test", program], ROOT)
-        print(f"{tool}: mo test: {last(result.stdout)}")
+        result = run([mo, "test", "--in", tool.capitalize(), program], ROOT)
+        print(f"{tool}: mo test: {last(result.stdout, 'gates')}; {last(result.stdout)}")
         if result.returncode != 0:
             failures.append(f"mo test tools/{tool}.mo exited {result.returncode}:\n"
                             f"{result.stdout}{result.stderr}")

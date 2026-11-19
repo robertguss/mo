@@ -1,3 +1,4 @@
 passed Main.keep_small.promise.1  tests/golden/lang-test-promise-holds/main.mo:4:3
 passed Main.test.1  tests/golden/lang-test-promise-holds/main.mo:13:1
+gates: 4 mutants tried, 2 killed (0 promise, 0 example, 2 test, 0 recovery, 0 start), 2 survived, 0 dropped
 2 passed, 0 failed, 0 stopped

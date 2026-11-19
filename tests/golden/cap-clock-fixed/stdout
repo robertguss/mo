@@ -1,3 +1,4 @@
 passed Main.test.1  tests/golden/cap-clock-fixed/main.mo:11:1
 passed Main.test.2  tests/golden/cap-clock-fixed/main.mo:17:1
+gates: 0 mutants tried, 0 killed (0 promise, 0 example, 0 test, 0 recovery, 0 start), 0 survived, 0 dropped
 2 passed, 0 failed, 0 stopped

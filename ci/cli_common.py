@@ -40,12 +40,33 @@ def records(result, command):
     return items
 
 
+def gated(items):
+    """A full run's check results and its totals without the gates' fields, once its gates ran
+    and no mutant survived."""
+    total = dict(items[-1])
+    assert total.pop("gates") == "ran" and total.pop("mutants")["survived"] == 0, items[-1]
+    return [r for r in items if r["record"] == "result"], total
+
+
 SERVE_COUNTER = """module Counter
 
 service
   state Int = 0
   tools add, read
   token from env "COUNTER_TOKEN"
+
+  promise "an addition adds its amount and replies with the new count" on add
+    after == before + amount
+    reply == after
+    allows before: 1, amount: 2, reply: 3, after: 3, now: t0
+    forbids before: 1, amount: 2, reply: 3, after: -1, now: t0
+  end
+
+  promise "a read replies with the count" on read
+    reply == before.to_text
+    allows before: 4, reply: "4", after: 4, now: t0
+    forbids before: 4, reply: "5", after: 4, now: t0
+  end
 end
 
 ## Adds an amount to the count.
@@ -57,6 +78,8 @@ end
 fn read(state: Int, _now: Time) : Text
   state.to_text
 end
+
+t0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"
 """
 SERVE_HALTING = (SERVE_COUNTER.replace("tools add, read", "tools add, read, halt") +
                  '\n## Always stops.\nfn halt(_state: Int, _now: Time) : Text\n'

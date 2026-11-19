@@ -1,7 +1,7 @@
 import pathlib
 import tempfile
 
-from cli_common import records, root, run
+from cli_common import gated, records, root, run
 
 
 def scalar_promises(binary):
@@ -14,10 +14,10 @@ def scalar_promises(binary):
                   'fn main()\nstop "main ran"\nend\n')
         path.write_text(source)
         items = records(run(binary, ["test", "--json", str(path)], 0), "test")
-        assert [(r["name"], r["outcome"]) for r in items[1:-1]] == [
+        assert [(r["name"], r["outcome"]) for r in gated(items)[0]] == [
             ("Main.keep.promise.1", "passed"), ("Main.test.1", "passed")]
-        assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 2, "failed": 0, "stopped": 0, "status": 0}
+        assert gated(items)[1] == {"record": "totals", "errors": 0, "dropped": 0,
+                                   "passed": 2, "failed": 0, "stopped": 0, "status": 0}
 
         # Independent SipHash-1-3/SplitMix calculation: after the five Int
         # boundaries these promises first generate 9 and -9, respectively.
@@ -43,8 +43,10 @@ def scalar_promises(binary):
                         'promise "keeps input"\nresult == value\n'
                         'allows value: 3, result: 3\nforbids value: 3, result: 4\nend\n'
                         f'if value == {target}\nstop "trial 201"\nend\nvalue\nend\nfn main()\nend\n')
-        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
         assert items[1]['outcome'] == 'passed'
+        assert [r['primary']['label'] for r in items if r['record'] == 'diagnostic'] == [
+            f'Main.capped: int, `{target[1:]}` to `{int(target[1:]) + 1}`'], items
         items = records(run(binary, ['test', '--json', '--calls', '201', str(path)], 1), 'test')
         assert items[1]['outcome'] == 'stopped' and items[1]['input'] == [
             {'name': 'value', 'value': target}]
@@ -93,7 +95,7 @@ def promise_boundaries(binary):
         assert items[8]['extreme'] == {'name': 'value', 'description': "Int's smallest value"}
         assert items[-2]['outcome'] == 'passed'
         assert items[-1] == {'record': 'totals', 'errors': 0, 'dropped': 0,
-                             'passed': 1, 'failed': 0, 'stopped': 10, 'status': 1}
+                             'passed': 1, 'failed': 0, 'stopped': 10, 'gates': 'did not run', 'status': 1}
         text = run(binary, ['test', '--calls', '6', str(path)], 1)
         assert not text.stderr and text.stdout.endswith(b'1 passed, 0 failed, 10 stopped\n')
         assert b"Int's smallest value" in text.stdout and b"Decimal's largest value" in text.stdout
@@ -131,7 +133,8 @@ def promise_deadlines(binary):
                 assert len(diagnostic) == 1 and diagnostic[0]['code'] == 'E1404'
                 assert ('clock could not be read' in diagnostic[0]['headline']) == (mode != 'expiry')
                 assert items[-1] == {'record': 'totals', 'errors': 1, 'dropped': 0,
-                                     'passed': 1, 'failed': 0, 'stopped': 0, 'status': 1}
+                                     'passed': 1, 'failed': 0, 'stopped': 0,
+                                     'gates': 'did not run', 'status': 1}
         # Actual CLOCK_MONOTONIC cancellation, with run()'s 30-second safety
         # watchdog. No fragile wall-duration threshold or instruction budget.
         path.write_text(subject + tail)
@@ -275,14 +278,21 @@ def promise_shrinking(binary):
 
 def generic_promises(binary):
     fixture = root / 'tests/lower-source/generic-subject/main.mo'
-    items = records(run(binary, ['test', '--json', str(fixture)], 0), 'test')
-    promises = [r for r in items[1:-1] if r['kind'] == 'promise']
+    items = records(run(binary, ['test', '--json', str(fixture)], 1), 'test')
+    unrun = '; no check runs this function'
+    assert [r['primary']['label'] for r in items if r['record'] == 'diagnostic'] == [
+        'Main.larger: boundary, `<` to `<=`', f'Main.main: int, `7` to `8`{unrun}',
+        *(f'Main.main: {change}{unrun}' for change in (
+            'negate, `==` to `!=`', 'int, `7` to `8`', 'logic, `and` to `or`',
+            'negate, `==` to `!=`', 'logic, `and` to `or`', 'negate, `==` to `!=`',
+            'int, `0` to `1`', 'int, `1` to `2`'))], items
+    promises = [r for r in items if r['record'] == 'result' and r['kind'] == 'promise']
     assert {r['instance'] for r in promises} == {
         'Main::Main.swap(Int, Text).promise.1',
         'Main::Main.swap(Bool, Decimal).promise.1',
     }
     assert len(promises) == 2 and all(r['outcome'] == 'passed' for r in promises)
-    assert items[-1]['passed'] == 6 and items[-1]['errors'] == 0
+    assert items[-1]['passed'] == 6 and items[-1]['mutants']['survived'] == 10
     with tempfile.TemporaryDirectory(prefix='mo-generic-promises-') as directory:
         path = pathlib.Path(directory) / 'main.mo'
         path.write_text('module Main\nfn probe(n: Int, _value: List(T)) : Int\n'
@@ -326,7 +336,12 @@ def generic_promises(binary):
         }
         assert items[-1]['passed'] == 3 and items[-1]['errors'] == 0
         listed = records(run(binary, ['test', '--json', '--list', str(path)], 0), 'test')
-        assert [r['name'] for r in listed[1:-1]] == ['Holds.keep.promise.1']
+        assert [r['name'] for r in listed if r['record'] == 'test'] == ['Holds.keep.promise.1']
+        assert [(r['function'], r['original'], r['replacement']) for r in listed
+                if r['record'] == 'mutant'] == [('Main.main', 'true', 'false'),
+                                                 ('Main.main', 'false', 'true')], listed
+        assert [(r['name'], r['mutants']) for r in listed if r['record'] == 'function'] == [
+            ('Main.forward', 0), ('Main.main', 2), ('Holds.keep', 0)], listed
 
         path.write_text('module Main\nseed = crash()\nfn crash() : Int\nstop "initializer ran"\nend\n'
                         'test "first observation"\nassert true\nend\n'
@@ -360,8 +375,9 @@ def fake_capability_promises(binary):
             '_words = args.list\n0\nend\n'
             't0 = Time.parse("1970-01-01T00:00:00Z") or stop "the time is written correctly"\n' + tail)
         items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
-        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+        assert [(r['name'], r['outcome']) for r in gated(items)[0]] == [
             ('Main.all.promise.1', 'passed')]
+        assert items[-1]['mutants']['tried'] == items[-1]['mutants']['killed']['promise'] == 1
 
         # The first fake with a file in it fails this promise, on the second call, and the
         # report shows the capability by its type rather than by contents.
@@ -395,7 +411,7 @@ def fake_capability_promises(binary):
     # examples/notes-tool.mo asks for a ReadFiles in its promise.
     root = pathlib.Path(__file__).resolve().parent.parent
     items = records(run(binary, ['test', '--json', str(root / 'examples/notes-tool.mo')], 0), 'test')
-    assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+    assert [(r['name'], r['outcome']) for r in gated(items)[0]] == [
         ('NotesTool.search_notes.promise.1', 'passed'),
         ('NotesTool.search_notes.example.1', 'passed'),
         ('NotesTool.search_notes.example.2', 'passed'),
@@ -421,9 +437,11 @@ def hidden_promises(binary):
         path.write_text(counter + 'promise "in range"\nresult >= 0 and result <= 27\n'
                         'allows counter: zero, result: 0\nforbids counter: zero, result: 28\n'
                         'end\ncounter.value\nend\n' + tail)
-        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
-        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert [(r['name'], r['outcome']) for r in items if r['record'] == 'result'] == [
             ('Main.count.promise.1', 'passed'), ('Main.test.1', 'passed')]
+        assert [(r['code'], r['primary']['label']) for r in items if r['record'] == 'diagnostic'] == [
+            ('E1440', 'Main.bump: give it a promise or an example')], items
         path.write_text(counter + 'promise "stays small"\nresult < 15\n'
                         'allows counter: zero, result: 0\nforbids counter: zero, result: 15\n'
                         'end\ncounter.value\nend\n' + tail)
@@ -447,8 +465,11 @@ def hidden_promises(binary):
                         'result >= 1 and result <= 400\n'
                         'allows counter: Counter(value: 1), result: 1\n'
                         'forbids counter: Counter(value: 1), result: 0\nend\ncounter.value\nend\n' + tail)
-        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
-        assert items[1]['outcome'] == 'passed' and items[-1]['status'] == 0
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'passed' and items[-1]['gates'] == 'did not run'
+        assert [(r['code'], r['primary']['label']) for r in items if r['record'] == 'diagnostic'] == [
+            ('E1440', 'Main.start: give it a promise or an example'),
+            ('E1440', 'Main.add: give it a promise or an example')], items
 
         # No way to start one: steps alone, a start that needs a capability, or a private
         # constant. The whole selection is refused before it runs.
@@ -607,9 +628,11 @@ def hidden_promises(binary):
                  'forbids stamp: Stamp(seat: 10), result: 7\nend\nstamp.seat\nend\n')
         exposed = 'module Main\nexpose Pool, Ticket, Stamp, open, issue, stamp'
         path.write_text(exposed + '\n' + chain + probe + tail)
-        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
-        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert [(r['name'], r['outcome']) for r in items if r['record'] == 'result'] == [
             ('Main.seat_of.promise.1', 'passed'), ('Main.test.1', 'passed')], items
+        assert [r['primary']['label'] for r in items if r['record'] == 'diagnostic'] == [
+            f'Main.{name}: give it a promise or an example' for name in ('open', 'issue', 'stamp')]
         path.write_text(exposed + '\nstruct Pool\nsize: Int\nend\n'
                         'struct Ticket\nseat: Int\nend\nstruct Stamp\nseat: Int\nend\n'
                         'fn open(size: Int) : Option(Pool)\n'
@@ -686,8 +709,10 @@ def hidden_promises(binary):
                         'fn size_of(pool: Pool) : Int\npromise "one"\nresult == 1\n'
                         'allows pool: Pool(size: 1), result: 1\n'
                         'forbids pool: Pool(size: 1), result: 2\nend\npool.size\nend\n' + tail)
-        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
-        assert items[1]['outcome'] == 'passed' and items[-1]['errors'] == 0, items
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'passed', items
+        assert [r['primary']['label'] for r in items if r['record'] == 'diagnostic'] == [
+            'Main.open: give it a promise or an example'], items
 
         # Each hidden type is built by its own module, whatever order the image lists them in;
         # Alpha's generic Box(Int) comes after Beta's B among the types.
@@ -702,8 +727,11 @@ def hidden_promises(binary):
                         'promise "anything"\nresult == 0\n'
                         'allows b: Beta.make_b(0), result: 0\nforbids b: Beta.make_b(0), result: 1\n'
                         'end\nBeta.get_b(b) * 0 + Alpha.get_box(Alpha.make_box(1)) * 0\nend\n' + tail)
-        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
-        assert items[1]['outcome'] == 'passed' and items[-1]['errors'] == 0, items
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert items[1]['outcome'] == 'passed', items
+        assert [r['primary']['label'] for r in items if r['record'] == 'diagnostic'] == [
+            f'{name}: give it a promise or an example' for name in (
+                'Alpha.make_box', 'Alpha.get_box', 'Beta.make_b', 'Beta.get_b')], items
 
         # A step that never returns ends the search at the promise's deadline, between trials.
         path.write_text('module Main\nexpose Counter, zero, spin\nstruct Counter\nvalue: Int\nend\n'
@@ -731,10 +759,11 @@ def hidden_promises(binary):
         answer.write_bytes((root / 'learnability/final/gpt-6.1-sol/job-queue.mo').read_bytes())
         for only in ([], ['--only', 'Answers.JobQueue.acknowledge.promise.1'],
                      ['--only', 'Answers.JobQueue.fail.promise.1']):
-            items = records(run(binary, ['test', '--json', *only, str(answer)], 0), 'test')
+            items = records(run(binary, ['test', '--json', '--in', 'Answers.JobQueue', *only,
+                                         str(answer)], 0), 'test')
             promises = [r for r in items if r.get('kind') == 'promise']
             assert promises and all(r['outcome'] == 'passed' for r in promises), items
-            assert items[-1]['errors'] == 0, items
+            assert items[-1]['errors'] == 0 and items[-1]['gates'] == 'did not run', items
         # Half the random trials take the Queue that the Lease's own lease call returned (D284),
         # so acknowledge and fail reach their Ok branch: breaking either Ok path fails its promise
         # and only that one.
@@ -962,7 +991,7 @@ def composite_deadlines(binary):
         items = records(run(clock, ['expiry', 'test', '--json', '--seconds', '1', str(path)], 1), 'test')
         assert [r['name'] for r in items if r['record'] == 'result'] == ['Main.test.1']
         assert items[-1] == {'record': 'totals', 'errors': 1, 'dropped': 0, 'passed': 1,
-                             'failed': 0, 'stopped': 0, 'status': 1}
+                             'failed': 0, 'stopped': 0, 'gates': 'did not run', 'status': 1}
         assert items[-2]['code'] == 'E1404'
 
 
@@ -981,12 +1010,13 @@ def collection_promises(binary):
             path.write_text('module Main\nfn probe(value: Map(Text, Int), tags: Set(Int)) : Int\n' +
                             body.format(sentence=sentence) + subject + '\nend\n'
                             'test "after promise"\nassert true\nend\nfn main()\nend\n')
-            items = records(run(binary, ['test', '--json', str(path)], 0 if expected is None else 1),
-                            'test')
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
             if expected is None:
-                assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+                assert [(r['name'], r['outcome']) for r in items if r['record'] == 'result'] == [
                     ('Main.probe.promise.1', 'passed'), ('Main.test.1', 'passed')]
-                assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
+                assert [r['primary']['label'] for r in items if r['record'] == 'diagnostic'] == [
+                    'Main.probe: arithmetic, `+` to `-`'], items
+                assert items[-1]['passed'] == 2 and items[-1]['mutants']['tried'] == 5
             else:
                 assert items[1]['outcome'] == 'failed' and items[1]['input'] == expected
                 assert items[1]['result'] == '1' and items[-1]['errors'] == 0

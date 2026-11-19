@@ -58,11 +58,14 @@ int main(int argc, char *argv[]) {
               snprintf(errors, sizeof errors, "%s/err", folder) > 0);
     FILE *source = fopen(path, "w");
     MO_ASSERT(source != NULL);
-    MO_ASSERT(
-        fputs("module Main\nservice\nstate Int = 0\ntools add\ntoken from env \"T\"\nend\n"
-              "fn add(state: Int, _now: Time, n: Int) : (Int, Unit)\n(state + n, Unit)\nend\n",
-              source) >= 0 &&
-        fclose(source) == 0);
+    MO_ASSERT(fputs("module Main\nservice\nstate Int = 0\ntools add\ntoken from env \"T\"\n"
+                    "promise \"adds\" on add\nafter == before + n\n"
+                    "allows before: 1, n: 2, reply: Unit, after: 3, now: t0\n"
+                    "forbids before: 1, n: 2, reply: Unit, after: 1, now: t0\nend\nend\n"
+                    "fn add(state: Int, _now: Time, n: Int) : (Int, Unit)\n(state + n, Unit)\nend\n"
+                    "t0 = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"time\"\n",
+                    source) >= 0 &&
+              fclose(source) == 0);
     instant = (struct timespec){17, 0};
     jump = 3;
     const char *arguments[] = {"mo", "test", path};
@@ -78,10 +81,13 @@ int main(int argc, char *argv[]) {
     rewind(out);
     size_t length = fread(text, 1, sizeof text - 1, out);
     text[length] = '\0';
-    char expected[256];
-    MO_ASSERT(snprintf(expected, sizeof expected,
-                       "passed Main.service.recovery  %s:2:1\n1 passed, 0 failed, 0 stopped\n",
-                       path) > 0);
+    char expected[512];
+    MO_ASSERT(
+        snprintf(expected, sizeof expected,
+                 "passed Main.service.promise.1  %s:6:1\npassed Main.service.recovery  "
+                 "%s:2:1\ngates: 1 mutants tried, 1 killed (1 promise, 0 example, 0 test, "
+                 "0 recovery, 0 start), 0 survived, 0 dropped\n2 passed, 0 failed, 0 stopped\n",
+                 path, path) > 0);
     CHECK(strcmp(text, expected) == 0);
     MO_ASSERT(fclose(out) == 0 && fclose(err) == 0);
     MO_ASSERT(unlink(path) == 0 && unlink(output) == 0 && unlink(errors) == 0 &&

@@ -15,4 +15,5 @@ failed Main.test.1  tests/golden/tst-two-failures/main.mo:14:1
   right: 2
   15 |   assert sign(10) == 2
      |   ^^^^^^^^^^^^^^^^^^^^ this assertion was false
+gates: did not run: a check did not pass
 2 passed, 3 failed, 0 stopped

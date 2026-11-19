@@ -23,4 +23,5 @@ passed JobQueue.test.1  examples/job-queue.mo:277:1
 passed JobQueue.test.2  examples/job-queue.mo:291:1
 passed JobQueue.test.3  examples/job-queue.mo:311:1
 passed JobQueue.test.4  examples/job-queue.mo:334:1
+gates: 25 mutants tried, 25 killed (0 promise, 19 example, 4 test, 0 recovery, 2 start), 0 survived, 1 dropped
 25 passed, 0 failed, 0 stopped

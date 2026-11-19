@@ -9,4 +9,5 @@ passed Inventory.table.example.1  examples/inventory.mo:69:5
 passed Inventory.test.1  examples/inventory.mo:122:1
 passed Inventory.test.2  examples/inventory.mo:131:1
 passed Inventory.test.3  examples/inventory.mo:135:1
+gates: 13 mutants tried, 13 killed (0 promise, 6 example, 7 test, 0 recovery, 0 start), 0 survived, 1 dropped
 11 passed, 0 failed, 0 stopped

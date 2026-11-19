@@ -5,4 +5,5 @@ stopped Main.service.promise.1  tests/golden/service-promise-work/main.mo:10:3
   state after step 1: 1
   bug: running past a service promise's work limit (MO_LIMIT_SERVICE_WORK = 1048576)
 passed Main.service.recovery  tests/golden/service-promise-work/main.mo:5:1
+gates: did not run: a check did not pass
 1 passed, 0 failed, 1 stopped

@@ -1,10 +1,10 @@
 # Trust gates: the dry run, the measurement and the full run
 
-The record of PR3 and PR4 of `docs/plans/2026-11-18-2013-feat-trust-gates-mo-test-plan.md`: U8,
+The record of PR3 to PR5 of `docs/plans/2026-11-18-2013-feat-trust-gates-mo-test-plan.md`: U8,
 the dry run that settles the table of kinds; U10, the measurement of how many of the 24 wrong
-versions a task queue fitted only to the gates kills; and U11 and U12, the repository's programs
-fitted to the gates and the cost of their full run. The result files are in
-`learnability/trust-gates/`, which its `README.md` describes.
+versions a task queue fitted only to the gates kills; U11 and U12, the repository's programs
+fitted to the gates and the cost of their full run; and U13 and U14, the gates on by default.
+The result files are in `learnability/trust-gates/`, which its `README.md` describes.
 
 Robert delegated every decision in this work on 2026-11-19 ("I trust you to make all decisions
 for me"; "Don't stop for any approval from me for anything"). Where the plan says Robert
@@ -399,6 +399,53 @@ here, for PR5 to turn the gates on. Reasons:
   versions take as long as the mutants. That is a cost of the shorter run, not of R30, and the
   first lever is the one the plan names: a cheaper test of the full queue.
 
+## On by default (PR5)
+
+Plain `mo test`, alone or with `--json`, is now the full run, and `--gates` is gone. Reference
+section 12.6 states the table of kinds, kills and stated intent. It says a pass is a floor on how
+thoroughly the checks run the code, not evidence that they catch the mistakes a person would
+make, which is as far as the measurement of U10 goes. The guide says the same and cites that
+measurement.
+
+### The golden cases and fixtures, written by hand
+
+Each expectation was written from section 12.6 before the case ran, by listing the program's
+mutants and deciding which check kills each one. The prediction files for the twelve samples
+were written first and kept outside the repository. A run that disagreed was investigated, never
+copied.
+
+- 19 cases fail a check, and each gained only "gates: did not run: a check did not pass". All
+  19 matched, as did the two E0101 cases, which reach no check and are unchanged.
+- 18 other cases were derived one by one. All matched the first time. Five now fail the gates,
+  because mutants their checks cannot or do not kill survive: `lang-test-passing`,
+  `lang-test-promise-holds`, `tst-assert-is-binding`, `tst-passing` and `tst-promise-holds`.
+  `service-read-only` and `tst-private-names` failed stated intent and were then fitted (below).
+  Their new expectations also matched the first time.
+- The 12 samples: 9 matched the first time. In 3 the derivation was wrong and the toolchain was
+  right:
+  - `sample-kv-tests`: three Int literals inside `Count(...)` in `expire` were missed.
+  - `sample-notes-tool-tests`: an example, not a test, was the cheaper check for
+    `input.limit < 1` made `>=`.
+  - `sample-job-queue-tests`: two mutants break an `allows` anchor, so the program no longer
+    starts. That is a start kill, which the derivation had counted as an example kill.
+- In the drivers, one derivation was wrong: `imported_constants` missed the literal `0` in
+  `handler(0)`.
+- No run showed a toolchain defect in the gates themselves. The work found one defect in the
+  report: when no check reached an outcome (a compile error, or E1404 under a limit), the text
+  output still printed a gates line with no totals line. The gates line now prints only beside
+  the totals.
+
+Survivor attribution, meaning which kind of check killed a mutant, depends on step counts that a
+reader can only estimate. Those derivations are the weakest part of this record.
+
+### Drivers whose claim is about something else
+
+The task queue's simulation check, the three tools' own tests and the Phase 4 grader select with
+`--in`. They try no mutants and run the same checks they ran before. The task queue's
+simulation check runs each of its three modules in turn, and took 84 seconds where its full run
+takes about 300. The grader does the same for the variant's three modules, so it grades exactly
+the checks it graded before.
+
 ## Decided under delegation
 
 Each of these was decided by the agent under Robert's delegation of 2026-11-19.
@@ -462,3 +509,42 @@ In PR4:
 - **Phase 7's M3 waits for PR5**, the plan's default: until the gates are the default, an agent
   writing the client must remember `--gates`.
 - **`tools/*.mo` are not fitted here**, the plan's default.
+
+In PR5:
+
+- **`--list` lists the mutants by default.** With no selector or limit, `mo test --list` also
+  lists each mutant and how many each function has, as `--gates --list` did, because those are
+  what a full run would try.
+- **The gates line goes with the totals line.** A run in which no check reached an outcome
+  prints neither, in text. In JSON the totals always carry the `gates` field.
+- **The guide's counter service gains a promise on each tool,** so the guide's own example
+  passes the full run (U14). `ci/cli_common.py` shares the text with `cli_serve`, which checks
+  that the guide holds it verbatim.
+- **`tests/test_deadline.c`'s service gains a promise.** The test now shows that the whole full
+  run, gates included, ignores a clock that jumps three seconds a read.
+- **Two golden programs were fitted, as PR4 fitted `examples/`:** `tst-private-names` gives its
+  exposed `run` an example, and `service-read-only` gives its tool's handler one. Each was the
+  only accepting program for its conformance rules (10.1/2; 2.3/8, 10.4/2, 11.5 and 12.5/1).
+  Other rows that cited a case which now fails the gates cite a passing case instead.
+- **`learnability/phase4/grade.py` was edited.** The plan says to stop if a check compares it
+  with `freeze.json`. `git grep` finds none: the only reader of a `freeze.json` is Phase 5's own
+  test, with a file it writes itself.
+- **`learnability/phase5/evaluation/grade.py` is unchanged.** It is not in CI, the plan does not
+  name it, and its phase is closed. A rerun with this build would gate the candidate program.
+- **`test_output` in `ci/check_format.py` is unchanged.** The plan asked it to ignore positions
+  in survivor lines, but the check passes with the survivor cases. The tracked programs are
+  formatted, so formatting moves no position.
+- **The limits** for one program in `ci/check_lib.py` (60 to 240 seconds), `ci/check_golden.py`
+  (60 to 120) and `ci/check_format.py` (30 to 120) are about ten times the slowest program each
+  runs. Measured here: `lib/json.mo` 22 seconds and `examples/json-query.mo` 9 on the debug
+  build, and 22 and 8 on the sanitizer build.
+- **AGENTS.md** asks a PR that changes a gated program to run plain `mo test` on it and quote
+  the last line. This resolves the review item the plan left for Robert, as the coordinator
+  decided.
+
+- **`ci/check_lib.py` still runs the full run on every build.** For the first build it repeats
+  `ci/check_gates.py`. It is kept because it is the only check that runs `lib/` on the clang
+  and sanitizer builds, and its limit pays for that.
+- **A `--bundle` check was added after the code review.** The guide says `--bundle` tries no
+  mutants, and no driver showed it. `ci/cli_gates.py` now runs the door's checks on a bundle of
+  the survivor fixture and expects exit 0, which a mutant tried there would turn into 1.

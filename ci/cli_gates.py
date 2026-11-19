@@ -14,7 +14,7 @@ NOT_GATED = b"gates: did not run: the run selects checks or sets a limit\n"
 
 
 def totals(binary, path, status):
-    items = records(run(binary, ["test", "--gates", "--json", path], status), "test")
+    items = records(run(binary, ["test", "--json", path], status), "test")
     return items, items[-1]
 
 
@@ -39,18 +39,20 @@ def gates(binary):
     assert json.dumps(items) == json.dumps(again)
     for args in (["--only", "Main.test.1"], ["--in", "Main"], ["--calls", "10"],
                  ["--seconds", "5"], ["--max-depth", "100"]):
-        result = run(binary, ["test", "--gates", *args, SURVIVOR], 0)
+        result = run(binary, ["test", *args, SURVIVOR], 0)
         assert not result.stderr, (args, result.stderr)
         assert result.stdout.splitlines(keepends=True)[-2] == NOT_GATED, (args, result.stdout)
-    skipped = records(run(binary, ["test", "--gates", "--json", "--only", "Main.test.1", SURVIVOR],
+    skipped = records(run(binary, ["test", "--json", "--only", "Main.test.1", SURVIVOR],
                           0), "test")[-1]
     assert skipped["gates"] == "did not run" and "mutants" not in skipped, skipped
-    plain = records(run(binary, ["test", "--json", SURVIVOR], 0), "test")[-1]
-    assert "gates" not in plain, plain
-    for flag in (["--strength", "x"], ["--bundle"]):
-        result = run(binary, ["test", "--gates", *flag, SURVIVOR], 2)
-        assert result.stderr == (b"--gates runs every check and tries every mutant; it takes no "
-                                 b"--bundle or --strength: \"--gates\"\n"), result.stderr
+    assert run(binary, ["test", "--gates", SURVIVOR], 2).stderr == b'unknown flag: "--gates"\n'
+    strength = run(binary, ["test", SURVIVOR, "--strength", "tests/cli/strength/versions"], 0)
+    assert b"gates" not in strength.stdout and not strength.stderr, strength
+    with tempfile.TemporaryDirectory() as scratch:
+        survivor = pathlib.Path(scratch) / "survivor.mosb"
+        survivor.write_bytes(bundle(root / "tests/errors/e1439", "main.mo", ["main.mo"]))
+        door = run(binary, ["test", "--bundle", survivor], 0)
+    assert b"gates" not in door.stdout and not door.stderr, door
 
     items, total = totals(binary, f"{GATES}/killed/main.mo", 0)
     mutants(total, 3, promise=1, example=1, test=1)
@@ -70,7 +72,7 @@ def gates(binary):
             if r["record"] == "mutant"] == [
         (4, 3, "not", "", "survived"), (4, 10, "or", "and", "survived"),
         (8, 12, "or", "and", "dropped"), (8, 15, "0", "1", "survived")], items
-    listing = run(binary, ["test", "--gates", "--list", f"{GATES}/unrun/main.mo"], 0)
+    listing = run(binary, ["test", "--list", f"{GATES}/unrun/main.mo"], 0)
     assert listing.stdout.decode().splitlines() == [
         "Main.test.1",
         f"mutant {GATES}/unrun/main.mo:4:3 Main.neither: not, `not` removed",
@@ -79,25 +81,21 @@ def gates(binary):
         f"mutant {GATES}/unrun/main.mo:8:15 Main.head: int, `0` to `1`",
         "function Main.neither: 2 mutants", "function Main.head: 2 mutants",
         "function Main.main: 0 mutants"], listing.stdout
-    listed = records(run(binary, ["test", "--gates", "--list", "--json",
+    listed = records(run(binary, ["test", "--list", "--json",
                                   f"{GATES}/unrun/main.mo"], 0), "test")
     assert [r for r in listed if r["record"] == "mutant"] == [
         {k: v for k, v in r.items() if k not in ("outcome", "by", "check")} for r in items
         if r["record"] == "mutant"], listed
     assert [(r["name"], r["mutants"]) for r in listed if r["record"] == "function"] == [
         ("Main.neither", 2), ("Main.head", 2), ("Main.main", 0)], listed
-    unlisted = run(binary, ["test", "--gates", "--list", "--only", "Main.test.1",
+    unlisted = run(binary, ["test", "--list", "--only", "Main.test.1",
                             f"{GATES}/unrun/main.mo"], 0)
     assert unlisted.stdout == b"Main.test.1\n", unlisted.stdout
 
-    failing = f"{GATES}/failing/main.mo"
-    plain = run(binary, ["test", failing], 1)
-    gated = run(binary, ["test", "--gates", failing], 1)
-    lines = plain.stdout.splitlines(keepends=True)
-    assert b"  input n = 100\n" in lines, plain.stdout
-    assert gated.stdout == b"".join(
-        lines[:-1] + [b"gates: did not run: a check did not pass\n", lines[-1]]), gated.stdout
-    assert gated.stderr == plain.stderr == b""
+    failing = run(binary, ["test", f"{GATES}/failing/main.mo"], 1)
+    lines = failing.stdout.splitlines(keepends=True)
+    assert b"  input n = 100\n" in lines, failing.stdout
+    assert lines[-2] == b"gates: did not run: a check did not pass\n" and not failing.stderr, lines
 
     _, total = totals(binary, f"{GATES}/loops/main.mo", 0)
     mutants(total, 4, example=4)
@@ -110,7 +108,7 @@ def gates(binary):
     _, total = totals(binary, f"{GATES}/empty/main.mo", 0)
     mutants(total, 0)
 
-    library = subprocess.run([str(binary), "test", "--gates", "--json", "lib/list.mo"], cwd=root,
+    library = subprocess.run([str(binary), "test", "--json", "lib/list.mo"], cwd=root,
                              capture_output=True, timeout=300)
     items = records(library, "test")
     total = items[-1]
@@ -134,12 +132,12 @@ def stated_intent(binary):
         (exposed, 28, "Main.also_bare: give it a promise or an example")], items
     assert {r["code"] for r in items if r["record"] == "diagnostic"} == {"E1440"}, items
     assert total["gates"] == "did not run" and "mutants" not in total, total
-    text = run(binary, ["test", "--gates", f"{GATES}/intent/main.mo"], 1).stdout.splitlines()
+    text = run(binary, ["test", f"{GATES}/intent/main.mo"], 1).stdout.splitlines()
     assert text[-2] == b"gates: did not run: a function or tool states no intent", text
     for program in ("intent", "tools"):
         path = f"{GATES}/{program}/main.mo"
         assert not run(binary, ["check", path], 0).stderr
-        result = run(binary, ["test", "--gates", "--in", "Main", path], 0)
+        result = run(binary, ["test", "--in", "Main", path], 0)
         assert not result.stderr and result.stdout.splitlines(keepends=True)[-2] == NOT_GATED
     ran = run(binary, ["run", f"{GATES}/intent/main.mo"], 0)
     assert not ran.stdout and not ran.stderr, ran
@@ -171,13 +169,17 @@ def edit(text, *pairs):
     return text
 
 
-def bundle_digest(folder, entry, files):
+def bundle(folder, entry, files):
     def field(data):
         return struct.pack("<I", len(data)) + data
     wire = b"MOSB\1" + field(entry.encode()) + struct.pack("<I", len(files))
     for name in sorted(files):
         wire += field(name.encode()) + field((folder / name).read_bytes())
-    return hashlib.sha256(wire).hexdigest()
+    return wire
+
+
+def bundle_digest(folder, entry, files):
+    return hashlib.sha256(bundle(folder, entry, files)).hexdigest()
 
 
 def snapshot(folder):

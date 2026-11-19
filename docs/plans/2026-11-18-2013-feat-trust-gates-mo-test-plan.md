@@ -767,14 +767,3 @@ For each PR:
 - `docs/status/phase6-run.md` and `learnability/phase6/strength/`: the shape of a measurement with predictions written first.
 - Mutation testing practice: the default kinds of PIT and Mull; Yao, Harman and Jia (ICSE 2014) on how many mutants of each kind nothing can kill; PIT's use of what each test ran, cheapest first and stopping at the first kill; PIT's and Stryker's accounts of what a result kept from an earlier run can miss.
 
----
-
-## Deferred / Open Questions
-
-These are items a document review left for Robert. They do not block PR1.
-
-### From 2026-11-18 review
-
-- **Nothing runs the full run before a change merges** — Verification Contract, and U12 (the repository's full run and its cost) (P1, adversarial-document-reviewer, confidence 75)
-
-  A pull request whose shorter run passed can merge while a full run would fail. An agent's everyday pass is the shorter run with `--against`, and the full run sits only in `ci/check_gates.py` in the `drivers` group, which AGENTS.md leaves to the nightly. The nightly runs after the merge. So a version with a surviving mutant can reach `main`, which the second success criterion rules out for the client library of Phase 7's M3. The shorter run misses a survivor when something a function calls changed (KTD11 leaves that to the full run), or when the previous version never passed a full run. The decision is Robert's because it changes "Checks and merging" in AGENTS.md, which today says not to run more groups than `gcc`. The review recommends this rule, added to AGENTS.md by U13: a pull request that changes a Mo program the nightly gates runs plain `mo test` on each changed program and puts the last line in its body. What it costs is known once U12 has measured the full run.

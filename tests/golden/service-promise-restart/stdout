@@ -9,4 +9,5 @@ failed Main.service.promise.1  tests/golden/service-promise-restart/main.mo:12:3
   13 |     before.all?(fn(n) after.contains?(n) end)
      |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this promise condition was false
 passed Main.service.recovery  tests/golden/service-promise-restart/main.mo:6:1
+gates: did not run: a check did not pass
 1 passed, 1 failed, 0 stopped

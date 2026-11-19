@@ -3,4 +3,5 @@ passed Main.test.2  tests/golden/cap-files-fake-folders/main.mo:13:1
 passed Main.test.3  tests/golden/cap-files-fake-folders/main.mo:27:1
 passed Main.test.4  tests/golden/cap-files-fake-folders/main.mo:34:1
 passed Main.test.5  tests/golden/cap-files-fake-folders/main.mo:51:1
+gates: 0 mutants tried, 0 killed (0 promise, 0 example, 0 test, 0 recovery, 0 start), 0 survived, 0 dropped
 5 passed, 0 failed, 0 stopped

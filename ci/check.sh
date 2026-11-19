@@ -216,7 +216,7 @@ if have python3; then
 		python3 ci/test_conformance.py
 	built mo
 	if ((${#drivers[@]})); then
-		later "The gates: lib/, examples/ and the task queue pass mo test --gates (${drivers[0]})" \
+		later "The gates: lib/, examples/ and the task queue pass mo test (${drivers[0]})" \
 			python3 ci/check_gates.py "${drivers[0]}"
 		for driver in "${drivers[@]}"; do
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \

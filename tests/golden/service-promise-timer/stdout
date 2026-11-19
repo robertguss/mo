@@ -8,4 +8,5 @@ failed Main.service.promise.1  tests/golden/service-promise-timer/main.mo:11:3
      |     ^^^^^^^^^^ this promise condition was false
 passed Main.service.promise.2  tests/golden/service-promise-timer/main.mo:17:3
 passed Main.service.recovery  tests/golden/service-promise-timer/main.mo:5:1
+gates: did not run: a check did not pass
 2 passed, 1 failed, 0 stopped

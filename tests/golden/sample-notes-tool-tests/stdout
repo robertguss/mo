@@ -5,4 +5,5 @@ passed NotesTool.search_notes.example.3  examples/notes-tool.mo:50:5
 passed NotesTool.test.1  examples/notes-tool.mo:72:1
 passed NotesTool.test.2  examples/notes-tool.mo:87:1
 passed NotesTool.test.3  examples/notes-tool.mo:93:1
+gates: 11 mutants tried, 11 killed (0 promise, 11 example, 0 test, 0 recovery, 0 start), 0 survived, 0 dropped
 7 passed, 0 failed, 0 stopped
