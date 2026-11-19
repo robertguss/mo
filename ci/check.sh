@@ -8,6 +8,8 @@
 # drives every one that is built. MO_DRIVERS names the builds to make and drive instead, such as
 # "clang/sanitize", and MO_SHARED_CHECKS=0 leaves out the drivers checks that do not depend on the
 # build; the nightly workflow uses both to run the drivers group for each build in its own job.
+# MO_SIDE_BY_SIDE caps how many checks run side by side; the nightly sets it for the sanitize
+# build, which runs each check about three times slower than a debug build.
 #
 # A check whose tool is missing is skipped with a note, and the summary at the end counts what
 # was skipped instead of claiming that all checks passed. Set CI=1 to make a missing tool an
@@ -69,10 +71,11 @@ has_libfuzzer() {
 }
 
 # Checks that don't depend on each other run side by side, as many at a time as there are
-# processors. `later TITLE COMMAND...` starts one in the background, and `report` prints each
-# one's output under its title as it finishes, with how long it took, and fails if any of them
-# failed. A command that is a shell function runs without `set -e`, so chain its steps with &&.
-later_limit=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+# processors, or MO_SIDE_BY_SIDE. `later TITLE COMMAND...` starts one in the background, and
+# `report` prints each one's output under its title as it finishes, with how long it took, and
+# fails if any of them failed. A command that is a shell function runs without `set -e`, so chain
+# its steps with &&.
+later_limit=${MO_SIDE_BY_SIDE:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 later_dir=
 later_titles=()
 later_pids=()

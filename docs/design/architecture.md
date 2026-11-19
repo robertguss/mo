@@ -2554,7 +2554,8 @@ and on manual dispatch (MO-152). It has no pull-request or push trigger, refuses
 dispatches on other branches, and checks the event's exact commit. Seven
 Ubuntu 24.04 jobs run side by side, each with a 120-minute timeout and building what it drives:
 gcc, clang and static; sanitize; the `drivers` group once for each build, with `MO_DRIVERS`
-naming the build and `MO_SHARED_CHECKS=0` on all but the gcc one; bench; and lean, which also
+naming the build and `MO_SHARED_CHECKS=0` on all but the gcc one, and `MO_SIDE_BY_SIDE=2` on
+the sanitize one, whose checks run about three times slower; bench; and lean, which also
 runs the seed batch;
 an overlapping run leaves the active run alone, with at most one pending run
 retained (a newer request replaces the pending one). It installs clang 18 with

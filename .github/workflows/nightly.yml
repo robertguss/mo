@@ -37,6 +37,7 @@ jobs:
             groups: drivers
             drivers: clang/sanitize
             shared: '0'
+            side_by_side: '2'
           - name: bench
             groups: bench
             drivers: gcc/debug clang/debug clang/sanitize
@@ -53,6 +54,7 @@ jobs:
       MO_ALL_DRIVERS: '1'
       MO_DRIVERS: ${{ matrix.drivers }}
       MO_SHARED_CHECKS: ${{ matrix.shared }}
+      MO_SIDE_BY_SIDE: ${{ matrix.side_by_side }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
