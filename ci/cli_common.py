@@ -22,8 +22,9 @@ else:
     raise AssertionError("CLI display tests need an installed UTF-8 locale")
 
 
-def run(binary, args, status, env=None):
-    result = subprocess.run([str(binary), *args], cwd=root, env=env, capture_output=True, timeout=30)
+def run(binary, args, status, env=None, timeout=30):
+    result = subprocess.run([str(binary), *args], cwd=root, env=env, capture_output=True,
+                            timeout=timeout)
     assert result.returncode == status, (args, result.returncode, result.stderr)
     return result
 
