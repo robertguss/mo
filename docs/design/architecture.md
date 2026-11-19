@@ -1754,8 +1754,9 @@ budgets but will not consume them. `--strength DIR` runs a fixed plan over the
 whole program and takes no `--list`, `--only`, `--in` or `--calls`. `--gates` runs
 every check and tries every mutant; it takes no `--bundle` or `--strength`.
 `--gates` with `--only`, `--in`, `--calls`, `--seconds`, `--max-stack`, `--max-depth` or
-`--max-heap` is accepted but skips the gate: `totals.gates` is `"did not run"` and there is
-no `mutants` object.
+`--max-heap`, and without `--list`, is accepted but skips the gate: `totals.gates` is
+`"did not run"` and there is no `mutants` object. With `--list` as well it lists only the
+selected check names, with no `gates` field and no `mutant` or `function` records.
 `--against OLD` runs every check and tries the mutants of what changed; it takes
 no `--only`, `--in`, `--calls`, `--seconds`, `--max-stack`, `--max-depth`,
 `--max-heap`, `--list`, `--bundle` or `--strength`. Source-inventory matching precedes execution
@@ -2445,10 +2446,11 @@ records may be added, and readers ignore what they don't know.
   `dropped`, those found past the limits a run keeps
   (`MO_LIMIT_DIAGNOSTICS`); for `mo test`, `passed`, `failed` and `stopped`;
   and `status`, the status `mo` exits with. When `--gates` or `--against` was
-  given, `gates` is `"ran"`, `"ran shorter"` or `"did not run"`; `"ran"` and
-  `"ran shorter"` add `mutants` with `tried`, `killed` (`promise`, `example`,
-  `test`, `recovery`, `start`), `survived` and `dropped`; `"ran shorter"` also
-  adds `carried` and `previous`.
+  given without `--list`, `gates` is `"ran"`, `"ran shorter"` or `"did not run"`;
+  `"ran"` and `"ran shorter"` add `mutants` with `tried`, `killed` (`promise`,
+  `example`, `test`, `recovery`, `start`), `survived` and `dropped`; `"ran
+  shorter"` also adds `carried` and `previous`. `--json --gates --list` writes a
+  `totals` record with no `gates` field.
 
 A **span** is `file`, the path of the file; `file_bytes`, its exact path bytes
 in lowercase hexadecimal; `start` and `end`, byte offsets
