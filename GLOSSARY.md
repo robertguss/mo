@@ -36,4 +36,4 @@ something new, and those that could not be compared.
 A gated run against the previous version of a program that tries only the mutants of functions
 whose code changed, that are new, or whose checks changed, and carries the rest over untried,
 except a function in both versions that no previous check or start ran, whose mutants are tried
-and survive.
+and survive only if the new run also does not enter the function.

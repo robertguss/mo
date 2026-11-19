@@ -2431,10 +2431,12 @@ records may be added, and readers ignore what they don't know.
   `replacement`; `outcome`, `"dropped"`, `"killed"` or `"survived"`; `by`; and
   `check`. The last two are `null` when unused. A carried mutant under
   `--against` has no record; `totals.carried` counts those functions. Under
-  `--json --gates --list`, one listed record per mutant, without `outcome`,
-  `by` or `check`.
-- **`function`**, one per function under `mo test --json --gates --list`:
-  `name` and `mutants`.
+  `--json --gates --list`, with no `--only`, `--in`, `--calls`, `--seconds`,
+  `--max-stack`, `--max-depth` or `--max-heap`, one listed record per mutant,
+  without `outcome`, `by` or `check`.
+- **`function`**, one per function under `mo test --json --gates --list` with no
+  `--only`, `--in`, `--calls`, `--seconds`, `--max-stack`, `--max-depth` or
+  `--max-heap`: `name` and `mutants`.
 - **`change`**, one per check in the `--against` summary, after `result` and
   before `totals`: `change`, `"no longer true"`, `"newly true"`, `"about
   something new"` or `"could not be compared"`; `name`; and `reason` when
