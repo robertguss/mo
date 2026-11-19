@@ -118,13 +118,13 @@ done:
     return verdict;
 }
 
+static const char *const kinds[MO_GATE_KILL_KINDS] = {"promise", "example", "test", "recovery",
+                                                      "start"};
+
 static void count_kill(struct mo_gate_totals *totals, const char *kind) {
-    uint32_t *counts[] = {&totals->promise, &totals->example, &totals->test, &totals->recovery,
-                          &totals->start};
-    const char *kinds[] = {"promise", "example", "test", "recovery", "start"};
-    for (size_t i = 0; i < sizeof kinds / sizeof *kinds; i++)
+    for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
         if (strcmp(kind, kinds[i]) == 0) {
-            (*counts[i])++;
+            totals->killed[i]++;
             return;
         }
     MO_UNREACHABLE();
@@ -151,13 +151,9 @@ static void survived(const struct gate *g, const struct mo_mutant *m, bool unrun
     mo_buffer_free(&detail);
 }
 
-static bool covered(const struct mo_program *program, uint32_t module) {
-    return module == 0 || !program->set->library[module];
-}
-
 static bool exposed(const struct mo_program *program, uint32_t function) {
     const struct mo_symbol *symbol = program->functions[function].signature->function;
-    return symbol->exported && covered(program, symbol->module) &&
+    return symbol->exported && mo_module_tested(program, symbol->module) &&
            function != program->entry.function && symbol->declaration != NULL &&
            symbol->declaration->kind == MO_S_FN;
 }
@@ -200,15 +196,15 @@ static const char *intent(struct mo_arena *arena, const struct mo_program *progr
             spec->subject != UINT32_MAX)
             stated[spec->subject] = true;
     }
-    const char *missing = NULL;
+    bool missing = false;
     for (uint32_t i = 0; i < program->function_count; i++)
         if (exposed(program, i) && !stated[i]) {
             unstated(diags, program, i, false);
-            missing = "a function or tool states no intent";
+            missing = true;
         }
     for (uint32_t i = 0; i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
-        if (!covered(program, service->module))
+        if (!mo_module_tested(program, service->module))
             continue;
         for (uint32_t t = 0; t < service->tool_count; t++) {
             uint32_t function = service->tools[t].function;
@@ -217,11 +213,11 @@ static const char *intent(struct mo_arena *arena, const struct mo_program *progr
                 met = met || service->promises[p].tool == t;
             if (!met) {
                 unstated(diags, program, function, true);
-                missing = "a function or tool states no intent";
+                missing = true;
             }
         }
     }
-    return missing;
+    return missing ? "a function or tool states no intent" : NULL;
 }
 
 static bool try_all(struct gate *g, const struct mo_mutants *mutants) {
@@ -303,25 +299,23 @@ void mo_gates(const struct mo_cli *cli, struct mo_arena *arena, const struct mo_
 }
 
 bool mo_render_gates(struct mo_buffer *out, const struct mo_gate_totals *gates, bool json) {
-    uint32_t killed =
-        gates->promise + gates->example + gates->test + gates->recovery + gates->start;
+    uint32_t killed = 0;
+    for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
+        killed += gates->killed[i];
     if (!gates->ran)
         return json ? mo_buffer_append_text(out, ",\"gates\":\"did not run\"")
                     : mo_buffer_append_text(out, "gates: did not run: ") &&
                           mo_buffer_append_text(out, gates->skipped) &&
                           mo_buffer_append_text(out, "\n");
-    const char *const names[] = {"promise", "example", "test", "recovery", "start"};
-    const uint32_t counts[] = {gates->promise, gates->example, gates->test, gates->recovery,
-                               gates->start};
     bool ok;
     if (json) {
         ok = mo_buffer_append_text(out, ",\"gates\":\"ran\",\"mutants\":{\"tried\":") &&
              mo_buffer_append_uint(out, gates->tried) &&
              mo_buffer_append_text(out, ",\"killed\":{");
-        for (size_t i = 0; i < 5; i++)
+        for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
             ok = ok && mo_buffer_append_text(out, i == 0 ? "\"" : ",\"") &&
-                 mo_buffer_append_text(out, names[i]) && mo_buffer_append_text(out, "\":") &&
-                 mo_buffer_append_uint(out, counts[i]);
+                 mo_buffer_append_text(out, kinds[i]) && mo_buffer_append_text(out, "\":") &&
+                 mo_buffer_append_uint(out, gates->killed[i]);
         return ok && mo_buffer_append_text(out, "},\"survived\":") &&
                mo_buffer_append_uint(out, gates->survived) &&
                mo_buffer_append_text(out, ",\"dropped\":") &&
@@ -330,10 +324,10 @@ bool mo_render_gates(struct mo_buffer *out, const struct mo_gate_totals *gates, 
     ok = mo_buffer_append_text(out, "gates: ") && mo_buffer_append_uint(out, gates->tried) &&
          mo_buffer_append_text(out, " mutants tried, ") && mo_buffer_append_uint(out, killed) &&
          mo_buffer_append_text(out, " killed (");
-    for (size_t i = 0; i < 5; i++)
+    for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
         ok = ok && mo_buffer_append_text(out, i == 0 ? "" : ", ") &&
-             mo_buffer_append_uint(out, counts[i]) && mo_buffer_append_text(out, " ") &&
-             mo_buffer_append_text(out, names[i]);
+             mo_buffer_append_uint(out, gates->killed[i]) && mo_buffer_append_text(out, " ") &&
+             mo_buffer_append_text(out, kinds[i]);
     return ok && mo_buffer_append_text(out, "), ") && mo_buffer_append_uint(out, gates->survived) &&
            mo_buffer_append_text(out, " survived, ") &&
            mo_buffer_append_uint(out, gates->dropped) && mo_buffer_append_text(out, " dropped\n");

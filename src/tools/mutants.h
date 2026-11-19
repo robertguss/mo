@@ -18,6 +18,8 @@ struct mo_mutants {
     struct mo_mutant *items;
 };
 
+MO_MUST_USE bool mo_module_tested(const struct mo_program *program, uint32_t module);
+
 MO_MUST_USE const char *mo_list_mutants(struct mo_arena *arena, const struct mo_program *program,
                                         const struct mo_sources *sources, struct mo_mutants *out);
 

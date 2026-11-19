@@ -91,7 +91,9 @@ static char *raise(struct mo_arena *arena, const uint8_t *text, uint32_t length)
 
 static void site(struct walk *w, enum mo_syntax_token token, struct mo_span span) {
     for (size_t r = 0; r < sizeof rows / sizeof *rows; r++)
-        for (size_t s = 0; s < 6 && rows[r].swaps[s].from != MO_T_EOF; s++) {
+        for (size_t s = 0;
+             s < sizeof rows[r].swaps / sizeof *rows[r].swaps && rows[r].swaps[s].from != MO_T_EOF;
+             s++) {
             if (rows[r].swaps[s].from != token)
                 continue;
             if (w->items != NULL) {
@@ -191,6 +193,10 @@ static void walk_all(struct walk *w, const struct mo_program *program, const str
     }
 }
 
+bool mo_module_tested(const struct mo_program *program, uint32_t module) {
+    return module == 0 || !program->set->library[module];
+}
+
 const char *mo_list_mutants(struct mo_arena *arena, const struct mo_program *program,
                             const struct mo_sources *sources, struct mo_mutants *out) {
     *out = (struct mo_mutants){0};
@@ -203,8 +209,8 @@ const char *mo_list_mutants(struct mo_arena *arena, const struct mo_program *pro
     uint32_t count = 0;
     for (uint32_t i = 0; i < program->function_count; i++) {
         const struct mo_symbol *symbol = program->functions[i].signature->function;
-        if ((symbol->module == 0 || !program->set->library[symbol->module]) &&
-            symbol->declaration != NULL && symbol->declaration->kind == MO_S_FN)
+        if (mo_module_tested(program, symbol->module) && symbol->declaration != NULL &&
+            symbol->declaration->kind == MO_S_FN)
             places[count++] = (struct place){i, symbol->module, symbol->declaration->span.start};
     }
     qsort(places, count, sizeof *places, by_place);

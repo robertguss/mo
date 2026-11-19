@@ -457,7 +457,7 @@ static bool run_one(const struct mo_cli *cli, const struct mo_program *program,
     return shown;
 }
 
-struct gate {
+struct gated {
     struct mo_gated_run *run;
     struct mo_vm_trace trace;
     uint32_t *order, *owner;
@@ -476,9 +476,9 @@ static bool named(const struct mo_observation *observation, const char *name) {
     return instance->name.length == length && memcmp(instance->name.bytes, name, length) == 0;
 }
 
-static bool plan(struct mo_arena *arena, struct mo_arena *scratch,
-                 const struct mo_test_selection *selection, struct gate *g,
-                 struct mo_diags *diags) {
+static bool order_checks(struct mo_arena *arena, struct mo_arena *scratch,
+                         const struct mo_test_selection *selection, struct gated *g,
+                         struct mo_diags *diags) {
     struct mo_gated_run *run = g->run;
     if (run->checks == NULL) {
         run->count = selection->count;
@@ -556,10 +556,10 @@ static bool *flags(struct mo_arena *arena, size_t count) {
 static bool prepare(struct mo_arena *arena, struct mo_arena *scratch,
                     const struct mo_bytecode *file, const struct mo_program *program,
                     const struct mo_sources *sources, const struct mo_test_selection *selection,
-                    struct gate *g, struct mo_diags *diags) {
+                    struct gated *g, struct mo_diags *diags) {
     struct mo_gated_run *run = g->run;
     g->trace = (struct mo_vm_trace){NULL, 0, run->start_limit};
-    if (!plan(arena, scratch, selection, g, diags))
+    if (!order_checks(arena, scratch, selection, g, diags))
         return false;
     if (!run->record)
         return true;
@@ -574,7 +574,7 @@ static bool prepare(struct mo_arena *arena, struct mo_arena *scratch,
     return ready;
 }
 
-static void attribute(const struct gate *g, uint32_t count, bool *out) {
+static void attribute(const struct gated *g, uint32_t count, bool *out) {
     for (uint32_t b = 0; b < count; b++)
         if (g->trace.entered[b] && g->owner[b] != MO_NO_INDEX)
             out[g->owner[b]] = true;
@@ -584,7 +584,7 @@ static void run_plan(const struct mo_cli *cli, const struct mo_program *program,
                      struct mo_image *image, const struct mo_sources *sources,
                      const struct mo_test_selection *selection, const uint32_t *functions,
                      FILE *output, struct mo_diags *diags, struct mo_test_totals *totals,
-                     struct gate *g) {
+                     struct gated *g) {
     struct mo_gated_run *run = g->run;
     uint32_t count = mo_image_bytecode(image)->function_count;
     for (uint32_t k = 0; k < run->count; k++) {
@@ -621,7 +621,7 @@ static void mo_test_program(const struct mo_cli *cli, struct mo_arena *arena,
                             const struct mo_program *program,
                             const struct mo_test_selection *selection, const struct mo_buffer *wire,
                             const struct mo_sources *sources, FILE *output, struct mo_diags *diags,
-                            struct mo_test_totals *totals, struct gate *g) {
+                            struct mo_test_totals *totals, struct gated *g) {
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
@@ -695,7 +695,7 @@ done:
 static void run_tests(const struct mo_cli *cli, struct mo_arena *arena,
                       const struct mo_program *program, const struct mo_sources *sources,
                       const struct mo_test_selection *selection, FILE *output,
-                      struct mo_diags *diags, struct mo_test_totals *totals, struct gate *g) {
+                      struct mo_diags *diags, struct mo_test_totals *totals, struct gated *g) {
     /* Closed declarations can refuse before lowering. Generic inputs need the concrete uses
      * retained below; both passes precede execution. */
     if (!mo_promises_supported(program, selection, diags))
@@ -738,6 +738,6 @@ void mo_run_gated(const struct mo_cli *cli, struct mo_arena *arena,
     run->start_steps = 0;
     run->start_entered = NULL;
     run->ran = 0;
-    struct gate g = {.run = run};
+    struct gated g = {.run = run};
     run_tests(&gated, arena, program, sources, selection, output, diags, totals, &g);
 }

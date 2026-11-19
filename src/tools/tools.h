@@ -94,11 +94,12 @@ MO_MUST_USE const char *mo_version_line(void);
  * Missing files (including UINT32_MAX) are unavailable, not source indices. */
 MO_MUST_USE bool mo_render_diagnostic(const struct mo_sources *sources, const struct mo_diag *diag,
                                       bool json, struct mo_buffer *out);
+#define MO_GATE_KILL_KINDS 5
 struct mo_gate_totals {
     bool asked, ran;
     const char *skipped;
     uint32_t tried, survived, dropped;
-    uint32_t promise, example, test, recovery, start;
+    uint32_t killed[MO_GATE_KILL_KINDS];
 };
 struct mo_test_totals {
     uint32_t passed, failed, stopped;
