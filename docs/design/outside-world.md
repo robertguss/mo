@@ -1,7 +1,10 @@
 # Mo talks to the outside world
 
-Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. The
-confinement of the children is built, as [As built](#as-built) says. Nothing else in it is built. Every choice that was his to make is in
+Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. Two
+parts are built. The confinement of the children is one, as [As built](#as-built) says. The network
+capability with its fake, and the two `Bytes` operations, are the other, as
+[The network and `Bytes` as built](#the-network-and-bytes-as-built) says. The HTTP client, the
+SQLite capability and HTTPS are not built. Every choice that was his to make is in
 [Decisions for Robert](#decisions-for-robert), with his answer. The evidence, with its commands
 and raw outputs, is in [the preflight](../../learnability/phase7/preflight/README.md).
 
@@ -16,8 +19,10 @@ and the second measurement meets the bar. It is the first decision in the list.
 
 ## A spike in Mo
 
-Both programs type-check today against stand-in modules
-([surface/](../../learnability/phase7/preflight/surface/README.md)). Nothing in them runs yet.
+Both programs type-checked against stand-in modules when this was written
+([surface/](../../learnability/phase7/preflight/surface/README.md)). The stand-ins declared
+`Network`, `Connection` and `NetworkError`, which are built-in names now, so those programs no
+longer check. Nothing in them runs yet.
 
 ### The first run: look at a response
 
@@ -225,6 +230,55 @@ Named in `src/base/limits.h`, with these starting values:
 | Connections open at once | 64 | Bug |
 | Bytes in one `receive` | 1 MiB | Bug |
 | Length of a host name | 253 bytes | `Error(UnknownHost(host))` |
+
+### The network and `Bytes` as built
+
+The capability, its fake and the two `Bytes` operations are built as the sections above and
+below describe. These are the points the design left open, and what was built.
+
+- **`Network` and `Connection` are capability kinds 8 and 9.** They follow `Simulation`, so no
+  number in existing bytecode changed. `main` may list a `Network`. A `main` that lists a
+  `Connection` is rejected with E0079.
+- **`NetworkError` is a built-in type, as `FileError` is.** Its cases resolve only with
+  `Network.` in front, in an expression and in a pattern. A bare `TimedOut` is an unknown name,
+  and a program may declare its own case called `Refused`. A program that declares a type named
+  `Network`, `Connection` or `NetworkError` is rejected with E0045. A `NetworkError` has the
+  text form every enum has, such as `Refused(host: "h", port: 80)`.
+- **A connection holds one deadline on the monotonic clock.** Every step waits with `poll` for
+  no longer than what is left, and each `send` and `receive` checks the deadline before it does
+  anything. `within` of zero or less gives `TimedOut` and looks nothing up.
+- **The lookup runs on a helper thread.** `getaddrinfo` has no timeout. The thread reports
+  through a pipe, and `connect` waits on the pipe. When the deadline passes first, `connect`
+  gives `TimedOut` and leaves the thread to end by itself. The thread's state is one of 8
+  static slots. With every slot held by a lookup that has not ended, `connect` gives
+  `Broken("too many lookups still running")`. Gap 5 of
+  [sandbox-properties.md](sandbox-properties.md) reviews what the thread shares.
+- **A lookup keeps at most 8 addresses, and they are tried in the order it gives them.** One
+  address that does not answer uses the whole deadline, so the addresses after it are never
+  tried. When any address refuses and none connects, the error is `Refused`. `UnknownHost` is a name the
+  resolver says does not exist or has no address. Any other failure of the lookup is `Broken`
+  with the resolver's reason.
+- **The limit of 64 open connections counts real connections.** A fake's connections do not
+  count, as a fake's folders do not count toward the folder limit.
+- **A fake applies the real network's rule for a host name.** An empty name, a name over 253
+  bytes and a name that holds a NUL byte give `UnknownHost`, whatever the map holds.
+- **A fake's connection has two stages.** A `send` after the first `receive` gives
+  `Error(Network.Closed)`. A `receive` before any `send` looks up the empty request, and so
+  gives the error for a request with no reply unless the map holds a reply for empty `Bytes`.
+  That error comes back on every later `receive`.
+- **The reason for a request with no reply names the line that differs.** It is
+  `no reply for "GET / HTTP/1.1"`, with the first line sent. When the fake holds a request that
+  starts with the same lines, the reason goes on `: sent "A: 1\r\n", expected "A: 2\r\n"`,
+  from the held request that shares the most leading lines. A side with no more lines reads
+  `nothing more`. A quoted line is cut at 120 bytes, and bytes outside printable ASCII are
+  written as `\r`, `\n` or `\xNN`.
+- **`bytes.slice(from, to)` with `from` at or past `to` gives empty `Bytes`.**
+- **Lean types the four operations and stops at each.** `ci/check_host.py` names them in
+  `OUTSIDE_MODEL`. The Core text version is 0.10.
+- **The code is four files in `src/host/`.** `network.c` holds the checks both networks share
+  and builds the results, `real-network.c` and `fake-network.c` hold the two networks, and
+  `network.h` is their shared internal header. Their tests are `tests/test_network.c`, and the
+  fake has a fuzz target of its own, `fuzz/fuzz_network_fake.c`.
 
 ## `Bytes` operations
 
@@ -612,8 +666,10 @@ bound, and still skips `Simulation`.
 
 Two costs are not on the plan's list:
 
-- **The host can build values of six types** (`Int`, `Time`, `Text`, a list, a set and a map of
-  texts). Results that hold `Bytes`, the fake's maps and SQLite's rows each need more.
+- **The host could build values of six types** (`Int`, `Time`, `Text`, a list, a set and a map of
+  texts). A result that holds `Bytes` needed nothing new, because `files.read_bytes` already
+  gives one. The fake network's maps took three more private types: `Bytes`, the map of replies
+  and the map of peers. SQLite's rows need more.
 - **`ci/check_host.py` has no way to skip a row.** It fails when a row has no modelled
   counterpart in Lean. See the next section.
 
@@ -654,8 +710,9 @@ The client's parsing functions take plain values and are compared in every case.
 
 `Network`, `Connection`, `Sqlite`, `NetworkError` and `SqliteError` become type names that are
 always in scope, as `Files` and `FileError` are. `Http` becomes a library module's name. A
-program that declares any of the six stops compiling. No program in the repository does, apart
-from `runtime/http.mo`. `Sqlite.Database`, `Sqlite.Value` and `Sqlite.Rows` are written with the
+program that declares any of the six stops compiling. In the repository, `runtime/http.mo` does, and
+so did the stand-ins under `learnability/phase7/preflight/surface/`, which stopped checking when
+the network's types were built. `Sqlite.Database`, `Sqlite.Value` and `Sqlite.Rows` are written with the
 module's name in front, so they take no name from a program.
 
 The cases of the new enums are not always in scope. `FileError`'s are, which is why no program

@@ -542,6 +542,33 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 | `Entry(name: n, kind: k)`, and `EntryKind`'s cases | instruction | `construct` and `make_case`; `field` and `switch` | |
 | `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
 
+## Network
+
+The real network is C in `src/host/real-network.c`, and the fake is C in
+`src/host/fake-network.c`. `src/host/network.c` holds the checks both share.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `connect(host, port, within)` | host | `NETWORK_CONNECT` | |
+| `Network.fake(peers)` | host | `NETWORK_FAKE` | a fake, for spec code only (reference 12.4) |
+
+## Connection
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `send(bytes)` | host | `CONNECTION_SEND` | |
+| `receive(most)` | host | `CONNECTION_RECEIVE` | |
+
+## NetworkError
+
+`NetworkError` has no `to_text` of its own, so its text form is the one
+generated for every type with `Text` (the first table).
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Network.Refused(host: h, port: p)`, and the other cases | instruction | `make_case`; `switch` and `case_field` | |
+| `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
+
 ## Json
 
 `Json` is a module of the library, written in Mo (D232). The VM needs nothing

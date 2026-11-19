@@ -177,9 +177,9 @@ space.*
 
 ### P7. The outside world is reachable only through capabilities
 
-*A program can read files, print, read the clock, draw random numbers, or read arguments and
-the environment only through a capability value it was given, and `main` receives only the
-capabilities it declares.*
+*A program can read files, print, read the clock, draw random numbers, read arguments and
+the environment, or open a network connection only through a capability value it was given,
+and `main` receives only the capabilities it declares.*
 
 - Enforced by: the language has no other way to name an effect; every effect is a `host`
   instruction through a capability object's operation table (`architecture.md` section 7;
@@ -188,13 +188,18 @@ capabilities it declares.*
   `fail` are accepted only in spec code, and non-spec code cannot call, tail-call, make a
   closure of, or load a closure constant of spec code (`bytecode.md` section 9, item 6). So
   `main` and what it reaches cannot make a fake, even in an image that contains tests.
-  `Files.within` and `read_only` only narrow a capability.
-- Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_bytecode_verify.c`;
-  `fuzz/fuzz_host.c` and `fuzz/fuzz_host_real.c`.
+  `Files.within` and `read_only` only narrow a capability. A `Connection` comes only from
+  `connect` on a `Network`: `main` cannot list one, and a service holds no capability at all.
+  A fake network opens no socket.
+- Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_network.c`,
+  `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`, `fuzz/fuzz_host_real.c`,
+  `fuzz/fuzz_network.c` and `fuzz/fuzz_network_fake.c`.
 - Not covered: the primitives (`src/prim`) are trusted C that the VM calls directly; that they
   perform no I/O is by construction and review, not a mechanical check. The host operations are
   trusted C. Console and entropy sources are process-wide: `mo_host_start` ignores `SIGPIPE`
-  for the whole process (`architecture.md` section 7).
+  for the whole process (`architecture.md` section 7). A `Network` is not narrowed: a program
+  that holds one can connect to any host and port the machine can reach, where a `Files`
+  reaches one folder. Nothing in this phase limits it to a list of hosts.
 
 ### P8. File capabilities cannot reach outside their folder
 
@@ -310,6 +315,26 @@ These are not guaranteed today.
    upgrade report.
 5. **No concurrency checking.** ThreadSanitizer is not a gate (`implementation.md`, condition 1);
    property P7's process-wide signal handling and any future threads need their own review.
+   One thread exists, and this is its review. `Network.connect` runs each name lookup on a
+   detached helper thread (`resolve` in `src/host/real-network.c`), because `getaddrinfo` has
+   no timeout and the connection's deadline covers the lookup.
+   - What it shares: one slot of a static table of `MO_LIMIT_LOOKUPS` lookups. The caller fills
+     the slot's host name and port before it starts the thread and does not write them again.
+     Every other field, the slot's state included, is read and written only under one mutex.
+     The thread touches no heap value, no capability and no descriptor but its lookup's pipe.
+   - Who owns each descriptor: a lookup has one pipe. The thread closes the write end when it
+     has stored its answer. The caller closes the read end when it takes the answer. A caller
+     whose deadline passes first marks the slot abandoned, and the thread then closes the read
+     end too and frees the slot, so a slot is never taken again while a thread can write to it.
+     Both ends are close-on-exec.
+   - Signals: the thread starts with every signal blocked.
+   - What a stuck resolver costs: a lookup that never ends keeps its slot and its two
+     descriptors. With every slot taken, `connect` gives `Broken` and starts no thread, so the
+     number of threads and of their descriptors is bounded.
+   - Evidence: `tests/test_network.c`, and the fault build (`tests/test_host_faults.c`), which
+     holds every slot busy, checks that `connect` says so, and checks that once the lookups end
+     a `connect` succeeds with no descriptor of theirs left open. No sanitizer run checks the
+     locking: ThreadSanitizer does not run, so the claims about the mutex rest on this review.
 6. **Concurrent changes to the filesystem** are outside P8.
 7. **The upgrade credential reaches the compiler.** A live upgrade compiles network input in a
    child process under CPU, memory and wall limits and the confinement of gap 4, and loads its
