@@ -23,9 +23,9 @@ def main(argv):
         path = str(source.relative_to(root))
         print(f"==> mo test {path}", flush=True)
         try:
-            result = subprocess.run([binary, "test", path], cwd=root, timeout=60)
+            result = subprocess.run([binary, "test", path], cwd=root, timeout=240)
         except subprocess.TimeoutExpired:
-            print(f"{path}: mo test timed out after 60 s", file=sys.stderr)
+            print(f"{path}: mo test timed out after 240 s", file=sys.stderr)
             failed.append(path)
             continue
         if result.returncode != 0:

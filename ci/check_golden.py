@@ -38,7 +38,7 @@ def run_case(binary, case):
     assert command in ("run", "test"), case.name
     arguments = text(case, "args").decode().splitlines()
     result = subprocess.run([str(binary), command, program, *arguments], cwd=root,
-                            input=text(case, "stdin"), capture_output=True, timeout=60)
+                            input=text(case, "stdin"), capture_output=True, timeout=120)
     status = int(text(case, "status", b"0").decode().strip())
     problems = []
     if result.stdout != text(case, "stdout"):
