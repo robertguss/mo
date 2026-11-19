@@ -1514,8 +1514,12 @@ examples kill, and how many any of its checks kills; it takes no `--only`, `--in
 matches nothing is a mistake in the command.
 
 `mo test --gates` also tries mutants. A mutant is one small change to the code
-of a function in the file given or in a program module it imports, such as `<`
-made `<=` or a `not` removed. Every check runs first, with no time limit; if
+of a function in the file given or in a program module it imports, of one of
+seven kinds: a comparison moved to its boundary (`<` and `<=` swapped, and `>`
+and `>=`), a comparison negated (`==` and `!=` swapped, `<` made `>=`, `<=` made
+`>`, `>` made `<=`, `>=` made `<`), `and` and `or` swapped, a `not` removed, an
+arithmetic operator swapped (`+` and `-`, `*` and `/`), a Bool literal flipped,
+or an Int literal raised by one. Every check runs first, with no time limit; if
 one does not pass, no mutant is tried. Next, each function on the `expose` line
 of those modules, other than `main`, needs a promise or an example of its own,
 each overload on its own, and each service tool a service promise `on` it or a
