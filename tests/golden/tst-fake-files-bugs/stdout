@@ -19,4 +19,5 @@ stopped Main.test.6  tests/golden/tst-fake-files-bugs/main.mo:27:1
   bug: fake has a key that is not a plain relative path
   detail: a//b
   at Main.test.6  tests/golden/tst-fake-files-bugs/main.mo:28:16
+gates: did not run: a check did not pass
 1 passed, 0 failed, 5 stopped

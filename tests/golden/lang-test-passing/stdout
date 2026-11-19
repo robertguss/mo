@@ -4,4 +4,5 @@ passed Main.clamp.example.1  tests/golden/lang-test-passing/main.mo:22:5
 passed Main.clamp.example.2  tests/golden/lang-test-passing/main.mo:23:5
 passed Main.test.1  tests/golden/lang-test-passing/main.mo:29:1
 passed Main.test.2  tests/golden/lang-test-passing/main.mo:33:1
+gates: 6 mutants tried, 4 killed (0 promise, 4 example, 0 test, 0 recovery, 0 start), 2 survived, 0 dropped
 6 passed, 0 failed, 0 stopped

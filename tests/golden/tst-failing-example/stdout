@@ -5,4 +5,5 @@ failed Main.double.example.2  tests/golden/tst-failing-example/main.mo:6:5
   6 |     double(3) == 7
     |     ^^^^^^^^^^^^^^ this example was false
 passed Main.double.example.3  tests/golden/tst-failing-example/main.mo:7:5
+gates: did not run: a check did not pass
 2 passed, 1 failed, 0 stopped

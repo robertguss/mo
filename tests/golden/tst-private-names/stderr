@@ -1,0 +1,5 @@
+error E1440: an exposed function states no intent  tests/golden/tst-private-names/main.mo:10:4
+
+  10 | fn run() : Int
+     |    ^^^ Main.run: give it a promise or an example
+

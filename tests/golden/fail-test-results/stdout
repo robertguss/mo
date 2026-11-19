@@ -5,4 +5,5 @@ passed Main.half.example.1  tests/golden/fail-test-results/main.mo:24:5
 passed Main.half.example.2  tests/golden/fail-test-results/main.mo:25:5
 passed Main.test.1  tests/golden/fail-test-results/main.mo:31:1
 passed Main.test.2  tests/golden/fail-test-results/main.mo:36:1
+gates: 5 mutants tried, 5 killed (0 promise, 5 example, 0 test, 0 recovery, 0 start), 0 survived, 0 dropped
 7 passed, 0 failed, 0 stopped

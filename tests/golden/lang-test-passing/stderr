@@ -1,0 +1,10 @@
+error E1439: a mutant survived: no check noticed this change  tests/golden/lang-test-passing/main.mo:26:8
+
+  26 |   if n < low: low else if n > high: high else: n
+     |        ^ Main.clamp: boundary, `<` to `<=`
+
+error E1439: a mutant survived: no check noticed this change  tests/golden/lang-test-passing/main.mo:26:29
+
+  26 |   if n < low: low else if n > high: high else: n
+     |                             ^ Main.clamp: boundary, `>` to `>=`
+
