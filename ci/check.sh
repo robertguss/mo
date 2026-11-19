@@ -71,9 +71,10 @@ has_libfuzzer() {
 }
 
 # Checks that don't depend on each other run side by side, as many at a time as there are
-# processors, or MO_SIDE_BY_SIDE. `later TITLE COMMAND...` starts one in the background, and `report` prints each
-# one's output under its title as it finishes, with how long it took, and fails if any of them
-# failed. A command that is a shell function runs without `set -e`, so chain its steps with &&.
+# processors, or MO_SIDE_BY_SIDE. `later TITLE COMMAND...` starts one in the background, and
+# `report` prints each one's output under its title as it finishes, with how long it took, and
+# fails if any of them failed. A command that is a shell function runs without `set -e`, so chain
+# its steps with &&.
 later_limit=${MO_SIDE_BY_SIDE:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}
 later_dir=
 later_titles=()
