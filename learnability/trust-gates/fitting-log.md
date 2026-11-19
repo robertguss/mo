@@ -38,12 +38,12 @@ Counted from `mo test --gates --list --json` before and after.
 
 | Program | Mutants before | Mutants after | Functions | With no mutant before | With no mutant after |
 | --- | ---: | ---: | --- | ---: | ---: |
-| 12 library modules | 274 | 265 | 70, then 70 | 31 | 31 |
+| 12 library modules | 274 | 264 | 70, then 70 | 31 | 31 |
 | 12 examples | 273 | 266 | 100, then 99 | 36 | 37 |
 | task queue | 86 | 85 | 42, then 42 | 18 | 18 |
-| All 25 | 633 | 616 | 212, then 211 | 85 | 86 |
+| All 25 | 633 | 615 | 212, then 211 | 85 | 86 |
 
-By program, the counts that changed: `lib/json.mo` 229 to 220, `examples/expenses.mo` 18 to 14,
+By program, the counts that changed: `lib/json.mo` 229 to 219, `examples/expenses.mo` 18 to 14,
 `examples/inventory.mo` 16 to 14, `examples/rate-limit.mo` 31 to 30 and the task queue 86 to 85.
 
 Functions that lost all their mutants:

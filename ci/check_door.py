@@ -2,9 +2,10 @@
 """The review door's proof on the task queue: planted changes and frozen wrong versions pushed
 through a real mo serve, mo push and mo review under both review settings.
 
-The task queue the planted set's manifest names, kept in learnability/phase6/door/program, is
-served on a fresh data folder, every item of the served program is approved with `mo review --base ... --approve ...`, and that state is copied
-once per review setting. Each case is pushed to its own copy of that state:
+The frozen task queue in learnability/phase6/door/program, the program the planted set's
+manifest names, is served on a fresh data folder, every item of the served program is approved
+with `mo review --base ... --approve ...`, and that state is copied once per review setting.
+Each case is pushed to its own copy of that state:
 
 - a planted `intent` change, which edits or removes an approved item, is held under both settings;
 - a planted `fix`, which keeps every approved item and every owner called, activates under

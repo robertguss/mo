@@ -335,7 +335,7 @@ how each survivor was killed.
 - 104 survivors and 4 functions with no stated intent before; none after. The dry run's 70
   survivors are among them; the other 34 are in `lib/json.mo` and `examples/account.mo`, whose
   mutants were not tried until they stated intent.
-- Mutants: 633 before, 616 after. Functions with no mutant: 85 of 212 before, 86 of 211 after.
+- Mutants: 633 before, 615 after. Functions with no mutant: 85 of 212 before, 86 of 211 after.
   Two functions lost all their mutants: `Inventory.pad_column` and `RateLimit.limiter_of`.
 - Nine survivors could not be killed by any check of the program as written, because they
   change nothing a check can observe; each was resolved by simpler code. Three more in

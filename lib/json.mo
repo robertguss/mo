@@ -503,8 +503,9 @@ fn plain(number: JsonNumber) : Option((Bool, List(Char), List(Char)))
   return None if exponent > 60 - point or exponent < -60 - point
   point += exponent
   padded = zeros(0 - point).concat(digits).concat(zeros(point))
-  whole = padded.take(point.max(0))
-  var fraction = padded.drop(point.max(0))
+  split = point.max(0)
+  whole = padded.take(split)
+  var fraction = padded.drop(split)
   var kept = fraction.size
   while fraction.get(kept - 1) == Some('0')
     kept -= 1

@@ -7,6 +7,6 @@ passed RateLimit.new_limiter.example.6  examples/rate-limit.mo:33:5
 passed RateLimit.new_limiter.example.7  examples/rate-limit.mo:34:5
 passed RateLimit.request.promise.1  examples/rate-limit.mo:43:3
 passed RateLimit.wait_for_one.example.1  examples/rate-limit.mo:78:5
-passed RateLimit.test.1  examples/rate-limit.mo:90:1
-passed RateLimit.test.2  examples/rate-limit.mo:102:1
+passed RateLimit.test.1  examples/rate-limit.mo:91:1
+passed RateLimit.test.2  examples/rate-limit.mo:103:1
 11 passed, 0 failed, 0 stopped
