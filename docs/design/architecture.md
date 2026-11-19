@@ -2551,12 +2551,15 @@ The `ci/check.sh` groups, the pre-PR command, and the nightly list are in AGENTS
 "Checks and merging". `.github/workflows/nightly.yml` runs that nightly list with
 `CI=1` and `MO_ALL_DRIVERS=1` on main daily at 07:17 UTC
 and on manual dispatch (MO-152). It has no pull-request or push trigger, refuses
-dispatches on other branches, and checks the event's exact commit. A single
-Ubuntu 24.04 job shares the builds across groups, with a 120-minute timeout;
+dispatches on other branches, and checks the event's exact commit. Seven
+Ubuntu 24.04 jobs run side by side, each with a 120-minute timeout and building what it drives:
+gcc, clang and static; sanitize; the `drivers` group once for each build, with `MO_DRIVERS`
+naming the build and `MO_SHARED_CHECKS=0` on all but the gcc one; bench; and lean, which also
+runs the seed batch;
 an overlapping run leaves the active run alone, with at most one pending run
 retained (a newer request replaces the pending one). It installs clang 18 with
 `libclang-rt-18-dev`, clang-tidy 18, clang-format 14 (checked as 14.0.6) and
-Bison, then Lean through elan into `/opt/elan` with the version
+Bison, and in the lean job Lean through elan into `/opt/elan` with the version
 from `formal/lean-toolchain`. Actions receive only
 read access to repository contents, and checkout does not retain credentials.
 

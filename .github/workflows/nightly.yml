@@ -15,8 +15,34 @@ concurrency:
 jobs:
   check:
     if: github.ref == 'refs/heads/main'
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc, clang and static
+            groups: gcc clang static
+          - name: sanitize
+            groups: sanitize
+          - name: drivers on gcc
+            groups: drivers
+            drivers: gcc/debug
+          - name: drivers on clang
+            groups: drivers
+            drivers: clang/debug
+            shared: '0'
+          - name: drivers on sanitize
+            groups: drivers
+            drivers: clang/sanitize
+            shared: '0'
+          - name: bench
+            groups: bench
+            drivers: gcc/debug clang/debug clang/sanitize
+          - name: lean
+            groups: lean
+            lean: true
     defaults:
       run:
         shell: bash
@@ -25,6 +51,8 @@ jobs:
       PYTHONDONTWRITEBYTECODE: '1'
       MO_CORE_DIFF_OUT: build/nightly-mismatches
       MO_ALL_DRIVERS: '1'
+      MO_DRIVERS: ${{ matrix.drivers }}
+      MO_SHARED_CHECKS: ${{ matrix.shared }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -42,6 +70,10 @@ jobs:
           ln -s /usr/bin/clang-format-14 "$RUNNER_TEMP/mo-tools/clang-format"
           echo "$RUNNER_TEMP/mo-tools" >> "$GITHUB_PATH"
           /usr/bin/clang-format-14 --version | grep -F 'version 14.0.6'
+
+      - name: Install Lean
+        if: matrix.lean
+        run: |
           # Lean 4 through elan in /opt/elan (the version formal/lean-toolchain names).
           export ELAN_HOME=/opt/elan
           sudo mkdir -p "$ELAN_HOME"
@@ -54,9 +86,10 @@ jobs:
         run: |
           MAKEFLAGS="-j$(nproc) -Otarget"
           export MAKEFLAGS
-          bash ci/check.sh gcc clang sanitize drivers static lean bench
+          bash ci/check.sh ${{ matrix.groups }}
 
       - name: Compare a fresh seed range
+        if: matrix.lean
         env:
           MO_CORE_DIFF: '1000'
         run: |
@@ -70,7 +103,7 @@ jobs:
             build/clang/sanitize/tests/test_vm.test
 
       - name: Keep programs that differ
-        if: failure()
+        if: failure() && matrix.lean
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: core-mismatches
