@@ -116,6 +116,8 @@ def recovery_checks(binary):
         ("Main.list.promise.1", "promise"),
         *((f"Main.list.example.{n}", "example") for n in range(1, 4)),
         *((f"Main.expire.example.{n}", "example") for n in range(1, 3)),
+        *((f"Main.current?.example.{n}", "example") for n in range(1, 3)),
+        ("Main.matching.example.1", "example"),
         *((f"Main.service.promise.{n}", "promise") for n in range(1, 11)),
         ("Main.service.recovery", "recovery")], items
     span = items[-2]["span"]
