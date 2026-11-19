@@ -352,7 +352,7 @@ def guide_claims(binary):
          "`mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own.")
     for library_file in sorted((root / "lib").glob("*.mo")):
         run(binary, ["check", str(library_file)], 0)
-        result = run(binary, ["test", str(library_file)], 0)
+        result = run(binary, ["test", str(library_file)], 0, timeout=300)
         assert result.stdout.endswith(b", 0 failed, 0 stopped\n"), (library_file, result.stdout)
     with tempfile.TemporaryDirectory() as folder:
         source = pathlib.Path(folder) / "main.mo"
