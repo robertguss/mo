@@ -44,7 +44,7 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Console | `print`, `error`, `read_line`, `printed`, `printed_errors`, the fakes | runs | `cap-console-*` |
 | Files, ReadFiles | every operation and `Files.in_memory` | runs | `cap-files-*` |
 | FileError, Entry | constructors, `to_text`, `compare` | runs in every form; qualified `compare` and `Entry` `to_text` since MO-144 (#208) | `ref-abilities`, `fail-result-declared` |
-| Json | `parse`, `int`, `decimal`, `float`, `to_text`, `pretty`, JsonNumber's conversions, JsonError | runs | `lib-json-query`, `lib-json-errors` |
+| Json | `parse`, `int`, `decimal`, `float`, `to_text`, `pretty`, JsonNumber's conversions, JsonError, and lookup by `get`, `at`, `path`, `text_at`, `int_at`, `bool_at` and `list_at` | runs | `lib-json-query`, `lib-json-errors`, `lib-json-lookup` |
 | Unicode16 | every function | runs | `lib-unicode16` |
 
 ## What did not run, and what happened

@@ -1863,6 +1863,20 @@ where reading stopped, counting both from 1, and why: `UnexpectedEnd`,
 in a `\u` escape), `DuplicateKey(key: Text)`, or `TooDeep`, for arrays and
 objects nested more than 128 deep.
 
+`json.get(key: Text) : Option(Json)` gives a field of an object, and
+`json.at(index: Int) : Option(Json)` an item of an array, counted from 0.
+`json.path(steps: Text) : Option(Json)` follows steps separated by `.`, as in
+`"items.0.user.login"`: a step is a key when the value is an object, and an
+index written in ASCII digits when it is an array, so an object whose keys are
+digits still works. The empty path is the value itself. A key that contains a
+`.` can't be written in a path; `get` reaches it.
+`text_at(steps: Text) : Option(Text)`, `int_at(steps: Text) : Option(Int)`,
+`bool_at(steps: Text) : Option(Bool)` and
+`list_at(steps: Text) : Option(List(Json))` give the string, the whole number,
+the `Bool` or the array's items at a path. Every lookup gives `None` when the
+path is absent or the value has another kind, and `int_at` also when the number
+isn't a whole number that fits an `Int`. None of them stops the program.
+
 **Unicode16**, following Unicode 16.0: `graphemes(text: Text) : List(Text)`,
 `display_width(text: Text) : Int`, and `normalize_nfc`, `lowercase` and
 `uppercase(text: Text) : Text`. `letter?(c: Char) : Bool` tests General_Category

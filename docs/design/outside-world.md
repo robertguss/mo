@@ -339,8 +339,8 @@ in a path. `get` reaches it.
 Every lookup gives `None` when the path is absent or the value has another kind. None stops the
 program.
 
-`examples/json-query.mo` has this lookup today, beside its own copy of the `Json` type from
-before the library existed. It becomes a short program that uses the library.
+`examples/json-query.mo` had this lookup first, beside its own copy of the `Json` type from
+before the library existed. It is now a short program that uses the library.
 
 ## The SQLite capability
 
