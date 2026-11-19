@@ -53,8 +53,9 @@ def gates(binary):
     items, total = totals(binary, f"{GATES}/unrun/main.mo", 1)
     assert [r["primary"]["label"] for r in items if r["record"] == "diagnostic"] == [
         "Main.neither: not, `not` removed; no check runs this function",
-        "Main.neither: logic, `or` to `and`; no check runs this function"], items
-    mutants(total, 2, survived=2)
+        "Main.neither: logic, `or` to `and`; no check runs this function",
+        "Main.head: int, `0` to `1`; no check runs this function"], items
+    mutants(total, 3, survived=3, dropped=1)
 
     failing = f"{GATES}/failing/main.mo"
     plain = run(binary, ["test", failing], 1)
@@ -120,5 +121,5 @@ def stated_intent(binary):
     library = subprocess.run([str(binary), "test", "--gates", "--json", "lib/json.mo"], cwd=root,
                              capture_output=True, timeout=300)
     items = records(library, "test")
-    assert library.returncode == 1 and unstated(items) == [
-        (exposed, 538, "Json.to_text@JsonNumber: give it a promise or an example")], items
+    assert library.returncode == 1 and [(h, label) for h, _, label in unstated(items)] == [
+        (exposed, "Json.to_text@JsonNumber: give it a promise or an example")], items

@@ -66,8 +66,6 @@ static void broken(const struct gate *g, const struct mo_mutant *m, const struct
 
 static enum verdict try_mutant(const struct gate *g, const struct mo_mutant *m, const char **kind) {
     uint32_t count = plan(g, m->function);
-    if (count == 0 && !g->first->start_entered[m->function])
-        return UNRUN;
     struct mo_arena arena;
     mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
     struct mo_sources sources;
@@ -88,6 +86,10 @@ static enum verdict try_mutant(const struct gate *g, const struct mo_mutant *m, 
     struct mo_program *checked = mo_check(&arena, set, &diags);
     if (checked == NULL || mo_diags_any(&diags)) {
         verdict = DROPPED;
+        goto done;
+    }
+    if (count == 0 && !g->first->start_entered[m->function]) {
+        verdict = UNRUN;
         goto done;
     }
     struct mo_test_selection *selection = mo_select_tests(&arena, checked, g->cli, &diags);
