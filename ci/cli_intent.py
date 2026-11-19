@@ -309,8 +309,9 @@ def strength_checks(binary):
     service = strength_record(binary, f"{STRENGTH}-service/main.mo", f"{STRENGTH}-service/versions")
     assert ([v["outcome"] for v in service["versions"]], service["killed_any"],
             service["scored"]) == (["killed_by_test"], 1, 1), service
-    library = without_time(run(binary, ["test", "--list", "--json", "lib/list.mo"], 0))
-    assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
+    for module in ("lib/list.mo", "lib/json.mo"):
+        library = without_time(run(binary, ["test", "--list", "--json", module], 0))
+        assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
 
 
 INTENT = "tests/cli/intent"

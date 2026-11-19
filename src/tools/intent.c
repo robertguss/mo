@@ -88,13 +88,23 @@ static void walk_type(struct walker *w, const struct mo_source_type *type) {
         walk_type(w, type->arguments[i]);
 }
 
-static void walk_proof(struct walker *w, const struct mo_ability_implementation *proof) {
+struct proof_path {
+    const struct mo_ability_implementation *proof;
+    const struct proof_path *up;
+};
+
+static void walk_proof(struct walker *w, const struct mo_ability_implementation *proof,
+                       const struct proof_path *up) {
     if (proof == NULL || !charge(w))
         return;
+    for (const struct proof_path *p = up; p != NULL; p = p->up)
+        if (p->proof == proof)
+            return;
     if (proof->kind == MO_ABILITY_FUNCTION)
         visit(w, proof->function);
+    struct proof_path here = {proof, up};
     for (uint32_t i = 0; i < proof->part_count; i++)
-        walk_proof(w, proof->parts[i]);
+        walk_proof(w, proof->parts[i], &here);
 }
 
 static void walk_body(struct walker *w, const struct mo_checked_body *body) {
@@ -103,7 +113,7 @@ static void walk_body(struct walker *w, const struct mo_checked_body *body) {
         visit(w, e->symbol);
         walk_type(w, e->type);
         for (uint32_t j = 0; j < e->ability_count; j++)
-            walk_proof(w, e->abilities[j].implementation);
+            walk_proof(w, e->abilities[j].implementation, NULL);
     }
     for (uint32_t i = 0; i < body->binding_count; i++)
         walk_type(w, body->bindings[i].type);
