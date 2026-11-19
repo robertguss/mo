@@ -528,7 +528,7 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
         if (!resolved)
             break;
     }
-    if (known && best.process != NULL && best.condition != 0 && !cli->gated) {
+    if (known && best.process != NULL && best.condition != 0 && !cli->first_failure) {
         struct mo_input_shrinker shrinker;
         mo_input_shrink_init(&shrinker, &inputs, MO_CLI_PROMISE_SHRINK_CALLS);
         struct mo_builder_shrinker builder_shrinker;

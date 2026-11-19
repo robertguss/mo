@@ -194,9 +194,10 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
 13.4/1	ref-shout,tst-passing				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run
 13.4/2					ci/cli_intent.py:promise_selection,ci/cli_intent.py:recovery_checks
-13.4/3	lang-recursion-tail				ci/cli_programs.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
-13.4/4		e1410,e1411,e1411-function,e1412,e1413			ci/check_offline.py:history,ci/check_offline.py:owned,ci/check_offline.py:hot_journal,ci/check_offline.py:pre_capture,ci/check_offline.py:replays,ci/check_offline.py:work_limit,ci/check_offline.py:queries,ci/cli_guide.py:guide_claims
-13.4/5					ci/cli_common.py:records,ci/check_cli.py:check,ci/check_offline.py:replays,ci/check_offline.py:queries		No program can show that a field keeps its name, type and meaning in later versions of the format.
+13.4/3		e1439			ci/cli_gates.py:gates,ci/cli_guide.py:guide_claims
+13.4/4	lang-recursion-tail				ci/cli_programs.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
+13.4/5		e1410,e1411,e1411-function,e1412,e1413			ci/check_offline.py:history,ci/check_offline.py:owned,ci/check_offline.py:hot_journal,ci/check_offline.py:pre_capture,ci/check_offline.py:replays,ci/check_offline.py:work_limit,ci/check_offline.py:queries,ci/cli_guide.py:guide_claims
+13.4/6					ci/cli_common.py:records,ci/check_cli.py:check,ci/check_offline.py:replays,ci/check_offline.py:queries		No program can show that a field keeps its name, type and meaning in later versions of the format.
 14/1	lang-dot-calls,lang-dot-calls-cases,col-range-loops,ref-abilities,ref-case-receivers,ref-qualified-abilities	e0050-unknown-member	fail-bug-take-negative	
 14/2	num-int-functions,num-int-checked,ref-library-natives,ref-time		fail-bug-pow-negative,fail-bug-duration-unit-overflow	
 14/3	num-bigint,ref-library-natives,ref-bigint			

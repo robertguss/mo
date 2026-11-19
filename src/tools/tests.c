@@ -38,23 +38,28 @@ struct mo_span mo_observation_span(const struct mo_observation *observation) {
                                           : observation->service->syntax->span;
 }
 
+bool mo_append_function_name(struct mo_buffer *out, const struct mo_program *program,
+                             uint32_t function) {
+    const struct mo_symbol *symbol = program->functions[function].signature->function;
+    bool ok = mo_buffer_append_text(out, program->set->names[symbol->module]) &&
+              mo_buffer_append_text(out, ".") && mo_buffer_append_text(out, symbol->name);
+    const struct mo_module_scope *scope = &program->interfaces->scopes[symbol->module];
+    const struct mo_symbol *group =
+        mo_find_symbol(scope, (const uint8_t *)symbol->name, symbol->name_length);
+    MO_ASSERT(group != NULL);
+    if (symbol->receiver != UINT32_MAX && group->overload_count > 1)
+        ok = ok && mo_buffer_append_text(out, "@") &&
+             mo_buffer_append_text(out, scope->symbols[symbol->receiver].name);
+    return ok;
+}
+
 static char *name(struct mo_arena *arena, const struct mo_program *program,
                   const struct mo_checked_spec *spec, size_t *work) {
     struct mo_buffer buffer;
     mo_buffer_init(&buffer, *work < MO_CLI_DIAGNOSTIC_SIZE ? *work : MO_CLI_DIAGNOSTIC_SIZE);
-    bool ok = mo_buffer_append_text(&buffer, program->set->names[spec->module]);
-    if (spec->subject != UINT32_MAX) {
-        const struct mo_symbol *symbol = program->functions[spec->subject].signature->function;
-        ok = ok && mo_buffer_append_text(&buffer, ".") &&
-             mo_buffer_append_text(&buffer, symbol->name);
-        const struct mo_module_scope *scope = &program->interfaces->scopes[symbol->module];
-        const struct mo_symbol *group =
-            mo_find_symbol(scope, (const uint8_t *)symbol->name, symbol->name_length);
-        MO_ASSERT(group != NULL);
-        if (symbol->receiver != UINT32_MAX && group->overload_count > 1)
-            ok = ok && mo_buffer_append_text(&buffer, "@") &&
-                 mo_buffer_append_text(&buffer, scope->symbols[symbol->receiver].name);
-    }
+    bool ok = spec->subject != UINT32_MAX
+                  ? mo_append_function_name(&buffer, program, spec->subject)
+                  : mo_buffer_append_text(&buffer, program->set->names[spec->module]);
     ok = ok && mo_buffer_append_text(&buffer, ".") &&
          mo_buffer_append_text(&buffer,
                                mo_observation_kind(&(struct mo_observation){.source = spec})) &&
@@ -728,6 +733,7 @@ void mo_run_gated(const struct mo_cli *cli, struct mo_arena *arena,
                   struct mo_test_totals *totals, struct mo_gated_run *run) {
     struct mo_cli gated = *cli;
     gated.gated = true;
+    gated.first_failure = !run->shrink;
     run->started = false;
     run->start_steps = 0;
     run->start_entered = NULL;

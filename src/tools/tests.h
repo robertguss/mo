@@ -29,6 +29,8 @@ MO_MUST_USE struct mo_test_selection *mo_select_tests(struct mo_arena *arena,
                                                       const struct mo_program *program,
                                                       const struct mo_cli *cli,
                                                       struct mo_diags *diags);
+MO_MUST_USE bool mo_append_function_name(struct mo_buffer *out, const struct mo_program *program,
+                                         uint32_t function);
 /* "example", "promise", "test" or "recovery". */
 MO_MUST_USE const char *mo_observation_kind(const struct mo_observation *observation);
 /* The written spec or service promise, or a recovery check's service block. */
@@ -79,7 +81,7 @@ struct mo_gated_check {
 struct mo_gated_run {
     struct mo_gated_check *checks;
     uint32_t count;
-    bool record, stop;
+    bool record, stop, shrink;
     uint64_t start_limit;
     bool started;
     uint64_t start_steps;

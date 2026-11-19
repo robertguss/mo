@@ -248,6 +248,8 @@
 
 #define MO_LIMIT_STRENGTH_VERSIONS 1024
 #define MO_LIMIT_MUTANTS 65536
+#define MO_LIMIT_GATE_STEP_MULTIPLE 4
+#define MO_LIMIT_GATE_STEP_FLOOR 1000000
 
 /* Entries in the debug section (bytecode.md section 3.4). */
 #define MO_LIMIT_DEBUG_ENTRIES (1 << 24)

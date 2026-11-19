@@ -1513,6 +1513,19 @@ measures how many of the wrong versions in `DIR` the program's promises and
 examples kill; it takes no `--only`, `--in`, `--list` or `--calls`. A selection that
 matches nothing is a mistake in the command.
 
+`mo test --gates` also tries mutants. A mutant is one small change to the code
+of a function in the file given or in a program module it imports, such as `<`
+made `<=` or a `not` removed. Every check runs first, with no time limit; if
+one does not pass, no mutant is tried. Each mutant then runs against the checks
+that ran its function, cheapest first, and is killed when one of them no longer
+passes or the program no longer starts. A check that takes more than four times
+the steps it took on the unchanged program, and more than 1,000,000, no longer
+passes. A mutant that survives is an error, E1439, naming the function, the
+line and the change; a mutant the checker refuses is dropped. With `--only`,
+`--in`, `--calls`, `--seconds` or a `--max` limit, `--gates` runs the checks as
+without it, tries no mutant and says the gates did not run. It takes no
+`--list`, `--bundle` or `--strength`.
+
 `mo run` and `mo test` limit what a program uses: `--max-stack` sets the bytes
 of stack, by default 8 MiB; `--max-depth` the calls in progress at once, by
 default 10,000; and `--max-heap` the bytes of memory, by default 1 GiB. Going

@@ -233,7 +233,7 @@ static bool failed(struct run *w, uint32_t item, struct mo_recovery_result *foun
     if (check)
         set_judges(w, found->verdict.check);
     struct mo_recovery_hooks hooks = {NULL, check ? judge_step : NULL, w};
-    if (!w->cli->gated) {
+    if (!w->cli->first_failure) {
         uint32_t runs = mo_recovery_shrink(w->recovery, &found->sequence, found->outcome,
                                            check ? &hooks : NULL, found->verdict);
         (void)runs;
@@ -339,7 +339,7 @@ static bool search(struct run *w) {
         add(&base, found.resume);
         first = found.ordinal;
         mo_recovery_result_free(w->recovery, &found);
-        if (!more || w->cli->gated)
+        if (!more || w->cli->first_failure)
             return written;
     }
 }

@@ -3,6 +3,7 @@
 #include "tools/tools.h"
 
 #include "prim/prim.h"
+#include "tools/gates.h"
 #include "tools/promises.h"
 #include "tools/recovery.h"
 #include "tools/run.h"
@@ -1522,6 +1523,8 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
             unsigned_number(&w, counts.failed);
             text(&w, ",\"stopped\":");
             unsigned_number(&w, counts.stopped);
+            if (counts.gates.asked && w.ok)
+                w.ok = mo_render_gates(w.out, &counts.gates, true);
         }
         text(&w, ",\"status\":");
         unsigned_number(&w, (uint32_t)status);
@@ -1532,6 +1535,10 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     }
     if (ok && buffer.length != 0)
         ok = w.ok && write_buffer(json ? output : errors, &buffer);
+    if (ok && !json && counts.gates.asked) {
+        mo_buffer_clear(&buffer);
+        ok = mo_render_gates(&buffer, &counts.gates, false) && write_buffer(output, &buffer);
+    }
     if (ok && !json && (counts.passed != 0 || counts.failed != 0 || counts.stopped != 0)) {
         mo_buffer_clear(&buffer);
         unsigned_number(&w, counts.passed);
