@@ -148,16 +148,18 @@ static const struct mo_intent_read *read_named(const struct mo_check_text *check
     return NULL;
 }
 
-const char *mo_changed_helper(const struct mo_check_text *a, const struct mo_check_text *b) {
+static const char *helper_changed(const struct mo_check_text *a, const struct mo_check_text *b) {
     for (uint32_t i = 0; i < a->read_count; i++) {
         const struct mo_intent_read *other = read_named(b, a->reads[i].label);
-        if (other == NULL || !mo_same_text(a->reads[i].text, other->text))
+        if (a->reads[i].helper && (other == NULL || !mo_same_text(a->reads[i].text, other->text)))
             return a->reads[i].label;
     }
-    for (uint32_t i = 0; i < b->read_count; i++)
-        if (read_named(a, b->reads[i].label) == NULL)
-            return b->reads[i].label;
     return NULL;
+}
+
+const char *mo_changed_helper(const struct mo_check_text *a, const struct mo_check_text *b) {
+    const char *helper = helper_changed(a, b);
+    return helper != NULL ? helper : helper_changed(b, a);
 }
 
 static bool coded(const struct mo_program *program, uint32_t function) {

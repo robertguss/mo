@@ -223,7 +223,12 @@ def shorter_run(binary):
     assert [r["primary"]["label"] for r in items if r["record"] == "diagnostic"] == [
         "Main.twice: arithmetic, `*` to `/`", "Main.twice: int, `2` to `3`"], items
     shorter(items[-1], digest, 3, 3, survived=2, test=1)
-    unused = edit(base, ("fn main()", "fn unused(a: Int) : Int\n  a + 1\nend\n\nfn main()"))
+    rooted = edit(base, ("fn main()\n", "fn main() : Int\n  twice(1)\n"))
+    items, digest = against(binary, base, rooted, 1)
+    assert not changes(items), items
+    summary(items, 8)
+    shorter(items[-1], digest, 1, 5, survived=1)
+    unused =edit(base, ("fn main()", "fn unused(a: Int) : Int\n  a + 1\nend\n\nfn main()"))
     items, digest = against(binary, unused, unused, 1)
     assert [r["primary"]["label"] for r in items if r["record"] == "diagnostic"] == [
         "Main.unused: arithmetic, `+` to `-`; no check runs this function",

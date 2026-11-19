@@ -288,12 +288,11 @@ static struct mo_intent_read *collect(struct walker *w, const bool *roots, uint3
     *count = 0;
     for (uint32_t i = 0; w->ok && i < w->reach_count; i++) {
         uint32_t index = w->reach[i], m;
-        if (roots != NULL && roots[index])
-            continue;
         const struct mo_symbol *symbol = symbol_at(w, index, &m);
         struct mo_intent_text text = declaration_text(w, index);
         entries[*count] = (struct mo_intent_read){w->program->set->names[m], symbol->name,
-                                                  symbol_name(w, m, symbol), text};
+                                                  symbol_name(w, m, symbol), text,
+                                                  roots != NULL && !roots[index]};
         w->ok = w->ok && entries[(*count)++].label != NULL;
     }
     if (w->ok)

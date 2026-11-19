@@ -16,6 +16,7 @@ struct mo_intent_read {
     const char *name;
     const char *label;
     struct mo_intent_text text;
+    bool helper;
 };
 
 struct mo_intent_item {
