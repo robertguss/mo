@@ -1007,9 +1007,13 @@ static void native_graph(void) {
     init(&f, "module Main\n"
              "power = Int.pow\nroot = Float.sqrt\ndecode = Bytes.decode_utf8\n"
              "to_int = Byte.to_int\ncompare_ints = Int.compare\n"
+             "slice = Bytes.slice\njoin = Bytes.join\n"
              "fn main() : Int\n"
              "if power(2, 3) == 8 and root(9.0) == 3.0 and "
              "decode(\"λ\".bytes) == Some(\"λ\") and Bytes.get(\"a\".bytes, 0) == 97.to_byte and "
+             "\"abc\".bytes.slice(1, 2) == \"b\".bytes and "
+             "Bytes.slice(\"abc\".bytes, 1, 9) == slice(\"abc\".bytes, 1, 3) and "
+             "Bytes.join([\"a\".bytes, \"bc\".bytes]) == join([\"abc\".bytes]) and "
              "to_int(255.to_byte or stop \"byte\") == 255 and "
              "compare_ints(7, -2) == Greater\n"
              "  [Int.checked_sub(7, 3) or 0, -1, 3].sum\nelse\n0\nend\nend\n");

@@ -189,6 +189,48 @@ static void unchanged_trim(void) {
     prim_fixture_free(&f);
 }
 
+static void bytes_slice_and_join(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 1 << 20);
+    uint32_t bytes_type = f.builtin[MO_TYPE_BYTES];
+    uint32_t list_type = f.types.items[f.signature[MO_PRIM_BYTES_JOIN]].parameters[0];
+    struct mo_cell whole, out;
+    const char *reason = NULL;
+    MO_ASSERT(mo_value_bytes(f.heap, (const uint8_t *)"abcde", 5, &whole));
+    struct mo_cell args[3] = {whole, mo_cell_int(1), mo_cell_int(3)};
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_SLICE, f.signature[MO_PRIM_BYTES_SLICE],
+                           args, &out, &reason) == MO_PRIM_RETURNED);
+    size_t length;
+    const uint8_t *bytes = mo_value_data(out, &length);
+    CHECK(length == 2 && memcmp(bytes, "bc", 2) == 0);
+    CHECK(mo_cell_get_ref(out) != mo_cell_get_ref(whole));
+    bytes = mo_value_data(whole, &length);
+    CHECK(length == 5 && memcmp(bytes, "abcde", 5) == 0);
+
+    args[1] = mo_cell_int(-1);
+    struct mo_cell untouched = mo_cell_int(41);
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_SLICE, f.signature[MO_PRIM_BYTES_SLICE],
+                       args, &untouched, &reason) == MO_PRIM_OUTSIDE);
+    CHECK(strcmp(reason, "Bytes.slice with a negative index") == 0);
+    CHECK(mo_cell_get_int(untouched) == 41);
+
+    struct mo_cell empty, list, joined;
+    MO_ASSERT(mo_value_bytes(f.heap, (const uint8_t *)"", 0, &empty));
+    struct mo_cell parts[3] = {out, empty, whole};
+    MO_ASSERT(mo_value_list(f.heap, list_type, parts, 3, &list));
+    MO_ASSERT(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_JOIN, f.signature[MO_PRIM_BYTES_JOIN],
+                           &list, &joined, &reason) == MO_PRIM_RETURNED);
+    bytes = mo_value_data(joined, &length);
+    CHECK(length == 7 && memcmp(bytes, "bcabcde", 7) == 0);
+    mo_value_drop(f.heap, bytes_type, joined);
+    mo_value_drop(f.heap, list_type, list);
+    mo_value_drop(f.heap, bytes_type, out);
+    mo_value_drop(f.heap, bytes_type, empty);
+    mo_value_drop(f.heap, bytes_type, whole);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    prim_fixture_free(&f);
+}
+
 static void unique_reverse_without_space(void) {
     struct prim_fixture f;
     prim_fixture_init(&f, 1 << 20);
@@ -1159,6 +1201,7 @@ int main(int argc, char **argv) {
     unique_contraction();
     growth_near_limit();
     unchanged_trim();
+    bytes_slice_and_join();
     unique_reverse_without_space();
     unique_union_without_space();
     reuse_refusals();

@@ -288,9 +288,11 @@ inductive TextOp where
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Bytes`. `decodeUtf8` gives `None` for bytes that aren't
-valid UTF-8 (reference 3.4). -/
+valid UTF-8 (reference 3.4). `slice` gives the bytes from one index up to,
+not including, another; an index past the end is the end, and a negative
+index is a bug. `join` gives the parts of a list as one value. -/
 inductive BytesOp where
-  | size | get | decodeUtf8
+  | size | get | decodeUtf8 | slice | join
   deriving DecidableEq, Repr, Inhabited
 
 /-- Unicode 16.0 trusted primitives; Core specifies their interface, not tables. -/
@@ -468,6 +470,8 @@ def BytesOp.sig : BytesOp → List Ty × Ty
   | .size => ([.bytes], .int)
   | .get => ([.bytes, .int], .option .byte)
   | .decodeUtf8 => ([.bytes], .option .text)
+  | .slice => ([.bytes, .int, .int], .bytes)
+  | .join => ([.list .bytes], .bytes)
 
 def RangeOp.sig : RangeOp → List Ty × Ty
   | .make => ([.int, .int], .range)

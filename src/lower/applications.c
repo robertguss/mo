@@ -265,7 +265,9 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
             enum mo_core_bytes_op operation;
         } bytes[] = {{"Bytes.size", MO_CORE_BYTES_OP_SIZE},
                      {"Bytes.get", MO_CORE_BYTES_OP_GET},
-                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8}};
+                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8},
+                     {"Bytes.slice", MO_CORE_BYTES_OP_SLICE},
+                     {"Bytes.join", MO_CORE_BYTES_OP_JOIN}};
         for (size_t i = 0; i < sizeof bytes / sizeof bytes[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, bytes[i].name) == 0)

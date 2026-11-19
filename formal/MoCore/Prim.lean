@@ -286,11 +286,24 @@ list. -/
 def bytesGet (bs : List Int) (i : Int) : Value :=
   if 0 ≤ i then optOf (bs[i.toNat]?.map .byte) else noneV
 
+/-- The parts of a list of `Bytes` values. -/
+def bytesOf : List Value → Option (List (List Int))
+  | [] => some []
+  | .bytes bs :: vs => (bytesOf vs).map (bs :: ·)
+  | _ => none
+
 def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
   | .size, [.bytes bs] => okInt bs.length w
   | .get, [.bytes bs, .int i] => .ok (bytesGet bs i) w
   | .decodeUtf8, [.bytes bs] => .ok (optText ((utf8Decode bs).map String.ofList)) w
+  | .slice, [.bytes bs, .int i, .int j] =>
+    if i < 0 ∨ j < 0 then outside "Bytes.slice with a negative index" w
+    else .ok (.bytes ((bs.take j.toNat).drop i.toNat)) w
+  | .join, [.list xs] =>
+    match bytesOf xs with
+    | some parts => .ok (.bytes parts.flatten) w
+    | none => wrongArgs "Bytes.join"
   | _, _ => wrongArgs "Bytes primitive"
 
 /-! ## Ranges -/

@@ -189,6 +189,8 @@ def signatures():
     add("bytes", "size", "(bytes)", I)
     add("bytes", "get", "(bytes)|" + I, O("(byte)"))
     add("bytes", "decodeUtf8", "(bytes)", O(T))
+    add("bytes", "slice", "(bytes)|" + I + "|" + I, "(bytes)")
+    add("bytes", "join", L("(bytes)"), "(bytes)")
     add("unicode16", "graphemes", T, L(T))
     add("unicode16", "displayWidth", T, I)
     add("unicode16", "normalizeNfc lowercase uppercase", T, T)

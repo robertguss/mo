@@ -374,7 +374,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `CmpOp` | `lt le gt ge` |
 | `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText` |
 | `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes` |
-| `BytesOp` | `size get decodeUtf8` |
+| `BytesOp` | `size get decodeUtf8 slice join` |
 | `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase letter digit` |
 | `RangeOp` | `make start end toList contains toText` |
 | `TimeOp` | `sub add subDur checkedAdd toText parse durAdd durSub durMul durNeg inMilliseconds inSeconds durToText` |

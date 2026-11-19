@@ -202,6 +202,8 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     case MO_PRIM_BYTES_SIZE:
     case MO_PRIM_BYTES_GET:
     case MO_PRIM_BYTES_DECODE_UTF8:
+    case MO_PRIM_BYTES_SLICE:
+    case MO_PRIM_BYTES_JOIN:
         status = mo_prim_text(&call, &result);
         break;
     case MO_PRIM_LIST_EMPTY:

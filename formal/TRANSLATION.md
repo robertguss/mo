@@ -323,7 +323,11 @@ no sequence cut short. A byte order mark is the character U+FEFF, kept like
 any other, as Mo never normalizes text silently (reference 3.4). `Bytes` has
 `Equal`, `Hash` and an order, byte by byte, in which a sequence comes before
 any longer one it begins, as a list does; it has no text form (reference
-9.2), so it can't be interpolated.
+9.2), so it can't be interpolated. `slice(from, to)` is `%bytes.slice`: the
+bytes from index `from` up to, not including, `to`, where an index past the
+end is the end and `from` at or past `to` gives no bytes; a negative index
+stops as a bug, "Bytes.slice with a negative index". `Bytes.join(parts)` is
+`%bytes.join`, the parts in order as one value.
 
 ```mo
 size = text.bytes.size
@@ -1679,7 +1683,7 @@ that every library primitive in the model's table below is source-lowered yet.
 | `Text`: `byte_count`, `char_count`, `empty?`, `chars`, `bytes`, `lines`, `words`, `split`, `trim`, `trim_start`, `trim_end`, `starts_with?`, `ends_with?`, `contains?`, `drop_prefix`, `drop_suffix`, `replace`, `repeat`, `pad_left`, `pad_right`, `ascii_lowercase`, `ascii_uppercase`, `to_int`, `to_decimal`, `Text.from_chars`, interpolation | prim (`%text.*`) |
 | `Text`: `to_float` | prim (`%text.toFloat`) |
 | `Char`: `code`, `ascii_digit?`, `ascii_letter?`, `ascii_white_space?`, `ascii_lowercase`, `ascii_uppercase`, `to_text` | prim (`%char.*`) |
-| `Bytes`: `size`, `get`, `decode_utf8` | prim (`%bytes.*`) |
+| `Bytes`: `size`, `get`, `decode_utf8`, `slice`, `Bytes.join` | prim (`%bytes.*`) |
 | `List`: literals, `size`, `empty?`, `get`, `first`, `last`, `append`, `prepend`, `concat`, `reverse`, `take`, `drop`, `set`, `remove_at`, `enumerate`, `zip`, `contains?`, `unique` | prim (`%list.*`) |
 | `List`: `join` | prim (`%text.join`) |
 | `List`: `to_map` | prim (`%map.ofList`): for a key given twice, the later value, in the key's first place |

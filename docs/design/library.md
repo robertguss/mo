@@ -284,6 +284,8 @@ no functions, only tests that pin what reference section 14 says they do.
 | `size` | primitive | `BYTES_SIZE` | |
 | `get(i)` | primitive | `BYTES_GET` | |
 | `decode_utf8` | primitive | `BYTES_DECODE_UTF8` | |
+| `slice(from, to)` | primitive | `BYTES_SLICE` | a copy: `Bytes` has no window onto another value's bytes, and the HTTP client's reader cuts at most a few times for each receive |
+| `Bytes.join(parts)` | primitive | `BYTES_JOIN` | joining through a list of single bytes took 6.7 to 7.9 times the instructions in the HTTP prototype (`learnability/phase7/preflight/http-in-mo/`) |
 
 ## Unit
 

@@ -680,6 +680,10 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
             return sig(O(S(BYTE)), 2, S(BYTES), S(INT), NULL);
         case MO_CORE_BYTES_OP_DECODE_UTF8:
             return sig(O(S(TEXT)), 1, S(BYTES), NULL, NULL);
+        case MO_CORE_BYTES_OP_SLICE:
+            return sig(S(BYTES), 3, S(BYTES), S(INT), S(INT));
+        case MO_CORE_BYTES_OP_JOIN:
+            return sig(S(BYTES), 1, L(S(BYTES)), NULL, NULL);
         }
         break;
     case MO_CORE_PRIM_UNICODE16:
