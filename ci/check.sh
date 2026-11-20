@@ -262,6 +262,8 @@ if have python3; then
 			later "Approvals and the review setting on a real service ($driver)" \
 				python3 ci/check_review.py "$driver" "$checks_fail"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
+			later "The Http client against a live peer on loopback ($driver)" \
+				python3 ci/check_network.py "$driver"
 			later "Offline history, replay and query ($driver)" python3 ci/check_offline.py "$driver"
 			later "Immutable state exports ($driver)" python3 ci/check_export.py "$driver"
 			later "Service simulation: deterministic lifecycle and real persistence ($driver)" \
