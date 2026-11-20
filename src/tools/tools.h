@@ -59,6 +59,7 @@ struct mo_cli {
     uint32_t approve_count, answers;
     uint64_t fetch_failure;
     const char *module;
+    const char *library;
     const char *output; /* emit's -o file */
     uint16_t port;
     const char *data;

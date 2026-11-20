@@ -8,19 +8,22 @@
 
 struct interval {
     uint32_t first, last, block, slot, next, replaced, written;
-    bool pinned, closed, borrowed;
+    bool pinned, closed, borrowed, prologue_needed;
 };
 struct slot {
     uint32_t type, next, previous, block, clear_next;
+    bool initialized, entry_written;
 };
 struct allocation {
     const struct mo_bytecode *context;
     const struct mo_bytecode_function *function;
     struct interval *intervals;
     struct slot *slots;
-    bool *starts;
+    bool *starts, *kept_prologue;
+    uint8_t *incoming;
     uint32_t *heads, *ends, *offsets, *code;
     uint32_t count, used, capacity, instructions, block, clear;
+    bool has_joins;
     uint64_t work;
     uint16_t error;
 };
@@ -87,12 +90,25 @@ static MO_MUST_USE bool scan(struct allocation *a, uint32_t prologue) {
             struct mo_operand_info operand =
                 i < info->fixed_count ? info->fixed[i] : info->variable;
             if (operand.kind == MO_OPERAND_TARGET) {
-                MO_ASSERT(f->code[pc + 1 + i] < f->code_count);
-                a->starts[f->code[pc + 1 + i]] = true;
+                uint32_t target = f->code[pc + 1 + i];
+                MO_ASSERT(target < f->code_count);
+                a->starts[target] = true;
+                if (a->incoming[target] < 2)
+                    a->incoming[target]++;
             }
         }
         pc += n;
     }
+    for (uint32_t pc = 0; pc < f->code_count;) {
+        uint32_t n = width(a, pc), op = f->code[pc] & MO_OPCODE_MASK;
+        if (!transfer(op) && pc + n < f->code_count && a->starts[pc + n] && a->incoming[pc + n] < 2)
+            a->incoming[pc + n]++;
+        pc += n;
+    }
+    a->has_joins = a->incoming[0] > 0;
+    for (uint32_t pc = 1; pc < f->code_count && !a->has_joins; pc++)
+        if (a->starts[pc] && a->incoming[pc] > 1)
+            a->has_joins = true;
     uint32_t block = 0;
     for (uint32_t pc = 0; pc < f->code_count;) {
         uint32_t n = width(a, pc), op = f->code[pc] & MO_OPCODE_MASK;
@@ -117,7 +133,7 @@ static MO_MUST_USE bool scan(struct allocation *a, uint32_t prologue) {
                 MO_ASSERT(r < f->register_count);
                 struct interval *v = &a->intervals[r];
                 if (pc < prologue) {
-                    if (!write)
+                    if (!write && a->has_joins)
                         v->pinned = true;
                     continue;
                 }
@@ -196,10 +212,96 @@ static MO_MUST_USE bool clear(struct allocation *a) {
     }
     return true;
 }
+static MO_MUST_USE bool assign_slots(struct allocation *a, uint32_t prologue) {
+    const struct mo_bytecode_function *f = a->function;
+    bool in_entry = a->incoming[0] == 0 &&
+                    (prologue == 0 || prologue == f->code_count || a->incoming[prologue] <= 1);
+    for (uint32_t pc = prologue; pc < f->code_count;) {
+        uint32_t n = width(a, pc), op = f->code[pc] & MO_OPCODE_MASK;
+        const struct mo_opcode_info *info = mo_opcode_find(op);
+        MO_ASSERT(info != NULL);
+        if (!charge(a, n + 1u))
+            return false;
+        if (pc > prologue && a->starts[pc])
+            in_entry = false;
+        for (uint32_t i = 0; i + 1 < n; i++) {
+            struct mo_operand_info operand =
+                i < info->fixed_count ? info->fixed[i] : info->variable;
+            if (operand.kind != MO_OPERAND_REGISTER)
+                continue;
+            uint32_t r = f->code[pc + 1 + i];
+            struct interval *v = &a->intervals[r];
+            if (v->first == pc && !v->pinned && v->slot == MO_NO_INDEX) {
+                uint32_t ty = f->register_types[r], slot = a->heads[ty];
+                if (slot == MO_NO_INDEX) {
+                    if (a->count == MO_LIMIT_FUNCTION_REGISTERS) {
+                        a->error = MO_CODE_TOO_MANY_REGISTERS;
+                        return false;
+                    }
+                    slot = a->count++;
+                    a->slots[slot] = (struct slot){.type = ty, .previous = MO_NO_INDEX};
+                } else {
+                    a->heads[ty] = a->slots[slot].next;
+                    a->intervals[a->slots[slot].previous].replaced = pc;
+                }
+                v->slot = slot;
+            }
+            enum mo_operand_access mode = access(a, pc, i);
+            if (in_entry && mode == MO_ACCESS_WRITE && op != MO_OP_CLEAR &&
+                !a->context->types[f->register_types[r]].reference) {
+                MO_ASSERT(v->slot != MO_NO_INDEX);
+                a->slots[v->slot].entry_written = true;
+            }
+        }
+        for (uint32_t r = a->ends[pc]; r != MO_NO_INDEX; r = a->intervals[r].next) {
+            uint32_t slot = a->intervals[r].slot, ty = a->slots[slot].type;
+            a->slots[slot].previous = r;
+            a->slots[slot].next = a->heads[ty];
+            a->heads[ty] = slot;
+        }
+        if (transfer(op))
+            in_entry = false;
+        pc += n;
+    }
+    if (!a->has_joins || prologue == 0)
+        return true;
+    /* Deduplicate prologue initializers per physical immediate slot, walking backwards so any
+     * helper register read by MAKE_RANGE / MAKE_CASE stays initialized before its reader. */
+    uint32_t count = 0;
+    for (uint32_t pc = 0; pc < prologue; pc += width(a, pc))
+        a->offsets[count++] = pc;
+    if (!charge(a, count))
+        return false;
+    while (count != 0) {
+        uint32_t pc = a->offsets[--count], n = width(a, pc), op = f->code[pc] & MO_OPCODE_MASK;
+        const struct mo_opcode_info *info = mo_opcode_find(op);
+        MO_ASSERT(info != NULL && info->fixed_count >= 1 &&
+                  info->fixed[0].access == MO_ACCESS_WRITE);
+        uint32_t r = f->code[pc + 1];
+        struct interval *v = &a->intervals[r];
+        bool need = (v->slot != MO_NO_INDEX && !a->slots[v->slot].initialized &&
+                     !a->slots[v->slot].entry_written) ||
+                    v->prologue_needed;
+        if (!need)
+            continue;
+        MO_ASSERT(v->slot != MO_NO_INDEX);
+        a->kept_prologue[pc] = true;
+        a->slots[v->slot].initialized = true;
+        for (uint32_t i = 1; i + 1 < n; i++) {
+            struct mo_operand_info operand =
+                i < info->fixed_count ? info->fixed[i] : info->variable;
+            if (operand.kind == MO_OPERAND_REGISTER)
+                a->intervals[f->code[pc + 1 + i]].prologue_needed = true;
+        }
+    }
+    return true;
+}
 static MO_MUST_USE bool rewrite(struct allocation *a, uint32_t prologue) {
     const struct mo_bytecode_function *f = a->function;
     a->block = 0;
     a->clear = MO_NO_INDEX;
+    for (uint32_t i = 0; i < a->count; i++)
+        a->slots[i].previous = MO_NO_INDEX;
     for (uint32_t pc = 0; pc < f->code_count;) {
         uint32_t n = width(a, pc), op = f->code[pc] & MO_OPCODE_MASK;
         const struct mo_opcode_info *info = mo_opcode_find(op);
@@ -211,7 +313,12 @@ static MO_MUST_USE bool rewrite(struct allocation *a, uint32_t prologue) {
             a->clear = MO_NO_INDEX;
         }
         a->offsets[pc] = a->used;
-        bool unused = false;
+        if (pc < prologue) {
+            if (a->kept_prologue[pc] && !append(a, f->code + pc, n))
+                return false;
+            pc += n;
+            continue;
+        }
         for (uint32_t i = 0; i + 1 < n; i++) {
             struct mo_operand_info operand =
                 i < info->fixed_count ? info->fixed[i] : info->variable;
@@ -219,25 +326,10 @@ static MO_MUST_USE bool rewrite(struct allocation *a, uint32_t prologue) {
                 continue;
             uint32_t r = f->code[pc + 1 + i];
             struct interval *v = &a->intervals[r];
-            if (v->first == MO_NO_INDEX && !v->pinned) {
-                MO_ASSERT(pc < prologue && operand.access == MO_ACCESS_WRITE);
-                unused = true;
-            }
-            if (v->first != pc || v->pinned || v->slot != MO_NO_INDEX)
+            if (v->first != pc || v->pinned)
                 continue;
-            uint32_t ty = f->register_types[r], slot = a->heads[ty];
-            if (slot == MO_NO_INDEX) {
-                if (a->count == MO_LIMIT_FUNCTION_REGISTERS) {
-                    a->error = MO_CODE_TOO_MANY_REGISTERS;
-                    return false;
-                }
-                slot = a->count++;
-                a->slots[slot] = (struct slot){.type = ty, .previous = MO_NO_INDEX};
-            } else {
-                a->heads[ty] = a->slots[slot].next;
-                a->intervals[a->slots[slot].previous].replaced = pc;
-            }
-            v->slot = slot;
+            uint32_t ty = f->register_types[r], slot = v->slot;
+            MO_ASSERT(slot != MO_NO_INDEX);
             if (a->context->types[ty].reference && a->slots[slot].block != a->block) {
                 a->slots[slot].block = a->block;
                 a->slots[slot].clear_next = a->clear;
@@ -247,16 +339,10 @@ static MO_MUST_USE bool rewrite(struct allocation *a, uint32_t prologue) {
         bool end = pc + n == f->code_count || a->starts[pc + n];
         if (end && transfer(op) && !terminal(op) && !clear(a))
             return false;
-        /* Keep virtual operands until the complete plan exists: prologue writes
-         * precede local allocation. Inserted clears name the last retired virtual. */
-        if (!unused && !append(a, f->code + pc, n))
+        if (!append(a, f->code + pc, n))
             return false;
-        for (uint32_t r = a->ends[pc]; r != MO_NO_INDEX; r = a->intervals[r].next) {
-            uint32_t slot = a->intervals[r].slot, ty = a->slots[slot].type;
-            a->slots[slot].previous = r;
-            a->slots[slot].next = a->heads[ty];
-            a->heads[ty] = slot;
-        }
+        for (uint32_t r = a->ends[pc]; r != MO_NO_INDEX; r = a->intervals[r].next)
+            a->slots[a->intervals[r].slot].previous = r;
         if (end && !transfer(op) && !clear(a))
             return false;
         pc += n;
@@ -281,22 +367,28 @@ uint16_t mo_codegen_registers(struct mo_arena *arena, const struct mo_bytecode *
     ARRAY(intervals, registers);
     ARRAY(slots, slots);
     ARRAY(starts, words);
+    ARRAY(kept_prologue, prologue == 0 ? 1 : prologue);
+    ARRAY(incoming, words);
     ARRAY(heads, context->type_count);
     ARRAY(ends, words);
     ARRAY(offsets, (size_t)words + 1);
     ARRAY(code, a.capacity);
 #undef ARRAY
     uint16_t result = MO_CODE_CODEGEN_MEMORY;
-    if (a.intervals != NULL && a.slots != NULL && a.starts != NULL && a.heads != NULL &&
-        a.ends != NULL && a.offsets != NULL && a.code != NULL &&
+    if (a.intervals != NULL && a.slots != NULL && a.starts != NULL && a.kept_prologue != NULL &&
+        a.incoming != NULL && a.heads != NULL && a.ends != NULL && a.offsets != NULL &&
+        a.code != NULL &&
         charge(&a, (uint64_t)registers + UINT64_C(2) * words + context->type_count)) {
         memset(a.starts, 0, (size_t)words * sizeof *a.starts);
+        memset(a.kept_prologue, 0,
+               (size_t)(prologue == 0 ? 1 : prologue) * sizeof *a.kept_prologue);
+        memset(a.incoming, 0, (size_t)words * sizeof *a.incoming);
         memset(a.ends, 255, (size_t)words * sizeof *a.ends);
         memset(a.heads, 255, (size_t)context->type_count * sizeof *a.heads);
         for (uint32_t r = 0; r < registers; r++)
             a.intervals[r] =
                 (struct interval){.first = MO_NO_INDEX, .slot = MO_NO_INDEX, .replaced = words};
-        if (scan(&a, prologue) && rewrite(&a, prologue) &&
+        if (scan(&a, prologue) && assign_slots(&a, prologue) && rewrite(&a, prologue) &&
             charge(&a, UINT64_C(2) * words + UINT64_C(2) * a.used + a.count + debug->span_count +
                            UINT64_C(2) * debug->name_count)) {
             uint32_t blocks = 0;

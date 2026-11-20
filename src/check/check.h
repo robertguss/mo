@@ -21,6 +21,17 @@ struct mo_module_set {
     const struct mo_sources *sources;
 };
 
+struct mo_embedded_source {
+    const char *path;
+    const uint8_t *bytes;
+    size_t length;
+};
+
+struct mo_embedded_library {
+    const struct mo_embedded_source *files;
+    uint32_t count;
+};
+
 /* Loads the entry and its transitive uses. sources must be initialized and empty.
  * A NULL library means no library folder; a non-NULL folder must exist. Every
  * .mo library file is included, recursively, without entering linked folders.
@@ -30,6 +41,11 @@ struct mo_module_set {
 MO_MUST_USE struct mo_module_set *mo_load_program(struct mo_arena *arena,
                                                   struct mo_sources *sources, const char *entry,
                                                   const char *library, struct mo_diags *diags);
+
+MO_MUST_USE struct mo_module_set *
+mo_load_program_with_library(struct mo_arena *arena, struct mo_sources *sources, const char *entry,
+                             const char *library, const struct mo_embedded_library *embedded,
+                             const char *library_entry_root, struct mo_diags *diags);
 
 MO_MUST_USE struct mo_module_set *mo_load_program_sources(struct mo_arena *arena,
                                                           struct mo_sources *sources,
@@ -43,12 +59,22 @@ MO_MUST_USE struct mo_module_set *mo_load_upgrade_sources(struct mo_arena *arena
                                                           struct mo_sources *sources,
                                                           const char *entry, const char *library,
                                                           struct mo_diags *diags);
+
+MO_MUST_USE struct mo_module_set *
+mo_load_upgrade_with_library(struct mo_arena *arena, struct mo_sources *sources, const char *entry,
+                             const char *library, const struct mo_embedded_library *embedded,
+                             const char *library_entry_root, struct mo_diags *diags);
+
 /* In-memory closed source set plus this build's standard library. Missing imports never
  * fall back to candidate filesystem paths. */
 MO_MUST_USE struct mo_module_set *mo_load_bundle_sources(struct mo_arena *arena,
                                                          struct mo_sources *sources,
                                                          const char *library,
                                                          struct mo_diags *diags);
+
+MO_MUST_USE struct mo_module_set *
+mo_load_bundle_with_library(struct mo_arena *arena, struct mo_sources *sources, const char *library,
+                            const struct mo_embedded_library *embedded, struct mo_diags *diags);
 
 struct mo_symbol {
     const char *name;

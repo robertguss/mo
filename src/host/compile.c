@@ -74,8 +74,8 @@ static enum mo_compile_status spawn(const struct mo_compiler *compiler, const ch
     *child = (struct mo_compile_child){pid, now + limits.wall};
     return MO_COMPILE_RUNNING;
 }
-static unsigned upgrade_inputs(const char **arguments, unsigned at, const char *old_bundle,
-                               const char *migration, const char *context) {
+static unsigned upgrade_inputs(const char **arguments, unsigned at, const char *library,
+                               const char *old_bundle, const char *migration, const char *context) {
     if (old_bundle != NULL) {
         arguments[at++] = "--old-bundle";
         arguments[at++] = old_bundle;
@@ -88,6 +88,10 @@ static unsigned upgrade_inputs(const char **arguments, unsigned at, const char *
         arguments[at++] = "--context";
         arguments[at++] = context;
     }
+    if (library != NULL) {
+        arguments[at++] = "--lib";
+        arguments[at++] = library;
+    }
     arguments[at] = NULL;
     return at;
 }
@@ -97,7 +101,8 @@ enum mo_compile_status mo_compile_start(const struct mo_compiler *compiler, cons
                                         const char *migration, const char *context, uint64_t now,
                                         struct mo_compile_child *child) {
     const char *arguments[16] = {compiler->executable, "emit", entry, "-o", output, "--bundle"};
-    unsigned count = upgrade_inputs(arguments, 6, old_bundle, migration, context);
+    unsigned count =
+        upgrade_inputs(arguments, 6, compiler->library, old_bundle, migration, context);
     struct child_limits limits = {MO_LIMIT_UPGRADE_COMPILE_MEMORY,
                                   MO_LIMIT_UPGRADE_COMPILE_CPU_SECONDS,
                                   MO_LIMIT_UPGRADE_COMPILE_WALL_US};
@@ -111,7 +116,7 @@ enum mo_compile_status mo_list_start(const struct mo_compiler *compiler, const c
                                      struct mo_compile_child *child) {
     const char *arguments[16] = {
         compiler->executable, "test", bundle, "--bundle", "--list", "-o", output};
-    unsigned count = upgrade_inputs(arguments, 7, old_bundle, NULL, context);
+    unsigned count = upgrade_inputs(arguments, 7, compiler->library, old_bundle, NULL, context);
     struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
                                   MO_LIMIT_CHECK_WALL_US};
     const char *reads[3] = {bundle, old_bundle, context};
@@ -122,7 +127,7 @@ enum mo_compile_status mo_check_start(const struct mo_compiler *compiler, const 
                                       const char *old_bundle, const char *context, uint64_t now,
                                       struct mo_compile_child *child) {
     const char *arguments[16] = {compiler->executable, "test", bundle, "--bundle"};
-    unsigned count = upgrade_inputs(arguments, 4, old_bundle, NULL, context);
+    unsigned count = upgrade_inputs(arguments, 4, compiler->library, old_bundle, NULL, context);
     struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
                                   MO_LIMIT_CHECK_WALL_US};
     const char *reads[3] = {bundle, old_bundle, context};

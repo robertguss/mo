@@ -33,7 +33,9 @@ struct loader {
     const char *real_root;
     const char *real_library;
     const char *real_entry; /* the entry's real path when the entry is a library file */
-    uint32_t index;         /* AVL root, one-based; zero is absent */
+    const char *entry_library_rel;
+    const struct mo_embedded_library *embedded;
+    uint32_t index; /* AVL root, one-based; zero is absent */
     bool memory_only, upgrade;
     bool failed;
 };
@@ -329,7 +331,8 @@ static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const 
 static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
                                         const char *expected, struct mo_span origin, bool library) {
     MO_ASSERT(!l->memory_only || library);
-    if (expected != NULL || library) {
+    MO_ASSERT(!library || l->real_library != NULL || l->entry_library_rel != NULL);
+    if (expected != NULL || (library && l->real_library != NULL)) {
         const char *root = library ? l->real_library : l->real_root;
         MO_ASSERT(root != NULL);
         char *real = real_path(l, file_path, origin, false);
@@ -509,8 +512,67 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
 
 static MO_MUST_USE char *library_file(struct loader *l, const struct mo_syntax *path) {
     char *relative = path_text(l, path, true);
+    if (l->real_library == NULL)
+        return relative == NULL ? NULL : join(l, "lib/", relative, path->span);
     char *prefix = join(l, l->real_library, "/", path->span);
     return relative == NULL || prefix == NULL ? NULL : join(l, prefix, relative, path->span);
+}
+
+static MO_MUST_USE uint32_t read_embedded_module(struct loader *l,
+                                                 const struct mo_embedded_source *src,
+                                                 const char *expected, struct mo_span origin) {
+    char *virtual_path = join(l, "<lib>/", src->path, origin);
+    if (virtual_path == NULL)
+        return 0;
+    uint32_t file;
+    struct mo_source_error error;
+    if (!mo_sources_add_bytes(l->sources, virtual_path, src->bytes, src->length, &file, &error)) {
+        bool kept = source_error(l, error, virtual_path, origin);
+        (void)kept;
+        return 0;
+    }
+    return index_module(l, file, expected, origin, true);
+}
+
+static MO_MUST_USE bool embedded_library_files(struct loader *l,
+                                               const struct mo_embedded_library *embedded) {
+    struct mo_span unavailable = {UINT32_MAX, 0, 0};
+    for (uint32_t i = 0; i < embedded->count; i++) {
+        const struct mo_embedded_source *src = &embedded->files[i];
+        if (l->entry_library_rel != NULL && strcmp(src->path, l->entry_library_rel) == 0)
+            continue;
+        if (file_loaded_on_use(src->path))
+            continue;
+        uint32_t id = read_embedded_module(l, src, NULL, unavailable);
+        if (id == 0)
+            return false;
+        char *relative = path_text(l, l->items[id - 1].header.path, true);
+        if (relative == NULL)
+            return false;
+        if (strcmp(src->path, relative) != 0) {
+            bool kept = report(l, MO_CODE_MODULE_NAME, l->items[id - 1].header.path->span,
+                               "the module's name doesn't match its file",
+                               "Each part of a module's name becomes a lowercase folder or file "
+                               "name with hyphens between words (reference 2.1).",
+                               relative);
+            (void)kept;
+            return false;
+        }
+    }
+    return true;
+}
+
+static const struct mo_embedded_source *find_embedded_on_use(struct loader *l,
+                                                             const struct mo_syntax *path) {
+    if (l->embedded == NULL)
+        return NULL;
+    char *relative = path_text(l, path, true);
+    if (relative == NULL)
+        return NULL;
+    for (uint32_t i = 0; i < l->embedded->count; i++)
+        if (strcmp(l->embedded->files[i].path, relative) == 0)
+            return &l->embedded->files[i];
+    return NULL;
 }
 
 static MO_MUST_USE bool graph(struct loader *l) {
@@ -561,6 +623,13 @@ static MO_MUST_USE bool graph(struct loader *l) {
                 target = read_module(l, full, name, path->span, true);
                 if (target == 0)
                     return false;
+            } else if (target == 0 && l->embedded != NULL && loaded_on_use(name)) {
+                const struct mo_embedded_source *src = find_embedded_on_use(l, path);
+                if (src != NULL) {
+                    target = read_embedded_module(l, src, name, path->span);
+                    if (target == 0)
+                        return false;
+                }
             }
             if (l->memory_only &&
                 (target == 0 || (l->out->library[frame->id - 1] && !l->out->library[target - 1]))) {
@@ -663,10 +732,15 @@ static MO_MUST_USE struct mo_module_set *parse_modules(struct loader *l) {
 
 static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_sources *sources,
                                               const char *entry, const char *library,
+                                              const struct mo_embedded_library *embedded,
+                                              const char *library_entry_root,
                                               struct mo_diags *diags, bool upgrade) {
     MO_ASSERT(arena != NULL && sources != NULL && entry != NULL && diags != NULL);
     MO_ASSERT(sources->count == 0);
-    struct loader l = {.arena = arena, .sources = sources, .diags = diags};
+    struct loader l = {.arena = arena,
+                       .sources = sources,
+                       .diags = diags,
+                       .embedded = library == NULL ? embedded : NULL};
     if (!prepare(&l))
         return NULL;
     entry = normal_path(&l, entry);
@@ -688,6 +762,22 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
             l.real_entry = real_path(&l, entry, (struct mo_span){UINT32_MAX, 0, 0}, false);
             if (l.real_entry == NULL)
                 return NULL;
+        }
+    } else if (embedded != NULL && library_entry_root != NULL) {
+        char lib_resolved[MO_LIMIT_PATH_SIZE + 1], entry_resolved[MO_LIMIT_PATH_SIZE + 1];
+        if (realpath(library_entry_root, lib_resolved) != NULL &&
+            realpath(entry, entry_resolved) != NULL) {
+            size_t n = strlen(lib_resolved);
+            if (strncmp(lib_resolved, entry_resolved, n) == 0 &&
+                (n == 1 || entry_resolved[n] == '/')) {
+                l.real_entry = real_path(&l, entry, (struct mo_span){UINT32_MAX, 0, 0}, false);
+                if (l.real_entry == NULL)
+                    return NULL;
+                const char *rel = l.real_entry + n;
+                if (*rel == '/')
+                    rel++;
+                l.entry_library_rel = rel;
+            }
         }
     }
     if (read_module(&l, entry, NULL, (struct mo_span){UINT32_MAX, 0, 0}, l.real_entry != NULL) == 0)
@@ -726,13 +816,23 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     }
     if (library != NULL && !library_files(&l, library))
         return NULL;
+    if (library == NULL && embedded != NULL && !embedded_library_files(&l, embedded))
+        return NULL;
     return parse_modules(&l);
 }
 
 struct mo_module_set *mo_load_program(struct mo_arena *arena, struct mo_sources *sources,
                                       const char *entry, const char *library,
                                       struct mo_diags *diags) {
-    struct mo_module_set *set = load(arena, sources, entry, library, diags, false);
+    return mo_load_program_with_library(arena, sources, entry, library, NULL, NULL, diags);
+}
+
+struct mo_module_set *
+mo_load_program_with_library(struct mo_arena *arena, struct mo_sources *sources, const char *entry,
+                             const char *library, const struct mo_embedded_library *embedded,
+                             const char *library_entry_root, struct mo_diags *diags) {
+    struct mo_module_set *set =
+        load(arena, sources, entry, library, embedded, library_entry_root, diags, false);
     mo_diags_sort(diags);
     return set;
 }
@@ -760,14 +860,33 @@ done:
 struct mo_module_set *mo_load_upgrade_sources(struct mo_arena *arena, struct mo_sources *sources,
                                               const char *entry, const char *library,
                                               struct mo_diags *diags) {
-    struct mo_module_set *set = load(arena, sources, entry, library, diags, true);
+    return mo_load_upgrade_with_library(arena, sources, entry, library, NULL, NULL, diags);
+}
+
+struct mo_module_set *
+mo_load_upgrade_with_library(struct mo_arena *arena, struct mo_sources *sources, const char *entry,
+                             const char *library, const struct mo_embedded_library *embedded,
+                             const char *library_entry_root, struct mo_diags *diags) {
+    struct mo_module_set *set =
+        load(arena, sources, entry, library, embedded, library_entry_root, diags, true);
     mo_diags_sort(diags);
     return set;
 }
+
 struct mo_module_set *mo_load_bundle_sources(struct mo_arena *arena, struct mo_sources *sources,
                                              const char *library, struct mo_diags *diags) {
+    return mo_load_bundle_with_library(arena, sources, library, NULL, diags);
+}
+
+struct mo_module_set *mo_load_bundle_with_library(struct mo_arena *arena,
+                                                  struct mo_sources *sources, const char *library,
+                                                  const struct mo_embedded_library *embedded,
+                                                  struct mo_diags *diags) {
     MO_ASSERT(sources->count != 0);
-    struct loader l = {.arena = arena, .sources = sources, .diags = diags};
+    struct loader l = {.arena = arena,
+                       .sources = sources,
+                       .diags = diags,
+                       .embedded = library == NULL ? embedded : NULL};
     if (!prepare(&l))
         return NULL;
     l.out->root = "";
@@ -779,6 +898,8 @@ struct mo_module_set *mo_load_bundle_sources(struct mo_arena *arena, struct mo_s
         l.real_library = real_path(&l, library, (struct mo_span){UINT32_MAX, 0, 0}, true);
         if (l.real_library == NULL || !library_files(&l, library))
             return NULL;
+    } else if (embedded != NULL && !embedded_library_files(&l, embedded)) {
+        return NULL;
     }
     l.memory_only = true;
     struct mo_module_set *set = parse_modules(&l);

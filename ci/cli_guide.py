@@ -1,4 +1,5 @@
 import pathlib
+import shutil
 import subprocess
 import tempfile
 
@@ -18,6 +19,7 @@ flags = {
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
     "--mutants": ([], {"test"}),
+    "--lib": (["lib"], {"check", "run", "test", "fix", "emit", "serve", "replay", "query"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
@@ -229,8 +231,9 @@ def guide_claims(binary):
         says("`mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode "
              "to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A module "
              "with neither `main` nor a service is E0079, as for `mo run`, and a file that cannot be written is "
-             "E1404. This build has no command that runs a bytecode file; run the source with "
-             "`mo run`.")
+             "E1404. `mo run OUT [ARGS...]` loads, verifies and runs an emitted bytecode file directly without "
+             "source files; an unreadable or invalid bytecode file is E1404, a service entry module is E1408, "
+             "and a module without `main` is E0079.")
         unused = folder / "unused.mo"
         unused.write_text("module Unused\n\nfn one(x: Int) : Int\n  1\nend\n", encoding="utf-8")
         assert b"Fix: " in run(binary, ["check", str(unused)], 1).stderr
@@ -342,9 +345,11 @@ def guide_claims(binary):
         result = run(binary, ["test", "--only", "Twice.one.example.1", str(twice)], 0)
         assert result.stdout.endswith(b"1 passed, 0 failed, 0 stopped\n")
 
-    says("The `lib/` folder holds library modules written in Mo, and every `mo` command loads "
-         "them with your program, `Http`, `Json` and `Unicode16` only when a `use` line names "
-         "them.",
+    says("The `lib/` folder holds library modules written in Mo, embedded into the `mo` binary so "
+         "a single `mo` executable runs anywhere without an external `lib/` directory "
+         "(`--lib DIR` overrides the embedded library with a folder on disk).",
+         "Every `mo` command loads them with your program, `Http`, `Json` and `Unicode16` only "
+         "when a `use` line names them.",
          "`mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own.")
     for library_file in sorted((root / "lib").glob("*.mo")):
         run(binary, ["check", str(library_file)], 0)
@@ -482,6 +487,8 @@ def emit_command(binary):
             ran = run(binary, ["run", str(path)], 37 if name == "console" else 0)
             loaded = run(driver, ["--run-bytecode", str(out)], 37 if name == "console" else 0)
             assert loaded.stdout == ran.stdout and loaded.stderr == ran.stderr, (name, loaded, ran)
+            direct = run(binary, ["run", str(out)], 37 if name == "console" else 0)
+            assert direct.stdout == ran.stdout and direct.stderr == ran.stderr, (name, direct, ran)
             # Emission is deterministic.
             again = folder / f"{name}-again.bc"
             run(binary, ["emit", str(path), "-o", str(again)], 0)
@@ -540,6 +547,36 @@ def emit_command(binary):
         if full.exists():
             refused = run(binary, ["emit", str(source), "-o", str(full)], 1)
             assert b"E1404" in refused.stderr
+        # mo run executes emitted bytecode with CLI arguments, refuses service bytecode (E1408)
+        # and corrupt bytecode (E1404), and a standalone copied mo binary runs with embedded lib/.
+        arg_src = folder / "arg_prog" / "main.mo"
+        arg_src.parent.mkdir()
+        arg_src.write_text(
+            'module Main\nuse Json\nfn main(args: Args, console: Console)\n'
+            '  console.print("#{args.list.first or "none"} #{Json.Null.to_text}")\nend\n')
+        arg_bc = folder / "arg_prog" / "out_bin"
+        run(binary, ["emit", str(arg_src), "-o", str(arg_bc)], 0)
+        arg_src.unlink()
+        assert run(binary, ["run", str(arg_bc), "Ada", "Grace"], 0).stdout == b"Ada null\n"
+        corrupt = folder / "corrupt.bc"
+        corrupt.write_bytes(b"MOBCbroken")
+        assert b"E1404" in run(binary, ["run", str(corrupt)], 1).stderr
+        svc_bc = folder / "svc.bc"
+        run(binary, ["emit", "tests/errors/e1408/main.mo", "-o", str(svc_bc)], 0)
+        assert b"E1408" in run(binary, ["run", str(svc_bc)], 1).stderr
+        portable_dir = folder / "portable"
+        portable_dir.mkdir()
+        portable_mo = portable_dir / "mo"
+        shutil.copy2(binary, portable_mo)
+        (portable_dir / "app.mo").write_text(
+            'module App\nuse Http\nuse Json\nfn main(console: Console)\n'
+            '  method = Http.get("http://example.com").method\n'
+            '  console.print("#{[1, 2, 3].map(fn(x) x * 2 end)} #{Json.int(7).to_text} #{method}")\n'
+            'end\n')
+        standalone = subprocess.run([str(portable_mo), "run", "app.mo"], cwd=portable_dir,
+                                    capture_output=True, timeout=30)
+        assert standalone.returncode == 0 and standalone.stdout == b"[2, 4, 6] 7 GET\n", standalone
+        assert b"E1102" in run(binary, ["check", "--lib", str(folder / "no-such-lib"), str(source)], 1).stderr
     def mistake(args, message):
         r = run(binary, args, 2)
         assert not r.stdout and r.stderr == message.encode() + b"\n", (args, r.stderr)

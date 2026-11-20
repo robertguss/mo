@@ -91,7 +91,7 @@ static bool makes_temporary(void) {
 
 static int probe(int argc, char **argv) {
     need("execute", true);
-    MO_ASSERT(argc == 8);
+    MO_ASSERT(argc == 10 && strcmp(argv[8], "--lib") == 0);
     char plan[512] = {0}, root[256] = {0}, path[512];
     int fd = open(argv[2], O_RDONLY | O_CLOEXEC);
     ssize_t got = fd < 0 ? -1 : read(fd, plan, sizeof plan - 1);
@@ -335,7 +335,7 @@ static struct outcome run_probe(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc == 8 && strcmp(argv[1], "test") == 0)
+    if (argc >= 8 && strcmp(argv[1], "test") == 0)
         return probe(argc, argv);
     show = argc == 2 && strcmp(argv[1], "--show") == 0;
     (void)prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0);

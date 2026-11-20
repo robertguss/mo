@@ -262,7 +262,8 @@ static int push_attempt(const struct mo_cli *cli, FILE *output, FILE *errors, co
     int status = 1;
     struct mo_image *image = NULL;
     if (!mo_sources_init(&sources) ||
-        !mo_upgrade_bundle(mo_cli_file(cli, 0), true, true, &bundle, &diags, &sources)) {
+        !mo_upgrade_bundle_with_library(mo_cli_file(cli, 0), cli->library, true, true, &bundle,
+                                        &diags, &sources)) {
         status = mo_write_diagnostics(output, errors, cli->json, MO_COMMAND_PUSH, &sources, &diags,
                                       NULL);
         status = status == 0 ? 1 : status;

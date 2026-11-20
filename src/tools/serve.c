@@ -280,7 +280,7 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     const char *authorities[] = {numeric, named, cli->allow_host};
     size_t authority_count = cli->allow_host == NULL ? 2 : 3;
     const struct mo_protocol_events events = {log_event, &log};
-    struct mo_compiler compiler = mo_upgrade_compiler();
+    struct mo_compiler compiler = mo_upgrade_compiler_with_library(cli->library);
     enum mo_upgrade_children children = mo_upgrade_children(cli->unconfined);
     enum mo_protocol_server_status built = mo_protocol_server_new(
         image, service, store, listener, authorities, authority_count, &events, &server);

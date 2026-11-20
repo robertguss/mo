@@ -118,9 +118,8 @@ static void test_control(void) {
                         "(if_ (var \"b\") (lit (int 17)) (lit (int 29))) \"Control\" (function) "
                         "0)) () \"main\" (noSource))");
     if (b != NULL) {
-        const uint32_t expected[] = {
-            MO_OP_CONST, 1,         2, MO_OP_CONST, 1, 2, MO_OP_BRANCH, 0, 10, 15, MO_OP_CONST, 1,
-            0,           MO_OP_RET, 1, MO_OP_CONST, 1, 1, MO_OP_RET,    1};
+        const uint32_t expected[] = {MO_OP_BRANCH, 0, 4,           9, MO_OP_CONST, 1,         0,
+                                     MO_OP_RET,    1, MO_OP_CONST, 1, 1,           MO_OP_RET, 1};
         CHECK(b->functions[0].code_count == sizeof expected / sizeof expected[0]);
         CHECK(memcmp(b->functions[0].code, expected, sizeof expected) == 0);
         CHECK(b->constants[0].value.immediate[0] == 17 && b->constants[1].value.immediate[0] == 29);
@@ -132,28 +131,9 @@ static void test_control(void) {
                 "(case_ (var \"o\") ((\"None\" () (lit (int -5))) (\"Some\" (\"x\") (var \"x\")))) "
                 "\"Cases\" (function) 0)) () \"main\" (noSource))");
     if (b != NULL) {
-        const uint32_t expected[] = {MO_OP_CONST,
-                                     1,
-                                     1,
-                                     MO_OP_CONST,
-                                     1,
-                                     1,
-                                     MO_OP_SWITCH | (2u << 16),
-                                     0,
-                                     10,
-                                     15,
-                                     MO_OP_CONST,
-                                     1,
-                                     0,
-                                     MO_OP_RET,
-                                     1,
-                                     MO_OP_CASE_FIELD,
-                                     1,
-                                     0,
-                                     1,
-                                     0,
-                                     MO_OP_RET,
-                                     1};
+        const uint32_t expected[] = {
+            MO_OP_SWITCH | (2u << 16), 0, 4, 9, MO_OP_CONST, 1,         0, MO_OP_RET, 1,
+            MO_OP_CASE_FIELD,          1, 0, 1, 0,           MO_OP_RET, 1};
         CHECK(b->functions[0].code_count == sizeof expected / sizeof expected[0]);
         CHECK(memcmp(b->functions[0].code, expected, sizeof expected) == 0);
         CHECK(b->types[1].kind == MO_TYPE_CHOICE && b->types[1].case_count == 2);
@@ -842,7 +822,8 @@ static void test_range_and_fail(void) {
         "(if_ (var \"b\") (fail (var \"why\")) (lit (int 23))) \"M\" (promise) 0)) "
         "() \"main\" (noSource))");
     if (b != NULL) {
-        const uint32_t *make = instruction(&b->functions[0], MO_OP_MAKE_RANGE, 2),
+        CHECK(opcode_count(&b->functions[0], MO_OP_MAKE_RANGE) == 1);
+        const uint32_t *make = instruction(&b->functions[0], MO_OP_MAKE_RANGE, 0),
                        *move = instruction(&b->functions[0], MO_OP_MOVE, 0),
                        *start = instruction(&b->functions[0], MO_OP_RANGE_START, 0),
                        *end = instruction(&b->functions[0], MO_OP_RANGE_END, 0);
@@ -2497,9 +2478,9 @@ static void test_join_metadata(void) {
             const struct mo_bytecode_function *f = &b->functions[0];
             const struct mo_bytecode_debug *d = &b->debug[0];
             const uint32_t *ret = instruction(f, MO_OP_RET, 0);
-            CHECK(d->name_count == 0 && d->span_count == 3);
-            if (ret != NULL && d->span_count == 3) {
-                const struct mo_bytecode_span *s = &d->spans[2];
+            CHECK(d->name_count == 0 && d->span_count == 2);
+            if (ret != NULL && d->span_count == 2) {
+                const struct mo_bytecode_span *s = &d->spans[1];
                 CHECK(s->code_offset == (uint32_t)(ret - 3 - f->code) &&
                       file_is(b, s->file, "absent.mo") && s->start == 30 && s->end == 35);
                 CHECK(b->constants[ret[-1]].value.immediate[0] == 23);
@@ -2552,6 +2533,106 @@ static void test_depth(void) {
         mo_arena_free(&arena);
     }
 }
+static bool function_has_opcode(const struct mo_bytecode *file, uint32_t fn_idx,
+                                enum mo_opcode want) {
+    const struct mo_bytecode_function *fn = &file->functions[fn_idx];
+    for (uint32_t pc = 0; pc < fn->code_count;) {
+        uint32_t op = fn->code[pc] & MO_OPCODE_MASK;
+        if (op == (uint32_t)want)
+            return true;
+        const struct mo_opcode_info *info = mo_opcode_find(op);
+        MO_ASSERT(info != NULL);
+        pc += 1u + info->fixed_count + (fn->code[pc] >> MO_OPCODE_VARIABLE_SHIFT);
+    }
+    return false;
+}
+
+static void test_perceus_reuse(void) {
+    static const char core_text[] =
+        "(Program ("
+        "  (DataDecl \"Pair\" ((Ctor \"Pair\" ((\"a\" (int)) (\"b\" (int))))))"
+        "  (DataDecl \"Choice\" ((Ctor \"Empty\" ()) (Ctor \"Node\" ((\"x\" (int)) (\"y\" "
+        "(int))))))) ("
+        "  (FunDecl \"set_one\" ((\"p\" (data \"Pair\")) (\"v\" (int))) (data \"Pair\")"
+        "    (case_ (var \"p\") ((\"Pair\" (\"a\" \"b\") (con (data \"Pair\") \"Pair\" ((var "
+        "\"a\") (var \"v\"))))))"
+        "    \"M\" (function) 0)"
+        "  (FunDecl \"swap_pair\" ((\"p\" (data \"Pair\"))) (data \"Pair\")"
+        "    (case_ (var \"p\") ((\"Pair\" (\"a\" \"b\")"
+        "      (let_ \"s\" (prim (int (add)) ((var \"a\") (var \"b\")))"
+        "        (con (data \"Pair\") \"Pair\" ((var \"b\") (var \"s\")))))))"
+        "    \"M\" (function) 0)"
+        "  (FunDecl \"bump_choice\" ((\"c\" (data \"Choice\"))) (data \"Choice\")"
+        "    (case_ (var \"c\") ("
+        "      (\"Empty\" () (con (data \"Choice\") \"Empty\" ()))"
+        "      (\"Node\" (\"x\" \"y\")"
+        "        (let_ \"nx\" (prim (int (add)) ((var \"x\") (lit (int 1))))"
+        "          (con (data \"Choice\") \"Node\" ((var \"nx\") (var \"y\")))))))"
+        "    \"M\" (function) 0)"
+        "  (FunDecl \"set_entry\" ((\"e\" (entry)) (\"n\" (text))) (entry)"
+        "    (case_ (var \"e\") ((\"Entry\" (\"old\" \"k\") (con (entry) \"Entry\" ((var \"n\") "
+        "(var \"k\"))))))"
+        "    \"M\" (function) 0)"
+        "  (FunDecl \"main\" () (int)"
+        "    (let_ \"p0\" (con (data \"Pair\") \"Pair\" ((lit (int 3)) (lit (int 4))))"
+        "      (let_ \"p1\" (call \"set_one\" ((var \"p0\") (lit (int 10))))"
+        "        (let_ \"p2\" (call \"swap_pair\" ((var \"p1\")))"
+        "          (let_ \"c0\" (con (data \"Choice\") \"Node\" ((lit (int 5)) (lit (int 6))))"
+        "            (let_ \"c1\" (call \"bump_choice\" ((var \"c0\")))"
+        "              (let_ \"e0\" (con (entry) \"Entry\" ((lit (text \"a\")) (con (entryKind) "
+        "\"File\" ())))"
+        "                (let_ \"e1\" (call \"set_entry\" ((var \"e0\") (lit (text \"b\"))))"
+        "                  (case_ (var \"e1\") ((\"Entry\" (\"en\" \"ek\")"
+        "                    (case_ (var \"p2\") ((\"Pair\" (\"a\" \"b\")"
+        "                      (case_ (var \"c1\") ("
+        "                        (\"Empty\" () (lit (int 0)))"
+        "                        (\"Node\" (\"x\" \"y\")"
+        "                          (prim (int (add)) ((prim (int (add)) ((var \"a\") (var \"b\")))"
+        "                                             (prim (int (add)) ((var \"x\") (var "
+        "\"y\")))))))))))))))))))))"
+        "    \"M\" (function) 0)"
+        ") () \"main\" (noSource))";
+    struct mo_arena arena;
+    struct mo_diags diags;
+    struct mo_buffer out;
+    mo_arena_init(&arena, MO_LIMIT_CORE_SCRATCH_SIZE);
+    CHECK(mo_diags_init(&diags));
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *p = parse(&arena, core_text, &diags);
+    CHECK(p != NULL && mo_core_check(p, &diags) && mo_compile(p, &out, &diags));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(out.bytes, out.length, &error);
+    CHECK(image != NULL);
+    if (image != NULL) {
+        const struct mo_bytecode *file = mo_image_bytecode(image);
+        CHECK(function_has_opcode(file, 0, MO_OP_RESET));
+        CHECK(function_has_opcode(file, 0, MO_OP_REUSE));
+        CHECK(!function_has_opcode(file, 0, MO_OP_MAKE_CASE));
+        CHECK(function_has_opcode(file, 1, MO_OP_RESET));
+        CHECK(function_has_opcode(file, 1, MO_OP_REUSE));
+        CHECK(!function_has_opcode(file, 1, MO_OP_MAKE_CASE));
+        CHECK(function_has_opcode(file, 2, MO_OP_RESET));
+        CHECK(function_has_opcode(file, 2, MO_OP_REUSE));
+        CHECK(opcode_count(&file->functions[2], MO_OP_MAKE_CASE) == 1);
+        CHECK(function_has_opcode(file, 3, MO_OP_SET_FIELD));
+        CHECK(!function_has_opcode(file, 3, MO_OP_CONSTRUCT));
+        struct mo_limits limits = mo_limits_default();
+        struct mo_defect defect;
+        CHECK(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+        struct mo_process *proc = mo_process_new(image, &limits);
+        struct mo_cell result = {0};
+        bool ran = proc != NULL && mo_call(proc, 4, NULL, 0, &result, &defect) == MO_RETURNED;
+        CHECK(ran);
+        if (ran)
+            CHECK(mo_cell_get_int(result) == 35);
+        mo_process_free(proc);
+        mo_image_free(image);
+    }
+    mo_buffer_free(&out);
+    mo_diags_free(&diags);
+    mo_arena_free(&arena);
+}
+
 static MO_MUST_USE int tests(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--bigints") == 0)
         return corpus(argc - 1, argv + 1, true);
@@ -2599,6 +2680,7 @@ static MO_MUST_USE int tests(int argc, char **argv) {
     test_reachable_children();
     test_join_metadata();
     test_depth();
+    test_perceus_reuse();
     return mo_test_report("test_codegen");
 }
 struct arguments {

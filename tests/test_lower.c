@@ -2163,6 +2163,113 @@ static void test_source_sort_work(void *unused) {
     mo_arena_free(&input);
 }
 
+static uint64_t scalar_work(const struct mo_image *image, const char *name,
+                            const int64_t *arguments, uint32_t count, int64_t expected) {
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    uint32_t function = UINT32_MAX;
+    for (uint32_t j = 0; j < file->function_count; j++) {
+        const struct mo_bytecode_string *s = &file->strings[file->functions[j].name];
+        if (s->length == strlen(name) && memcmp(s->bytes, name, s->length) == 0)
+            function = j;
+    }
+    MO_ASSERT(function != UINT32_MAX && count <= 3);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_process *process = mo_process_new(image, &limits);
+    MO_ASSERT(process != NULL);
+    struct mo_cell cells[3], result;
+    for (uint32_t i = 0; i < count; i++)
+        cells[i] = mo_cell_int(arguments[i]);
+    struct mo_defect defect;
+    uint64_t instructions = 0;
+    MO_ASSERT(mo_call_controlled(process, function, cells, count, count_instruction, &instructions,
+                                 &result, &defect) == MO_CONTROL_RETURNED);
+    CHECK(mo_cell_get_int(result) == expected);
+    mo_process_free(process);
+    return instructions;
+}
+
+/* Perceus in-place field updates, left-to-right interpolation and indexed for loops must scale
+ * linearly: quadrupling N from 256 to 1024 multiplies executed instructions by ~4x, never 16x. */
+static void test_source_linear_scaling(void *unused) {
+    (void)unused;
+    static const char program_source[] = "module Main\n"
+                                         "struct Bag\n  items: List(Int)\n  tag: Int\nend\n"
+                                         "fn run_case(n: Int, kind: Int) : Int\n"
+                                         "  if kind == 0\n"
+                                         "    var b = Bag(items: [], tag: 1)\n"
+                                         "    for i in 0..n\n"
+                                         "      b.items = b.items.append(i)\n"
+                                         "    end\n"
+                                         "    b.items.size\n"
+                                         "  else if kind == 1\n"
+                                         "    var acc = \"\"\n"
+                                         "    for i in 0..n\n"
+                                         "      acc = \"#{acc}#{i % 10}\"\n"
+                                         "    end\n"
+                                         "    acc.byte_count\n"
+                                         "  else if kind == 2\n"
+                                         "    var xs = []\n"
+                                         "    var m = {}\n"
+                                         "    for i in 0..n\n"
+                                         "      xs = xs.append(i)\n"
+                                         "      m = m.set(i, 1)\n"
+                                         "    end\n"
+                                         "    pair = (xs, xs)\n"
+                                         "    var total = 0\n"
+                                         "    for x in pair.0\n"
+                                         "      total += x - x + 1\n"
+                                         "    end\n"
+                                         "    for (_k, v) in m\n"
+                                         "      total += v\n"
+                                         "    end\n"
+                                         "    total / 2\n"
+                                         "  else\n"
+                                         "    var xs = []\n"
+                                         "    for _i in 0..n\n"
+                                         "      xs = xs.append(1)\n"
+                                         "    end\n"
+                                         "    xs.sum\n"
+                                         "  end\n"
+                                         "end\n";
+    struct mo_arena input, output;
+    struct mo_sources sources;
+    struct mo_diags diags;
+    struct mo_buffer bytes;
+    mo_arena_init(&input, MO_CLI_CHECK_SIZE);
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
+    uint32_t file;
+    struct mo_source_error src_err;
+    MO_ASSERT(mo_sources_add_bytes(&sources, "main.mo", (const uint8_t *)program_source,
+                                   sizeof(program_source) - 1, &file, &src_err));
+    struct mo_module_set *set = mo_load_bundle_sources(&input, &sources, "lib", &diags);
+    MO_ASSERT(set != NULL && !mo_diags_any(&diags));
+    struct mo_program *program = mo_check(&input, set, &diags);
+    MO_ASSERT(program != NULL && !mo_diags_any(&diags));
+    struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+    MO_ASSERT(core != NULL && !mo_diags_any(&diags) && mo_core_check(core, &diags));
+    MO_ASSERT(mo_compile(core, &bytes, &diags));
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(bytes.bytes, bytes.length, &error);
+    MO_ASSERT(image != NULL);
+    struct mo_limits limits = mo_limits_default();
+    struct mo_defect defect;
+    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+    for (int64_t kind = 0; kind < 4; kind++) {
+        int64_t a0[] = {256, kind}, a1[] = {1024, kind};
+        uint64_t w0 = scalar_work(image, "Main.run_case", a0, 2, 256);
+        uint64_t w1 = scalar_work(image, "Main.run_case", a1, 2, 1024);
+        CHECK(w1 <= 6 * w0);
+    }
+    mo_image_free(image);
+    mo_buffer_free(&bytes);
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+    mo_arena_free(&output);
+    mo_arena_free(&input);
+}
+
 /* FileError's text form is lib/file-error.mo's to_text; without the library, lowering refuses it
  * rather than derive constructor syntax. */
 static void test_source_file_error_text(void *unused) {
@@ -2471,6 +2578,7 @@ int main(int argc, char **argv) {
                                 "tests/runtime/mcp-upgrade-routing-check.mo") == 0);
     }
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_linear_scaling, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_query, NULL) == 0);

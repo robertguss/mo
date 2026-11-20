@@ -11,7 +11,8 @@ static const uint8_t no_items[] = {'M', 'O', 'I', 'L', 1, 1, 0, 0, 0, 0};
 static struct mo_protocol_server *fault_server;
 static uint64_t admitted_before;
 static bool exhaust_reply, record_resizes, fail_append;
-static unsigned exhausted_calls, memory_stops, decode_after, decode_failures, append_failures;
+static unsigned exhausted_calls, memory_stops, encode_after, encode_failures, decode_after,
+    decode_failures, append_failures;
 static unsigned fail_call_after;
 static bool scan_limit_zero;
 static size_t resize_calls, resize_after, resize_failures, resize_sizes[4096];
@@ -24,6 +25,10 @@ enum mo_outcome mo_protocol_server_fault_call(struct mo_process *process, uint32
                                               struct mo_cell *out, struct mo_defect *defect);
 void *mo_protocol_server_fault_resize(struct mo_scratch *scratch, void *bytes, size_t old_size,
                                       size_t new_size);
+enum mo_saved_status mo_protocol_server_fault_encode_unshared(struct mo_heap *heap, uint32_t type,
+                                                              struct mo_cell value,
+                                                              struct mo_buffer *out,
+                                                              bool *unshared);
 bool mo_protocol_server_fault_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes,
                                      size_t length, struct mo_cell *out);
 enum mo_store_status mo_protocol_server_fault_store(
@@ -74,6 +79,20 @@ void *mo_protocol_server_fault_resize(struct mo_scratch *scratch, void *bytes, s
         return NULL;
     }
     return mo_scratch_resize(scratch, bytes, old_size, new_size);
+}
+
+enum mo_saved_status mo_protocol_server_fault_encode_unshared(struct mo_heap *heap, uint32_t type,
+                                                              struct mo_cell value,
+                                                              struct mo_buffer *out,
+                                                              bool *unshared) {
+    if (encode_after != 0 && --encode_after == 0) {
+        encode_failures++;
+        return MO_SAVED_MEMORY;
+    }
+    enum mo_saved_status status = mo_value_encode_unshared(heap, type, value, out, unshared);
+    if (status == MO_SAVED_OK && decode_after != 0)
+        *unshared = false;
+    return status;
 }
 
 bool mo_protocol_server_fault_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes,
@@ -203,6 +222,17 @@ static void exhausted_fallback(void) {
 static void saved_copy_memory(void) {
     struct fixture_server f = start();
     char out[4096];
+    for (unsigned after = 1; after <= 2; after++) {
+        uint64_t admitted = mo_protocol_server_metrics(f.server).admitted;
+        encode_after = after;
+        tool_request(&f, "add", "{\"amount\":\"7\"}", "1", out, sizeof out);
+        tool_error(out, "memory_limit", "none", "1");
+        CHECK(encode_after == 0);
+        CHECK(mo_protocol_server_metrics(f.server).admitted == admitted + (after == 1 ? 0u : 1u));
+        tool_request(&f, "read", "{}", "2", out, sizeof out);
+        CHECK(strstr(out, "\"structuredContent\":{\"value\":\"0\"}") != NULL);
+    }
+    CHECK(encode_failures == 2);
     for (unsigned after = 1; after <= 2; after++) {
         uint64_t admitted = mo_protocol_server_metrics(f.server).admitted;
         decode_after = after;

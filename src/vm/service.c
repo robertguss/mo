@@ -207,15 +207,22 @@ static bool replacement(const struct mo_process *p, const struct mo_bytecode_ser
     return true;
 }
 
-/* Copies through the saved codec, so the live value is as unshared as the one
- * recovery decodes and never larger than a record payload. */
+/* Copies through the saved codec when the value contains shared or immortal
+ * nodes, so the live value is as unshared as the one recovery decodes and
+ * never larger than a record payload. */
 static bool encoded_copy(struct mo_heap *heap, uint32_t type, struct mo_cell value,
                          struct mo_cell *out, struct mo_buffer *encoded,
                          enum mo_saved_status *status) {
     mo_buffer_clear(encoded);
-    *status = mo_value_encode_status(heap, type, value, encoded);
-    return *status == MO_SAVED_OK &&
-           mo_value_decode(heap, type, encoded->bytes, encoded->length, out);
+    bool unshared = false;
+    *status = mo_value_encode_unshared(heap, type, value, encoded, &unshared);
+    if (*status != MO_SAVED_OK)
+        return false;
+    if (unshared) {
+        *out = mo_value_dup(heap, type, value);
+        return true;
+    }
+    return mo_value_decode(heap, type, encoded->bytes, encoded->length, out);
 }
 
 static bool saved_copy(struct mo_service_loop *s, uint32_t type, struct mo_cell value,

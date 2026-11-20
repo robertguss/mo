@@ -187,6 +187,9 @@ enum mo_saved_status {
 MO_MUST_USE enum mo_saved_status mo_value_encode_status(struct mo_heap *heap, uint32_t type,
                                                         struct mo_cell value,
                                                         struct mo_buffer *out);
+MO_MUST_USE enum mo_saved_status mo_value_encode_unshared(struct mo_heap *heap, uint32_t type,
+                                                          struct mo_cell value,
+                                                          struct mo_buffer *out, bool *unshared);
 MO_MUST_USE enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *process, uint32_t type,
                                                             struct mo_cell value,
                                                             struct mo_buffer *out);

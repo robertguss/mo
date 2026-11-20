@@ -46,9 +46,9 @@ bool lower_cps_direct_function(struct body *b, const struct mo_checked_expressio
 
 static mo_core_expr list_sum(struct body *b, mo_core_ty number, mo_core_expr values) {
     struct lowering *p = b->p;
-    mo_core_ty list = LOWER_NEW(p, struct mo_core_ty, 1);
-    list->tag = MO_CORE_TY_LIST;
-    list->as.list = number;
+    static const struct mo_source_type int_type = {
+        .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+    mo_core_ty pos_ty = lower_cps_type(b, &int_type);
     mo_core_expr zero = lower_int(p, 0);
     if (number->tag != MO_CORE_TY_INT) {
         MO_ASSERT(number->tag == MO_CORE_TY_BIG_INT || number->tag == MO_CORE_TY_DECIMAL ||
@@ -60,45 +60,77 @@ static mo_core_expr list_sum(struct body *b, mo_core_ty number, mo_core_expr val
         zero = lower_cps_unary(
             b, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = convert}, zero);
     }
+    mo_core_expr held = lower_cps_let(b, lower_fresh(p), values);
+    mo_core_string list_name = held->as.let_.name;
+    mo_core_expr size_let =
+        lower_cps_let(b, lower_fresh(p),
+                      lower_cps_unary(b,
+                                      (struct mo_core_prim){
+                                          .tag = MO_CORE_PRIM_LIST,
+                                          .as.list = {.t = number, .op.tag = MO_CORE_LIST_OP_SIZE}},
+                                      lower_var(p, list_name)));
+    held->as.let_.body = size_let;
+    mo_core_string end_name = size_let->as.let_.name;
     struct continuation *done = lower_cps_continuation(b, K_JUMP);
     done->name = lower_fresh(p);
     done->result = true;
     mo_core_expr exit = lower_cps_join(b, done, number);
     exit->as.join.body = lower_var(p, exit->as.join.params.items[0].name);
+    size_let->as.let_.body = exit;
     struct continuation *again = lower_cps_continuation(b, K_JUMP);
     again->name = lower_fresh(p);
     again->result = true;
     again->position = lower_fresh(p);
-    again->position_type = list;
+    again->position_type = pos_ty;
     mo_core_expr round = lower_cps_join(b, again, number);
     exit->as.join.rest = round;
     mo_core_expr accumulator = lower_var(p, round->as.join.params.items[0].name);
+    mo_core_expr check = lower_expr(p, MO_CORE_EXPR_IF);
+    round->as.join.body = check;
+    mo_core_expr_list cmp_args = lower_cps_arguments(b, 2);
+    cmp_args.items[0] = lower_var(p, again->position);
+    cmp_args.items[1] = lower_var(p, end_name);
+    check->as.if_.cond =
+        lower_prim(p,
+                   (struct mo_core_prim){.tag = MO_CORE_PRIM_CMP,
+                                         .as.cmp = {MO_CORE_BASE_INT, MO_CORE_CMP_OP_LT}},
+                   cmp_args);
+    check->as.if_.else_ = lower_cps_jump(b, done, accumulator);
     mo_core_expr select = lower_expr(p, MO_CORE_EXPR_CASE);
-    round->as.join.body = select;
-    select->as.case_.expr = lower_cps_unary(
-        b,
-        (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
-                              .as.list = {.t = number, .op.tag = MO_CORE_LIST_OP_UNCONS}},
-        lower_var(p, again->position));
+    check->as.if_.then_ = select;
+    mo_core_expr_list get_args = lower_cps_arguments(b, 2);
+    get_args.items[0] = lower_var(p, list_name);
+    get_args.items[1] = lower_var(p, again->position);
+    select->as.case_.expr =
+        lower_prim(p,
+                   (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                                         .as.list = {.t = number, .op.tag = MO_CORE_LIST_OP_GET}},
+                   get_args);
     select->as.case_.arms.count = 2;
     select->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
-    select->as.case_.arms.items[0] = (struct mo_core_arm){
-        .ctor = lower_text(p, "None"), .body = lower_cps_jump(b, done, accumulator)};
+    mo_core_expr impossible = lower_expr(p, MO_CORE_EXPR_STOP);
+    impossible->as.stop = lower_text(p, "unreachable list index");
+    select->as.case_.arms.items[0] =
+        (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = impossible};
     struct mo_core_arm *some = &select->as.case_.arms.items[1];
     some->ctor = lower_text(p, "Some");
     some->names.count = 1;
     some->names.items = LOWER_NEW(p, mo_core_string, 1);
     some->names.items[0] = lower_fresh(p);
-    mo_core_expr pair = lower_var(p, some->names.items[0]);
-    mo_core_expr_list args = lower_cps_arguments(b, 2);
-    args.items[0] = accumulator;
-    args.items[1] = lower_cps_projection(b, pair, 0);
-    again->extra = lower_cps_projection(b, pair, 1);
-    some->body =
-        lower_cps_jump(b, again, lower_prim(p, lower_operator(p, MO_T_PLUS, number, number), args));
-    again->extra = values;
+    mo_core_expr_list step_args = lower_cps_arguments(b, 2);
+    step_args.items[0] = lower_var(p, again->position);
+    step_args.items[1] = lower_int(p, 1);
+    again->extra =
+        lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_ADD},
+                   step_args);
+    mo_core_expr_list add_args = lower_cps_arguments(b, 2);
+    add_args.items[0] = accumulator;
+    add_args.items[1] = lower_var(p, some->names.items[0]);
+    some->body = lower_cps_jump(
+        b, again, lower_prim(p, lower_operator(p, MO_T_PLUS, number, number), add_args));
+    again->extra = lower_int(p, 0);
     round->as.join.rest = lower_cps_jump(b, again, zero);
-    return exit;
+    return held;
 }
 
 mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expression *r,

@@ -22,6 +22,9 @@ MO_MUST_USE bool mo_program_has_anchors(const struct mo_program *program);
 MO_MUST_USE bool mo_check_anchors(struct mo_image *image, const struct mo_cli *cli,
                                   const struct mo_sources *sources,
                                   const struct mo_program *program, struct mo_diags *diags);
+MO_MUST_USE bool mo_is_bytecode_path(const char *path);
+MO_MUST_USE int mo_run_bytecode(const struct mo_cli *cli, const char *path, FILE *output,
+                                FILE *errors, struct mo_diags *diags);
 MO_MUST_USE int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
                                const struct mo_core *core, const struct mo_buffer *wire,
                                const struct mo_sources *sources, FILE *output, FILE *errors,
