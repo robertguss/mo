@@ -1,7 +1,7 @@
 module McpFetch
 expose read, upgrade
 use Json
-use Http
+use HttpServer
 
 fn text(value: Json.Json, key: Text) : Text
   case value
@@ -34,7 +34,7 @@ fn envelope(wire: Text) : Option(Map(Text, Json.Json))
     return None if fields.size < 2
     name = (fields.first or "").ascii_lowercase
     value = fields.drop(1).join(":").trim
-    return None if name == "" or not name.chars.all?(fn(c) Http.token?(c.code) end)
+    return None if name == "" or not name.chars.all?(fn(c) HttpServer.token?(c.code) end)
     if name == "content-length"
       return None if length != None
       length = value.to_int

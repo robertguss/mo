@@ -1913,7 +1913,7 @@ static bool view_abi_drift;
 bool mo_protocol_bad_abi_sources(struct mo_sources *sources, const char *path, const uint8_t *bytes,
                                  size_t length, uint32_t *file_out,
                                  struct mo_source_error *error_out) {
-    if (strcmp(path, view_abi_drift ? "runtime/mcp-views.mo" : "runtime/http.mo") != 0)
+    if (strcmp(path, view_abi_drift ? "runtime/mcp-views.mo" : "runtime/http-server.mo") != 0)
         return mo_sources_add_bytes(sources, path, bytes, length, file_out, error_out);
     const char *before =
         view_abi_drift ? "  heap_used: Int\n  heap_peak: Int\n" : "  Incomplete\n  Malformed\n";

@@ -463,10 +463,10 @@ static bool valid_abi(const struct mo_image *image) {
         uint32_t count;
         enum abi_type parameters[5], result;
     } functions[] = {
-        {"Http.scan_headers", 3, {ABI_BYTES, ABI_SCAN, ABI_INT}, ABI_SCAN_RESULT},
-        {"Http.parse_headers", 2, {ABI_BYTES, ABI_LIMITS}, ABI_HEAD_RESULT},
-        {"Http.bearer_span", 2, {ABI_BYTES, ABI_HEAD}, ABI_SPAN_OPTION},
-        {"Http.chunk_size", 3, {ABI_BYTES, ABI_INT, ABI_INT}, ABI_INT_RESULT},
+        {"HttpServer.scan_headers", 3, {ABI_BYTES, ABI_SCAN, ABI_INT}, ABI_SCAN_RESULT},
+        {"HttpServer.parse_headers", 2, {ABI_BYTES, ABI_LIMITS}, ABI_HEAD_RESULT},
+        {"HttpServer.bearer_span", 2, {ABI_BYTES, ABI_HEAD}, ABI_SPAN_OPTION},
+        {"HttpServer.chunk_size", 3, {ABI_BYTES, ABI_INT, ABI_INT}, ABI_INT_RESULT},
         {"HttpAuthority.check", 1, {ABI_TEXTS}, ABI_BOOL},
         {"HttpPolicy.inspect", 3, {ABI_BYTES, ABI_HEAD, ABI_TEXTS}, ABI_INSPECTION},
         {"HttpPolicy.body_plan", 3, {ABI_BYTES, ABI_HEAD, ABI_INT}, ABI_BODY_PLAN},

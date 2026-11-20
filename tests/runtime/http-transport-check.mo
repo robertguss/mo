@@ -1,5 +1,5 @@
 module HttpTransportCheck
-use Http
+use HttpServer
 use HttpAuthority
 use HttpPolicy
 use HttpBody
@@ -14,8 +14,8 @@ fn require(ok: Bool)
   end
 end
 
-fn head(bytes: List(Byte)) : Http.Head
-  case Http.parse_headers(bytes, Http.HeaderLimits(bytes: 1024, line: 8192, fields: 64))
+fn head(bytes: List(Byte)) : HttpServer.Head
+  case HttpServer.parse_headers(bytes, HttpServer.HeaderLimits(bytes: 1024, line: 8192, fields: 64))
     Ok(value): value
     Error(_): stop "header fixture"
   end
@@ -149,15 +149,15 @@ fn inspection()
     bytes = octets("POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: #{auth}\r\n\r\n")
     parsed = head(bytes)
     access = inspected(bytes)
-    require(access.bearer == Http.bearer_span(bytes, parsed) and access.bearer != None)
+    require(access.bearer == HttpServer.bearer_span(bytes, parsed) and access.bearer != None)
   end
   stream = octets(
     "GET /mcp HTTP/1.1\r\nHost: localhost\r\nMCP-Session-Id: abc\r\nMo-Upgrade-Authorization: Bearer  up\r\n\r\n"
   )
   access = inspected(stream)
   require(access.stream and access.bearer == None)
-  require(access.session == Some(Http.Span(start: 52, size: 3)))
-  require(access.upgrade == Some(Http.Span(start: 91, size: 2)))
+  require(access.session == Some(HttpServer.Span(start: 52, size: 3)))
+  require(access.upgrade == Some(HttpServer.Span(start: 91, size: 2)))
   for upgrades in [
     "Mo-Upgrade-Authorization: Bearer a\r\nmo-upgrade-authorization: Bearer b\r\n",
     "Mo-Upgrade-Authorization: Basic a\r\n",
@@ -519,7 +519,7 @@ fn parameterized_body_algorithm_limits()
   body = octets("x".repeat(16384))
   case HttpBody.feed(HttpBody.fixed(16384), body.concat(octets("NEXT")), bounds)
     Ok(step):
-      require(step.payload == [Http.Span(start: 0, size: 16384)])
+      require(step.payload == [HttpServer.Span(start: 0, size: 16384)])
       require(step.consumed == 16384 and step.state.phase == HttpBody.Complete)
     Error(_): stop "16 KiB body boundary"
   end

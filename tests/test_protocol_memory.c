@@ -423,22 +423,24 @@ static void history_host_copies(void) {
     CHECK(leftover > 0);
 }
 
+static uint32_t function_named(const struct mo_image *image, const char *wanted) {
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    for (uint32_t i = 0; i < file->function_count; i++) {
+        const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
+        if (name->length == strlen(wanted) && memcmp(name->bytes, wanted, name->length) == 0)
+            return i;
+    }
+    MO_UNREACHABLE();
+}
+
 int main(void) {
     struct mo_image *image = mo_protocol_build();
     MO_ASSERT(image != NULL);
     struct mo_limits limits = mo_limits_default();
     struct mo_defect defect;
     MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
-    uint32_t parse = UINT32_MAX, chunk = UINT32_MAX;
-    const struct mo_bytecode *file = mo_image_bytecode(image);
-    for (uint32_t i = 0; i < file->function_count; i++) {
-        const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
-        if (name->length == 18 && memcmp(name->bytes, "Http.parse_headers", 18) == 0)
-            parse = i;
-        if (name->length == 15 && memcmp(name->bytes, "Http.chunk_size", 15) == 0)
-            chunk = i;
-    }
-    MO_ASSERT(parse != UINT32_MAX && chunk != UINT32_MAX);
+    uint32_t parse = function_named(image, "HttpServer.parse_headers"),
+             chunk = function_named(image, "HttpServer.chunk_size");
     export_storage(image);
     history_host_copies();
     request_budget(image, chunk);

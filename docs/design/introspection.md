@@ -324,7 +324,7 @@ A 16 MiB saved state plus framing is 2,049 pages. At the token's rate limit of 2
   symlink is refused before connecting.
 
 Exit statuses follow `mo`'s: 0 published, 1 refused by the service or by a check, 2 a command
-mistake. Response parsing is Mo code (the existing `Http` and `Json` modules); sockets, files and
+mistake. Response parsing is Mo code (the existing `HttpServer` and `Json` modules); sockets, files and
 the digest are C. A new fuzz target, `fuzz_fetch`, feeds response sequences through the reader
 with its own seeds.
 

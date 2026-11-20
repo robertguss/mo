@@ -69,7 +69,7 @@ static bool authorities(struct mo_protocol_server *s, struct protocol_connection
     return true;
 }
 
-/* Some(Http.Span) gives its validated header range; None gives false. */
+/* Some(HttpServer.Span) gives its validated header range; None gives false. */
 static bool header_span(struct mo_protocol_server *s, struct protocol_connection *c,
                         uint32_t option, struct mo_cell value, size_t *start, size_t *length) {
     if (mo_cell_get_tag(value) != 1)

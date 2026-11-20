@@ -1,6 +1,6 @@
 module HttpBody
 expose Phase(..), State(..), Bounds(..), Step(..), fixed, chunked, feed
-use Http
+use HttpServer
 
 enum Phase
   Fixed(Int)
@@ -33,7 +33,7 @@ end
 struct Step
   state: State
   consumed: Int
-  payload: List(Http.Span)
+  payload: List(HttpServer.Span)
 end
 
 fn fixed(length: Int) : State
@@ -84,7 +84,7 @@ fn feed(state: State, bytes: List(Byte), bounds: Bounds) : Result(Step, Int)
         count = if remaining < bytes.size - at: remaining else: bytes.size - at
         return Error(413) if count > bounds.ingress - encoded
         if count > 0
-          payload = payload.append(Http.Span(start: at, size: count))
+          payload = payload.append(HttpServer.Span(start: at, size: count))
         end
         at += count
         encoded += count
@@ -100,9 +100,9 @@ fn feed(state: State, bytes: List(Byte), bounds: Bounds) : Result(Step, Int)
         at += 1
         encoded += 1
         if value.to_int == 10
-          size = case Http.chunk_size(read, bounds.body - decoded, bounds.line)
+          size = case HttpServer.chunk_size(read, bounds.body - decoded, bounds.line)
             Ok(value_size): value_size
-            Error(Http.TooLarge): return Error(413)
+            Error(HttpServer.TooLarge): return Error(413)
             Error(_): return Error(400)
           end
           if size == 0
@@ -139,12 +139,12 @@ fn feed(state: State, bytes: List(Byte), bounds: Bounds) : Result(Step, Int)
             phase = Complete
           else
             return Error(413) if trailer_fields >= bounds.trailer_fields
-            finish = case Http.line_end(read, 0, bounds.line)
+            finish = case HttpServer.line_end(read, 0, bounds.line)
               Ok(value_finish): value_finish
-              Error(Http.TooLarge): return Error(413)
+              Error(HttpServer.TooLarge): return Error(413)
               Error(_): return Error(400)
             end
-            case Http.field(read, 0, finish)
+            case HttpServer.field(read, 0, finish)
               Ok(_): Unit
               Error(_): return Error(400)
             end

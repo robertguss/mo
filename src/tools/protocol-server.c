@@ -5,8 +5,8 @@
 #include <string.h>
 #include <sys/random.h>
 
-static const char *const function_names[PF_COUNT] = {"Http.scan_headers",
-                                                     "Http.parse_headers",
+static const char *const function_names[PF_COUNT] = {"HttpServer.scan_headers",
+                                                     "HttpServer.parse_headers",
                                                      "HttpAuthority.check",
                                                      "HttpPolicy.inspect",
                                                      "HttpPolicy.body_plan",

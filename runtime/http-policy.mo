@@ -1,15 +1,15 @@
 module HttpPolicy
 expose BodyPlan(..), Access(..), inspect, body_plan, stream_plan
-use Http
+use HttpServer
 use HttpAuthority
 
 ## Header spans the native side checks and wipes; stream marks an MCP GET stream request.
 struct Access
-  bearer: Option(Http.Span)
-  upgrade: Option(Http.Span)
-  session: Option(Http.Span)
+  bearer: Option(HttpServer.Span)
+  upgrade: Option(HttpServer.Span)
+  session: Option(HttpServer.Span)
   stream: Bool
-  approval: Option(Http.Span)
+  approval: Option(HttpServer.Span)
 end
 
 enum BodyPlan
@@ -19,13 +19,13 @@ enum BodyPlan
 end
 
 struct Parameter
-  name: Http.Span
-  value: Http.Span
+  name: HttpServer.Span
+  value: HttpServer.Span
   quoted: Bool
 end
 
 struct Item
-  name: Http.Span
+  name: HttpServer.Span
   params: List(Parameter)
 end
 
@@ -36,7 +36,7 @@ fn byte(bytes: List(Byte), at: Int) : Int
   end
 end
 
-fn equal?(bytes: List(Byte), part: Http.Span, text: Text) : Bool
+fn equal?(bytes: List(Byte), part: HttpServer.Span, text: Text) : Bool
   chars = text.chars
   return false if chars.size != part.size
   for at in 0..part.size
@@ -45,11 +45,11 @@ fn equal?(bytes: List(Byte), part: Http.Span, text: Text) : Bool
   true
 end
 
-fn ascii?(bytes: List(Byte), part: Http.Span, text: Text) : Bool
-  Http.ascii?(bytes, part, text.chars.map(fn(c) c.code end))
+fn ascii?(bytes: List(Byte), part: HttpServer.Span, text: Text) : Bool
+  HttpServer.ascii?(bytes, part, text.chars.map(fn(c) c.code end))
 end
 
-fn values(bytes: List(Byte), head: Http.Head, name: Text) : List(Http.Span)
+fn values(bytes: List(Byte), head: HttpServer.Head, name: Text) : List(HttpServer.Span)
   var found = []
   for field in head.fields
     if ascii?(bytes, field.name, name)
@@ -59,7 +59,7 @@ fn values(bytes: List(Byte), head: Http.Head, name: Text) : List(Http.Span)
   found
 end
 
-fn authority(bytes: List(Byte), part: Http.Span) : Option(HttpAuthority.Authority)
+fn authority(bytes: List(Byte), part: HttpServer.Span) : Option(HttpAuthority.Authority)
   var chars = []
   for at in part.start..part.start + part.size
     c = byte(bytes, at)
@@ -70,17 +70,17 @@ fn authority(bytes: List(Byte), part: Http.Span) : Option(HttpAuthority.Authorit
   HttpAuthority.parse(Text.from_chars(chars))
 end
 
-fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result(Access, Int)
+fn inspect(bytes: List(Byte), head: HttpServer.Head, authorities: List(Text)) : Result(Access, Int)
   return Error(505) if not equal?(bytes, head.version, "HTTP/1.1")
   hosts = values(bytes, head, "host")
   return Error(400) if hosts.size != 1
-  host = case authority(bytes, hosts.get(0) or Http.Span(start: 0, size: 0))
+  host = case authority(bytes, hosts.get(0) or HttpServer.Span(start: 0, size: 0))
     Some(value): value
     None: return Error(400)
   end
   var effective = host
   var path = head.target
-  if ascii?(bytes, Http.Span(start: head.target.start, size: 7), "http://") and
+  if ascii?(bytes, HttpServer.Span(start: head.target.start, size: 7), "http://") and
     head.target.size >= 7
     var at = head.target.start + 7
     finish = head.target.start + head.target.size
@@ -88,11 +88,11 @@ fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result
     while at < finish and byte(bytes, at) != 47 and byte(bytes, at) != 63 and byte(bytes, at) != 35
       at += 1
     end
-    effective = case authority(bytes, Http.Span(start: start, size: at - start))
+    effective = case authority(bytes, HttpServer.Span(start: start, size: at - start))
       Some(value): value
       None: return Error(400)
     end
-    path = Http.Span(start: at, size: finish - at)
+    path = HttpServer.Span(start: at, size: finish - at)
   end
   var allowed = false
   for entry in authorities
@@ -113,7 +113,7 @@ fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result
   return Error(400) if sessions.size > 1
   Ok(
     Access(
-      bearer: Http.bearer_span(bytes, head),
+      bearer: HttpServer.bearer_span(bytes, head),
       upgrade: single_bearer(bytes, head, "mo-upgrade-authorization"),
       session: sessions.get(0),
       stream: stream,
@@ -122,10 +122,10 @@ fn inspect(bytes: List(Byte), head: Http.Head, authorities: List(Text)) : Result
   )
 end
 
-fn single_bearer(bytes: List(Byte), head: Http.Head, name: Text) : Option(Http.Span)
+fn single_bearer(bytes: List(Byte), head: HttpServer.Head, name: Text) : Option(HttpServer.Span)
   found = values(bytes, head, name)
   case found.get(0)
-    Some(value): if found.size == 1: Http.bearer_value(bytes, value) else: None
+    Some(value): if found.size == 1: HttpServer.bearer_value(bytes, value) else: None
     None: None
   end
 end
@@ -138,7 +138,7 @@ fn space(bytes: List(Byte), start: Int, finish: Int) : Int
   at
 end
 
-fn items(bytes: List(Byte), parts: List(Http.Span)) : Option(List(Item))
+fn items(bytes: List(Byte), parts: List(HttpServer.Span)) : Option(List(Item))
   var result = []
   for part in parts
     finish = part.start + part.size
@@ -146,21 +146,21 @@ fn items(bytes: List(Byte), parts: List(Http.Span)) : Option(List(Item))
     while true
       at = space(bytes, at, finish)
       start = at
-      while at < finish and (Http.token?(byte(bytes, at)) or byte(bytes, at) == 47)
+      while at < finish and (HttpServer.token?(byte(bytes, at)) or byte(bytes, at) == 47)
         at += 1
       end
       return None if at == start
-      name = Http.Span(start: start, size: at - start)
+      name = HttpServer.Span(start: start, size: at - start)
       var params = []
       at = space(bytes, at, finish)
       while at < finish and byte(bytes, at) == 59
         at = space(bytes, at + 1, finish)
         param_start = at
-        while at < finish and Http.token?(byte(bytes, at))
+        while at < finish and HttpServer.token?(byte(bytes, at))
           at += 1
         end
         return None if at == param_start
-        param_name = Http.Span(start: param_start, size: at - param_start)
+        param_name = HttpServer.Span(start: param_start, size: at - param_start)
         at = space(bytes, at, finish)
         return None if at >= finish or byte(bytes, at) != 61
         at = space(bytes, at + 1, finish)
@@ -179,7 +179,7 @@ fn items(bytes: List(Byte), parts: List(Http.Span)) : Option(List(Item))
           end
           return None if at >= finish
         else
-          while at < finish and Http.token?(byte(bytes, at))
+          while at < finish and HttpServer.token?(byte(bytes, at))
             at += 1
           end
           return None if at == value_start
@@ -187,7 +187,7 @@ fn items(bytes: List(Byte), parts: List(Http.Span)) : Option(List(Item))
         params = params.append(
           Parameter(
             name: param_name,
-            value: Http.Span(start: value_start, size: at - value_start),
+            value: HttpServer.Span(start: value_start, size: at - value_start),
             quoted: quoted
           )
         )
@@ -205,14 +205,14 @@ fn items(bytes: List(Byte), parts: List(Http.Span)) : Option(List(Item))
   Some(result)
 end
 
-fn token?(bytes: List(Byte), part: Http.Span) : Bool
+fn token?(bytes: List(Byte), part: HttpServer.Span) : Bool
   for at in part.start..part.start + part.size
-    return false if not Http.token?(byte(bytes, at))
+    return false if not HttpServer.token?(byte(bytes, at))
   end
   part.size > 0
 end
 
-fn quality(bytes: List(Byte), part: Http.Span) : Option(Int)
+fn quality(bytes: List(Byte), part: HttpServer.Span) : Option(Int)
   first = byte(bytes, part.start)
   return None if part.size < 1 or part.size > 5 or (first != 48 and first != 49)
   return Some((first - 48) * 1000) if part.size == 1
@@ -228,12 +228,12 @@ fn quality(bytes: List(Byte), part: Http.Span) : Option(Int)
   Some(if first == 49: 1000 else: q)
 end
 
-fn accepts_json?(bytes: List(Byte), parts: List(Http.Span)) : Bool
+fn accepts_json?(bytes: List(Byte), parts: List(HttpServer.Span)) : Bool
   return true if parts.empty?
   accepts?(bytes, parts, "application/json", "application/*")
 end
 
-fn accepts?(bytes: List(Byte), parts: List(Http.Span), kind: Text, family: Text) : Bool
+fn accepts?(bytes: List(Byte), parts: List(HttpServer.Span), kind: Text, family: Text) : Bool
   parsed = case items(bytes, parts)
     Some(value): value
     None: return false
@@ -273,18 +273,18 @@ fn accepts?(bytes: List(Byte), parts: List(Http.Span), kind: Text, family: Text)
   best > 0
 end
 
-fn protocol_version(bytes: List(Byte), head: Http.Head) : Option(Text)
+fn protocol_version(bytes: List(Byte), head: HttpServer.Head) : Option(Text)
   versions = values(bytes, head, "mcp-protocol-version")
   return None if versions.empty?
   if versions.size == 1 and
-    equal?(bytes, versions.get(0) or Http.Span(start: 0, size: 0), "2025-11-25")
+    equal?(bytes, versions.get(0) or HttpServer.Span(start: 0, size: 0), "2025-11-25")
     Some("2025-11-25")
   else
     Some("")
   end
 end
 
-fn length(bytes: List(Byte), part: Http.Span) : Option(Int)
+fn length(bytes: List(Byte), part: HttpServer.Span) : Option(Int)
   return None if part.size == 0
   var value = 0
   for at in part.start..part.start + part.size
@@ -298,7 +298,7 @@ fn length(bytes: List(Byte), part: Http.Span) : Option(Int)
 end
 
 ## A GET stream carries no body; zero accepts it, otherwise the HTTP status to refuse with.
-fn stream_plan(bytes: List(Byte), head: Http.Head) : Int
+fn stream_plan(bytes: List(Byte), head: HttpServer.Head) : Int
   return 400 if protocol_version(bytes, head) == Some("")
   accept = values(bytes, head, "accept")
   return 406 if accept.empty? or not accepts?(bytes, accept, "text/event-stream", "text/*")
@@ -309,7 +309,7 @@ fn stream_plan(bytes: List(Byte), head: Http.Head) : Int
   0
 end
 
-fn body_plan(bytes: List(Byte), head: Http.Head, body_limit: Int) : BodyPlan
+fn body_plan(bytes: List(Byte), head: HttpServer.Head, body_limit: Int) : BodyPlan
   expects = case items(bytes, values(bytes, head, "expect"))
     Some(value): value
     None: return Reject(417)
