@@ -1050,9 +1050,13 @@ def simulationStart : Expr := prim (.sim (.start 0)) [.lit (.time 0)]
 
 def networkConnect : Expr :=
   io .connect [v "n", str "example.com", int 80, .lit (.duration 1)]
+def networkConnectSecure : Expr :=
+  io .connectSecure [v "n", str "example.com", int 443, .lit (.duration 1)]
 def networkTy (ok : Ty) : Ty := .result ok .networkError
 #guard Text.exprRoundTrip networkConnect &&
+  Text.exprRoundTrip networkConnectSecure &&
   typedAs? program [("n", tCap .network)] networkConnect (networkTy (tCap .connection)) &&
+  typedAs? program [("n", tCap .network)] networkConnectSecure (networkTy (tCap .connection)) &&
   !typedAs? program [("n", tCap .network)] (io .connect [v "n", str "example.com", int 80])
     (networkTy (tCap .connection)) &&
   !typedAs? program [("n", tCap .connection)] networkConnect (networkTy (tCap .connection))

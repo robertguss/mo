@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "host/files.h"
 #include "host/network.h"
+#include "host/tls.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -19,6 +20,7 @@ struct connection {
     struct mo_host *owner;
     int descriptor;
     uint64_t deadline;
+    struct mo_tls tls;
 };
 
 enum lookup_state { LOOKUP_FREE, LOOKUP_RUNNING, LOOKUP_DONE, LOOKUP_ABANDONED };
@@ -231,16 +233,33 @@ static MO_MUST_USE struct mo_network_error open_socket(const struct lookup *foun
                    : (struct mo_network_error){.status = NETWORK_BROKEN, .number = last};
 }
 
-static MO_MUST_USE struct mo_network_error send_all(const struct connection *connection,
+static MO_MUST_USE struct mo_network_error send_all(struct connection *connection,
                                                     const uint8_t *bytes, size_t length) {
-    if (length == 0) {
-        uint64_t now;
-        if (!monotonic(&now))
-            return (struct mo_network_error){.status = NETWORK_INTERNAL};
-        if (now >= connection->deadline)
-            return (struct mo_network_error){.status = NETWORK_TIMED_OUT};
-    }
+    uint64_t now;
+    if (!monotonic(&now))
+        return (struct mo_network_error){.status = NETWORK_INTERNAL};
+    if (now >= connection->deadline)
+        return (struct mo_network_error){.status = NETWORK_TIMED_OUT};
     size_t sent = 0;
+    if (connection->tls.ssl != NULL) {
+        while (sent < length) {
+            size_t written = 0;
+            struct mo_network_error problem = {.status = NETWORK_OK};
+            enum mo_tls_step step =
+                mo_tls_write(&connection->tls, bytes + sent, length - sent, &written, &problem);
+            if (step == MO_TLS_DONE) {
+                sent += written;
+                continue;
+            }
+            if (step == MO_TLS_FAILED)
+                return problem;
+            problem = wait_for(connection->descriptor, step == MO_TLS_WANT_READ ? POLLIN : POLLOUT,
+                               connection->deadline);
+            if (problem.status != NETWORK_OK)
+                return problem;
+        }
+        return (struct mo_network_error){.status = NETWORK_OK};
+    }
     while (sent < length) {
         struct mo_network_error problem =
             wait_for(connection->descriptor, POLLOUT, connection->deadline);
@@ -258,7 +277,26 @@ static MO_MUST_USE struct mo_network_error send_all(const struct connection *con
 }
 
 static MO_MUST_USE struct mo_network_error
-receive_some(const struct connection *connection, uint8_t *bytes, size_t most, size_t *count) {
+receive_some(struct connection *connection, uint8_t *bytes, size_t most, size_t *count) {
+    if (connection->tls.ssl != NULL) {
+        uint64_t now;
+        if (!monotonic(&now))
+            return (struct mo_network_error){.status = NETWORK_INTERNAL};
+        if (now >= connection->deadline)
+            return (struct mo_network_error){.status = NETWORK_TIMED_OUT};
+        for (;;) {
+            struct mo_network_error problem = {.status = NETWORK_OK};
+            enum mo_tls_step step = mo_tls_read(&connection->tls, bytes, most, count, &problem);
+            if (step == MO_TLS_DONE)
+                return problem;
+            if (step == MO_TLS_FAILED)
+                return problem;
+            problem = wait_for(connection->descriptor, step == MO_TLS_WANT_READ ? POLLIN : POLLOUT,
+                               connection->deadline);
+            if (problem.status != NETWORK_OK)
+                return problem;
+        }
+    }
     for (;;) {
         struct mo_network_error problem =
             wait_for(connection->descriptor, POLLIN, connection->deadline);
@@ -278,15 +316,15 @@ receive_some(const struct connection *connection, uint8_t *bytes, size_t most, s
 
 static void release(intptr_t handle) {
     struct connection *connection = (struct connection *)handle;
+    mo_tls_close(&connection->tls);
     mo_host_close(connection->descriptor);
     MO_ASSERT(connection->owner->open_connections != 0);
     connection->owner->open_connections--;
 }
 
-static MO_MUST_USE enum mo_host_outcome network_connect(struct mo_host *host, struct mo_heap *heap,
-                                                        uint32_t type, const struct mo_cell *args,
-                                                        struct mo_cell *out,
-                                                        struct mo_host_error *error) {
+static MO_MUST_USE enum mo_host_outcome
+network_connect(struct mo_host *host, struct mo_heap *heap, bool secure, uint32_t type,
+                const struct mo_cell *args, struct mo_cell *out, struct mo_host_error *error) {
     int64_t port = mo_cell_get_int(args[2]);
     if (host->open_connections == MO_LIMIT_OPEN_CONNECTIONS)
         return mo_host_bug(error, "too many connections open at once");
@@ -311,6 +349,21 @@ static MO_MUST_USE enum mo_host_outcome network_connect(struct mo_host *host, st
                 problem = finish_lookup(slot, connection.deadline, &found);
             if (problem.status == NETWORK_OK)
                 problem = open_socket(&found, connection.deadline, &fd);
+            if (problem.status == NETWORK_OK && secure) {
+                problem = mo_tls_open(&connection.tls, fd, name, length);
+                while (problem.status == NETWORK_OK) {
+                    enum mo_tls_step step = mo_tls_handshake(&connection.tls, &problem);
+                    if (step == MO_TLS_DONE || step == MO_TLS_FAILED)
+                        break;
+                    problem = wait_for(fd, step == MO_TLS_WANT_READ ? POLLIN : POLLOUT,
+                                       connection.deadline);
+                }
+                if (problem.status != NETWORK_OK) {
+                    mo_tls_close(&connection.tls);
+                    mo_host_close(fd);
+                    fd = -1;
+                }
+            }
         }
     }
     if (problem.status != NETWORK_OK)
@@ -321,6 +374,7 @@ static MO_MUST_USE enum mo_host_outcome network_connect(struct mo_host *host, st
     struct mo_cell value;
     if (!mo_value_capability_native(heap, mo_host_network_payload(host, type, "Ok"), &info,
                                     &connection, sizeof connection, &value)) {
+        mo_tls_close(&connection.tls);
         mo_host_close(fd);
         return MO_HOST_OUT_OF_MEMORY;
     }
@@ -332,10 +386,10 @@ enum mo_host_outcome mo_host_real_network_call(struct mo_host *host, struct mo_h
                                                uint32_t operation, uint32_t type,
                                                const struct mo_cell *args, struct mo_cell *out,
                                                struct mo_host_error *error) {
-    if (operation == MO_HOST_NETWORK_CONNECT)
-        return network_connect(host, heap, type, args, out, error);
-    const struct connection *connection =
-        (const struct connection *)mo_capability_get(args[0])->handle;
+    if (operation == MO_HOST_NETWORK_CONNECT || operation == MO_HOST_NETWORK_CONNECT_SECURE)
+        return network_connect(host, heap, operation == MO_HOST_NETWORK_CONNECT_SECURE, type, args,
+                               out, error);
+    struct connection *connection = (struct connection *)mo_capability_get(args[0])->handle;
     if (operation == MO_HOST_CONNECTION_SEND) {
         size_t length;
         const uint8_t *bytes = mo_value_data(args[1], &length);

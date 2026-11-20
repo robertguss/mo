@@ -219,7 +219,7 @@ enum mo_host_outcome mo_host_fake_network_call(struct mo_host *host, struct mo_h
                                                uint32_t operation, uint32_t type,
                                                const struct mo_cell *args, struct mo_cell *out,
                                                struct mo_host_error *error) {
-    if (operation == MO_HOST_NETWORK_CONNECT)
+    if (operation == MO_HOST_NETWORK_CONNECT || operation == MO_HOST_NETWORK_CONNECT_SECURE)
         return fake_connect(host, heap, type, args, out, error);
     if (operation == MO_HOST_CONNECTION_SEND)
         return fake_send(host, heap, type, args, out, error);

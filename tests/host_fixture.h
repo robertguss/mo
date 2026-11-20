@@ -65,8 +65,9 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
         {.name = "Refused", .fields = refused, .field_count = 2},
         {.name = "TimedOut"},
         {.name = "Closed"},
-        {.name = "Broken", .fields = &broken, .field_count = 1}};
-    MO_ASSERT(mo_types_define_choice(&f->source, f->network_error, network_errors, 5) ==
+        {.name = "Broken", .fields = &broken, .field_count = 1},
+        {.name = "Certificate", .fields = &broken, .field_count = 1}};
+    MO_ASSERT(mo_types_define_choice(&f->source, f->network_error, network_errors, 6) ==
               MO_TYPES_OK);
     uint32_t kind;
     MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "EntryKind", &kind) == MO_TYPES_OK);
@@ -209,6 +210,7 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
     case MO_HOST_NETWORK_FAKE:
         return f->capabilities[MO_CAP_NETWORK];
     case MO_HOST_NETWORK_CONNECT:
+    case MO_HOST_NETWORK_CONNECT_SECURE:
         return f->result_connection;
     case MO_HOST_CONNECTION_SEND:
         return f->result_sent;

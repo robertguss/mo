@@ -228,11 +228,10 @@ enum mo_host_outcome mo_host_network_error(struct mo_host *host, struct mo_heap 
                                            uint32_t type, struct mo_network_error error,
                                            struct mo_cell name, int64_t port, struct mo_cell *out,
                                            struct mo_host_error *stop) {
-    static const char *const cases[] = {[NETWORK_TIMED_OUT] = "TimedOut",
-                                        [NETWORK_CLOSED] = "Closed",
-                                        [NETWORK_REFUSED] = "Refused",
-                                        [NETWORK_UNKNOWN_HOST] = "UnknownHost",
-                                        [NETWORK_BROKEN] = "Broken"};
+    static const char *const cases[] = {
+        [NETWORK_TIMED_OUT] = "TimedOut", [NETWORK_CLOSED] = "Closed",
+        [NETWORK_REFUSED] = "Refused",    [NETWORK_UNKNOWN_HOST] = "UnknownHost",
+        [NETWORK_BROKEN] = "Broken",      [NETWORK_CERTIFICATE] = "Certificate"};
     if (error.status == NETWORK_INTERNAL) {
         *stop = (struct mo_host_error){.reason = "internal error: monotonic clock unavailable"};
         return MO_HOST_INTERNAL;
@@ -242,7 +241,8 @@ enum mo_host_outcome mo_host_network_error(struct mo_host *host, struct mo_heap 
     uint32_t count = error.status == NETWORK_REFUSED        ? 2
                      : error.status == NETWORK_UNKNOWN_HOST ? 1
                                                             : 0;
-    if (error.status == NETWORK_BROKEN) {
+    bool allocated_reason = error.status == NETWORK_BROKEN || error.status == NETWORK_CERTIFICATE;
+    if (allocated_reason) {
         char system[256];
         const char *reason = error.reason;
         if (reason == NULL)
@@ -254,7 +254,7 @@ enum mo_host_outcome mo_host_network_error(struct mo_host *host, struct mo_heap 
     uint32_t error_type = mo_host_network_payload(host, type, "Error");
     struct mo_cell value;
     bool built = mo_host_case(host, heap, error_type, cases[error.status], fields, count, &value);
-    if (error.status == NETWORK_BROKEN)
+    if (allocated_reason)
         mo_value_drop(heap, host->types->text, fields[0]);
     if (!built)
         return MO_HOST_OUT_OF_MEMORY;
@@ -270,7 +270,7 @@ enum mo_host_outcome mo_host_network(struct mo_host *host, struct mo_heap *heap,
         return network_allow_hosts(host, heap, type, args, out);
     const struct mo_capability_info *info = mo_capability_get(args[0]);
     const struct mo_host_operations *operations = info->operations;
-    if (operation == MO_HOST_NETWORK_CONNECT) {
+    if (operation == MO_HOST_NETWORK_CONNECT || operation == MO_HOST_NETWORK_CONNECT_SECURE) {
         int64_t port = mo_cell_get_int(args[2]);
         if (port < 1 || port > 65535)
             return mo_host_bug(error, "port outside 1 to 65535");

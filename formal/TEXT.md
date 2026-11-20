@@ -14,7 +14,7 @@ value spelling inside a string. C differential tests compare **reports**.
 
 Version 0.10 adds the type `(networkError)` and the capability kinds `(network)`
 and `(connection)`. Only 0.10 is accepted; 0.9, older and unknown versions are
-rejected. The error type has five constructors, in this order:
+rejected. The error type has six constructors, in this order:
 
 | Constructor | Fields |
 | --- | --- |
@@ -23,18 +23,20 @@ rejected. The error type has five constructors, in this order:
 | `TimedOut` | none |
 | `Closed` | none |
 | `Broken` | `reason` Text |
+| `Certificate` | `reason` Text |
 
 Its structural text names the fields, as `FileError`'s does:
 `Refused(host: "example.org", port: 80)`. A `Connection` is never a parameter of
 the entry function. No World or CapState field is added.
 
-It also adds five `IoOp` operations, which are typed and not modeled. A run that
+It also adds six `IoOp` operations, which are typed and not modeled. A run that
 reaches one stops with `Network is not modeled by mocore`, and keeps the effects
 before it. `networkFake` is a fake constructor, so only spec code may use it:
 
 | IoOp | Argument types | Result |
 | --- | --- | --- |
 | `connect` | Network, Text, Int, Duration | Result(Connection, NetworkError) |
+| `connectSecure` | Network, Text, Int, Duration | Result(Connection, NetworkError) |
 | `allowHosts` | Network, List(Text) | Network |
 | `send` | Connection, Bytes | Result(Unit, NetworkError) |
 | `receive` | Connection, Int | Result(Bytes, NetworkError) |
@@ -411,7 +413,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `ListOp` | `size isEmpty get first last append prepend concat reverse take drop set removeAt uncons enumerate contains unique` |
 | `MapOp` | `empty size isEmpty get has set remove keys values entries ofList` |
 | `SetOp` | `empty size isEmpty has add remove union intersection difference toList ofList` |
-| `IoOp` | `argsList envGet print printError readLine printed printedErrors writeText appendText remove makeFolder readOnly now randomInt consoleFake consoleFakeInput filesInMemory clockFixed randomSeeded argsOf envOf connect allowHosts send receive networkFake` |
+| `IoOp` | `argsList envGet print printError readLine printed printedErrors writeText appendText remove makeFolder readOnly now randomInt consoleFake consoleFakeInput filesInMemory clockFixed randomSeeded argsOf envOf connect connectSecure allowHosts send receive networkFake` |
 
 The non-nullary operation constructors are exactly:
 

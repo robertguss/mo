@@ -7,6 +7,7 @@ fn name(error: NetworkError) : Text
     Network.TimedOut: "timed out"
     Network.Closed: "closed"
     Network.Broken(reason: reason): "broken #{reason}"
+    Network.Certificate(reason: reason): "certificate #{reason}"
   end
 end
 
@@ -17,7 +18,8 @@ fn main(console: Console) : Int
     refused,
     Network.TimedOut,
     Network.Closed,
-    Network.Broken(reason: "bad line")
+    Network.Broken(reason: "bad line"),
+    Network.Certificate(reason: "expired")
   ]
   console.print("#{all}")
   if name(Network.UnknownHost(host: "nowhere")) == "unknown nowhere" and
@@ -25,8 +27,9 @@ fn main(console: Console) : Int
     name(Network.TimedOut) == "timed out" and
     name(Network.Closed) == "closed" and
     name(Network.Broken(reason: "bad line")) == "broken bad line" and
+    name(Network.Certificate(reason: "expired")) == "certificate expired" and
     "#{all}" ==
-      "[UnknownHost(host: \"nowhere\"), Refused(host: \"h\", port: 80), TimedOut, Closed, Broken(reason: \"bad line\")]" and
+      "[UnknownHost(host: \"nowhere\"), Refused(host: \"h\", port: 80), TimedOut, Closed, Broken(reason: \"bad line\"), Certificate(reason: \"expired\")]" and
     refused == Network.Refused(host: "h", port: 80) and
     refused != Network.TimedOut and
     refused < Network.Refused(host: "h", port: 443) and

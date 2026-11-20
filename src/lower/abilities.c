@@ -593,8 +593,8 @@ static void derive_text(struct lowering *p, struct derived *d) {
                 fields = ctor->fields.items;
             else if (d->type->tag == MO_CORE_TY_ENTRY || d->type->tag == MO_CORE_TY_NETWORK_ERROR) {
                 static const char *const entry[] = {"name", "kind"};
-                static const char *const network[][2] = {
-                    {"host"}, {"host", "port"}, {NULL}, {NULL}, {"reason"}};
+                static const char *const network[][2] = {{"host"}, {"host", "port"}, {NULL},
+                                                         {NULL},   {"reason"},       {"reason"}};
                 struct mo_core_param *named = LOWER_NEW(p, struct mo_core_param, count);
                 for (size_t j = 0; j < count; j++)
                     named[j].name =

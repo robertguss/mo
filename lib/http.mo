@@ -216,17 +216,21 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
       Network.fake(replies([(get("http://example.org/a"), reply(404, "gone"))]))
     ) ==
       Ok(reply(404, "gone"))
+    get("https://example.org/a").send(
+      Network.fake(replies([(get("https://example.org/a"), reply(200, "secure"))]))
+    ) ==
+      Ok(reply(200, "secure"))
     get("http://example.org/a").send(Network.fake({})) ==
       Error(Unreachable(Network.UnknownHost(host: "example.org")))
     get("example.org/a").send(Network.fake({})) == Error(BadUrl(url: "example.org/a"))
   end
 
   written = try wire(request)
-  if written.target.secure
-    reason = "HTTPS is not built yet, so #{request.url} can't be reached"
-    return Error(Unreachable(Network.Broken(reason: reason)))
+  connection = if written.target.secure
+    try network.connect_secure(written.target.host, written.target.port, request.timeout)
+  else
+    try network.connect(written.target.host, written.target.port, request.timeout)
   end
-  connection = try network.connect(written.target.host, written.target.port, request.timeout)
   try connection.send(written.bytes)
   bound = limits()
   var head_bytes = "".bytes
@@ -1072,12 +1076,9 @@ test "a request the fake holds no reply for is an error that quotes it, and so i
     )
   assert held.send(network) == Ok(reply(200, "one"))
   secure = get("https://example.org/a")
-  assert secure.send(Network.fake(replies([(secure, reply(200, "one"))]))) ==
-    Error(
-      Unreachable(
-        Network.Broken(reason: "HTTPS is not built yet, so https://example.org/a can't be reached")
-      )
-    )
+  assert secure.send(Network.fake(replies([(secure, reply(200, "one"))]))) == Ok(reply(200, "one"))
+  assert secure.send(Network.fake({})) ==
+    Error(Unreachable(Network.UnknownHost(host: "example.org")))
 end
 
 test "a response is read whole however it says where it ends"

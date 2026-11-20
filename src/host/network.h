@@ -10,6 +10,7 @@ enum mo_network_status {
     NETWORK_REFUSED,
     NETWORK_UNKNOWN_HOST,
     NETWORK_BROKEN,
+    NETWORK_CERTIFICATE,
     NETWORK_INTERNAL
 };
 struct mo_network_error {

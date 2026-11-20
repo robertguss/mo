@@ -358,6 +358,7 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_ARGS_OF,
                                                MO_HOST_ENV_OF,
                                                MO_HOST_NETWORK_CONNECT,
+                                               MO_HOST_NETWORK_CONNECT_SECURE,
                                                MO_HOST_CONNECTION_SEND,
                                                MO_HOST_CONNECTION_RECEIVE,
                                                MO_HOST_NETWORK_FAKE,

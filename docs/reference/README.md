@@ -1820,10 +1820,13 @@ which must be greater; `Random.seeded(seed: Int) : Random`. **Args** and
 
 **Network**:
 `connect(host: Text, port: Int, within: Duration) : Result(Connection, NetworkError)`
-looks `host` up and opens a TCP connection to `port`. `within` is one deadline
-for the connection's whole life: the lookup, the connect, and every `send` and
-`receive` after it. Once it has passed, each of them gives
-`Error(Network.TimedOut)`.
+looks `host` up and opens an unencrypted TCP connection to `port`.
+`connect_secure(host: Text, port: Int, within: Duration) : Result(Connection, NetworkError)`
+opens a TCP connection to `port` and negotiates TLS 1.2 or newer, verifying the
+peer's certificate chain against the system's root certificates and `host` (DNS
+name or IP address). `within` is one deadline for the connection's whole life:
+the lookup, the connect and handshake, and every `send` and `receive` after it.
+Once it has passed, each of them gives `Error(Network.TimedOut)`.
 `allow_hosts(hosts: List(Text)) : Network` returns a narrowed `Network` that
 connects only to destinations matching `hosts`, where each entry is `"host"`
 (any port, case-insensitive ASCII), `"host:port"`, `"[ipv6]"`, or `"[ipv6]:port"`
@@ -1834,32 +1837,36 @@ intersects the allowed sets so authority never widens. **Connection**:
 `send(bytes: Bytes) : Result(Unit, NetworkError)` sends all of `bytes`.
 `receive(most: Int) : Result(Bytes, NetworkError)` waits for data and gives at
 most `most` bytes of it, and empty `Bytes` when the other side has finished.
-A connection has no `close`: it closes when the program no longer holds it.
-Nothing is encrypted. A port outside 1 to 65,535, a `most` below 1 or above
-1,048,576, and more than 64 connections open at once are bugs (13.2).
+A connection has no `close`: it closes when the program no longer holds it. A
+port outside 1 to 65,535, a `most` below 1 or above 1,048,576, and more than 64
+connections open at once are bugs (13.2).
 
 **NetworkError**: `UnknownHost(host: Text)`, for a name that doesn't exist, is
 empty, is longer than 253 bytes or holds a NUL character; `Refused(host: Text, port: Int)`;
-`TimedOut`; `Closed`, when the other side reset the connection, or closed it
-before a `send` finished; and `Broken(reason: Text)`, with the system's reason
-for anything else. Its cases are written with `Network.` in front, in
+`TimedOut`; `Closed`, when the other side reset the connection, closed it
+during a TLS handshake, or closed it before a `send` or TLS record finished;
+`Broken(reason: Text)`, with the system's or TLS protocol's reason for anything
+else; and `Certificate(reason: Text)`, when TLS certificate or host
+verification fails. Its cases are written with `Network.` in front, in
 expressions and in patterns, as in `Network.Refused(host: "example.org", port: 80)`,
 so a program may give its own types cases with these names. Its text forms are
 those of section 9.2, as in `Refused(host: "example.org", port: 80)`.
 
 `Network.fake(peers: Map(Text, Map(Bytes, Bytes))) : Network` is a network that
 answers from `peers`. A key of `peers` is a host and a port, as in
-`"example.org:80"`, and its value maps the exact bytes a connection sends to the
-bytes it then receives. `connect` to a host and port that `peers` lacks gives
+`"example.org:80"` or `"example.org:443"`, and its value maps the exact bytes a
+connection sends to the bytes it then receives. `connect` or `connect_secure`
+to a host and port that `peers` lacks gives
 `Error(Network.UnknownHost(host: host))`. A connection collects what it is
 sent, and its first `receive` looks up everything sent so far. With a reply,
 `receive` hands it out, at most `most` bytes at a time, and then gives empty
 `Bytes`. With none, every `receive` gives `Error(Network.Broken(reason: reason))`.
 The reason quotes the first line sent, and, when `peers` holds a request that
 starts with the same lines, the first line that differs. A `send` after the
-first `receive` gives `Error(Network.Closed)`. A fake opens no connection and
-reads no clock: `within` is ignored, and a fake's connections don't count toward
-the limit. The `Network` that `mo test` makes for a promise has no peers.
+first `receive` gives `Error(Network.Closed)`. A fake opens no connection, runs
+no TLS and reads no clock: `within` is ignored, and a fake's connections don't
+count toward the limit. The `Network` that `mo test` makes for a promise has no
+peers.
 
 <!-- mo-example: fragment -->
 ```mo
@@ -1967,12 +1974,11 @@ method or header.
 connection with the request's timeout as its `within`, writes the request,
 reads the response to its end, and lets the connection close. A URL is
 `http://` or `https://`, a host, then an optional `:` and port from 1 to 65,535,
-an optional path and an optional query. Without a port it is 80, and without a
-path it is `/`. A URL of any other form, or one that holds a space, a control
-character, a `#`, or a `@` in its host, gives `Error(BadUrl(url))`. Nothing is
-encrypted yet: an `https://` URL gives
-`Error(Unreachable(Network.Broken(reason)))`, and the reason says that HTTPS is
-not built. A method that isn't ASCII letters gives `Error(BadHeader(name))` with
+an optional path and an optional query. Without a port it is 80 for `http://`
+and 443 for `https://`, and without a path it is `/`. A URL of any other form,
+or one that holds a space, a control character, a `#`, or a `@` in its host,
+gives `Error(BadUrl(url))`. `send` opens its connection with `connect` for
+`http://` and `connect_secure` for `https://`. A method that isn't ASCII letters gives `Error(BadHeader(name))` with
 the method as the name. So does a header whose name is empty or holds a space,
 a `:` or a control character, whose value holds a control character, or whose
 name is `Host`, `Connection`, `Content-Length` or `Transfer-Encoding` in any

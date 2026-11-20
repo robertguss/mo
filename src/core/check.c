@@ -924,6 +924,7 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
             s = sig(C(ENV), 1, binary(c, MO_CORE_TY_MAP, S(TEXT), S(TEXT)), NULL, NULL);
             break;
         case MO_CORE_IO_OP_CONNECT:
+        case MO_CORE_IO_OP_CONNECT_SECURE:
             s = sig(binary(c, MO_CORE_TY_RESULT, C(CONNECTION), S(NETWORK_ERROR)), 4, C(NETWORK),
                     S(TEXT), S(INT));
             s.args[3] = S(DURATION);
@@ -1070,9 +1071,9 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         return t->constructors;
     }
     struct data *d;
-    const char *names[5] = {0};
-    struct type *fields[5][2] = {{0}};
-    size_t counts[5] = {0}, n = 0;
+    const char *names[6] = {0};
+    struct type *fields[6][2] = {{0}};
+    size_t counts[6] = {0}, n = 0;
     if (t->tag == MO_CORE_TY_OPTION) {
         n = 2;
         names[0] = "None";
@@ -1108,15 +1109,16 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         names[0] = "ServiceDown";
         names[1] = "ToolFailed";
     } else if (t->tag == MO_CORE_TY_NETWORK_ERROR) {
-        n = 5;
+        n = 6;
         names[0] = "UnknownHost";
         names[1] = "Refused";
         names[2] = "TimedOut";
         names[3] = "Closed";
         names[4] = "Broken";
-        counts[0] = counts[4] = 1;
+        names[5] = "Certificate";
+        counts[0] = counts[4] = counts[5] = 1;
         counts[1] = 2;
-        fields[0][0] = fields[1][0] = fields[4][0] = scalar(c, MO_CORE_TY_TEXT);
+        fields[0][0] = fields[1][0] = fields[4][0] = fields[5][0] = scalar(c, MO_CORE_TY_TEXT);
         fields[1][1] = scalar(c, MO_CORE_TY_INT);
     } else if (t->tag == MO_CORE_TY_ENTRY) {
         n = 1;

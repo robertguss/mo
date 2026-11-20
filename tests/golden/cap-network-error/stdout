@@ -1,5 +1,5 @@
-unknown nowhere, refused h 80, timed out, closed, broken bad line
-[UnknownHost(host: "nowhere"), Refused(host: "h", port: 80), TimedOut, Closed, Broken(reason: "bad line")]
+unknown nowhere, refused h 80, timed out, closed, broken bad line, certificate expired
+[UnknownHost(host: "nowhere"), Refused(host: "h", port: 80), TimedOut, Closed, Broken(reason: "bad line"), Certificate(reason: "expired")]
 true false
 true Greater
 Refused(why: "locked") true Open

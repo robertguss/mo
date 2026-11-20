@@ -80,9 +80,11 @@ test "a request the client can't send is an error before any connection"
     Error(Http.BadUrl(url: "ftp://example.org/"))
   assert Http.get("http://example.org/").header("X-Token", "t0ken\n").send(network) ==
     Error(Http.BadHeader(name: "X-Token"))
-  assert Http.get("https://example.org/").send(network) is
-    Error(Http.Unreachable(Network.Broken(reason: why)))
-  assert why == "HTTPS is not built yet, so https://example.org/ can't be reached"
+  secure = Http.get("https://example.org/")
+  assert secure.send(Network.fake(Http.replies([(secure, Http.reply(200, "ok"))]))) ==
+    Ok(Http.reply(200, "ok"))
+  assert secure.send(network) ==
+    Error(Http.Unreachable(Network.UnknownHost(host: "example.org")))
   assert Http.get("http://example.org/").send(network) ==
     Error(Http.Unreachable(Network.UnknownHost(host: "example.org")))
 end

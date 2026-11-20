@@ -36,9 +36,10 @@ in AGENTS.md "Checks and merging".
    `fflush`, `fwrite`, `malloc` and `strtol`. That list leaves out `printf`,
    `puts` and `putchar`, so their results are checked by convention only. A
    `(void)` cast discards a result on purpose.
-4. **A small trusted core.** Only the VM, primitives and system calls are C.
-   The standard library above them, including JSON, HTTP routing and MCP, is
-   written in Mo, which is memory-safe by construction.
+4. **A small trusted core.** Only the VM, primitives and system calls (with
+   OpenSSL for TLS and SQLite for durable storage) are C. The standard library
+   above them, including JSON, HTTP client and routing, and MCP, is written in
+   Mo, which is memory-safe by construction.
 5. **Bytecode verified when it's loaded,** as WebAssembly does, because upgrade
    packages will arrive over the network in Phase 5.
 

@@ -213,8 +213,9 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                                  *const ordering[] = {"Less", "Equal", "Greater"},
                                  *const entry[] = {"File", "Folder", "Link", "Other"},
                                  *const simulation_errors[] = {"ServiceDown", "ToolFailed"},
-                                 *const network_errors[] = {"UnknownHost", "Refused", "TimedOut",
-                                                            "Closed", "Broken"},
+                                 *const network_errors[] = {"UnknownHost", "Refused",
+                                                            "TimedOut",    "Closed",
+                                                            "Broken",      "Certificate"},
                                  *const errors[] = {"NotFound", "NotAllowed", "NotText", "Failed"};
         names = t->tag == MO_CORE_TY_OPTION             ? option
                 : t->tag == MO_CORE_TY_RESULT           ? result
@@ -236,7 +237,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         struct mo_type_field network[3] = {{0}};
         static const struct {
             uint32_t count, first;
-        } network_fields[5] = {{1, 0}, {2, 0}, {0, 0}, {0, 0}, {1, 2}};
+        } network_fields[6] = {{1, 0}, {2, 0}, {0, 0}, {0, 0}, {1, 2}, {1, 2}};
         if (t->tag == MO_CORE_TY_NETWORK_ERROR) {
             uint32_t text_type = codegen_scalar(c, MO_TYPE_TEXT);
             uint32_t int_type = codegen_scalar(c, MO_TYPE_INT);
@@ -249,8 +250,8 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             network[1] = (struct mo_type_field){"port", int_type};
             network[2] = (struct mo_type_field){"reason", text_type};
         }
-        struct mo_type_case cases[5] = {{0}};
-        uint32_t n = t->tag == MO_CORE_TY_NETWORK_ERROR                                   ? 5
+        struct mo_type_case cases[6] = {{0}};
+        uint32_t n = t->tag == MO_CORE_TY_NETWORK_ERROR                                   ? 6
                      : t->tag == MO_CORE_TY_ENTRY_KIND || t->tag == MO_CORE_TY_FILE_ERROR ? 4
                      : t->tag == MO_CORE_TY_ORDERING                                      ? 3
                                                                                           : 2;
@@ -274,7 +275,7 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
         }
         status = mo_types_define_choice(&c->types, id, cases, n);
         const bool unnamed[] = {cases[0].unnamed, cases[1].unnamed, cases[2].unnamed,
-                                cases[3].unnamed, cases[4].unnamed};
+                                cases[3].unnamed, cases[4].unnamed, cases[5].unnamed};
         if (codegen_type_result(c, status, id) == MO_NO_INDEX ||
             !codegen_service_shape(
                 c, id, &(struct mo_service_shape){.case_count = n, .unnamed = unnamed}) ||
