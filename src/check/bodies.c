@@ -67,11 +67,13 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
     const struct mo_syntax **inputs = NULL;
     struct note **spec_notes = NULL;
     if (promise || anchor) {
-        inputs = infer_allocate(&p, slots, sizeof(*inputs), _Alignof(const struct mo_syntax *));
-        if (inputs == NULL ||
-            !infer_anchor_inputs(&p, anchor ? written : written->children[2]->children[0],
-                                 parameters, slots, inputs))
-            goto failed;
+        if (anchor || written->children[2]->count != 0) {
+            inputs = infer_allocate(&p, slots, sizeof(*inputs), _Alignof(const struct mo_syntax *));
+            if (inputs == NULL ||
+                !infer_anchor_inputs(&p, anchor ? written : written->children[2]->children[0],
+                                     parameters, slots, inputs))
+                goto failed;
+        }
         uint32_t count = anchor ? slots : written->children[1]->count;
         spec_notes = infer_allocate(&p, count, sizeof(*spec_notes), _Alignof(struct note *));
         if (spec_notes == NULL)
@@ -85,8 +87,22 @@ infer_function(struct mo_arena *arena, const struct mo_module_interfaces *interf
         goto failed;
     for (uint32_t i = 0; i < parameter_count; i++) {
         struct term *type = infer_argument(&p, fn, i);
-        const struct mo_syntax *name =
-            i < parameters->count ? parameters->children[i]->children[0] : inputs[i]->children[0];
+        const struct mo_syntax *name = NULL;
+        if (i < parameters->count)
+            name = parameters->children[i]->children[0];
+        else if (inputs != NULL)
+            name = inputs[i]->children[0];
+        else {
+            struct mo_syntax *synthetic =
+                infer_allocate(&p, 1, sizeof(*synthetic), _Alignof(struct mo_syntax));
+            if (synthetic == NULL)
+                goto failed;
+            *synthetic = (struct mo_syntax){
+                .kind = MO_S_NAME,
+                .span = {written->span.file, written->span.start, written->span.start + 6},
+                .text = (const uint8_t *)"result"};
+            name = synthetic;
+        }
         if (type == NULL || !infer_bind(&p, name, type, false))
             goto failed;
         if (promise && p.locals != NULL)

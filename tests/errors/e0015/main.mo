@@ -1,7 +1,5 @@
 module Main
 fn f()
-promise "p"
-true
-allows result: true
+promise
 end
 end

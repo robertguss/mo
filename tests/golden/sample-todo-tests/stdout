@@ -8,10 +8,10 @@ passed Todo.parse_items.example.2  examples/todo.mo:62:5
 passed Todo.parse_items.example.3  examples/todo.mo:63:5
 passed Todo.format.example.1  examples/todo.mo:81:5
 passed Todo.apply.promise.1  examples/todo.mo:93:3
-passed Todo.apply.example.1  examples/todo.mo:100:5
-passed Todo.apply.example.2  examples/todo.mo:101:5
-passed Todo.apply.example.3  examples/todo.mo:102:5
-passed Todo.apply.example.4  examples/todo.mo:103:5
-passed Todo.test.1  examples/todo.mo:141:1
-passed Todo.test.2  examples/todo.mo:152:1
+passed Todo.apply.example.1  examples/todo.mo:98:5
+passed Todo.apply.example.2  examples/todo.mo:99:5
+passed Todo.apply.example.3  examples/todo.mo:100:5
+passed Todo.apply.example.4  examples/todo.mo:101:5
+passed Todo.test.1  examples/todo.mo:139:1
+passed Todo.test.2  examples/todo.mo:150:1
 16 passed, 0 failed, 0 stopped

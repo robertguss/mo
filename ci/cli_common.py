@@ -48,17 +48,13 @@ service
   tools add, read
   token from env "COUNTER_TOKEN"
 
-  promise "an addition adds its amount and replies with the new count" on add
+  promise on add
     after == before + amount
     reply == after
-    allows before: 1, amount: 2, reply: 3, after: 3, now: t0
-    forbids before: 1, amount: 2, reply: 3, after: -1, now: t0
   end
 
-  promise "a read replies with the count" on read
+  promise on read
     reply == before.to_text
-    allows before: 4, reply: "4", after: 4, now: t0
-    forbids before: 4, reply: "5", after: 4, now: t0
   end
 end
 
@@ -71,8 +67,6 @@ end
 fn read(state: Int, _now: Time) : Text
   state.to_text
 end
-
-t0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"
 """
 SERVE_HALTING = (SERVE_COUNTER.replace("tools add, read", "tools add, read, halt") +
                  '\n## Always stops.\nfn halt(_state: Int, _now: Time) : Text\n'

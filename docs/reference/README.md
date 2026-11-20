@@ -1185,42 +1185,45 @@ end
 
 ### 12.2 Promises
 
-A `promise` states what must hold for every call. It has three parts:
+A `promise` states what must hold for every call. It has a body, an optional
+label, and optional anchors:
 
-- **a sentence** saying, in plain words, what is promised;
+- **an optional label**: a plain text literal after `promise` naming what is
+  promised, when a short label helps;
 - **a body**: one or more `Bool` lines over the parameters and `result`, the
   function's result, which must all be true;
-- **anchors**: at least one `allows` line and one `forbids` line. Each gives
-  every parameter and `result` a value, which the body must accept or reject.
+- **optional anchors**: `allows` and `forbids` lines. Each gives every
+  parameter and `result` a value, which the body must accept (`allows`) or
+  reject (`forbids`).
 
 ```mo
 fn ordered(a: Int, b: Int) : (Int, Int)
-  promise "the smaller comes first, and both values are kept"
+  promise
     result.0 <= result.1
     result == (a, b) or result == (b, a)
-    allows a: 5, b: 2, result: (2, 5)
-    forbids a: 5, b: 2, result: (2, 2)
   end
 
   if a <= b: (a, b) else: (b, a)
 end
 ```
 
-The compiler checks that the body accepts every `allows` and rejects every
-`forbids`, which catches a body that doesn't say what its sentence says.
-`mo test` checks the body against the function on many generated inputs,
-boundaries first. It builds a type exposed without its insides only through a
-limited number of calls to its module's exposed functions, other types from any
-values of their fields, and capabilities as fakes. A value built that way can
-come with another such value that the same call returned, so a `Lease` can
-arrive with the `Queue` that issued it. A promise speaks about calls
-that return; a call that stops on a generated input is reported as a bug, with
-the input. The boundaries include each type's extremes, such as `Decimal`'s
-largest value and the last instant of the year 9999, so a promise that passes
-holds for every call its types allow. When an extreme stops a call, the report
-says so, as in "stops with overflow when `amount` is `Decimal`'s largest
-value", and shows the two fixes: return a failure for such inputs, or take a
-type whose module keeps its values in range. Proofs come in a later version.
+When anchors are written, the compiler checks that the body accepts every
+`allows` and rejects every `forbids`. `mo test` checks the body against the
+function on many generated inputs, boundaries first, and fails any vacuous
+condition: a condition that is always true, or an `a implies b` condition whose
+left side `a` is never true across all `examples` and generated inputs. It
+builds a type exposed without its insides only through a limited number of
+calls to its module's exposed functions, other types from any values of their
+fields, and capabilities as fakes. A value built that way can come with another
+such value that the same call returned, so a `Lease` can arrive with the
+`Queue` that issued it. A promise speaks about calls that return; a call that
+stops on a generated input is reported as a bug, with the input. The boundaries
+include each type's extremes, such as `Decimal`'s largest value and the last
+instant of the year 9999, so a promise that passes holds for every call its
+types allow. When an extreme stops a call, the report says so, as in "stops
+with overflow when `amount` is `Decimal`'s largest value", and shows the two
+fixes: return a failure for such inputs, or take a type whose module keeps its
+values in range. Proofs come in a later version.
 
 After a false promise, `mo test` tries smaller inputs, keeping only those that
 still fail. For a hidden type, it shortens the recorded builder sequence and
@@ -1246,11 +1249,12 @@ function's type parameters.
 A promise about a whole service is written in its `service` block, after
 `token`. A step promise holds across every step the service takes: a tool call,
 a clock advance, or a crash and restart. Its body reads `before`, `after` and
-`now`. A tool promise, `promise "…" on submit`, holds after every call to that
-tool that replied, and also reads the tool's arguments by name and `reply`,
-what the caller received. Anchors give each of those names a value. `mo test`
-checks service promises on the recovery check's generated sequences (section
-12.5) and reports a failure as a short sequence that still fails.
+`now`. A tool promise, `promise on submit` (or `promise "…" on submit`), holds
+after every call to that tool that replied, and also reads the tool's arguments
+by name and `reply`, what the caller received. Any anchors give each of those
+names a value. `mo test` checks service promises on the recovery check's
+generated sequences (section 12.5) and reports a failure as a short sequence
+that still fails.
 
 ```mo
 module Counter
@@ -1260,24 +1264,18 @@ service
   tools add
   token from env "COUNTER_TOKEN"
 
-  promise "the count never falls"
+  promise
     after >= before
-    allows before: 1, after: 3, now: t0
-    forbids before: 3, after: 1, now: t0
   end
 
-  promise "an addition adds its amount's size" on add
+  promise on add
     after == before + amount.abs
-    allows before: 1, amount: -2, reply: Unit, after: 3, now: t0
-    forbids before: 1, amount: -2, reply: Unit, after: -1, now: t0
   end
 end
 
 fn add(state: Int, _now: Time, amount: Int) : (Int, Unit)
   (state + amount.abs, Unit)
 end
-
-t0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"
 ```
 
 For a crash and restart, `before` is the state at the crash and `after` the
@@ -2094,7 +2092,7 @@ type        = Name ("." Name)? ("(" type ("," type)* ")")?
 struct      = "struct" Name ("(" Name ("," Name)* ")")? NL (name ":" type NL)+ "end" NL
 enum        = "enum" Name ("(" Name ("," Name)* ")")? NL (case NL)+ "end" NL
 case        = Name | Name "(" type ")" | Name "(" name ":" type ("," name ":" type)* ")"
-promise     = "promise" text ("on" name)? NL (expr NL)+ (("allows" | "forbids") anchor ("," anchor)* NL)+ "end" NL
+promise     = "promise" text? ("on" name)? NL (expr NL)+ (("allows" | "forbids") anchor ("," anchor)* NL)* "end" NL
 anchor      = name ":" expr
 examples    = "examples" NL (expr NL)+ "end" NL
 test        = "test" text NL statement* "end" NL

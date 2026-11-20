@@ -90,10 +90,8 @@ fn box(item: Item) : Text
 end
 
 fn apply(items: List(Item), command: Command) : Result(List(Item), TodoError)
-  promise "marking an item done keeps every item"
+  promise
     command is Done(number: _) and result is Ok(after) implies after.size == items.size
-    allows items: [milk], command: Done(number: 1), result: Ok([milk_done])
-    forbids items: [milk], command: Done(number: 1), result: Ok([])
   end
 
   examples

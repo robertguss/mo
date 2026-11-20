@@ -15,6 +15,15 @@ struct mo_promise_result {
     const struct mo_input_extreme *extreme;
 };
 
+struct mo_promise_vacuity {
+    uint32_t tautology_line; /* 1-based condition index when constant-true, else 0 */
+    uint64_t required_mask;  /* bit i (i < 62) set iff condition i is top-level `a implies b` */
+};
+
+MO_MUST_USE struct mo_promise_vacuity mo_promise_vacuity_plan(const struct mo_program *program,
+                                                              const struct mo_checked_spec *spec);
+MO_MUST_USE uint32_t mo_vacuity_missing_line(uint64_t required, uint64_t seen);
+
 /* Refuse the entire selected set before initialization/observations. Listing
  * needs no generator. Closed scalars, tuples, collections, visible data, capabilities as fakes,
  * and hidden types their module can start within MO_CLI_BUILDER_LEVELS. Generic templates are

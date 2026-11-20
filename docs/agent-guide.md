@@ -14,7 +14,7 @@ This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guid
 
 This build checks, formats, fixes and serves `service ... end` blocks (reference 11.5). `mo test` never reads a service's token, and starts a service on its own only in the service's recovery check, below. Tests and examples can explicitly start one with `Simulation.start(Module, at)`, send registered tools with `Simulation.send(handle, Module.tool, args...)`, advance its fake clock, and crash/restart through the real log and snapshot path backed by an in-memory store. `send` returns the complete declared handler result inside another `Result`; an application `Error` is still inside `Ok`. Helpers may receive the handle. A promise whose inputs include a `Simulation` is E1400; promises over a service's sequences of steps are deferred. `mo run` on a service entry module still refuses with E1408, "mo run does not start services yet". Importing a service module does not start it.
 
-`mo test` runs one recovery check for each service in the program, named after its module, such as `Counter.service.recovery` (reference 12.5). Its author writes nothing for it. It calls tools with generated arguments, advances the fake clock, crashes and restarts the service on an in-memory store, and checks that each restart recovers the state the service held before its crash. `--list` prints it after its module's other checks, and `--only` and `--in` select it. A service's own promises (reference 12.2) are checked on the same sequences. Each is named after its position, such as `Counter.service.promise.1`, listed just before the recovery check, and judged after every step it covers, restarts included. A failing promise prints its shrunk sequence with `broke` on the step that made it false, the states around that step and the condition that was false. Every service check runs its whole plan of 200 sequences, which `--calls` caps; `--seconds` does not apply. A promise body that runs past `MO_LIMIT_SERVICE_WORK` stops with that bug. For `counter.mo` under Run a service, `mo test counter.mo` prints `passed Counter.service.promise.1  counter.mo:8:3`, `passed Counter.service.promise.2  counter.mo:15:3` and `passed Counter.service.recovery  counter.mo:3:1`, then `3 passed, 0 failed, 0 stopped`. A failing check prints the numbered steps of a shrunk sequence, with literal arguments and each step's outcome, then the state before the crash and the state recovery produced. When the start value stops, the check stops with that bug.
+`mo test` runs one recovery check for each service in the program, named after its module, such as `Counter.service.recovery` (reference 12.5). Its author writes nothing for it. It calls tools with generated arguments, advances the fake clock, crashes and restarts the service on an in-memory store, and checks that each restart recovers the state the service held before its crash. `--list` prints it after its module's other checks, and `--only` and `--in` select it. A service's own promises (reference 12.2) are checked on the same sequences. Each is named after its position, such as `Counter.service.promise.1`, listed just before the recovery check, and judged after every step it covers, restarts included. A failing promise prints its shrunk sequence with `broke` on the step that made it false, the states around that step and the condition that was false. Every service check runs its whole plan of 200 sequences, which `--calls` caps; `--seconds` does not apply. A promise body that runs past `MO_LIMIT_SERVICE_WORK` stops with that bug. For `counter.mo` under Run a service, `mo test counter.mo` prints `passed Counter.service.promise.1  counter.mo:8:3`, `passed Counter.service.promise.2  counter.mo:13:3` and `passed Counter.service.recovery  counter.mo:3:1`, then `3 passed, 0 failed, 0 stopped`. A failing check prints the numbered steps of a shrunk sequence, with literal arguments and each step's outcome, then the state before the crash and the state recovery produced. When the start value stops, the check stops with that bug.
 
 `mo check --emit=bytecode FILE` prints the program's bytecode as indexed text, with a `services` section holding one descriptor for each module that declares a service, including imported modules. It works on a module without `main`. `mo emit FILE -o OUT` writes the same descriptors and accepts a service without `main`. Neither command evaluates a service's start value or reads its token, and `mo run` still does not start a service (E1408). `mo check --emit=core FILE` shows the start value and timer intervals as ordinary functions but no service registration, so Core output alone cannot reconstruct a service.
 
@@ -140,7 +140,7 @@ Write these forms. The section number states the rule.
 - Cover every possible value in a `case`. On a choice, a whole arm cannot be `_` or a name, so list the cases. Inside a pattern, `_` or a name may stand for anything. Section 7.2.
 - Pass a capability in only as a parameter. Make a fake only in tests, examples, and promises. Sections 11 and 12.4.
 - Declare a `struct` or an `enum`. Records have no methods. Put functions in that module. Sections 4 and 5.4.
-- To state that a function holds for every input, write a `promise` with a sentence, a body, an `allows` line, and a `forbids` line. Section 12.2.
+- To state that a function holds for every input, write a `promise` block with one or more `Bool` lines over the parameters and `result`; a text label after `promise` is optional, and `mo test` fails vacuous promises. Section 12.2.
 - When another module needs a name, list it with `expose` and bring the module in with `use`. Section 10.
 
 The program `Shout` in section 1 has no `examples` and no `promise`.
@@ -204,17 +204,13 @@ service
   tools add, read
   token from env "COUNTER_TOKEN"
 
-  promise "an addition adds its amount and replies with the new count" on add
+  promise on add
     after == before + amount
     reply == after
-    allows before: 1, amount: 2, reply: 3, after: 3, now: t0
-    forbids before: 1, amount: 2, reply: 3, after: -1, now: t0
   end
 
-  promise "a read replies with the count" on read
+  promise on read
     reply == before.to_text
-    allows before: 4, reply: "4", after: 4, now: t0
-    forbids before: 4, reply: "5", after: 4, now: t0
   end
 end
 
@@ -227,8 +223,6 @@ end
 fn read(state: Int, _now: Time) : Text
   state.to_text
 end
-
-t0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"
 ```
 
 When it is ready, it prints one line to standard output:

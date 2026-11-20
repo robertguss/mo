@@ -35,10 +35,8 @@ fn balance(account: Account) : Decimal
 end
 
 fn deposit(account: Account, amount: Decimal) : Result(Account, AccountError)
-  promise "a deposit adds exactly the amount"
+  promise
     result is Ok(after) implies after.balance == account.balance + amount
-    allows account: alice(10.00), amount: 5.50, result: Ok(alice(15.50))
-    forbids account: alice(10.00), amount: 5.50, result: Ok(alice(10.00))
   end
 
   examples
@@ -57,16 +55,9 @@ fn deposit(account: Account, amount: Decimal) : Result(Account, AccountError)
 end
 
 fn withdraw(account: Account, amount: Decimal) : Result(Account, AccountError)
-  promise "a withdrawal never leaves a negative balance"
+  promise
     result is Ok(after) implies after.balance >= 0
-    allows account: alice(100.00), amount: 30.00, result: Ok(alice(70.00))
-    forbids account: alice(50.00), amount: 80.00, result: Ok(alice(-30.00))
-  end
-
-  promise "a withdrawal takes exactly the amount asked for"
     result is Ok(after) implies after.balance == account.balance - amount
-    allows account: alice(100.00), amount: 30.00, result: Ok(alice(70.00))
-    forbids account: alice(100.00), amount: 30.00, result: Ok(alice(75.00))
   end
 
   examples
@@ -86,11 +77,9 @@ fn withdraw(account: Account, amount: Decimal) : Result(Account, AccountError)
 end
 
 fn transfer(from: Account, to: Account, amount: Decimal) : Result((Account, Account), AccountError)
-  promise "a transfer moves money without making or losing any"
+  promise
     result is Ok((paid, received)) implies
       paid.balance + received.balance == from.balance + to.balance
-    allows from: alice(100.00), to: bob(5.00), amount: 30.00, result: Ok((alice(70.00), bob(35.00)))
-    forbids from: alice(100.00), to: bob(5.00), amount: 30.00, result: Ok((alice(70.00), bob(5.00)))
   end
 
   examples

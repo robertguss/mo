@@ -322,8 +322,13 @@ specification
     ;
 
 promise
-    : "promise" TEXT promise_tool NL lines anchors "end" NL
+    : "promise" promise_label promise_tool NL lines anchors "end" NL
                                             { $$ = MK(K_PROMISE, @$, $2, $5, $6, $3); }
+    ;
+
+promise_label
+    : %empty                                { $$ = NULL; }
+    | TEXT                                  { $$ = $1; }
     ;
 
 promise_tool
@@ -332,7 +337,7 @@ promise_tool
     ;
 
 anchors
-    : anchor                                { $$ = MK(K_LIST_OF, @$, $1); }
+    : %empty                                { $$ = LEAF(K_LIST_OF, @$); }
     | anchors anchor                        { $$ = ADD($1, $2); }
     ;
 

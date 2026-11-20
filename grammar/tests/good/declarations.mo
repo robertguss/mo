@@ -37,16 +37,9 @@ fn total(order: Order) : Decimal
 end
 
 fn place(lines: List(OrderLine)) : Result(Order, OrderError)
-  promise "an order is never empty"
+  promise
     result is Ok(order) implies not order.lines.empty?
-    allows lines: [one], result: Ok(order_of([one]))
-    forbids lines: [], result: Ok(order_of([]))
-  end
-
-  promise "an order never has more lines than allowed"
     result is Ok(order) implies order.lines.size <= max_items
-    forbids lines: [], result: Ok(order_of(many))
-    allows lines: [], result: Error(Empty)
   end
 
   examples

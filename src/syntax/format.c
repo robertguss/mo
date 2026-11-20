@@ -501,9 +501,11 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
     case MO_S_PROMISE:
     case MO_S_EXAMPLES: {
         bool promise = n->kind == MO_S_PROMISE;
-        text(f, promise ? "promise " : "examples");
-        if (promise)
+        text(f, promise ? "promise" : "examples");
+        if (promise && n->children[0] != NULL) {
+            text(f, " ");
             node(f, n->children[0]);
+        }
         if (promise && n->children[3] != NULL) {
             text(f, " ");
             clause_word(f, "on");

@@ -119,15 +119,15 @@ def recovery_checks(binary):
         *((f"Main.expire.example.{n}", "example") for n in range(1, 3)),
         *((f"Main.current?.example.{n}", "example") for n in range(1, 3)),
         ("Main.matching.example.1", "example"),
-        *((f"Main.service.promise.{n}", "promise") for n in range(1, 11)),
+        *((f"Main.service.promise.{n}", "promise") for n in range(1, 8)),
         ("Main.service.recovery", "recovery")], items
     span = items[-2]["span"]
-    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 149), span
+    assert (span["line"], span["column"], span["end_line"]) == (15, 1, 102), span
     tests = "services/task-queue/queue-tests.mo"
     listed = run(binary, ["test", "--list", "--in", "QueueTests", tests], 0).stdout.decode()
     assert "QueueTests.test.1\n" in listed and "service" not in listed, listed
     listed = run(binary, ["test", "--list", "--in", "Main", tests], 0).stdout.decode()
-    assert listed.endswith("Main.service.promise.10\nMain.service.recovery\n"), listed
+    assert listed.endswith("Main.service.promise.7\nMain.service.recovery\n"), listed
     # --only runs the one check; --calls caps its sequences, and JSON carries the counts.
     items = records(run(binary, ["test", "--json", "--calls", "3", "--only",
                                  "Main.service.recovery", queue], 0), "test")

@@ -32,14 +32,8 @@ max_limit = 100
 ## Finds the lines of the .md notes that contain the query, ignoring ASCII case,
 ## in file order and then line order.
 fn search_notes(notes: ReadFiles, input: SearchInput) : Result(SearchOutput, ToolError)
-  promise "a search never returns more hits than its limit"
+  promise
     result is Ok(output) implies output.hits.size <= input.limit
-    allows notes: Files.in_memory({}).read_only, input: SearchInput(query: "x", limit: 1), result: Ok(
-      SearchOutput(hits: [], truncated?: false)
-    )
-    forbids notes: Files.in_memory({}).read_only, input: SearchInput(query: "x", limit: 1), result: Ok(
-      SearchOutput(hits: [hit, hit], truncated?: false)
-    )
   end
 
   examples

@@ -223,13 +223,16 @@ static MO_MUST_USE bool check_promise(struct mo_arena *arena, const struct mo_pr
                                                         .promise = UINT32_MAX},
                                                .tool = tool};
     struct mo_span header = item->span;
-    header.end = (on != NULL ? on : item->children[0])->span.end;
+    header.end = on != NULL                  ? on->span.end
+                 : item->children[0] != NULL ? item->children[0]->span.end
+                                             : item->span.start + 7;
     const struct mo_syntax *lines = item->children[1];
     struct mo_checked_condition *conditions =
         allocate(arena, diags, header, lines->count, sizeof(*conditions),
                  _Alignof(struct mo_checked_condition));
     if (conditions == NULL || !mo_spec_copy_text(arena, diags, sources, header, &out->spec.text) ||
-        !mo_spec_wording(arena, diags, item->children[0], &out->spec))
+        (item->children[0] != NULL &&
+         !mo_spec_wording(arena, diags, item->children[0], &out->spec)))
         return false;
     for (uint32_t k = 0; k < lines->count; k++) {
         conditions[k] = (struct mo_checked_condition){.expression = UINT32_MAX};
@@ -244,9 +247,11 @@ static MO_MUST_USE bool check_promise(struct mo_arena *arena, const struct mo_pr
         return false;
     *halt = true;
     const struct mo_syntax *written = item->children[2];
-    struct mo_checked_spec *anchors = allocate(arena, diags, header, written->count,
-                                               sizeof *anchors, _Alignof(struct mo_checked_spec));
-    if (anchors == NULL)
+    struct mo_checked_spec *anchors =
+        written->count == 0 ? NULL
+                            : allocate(arena, diags, header, written->count, sizeof *anchors,
+                                       _Alignof(struct mo_checked_spec));
+    if (written->count != 0 && anchors == NULL)
         return false;
     uint32_t allows = 0, forbids = 0;
     bool valid = true;

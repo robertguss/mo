@@ -158,11 +158,11 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.5/9					tests/test_protocol_server.c:wire,tests/test_protocol_server.c:response_limit,tests/test_protocol_server.c:small_body_reads,tests/test_protocol_server.c:rejection_paths,tests/test_protocol_server.c:result_updates,tests/test_protocol_server_faults.c:exhausted_fallback,tests/test_protocol_server_faults.c:store_failure,tests/test_protocol_server_faults.c:preauth_failure,tests/test_protocol_server_faults.c:poll_failures,tests/test_protocol_bounds.c:header_bytes,tests/test_protocol_bounds.c:header_fields,tests/test_protocol_bounds.c:body_ceiling,tests/test_protocol_bounds.c:chunk_ceilings,tests/test_protocol_bounds.c:response_ceiling,tests/test_protocol_composites.c:output_nodes,tests/test_listener.c:real_io,tests/test_listener_faults.c:retry_accept,tests/test_lower.c:test_embedded_protocol
 12/1	lang-test-passing,col-test-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
 12.1/1	col-test-passing	tst-failing-example		
-12.2/1	sample-account-tests	e0015		
-12.2/2	sample-account-tests	e0015-sentence		
-12.2/3	sample-account-tests	e0074-promise		
-12.2/4	sample-account-tests	e0015,e0088,e1405,e1405-forbids		
-12.2/5	tst-promise-holds,sample-account-tests	tst-overflow-promise,tst-failing-promise			ci/cli_promises.py:promise_boundaries,ci/cli_promises.py:hidden_promises,ci/cli_promises.py:composite_promises,ci/cli_promises.py:fake_capability_promises,ci/cli_promises.py:promise_shrinking
+12.2/1	sample-account-tests	e0015			ci/cli_promises.py:vacuous_promises
+12.2/2	sample-account-tests				ci/cli_promises.py:vacuous_promises
+12.2/3	sample-account-tests	e0074-promise			ci/cli_promises.py:vacuous_promises
+12.2/4	sample-account-tests	e0088,e1405,e1405-forbids			ci/cli_promises.py:vacuous_promises
+12.2/5	tst-promise-holds,sample-account-tests	tst-overflow-promise,tst-failing-promise			ci/cli_promises.py:vacuous_promises,ci/cli_promises.py:promise_boundaries,ci/cli_promises.py:hidden_promises,ci/cli_promises.py:composite_promises,ci/cli_promises.py:fake_capability_promises,ci/cli_promises.py:promise_shrinking
 12.2/6					ci/cli_promises.py:hidden_promises,ci/cli_promises.py:promise_shrinking
 12.2/7					ci/cli_promises.py:hidden_promises
 12.2/8					ci/cli_promises.py:generic_promises,ci/cli_intent.py:promise_selection

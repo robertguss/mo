@@ -155,7 +155,43 @@ size_t mo_process_memory_peak(const struct mo_process *process) {
     return sizeof *process + mo_heap_peak(process->heap);
 }
 
+void mo_process_observe_calls(struct mo_process *process, struct mo_call_observer *observer) {
+    MO_ASSERT(process != NULL && (observer == NULL ? (process->depth == 0 || process->terminal)
+                                                   : (process->depth == 0 && !process->terminal)));
+    MO_ASSERT(observer == NULL || observer->target < process->file->function_count);
+    while (process->observer != NULL && process->observer->pending_count != 0) {
+        struct mo_observed_pending *pending =
+            &process->observer->pending[--process->observer->pending_count];
+        const struct mo_bytecode_function *fn =
+            &process->file->functions[process->observer->target];
+        for (uint32_t i = 0; i < fn->parameter_count; i++)
+            mo_value_drop(process->heap, fn->parameters[i].type, pending->arguments[i]);
+    }
+    process->observer = observer;
+}
+
+void mo_call_observer_clear(struct mo_process *process, struct mo_call_observer *observer) {
+    MO_ASSERT(process != NULL && observer != NULL &&
+              observer->target < process->file->function_count);
+    const struct mo_bytecode_function *fn = &process->file->functions[observer->target];
+    if (process->observer == observer)
+        process->observer = NULL;
+    while (observer->pending_count != 0) {
+        struct mo_observed_pending *pending = &observer->pending[--observer->pending_count];
+        for (uint32_t i = 0; i < fn->parameter_count; i++)
+            mo_value_drop(process->heap, fn->parameters[i].type, pending->arguments[i]);
+    }
+    for (uint32_t c = 0; c < observer->count; c++) {
+        for (uint32_t i = 0; i < fn->parameter_count; i++)
+            mo_value_drop(process->heap, fn->parameters[i].type, observer->calls[c].arguments[i]);
+        mo_value_drop(process->heap, fn->result_type, observer->calls[c].result);
+    }
+    observer->count = 0;
+}
+
 void mo_vm_dispose(struct mo_process *process) {
+    if (process->observer != NULL)
+        mo_call_observer_clear(process, process->observer);
     if (process->budget_stack.process != NULL)
         mo_scratch_free(&process->budget_stack);
     else

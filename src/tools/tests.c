@@ -712,7 +712,7 @@ static void run_tests(const struct mo_cli *cli, struct mo_arena *arena,
     struct mo_buffer wire;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     struct mo_core *core =
-        mo_lower_services(&lowered, program, sources, diags, &promises, &services);
+        mo_lower_test_services(&lowered, program, sources, diags, &promises, &services);
     if (core == NULL || mo_diags_any(diags) || !mo_core_check_services(core, &services, diags))
         goto done;
     selection = mo_instantiate_tests(arena, selection, &promises, diags);

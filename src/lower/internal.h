@@ -79,6 +79,7 @@ struct lowering {
     struct instance **specs;
     uint32_t *promise_heads, *promise_next;
     bool retain_source_types;
+    bool promise_vacuity;
 };
 
 _Noreturn void lower_refuse(struct lowering *p, uint16_t code, const char *message);

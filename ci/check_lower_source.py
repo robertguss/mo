@@ -889,7 +889,8 @@ def check_specs(driver, vm, root, world):
                 assert [p[1] for p in fun[2]] == [p[1] for p in subject[2]] + [subject[3]], name
                 start = int(meta[2][1][2])
                 header = original[start:].split(b"\n", 1)[0].decode()
-                assert meta[3] == ["some", header] and header.startswith("promise "), name
+                assert meta[3] == ["some", header] and (
+                    header == "promise" or header.startswith("promise ")), name
                 for line in meta[7]:
                     span = line[1][1]
                     assert line[2].encode() == original[int(span[2]):int(span[3])], (name, line)

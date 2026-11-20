@@ -176,7 +176,7 @@ def guide_claims(binary):
          "A promise body that runs past `MO_LIMIT_SERVICE_WORK` stops with that bug.",
          "For `counter.mo` under Run a service, `mo test counter.mo` prints "
          "`passed Counter.service.promise.1  counter.mo:8:3`, "
-         "`passed Counter.service.promise.2  counter.mo:15:3` and "
+         "`passed Counter.service.promise.2  counter.mo:13:3` and "
          "`passed Counter.service.recovery  counter.mo:3:1`, then `3 passed, 0 failed, 0 stopped`.",
          "When the start value stops, the check stops with that bug.",
          "`mo test FILE` checks its examples, promises, tests and recovery checks.",
@@ -188,7 +188,7 @@ def guide_claims(binary):
         assert counter.returncode == 0 and not counter.stderr, counter
         assert counter.stdout == (
             b"passed Counter.service.promise.1  counter.mo:8:3\n"
-            b"passed Counter.service.promise.2  counter.mo:15:3\n"
+            b"passed Counter.service.promise.2  counter.mo:13:3\n"
             b"passed Counter.service.recovery  counter.mo:3:1\n"
             b"3 passed, 0 failed, 0 stopped\n"), counter.stdout
         listed = subprocess.run([str(binary), "test", "--list", "counter.mo"], cwd=directory,
@@ -200,8 +200,8 @@ def guide_claims(binary):
                                        cwd=directory, capture_output=True, timeout=30)
         assert mutant_listed.stdout.decode().splitlines() == [
             "Counter.service.promise.1", "Counter.service.promise.2", "Counter.service.recovery",
-            "mutant counter.mo:24:10 Counter.add: arithmetic, `+` to `-`",
-            "mutant counter.mo:24:26 Counter.add: arithmetic, `+` to `-`",
+            "mutant counter.mo:20:10 Counter.add: arithmetic, `+` to `-`",
+            "mutant counter.mo:20:26 Counter.add: arithmetic, `+` to `-`",
             "function Counter.add: 2 mutants", "function Counter.read: 0 mutants"], mutant_listed
         run(binary, ["format", str(pathlib.Path(directory) / "counter.mo")], 0)
         assert (pathlib.Path(directory) / "counter.mo").read_text() == SERVE_COUNTER

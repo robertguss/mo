@@ -245,19 +245,8 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
         return true;
     case K_FN:
         return check_kids(n, 4, stack);
-    case K_PROMISE: {
-        bool allows = false;
-        bool forbids = false;
-        const struct node *anchors = n->kids[2];
-        for (int i = 0; i < anchors->count; i++) {
-            allows = allows || anchors->kids[i]->op == ALLOWS;
-            forbids = forbids || anchors->kids[i]->op == FORBIDS;
-        }
-        if (!allows || !forbids) {
-            return fail(lx, n, "a promise has at least one allows line and one forbids line");
-        }
+    case K_PROMISE:
         return check_kids(n, 1, stack);
-    }
     case K_NAMED_ARG:
     case K_TEST:
     case K_CONST:

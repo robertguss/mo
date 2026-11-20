@@ -18,51 +18,30 @@ service
   every 1.minute expire
   token from env "QUEUE_TOKEN"
 
-  promise "no job is ever lost"
+  promise
     ids(before).all?(fn(id) ids(after).contains?(id) end)
-    allows before: one_job, after: one_job, now: t0
-    forbids before: one_job, after: JobQueue.empty, now: t0
-  end
-
-  promise "a finished job stays as it finished"
     JobQueue.jobs(before).all?(
       fn(job) not finished?(job) or JobQueue.jobs(after).contains?(job) end
     )
-    allows before: done_job, after: done_job, now: t0
-    forbids before: done_job, after: one_job, now: t0
-  end
-
-  promise "a lease ends at most 30 minutes from now"
     JobQueue.jobs(after).all?(
       fn(job) job.state is JobQueue.Leased(until: until) implies until <= now + lease_length end
     )
-    allows before: one_job, after: leased_job, now: t0
-    forbids before: one_job, after: leased_job, now: t0 - 1.hour
   end
 
-  promise "a submitted job is in the queue, ready" on submit
+  promise on submit
     reply is Ok(id) implies
       JobQueue.jobs(after).contains?(
         Job(id: id, payload: payload, attempts: 0, state: JobQueue.Ready)
       )
-    allows before: JobQueue.empty, payload: "x", reply: Ok(1), after: one_job, now: t0
-    forbids before: JobQueue.empty, payload: "x", reply: Ok(1), after: JobQueue.empty, now: t0
-  end
-
-  promise "submit refuses only an oversized payload or a full queue" on submit
     reply is Error(PayloadTooLarge(limit: limit, bytes: bytes)) implies
       limit == max_payload_bytes and bytes == payload.byte_count and bytes > limit
     reply is Error(QueueFull(limit: limit, advice: _)) implies
       limit == max_jobs and JobQueue.jobs(before).size >= limit
     reply is Ok(_) implies
       payload.byte_count <= max_payload_bytes and JobQueue.jobs(before).size < max_jobs
-    allows before: JobQueue.empty, payload: "x", reply: Ok(1), after: one_job, now: t0
-    forbids before: JobQueue.empty, payload: "x", reply: Error(
-      QueueFull(limit: max_jobs, advice: full_advice)
-    ), after: JobQueue.empty, now: t0
   end
 
-  promise "a lease takes the oldest ready job for 30 minutes and counts an attempt" on lease
+  promise on lease
     reply is Ok(Some(job)) implies
       JobQueue.jobs(before).find(fn(old) old.state == JobQueue.Ready end) is Some(old) and
         job ==
@@ -74,11 +53,9 @@ service
           ) and
         JobQueue.jobs(after).contains?(job)
     reply is Ok(None) implies JobQueue.jobs(before).all?(fn(old) old.state != JobQueue.Ready end)
-    allows before: one_job, reply: Ok(Some(first_lease)), after: leased_job, now: t0
-    forbids before: one_job, reply: Ok(None), after: one_job, now: t0
   end
 
-  promise "a heartbeat renews only your current lease, for 30 minutes from now" on heartbeat
+  promise on heartbeat
     reply is Ok(_) implies current?(before, now, id, attempt)
     reply is Ok(_) implies
       job_of(before, id) is Some(old) and
@@ -90,22 +67,18 @@ service
             state: JobQueue.Leased(until: now + lease_length)
           )
         )
-    allows before: leased_job, id: 1, attempt: 1, reply: Ok(Unit), after: leased_job, now: t0
-    forbids before: leased_job, id: 1, attempt: 2, reply: Ok(Unit), after: leased_job, now: t0
   end
 
-  promise "acknowledging finishes only your current lease" on acknowledge
+  promise on acknowledge
     reply is Ok(_) implies current?(before, now, id, attempt)
     reply is Ok(_) implies
       job_of(before, id) is Some(old) and
         JobQueue.jobs(after).contains?(
           Job(id: id, payload: old.payload, attempts: attempt, state: JobQueue.Done)
         )
-    allows before: leased_job, id: 1, attempt: 1, reply: Ok(Unit), after: done_job, now: t0
-    forbids before: leased_job, id: 1, attempt: 1, reply: Ok(Unit), after: leased_job, now: t0
   end
 
-  promise "failing gives back only your current lease, ready or dead on its third attempt" on fail
+  promise on fail
     reply is Ok(_) implies current?(before, now, id, attempt)
     reply is Ok(_) implies
       job_of(before, id) is Some(old) and
@@ -117,34 +90,14 @@ service
             state: if attempt >= 3: JobQueue.Dead else: JobQueue.Ready
           )
         )
-    allows before: one_job, id: 1, attempt: 1, reply: Error(JobQueue.NotLeased(id: 1)), after: one_job, now: t0
-    forbids before: one_job, id: 1, attempt: 1, reply: Ok(Unit), after: one_job, now: t0
   end
 
-  promise "stats counts every job by its state" on stats
+  promise on stats
     reply.total == JobQueue.jobs(before).size
     reply.ready == matching(before, Ready, 0).size and
       reply.leased == matching(before, Leased, 0).size
     reply.done == matching(before, Done, 0).size and reply.dead == matching(before, Dead, 0).size
     reply.limit == max_jobs and reply.now == now
-    allows before: one_job, reply: Stats(
-      total: 1,
-      ready: 1,
-      leased: 0,
-      done: 0,
-      dead: 0,
-      limit: max_jobs,
-      now: t0
-    ), after: one_job, now: t0
-    forbids before: done_job, reply: Stats(
-      total: 1,
-      ready: 0,
-      leased: 0,
-      done: 0,
-      dead: 0,
-      limit: max_jobs,
-      now: t0
-    ), after: done_job, now: t0
   end
 end
 
@@ -327,7 +280,7 @@ fn list(queue: Queue, now: Time, filter: JobFilter, after: Int, limit: Int) : Re
   Page,
   PageError
 )
-  promise "a page lists, in id order, the first jobs after `after` that its filter shows"
+  promise
     (result is Error(_)) == (after < 0 or limit < 1 or limit > max_page_jobs)
     result is Ok(page) implies page.jobs == matching(queue, filter, after).take(limit)
     result is Ok(page) implies
@@ -335,12 +288,6 @@ fn list(queue: Queue, now: Time, filter: JobFilter, after: Int, limit: Int) : Re
         if matching(queue, filter, after).size > limit: page.jobs.last.map(fn(job) job.id end) else: None
       )
     result is Ok(page) implies page.now == now
-    allows queue: one_job, now: t0, filter: AllJobs, after: 0, limit: 1, result: Ok(
-      Page(jobs: JobQueue.jobs(one_job), next: None, now: t0)
-    )
-    forbids queue: one_job, now: t0, filter: Done, after: 0, limit: 1, result: Ok(
-      Page(jobs: JobQueue.jobs(one_job), next: None, now: t0)
-    )
   end
 
   examples
@@ -427,8 +374,7 @@ fn finished?(job: Job) : Bool
 end
 
 t0 = Time.parse("2026-10-12T09:00:00Z") or stop "the time is written correctly"
-one_job = JobQueue.submit(JobQueue.empty, "x").0
-leased_job = case JobQueue.lease(one_job, t0, lease_length)
+leased_job = case JobQueue.lease(JobQueue.submit(JobQueue.empty, "x").0, t0, lease_length)
   Ok((queue, _)): queue
   Error(_): stop "a ready job can be leased"
 end
@@ -436,12 +382,6 @@ done_job = case JobQueue.acknowledge(leased_job, t0, 1, 1)
   Ok(queue): queue
   Error(_): stop "a leased job can be acknowledged"
 end
-first_lease = Job(
-  id: 1,
-  payload: "x",
-  attempts: 1,
-  state: JobQueue.Leased(until: t0 + lease_length)
-)
 three_jobs = submitted(done_job, 2)
 
 fn submitted(queue: Queue, count: Int) : Queue

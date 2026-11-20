@@ -28,6 +28,7 @@ struct mo_process {
     uint64_t instructions;
     bool (*keep_running)(void *context);
     void *control_context;
+    struct mo_call_observer *observer;
     bool cancelled;
     bool bounded, terminal, owns_heap;
     bool confidential;

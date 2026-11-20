@@ -21,7 +21,7 @@ from cli_programs import captures, generic_imports, imported_constants, imports,
 from cli_promises import (
     collection_promises, composite_deadlines, composite_promises, fake_capability_promises,
     generic_promises, hidden_promises, promise_boundaries, promise_deadlines, promise_shrinking,
-    scalar_promises,
+    scalar_promises, vacuous_promises,
 )
 from cli_runner import runner
 from cli_serve import serve_command, service_commands, service_refusals
@@ -45,6 +45,7 @@ def check(binary):
     imports(binary)
     generic_imports(binary)
     scalar_promises(binary)
+    vacuous_promises(binary)
     promise_boundaries(binary)
     promise_deadlines(binary)
     promise_shrinking(binary)

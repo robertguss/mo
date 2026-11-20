@@ -288,9 +288,171 @@ struct trial {
     struct mo_defect defect;
     enum mo_outcome outcome;
     uint32_t condition;
+    uint64_t seen_mask;
     /* Both the subject and the promise returned, whatever the condition. */
     bool has_input, has_value, returned;
 };
+
+static const struct mo_checked_expression *unwrap_checked(const struct mo_checked_body *body,
+                                                          uint32_t index) {
+    const struct mo_checked_expression *r = &body->items[index];
+    while (r->syntax->kind == MO_S_GROUP || r->syntax->kind == MO_S_EXPR_STMT) {
+        MO_ASSERT(r->operand_count == 1 && r->operands[0] < index);
+        index = r->operands[0];
+        r = &body->items[index];
+    }
+    return r;
+}
+
+static bool type_may_hold_float(const struct mo_program *program, const struct mo_source_type *type,
+                                uint32_t depth) {
+    if (type == NULL || depth > 8)
+        return true;
+    if (type->kind == MO_SOURCE_PARAMETER || type->kind == MO_SOURCE_FUNCTION)
+        return true;
+    for (uint32_t i = 0; i < type->count; i++)
+        if (type_may_hold_float(program, type->arguments[i], depth + 1))
+            return true;
+    if (type->kind == MO_SOURCE_NAMED) {
+        if (type->module == UINT32_MAX)
+            return strcmp(type->name, "Float") == 0;
+        if (program == NULL || program->signatures == NULL || type->declaration == NULL)
+            return true;
+        const struct mo_symbol *owner = type->declaration;
+        bool choice = owner->declaration->kind == MO_S_ENUM;
+        uint32_t cases = choice ? owner->case_count : 1;
+        for (uint32_t c = 0; c < cases; c++) {
+            const struct mo_symbol *sym =
+                choice ? &program->interfaces->scopes[owner->module].symbols[owner->cases[c]]
+                       : owner;
+            for (uint32_t d = 0; d < program->signatures->data_count; d++) {
+                const struct mo_data_signature *data = &program->signatures->data[d];
+                if (data->symbol != sym)
+                    continue;
+                for (uint32_t f = 0; f < data->count; f++)
+                    if (type_may_hold_float(program, data->by_index[f]->type, depth + 1))
+                        return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool constant_bool_expr(const struct mo_program *program, const struct mo_checked_body *body,
+                               uint32_t index, uint32_t depth, bool *value) {
+    if (depth > 64)
+        return false;
+    const struct mo_checked_expression *r = unwrap_checked(body, index);
+    enum mo_syntax_kind kind = r->syntax->kind;
+    if (kind == MO_S_TRUE || kind == MO_S_FALSE) {
+        *value = kind == MO_S_TRUE;
+        return true;
+    }
+    if (r->operation == MO_T_NOT && r->operand_count == 1) {
+        bool inner = false;
+        if (!constant_bool_expr(program, body, r->operands[0], depth + 1, &inner))
+            return false;
+        *value = !inner;
+        return true;
+    }
+    if (r->operation == MO_T_AND && r->operand_count == 2) {
+        bool left = false, right = false;
+        bool left_const = constant_bool_expr(program, body, r->operands[0], depth + 1, &left);
+        if (left_const && !left) {
+            *value = false;
+            return true;
+        }
+        if (left_const && left &&
+            constant_bool_expr(program, body, r->operands[1], depth + 1, &right)) {
+            *value = right;
+            return true;
+        }
+        return false;
+    }
+    if (r->operation == MO_T_OR && r->or_kind != MO_CHECK_OR_OPTION && r->operand_count == 2) {
+        bool left = false, right = false;
+        bool left_const = constant_bool_expr(program, body, r->operands[0], depth + 1, &left);
+        if (left_const && left) {
+            *value = true;
+            return true;
+        }
+        bool right_const = constant_bool_expr(program, body, r->operands[1], depth + 1, &right);
+        if (right_const && right) {
+            *value = true;
+            return true;
+        }
+        if (left_const && !left && right_const && !right) {
+            *value = false;
+            return true;
+        }
+        return false;
+    }
+    if (r->operation == MO_T_IMPLIES && r->operand_count == 2) {
+        bool left = false, right = false;
+        bool left_const = constant_bool_expr(program, body, r->operands[0], depth + 1, &left);
+        if (left_const && !left) {
+            *value = true;
+            return true;
+        }
+        bool right_const = constant_bool_expr(program, body, r->operands[1], depth + 1, &right);
+        if (right_const && right) {
+            *value = true;
+            return true;
+        }
+        if (left_const && left && right_const && !right) {
+            *value = false;
+            return true;
+        }
+        return false;
+    }
+    if ((r->operation == MO_T_EQ || r->operation == MO_T_LE || r->operation == MO_T_GE) &&
+        r->operand_count == 2) {
+        const struct mo_checked_expression *a = unwrap_checked(body, r->operands[0]);
+        const struct mo_checked_expression *b = unwrap_checked(body, r->operands[1]);
+        if (a->binding != NULL && a->binding == b->binding && a->operand_count == 0 &&
+            b->operand_count == 0 && !type_may_hold_float(program, a->type, 0)) {
+            *value = true;
+            return true;
+        }
+        enum mo_syntax_kind ak = a->syntax->kind;
+        if ((ak == MO_S_INT || ak == MO_S_CHAR || ak == MO_S_TEXT) && ak == b->syntax->kind &&
+            a->operand_count == 0 && b->operand_count == 0) {
+            uint32_t alen = a->syntax->span.end - a->syntax->span.start;
+            uint32_t blen = b->syntax->span.end - b->syntax->span.start;
+            if (alen == blen && memcmp(a->syntax->text, b->syntax->text, alen) == 0) {
+                *value = true;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+struct mo_promise_vacuity mo_promise_vacuity_plan(const struct mo_program *program,
+                                                  const struct mo_checked_spec *spec) {
+    struct mo_promise_vacuity plan = {0};
+    for (uint32_t i = 0; i < spec->condition_count; i++) {
+        bool val = false;
+        if (plan.tautology_line == 0 &&
+            constant_bool_expr(program, &spec->body, spec->conditions[i].expression, 0, &val) &&
+            val)
+            plan.tautology_line = i + 1;
+        const struct mo_checked_expression *r =
+            unwrap_checked(&spec->body, spec->conditions[i].expression);
+        if (i < 62 && r->operation == MO_T_IMPLIES)
+            plan.required_mask |= UINT64_C(1) << i;
+    }
+    return plan;
+}
+
+uint32_t mo_vacuity_missing_line(uint64_t required, uint64_t seen) {
+    uint64_t missing = required & ~seen;
+    MO_ASSERT(missing != 0);
+    uint32_t bit = 0;
+    while (((missing >> bit) & 1U) == 0)
+        bit++;
+    return bit + 1;
+}
 
 static void discard(struct trial *trial, const struct mo_bytecode_function *subject) {
     mo_build_trace_free(&trial->trace);
@@ -341,11 +503,18 @@ static bool evaluate(struct trial *trial, const struct mo_bytecode *file, uint32
                                      deadline, &answer, &trial->defect);
         if (outcome == MO_CONTROL_RETURNED) {
             int64_t condition = mo_cell_get_int(answer);
-            MO_ASSERT(condition >= 0 && (uint64_t)condition <= file->debug[promise].line_count);
-            trial->condition = (uint32_t)condition;
             mo_value_drop(heap, file->functions[promise].result_type, answer);
             trial->returned = true;
-            trial->outcome = condition == 0 ? MO_RETURNED : MO_FAILED;
+            if (condition > 0) {
+                MO_ASSERT((uint64_t)condition <= file->debug[promise].line_count);
+                trial->condition = (uint32_t)condition;
+                trial->seen_mask = 0;
+                trial->outcome = MO_FAILED;
+            } else {
+                trial->condition = 0;
+                trial->seen_mask = -(uint64_t)condition;
+                trial->outcome = MO_RETURNED;
+            }
             return true;
         }
     }
@@ -373,18 +542,122 @@ static void interrupted(struct mo_diags *diags, const struct mo_observation *obs
                   "the promise's monotonic deadline expired");
 }
 
+static void harvest_example_mask(struct mo_image *image, const struct mo_cli *cli,
+                                 struct mo_deadline *deadline, uint32_t subject, uint32_t promise,
+                                 uint64_t *seen_mask, uint64_t required_mask) {
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_bytecode_string *subject_name = &file->strings[file->functions[subject].name];
+    const struct mo_bytecode_function *pfn = &file->functions[promise];
+    for (uint32_t fn = 0;
+         fn < file->function_count && (*seen_mask & required_mask) != required_mask &&
+         mo_deadline_running(deadline);
+         fn++) {
+        if (file->functions[fn].kind != MO_FUNCTION_ANCHOR || file->debug[fn].subject != promise ||
+            file->debug[fn].expectation != MO_BYTECODE_ALLOWS)
+            continue;
+        struct mo_process *proc = mo_process_new(image, &cli->limits);
+        if (proc == NULL)
+            return;
+        struct mo_cell ans;
+        struct mo_defect defect;
+        if (mo_call_controlled(proc, fn, NULL, 0, mo_deadline_running, deadline, &ans, &defect) ==
+            MO_CONTROL_RETURNED) {
+            int64_t cond = mo_cell_get_int(ans);
+            mo_value_drop(mo_process_heap(proc), file->functions[fn].result_type, ans);
+            if (cond <= 0)
+                *seen_mask |= -(uint64_t)cond;
+        }
+        mo_process_free(proc);
+    }
+    if ((*seen_mask & required_mask) == required_mask || !mo_deadline_running(deadline))
+        return;
+    struct mo_arena obs_arena;
+    mo_arena_init(&obs_arena, sizeof(struct mo_call_observer) + 64);
+    struct mo_call_observer *observer =
+        mo_arena_allocate(&obs_arena, sizeof(*observer), _Alignof(struct mo_call_observer));
+    if (observer == NULL) {
+        mo_arena_free(&obs_arena);
+        return;
+    }
+    for (unsigned pass = 0;
+         pass < 2 && (*seen_mask & required_mask) != required_mask && mo_deadline_running(deadline);
+         pass++) {
+        for (uint32_t ex = 0;
+             ex < file->function_count && (*seen_mask & required_mask) != required_mask &&
+             mo_deadline_running(deadline);
+             ex++) {
+            enum mo_function_kind fk = file->functions[ex].kind;
+            if (fk != MO_FUNCTION_EXAMPLE && fk != MO_FUNCTION_TEST)
+                continue;
+            const struct mo_bytecode_string *ex_name = &file->strings[file->functions[ex].name];
+            bool direct = fk == MO_FUNCTION_EXAMPLE && ex_name->length > subject_name->length + 9 &&
+                          memcmp(ex_name->bytes, subject_name->bytes, subject_name->length) == 0 &&
+                          memcmp(ex_name->bytes + subject_name->length, ".example.", 9) == 0;
+            if (direct != (pass == 0))
+                continue;
+            struct mo_process *proc = mo_process_new(image, &cli->limits);
+            if (proc == NULL)
+                break;
+            *observer = (struct mo_call_observer){.target = subject};
+            mo_process_observe_calls(proc, observer);
+            struct mo_cell ex_val;
+            struct mo_defect defect;
+            enum mo_controlled_outcome ex_out = mo_call_controlled(
+                proc, ex, NULL, 0, mo_deadline_running, deadline, &ex_val, &defect);
+            mo_process_observe_calls(proc, NULL);
+            if (ex_out == MO_CONTROL_RETURNED) {
+                struct mo_heap *heap = mo_process_heap(proc);
+                mo_value_drop(heap, file->functions[ex].result_type, ex_val);
+                for (uint32_t c = 0;
+                     c < observer->count && (*seen_mask & required_mask) != required_mask &&
+                     mo_deadline_running(deadline);
+                     c++) {
+                    struct mo_cell call_args[MO_LIMIT_BYTECODE_PARAMETERS];
+                    for (uint32_t a = 0; a < pfn->parameter_count; a++) {
+                        struct mo_cell val = a + 1 == pfn->parameter_count
+                                                 ? observer->calls[c].result
+                                                 : observer->calls[c].arguments[a];
+                        call_args[a] = pfn->parameters[a].ownership == MO_PARAMETER_OWNED
+                                           ? mo_value_dup(heap, pfn->parameters[a].type, val)
+                                           : val;
+                    }
+                    struct mo_cell ans;
+                    enum mo_controlled_outcome pout =
+                        mo_call_controlled(proc, promise, call_args, pfn->parameter_count,
+                                           mo_deadline_running, deadline, &ans, &defect);
+                    if (pout != MO_CONTROL_RETURNED)
+                        break;
+                    int64_t cond = mo_cell_get_int(ans);
+                    mo_value_drop(heap, pfn->result_type, ans);
+                    if (cond <= 0)
+                        *seen_mask |= -(uint64_t)cond;
+                }
+            }
+            mo_call_observer_clear(proc, observer);
+            mo_process_free(proc);
+        }
+    }
+    mo_arena_free(&obs_arena);
+}
+
 static bool write_result(const struct mo_cli *cli, const struct mo_sources *sources,
                          const struct mo_observation *observation, const struct mo_bytecode *file,
                          uint32_t promise, const struct mo_inputs *inputs, const struct trial *best,
-                         uint64_t calls, const struct mo_deadline *deadline, FILE *output,
-                         struct mo_diags *diags, struct mo_test_totals *totals) {
+                         enum mo_vacuity_kind vacuity, uint32_t vacuity_line, uint64_t calls,
+                         const struct mo_deadline *deadline, FILE *output, struct mo_diags *diags,
+                         struct mo_test_totals *totals) {
     struct mo_promise_result details = {.subject = file->debug[promise].subject, .calls = calls};
     struct mo_test_result result = {.observation = observation,
                                     .file = file,
-                                    .outcome = MO_RETURNED,
+                                    .outcome = vacuity != MO_VACUITY_NONE ? MO_FAILED : MO_RETURNED,
+                                    .vacuity = vacuity,
                                     .microseconds = mo_deadline_microseconds(deadline),
                                     .line.file = UINT32_MAX,
                                     .promise = &details};
+    if (vacuity != MO_VACUITY_NONE) {
+        const struct mo_bytecode_spec_line *line = &file->debug[promise].lines[vacuity_line - 1];
+        result.line = mo_runtime_span(file, sources, line->file, line->start, line->end);
+    }
     struct mo_input_extreme extreme;
     if (best->process != NULL) {
         result.process = best->process;
@@ -446,6 +719,11 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
         interrupted(diags, observation, &deadline);
         return true;
     }
+    struct mo_promise_vacuity vacuity = mo_promise_vacuity_plan(program, observation->source);
+    if (vacuity.tautology_line != 0)
+        return write_result(cli, sources, observation, file, function, NULL, &(struct trial){0},
+                            MO_VACUITY_TAUTOLOGY, vacuity.tautology_line, 0, &deadline, output,
+                            diags, totals);
     uint32_t parameters[MO_LIMIT_BYTECODE_PARAMETERS];
     for (uint32_t i = 0; i < ordinary->parameter_count; i++)
         parameters[i] = ordinary->parameters[i].type;
@@ -477,8 +755,8 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
     } else
         inputs = (struct mo_inputs){0};
     struct trial best = {0};
-    uint64_t calls = 0, random_trials = 0;
-    bool complete = true, known = true;
+    uint64_t calls = 0, random_trials = 0, seen_mask = 0;
+    bool complete = true, known = true, exhausted_inputs = false;
     if (prepared != MO_INPUT_OK) {
         inability(diags, observation, "promise input generator could not be prepared", NULL);
         goto done;
@@ -502,6 +780,7 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
         }
         candidate.has_input = generated == MO_INPUT_OK;
         if (generated == MO_INPUT_DONE) {
+            exhausted_inputs = true;
             discard(&candidate, ordinary);
             break;
         }
@@ -523,11 +802,14 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
             best = candidate;
             mo_fakes_keep(&fakes);
             break;
-        }
+        } else
+            seen_mask |= candidate.seen_mask;
         discard(&candidate, ordinary);
         if (!resolved)
             break;
     }
+    if (calls == cli->calls)
+        exhausted_inputs = true;
     if (known && best.process != NULL && best.condition != 0 && !cli->first_failure) {
         struct mo_input_shrinker shrinker;
         mo_input_shrink_init(&shrinker, &inputs, MO_CLI_PROMISE_SHRINK_CALLS);
@@ -601,9 +883,22 @@ bool mo_test_promise(const struct mo_cli *cli, const struct mo_program *program,
         interrupted(diags, observation, &deadline);
         known = false;
     }
+    enum mo_vacuity_kind vacuity_kind = MO_VACUITY_NONE;
+    uint32_t vacuity_line = 0;
+    if (known && best.process == NULL && exhausted_inputs &&
+        (seen_mask & vacuity.required_mask) != vacuity.required_mask) {
+        harvest_example_mask(image, cli, &deadline, subject, function, &seen_mask,
+                             vacuity.required_mask);
+        if ((seen_mask & vacuity.required_mask) != vacuity.required_mask &&
+            (mo_deadline_running(&deadline) || cli->gated)) {
+            vacuity_kind = MO_VACUITY_UNREACHED_IMPLIES;
+            vacuity_line = mo_vacuity_missing_line(vacuity.required_mask, seen_mask);
+        }
+    }
     if (known)
-        complete = write_result(cli, sources, observation, file, function, &inputs, &best, calls,
-                                &deadline, output, diags, totals);
+        complete =
+            write_result(cli, sources, observation, file, function, &inputs, &best, vacuity_kind,
+                         vacuity_line, calls, &deadline, output, diags, totals);
 done:
     discard(&best, ordinary);
     mo_inputs_free(&inputs);
