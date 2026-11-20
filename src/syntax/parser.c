@@ -1066,9 +1066,12 @@ static MO_MUST_USE bool declaration_header(struct parser *p, enum mo_syntax_toke
     } else if (token == MO_T_STRUCT || token == MO_T_ENUM) {
         parts[0] = name(p, MO_T_CAPNAME);
         parts[1] = type_parameters(p);
-    } else if (token == MO_T_TEST || token == MO_T_PROMISE) {
+    } else if (token == MO_T_TEST) {
         parts[0] = name(p, MO_T_TEXT);
-        if (token == MO_T_PROMISE && clause_word(p, "on"))
+    } else if (token == MO_T_PROMISE) {
+        if (p->current.kind == MO_T_TEXT || p->current.kind == MO_T_TEXT_HEAD)
+            parts[0] = name(p, MO_T_TEXT);
+        if (clause_word(p, "on"))
             parts[1] = name(p, MO_T_NAME);
     }
     expect(p, MO_T_NL);
@@ -1424,17 +1427,6 @@ static void validate(struct parser *p, struct mo_syntax *n, bool pattern) {
         if (!n->incomplete && n->children[1]->count == 0)
             error(p, MO_CODE_SOURCE_PROMISE, n->span, "a promise is one or more Boolean lines",
                   "A promise's body is one or more Boolean lines (reference 12.2).");
-        const struct mo_syntax *anchors = n->children[2];
-        bool allows = false, forbids = false;
-        for (uint32_t i = 0; i < anchors->count; i++) {
-            allows = allows || anchors->children[i]->token == MO_T_ALLOWS;
-            forbids = forbids || anchors->children[i]->token == MO_T_FORBIDS;
-        }
-        if (!n->incomplete && (!allows || !forbids))
-            error(p, MO_CODE_SOURCE_PROMISE, n->span,
-                  "a promise has at least one allows line and one forbids line",
-                  "Anchors give every parameter and result a value which the body must accept or "
-                  "reject (reference 12.2).");
     }
     if (kind == MO_S_EXAMPLES && !n->incomplete && n->children[0]->count == 0)
         error(p, MO_CODE_SOURCE_EXAMPLES, n->span, "an example is a Boolean line",

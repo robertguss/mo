@@ -232,6 +232,16 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
                 MO_ASSERT(fn->register_types[regs[i]] == callee->parameters[i].type);
                 arguments[i] = read(p, f, regs[i]);
             }
+            if (p->observer != NULL && target == p->observer->target &&
+                p->observer->pending_count < MO_VM_OBSERVED_PENDING &&
+                p->observer->count + p->observer->pending_count < MO_VM_OBSERVED_CALLS) {
+                struct mo_observed_pending *slot =
+                    &p->observer->pending[p->observer->pending_count++];
+                slot->return_depth = tail ? p->depth - 1 : p->depth;
+                for (uint32_t i = 0; i < count; i++)
+                    slot->arguments[i] =
+                        mo_value_dup(p->heap, callee->parameters[i].type, arguments[i]);
+            }
             for (uint32_t i = 0; i < count; i++)
                 if (callee->parameters[i].ownership == MO_PARAMETER_OWNED)
                     consume(p, f, regs[i]);
@@ -253,6 +263,21 @@ enum mo_outcome mo_vm_execute(struct mo_process *p, struct mo_cell *result) {
             uint32_t destination = f->destination, resume = f->next;
             p->used = p->top;
             p->depth--;
+            while (p->observer != NULL && p->observer->pending_count != 0 &&
+                   p->observer->pending[p->observer->pending_count - 1].return_depth == p->depth) {
+                struct mo_observed_pending *done =
+                    &p->observer->pending[--p->observer->pending_count];
+                if (p->observer->count < MO_VM_OBSERVED_CALLS) {
+                    struct mo_observed_call *recorded = &p->observer->calls[p->observer->count++];
+                    memcpy(recorded->arguments, done->arguments, sizeof done->arguments);
+                    recorded->result = mo_value_dup(p->heap, fn->result_type, value);
+                } else {
+                    const struct mo_bytecode_function *obs_fn =
+                        &p->file->functions[p->observer->target];
+                    for (uint32_t i = 0; i < obs_fn->parameter_count; i++)
+                        mo_value_drop(p->heap, obs_fn->parameters[i].type, done->arguments[i]);
+                }
+            }
             if (previous == SIZE_MAX) {
                 *result = value;
                 return MO_RETURNED;

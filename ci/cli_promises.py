@@ -1014,3 +1014,118 @@ def collection_promises(binary):
         items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
         assert items[1]['outcome'] == 'failed' and items[1]['input'] == [
             {'name': 'tags', 'value': '[""].to_set'}]
+
+
+def vacuous_promises(binary):
+    with tempfile.TemporaryDirectory(prefix='mo-vacuous-promises-') as directory:
+        path = pathlib.Path(directory) / 'main.mo'
+
+        # Code-first promises: optional label, multiple lines, no mandatory anchors,
+        # and mo format preserves both unlabeled and labeled forms idempotently.
+        clean = (
+            'module Main\n\n'
+            'fn clamp_nonneg(x: Int) : Int\n'
+            '  promise\n'
+            '    result >= 0\n'
+            '    x >= 0 implies result == x\n'
+            '    x < 0 implies result == 0\n'
+            '  end\n\n'
+            '  if x < 0: 0 else: x\n'
+            'end\n\n'
+            'fn labelled(x: Int) : Int\n'
+            '  promise "doubles the input"\n'
+            '    result == x.wrapping_add(x)\n'
+            '  end\n\n'
+            '  x.wrapping_add(x)\n'
+            'end\n'
+        )
+        path.write_text(clean)
+        run(binary, ['format', str(path)], 0)
+        assert path.read_text() == clean, path.read_text()
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.clamp_nonneg.promise.1', 'passed'),
+            ('Main.labelled.promise.1', 'passed')], items
+
+        # Constant-true tautologies fail immediately with calls == 0 and vacuous == true.
+        for tautology in ('true', 'not false', 'false implies result == 1',
+                          'x == 0 implies true', 'x == x', 'result == result'):
+            source = (f'module Main\nfn probe(x: Int) : Int\n'
+                      f'  promise\n    result == x\n    {tautology}\n  end\n\n  x\nend\n')
+            path.write_text(source)
+            items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+            res = items[1]
+            assert res['outcome'] == 'failed' and res['vacuous'] is True, res
+            assert res['calls'] == 0 and 'input' not in res and 'result' not in res, res
+            assert res['line']['line'] == 5, res
+            txt = run(binary, ['test', str(path)], 1)
+            assert b'this promise condition is always true' in txt.stdout, txt.stdout
+
+        # Float x == x is NOT a tautology (NaN != NaN), so it fails with a real NaN input.
+        path.write_text('module Main\nfn probe(x: Float) : Float\n'
+                        '  promise\n    x == x\n  end\n\n  x\nend\n')
+        float_items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        assert float_items[1]['outcome'] == 'failed' and 'vacuous' not in float_items[1]
+        assert float_items[1]['input'] == [{'name': 'x', 'value': 'nan'}]
+
+        # Top-level implies whose antecedent is never true fails as vacuous unless
+        # an example exercises that antecedent (including via tail-recursive calls).
+        unreached = (
+            'module Main\n'
+            'fn secret(x: Int) : Result(Int, Text)\n'
+            '  promise\n'
+            '    result is Ok(v) implies v == 42\n'
+            '  end\n\n'
+            '  return Ok(42) if x == 7129384756\n'
+            '  Error("nope")\n'
+            'end\n'
+        )
+        path.write_text(unreached)
+        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
+        res = items[1]
+        assert res['outcome'] == 'failed' and res['vacuous'] is True, res
+        assert res['calls'] == 200 and res['line']['line'] == 4, res
+        txt = run(binary, ['test', str(path)], 1)
+        assert b'the left side of implies was never true' in txt.stdout, txt.stdout
+
+        covered = unreached.replace(
+            '  end\n\n  return',
+            '  end\n\n  examples\n    secret(7129384756) == Ok(42)\n  end\n\n  return')
+        path.write_text(covered)
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.secret.promise.1', 'passed'),
+            ('Main.secret.example.1', 'passed')], items
+
+        # Service promise vacuity: unreached implies fails, then passes when tool example hits it.
+        svc_unreached = (
+            'module Main\n'
+            'service\n'
+            '  state Int = 0\n'
+            '  tools bump\n'
+            '  token from env "TOK"\n\n'
+            '  promise on bump\n'
+            '    amount == 7129384756 implies after == before + amount\n'
+            '  end\n'
+            'end\n\n'
+            'fn bump(state: Int, _now: Time, amount: Int) : (Int, Int)\n'
+            '  (state + amount, state + amount)\n'
+            'end\n'
+        )
+        path.write_text(svc_unreached)
+        items = records(run(binary, ['test', '--json', '--calls', '5', str(path)], 1), 'test')
+        assert items[1]['name'] == 'Main.service.promise.1'
+        assert items[1]['outcome'] == 'failed' and items[1]['vacuous'] is True, items
+        assert items[1]['line']['line'] == 8 and items[2]['outcome'] == 'passed', items
+
+        svc_covered = svc_unreached.replace(
+            '  (state + amount, state + amount)\n',
+            '  examples\n    bump(1, t0, 7129384756) == (7129384757, 7129384757)\n  end\n\n'
+            '  (state + amount, state + amount)\n'
+        ) + '\nt0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"\n'
+        path.write_text(svc_covered)
+        items = records(run(binary, ['test', '--json', '--calls', '5', str(path)], 0), 'test')
+        assert [(r['name'], r['outcome']) for r in items[1:-1]] == [
+            ('Main.bump.example.1', 'passed'),
+            ('Main.service.promise.1', 'passed'),
+            ('Main.service.recovery', 'passed')], items

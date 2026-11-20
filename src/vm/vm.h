@@ -117,6 +117,27 @@ MO_MUST_USE enum mo_outcome mo_call_main(struct mo_process *process, uint32_t fu
  * produces an internal stop before the next instruction (for bounded fuzzing). */
 void mo_process_instruction_limit(struct mo_process *process, uint64_t instructions);
 MO_MUST_USE uint64_t mo_process_instructions_remaining(const struct mo_process *process);
+#define MO_VM_OBSERVED_CALLS 64
+#define MO_VM_OBSERVED_PENDING 16
+struct mo_observed_pending {
+    uint32_t return_depth;
+    struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
+};
+struct mo_observed_call {
+    struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
+    struct mo_cell result;
+};
+struct mo_call_observer {
+    uint32_t target;
+    uint32_t count;
+    uint32_t pending_count;
+    struct mo_observed_pending pending[MO_VM_OBSERVED_PENDING];
+    struct mo_observed_call calls[MO_VM_OBSERVED_CALLS];
+};
+/* C test harness hook: records completed nested calls to observer->target in
+ * process's heap. Clear before freeing process so retained cells are dropped. */
+void mo_process_observe_calls(struct mo_process *process, struct mo_call_observer *observer);
+void mo_call_observer_clear(struct mo_process *process, struct mo_call_observer *observer);
 /* Exact image name bytes (length authoritative), file type index and borrowed
  * cell. The view itself lasts only for the callback; its contents belong to
  * the stopped process/image and never transfer ownership. */

@@ -252,9 +252,11 @@ static MO_MUST_USE bool check_specs(struct mo_arena *arena, struct mo_program *p
                                                 .number = ++promise_number,
                                                 .promise = UINT32_MAX};
             struct mo_span header = item->span;
-            header.end = item->children[0]->span.end;
+            header.end =
+                item->children[0] != NULL ? item->children[0]->span.end : item->span.start + 7;
             if (!mo_spec_copy_text(arena, diags, sources, header, &promise->text) ||
-                !mo_spec_wording(arena, diags, item->children[0], promise))
+                (item->children[0] != NULL &&
+                 !mo_spec_wording(arena, diags, item->children[0], promise)))
                 return false;
             const struct mo_syntax *lines = item->children[1];
             struct mo_checked_condition *conditions =

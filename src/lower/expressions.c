@@ -797,6 +797,69 @@ static mo_core_expr detail_field(struct body *b, const char *label, mo_core_ty t
     return e;
 }
 
+static const struct mo_checked_expression *unwrap_condition(struct body *b, uint32_t row) {
+    const struct mo_checked_expression *r = lower_cps_row(b, row);
+    while (lower_cps_kind(r) == MO_S_GROUP || lower_cps_kind(r) == MO_S_EXPR_STMT) {
+        lower_work(b->p, 1);
+        MO_ASSERT(r->operand_count == 1 && r->operands[0] < row);
+        row = r->operands[0];
+        r = lower_cps_row(b, row);
+    }
+    return r;
+}
+
+static void start_promise_step(struct body *b, uint32_t at, mo_core_string mask,
+                               mo_core_expr *out) {
+    struct lowering *p = b->p;
+    const struct mo_checked_spec *spec = b->instance->spec;
+    if (at == spec->condition_count) {
+        *out = mask.bytes == NULL ? lower_int(p, 0) : lower_var(p, mask);
+        return;
+    }
+    p->span = spec->conditions[at].text.span;
+    const struct mo_checked_expression *r = unwrap_condition(b, spec->conditions[at].expression);
+    if (mask.bytes == NULL || at >= 62 || r->operation != MO_T_IMPLIES) {
+        struct continuation *next = lower_cps_continuation(b, K_PROMISE);
+        next->at = at;
+        next->name = mask;
+        emit(b, spec->conditions[at].expression, (struct state){0}, next, out);
+        return;
+    }
+    static const struct mo_source_type int_ = {
+        .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+    struct continuation *next_k = lower_cps_continuation(b, K_JUMP);
+    next_k->name = lower_fresh(p);
+    next_k->result = true;
+    mo_core_expr join_e = lower_cps_join(b, next_k, lower_cps_type(b, &int_));
+    mo_core_string next_mask = join_e->as.join.params.items[0].name;
+    *out = join_e;
+    struct continuation *cont = lower_cps_continuation(b, K_PROMISE);
+    cont->at = at + 1;
+    cont->name = next_mask;
+    cont->result = true;
+    finish(b, NULL, (struct state){0}, cont, &join_e->as.join.body);
+    mo_core_expr miss_branch = lower_cps_jump(b, next_k, lower_var(p, mask));
+    mo_core_expr_list sub_args = lower_cps_arguments(b, 2);
+    sub_args.items[0] = lower_var(p, mask);
+    sub_args.items[1] = lower_int(p, UINT64_C(1) << at);
+    mo_core_expr updated = lower_prim(
+        p, (struct mo_core_prim){.tag = MO_CORE_PRIM_INT, .as.int_ = MO_CORE_INT_OP_SUB}, sub_args);
+    mo_core_expr hit_branch = let(b, lower_fresh(p), updated);
+    hit_branch->as.let_.body = lower_cps_jump(b, next_k, lower_var(p, hit_branch->as.let_.name));
+    mo_core_expr select = lower_expr(p, MO_CORE_EXPR_IF);
+    select->as.if_.then_ = NULL;
+    select->as.if_.else_ = miss_branch;
+    push(b, (struct task){.kind = TASK_CONDITION,
+                          .row = r->operands[0],
+                          .out = &join_e->as.join.rest,
+                          .value = select});
+    push(b, (struct task){.kind = TASK_CONDITION,
+                          .row = r->operands[1],
+                          .out = &select->as.if_.then_,
+                          .then_ = hit_branch,
+                          .else_ = lower_int(p, (uint64_t)at + 1)});
+}
+
 static void finish_task(struct body *b, struct task t) {
     struct lowering *p = b->p;
     struct continuation *k = t.continuation;
@@ -805,19 +868,17 @@ static void finish_task(struct body *b, struct task t) {
         return;
     }
     if (k->kind == K_PROMISE) {
+        if (k->result) {
+            start_promise_step(b, k->at, k->name, t.out);
+            return;
+        }
         const struct mo_checked_spec *spec = b->instance->spec;
         p->span = spec->conditions[k->at].text.span;
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);
         e->as.if_.cond = t.value;
         e->as.if_.else_ = lower_int(p, (uint64_t)k->at + 1);
         *t.out = e;
-        if (k->at + 1 == spec->condition_count)
-            e->as.if_.then_ = lower_int(p, 0);
-        else {
-            struct continuation *next = lower_cps_continuation(b, K_PROMISE);
-            next->at = k->at + 1;
-            emit(b, spec->conditions[next->at].expression, t.state, next, &e->as.if_.then_);
-        }
+        start_promise_step(b, k->at + 1, k->name, &e->as.if_.then_);
         return;
     }
     if (k->kind == K_ANCHOR) {
@@ -1419,8 +1480,17 @@ void lower_body(struct lowering *p, struct instance *instance, const struct mo_c
         emit(&b, values[0].expression, (struct state){0}, k, &instance->fun.body);
     } else if (spec != NULL && spec->kind == MO_SPEC_PROMISE) {
         MO_ASSERT(instance->spec->condition_count != 0);
-        emit(&b, instance->spec->conditions[0].expression, (struct state){0},
-             lower_cps_continuation(&b, K_PROMISE), &instance->fun.body);
+        bool track_implies = false;
+        for (uint32_t i = 0; p->promise_vacuity && i < spec->condition_count && i < 62; i++)
+            track_implies |=
+                unwrap_condition(&b, spec->conditions[i].expression)->operation == MO_T_IMPLIES;
+        if (track_implies) {
+            p->span = spec->conditions[0].text.span;
+            mo_core_expr init = let(&b, lower_fresh(p), lower_int(p, 0));
+            instance->fun.body = init;
+            start_promise_step(&b, 0, init->as.let_.name, &init->as.let_.body);
+        } else
+            start_promise_step(&b, 0, (mo_core_string){0}, &instance->fun.body);
     } else if (instance->fun.kind == MO_CORE_EXAMPLE) {
         p->span = instance->spec->syntax->span;
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_IF);

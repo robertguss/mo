@@ -16,10 +16,10 @@ import time
 
 FOLDER = 'services/task-queue'
 TOKEN = 'TaskQueueCanary42'
-JOB_QUEUE_RESULTS = 30
+JOB_QUEUE_RESULTS = 31
 QUEUE_TEST_RESULTS = 23
 MAIN_RESULTS = 12
-SERVICE_CHECKS = [*(f'Main.service.promise.{n}' for n in range(1, 11)), 'Main.service.recovery']
+SERVICE_CHECKS = [*(f'Main.service.promise.{n}' for n in range(1, 8)), 'Main.service.recovery']
 DESCRIPTION_LIMIT = 4096
 INT = {'type': 'string', 'pattern': '^-?[0-9]+$'}
 INITIALIZE = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {

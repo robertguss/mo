@@ -336,7 +336,7 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
                              const struct mo_sources *sources, struct mo_diags *diags,
                              struct mo_lowered_promises *promises,
                              struct mo_services *service_output, uint32_t query,
-                             uint32_t *query_index) {
+                             uint32_t *query_index, bool promise_vacuity) {
     MO_ASSERT(arena != NULL && program != NULL && sources != NULL && diags != NULL);
     struct lowering *p = mo_arena_allocate(arena, sizeof *p, _Alignof(struct lowering));
     if (p == NULL) {
@@ -352,7 +352,8 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
                            .sources = sources,
                            .diags = diags,
                            .span.file = UINT32_MAX,
-                           .retain_source_types = promises != NULL};
+                           .retain_source_types = promises != NULL,
+                           .promise_vacuity = promise_vacuity};
     if (setjmp(p->escape) != 0)
         return NULL;
     if (program->set == NULL)
@@ -469,14 +470,14 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
 
 struct mo_core *mo_lower(struct mo_arena *arena, const struct mo_program *program,
                          const struct mo_sources *sources, struct mo_diags *diags) {
-    return lower(arena, program, sources, diags, NULL, NULL, UINT32_MAX, NULL);
+    return lower(arena, program, sources, diags, NULL, NULL, UINT32_MAX, NULL, false);
 }
 
 struct mo_core *mo_lower_for_tests(struct mo_arena *arena, const struct mo_program *program,
                                    const struct mo_sources *sources, struct mo_diags *diags,
                                    struct mo_lowered_promises *promises) {
     MO_ASSERT(promises != NULL);
-    return lower(arena, program, sources, diags, promises, NULL, UINT32_MAX, NULL);
+    return lower(arena, program, sources, diags, promises, NULL, UINT32_MAX, NULL, false);
 }
 
 struct mo_core *mo_lower_services(struct mo_arena *arena, const struct mo_program *program,
@@ -485,7 +486,16 @@ struct mo_core *mo_lower_services(struct mo_arena *arena, const struct mo_progra
                                   struct mo_services *service_output) {
     MO_ASSERT(service_output != NULL);
     *service_output = (struct mo_services){0};
-    return lower(arena, program, sources, diags, promises, service_output, UINT32_MAX, NULL);
+    return lower(arena, program, sources, diags, promises, service_output, UINT32_MAX, NULL, false);
+}
+
+struct mo_core *mo_lower_test_services(struct mo_arena *arena, const struct mo_program *program,
+                                       const struct mo_sources *sources, struct mo_diags *diags,
+                                       struct mo_lowered_promises *promises,
+                                       struct mo_services *service_output) {
+    MO_ASSERT(service_output != NULL);
+    *service_output = (struct mo_services){0};
+    return lower(arena, program, sources, diags, promises, service_output, UINT32_MAX, NULL, true);
 }
 
 struct mo_core *mo_lower_query(struct mo_arena *arena, const struct mo_program *program,
@@ -494,5 +504,5 @@ struct mo_core *mo_lower_query(struct mo_arena *arena, const struct mo_program *
     MO_ASSERT(services != NULL && index != NULL);
     *services = (struct mo_services){0};
     *index = UINT32_MAX;
-    return lower(arena, program, sources, diags, NULL, services, function, index);
+    return lower(arena, program, sources, diags, NULL, services, function, index, false);
 }

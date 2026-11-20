@@ -142,8 +142,7 @@ static bool check_anchor(struct mo_image *image, const struct mo_cli *cli,
     bool added = true;
     if (outcome == MO_RETURNED) {
         int64_t answer = mo_cell_get_int(result);
-        MO_ASSERT(answer >= 0);
-        if ((answer == 0) != allows) {
+        if ((answer <= 0) != allows) {
             struct mo_span line;
             if (answer > 0)
                 line = false_line(file, sources, function, service, answer);

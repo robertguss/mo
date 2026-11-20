@@ -86,16 +86,8 @@ fn build_command(name: Text, args: List(Text)) : Result(Command, ParseError)
 end
 
 fn apply(store: Store, command: Command, now: Time) : (Store, Reply)
-  promise "a store never holds a key past its expiry"
+  promise
     result.0.entries.values.all?(fn(entry) entry.expires is Some(at) implies at > now end)
-    allows store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (
-      holding("a", "1", None),
-      Okay
-    )
-    forbids store: empty_store, command: Put(key: "a", value: "1"), now: t0, result: (
-      holding("a", "1", Some(t0)),
-      Okay
-    )
   end
 
   examples

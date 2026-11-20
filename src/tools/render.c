@@ -639,7 +639,7 @@ static bool failure_part(const uint8_t **at, size_t *left, const char *label,
 }
 
 static void equality_failure(struct writer *w, const struct mo_defect *defect, bool json) {
-    if (!defect->has_detail)
+    if (defect == NULL || !defect->has_detail)
         return;
     size_t length;
     const uint8_t *at = mo_value_data(defect->detail, &length);
@@ -739,32 +739,46 @@ static const char *extreme_description(const struct mo_input_extreme *extreme) {
     MO_UNREACHABLE();
 }
 
+static const char *vacuity_label(enum mo_vacuity_kind vacuity) {
+    switch (vacuity) {
+    case MO_VACUITY_TAUTOLOGY:
+        return "this promise condition is always true";
+    case MO_VACUITY_UNREACHED_IMPLIES:
+        return "this promise condition was vacuous: the left side of implies was never true";
+    case MO_VACUITY_NONE:
+        break;
+    }
+    MO_UNREACHABLE();
+}
+
 static void promise_result(struct writer *w, const struct mo_test_result *result, bool json) {
     const struct mo_promise_result *promise = result->promise;
     if (result->outcome == MO_RETURNED)
         return;
     const struct mo_checked_spec *spec = result->observation->source;
     const struct mo_bytecode_function *subject = &result->file->functions[promise->subject];
-    if (json)
-        text(w, ",\"input\":[");
-    for (uint32_t i = 0; w->ok && i < subject->parameter_count; i++) {
-        const char *name = spec->parameters[i]->name;
-        if (json) {
-            if (i != 0)
-                text(w, ",");
-            text(w, "{\"name\":");
-            json_string(w, name);
-            text(w, ",\"value\":");
-        } else {
-            text(w, "  input ");
-            safe_text(w, name);
-            text(w, " = ");
+    if (promise->input != NULL) {
+        if (json)
+            text(w, ",\"input\":[");
+        for (uint32_t i = 0; w->ok && i < subject->parameter_count; i++) {
+            const char *name = spec->parameters[i]->name;
+            if (json) {
+                if (i != 0)
+                    text(w, ",");
+                text(w, "{\"name\":");
+                json_string(w, name);
+                text(w, ",\"value\":");
+            } else {
+                text(w, "  input ");
+                safe_text(w, name);
+                text(w, " = ");
+            }
+            promise_value(w, result, subject->parameters[i].type, promise->input[i], json);
+            text(w, json ? "}" : "\n");
         }
-        promise_value(w, result, subject->parameters[i].type, promise->input[i], json);
-        text(w, json ? "}" : "\n");
+        if (json)
+            text(w, "]");
     }
-    if (json)
-        text(w, "]");
     if (result->outcome == MO_FAILED) {
         if (promise->has_value) {
             text(w, json ? ",\"result\":" : "  result: ");
@@ -776,6 +790,8 @@ static void promise_result(struct writer *w, const struct mo_test_result *result
         unsigned_number(w, promise->calls);
         if (!json)
             text(w, "\n");
+        if (json && result->vacuity != MO_VACUITY_NONE)
+            text(w, ",\"vacuous\":true");
     }
     if (promise->extreme != NULL) {
         const char *name = spec->parameters[promise->extreme->parameter]->name;
@@ -1288,6 +1304,19 @@ static void recovery_result(struct writer *w, const struct mo_sources *sources,
     if (result->outcome == MO_RETURNED)
         return;
     if (report->sequence == NULL) {
+        if (result->vacuity != MO_VACUITY_NONE) {
+            if (json) {
+                text(w, ",\"vacuous\":true,\"line\":");
+                json_span(w, sources, result->line, NULL, false);
+            } else {
+                text(w, "  sequences: ");
+                unsigned_number(w, report->counts.sequences);
+                text(w, "\n");
+                struct mo_label label = {result->line, vacuity_label(result->vacuity)};
+                text_label(w, sources, &label);
+            }
+            return;
+        }
         recovery_stopped(w, sources, result, json);
         return;
     }
@@ -1351,9 +1380,11 @@ bool mo_render_test_result(const struct mo_sources *sources, const struct mo_tes
                 text(&w, ",\"line\":");
                 json_span(&w, sources, result->line, NULL, false);
             } else {
-                struct mo_label label = {result->line, observation->source->kind == MO_SPEC_TEST
-                                                           ? "this assertion was false"
-                                                           : "this promise condition was false"};
+                const char *message =
+                    observation->source->kind == MO_SPEC_TEST ? "this assertion was false"
+                    : result->vacuity != MO_VACUITY_NONE      ? vacuity_label(result->vacuity)
+                                                              : "this promise condition was false";
+                struct mo_label label = {result->line, message};
                 text_label(&w, sources, &label);
             }
         } else if (!json) {

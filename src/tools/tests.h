@@ -43,6 +43,8 @@ mo_instantiate_tests(struct mo_arena *arena, const struct mo_test_selection *sel
 MO_MUST_USE bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
                                const struct mo_observation *observation, const uint8_t *digest);
 
+enum mo_vacuity_kind { MO_VACUITY_NONE, MO_VACUITY_TAUTOLOGY, MO_VACUITY_UNREACHED_IMPLIES };
+
 struct mo_promise_result;
 struct mo_recovery_report;
 /* All result data is borrowed until the complete record is flushed. */
@@ -52,6 +54,7 @@ struct mo_test_result {
     struct mo_process *process;
     const struct mo_defect *defect;
     enum mo_outcome outcome;
+    enum mo_vacuity_kind vacuity;
     uint64_t microseconds;
     struct mo_span line;                       /* original assert or false promise condition */
     const struct mo_promise_result *promise;   /* NULL for ordinary observations */

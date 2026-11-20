@@ -46,10 +46,8 @@ end
 empty = Queue(jobs: {}, next_id: 1)
 
 fn submit(queue: Queue, payload: Text) : (Queue, Int)
-  promise "a submitted job is in the queue, ready"
+  promise
     result.0.jobs.get(result.1) is Some(job) and job.state == Ready
-    allows queue: empty, payload: "x", result: (holding([ready(1)]), 1)
-    forbids queue: empty, payload: "x", result: (empty, 1)
   end
 
   examples
@@ -67,13 +65,8 @@ end
 ## Leases the oldest ready job until now + length, counting an attempt. The
 ## length must be positive, and the lease must end by the year 9999.
 fn lease(queue: Queue, now: Time, length: Duration) : Result((Queue, Option(Job)), QueueError)
-  promise "a lease never loses a job"
+  promise
     result is Ok((after, _)) implies queue.jobs.keys.all?(fn(id) after.jobs.has?(id) end)
-    allows queue: holding([ready(1)]), now: t0, length: 30.seconds, result: Ok((
-      holding([leased(1, t0 + 30.seconds)]),
-      Some(leased(1, t0 + 30.seconds))
-    ))
-    forbids queue: holding([ready(1)]), now: t0, length: 30.seconds, result: Ok((empty, None))
   end
 
   examples
@@ -99,33 +92,24 @@ end
 ## Renews the current lease until now + 30 minutes without counting an attempt.
 ## NotLeased also covers an expired lease or a different attempt.
 fn heartbeat(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, QueueError)
-  promise "only a current lease can be renewed"
+  promise
     result is Ok(_) implies
       queue.jobs.get(id) is Some(job) and
         job.attempts == attempt and
         job.state is Leased(until: until) and
         until > now
-    allows queue: holding([leased(1, t0 + 1.second)]), now: t0, id: 1, attempt: 1, result: Ok(
-      holding([leased(1, t0 + 30.minutes)])
-    )
-    forbids queue: holding([leased(1, t0 + 1.second)]), now: t0, id: 1, attempt: 2, result: Ok(
-      holding([leased(1, t0 + 30.minutes)])
-    )
-  end
-
-  promise "renewing a lease keeps every job and its attempt"
     result is Ok(after) implies queue.jobs.keys.all?(fn(other) after.jobs.has?(other) end)
     result is Ok(after) implies
       after.jobs.get(id) is Some(job) and
         job.attempts == attempt and
         job.state is Leased(until: until) and
         now.checked_add(30.minutes) == Some(until)
-    allows queue: holding([leased(1, t0 + 1.second), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
-      holding([leased(1, t0 + 30.minutes), ready(2)])
-    )
-    forbids queue: holding([leased(1, t0 + 1.second), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
-      holding([leased(1, t0 + 30.minutes)])
-    )
+  end
+
+  examples
+    heartbeat(holding([leased(1, t0 + 1.second), ready(2)]), t0, 1, 1) ==
+      Ok(holding([leased(1, t0 + 30.minutes), ready(2)]))
+    heartbeat(holding([ready(1)]), t0, 1, 0) == Error(NotLeased(id: 1))
   end
 
   job = try leased_job(queue, now, id, attempt)
@@ -137,29 +121,20 @@ end
 
 ## Finishes a current lease. Expired or mismatched attempts return NotLeased.
 fn acknowledge(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, QueueError)
-  promise "only a current lease can be acknowledged"
+  promise
     result is Ok(_) implies
       queue.jobs.get(id) is Some(job) and
         job.attempts == attempt and
         job.state is Leased(until: until) and
         until > now
-    allows queue: holding([leased(1, t0 + 30.seconds)]), now: t0, id: 1, attempt: 1, result: Ok(
-      holding([done(1)])
-    )
-    forbids queue: holding([leased(1, t0 + 30.seconds)]), now: t0, id: 1, attempt: 2, result: Ok(
-      holding([done(1)])
-    )
-  end
-
-  promise "acknowledging finishes the job and keeps every job"
     result is Ok(after) implies queue.jobs.keys.all?(fn(other) after.jobs.has?(other) end)
     result is Ok(after) implies after.jobs.get(id) is Some(job) and job.state == Done
-    allows queue: holding([leased(1, t0 + 30.seconds), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
-      holding([done(1), ready(2)])
-    )
-    forbids queue: holding([leased(1, t0 + 30.seconds), ready(2)]), now: t0, id: 1, attempt: 1, result: Ok(
-      holding([done(1)])
-    )
+  end
+
+  examples
+    acknowledge(holding([leased(1, t0 + 30.seconds), ready(2)]), t0, 1, 1) ==
+      Ok(holding([done(1), ready(2)]))
+    acknowledge(holding([ready(1)]), t0, 1, 0) == Error(NotLeased(id: 1))
   end
 
   job = try leased_job(queue, now, id, attempt)
@@ -171,27 +146,14 @@ end
 ## Gives a current lease back after its worker failed: ready again, or dead after
 ## its last attempt. Expired or mismatched attempts return NotLeased.
 fn fail(queue: Queue, now: Time, id: Int, attempt: Int) : Result(Queue, QueueError)
-  promise "only a current lease can fail"
+  promise
     result is Ok(_) implies
       queue.jobs.get(id) is Some(job) and
         job.attempts == attempt and
         job.state is Leased(until: until) and
         until > now
-    allows queue: holding([tried(1, 2)]), now: t0, id: 1, attempt: 2, result: Ok(
-      holding([retried(1, 2)])
-    )
-    forbids queue: holding([tried(1, 2)]), now: t0, id: 1, attempt: 1, result: Ok(
-      holding([retried(1, 2)])
-    )
-  end
-
-  promise "a job is attempted at most three times"
     result is Ok(after) and after.jobs.get(id) is Some(job) and job.attempts >= max_attempts implies
       job.state == Dead
-    allows queue: holding([tried(1, 3)]), now: t0, id: 1, attempt: 3, result: Ok(holding([dead(1)]))
-    forbids queue: holding([tried(1, 3)]), now: t0, id: 1, attempt: 3, result: Ok(
-      holding([retried(1, 3)])
-    )
   end
 
   examples
