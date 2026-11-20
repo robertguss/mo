@@ -52,7 +52,7 @@ case command
   Stop: return
   Skip: continue
   Done: break
-  Fail(reason: r): stop "unreachable: #{r}"
+  Fail: stop "unreachable"
 end
 f = fn(a, b) a + b end
 g = fn() 42 end

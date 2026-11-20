@@ -530,7 +530,7 @@ primary
     | "{" map_entries comma "}"             { $$ = $2; }
     | case_expr
     | lambda
-    | "stop" text                           { $$ = MK(K_STOP, @$, $2); }
+    | "stop" TEXT                           { $$ = MK(K_STOP, @$, $2); }
     ;
 
 /* The tuple's elements after its first. */
