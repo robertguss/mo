@@ -10,6 +10,7 @@ applies_when:
   - Library code in Mo runs once for each character, byte or item of an input
   - A Mo program is too slow and the cause is not known
   - A parser or a protocol is written in Mo, such as the HTTP client of Phase 7
+  - A reader in Mo is called again each time more input arrives
 tags: [performance, vm, bytecode, instructions, parser, lib, mo]
 ---
 
@@ -51,6 +52,14 @@ phase about speed can change them.
 - **A structure built for each input has a fixed cost.** The parser now looks for 32 control
   characters before it reads anything. That is about 1,700 instructions for each parse, and a
   document under about 25 bytes got slower.
+- **Measure how the input arrives, not only how large it is.** The HTTP client's reader ran
+  again from the first byte after each receive, and its 1 MiB case met its bar, because 1 MiB
+  arrives in a few large receives. A body of 3,000 chunks that arrived one at a time used a
+  whole CPU for as long as it took, because each receive read every earlier chunk again. A
+  fake network gives a whole reply in one receive, so no test against a fake shows this. A
+  reader that is called again as input arrives needs one measurement where the input comes
+  in many small pieces, and a test that reads it a piece at a time
+  (`learnability/phase7/preflight/http-in-mo/README.md`, "The client as built").
 
 ## Why This Matters
 
