@@ -60,6 +60,23 @@ static MO_MUST_USE bool depends(struct compiler *c, uint32_t from, uint32_t to) 
     o[from].edges = id;
     return true;
 }
+MO_MUST_USE bool codegen_reuses_ctor(const struct compiler *c, uint32_t ty, uint32_t case_id,
+                                     const struct node *n, unsigned depth) {
+    if (n == NULL || depth >= MO_LIMIT_CORE_DEPTH)
+        return false;
+    if (n->core->tag == MO_CORE_EXPR_CON && n->type == ty &&
+        (c->types.items[ty].kind == MO_TYPE_RECORD || n->index == case_id))
+        return true;
+    if (n->core->tag == MO_CORE_EXPR_IF || n->core->tag == MO_CORE_EXPR_CASE)
+        return codegen_reuses_ctor(c, ty, case_id, n->children[0], depth + 1);
+    if (n->core->tag == MO_CORE_EXPR_JOIN || n->core->tag == MO_CORE_EXPR_JUMP ||
+        n->core->tag == MO_CORE_EXPR_LAM)
+        return false;
+    for (uint32_t i = 0; i < n->count; i++)
+        if (codegen_reuses_ctor(c, ty, case_id, n->children[i], depth + 1))
+            return true;
+    return false;
+}
 /* Dependencies propagate ownership once per slot. Tail calls add the reverse dependency:
  * an argument owned by the disappearing frame makes the callee's parameter owned too. */
 static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, struct node *n,
@@ -71,6 +88,9 @@ static MO_MUST_USE bool borrow_walk(struct compiler *c, struct function *f, stru
             return false;
         for (uint32_t i = 1; i < n->count; i++) {
             struct node *arm = n->children[i], *body = arm->children[0];
+            if (arm->bind_count != 0 &&
+                codegen_reuses_ctor(c, n->children[0]->type, n->cases[i - 1], body, 0))
+                seed(c, codegen_flow_id(f, n->children[0]->reg));
             for (uint32_t j = 0; j < arm->bind_count; j++) {
                 uint32_t field = codegen_flow_id(f, arm->binds[j]);
                 seed(c, field);
@@ -347,6 +367,7 @@ static MO_MUST_USE bool live_walk(struct compiler *c, struct function *f, struct
                     for (uint32_t j = 0; j < arm->bind_count; j++)
                         if (!live_kill(c, f, &n->work, arm->binds[j]))
                             return false;
+                    arm->scrutinee_dead = !codegen_live_has(&n->work, n->children[0]->reg);
                 }
                 bool ignored = false;
                 if (!live_union(c, f, live, &n->work, &ignored))

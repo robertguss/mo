@@ -202,6 +202,7 @@ enum flag_id {
     FLAG_OUT,
     FLAG_REVIEW,
     FLAG_MUTANTS,
+    FLAG_LIB,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -273,6 +274,9 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_OUT, "--out", false, false, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_REVIEW, "--review", false, false, VALUE_TEXT, 0, ON(SERVE)},
     {FLAG_MUTANTS, "--mutants", false, false, VALUE_NONE, 0, ON(TEST)},
+    {FLAG_LIB, "--lib", false, false, VALUE_TEXT, 0,
+     ON(CHECK) | ON(RUN) | ON(TEST) | ON(FIX) | ON(EMIT) | ON(SERVE) | ON(REPLAY) | ON(QUERY) |
+         ON(PUSH) | ON(INTENT)},
 };
 #undef ON
 
@@ -325,6 +329,9 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_MUTANTS:
         out->mutants = true;
+        break;
+    case FLAG_LIB:
+        out->library = operand;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;

@@ -4,6 +4,9 @@
 #include "host/host.h"
 #include "tools/tools.h"
 MO_MUST_USE struct mo_compiler mo_upgrade_compiler(void);
+MO_MUST_USE struct mo_compiler mo_upgrade_compiler_with_library(const char *library);
+MO_MUST_USE const struct mo_embedded_library *mo_default_embedded_library(void);
+MO_MUST_USE const char *mo_default_library_root(void);
 enum mo_upgrade_children { MO_CHILDREN_CONFINED, MO_CHILDREN_UNCONFINED, MO_CHILDREN_REFUSED };
 MO_MUST_USE enum mo_upgrade_children mo_upgrade_children(bool unconfined);
 MO_MUST_USE int mo_upgrade_emit(const struct mo_cli *cli, FILE *output, FILE *errors);
@@ -13,6 +16,9 @@ MO_MUST_USE int mo_upgrade_check(const struct mo_cli *cli, FILE *output, FILE *e
 MO_MUST_USE bool mo_upgrade_bundle(const char *path, bool migration, bool serving,
                                    struct mo_buffer *out, struct mo_diags *diags,
                                    struct mo_sources *sources);
+MO_MUST_USE bool mo_upgrade_bundle_with_library(const char *path, const char *library,
+                                                bool migration, bool serving, struct mo_buffer *out,
+                                                struct mo_diags *diags, struct mo_sources *sources);
 MO_MUST_USE bool mo_source_bundle(const struct mo_module_set *set, const struct mo_sources *sources,
                                   bool migration, struct mo_buffer *out, struct mo_diags *diags);
 MO_MUST_USE bool mo_upgrade_old_sources(const struct mo_program *old, struct mo_sources *candidate);

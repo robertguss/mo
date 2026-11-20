@@ -170,8 +170,9 @@ static void scratch(struct mo_image *image) {
 }
 
 static unsigned headers(struct mo_image *image, uint32_t parse, unsigned fault, uint64_t budget) {
-    const char *header = "POST /mcp HTTP/1.1\r\nAuthorization: Bearer canary-wipe-47\r\n\r\n";
-    struct mo_cell input[128];
+    const char *header = "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:8080\r\nContent-Type: "
+                         "application/json\r\nAuthorization: Bearer canary-wipe-47\r\n\r\n";
+    struct mo_cell input[256];
     size_t size = strlen(header);
     MO_ASSERT(size <= sizeof input / sizeof *input);
     for (size_t i = 0; i < size; i++)
@@ -446,7 +447,8 @@ int main(void) {
     request_budget(image, chunk);
     scratch(image);
     unsigned count = headers(image, parse, 0, MO_LIMIT_MCP_HEADER_WORK);
-    CHECK(count > 1);
+    /* Indexed loops and pruned register frames fit within the initial 4 KiB stack chunk. */
+    CHECK(count >= 1);
     for (unsigned fault = 1; fault <= count; fault++)
         (void)headers(image, parse, fault, MO_LIMIT_MCP_HEADER_WORK);
     (void)headers(image, parse, 0, 0);

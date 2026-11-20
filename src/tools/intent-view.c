@@ -2,6 +2,7 @@
 
 #include "tools/offline.h"
 #include "tools/tests.h"
+#include "tools/upgrade.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -344,7 +345,11 @@ static void against(const struct mo_cli *cli, struct out *o, struct mo_arena *ar
     bool ready = mo_sources_init(&sources);
     ready = mo_diags_init(&old_diags) && ready;
     struct mo_module_set *set =
-        ready ? mo_load_program(&old_arena, &sources, cli->against, library, &old_diags) : NULL;
+        ready ? mo_load_program_with_library(&old_arena, &sources, cli->against, library,
+                                             library == NULL ? mo_default_embedded_library() : NULL,
+                                             library == NULL ? mo_default_library_root() : NULL,
+                                             &old_diags)
+              : NULL;
     struct mo_program *program =
         set == NULL || mo_diags_any(&old_diags) ? NULL : mo_check(&old_arena, set, &old_diags);
     struct mo_intent old;

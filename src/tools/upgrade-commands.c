@@ -84,9 +84,10 @@ static void check_upgrade(void *context) {
         mo_sources_init(&old_sources) && mo_sources_init(&sources) &&
         (folder ? recorded_check_input(work->cli->upgrade_from, &old_bundle, &recorded_context,
                                        &report)
-                : mo_upgrade_bundle(work->cli->upgrade_from, false, false, &old_bundle, &diags,
-                                    &old_sources)) &&
-        mo_upgrade_bundle(mo_cli_file(work->cli, 0), true, false, &candidate, &diags, &sources);
+                : mo_upgrade_bundle_with_library(work->cli->upgrade_from, work->cli->library, false,
+                                                 false, &old_bundle, &diags, &old_sources)) &&
+        mo_upgrade_bundle_with_library(mo_cli_file(work->cli, 0), work->cli->library, true, false,
+                                       &candidate, &diags, &sources);
     if (ok) {
         struct mo_sha256 hash;
         mo_sha256_init(&hash);
@@ -257,7 +258,8 @@ static void serve_upgrade(void *context) {
      * only resolve imports here; the child needs validated recorded context to type them. */
     if (cli->file_count != 0 &&
         (!mo_sources_init(&sources) ||
-         !mo_upgrade_bundle(mo_cli_file(cli, 0), true, true, &candidate, &diags, &sources)))
+         !mo_upgrade_bundle_with_library(mo_cli_file(cli, 0), cli->library, true, true, &candidate,
+                                         &diags, &sources)))
         goto done;
     mode_t mask = umask(S_IRWXG | S_IRWXO);
     enum mo_store_status opened = mo_store_open_wait(path, &store);

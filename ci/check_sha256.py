@@ -14,7 +14,7 @@ def main():
     actual = output[-1]
     assert actual == expected, (actual, expected)
     configuration = executable.parent.parent.name
-    assert configuration in ("debug", "sanitize"), configuration
+    assert configuration in ("debug", "sanitize", "release"), configuration
     assert output[-2].endswith("; " + configuration), output[-2]
     rng = random.Random(164)
     for length in [0, 1, 55, 56, 63, 64, 65, 127, 128, 1000000] + [

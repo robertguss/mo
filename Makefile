@@ -40,6 +40,7 @@ WARNINGS := -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conver
 	-Wformat=2 -Wcast-qual -Wundef -Wnull-dereference
 COMMON := $(CSTD) $(INCLUDES) $(WARNINGS) $(THREADS) -MMD -MP
 DEBUG := -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g $(THREADS)
+RELEASE := -DMO_BUILD_CONFIGURATION=\"release\" -O2 -g $(THREADS)
 SANITIZE := -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
 FUZZ := -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
 LDLIBS += -lm
@@ -95,10 +96,13 @@ ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 export ASAN_OPTIONS UBSAN_OPTIONS
 
-.PHONY: all test sanitize test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal cbmc \
+.PHONY: all release test sanitize test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal cbmc \
 	host-rename-stress clean FORCE
 
 all: $(BUILD)/debug/mo
+
+release: $(BUILD)/release/mo
+	@$(BUILD)/release/mo --version >/dev/null
 
 # Ordinary prerequisites keep an up-to-date build usable without Python.
 # Mutually exclusive stamps also detect the optional guide appearing/disappearing,
@@ -120,8 +124,17 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 
 # Depend directly on the state too: a same-tick header rewrite must still
 # recompile the document consumer when the guide appears or disappears.
-$(BUILD)/debug/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
+$(BUILD)/debug/src/tools/execute.o $(BUILD)/release/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
+
+LIBRARY_SOURCES := $(sort $(wildcard lib/*.mo))
+build/generated/tools/library-sources.h: ci/embed_library.py $(LIBRARY_SOURCES) Makefile
+	python3 ci/embed_library.py $@ $(LIBRARY_SOURCES)
+	@touch $@
+
+$(BUILD)/debug/src/tools/upgrade-bundle.o $(BUILD)/release/src/tools/upgrade-bundle.o $(BUILD)/sanitize/src/tools/upgrade-bundle.o \
+$(FUZZ_BUILD)/src/tools/upgrade-bundle.o \
+$(BUILD)/debug/checks-fail/tools/upgrade-bundle.o $(BUILD)/sanitize/checks-fail/tools/upgrade-bundle.o: build/generated/tools/embedded.h build/generated/tools/library-sources.h $(GUIDE_STAMP)
 
 PROTOCOL_SOURCES := runtime/mcp-fetch.mo runtime/http-server.mo runtime/http-authority.mo runtime/http-policy.mo runtime/http-body.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo runtime/mcp-transport.mo runtime/mcp-views.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
 build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCES) Makefile
@@ -129,7 +142,7 @@ build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCE
 	@touch $@
 
 $(BUILD)/debug/tests/test_lower.o $(BUILD)/sanitize/tests/test_lower.o \
-$(BUILD)/debug/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o \
+$(BUILD)/debug/src/tools/protocol.o $(BUILD)/release/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o \
 $(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
 
 # The test executables without running them, for ci/check.sh's drivers, bench and lean groups.
@@ -277,7 +290,7 @@ library-map: $(BUILD)/debug/module-path
 # puts or putchar. Casting the call to (void) ignores the result on purpose. Mo's own functions
 # are covered by MO_MUST_USE. The flags are the debug build's, so clang-tidy sees the code as
 # the compiler does (it ignores the -M options).
-tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h build/generated/tools/protocol-sources.h
+tidy: $(GRAMMAR_GENERATED)/mo.tab.h build/generated/tools/embedded.h build/generated/tools/library-sources.h build/generated/tools/protocol-sources.h
 	clang-tidy --quiet -checks='-*,cert-err33-c' -warnings-as-errors='*' -header-filter='^(src|tests|fuzz|grammar)/' \
 		$(TIDY_FILES) -- $(COMMON) $(DEBUG) $(GRAMMAR_INCLUDES)
 
@@ -295,6 +308,10 @@ $(BUILD)/debug/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -c $< -o $@
 
+$(BUILD)/release/%.o: %.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(RELEASE) -c $< -o $@
+
 $(BUILD)/sanitize/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -c $< -o $@
@@ -308,6 +325,9 @@ SQLITE_FLAGS := $(CSTD) -DSQLITE_THREADSAFE=1 -DSQLITE_ZERO_MALLOC \
 $(BUILD)/debug/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(SQLITE_FLAGS) $(DEBUG) -c $< -o $@
+$(BUILD)/release/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(SQLITE_FLAGS) $(RELEASE) -c $< -o $@
 $(BUILD)/sanitize/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(SQLITE_FLAGS) $(SANITIZE) -c $< -o $@
@@ -321,6 +341,9 @@ $(SOURCE_LIST): FORCE
 
 $(BUILD)/debug/mo: $(call objects,$(BUILD)/debug,$(LIB_SOURCES) $(MAIN_SOURCE))
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/release/mo: $(call objects,$(BUILD)/release,$(LIB_SOURCES) $(MAIN_SOURCE))
+	$(CC) $(RELEASE) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/debug/module-path: $(BUILD)/debug/ci/module_path.o $(call objects,$(BUILD)/debug,$(BASE_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@
@@ -532,11 +555,11 @@ $(BUILD)/sanitize/protocol-server-faults/tools/protocol-request.o: src/tools/pro
 
 $(BUILD)/debug/protocol-server-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) -Dmo_value_encode_unshared=mo_protocol_server_fault_encode_unshared -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
 
 $(BUILD)/sanitize/protocol-server-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_value_encode_unshared=mo_protocol_server_fault_encode_unshared -Dmo_value_decode=mo_protocol_server_fault_decode -Dmo_store_call=mo_protocol_server_fault_store -c $< -o $@
 
 $(BUILD)/debug/tests/test_protocol_server_faults.test: $(BUILD)/debug/tests/test_protocol_server_faults.o $(call objects,$(BUILD)/debug,$(filter-out $(PROTOCOL_SERVER_FAULT_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/debug/protocol-server-faults/%.o,$(PROTOCOL_SERVER_FAULT_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)

@@ -17,11 +17,14 @@ struct state {
     struct variable *variables;
     struct loop *loop;
     struct continuation *return_;
+    const struct mo_checked_binding *split_binding;
+    const mo_core_string *split_fields;
 };
 enum continuation_kind {
     K_END,
     K_SEQUENCE,
     K_BIND,
+    K_FIELD_REBUILD,
     K_ARGUMENTS,
     K_JUMP,
     K_SELECT,
@@ -82,6 +85,7 @@ static inline mo_core_ty lower_cps_type(struct body *b, const struct mo_source_t
 }
 
 struct continuation *lower_cps_continuation(struct body *b, enum continuation_kind kind);
+mo_core_expr lower_cps_let(struct body *b, mo_core_string name, mo_core_expr value);
 mo_core_expr_list lower_cps_arguments(struct body *b, size_t count);
 mo_core_expr lower_cps_projection(struct body *b, mo_core_expr value, size_t index);
 mo_core_expr lower_cps_jump(struct body *b, struct continuation *k, mo_core_expr value);

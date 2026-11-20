@@ -9,6 +9,8 @@ struct saved_output {
     struct mo_buffer *bytes;
     const char *failure;
     uint64_t *work;
+    struct mo_allocation *marked;
+    bool track_sharing, shared;
 };
 
 /* One unit per visited schema/value node and per 64-byte native byte-walk block.
@@ -195,6 +197,19 @@ static bool encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
         return false;
     }
     (*nodes)++;
+    if (out->track_sharing && !out->shared) {
+        struct mo_object *object = mo_value_object(heap->types, type, value);
+        if (object != NULL) {
+            struct mo_allocation *a = mo_heap_allocation(object);
+            if (a->deep_immortal || a->preparing)
+                out->shared = true;
+            else {
+                a->preparing = true;
+                a->pending = out->marked;
+                out->marked = a;
+            }
+        }
+    }
     const struct mo_type *t = &heap->types->items[type];
     switch (t->kind) {
     case MO_TYPE_UNIT:
@@ -428,26 +443,45 @@ static bool decode(struct decoder *d, uint32_t type, unsigned depth, struct mo_c
     return ok;
 }
 
-static bool encode_value(struct mo_heap *heap, uint32_t type, struct mo_cell value,
-                         struct mo_buffer *out, const char **failure, uint64_t *work) {
+static void clear_marked(struct saved_output *output) {
+    while (output->marked != NULL) {
+        struct mo_allocation *a = output->marked;
+        output->marked = a->pending;
+        a->pending = NULL;
+        a->preparing = false;
+    }
+}
+
+static bool encode_value_sharing(struct mo_heap *heap, uint32_t type, struct mo_cell value,
+                                 struct mo_buffer *out, const char **failure, uint64_t *work,
+                                 bool *unshared) {
     MO_ASSERT(type < heap->types->count);
     struct mo_buffer bytes, shape;
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES);
     mo_buffer_init(&shape, MO_LIMIT_SAVED_BYTES);
-    struct saved_output output = {&bytes, NULL, work}, schema_output = {&shape, NULL, work};
+    struct saved_output output = {.bytes = &bytes, .work = work, .track_sharing = unshared != NULL},
+                        schema_output = {.bytes = &shape, .work = work};
     uint32_t nodes = 0;
     bool ok = write_schema(heap, type, &schema_output) && saved_append(&output, "MOSV\1", 5) &&
               saved_uint(&output, shape.length, 4) &&
               saved_append(&output, shape.bytes, shape.length) &&
               encode(heap, type, value, &output, 0, &nodes);
+    clear_marked(&output);
     if (ok)
         ok = mo_buffer_append(out, bytes.bytes, bytes.length);
+    if (ok && unshared != NULL)
+        *unshared = !output.shared;
     *failure = schema_output.failure != NULL ? schema_output.failure
                : output.failure != NULL      ? output.failure
                                              : "allocation";
     mo_buffer_free(&shape);
     mo_buffer_free(&bytes);
     return ok;
+}
+
+static bool encode_value(struct mo_heap *heap, uint32_t type, struct mo_cell value,
+                         struct mo_buffer *out, const char **failure, uint64_t *work) {
+    return encode_value_sharing(heap, type, value, out, failure, work, NULL);
 }
 
 bool mo_value_encode(struct mo_heap *heap, uint32_t type, struct mo_cell value,
@@ -478,7 +512,7 @@ enum mo_saved_status mo_value_encode_diagnostic(struct mo_heap *heap, uint32_t t
     uint32_t *seen =
         mo_arena_allocate_array(&scratch, heap->types->count, sizeof *seen, _Alignof(uint32_t));
     size_t start = out->length;
-    struct saved_output output = {out, NULL, NULL};
+    struct saved_output output = {.bytes = out};
     bool ok = seen != NULL && saved_append(&output, "MOSV\1", 5) && saved_uint(&output, 0, 4);
     size_t schema_start = out->length;
     if (ok) {
@@ -504,6 +538,15 @@ enum mo_saved_status mo_value_encode_status(struct mo_heap *heap, uint32_t type,
                                             struct mo_cell value, struct mo_buffer *out) {
     const char *failure;
     bool ok = encode_value(heap, type, value, out, &failure, NULL);
+    return saved_status(ok, failure);
+}
+
+enum mo_saved_status mo_value_encode_unshared(struct mo_heap *heap, uint32_t type,
+                                              struct mo_cell value, struct mo_buffer *out,
+                                              bool *unshared) {
+    MO_ASSERT(unshared != NULL);
+    const char *failure;
+    bool ok = encode_value_sharing(heap, type, value, out, &failure, NULL, unshared);
     return saved_status(ok, failure);
 }
 
@@ -548,7 +591,7 @@ static bool decode_names(struct mo_heap *heap, uint32_t type, const uint8_t *byt
         return false;
     struct mo_buffer shape;
     mo_buffer_init(&shape, MO_LIMIT_SAVED_BYTES);
-    struct saved_output schema_output = {&shape, NULL, work};
+    struct saved_output schema_output = {.bytes = &shape, .work = work};
     bool ok = write_schema_names(heap, type, &schema_output, names, name_count) &&
               shape.length == shape_length && memcmp(shape.bytes, shape_bytes, shape.length) == 0;
     mo_buffer_free(&shape);
@@ -588,7 +631,7 @@ bool mo_value_decode(struct mo_heap *heap, uint32_t type, const uint8_t *bytes, 
 bool mo_type_schema(struct mo_heap *heap, uint32_t type, struct mo_buffer *out) {
     MO_ASSERT(type < heap->types->count);
     size_t start = out->length;
-    struct saved_output output = {out, NULL, NULL};
+    struct saved_output output = {.bytes = out};
     bool ok = write_schema(heap, type, &output);
     if (!ok)
         out->length = start;

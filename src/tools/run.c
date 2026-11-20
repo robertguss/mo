@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -251,51 +252,13 @@ static int stopped(struct mo_process *process, const char *reason, const char *l
     return 70;
 }
 
-int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
-                   const struct mo_core *core, const struct mo_buffer *wire,
-                   const struct mo_sources *sources, FILE *output, FILE *errors,
-                   struct mo_diags *diags) {
-    struct mo_load_error error;
-    struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
-    if (image == NULL) {
-        struct mo_diag diag = {.code = MO_CODE_TOOL_PIPELINE,
-                               .message = "compiled bytecode could not be loaded",
-                               .primary = {{UINT32_MAX, 0, 0}, error.reason}};
-        bool added = mo_diags_add(diags, &diag);
-        (void)added;
-        return 1;
-    }
+static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uint32_t main,
+                           FILE *output, FILE *errors) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
-    uint32_t main = entry(core, file);
-    struct mo_defect defect;
-    bool anchors = mo_program_has_anchors(program);
-    enum mo_outcome outcome =
-        anchors ? mo_image_init_bounded(image, &cli->limits, MO_CLI_ANCHOR_INSTRUCTIONS, &defect)
-                : mo_image_init(image, &cli->limits, &defect);
     struct mo_process *process = NULL;
     int status = 70, folder = -1;
     bool have_args = false, have_env = false;
     struct mo_cell args, env;
-    if (outcome != MO_RETURNED) {
-        if (anchors) {
-            bool added = anchor_stopped(file, sources, MO_NO_INDEX, &defect, diags);
-            (void)added;
-            status = 1;
-        } else {
-            bool shown = mo_write_defect(errors, NULL, &defect);
-            if (!shown)
-                (void)fputs("mo: could not write the initialization defect\n", errors);
-        }
-        goto done;
-    }
-    if (!mo_check_anchors(image, cli, sources, program, diags)) {
-        status = 1;
-        goto done;
-    }
-    if (cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_EMIT) {
-        status = 0;
-        goto done;
-    }
     errno = 0;
     process = mo_process_new(image, &cli->limits);
     if (process == NULL) {
@@ -335,8 +298,9 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
         }
     }
     struct mo_cell result;
-    outcome = mo_call_main(process, main, have_args ? &args : NULL, have_env ? &env : NULL, folder,
-                           NULL, &result, &defect);
+    struct mo_defect defect;
+    enum mo_outcome outcome = mo_call_main(process, main, have_args ? &args : NULL,
+                                           have_env ? &env : NULL, folder, NULL, &result, &defect);
     if (outcome == MO_RETURNED) {
         int64_t value = mo_cell_get_int(result);
         MO_ASSERT(value >= 0 && value <= 255);
@@ -355,6 +319,205 @@ done:
     mo_process_free(process);
     if (folder >= 0 && close(folder) != 0)
         status = 70;
+    return status;
+}
+
+bool mo_is_bytecode_path(const char *path) {
+    size_t n = strlen(path);
+    if (n >= 3 && strcmp(path + n - 3, ".bc") == 0)
+        return true;
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+    if (fd < 0)
+        return false;
+    struct stat st;
+    uint8_t magic[4] = {0};
+    bool is_bc = fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && read(fd, magic, 4) == 4 &&
+                 memcmp(magic, "MOBC", 4) == 0;
+    (void)close(fd);
+    return is_bc;
+}
+
+static bool valid_bytecode_entry(const struct mo_image *image, uint32_t main) {
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_types *types = mo_image_types(image);
+    const struct mo_bytecode_function *fn = &file->functions[main];
+    if (fn->kind != MO_FUNCTION_FUNCTION || types->items[fn->result_type].kind != MO_TYPE_INT)
+        return false;
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < fn->parameter_count; i++) {
+        const struct mo_type *t = &types->items[fn->parameters[i].type];
+        if (t->kind != MO_TYPE_CAPABILITY || t->capability == MO_CAP_SIMULATION ||
+            t->capability >= 31)
+            return false;
+        uint32_t bit = UINT32_C(1) << t->capability;
+        if ((seen & bit) != 0)
+            return false;
+        seen |= bit;
+    }
+    return true;
+}
+
+static void bytecode_error(struct mo_diags *diags, uint16_t code, const char *message,
+                           const char *detail) {
+    struct mo_diag diag = {
+        .code = code, .message = message, .primary = {{UINT32_MAX, 0, 0}, detail}};
+    bool added = mo_diags_add(diags, &diag);
+    (void)added;
+}
+
+int mo_run_bytecode(const struct mo_cli *cli, const char *path, FILE *output, FILE *errors,
+                    struct mo_diags *diags) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+    if (fd < 0) {
+        bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be loaded",
+                       strerror(errno));
+        return 1;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        int err = errno;
+        (void)close(fd);
+        bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be loaded",
+                       err != 0 ? strerror(err) : "not a regular file");
+        return 1;
+    }
+    if (st.st_size < 0 || (uint64_t)st.st_size > MO_LIMIT_BYTECODE_SIZE) {
+        (void)close(fd);
+        bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be loaded",
+                       "bytecode exceeds MO_LIMIT_BYTECODE_SIZE");
+        return 1;
+    }
+    struct mo_buffer wire;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    uint8_t chunk[8192];
+    bool ok = true;
+    for (;;) {
+        ssize_t got = read(fd, chunk, sizeof chunk);
+        if (got == 0)
+            break;
+        if (got < 0) {
+            if (errno == EINTR)
+                continue;
+            ok = false;
+            break;
+        }
+        if (!mo_buffer_append(&wire, chunk, (size_t)got)) {
+            ok = false;
+            break;
+        }
+    }
+    int read_err = errno;
+    if (close(fd) != 0 && ok) {
+        ok = false;
+        read_err = errno;
+    }
+    if (!ok) {
+        mo_buffer_free(&wire);
+        bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be loaded",
+                       read_err != 0 ? strerror(read_err) : "read failed");
+        return 1;
+    }
+    struct mo_load_error load_err;
+    struct mo_image *image = mo_load(wire.bytes, wire.length, &load_err);
+    mo_buffer_free(&wire);
+    if (image == NULL) {
+        bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be loaded",
+                       load_err.reason);
+        return 1;
+    }
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    for (uint32_t i = 0; i < file->service_count; i++) {
+        if (file->services[i].module == 0) {
+            bytecode_error(diags, MO_CODE_TOOL_SERVICE_UNAVAILABLE,
+                           "mo run does not start services yet", NULL);
+            mo_image_free(image);
+            return 1;
+        }
+    }
+    uint32_t main = MO_NO_INDEX;
+    if (file->module_count > 0) {
+        const struct mo_bytecode_string *mod0 = &file->strings[file->modules[0].name];
+        static const char suffix[] = ".main.entry";
+        size_t want = (size_t)mod0->length + (sizeof suffix - 1);
+        for (uint32_t i = 0; i < file->function_count; i++) {
+            if (file->functions[i].module != 0 || file->functions[i].kind != MO_FUNCTION_FUNCTION)
+                continue;
+            const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
+            if (name->length == want && memcmp(name->bytes, mod0->bytes, mod0->length) == 0 &&
+                memcmp(name->bytes + mod0->length, suffix, sizeof suffix - 1) == 0) {
+                main = i;
+                break;
+            }
+        }
+    }
+    if (main == MO_NO_INDEX) {
+        bytecode_error(diags, MO_CODE_MAIN_CONTRACT, "the entry module has no main function", NULL);
+        mo_image_free(image);
+        return 1;
+    }
+    if (!valid_bytecode_entry(image, main)) {
+        bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "bytecode could not be loaded",
+                       "entry function does not satisfy main's capability contract");
+        mo_image_free(image);
+        return 1;
+    }
+    struct mo_defect defect;
+    if (mo_image_init(image, &cli->limits, &defect) != MO_RETURNED) {
+        bool shown = mo_write_defect(errors, NULL, &defect);
+        if (!shown)
+            (void)fputs("mo: could not write the initialization defect\n", errors);
+        mo_image_free(image);
+        return 70;
+    }
+    int status = run_loaded_main(cli, image, main, output, errors);
+    mo_image_free(image);
+    return status;
+}
+
+int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
+                   const struct mo_core *core, const struct mo_buffer *wire,
+                   const struct mo_sources *sources, FILE *output, FILE *errors,
+                   struct mo_diags *diags) {
+    struct mo_load_error error;
+    struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
+    if (image == NULL) {
+        struct mo_diag diag = {.code = MO_CODE_TOOL_PIPELINE,
+                               .message = "compiled bytecode could not be loaded",
+                               .primary = {{UINT32_MAX, 0, 0}, error.reason}};
+        bool added = mo_diags_add(diags, &diag);
+        (void)added;
+        return 1;
+    }
+    const struct mo_bytecode *file = mo_image_bytecode(image);
+    uint32_t main = entry(core, file);
+    struct mo_defect defect;
+    bool anchors = mo_program_has_anchors(program);
+    enum mo_outcome outcome =
+        anchors ? mo_image_init_bounded(image, &cli->limits, MO_CLI_ANCHOR_INSTRUCTIONS, &defect)
+                : mo_image_init(image, &cli->limits, &defect);
+    int status = 70;
+    if (outcome != MO_RETURNED) {
+        if (anchors) {
+            bool added = anchor_stopped(file, sources, MO_NO_INDEX, &defect, diags);
+            (void)added;
+            status = 1;
+        } else {
+            bool shown = mo_write_defect(errors, NULL, &defect);
+            if (!shown)
+                (void)fputs("mo: could not write the initialization defect\n", errors);
+        }
+        mo_image_free(image);
+        return status;
+    }
+    if (!mo_check_anchors(image, cli, sources, program, diags)) {
+        mo_image_free(image);
+        return 1;
+    }
+    if (cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_EMIT) {
+        mo_image_free(image);
+        return 0;
+    }
+    status = run_loaded_main(cli, image, main, output, errors);
     mo_image_free(image);
     return status;
 }

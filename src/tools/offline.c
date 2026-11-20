@@ -10,6 +10,7 @@
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "tools/run.h"
+#include "tools/upgrade.h"
 #include "vm/vm.h"
 
 #include <errno.h>
@@ -463,8 +464,10 @@ static bool compile_revision(struct offline *o, struct revision *r) {
     mo_buffer_init(&r->wire, MO_LIMIT_BYTECODE_SIZE);
     if (!have_sources || !have_diags)
         return refuse(o, "revised_program", "out of memory compiling REVISED", NULL, NULL);
-    struct mo_module_set *set =
-        mo_load_program(&r->arena, &r->sources, o->cli->revised, o->library, &r->diags);
+    struct mo_module_set *set = mo_load_program_with_library(
+        &r->arena, &r->sources, o->cli->revised, o->library,
+        o->library == NULL ? mo_default_embedded_library() : NULL,
+        o->library == NULL ? mo_default_library_root() : NULL, &r->diags);
     struct mo_program *program =
         set == NULL || mo_diags_any(&r->diags) ? NULL : mo_check(&r->arena, set, &r->diags);
     if (program != NULL)

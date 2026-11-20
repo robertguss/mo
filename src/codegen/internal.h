@@ -13,11 +13,11 @@ struct vector {
     uint32_t count, capacity;
     size_t width;
 };
-enum ref_state { REF_UNDEFINED, REF_BORROWED, REF_OWNED, REF_MOVED };
+enum ref_state { REF_UNDEFINED, REF_BORROWED, REF_OWNED, REF_TOKEN, REF_MOVED };
 struct reg {
     uint32_t type, name;
     uint32_t flow, previous, next;
-    uint32_t mark;
+    uint32_t mark, token_layout, token_depth;
     enum ref_state state, goal;
     bool owned, protected;
 };
@@ -56,7 +56,7 @@ struct node {
     uint32_t signature;
     bool *last;
     struct live_set after, work;
-    bool temporary;
+    bool temporary, scrutinee_dead;
 };
 struct join {
     struct node *node;
@@ -74,7 +74,7 @@ struct function {
     struct function *parent, *root;
     struct mo_core_span declaration;
     uint32_t lambda_number, closure_type;
-    uint32_t preorder, instructions, owned, mark;
+    uint32_t preorder, instructions, owned, mark, branch_depth;
     uint32_t live_count, live_cells, reference_count;
     uint32_t *references;
     uint64_t live_work;
@@ -165,6 +165,8 @@ MO_MUST_USE struct node *codegen_prepare(struct compiler *c, struct function *f,
                                          uint32_t expected, unsigned depth);
 MO_MUST_USE bool codegen_abilities_valid(struct compiler *c);
 MO_MUST_USE bool codegen_operation_owned(const struct node *n, uint32_t slot);
+MO_MUST_USE bool codegen_reuses_ctor(const struct compiler *c, uint32_t ty, uint32_t case_id,
+                                     const struct node *n, unsigned depth);
 MO_MUST_USE bool codegen_borrow_infer(struct compiler *c);
 MO_MUST_USE bool codegen_live_charge(struct compiler *c, struct function *f, uint64_t count);
 MO_MUST_USE bool codegen_operand_owned(struct compiler *c, const struct node *n, uint32_t i);

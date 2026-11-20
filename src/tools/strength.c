@@ -8,6 +8,7 @@
 #include "tools/intent.h"
 #include "tools/offline.h"
 #include "tools/tests.h"
+#include "tools/upgrade.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -363,7 +364,9 @@ static void measure_one(const struct measure *m, struct version *v, bool counted
     }
     if (!apply(m, &arena, v, &wrong, replacement, &program))
         goto done;
-    struct mo_module_set *set = mo_load_bundle_sources(&arena, &program, run->library, &diags);
+    struct mo_module_set *set = mo_load_bundle_with_library(
+        &arena, &program, run->library, run->library == NULL ? mo_default_embedded_library() : NULL,
+        &diags);
     struct mo_program *checked =
         set == NULL || mo_diags_any(&diags) ? NULL : mo_check(&arena, set, &diags);
     if (checked == NULL || mo_diags_any(&diags)) {

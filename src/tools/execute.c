@@ -104,15 +104,18 @@ static void execute_pipeline(void *argument) {
     struct mo_arena *arena = work->arena;
     struct mo_sources *sources = work->sources;
     struct mo_diags *diags = work->diags;
-    struct stat st;
-    /* No installed library yet is normal; an existing but unreadable folder
-     * must still reach the loader's E1102 rather than silently disappear. */
-    const char *library = mo_library_path;
-    if (stat(library, &st) != 0 && errno == ENOENT)
-        library = NULL;
+    if (cli->command == MO_COMMAND_RUN && mo_is_bytecode_path(mo_cli_file(cli, work->file))) {
+        work->status =
+            mo_run_bytecode(cli, mo_cli_file(cli, work->file), work->output, work->errors, diags);
+        return;
+    }
+    const char *library = cli->library;
     struct mo_module_set *set =
         cli->command != MO_COMMAND_REPLAY
-            ? mo_load_program(arena, sources, mo_cli_file(cli, work->file), library, diags)
+            ? mo_load_program_with_library(arena, sources, mo_cli_file(cli, work->file), library,
+                                           library == NULL ? mo_default_embedded_library() : NULL,
+                                           library == NULL ? mo_default_library_root() : NULL,
+                                           diags)
         : cli->file_count == 0
             ? mo_upgrade_replay_set(arena, cli->data, cli->failure, library, sources, diags)
             : mo_upgrade_source_set(arena, mo_cli_file(cli, work->file), library, sources, diags);

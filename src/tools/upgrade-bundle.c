@@ -11,6 +11,7 @@
 #include "lower/lower.h"
 #include "tools/embedded.h"
 #include "tools/intent.h"
+#include "tools/library-sources.h"
 #include "tools/offline.h"
 #include "tools/tests.h"
 #include "tools/upgrade-internal.h"
@@ -27,12 +28,18 @@ bool mo_upgrade_error(struct mo_diags *diags, uint16_t code, const char *message
     (void)added;
     return false;
 }
-static const char *library_path(void) {
+const struct mo_embedded_library *mo_default_embedded_library(void) {
+    return &mo_embedded_lib;
+}
+const char *mo_default_library_root(void) {
     struct stat info;
-    return stat(mo_library_path, &info) != 0 && errno == ENOENT ? NULL : mo_library_path;
+    return stat(mo_library_path, &info) == 0 ? mo_library_path : NULL;
 }
 struct mo_compiler mo_upgrade_compiler(void) {
-    return (struct mo_compiler){"/proc/self/exe", library_path()};
+    return (struct mo_compiler){"/proc/self/exe", NULL};
+}
+struct mo_compiler mo_upgrade_compiler_with_library(const char *library) {
+    return (struct mo_compiler){"/proc/self/exe", library};
 }
 bool mo_upgrade_file_bytes(const char *path, size_t limit, struct mo_buffer *out) {
     FILE *file = fopen(path, "rb");
@@ -107,13 +114,18 @@ bool mo_source_bundle(const struct mo_module_set *set, const struct mo_sources *
     }
     return ok;
 }
-bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo_buffer *out,
-                       struct mo_diags *diags, struct mo_sources *sources) {
+bool mo_upgrade_bundle_with_library(const char *path, const char *library, bool migration,
+                                    bool serving, struct mo_buffer *out, struct mo_diags *diags,
+                                    struct mo_sources *sources) {
     struct mo_arena arena;
     mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
+    const struct mo_embedded_library *embedded = library == NULL ? &mo_embedded_lib : NULL;
+    const char *entry_root = library == NULL ? mo_default_library_root() : NULL;
     const struct mo_module_set *set =
-        migration ? mo_load_upgrade_sources(&arena, sources, path, library_path(), diags)
-                  : mo_load_program(&arena, sources, path, library_path(), diags);
+        migration ? mo_load_upgrade_with_library(&arena, sources, path, library, embedded,
+                                                 entry_root, diags)
+                  : mo_load_program_with_library(&arena, sources, path, library, embedded,
+                                                 entry_root, diags);
     bool ok = set != NULL && !mo_diags_any(diags);
     if (ok && serving) {
         const struct mo_syntax *items = set->modules[0]->tree->children[1];
@@ -133,6 +145,10 @@ bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo
     ok = ok && mo_source_bundle(set, sources, migration, out, diags);
     mo_arena_free(&arena);
     return ok;
+}
+bool mo_upgrade_bundle(const char *path, bool migration, bool serving, struct mo_buffer *out,
+                       struct mo_diags *diags, struct mo_sources *sources) {
+    return mo_upgrade_bundle_with_library(path, NULL, migration, serving, out, diags, sources);
 }
 static bool load_bundle_bytes(const uint8_t *bytes, size_t length, struct mo_sources *sources,
                               struct mo_diags *diags) {
@@ -164,14 +180,15 @@ struct mo_module_set *mo_upgrade_source_set(struct mo_arena *arena, const char *
     struct mo_buffer bundle;
     mo_buffer_init(&bundle, MO_LIMIT_BUNDLE_BYTES);
     struct mo_module_set *set = NULL;
-    if (mo_upgrade_bundle(path, false, false, &bundle, diags, sources)) {
+    if (mo_upgrade_bundle_with_library(path, library, false, false, &bundle, diags, sources)) {
         /* Keep the original sources on a load error so diagnostics retain their spans. */
         mo_sources_free(sources);
         if (!mo_sources_init(sources))
             (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
                                    "source replay could not allocate its bundled sources");
         else if (load_bundle_bytes(bundle.bytes, bundle.length, sources, diags))
-            set = mo_load_bundle_sources(arena, sources, library, diags);
+            set = mo_load_bundle_with_library(arena, sources, library,
+                                              library == NULL ? &mo_embedded_lib : NULL, diags);
     }
     mo_buffer_free(&bundle);
     return set;
@@ -372,13 +389,19 @@ static void compile_bundle(void *context) {
                 ok = inject_context(work->cli->compile_context, &old_sources, &context_storage,
                                     retained_migration);
             struct mo_module_set *old_set =
-                ok ? mo_load_bundle_sources(&arena, &old_sources, library_path(), &diags) : NULL;
+                ok ? mo_load_bundle_with_library(
+                         &arena, &old_sources, work->cli->library,
+                         work->cli->library == NULL ? &mo_embedded_lib : NULL, &diags)
+                   : NULL;
             struct mo_program *old = old_set == NULL ? NULL : mo_check(&arena, old_set, &diags);
             ok = old != NULL && !mo_diags_any(&diags) && mo_upgrade_old_sources(old, &sources);
         }
     }
     struct mo_module_set *set =
-        ok ? mo_load_bundle_sources(&arena, &sources, library_path(), &diags) : NULL;
+        ok ? mo_load_bundle_with_library(&arena, &sources, work->cli->library,
+                                         work->cli->library == NULL ? &mo_embedded_lib : NULL,
+                                         &diags)
+           : NULL;
     if (set != NULL)
         for (uint32_t i = 0; i < set->count; i++)
             if (set->modules[i]->span.file < candidate_count && reserved(set->names[i]))
@@ -542,7 +565,9 @@ struct mo_module_set *mo_upgrade_replay_set(struct mo_arena *arena, const char *
             ok = mo_sources_add_bytes(sources, name, context.files[i].source.bytes,
                                       context.files[i].source.length, &file, &error);
         }
-        set = ok ? mo_load_bundle_sources(arena, sources, library, diags) : NULL;
+        set = ok ? mo_load_bundle_with_library(arena, sources, library,
+                                               library == NULL ? &mo_embedded_lib : NULL, diags)
+                 : NULL;
         if (!ok && !mo_diags_any(diags))
             (void)mo_upgrade_error(diags, MO_CODE_UPGRADE_INVALID_VALUE,
                                    "the retained program or its context is invalid");

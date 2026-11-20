@@ -42,7 +42,7 @@ static const char *const host_params[] = {
 static MO_MUST_USE bool consume(struct compiler *c, struct function *f, uint32_t r,
                                 enum mo_operand_access access, const uint32_t *fixed,
                                 enum mo_opcode op, uint32_t slot) {
-    bool owned = access == MO_ACCESS_CONSUME;
+    bool owned = access == MO_ACCESS_CONSUME || access == MO_ACCESS_TOKEN_CONSUME;
     if (access == MO_ACCESS_MOVE)
         owned = ((struct reg *)f->regs.items)[r].state == REF_OWNED;
     else if (access == MO_ACCESS_CALL_PARAMETER) {
@@ -72,9 +72,12 @@ static MO_MUST_USE bool transfer(struct compiler *c, struct function *f, enum mo
             if (!consume(c, f, variable[i], info->variable.access, fixed, op, i))
                 return false;
     for (uint32_t i = 0; i < info->fixed_count; i++)
-        if (info->fixed[i].kind == MO_OPERAND_REGISTER &&
-            info->fixed[i].access == MO_ACCESS_WRITE && !state(c, f, fixed[i], result))
-            return false;
+        if (info->fixed[i].kind == MO_OPERAND_REGISTER) {
+            if (info->fixed[i].access == MO_ACCESS_WRITE && !state(c, f, fixed[i], result))
+                return false;
+            if (info->fixed[i].access == MO_ACCESS_TOKEN_WRITE && !state(c, f, fixed[i], REF_TOKEN))
+                return false;
+        }
     return true;
 }
 MO_MUST_USE uint32_t codegen_emit(struct compiler *c, struct function *f,
@@ -158,7 +161,9 @@ static MO_MUST_USE bool drop(struct compiler *c, struct function *f, uint32_t r,
                              struct mo_core_span s) {
     if (r == MO_NO_INDEX || !((struct reg *)f->regs.items)[r].owned)
         return true;
-    if (codegen_emit(c, f, s, MO_OP_DROP, &r, 1, NULL, 0) == MO_NO_INDEX)
+    enum mo_opcode op =
+        ((struct reg *)f->regs.items)[r].state == REF_TOKEN ? MO_OP_FREE_TOKEN : MO_OP_DROP;
+    if (codegen_emit(c, f, s, op, &r, 1, NULL, 0) == MO_NO_INDEX)
         return false;
     owner_remove(f, r);
     return true;
@@ -175,9 +180,10 @@ static void restore(struct function *f, uint32_t checkpoint) {
     while (f->changes.count != checkpoint) {
         struct change change = ((struct change *)f->changes.items)[--f->changes.count];
         struct reg *r = &regs[change.reg];
-        if (r->owned && change.previous != REF_OWNED)
+        bool was_owner = change.previous == REF_OWNED || change.previous == REF_TOKEN;
+        if (r->owned && !was_owner)
             owner_remove(f, change.reg);
-        else if (!r->owned && change.previous == REF_OWNED)
+        else if (!r->owned && was_owner)
             codegen_owner_add(f, change.reg);
         r->state = change.previous;
     }
@@ -240,7 +246,7 @@ static MO_MUST_USE bool normalize(struct compiler *c, struct function *f, uint32
         /* Only path-local slots change on a live edge; lexical owners outside it survive.
          * Jump argument copies are protected until simultaneous parameter transfer. */
         MO_ASSERT(r->goal == REF_UNDEFINED);
-        if (r->state == REF_OWNED) {
+        if (r->state == REF_OWNED || r->state == REF_TOKEN) {
             MO_ASSERT(r->owned);
             if (!drop(c, f, id, s))
                 return false;
@@ -447,6 +453,52 @@ MO_MUST_USE bool codegen_reachable_walk(struct function *f, const struct node *n
     }
     return n->core->tag != MO_CORE_EXPR_FAIL && n->core->tag != MO_CORE_EXPR_STOP;
 }
+static uint32_t case_layout(const struct compiler *c, uint32_t type, uint32_t case_index) {
+    if (c->types.items[type].kind != MO_TYPE_CHOICE)
+        return c->layouts[type];
+    if (mo_case_shape(&c->types, type, case_index) != MO_CASE_BOXED)
+        return MO_NO_INDEX;
+    for (uint32_t i = 0; i < c->types.layout_count; i++) {
+        const struct mo_layout *l = &c->types.layouts[i];
+        if (l->kind == MO_LAYOUT_CASE && l->type == type && l->case_index == case_index)
+            return i;
+    }
+    return MO_NO_INDEX;
+}
+static uint32_t find_token(const struct function *f, uint32_t layout) {
+    if (layout == MO_NO_INDEX)
+        return MO_NO_INDEX;
+    const struct reg *regs = f->regs.items;
+    for (uint32_t r = f->owned; r != MO_NO_INDEX; r = regs[r].next)
+        if (regs[r].state == REF_TOKEN && regs[r].token_layout == layout &&
+            regs[r].token_depth == f->branch_depth && !regs[r].protected)
+            return r;
+    return MO_NO_INDEX;
+}
+static uint32_t record_set_field_slot(const struct node *arm, const struct node *body,
+                                      uint32_t record_type, uint32_t s_reg) {
+    if (body->core->tag != MO_CORE_EXPR_CON || body->type != record_type ||
+        body->count != arm->bind_count || arm->bind_count == 0)
+        return MO_NO_INDEX;
+    uint32_t changed = MO_NO_INDEX;
+    for (uint32_t j = 0; j < arm->bind_count; j++) {
+        const struct node *child = body->children[j];
+        if (child->core->tag != MO_CORE_EXPR_VAR)
+            return MO_NO_INDEX;
+        if (child->reg == arm->binds[j]) {
+            if (!body->last[j])
+                return MO_NO_INDEX;
+            continue;
+        }
+        if (changed != MO_NO_INDEX || child->reg == s_reg)
+            return MO_NO_INDEX;
+        for (uint32_t m = 0; m < arm->bind_count; m++)
+            if (child->reg == arm->binds[m])
+                return MO_NO_INDEX;
+        changed = j;
+    }
+    return changed;
+}
 /* false through *live means a terminal path, not a compiler refusal. */
 MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct node *n, bool tail,
                                   unsigned depth, bool *live) {
@@ -559,11 +611,20 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
         }
         uint32_t args[] = {n->reg, n->index, 0};
         enum mo_opcode op = MO_OP_CALL;
-        uint32_t count = 2;
+        uint32_t count = 2, reused_token = MO_NO_INDEX;
         if (n->core->tag == MO_CORE_EXPR_CON) {
-            if (c->types.items[n->type].kind == MO_TYPE_RECORD) {
+            uint32_t lay = c->types.items[n->type].kind == MO_TYPE_RECORD
+                               ? c->layouts[n->type]
+                               : case_layout(c, n->type, n->index);
+            reused_token = find_token(f, lay);
+            if (reused_token != MO_NO_INDEX) {
+                op = MO_OP_REUSE;
+                args[1] = reused_token;
+                args[2] = lay;
+                count = 3;
+            } else if (c->types.items[n->type].kind == MO_TYPE_RECORD) {
                 op = MO_OP_CONSTRUCT;
-                args[1] = c->layouts[n->type];
+                args[1] = lay;
             } else {
                 op = MO_OP_MAKE_CASE;
                 args[1] = n->type;
@@ -571,14 +632,25 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
                 count = 3;
             }
         } else if (n->core->tag == MO_CORE_EXPR_TUPLE) {
-            op = MO_OP_CONSTRUCT;
-            args[1] = c->layouts[n->type];
+            uint32_t lay = c->layouts[n->type];
+            reused_token = find_token(f, lay);
+            if (reused_token != MO_NO_INDEX) {
+                op = MO_OP_REUSE;
+                args[1] = reused_token;
+                args[2] = lay;
+                count = 3;
+            } else {
+                op = MO_OP_CONSTRUCT;
+                args[1] = lay;
+            }
         } else if (tail) {
             op = MO_OP_TAIL_CALL;
             args[0] = n->index;
             count = 1;
             *live = false;
         }
+        if (reused_token != MO_NO_INDEX)
+            owner_remove(f, reused_token);
         /* Reserve consumed operands while dropping the rest of a tail frame. */
         for (uint32_t i = 0; i < n->count; i++)
             if (codegen_operand_owned(c, n, i))
@@ -601,15 +673,51 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
         if (!codegen_generate(c, f, n->children[0], false, depth + 1, live) || !*live)
             return c->error == 0;
         bool choice = n->core->tag == MO_CORE_EXPR_CASE;
-        if (choice && c->types.items[n->children[0]->type].kind == MO_TYPE_RECORD) {
+        uint32_t s_reg = n->children[0]->reg, s_type = n->children[0]->type;
+        if (choice && c->types.items[s_type].kind == MO_TYPE_RECORD) {
             MO_ASSERT(n->count == 2);
             struct node *arm = n->children[1], *body = arm->children[0];
+            const struct reg *r_items = f->regs.items;
+            bool can_consume = r_items[s_reg].state == REF_OWNED && r_items[s_reg].owned &&
+                               !r_items[s_reg].protected && arm->scrutinee_dead;
+            if (can_consume) {
+                uint32_t set_slot = record_set_field_slot(arm, body, s_type, s_reg);
+                if (set_slot != MO_NO_INDEX) {
+                    uint32_t val = argument(c, f, body->children[set_slot]->reg, true, body->span,
+                                            body->last[set_slot]);
+                    if (val == MO_NO_INDEX)
+                        return false;
+                    owner_remove(f, s_reg);
+                    owner_remove(f, val);
+                    const uint32_t set_args[] = {n->reg, s_reg, set_slot, val};
+                    if (codegen_emit(c, f, n->span, MO_OP_SET_FIELD, set_args, 4, NULL, 0) ==
+                        MO_NO_INDEX)
+                        return false;
+                    codegen_owner_add(f, n->reg);
+                    break;
+                }
+            }
             for (uint32_t j = 0; j < arm->bind_count; j++) {
-                const uint32_t field[] = {arm->binds[j], n->children[0]->reg, j};
+                const uint32_t field[] = {arm->binds[j], s_reg, j};
                 if (codegen_emit(c, f, n->span, MO_OP_FIELD, field, 3, NULL, 0) == MO_NO_INDEX)
                     return false;
                 if (codegen_reference(c, ((struct reg *)f->regs.items)[arm->binds[j]].type))
                     codegen_owner_add(f, arm->binds[j]);
+            }
+            uint32_t tok = MO_NO_INDEX, lay = c->layouts[s_type];
+            if (can_consume && arm->bind_count != 0 && lay != MO_NO_INDEX &&
+                codegen_reuses_ctor(c, s_type, 0, body, 0)) {
+                tok = codegen_register_add(c, f, s_type, MO_NO_INDEX);
+                if (tok == MO_NO_INDEX)
+                    return false;
+                const uint32_t reset[] = {tok, s_reg};
+                if (codegen_emit(c, f, n->span, MO_OP_RESET, reset, 2, NULL, 0) == MO_NO_INDEX)
+                    return false;
+                owner_remove(f, s_reg);
+                struct reg *tok_r = &((struct reg *)f->regs.items)[tok];
+                tok_r->token_layout = lay;
+                tok_r->token_depth = f->branch_depth;
+                codegen_owner_add(f, tok);
             }
             uint32_t start = f->code.count;
             if (!codegen_generate(c, f, body, tail, depth + 1, live))
@@ -619,7 +727,11 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
                     ((struct ownership *)c->ownership.items)[codegen_flow_id(f, n->reg)].owned;
                 if (!copy(c, f, n->reg, body->reg, owned, n->span, n->last[1]) ||
                     (body->temporary && !drop(c, f, body->reg, n->span)) ||
-                    (n->children[0]->temporary && !drop(c, f, n->children[0]->reg, n->span)))
+                    (n->children[0]->temporary && !drop(c, f, s_reg, n->span)))
+                    return false;
+                if (tok != MO_NO_INDEX &&
+                    (!drop(c, f, tok, n->span) ||
+                     codegen_emit(c, f, n->span, MO_OP_CLEAR, &tok, 1, NULL, 0) == MO_NO_INDEX))
                     return false;
                 for (uint32_t j = 0; j < arm->bind_count; j++)
                     if (!drop(c, f, arm->binds[j], n->span))
@@ -638,13 +750,14 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
         memset(targets, 0, (size_t)arms * sizeof *targets);
         for (uint32_t i = 0; i < arms; i++)
             jumps[i] = MO_NO_INDEX;
-        uint32_t fixed[] = {n->children[0]->reg, 0, 0};
+        uint32_t fixed[] = {s_reg, 0, 0};
         uint32_t at = codegen_emit(c, f, n->span, choice ? MO_OP_SWITCH : MO_OP_BRANCH, fixed,
                                    choice ? 1 : 3, choice ? targets : NULL, choice ? arms : 0);
         if (at == MO_NO_INDEX)
             return false;
         uint32_t checkpoint = f->changes.count;
         bool any = false;
+        f->branch_depth++;
         for (uint32_t i = 0; i < arms; i++) {
             restore(f, checkpoint);
             uint32_t case_id = choice ? n->cases[i] : i;
@@ -653,12 +766,29 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
             struct node *arm = n->children[i + 1], *body = choice ? arm->children[0] : arm;
             if (choice) {
                 for (uint32_t j = 0; j < arm->bind_count; j++) {
-                    const uint32_t field[] = {arm->binds[j], n->children[0]->reg, case_id, j};
+                    const uint32_t field[] = {arm->binds[j], s_reg, case_id, j};
                     if (codegen_emit(c, f, n->span, MO_OP_CASE_FIELD, field, 4, NULL, 0) ==
                         MO_NO_INDEX)
                         return false;
                     if (codegen_reference(c, ((struct reg *)f->regs.items)[arm->binds[j]].type))
                         codegen_owner_add(f, arm->binds[j]);
+                }
+                const struct reg *r_items = f->regs.items;
+                uint32_t lay = arm->bind_count != 0 ? case_layout(c, s_type, case_id) : MO_NO_INDEX;
+                if (lay != MO_NO_INDEX && r_items[s_reg].state == REF_OWNED &&
+                    r_items[s_reg].owned && !r_items[s_reg].protected && arm->scrutinee_dead &&
+                    codegen_reuses_ctor(c, s_type, case_id, body, 0)) {
+                    uint32_t tok = codegen_register_add(c, f, s_type, MO_NO_INDEX);
+                    if (tok == MO_NO_INDEX)
+                        return false;
+                    const uint32_t reset[] = {tok, s_reg};
+                    if (codegen_emit(c, f, n->span, MO_OP_RESET, reset, 2, NULL, 0) == MO_NO_INDEX)
+                        return false;
+                    owner_remove(f, s_reg);
+                    struct reg *tok_r = &((struct reg *)f->regs.items)[tok];
+                    tok_r->token_layout = lay;
+                    tok_r->token_depth = f->branch_depth;
+                    codegen_owner_add(f, tok);
                 }
             }
             if (!codegen_generate(c, f, body, tail, depth + 1, live))
@@ -682,6 +812,7 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
                     return false;
             }
         }
+        f->branch_depth--;
         uint32_t *words = f->code.items;
         memcpy(words + at + 2, targets, (size_t)arms * sizeof *targets);
         for (uint32_t i = 0; i < arms; i++)
@@ -830,6 +961,7 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
         if (skip == MO_NO_INDEX)
             return false;
         uint32_t checkpoint = f->changes.count;
+        f->branch_depth++;
         struct join *joins = f->joins.items;
         joins[n->index].offset = f->code.count;
         joins[n->index].checkpoint = checkpoint;
@@ -879,6 +1011,7 @@ MO_MUST_USE bool codegen_generate(struct compiler *c, struct function *f, struct
             ((uint32_t *)f->code.items)[exit + 1] = f->code.count;
         *live |= any;
         restore(f, checkpoint);
+        f->branch_depth--;
         if (*live &&
             (!forget_dead(c, f, &n->after, n->reg, n->span, false) || !merged(c, f, n->reg)))
             return false;

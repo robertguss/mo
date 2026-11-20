@@ -228,16 +228,103 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
   end
   connection = try network.connect(written.target.host, written.target.port, request.timeout)
   try connection.send(written.bytes)
-  var received = "".bytes
-  var walk = start()
+  bound = limits()
+  var head_bytes = "".bytes
+  var head_from = 0
+  var cut_found = None
+  while cut_found is None
+    part = try connection.receive(1048576)
+    head_bytes = Bytes.join([head_bytes, part])
+    case mark_at(
+      head_bytes,
+      "\r\n\r\n".bytes,
+      head_from,
+      bound.headers - head_from,
+      "the headers are"
+    )
+      Ok(at): cut_found = Some(at)
+      Error(Bad(_)): return Error(
+        BadResponse(reason: "the headers are longer than #{bound.headers} bytes")
+      )
+      Error(More(_)):
+        if part.size == 0
+          return Error(BadResponse(reason: "the connection closed before the response was whole"))
+        end
+        head_from = (head_bytes.size - 3).max(0)
+    end
+  end
+  cut = cut_found or 0
+  head = try head_bytes.slice(0, cut).decode_utf8.or_fail(
+    BadResponse(reason: "the headers are not text")
+  )
+  lines = head.split("\r\n")
+  if not lines.all?(fn(line) plain?(line.replace("\t", " "), 32) end)
+    return Error(BadResponse(reason: "a line holds a control character"))
+  end
+  status = try code(lines.first or "").or_fail(BadResponse(reason: "the status line is malformed"))
+  headers = lines.drop(1).filter_map(fn(line) field(line) end)
+  return Error(BadResponse(reason: "a header line is malformed")) if headers.size != lines.size - 1
+  if request.method == "HEAD" or status == 204 or status == 304
+    return Ok(Response(status: status, headers: headers, body: "".bytes))
+  end
+  first_rest = head_bytes.slice(cut + 4, head_bytes.size)
+  codings = headers.filter(fn(h) h.0.ascii_lowercase == "transfer-encoding" end)
+  if not codings.empty?
+    coding = codings.map(fn(h) h.1 end).join(", ")
+    if coding.ascii_lowercase != "chunked"
+      return Error(BadResponse(reason: "the transfer encoding #{coding} is not supported"))
+    end
+    var unread = first_rest
+    var walk = start()
+    var closed = false
+    while true
+      case chunks(unread, bound, walk)
+        Ok(body): return Ok(Response(status: status, headers: headers, body: body))
+        Error(Bad(refusal)): return Error(refusal)
+        Error(More(next)):
+          if closed
+            return Error(BadResponse(reason: "the connection closed before the response was whole"))
+          end
+          unread = unread.slice(next.at, unread.size)
+          walk = Walk(at: 0, parts: next.parts, total: next.total)
+          part = try connection.receive(1048576)
+          if part.size == 0
+            closed = true
+          else
+            unread = if unread.size == 0: part else: Bytes.join([unread, part])
+          end
+      end
+    end
+  end
+  if named(headers, "content-length") is Some(written_length)
+    length = try number(written_length).or_fail(
+      BadResponse(reason: "the Content-Length is not a number")
+    )
+    return Error(TooLarge(limit: bound.body)) if length > bound.body
+    var parts = if first_rest.size == 0: [] else: [first_rest]
+    var received_size = first_rest.size
+    while received_size < length
+      part = try connection.receive(1048576)
+      if part.size == 0
+        return Error(BadResponse(reason: "the connection closed before the response was whole"))
+      end
+      parts = parts.append(part)
+      received_size += part.size
+    end
+    body = Bytes.join(parts)
+    return Ok(Response(status: status, headers: headers, body: body.slice(0, length)))
+  end
+  return Error(TooLarge(limit: bound.body)) if first_rest.size > bound.body
+  var parts = if first_rest.size == 0: [] else: [first_rest]
+  var received_size = first_rest.size
   while true
     part = try connection.receive(1048576)
-    received = Bytes.join([received, part])
-    case read(request.method, received, part.size == 0, limits(), walk)
-      Ok(response): return Ok(response)
-      Error(Bad(refusal)): return Error(refusal)
-      Error(More(next)): walk = next
+    if part.size == 0
+      return Ok(Response(status: status, headers: headers, body: Bytes.join(parts)))
     end
+    received_size += part.size
+    return Error(TooLarge(limit: bound.body)) if received_size > bound.body
+    parts = parts.append(part)
   end
   Error(BadResponse(reason: "the response was never whole"))
 end
@@ -1004,6 +1091,14 @@ test "a response is read whole however it says where it ends"
   )
   assert asked.send(Network.fake(replies([(asked, chunked)]))) is Ok(joined)
   assert joined.text == Some("Wikipedia")
+  big_chunk = "y".repeat(65536)
+  big_chunked = Response(
+    status: 200,
+    headers: [("Transfer-Encoding", "chunked")],
+    body: "10000\r\n#{big_chunk}\r\n10000\r\n#{big_chunk}\r\n0\r\n\r\n".bytes
+  )
+  assert asked.send(Network.fake(replies([(asked, big_chunked)]))) is Ok(big_joined)
+  assert big_joined.body.size == 131072
   closed = Response(status: 500, headers: [], body: "to the end".bytes)
   assert asked.send(Network.fake(replies([(asked, closed)]))) == Ok(closed)
   assert not closed.ok?
