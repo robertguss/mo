@@ -95,7 +95,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 8.3/1	fail-try-wrap,ref-functions	e0085,e0086		
 8.3/2	fail-try-wrap	e0087,e0087-ambiguous,e0412		
 8.4/1	fail-option-basics	e0050-unwrap	fail-bug-stop	
-8.4/2	ref-functions		fail-bug-stop,lang-stop	
+8.4/2	ref-functions	e0007-stop	fail-bug-stop,lang-stop	
 9.1/1	lang-generic-types	e0049,e0066		
 9.1/2	lang-enum-tree	e0084		
 9.2/1	lang-abilities-order,lang-abilities-custom-text,lang-abilities-hash	e0075,e0080		
