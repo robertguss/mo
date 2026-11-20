@@ -13,9 +13,13 @@ fn titles(network: Network, repo: Text, token: Text) : Result(List(Text), Http.H
   Ok(items.filter_map(fn(issue) issue.text_at("title") end))
 end
 
-fn main(console: Console, network: Network) : Result(Unit, Http.HttpError)
-  for title in try titles(network, "mo/mo", "t0ken")
-    console.print(title)
+fn main(args: Args, console: Console, network: Network) : Result(Unit, Http.HttpError)
+  case args.list
+    [repo]:
+      for title in try titles(network, repo, "t0ken")
+        console.print(title)
+      end
+    _: console.error("usage: issues OWNER/REPO")
   end
   Ok(Unit)
 end
