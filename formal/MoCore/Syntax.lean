@@ -362,7 +362,7 @@ inductive IoOp where
   | writeText | appendText | remove | makeFolder
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
-  | connect | allowHosts | send | receive
+  | connect | connectSecure | allowHosts | send | receive
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
   | networkFake
@@ -569,7 +569,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .readOnly => ([.cap .files], .cap .readFiles)
   | .now => ([.cap .clock], .time)
   | .randomInt => ([.cap .random, .int, .int], .int)
-  | .connect =>
+  | .connect | .connectSecure =>
     ([.cap .network, .text, .int, .duration], .result (.cap .connection) .networkError)
   | .allowHosts => ([.cap .network, .list .text], .cap .network)
   | .send => ([.cap .connection, .bytes], .result .unit .networkError)
@@ -837,7 +837,8 @@ def fileErrorCtors : List Ctor :=
 /-- The constructors of `NetworkError` (reference 14). -/
 def networkErrorCtors : List Ctor :=
   [⟨"UnknownHost", [("host", .text)]⟩, ⟨"Refused", [("host", .text), ("port", .int)]⟩,
-   ⟨"TimedOut", []⟩, ⟨"Closed", []⟩, ⟨"Broken", [("reason", .text)]⟩]
+   ⟨"TimedOut", []⟩, ⟨"Closed", []⟩, ⟨"Broken", [("reason", .text)]⟩,
+   ⟨"Certificate", [("reason", .text)]⟩]
 
 /-- The constructors of a type that has them: declared data types, and the
 library's always-in-scope choice types. -/

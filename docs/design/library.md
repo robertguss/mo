@@ -544,12 +544,14 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 
 ## Network
 
-The real network is C in `src/host/real-network.c`, and the fake is C in
-`src/host/fake-network.c`. `src/host/network.c` holds the checks both share.
+The real network is C in `src/host/real-network.c` (with TLS in
+`src/host/tls.c`), and the fake is C in `src/host/fake-network.c`.
+`src/host/network.c` holds the checks both share.
 
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `connect(host, port, within)` | host | `NETWORK_CONNECT` | |
+| `connect_secure(host, port, within)` | host | `NETWORK_CONNECT_SECURE` | |
 | `allow_hosts(hosts)` | host | `NETWORK_ALLOW_HOSTS` | |
 | `Network.fake(peers)` | host | `NETWORK_FAKE` | a fake, for spec code only (reference 12.4) |
 
@@ -594,7 +596,7 @@ them and reads none.
 | --- | --- | --- | --- |
 | `Http.get(url)`, `Http.post(url)`, `Http.request(method, url)` | Mo | `lib/http.mo` | |
 | `header`, `query`, `json`, `text` and `within` on a `Request` | Mo | `lib/http.mo` | each gives a changed copy and checks nothing; `send` reports a bad URL, method or header |
-| `request.send(network)` | Mo | `lib/http.mo` | one `connect`, one `send`, then `receive` of up to 1 MiB at a time until the response is whole; after each receive the reader reads the headers again and reads a chunked body on from the chunk it stopped at; the limits, 64 KiB of headers and 16 MiB of body, are in `limits()` |
+| `request.send(network)` | Mo | `lib/http.mo` | one `connect` or `connect_secure`, one `send`, then `receive` of up to 1 MiB at a time until the response is whole; after each receive the reader reads the headers again and reads a chunked body on from the chunk it stopped at; the limits, 64 KiB of headers and 16 MiB of body, are in `limits()` |
 | `ok?`, `header(name)`, `text` and `json` on a `Response` | Mo | `lib/http.mo` | `json` is `Json.parse` on the body |
 | `Http.reply(status, body)`, `Http.replies(exchanges)` | Mo | `lib/http.mo` | for tests: `replies` writes each request with the writer `send` uses, under its host and port |
 

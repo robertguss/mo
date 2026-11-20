@@ -161,11 +161,12 @@ static const struct mo_builtin_case builtin_cases[] = {
     {"Entry", "Entry", 23, 23, 1, 0, 2, 0, {"name", "kind"}, NULL},
     {"ServiceDown", "SimulationError", 24, 24, 2, 0, 0, 0, {NULL, NULL}, NULL},
     {"ToolFailed", "SimulationError", 25, 24, 2, 0, 0, 0, {NULL, NULL}, NULL},
-    {"UnknownHost", "NetworkError", 26, 26, 5, 0, 1, 0, {"host", NULL}, "Network"},
-    {"Refused", "NetworkError", 27, 26, 5, 0, 2, 0, {"host", "port"}, "Network"},
-    {"TimedOut", "NetworkError", 28, 26, 5, 0, 0, 0, {NULL, NULL}, "Network"},
-    {"Closed", "NetworkError", 29, 26, 5, 0, 0, 0, {NULL, NULL}, "Network"},
-    {"Broken", "NetworkError", 30, 26, 5, 0, 1, 0, {"reason", NULL}, "Network"},
+    {"UnknownHost", "NetworkError", 26, 26, 6, 0, 1, 0, {"host", NULL}, "Network"},
+    {"Refused", "NetworkError", 27, 26, 6, 0, 2, 0, {"host", "port"}, "Network"},
+    {"TimedOut", "NetworkError", 28, 26, 6, 0, 0, 0, {NULL, NULL}, "Network"},
+    {"Closed", "NetworkError", 29, 26, 6, 0, 0, 0, {NULL, NULL}, "Network"},
+    {"Broken", "NetworkError", 30, 26, 6, 0, 1, 0, {"reason", NULL}, "Network"},
+    {"Certificate", "NetworkError", 31, 26, 6, 0, 1, 0, {"reason", NULL}, "Network"},
 };
 
 static const struct native_text {

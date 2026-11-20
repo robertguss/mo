@@ -413,6 +413,7 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
                   {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}},
                   {"Network.connect", {MO_CORE_IO_OP_CONNECT, false}},
+                  {"Network.connect_secure", {MO_CORE_IO_OP_CONNECT_SECURE, false}},
                   {"Network.allow_hosts", {MO_CORE_IO_OP_ALLOW_HOSTS, false}},
                   {"Network.fake", {MO_CORE_IO_OP_NETWORK_FAKE, false}},
                   {"Connection.send", {MO_CORE_IO_OP_SEND, false}},
@@ -659,7 +660,7 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
         strcmp(r->native, "ServiceDown") != 0 && strcmp(r->native, "ToolFailed") != 0 &&
         strcmp(r->native, "UnknownHost") != 0 && strcmp(r->native, "Refused") != 0 &&
         strcmp(r->native, "TimedOut") != 0 && strcmp(r->native, "Closed") != 0 &&
-        strcmp(r->native, "Broken") != 0)
+        strcmp(r->native, "Broken") != 0 && strcmp(r->native, "Certificate") != 0)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
     if (lower_cps_kind(r) == MO_S_TUPLE || lower_cps_kind(r) == MO_S_MAP_ENTRY) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);

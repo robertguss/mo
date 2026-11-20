@@ -33,6 +33,11 @@ CSTD := -std=c17
 INCLUDES := -Isrc -Ibuild/generated -Ivendor/sqlite
 ifeq ($(shell uname -s),Darwin)
 INCLUDES += -D_DARWIN_C_SOURCE
+OPENSSL_PREFIX := $(firstword $(wildcard /opt/homebrew/opt/openssl@3 /opt/homebrew/opt/openssl /usr/local/opt/openssl@3 /usr/local/opt/openssl))
+ifneq ($(OPENSSL_PREFIX),)
+INCLUDES += -I$(OPENSSL_PREFIX)/include
+LDLIBS += -L$(OPENSSL_PREFIX)/lib
+endif
 endif
 THREADS := -pthread
 WARNINGS := -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion \
@@ -43,7 +48,7 @@ DEBUG := -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g $(THREADS)
 RELEASE := -DMO_BUILD_CONFIGURATION=\"release\" -O2 -g $(THREADS)
 SANITIZE := -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
 FUZZ := -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
-LDLIBS += -lm
+LDLIBS += -lssl -lcrypto -lm
 
 # Each directory in src/ is a module (architecture section 2), and every C file in it is built.
 # The library excludes the command entry point; the startup test links a renamed copy.

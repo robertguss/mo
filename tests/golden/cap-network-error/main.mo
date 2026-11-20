@@ -12,6 +12,7 @@ fn name(error: NetworkError) : Text
     Network.TimedOut: "timed out"
     Network.Closed: "closed"
     Network.Broken(reason: reason): "broken #{reason}"
+    Network.Certificate(reason: reason): "certificate #{reason}"
   end
 end
 
@@ -22,7 +23,8 @@ fn main(console: Console, _network: Network)
     refused,
     Network.TimedOut,
     Network.Closed,
-    Network.Broken(reason: "bad line")
+    Network.Broken(reason: "bad line"),
+    Network.Certificate(reason: "expired")
   ]
   console.print(all.map(name).join(", "))
   console.print("#{all}")

@@ -623,9 +623,9 @@ mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type) {
         }
         MO_UNREACHABLE();
     }
-    const char *names[5] = {0};
-    uint32_t counts[5] = {0}, count = 0;
-    mo_core_ty fields[5][2] = {{0}};
+    const char *names[6] = {0};
+    uint32_t counts[6] = {0}, count = 0;
+    mo_core_ty fields[6][2] = {{0}};
     static const struct mo_source_type text = {
         .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};
     static const struct mo_source_type entry_kind = {
@@ -673,15 +673,16 @@ mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type) {
         fields[0][0] = lower_type(p, &text, NULL);
         fields[0][1] = lower_type(p, &entry_kind, NULL);
     } else if (type->tag == MO_CORE_TY_NETWORK_ERROR) {
-        count = 5;
+        count = 6;
         names[0] = "UnknownHost";
         names[1] = "Refused";
         names[2] = "TimedOut";
         names[3] = "Closed";
         names[4] = "Broken";
-        counts[0] = counts[4] = 1;
+        names[5] = "Certificate";
+        counts[0] = counts[4] = counts[5] = 1;
         counts[1] = 2;
-        fields[0][0] = fields[1][0] = fields[4][0] = lower_type(p, &text, NULL);
+        fields[0][0] = fields[1][0] = fields[4][0] = fields[5][0] = lower_type(p, &text, NULL);
         fields[1][1] = lower_type(p, &integer, NULL);
     } else
         MO_UNREACHABLE();

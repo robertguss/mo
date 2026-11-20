@@ -4,7 +4,13 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/rsa.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
@@ -563,6 +569,188 @@ static void test_allow_hosts(void) {
     finish(&f, capability);
 }
 
+struct tls_server_plan {
+    int listening;
+    SSL_CTX *ctx;
+    bool raw_close;
+    bool plain_http;
+};
+
+static void *run_tls_peer(void *arg) {
+    struct tls_server_plan *plan = arg;
+    int fd = accept(plan->listening, NULL, NULL);
+    MO_ASSERT(fd >= 0);
+    if (plan->raw_close) {
+        MO_ASSERT(close(fd) == 0);
+        return NULL;
+    }
+    if (plan->plain_http) {
+        char buf[128];
+        (void)recv(fd, buf, sizeof buf, 0);
+        static const char reply[] = "HTTP/1.1 400 Bad Request\r\n\r\n";
+        (void)send(fd, reply, sizeof reply - 1, 0);
+        MO_ASSERT(close(fd) == 0);
+        return NULL;
+    }
+    SSL *ssl = SSL_new(plan->ctx);
+    MO_ASSERT(ssl != NULL && SSL_set_fd(ssl, fd) == 1);
+    if (SSL_accept(ssl) == 1) {
+        uint8_t got[64];
+        size_t read_bytes = 0;
+        if (SSL_read_ex(ssl, got, sizeof got, &read_bytes) == 1 && read_bytes == 4 &&
+            memcmp(got, "ping", 4) == 0) {
+            size_t sent = 0;
+            MO_ASSERT(SSL_write_ex(ssl, "0123456789", 10, &sent) == 1 && sent == 10);
+            (void)SSL_shutdown(ssl);
+        }
+    }
+    ERR_clear_error();
+    SSL_free(ssl);
+    MO_ASSERT(close(fd) == 0);
+    return NULL;
+}
+
+static struct mo_cell dial_secure(struct host_fixture *f, struct mo_cell capability,
+                                  const char *host, size_t length, int64_t port, int64_t within) {
+    struct mo_cell arguments[] = {capability, mo_cell_unit(), mo_cell_int(port),
+                                  mo_cell_duration(within)};
+    MO_ASSERT(mo_value_text(f->heap, host, length, &arguments[1]));
+    struct mo_cell out = call(f, MO_HOST_NETWORK_CONNECT_SECURE, arguments);
+    mo_value_drop(f->heap, f->types.text, arguments[1]);
+    return out;
+}
+
+static void shows_prefix(struct host_fixture *f, uint32_t type, struct mo_cell value,
+                         const char *prefix) {
+    struct mo_buffer printed;
+    mo_buffer_init(&printed, MO_LIMIT_STRING_SIZE);
+    CHECK(mo_value_print(f->heap, type, value, &printed));
+    size_t len = strlen(prefix);
+    bool match = printed.length >= len && memcmp(printed.bytes, prefix, len) == 0;
+    if (!match)
+        CHECK(fprintf(stderr, "expected prefix %s, got %.*s\n", prefix, (int)printed.length,
+                      printed.bytes) >= 0);
+    CHECK(match);
+    mo_buffer_free(&printed);
+    mo_value_drop(f->heap, type, value);
+}
+
+static void test_tls(void) {
+    MO_ASSERT(OPENSSL_init_ssl(OPENSSL_INIT_NO_LOAD_CONFIG, NULL) == 1);
+    EVP_PKEY *pkey = EVP_RSA_gen(2048);
+    X509 *cert = X509_new();
+    MO_ASSERT(pkey != NULL && cert != NULL);
+    MO_ASSERT(X509_set_version(cert, 2) == 1 &&
+              ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) == 1 &&
+              X509_gmtime_adj(X509_getm_notBefore(cert), -60) != NULL &&
+              X509_gmtime_adj(X509_getm_notAfter(cert), 3600) != NULL &&
+              X509_set_pubkey(cert, pkey) == 1);
+    X509_NAME *subject = X509_get_subject_name(cert);
+    MO_ASSERT(X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
+                                         (const unsigned char *)"localhost", -1, -1, 0) == 1 &&
+              X509_set_issuer_name(cert, subject) == 1);
+    char san[] = "IP:127.0.0.1,DNS:localhost";
+    X509V3_CTX v3ctx;
+    X509V3_set_ctx_nodb(&v3ctx);
+    X509V3_set_ctx(&v3ctx, cert, cert, NULL, NULL, 0);
+    X509_EXTENSION *ext = X509V3_EXT_conf_nid(NULL, &v3ctx, NID_subject_alt_name, san);
+    MO_ASSERT(ext != NULL && X509_add_ext(cert, ext, -1) == 1);
+    X509_EXTENSION_free(ext);
+    MO_ASSERT(X509_sign(cert, pkey, EVP_sha256()) > 0);
+
+    char pem_path[] = "/tmp/mo-test-tls-XXXXXX";
+    int pem_fd = mkstemp(pem_path);
+    MO_ASSERT(pem_fd >= 0);
+    FILE *pem_file = fdopen(pem_fd, "w");
+    MO_ASSERT(pem_file != NULL && PEM_write_X509(pem_file, cert) == 1 && fclose(pem_file) == 0);
+
+    SSL_CTX *server_ctx = SSL_CTX_new(TLS_server_method());
+    MO_ASSERT(server_ctx != NULL && SSL_CTX_use_certificate(server_ctx, cert) == 1 &&
+              SSL_CTX_use_PrivateKey(server_ctx, pkey) == 1);
+
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    struct mo_cell capability = network(&f);
+    uint16_t port;
+    int listening = listener(&port);
+
+    /* Peer closes TCP mid-handshake -> Closed. */
+    struct tls_server_plan drop_plan = {.listening = listening, .raw_close = true};
+    pthread_t peer_thread;
+    MO_ASSERT(pthread_create(&peer_thread, NULL, run_tls_peer, &drop_plan) == 0);
+    shows(&f, f.result_connection, dial_secure(&f, capability, "127.0.0.1", 9, port, 5000000),
+          "Error(Closed)");
+    MO_ASSERT(pthread_join(peer_thread, NULL) == 0);
+
+    /* Peer speaks plain HTTP instead of TLS -> Broken. */
+    struct tls_server_plan http_plan = {.listening = listening, .plain_http = true};
+    MO_ASSERT(pthread_create(&peer_thread, NULL, run_tls_peer, &http_plan) == 0);
+    shows_prefix(&f, f.result_connection,
+                 dial_secure(&f, capability, "127.0.0.1", 9, port, 5000000),
+                 "Error(Broken(reason: \"");
+    MO_ASSERT(pthread_join(peer_thread, NULL) == 0);
+
+    /* Untrusted certificate -> Certificate. */
+    const char *previous_cert = getenv("SSL_CERT_FILE");
+    char saved_cert[512] = {0};
+    bool had_cert = previous_cert != NULL;
+    if (had_cert) {
+        MO_ASSERT(strlen(previous_cert) < sizeof saved_cert);
+        memcpy(saved_cert, previous_cert, strlen(previous_cert) + 1);
+    }
+    MO_ASSERT(unsetenv("SSL_CERT_FILE") == 0);
+    struct tls_server_plan tls_plan = {.listening = listening, .ctx = server_ctx};
+    MO_ASSERT(pthread_create(&peer_thread, NULL, run_tls_peer, &tls_plan) == 0);
+    shows_prefix(&f, f.result_connection,
+                 dial_secure(&f, capability, "127.0.0.1", 9, port, 5000000),
+                 "Error(Certificate(reason: \"");
+    MO_ASSERT(pthread_join(peer_thread, NULL) == 0);
+
+    /* Trusted certificate + wrong hostname -> Certificate. */
+    MO_ASSERT(setenv("SSL_CERT_FILE", pem_path, 1) == 0);
+    /* Valid IP SAN + sub-record reads (4 + 4 + 2 + EOF) over TLS! */
+    MO_ASSERT(pthread_create(&peer_thread, NULL, run_tls_peer, &tls_plan) == 0);
+    struct mo_cell conn = opened(&f, dial_secure(&f, capability, "127.0.0.1", 9, port, 5000000));
+    sends(&f, conn, "ping", "Ok(Unit)");
+    receives(&f, conn, 4, "Ok(bytes[48, 49, 50, 51])");
+    receives(&f, conn, 4, "Ok(bytes[52, 53, 54, 55])");
+    receives(&f, conn, 4, "Ok(bytes[56, 57])");
+    receives(&f, conn, 4, "Ok(bytes[])");
+    drop_connection(&f, conn);
+    MO_ASSERT(pthread_join(peer_thread, NULL) == 0);
+
+    /* Valid DNS SAN ("localhost") + SNI over TLS! */
+    MO_ASSERT(pthread_create(&peer_thread, NULL, run_tls_peer, &tls_plan) == 0);
+    conn = opened(&f, dial_secure(&f, capability, "localhost", 9, port, 5000000));
+    sends(&f, conn, "ping", "Ok(Unit)");
+    receives(&f, conn, 10, "Ok(bytes[48, 49, 50, 51, 52, 53, 54, 55, 56, 57])");
+    drop_connection(&f, conn);
+    MO_ASSERT(pthread_join(peer_thread, NULL) == 0);
+
+    /* Fake network connect_secure and port bounds. */
+    static const char *const held[] = {"GET / HTTP/1.1\r\n\r\n", "ok"};
+    struct mo_cell fake = fake_network(&f, "example.org:443", held, 1);
+    conn = opened(&f, dial_secure(&f, fake, "example.org", 11, 443, 0));
+    sends(&f, conn, "GET / HTTP/1.1\r\n\r\n", "Ok(Unit)");
+    receives(&f, conn, 4, "Ok(bytes[111, 107])");
+    drop_connection(&f, conn);
+    struct mo_cell bad_port[] = {fake, host_text(&f, "example.org"), mo_cell_int(0),
+                                 mo_cell_duration(0)};
+    refuses(&f, MO_HOST_NETWORK_CONNECT_SECURE, bad_port, "port outside 1 to 65535");
+    mo_value_drop(f.heap, f.types.text, bad_port[1]);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], fake);
+
+    if (had_cert)
+        MO_ASSERT(setenv("SSL_CERT_FILE", saved_cert, 1) == 0);
+    else
+        MO_ASSERT(unsetenv("SSL_CERT_FILE") == 0);
+    CHECK(close(listening) == 0 && unlink(pem_path) == 0);
+    SSL_CTX_free(server_ctx);
+    X509_free(cert);
+    EVP_PKEY_free(pkey);
+    finish(&f, capability);
+}
+
 int main(void) {
     test_round_trip();
     test_errors();
@@ -575,5 +763,6 @@ int main(void) {
     test_fake_snapshot();
     test_fake_bugs();
     test_allow_hosts();
+    test_tls();
     return mo_test_report("test_network");
 }

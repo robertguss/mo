@@ -411,27 +411,35 @@ def guide_claims(binary):
         result = run(binary, ["run", str(source)], 0)
         assert result.stdout == b'Some("mo")\nNone\nNone\n', (result.stdout, result.stderr)
     says("`Network` and `Connection` run (reference section 14).",
+         "`network.connect_secure(host, port, within)` opens a TLS 1.2+ connection verified "
+         "against the system's root certificates and `host` (returning "
+         "`Error(Network.Certificate(reason: reason))` on certificate or host mismatch)",
          "`network.allow_hosts(hosts)` narrows a real or fake `Network` to the `\"host\"` or "
          "`\"host:port\"` destinations in `hosts`, refusing any other destination with "
          "`Error(Network.Refused(host: host, port: port))`.",
          "`NetworkError`'s cases are written with `Network.` in front, as in "
          "`Error(Network.TimedOut)`.",
-         "`Network.fake({\"example.org:80\": {request: reply}})` answers a connection that sends "
-         "exactly `request` with `reply`. Any other request gets "
-         "`Error(Network.Broken(reason: reason))`, and the reason names the line that differs.",
+         "`Network.fake({\"example.org:80\": {request: reply}})` answers a `connect` or "
+         "`connect_secure` connection that sends exactly `request` with `reply`. Any other "
+         "request gets `Error(Network.Broken(reason: reason))`, and the reason names the line "
+         "that differs.",
          "`bytes.slice(from, to)` and `Bytes.join(parts)` cut and join `Bytes`.")
     with tempfile.TemporaryDirectory() as folder:
         source = pathlib.Path(folder) / "main.mo"
         source.write_text(
             "module Main\n\ntest \"a fake network answers one request\"\n"
             "  request = \"GET /\\r\\nA: 1\\r\\n\".bytes\n"
-            "  network = Network.fake({\"example.org:80\": {request: \"reply\".bytes}})\n"
-            "  narrow = network.allow_hosts([\"example.org:80\"])\n"
+            "  network = Network.fake({\"example.org:80\": {request: \"reply\".bytes}, "
+            "\"example.org:443\": {request: \"secure\".bytes}})\n"
+            "  narrow = network.allow_hosts([\"example.org:80\", \"example.org:443\"])\n"
             "  assert narrow.connect(\"other.org\", 80, 1.second) is\n"
             "    Error(Network.Refused(host: \"other.org\", port: 80))\n"
             "  assert narrow.connect(\"example.org\", 80, 1.second) is Ok(held)\n"
             "  assert held.send(request) == Ok(Unit)\n"
             "  assert held.receive(3) == Ok(\"rep\".bytes)\n"
+            "  assert narrow.connect_secure(\"example.org\", 443, 1.second) is Ok(tls)\n"
+            "  assert tls.send(request) == Ok(Unit)\n"
+            "  assert tls.receive(6) == Ok(\"secure\".bytes)\n"
             "  assert network.connect(\"example.org\", 80, 1.second) is Ok(other)\n"
             "  assert other.send(\"GET /\\r\\nA: 2\\r\\n\".bytes) == Ok(Unit)\n"
             "  reason = \"no reply for \\\"GET /\\\": sent \\\"A: 2\\\\r\\\\n\\\", "
@@ -444,8 +452,6 @@ def guide_claims(binary):
         assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
     says("`.send(network)` gives `Result(Response, Http.HttpError)`.",
          "A status such as 404 is a response and not an error.",
-         "An `https://` URL is an error until HTTPS is built: "
-         "`Error(Http.Unreachable(Network.Broken(reason: reason)))`, and the reason says so.",
          "`Network.fake(Http.replies([(request, Http.reply(200, body))]))` answers exactly that "
          "request, so the test builds the request the program builds. The order of `header` calls "
          "with different names does not matter.")
@@ -457,14 +463,16 @@ def guide_claims(binary):
             "\ntest \"what the guide says about a status, https and the order of headers\"\n"
             "  one = Http.get(\"http://h/\").header(\"B\", \"2\").header(\"A\", \"1\")\n"
             "  other = Http.get(\"http://h/\").header(\"A\", \"1\").header(\"B\", \"2\")\n"
-            "  network = Network.fake(Http.replies([(one, Http.reply(404, \"gone\"))]))\n"
+            "  secure = Http.get(\"https://h/\")\n"
+            "  network = Network.fake(Http.replies([\n"
+            "    (one, Http.reply(404, \"gone\")),\n"
+            "    (secure, Http.reply(200, \"encrypted\"))\n"
+            "  ]))\n"
             "  assert other.send(network).map(fn(r) (r.status, r.ok?, r.text) end) ==\n"
             "    Ok((404, false, Some(\"gone\")))\n"
             "  assert other.header(\"C\", \"3\").send(network) is\n"
             "    Error(Http.Unreachable(Network.Broken(reason: _)))\n"
-            "  reason = \"HTTPS is not built yet, so https://h/ can't be reached\"\n"
-            "  assert Http.get(\"https://h/\").send(network) ==\n"
-            "    Error(Http.Unreachable(Network.Broken(reason: reason)))\n"
+            "  assert secure.send(network) == Ok(Http.reply(200, \"encrypted\"))\n"
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"2 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)

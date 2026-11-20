@@ -665,6 +665,7 @@ static void test_every_capability_operation_is_there(void) {
         {"Args", "of"},
         {"Env", "of"},
         {"Network", "connect"},
+        {"Network", "connect_secure"},
         {"Network", "allow_hosts"},
         {"Connection", "send"},
         {"Connection", "receive"},

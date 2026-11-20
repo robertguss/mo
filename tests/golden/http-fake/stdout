@@ -3,5 +3,5 @@ passed Main.test.2  tests/golden/http-fake/main.mo:38:1
 passed Main.test.3  tests/golden/http-fake/main.mo:50:1
 passed Main.test.4  tests/golden/http-fake/main.mo:61:1
 passed Main.test.5  tests/golden/http-fake/main.mo:77:1
-passed Main.test.6  tests/golden/http-fake/main.mo:90:1
+passed Main.test.6  tests/golden/http-fake/main.mo:92:1
 6 passed, 0 failed, 0 stopped

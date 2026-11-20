@@ -1,6 +1,6 @@
 E0070 7.2
 0:46..56
-case doesn't cover every possible value; missing: Network.Closed | Network.Broken(..)
+case doesn't cover every possible value; missing: Network.Closed | Network.Broken(..) | Network.Certificate(..)
 The arms must cover every possible value (reference 7.2).
 a possible value isn't covered
 secondary 0:51..56 matched value

@@ -1051,7 +1051,7 @@ A capability is a heap object that carries its own operations. It has:
 - for a fake, an owned reference to the fake's **state**;
 - for `Files` and `ReadFiles`, its folder: an open handle for a real one, and
   a path prefix for a fake one;
-- for a real `Connection`, its socket and its deadline;
+- for a real `Connection`, its socket, its optional TLS session and its deadline;
 - and whether it is read-only.
 
 `host r_d, h, r_c, …` calls operation `h` of `r_c`'s table. A fake
@@ -1065,7 +1065,7 @@ constructor makes a capability rather than using one, so `host` calls it by
   `make_folder`, `list`, `entries`, `exists?`, `within` and `read_only`;
 - `ReadFiles`: `read_text`, `read_bytes`, `list`, `entries`, `exists?` and `within`;
 - `Clock`: `now`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
-- `Network`: `connect`. `Connection`: `send` and `receive`;
+- `Network`: `connect`, `connect_secure` and `allow_hosts`. `Connection`: `send` and `receive`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
   `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` and
   `Network.fake`.
@@ -1102,11 +1102,11 @@ doesn't change a list the test holds. Every handle on one fake shares its
 state: the `Console.fake()` passed to `main` and the one the test reads
 `printed` from are the same object. `files.within("a")` and `files.read_only`
 make new handles on the same state, with a longer prefix or read-only set.
-`Network.fake(peers)` consumes its map and never changes it. Each `connect` on
-it makes a fake `Connection` with a state of its own: the replies of the peer
-it reached, the bytes sent so far, and how much of the reply `receive` has
-handed out. A fake connection holds no reference to its network, and opens no
-socket.
+`Network.fake(peers)` consumes its map and never changes it. Each `connect` or
+`connect_secure` on it makes a fake `Connection` with a state of its own: the
+replies of the peer it reached, the bytes sent so far, and how much of the reply
+`receive` has handed out. A fake connection holds no reference to its network,
+and opens no socket.
 
 **Simulation** is a VM-owned fake capability. Its native context owns one
 service loop and one open in-memory store. The last reference, or heap
@@ -1124,8 +1124,9 @@ without fields. These names are checked as a built-in shape at send sites.
 `Files` or `ReadFiles` handle closes its folder's descriptor. The number of
 open handles has a named limit, and `within` past it is a bug. A real
 `Connection` is the one capability a program gets from an operation and never
-from `main`: `connect` makes it, dropping it closes its socket, and the number
-open at once has a named limit, past which `connect` is a bug. `mo_call_main`
+from `main`: `connect` or `connect_secure` makes it, dropping it closes its TLS
+session (if any) and socket, and the number open at once has a named limit, past
+which `connect` or `connect_secure` is a bug. `mo_call_main`
 retains each declared kind in the process so repeated calls share it.
 Host refusal keeps the capability and operand ownership intact. Fake updates
 are transactional on allocation failure; real external I/O and bindings cannot

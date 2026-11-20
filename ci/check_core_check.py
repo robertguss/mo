@@ -290,6 +290,7 @@ def signatures():
     add("io", "envOf", f"(map {T} {T})", C("env"), True)
     failed = lambda t: f"(result {t} (networkError))"
     add("io", "connect", C("network") + "|" + T + "|" + I + "|(duration)", failed(C("connection")))
+    add("io", "connectSecure", C("network") + "|" + T + "|" + I + "|(duration)", failed(C("connection")))
     add("io", "allowHosts", C("network") + "|" + L(T), C("network"))
     add("io", "send", C("connection") + "|(bytes)", failed(U))
     add("io", "receive", C("connection") + "|" + I, failed("(bytes)"))

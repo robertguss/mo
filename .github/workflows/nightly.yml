@@ -64,7 +64,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y build-essential python3 clang-18 libclang-rt-18-dev \
-            clang-format-14 clang-tidy-18 bison
+            clang-format-14 clang-tidy-18 bison libssl-dev
           # The runner also has other LLVM versions. Select these tools explicitly.
           mkdir -p "$RUNNER_TEMP/mo-tools"
           ln -s /usr/bin/clang-18 "$RUNNER_TEMP/mo-tools/clang"
