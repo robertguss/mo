@@ -59,6 +59,26 @@ The two fetch programs gained a usage line after the first measurement, so that 
 arguments ends: the format check runs every tracked program that way. The line costs 47
 instructions, and the second measurement includes it.
 
+## The client as built
+
+The same case with the client in `lib/http.mo` and the `Network` capability, measured on
+2026-11-20 on the branch that adds the client (8 vCPUs, AMD EPYC 9554P, 31 GiB, gcc 13.3.0, debug
+build). Median of five runs of the whole `mo run`:
+
+| Case | `Content-Length` | Chunked | Bar |
+| --- | --- | --- | --- |
+| 1 MiB (1,048,867 bytes), wall time | 1.84 s (1.78 to 1.85) | 1.87 s (1.79 to 1.90) | 2.0 s, met |
+| 1 MiB, smallest `--max-heap` the run passes under, to the nearest MiB | 43 MiB | 43 MiB | 256 MiB, met |
+| 100 KiB (102,581 bytes), wall time | 0.30 s | 0.33 s | none |
+
+All 20 runs exit 0 and print the same line for the same body (`3132 items, 1048867 bytes` and
+`310 items, 102581 bytes`). The heap figure is a bound and not the VM's own peak figure, because
+`mo run` has no way to print that: the run was repeated with a smaller `--max-heap` until it
+stopped. The margin on wall time is as small as the prototype's, 6% to 8%.
+
+`client/fetch.mo` is the program and `client/measure.py` takes the figures:
+`python3 learnability/phase7/preflight/http-in-mo/client/measure.py build/gcc/debug/mo learnability/phase7/preflight/http-in-mo/client/fetch.mo 18123`.
+
 ## What the numbers say
 
 - **The level of the capability costs almost nothing.** With `Bytes.slice` and `Bytes.join`,

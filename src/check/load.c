@@ -282,8 +282,8 @@ static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const 
         return 0;
     }
     uint32_t previous = find(l, name);
-    if (previous != 0 ||
-        (!library && (strcmp(name, "Json") == 0 || strcmp(name, "Unicode16") == 0))) {
+    if (previous != 0 || (!library && (strcmp(name, "Http") == 0 || strcmp(name, "Json") == 0 ||
+                                       strcmp(name, "Unicode16") == 0))) {
         struct mo_span conflict = library && previous != 0 && !l->out->library[previous - 1]
                                       ? l->items[previous - 1].header.path->span
                                       : header.path->span;

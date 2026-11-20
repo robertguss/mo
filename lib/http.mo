@@ -1,4 +1,5 @@
-## An HTTP/1.1 client: a request built a step at a time, and a fake network's replies for a test.
+## An HTTP/1.1 client: a request built a step at a time and sent over a `Network`, the response
+## that comes back, and a fake network's replies for a test.
 module Http
 expose Request(..),
 Response(..),
@@ -11,6 +12,8 @@ query,
 json,
 text,
 within,
+send,
+ok?,
 reply,
 replies
 use Json
@@ -51,6 +54,18 @@ end
 struct Wire
   target: Target
   bytes: Bytes
+end
+
+## The most the client reads of a response's headers and of its body, in bytes.
+struct Limits
+  headers: Int
+  body: Int
+end
+
+## Why reading stopped short of a whole response: more bytes must come, or it can never be one.
+enum Halt
+  More
+  Bad(HttpError)
 end
 
 ## A GET request for a URL, with no headers, no body and 30 seconds to finish in.
@@ -182,6 +197,380 @@ fn within(request: Request, timeout: Duration) : Request
   var changed = request
   changed.timeout = timeout
   changed
+end
+
+## Makes the request over a new connection and gives the response, whatever its status. The
+## request's timeout covers the whole exchange.
+fn send(request: Request, network: Network) : Result(Response, HttpError)
+  examples
+    get("http://example.org/a").send(
+      Network.fake(replies([(get("http://example.org/a"), reply(404, "gone"))]))
+    ) ==
+      Ok(reply(404, "gone"))
+    get("http://example.org/a").send(Network.fake({})) ==
+      Error(Unreachable(Network.UnknownHost(host: "example.org")))
+    get("example.org/a").send(Network.fake({})) == Error(BadUrl(url: "example.org/a"))
+  end
+
+  written = try wire(request)
+  if written.target.secure
+    reason = "HTTPS is not built yet, so #{request.url} can't be reached"
+    return Error(Unreachable(Network.Broken(reason: reason)))
+  end
+  connection = try network.connect(written.target.host, written.target.port, request.timeout)
+  try connection.send(written.bytes)
+  var received = "".bytes
+  var found = None
+  while found is None
+    part = try connection.receive(1048576)
+    received = Bytes.join([received, part])
+    found = try read(request.method, received, part.size == 0, limits())
+  end
+  found.or_fail(BadResponse(reason: "the response was never whole"))
+end
+
+## The limits `send` reads within: 64 KiB of headers and 16 MiB of body.
+fn limits() : Limits
+  Limits(headers: 65536, body: 16777216)
+end
+
+## Whether the status says the request succeeded: 200 to 299.
+fn ok?(response: Response) : Bool
+  examples
+    reply(200, "").ok?
+    reply(299, "").ok?
+    not reply(199, "").ok?
+    not reply(300, "").ok?
+    not reply(404, "").ok?
+  end
+
+  response.status >= 200 and response.status < 300
+end
+
+## The value of the first header with this name, matched without regard to case.
+fn header(response: Response, name: Text) : Option(Text)
+  examples
+    reply(200, "four").header("content-LENGTH") == Some("4")
+    reply(200, "four").header("Content-Type") == None
+  end
+
+  named(response.headers, name.ascii_lowercase)
+end
+
+fn named(headers: List((Text, Text)), name: Text) : Option(Text)
+  headers.find(fn(h) h.0.ascii_lowercase == name end).map(fn(h) h.1 end)
+end
+
+## The body parsed as JSON.
+fn json(response: Response) : Result(Json, HttpError)
+  examples
+    reply(200, "[1]").json == Ok(Json.Array([Json.int(1)]))
+    reply(200, "[1").json ==
+      Error(NotJson(Json.JsonError(line: 1, column: 3, problem: Json.UnexpectedEnd)))
+    Response(status: 200, headers: [], body: "é".bytes.slice(0, 1)).json ==
+      Error(BadResponse(reason: "the body is not UTF-8 text"))
+  end
+
+  decoded = try response.body.decode_utf8.or_fail(BadResponse(reason: "the body is not UTF-8 text"))
+  Ok(try Json.parse(decoded))
+end
+
+## The body as text, or `None` when it isn't UTF-8.
+fn text(response: Response) : Option(Text)
+  examples
+    reply(200, "héllo").text == Some("héllo")
+    Response(status: 200, headers: [], body: "é".bytes.slice(0, 1)).text == None
+  end
+
+  response.body.decode_utf8
+end
+
+## What the bytes received so far hold: `Some` whole response, or `None` while more must come.
+## `finished` says the other side has sent all it will, so a response still short is an error.
+fn read(method: Text, received: Bytes, finished: Bool, limits: Limits) : Result(
+  Option(Response),
+  HttpError
+)
+  examples
+    read("GET", "HTTP/1.1 200 OK\r\nA: b\r\nContent-Length: 2\r\n\r\nhi!".bytes, false, limits()) ==
+      Ok(
+        Some(
+          Response(status: 200, headers: [("A", "b"), ("Content-Length", "2")], body: "hi".bytes)
+        )
+      )
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh".bytes, false, limits()) == Ok(None)
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh".bytes, true, limits()) ==
+      Error(BadResponse(reason: "the connection closed before the response was whole"))
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Len".bytes, false, limits()) == Ok(None)
+    read("GET", "HTTP/2 200\r\n\r\n".bytes, false, limits()) ==
+      Error(BadResponse(reason: "the status line is malformed"))
+    read("GET", "\r\n\r\n".bytes, false, limits()) ==
+      Error(BadResponse(reason: "the status line is malformed"))
+    read("GET", "HTTP/1.1 200 OK\r\nno colon\r\n\r\n".bytes, false, limits()) ==
+      Error(BadResponse(reason: "a header line is malformed"))
+    read("GET", "HTTP/1.1 200 OK\r\nA: é".bytes.slice(0, 21), true, limits()) ==
+      Error(BadResponse(reason: "the connection closed before the response was whole"))
+    read(
+      "GET",
+      Bytes.join(["HTTP/1.1 200 OK\r\nA: ".bytes, "é".bytes.slice(0, 1), "\r\n\r\n".bytes]),
+      true,
+      limits()
+    ) ==
+      Error(BadResponse(reason: "the headers are not text"))
+    read("HEAD", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n".bytes, false, limits()) ==
+      Ok(Some(Response(status: 200, headers: [("Content-Length", "5")], body: "".bytes)))
+    read("GET", "HTTP/1.1 204 No Content\r\n\r\n".bytes, false, limits()) ==
+      Ok(Some(Response(status: 204, headers: [], body: "".bytes)))
+    read("GET", "HTTP/1.1 304 Not Modified\r\n\r\n".bytes, false, limits()) ==
+      Ok(Some(Response(status: 304, headers: [], body: "".bytes)))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, false, limits()) == Ok(None)
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, limits()) ==
+      Ok(Some(Response(status: 200, headers: [], body: "hi".bytes)))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, Limits(headers: 19, body: 2)) ==
+      Ok(Some(Response(status: 200, headers: [], body: "hi".bytes)))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, Limits(headers: 18, body: 2)) ==
+      Error(BadResponse(reason: "the headers are longer than 18 bytes"))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi!".bytes, false, Limits(headers: 19, body: 2)) ==
+      Error(TooLarge(limit: 2))
+    read(
+      "GET",
+      "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi".bytes,
+      false,
+      Limits(headers: 64, body: 2)
+    ) ==
+      Ok(Some(Response(status: 200, headers: [("Content-Length", "2")], body: "hi".bytes)))
+    read(
+      "GET",
+      "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n".bytes,
+      false,
+      Limits(headers: 64, body: 2)
+    ) ==
+      Error(TooLarge(limit: 2))
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: -5\r\n\r\n".bytes, false, limits()) ==
+      Error(BadResponse(reason: "the Content-Length is not a number"))
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\nhello".bytes, false, limits()) ==
+      Error(BadResponse(reason: "the Content-Length is not a number"))
+    read(
+      "GET",
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: Chunked\r\nContent-Length: 9\r\n\r\n2\r\nhi\r\n0\r\n\r\n"
+        .bytes,
+      false,
+      limits()
+    ) ==
+      Ok(
+        Some(
+          Response(
+            status: 200,
+            headers: [("Transfer-Encoding", "Chunked"), ("Content-Length", "9")],
+            body: "hi".bytes
+          )
+        )
+      )
+    read("GET", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".bytes, false, limits()) ==
+      Error(BadResponse(reason: "the transfer encoding gzip is not supported"))
+    read("GET", "HTTP/1.1 200 OK\nContent-Length: 2\n\nhi".bytes, true, limits()) ==
+      Error(BadResponse(reason: "the connection closed before the response was whole"))
+  end
+
+  case whole(method, received, finished, limits)
+    Ok(response): Ok(Some(response))
+    Error(Bad(refusal)): Error(refusal)
+    Error(More):
+      return Ok(None) if not finished
+      Error(BadResponse(reason: "the connection closed before the response was whole"))
+  end
+end
+
+fn bad(reason: Text) : Halt
+  Bad(BadResponse(reason: reason))
+end
+
+fn whole(method: Text, received: Bytes, finished: Bool, limits: Limits) : Result(Response, Halt)
+  cut = try mark_at(received, "\r\n\r\n".bytes, 0, limits.headers, "the headers are")
+  head = try received.slice(0, cut).decode_utf8.or_fail(bad("the headers are not text"))
+  lines = head.split("\r\n")
+  status = try code(lines.first or "").or_fail(bad("the status line is malformed"))
+  headers = lines.drop(1).filter_map(fn(line) field(line) end)
+  return Error(bad("a header line is malformed")) if headers.size != lines.size - 1
+  body = if method == "HEAD" or status == 204 or status == 304
+    "".bytes
+  else
+    try content(headers, received.slice(cut + 4, received.size), finished, limits)
+  end
+  Ok(Response(status: status, headers: headers, body: body))
+end
+
+## Where `mark` first starts at or after `from`, when it ends within `most` bytes of `from`.
+## `what` starts the reason when it doesn't, as in "the headers are".
+fn mark_at(received: Bytes, mark: Bytes, from: Int, most: Int, what: Text) : Result(Int, Halt)
+  examples
+    mark_at("ab\r\n".bytes, "\r\n".bytes, 0, 4, "a line is") == Ok(2)
+    mark_at("ab\r\ncd\r\n".bytes, "\r\n".bytes, 3, 5, "a line is") == Ok(6)
+    mark_at("ab\r\n".bytes, "\r\n".bytes, 0, 3, "a line is") ==
+      Error(Bad(BadResponse(reason: "a line is longer than 3 bytes")))
+    mark_at("abc".bytes, "\r\n".bytes, 0, 3, "a line is") ==
+      Error(Bad(BadResponse(reason: "a line is longer than 3 bytes")))
+    mark_at("ab".bytes, "\r\n".bytes, 0, 3, "a line is") == Error(More)
+    mark_at("ab\r".bytes, "\r\n".bytes, 1, 3, "a line is") == Error(More)
+  end
+
+  last = received.size.min(from + most) - mark.size
+  var at = from
+  while at <= last
+    return Ok(at) if received.slice(at, at + mark.size) == mark
+    at += 1
+  end
+  return Error(bad("#{what} longer than #{most} bytes")) if received.size >= from + most
+  Error(More)
+end
+
+## The status in a status line such as `HTTP/1.1 200 OK`: three digits after the version.
+fn code(line: Text) : Option(Int)
+  examples
+    code("HTTP/1.1 200 OK") == Some(200)
+    code("HTTP/1.0 404") == Some(404)
+    code("HTTP/1.1 2000 OK") == None
+    code("HTTP/1.1 20 OK") == None
+    code("HTTP/1.1 OK 200") == None
+    code("HTTP/1.1") == None
+    code("HTTP/2 200 OK") == None
+    code("200 OK") == None
+  end
+
+  parts = line.split(" ")
+  return None if not (parts.first or "").starts_with?("HTTP/1.")
+  digits = try parts.get(1)
+  return None if digits.byte_count != 3
+  number(digits)
+end
+
+## A header line as its name and its value, or `None` for a line with no colon or with a name
+## that is empty or holds a space.
+fn field(line: Text) : Option((Text, Text))
+  examples
+    field("Date: 12:30") == Some(("Date", "12:30"))
+    field("X:") == Some(("X", ""))
+    field("no colon") == None
+    field(": b") == None
+    field("A b: c") == None
+    field(" A: b") == None
+  end
+
+  parts = line.split(":")
+  name = try parts.first
+  return None if parts.size < 2 or name.words != [name]
+  Some((name, parts.drop(1).join(":").trim))
+end
+
+## The body in what followed the headers, by the framing the headers name: chunks, a length,
+## or everything until the other side has finished.
+fn content(headers: List((Text, Text)), rest: Bytes, finished: Bool, limits: Limits) : Result(
+  Bytes,
+  Halt
+)
+  if named(headers, "transfer-encoding") is Some(coding)
+    if coding.ascii_lowercase != "chunked"
+      return Error(bad("the transfer encoding #{coding} is not supported"))
+    end
+    return chunks(rest, limits)
+  end
+  if named(headers, "content-length") is Some(written)
+    length = try number(written).or_fail(bad("the Content-Length is not a number"))
+    return Error(Bad(TooLarge(limit: limits.body))) if length > limits.body
+    return Error(More) if rest.size < length
+    return Ok(rest.slice(0, length))
+  end
+  return Error(Bad(TooLarge(limit: limits.body))) if rest.size > limits.body
+  return Error(More) if not finished
+  Ok(rest)
+end
+
+## The data of a chunked body, once its last chunk and the line that ends its trailers are in.
+fn chunks(rest: Bytes, limits: Limits) : Result(Bytes, Halt)
+  examples
+    chunks("3\r\nabc\r\n0\r\n\r\n".bytes, Limits(headers: 8, body: 3)) == Ok("abc".bytes)
+    chunks("1;x=y\r\na\r\n2\r\nbc\r\n0\r\nA: b\r\n\r\n".bytes, limits()) == Ok("abc".bytes)
+    chunks("0\r\n\r\n".bytes, limits()) == Ok("".bytes)
+    chunks("3\r\nabc\r\n0\r\n".bytes, limits()) == Error(More)
+    chunks("3\r\nabc\r\n".bytes, limits()) == Error(More)
+    chunks("3\r\nabc\r".bytes, limits()) == Error(More)
+    chunks("3\r\nabcde".bytes, limits()) ==
+      Error(Bad(BadResponse(reason: "a chunk's data doesn't end with a line break")))
+    chunks("-3\r\nabc\r\n0\r\n\r\n".bytes, limits()) ==
+      Error(Bad(BadResponse(reason: "a chunk's size is malformed")))
+    chunks("2\r\nab\r\n2\r\ncd\r\n0\r\n\r\n".bytes, Limits(headers: 8, body: 3)) ==
+      Error(Bad(TooLarge(limit: 3)))
+    chunks("0\r\nA: b\r\n\r\n".bytes, Limits(headers: 8, body: 3)) ==
+      Error(Bad(BadResponse(reason: "the trailers are longer than 8 bytes")))
+    chunks("1;#{"x".repeat(252)}\r\na\r\n0\r\n\r\n".bytes, limits()) == Ok("a".bytes)
+    chunks("1;#{"x".repeat(253)}\r\na\r\n0\r\n\r\n".bytes, limits()) ==
+      Error(Bad(BadResponse(reason: "a chunk's size line is longer than 256 bytes")))
+  end
+
+  var at = 0
+  var parts = []
+  var total = 0
+  var last = false
+  while not last
+    cut = try mark_at(rest, "\r\n".bytes, at, 256, "a chunk's size line is")
+    size = try chunk_size(rest.slice(at, cut)).or_fail(bad("a chunk's size is malformed"))
+    total += size
+    return Error(Bad(TooLarge(limit: limits.body))) if total > limits.body
+    last = size == 0
+    if not last
+      data = cut + 2
+      after = data + size
+      return Error(More) if rest.size < after + 2
+      if rest.slice(after, after + 2) != "\r\n".bytes
+        return Error(bad("a chunk's data doesn't end with a line break"))
+      end
+      parts = parts.append(rest.slice(data, after))
+      at = after + 2
+    end
+  end
+  _trailers = try mark_at(rest, "\r\n\r\n".bytes, at, limits.headers, "the trailers are")
+  Ok(Bytes.join(parts))
+end
+
+## The size a chunk's first line gives, in hexadecimal, before any space, `;` and extension.
+fn chunk_size(line: Bytes) : Option(Int)
+  examples
+    chunk_size("1a".bytes) == Some(26)
+    chunk_size("0 ; name=value".bytes) == Some(0)
+    chunk_size(" 1a".bytes) == None
+    chunk_size("".bytes) == None
+    chunk_size("é".bytes.slice(0, 1)) == None
+  end
+
+  written = try line.decode_utf8
+  hex((written.split(";").first or "").trim_end)
+end
+
+## The number written in 1 to 8 hexadecimal digits, with no sign.
+fn hex(text: Text) : Option(Int)
+  examples
+    hex("0") == Some(0)
+    hex("1a") == Some(26)
+    hex("FF") == Some(255)
+    hex("0000000a") == Some(10)
+    hex("00000000a") == None
+    hex("") == None
+    hex("1g") == None
+    hex("-1") == None
+  end
+
+  return None if text.empty? or text.byte_count > 8
+  var value = 0
+  for c in text.chars
+    value = value * 16 + (try hex_digit(c.ascii_lowercase))
+  end
+  Some(value)
+end
+
+fn hex_digit(c: Char) : Option(Int)
+  return Some(c.code - 48) if c.ascii_digit?
+  return Some(c.code - 87) if "abcdef".contains?(c.to_text)
+  None
 end
 
 ## A response for a test: a status, and a body with its length as the one header.
@@ -454,4 +843,72 @@ test "replies gives a fake one peer for each host and port, holding each request
   assert network.connect("example.org", 80, 1.second) is Ok(connection)
   assert connection.send(written.bytes) == Ok(Unit)
   assert connection.receive(1024) == Ok("HTTP/1.1 404 \r\nContent-Length: 0\r\n\r\n".bytes)
+end
+
+test "a function that calls an API is tested with no network"
+  page = "[{\"number\": 7, \"title\": \"Crash on empty input\"}, {\"number\": 9, \"title\": \"Slow start\"}]"
+  url = "http://api.example.com/repos/mo/mo/issues"
+  asked = get(url).query("state", "open").header("Authorization", "Bearer t0ken")
+  network = Network.fake(replies([(asked, reply(200, page))]))
+  assert get(url).header("Authorization", "Bearer t0ken").query("state", "open").send(network) is
+    Ok(answer)
+  assert answer.ok?
+  assert answer.json is Ok(issues)
+  assert issues.text_at("1.title") == Some("Slow start")
+  assert issues.int_at("0.number") == Some(7)
+end
+
+test "a request the fake holds no reply for is an error that quotes it, and so is https"
+  held = get("http://example.org/a")
+  network = Network.fake(replies([(held, reply(200, "one"))]))
+  assert get("http://example.org/b").send(network) ==
+    Error(Unreachable(Network.Broken(reason: "no reply for \"GET /b HTTP/1.1\"")))
+  assert held.header("Accept", "a").send(network) ==
+    Error(
+      Unreachable(
+        Network.Broken(
+          reason: "no reply for \"GET /a HTTP/1.1\": sent \"Accept: a\\r\\n\", expected \"\\r\\n\""
+        )
+      )
+    )
+  assert held.send(network) == Ok(reply(200, "one"))
+  secure = get("https://example.org/a")
+  assert secure.send(Network.fake(replies([(secure, reply(200, "one"))]))) ==
+    Error(
+      Unreachable(
+        Network.Broken(reason: "HTTPS is not built yet, so https://example.org/a can't be reached")
+      )
+    )
+end
+
+test "a response is read whole however it says where it ends"
+  asked = get("http://example.org/")
+  long = "x".repeat(1100000)
+  assert asked.send(Network.fake(replies([(asked, reply(200, long))]))) == Ok(reply(200, long))
+  chunked = Response(
+    status: 200,
+    headers: [("Transfer-Encoding", "chunked")],
+    body: "4;note=1\r\nWiki\r\n5\r\npedia\r\n0\r\nExpires: never\r\n\r\n".bytes
+  )
+  assert asked.send(Network.fake(replies([(asked, chunked)]))) is Ok(joined)
+  assert joined.text == Some("Wikipedia")
+  closed = Response(status: 500, headers: [], body: "to the end".bytes)
+  assert asked.send(Network.fake(replies([(asked, closed)]))) == Ok(closed)
+  assert not closed.ok?
+end
+
+test "a response that is cut off or past a limit is an error"
+  asked = get("http://example.org/")
+  short = Response(status: 200, headers: [("Content-Length", "5")], body: "hi".bytes)
+  assert asked.send(Network.fake(replies([(asked, short)]))) ==
+    Error(BadResponse(reason: "the connection closed before the response was whole"))
+  huge = Response(status: 200, headers: [("Content-Length", "16777217")], body: "".bytes)
+  assert asked.send(Network.fake(replies([(asked, huge)]))) == Error(TooLarge(limit: 16777216))
+  full = Response(status: 200, headers: [("Content-Length", "16777216")], body: "".bytes)
+  assert asked.send(Network.fake(replies([(asked, full)]))) ==
+    Error(BadResponse(reason: "the connection closed before the response was whole"))
+  padded = Response(status: 200, headers: [("X-Pad", "x".repeat(65511))], body: "".bytes)
+  assert answered(padded).size == 65537
+  assert asked.send(Network.fake(replies([(asked, padded)]))) ==
+    Error(BadResponse(reason: "the headers are longer than 65536 bytes"))
 end
