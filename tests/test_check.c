@@ -99,10 +99,10 @@ static void interfaces(void) {
                                                 "tests/check/library", &diags);
     CHECK(set != NULL && diags.count == 0);
     if (set != NULL) {
-        CHECK(set->count == 4);
-        CHECK(strcmp(set->names[1], "Json") == 0 && strcmp(set->names[2], "LibSupport.Extra") == 0);
-        CHECK(set->library[1] && set->library[2] && !set->library[0] && !set->library[3]);
-        CHECK(set->uses[0][0] == 3);
+        CHECK(set->count == 3 && sources.count == 3);
+        CHECK(strcmp(set->names[1], "LibSupport.Extra") == 0);
+        CHECK(set->library[1] && !set->library[0] && !set->library[2]);
+        CHECK(set->uses[0][0] == 2);
         struct mo_module_interfaces *names = mo_resolve_modules(&arena, set, &diags);
         CHECK(names != NULL && diags.count == 0);
         if (names != NULL && names->scopes[0].imported_count == 5) {
@@ -1724,6 +1724,29 @@ static void library_collision(void) {
     finish(&f);
 }
 
+static void library_on_use(void) {
+    char root[] = "/tmp/mo-check-on-use-XXXXXX";
+    MO_ASSERT(mkdtemp(root) != NULL);
+    char entry[256];
+    int a = snprintf(entry, sizeof(entry), "%s/main.mo", root);
+    MO_ASSERT(a > 0 && (size_t)a < sizeof(entry));
+    const uint8_t source[] = "module Main\nuse Json\n";
+    write_file(entry, source, sizeof(source) - 1);
+    struct fixture f;
+    init(&f, 16 << 20);
+    struct mo_module_set *set =
+        mo_load_program(&f.arena, &f.sources, entry, "tests/check/library", &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        CHECK(set->count == 3 && f.sources.count == 3);
+        CHECK(strcmp(set->names[1], "LibSupport.Extra") == 0 && strcmp(set->names[2], "Json") == 0);
+        CHECK(!set->library[0] && set->library[1] && set->library[2]);
+        CHECK(set->uses[0][0] == 2);
+    }
+    finish(&f);
+    MO_ASSERT(unlink(entry) == 0 && rmdir(root) == 0);
+}
+
 static void path_policy(void) {
     char folder[] = "/tmp/mo-check-path-XXXXXX", library[] = "/tmp/mo-check-links-XXXXXX";
     MO_ASSERT(mkdtemp(folder) != NULL && mkdtemp(library) != NULL);
@@ -2641,6 +2664,7 @@ static void run_tests(void *argument) {
     arena_limits();
     header_lookahead();
     library_collision();
+    library_on_use();
     path_policy();
     confined_files();
     library_roots();

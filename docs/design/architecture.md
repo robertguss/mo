@@ -395,9 +395,13 @@ in the toolchain's own folder, and are always available.
 **The loading boundary.** `mo_load_program` takes an explicit library folder from
 the caller, rather than locating the running executable. The tools supply
 the installed library's path; `NULL` permits a library-free fixture while
-`lib/` is being built. A supplied folder must exist. All its `.mo` files,
-including unused modules, are included. Discovery does not enter symlinked
-folders. An entry file under the library folder is library module 0 and is not read a
+`lib/` is being built. A supplied folder must exist. Its `.mo` files are
+included whether or not the program calls them, with one exception: a library
+module that a program brings in with `use` (`Json` and `Unicode16`) is read
+only when a `use` line names it, so a program that doesn't use it doesn't
+compile it. Those modules are listed in `on_use` in `src/check/load.c`, and a
+new library module whose name isn't always in scope goes on that list.
+Discovery does not enter symlinked folders. An entry file under the library folder is library module 0 and is not read a
 second time, so the toolchain can check and test its own library. A dependency or library source file may be a link only when its
 resolved path stays under the resolved path of its own root folder (D236).
 This is checked before its bytes enter source storage or diagnostics; the
