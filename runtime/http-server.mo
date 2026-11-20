@@ -1,4 +1,4 @@
-module Http
+module HttpServer
 expose Span(..),
 Field(..),
 Head(..),

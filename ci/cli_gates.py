@@ -292,7 +292,7 @@ def shorter_run(binary):
         items = records(run(binary, args, 0), "test")
         assert snapshot(old) == before
         files = [p.relative_to(old).as_posix() for p in old.rglob("*.mo")
-                 if p.name not in ("json.mo", "unicode16.mo")]
+                 if p.name not in ("http.mo", "json.mo", "unicode16.mo")]
         shorter(items[-1], bundle_digest(old, "list.mo", files), 0, 10)
 
 

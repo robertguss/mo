@@ -6,15 +6,15 @@ here, against stand-in modules, so that the forms Robert read were Mo the checke
 This folder is a record. When it was written, `mo check look.mo` and `mo check issues.mo` both
 exited 0. They no longer check: `Network`, `Connection` and `NetworkError` are built-in types
 now, so a `use Network{...}` line clashes with a name that is always in scope (E0045). The
-stand-in `network.mo` is removed for that reason. The built capability is in reference section
-14.
+stand-in `network.mo` is removed for that reason. The stand-in `http.mo` is removed too: `Http`
+is a library module's name now, which a program can't declare (E0037), and the client is
+`lib/http.mo`. Both are in reference section 14.
 
 | File | What it is |
 | --- | --- |
 | `look.mo` | The first run of a spike: one request, the response printed readably. |
 | `issues.mo` | The finished tool and its two tests with no network. |
 | `sqlite.mo` | A stand-in for the proposed SQLite capability types: ordinary structs with the proposed functions, and no bodies. |
-| `http.mo` | A stand-in for the client library: its types and signatures, and no bodies. |
 | `json-path.mo` | A stand-in for the lookup functions proposed for `lib/json.mo`. |
 
 ## What this showed

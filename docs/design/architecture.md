@@ -397,8 +397,8 @@ the caller, rather than locating the running executable. The tools supply
 the installed library's path; `NULL` permits a library-free fixture while
 `lib/` is being built. A supplied folder must exist. Its `.mo` files are
 included whether or not the program calls them, with one exception: a library
-module that a program brings in with `use` (`Json` and `Unicode16`) is read
-only when a `use` line names it, so a program that doesn't use it doesn't
+module that a program brings in with `use` (`Http`, `Json` and `Unicode16`) is
+read only when a `use` line names it, so a program that doesn't use it doesn't
 compile it. Those modules are listed in `on_use` in `src/check/load.c`, and a
 new library module whose name isn't always in scope goes on that list.
 Discovery does not enter symlinked folders. An entry file under the library folder is library module 0 and is not read a
@@ -2485,6 +2485,7 @@ among them:
 | Compiler | every Core program the Core checker accepts compiles to bytecode the verifier accepts: a property run on every Core program above |
 | Verifier and loader | arbitrary and mutated files; disassembling then assembling gives the same bytes |
 | Library | `mo test` on the library's own examples, promises and tests; `ci/check_gates.py`, the full run of `mo test` on `lib/`, `examples/` and the task queue, which fails on a surviving mutant; the trusted primitives against their oracles (4.5) |
+| The network and the `Http` client | `tests/test_network.c` drives the real network over loopback sockets; `ci/check_network.py` (the `drivers` group) runs a Mo program on the client against a raw loopback peer and checks the request as it arrived, a chunked reply, and a timeout, a cut-off reply, a closed port and an unknown host, each beside the same request succeeding; the fuzz targets `fuzz_network`, `fuzz_network_fake` and `fuzz_http_client` |
 | Services | `mo test` recovery checks; `ci/check_task_queue.py` over loopback; `ci/check_kill_loop.py` SIGKILLs a real `mo serve`; `ci/check_door.py` pushes the frozen planted changes and wrong versions through the review door under both settings, and must fail against `mo-door-bypass`, a build whose decision activates every candidate that passes its checks (`tests/door_bypass.c`) |
 | Small critical C functions | CBMC proofs of memory safety and of no overflow: checked arithmetic, Decimal's products and quotients, UTF-8 decoding, lexical path containment, path resolution after normalize, hash-table probing, reference count updates |
 | The whole toolchain | a golden corpus of programs with their expected output and exit status, and Phase 2's agent benchmark |

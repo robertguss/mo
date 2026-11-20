@@ -1,0 +1,8 @@
+passed Main.test.1  tests/golden/http-fake/main.mo:32:1
+passed Main.test.2  tests/golden/http-fake/main.mo:38:1
+passed Main.test.3  tests/golden/http-fake/main.mo:50:1
+passed Main.test.4  tests/golden/http-fake/main.mo:61:1
+passed Main.test.5  tests/golden/http-fake/main.mo:77:1
+passed Main.test.6  tests/golden/http-fake/main.mo:90:1
+gates: 1 mutants tried, 1 killed (0 promise, 0 example, 1 test, 0 recovery, 0 start), 0 survived, 0 dropped
+6 passed, 0 failed, 0 stopped

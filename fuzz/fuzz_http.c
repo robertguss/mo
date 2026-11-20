@@ -69,21 +69,12 @@ static void prepare(void) {
     struct mo_defect defect;
     MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
     const struct mo_bytecode *file = mo_image_bytecode(image);
-    parse = scan = authorization = chunk_size = UINT32_MAX;
-    for (uint32_t i = 0; i < file->function_count; i++) {
-        const struct mo_bytecode_string *name = &file->strings[file->functions[i].name];
-        if (name->length == 18 && memcmp(name->bytes, "Http.parse_headers", 18) == 0)
-            parse = i;
-        if (name->length == 17 && memcmp(name->bytes, "Http.scan_headers", 17) == 0)
-            scan = i;
-        if (name->length == 16 && memcmp(name->bytes, "Http.bearer_span", 16) == 0)
-            authorization = i;
-        if (name->length == 15 && memcmp(name->bytes, "Http.chunk_size", 15) == 0)
-            chunk_size = i;
-    }
-    MO_ASSERT(parse != UINT32_MAX && file->functions[parse].parameter_count == 2);
-    MO_ASSERT(scan != UINT32_MAX && file->functions[scan].parameter_count == 3);
-    MO_ASSERT(authorization != UINT32_MAX && chunk_size != UINT32_MAX);
+    parse = function_named("HttpServer.parse_headers");
+    scan = function_named("HttpServer.scan_headers");
+    authorization = function_named("HttpServer.bearer_span");
+    chunk_size = function_named("HttpServer.chunk_size");
+    MO_ASSERT(file->functions[parse].parameter_count == 2);
+    MO_ASSERT(file->functions[scan].parameter_count == 3);
     const struct mo_types *types = mo_image_types(image);
     header_type = file->functions[parse].parameters[1].type;
     MO_ASSERT(types->items[header_type].kind == MO_TYPE_CHOICE &&

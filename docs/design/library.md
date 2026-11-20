@@ -583,6 +583,20 @@ new for it: it parses and prints with text and list primitives.
 | `Json.int(n)`, `Json.decimal(d)`, `Json.float(f)` | Mo | `lib/json.mo` | |
 | `to_int`, `to_decimal`, `to_float` and `to_text` on a `JsonNumber` | Mo | `lib/json.mo` | the parser has already checked JSON's own number syntax; `to_float` is `Text.to_float` on the number's text, and `to_int` and `to_decimal` first write it without its exponent, so `1.5e1` is the `Int` 15 |
 
+## Http
+
+`Http` is a module of the library, written in Mo on `Bytes` and the `Network` capability. The VM
+needs nothing new for it. The only C that touches a response's bytes is `receive`, which copies
+them and reads none.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Http.get(url)`, `Http.post(url)`, `Http.request(method, url)` | Mo | `lib/http.mo` | |
+| `header`, `query`, `json`, `text` and `within` on a `Request` | Mo | `lib/http.mo` | each gives a changed copy and checks nothing; `send` reports a bad URL, method or header |
+| `request.send(network)` | Mo | `lib/http.mo` | one `connect`, one `send`, then `receive` of up to 1 MiB at a time until the response is whole; after each receive the reader reads the headers again and reads a chunked body on from the chunk it stopped at; the limits, 64 KiB of headers and 16 MiB of body, are in `limits()` |
+| `ok?`, `header(name)`, `text` and `json` on a `Response` | Mo | `lib/http.mo` | `json` is `Json.parse` on the body |
+| `Http.reply(status, body)`, `Http.replies(exchanges)` | Mo | `lib/http.mo` | for tests: `replies` writes each request with the writer `send` uses, under its host and port |
+
 ## Clock
 
 | Function | Where | Implemented by | Why |

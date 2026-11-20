@@ -47,6 +47,7 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Network, Connection | `connect`, `send`, `receive` and `Network.fake` | runs in every form, on a fake; the real network runs in `tests/test_network.c` | `cap-network-fake`, `cap-network-forms` |
 | NetworkError | constructors, `to_text`, `compare` | runs in every form | `cap-network-error`, `cap-network-forms` |
 | Json | `parse`, `int`, `decimal`, `float`, `to_text`, `pretty`, JsonNumber's conversions, JsonError, and lookup by `get`, `at`, `path`, `text_at`, `int_at`, `bool_at` and `list_at` | runs | `lib-json-query`, `lib-json-errors`, `lib-json-lookup` |
+| Http | every function | runs on a fake; against a live peer in `ci/check_network.py` | `http-fake` |
 | Unicode16 | every function | runs | `lib-unicode16` |
 
 ## What did not run, and what happened

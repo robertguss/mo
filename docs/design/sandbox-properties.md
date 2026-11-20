@@ -193,7 +193,9 @@ and `main` receives only the capabilities it declares.*
   A fake network opens no socket.
 - Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_network.c`,
   `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`, `fuzz/fuzz_host_real.c`,
-  `fuzz/fuzz_network.c` and `fuzz/fuzz_network_fake.c`.
+  `fuzz/fuzz_network.c` and `fuzz/fuzz_network_fake.c`. The `Http` client is Mo code in
+  `lib/http.mo`: it reaches the network only through the `Network` a program passes to `send`,
+  and `fuzz/fuzz_http_client.c` runs its reader on arbitrary bytes.
 - Not covered: the primitives (`src/prim`) are trusted C that the VM calls directly; that they
   perform no I/O is by construction and review, not a mechanical check. The host operations are
   trusted C. Console and entropy sources are process-wide: `mo_host_start` ignores `SIGPIPE`
