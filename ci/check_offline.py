@@ -184,8 +184,8 @@ def serve(binary, folder, source, calls, fetches=()):
         for kind, failure, path in fetches:
             selector = ["state"] if kind == "state" else ["failure", str(failure)]
             result = subprocess.run(
-                [str(binary), "fetch", f"http://127.0.0.1:{served.port}/mcp", "--export",
-                 *selector, "--out", str(path), "--token-env", "OPERATOR_TOKEN"],
+                [str(binary), "fetch", "--admin-socket", str(served.admin_socket), "--export",
+                 *selector, "--out", str(path)],
                 env=env, capture_output=True, timeout=300)
             assert result.returncode == 0, result.stderr
         served.finish(0, signal.SIGTERM)
@@ -207,7 +207,6 @@ def history(binary, folder):
             "SELECT source,context_digest,ordinal FROM program").fetchone()
     assert lines.pop(1) == (f"program: source {source.hex()}, context {context.hex()}, "
                             f"activation {ordinal}"), lines
-    assert lines.pop(1) == "review setting: everything; approval version 0", lines
     assert lines[1] == ("snapshot: as of sequence 0, 2 later messages not applied; "
                         "producer build not recorded"), lines
     assert lines[2].startswith("state (") and '"label":"seed","count":"0"' in lines[2], lines
@@ -231,8 +230,6 @@ def history(binary, folder):
     assert h["program"]["context_digest"] == context.hex(), h
     assert h["program"]["ordinal"] == str(ordinal), h
     assert h["previous_programs"] == [] and h["upgrades"] == [], h
-    assert h["review"] == {"setting": "everything", "approval_version": "0", "approvals": [],
-                           "decisions": [], "decision_records": "0", "truncated": False}, h
     snapshot = h["snapshot"]
     assert snapshot["sequence"] == "0" and snapshot["later_messages"] == 2, snapshot
     assert snapshot["producer_build"] is None and snapshot["state"]["complete"], snapshot
@@ -872,10 +869,21 @@ def serve_gauge(binary, folder, artifacts):
         for selector, path in [(["failure", ids[h]], artifacts[h]) for h in ids] + \
                               [(["state"], artifacts["state"])]:
             result = subprocess.run(
-                [str(binary), "fetch", f"http://127.0.0.1:{served.port}/mcp", "--export",
-                 *selector, "--out", str(path), "--token-env", "OPERATOR_TOKEN"],
+                [str(binary), "fetch", "--admin-socket", str(served.admin_socket), "--export",
+                 *selector, "--out", str(path)],
                 env=env, capture_output=True, timeout=300)
             assert result.returncode == 0, result.stderr
+        live_query_dir = folder / "live-query"
+        shutil.copytree(folder / "deployed", live_query_dir)
+        (live_query_dir / "main.mo").write_text(GAUGE + GAUGE_QUERIES)
+        live_query_file = str(live_query_dir / "main.mo")
+        assert mo(binary, ["query", live_query_file, "count", "--admin-socket",
+                           str(served.admin_socket)], 0).stdout == b"2\n"
+        live_json = records(mo(binary, ["query", "--json", live_query_file, "count",
+                                        "--admin-socket", str(served.admin_socket)], 0), "query")
+        assert live_json[1]["result"] == {"value": "2", "complete": True}, live_json
+        assert mo(binary, ["query", live_query_file, "inputs", "--failure", ids["bump"],
+                           "--admin-socket", str(served.admin_socket)], 0).stdout == b"2 7\n"
         # A running service owns its folder: history refuses at once and waits for nothing.
         began = time.monotonic()
         result = mo(binary, ["history", str(data)], 1)
@@ -1121,19 +1129,12 @@ end
                 line = super().announcement()
             return line
     restart = ("--upgrade", "--migrate", "Main.migrate")
-    held = subprocess.run([str(binary), "serve", str(source), "--port", "0", "--data",
-                           str(owned_data), *restart], env=env, cwd=upgraded,
-                          capture_output=True, timeout=300)
-    shown = re.search(rb"error E1435: .*--review ([0-9a-f]{64})", held.stderr)
-    assert held.returncode == 1 and shown, held
-    served = Upgraded(binary, source, owned_data, env, upgraded,
-                    extra=(*restart, "--review", shown.group(1).decode()))
+    served = Upgraded(binary, source, owned_data, env, upgraded, extra=restart)
     context_export = folder / "context.moex"
     try:
-        result = subprocess.run([str(binary), "fetch", f"http://127.0.0.1:{served.port}/mcp",
-                                 "--export", "state", "--out", str(context_export),
-                                 "--token-env", "OPERATOR_TOKEN"], env=env, capture_output=True,
-                                timeout=120)
+        result = subprocess.run([str(binary), "fetch", "--admin-socket", str(served.admin_socket),
+                                 "--export", "state", "--out", str(context_export)],
+                                env=env, capture_output=True, timeout=120)
         assert result.returncode == 0, result.stderr
         served.finish(0, signal.SIGTERM)
     finally:

@@ -171,17 +171,17 @@ fn methods()
     input = request(
       "{\"jsonrpc\":\"2.0\",\"id\":-0,\"method\":\"#{name}\",\"params\":#{params},\"extra\":null}"
     )
-    require(McpRpc.method(input, ["first", "echo"], "0123456789abcdef") == expected)
+    require(McpRpc.method(input, ["first", "echo"], "0123456789abcdef", false) == expected)
   end
   for name in ["initialize", "ping", "tools/list", "tools/call"]
     for params in ["[]", "{\"_meta\":null}", "{\"_meta\":[]}"]
       input = request("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"#{name}\",\"params\":#{params}}")
-      require(McpRpc.method(input, ["echo"], "0123456789abcdef") == McpRpc.InvalidParams)
+      require(McpRpc.method(input, ["echo"], "0123456789abcdef", false) == McpRpc.InvalidParams)
     end
   end
   for (name, expected) in [("ping", McpRpc.Ping), ("tools/list", McpRpc.ListTools(0))]
     input = request("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"#{name}\"}")
-    require(McpRpc.method(input, ["echo"], "0123456789abcdef") == expected)
+    require(McpRpc.method(input, ["echo"], "0123456789abcdef", false) == expected)
   end
   for cursor in [
     "21.0123456789abcdef",
@@ -203,12 +203,14 @@ fn methods()
         "params": Json.Object({"cursor": Json.String(cursor)})
       }).to_text
     )
-    require(McpRpc.method(input, ["first", "echo"], "0123456789abcdef") == McpRpc.InvalidParams)
+    require(
+      McpRpc.method(input, ["first", "echo"], "0123456789abcdef", false) == McpRpc.InvalidParams
+    )
   end
   input = request(
     "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{\"cursor\":0}}"
   )
-  require(McpRpc.method(input, ["echo"], "0123456789abcdef") == McpRpc.InvalidParams)
+  require(McpRpc.method(input, ["echo"], "0123456789abcdef", false) == McpRpc.InvalidParams)
   require(
     McpRpc.initialized("test-version") ==
       json(
@@ -242,7 +244,7 @@ fn pages()
   end
   descriptor = McpType.Service(types: [McpType.UnitType], tools: tools)
   key = "0123456789abcdef"
-  wide = Mcp.prepare(descriptor, key, 262144) or stop "wide catalog"
+  wide = Mcp.prepare(descriptor, key, 262144, false) or stop "wide catalog"
   all = Mcp.page(wide, 0, Json.int(-7)) or stop "whole page"
   require(
     all ==
@@ -262,8 +264,8 @@ fn pages()
       exact = bytes
     end
   end
-  tight = Mcp.prepare(descriptor, key, exact) or stop "exact catalog"
-  require(Mcp.prepare(descriptor, key, exact - 1) == None)
+  tight = Mcp.prepare(descriptor, key, exact, false) or stop "exact catalog"
+  require(Mcp.prepare(descriptor, key, exact - 1, false) == None)
   var cursor = 0
   var collected = []
   while cursor < wide.tools.size
@@ -305,7 +307,7 @@ fn pages()
   require(Mcp.page(tight, -1, id) == None)
   require(Mcp.page(tight, wide.tools.size, id) == None)
   for bad in ["0123456789abcdeF", "0123456789abcdeg", "0123456789abcde", "0123456789abcdef0"]
-    require(Mcp.prepare(descriptor, bad, 262144) == None)
+    require(Mcp.prepare(descriptor, bad, 262144, false) == None)
   end
 end
 

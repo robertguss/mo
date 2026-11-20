@@ -6,10 +6,8 @@ use HttpAuthority
 ## Header spans the native side checks and wipes; stream marks an MCP GET stream request.
 struct Access
   bearer: Option(HttpServer.Span)
-  upgrade: Option(HttpServer.Span)
   session: Option(HttpServer.Span)
   stream: Bool
-  approval: Option(HttpServer.Span)
 end
 
 enum BodyPlan
@@ -111,23 +109,7 @@ fn inspect(bytes: List(Byte), head: HttpServer.Head, authorities: List(Text)) : 
   return Error(405) if not stream and not equal?(bytes, head.method, "POST")
   sessions = values(bytes, head, "mcp-session-id")
   return Error(400) if sessions.size > 1
-  Ok(
-    Access(
-      bearer: HttpServer.bearer_span(bytes, head),
-      upgrade: single_bearer(bytes, head, "mo-upgrade-authorization"),
-      session: sessions.get(0),
-      stream: stream,
-      approval: single_bearer(bytes, head, "mo-approval-authorization")
-    )
-  )
-end
-
-fn single_bearer(bytes: List(Byte), head: HttpServer.Head, name: Text) : Option(HttpServer.Span)
-  found = values(bytes, head, name)
-  case found.get(0)
-    Some(value): if found.size == 1: HttpServer.bearer_value(bytes, value) else: None
-    None: None
-  end
+  Ok(Access(bearer: HttpServer.bearer_span(bytes, head), session: sessions.get(0), stream: stream))
 end
 
 fn space(bytes: List(Byte), start: Int, finish: Int) : Int

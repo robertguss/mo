@@ -476,6 +476,93 @@ static void test_fake_bugs(void) {
     finish(&f, capability);
 }
 
+static struct mo_cell allow_hosts(struct host_fixture *f, struct mo_cell capability,
+                                  const char *const *hosts, uint32_t count) {
+    struct mo_cell items[8], list;
+    MO_ASSERT(count <= 8);
+    for (uint32_t i = 0; i < count; i++)
+        items[i] = host_text(f, hosts[i]);
+    MO_ASSERT(mo_value_list(f->heap, f->types.texts, items, count, &list));
+    for (uint32_t i = 0; i < count; i++)
+        mo_value_drop(f->heap, f->types.text, items[i]);
+    struct mo_cell args[] = {capability, list};
+    struct mo_cell out = call(f, MO_HOST_NETWORK_ALLOW_HOSTS, args);
+    mo_value_drop(f->heap, f->types.texts, list);
+    return out;
+}
+
+static void test_allow_hosts(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    struct mo_cell capability = network(&f);
+    uint16_t port_a, port_b;
+    int listen_a = listener(&port_a), listen_b = listener(&port_b);
+    char exact_a[64], refused_b[96];
+    CHECK(snprintf(exact_a, sizeof exact_a, "127.0.0.1:%u", (unsigned)port_a) > 0);
+    CHECK(snprintf(refused_b, sizeof refused_b, "Error(Refused(host: \"127.0.0.1\", port: %u))",
+                   (unsigned)port_b) > 0);
+
+    static const char *const host_only[] = {"127.0.0.1", "LOCALHOST"};
+    struct mo_cell any_port = allow_hosts(&f, capability, host_only, 2);
+    struct mo_cell conn = connected(&f, any_port, port_a, 5000000);
+    int peer = accept(listen_a, NULL, NULL);
+    MO_ASSERT(peer >= 0 && close(peer) == 0);
+    drop_connection(&f, conn);
+    conn = opened(&f, dial(&f, any_port, "LocalHost", 9, port_b, 5000000));
+    peer = accept(listen_b, NULL, NULL);
+    MO_ASSERT(peer >= 0 && close(peer) == 0);
+    drop_connection(&f, conn);
+    shows(&f, f.result_connection, dial(&f, any_port, "example.org", 11, 80, 5000000),
+          "Error(Refused(host: \"example.org\", port: 80))");
+
+    const char *const one_port[] = {exact_a, "example.org"};
+    struct mo_cell narrowed = allow_hosts(&f, any_port, one_port, 2);
+    conn = connected(&f, narrowed, port_a, 5000000);
+    peer = accept(listen_a, NULL, NULL);
+    MO_ASSERT(peer >= 0 && close(peer) == 0);
+    drop_connection(&f, conn);
+    shows(&f, f.result_connection, dial(&f, narrowed, "127.0.0.1", 9, port_b, 5000000), refused_b);
+    shows(&f, f.result_connection, dial(&f, narrowed, "example.org", 11, 80, 5000000),
+          "Error(Refused(host: \"example.org\", port: 80))");
+
+    /* Re-allowing a broader host cannot widen port authority. */
+    struct mo_cell widen_attempt = allow_hosts(&f, narrowed, host_only, 1);
+    shows(&f, f.result_connection, dial(&f, widen_attempt, "127.0.0.1", 9, port_b, 5000000),
+          refused_b);
+    struct mo_cell none = allow_hosts(&f, widen_attempt, NULL, 0);
+    char refused_a[96];
+    CHECK(snprintf(refused_a, sizeof refused_a, "Error(Refused(host: \"127.0.0.1\", port: %u))",
+                   (unsigned)port_a) > 0);
+    shows(&f, f.result_connection, dial(&f, none, "127.0.0.1", 9, port_a, 5000000), refused_a);
+
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], none);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], widen_attempt);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], narrowed);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], any_port);
+    CHECK(close(listen_a) == 0 && close(listen_b) == 0);
+
+    static const char *const held[] = {ASKED, "ok"};
+    struct mo_cell fake = fake_network(&f, "example.org:80", held, 1);
+    static const char *const fake_allowed[] = {"EXAMPLE.ORG:80", "[::1]:8080"};
+    struct mo_cell fake_narrowed = allow_hosts(&f, fake, fake_allowed, 2);
+    conn = asked(&f, fake_narrowed);
+    sends(&f, conn, ASKED, "Ok(Unit)");
+    receives(&f, conn, 4, "Ok(bytes[111, 107])");
+    drop_connection(&f, conn);
+    shows(&f, f.result_connection, dial(&f, fake_narrowed, "example.org", 11, 81, 0),
+          "Error(Refused(host: \"example.org\", port: 81))");
+    shows(&f, f.result_connection, dial(&f, fake_narrowed, "other.org", 9, 80, 0),
+          "Error(Refused(host: \"other.org\", port: 80))");
+    static const char *const fake_other[] = {"other.org:80"};
+    struct mo_cell fake_empty = allow_hosts(&f, fake_narrowed, fake_other, 1);
+    shows(&f, f.result_connection, dial(&f, fake_empty, "example.org", 11, 80, 0),
+          "Error(Refused(host: \"example.org\", port: 80))");
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], fake_empty);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], fake_narrowed);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], fake);
+    finish(&f, capability);
+}
+
 int main(void) {
     test_round_trip();
     test_errors();
@@ -487,5 +574,6 @@ int main(void) {
     test_fake_no_reply();
     test_fake_snapshot();
     test_fake_bugs();
+    test_allow_hosts();
     return mo_test_report("test_network");
 }

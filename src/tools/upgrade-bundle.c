@@ -10,7 +10,6 @@
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "tools/embedded.h"
-#include "tools/intent.h"
 #include "tools/library-sources.h"
 #include "tools/offline.h"
 #include "tools/tests.h"
@@ -260,16 +259,6 @@ static bool save_context(const struct mo_sources *sources, const char *migration
     mo_buffer_free(&bytes);
     return ok;
 }
-static bool list_items(struct mo_arena *arena, const struct mo_program *program,
-                       const char *output) {
-    struct mo_intent intent;
-    struct mo_buffer list;
-    mo_buffer_init(&list, MO_LIMIT_INTENT_LIST_BYTES);
-    bool ok = mo_intent_items(arena, program, &intent) && mo_intent_list_write(&intent, &list) &&
-              mo_upgrade_write_file_bytes(output, list.bytes, list.length);
-    mo_buffer_free(&list);
-    return ok;
-}
 static void run_checks(struct mo_arena *arena, const struct mo_cli *cli,
                        const struct mo_program *program, const struct mo_sources *sources,
                        struct mo_diags *diags) {
@@ -412,11 +401,8 @@ static void compile_bundle(void *context) {
     ok = program != NULL && !mo_diags_any(&diags);
     bool listing = work->cli->command == MO_COMMAND_TEST;
     if (listing) {
-        if (ok && !work->cli->list)
+        if (ok)
             run_checks(&arena, work->cli, program, &sources, &diags);
-        else if (ok && !list_items(&arena, program, work->cli->output))
-            (void)mo_upgrade_error(&diags, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC,
-                                   "the program's intent items exceed their limits");
         ok = false;
     }
     if (ok && selected_migration == retained_migration && retained_migration[0] != 0) {

@@ -4,11 +4,11 @@ import subprocess
 import tempfile
 
 from cli_common import (
-    SERVE_COUNTER, SERVE_OPERATOR_NAMES, SERVE_REVIEW_NAMES, SERVE_UPGRADE_NAMES, root, run,
+    SERVE_COUNTER, SERVE_OPERATOR_NAMES, SERVE_UPGRADE_NAMES, root, run,
 )
 
 flags = {
-    "--json": ([], {"check", "test", "replay", "query", "history"}),
+    "--json": ([], {"check", "test", "replay", "query", "history", "push", "diff"}),
     "--list": ([], {"test"}),
     "--reference": ([], {"guide"}),
     "--only": (["Main.test.1"], {"test"}),
@@ -19,10 +19,11 @@ flags = {
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
     "--mutants": ([], {"test"}),
-    "--lib": (["lib"], {"check", "run", "test", "fix", "emit", "serve", "replay", "query"}),
+    "--lib": (["lib"], {"check", "run", "test", "fix", "emit", "serve", "replay", "query", "push", "diff"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
+    "--admin-socket": (["admin.sock"], {"serve", "push", "query"}),
     "--unconfined": ([], {"serve"}),
     "--emit=core": ([], {"check"}),
     "--emit=bytecode": ([], {"check"}),
@@ -40,28 +41,27 @@ def guide_claims(binary):
     When one of these fails, the build changed: update docs/agent-guide.md to match, then this
     test. Never edit only the test."""
     guide = (root / "docs/agent-guide.md").read_text(encoding="utf-8")
-    # The live operator driver exercises these guide claims through the real endpoint.
+    # The live operator driver exercises these guide claims through the real admin socket.
     for name in SERVE_OPERATOR_NAMES:
         assert f"`{name}`" in guide
     # ci/check_offline.py exercises the offline commands' claims against real data folders.
     assert ("On the service host, `mo history`, `mo replay` and `mo query` read a stopped data "
             "folder or an artifact without starting the service, as Diagnose a failure offline "
             "says.") in guide
-    assert "mo fetch URL --export failure ID --out failure.moex --token-env NAME" in guide
-    # ci/check_upgrade_live.py, ci/check_review.py and ci/check_upgrade_remote.py exercise these
-    # claims through mo serve, mo push, mo review and mo fetch.
-    for name in SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES:
+    assert "mo fetch --admin-socket PATH --export failure ID --out failure.moex" in guide
+    # ci/check_upgrade_live.py and ci/check_upgrade_remote.py exercise these claims through
+    # mo serve, mo push, mo query and mo fetch over --admin-socket.
+    for name in SERVE_UPGRADE_NAMES:
         assert f"`{name}`" in guide
-    for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage, URL or base digest; exit 3 means the push is held for review.",
-                     "Only the nine operator views, `mo-intent-items`, `mo-review-pending`, "
-                     "`mo-review-source` and `mo-upgrade-status` are read-only;",
-                     "An ID that is not the held upgrade's is E1435, which names the current one, "
-                     "and nothing held is E1436.",
-                     "any other URL is refused before either credential is read.",
+    for sentence in ("Exit 1 means a refusal or client failure; exit 2 means invalid command usage or base digest.",
+                     "Public HTTP (`--port N`) exposes only the tools declared in `service ... end`.",
+                     "Only the nine operator views are read-only; the three upgrade tools carry "
+                     "`readOnlyHint: false`, and commit carries `destructiveHint: true`.",
+                     "When `--base` is omitted, `mo push` reads the active program's source digest "
+                     "from `mo-overview`;",
                      "Pushing the active program again reports `already active` and changes "
                      "nothing",
                      "Where the host can confine, `--unconfined` changes nothing.",
-                     "neither credential appears in output, events or the data folder.",
                      "a new GET replaces it.",
                      "fetch an export with `mo fetch`, and replay or query a fetched export with "
                      "the same `mo` build and the deployed source."):
@@ -69,9 +69,12 @@ def guide_claims(binary):
     assert ("A wrong version that stops is kept out of the rate, and so is one that does not check "
             "or changes a digest, unless a `counted` file in `DIR` lists it: a listed one stays in "
             "the rate as not killed.") in guide
-    assert ("`mo intent FILE --against OLD` shows how the intent changed since the program `OLD`: "
-            "items edited, with both texts, removed, added and moved to another function, and for "
-            "an edited or moved item each declaration it reads that changed, before and after.") in guide
+    assert ("`mo diff [OLD] NEW` checks how a program changed from `OLD` (or Git `HEAD` when only "
+            "`NEW` is given) to `NEW`: capability authority (including `Files.within`, "
+            "`ReadFiles.within`, `Files.read_only` and `Network.allow_hosts` narrowings), exposed "
+            "signatures and service tools, saved state schema (`migration_required`), and "
+            "behavioral contracts by running `OLD`'s promises, service promises and examples "
+            "against `NEW`.") in guide
     blocks = guide.split("```mo\n")
     assert len(blocks) == 3, "the guide has two Mo programs: the API call and its example"
     program = blocks[2].split("```\n", 1)[0]
@@ -112,7 +115,7 @@ def guide_claims(binary):
     result = run(binary, ["query", "tests/errors/e1413/main.mo", "nothing", "--export",
                           "tests/errors/missing.moex"], 2)
     assert result.stderr == b"mo query: no function of that name in that module\n", result
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo review`, `mo replay`, `mo query`, `mo history` and `mo intent`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history` and `mo diff`.",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -408,6 +411,9 @@ def guide_claims(binary):
         result = run(binary, ["run", str(source)], 0)
         assert result.stdout == b'Some("mo")\nNone\nNone\n', (result.stdout, result.stderr)
     says("`Network` and `Connection` run (reference section 14).",
+         "`network.allow_hosts(hosts)` narrows a real or fake `Network` to the `\"host\"` or "
+         "`\"host:port\"` destinations in `hosts`, refusing any other destination with "
+         "`Error(Network.Refused(host: host, port: port))`.",
          "`NetworkError`'s cases are written with `Network.` in front, as in "
          "`Error(Network.TimedOut)`.",
          "`Network.fake({\"example.org:80\": {request: reply}})` answers a connection that sends "
@@ -420,7 +426,10 @@ def guide_claims(binary):
             "module Main\n\ntest \"a fake network answers one request\"\n"
             "  request = \"GET /\\r\\nA: 1\\r\\n\".bytes\n"
             "  network = Network.fake({\"example.org:80\": {request: \"reply\".bytes}})\n"
-            "  assert network.connect(\"example.org\", 80, 1.second) is Ok(held)\n"
+            "  narrow = network.allow_hosts([\"example.org:80\"])\n"
+            "  assert narrow.connect(\"other.org\", 80, 1.second) is\n"
+            "    Error(Network.Refused(host: \"other.org\", port: 80))\n"
+            "  assert narrow.connect(\"example.org\", 80, 1.second) is Ok(held)\n"
             "  assert held.send(request) == Ok(Unit)\n"
             "  assert held.receive(3) == Ok(\"rep\".bytes)\n"
             "  assert network.connect(\"example.org\", 80, 1.second) is Ok(other)\n"
@@ -592,12 +601,10 @@ def emit_command(binary):
     for flag in ("--json", "--emit=core", "--max-heap", "--list"):
         args = ["emit", flag, *(["1GiB"] if flag == "--max-heap" else []), good, "-o", "a.bc"]
         mistake(args, f'flag is not accepted by this command: "{flag}"')
-    for command in ("check", "run", "format", "fix"):
+    for command in ("check", "run", "test", "format", "fix"):
         mistake([command, "-o", "a.bc", good], f'flag is not accepted by this command: "-o"')
-    for args in (["-o", "a.bc"], ["--bundle", "--list"], ["--list", "-o", "a.bc"]):
-        mistake(["test", *args, good], 'test writes an item list only as --bundle --list -o FILE: "test"')
-    for args in (["--json"], ["--calls", "5"], ["--seconds", "5"], ["--strength", "x"], ["-o", "a.bc"]):
+    for args in (["--list"], ["--json"], ["--calls", "5"], ["--seconds", "5"], ["--strength", "x"]):
         mistake(["test", "--bundle", *args, good],
-                "test --bundle without --list runs the door's checks over the whole bundle; it takes "
-                'no -o, --json, --only, --in, --calls, --seconds or --strength: "--bundle"')
+                "test --bundle runs upgrade checks over the whole bundle; "
+                'it takes no --list, --json, --only, --in, --calls, --seconds or --strength: "--bundle"')
     assert not (root / "a.bc").exists()

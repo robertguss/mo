@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Private fetch through real loopback sockets and independent artifact checks."""
-import hashlib
+"""Private fetch through real Unix admin sockets and independent artifact checks."""
 import base64
+import hashlib
 import http.server
 import json
-import socket
-import threading
-import time
 import os
 import pathlib
 import signal
+import socket
+import socketserver
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 from cli_common import Served
 from check_operator import FAILING, SOURCE, TOKEN, body, client, exported
 from check_export import SOURCE as COMMIT_SOURCE
 
+
+class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
 
 
 def commits(binary):
@@ -29,14 +33,18 @@ def commits(binary):
         env = {**os.environ, "OPERATOR_TOKEN": TOKEN}
         service = Served(binary, root / "main.mo", root / "data", env, root)
         generations = []
+        relay_sock = root / "relay.sock"
 
         class Relay(http.server.BaseHTTPRequestHandler):
+            def address_string(self):
+                return "unix"
+
             def log_message(self, *args):
                 pass
 
             def do_POST(self):
                 request = self.rfile.read(int(self.headers["Content-Length"]))
-                status, raw = service.post(request.decode(), TOKEN)
+                status, raw = service.admin_post(request.decode())
                 page = json.loads(raw)["result"]["structuredContent"]["value"]
                 generations.append(page["export"])
                 self.send_response(status)
@@ -49,18 +57,19 @@ def commits(binary):
                         "method": "tools/call", "params": {"name": "change", "arguments": {}}}), TOKEN)
                     assert status == 200
 
-        relay = http.server.HTTPServer(("127.0.0.1", 0), Relay)
+        relay = UnixHTTPServer(str(relay_sock), Relay)
+        os.chmod(relay_sock, 0o600)
         worker = threading.Thread(target=relay.serve_forever)
         worker.start()
         try:
-            status, raw = service.post(json.dumps({"jsonrpc": "2.0", "id": 1,
-                "method": "tools/call", "params": {"name": "mo-overview", "arguments": {}}}), TOKEN)
+            status, raw = service.admin_post(json.dumps({"jsonrpc": "2.0", "id": 1,
+                "method": "tools/call", "params": {"name": "mo-overview", "arguments": {}}}))
             assert status == 200
             overview = json.loads(raw)["result"]["structuredContent"]["value"]
             time.sleep(0.055)
             for name in ["first", "retry"]:
-                result = subprocess.run([str(binary), "fetch", f"http://127.0.0.1:{relay.server_port}/mcp",
-                    "--export", "state", "--out", str(root / name), "--token-env", "OPERATOR_TOKEN"],
+                result = subprocess.run([str(binary), "fetch", "--admin-socket", str(relay_sock),
+                    "--export", "state", "--out", str(root / name)],
                     env=env, capture_output=True, timeout=30)
                 assert result.returncode == 0, result.stderr
                 assert (root / name).stat().st_mode & 0o777 == 0o600
@@ -93,9 +102,9 @@ def commits(binary):
             relay.shutdown()
             worker.join()
             relay.server_close()
+            relay_sock.unlink(missing_ok=True)
             service.finish(0, signal.SIGTERM)
             service.close()
-
 
 
 def lifecycle(binary, mode):
@@ -108,15 +117,19 @@ def lifecycle(binary, mode):
         first_id = []
         second = threading.Event()
         intervened = False
+        relay_sock = root / "relay.sock"
 
         class Relay(http.server.BaseHTTPRequestHandler):
+            def address_string(self):
+                return "unix"
+
             def log_message(self, *args):
                 pass
 
             def do_POST(self):
                 nonlocal intervened
                 request = self.rfile.read(int(self.headers["Content-Length"]))
-                status, raw = service.post(request.decode(), TOKEN)
+                status, raw = service.admin_post(request.decode())
                 value = json.loads(raw)["result"]["structuredContent"]["value"]
                 if not intervened and "offset" in value and value["offset"] == 0:
                     first_id.append(value["export"])
@@ -125,8 +138,8 @@ def lifecycle(binary, mode):
                     if mode == "release":
                         args.update(export=value["export"], offset=((value["total"] - 1) // 8192) * 8192)
                     if mode in ["replace", "release"]:
-                        code, _ = service.post(json.dumps({"jsonrpc": "2.0", "id": 1,
-                            "method": "tools/call", "params": {"name": "mo-export", "arguments": args}}), TOKEN)
+                        code, _ = service.admin_post(json.dumps({"jsonrpc": "2.0", "id": 1,
+                            "method": "tools/call", "params": {"name": "mo-export", "arguments": args}}))
                         assert code == 200
                     if mode == "expiry":
                         time.sleep(60.1)
@@ -152,13 +165,14 @@ def lifecycle(binary, mode):
                 except (BrokenPipeError, ConnectionResetError):
                     pass
 
-        relay = http.server.HTTPServer(("127.0.0.1", 0), Relay)
+        relay = UnixHTTPServer(str(relay_sock), Relay)
+        os.chmod(relay_sock, 0o600)
         worker = threading.Thread(target=relay.serve_forever)
         worker.start()
         try:
             target = root / "refused"
-            command = [str(binary), "fetch", f"http://127.0.0.1:{relay.server_port}/mcp",
-                "--export", "state", "--out", str(target), "--token-env", "OPERATOR_TOKEN"]
+            command = [str(binary), "fetch", "--admin-socket", str(relay_sock),
+                "--export", "state", "--out", str(target)]
             process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if mode == "cancel":
                 assert second.wait(15)
@@ -171,8 +185,8 @@ def lifecycle(binary, mode):
             if mode in ["expiry", "release"]:
                 assert b"released or expired" in stderr
             assert first_id and not list(root.glob("*.mo-fetch-*"))
-            retry = subprocess.run([str(binary), "fetch", f"http://127.0.0.1:{service.port}/mcp",
-                "--export", "state", "--out", str(root / "retry"), "--token-env", "OPERATOR_TOKEN"],
+            retry = subprocess.run([str(binary), "fetch", "--admin-socket", str(service.admin_socket),
+                "--export", "state", "--out", str(root / "retry")],
                 env=env, capture_output=True, timeout=15)
             assert retry.returncode == 0, retry.stderr
             assert (root / "retry").read_bytes()[6:22].hex() != first_id[0]
@@ -180,6 +194,7 @@ def lifecycle(binary, mode):
             relay.shutdown()
             worker.join()
             relay.server_close()
+            relay_sock.unlink(missing_ok=True)
             service.finish(0, signal.SIGTERM)
             service.close()
 
@@ -200,8 +215,8 @@ def failure(binary):
 
             def fetch(target, *selector):
                 time.sleep(0.055)
-                result = subprocess.run([str(binary), "fetch", f"http://127.0.0.1:{service.port}/mcp",
-                    "--export", *selector, "--out", str(target), "--token-env", "OPERATOR_TOKEN"],
+                result = subprocess.run([str(binary), "fetch", "--admin-socket", str(service.admin_socket),
+                    "--export", *selector, "--out", str(target)],
                     env=env, capture_output=True, umask=0o777, timeout=30)
                 assert TOKEN.encode() not in result.stdout + result.stderr
                 assert not list(root.glob("*.mo-fetch-*"))
@@ -246,13 +261,11 @@ def run(binary):
         service = Served(binary, source, data, env, root)
         try:
             assert service.port, service.errors()
-            url = f"http://127.0.0.1:{service.port}/mcp"
 
-            def fetch(target, token=TOKEN, address=url, umask=-1):
-                result = subprocess.run([str(binary), "fetch", address, "--export", "state",
-                                         "--out", str(target), "--token-env", "OPERATOR_TOKEN"],
-                                        env={**env, "OPERATOR_TOKEN": token}, capture_output=True, umask=umask,
-                                        timeout=30)
+            def fetch(target, sock=service.admin_socket, umask=-1):
+                result = subprocess.run([str(binary), "fetch", "--admin-socket", str(sock),
+                                         "--export", "state", "--out", str(target)],
+                                        env=env, capture_output=True, umask=umask, timeout=30)
                 assert TOKEN.encode() not in result.stdout + result.stderr
                 assert not list(root.glob("*.mo-fetch-*"))
                 return result
@@ -285,17 +298,17 @@ def run(binary):
             symlink = root / "symlink"
             symlink.symlink_to(root / "missing")
             assert fetch(symlink).returncode == 1 and symlink.is_symlink()
-            assert fetch(root / "wrong", "wrong").returncode == 1
+            assert fetch(root / "wrong", sock=root / "no-such.sock").returncode == 1
             assert not (root / "wrong").exists()
-            for address in ["http://192.0.2.1:80/mcp", "https://localhost:80/mcp",
-                            "http://user@localhost:80/mcp", "http://localhost:x/mcp"]:
-                assert fetch(root / "bad", address=address).returncode == 2
-                assert not (root / "bad").exists()
-            # Relay actual pages and alter only metadata/checksum, retaining every refusal.
+            regular = root / "regular"
+            regular.write_bytes(b"not a socket")
+            assert fetch(root / "bad", sock=regular).returncode == 1
+            assert not (root / "bad").exists()
+
             def altered_page(key, value):
                 request = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                     "params": {"name": "mo-export", "arguments": {"kind": "state"}}})
-                status, raw = service.post(request, TOKEN)
+                status, raw = service.admin_post(request)
                 assert status == 200
                 body = json.loads(raw)
                 page = body["result"]["structuredContent"]["value"]
@@ -305,15 +318,17 @@ def run(binary):
                 payload = json.dumps(body, separators=(",", ":")).encode()
                 return b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload
 
-            # Adversarial closed responses are served over actual loopback sockets.
-            def bad_response(wire, cancel=False, accepted=False, sequences=(9, 8), host="127.0.0.1"):
-                listener = socket.socket(socket.AF_INET6 if host == "::1" else socket.AF_INET)
-                listener.bind(("127.0.0.1" if host == "localhost" else host, 0))
+            # Adversarial closed responses are served over actual Unix sockets.
+            def bad_response(wire, cancel=False, accepted=False, sequences=(9, 8)):
+                sock_path = root / "bad.sock"
+                sock_path.unlink(missing_ok=True)
+                listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                listener.bind(str(sock_path))
+                os.chmod(sock_path, 0o600)
                 listener.listen()
-                port = listener.getsockname()[1]
-                address = f"http://{'[::1]' if host == '::1' else host}:{port}/mcp"
                 requests = []
                 done = threading.Event()
+
                 def serve():
                     connection, _ = listener.accept()
                     with connection:
@@ -331,37 +346,43 @@ def run(binary):
                         except TimeoutError:
                             pass
                     listener.close()
+
                 worker = threading.Thread(target=serve, daemon=True)
                 worker.start()
                 target = root / "refused"
-                if cancel:
-                    process = subprocess.Popen([str(binary), "fetch", address,
-                        "--export", "state", "--out", str(target), "--token-env", "OPERATOR_TOKEN"],
-                        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    deadline = time.monotonic() + 10
-                    while not requests and time.monotonic() < deadline:
-                        time.sleep(0.01)
-                    assert requests
-                    process.send_signal(signal.SIGTERM)
-                    _, stderr = process.communicate(timeout=5)
-                    assert process.returncode == 1 and TOKEN.encode() not in stderr
-                else:
-                    assert fetch(target, address=address).returncode == (0 if accepted else 1)
-                done.set()
-                worker.join(5)
-                assert not worker.is_alive() and len(requests) == 1 and target.exists() == accepted
-                if accepted:
-                    artifact = target.read_bytes()
-                    value = json.loads(wire.split(b"\r\n\r\n", 1)[1])["result"]["structuredContent"]["value"]
-                    assert artifact == base64.b64decode(value["base64"], validate=True)
-                    label = struct.unpack_from("<I", artifact, 62)[0]
-                    assert struct.unpack_from("<QQ", artifact, 70 + label) == sequences
-                    assert target.stat().st_mode & 0o777 == 0o600
-                    target.unlink()
-                assert not list(root.glob("*.mo-fetch-*"))
+                try:
+                    if cancel:
+                        process = subprocess.Popen([str(binary), "fetch", "--admin-socket", str(sock_path),
+                            "--export", "state", "--out", str(target)],
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        deadline = time.monotonic() + 10
+                        while not requests and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        assert requests
+                        process.send_signal(signal.SIGTERM)
+                        _, stderr = process.communicate(timeout=5)
+                        assert process.returncode == 1 and TOKEN.encode() not in stderr
+                    else:
+                        assert fetch(target, sock=sock_path).returncode == (0 if accepted else 1)
+                    done.set()
+                    worker.join(5)
+                    assert not worker.is_alive() and len(requests) == 1 and target.exists() == accepted
+                    if accepted:
+                        artifact = target.read_bytes()
+                        value = json.loads(wire.split(b"\r\n\r\n", 1)[1])["result"]["structuredContent"]["value"]
+                        assert artifact == base64.b64decode(value["base64"], validate=True)
+                        label = struct.unpack_from("<I", artifact, 62)[0]
+                        assert struct.unpack_from("<QQ", artifact, 70 + label) == sequences
+                        assert target.stat().st_mode & 0o777 == 0o600
+                        target.unlink()
+                    assert not list(root.glob("*.mo-fetch-*"))
+                finally:
+                    done.set()
+                    worker.join(5)
+                    sock_path.unlink(missing_ok=True)
+
             fixture = (pathlib.Path(__file__).resolve().parents[1] / "fuzz/corpus/fuzz_fetch/page").read_bytes()
-            for host in ["127.0.0.1", "localhost", "::1"]:
-                bad_response(fixture, accepted=True, host=host)
+            bad_response(fixture, accepted=True)
             # Encoded state may be ahead of the durable sequence after snapshot failure.
             envelope = json.loads(fixture.split(b"\r\n\r\n", 1)[1])
             value = envelope["result"]["structuredContent"]["value"]

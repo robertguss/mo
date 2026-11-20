@@ -125,6 +125,7 @@ class Layout:
         self.start_data = self.session / 'start-data'
         self.deployed = self.session / 'deployed'
         self.service_log = self.session / 'service.log'
+        self.admin_socket = self.session / 'admin.sock'
         self.mcp_config = self.session / 'mcp.json'
         self.private = pathlib.Path(private or pathlib.Path.home())
         self.state = pathlib.Path(state or self.private / '.mo-phase4-harness')
@@ -289,7 +290,7 @@ def reset(layout):
     processes it ended."""
     ended = end_all(layout.user)
     for path in (layout.work, layout.start_data, layout.deployed, layout.service_log,
-                 layout.mcp_config):
+                 layout.admin_socket, layout.mcp_config):
         sudo('rm', '-rf', path)
     if not layout.snapshot.exists():
         raise HarnessError(f'no snapshot of {layout.user}\'s home in {layout.snapshot}: run setup')
@@ -601,7 +602,7 @@ def session(layout, variant, built, client, out, binary, limit, mo, token, fixed
 
     shutil.copytree(built / 'data', scratch / 'data')
     service = fixture.Service(mo, program / 'main.mo', scratch / 'data', token,
-                              layout.service_log)
+                              layout.service_log, scratch / 'admin.sock')
     running.append(service)
     os.chmod(layout.service_log, 0o644)
     place_read_only(built / 'data', layout.start_data)
@@ -610,7 +611,8 @@ def session(layout, variant, built, client, out, binary, limit, mo, token, fixed
     for name in grade.SESSION_FILES:
         shutil.copyfile(variant / name, deployed / name)
     place_read_only(deployed, layout.deployed)
-    record = proxy.Proxy(service.url, out / 'proxy.jsonl', token)
+    record = proxy.Proxy(service.url, out / 'proxy.jsonl', token,
+                         upstream_admin=service.admin_socket, admin_socket=layout.admin_socket)
     running.append(record)
     layout.work.mkdir(mode=0o755)
     for name in grade.SESSION_FILES:

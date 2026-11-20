@@ -54,9 +54,10 @@ static bool authorities(struct mo_protocol_server *s, struct protocol_connection
     uint32_t text = mo_image_types(s->protocol)->items[list].parameters[0];
     if (!mo_value_list(heap, list, NULL, 0, out))
         return false;
-    for (uint32_t i = 0; i < mo_list_size(s->authorities); i++) {
+    struct mo_cell allowed = c->admin ? s->admin_authorities : s->authorities;
+    for (uint32_t i = 0; i < mo_list_size(allowed); i++) {
         struct mo_cell item, copy;
-        MO_ASSERT(mo_list_get(s->authorities, i, &item));
+        MO_ASSERT(mo_list_get(allowed, i, &item));
         size_t size;
         const uint8_t *bytes = mo_value_data(item, &size);
         if (!mo_protocol_charge(c, size) || !mo_value_text(heap, (const char *)bytes, size, &copy))
@@ -120,30 +121,15 @@ static bool authenticate(struct mo_protocol_server *s, struct protocol_connectio
     union mo_listener_request request = {.auth = {c->input, c->header_size, 0, 0}};
     (void)header_span(s, c, fields->fields[0].type, mo_value_field(record, 0), &request.auth.start,
                       &request.auth.length);
-    size_t upgrade_start = 0, upgrade_length = 0, session_start = 0, session_length = 0;
-    bool upgrade = header_span(s, c, fields->fields[1].type, mo_value_field(record, 1),
-                               &upgrade_start, &upgrade_length);
-    bool session_named = header_span(s, c, fields->fields[2].type, mo_value_field(record, 2),
+    size_t session_start = 0, session_length = 0;
+    bool session_named = header_span(s, c, fields->fields[1].type, mo_value_field(record, 1),
                                      &session_start, &session_length);
-    bool streaming = mo_cell_get_bool(mo_value_field(record, 3));
-    size_t approval_start = 0, approval_length = 0;
-    bool approval = header_span(s, c, fields->fields[4].type, mo_value_field(record, 4),
-                                &approval_start, &approval_length);
+    bool streaming = mo_cell_get_bool(mo_value_field(record, 2));
+    struct mo_listener *listener = mo_protocol_connection_listener(s, c);
     union mo_listener_result result;
     enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_AUTH, &request, &result);
-    bool admitted = status == MO_LISTENER_OK && result.authenticated && upgrade != approval;
-    c->upgrade_authorized =
-        admitted && upgrade && s->upgrade_enabled &&
-        mo_bearer_check(&s->upgrade_bearer, c->input + upgrade_start, upgrade_length);
-    c->approval_authorized =
-        admitted && approval && s->approval_enabled &&
-        mo_bearer_check(&s->approval_bearer, c->input + approval_start, approval_length);
+        mo_listener_call(listener, MO_LISTENER_AUTH, &request, &result);
     /* No credential outlives this check; nothing below reads them. */
-    mo_host_wipe(c->input + upgrade_start, upgrade_length);
-    memset(c->input + upgrade_start, 'x', upgrade_length);
-    mo_host_wipe(c->input + approval_start, approval_length);
-    memset(c->input + approval_start, 'x', approval_length);
     mo_host_wipe(c->input + request.auth.start, request.auth.length);
     memset(c->input + request.auth.start, 'x', request.auth.length);
     if (status != MO_LISTENER_OK || !result.authenticated) {
@@ -152,7 +138,7 @@ static bool authenticate(struct mo_protocol_server *s, struct protocol_connectio
     }
     size_t session = SIZE_MAX;
     if (session_named) {
-        session = mo_protocol_session_find(s, c->input + session_start, session_length);
+        session = mo_protocol_session_find(s, c->admin, c->input + session_start, session_length);
         if (session == SIZE_MAX) {
             mo_protocol_fail(s, c, 404);
             return false;
@@ -290,6 +276,7 @@ static void head_complete(struct mo_protocol_server *s, struct protocol_connecti
 }
 
 void mo_protocol_read(struct mo_protocol_server *s, struct protocol_connection *c) {
+    struct mo_listener *listener = mo_protocol_connection_listener(s, c);
     size_t at = c->phase == PS_HEADERS ? c->header_size : 0;
     if (at == sizeof c->input) {
         mo_protocol_fail(s, c, 431);
@@ -298,7 +285,7 @@ void mo_protocol_read(struct mo_protocol_server *s, struct protocol_connection *
     union mo_listener_request request = {.read = {c->key, c->input + at, sizeof c->input - at}};
     union mo_listener_result result;
     enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_READ, &request, &result);
+        mo_listener_call(listener, MO_LISTENER_READ, &request, &result);
     if (status == MO_LISTENER_AGAIN)
         return;
     if (status != MO_LISTENER_OK) {
@@ -313,7 +300,7 @@ void mo_protocol_read(struct mo_protocol_server *s, struct protocol_connection *
         while (buffered < sizeof c->input) {
             request.read.bytes = c->input + buffered;
             request.read.capacity = sizeof c->input - buffered;
-            status = mo_listener_call(s->listener, MO_LISTENER_READ, &request, &result);
+            status = mo_listener_call(listener, MO_LISTENER_READ, &request, &result);
             if (status != MO_LISTENER_OK)
                 break;
             MO_ASSERT(result.transferred > 0);

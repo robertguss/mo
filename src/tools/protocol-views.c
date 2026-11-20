@@ -236,7 +236,7 @@ bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *
     const struct mo_bytecode_function *fn = mo_protocol_function(s, PF_VIEW);
     uint32_t type = fn->parameters[2].type;
     struct mo_service_observation observed = mo_service_observe(s->service);
-    struct mo_cell fields[10], observation;
+    struct mo_cell fields[11], observation;
     uint32_t built = 0;
     if (name(&b, mo_image_bytecode(s->image)->modules[s->descriptor->module].name, &fields[0]))
         built++;
@@ -298,12 +298,17 @@ bool mo_protocol_view(struct mo_protocol_server *s, struct protocol_connection *
     MO_ASSERT(s->now.monotonic_us >= s->started_at);
     if (built == 9 && number(&b, s->now.monotonic_us - s->started_at, &fields[9]))
         built++;
-    if (built != 10) {
+    char source_hex[65] = {0};
+    if (s->upgrade.active_found)
+        mo_protocol_hex(s->upgrade.active.source, 32, source_hex);
+    if (built == 10 && text(&b, source_hex, &fields[10]))
+        built++;
+    if (built != 11) {
         for (uint32_t i = 0; i < built; i++)
             mo_value_drop(b.heap, field_type(&b, type, i), fields[i]);
         return false;
     }
-    if (!record(&b, type, fields, 10, &observation))
+    if (!record(&b, type, fields, 11, &observation))
         return false;
     const uint8_t *bytes = NULL;
     size_t length = 0;

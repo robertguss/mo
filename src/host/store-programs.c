@@ -308,14 +308,13 @@ static bool replace_snapshot(struct mo_store *s, const struct mo_buffer *bytes, 
                             head, bytes) &&
            store_exec(
                s, "INSERT INTO head VALUES(1,0) ON CONFLICT(id) DO NOTHING;DELETE FROM log;PRAGMA "
-                  "user_version=3");
+                  "user_version=2");
 }
 
 enum mo_store_status mo_store_program_record(struct mo_store *s,
                                              const struct mo_store_program *program,
                                              const struct mo_store_record *snapshot) {
-    if (s->unsafe || !program_valid(program) || !store_items_valid(program) ||
-        !snapshot_matches(program, snapshot))
+    if (s->unsafe || !program_valid(program) || !snapshot_matches(program, snapshot))
         return MO_STORE_CORRUPT;
     struct mo_buffer bytes;
     mo_buffer_init(&bytes, MO_LIMIT_SAVED_BYTES + MO_STORE_FRAME_BYTES);
@@ -333,10 +332,8 @@ enum mo_store_status mo_store_program_record(struct mo_store *s,
              (found ? previous.ordinal == program->ordinal &&
                           memcmp(previous.source, program->source, 32) == 0
                     : program->ordinal == 0) &&
-             store_not_version_two(s) && upgrade_tables_ready(s) &&
-             replace_snapshot(s, &bytes, head) &&
-             write_program(s, replace_program, program, program->ordinal) &&
-             store_review_write(s, program);
+             upgrade_tables_ready(s) && replace_snapshot(s, &bytes, head) &&
+             write_program(s, replace_program, program, program->ordinal);
         if (ok)
             ok = store_exec(s, "COMMIT");
         if (!ok) {
@@ -467,7 +464,6 @@ activate(struct mo_store *s, const struct mo_store_activation *a, bool adoption,
         return MO_STORE_ACTIVATION_UNSAFE;
     static const uint8_t unavailable[32] = {0};
     if ((!legacy && !program_valid(&a->previous)) || !program_valid(&a->candidate) ||
-        !store_items_valid(&a->candidate) ||
         (legacy && (a->previous.ordinal != 0 ||
                     memcmp(a->previous.source, unavailable, sizeof unavailable) != 0)) ||
         (adoption && memcmp(a->previous.schema, a->candidate.schema, 32) != 0) ||
@@ -498,8 +494,6 @@ activate(struct mo_store *s, const struct mo_store_activation *a, bool adoption,
     int version = -1;
     struct adoption_snapshot original = {.expected = &a->previous_state};
     struct saved_head saved;
-    struct mo_store_decision conversion = {.kind = "conversion", .time = a->time};
-    memcpy(conversion.base, a->previous.source, 32);
     bool verified_snapshot = !adoption || (store_load_snapshot(s, &saved, compare_adoption_snapshot,
                                                                &original) == MO_STORE_OK &&
                                            original.matched);
@@ -513,8 +507,7 @@ activate(struct mo_store *s, const struct mo_store_activation *a, bool adoption,
                          &previous) &&
         retain_programs(s, a->candidate.ordinal) && replace_snapshot(s, &candidate, head) &&
         write_program(s, replace_program, &a->candidate, a->candidate.ordinal) &&
-        write_upgrade(s, a) && store_door_decided(s, a) && store_review_write(s, &a->candidate) &&
-        store_drop_stale(s, a->time) && (version != 2 || store_decide(s, &conversion));
+        write_upgrade(s, a);
     if (ok) {
         if (store_exec(s, "COMMIT"))
             result = MO_STORE_ACTIVATED;

@@ -134,15 +134,7 @@ fn inspection()
     bytes = octets("POST #{target} HTTP/1.1\r\nHost: #{host}\r\nContent-Length: -1\r\n\r\n")
     require(
       HttpPolicy.inspect(bytes, head(bytes), ["localhost"]) ==
-        Ok(
-          HttpPolicy.Access(
-            bearer: None,
-            upgrade: None,
-            session: None,
-            stream: false,
-            approval: None
-          )
-        )
+        Ok(HttpPolicy.Access(bearer: None, session: None, stream: false))
     )
   end
   for auth in ["Bearer canary", "bEaReR  canary"]
@@ -151,22 +143,10 @@ fn inspection()
     access = inspected(bytes)
     require(access.bearer == HttpServer.bearer_span(bytes, parsed) and access.bearer != None)
   end
-  stream = octets(
-    "GET /mcp HTTP/1.1\r\nHost: localhost\r\nMCP-Session-Id: abc\r\nMo-Upgrade-Authorization: Bearer  up\r\n\r\n"
-  )
+  stream = octets("GET /mcp HTTP/1.1\r\nHost: localhost\r\nMCP-Session-Id: abc\r\n\r\n")
   access = inspected(stream)
   require(access.stream and access.bearer == None)
   require(access.session == Some(HttpServer.Span(start: 52, size: 3)))
-  require(access.upgrade == Some(HttpServer.Span(start: 91, size: 2)))
-  for upgrades in [
-    "Mo-Upgrade-Authorization: Bearer a\r\nmo-upgrade-authorization: Bearer b\r\n",
-    "Mo-Upgrade-Authorization: Basic a\r\n",
-    "Mo-Upgrade-Authorization: Bearer\r\n"
-  ]
-    bytes = octets("POST /mcp HTTP/1.1\r\nHost: localhost\r\n#{upgrades}\r\n")
-    found = inspected(bytes)
-    require(found.upgrade == None and not found.stream)
-  end
 end
 
 fn streams()

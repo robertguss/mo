@@ -66,7 +66,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (address_size != 0)
         memcpy(address, data, address_size);
     address[address_size] = 0;
-    struct mo_cli cli = {.fetch_url = address, .output = ".", .fetch_token = "UNREAD"};
+    struct mo_cli cli = {.admin_socket = address, .output = "."};
     int result = mo_fetch(&cli, errors);
     MO_ASSERT(result == 1 || result == 2);
     struct mo_arena arena;

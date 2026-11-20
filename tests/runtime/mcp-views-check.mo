@@ -141,70 +141,9 @@ fn main() : Int
   next = page.get("next") or stop "next page"
   require(McpViews.valid(7, next))
   require(McpViews.failure_id(next) == 7)
-  require(McpViews.names().size == 19)
+  require(McpViews.names().size == 12)
   require(McpViews.upgrade_kind(-1) == 0)
-  require(McpViews.upgrade_kind(19) == 0)
-  require(McpViews.upgrade_kind(12) == 4)
-  require(McpViews.upgrade_kind(13) == 5)
-  require(McpViews.upgrade_kind(14) == 6)
-  require(McpViews.upgrade_kind(15) == 7)
-  require(McpViews.upgrade_kind(16) == 8)
-  require(McpViews.upgrade_kind(17) == 9)
-  require(McpViews.upgrade_kind(18) == 10)
-  digest = "c".repeat(64)
-  require(McpViews.valid(12, Json.Object({"offset": Json.int(3)})))
-  require(
-    McpViews.valid(
-      13,
-      Json.Object({"program": Json.String("0".repeat(64)), "digest": Json.String(digest)})
-    )
-  )
-  require(not McpViews.valid(13, Json.Object({"digest": Json.String(digest)})))
-  require(
-    not McpViews.valid(
-      13,
-      Json.Object({"program": Json.String("C".repeat(64)), "digest": Json.String(digest)})
-    )
-  )
-  require(McpViews.valid(14, Json.Object({})))
-  require(McpViews.valid(14, Json.Object({"setting": Json.String("intent")})))
-  require(not McpViews.valid(14, Json.Object({"setting": Json.String("never")})))
-  require(McpViews.valid(15, Json.Object({})))
-  require(not McpViews.valid(15, Json.Object({"review": Json.String(digest)})))
-  require(
-    McpViews.valid(16, Json.Object({"review": Json.String(digest), "answer": Json.String("yes")}))
-  )
-  require(not McpViews.valid(16, Json.Object({"review": Json.String(digest)})))
-  require(
-    not McpViews.valid(
-      16,
-      Json.Object({"review": Json.String(digest), "answer": Json.String("maybe")})
-    )
-  )
-  require(
-    not McpViews.valid(
-      16,
-      Json.Object({"review": Json.String("C".repeat(64)), "answer": Json.String("no")})
-    )
-  )
-  require(McpViews.valid(17, Json.Object({})))
-  source = {"review": Json.String(digest), "source": Json.String("pending")}
-  require(McpViews.valid(18, Json.Object(source)))
-  require(McpViews.valid(18, Json.Object(source.set("offset", Json.int(8192)))))
-  require(not McpViews.valid(18, Json.Object(source.set("offset", Json.int(100)))))
-  require(not McpViews.valid(18, Json.Object(source.set("source", Json.String("other")))))
-  require(not McpViews.valid(18, Json.Object({"source": Json.String("active")})))
-  require(McpViews.upgrade_arguments(Json.Object(source)).drop(11) == [digest, "", "pending"])
-  require(
-    McpViews.upgrade_arguments(
-      Json.Object({"program": Json.String(digest), "setting": Json.String("intent")})
-    ).drop(8) == [digest, "", "intent", "", "", ""]
-  )
-  require(
-    McpViews.upgrade_arguments(
-      Json.Object({"review": Json.String(digest), "answer": Json.String("no")})
-    ).drop(11) == [digest, "no", ""]
-  )
+  require(McpViews.upgrade_kind(12) == 0)
   for i in 0..9
     require(McpViews.upgrade_kind(i) == 0)
   end
@@ -279,24 +218,7 @@ fn main() : Int
     McpViews.valid(11, Json.Object({"slot": Json.String(up_slot), "base": Json.String(up_base)}))
   )
   require(not McpViews.valid(11, Json.Object({"slot": Json.String(up_slot)})))
-  require(
-    McpViews.upgrade_arguments(up_page) == [
-      "",
-      "",
-      "3",
-      "",
-      up_slot,
-      "0",
-      "0",
-      "YWJj",
-      "",
-      "",
-      "",
-      "",
-      "",
-      ""
-    ]
-  )
+  require(McpViews.upgrade_arguments(up_page) == ["", "", "3", "", up_slot, "0", "0", "YWJj"])
   require(McpViews.names().contains?("mo-export"))
   require(McpViews.names().contains?("mo-failures"))
   require(
@@ -330,24 +252,16 @@ fn main() : Int
       fields.get("annotations") ==
         Some(
           Json.Object(
-            if fields.get("name") == Some(Json.String("mo-export")) or
-              fields.get("name") == Some(Json.String("mo-intent-items")) or
-              fields.get("name") == Some(Json.String("mo-review-pending")) or
-              fields.get("name") == Some(Json.String("mo-upgrade-status")) or
-              fields.get("name") == Some(Json.String("mo-review-source")): {
-                "readOnlyHint": Json.Boolean(true),
-                "idempotentHint": Json.Boolean(true),
-                "openWorldHint": Json.Boolean(false)
-              } else if fields.get("name") == Some(Json.String("mo-upgrade-open")) or
+            if fields.get("name") == Some(Json.String("mo-export")): {
+              "readOnlyHint": Json.Boolean(true),
+              "idempotentHint": Json.Boolean(true),
+              "openWorldHint": Json.Boolean(false)
+            } else if fields.get("name") == Some(Json.String("mo-upgrade-open")) or
               fields.get("name") == Some(Json.String("mo-upgrade-page")) or
-              fields.get("name") == Some(Json.String("mo-upgrade-commit")) or
-              fields.get("name") == Some(Json.String("mo-intent-approve")) or
-              fields.get("name") == Some(Json.String("mo-review-setting")) or
-              fields.get("name") == Some(Json.String("mo-review-answer")): {
+              fields.get("name") == Some(Json.String("mo-upgrade-commit")): {
                 "readOnlyHint": Json.Boolean(false),
                 "destructiveHint": Json.Boolean(
-                  fields.get("name") == Some(Json.String("mo-upgrade-commit")) or
-                    fields.get("name") == Some(Json.String("mo-review-answer"))
+                  fields.get("name") == Some(Json.String("mo-upgrade-commit"))
                 ),
                 "idempotentHint": Json.Boolean(false),
                 "openWorldHint": Json.Boolean(false)
@@ -394,7 +308,8 @@ fn main() : Int
     timers: [],
     events: [],
     log: [],
-    uptime: "0"
+    uptime: "0",
+    program_source: ""
   )
   encoded = "MOSV\u{1}\u{d}\u{0}\u{0}\u{0}\u{3}\u{0}\u{0}\u{0}\u{0}\u{1}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}*\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}\u{0}"
   result = McpViews.render(1, Json.Object({}), observation, encoded.bytes, 6144)
@@ -412,6 +327,11 @@ end
 
 fn overviews(base: McpViews.Observation)
   open = object(McpViews.render(0, Json.Object({}), base, "".bytes, 6144))
+  require(open.get("program_source") == Some(Json.Null))
+  var with_src = base
+  with_src.program_source = "a".repeat(64)
+  with_src_view = object(McpViews.render(0, Json.Object({}), with_src, "".bytes, 6144))
+  require(with_src_view.get("program_source") == Some(Json.String("a".repeat(64))))
   require(open.get("retained_failures") == Some(Json.int(0)))
   require(open.get("evicted_kinds_since_open") == Some(Json.String("0")))
   require(open.get("failure_capture_available") == Some(Json.Boolean(true)))

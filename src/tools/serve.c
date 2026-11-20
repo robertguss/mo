@@ -107,52 +107,6 @@ static void refuse(struct mo_diags *diags, const char *what, const char *subject
     refuse_as(diags, MO_CODE_TOOL_SERVICE_START, what, subject, reason);
 }
 
-static bool secret(struct mo_diags *diags, const char *name, const char *what,
-                   struct mo_bearer *out) {
-    if (name == NULL || (mo_bearer_read(out, name) && out->length >= 16))
-        return true;
-    mo_host_wipe(out, sizeof *out);
-    refuse(diags, what, name, "it is missing, invalid or shorter than 16 bytes");
-    return false;
-}
-
-static bool same(const struct mo_bearer *a, const struct mo_bearer *b) {
-    return mo_bearer_check(a, b->bytes, b->length);
-}
-
-bool mo_serve_secrets(const struct mo_cli *cli, const char *token, struct mo_diags *diags,
-                      struct mo_bearer *upgrade, struct mo_bearer *approval) {
-    mo_host_wipe(upgrade, sizeof *upgrade);
-    mo_host_wipe(approval, sizeof *approval);
-    if (cli->upgrade_token != NULL && cli->approval_token == NULL) {
-        refuse_as(diags, MO_CODE_SERVE_CREDENTIALS, "mo serve was given --upgrade-token-env", NULL,
-                  "live upgrades also need --approval-token-env NAME");
-        return false;
-    }
-    bool read = secret(diags, cli->upgrade_token,
-                       "mo serve could not use the upgrade credential from environment variable",
-                       upgrade) &&
-                secret(diags, cli->approval_token,
-                       "mo serve could not use the approval credential from environment variable",
-                       approval);
-    if (read && token != NULL && cli->approval_token != NULL) {
-        struct mo_bearer service = {0};
-        bool known = mo_bearer_read(&service, token);
-        read = !(known && (same(&service, upgrade) || same(&service, approval))) &&
-               !same(upgrade, approval);
-        mo_host_wipe(&service, sizeof service);
-        if (!read)
-            refuse_as(diags, MO_CODE_SERVE_CREDENTIALS, "mo serve could not start", NULL,
-                      "two of the service token, the upgrade credential and the approval "
-                      "credential are equal");
-    }
-    if (!read) {
-        mo_host_wipe(upgrade, sizeof *upgrade);
-        mo_host_wipe(approval, sizeof *approval);
-    }
-    return read;
-}
-
 static const char *server_refusal(enum mo_protocol_server_status status,
                                   const struct serve_log *log) {
     if (log->failed)
@@ -215,6 +169,14 @@ static void refuse_listener(struct mo_diags *diags, enum mo_listener_status stat
            status == MO_LISTENER_IO ? strerror(reason) : mo_listener_status_text(status));
 }
 
+static void refuse_admin_listener(struct mo_diags *diags, enum mo_listener_status status,
+                                  int reason, const char *socket_path) {
+    refuse(diags, "mo serve could not open admin socket at", socket_path,
+           status == MO_LISTENER_CONFIG ? "the socket path is empty or longer than UNIX_PATH_MAX"
+           : status == MO_LISTENER_IO   ? strerror(reason)
+                                        : mo_listener_status_text(status));
+}
+
 int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint32_t service,
                    FILE *output, FILE *errors, struct mo_diags *diags,
                    struct mo_store *held_store) {
@@ -223,6 +185,7 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     const struct mo_bytecode_string *token = &file->strings[file->services[service].token_env];
     struct serve_log log = {.errors = errors};
     struct mo_listener *listener = NULL;
+    struct mo_listener *admin_listener = NULL;
     struct mo_store *store = held_store;
     struct mo_protocol_server *server = NULL;
     struct mo_buffer name;
@@ -243,14 +206,19 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
         refuse(diags, "mo serve could not read the token's variable name", NULL, "out of memory");
         goto done;
     }
-    struct mo_bearer upgrade = {0}, approval = {0};
-    if (!mo_serve_secrets(cli, (const char *)name.bytes, diags, &upgrade, &approval))
-        goto done;
     struct mo_listener_config config = {.port = cli->port};
     enum mo_listener_status opened = mo_listener_open(&config, (const char *)name.bytes, &listener);
     if (opened != MO_LISTENER_OK) {
         refuse_listener(diags, opened, errno, (const char *)name.bytes, cli->port);
         goto done;
+    }
+    if (cli->admin_socket != NULL) {
+        enum mo_listener_status admin_opened =
+            mo_listener_open_unix(cli->admin_socket, &admin_listener);
+        if (admin_opened != MO_LISTENER_OK) {
+            refuse_admin_listener(diags, admin_opened, errno, cli->admin_socket);
+            goto done;
+        }
     }
     char path[MO_CLI_ARGUMENT_SIZE + sizeof "/" MO_DATA_FILE];
     int length = snprintf(path, sizeof path, "%s/" MO_DATA_FILE, cli->data);
@@ -284,18 +252,13 @@ int mo_serve_image(const struct mo_cli *cli, const struct mo_image *image, uint3
     enum mo_upgrade_children children = mo_upgrade_children(cli->unconfined);
     enum mo_protocol_server_status built = mo_protocol_server_new(
         image, service, store, listener, authorities, authority_count, &events, &server);
-    if (built == MO_PROTOCOL_SERVER_OK)
-        built = mo_protocol_server_upgrades(server, cli->upgrade_token == NULL ? NULL : &upgrade,
-                                            cli->approval_token == NULL ? NULL : &approval,
-                                            &compiler, children);
-    mo_host_wipe(&upgrade, sizeof upgrade);
-    mo_host_wipe(&approval, sizeof approval);
+    if (built == MO_PROTOCOL_SERVER_OK && admin_listener != NULL)
+        built = mo_protocol_server_admin(server, admin_listener, &compiler, children);
     if (built != MO_PROTOCOL_SERVER_OK) {
         refuse(diags, "mo serve could not start the service", NULL, server_refusal(built, &log));
         goto done;
     }
-    if ((cli->upgrade_token != NULL || cli->approval_token != NULL) &&
-        children != MO_CHILDREN_CONFINED)
+    if (admin_listener != NULL && children != MO_CHILDREN_CONFINED)
         log_line(errors, "upgrades",
                  children == MO_CHILDREN_REFUSED
                      ? "refused, because this host cannot confine the compile children; "
@@ -311,6 +274,7 @@ done:
     mo_protocol_server_free(server);
     if (held_store == NULL)
         mo_store_close(store);
+    mo_listener_close(admin_listener);
     mo_listener_close(listener);
     mo_buffer_free(&name);
     return status;

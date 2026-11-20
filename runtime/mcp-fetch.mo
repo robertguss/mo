@@ -1,5 +1,5 @@
 module McpFetch
-expose read, upgrade
+expose read, upgrade, overview_source
 use Json
 use HttpServer
 
@@ -146,11 +146,8 @@ fn read(wire: Text) : List(Text)
   ]
 end
 
-## A closed upgrade-tool result: the error flag, the text rendering, the structured report, the
-## slot an open names, the next page offset, the review id of a held push, and a held upgrade's
-## base and candidate digests, migration, approval version, intent difference, whether it is
-## clipped, and a source page's total and bytes ("" where absent). Empty refuses the reply as
-## malformed.
+## A closed upgrade-tool result: the error flag, the text rendering, the structured report and
+## the slot an open names ("" where absent). Empty refuses the reply as malformed.
 fn upgrade(wire: Text) : List(Text)
   fields = case envelope(wire)
     Some(value): value
@@ -189,47 +186,50 @@ fn upgrade(wire: Text) : List(Text)
     Some(_) | None: return []
   end
   return [] if rendered == "!"
-  [
-    if failed: "true" else: "false",
-    rendered,
-    structured.to_text,
-    present(structured, "slot"),
-    next_offset(structured),
-    present(structured, "review"),
-    present(structured, "base_source"),
-    present(structured, "candidate_source"),
-    present(structured, "migration"),
-    present(structured, "approval_version"),
-    present(structured, "difference"),
-    if clipped(structured): "true" else: "false",
-    present(structured, "total"),
-    present(structured, "bytes")
-  ]
+  [if failed: "true" else: "false", rendered, structured.to_text, present(structured, "slot")]
+end
+
+## Extracts program_source from an mo-overview reply: 64-hex text, "none" when null, or "" on
+## malformed/error replies ("rate_limited" when rate limited).
+fn overview_source(wire: Text) : Text
+  fields = case envelope(wire)
+    Some(value): value
+    None: return ""
+  end
+  if fields.get("isError") == Some(Json.Boolean(true))
+    case fields.get("structuredContent")
+      Some(Json.Object(content)):
+        case content.get("error")
+          Some(Json.Object(error)):
+            if error.get("kind") == Some(Json.String("runtime")) and
+              error.get("code") == Some(Json.String("rate_limited")) and
+              error.get("effect") == Some(Json.String("none"))
+              return "rate_limited"
+            end
+          Some(_) | None: Unit
+        end
+      Some(_) | None: Unit
+    end
+    return ""
+  end
+  return "" if fields.get("isError") != Some(Json.Boolean(false))
+  structured = fields.get("structuredContent") or Json.Null
+  value = case structured
+    Json.Object(entries): entries.get("value") or Json.Null
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return ""
+  end
+  case value
+    Json.Object(entries):
+      case entries.get("program_source")
+        Some(Json.String(s)): s
+        Some(Json.Null): "none"
+        Some(_) | None: ""
+      end
+    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): ""
+  end
 end
 
 fn present(structured: Json.Json, key: Text) : Text
   value = text(structured, key)
   if value == "!": "" else: value
-end
-
-fn clipped(structured: Json.Json) : Bool
-  case structured
-    Json.Object(fields): fields.get("clipped") == Some(Json.Boolean(true))
-    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): false
-  end
-end
-
-fn next_offset(structured: Json.Json) : Text
-  page = case structured
-    Json.Object(fields): fields.get("next") or Json.Null
-    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): Json.Null
-  end
-  case page
-    Json.Object(fields):
-      case fields.get("offset")
-        Some(Json.Number(n)): Json.Number(n).to_text
-        Some(_) | None: ""
-      end
-    Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): ""
-  end
 end

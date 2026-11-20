@@ -96,7 +96,7 @@ static bool invoke(struct mo_protocol_server *s, struct protocol_connection *c,
                    const struct mo_cell *args, struct mo_cell *out) {
     const struct mo_bytecode_function *fn = mo_protocol_function(s, function);
     struct mo_heap *heap = mo_process_heap(process);
-    struct mo_cell owned[5];
+    struct mo_cell owned[6];
     MO_ASSERT(fn->parameter_count <= sizeof owned / sizeof *owned);
     uint64_t budget = c == NULL ? UINT64_MAX : c->work_left;
     if (c != NULL && !c->authenticated && c->preauth_left < budget)
@@ -160,7 +160,7 @@ void mo_protocol_observe(struct mo_protocol_server *s, struct protocol_connectio
             s->metrics.preauth_memory = memory;
     }
     size_t concurrent = 0;
-    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++) {
+    for (size_t i = 0; i < MO_PROTOCOL_TOTAL_CONNECTIONS; i++) {
         const struct protocol_connection *other = &s->connections[i];
         if (other->phase != PS_EMPTY) {
             size_t peak = sizeof *other + other->fallback_capacity;
@@ -193,10 +193,11 @@ void mo_protocol_close(struct mo_protocol_server *s, struct protocol_connection 
         s->sessions[c->session - 1].stream = SIZE_MAX;
     if (c->retained)
         mo_value_drop(s->service_heap, c->reply.type, c->reply.value);
+    struct mo_listener *listener = mo_protocol_connection_listener(s, c);
     union mo_listener_request request = {.connection = c->key};
     union mo_listener_result result;
     enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_CLOSE, &request, &result);
+        mo_listener_call(listener, MO_LISTENER_CLOSE, &request, &result);
     MO_ASSERT(status == MO_LISTENER_OK || status == MO_LISTENER_STALE);
     mo_protocol_dispose(s, c);
     uint8_t *fallback = c->fallback;
@@ -354,7 +355,7 @@ static bool templates(struct mo_protocol_server *s) {
         if (s->fallback_headers[size].size > max_header)
             max_header = s->fallback_headers[size].size;
     }
-    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++) {
+    for (size_t i = 0; i < MO_PROTOCOL_TOTAL_CONNECTIONS; i++) {
         struct protocol_connection *c = &s->connections[i];
         c->fallback_capacity = s->fallback_body_max + max_header;
         c->fallback = mo_scratch_resize(&s->catalog_scratch, NULL, 0, c->fallback_capacity);
@@ -389,11 +390,13 @@ static bool templates(struct mo_protocol_server *s) {
     return true;
 }
 
-size_t mo_protocol_session_find(struct mo_protocol_server *s, const uint8_t *id, size_t length) {
+size_t mo_protocol_session_find(struct mo_protocol_server *s, bool admin, const uint8_t *id,
+                                size_t length) {
     if (length != MO_LIMIT_MCP_SESSION_ID_BYTES)
         return SIZE_MAX;
     for (size_t i = 0; i < MO_LIMIT_MCP_SESSIONS; i++)
-        if (s->sessions[i].live && memcmp(s->sessions[i].id, id, length) == 0) {
+        if (s->sessions[i].live && s->sessions[i].admin == admin &&
+            memcmp(s->sessions[i].id, id, length) == 0) {
             s->sessions[i].used = ++s->sequence_sessions;
             return i;
         }
@@ -406,7 +409,7 @@ static void stream_close(struct mo_protocol_server *s, size_t session) {
         mo_protocol_close(s, &s->connections[slot]);
 }
 
-bool mo_protocol_session_open(struct mo_protocol_server *s, size_t *out) {
+bool mo_protocol_session_open(struct mo_protocol_server *s, bool admin, size_t *out) {
     size_t chosen = 0;
     for (size_t i = 1; i < MO_LIMIT_MCP_SESSIONS; i++)
         if (s->sessions[chosen].live &&
@@ -425,6 +428,7 @@ bool mo_protocol_session_open(struct mo_protocol_server *s, size_t *out) {
     }
     mo_host_wipe(random, sizeof random);
     session->live = true;
+    session->admin = admin;
     session->used = ++s->sequence_sessions;
     session->stream = SIZE_MAX;
     *out = chosen;
@@ -434,7 +438,9 @@ bool mo_protocol_session_open(struct mo_protocol_server *s, size_t *out) {
 void mo_protocol_stream_open(struct mo_protocol_server *s, struct protocol_connection *c,
                              size_t session) {
     size_t streams = 0;
-    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
+    size_t first = c->admin ? MO_LIMIT_MCP_CONNECTIONS : 0;
+    size_t last = c->admin ? MO_PROTOCOL_TOTAL_CONNECTIONS : MO_LIMIT_MCP_CONNECTIONS;
+    for (size_t i = first; i < last; i++)
         streams += s->connections[i].phase == PS_STREAM;
     /* One stream per session: a reconnect replaces it, so no message reaches two streams. */
     if (s->sessions[session].stream != SIZE_MAX) {
@@ -473,6 +479,35 @@ void mo_protocol_list_changed(struct mo_protocol_server *s) {
     }
 }
 
+static bool build_authority_list(struct mo_protocol_server *s, struct mo_heap *heap,
+                                 const char *const *authorities, size_t authority_count,
+                                 enum mo_protocol_server_status *status, struct mo_cell *out) {
+    uint32_t list_type = mo_protocol_function(s, PF_AUTHORITY)->parameters[0].type;
+    if (!mo_value_list(heap, list_type, NULL, 0, out))
+        return false;
+    for (size_t i = 0; i < authority_count; i++) {
+        struct mo_cell text;
+        if (authorities[i] == NULL) {
+            *status = MO_PROTOCOL_SERVER_CONFIG;
+            return false;
+        }
+        if (!mo_value_text(heap, authorities[i], strlen(authorities[i]), &text))
+            return false;
+        bool ok = mo_list_append(heap, list_type, out, text);
+        mo_value_drop(heap, mo_image_types(s->protocol)->items[list_type].parameters[0], text);
+        if (!ok)
+            return false;
+    }
+    struct mo_cell checked;
+    if (!mo_protocol_invoke(s, NULL, PF_AUTHORITY, out, &checked))
+        return false;
+    if (!mo_cell_get_bool(checked)) {
+        *status = MO_PROTOCOL_SERVER_CONFIG;
+        return false;
+    }
+    return mo_value_make_immortal(heap, list_type, *out);
+}
+
 enum mo_protocol_server_status
 mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_store *store,
                        struct mo_listener *listener, const char *const *authorities,
@@ -490,6 +525,7 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
         mo_arena_free(&arena);
         return MO_PROTOCOL_SERVER_MEMORY;
     }
+    uint64_t burst = MO_LIMIT_MCP_BURST * UINT64_C(1000000);
     *s = (struct mo_protocol_server){.arena = arena,
                                      .image = image,
                                      .listener = listener,
@@ -497,7 +533,7 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
                                          events == NULL ? (struct mo_protocol_events){0} : *events,
                                      .descriptor = &mo_image_bytecode(image)->services[index],
                                      .service_index = index,
-                                     .rate_credit = MO_LIMIT_MCP_BURST * UINT64_C(1000000)};
+                                     .rate_credit = {burst, burst}};
     enum mo_protocol_server_status status = MO_PROTOCOL_SERVER_PROTOCOL;
     s->protocol = mo_protocol_build();
     if (s->protocol == NULL)
@@ -525,32 +561,13 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
     mo_process_confidential(s->catalog_process);
     struct mo_heap *heap = mo_process_heap(s->catalog_process);
     mo_scratch_init(&s->catalog_scratch, heap);
-    uint32_t list_type = mo_protocol_function(s, PF_AUTHORITY)->parameters[0].type;
-    if (!mo_value_list(heap, list_type, NULL, 0, &s->authorities))
-        goto fail;
-    for (size_t i = 0; i < authority_count; i++) {
-        struct mo_cell text;
-        if (authorities[i] == NULL) {
-            status = MO_PROTOCOL_SERVER_CONFIG;
-            goto fail;
-        }
-        if (!mo_value_text(heap, authorities[i], strlen(authorities[i]), &text))
-            goto fail;
-        bool ok = mo_list_append(heap, list_type, &s->authorities, text);
-        mo_value_drop(heap, mo_image_types(s->protocol)->items[list_type].parameters[0], text);
-        if (!ok)
-            goto fail;
-    }
-    struct mo_cell checked;
-    if (!mo_protocol_invoke(s, NULL, PF_AUTHORITY, &s->authorities, &checked))
-        goto fail;
-    if (!mo_cell_get_bool(checked)) {
-        status = MO_PROTOCOL_SERVER_CONFIG;
-        goto fail;
-    }
-    if (!mo_value_make_immortal(heap, list_type, s->authorities) ||
+    static const char *const admin_hosts[] = {"localhost", "127.0.0.1", "[::1]", "localhost:0",
+                                              "127.0.0.1:0"};
+    if (!build_authority_list(s, heap, authorities, authority_count, &status, &s->authorities) ||
+        !build_authority_list(s, heap, admin_hosts, sizeof admin_hosts / sizeof *admin_hosts,
+                              &status, &s->admin_authorities) ||
         !mo_protocol_catalog(s, image, index, &s->service_catalog, &s->cached_descriptor,
-                             &s->cached_catalog) ||
+                             &s->cached_catalog, &s->cached_admin_catalog) ||
         !templates(s))
         goto fail;
     s->metrics.catalog_memory = s->arena.used + mo_process_memory_peak(s->catalog_process) +
@@ -564,7 +581,7 @@ mo_protocol_server_new(const struct mo_image *image, uint32_t index, struct mo_s
     s->service_heap = mo_service_heap(s->service);
     s->store = store;
     s->upgrade.waiting = SIZE_MAX;
-    s->rate_at = s->now.monotonic_us;
+    s->rate_at[0] = s->rate_at[1] = s->now.monotonic_us;
     s->started_at = s->now.monotonic_us;
     *out = s;
     return MO_PROTOCOL_SERVER_OK;
@@ -576,7 +593,7 @@ fail:
 void mo_protocol_server_free(struct mo_protocol_server *s) {
     if (s == NULL)
         return;
-    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
+    for (size_t i = 0; i < MO_PROTOCOL_TOTAL_CONNECTIONS; i++)
         mo_protocol_close(s, &s->connections[i]);
     mo_export_release(&s->state_export);
     mo_export_release(&s->failure_export);
@@ -592,17 +609,19 @@ void mo_protocol_server_free(struct mo_protocol_server *s) {
         mo_scratch_free(&s->catalog_scratch);
         mo_process_free(s->catalog_process);
     }
-    mo_image_free(s->protocol);
+    if (s->protocol != NULL)
+        mo_image_free(s->protocol);
     struct mo_arena arena = s->arena;
     mo_host_wipe(s, sizeof *s);
     mo_arena_free(&arena);
 }
 
 static void stream_ready(struct mo_protocol_server *s, struct protocol_connection *c) {
+    struct mo_listener *listener = mo_protocol_connection_listener(s, c);
     union mo_listener_request request = {.write = {c->key, c->stream, c->stream_size}};
     union mo_listener_result result;
     enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_WRITE, &request, &result);
+        mo_listener_call(listener, MO_LISTENER_WRITE, &request, &result);
     if (status == MO_LISTENER_AGAIN)
         return;
     if (status != MO_LISTENER_OK) {
@@ -617,10 +636,11 @@ static void stream_ready(struct mo_protocol_server *s, struct protocol_connectio
 
 /* A stream client sends nothing; its bytes are discarded and its end closes the stream. */
 static void stream_read(struct mo_protocol_server *s, struct protocol_connection *c) {
+    struct mo_listener *listener = mo_protocol_connection_listener(s, c);
     union mo_listener_request request = {.read = {c->key, c->input, sizeof c->input}};
     union mo_listener_result result;
     enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_READ, &request, &result);
+        mo_listener_call(listener, MO_LISTENER_READ, &request, &result);
     if (status == MO_LISTENER_AGAIN)
         return;
     mo_host_wipe(c->input, sizeof c->input);
@@ -630,11 +650,12 @@ static void stream_read(struct mo_protocol_server *s, struct protocol_connection
 }
 
 static void write_ready(struct mo_protocol_server *s, struct protocol_connection *c) {
+    struct mo_listener *listener = mo_protocol_connection_listener(s, c);
     union mo_listener_request request = {
         .write = {c->key, c->output.bytes + c->write_offset, c->output.size - c->write_offset}};
     union mo_listener_result result;
     enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_WRITE, &request, &result);
+        mo_listener_call(listener, MO_LISTENER_WRITE, &request, &result);
     if (status == MO_LISTENER_AGAIN)
         return;
     if (status != MO_LISTENER_OK) {
@@ -651,8 +672,7 @@ static void write_ready(struct mo_protocol_server *s, struct protocol_connection
         return;
     }
     request.connection = c->key;
-    if (mo_listener_call(s->listener, MO_LISTENER_HALF_CLOSE, &request, &result) !=
-        MO_LISTENER_OK) {
+    if (mo_listener_call(listener, MO_LISTENER_HALF_CLOSE, &request, &result) != MO_LISTENER_OK) {
         mo_protocol_close(s, c);
         return;
     }
@@ -664,13 +684,14 @@ static void write_ready(struct mo_protocol_server *s, struct protocol_connection
 }
 
 static void drain_ready(struct mo_protocol_server *s, struct protocol_connection *c) {
+    struct mo_listener *listener = mo_protocol_connection_listener(s, c);
     size_t capacity = MO_LIMIT_MCP_DRAIN_BYTES - c->drained;
     if (capacity > sizeof c->input)
         capacity = sizeof c->input;
     union mo_listener_request request = {.read = {c->key, c->input, capacity}};
     union mo_listener_result result;
     enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_READ, &request, &result);
+        mo_listener_call(listener, MO_LISTENER_READ, &request, &result);
     if (status == MO_LISTENER_AGAIN)
         return;
     c->drained += result.transferred;
@@ -679,34 +700,11 @@ static void drain_ready(struct mo_protocol_server *s, struct protocol_connection
         mo_protocol_close(s, c);
 }
 
-enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server *s,
-                                                       uint64_t until_us) {
-    MO_ASSERT(s != NULL);
-    (void)clock_now(s);
-    bool expired = mo_export_expire(&s->state_export, s->now.monotonic_us);
-    bool failure_expired = mo_export_expire(&s->failure_export, s->now.monotonic_us);
-    (void)failure_expired;
-    (void)expired;
-    if (s->io_failed)
-        return MO_PROTOCOL_SERVER_IO;
-    union mo_listener_request request = {.wait = {.until_us = until_us, .accept = !s->closing}};
-    if (s->state_export.bytes != NULL) {
-        uint64_t expires = mo_protocol_deadline(s->state_export.touched, MO_LIMIT_EXPORT_IDLE_US);
-        if (expires < request.wait.until_us)
-            request.wait.until_us = expires;
-    }
-    if (s->failure_export.bytes != NULL) {
-        uint64_t expires = mo_protocol_deadline(s->failure_export.touched, MO_LIMIT_EXPORT_IDLE_US);
-        if (expires < request.wait.until_us)
-            request.wait.until_us = expires;
-    }
-    size_t slots[MO_LIMIT_MCP_CONNECTIONS];
-    uint64_t next_service;
-    if (mo_service_next_deadline(s->service, &next_service) && next_service < request.wait.until_us)
-        request.wait.until_us = next_service;
-    request.wait.until_us = mo_protocol_upgrade_wake(s, request.wait.until_us);
+static void collect_interests(struct mo_protocol_server *s, size_t base, size_t start,
+                              struct mo_listener_wait *wait, size_t slots[MO_LIMIT_MCP_CONNECTIONS],
+                              uint64_t *until) {
     for (size_t n = 0; n < MO_LIMIT_MCP_CONNECTIONS; n++) {
-        size_t slot = (s->next_slot + n) % MO_LIMIT_MCP_CONNECTIONS;
+        size_t slot = base + (start + n) % MO_LIMIT_MCP_CONNECTIONS;
         struct protocol_connection *c = &s->connections[slot];
         if (c->phase == PS_EMPTY)
             continue;
@@ -716,29 +714,25 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
             mo_protocol_close(s, c);
             continue;
         }
-        if (c->deadline < request.wait.until_us && !waiting)
-            request.wait.until_us = c->deadline;
+        if (c->deadline < *until && !waiting)
+            *until = c->deadline;
         if (waiting)
             continue;
         unsigned events = c->phase == PS_WRITE || c->phase == PS_CONTINUE ? MO_LISTENER_WRITABLE
                                                                           : MO_LISTENER_READABLE;
         if (c->phase == PS_STREAM && c->stream_size != 0)
             events |= MO_LISTENER_WRITABLE;
-        slots[request.wait.count] = slot;
-        request.wait.interests[request.wait.count++] =
-            (struct mo_listener_interest){c->key, events};
+        slots[wait->count] = slot;
+        wait->interests[wait->count++] = (struct mo_listener_interest){c->key, events};
     }
-    union mo_listener_result result;
-    enum mo_listener_status status =
-        mo_listener_call(s->listener, MO_LISTENER_WAIT, &request, &result);
-    if (status == MO_LISTENER_AGAIN)
-        return MO_PROTOCOL_SERVER_OK;
-    if (status != MO_LISTENER_OK)
-        return MO_PROTOCOL_SERVER_IO;
-    s->now = result.wait.now;
-    for (size_t i = 0; i < request.wait.count; i++) {
+}
+
+static void dispatch_ready(struct mo_protocol_server *s, const struct mo_listener_wait *wait,
+                           const struct mo_listener_ready *ready,
+                           const size_t slots[MO_LIMIT_MCP_CONNECTIONS]) {
+    for (size_t i = 0; i < wait->count; i++) {
         struct protocol_connection *c = &s->connections[slots[i]];
-        unsigned events = result.wait.events[i];
+        unsigned events = ready->events[i];
         if (c->phase == PS_EMPTY)
             continue;
         if (s->now.monotonic_us >= c->deadline) {
@@ -761,6 +755,83 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
                 mo_protocol_read(s, c);
         }
     }
+}
+
+static bool accept_on(struct mo_protocol_server *s, struct mo_listener *listener, bool admin) {
+    union mo_listener_result result;
+    enum mo_listener_status status = mo_listener_call(listener, MO_LISTENER_ACCEPT, NULL, &result);
+    if (status == MO_LISTENER_OK) {
+        size_t base = admin ? MO_LIMIT_MCP_CONNECTIONS : 0;
+        struct protocol_connection *c = &s->connections[base + result.accepted.slot];
+        MO_ASSERT(c->phase == PS_EMPTY);
+        c->key = result.accepted;
+        c->admin = admin;
+        c->phase = PS_HEADERS;
+        c->deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_HEADER_US);
+        c->work_left = MO_LIMIT_MCP_REQUEST_WORK;
+        c->preauth_left = MO_LIMIT_MCP_HEADER_WORK;
+        if (!mo_protocol_request_process(s, c))
+            mo_protocol_close(s, c);
+        else {
+            struct mo_cell fields[] = {mo_cell_int(0), mo_cell_int(0), mo_cell_bool(false)};
+            uint32_t scan_type = mo_protocol_function(s, PF_SCAN)->parameters[1].type;
+            if (!mo_value_case(mo_process_heap(c->process), scan_type, 0, fields, 3, &c->scan))
+                mo_protocol_close(s, c);
+        }
+        return true;
+    }
+    return status == MO_LISTENER_AGAIN || status == MO_LISTENER_FULL;
+}
+
+enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server *s,
+                                                       uint64_t until_us) {
+    MO_ASSERT(s != NULL);
+    (void)clock_now(s);
+    bool expired = mo_export_expire(&s->state_export, s->now.monotonic_us);
+    bool failure_expired = mo_export_expire(&s->failure_export, s->now.monotonic_us);
+    (void)failure_expired;
+    (void)expired;
+    if (s->io_failed)
+        return MO_PROTOCOL_SERVER_IO;
+    uint64_t wake = until_us;
+    if (s->state_export.bytes != NULL) {
+        uint64_t expires = mo_protocol_deadline(s->state_export.touched, MO_LIMIT_EXPORT_IDLE_US);
+        if (expires < wake)
+            wake = expires;
+    }
+    if (s->failure_export.bytes != NULL) {
+        uint64_t expires = mo_protocol_deadline(s->failure_export.touched, MO_LIMIT_EXPORT_IDLE_US);
+        if (expires < wake)
+            wake = expires;
+    }
+    uint64_t next_service;
+    if (mo_service_next_deadline(s->service, &next_service) && next_service < wake)
+        wake = next_service;
+    wake = mo_protocol_upgrade_wake(s, wake);
+    union mo_listener_request request = {.wait = {.accept = !s->closing}};
+    struct mo_listener_wait admin_wait = {.accept = !s->closing && s->admin_listener != NULL};
+    size_t slots[MO_LIMIT_MCP_CONNECTIONS], admin_slots[MO_LIMIT_MCP_CONNECTIONS];
+    collect_interests(s, 0, s->next_slot, &request.wait, slots, &wake);
+    if (s->admin_listener != NULL)
+        collect_interests(s, MO_LIMIT_MCP_CONNECTIONS, s->next_admin_slot, &admin_wait, admin_slots,
+                          &wake);
+    request.wait.until_us = wake;
+    admin_wait.until_us = wake;
+    union mo_listener_result result;
+    struct mo_listener_ready admin_ready = {0};
+    enum mo_listener_status status =
+        s->admin_listener == NULL
+            ? mo_listener_call(s->listener, MO_LISTENER_WAIT, &request, &result)
+            : mo_listener_wait_pair(s->listener, &request.wait, &result.wait, s->admin_listener,
+                                    &admin_wait, &admin_ready);
+    if (status == MO_LISTENER_AGAIN)
+        return MO_PROTOCOL_SERVER_OK;
+    if (status != MO_LISTENER_OK)
+        return MO_PROTOCOL_SERVER_IO;
+    s->now = result.wait.now;
+    dispatch_ready(s, &request.wait, &result.wait, slots);
+    if (s->admin_listener != NULL)
+        dispatch_ready(s, &admin_wait, &admin_ready, admin_slots);
     uint64_t before = clock_now(s).elapsed;
     (void)!mo_service_step(s->service);
     uint64_t elapsed = clock_now(s).elapsed - before;
@@ -771,28 +842,12 @@ enum mo_protocol_server_status mo_protocol_server_poll(struct mo_protocol_server
             mo_protocol_complete(s, &s->connections[i]);
     /* No connection holds a service cell now: every reply above was encoded. */
     mo_protocol_upgrade_poll(s);
-    if (result.wait.accept) {
-        status = mo_listener_call(s->listener, MO_LISTENER_ACCEPT, NULL, &result);
-        if (status == MO_LISTENER_OK) {
-            struct protocol_connection *c = &s->connections[result.accepted.slot];
-            MO_ASSERT(c->phase == PS_EMPTY);
-            c->key = result.accepted;
-            c->phase = PS_HEADERS;
-            c->deadline = mo_protocol_deadline(s->now.monotonic_us, MO_LIMIT_MCP_HEADER_US);
-            c->work_left = MO_LIMIT_MCP_REQUEST_WORK;
-            c->preauth_left = MO_LIMIT_MCP_HEADER_WORK;
-            if (!mo_protocol_request_process(s, c))
-                mo_protocol_close(s, c);
-            else {
-                struct mo_cell fields[] = {mo_cell_int(0), mo_cell_int(0), mo_cell_bool(false)};
-                uint32_t scan_type = mo_protocol_function(s, PF_SCAN)->parameters[1].type;
-                if (!mo_value_case(mo_process_heap(c->process), scan_type, 0, fields, 3, &c->scan))
-                    mo_protocol_close(s, c);
-            }
-        } else if (status != MO_LISTENER_AGAIN && status != MO_LISTENER_FULL)
-            return MO_PROTOCOL_SERVER_IO;
-    }
+    if (result.wait.accept && !accept_on(s, s->listener, false))
+        return MO_PROTOCOL_SERVER_IO;
+    if (s->admin_listener != NULL && admin_ready.accept && !accept_on(s, s->admin_listener, true))
+        return MO_PROTOCOL_SERVER_IO;
     s->next_slot = (s->next_slot + 1) % MO_LIMIT_MCP_CONNECTIONS;
+    s->next_admin_slot = (s->next_admin_slot + 1) % MO_LIMIT_MCP_CONNECTIONS;
     return s->io_failed ? MO_PROTOCOL_SERVER_IO : MO_PROTOCOL_SERVER_OK;
 }
 
@@ -800,11 +855,13 @@ void mo_protocol_server_stop_accepting(struct mo_protocol_server *s) {
     MO_ASSERT(s != NULL);
     s->closing = true;
     mo_listener_stop_accepting(s->listener);
+    if (s->admin_listener != NULL)
+        mo_listener_stop_accepting(s->admin_listener);
 }
 
 bool mo_protocol_server_connected(const struct mo_protocol_server *s) {
     MO_ASSERT(s != NULL);
-    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
+    for (size_t i = 0; i < MO_PROTOCOL_TOTAL_CONNECTIONS; i++)
         if (s->connections[i].phase != PS_EMPTY)
             return true;
     return false;

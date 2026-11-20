@@ -151,7 +151,42 @@ def main():
         name = "a" * 254
         refused(f"http://{name}/ok", f'Unreachable(UnknownHost(host: "{name}"))')
 
-    print("network: 7 checks against a live peer pass, each refusal beside a success")
+        narrowed_program = pathlib.Path(folder) / "narrowed.mo"
+        narrowed_program.write_text(
+            f"""module Narrowed
+use Http
+
+fn main(args: Args, console: Console, network: Network) : Result(Unit, Http.HttpError)
+  url = args.list.first or ""
+  allowed = network.allow_hosts(["127.0.0.1:{peer.port}"])
+  response = try Http.request("PUT", url).text("ok").within({TIMEOUT}.seconds).send(allowed)
+  console.print("#{{response.status}}")
+  Ok(Unit)
+end
+"""
+        )
+        ok_run = subprocess.run(
+            [str(binary), "run", str(narrowed_program), here + "/ok"],
+            cwd=root,
+            capture_output=True,
+            timeout=WAIT,
+        )
+        assert ok_run.returncode == 0 and ok_run.stdout == b"200\n", ok_run
+        blocked = Peer()
+        bad_run = subprocess.run(
+            [str(binary), "run", str(narrowed_program), f"http://127.0.0.1:{blocked.port}/ok"],
+            cwd=root,
+            capture_output=True,
+            timeout=WAIT,
+        )
+        assert (
+            bad_run.returncode == 1
+            and bad_run.stderr
+            == f'Unreachable(Refused(host: "127.0.0.1", port: {blocked.port}))\n'.encode()
+            and blocked.requests == []
+        ), (bad_run, blocked.requests)
+
+    print("network: 8 checks against a live peer pass, each refusal beside a success")
 
 
 if __name__ == "__main__":

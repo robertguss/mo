@@ -10,6 +10,8 @@
 #include <pthread.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -28,7 +30,8 @@ struct mo_listener {
     uint64_t cookie, generation;
     int fd;
     uint16_t port;
-    bool fake;
+    bool fake, no_auth;
+    char unix_path[MO_LIMIT_HOST_PATH_SIZE];
     struct mo_listener_time time;
     uint64_t last_wait_until_us;
     struct listener_slot slots[MO_LIMIT_MCP_CONNECTIONS];
@@ -71,28 +74,25 @@ static enum mo_listener_status io_status(void) {
     return MO_LISTENER_IO;
 }
 
-static enum mo_listener_status create_listener(const char *environment, bool fake,
-                                               struct mo_listener **out) {
-    struct mo_bearer bearer = {0};
-    if (environment == NULL || !mo_bearer_read(&bearer, environment)) {
-        mo_host_wipe(&bearer, sizeof bearer);
-        return MO_LISTENER_CREDENTIAL;
-    }
-    if (out == NULL) {
-        mo_host_wipe(&bearer, sizeof bearer);
+static enum mo_listener_status allocate_listener(const struct mo_bearer *bearer, bool fake,
+                                                 bool no_auth, struct mo_listener **out) {
+    if (out == NULL)
         return MO_LISTENER_CONFIG;
-    }
     struct mo_arena arena;
     mo_arena_init_confidential(&arena, sizeof(struct mo_listener) + MO_ARENA_CHUNK_HEADER);
     struct mo_listener *listener =
         mo_arena_allocate(&arena, sizeof *listener, _Alignof(struct mo_listener));
     if (listener == NULL) {
-        mo_host_wipe(&bearer, sizeof bearer);
         mo_arena_free(&arena);
         return MO_LISTENER_MEMORY;
     }
-    *listener = (struct mo_listener){.arena = arena, .bearer = bearer, .fd = -1, .fake = fake};
-    mo_host_wipe(&bearer, sizeof bearer);
+    *listener = (struct mo_listener){
+        .arena = arena,
+        .bearer = bearer == NULL ? (struct mo_bearer){.length = 0} : *bearer,
+        .fd = -1,
+        .fake = fake,
+        .no_auth = no_auth,
+    };
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
         listener->slots[i].fd = -1;
     MO_ASSERT(pthread_mutex_lock(&cookie_mutex) == 0);
@@ -107,8 +107,24 @@ static enum mo_listener_status create_listener(const char *environment, bool fak
     return MO_LISTENER_OK;
 }
 
+static enum mo_listener_status create_listener(const char *environment, bool fake,
+                                               struct mo_listener **out) {
+    struct mo_bearer bearer = {0};
+    if (environment == NULL || !mo_bearer_read(&bearer, environment)) {
+        mo_host_wipe(&bearer, sizeof bearer);
+        return MO_LISTENER_CREDENTIAL;
+    }
+    enum mo_listener_status status = allocate_listener(&bearer, fake, false, out);
+    mo_host_wipe(&bearer, sizeof bearer);
+    return status;
+}
+
 enum mo_listener_status mo_listener_fake(const char *environment, struct mo_listener **out) {
     return create_listener(environment, true, out);
+}
+
+enum mo_listener_status mo_listener_fake_admin(struct mo_listener **out) {
+    return allocate_listener(NULL, true, true, out);
 }
 
 static bool socket_options(int fd) {
@@ -212,6 +228,75 @@ fail:
     return status;
 }
 
+enum mo_listener_status mo_listener_open_unix(const char *path, struct mo_listener **out) {
+    if (path == NULL || out == NULL)
+        return MO_LISTENER_CONFIG;
+    struct sockaddr_un addr = {.sun_family = AF_UNIX};
+    size_t length = strnlen(path, sizeof addr.sun_path);
+    if (length == 0 || length >= sizeof addr.sun_path)
+        return MO_LISTENER_CONFIG;
+    memcpy(addr.sun_path, path, length + 1);
+    struct stat existing;
+    if (lstat(path, &existing) == 0) {
+        if (!S_ISSOCK(existing.st_mode)) {
+            errno = EEXIST;
+            return MO_LISTENER_IO;
+        }
+        int dgram_type = SOCK_DGRAM;
+#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+        dgram_type |= SOCK_NONBLOCK | SOCK_CLOEXEC;
+#endif
+        int probe = socket(AF_UNIX, dgram_type, 0);
+        if (probe < 0)
+            return io_status();
+        int connected = connect(probe, (const struct sockaddr *)&addr, (socklen_t)sizeof addr);
+        int probe_err = errno;
+        (void)close(probe);
+        if (connected == 0 || probe_err != ECONNREFUSED) {
+            errno = EADDRINUSE;
+            return MO_LISTENER_IO;
+        }
+        if (unlink(path) != 0 && errno != ENOENT)
+            return io_status();
+    } else if (errno != ENOENT)
+        return io_status();
+    struct mo_listener *listener = NULL;
+    enum mo_listener_status status = allocate_listener(NULL, false, true, &listener);
+    if (status != MO_LISTENER_OK)
+        return status;
+    int type = SOCK_STREAM;
+#if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+    type |= SOCK_NONBLOCK | SOCK_CLOEXEC;
+#endif
+    listener->fd = socket(AF_UNIX, type, 0);
+    if (listener->fd < 0 || !socket_options(listener->fd)) {
+        status = io_status();
+        goto fail;
+    }
+    mode_t mask = umask(S_IRWXG | S_IRWXO);
+    int bound = bind(listener->fd, (const struct sockaddr *)&addr, (socklen_t)sizeof addr);
+    int saved = errno;
+    (void)umask(mask);
+    if (bound != 0) {
+        errno = saved;
+        status = io_status();
+        goto fail;
+    }
+    memcpy(listener->unix_path, path, length + 1);
+    if (chmod(path, S_IRUSR | S_IWUSR) != 0 ||
+        listen(listener->fd, MO_LIMIT_MCP_CONNECTIONS) != 0) {
+        status = io_status();
+        goto fail;
+    }
+    *out = listener;
+    return MO_LISTENER_OK;
+fail:
+    saved = errno;
+    mo_listener_close(listener);
+    errno = saved;
+    return status;
+}
+
 static enum mo_listener_status close_slot(struct listener_slot *slot) {
     int fd = slot->fd;
     if (slot->peer != NULL)
@@ -228,6 +313,8 @@ void mo_listener_close(struct mo_listener *listener) {
         (void)close_slot(&listener->slots[i]);
     if (listener->fd >= 0)
         (void)close(listener->fd);
+    if (listener->unix_path[0] != '\0')
+        (void)unlink(listener->unix_path);
     struct mo_arena arena = listener->arena;
     mo_host_wipe(listener, sizeof *listener);
     mo_arena_free(&arena);
@@ -239,6 +326,10 @@ void mo_listener_stop_accepting(struct mo_listener *listener) {
     if (listener->fd >= 0)
         (void)close(listener->fd);
     listener->fd = -1;
+    if (listener->unix_path[0] != '\0') {
+        (void)unlink(listener->unix_path);
+        listener->unix_path[0] = '\0';
+    }
 }
 
 uint16_t mo_listener_port(const struct mo_listener *listener) {
@@ -545,6 +636,108 @@ static enum mo_listener_status write_bytes(struct mo_listener *listener,
     return MO_LISTENER_OK;
 }
 
+static unsigned ready_events(short revents, unsigned interest) {
+    unsigned out = 0;
+    if ((revents & (POLLIN | POLLHUP)) != 0 && (interest & MO_LISTENER_READABLE) != 0)
+        out |= MO_LISTENER_READABLE;
+    if ((revents & POLLOUT) != 0)
+        out |= MO_LISTENER_WRITABLE;
+    if ((revents & (POLLERR | POLLNVAL)) != 0)
+        out |= MO_LISTENER_ERROR;
+    return out;
+}
+
+enum mo_listener_status mo_listener_wait_pair(struct mo_listener *primary,
+                                              const struct mo_listener_wait *primary_req,
+                                              struct mo_listener_ready *primary_out,
+                                              struct mo_listener *admin,
+                                              const struct mo_listener_wait *admin_req,
+                                              struct mo_listener_ready *admin_out) {
+    if (primary == NULL || primary_req == NULL || primary_out == NULL)
+        return MO_LISTENER_CONFIG;
+    memset(primary_out, 0, sizeof *primary_out);
+    if (admin == NULL)
+        return wait_ready(primary, primary_req, primary_out);
+    if (admin_req == NULL || admin_out == NULL || primary->fake != admin->fake ||
+        primary_req->count > MO_LIMIT_MCP_CONNECTIONS ||
+        admin_req->count > MO_LIMIT_MCP_CONNECTIONS)
+        return MO_LISTENER_CONFIG;
+    memset(admin_out, 0, sizeof *admin_out);
+    if (primary->fake) {
+        admin->time = primary->time;
+        enum mo_listener_status st = wait_ready(primary, primary_req, primary_out);
+        if (st == MO_LISTENER_OK)
+            st = wait_ready(admin, admin_req, admin_out);
+        return st;
+    }
+    struct pollfd descriptors[2 * (MO_LIMIT_MCP_CONNECTIONS + 1)] = {0};
+    bool p_accept =
+        primary_req->accept && primary->fd >= 0 && empty_slot(primary) != MO_LIMIT_MCP_CONNECTIONS;
+    bool a_accept =
+        admin_req->accept && admin->fd >= 0 && empty_slot(admin) != MO_LIMIT_MCP_CONNECTIONS;
+    descriptors[0] = (struct pollfd){.fd = p_accept ? primary->fd : -1, .events = POLLIN};
+    for (size_t i = 0; i < primary_req->count; i++) {
+        const struct mo_listener_interest *interest = &primary_req->interests[i];
+        if ((interest->events & ~(unsigned)(MO_LISTENER_READABLE | MO_LISTENER_WRITABLE)) != 0)
+            return MO_LISTENER_CONFIG;
+        struct listener_slot *slot = lookup(primary, interest->connection);
+        if (slot == NULL)
+            return MO_LISTENER_STALE;
+        for (size_t j = 0; j < i; j++)
+            if (primary_req->interests[j].connection.slot == interest->connection.slot)
+                return MO_LISTENER_CONFIG;
+        descriptors[i + 1].fd = slot->fd;
+        if ((interest->events & MO_LISTENER_READABLE) != 0)
+            descriptors[i + 1].events |= POLLIN;
+        if ((interest->events & MO_LISTENER_WRITABLE) != 0)
+            descriptors[i + 1].events |= POLLOUT;
+    }
+    size_t a_base = primary_req->count + 1;
+    descriptors[a_base] = (struct pollfd){.fd = a_accept ? admin->fd : -1, .events = POLLIN};
+    for (size_t i = 0; i < admin_req->count; i++) {
+        const struct mo_listener_interest *interest = &admin_req->interests[i];
+        if ((interest->events & ~(unsigned)(MO_LISTENER_READABLE | MO_LISTENER_WRITABLE)) != 0)
+            return MO_LISTENER_CONFIG;
+        struct listener_slot *slot = lookup(admin, interest->connection);
+        if (slot == NULL)
+            return MO_LISTENER_STALE;
+        for (size_t j = 0; j < i; j++)
+            if (admin_req->interests[j].connection.slot == interest->connection.slot)
+                return MO_LISTENER_CONFIG;
+        descriptors[a_base + 1 + i].fd = slot->fd;
+        if ((interest->events & MO_LISTENER_READABLE) != 0)
+            descriptors[a_base + 1 + i].events |= POLLIN;
+        if ((interest->events & MO_LISTENER_WRITABLE) != 0)
+            descriptors[a_base + 1 + i].events |= POLLOUT;
+    }
+    struct mo_listener_time before;
+    enum mo_listener_status status = sample_time(primary, &before);
+    if (status != MO_LISTENER_OK)
+        return status;
+    uint64_t until =
+        primary_req->until_us < admin_req->until_us ? primary_req->until_us : admin_req->until_us;
+    uint64_t remaining = until > before.monotonic_us ? until - before.monotonic_us : 0;
+    uint64_t milliseconds = remaining / 1000;
+    int timeout = milliseconds > INT_MAX ? INT_MAX : (int)milliseconds;
+    int polled = poll(descriptors, (nfds_t)(a_base + 1 + admin_req->count), timeout);
+    if (polled < 0)
+        return io_status();
+    if ((descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 ||
+        (descriptors[a_base].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
+        return MO_LISTENER_IO;
+    primary_out->accept = (descriptors[0].revents & POLLIN) != 0;
+    for (size_t i = 0; i < primary_req->count; i++)
+        primary_out->events[i] =
+            ready_events(descriptors[i + 1].revents, primary_req->interests[i].events);
+    admin_out->accept = (descriptors[a_base].revents & POLLIN) != 0;
+    for (size_t i = 0; i < admin_req->count; i++)
+        admin_out->events[i] =
+            ready_events(descriptors[a_base + 1 + i].revents, admin_req->interests[i].events);
+    status = sample_time(primary, &primary_out->now);
+    admin_out->now = primary_out->now;
+    return status;
+}
+
 enum mo_listener_status mo_listener_call(struct mo_listener *listener,
                                          enum mo_listener_operation operation,
                                          const union mo_listener_request *request,
@@ -571,6 +764,10 @@ enum mo_listener_status mo_listener_call(struct mo_listener *listener,
         if ((auth->bytes == NULL && auth->size != 0) || auth->start > auth->size ||
             auth->length > auth->size - auth->start)
             return MO_LISTENER_CONFIG;
+        if (listener->no_auth) {
+            out->authenticated = true;
+            return MO_LISTENER_OK;
+        }
         const uint8_t *bytes = auth->bytes == NULL ? NULL : auth->bytes + auth->start;
         out->authenticated = mo_bearer_check(&listener->bearer, bytes, auth->length);
         return MO_LISTENER_OK;

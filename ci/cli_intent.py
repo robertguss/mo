@@ -331,97 +331,92 @@ def strength_checks(binary):
             service["scored"]) == (["killed_by_test"], 1, 1), service
     for module in ("lib/list.mo", "lib/json.mo"):
         library = without_time(run(binary, ["test", "--list", "--json", module], 0))
-        assert all("digest" in r for r in library if r.get("kind") in ("promise", "example")), library
+        assert all("digest" not in r for r in library), library
 
 
-INTENT = "tests/cli/intent"
-CLAMP_PROMISE = ('promise "{}"\n  within(result)\n  allows n: 3, result: 3\n'
-                 '  forbids n: 20, result: 20\nend\n')
-
-
-def intent_records(binary, args, status=0):
-    items = records(run(binary, ["intent", "--json", *args], status), "intent")
-    assert items[-2]["record"] == "intent", items
-    return items[1:-2], items[-2]
-
-
-def intent_command(binary):
-    listed, end = intent_records(binary, [f"{INTENT}/before/main.mo"])
-    assert end == {"record": "intent", "items": 5}, end
-    assert [(r["record"], r["name"], r["kind"], r["owner"], r["text"], r["reads"]) for r in listed] == [
-        ("item", "Main.within.example.1", "example", "Main.within", "within(3)\n", []),
-        ("item", "Main.clamp.promise.1", "promise", "Main.clamp",
-         CLAMP_PROMISE.format("the result stays within the limit"), ["Main.limit", "Main.within"]),
-        ("item", "Main.clamp.example.1", "example", "Main.clamp", "clamp(3) == 3\n", []),
-        ("item", "Main.clamp.example.2", "example", "Main.clamp", "clamp(20) == limit\n",
-         ["Main.limit"]),
-        ("item", "Main.clamp.example.3", "example", "Main.clamp", "clamp(-1) == 0\n", [])], listed
-    tested = without_time(run(binary, ["test", "--list", "--json", f"{INTENT}/before/main.mo"], 0))
-    assert [r["digest"] for r in tested[1:-1]] == [r["digest"] for r in listed], tested
-    changes, end = intent_records(binary, [f"{INTENT}/after/main.mo", "--against",
-                                           f"{INTENT}/before/main.mo"])
-    assert end == {"record": "intent", "items": 5, "unchanged": 2, "edited": 1, "removed": 1,
-                   "added": 1, "moved": 1}, end
-    shown = [(r["change"], r.get("before", {}).get("name"), r.get("after", {}).get("name"))
-             for r in changes]
-    assert shown == [("moved", "Main.within.example.1", "Main.clamp.example.3"),
-                     ("edited", "Main.clamp.promise.1", "Main.clamp.promise.1"),
-                     ("removed", "Main.clamp.example.3", None),
-                     ("added", None, "Main.within.promise.1")], changes
-    moved, edited, removed, added = changes
-    assert added["approved"] is False and "approved" not in edited, added
-    assert [(r["name"], r["before"]) for r in moved["reads"]] == [
-        ("Main.limit", None), ("Main.within", None)], moved
-    assert moved["reads"][0]["after"] == "limit = 10\n", moved
-    assert (edited["before"]["text"], edited["after"]["text"], edited["reads"]) == (
-        CLAMP_PROMISE.format("the result stays within the limit"),
-        CLAMP_PROMISE.format("the result never leaves the limit"), []), edited
-    assert (removed["before"]["text"], "after" in removed) == ("clamp(-1) == 0\n", False), removed
-    assert added["after"]["text"].startswith('promise "zero is always within"\n'), added
-    text = run(binary, ["intent", f"{INTENT}/after/main.mo", "--against",
-                        f"{INTENT}/before/main.mo"], 0).stdout.decode()
-    for line in ("moved Main.within.example.1 to Main.clamp.example.3\n",
-                 "edited Main.clamp.promise.1\n", '    promise "the result stays within the limit"\n',
-                 '    promise "the result never leaves the limit"\n',
-                 "removed Main.clamp.example.3\n", "added, unapproved Main.within.promise.1\n",
-                 "intent: 2 unchanged, 1 edited, 1 removed, 1 added, 1 moved\n"):
-        assert line in text, (line, text)
-    constant, end = intent_records(binary, [f"{INTENT}/limit/main.mo", "--against",
-                                            f"{INTENT}/before/main.mo"])
-    assert (end["unchanged"], end["edited"]) == (3, 2), end
-    assert [(r["change"], r["after"]["name"], r["reads"]) for r in constant] == [
-        (change, name, [{"name": "Main.limit", "before": "limit = 10\n", "after": "limit = 12\n"}])
-        for change, name in (("edited", "Main.clamp.promise.1"),
-                             ("edited", "Main.clamp.example.2"))], constant
-    text = run(binary, ["intent", f"{INTENT}/before/main.mo"], 0).stdout.decode()
-    assert "examples Main.clamp\n" in text and "  reads Main.limit, Main.within\n" in text, text
-    missing = run(binary, ["intent", f"{INTENT}/before/main.mo", "--against",
-                           f"{INTENT}/missing/main.mo"], 1)
-    assert b"the --against program does not check" in missing.stderr, missing
-    assert "  now reads Main.limit\n    limit = 10\n" in run(binary, [
-        "intent", f"{INTENT}/after/main.mo", "--against", f"{INTENT}/before/main.mo"], 0
-    ).stdout.decode()
-    assert "  no longer reads Main.limit\n    limit = 10\n" in run(binary, [
-        "intent", f"{INTENT}/before/main.mo", "--against", f"{INTENT}/after/main.mo"], 0
-    ).stdout.decode()
-    rows, end = intent_records(binary, [f"{INTENT}/rows-before/main.mo"])
-    assert rows[0]["reads"] == ["Main.P", "Main.Q", "Main.score@P", "Main.score@Q"], rows
-    text = run(binary, ["intent", f"{INTENT}/rows-before/main.mo"], 0).stdout.decode()
-    assert text.count("examples Main.double\n") == 1, text
-    assert text.index("double(3) == 6") < text.index("promise Main.double.promise.1"), text
-    changes, end = intent_records(binary, [f"{INTENT}/rows-after/main.mo", "--against",
-                                           f"{INTENT}/rows-before/main.mo"])
-    assert (end["unchanged"], end["edited"]) == (3, 2), end
-    assert [(r["name"], r["before"].split("\n")[0], r["after"].split("\n")[0])
-            for r in changes[0]["reads"]] == [
-        ("Main.score@P", "fn score(p: P) : Int", "fn score(z: P) : Int")], changes[0]
-    text = run(binary, ["intent", f"{INTENT}/rows-after/main.mo", "--against",
-                        f"{INTENT}/rows-before/main.mo"], 0).stdout.decode()
-    assert "edited Main.double.example.1 to Main.double.example.3\n" in text, text
-    service, end = intent_records(binary, ["services/task-queue/main.mo"])
-    promised = [r for r in service if r["kind"] == "service promise"]
-    assert promised and all(r["owner"] == "Main.service" for r in promised), service
-    assert promised[0]["name"] == "Main.service.promise.1", promised
+def diff_command(binary):
+    with tempfile.TemporaryDirectory(prefix="mo-diff-cli-") as directory:
+        folder = pathlib.Path(directory)
+        old_dir = folder / "old"
+        new_dir = folder / "new"
+        old_dir.mkdir()
+        new_dir.mkdir()
+        old = old_dir / "main.mo"
+        new = new_dir / "main.mo"
+        old.write_text(
+            'module Main\n'
+            'expose clamp\n'
+            'limit = 10\n'
+            'fn within?(n: Int) : Bool\n'
+            '  n >= 0 and n <= limit\n'
+            'end\n'
+            'fn clamp(n: Int) : Int\n'
+            '  promise\n'
+            '    within?(result)\n'
+            '  end\n'
+            '  examples\n'
+            '    clamp(3) == 3\n'
+            '    clamp(20) == 10\n'
+            '  end\n'
+            '  if n < 0: 0 else if n > limit: limit else: n\n'
+            'end\n'
+            'fn main(net: Network, files: Files)\n'
+            '  _n = net.allow_hosts(["api.github.com:443"])\n'
+            '  _f = files.within("reports").read_only\n'
+            'end\n'
+        )
+        # Refactoring that deletes private helper `within?` while preserving behavior and authority.
+        new.write_text(
+            'module Main\n'
+            'expose clamp\n'
+            'fn clamp(n: Int) : Int\n'
+            '  return 0 if n < 0\n'
+            '  return 10 if n > 10\n'
+            '  n\n'
+            'end\n'
+            'fn main(net: Network, files: Files)\n'
+            '  _n = net.allow_hosts(["api.github.com:443"])\n'
+            '  _f = files.within("reports").read_only\n'
+            'end\n'
+        )
+        ok_text = run(binary, ["diff", str(old), str(new)], 0).stdout.decode()
+        assert "authority:\n  unchanged" in ok_text and "contracts: 3 passed, 0 failed" in ok_text, ok_text
+        items = records(run(binary, ["diff", "--json", str(old), str(new)], 0), "diff")
+        diff_rec = next(r for r in items if r["record"] == "diff")
+        assert diff_rec["authority"]["capabilities"]["added"] == [], diff_rec
+        assert diff_rec["authority"]["attenuations"]["added"] == [], diff_rec
+        assert diff_rec["contracts"]["passed"] == 3 and diff_rec["contracts"]["failed"] == 0, diff_rec
+        # Authority delta: widening Network.allow_hosts is reported in authority.attenuations.
+        widened = folder / "widened"
+        widened.mkdir()
+        widened_main = widened / "main.mo"
+        widened_main.write_text(new.read_text().replace(
+            '["api.github.com:443"]', '["api.github.com:443", "evil.example:80"]'))
+        bad_auth = records(run(binary, ["diff", "--json", str(old), str(widened_main)], 0), "diff")
+        auth_rec = next(r for r in bad_auth if r["record"] == "diff")["authority"]
+        assert any("evil.example:80" in a for a in auth_rec["attenuations"]["added"]), auth_rec
+        # Behavioral regression: breaking old's promise exits 1.
+        broken = folder / "broken"
+        broken.mkdir()
+        broken_main = broken / "main.mo"
+        broken_main.write_text(new.read_text().replace("return 10 if n > 10", "return 99 if n > 10"))
+        bad_beh = records(run(binary, ["diff", "--json", str(old), str(broken_main)], 1), "diff")
+        contracts_rec = next(r for r in bad_beh if r["record"] == "diff")["contracts"]
+        assert contracts_rec["failed"] >= 1, contracts_rec
+        # Single-argument Git HEAD mode.
+        repo = folder / "repo"
+        repo.mkdir()
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+        tracked = repo / "main.mo"
+        tracked.write_text(old.read_text())
+        subprocess.run(["git", "add", "main.mo"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "initial"], cwd=repo, check=True)
+        tracked.write_text(new.read_text())
+        git_items = records(run(binary, ["diff", "--json", str(tracked)], 0), "diff")
+        assert next(r for r in git_items if r["record"] == "diff")["contracts"]["passed"] == 3, git_items
 
 
 def fix_command(binary):

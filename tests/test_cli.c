@@ -153,67 +153,68 @@ static void refused(int argc, const char *const *argv, const char *expected) {
     } while (0)
 
 static void parse_fetch(void) {
-    const char *args[] = {"mo",         "fetch",       "http://localhost:8080/mcp",
-                          "--export",   "state",       "--out",
-                          "state.moex", "--token-env", "TOKEN"};
+    const char *args[] = {"mo",       "fetch", "--admin-socket", "/run/app.sock",
+                          "--export", "state", "--out",          "state.moex"};
     struct mo_cli cli;
     const char *error;
-    CHECK(mo_cli_parse(9, args, &cli, &error));
+    CHECK(mo_cli_parse(8, args, &cli, &error));
     CHECK(cli.command == MO_COMMAND_FETCH && strcmp(cli.output, "state.moex") == 0);
-    CHECK(strcmp(cli.fetch_url, args[2]) == 0 && strcmp(cli.fetch_token, "TOKEN") == 0);
-    CHECK(!mo_cli_parse(8, args, &cli, &error));
+    CHECK(strcmp(cli.admin_socket, "/run/app.sock") == 0);
+    CHECK(!mo_cli_parse(7, args, &cli, &error));
     CHECK(strcmp(error,
-                 "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
-    CHECK(mo_cli_parse(9, args, &cli, &error) && cli.fetch_failure == 0);
-    const char *failure[] = {"mo",           "fetch",        "http://localhost:8080/mcp",
-                             "--export",     "failure",      "42",
-                             "--out",        "failure.moex", "--token-env",
-                             "FAILURE_TOKEN"};
-    CHECK(mo_cli_parse(10, failure, &cli, &error));
+                 "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE") == 0);
+    CHECK(mo_cli_parse(8, args, &cli, &error) && cli.fetch_failure == 0);
+    const char *reordered[] = {"mo",       "fetch", "--out",          "state.moex",
+                               "--export", "state", "--admin-socket", "/run/app.sock"};
+    CHECK(mo_cli_parse(8, reordered, &cli, &error) &&
+          strcmp(cli.admin_socket, "/run/app.sock") == 0);
+    const char *failure[] = {"mo",      "fetch", "--admin-socket", "/run/app.sock", "--export",
+                             "failure", "42",    "--out",          "failure.moex"};
+    CHECK(mo_cli_parse(9, failure, &cli, &error));
     CHECK(cli.command == MO_COMMAND_FETCH && cli.fetch_failure == 42);
-    CHECK(strcmp(cli.fetch_url, failure[2]) == 0 && strcmp(cli.output, "failure.moex") == 0);
-    CHECK(strcmp(cli.fetch_token, "FAILURE_TOKEN") == 0);
-    failure[5] = "9223372036854775807";
-    CHECK(mo_cli_parse(10, failure, &cli, &error) && cli.fetch_failure == INT64_MAX);
+    CHECK(strcmp(cli.admin_socket, "/run/app.sock") == 0 &&
+          strcmp(cli.output, "failure.moex") == 0);
+    failure[6] = "9223372036854775807";
+    CHECK(mo_cli_parse(9, failure, &cli, &error) && cli.fetch_failure == INT64_MAX);
     const char *refused_ids[] = {
         "", "0", "000", "4x", "-1", "+1", "9223372036854775808", "18446744073709551616"};
     for (size_t i = 0; i < sizeof refused_ids / sizeof *refused_ids; i++) {
-        failure[5] = refused_ids[i];
-        CHECK(!mo_cli_parse(10, failure, &cli, &error));
+        failure[6] = refused_ids[i];
+        CHECK(!mo_cli_parse(9, failure, &cli, &error));
         CHECK(strcmp(error, "failure id must be positive") == 0);
     }
-    failure[5] = "42";
+    failure[6] = "42";
+    CHECK(!mo_cli_parse(8, failure, &cli, &error));
+    CHECK(strcmp(error,
+                 "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE") == 0);
+    failure[5] = "state";
     CHECK(!mo_cli_parse(9, failure, &cli, &error));
     CHECK(strcmp(error,
-                 "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
-    failure[4] = "state";
-    CHECK(!mo_cli_parse(10, failure, &cli, &error));
-    CHECK(strcmp(error,
-                 "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME") == 0);
+                 "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE") == 0);
 }
 
-static void parse_intent(void) {
+static void parse_diff(void) {
     struct mo_cli cli;
     const char *error;
-    const char *happy[] = {"mo", "intent", "new.mo", "--against", "old.mo", "--json"};
-    CHECK(mo_cli_parse(6, happy, &cli, &error));
-    CHECK(cli.command == MO_COMMAND_INTENT && cli.file_count == 1 && cli.json);
-    CHECK(strcmp(mo_cli_file(&cli, 0), "new.mo") == 0 && strcmp(cli.against, "old.mo") == 0);
-    const char *two[] = {"mo", "intent", "a.mo", "b.mo"};
-    refused(4, two, "command takes exactly one file: \"b.mo\"");
-    const char *none[] = {"mo", "intent"};
-    refused(2, none, "command needs a file: \"intent\"");
-    const char *check[] = {"mo", "check", "--against", "old.mo", "f.mo"};
-    refused(5, check, "flag is not accepted by this command: \"--against\"");
-    const char *test_against[] = {"mo", "test", "--against", "old.mo", "f.mo"};
-    refused(5, test_against, "flag is not accepted by this command: \"--against\"");
+    const char *happy[] = {"mo", "diff", "old.mo", "new.mo", "--json"};
+    CHECK(mo_cli_parse(5, happy, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_DIFF && cli.file_count == 2 && cli.json);
+    CHECK(strcmp(mo_cli_file(&cli, 0), "old.mo") == 0 &&
+          strcmp(mo_cli_file(&cli, 1), "new.mo") == 0);
+    const char *single[] = {"mo", "diff", "new.mo"};
+    CHECK(mo_cli_parse(3, single, &cli, &error) && cli.file_count == 1 &&
+          strcmp(mo_cli_file(&cli, 0), "new.mo") == 0);
+    const char *three[] = {"mo", "diff", "a.mo", "b.mo", "c.mo"};
+    refused(5, three, "diff takes one or two files: \"c.mo\"");
+    const char *none[] = {"mo", "diff"};
+    refused(2, none, "command needs a file: \"diff\"");
     const char *mutants[] = {"mo", "test", "--mutants", "--json", "f.mo"};
     CHECK(mo_cli_parse(5, mutants, &cli, &error) && cli.mutants && cli.json && !cli.list);
     const char *mutants_list[] = {"mo", "test", "--mutants", "--list", "f.mo"};
     CHECK(mo_cli_parse(5, mutants_list, &cli, &error) && cli.mutants && cli.list);
     const char *mutants_only[] = {"mo", "test", "--mutants", "--only", "Main.test.1", "f.mo"};
     refused(6, mutants_only,
-            "--mutants runs every check and tries every mutant; it takes no -o, --only, --in, "
+            "--mutants runs every check and tries every mutant; it takes no --only, --in, "
             "--calls, --seconds, --max-stack, --max-depth, --max-heap, --bundle or --strength: "
             "\"--mutants\"");
 }
@@ -290,11 +291,11 @@ static void parse_serve(void) {
     const char *none[] = {"mo"};
     refused(1, none,
             "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, "
-            "review, replay, query, rehearse, history or intent");
+            "replay, query, rehearse, history or diff");
     const char *what[] = {"mo", "what"};
     refused(2, what,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, "
-            "push, review, replay, query, rehearse, history or intent): \"what\"");
+            "push, replay, query, rehearse, history or diff): \"what\"");
 }
 
 #define OFFLINE(expected, ...)                                                                     \
@@ -342,21 +343,30 @@ static void parse_offline(void) {
     CHECK(cli.command == MO_COMMAND_HISTORY && cli.recover && cli.json);
     CHECK(cli.file_count == 1 && strcmp(mo_cli_file(&cli, 0), "state") == 0);
 
+    const char *live_query[] = {"mo",         "query",          "main.mo",
+                                "Main.count", "--admin-socket", "/run/app.sock"};
+    CHECK(mo_cli_parse(6, live_query, &cli, &error) &&
+          strcmp(cli.admin_socket, "/run/app.sock") == 0);
+
     OFFLINE("replay needs --failure ID: \"replay\"", "replay", "main.mo", "--data", "d");
     OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"replay\"", "replay", "main.mo",
             "--failure", "1");
     OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"replay\"", "replay", "main.mo",
             "--failure", "1", "--data", "d", "--export", "a");
-    OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"query\"", "query", "main.mo",
-            "f");
-    OFFLINE("give exactly one of --data DIR and --export ARTIFACT: \"query\"", "query", "main.mo",
-            "f", "--data", "d", "--export", "a", "--failure", "1");
+    OFFLINE("give exactly one of --data DIR, --export ARTIFACT and --admin-socket PATH: \"query\"",
+            "query", "main.mo", "f");
+    OFFLINE("give exactly one of --data DIR, --export ARTIFACT and --admin-socket PATH: \"query\"",
+            "query", "main.mo", "f", "--data", "d", "--export", "a", "--failure", "1");
+    OFFLINE("give exactly one of --data DIR, --export ARTIFACT and --admin-socket PATH: \"query\"",
+            "query", "main.mo", "f", "--export", "a", "--admin-socket", "/run/s");
     OFFLINE("a query over a data folder needs --failure ID: \"query\"", "query", "main.mo", "f",
             "--data", "d");
-    OFFLINE("--recover reads a data folder, not --export: \"--recover\"", "replay", "main.mo",
-            "--failure", "1", "--export", "a", "--recover");
-    OFFLINE("--recover reads a data folder, not --export: \"--recover\"", "query", "main.mo", "f",
-            "--export", "a", "--recover");
+    OFFLINE("--recover reads a data folder, not --export or --admin-socket: \"--recover\"",
+            "replay", "main.mo", "--failure", "1", "--export", "a", "--recover");
+    OFFLINE("--recover reads a data folder, not --export or --admin-socket: \"--recover\"", "query",
+            "main.mo", "f", "--export", "a", "--recover");
+    OFFLINE("--recover reads a data folder, not --export or --admin-socket: \"--recover\"", "query",
+            "main.mo", "f", "--admin-socket", "/run/s", "--recover");
     OFFLINE("flag is not accepted by this command: \"--fix\"", "query", "main.mo", "f", "--fix",
             "r.mo", "--export", "a");
     OFFLINE("query needs a file and a function: \"query\"", "query", "main.mo", "--export", "a");
@@ -876,7 +886,7 @@ int main(int argc, char *argv[]) {
     parse_rehearsal();
     parse_commands();
     parse_serve();
-    parse_intent();
+    parse_diff();
     parse_fetch();
     parse_offline();
     limit_values();

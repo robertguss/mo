@@ -360,7 +360,8 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_NETWORK_CONNECT,
                                                MO_HOST_CONNECTION_SEND,
                                                MO_HOST_CONNECTION_RECEIVE,
-                                               MO_HOST_NETWORK_FAKE};
+                                               MO_HOST_NETWORK_FAKE,
+                                               MO_HOST_NETWORK_ALLOW_HOSTS};
         _Static_assert(sizeof rows / sizeof rows[0] == MO_CORE_IO_OP_READ_TEXT,
                        "one row for each Core IO operation");
         static const enum mo_host_id files[] = {MO_HOST_FILES_READ_TEXT, MO_HOST_FILES_READ_BYTES,

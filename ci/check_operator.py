@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 
-from cli_common import SERVE_OPERATOR_NAMES as NAMES, SERVE_UPGRADE_NAMES, SERVE_REVIEW_NAMES, Served, serve_events, serve_supervised
+from cli_common import SERVE_OPERATOR_NAMES as NAMES, SERVE_UPGRADE_NAMES, Served, serve_events, serve_supervised
 
 TOKEN = "OperatorViewCanary"
 VIEW_BYTES = 6144
@@ -93,10 +93,12 @@ end
 def client(served):
     assert served.port, served.errors()
 
-    def rpc(method, params, token=TOKEN):
+    def rpc(method, params, token=TOKEN, admin=None):
         time.sleep(0.055)
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-        status, raw = served.post(body, token)
+        use_admin = (method == "tools/call" and isinstance(params, dict)
+                     and str(params.get("name", "")).startswith("mo-")) if admin is None else admin
+        status, raw = served.admin_post(body) if use_admin else served.post(body, token)
         assert TOKEN.encode() not in raw
         return status, json.loads(raw) if raw else None
 
@@ -266,27 +268,26 @@ def failure_records(binary):
 def private_state(rpc, call):
     status, body = rpc("tools/list", {})
     tools = body["result"]["tools"]
-    assert status == 200 and [tool["name"] for tool in tools] == ["mo_state", *NAMES, *SERVE_UPGRADE_NAMES, *SERVE_REVIEW_NAMES]
+    assert status == 200 and [tool["name"] for tool in tools] == ["mo_state"]
     assert "annotations" not in tools[0]
-    for tool in tools[1:]:
+    admin_status, admin_body = rpc("tools/list", {}, admin=True)
+    admin_tools = admin_body["result"]["tools"]
+    assert admin_status == 200 and [tool["name"] for tool in admin_tools] == [*NAMES, *SERVE_UPGRADE_NAMES]
+    for tool in admin_tools:
         expected = {"readOnlyHint": True, "idempotentHint": True}
-        if tool["name"] in ("mo-export", "mo-intent-items", "mo-review-pending",
-                            "mo-upgrade-status", "mo-review-source"):
+        if tool["name"] == "mo-export":
             expected["openWorldHint"] = False
-        if tool["name"] in SERVE_REVIEW_NAMES and tool["name"] != "mo-upgrade-status":
-            assert "Mo-Approval-Authorization: Bearer VALUE" in tool["description"], tool
-        if tool["name"] in ("mo-intent-approve", "mo-review-setting", "mo-review-answer"):
-            expected = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False,
-                        "destructiveHint": tool["name"] == "mo-review-answer"}
-        if tool["name"] in (*SERVE_UPGRADE_NAMES, "mo-upgrade-status"):
-            assert "Mo-Upgrade-Authorization: Bearer VALUE" in tool["description"], tool
-            assert len(tool["description"].encode()) <= 512
         if tool["name"] in SERVE_UPGRADE_NAMES:
+            assert len(tool["description"].encode()) <= 512
             expected = {"readOnlyHint": False, "idempotentHint": False, "openWorldHint": False,
                         "destructiveHint": tool["name"] == "mo-upgrade-commit"}
         assert tool["annotations"] == expected, tool
+    # Public HTTP never exposes operator views, even with the valid service token.
+    pub_status, pub_body = rpc("tools/call", {"name": "mo-state"}, TOKEN, admin=False)
+    assert pub_status == 200 and pub_body["error"]["code"] == -32602, (pub_status, pub_body)
     before = call("mo-overview")
     assert before["runtime_identity"] and len(before["runtime_identity"]) == 64
+    assert len(before["program_source"]) == 64
     whole = call("mo-state")
     fields = whole["state"]["fields"]
     assert not whole["complete"] and fields["answer"] == "42", whole
@@ -316,7 +317,7 @@ def private_state(rpc, call):
     assert retained["records"] == [] and retained["truncated"] == 0, retained
     assert retained["next"] is None and retained["unavailable"] == [], retained
     for token in ["", "WrongOperatorCanary"]:
-        status, _ = rpc("tools/call", {"name": "mo-state"}, token)
+        status, _ = rpc("tools/call", {"name": "mo_state"}, token, admin=False)
         assert status == 401
     for name in ["mo-export"]:
         status, body = rpc("tools/call", {"name": name})

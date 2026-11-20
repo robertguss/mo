@@ -22,7 +22,10 @@ struct Catalog
   response_bytes: Int
 end
 
-fn catalog(descriptor: McpType.Service) : Json.Json
+fn catalog(descriptor: McpType.Service, admin: Bool) : Json.Json
+  if admin
+    return Json.Object({"tools": Json.Array(McpViews.catalog())})
+  end
   var tools = []
   for tool in descriptor.tools
     tools = tools.append(
@@ -34,15 +37,17 @@ fn catalog(descriptor: McpType.Service) : Json.Json
       })
     )
   end
-  Json.Object({"tools": Json.Array(tools.concat(McpViews.catalog()))})
+  Json.Object({"tools": Json.Array(tools)})
 end
 
-fn prepare(descriptor: McpType.Service, image_key: Text, response_bytes: Int) : Option(Catalog)
+fn prepare(descriptor: McpType.Service, image_key: Text, response_bytes: Int, admin: Bool) : Option(
+  Catalog
+)
   return None if image_key.byte_count != 16
   for c in image_key.chars
     return None if not ((c >= '0' and c <= '9') or (c >= 'a' and c <= 'f'))
   end
-  tools = case catalog(descriptor)
+  tools = case catalog(descriptor, admin)
     Json.Object(fields):
       case fields.get("tools")
         Some(Json.Array(items)): items
@@ -152,6 +157,10 @@ test "catalog byte sizes match JSON across string lengths and escapes"
 end
 
 fn page(catalog: Catalog, start: Int, id: Json.Json) : Option(Json.Json)
+  if start == 0 and catalog.tools.empty?
+    empty = McpRpc.result(id, page_result([], catalog.image_key, None))
+    return if empty.to_text.byte_count <= catalog.response_bytes: Some(empty) else: None
+  end
   return None if start < 0 or start >= catalog.tools.size
   id_bytes = id.to_text.byte_count
   var items = []

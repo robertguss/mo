@@ -146,7 +146,7 @@ $(BUILD)/debug/src/tools/protocol.o $(BUILD)/release/src/tools/protocol.o $(BUIL
 $(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
 
 # The test executables without running them, for ci/check.sh's drivers, bench and lean groups.
-test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo $(BUILD)/debug/mo-door-bypass $(BUILD)/debug/mo-checks-fail
+test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo $(BUILD)/debug/mo-checks-fail
 sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 
 # Each test runs as its own target, so make -j runs them side by side (they share
@@ -509,11 +509,11 @@ $(BUILD)/sanitize/tests/test_confinement_control.test: $(BUILD)/sanitize/tests/t
 PROTOCOL_SERVER_FAULT_SOURCES := src/tools/protocol-server.c src/tools/protocol-request.c $(SERVICE_LOOP_SOURCES) src/tools/protocol-upgrade.c
 $(BUILD)/debug/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+	$(CC) $(COMMON) $(DEBUG) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -Dmo_listener_wait_pair=mo_protocol_server_fault_wait_pair -c $< -o $@
 
 $(BUILD)/sanitize/protocol-server-faults/tools/protocol-server.o: src/tools/protocol-server.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(SANITIZE) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -c $< -o $@
+	$(CC) $(COMMON) $(SANITIZE) -Dmo_process_new=mo_protocol_server_fault_process_new -Dmo_call=mo_protocol_server_fault_call -Dmo_scratch_resize=mo_protocol_server_fault_resize -Dmo_listener_call=mo_protocol_server_fault_listener -Dmo_listener_wait_pair=mo_protocol_server_fault_wait_pair -c $< -o $@
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-upgrade.o: src/tools/protocol-upgrade.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
@@ -526,24 +526,6 @@ $(BUILD)/sanitize/protocol-server-faults/tools/protocol-upgrade.o: src/tools/pro
 # The activation test compiles candidates with the sibling mo executable.
 $(BUILD)/debug/tests/test_protocol_server_faults.test.run: $(BUILD)/debug/mo
 $(BUILD)/sanitize/tests/test_protocol_server_faults.test.run: $(BUILD)/sanitize/mo
-
-$(BUILD)/debug/door-bypass/tools/protocol-upgrade.o: src/tools/protocol-upgrade.c Makefile $(SOURCE_LIST)
-	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_protocol_door_decide=mo_door_bypass_decide -c $< -o $@
-
-$(BUILD)/debug/mo-door-bypass: $(call objects,$(BUILD)/debug,$(filter-out src/tools/protocol-upgrade.c,$(LIB_SOURCES)) $(MAIN_SOURCE) tests/door_bypass.c) $(BUILD)/debug/door-bypass/tools/protocol-upgrade.o
-	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
-
-$(BUILD)/debug/checks-fail/tools/upgrade-bundle.o: src/tools/upgrade-bundle.c Makefile $(SOURCE_LIST)
-	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_run_tests=mo_checks_fail_run -c $< -o $@
-
-$(BUILD)/debug/checks-fail/tools/upgrade.o: src/tools/upgrade.c Makefile $(SOURCE_LIST)
-	@mkdir -p $(dir $@)
-	$(CC) $(COMMON) $(DEBUG) -Dmo_check_start=mo_checks_fail_start -c $< -o $@
-
-$(BUILD)/debug/mo-checks-fail: $(call objects,$(BUILD)/debug,$(filter-out src/tools/upgrade-bundle.c src/tools/upgrade.c,$(LIB_SOURCES)) $(MAIN_SOURCE) tests/checks_fail.c) $(BUILD)/debug/checks-fail/tools/upgrade-bundle.o $(BUILD)/debug/checks-fail/tools/upgrade.o
-	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/debug/protocol-server-faults/tools/protocol-request.o: src/tools/protocol-request.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
@@ -784,9 +766,9 @@ $(FUZZ_BUILD)/grammar/mo.tab.o: $(GRAMMAR_GENERATED)/mo.tab.c Makefile
 
 -include $(shell find build -name '*.d' 2>/dev/null)
 
-# Credential admission tests substitute only the fetcher's POSIX boundary.
-FETCH_PEER_RENAMES := -Dgetaddrinfo=mo_fetch_fault_resolve -Dfreeaddrinfo=mo_fetch_fault_free \
-	-Dconnect=mo_fetch_fault_connect -Dgetpeername=mo_fetch_fault_peer -Dsend=mo_fetch_fault_send -Dopen=mo_fetch_fault_open
+# Peer and cancellation tests substitute only the fetcher's POSIX boundary.
+FETCH_PEER_RENAMES := -Dconnect=mo_fetch_fault_connect -Dgetpeername=mo_fetch_fault_peer \
+	-Dsend=mo_fetch_fault_send -Dopen=mo_fetch_fault_open
 $(BUILD)/debug/fetch-peer/fetch.o: src/tools/fetch.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) $(FETCH_PEER_RENAMES) -c $< -o $@

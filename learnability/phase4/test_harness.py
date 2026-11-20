@@ -368,7 +368,8 @@ class Sessions(unittest.TestCase):
     def instruments(self, built):
         for client in harness.CLIENTS:
             stub_mode({'mode': 'instruments', 'data': str(INSTALL / 'session' / 'start-data'),
-                       'deployed': str(INSTALL / 'session' / 'deployed')})
+                       'deployed': str(INSTALL / 'session' / 'deployed'),
+                       'admin_socket': str(INSTALL / 'session' / 'admin.sock')})
             out = PRIVATE / 'runs' / f'instruments-{client}'
             result = harness_command('run', ROOT / 'variants' / 'synthetic', built / 'synthetic',
                                      client, out, '--limit', 120)
@@ -379,7 +380,7 @@ class Sessions(unittest.TestCase):
                              (1, []))
             self.assertGreater(graded['records']['shell'], 0)
             self.assertEqual(graded['coverage'], {
-                'operator_tools': ['mo-overview'],
+                'operator_tools': [],
                 'commands': ['fetch', 'history', 'replay', 'replay --fix']})
             reported = json.loads(harness.grade.last_message(out / 'stream.jsonl'))
             self.assertEqual(reported, {'fetch': 0, 'history': 0, 'replay': 0,

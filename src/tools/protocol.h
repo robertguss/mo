@@ -35,15 +35,11 @@ mo_protocol_server_new(const struct mo_image *service, uint32_t index, struct mo
                        size_t authority_count, const struct mo_protocol_events *events,
                        struct mo_protocol_server **out);
 void mo_protocol_server_free(struct mo_protocol_server *server);
-/* Enables the live upgrade tools and the review tools: credential is the second bearer secret
- * every upgrade call must carry, approval the third that every review call must carry, compiler
- * the executable that compiles candidates, children whether candidates are accepted. Reads the
- * active program row. */
-struct mo_bearer;
+/* Attaches the operator Unix socket listener and compiler for live inspection, export and
+ * upgrades. Either may be NULL when not configured; reads the active program row. */
 MO_MUST_USE enum mo_protocol_server_status
-mo_protocol_server_upgrades(struct mo_protocol_server *server, const struct mo_bearer *credential,
-                            const struct mo_bearer *approval, const struct mo_compiler *compiler,
-                            enum mo_upgrade_children children);
+mo_protocol_server_admin(struct mo_protocol_server *server, struct mo_listener *admin_listener,
+                         const struct mo_compiler *compiler, enum mo_upgrade_children children);
 MO_MUST_USE enum mo_protocol_server_status
 mo_protocol_server_poll(struct mo_protocol_server *server, uint64_t until_us);
 void mo_protocol_server_stop_accepting(struct mo_protocol_server *server);

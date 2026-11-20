@@ -109,10 +109,9 @@ class Live(unittest.TestCase):
         self.assertEqual(response['body'], reply)
         self.assertGreaterEqual(response['elapsed'], 0)
         listed = [e['listed'] for e in self.logged() if e.get('listed')]
-        # Record the complete upstream listing, including authenticated operator tools.
+        # Record the complete upstream listing on the public HTTP port (author tools only).
         names = [tool['name'] for tool in upstream['result']['tools']]
-        self.assertEqual([name for name in names if not name.startswith('mo-')], fixture.TOOLS)
-        self.assertIn('mo-overview', names)
+        self.assertEqual(names, fixture.TOOLS)
         self.assertEqual(listed, [names])
         listing_response = next(e for e in self.logged() if e.get('listed'))
         self.assertEqual(listing_response['body'], upstream)
@@ -337,7 +336,7 @@ class Match(unittest.TestCase):
     FETCHED = [('mo-export', {'kind': 'state'}),
                ('mo-export', {'kind': 'state', 'export': 'e1', 'offset': 8192}),
                ('mo-export', {'kind': 'state', 'export': 'e1', 'offset': 16384})]
-    FETCH = 'mo fetch http://127.0.0.1:4000/mcp --export state --out s.moex --token-env QUEUE_TOKEN'
+    FETCH = 'mo fetch --admin-socket /var/run/admin.sock --export state --out s.moex'
 
     def test_export_pages_a_fetch_command_read_count_as_the_shell(self):
         log = self.logged(self.CALLS + self.FETCHED)

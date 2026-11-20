@@ -4,6 +4,7 @@ import locale
 import pathlib
 import select
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
@@ -77,11 +78,8 @@ SERVE_EDITS = (("(state + amount, state + amount)", "(state + amount, state * am
                ("## Reads the count.", "\n## Reads the count."))
 SERVE_TOOL_PAGE = 32
 SERVE_OPERATOR_NAMES = ["mo-overview", "mo-state", "mo-mailbox", "mo-timers", "mo-memory", "mo-supervisor", "mo-log", "mo-export", "mo-failures"]
-# Listed after the views; they need the upgrade credential and change the service.
+# Listed after the views on the admin socket; they change the service.
 SERVE_UPGRADE_NAMES = ["mo-upgrade-open", "mo-upgrade-page", "mo-upgrade-commit"]
-SERVE_REVIEW_NAMES = ["mo-intent-items", "mo-intent-approve", "mo-review-setting",
-                      "mo-review-pending", "mo-review-answer", "mo-upgrade-status",
-                      "mo-review-source"]
 SERVE_OVERLOADED = """module Overloaded
 
 struct Count
@@ -148,11 +146,22 @@ SERVE_HALT = '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ha
 
 
 class Served:
-    def __init__(self, binary, source, data, env, folder, port="0", extra=()):
+    def __init__(self, binary, source, data, env, folder, port="0", extra=(), admin=True):
         self.stderr = tempfile.NamedTemporaryFile(dir=folder, prefix="stderr-", delete=False)
         self.outputs = pathlib.Path(self.stderr.name)
+        self.admin_socket = None
+        admin_args = ()
+        if admin and "--admin-socket" not in extra:
+            import os
+            sock_dir = "/tmp" if pathlib.Path("/tmp").is_dir() and len(str(folder)) > 60 else folder
+            fd, sock_name = tempfile.mkstemp(dir=sock_dir, prefix="mo-adm-", suffix=".sock")
+            pathlib.Path(sock_name).unlink()
+            os.close(fd)
+            self.admin_socket = pathlib.Path(sock_name)
+            admin_args = ("--admin-socket", str(self.admin_socket))
         self.process = subprocess.Popen(
-            [str(binary), "serve", str(source), "--port", port, "--data", str(data), *extra],
+            [str(binary), "serve", str(source), "--port", port, "--data", str(data),
+             *admin_args, *extra],
             env=env, stdout=subprocess.PIPE, stderr=self.stderr, cwd=folder, bufsize=0,
             umask=0o022)
         try:
@@ -161,6 +170,8 @@ class Served:
             self.process.kill()
             self.process.wait()
             self.stderr.close()
+            if self.admin_socket is not None:
+                self.admin_socket.unlink(missing_ok=True)
             raise
         self.line = line
         self.port = None
@@ -191,6 +202,20 @@ class Served:
         connection.close()
         return response.status, data
 
+    def admin_post(self, body, headers=None):
+        assert self.admin_socket is not None
+        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw.settimeout(30)
+        raw.connect(str(self.admin_socket))
+        connection = http.client.HTTPConnection("localhost", timeout=30)
+        connection.sock = raw
+        sent = {"Content-Type": "application/json", "MCP-Protocol-Version": "2025-11-25"}
+        connection.request("POST", "/mcp", body, {**sent, **(headers or {})})
+        response = connection.getresponse()
+        data = response.read()
+        connection.close()
+        return response.status, data
+
     def finish(self, status, stop=None):
         if stop is not None:
             self.process.send_signal(stop)
@@ -208,6 +233,8 @@ class Served:
             self.process.wait(timeout=30)
         self.process.stdout.close()
         self.stderr.close()
+        if self.admin_socket is not None:
+            self.admin_socket.unlink(missing_ok=True)
 
 
 STORE_FAILED = b"service store failed; reopen it to see whether the last change was saved"

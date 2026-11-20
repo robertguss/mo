@@ -30,8 +30,8 @@ end
 
 fn receive(text: Text, version: Option(Text)) : McpTransport.Action
   shape = descriptor(1)
-  catalog = Mcp.prepare(shape, "0123456789abcdef", 32768) or stop "catalog"
-  McpTransport.receive(text, version, shape, catalog, "fixture-version")
+  catalog = Mcp.prepare(shape, "0123456789abcdef", 32768, false) or stop "catalog"
+  McpTransport.receive(text, version, shape, catalog, "fixture-version", false)
 end
 
 fn request(name: Text, params: Json.Json) : Text
@@ -170,7 +170,7 @@ fn pages()
   id = Json.int(-7)
   for count in [0, 31, 32, 33, 64]
     shape = descriptor(count)
-    catalog = Mcp.prepare(shape, key, 32768) or stop "page catalog"
+    catalog = Mcp.prepare(shape, key, 32768, false) or stop "page catalog"
     var fields = {"tools": Json.Array(catalog.tools.take(32))}
     if catalog.tools.size > 32
       fields = fields.set("nextCursor", Json.String("32.#{key}"))
@@ -183,7 +183,8 @@ fn pages()
         Some("2025-11-25"),
         shape,
         catalog,
-        "v"
+        "v",
+        false
       ) ==
         McpTransport.Reply(status: 200, body: expected.to_text),
       "list response"
@@ -198,9 +199,12 @@ fn pages()
     end
   end
   empty = descriptor(0)
-  catalog = Mcp.prepare(empty, key, 32768) or stop "operator-only catalog"
-  require(catalog.tools.size == 19, "operator tools without author tools")
-  require(Mcp.page(catalog, 19, id) == None, "invalid start")
+  pub_empty = Mcp.prepare(empty, key, 32768, false) or stop "empty public catalog"
+  require(pub_empty.tools.size == 0, "public HTTP exposes no operator tools")
+  require(Mcp.page(pub_empty, 1, id) == None, "invalid empty start")
+  admin_catalog = Mcp.prepare(empty, key, 32768, true) or stop "admin catalog"
+  require(admin_catalog.tools.size == 12, "admin socket exposes 12 operator/upgrade tools")
+  require(Mcp.page(admin_catalog, 12, id) == None, "invalid admin start")
   broken = Mcp.Catalog(tools: [], sizes: [], image_key: key, response_bytes: 0)
   require(
     McpTransport.receive(
@@ -208,7 +212,8 @@ fn pages()
       Some("2025-11-25"),
       empty,
       broken,
-      "v"
+      "v",
+      true
     ) ==
       error(Some(id), -32603, "Internal error"),
     "internal error"

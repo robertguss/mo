@@ -68,15 +68,15 @@ class Mismatch(Exception):
 
 class KillableQueue(Queue):
     """A Queue whose post says when the request has gone, so a kill can follow it. It accepts
-    upgrades, and after its folder's first start it runs the recorded program alone."""
+    upgrades over its admin socket, and after its folder's first start it runs the recorded program alone."""
 
     def __init__(self, binary, data, source):
+        data_path = pathlib.Path(data)
+        self.admin_socket = data_path.parent / f'{data_path.name}-admin.sock'
         self.process = subprocess.Popen(
             [str(binary), 'serve', *([str(source)] if source else []), '--port', '0', '--data',
-             str(data), '--upgrade-token-env', 'QUEUE_UPGRADE', '--approval-token-env',
-             'QUEUE_APPROVAL'],
-            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN,
-                 'QUEUE_APPROVAL': APPROVAL_TOKEN},
+             str(data), '--admin-socket', str(self.admin_socket)],
+            env={**os.environ, 'QUEUE_TOKEN': TOKEN},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
         try:
             self.port = self.listening()
@@ -85,6 +85,10 @@ class KillableQueue(Queue):
             raise
         self.next_id = 100
         self.sent = threading.Event()
+
+    def close(self):
+        super().close()
+        self.admin_socket.unlink(missing_ok=True)
 
     def post(self, body, token=TOKEN):
         connection = http.client.HTTPConnection('127.0.0.1', self.port, timeout=30)
@@ -232,15 +236,6 @@ class Run:
             self.fail(f'mo serve did not start on {self.folder}: {error}')
         if not self.started:
             self.started, self.born = True, time.monotonic()
-            if self.review('--setting', 'intent').returncode != 0:
-                self.fail('the review setting could not be set to intent')
-
-    def review(self, *args):
-        return subprocess.run(
-            [str(self.binary), 'review', '--url', f'http://127.0.0.1:{self.queue.port}/mcp',
-             '--token-env', 'QUEUE_TOKEN', '--approval-token-env', 'QUEUE_APPROVAL', *args],
-            capture_output=True, timeout=300, check=False,
-            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_APPROVAL': APPROVAL_TOKEN})
 
     def kill(self):
         assert self.started, 'never kill before the first listening line of a folder'
@@ -468,14 +463,11 @@ class Run:
 
     def push(self, target, out, stale=False):
         out['result'] = subprocess.run(
-            [str(self.binary), 'push', str(self.upgrades[target] / 'main.mo'), '--url',
-             f'http://127.0.0.1:{self.queue.port}/mcp', '--base', self.digests[0 if stale else self.program],
-             *(['--migrate', 'migrate'] if target in (4, 5) else []),
-             '--token-env', 'QUEUE_TOKEN', '--upgrade-token-env', 'QUEUE_UPGRADE', '--json'],
+            [str(self.binary), 'push', str(self.upgrades[target] / 'main.mo'), '--admin-socket',
+             str(self.queue.admin_socket), '--base', self.digests[0 if stale else self.program],
+             *(['--migrate', 'migrate'] if target in (4, 5) else []), '--json'],
             capture_output=True, timeout=300, check=False,
-            env={**os.environ, 'QUEUE_TOKEN': TOKEN, 'QUEUE_UPGRADE': UPGRADE_TOKEN})
-        if out['result'].returncode == 3:
-            out['result'] = self.review('--yes', json.loads(out['result'].stdout)['review'])
+            env={**os.environ, 'QUEUE_TOKEN': TOKEN})
 
     def upgrade(self, target=None, killing=None, stale=False, load=True):
         """Pushes the next variant, or the invalid one, while calls go on; may kill mid-push."""
@@ -518,12 +510,8 @@ class Run:
             return
         pusher.join(timeout=300)
         result = out['result']
-        if result.args[1] == 'review':
-            report = ({'code': result.stderr.decode()[6:11]} if result.returncode else
-                      {'ordinal': str(self.ordinal + 1)})
-        else:
-            reports = [json.loads(line) for line in result.stdout.splitlines()]
-            report = next((item for item in reports if 'code' in item or 'ordinal' in item), {})
+        reports = [json.loads(line) for line in result.stdout.splitlines()]
+        report = next((item for item in reports if 'code' in item or 'ordinal' in item), {})
         if refusal is not None:
             self.invalid += 1
             if result.returncode != 1 or report.get('code') != refusal:

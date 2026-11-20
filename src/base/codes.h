@@ -289,7 +289,6 @@
     X(1412, QUERY_STATE, NULL)                                                                     \
     /* A query's function takes more than the state, or not the failure's time and arguments. */   \
     X(1413, QUERY_INPUTS, NULL)                                                                    \
-    X(1414, UPGRADE_CREDENTIAL, NULL)                                                              \
     X(1415, UPGRADE_BUSY, NULL)                                                                    \
     X(1416, UPGRADE_STALE_BASE, NULL)                                                              \
     X(1417, UPGRADE_BUNDLE_SIZE, NULL)                                                             \
@@ -309,10 +308,6 @@
     X(1431, UPGRADE_AMBIGUOUS_PROGRAM, NULL)                                                       \
     X(1432, PLAN_UNFINISHED, NULL)                                                                 \
     X(1433, CHECKS_FAILED, NULL)                                                                   \
-    X(1434, SERVE_CREDENTIALS, NULL)                                                               \
-    X(1435, REVIEW_MISMATCH, NULL)                                                                 \
-    X(1436, REVIEW_NOT_PENDING, NULL)                                                              \
-    X(1437, REVIEW_FULL, NULL)                                                                     \
     X(1438, UPGRADE_UNCONFINED, NULL)                                                              \
     X(1439, MUTANT_SURVIVED, NULL)
 

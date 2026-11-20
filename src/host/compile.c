@@ -109,19 +109,6 @@ enum mo_compile_status mo_compile_start(const struct mo_compiler *compiler, cons
     const char *reads[3] = {entry, old_bundle, context};
     return spawn(compiler, folder, reads, arguments, count, diagnostics, limits, now, child);
 }
-enum mo_compile_status mo_list_start(const struct mo_compiler *compiler, const char *folder,
-                                     const char *bundle, const char *output,
-                                     const char *diagnostics, const char *old_bundle,
-                                     const char *context, uint64_t now,
-                                     struct mo_compile_child *child) {
-    const char *arguments[16] = {
-        compiler->executable, "test", bundle, "--bundle", "--list", "-o", output};
-    unsigned count = upgrade_inputs(arguments, 7, compiler->library, old_bundle, NULL, context);
-    struct child_limits limits = {MO_LIMIT_CHECK_MEMORY, MO_LIMIT_CHECK_CPU_SECONDS,
-                                  MO_LIMIT_CHECK_WALL_US};
-    const char *reads[3] = {bundle, old_bundle, context};
-    return spawn(compiler, folder, reads, arguments, count, diagnostics, limits, now, child);
-}
 enum mo_compile_status mo_check_start(const struct mo_compiler *compiler, const char *folder,
                                       const char *bundle, const char *diagnostics,
                                       const char *old_bundle, const char *context, uint64_t now,

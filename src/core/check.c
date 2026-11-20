@@ -940,6 +940,8 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
                 binary(c, MO_CORE_TY_MAP, S(TEXT), binary(c, MO_CORE_TY_MAP, S(BYTES), S(BYTES))),
                 NULL, NULL);
             break;
+        case MO_CORE_IO_OP_ALLOW_HOSTS:
+            return sig(C(NETWORK), 2, C(NETWORK), L(S(TEXT)), NULL);
         }
         s.spec = true;
         return s;

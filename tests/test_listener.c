@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 static const char environment[] = "MO_TEST_LISTENER_BEARER";
@@ -453,6 +455,54 @@ static void real_limit_and_backpressure(void) {
         CHECK(close(clients[i]) == 0);
 }
 
+static void unix_socket_io(void) {
+    char dir[] = "/tmp/mo-listener-unix-XXXXXX";
+    MO_ASSERT(mkdtemp(dir) != NULL);
+    char sock_path[128];
+    MO_ASSERT(snprintf(sock_path, sizeof sock_path, "%s/admin.sock", dir) > 0);
+    struct mo_listener *admin = NULL, *dup = NULL, *tcp = NULL;
+    CHECK(mo_listener_open_unix("", &admin) == MO_LISTENER_CONFIG);
+    CHECK(mo_listener_open_unix(sock_path, &admin) == MO_LISTENER_OK && admin != NULL);
+    struct stat st;
+    CHECK(stat(sock_path, &st) == 0 && S_ISSOCK(st.st_mode) && (st.st_mode & 0777) == 0600);
+    CHECK(mo_listener_open_unix(sock_path, &dup) == MO_LISTENER_IO && dup == NULL);
+
+    union mo_listener_request auth_req = {.auth = {0}};
+    union mo_listener_result auth_res = {0};
+    CHECK(mo_listener_call(admin, MO_LISTENER_AUTH, &auth_req, &auth_res) == MO_LISTENER_OK &&
+          auth_res.authenticated);
+
+    struct mo_listener_config cfg = {0};
+    CHECK(mo_listener_open(&cfg, environment, &tcp) == MO_LISTENER_OK && tcp != NULL);
+    int uclient = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(uclient >= 0);
+    struct sockaddr_un target = {.sun_family = AF_UNIX};
+    memcpy(target.sun_path, sock_path, strlen(sock_path) + 1);
+    CHECK(connect(uclient, (const struct sockaddr *)&target, sizeof target) == 0);
+
+    struct mo_listener_wait wait_a = {.until_us = now(tcp).monotonic_us + 1000000, .accept = true};
+    struct mo_listener_wait wait_b = {.until_us = wait_a.until_us, .accept = true};
+    struct mo_listener_ready done_a = {0}, done_b = {0};
+    CHECK(mo_listener_wait_pair(tcp, &wait_a, &done_a, admin, &wait_b, &done_b) == MO_LISTENER_OK);
+    CHECK(!done_a.accept && done_b.accept);
+    struct mo_listener_key conn = accept_peer(admin);
+    CHECK(close_peer(admin, conn) == MO_LISTENER_OK);
+    CHECK(close(uclient) == 0);
+    mo_listener_close(tcp);
+    mo_listener_close(admin);
+    CHECK(access(sock_path, F_OK) != 0);
+
+    int stale = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(stale >= 0);
+    CHECK(bind(stale, (const struct sockaddr *)&target, sizeof target) == 0);
+    CHECK(close(stale) == 0);
+    CHECK(access(sock_path, F_OK) == 0);
+    CHECK(mo_listener_open_unix(sock_path, &admin) == MO_LISTENER_OK && admin != NULL);
+    mo_listener_close(admin);
+    CHECK(access(sock_path, F_OK) != 0);
+    CHECK(rmdir(dir) == 0);
+}
+
 int main(void) {
     credentials();
     configuration();
@@ -464,6 +514,7 @@ int main(void) {
     else
         CHECK(printf("listener: IPv6 loopback unavailable\n") >= 0);
     real_limit_and_backpressure();
+    unix_socket_io();
     CHECK(unsetenv(environment) == 0);
     return mo_test_report("listener");
 }

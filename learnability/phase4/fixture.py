@@ -256,11 +256,13 @@ class Client:
 class Service:
     """`mo serve PROGRAM` on a data folder, with its standard error in a file."""
 
-    def __init__(self, mo, program, data, token, stderr_path):
+    def __init__(self, mo, program, data, token, stderr_path, admin_socket=None):
         self.stderr_path = pathlib.Path(stderr_path)
         self.stderr = open(self.stderr_path, 'wb')
+        self.admin_socket = pathlib.Path(admin_socket) if admin_socket else None
+        admin_args = ('--admin-socket', str(self.admin_socket)) if self.admin_socket else ()
         self.process = subprocess.Popen(
-            [str(mo), 'serve', str(program), '--port', '0', '--data', str(data)],
+            [str(mo), 'serve', str(program), '--port', '0', '--data', str(data), *admin_args],
             env={'PATH': os.environ.get('PATH', ''), 'QUEUE_TOKEN': token},
             stdout=subprocess.PIPE, stderr=self.stderr, stdin=subprocess.DEVNULL, bufsize=0)
         self.port = self.listening()
@@ -289,6 +291,8 @@ class Service:
         status = self.process.wait(timeout=120)
         self.process.stdout.close()
         self.stderr.close()
+        if self.admin_socket is not None:
+            self.admin_socket.unlink(missing_ok=True)
         return status
 
 

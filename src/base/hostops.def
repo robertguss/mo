@@ -83,6 +83,7 @@ HOSTOP(RANDOM_INT,             "Random",    "int",            "fn(Random, Int, I
 HOSTOP(RANDOM_SEEDED,          "Random",    "seeded",         "fn(Int) : Random",                                    "b",   "",                                   true)
 
 HOSTOP(NETWORK_CONNECT,        "Network",   "connect",        "fn(Network, Text, Int, Duration) : Result(Connection, NetworkError)", "bbbb", "port outside 1 to 65535; too many connections open at once", false)
+HOSTOP(NETWORK_ALLOW_HOSTS,    "Network",   "allow_hosts",    "fn(Network, List(Text)) : Network",                                   "bb",   "",                                   false)
 HOSTOP(CONNECTION_SEND,        "Connection", "send",          "fn(Connection, Bytes) : Result(Unit, NetworkError)",  "bb",  "",                                   false)
 HOSTOP(CONNECTION_RECEIVE,     "Connection", "receive",       "fn(Connection, Int) : Result(Bytes, NetworkError)",   "bb",  "most below 1 or above the receive limit", false)
 HOSTOP(NETWORK_FAKE,           "Network",   "fake",           "fn(Map(Text, Map(Bytes, Bytes))) : Network",          "o",   "",                                   true)

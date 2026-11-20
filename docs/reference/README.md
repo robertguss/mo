@@ -1044,10 +1044,12 @@ end
 ### 11.3 Passing less
 
 A capability can be narrowed before it is passed on. `files.within("reports")`
-reaches only that folder, and `files.read_only` returns a `ReadFiles`, which
-can only read. Calling `within` with a path that would leave the folder, such
-as `".."`, gives a capability that reaches nothing (section 14). Pass each
-function the least it needs:
+reaches only that folder, `files.read_only` returns a `ReadFiles`, which can
+only read, and `network.allow_hosts(["api.example.com:443"])` returns a
+`Network` that opens connections only to the listed destinations (section 14).
+Calling `within` with a path that would leave the folder, such as `".."`, gives
+a capability that reaches nothing (section 14). Pass each function the least it
+needs:
 
 <!-- mo-example: fragment -->
 ```mo
@@ -1520,18 +1522,24 @@ Each command is given the file of the program's main module; `mo check` and `mo
 test` also accept a library module. `mo check FILE`
 reports the program's errors, `mo run FILE [ARGS...]` runs it with the
 arguments after the file's name, and `mo test FILE` checks its examples,
-promises and tests. `mo emit FILE -o OUT` checks the program as `mo check` does
+promises and tests. `mo diff [OLD] NEW` compares `NEW` against `OLD`, or against
+Git `HEAD` when `OLD` is omitted: it reports authority changes (capability
+parameters and literal `within`, `read_only` and `allow_hosts` narrowings),
+exposed signature and service tool changes, state schema changes, and runs
+`OLD`'s promises, service promises and examples against `NEW`, exiting 1 when
+authority expands or a contract fails or stops. `mo emit FILE -o OUT` checks the program as `mo check` does
 and writes its bytecode to `OUT`; `-o` is required, and a library module has no
-main to emit (E0079). `mo serve FILE --port N --data DIR [--allow-host NAME]`
-runs the service `FILE` declares (section 11.5) over MCP on 127.0.0.1, with its
-saved state in the folder `DIR`, which must exist; `--allow-host` also accepts
-requests that give `NAME` as their host, as a proxy in front of it does. The
-service also answers built-in operator tools, with the same token as its own
-tools, that show its state and retained failures without running its
-handlers. `mo fetch URL --export state|failure ID --out FILE --token-env NAME`,
+main to emit (E0079). `mo serve FILE --port N --data DIR [--allow-host NAME]
+[--admin-socket PATH]` runs the service `FILE` declares (section 11.5) over MCP
+on 127.0.0.1, with its saved state in the folder `DIR`, which must exist;
+`--allow-host` also accepts requests that give `NAME` as their host, as a proxy
+in front of it does. Public HTTP exposes only the service's declared tools. When
+`--admin-socket PATH` is given, `mo serve` binds a mode-0600 Unix domain socket
+at `PATH` exposing built-in operator views and live `mo push` upgrade tools,
+authenticated by OS filesystem permissions.
+`mo fetch --admin-socket PATH --export state|failure ID --out FILE`,
 run on the same host, saves an export of the state or of one retained failure
-from a service on 127.0.0.1 to a new private file, reading the token from the
-environment variable `NAME`. `mo format` and `mo fix` rewrite the files they are given.
+over the admin socket to a new private file. `mo format` and `mo fix` rewrite the files they are given.
 `mo guide` needs no file. It prints a short guide for agents writing Mo,
 matched to the installed version: how to work with the `mo` command, a small
 complete program with its tests, and when a task is done. `mo guide
@@ -1591,25 +1599,26 @@ failure, and the `mo` that replays it the one that recorded it. `--fix
 REVISED` then runs the handler of the same name in the program `REVISED` on
 the same inputs, and its verdict is `verified` only when the original failure
 reproduced and the revision succeeded. `mo query FILE FUNCTION` runs a
-function of the program over an exported state (`--export ARTIFACT`) or over a
-retained failure's inputs (`--failure ID` with `--data DIR` or `--export
-ARTIFACT`). The function takes the state type of `FILE`'s service, then for a
-failure `Time` and the handler's arguments in order, and its parameters and
-result hold no capability or function. A query takes `mo run`'s limits and
-`--max-work`, the instructions it may run, by default 1,073,741,824. Each of
-these commands refuses an input it cannot use before anything runs, naming
-what differs. They exit 0 when the result they report holds, 1 when it does
-not or they refuse, and 2 for a mistake in the command; `mo query` exits 70
-when its function stops with a bug (section 13.2).
+function of the program over an exported or live state (`--export ARTIFACT` or
+`--admin-socket PATH`) or over a retained failure's inputs (`--failure ID` with
+`--data DIR`, `--export ARTIFACT` or `--admin-socket PATH`). The function takes
+the state type of `FILE`'s service, then for a failure `Time` and the handler's
+arguments in order, and its parameters and result hold no capability or
+function. A query takes `mo run`'s limits and `--max-work`, the instructions it
+may run, by default 1,073,741,824. Each of these commands refuses an input it
+cannot use before anything runs, naming what differs. They exit 0 when the
+result they report holds, 1 when it does not or they refuse, and 2 for a mistake
+in the command; `mo query` exits 70 when its function stops with a bug
+(section 13.2).
 
-`mo check --json`, `mo test --json`, and `--json` on `mo replay`, `mo query`
-and `mo history` write one JSON object per line to standard output: first the
-format's version, then one for each error and for each example, promise and
-test run or each outcome reported, and last the totals and the exit status.
-Within a major version of the format, every field keeps its name, type and
-meaning, and an error's code keeps its meaning; new fields and new kinds of
-object may be added, so a reader skips what it doesn't know. A message's
-wording may change.
+`mo check --json`, `mo test --json`, `mo diff --json`, and `--json` on `mo
+replay`, `mo query` and `mo history` write one JSON object per line to standard
+output: first the format's version, then one for each error and for each
+example, promise and test run or each outcome reported, and last the totals and
+the exit status. Within a major version of the format, every field keeps its
+name, type and meaning, and an error's code keeps its meaning; new fields and
+new kinds of object may be added, so a reader skips what it doesn't know. A
+message's wording may change.
 
 ## 14. The core library
 
@@ -1814,7 +1823,14 @@ which must be greater; `Random.seeded(seed: Int) : Random`. **Args** and
 looks `host` up and opens a TCP connection to `port`. `within` is one deadline
 for the connection's whole life: the lookup, the connect, and every `send` and
 `receive` after it. Once it has passed, each of them gives
-`Error(Network.TimedOut)`. **Connection**:
+`Error(Network.TimedOut)`.
+`allow_hosts(hosts: List(Text)) : Network` returns a narrowed `Network` that
+connects only to destinations matching `hosts`, where each entry is `"host"`
+(any port, case-insensitive ASCII), `"host:port"`, `"[ipv6]"`, or `"[ipv6]:port"`
+with `port` in `1..65535`; any other destination gets
+`Error(Network.Refused(host: host, port: port))` without DNS lookup or socket
+activity, a malformed entry is a bug (13.2), and chaining `allow_hosts`
+intersects the allowed sets so authority never widens. **Connection**:
 `send(bytes: Bytes) : Result(Unit, NetworkError)` sends all of `bytes`.
 `receive(most: Int) : Result(Bytes, NetworkError)` waits for data and gives at
 most `most` bytes of it, and empty `Bytes` when the other side has finished.

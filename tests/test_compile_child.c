@@ -38,7 +38,6 @@ int main(void) {
     MO_ASSERT(fputs("#!/bin/sh\n[ -z \"$MO_CHILD_CANARY\" ] && [ -x compiler ] || exit 1\nif [ "
                     "\"$1\" = test ]; then\n"
                     "  [ ! -e \"/proc/$$/fd/$2\" ] || exit 1\n"
-                    "  [ \"$4\" != --list ] || { printf list > \"$6\"; exit 0; }\n"
                     "  " MEMORY_CHECK "test \"$(ulimit -t)\" = 120 && test \"$(ulimit -c)\" = 0\n"
                     "  exit\nfi\ncase \"$2\" in\n"
                     "ok) printf image > \"$4\";;\n"
@@ -95,10 +94,6 @@ int main(void) {
     MO_ASSERT(held > 2);
     char number[16];
     MO_ASSERT(snprintf(number, sizeof number, "%d", held) > 0);
-    CHECK(mo_list_start(&compiler, dir, number, output, errors, NULL, NULL, 100, &child) ==
-          MO_COMPILE_RUNNING);
-    CHECK(complete(&child) == MO_COMPILE_OK);
-    CHECK(unlink(errors) == 0);
     CHECK(mo_check_start(&compiler, dir, number, errors, NULL, NULL, 100, &child) ==
           MO_COMPILE_RUNNING);
     CHECK(complete(&child) == MO_COMPILE_OK);

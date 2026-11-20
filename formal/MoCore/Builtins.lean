@@ -1059,7 +1059,9 @@ def networkTy (ok : Ty) : Ty := .result ok .networkError
 #guard typedAs? program [("c", tCap .connection)] (io .send [v "c", bytesE [1]]) (networkTy .unit) &&
   !typedAs? program [("c", tCap .network)] (io .send [v "c", bytesE [1]]) (networkTy .unit) &&
   typedAs? program [("c", tCap .connection)] (io .receive [v "c", int 4]) (networkTy .bytes) &&
-  !typedAs? program [("c", tCap .connection)] (io .receive [v "c", str "4"]) (networkTy .bytes)
+  !typedAs? program [("c", tCap .connection)] (io .receive [v "c", str "4"]) (networkTy .bytes) &&
+  typedAs? program [("n", tCap .network)] (io .allowHosts [v "n", strs ["example.org"]]) (tCap .network) &&
+  !typedAs? program [("n", tCap .network)] (io .allowHosts [v "n", str "example.org"]) (tCap .network)
 #guard match run program (seq (io .print [v "c", str "before the network"]) networkConnect)
     { files := [("kept", "value")], now := 123 } (handles [("c", .console), ("n", .network)]) with
   | .stopped (.outside "Network is not modeled by mocore") w =>

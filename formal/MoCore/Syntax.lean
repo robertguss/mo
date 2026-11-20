@@ -362,7 +362,7 @@ inductive IoOp where
   | writeText | appendText | remove | makeFolder
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
-  | connect | send | receive
+  | connect | allowHosts | send | receive
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
   | networkFake
@@ -571,6 +571,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .randomInt => ([.cap .random, .int, .int], .int)
   | .connect =>
     ([.cap .network, .text, .int, .duration], .result (.cap .connection) .networkError)
+  | .allowHosts => ([.cap .network, .list .text], .cap .network)
   | .send => ([.cap .connection, .bytes], .result .unit .networkError)
   | .receive => ([.cap .connection, .int], .result .bytes .networkError)
   | .consoleFake => ([], .cap .console)

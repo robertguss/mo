@@ -228,13 +228,10 @@ static const struct abi_case catalog[] = {{"Catalog",
 static const struct abi_case catalog_option[] = {{.name = "None"},
                                                  {"Some", 1, {{NULL, ABI_CATALOG}}}};
 
-static const struct abi_case access[] = {{"Access",
-                                          5,
-                                          {{"bearer", ABI_SPAN_OPTION},
-                                           {"upgrade", ABI_SPAN_OPTION},
-                                           {"session", ABI_SPAN_OPTION},
-                                           {"stream", ABI_BOOL},
-                                           {"approval", ABI_SPAN_OPTION}}}};
+static const struct abi_case access[] = {
+    {"Access",
+     3,
+     {{"bearer", ABI_SPAN_OPTION}, {"session", ABI_SPAN_OPTION}, {"stream", ABI_BOOL}}}};
 static const struct abi_case inspection[] = {{"Ok", 1, {{NULL, ABI_ACCESS}}},
                                              {"Error", 1, {{NULL, ABI_INT}}}};
 static const struct abi_case body_plan[] = {
@@ -325,7 +322,7 @@ static const struct abi_case view_event[] = {{"Event",
                                                {"record", ABI_TEXT},
                                                {"unavailable", ABI_TEXT}}}};
 static const struct abi_case view_observation[] = {{"Observation",
-                                                    10,
+                                                    11,
                                                     {{"service_name", ABI_TEXT},
                                                      {"program", ABI_TEXT},
                                                      {"build", ABI_TEXT},
@@ -335,7 +332,8 @@ static const struct abi_case view_observation[] = {{"Observation",
                                                      {"timers", ABI_VIEW_TIMERS},
                                                      {"events", ABI_VIEW_EVENTS},
                                                      {"log", ABI_VIEW_MESSAGES},
-                                                     {"uptime", ABI_TEXT}}}};
+                                                     {"uptime", ABI_TEXT},
+                                                     {"program_source", ABI_TEXT}}}};
 
 static const struct {
     enum mo_type_kind kind;
@@ -461,7 +459,7 @@ static bool valid_abi(const struct mo_image *image) {
     static const struct {
         const char *name;
         uint32_t count;
-        enum abi_type parameters[5], result;
+        enum abi_type parameters[6], result;
     } functions[] = {
         {"HttpServer.scan_headers", 3, {ABI_BYTES, ABI_SCAN, ABI_INT}, ABI_SCAN_RESULT},
         {"HttpServer.parse_headers", 2, {ABI_BYTES, ABI_LIMITS}, ABI_HEAD_RESULT},
@@ -476,6 +474,7 @@ static bool valid_abi(const struct mo_image *image) {
         {"HttpBody.feed", 3, {ABI_BODY_STATE, ABI_BYTES, ABI_BODY_BOUNDS}, ABI_BODY_RESULT},
         {"McpFetch.read", 1, {ABI_TEXT}, ABI_TEXTS},
         {"McpFetch.upgrade", 1, {ABI_TEXT}, ABI_TEXTS},
+        {"McpFetch.overview_source", 1, {ABI_TEXT}, ABI_TEXT},
         {"McpViews.export_id", 1, {ABI_JSON}, ABI_TEXT},
         {"McpViews.failure_id", 1, {ABI_JSON}, ABI_INT},
         {"McpViews.failure_after", 1, {ABI_JSON}, ABI_INT},
@@ -491,16 +490,16 @@ static bool valid_abi(const struct mo_image *image) {
          5,
          {ABI_INT, ABI_JSON, ABI_VIEW_OBSERVATION, ABI_NATIVE_BYTES, ABI_INT},
          ABI_JSON},
-        {"Mcp.catalog", 1, {ABI_MCP_SERVICE}, ABI_JSON},
-        {"Mcp.prepare", 3, {ABI_MCP_SERVICE, ABI_TEXT, ABI_INT}, ABI_CATALOG_OPTION},
+        {"Mcp.catalog", 2, {ABI_MCP_SERVICE, ABI_BOOL}, ABI_JSON},
+        {"Mcp.prepare", 4, {ABI_MCP_SERVICE, ABI_TEXT, ABI_INT, ABI_BOOL}, ABI_CATALOG_OPTION},
         {"Mcp.page", 3, {ABI_CATALOG, ABI_INT, ABI_JSON}, ABI_JSON_OPTION},
         {"Mcp.success", 1, {ABI_JSON}, ABI_JSON},
         {"Mcp.application_error", 1, {ABI_JSON}, ABI_JSON},
         {"Mcp.tool_reply", 4, {ABI_JSON, ABI_JSON, ABI_BOOL, ABI_INT}, ABI_TEXT_OPTION},
         {"Mcp.operator_reply", 4, {ABI_JSON, ABI_JSON, ABI_BOOL, ABI_INT}, ABI_TEXT_OPTION},
         {"McpTransport.receive",
-         5,
-         {ABI_TEXT, ABI_TEXT_OPTION, ABI_MCP_SERVICE, ABI_CATALOG, ABI_TEXT},
+         6,
+         {ABI_TEXT, ABI_TEXT_OPTION, ABI_MCP_SERVICE, ABI_CATALOG, ABI_TEXT, ABI_BOOL},
          ABI_ACTION},
         {"McpTransport.reply", 2, {ABI_JSON, ABI_JSON}, ABI_TEXT},
         {"McpTransport.fallback", 2, {ABI_TEXT, ABI_TEXT}, ABI_TEXT_PAIR},
@@ -511,7 +510,7 @@ static bool valid_abi(const struct mo_image *image) {
         {"McpTransport.stream_head", 0, {0}, ABI_TEXT},
         {"McpTransport.list_changed", 0, {0}, ABI_TEXT},
         {"McpRpc.parse", 2, {ABI_TEXT, ABI_TEXT_OPTION}, ABI_RPC_ENVELOPE},
-        {"McpRpc.method", 3, {ABI_RPC_REQUEST, ABI_TEXTS, ABI_TEXT}, ABI_RPC_METHOD},
+        {"McpRpc.method", 4, {ABI_RPC_REQUEST, ABI_TEXTS, ABI_TEXT, ABI_BOOL}, ABI_RPC_METHOD},
         {"McpRpc.result", 2, {ABI_JSON, ABI_JSON}, ABI_JSON},
         {"McpRpc.error", 3, {ABI_JSON_OPTION, ABI_INT, ABI_TEXT}, ABI_JSON},
         {"McpRpc.initialized", 1, {ABI_TEXT}, ABI_JSON},

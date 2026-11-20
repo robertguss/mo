@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Live upgrades of a running mo serve: pushes, refusals, streams, kills and recovery.
+"""Live upgrades of a running mo serve over its private admin socket: pushes, refusals, streams,
+kills and recovery.
 
-Every scenario drives the real executable over loopback: mo push for the client path and raw
-MCP calls where a test needs to stop between steps."""
+Every scenario drives the real executable: mo push for the client path and raw MCP calls over the
+admin socket where a test needs to stop between steps."""
 import base64
 import hashlib
 import http.client
 import json
 import os
 import pathlib
-import re
 import select
 import signal
 import socket
@@ -20,10 +20,7 @@ import threading
 import time
 
 TOKEN = "LiveServiceToken0123456789"
-UPGRADE = "LiveUpgradeCredential9876543210"
-APPROVAL = "LiveApprovalCredential0123456789"
-ENV = {**os.environ, "TOKEN": TOKEN, "UPGRADE": UPGRADE, "APPROVAL": APPROVAL}
-SECRETS = ["--upgrade-token-env", "UPGRADE", "--approval-token-env", "APPROVAL"]
+ENV = {**os.environ, "TOKEN": TOKEN}
 
 V1 = '''module Main
 service
@@ -157,10 +154,12 @@ def digests(binary, old, new):
 
 
 class Service:
-    def __init__(self, binary, data, source=None, flags=(), credential=True, setting="intent",
-                 cwd=None):
+    def __init__(self, binary, data, source=None, flags=(), admin=True, cwd=None):
+        data_path = pathlib.Path(data)
+        self.admin_socket = (data_path.parent / f"{data_path.name}-admin.sock") if admin else None
+        admin_args = ("--admin-socket", str(self.admin_socket)) if self.admin_socket else ()
         args = [binary, "serve", *([str(source)] if source else []), "--data", str(data),
-                "--port", "0", *(SECRETS if credential else []), *flags]
+                "--port", "0", *admin_args, *flags]
         self.errors = tempfile.TemporaryFile()
         self.process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=self.errors,
                                         env=ENV, bufsize=0, cwd=cwd)
@@ -181,30 +180,41 @@ class Service:
                 if line.startswith("mo serve: listening on http://127.0.0.1:"):
                     self.port = int(line.rsplit(":", 1)[1].split("/")[0])
         assert self.port is not None, (self.output, self.stderr())
-        if credential and setting is not None:
-            result = review(binary, self.port, "--setting", setting)
-            assert result.returncode == 0, result
 
     def stderr(self):
         self.errors.seek(0)
         return self.errors.read().decode(errors="replace")
 
-    def rpc(self, method, params=None, headers=None, upgrade=False):
+    def rpc(self, method, params=None, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=60)
         body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
         fields = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json",
                   "MCP-Protocol-Version": "2025-11-25", **(headers or {})}
-        if upgrade:
-            fields["Mo-Upgrade-Authorization"] = f"Bearer {UPGRADE}"
         connection.request("POST", "/mcp", body, fields)
         response = connection.getresponse()
         text = response.read()
         connection.close()
         return response.status, json.loads(text) if text else None, dict(response.getheaders())
 
-    def call(self, tool, upgrade=False, **arguments):
-        status, body, _ = self.rpc("tools/call", {"name": tool, "arguments": arguments},
-                                   upgrade=upgrade)
+    def admin_rpc(self, method, params=None, headers=None):
+        assert self.admin_socket is not None
+        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw.settimeout(60)
+        raw.connect(str(self.admin_socket))
+        connection = http.client.HTTPConnection("localhost", timeout=60)
+        connection.sock = raw
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}})
+        fields = {"Content-Type": "application/json",
+                  "MCP-Protocol-Version": "2025-11-25", **(headers or {})}
+        connection.request("POST", "/mcp", body, fields)
+        response = connection.getresponse()
+        text = response.read()
+        connection.close()
+        return response.status, json.loads(text) if text else None, dict(response.getheaders())
+
+    def call(self, tool, **arguments):
+        target = self.admin_rpc if tool.startswith("mo-") else self.rpc
+        status, body, _ = target("tools/call", {"name": tool, "arguments": arguments})
         assert status == 200, (status, body)
         return body["result"]
 
@@ -224,11 +234,15 @@ class Service:
         self.process.send_signal(signal.SIGKILL)
         self.process.wait(timeout=30)
         self.process.stdout.close()
+        if self.admin_socket is not None:
+            self.admin_socket.unlink(missing_ok=True)
 
     def stop(self):
         self.process.send_signal(signal.SIGTERM)
         status = self.process.wait(timeout=60)
         self.process.stdout.close()
+        if self.admin_socket is not None:
+            self.admin_socket.unlink(missing_ok=True)
         return status
 
 
@@ -274,31 +288,18 @@ class Stream:
         self.socket.close()
 
 
-def review(binary, port, *args, approval="APPROVAL"):
-    return subprocess.run([binary, "review", "--url", f"http://127.0.0.1:{port}/mcp",
-                           "--token-env", "TOKEN", "--approval-token-env", approval, *args],
-                          capture_output=True, timeout=300, env=ENV)
-
-
-def push(binary, service, source, base, *flags, upgrade=UPGRADE, url=None):
-    env = {**ENV, "UPGRADE": upgrade}
-    return subprocess.run([binary, "push", str(source), "--url",
-                           url or f"http://127.0.0.1:{service.port}/mcp", "--base", base,
-                           "--token-env", "TOKEN", "--upgrade-token-env", "UPGRADE", *flags],
-                          capture_output=True, timeout=120, env=env)
-
-
-def answered(binary, service, source, base, *flags):
-    held = push(binary, service, source, base, *flags)
-    assert held.returncode == 3 and held.stdout.startswith(b"held "), held
-    return review(binary, service.port, "--yes", held.stdout.split()[1].decode())
+def push(binary, service, source, base=None, *flags, admin_socket=None):
+    target = str(admin_socket if admin_socket is not None else service.admin_socket)
+    base_args = ("--base", base) if base is not None else ()
+    return subprocess.run([binary, "push", str(source), "--admin-socket", target, *base_args,
+                           *flags], capture_output=True, timeout=120, env=ENV)
 
 
 def assert_no_secrets(*texts):
     for text in texts:
         if isinstance(text, bytes):
             text = text.decode(errors="replace")
-        assert TOKEN not in text and UPGRADE not in text and APPROVAL not in text, text
+        assert TOKEN not in text, text
 
 
 def folder_bytes(data):
@@ -308,30 +309,34 @@ def folder_bytes(data):
 
 def client_refusals(binary, root):
     source = write(root, "client", V1)
-    for url in ["http://example.com:80/mcp", "http://10.1.2.3:8080/mcp", "https://127.0.0.1:1/mcp"]:
-        # No credential is set, so a refusal naming the URL proves it came first.
-        bare = {k: v for k, v in os.environ.items() if k not in ("TOKEN", "UPGRADE")}
-        result = subprocess.run([binary, "push", str(source), "--url", url, "--base", "0" * 64,
-                                 "--token-env", "TOKEN", "--upgrade-token-env", "UPGRADE"],
-                                capture_output=True, timeout=30, env=bare)
-        assert result.returncode == 2 and b"loopback URL" in result.stderr, result
+    missing_sock = pathlib.Path(root) / "missing.sock"
+    result = subprocess.run([binary, "push", str(source), "--admin-socket", str(missing_sock),
+                             "--base", "0" * 64], capture_output=True, timeout=30, env=ENV)
+    assert result.returncode == 1 and b"nothing was changed" in result.stderr, result
+    bad_base = subprocess.run([binary, "push", str(source), "--admin-socket", str(missing_sock),
+                               "--base", "not-hex"], capture_output=True, timeout=30, env=ENV)
+    assert bad_base.returncode == 2 and b"--base" in bad_base.stderr, bad_base
+    no_sock = subprocess.run([binary, "push", str(source)], capture_output=True, timeout=30,
+                             env=ENV)
+    assert no_sock.returncode == 2 and b"--admin-socket" in no_sock.stderr, no_sock
 
 
 def start_refusals(binary, root):
     data = pathlib.Path(root) / "refusals"
     data.mkdir()
     source = write(root, "refusals-src", V1)
-    cases = [(SECRETS[:2], {}, b"E1434: mo serve was given --upgrade-token-env"),
-             (SECRETS, {"UPGRADE": "short"}, b"E1409: mo serve could not use the upgrade"),
-             (SECRETS, {"UPGRADE": TOKEN}, b"E1434: mo serve could not start: two of"),
-             (SECRETS, {"APPROVAL": TOKEN}, b"E1434: mo serve could not start: two of"),
-             (SECRETS, {"APPROVAL": UPGRADE}, b"E1434: mo serve could not start: two of")]
-    for i, (flags, changed, words) in enumerate(cases):
-        result = subprocess.run([binary, "serve", str(source), "--data", str(data), "--port", "0",
-                                 *flags], capture_output=True, timeout=60, env={**ENV, **changed})
-        assert result.returncode == 1 and words in result.stderr, result
-        assert_no_secrets(result.stdout, result.stderr)
-        assert i >= 2 or not any(data.iterdir()), list(data.iterdir())
+    regular = pathlib.Path(root) / "regular-file"
+    regular.write_bytes(b"keep me")
+    result = subprocess.run([binary, "serve", str(source), "--data", str(data), "--port", "0",
+                             "--admin-socket", str(regular)], capture_output=True, timeout=60,
+                            env=ENV)
+    assert result.returncode == 1 and b"E1409" in result.stderr, result
+    assert regular.read_bytes() == b"keep me"
+    assert_no_secrets(result.stdout, result.stderr)
+    missing_dir = subprocess.run([binary, "serve", str(source), "--data", str(data), "--port", "0",
+                                  "--admin-socket", str(pathlib.Path(root) / "absent" / "a.sock")],
+                                 capture_output=True, timeout=60, env=ENV)
+    assert missing_dir.returncode == 1 and b"E1409" in missing_dir.stderr, missing_dir
 
 
 def adds(service, stop, acknowledged, errors):
@@ -348,12 +353,12 @@ def adds(service, stop, acknowledged, errors):
 
 
 def raw_upload(service, source_bytes, base, candidate):
-    opened = service.call("mo-upgrade-open", upgrade=True, base=base, candidate=candidate,
+    opened = service.call("mo-upgrade-open", base=base, candidate=candidate,
                           total=len(source_bytes))
     assert not opened["isError"], opened
     slot = opened["structuredContent"]["slot"]
     for index, offset in enumerate(range(0, len(source_bytes), 8192)):
-        page = service.call("mo-upgrade-page", upgrade=True, slot=slot, index=index, offset=offset,
+        page = service.call("mo-upgrade-page", slot=slot, index=index, offset=offset,
                             total=len(source_bytes),
                             bytes=base64.b64encode(source_bytes[offset:offset + 8192]).decode())
         assert not page["isError"], page
@@ -387,16 +392,15 @@ def main_flow(binary, root):
         records = service.call("mo-failures")["structuredContent"]["value"]["records"]
         record = records[0]["id"]
         timers = service.call("mo-timers")["structuredContent"]["value"]
-        # The service token alone and a wrong credential change nothing and send no notice.
-        wrong = push(binary, service, v2, base1, upgrade="NotTheUpgradeCredential0")
-        outputs += [wrong.stdout, wrong.stderr]
-        assert wrong.returncode == 1 and b"E1414" in wrong.stderr, wrong
-        # A wrong service token never reaches the tools: nothing changed, and --json stays JSON.
-        rejected = subprocess.run([binary, "push", str(v2), "--url",
-                                   f"http://127.0.0.1:{service.port}/mcp", "--base", base1,
-                                   "--token-env", "TOKEN", "--upgrade-token-env", "UPGRADE",
-                                   "--json"], capture_output=True, timeout=120,
-                                  env={**ENV, "TOKEN": "WrongServiceToken0123456"})
+        # Public HTTP never exposes upgrade tools, even with the valid bearer token.
+        pub_status, pub_body, _ = service.rpc("tools/call", {"name": "mo-upgrade-open",
+                                                             "arguments": {"base": base1,
+                                                                           "candidate": digest2,
+                                                                           "total": 1}})
+        assert pub_status == 200 and pub_body["error"]["code"] == -32602, pub_body
+        # A missing admin socket never reaches the tools: nothing changed, and --json stays JSON.
+        rejected = push(binary, service, v2, base1, "--json",
+                        admin_socket=pathlib.Path(root) / "absent.sock")
         report = json.loads(rejected.stdout)
         assert rejected.returncode == 1 and report["class"] == "client", rejected
         assert "nothing was changed" in report["message"], report
@@ -431,7 +435,10 @@ def main_flow(binary, root):
             assert notices == [{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"}]
         status, body, _ = service.rpc("tools/list", headers={"MCP-Session-Id": first})
         names = [tool["name"] for tool in body["result"]["tools"]]
-        assert "double" in names and "gone" not in names and "mo-upgrade-commit" in names, names
+        assert "double" in names and "gone" not in names and "mo-upgrade-commit" not in names, names
+        _, admin_body, _ = service.admin_rpc("tools/list")
+        admin_names = [tool["name"] for tool in admin_body["result"]["tools"]]
+        assert "mo-upgrade-commit" in admin_names and "double" not in admin_names, admin_names
         status, body, _ = service.rpc("tools/call", {"name": "gone"})
         assert body["error"]["message"] == "Invalid params: unknown tool", body
         # Timer phase is kept by name: the next due time moved only by whole intervals.
@@ -445,17 +452,15 @@ def main_flow(binary, root):
         assert any(e["kind"] == "failure" and e["handler"] == "fail_now" for e in events), events
         assert any(e["kind"] == "upgrade" and e["reason"].startswith("accepted ordinal 1")
                    for e in events), events
-        assert any(e["kind"] == "upgrade" and e["reason"].startswith("refused E1414")
-                   for e in events), events
-        # Retrying the push that already landed, and a push against a stale base.
+        # Retrying the push that already landed (both with --base and auto-discovered), and stale base.
         again = push(binary, service, v2, base1)
         assert again.returncode == 0 and b"already active" in again.stdout, again
         stale = push(binary, service, v3, base1, "--migrate", "migrate")
         assert stale.returncode == 1 and b"E1416" in stale.stderr and digest2.encode() in stale.stderr
-        same = push(binary, service, v2, digest2)
+        same = push(binary, service, v2, None)
         assert same.returncode == 0 and b"already active" in same.stdout, same
         # A migration over the live budget is refused; the old program keeps serving.
-        refused = answered(binary, service, slow, digest2, "--migrate", "migrate")
+        refused = push(binary, service, slow, digest2, "--migrate", "migrate")
         assert refused.returncode == 1 and refused.stderr.startswith(b"error E1424:"), refused
         assert service.value("read").startswith("v2:")
         failed = push(binary, service, broken, digest2, "--json")
@@ -470,14 +475,18 @@ def main_flow(binary, root):
         assert service.value("read").startswith("v2:")
         assert all(stream.events(0.3) == [] for stream in streams)
         counted = len(acknowledged)
-        migrated = answered(binary, service, v3, digest2, "--migrate", "migrate")
+        # Omit --base to exercise automatic active-base discovery via mo-overview.
+        migrated = push(binary, service, v3, None, "--migrate", "migrate")
         assert migrated.returncode == 0 and b"upgrade accepted" in migrated.stdout, migrated
         assert service.value("read") == f"v3:migrated:{counted}"
         for stream in streams:
             stream.close()
         outputs += [migrated.stdout, migrated.stderr]
-        # Killed after the commit: the restart runs the recorded program without a source file.
-        service.kill()
+        # Killed after the commit (leaving a stale socket file): restart unlinks and rebinds it.
+        service.process.send_signal(signal.SIGKILL)
+        service.process.wait(timeout=30)
+        service.process.stdout.close()
+        assert service.admin_socket.exists()
         service = Service(binary, data)
         assert service.value("read") == f"v3:migrated:{counted}"
         assert service.value("add", amount="2") == str(counted + 2)
@@ -496,7 +505,7 @@ def main_flow(binary, root):
         if service.process.poll() is None:
             service.stop()
     assert_no_secrets(logs, *outputs)
-    assert TOKEN.encode() not in folder_bytes(data) and UPGRADE.encode() not in folder_bytes(data)
+    assert TOKEN.encode() not in folder_bytes(data)
     history = subprocess.run([binary, "history", str(data), "--json"], capture_output=True,
                              timeout=60, env=ENV)
     assert history.returncode == 0, history
@@ -539,17 +548,12 @@ def budget_then_restart(binary, root):
     service = Service(binary, data, v1)
     try:
         assert service.value("add", amount="4") == "4"
-        refused = answered(binary, service, slow, base1, "--migrate", "migrate")
+        refused = push(binary, service, slow, base1, "--migrate", "migrate")
         assert refused.returncode == 1 and refused.stderr.startswith(b"error E1424:"), refused
         assert service.value("read") == "v1:4"
     finally:
         service.stop()
-    restart = ["--upgrade", "--migrate", "migrate"]
-    held = subprocess.run([binary, "serve", str(slow), "--data", str(data), "--port", "0",
-                           *SECRETS, *restart], env=ENV, capture_output=True, timeout=300)
-    shown = re.search(rb"error E1435: .*--review ([0-9a-f]{64})", held.stderr)
-    assert held.returncode == 1 and shown, held
-    service = Service(binary, data, slow, [*restart, "--review", shown.group(1).decode()])
+    service = Service(binary, data, slow, ["--upgrade", "--migrate", "migrate"])
     try:
         assert service.value("read") == "v3:slow:4"
     finally:
@@ -560,11 +564,11 @@ def back_to_back(binary, root):
     data = pathlib.Path(root) / "twice"
     data.mkdir()
     v1, v2, v3 = write(root, "t1", V1), write(root, "t2", V2), write(root, "t3", V3)
-    base1, digest2 = digests(binary, v1, v2)
+    base1, _ = digests(binary, v1, v2)
     service = Service(binary, data, v1)
     try:
         first = push(binary, service, v2, base1, "--json")
-        second = answered(binary, service, v3, digest2, "--migrate", "migrate")
+        second = push(binary, service, v3, None, "--migrate", "migrate")
         assert json.loads(first.stdout)["ordinal"] == "1" and second.returncode == 0, second
         assert service.value("read") == "v3:migrated:0"
     finally:
@@ -577,7 +581,8 @@ def back_to_back(binary, root):
 
 def main(binary):
     binary = str(pathlib.Path(binary).resolve())
-    with tempfile.TemporaryDirectory() as root:
+    tmp_base = "/tmp" if pathlib.Path("/tmp").is_dir() else None
+    with tempfile.TemporaryDirectory(dir=tmp_base) as root:
         client_refusals(binary, root)
         start_refusals(binary, root)
         main_flow(binary, root)
@@ -585,7 +590,7 @@ def main(binary):
         budget_then_restart(binary, root)
         back_to_back(binary, root)
     print("live upgrades: pushes, refusals, streams, timers, events, kills, restarts, "
-          "retained replay and credential hygiene passed")
+          "retained replay and admin-socket isolation passed")
 
 
 if __name__ == "__main__":

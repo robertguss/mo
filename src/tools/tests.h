@@ -41,7 +41,7 @@ MO_MUST_USE struct mo_test_selection *
 mo_instantiate_tests(struct mo_arena *arena, const struct mo_test_selection *selection,
                      const struct mo_lowered_promises *promises, struct mo_diags *diags);
 MO_MUST_USE bool mo_write_test(FILE *output, bool json, const struct mo_sources *sources,
-                               const struct mo_observation *observation, const uint8_t *digest);
+                               const struct mo_observation *observation);
 
 enum mo_vacuity_kind { MO_VACUITY_NONE, MO_VACUITY_TAUTOLOGY, MO_VACUITY_UNREACHED_IMPLIES };
 

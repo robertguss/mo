@@ -79,5 +79,6 @@
     X(CONSOLE_FAKE, "consoleFake") X(CONSOLE_FAKE_INPUT, "consoleFakeInput") \
     X(FILES_IN_MEMORY, "filesInMemory") X(CLOCK_FIXED, "clockFixed") \
     X(RANDOM_SEEDED, "randomSeeded") X(ARGS_OF, "argsOf") X(ENV_OF, "envOf") \
-    X(CONNECT, "connect") X(SEND, "send") X(RECEIVE, "receive") X(NETWORK_FAKE, "networkFake")
+    X(CONNECT, "connect") X(SEND, "send") X(RECEIVE, "receive") X(NETWORK_FAKE, "networkFake") \
+    X(ALLOW_HOSTS, "allowHosts")
 // clang-format on

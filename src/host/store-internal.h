@@ -52,19 +52,12 @@ bool store_blob_size(sqlite3_stmt *stmt, int column, int length);
 bool store_program_row(sqlite3_stmt *stmt, struct mo_store_program *p);
 enum mo_store_status store_read_program(struct mo_store *s, struct mo_arena *arena,
                                         struct mo_store_program *out, bool *found);
-enum mo_store_status store_read_setting(struct mo_store *s, struct mo_store_review *out);
 
 struct store_table {
     const char *name, *sql;
 };
 
 bool store_table_ready(struct mo_store *s, const struct store_table *t);
-bool store_items_valid(const struct mo_store_program *p);
-bool store_decide(struct mo_store *s, const struct mo_store_decision *d);
-bool store_door_decided(struct mo_store *s, const struct mo_store_activation *a);
-bool store_drop_stale(struct mo_store *s, int64_t time);
-bool store_review_write(struct mo_store *s, const struct mo_store_program *p);
-bool store_not_version_two(struct mo_store *s);
 
 enum table_state { TABLE_FAILED, TABLE_ABSENT, TABLE_SAME, TABLE_DIFFERENT };
 
