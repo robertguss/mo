@@ -348,7 +348,8 @@ def guide_claims(binary):
         assert result.stdout.endswith(b"1 passed, 0 failed, 0 stopped\n")
 
     says("The `lib/` folder holds library modules written in Mo, and every `mo` command loads "
-         "them with your program.",
+         "them with your program, `Http`, `Json` and `Unicode16` only when a `use` line names "
+         "them.",
          "`mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own.")
     for library_file in sorted((root / "lib").glob("*.mo")):
         run(binary, ["check", str(library_file)], 0)

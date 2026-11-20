@@ -275,6 +275,9 @@ def strength_checks(binary):
     assert (b"strength: 3 of 4 wrong versions killed (75.0%), 3 by any check; 2 invalid, "
             b"1 changes_intent, "
             b"1 defect, 0 unfinished, 0 not_counted\n") in text, text
+    used = strength_record(binary, f"{STRENGTH}-json/main.mo", f"{STRENGTH}-json/versions")
+    assert [(v["name"], v["outcome"]) for v in used["versions"]] == [
+        ("a-wrong.mo", "killed_by_example")], used
     source = (root / STRENGTH / "main.mo").read_text()
     with tempfile.TemporaryDirectory(prefix="mo-strength-") as directory:
         folder = pathlib.Path(directory)

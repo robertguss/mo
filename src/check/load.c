@@ -256,6 +256,26 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
     return 0;
 }
 
+static const char *const on_use[] = {"Http", "Json", "Unicode16"};
+
+static MO_MUST_USE bool loaded_on_use(const char *name) {
+    for (size_t i = 0; i < sizeof on_use / sizeof *on_use; i++)
+        if (strcmp(name, on_use[i]) == 0)
+            return true;
+    return false;
+}
+
+static MO_MUST_USE bool file_loaded_on_use(const char *relative) {
+    for (size_t i = 0; i < sizeof on_use / sizeof *on_use; i++) {
+        char file[MO_LIMIT_PATH_SIZE + 1];
+        bool valid = mo_module_path((const uint8_t *)on_use[i], strlen(on_use[i]), file);
+        MO_ASSERT(valid);
+        if (strcmp(relative, file) == 0)
+            return true;
+    }
+    return false;
+}
+
 static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const char *expected,
                                          struct mo_span origin, bool library) {
     struct mo_header header;
@@ -282,8 +302,7 @@ static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const 
         return 0;
     }
     uint32_t previous = find(l, name);
-    if (previous != 0 || (!library && (strcmp(name, "Http") == 0 || strcmp(name, "Json") == 0 ||
-                                       strcmp(name, "Unicode16") == 0))) {
+    if (previous != 0 || (!library && loaded_on_use(name))) {
         struct mo_span conflict = library && previous != 0 && !l->out->library[previous - 1]
                                       ? l->items[previous - 1].header.path->span
                                       : header.path->span;
@@ -309,7 +328,7 @@ static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const 
 
 static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
                                         const char *expected, struct mo_span origin, bool library) {
-    MO_ASSERT(!l->memory_only);
+    MO_ASSERT(!l->memory_only || library);
     if (expected != NULL || library) {
         const char *root = library ? l->real_library : l->real_root;
         MO_ASSERT(root != NULL);
@@ -464,15 +483,17 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
             if (realpath(files[i], resolved) != NULL && strcmp(resolved, l->real_entry) == 0)
                 continue; /* the entry is this file, already loaded as module 0 */
         }
+        const char *actual = files[i] + root_length;
+        if (*actual == '/')
+            actual++;
+        if (file_loaded_on_use(actual))
+            continue;
         uint32_t id = read_module(l, files[i], NULL, unavailable, true);
         if (id == 0)
             return false;
         char *relative = path_text(l, l->items[id - 1].header.path, true);
         if (relative == NULL)
             return false;
-        const char *actual = files[i] + root_length;
-        if (*actual == '/')
-            actual++;
         if (strcmp(actual, relative) != 0) {
             bool kept = report(l, MO_CODE_MODULE_NAME, l->items[id - 1].header.path->span,
                                "the module's name doesn't match its file",
@@ -484,6 +505,12 @@ static MO_MUST_USE bool library_files(struct loader *l, const char *root) {
         }
     }
     return true;
+}
+
+static MO_MUST_USE char *library_file(struct loader *l, const struct mo_syntax *path) {
+    char *relative = path_text(l, path, true);
+    char *prefix = join(l, l->real_library, "/", path->span);
+    return relative == NULL || prefix == NULL ? NULL : join(l, prefix, relative, path->span);
 }
 
 static MO_MUST_USE bool graph(struct loader *l) {
@@ -527,6 +554,14 @@ static MO_MUST_USE bool graph(struct loader *l) {
                 if (!ok || target == 0)
                     return false;
             }
+            if (target == 0 && l->real_library != NULL && loaded_on_use(name)) {
+                char *full = library_file(l, path);
+                if (full == NULL)
+                    return false;
+                target = read_module(l, full, name, path->span, true);
+                if (target == 0)
+                    return false;
+            }
             if (l->memory_only &&
                 (target == 0 || (l->out->library[frame->id - 1] && !l->out->library[target - 1]))) {
                 bool kept = source_error(
@@ -535,11 +570,7 @@ static MO_MUST_USE bool graph(struct loader *l) {
                 return false;
             }
             if (l->out->library[frame->id - 1] && (target == 0 || !l->out->library[target - 1])) {
-                char *relative = path_text(l, path, true);
-                char *prefix = join(l, l->real_library, "/", path->span);
-                char *full = relative == NULL || prefix == NULL
-                                 ? NULL
-                                 : join(l, prefix, relative, path->span);
+                char *full = library_file(l, path);
                 if (full == NULL)
                     return false;
                 bool kept = report(l, MO_CODE_MODULE_MISSING, path->span,
