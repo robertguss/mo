@@ -23,7 +23,7 @@ Phase 3 builds only what that job queue needs (D257):
 - MCP tools served over the network.
 
 These move to a later phase: a multi-core scheduler, an HTTP client, TLS, and database access for
-Mo programs. Phase 7's proposed design gives the last three to programs that `mo run` starts
+Mo programs. Phase 7's approved design gives the last three to programs that `mo run` starts
 ([outside-world.md](outside-world.md)). A service still holds no capability.
 
 ## 3. The demo: Mo's own task queue
@@ -876,14 +876,16 @@ Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
 describes. Activation atomically records the source bundle, migrated snapshot and
 program identities in a version-2 folder that older readers refuse. The upgrade
 operator tools change the service and require a separate credential. A compiler
-child limits crashes and stalls but shares the host identity, files and secrets:
-its compiler is part of the upgrade credential's trusted base. Write access to
-the data folder confers the authority to replace the running program.
+child limits crashes and stalls, and where the host can confine it reaches only
+the compiler, its library, its inputs and its own folder. A child taken over can
+still forge its own output, so its compiler is part of the upgrade credential's
+trusted base. Write access to the data folder confers the authority to replace
+the running program.
 
-Phase 6's approved design adds [the review door](intent.md), not yet implemented: a third
-secret, the approval credential, held only on the service's host; a second
-child that runs the candidate's checks there under limits but without
-operating-system confinement; and a version-3 folder holding approvals. Write
-access to the data folder then confers approval authority too, and a
-memory-safety defect in the compiler or the VM that pushed source can reach is a
-way around the door without a shell.
+[The review door](intent.md) adds a third secret, the approval credential, held
+only on the service's host; a second child that runs the candidate's checks
+there under the same limits and confinement; and a version-3 folder holding
+approvals. Write access to the data folder therefore confers
+approval authority too, and a memory-safety defect in the compiler or the VM
+that pushed source can reach can make a check child report a pass: a way around
+the door without a shell.

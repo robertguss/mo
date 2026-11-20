@@ -58,7 +58,7 @@ Trust also builds over time, change by change. Today a change arrives as a diff 
 
 This plan covers the gates in `mo test` and their proof. The rest of this list is the current understanding of the surrounding work, not a committed roadmap.
 
-- **Phase 7's M3, the HTTP client.** Depends on this plan: the client is written under the gates from its first line and is their second trial. M1 has merged and M2 is in progress; neither depends on this plan. Phase 7 is planned in `docs/plans/2026-11-17-1900-feat-phase7-outside-world-plan.md`.
+- **Phase 7's M3, the HTTP client.** Depends on this plan: the client is written under the gates from its first line and is their second trial. M1 has merged (#360) and M2 has merged (#366); neither depends on this plan. Phase 7 is planned in `docs/plans/2026-11-17-1900-feat-phase7-outside-world-plan.md`.
 - **The gate at the review door.** Depends on this plan and gets its own. The door would refuse a push when a changed function has a surviving mutant, comparing against the running program. Its time limit is set from this plan's measurements.
 - **Trying every call sequence for a service.** Still to decide. This plan's proof counts the survivors that only a rare sequence could kill, and that count is the case for or against it.
 - **Exceptions for mutants that cannot be killed.** Still to decide. This plan's proof counts them.
