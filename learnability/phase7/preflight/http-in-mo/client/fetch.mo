@@ -1,5 +1,5 @@
-## Fetches one JSON document with the Http client in lib/http.mo and prints how many items it
-## holds.
+## Fetches one JSON document with the Http client in lib/http.mo and prints how many items
+## and bytes it holds.
 ##
 ##   fetch PORT PATH
 module Fetch

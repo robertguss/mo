@@ -104,8 +104,8 @@ fn request(method: Text, url: Text) : Request
   Request(method: method, url: url, headers: [], body: "".bytes, timeout: 30.seconds)
 end
 
-## The request with one more header. Headers are sent sorted by name, so the order of these
-## calls changes nothing.
+## The request with one more header. Headers are sent sorted by name, so the order of calls
+## with different names changes nothing.
 fn header(request: Request, name: Text, value: Text) : Request
   examples
     get("http://example.org/").header("Accept", "text/plain").header("Accept", "text/html").headers == [
@@ -445,7 +445,7 @@ fn code(line: Text) : Option(Int)
 end
 
 ## A header line as its name and its value, or `None` for a line with no colon or with a name
-## that is empty or holds a space.
+## that is empty or holds white space.
 fn field(line: Text) : Option((Text, Text))
   examples
     field("Date: 12:30") == Some(("Date", "12:30"))
@@ -532,7 +532,7 @@ fn chunks(rest: Bytes, limits: Limits) : Result(Bytes, Halt)
   Ok(Bytes.join(parts))
 end
 
-## The size a chunk's first line gives, in hexadecimal, before any space, `;` and extension.
+## The size a chunk's first line gives, in hexadecimal, before any `;` and extension.
 fn chunk_size(line: Bytes) : Option(Int)
   examples
     chunk_size("1a".bytes) == Some(26)
@@ -578,6 +578,7 @@ fn reply(status: Int, body: Text) : Response
   examples
     reply(404, "gone") ==
       Response(status: 404, headers: [("Content-Length", "4")], body: "gone".bytes)
+    reply(200, "é").headers == [("Content-Length", "2")]
   end
 
   Response(status: status, headers: [("Content-Length", "#{body.byte_count}")], body: body.bytes)
@@ -668,6 +669,9 @@ fn sendable?(name: Text, value: Text) : Bool
     not sendable?("X", "v\r\nHost: evil")
     not sendable?("X", "v\u{7f}")
     not sendable?("Content-Length", "0")
+    not sendable?("Transfer-Encoding", "chunked")
+    not sendable?("connection", "keep-alive")
+    not sendable?("HOST", "evil")
   end
 
   plain?(name, 33) and
@@ -754,7 +758,7 @@ fn parsed(url: Text) : Option(Target)
   )
 end
 
-## Whether the URL is `https`, and what follows its scheme.
+## Whether the URL is `https`, and what follows its scheme. `None` for any other scheme.
 fn address(url: Text) : Option((Bool, Text))
   case url.drop_prefix("http://")
     Some(rest): Some((false, rest))
@@ -790,7 +794,7 @@ test "a request is written with the client's headers first and the program's sor
     )
 end
 
-test "the order of header calls never changes what is sent"
+test "the order of header calls with different names never changes what is sent"
   one = get("http://example.org/").header("Accept", "a").header("X-Id", "7")
   other = get("http://example.org/").header("X-Id", "7").header("Accept", "a")
   assert one != other
