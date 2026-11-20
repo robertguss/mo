@@ -81,8 +81,9 @@ Fix the compiler and runtime bottlenecks uncovered during the codebase audit so 
 1. **Struct field updates & nested collections (`src/lower/expressions.c`, `src/codegen/`):**
    - Fix `K_BIND` / `field_update` so `s.items = s.items.append(x)` and `s.jobs = s.jobs.set(k, v)` extract/clear the old field reference before evaluating the RHS, keeping `object.count == 1` on nested `List`/`Map`/`Set` values instead of cloning in $O(N)$ on every update.
    - Wire `MO_OP_RESET`, `MO_OP_REUSE`, and `MO_OP_SET_FIELD` in `src/codegen/` (the VM and heap machinery in `src/heap/reuse.c`, `src/heap/value.c`, and `src/vm/execute.c` already exists).
-2. **String interpolation folding (`src/lower/expressions.c:914`):**
+2. **String interpolation folding (`src/lower/expressions.c:914`) & chunked `Bytes` accumulation (`lib/http.mo:235`):**
    - Strip empty `""` literal parts in `K_TEXT` and fold `MO_CORE_TEXT_OP_CONCAT` **left-to-right** so loops like `acc = "#{acc}#{piece}"` preserve `acc`'s `object.count == 1` left buffer and hit `mo_text_concat`'s 2× geometric growth instead of copying $O(N^2)$ into a leading constant `""`.
+   - Accumulate incoming socket chunks as `List(Bytes)` (joined once or grown geometrically) instead of calling `Bytes.join([received, part])` on every TCP packet in `lib/http.mo`.
 3. **List and map `for` loops (`src/lower/expressions.c:718`, `src/codegen/generate.c:365`, `src/heap/value.c:519`):**
    - Lower `for x in list` to direct indexed iteration (`0..list.size` + `LIST_GET`) instead of `MO_CORE_LIST_OP_UNCONS` per-element tuple boxing and `mo_list_slice` $O(N^2)$ tail copying on shared lists (`object.count > 1`).
    - Iterate `Map` and `Set` entries by slot/index without materializing intermediate `List((K, V))` heap tuples.
@@ -148,10 +149,34 @@ end
 
 ---
 
-## 4. Track 3: Real-World Crucible Suite (Post-Implementation Validation)
+## 4. Track 3: Real-World Crucible Suite (Replacing Synthetic Benchmarks)
 
-Once Phase 7 finishes and Tracks 1–2 are built, Mo will be validated on real software rather than synthetic benchmark cohorts:
+Once Phase 7 (`HTTPS` and `Sqlite`) finishes and Tracks 1–2 are in place, Mo will be validated and refined by building real tools and servers across three tiers:
 
-1. **Crucible 1 — API Spike & ETL CLI:** A real HTTPS-to-SQLite ingestion/analytics CLI (`Json.decode` + pagination + `Sqlite` upserts).
-2. **Crucible 2 — Popular Open-Source CLI Rewrite:** Porting a widely used developer tool (such as an `httpie`/`xh`-style HTTP CLI or `tokei`-style SLOC counter) to benchmark Mo's ergonomics, stdlib completeness, and `-O2` single-binary speed.
-3. **Crucible 3 — "FastAPI in Mo" Reference App:** A multi-route HTTP service with `Sqlite`, `auth`, webhook verification, OpenAPI docs, and an in-memory `RateLimiter` `actor`, load-tested with `oha`/`wrk`.
+### Tier 1 — API Spikes & ETL CLIs
+1. **`gh-sync`:** GitHub repository activity (`HTTPS` pagination + `Json.decode[T]` + `Sqlite` incremental upserts + cycle-time analytics).
+2. **Work-API ETL CLI:** A head-to-head Mo replacement for Robert's `uv init` + `httpx` Python API exploration and ETL workflow.
+3. **`dev-pulse`:** Multi-source developer feed aggregator normalizing, deduplicating, and querying trends in `Sqlite`.
+
+### Tier 2 — Open-Source CLI Rewrites
+1. **`mox` (`httpie` / `xh` in Mo):** Human-friendly HTTP/HTTPS shorthand (`Header:Val`, `q==val`, `n:=42`), pretty colorized headers/JSON, plus built-in local `Sqlite` request history and response diffing.
+2. **`moloc` (`tokei` / `scc` in Mo):** Fast polyglot source/comment/blank line counter benchmarking `Files.walk`, `Bytes` scanning, Perceus memory reuse, and `-O2` VM throughput against Rust/Go.
+3. **`moq` (`jq` + `sqlite-utils` in Mo):** Pipe JSON, NDJSON, or CSV from stdin/files to slice by path or auto-load into `Sqlite` for one-liner SQL analytics.
+
+### Tier 3 — "FastAPI in Mo + BEAM Actors" Flagship Servers
+1. **`mo-vcr`:** Recording HTTPS proxy and chaos simulator (`429`s, latency injection via an `actor`, payload diffing in `Sqlite`) for rapid offline API spikes.
+2. **`mo-pipe`:** Single-binary scheduled API sync and ETL daemon (scheduled `actor`s + watermark/cursor tracking in `Sqlite` + schema-drift alerts + status `api`).
+3. **`mo-gateway`:** Local/team LLM proxy, prompt cache, and token budgeter (streaming SSE `api`, exact sub-cent token accounting via 128-bit `Decimal`, microsecond per-key $/RPM caps via a `Budget` `actor`, telemetry in `Sqlite`).
+4. **`mo-pulse`:** Self-hosted error tracker, structured log sink, and HTTPS uptime monitor in one binary (`AlertDedup` and `BatchWriter` `actor`s + `Sqlite` FTS5 search + `Pinger` `actor`).
+5. **`mo-pocket`:** Typed single-binary backend-in-a-box (`Sqlite` + `auth` + auto-OpenAPI REST `api` + realtime SSE + typed Mo business rules and `promise`s).
+
+---
+
+## 5. Capstone: The Mo Agent Harness (`mo-harness`)
+
+Historically, a systems language proves itself when its compiler is written in itself. For an agent-first language, the self-hosting milestone is **an AI coding-agent harness written in Mo**:
+
+- **Workspace safety by construction:** Uses `files.within(workspace)` (`openat2` `RESOLVE_BENEATH`) so file tools physically cannot escape the target repository.
+- **Scoped, confined command execution (`Command` capability):** Adds an explicit, capability-attenuated `Command` capability (reusing `src/host/confine.c`'s Landlock + seccomp child sandbox, explicit binary/directory allowlists, timeouts, and `Command.fake(...)` for deterministic `mo test` runs) to invoke `mo check`, `mo test`, `mo diff`, and `git`.
+- **BEAM multi-agent orchestration:** Coordinates parallel research/worker subagents and background tasks via isolated `actor`s with share-nothing heaps—no shared-memory race conditions.
+- **Dogfooding the stack:** Routes model calls and streaming tool turns through `mo-gateway` (with exact `Decimal` cost tracking), records deterministic offline test fixtures with `mo-vcr`, monitors failures in `mo-pulse`, and stores full replayable trajectories in `Sqlite`.
