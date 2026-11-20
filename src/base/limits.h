@@ -277,6 +277,10 @@
  * stops the program (bytecode.md section 7). It stays well below the 1,024 descriptors a process
  * usually gets, leaving room for the files the program reads and writes. */
 #define MO_LIMIT_OPEN_FOLDERS 256
+
+/* Real connections open at once (a bug past it; a fake's do not count), bytes in one receive
+ * (a bug past it), host-name length (UnknownHost past it), concurrent lookups, addresses kept
+ * from one lookup, and quoted bytes in a fake Broken reason. */
 #define MO_LIMIT_OPEN_CONNECTIONS 64
 #define MO_LIMIT_RECEIVE_BYTES (1U << 20)
 #define MO_LIMIT_HOST_NAME 253

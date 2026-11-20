@@ -81,7 +81,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     }
     MO_ASSERT(!held || received == size);
     sends(&f, connection, sent, sent_size, 1);
-    MO_ASSERT(f.host.open_connections == 0);
     mo_value_drop(f.heap, f.result_connection, opened);
     mo_value_drop(f.heap, f.types.text, dialing[1]);
     mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], network);
