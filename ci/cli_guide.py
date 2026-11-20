@@ -71,8 +71,8 @@ def guide_claims(binary):
             "items edited, with both texts, removed, added and moved to another function, and for "
             "an edited or moved item each declaration it reads that changed, before and after.") in guide
     blocks = guide.split("```mo\n")
-    assert len(blocks) == 2, "the guide has exactly one Mo program"
-    program = blocks[1].split("```\n", 1)[0]
+    assert len(blocks) == 3, "the guide has two Mo programs: the API call and its example"
+    program = blocks[2].split("```\n", 1)[0]
 
     def says(*sentences):
         for sentence in sentences:
@@ -432,6 +432,32 @@ def guide_claims(binary):
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
+    says("`.send(network)` gives `Result(Response, Http.HttpError)`.",
+         "A status such as 404 is a response and not an error.",
+         "An `https://` URL is an error until HTTPS is built: "
+         "`Error(Http.Unreachable(Network.Broken(reason: reason)))`, and the reason says so.",
+         "`Network.fake(Http.replies([(request, Http.reply(200, body))]))` answers exactly that "
+         "request, so the test builds the request the program builds. The order of `header` calls "
+         "with different names does not matter.")
+    example = blocks[1].split("```\n", 1)[0]
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "issues.mo"
+        source.write_text(
+            example +
+            "\ntest \"what the guide says about a status, https and the order of headers\"\n"
+            "  one = Http.get(\"http://h/\").header(\"B\", \"2\").header(\"A\", \"1\")\n"
+            "  other = Http.get(\"http://h/\").header(\"A\", \"1\").header(\"B\", \"2\")\n"
+            "  network = Network.fake(Http.replies([(one, Http.reply(404, \"gone\"))]))\n"
+            "  assert other.send(network).map(fn(r) (r.status, r.ok?, r.text) end) ==\n"
+            "    Ok((404, false, Some(\"gone\")))\n"
+            "  assert other.header(\"C\", \"3\").send(network) is\n"
+            "    Error(Http.Unreachable(Network.Broken(reason: _)))\n"
+            "  reason = \"HTTPS is not built yet, so https://h/ can't be reached\"\n"
+            "  assert Http.get(\"https://h/\").send(network) ==\n"
+            "    Error(Http.Unreachable(Network.Broken(reason: reason)))\n"
+            "end\n")
+        result = run(binary, ["test", str(source)], 0)
+        assert b"2 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
 
 
 def emit_command(binary):

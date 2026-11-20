@@ -1,10 +1,11 @@
 # Mo talks to the outside world
 
-Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. Two
+Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. Three
 parts are built. The confinement of the children is one, as [As built](#as-built) says. The network
-capability with its fake, and the two `Bytes` operations, are the other, as
-[The network and `Bytes` as built](#the-network-and-bytes-as-built) says. The HTTP client, the
-SQLite capability and HTTPS are not built. Every choice that was his to make is in
+capability with its fake, and the two `Bytes` operations, are the second, as
+[The network and `Bytes` as built](#the-network-and-bytes-as-built) says. The HTTP client is the
+third, as [The client as built](#the-client-as-built) says. The SQLite capability and HTTPS are
+not built. Every choice that was his to make is in
 [Decisions for Robert](#decisions-for-robert), with his answer. The evidence, with its commands
 and raw outputs, is in [the preflight](../../learnability/phase7/preflight/README.md).
 
@@ -301,11 +302,12 @@ numbers are positions in that file and four of them are pinned in `src/prim/prim
 
 The client is the library module `Http`, in `lib/http.mo`. It is written new, on `Bytes`.
 
-`runtime/http.mo` already declares `module Http`. It is the server-side header parser that
-`mo serve` uses, it works on `List(Byte)`, and its limits are sized for MCP. A user program
-cannot `use` a module in `runtime/`. The protocol server's program is built from `runtime/` and
-`lib/` together, so two modules called `Http` cannot both exist, and the runtime's module is
-renamed (to `HttpServer`). The two parsers stay separate in this phase.
+`runtime/http.mo` declared `module Http`. It is the server-side header parser that `mo serve`
+uses, it works on `List(Byte)`, and its limits are sized for MCP. A user program cannot `use` a
+module in `runtime/`. The runtime's module is renamed to `HttpServer`. The clash was `mo check`
+on a runtime module with the library installed: every `mo` command loads `lib/` beside the
+program it is given, so `mo check runtime/http.mo` would have met two modules called `Http`. The
+protocol server's image never held `lib/http.mo`. The two parsers stay separate in this phase.
 
 ```mo
 struct Request
@@ -365,11 +367,65 @@ What `send` does:
 - A header whose name or value holds a line break is `BadHeader`, and nothing is sent. A token
   read from a file with its last newline would otherwise add a line to the request.
 - The response's headers may take 64 KiB and its body 16 MiB. Past either, the result is
-  `BadResponse` or `TooLarge`. Both are constants in `lib/http.mo`.
+  `BadResponse` or `TooLarge`. Both are in `limits()` in `lib/http.mo`.
 
 All parsing of what the network sends is Mo. The only new C that reads network bytes is the
 `receive` operation, which copies them into a `Bytes` and inspects nothing, and later the TLS
 library. Each gets a fuzz target with seeds.
+
+### The client as built
+
+The client is built as the section above describes. These are the points the design left open,
+and what was built.
+
+- **The module has no constants.** A library module's constants would become part of every
+  program's start and of every program's Core, and `lib/http.mo` would have been the first
+  library module with any. The limits are a function, `limits()`, and the other fixed values are
+  written where they are used.
+- **Nothing a program passes can add a line to a request.** A URL that holds a space or a
+  control character is `BadUrl`. So is one with a `#`, a `@` in its host, more than one `:` in
+  its host and port, or a port that isn't digits from 1 to 65,535. A method that isn't ASCII
+  letters is `BadHeader` with the method as its name. A header is `BadHeader` when its name is
+  empty or holds a space, a `:` or a control character, or when its value holds a control
+  character. A value may hold characters outside ASCII.
+- **The client owns four headers.** A program's `Host`, `Connection`, `Content-Length` or
+  `Transfer-Encoding` header, in any case, is `BadHeader`. The client writes `Host`, then
+  `Connection: close`, then `Content-Length` when the body isn't empty or the method is neither
+  `GET` nor `HEAD`.
+- **`json` and `text` on a request replace a `Content-Type` header** the request already had.
+  `query` writes every byte but ASCII letters, digits, `-`, `.`, `_` and `~` as `%` and two
+  uppercase hexadecimal digits.
+- **An `https` URL gives `Unreachable(Network.Broken(reason))`**, and the reason reads
+  `HTTPS is not built yet, so URL can't be reached` with the request's URL. A malformed `https`
+  URL is `BadUrl` first.
+- **The reader starts again from the first byte after each receive.** It keeps no position. A
+  receive asks for 1 MiB, the most the capability gives. The 1 MiB fetch meets its bar this way
+  ([the measurement](../../learnability/phase7/preflight/http-in-mo/README.md#the-client-as-built)).
+- **A response to `HEAD`, and one with status 204 or 304, has an empty body.** A status from
+  100 to 199 is read like any other response.
+- **Line ends are a carriage return and a line feed, and nothing else.** A status line
+  starts with `HTTP/1.`, and three digits follow its first space. A header line needs a `:` and a name with no
+  space in it, and its value is trimmed.
+- **A `Transfer-Encoding` other than `chunked` is `BadResponse`**, in any case of the word. A
+  `Content-Length` and a chunk's size are read digit by digit, so a sign is refused. A chunk's
+  size line may take 256 bytes and its size 8 hexadecimal digits, and what follows a `;` on it
+  is ignored. The trailers after the last chunk may take as much as the headers, and are
+  dropped.
+- **`response.json` on a body that isn't UTF-8 is `BadResponse`**, and `NotJson` holds
+  `Json.parse`'s error.
+- **`HttpError` has the text form every enum has**, as in `Unreachable(TimedOut)` and
+  `BadResponse(reason: "the status line is malformed")`. A `main` that returns one prints it
+  and exits with status 1.
+- **`Http.reply` gives the response one header, its `Content-Length`**, so the response a test
+  writes equals the one `send` reads back. `Http.replies` stops, as a bug, when it is given a
+  request the client refuses to send.
+- **`Http` is a reserved module name.** A program that declares `module Http` is rejected with
+  E0037, as for `Json`.
+- **The tests are in three places.** `lib/http.mo` holds its examples and tests and passes plain
+  `mo test` with no surviving mutant. `fuzz/fuzz_http_client.c` compiles the client and runs its
+  reader on arbitrary bytes under small limits, and checks a chunked body against a reader
+  written in C. `ci/check_network.py` runs a program on the client against a live peer on
+  loopback.
 
 ## Looking through a response
 
@@ -710,18 +766,18 @@ The client's parsing functions take plain values and are compared in every case.
 
 `Network`, `Connection`, `Sqlite`, `NetworkError` and `SqliteError` become type names that are
 always in scope, as `Files` and `FileError` are. `Http` becomes a library module's name. A
-program that declares any of the six stops compiling. In the repository, `runtime/http.mo` does, and
-so did the stand-ins under `learnability/phase7/preflight/surface/`, which stopped checking when
-the network's types were built. `Sqlite.Database`, `Sqlite.Value` and `Sqlite.Rows` are written with the
+program that declares any of the six stops compiling. In the repository, `runtime/http.mo` did,
+and its module is now `HttpServer`. So did the stand-ins under
+`learnability/phase7/preflight/surface/`, which stopped checking when the network's types were
+built. `Sqlite.Database`, `Sqlite.Value` and `Sqlite.Rows` are written with the
 module's name in front, so they take no name from a program.
 
 The cases of the new enums are not always in scope. `FileError`'s are, which is why no program
 may have a case called `NotFound` or `Failed`. Doing the same here would take `Refused`,
 `Closed`, `TimedOut`, `Null`, `String` and more from every program. A program writes the
 module's name in front, `Network.Refused(host, port)` and `Sqlite.Integer(7)`, as it does for
-an enum in a library module. No built-in type has cases that work this way today. The HTTP
-milestone builds that, or declares these types in `lib/` and teaches the host to build their
-values.
+an enum in a library module. No built-in type had cases that work this way. The HTTP milestone
+built it for `NetworkError`.
 
 ## The threat model
 

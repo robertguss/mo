@@ -954,10 +954,11 @@ declare a type with its own name, as the module `Account` declares `Account`:
 `Account.open(...)` calls the module's function, and `Account` in a type is the
 type. There are no wildcards and no aliases. A clash between names is an error that suggests the
 qualified form, and so is a cycle of modules that use each other. The
-library's `Json` and `Unicode16` modules are used the same way. Every library
-module reserves its name, so a program can't declare a module named `FileError`,
-`Files`, `Json`, `List`, `Map`, `Option`, `ReadFiles`, `Result`, `Set`, `Text`,
-`Time` or `Unicode16`. The built-in `Simulation` module also reserves its name.
+library's `Http`, `Json` and `Unicode16` modules are used the same way. Every
+library module reserves its name, so a program can't declare a module named
+`FileError`, `Files`, `Http`, `Json`, `List`, `Map`, `Option`, `ReadFiles`,
+`Result`, `Set`, `Text`, `Time` or `Unicode16`. The built-in `Simulation` module
+also reserves its name.
 
 ### 10.4 Constants
 
@@ -1937,6 +1938,120 @@ the `Bool` or the array's items at a path. Every lookup gives `None` when the
 path is absent or the value has another kind, and `int_at` also when the number
 isn't a whole number that fits an `Int`. None of them stops the program.
 
+**Http**, with `use Http`, is an HTTP/1.1 client over a `Network`. A program
+builds a `Request` a step at a time and sends it, and gets a `Response`:
+
+<!-- mo-example: fragment -->
+```mo
+struct Request
+  method: Text
+  url: Text
+  headers: List((Text, Text))
+  body: Bytes
+  timeout: Duration
+end
+
+struct Response
+  status: Int
+  headers: List((Text, Text))
+  body: Bytes
+end
+
+enum HttpError
+  BadUrl(url: Text)
+  BadHeader(name: Text)
+  Unreachable(NetworkError)
+  BadResponse(reason: Text)
+  NotJson(Json.JsonError)
+  TooLarge(limit: Int)
+end
+```
+
+`Http.get(url: Text)` and `Http.post(url: Text)` give a `Request`, and
+`Http.request(method: Text, url: Text)` gives one with any other method. It
+starts with no headers, an empty body and a timeout of 30 seconds.
+`request.header(name: Text, value: Text)` adds a header.
+`request.query(name: Text, value: Text)` adds a query parameter to the URL, and
+writes every byte of the name and the value as `%` and two hexadecimal digits
+except ASCII letters, digits, `-`, `.`, `_` and `~`.
+`request.json(value: Json)` sets the body to `value` as compact JSON with the
+content type `application/json`, and `request.text(text: Text)` sets it to
+`text` with `text/plain; charset=utf-8`; each replaces a `Content-Type` header
+the request already had. `request.within(timeout: Duration)` sets the timeout.
+Each gives a new `Request`, and none of them fails: `send` reports a bad URL,
+method or header.
+
+`request.send(network: Network) : Result(Response, HttpError)` opens one
+connection with the request's timeout as its `within`, writes the request,
+reads the response to its end, and lets the connection close. A URL is
+`http://` or `https://`, a host, then an optional `:` and port from 1 to 65,535,
+an optional path and an optional query. Without a port it is 80, and without a
+path it is `/`. A URL of any other form, or one that holds a space, a control
+character, a `#`, or a `@` in its host, gives `Error(BadUrl(url))`. Nothing is
+encrypted yet: an `https://` URL gives
+`Error(Unreachable(Network.Broken(reason)))`, and the reason says that HTTPS is
+not built. A method that isn't ASCII letters gives `Error(BadHeader(name))` with
+the method as the name. So does a header whose name is empty or holds a space,
+a `:` or a control character, whose value holds a control character, or whose
+name is `Host`, `Connection`, `Content-Length` or `Transfer-Encoding` in any
+case, with the header's name. After any of these errors nothing was sent, so
+nothing a program passes can add a line to a request. The client writes its own
+headers first: `Host`, then `Connection: close`, then `Content-Length` when the
+body isn't empty or the method is neither `GET` nor `HEAD`. The program's
+headers follow, sorted by name without regard to case, and headers with the
+same name keep the order they were added in.
+
+A response's body ends where its `Content-Length` says, where its chunks end
+when its `Transfer-Encoding` is `chunked`, and otherwise where the server
+closes the connection. The response to a `HEAD` request and one with status 204
+or 304 have an empty body. Any status is a response: 404 and 500 are not
+errors, and a status from 100 to 199 is read like any other. `send` follows no
+redirect, retries nothing, keeps no cookie, uses no proxy, reuses no connection
+and asks for no compression. Headers longer than 65,536 bytes, a status line or
+header line that is malformed, a line that doesn't end with a carriage return
+and a line feed, another transfer encoding, and a connection closed before the
+response was whole each give `Error(BadResponse(reason))`. A body longer than
+16,777,216 bytes gives `Error(TooLarge(limit: 16777216))`. A failure of the
+network gives `Error(Unreachable(error))`, as in
+`Unreachable(Network.TimedOut)`. An `HttpError`'s text forms are those of
+section 9.2.
+
+`response.ok? : Bool` is true for a status from 200 to 299.
+`response.header(name: Text) : Option(Text)` gives the first header with that
+name, without regard to case. `response.text : Option(Text)` gives the body
+when it is UTF-8. `response.json : Result(Json, HttpError)` parses the body:
+`Error(NotJson(error))` holds `Json.parse`'s error, and a body that isn't UTF-8
+gives `Error(BadResponse(reason))`.
+
+For a test, `Http.reply(status: Int, body: Text) : Response` gives a response
+whose one header is its `Content-Length`, and
+`Http.replies(exchanges: List((Request, Response))) : Map(Text, Map(Bytes, Bytes))`
+gives what `Network.fake` takes: each request as `send` writes it, with its
+response as a server would write it. The fake matches exactly, so a test's
+request has the method, URL, headers and body of the request the program makes.
+The order of `header` calls with different names doesn't matter. A request in
+`exchanges` that `send` would refuse is a bug (13.2).
+
+```mo
+module Issues
+use Http
+
+fn title(network: Network, id: Int) : Result(Text, Http.HttpError)
+  asked = Http.get("http://api.example.com/issues/#{id}").header("Accept", "application/json")
+  response = try asked.send(network)
+  return Error(Http.BadResponse(reason: "status #{response.status}")) if not response.ok?
+  document = try response.json
+  Ok(document.text_at("title") or "untitled")
+end
+
+test "a fake network answers an API call"
+  asked = Http.get("http://api.example.com/issues/7").header("Accept", "application/json")
+  network = Network.fake(Http.replies([(asked, Http.reply(200, "{\"title\": \"Crash\"}"))]))
+  assert title(network, 7) == Ok("Crash")
+  assert title(network, 8) is Error(Http.Unreachable(Network.Broken(reason: _)))
+end
+```
+
 **Unicode16**, following Unicode 16.0: `graphemes(text: Text) : List(Text)`,
 `display_width(text: Text) : Int`, and `normalize_nfc`, `lowercase` and
 `uppercase(text: Text) : Text`. `letter?(c: Char) : Bool` tests General_Category
@@ -1956,8 +2071,8 @@ changes only when its `use` line does.
 
 Live upgrades, including migrating saved state to a changed type, are tools
 (Phase 5, `docs/design/upgrades.md`) and change no rule in this reference.
-Approving and locking promises (Phase 6, `docs/design/intent.md`). An HTTP
-client, encrypted connections and a SQLite capability for programs (Phase 7,
+Approving and locking promises (Phase 6, `docs/design/intent.md`). Encrypted
+connections and a SQLite capability for programs (Phase 7,
 `docs/design/outside-world.md`), which add capability types and library
 functions to sections 10 to 14 when they are built. Demanding that a function
 update its input in place (Phase 8); packages and user-defined abilities

@@ -22,9 +22,10 @@ Phase 3 builds only what that job queue needs (D257):
 - saved state, so no accepted job is ever lost;
 - MCP tools served over the network.
 
-These move to a later phase: a multi-core scheduler, an HTTP client, TLS, and database access for
-Mo programs. Phase 7's proposed design gives the last three to programs that `mo run` starts
-([outside-world.md](outside-world.md)). A service still holds no capability.
+These move to a later phase: a multi-core scheduler, TLS, and database access for Mo programs.
+Phase 7 gives programs that `mo run` starts an HTTP client, which is built (`lib/http.mo`), and
+its design gives them the other two ([outside-world.md](outside-world.md)). A service still
+holds no capability.
 
 ## 3. The demo: Mo's own task queue
 

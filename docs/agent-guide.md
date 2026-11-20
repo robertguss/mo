@@ -40,7 +40,28 @@ Every `BigInt` function in reference section 14 compiles and runs, including `ab
 
 `Env.get` runs on real or fake capabilities. Tests, examples and promises can construct a fake with `Env.of`.
 
-`Network` and `Connection` run (reference section 14). `network.connect(host, port, within)` opens a TCP connection, `connection.send(bytes)` and `connection.receive(most)` use it, and `within` is one deadline for all of them. Nothing is encrypted, and this build has no HTTP client yet, so a program writes a request's bytes itself. `NetworkError`'s cases are written with `Network.` in front, as in `Error(Network.TimedOut)`. In tests, examples and promises, `Network.fake({"example.org:80": {request: reply}})` answers a connection that sends exactly `request` with `reply`. Any other request gets `Error(Network.Broken(reason: reason))`, and the reason names the line that differs. `bytes.slice(from, to)` and `Bytes.join(parts)` cut and join `Bytes`.
+`Network` and `Connection` run (reference section 14). `network.connect(host, port, within)` opens a TCP connection, `connection.send(bytes)` and `connection.receive(most)` use it, and `within` is one deadline for all of them. Nothing is encrypted. `NetworkError`'s cases are written with `Network.` in front, as in `Error(Network.TimedOut)`. In tests, examples and promises, `Network.fake({"example.org:80": {request: reply}})` answers a connection that sends exactly `request` with `reply`. Any other request gets `Error(Network.Broken(reason: reason))`, and the reason names the line that differs. `bytes.slice(from, to)` and `Bytes.join(parts)` cut and join `Bytes`.
+
+After `use Http`, a program calls an API over a `Network` (reference section 14). `Http.get(url)`, `Http.post(url)` and `Http.request(method, url)` start a request, `.header(name, value)`, `.query(name, value)`, `.json(value)`, `.text(text)` and `.within(timeout)` change it, and `.send(network)` gives `Result(Response, Http.HttpError)`. A response has `status`, `headers` and `body`, with `response.ok?`, `response.header(name)`, `response.text` and `response.json`. A status such as 404 is a response and not an error. `send` follows no redirect and retries nothing. An `https://` URL is an error until HTTPS is built: `Error(Http.Unreachable(Network.Broken(reason: reason)))`, and the reason says so. In a test, `Network.fake(Http.replies([(request, Http.reply(200, body))]))` answers exactly that request, so the test builds the request the program builds. The order of `header` calls with different names does not matter.
+
+```mo
+module Issues
+use Http
+
+fn title(network: Network, id: Int) : Result(Text, Http.HttpError)
+  asked = Http.get("http://api.example.com/issues/#{id}").header("Accept", "application/json")
+  response = try asked.send(network)
+  return Error(Http.BadResponse(reason: "status #{response.status}")) if not response.ok?
+  document = try response.json
+  Ok(document.text_at("title") or "untitled")
+end
+
+test "a fake network answers an API call"
+  asked = Http.get("http://api.example.com/issues/7").header("Accept", "application/json")
+  network = Network.fake(Http.replies([(asked, Http.reply(200, "{\"title\": \"Crash\"}"))]))
+  assert title(network, 7) == Ok("Crash")
+end
+```
 
 `mo test` exits 1 with E1400 when it cannot build the inputs of a selected promise, such as one whose function takes a function. The headline is "this build cannot generate inputs for this promise". Keep the promise. Run the other examples, promises and tests by name with `--only`, as `--list` prints them.
 

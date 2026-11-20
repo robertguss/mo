@@ -125,7 +125,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
 10.1/2	tst-private-names	e0041		
 10.2/1	mod-hidden-type	e0040,e0047,e0064		
-10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048		
+10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0037-http,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048		
 10.4/1	lang-constants,mod-constants			
 10.4/2	lang-constants,mod-constants,service-read-only	e0089	fail-bug-constant-stop				A constant has no effects, so no program can observe how many times it is computed.
 10.5/1	mod-type-bare-after-use,lang-bindings,cap-files-walk,cap-network-error	e0045			ci/check_simulation.py:main
@@ -240,7 +240,13 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/24	lib-json-query,lib-json-errors			
 14/25	lib-json-query,lib-json-errors,lib-json-numbers				lib/json.mo:to_decimal
 14/26	lib-json-lookup				lib/json.mo:path
-14/27	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
+14/27	http-fake				lib/http.mo:request,ci/check_network.py:main
+14/28	http-fake				lib/http.mo:request,lib/http.mo:query,lib/http.mo:with_body,lib/http.mo:within
+14/29	http-fake	e0050-network		No test opens two connections to show that a second request reuses none.	lib/http.mo:wire,lib/http.mo:parsed,lib/http.mo:send,ci/check_network.py:main
+14/30	http-fake			No test sends a redirect, a cookie or a compressed body to show that send leaves each alone. The 16 MiB limit is tested with a Content-Length of 16777217, not with a body that long.	lib/http.mo:read,lib/http.mo:whole,lib/http.mo:content,lib/http.mo:chunks,ci/check_network.py:main,fuzz/fuzz_http_client.c:LLVMFuzzerTestOneInput
+14/31	http-fake				lib/http.mo:named,lib/http.mo:json,lib/http.mo:text
+14/32	http-fake			No golden program shows the bug in Http.replies: its report names a place in lib/http.mo by byte offset, which moves with every edit there.	lib/http.mo:reply,lib/http.mo:replies,ci/cli_guide.py:guide_claims
+14/33	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases
 A/2		e0412			ci/check_errors.py:check_cases
