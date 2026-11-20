@@ -263,7 +263,8 @@ The `Unicode16` module (section 14) normalizes text, splits it into
 user-perceived characters, and converts case beyond ASCII.
 
 `Bytes` is binary data. `text.bytes` always succeeds; `bytes.decode_utf8`
-returns `None` when the bytes aren't valid UTF-8.
+returns `None` when the bytes aren't valid UTF-8. `bytes.slice(from, to)` cuts
+a part out, and `Bytes.join(parts)` puts parts together (section 14).
 
 ### 3.5 Unit
 
@@ -983,7 +984,9 @@ an argument and return any replacement state.
 Always in scope: the built-in types of section 3, `Option` with `Some` and
 `None`, `Result` with `Ok` and `Error`, `Ordering` with its cases, the
 capability types, `FileError` with its cases, `SimulationError` with `ServiceDown` and `ToolFailed`,
-and `Entry` with `EntryKind` and its cases. The functions of section 14 belong to their types' modules:
+`Entry` with `EntryKind` and its cases, and `NetworkError`. The cases of
+`NetworkError` are not in scope by themselves: they are written with `Network.`
+in front, as in `Network.TimedOut` (section 14). The functions of section 14 belong to their types' modules:
 call them with a dot, as in `text.lines`, or through the module, as in
 `Set.empty` and `Time.parse(text)`. So a local may be called `lines` or
 `count` without clashing with them.
@@ -1008,13 +1011,16 @@ the same arguments, it always gives the same result.
 | `ReadFiles` | only read them |
 | `Clock` | read the current time |
 | `Random` | draw random numbers |
+| `Network` | open connections to other computers |
+| `Connection` | send and receive bytes on one open connection |
 
 ### 11.2 main
 
 `main` lists the capabilities the program needs, in any order and at most one
 of each type. The runtime hands over exactly those, so a program's whole
 authority is on its first line. The `Files` or `ReadFiles` it gets reach the
-folder the program was started in.
+folder the program was started in. `main` can't list a `Connection`: a program
+gets one only from a `Network`.
 
 `main` returns nothing, and the program exits with status 0; or an `Int`, the
 exit status, from 0 to 255; or `Result(Unit, E)`, where `Error(e)` prints `e`'s
@@ -1306,7 +1312,8 @@ outside the program: `Console.fake()`, whose `printed` and `printed_errors` list
 the lines written to standard output and standard error;
 `Console.fake_input(lines)`, which also has those lines to read;
 `Files.in_memory(files)`, from a map of paths to texts; `Clock.fixed(time)`;
-`Random.seeded(n)`; `Args.of(list)`; `Env.of(map)`; and `Simulation.start(module, at)`
+`Random.seeded(n)`; `Args.of(list)`; `Env.of(map)`; `Network.fake(peers)`, from a
+map of the requests it answers (section 14); and `Simulation.start(module, at)`
 for a test service. Fakes are made only
 there, never in a module's constants or its functions. `printed` and
 `printed_errors` can be used only there too, where every console is a fake,
@@ -1500,8 +1507,8 @@ using more stack, call depth or memory than section 13.4's limits allow, or
 more memory than the machine has; calling a library function outside what it
 accepts, such as `take(-1)` or `random.int(5, 5)`; two keys of a map literal
 that turn out equal (section 3.8); an exit status outside 0 to 255; printing to
-an output that is gone; having too many folders open at once; and a fake whose
-files make one path both a file and a folder (section 14). Bugs are never
+an output that is gone; having too many folders or too many connections open at
+once; and a fake whose files make one path both a file and a folder (section 14). Bugs are never
 caught.
 
 ### 13.3 Costs
@@ -1706,7 +1713,12 @@ a number too large to be a finite `Float`. `Text.from_chars(chars: List(Char)) :
 `to_text : Text`.
 
 **Bytes**: `size : Int`, `get(i: Int) : Option(Byte)`,
-`decode_utf8 : Option(Text)`.
+`decode_utf8 : Option(Text)`. `slice(from: Int, to: Int) : Bytes` gives the
+bytes from position `from` up to, but not including, `to`, counted from 0. A
+position past the end is the end, and `from` at or past `to` gives empty
+`Bytes`; a negative position is a bug (13.2).
+`Bytes.join(parts: List(Bytes)) : Bytes` gives all the parts, in order, as one
+value.
 
 **List(T)**: `size : Int`, `empty? : Bool`. `get(i: Int)`, `first` and
 `last : Option(T)`; `get` gives `None` for a position below 0 or past the end.
@@ -1830,6 +1842,54 @@ and `Failed(path: Text, reason: Text)`. Its text forms are
 which must be greater; `Random.seeded(seed: Int) : Random`. **Args** and
 **Env** fakes: `Args.of(list: List(Text))`, `Env.of(map: Map(Text, Text))`.
 
+**Network**:
+`connect(host: Text, port: Int, within: Duration) : Result(Connection, NetworkError)`
+looks `host` up and opens a TCP connection to `port`. `within` is one deadline
+for the connection's whole life: the lookup, the connect, and every `send` and
+`receive` after it. Once it has passed, each of them gives
+`Error(Network.TimedOut)`. **Connection**:
+`send(bytes: Bytes) : Result(Unit, NetworkError)` sends all of `bytes`.
+`receive(most: Int) : Result(Bytes, NetworkError)` waits for data and gives at
+most `most` bytes of it, and empty `Bytes` when the other side has finished.
+A connection has no `close`: it closes when the program no longer holds it.
+Nothing is encrypted. A port outside 1 to 65,535, a `most` below 1 or above
+1,048,576, and more than 64 connections open at once are bugs (13.2).
+
+**NetworkError**: `UnknownHost(host: Text)`, for a name that doesn't exist, is
+empty, is longer than 253 bytes or holds a NUL character; `Refused(host: Text, port: Int)`;
+`TimedOut`; `Closed`, when the other side reset the connection, or closed it
+before a `send` finished; and `Broken(reason: Text)`, with the system's reason
+for anything else. Its cases are written with `Network.` in front, in
+expressions and in patterns, as in `Network.Refused(host: "example.org", port: 80)`,
+so a program may give its own types cases with these names. Its text forms are
+those of section 9.2, as in `Refused(host: "example.org", port: 80)`.
+
+`Network.fake(peers: Map(Text, Map(Bytes, Bytes))) : Network` is a network that
+answers from `peers`. A key of `peers` is a host and a port, as in
+`"example.org:80"`, and its value maps the exact bytes a connection sends to the
+bytes it then receives. `connect` to a host and port that `peers` lacks gives
+`Error(Network.UnknownHost(host: host))`. A connection collects what it is
+sent, and its first `receive` looks up everything sent so far. With a reply,
+`receive` hands it out, at most `most` bytes at a time, and then gives empty
+`Bytes`. With none, every `receive` gives `Error(Network.Broken(reason: reason))`.
+The reason quotes the first line sent, and, when `peers` holds a request that
+starts with the same lines, the first line that differs. A `send` after the
+first `receive` gives `Error(Network.Closed)`. A fake opens no connection and
+reads no clock: `within` is ignored, and a fake's connections don't count toward
+the limit. The `Network` that `mo test` makes for a promise has no peers.
+
+<!-- mo-example: fragment -->
+```mo
+test "a fake network answers the request it holds"
+  asked = "GET / HTTP/1.1\r\nHost: example.org\r\n\r\n".bytes
+  network = Network.fake({"example.org:80": {asked: "HTTP/1.1 204 No Content\r\n\r\n".bytes}})
+  assert network.connect("example.org", 80, 5.seconds) is Ok(connection)
+  assert connection.send(asked) == Ok(Unit)
+  assert connection.receive(8) == Ok("HTTP/1.1".bytes)
+  assert network.connect("example.com", 80, 5.seconds) is Error(Network.UnknownHost(host: _))
+end
+```
+
 **Json**, with `use Json`: `Json.parse(text: Text) : Result(Json, JsonError)`
 reads JSON as RFC 8259 defines it, into this type:
 
@@ -1896,8 +1956,8 @@ changes only when its `use` line does.
 
 Live upgrades, including migrating saved state to a changed type, are tools
 (Phase 5, `docs/design/upgrades.md`) and change no rule in this reference.
-Approving and locking promises (Phase 6, `docs/design/intent.md`). A network
-capability, an HTTP client and a SQLite capability for programs (Phase 7,
+Approving and locking promises (Phase 6, `docs/design/intent.md`). An HTTP
+client, encrypted connections and a SQLite capability for programs (Phase 7,
 `docs/design/outside-world.md`), which add capability types and library
 functions to sections 10 to 14 when they are built. Demanding that a function
 update its input in place (Phase 8); packages and user-defined abilities

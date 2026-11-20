@@ -93,6 +93,14 @@ def text_cases(rng, rows):
                 values = [[enc(b), f"(int {n})"] for b in byte_sequences for n in [-1, 0, len(b)-1, len(b), (1 << 63)-1]]
             elif name == "%compare":
                 values = [[enc(a), enc(b)] for a in byte_sequences for b in byte_sequences[:9]]
+            elif name == "slice":
+                values = [[enc(b), f"(int {i})", f"(int {j})"] for b in byte_sequences[:12]
+                          for i in [-1, 0, 1, len(b), len(b)+1, (1 << 63)-1]
+                          for j in [-(1 << 63), -1, 0, 1, len(b)-1, len(b), len(b)+1, (1 << 63)-1]]
+            elif name == "join":
+                values = [["(list (" + " ".join(enc(b) for b in parts) + "))"]
+                          for parts in [[], [b""], [b"", b""], [b"a", b"", b"\xff\0"], byte_sequences[:9],
+                                        byte_sequences]]
             else:
                 values = [[enc(b)] for b in byte_sequences]
         for i, args in enumerate(values):

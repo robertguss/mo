@@ -406,6 +406,32 @@ def guide_claims(binary):
             "    Error(_): console.print(\"not JSON\")\n  end\nend\n")
         result = run(binary, ["run", str(source)], 0)
         assert result.stdout == b'Some("mo")\nNone\nNone\n', (result.stdout, result.stderr)
+    says("`Network` and `Connection` run (reference section 14).",
+         "`NetworkError`'s cases are written with `Network.` in front, as in "
+         "`Error(Network.TimedOut)`.",
+         "`Network.fake({\"example.org:80\": {request: reply}})` answers a connection that sends "
+         "exactly `request` with `reply`. Any other request gets "
+         "`Error(Network.Broken(reason: reason))`, and the reason names the line that differs.",
+         "`bytes.slice(from, to)` and `Bytes.join(parts)` cut and join `Bytes`.")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\n\ntest \"a fake network answers one request\"\n"
+            "  request = \"GET /\\r\\nA: 1\\r\\n\".bytes\n"
+            "  network = Network.fake({\"example.org:80\": {request: \"reply\".bytes}})\n"
+            "  assert network.connect(\"example.org\", 80, 1.second) is Ok(held)\n"
+            "  assert held.send(request) == Ok(Unit)\n"
+            "  assert held.receive(3) == Ok(\"rep\".bytes)\n"
+            "  assert network.connect(\"example.org\", 80, 1.second) is Ok(other)\n"
+            "  assert other.send(\"GET /\\r\\nA: 2\\r\\n\".bytes) == Ok(Unit)\n"
+            "  reason = \"no reply for \\\"GET /\\\": sent \\\"A: 2\\\\r\\\\n\\\", "
+            "expected \\\"A: 1\\\\r\\\\n\\\"\"\n"
+            "  assert other.receive(3) == Error(Network.Broken(reason: reason))\n"
+            "  assert other.send(request) == Error(Network.Closed)\n"
+            "  assert Bytes.join([\"ab\".bytes, \"cd\".bytes]).slice(1, 3) == \"bc\".bytes\n"
+            "end\n")
+        result = run(binary, ["test", str(source)], 0)
+        assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
 
 
 def emit_command(binary):

@@ -156,9 +156,10 @@ static MO_MUST_USE bool pattern_node(struct inference *p, const struct mo_syntax
             name = node->children[1]->children[0];
             args = node->children[2]->children[0];
         }
-        const struct mo_builtin_case *builtin = mo_builtin_case_by_name(name);
-        if (prefix != NULL)
-            builtin = NULL;
+        const struct mo_builtin_case *builtin =
+            node->kind == MO_S_QUALIFIED
+                ? mo_builtin_case_by_name(node->children[1], node->children[0])
+                : mo_builtin_case_by_name(name, prefix);
         if (builtin != NULL) {
             struct term *nominal = infer_builtin_type(p, builtin, type);
             if (nominal == NULL)

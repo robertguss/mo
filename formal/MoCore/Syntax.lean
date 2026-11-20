@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env
+  | console | files | readFiles | clock | random | args | env | network | connection
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -56,6 +56,7 @@ inductive Ty where
   | fileError
   | simulation
   | simulationError
+  | networkError
   | entry
   | entryKind
   | fn (params : List Ty) (ret : Ty)
@@ -75,6 +76,7 @@ def Ty.beq : Ty → Ty → Bool
   | .range, .range | .time, .time | .duration, .duration | .ordering, .ordering
   | .fileError, .fileError | .entry, .entry | .entryKind, .entryKind => true
   | .simulation, .simulation | .simulationError, .simulationError => true
+  | .networkError, .networkError => true
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
   | .map k v, .map k' v' => Ty.beq k k' && Ty.beq v v'
@@ -96,7 +98,7 @@ mutual
 theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
   | .int | .bigInt | .byte | .decimal | .float | .bool | .char | .text | .bytes | .unit
   | .range | .time | .duration | .ordering | .fileError | .entry | .entryKind => rfl
-  | .simulation | .simulationError => rfl
+  | .simulation | .simulationError | .networkError => rfl
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
@@ -116,7 +118,7 @@ theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
   | .int, b, h | .bigInt, b, h | .byte, b, h | .decimal, b, h | .float, b, h | .bool, b, h
   | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .range, b, h | .time, b, h
   | .duration, b, h | .ordering, b, h | .fileError, b, h
-  | .simulation, b, h | .simulationError, b, h
+  | .simulation, b, h | .simulationError, b, h | .networkError, b, h
   | .entry, b, h | .entryKind, b, h => by cases b <;> simp_all [Ty.beq]
   | .data s, b, h | .cap s, b, h => by cases b <;> simp_all [Ty.beq]
   | .tuple as, b, h => by
@@ -155,6 +157,7 @@ instance : DecidableEq Ty := fun a b =>
 def Cap.name : Cap → String
   | .console => "Console" | .files => "Files" | .readFiles => "ReadFiles"
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
+  | .network => "Network" | .connection => "Connection"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -165,6 +168,7 @@ def Ty.render : Ty → String
   | .bytes => "Bytes" | .unit => "Unit" | .range => "Range" | .time => "Time"
   | .duration => "Duration" | .ordering => "Ordering" | .fileError => "FileError"
   | .simulation => "Simulation" | .simulationError => "SimulationError"
+  | .networkError => "NetworkError"
   | .entry => "Entry" | .entryKind => "EntryKind"
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
@@ -288,9 +292,11 @@ inductive TextOp where
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Bytes`. `decodeUtf8` gives `None` for bytes that aren't
-valid UTF-8 (reference 3.4). -/
+valid UTF-8 (reference 3.4). `slice` gives the bytes from one index up to,
+not including, another; an index past the end is the end, and a negative
+index is a bug. `join` gives the parts of a list as one value. -/
 inductive BytesOp where
-  | size | get | decodeUtf8
+  | size | get | decodeUtf8 | slice | join
   deriving DecidableEq, Repr, Inhabited
 
 /-- Unicode 16.0 trusted primitives; Core specifies their interface, not tables. -/
@@ -356,8 +362,10 @@ inductive IoOp where
   | writeText | appendText | remove | makeFolder
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
+  | connect | send | receive
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
+  | networkFake
   deriving DecidableEq, Repr, Inhabited
 
 inductive SimOp where
@@ -468,6 +476,8 @@ def BytesOp.sig : BytesOp → List Ty × Ty
   | .size => ([.bytes], .int)
   | .get => ([.bytes, .int], .option .byte)
   | .decodeUtf8 => ([.bytes], .option .text)
+  | .slice => ([.bytes, .int, .int], .bytes)
+  | .join => ([.list .bytes], .bytes)
 
 def RangeOp.sig : RangeOp → List Ty × Ty
   | .make => ([.int, .int], .range)
@@ -559,6 +569,10 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .readOnly => ([.cap .files], .cap .readFiles)
   | .now => ([.cap .clock], .time)
   | .randomInt => ([.cap .random, .int, .int], .int)
+  | .connect =>
+    ([.cap .network, .text, .int, .duration], .result (.cap .connection) .networkError)
+  | .send => ([.cap .connection, .bytes], .result .unit .networkError)
+  | .receive => ([.cap .connection, .int], .result .bytes .networkError)
   | .consoleFake => ([], .cap .console)
   | .consoleFakeInput => ([.list .text], .cap .console)
   | .filesInMemory => ([.map .text .text], .cap .files)
@@ -566,6 +580,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .randomSeeded => ([.int], .cap .random)
   | .argsOf => ([.list .text], .cap .args)
   | .envOf => ([.map .text .text], .cap .env)
+  | .networkFake => ([.map .text (.map .bytes .bytes)], .cap .network)
 
 def SimOp.sig : SimOp → List Ty × Ty
   | .start _ => ([.time], .simulation)
@@ -763,7 +778,7 @@ def Prim.specOnly : Prim → Bool
   | .sim (.start _) => true
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
-  | .io .randomSeeded | .io .argsOf | .io .envOf => true
+  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake => true
   | _ => false
 
 /-! ## Lookups -/
@@ -818,6 +833,11 @@ def fileErrorCtors : List Ctor :=
   [⟨"NotFound", [("path", .text)]⟩, ⟨"NotAllowed", [("path", .text)]⟩,
    ⟨"NotText", [("path", .text)]⟩, ⟨"Failed", [("path", .text), ("reason", .text)]⟩]
 
+/-- The constructors of `NetworkError` (reference 14). -/
+def networkErrorCtors : List Ctor :=
+  [⟨"UnknownHost", [("host", .text)]⟩, ⟨"Refused", [("host", .text), ("port", .int)]⟩,
+   ⟨"TimedOut", []⟩, ⟨"Closed", []⟩, ⟨"Broken", [("reason", .text)]⟩]
+
 /-- The constructors of a type that has them: declared data types, and the
 library's always-in-scope choice types. -/
 def ctorsOf (P : Program) : Ty → Option (List Ctor)
@@ -827,6 +847,7 @@ def ctorsOf (P : Program) : Ty → Option (List Ctor)
   | .ordering => some orderingCtors
   | .fileError => some fileErrorCtors
   | .simulationError => some [⟨"ServiceDown", []⟩, ⟨"ToolFailed", []⟩]
+  | .networkError => some networkErrorCtors
   | .entry => some [⟨"Entry", [("name", .text), ("kind", .entryKind)]⟩]
   | .entryKind => some [⟨"File", []⟩, ⟨"Folder", []⟩, ⟨"Link", []⟩, ⟨"Other", []⟩]
   | _ => none

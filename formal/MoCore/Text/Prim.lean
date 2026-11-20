@@ -43,7 +43,8 @@ def textOps : List (String × TextOp) :=
    ("repeat", .«repeat»), ("padLeft", .padLeft), ("padRight", .padRight), ("lower", .lower),
    ("upper", .upper), ("toInt", .toInt), ("toDecimal", .toDecimal), ("toFloat", .toFloat),
    ("join", .join), ("bytes", .bytes)]
-def bytesOps : List (String × BytesOp) := [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8)]
+def bytesOps : List (String × BytesOp) :=
+  [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8), ("slice", .slice), ("join", .join)]
 def unicodeOps : List (String × UnicodeOp) :=
   [("graphemes", .graphemes), ("displayWidth", .displayWidth), ("normalizeNfc", .normalizeNfc),
    ("lowercase", .lowercase), ("uppercase", .uppercase), ("letter", .letter), ("digit", .digit)]
@@ -100,7 +101,9 @@ def ioOps : List (String × IoOp) :=
    ("readOnly", .readOnly), ("now", .now), ("randomInt", .randomInt),
    ("consoleFake", .consoleFake), ("consoleFakeInput", .consoleFakeInput),
    ("filesInMemory", .filesInMemory), ("clockFixed", .clockFixed),
-   ("randomSeeded", .randomSeeded), ("argsOf", .argsOf), ("envOf", .envOf)]
+   ("randomSeeded", .randomSeeded), ("argsOf", .argsOf), ("envOf", .envOf),
+   ("connect", .connect), ("send", .send), ("receive", .receive),
+   ("networkFake", .networkFake)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

@@ -142,25 +142,30 @@ const struct mo_function_signature *mo_customizer_signature(const struct mo_sign
 }
 
 static const struct mo_builtin_case builtin_cases[] = {
-    {"Unit", "Unit", 6, 6, 1, 0, 0, 0, {NULL, NULL}},
-    {"None", "Option", 8, 8, 2, 1, 0, 0, {NULL, NULL}},
-    {"Some", "Option", 9, 8, 2, 1, 1, 0, {NULL, NULL}},
-    {"Ok", "Result", 10, 10, 2, 2, 1, 0, {NULL, NULL}},
-    {"Error", "Result", 11, 10, 2, 2, 1, 1, {NULL, NULL}},
-    {"Less", "Ordering", 12, 12, 3, 0, 0, 0, {NULL, NULL}},
-    {"Equal", "Ordering", 13, 12, 3, 0, 0, 0, {NULL, NULL}},
-    {"Greater", "Ordering", 14, 12, 3, 0, 0, 0, {NULL, NULL}},
-    {"File", "EntryKind", 15, 15, 4, 0, 0, 0, {NULL, NULL}},
-    {"Folder", "EntryKind", 16, 15, 4, 0, 0, 0, {NULL, NULL}},
-    {"Link", "EntryKind", 17, 15, 4, 0, 0, 0, {NULL, NULL}},
-    {"Other", "EntryKind", 18, 15, 4, 0, 0, 0, {NULL, NULL}},
-    {"NotFound", "FileError", 19, 19, 4, 0, 1, 0, {"path", NULL}},
-    {"NotAllowed", "FileError", 20, 19, 4, 0, 1, 0, {"path", NULL}},
-    {"NotText", "FileError", 21, 19, 4, 0, 1, 0, {"path", NULL}},
-    {"Failed", "FileError", 22, 19, 4, 0, 2, 0, {"path", "reason"}},
-    {"Entry", "Entry", 23, 23, 1, 0, 2, 0, {"name", "kind"}},
-    {"ServiceDown", "SimulationError", 24, 24, 2, 0, 0, 0, {NULL, NULL}},
-    {"ToolFailed", "SimulationError", 25, 24, 2, 0, 0, 0, {NULL, NULL}},
+    {"Unit", "Unit", 6, 6, 1, 0, 0, 0, {NULL, NULL}, NULL},
+    {"None", "Option", 8, 8, 2, 1, 0, 0, {NULL, NULL}, NULL},
+    {"Some", "Option", 9, 8, 2, 1, 1, 0, {NULL, NULL}, NULL},
+    {"Ok", "Result", 10, 10, 2, 2, 1, 0, {NULL, NULL}, NULL},
+    {"Error", "Result", 11, 10, 2, 2, 1, 1, {NULL, NULL}, NULL},
+    {"Less", "Ordering", 12, 12, 3, 0, 0, 0, {NULL, NULL}, NULL},
+    {"Equal", "Ordering", 13, 12, 3, 0, 0, 0, {NULL, NULL}, NULL},
+    {"Greater", "Ordering", 14, 12, 3, 0, 0, 0, {NULL, NULL}, NULL},
+    {"File", "EntryKind", 15, 15, 4, 0, 0, 0, {NULL, NULL}, NULL},
+    {"Folder", "EntryKind", 16, 15, 4, 0, 0, 0, {NULL, NULL}, NULL},
+    {"Link", "EntryKind", 17, 15, 4, 0, 0, 0, {NULL, NULL}, NULL},
+    {"Other", "EntryKind", 18, 15, 4, 0, 0, 0, {NULL, NULL}, NULL},
+    {"NotFound", "FileError", 19, 19, 4, 0, 1, 0, {"path", NULL}, NULL},
+    {"NotAllowed", "FileError", 20, 19, 4, 0, 1, 0, {"path", NULL}, NULL},
+    {"NotText", "FileError", 21, 19, 4, 0, 1, 0, {"path", NULL}, NULL},
+    {"Failed", "FileError", 22, 19, 4, 0, 2, 0, {"path", "reason"}, NULL},
+    {"Entry", "Entry", 23, 23, 1, 0, 2, 0, {"name", "kind"}, NULL},
+    {"ServiceDown", "SimulationError", 24, 24, 2, 0, 0, 0, {NULL, NULL}, NULL},
+    {"ToolFailed", "SimulationError", 25, 24, 2, 0, 0, 0, {NULL, NULL}, NULL},
+    {"UnknownHost", "NetworkError", 26, 26, 5, 0, 1, 0, {"host", NULL}, "Network"},
+    {"Refused", "NetworkError", 27, 26, 5, 0, 2, 0, {"host", "port"}, "Network"},
+    {"TimedOut", "NetworkError", 28, 26, 5, 0, 0, 0, {NULL, NULL}, "Network"},
+    {"Closed", "NetworkError", 29, 26, 5, 0, 0, 0, {NULL, NULL}, "Network"},
+    {"Broken", "NetworkError", 30, 26, 5, 0, 1, 0, {"reason", NULL}, "Network"},
 };
 
 static const struct native_text {
@@ -220,13 +225,27 @@ const struct mo_source_type *mo_builtin_template(const struct mo_builtin_case *d
                                                : NULL;
 }
 
-const struct mo_builtin_case *mo_builtin_case_by_name(const struct mo_syntax *name) {
+static MO_MUST_USE bool spelled(const struct mo_syntax *node, const char *text) {
+    size_t length = node->span.end - node->span.start;
+    return strlen(text) == length && memcmp(node->text, text, length) == 0;
+}
+
+const struct mo_builtin_case *mo_builtin_case_by_name(const struct mo_syntax *name,
+                                                      const struct mo_syntax *prefix) {
     if (name->kind != MO_S_CAPNAME)
         return NULL;
-    size_t length = name->span.end - name->span.start;
+    for (size_t i = 0; i < sizeof(builtin_cases) / sizeof(builtin_cases[0]); i++) {
+        const char *module = builtin_cases[i].module;
+        if (spelled(name, builtin_cases[i].name) &&
+            (prefix == NULL ? module == NULL : module != NULL && spelled(prefix, module)))
+            return &builtin_cases[i];
+    }
+    return NULL;
+}
+
+const struct mo_builtin_case *mo_builtin_case_by_text(const char *name) {
     for (size_t i = 0; i < sizeof(builtin_cases) / sizeof(builtin_cases[0]); i++)
-        if (strlen(builtin_cases[i].name) == length &&
-            memcmp(name->text, builtin_cases[i].name, length) == 0)
+        if (strcmp(builtin_cases[i].name, name) == 0)
             return &builtin_cases[i];
     return NULL;
 }
@@ -414,14 +433,40 @@ const char *mo_builtin_type(const struct mo_syntax *name, uint32_t *arity) {
     static const struct {
         const char *name;
         uint32_t arity;
-    } natives[] = {{"Bool", 0},      {"Int", 0},        {"BigInt", 0},         {"Byte", 0},
-                   {"Decimal", 0},   {"Float", 0},      {"Text", 0},           {"Char", 0},
-                   {"Bytes", 0},     {"Unit", 0},       {"List", 1},           {"Map", 2},
-                   {"Set", 1},       {"Range", 0},      {"Time", 0},           {"Duration", 0},
-                   {"Option", 1},    {"Result", 2},     {"Ordering", 0},       {"Args", 0},
-                   {"Env", 0},       {"Console", 0},    {"Files", 0},          {"ReadFiles", 0},
-                   {"Clock", 0},     {"Random", 0},     {"FileError", 0},      {"Entry", 0},
-                   {"EntryKind", 0}, {"Simulation", 0}, {"SimulationError", 0}};
+    } natives[] = {{"Bool", 0},
+                   {"Int", 0},
+                   {"BigInt", 0},
+                   {"Byte", 0},
+                   {"Decimal", 0},
+                   {"Float", 0},
+                   {"Text", 0},
+                   {"Char", 0},
+                   {"Bytes", 0},
+                   {"Unit", 0},
+                   {"List", 1},
+                   {"Map", 2},
+                   {"Set", 1},
+                   {"Range", 0},
+                   {"Time", 0},
+                   {"Duration", 0},
+                   {"Option", 1},
+                   {"Result", 2},
+                   {"Ordering", 0},
+                   {"Args", 0},
+                   {"Env", 0},
+                   {"Console", 0},
+                   {"Files", 0},
+                   {"ReadFiles", 0},
+                   {"Clock", 0},
+                   {"Random", 0},
+                   {"FileError", 0},
+                   {"Entry", 0},
+                   {"EntryKind", 0},
+                   {"Simulation", 0},
+                   {"SimulationError", 0},
+                   {"Network", 0},
+                   {"Connection", 0},
+                   {"NetworkError", 0}};
     for (size_t i = 0; i < sizeof(natives) / sizeof(natives[0]); i++)
         if (compare_name(name, natives[i].name) == 0) {
             *arity = natives[i].arity;

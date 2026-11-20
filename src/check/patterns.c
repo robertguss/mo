@@ -116,6 +116,13 @@ static MO_MUST_USE int compare_heads(const void *a, const void *b) {
 
 static void append(char *text, size_t *length, const char *bytes, size_t count);
 
+static void qualify(char *text, size_t *length, const struct mo_builtin_case *data) {
+    if (data != NULL && data->module != NULL) {
+        append(text, length, data->module, strlen(data->module));
+        append(text, length, ".", 1);
+    }
+}
+
 static MO_MUST_USE bool head_present(struct coverage *p, const struct frame *f, uintptr_t key,
                                      bool *present) {
     if (!work(p, 1))
@@ -190,6 +197,7 @@ static MO_MUST_USE struct mo_match_pattern *missing_head(struct coverage *p, str
                 MO_ASSERT(missing != NULL);
                 if (length != 0)
                     append(text, &length, " | ", 3);
+                qualify(text, &length, missing);
                 append(text, &length, missing->name, strlen(missing->name));
                 if (missing->count != 0)
                     append(text, &length, "(..)", 4);
@@ -328,13 +336,17 @@ static MO_MUST_USE const char *render(struct coverage *p, struct cell *witness) 
         struct mo_match_pattern *pattern = stack->pattern;
         if (pattern == NULL || pattern->count == 0) {
             const char *name = pattern == NULL ? "_" : pattern->name;
+            if (pattern != NULL)
+                qualify(text, &length, mo_builtin_case_by_key(pattern->key));
             append(text, &length, name, strlen(name));
             stack = stack->parent;
             continue;
         }
         if (!stack->opened) {
-            if (pattern->key != 4 && pattern->key != 5)
+            if (pattern->key != 4 && pattern->key != 5) {
+                qualify(text, &length, mo_builtin_case_by_key(pattern->key));
                 append(text, &length, pattern->name, strlen(pattern->name));
+            }
             append(text, &length, pattern->key == 4 ? "[" : "(", 1);
             stack->opened = true;
         }

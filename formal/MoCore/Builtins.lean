@@ -763,7 +763,8 @@ def fakeExpressions : List (Expr × Ty) :=
    (io .filesInMemory [mapOf tText tText []], tCap .files),
    (io .clockFixed [timeE "2026-10-12T09:00:00Z"], tCap .clock),
    (io .randomSeeded [int (-1)], tCap .random),
-   (io .argsOf [strs []], tCap .args), (io .envOf [mapOf tText tText []], tCap .env)]
+   (io .argsOf [strs []], tCap .args), (io .envOf [mapOf tText tText []], tCap .env),
+   (io .networkFake [mapOf tText (tMap tBytes tBytes) []], tCap .network)]
 #guard fakeExpressions.all fun (e, t) =>
   typedAs? program [] e t true && !typedAs? program [] e t &&
   typedAs? program [] (lam [] e) (tFn [] t) true && !typedAs? program [] (lam [] e) (tFn [] t) &&
@@ -1046,6 +1047,30 @@ def simulationStart : Expr := prim (.sim (.start 0)) [.lit (.time 0)]
     w.stdout == ["before simulation"] && w.files == [("kept", "value")] && w.now == 123
   | _ => false
 #guard passes program (ite ff (seq simulationStart ff) tt)
+
+def networkConnect : Expr :=
+  io .connect [v "n", str "example.com", int 80, .lit (.duration 1)]
+def networkTy (ok : Ty) : Ty := .result ok .networkError
+#guard Text.exprRoundTrip networkConnect &&
+  typedAs? program [("n", tCap .network)] networkConnect (networkTy (tCap .connection)) &&
+  !typedAs? program [("n", tCap .network)] (io .connect [v "n", str "example.com", int 80])
+    (networkTy (tCap .connection)) &&
+  !typedAs? program [("n", tCap .connection)] networkConnect (networkTy (tCap .connection))
+#guard typedAs? program [("c", tCap .connection)] (io .send [v "c", bytesE [1]]) (networkTy .unit) &&
+  !typedAs? program [("c", tCap .network)] (io .send [v "c", bytesE [1]]) (networkTy .unit) &&
+  typedAs? program [("c", tCap .connection)] (io .receive [v "c", int 4]) (networkTy .bytes) &&
+  !typedAs? program [("c", tCap .connection)] (io .receive [v "c", str "4"]) (networkTy .bytes)
+#guard match run program (seq (io .print [v "c", str "before the network"]) networkConnect)
+    { files := [("kept", "value")], now := 123 } (handles [("c", .console), ("n", .network)]) with
+  | .stopped (.outside "Network is not modeled by mocore") w =>
+    w.stdout == ["before the network"] && w.files == [("kept", "value")] && w.now == 123
+  | _ => false
+#guard [(IoOp.send, [v "c", bytesE [1]]), (.receive, [v "c", int 4])].all fun (op, args) =>
+  match run program (io op args) {} (handles [("c", .connection)]) with
+  | .stopped (.outside "Network is not modeled by mocore") _ => true
+  | _ => false
+#guard stops program (io .networkFake [mapOf tText (tMap tBytes tBytes) []]) (tCap .network)
+  (.outside "Network is not modeled by mocore")
 
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program

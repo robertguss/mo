@@ -1,0 +1,5 @@
+bug: port outside 1 to 65535
+  at Main.main (tests/golden/fail-bug-network-port/main.mo:102..147)
+  at Main.main.entry (tests/golden/fail-bug-network-port/main.mo:13..194)
+  console = <Console>
+  network = <Network>

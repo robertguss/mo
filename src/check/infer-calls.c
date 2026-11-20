@@ -36,7 +36,11 @@ MO_MUST_USE struct term *infer_builtin_part(struct inference *p, const struct mo
     MO_ASSERT(index < data->count);
     if (data->fields[0] == NULL)
         return infer_argument(p, type, data->parameter);
-    return infer_native(p, strcmp(data->name, "Entry") == 0 && index == 1 ? "EntryKind" : "Text",
+    return infer_native(p,
+                        index == 0                           ? "Text"
+                        : strcmp(data->name, "Entry") == 0   ? "EntryKind"
+                        : strcmp(data->name, "Refused") == 0 ? "Int"
+                                                             : "Text",
                         0);
 }
 

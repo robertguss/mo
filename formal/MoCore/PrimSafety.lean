@@ -445,8 +445,37 @@ theorem bytesGet_ty {bs : List Int} {i : Int} (h : ∀ b ∈ bs, InByte b) :
     exact .byte (h b (List.mem_of_getElem? hb))
   · exact .noneV
 
+/-- A list of `Bytes` values has its parts, and every byte of every part is
+from 0 to 255. -/
+theorem bytesOf_some : ∀ {xs : List Value},
+    (∀ x ∈ xs, ∃ bs, x = .bytes bs ∧ ∀ b ∈ bs, InByte b) →
+    ∃ l, bytesOf xs = some l ∧ ∀ p ∈ l, ∀ b ∈ p, InByte b
+  | [], _ => ⟨[], rfl, by simp⟩
+  | x :: xs, h => by
+    obtain ⟨bs, rfl, hbs⟩ := h x (by simp)
+    obtain ⟨l, hl, hin⟩ := bytesOf_some (xs := xs) fun y hy => h y (by simp [hy])
+    refine ⟨bs :: l, by simp [bytesOf, hl], fun p hp => ?_⟩
+    rcases List.mem_cons.mp hp with rfl | hp
+    · exact hbs
+    · exact hin p hp
+
 theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
-  cases op <;> invert_args <;> simp only [Prim.eval, evalBytesOp, outcomeOk_ok]
+  cases op
+  case slice =>
+    invert_args
+    simp only [Prim.eval, evalBytesOp, outcomeOk_ite, outcomeOk_ok]
+    exact ⟨fun _ => trivial, fun _ => .bytes fun b hb =>
+      ‹∀ b ∈ _, InByte b› b (List.mem_of_mem_take (List.mem_of_mem_drop hb))⟩
+  case join =>
+    invert_args
+    obtain ⟨l, hl, hin⟩ := bytesOf_some ‹_›
+    simp only [Prim.eval, evalBytesOp, hl, outcomeOk_ok]
+    refine .bytes fun b hb => ?_
+    obtain ⟨p, hp, hb⟩ := List.mem_flatten.mp hb
+    exact hin p hp b hb
+  all_goals
+    invert_args
+    simp only [Prim.eval, evalBytesOp, outcomeOk_ok]
   case size => exact okInt_safe
   case get => exact bytesGet_ty ‹_›
   case decodeUtf8 => exact .optText

@@ -43,6 +43,8 @@ enum mo_capability {
     MO_CAP_CLOCK,
     MO_CAP_RANDOM,
     MO_CAP_SIMULATION,
+    MO_CAP_NETWORK,
+    MO_CAP_CONNECTION,
 };
 
 enum mo_case_shape { MO_CASE_EMPTY, MO_CASE_INLINE, MO_CASE_REF, MO_CASE_BOXED };

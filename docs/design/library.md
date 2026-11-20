@@ -284,6 +284,8 @@ no functions, only tests that pin what reference section 14 says they do.
 | `size` | primitive | `BYTES_SIZE` | |
 | `get(i)` | primitive | `BYTES_GET` | |
 | `decode_utf8` | primitive | `BYTES_DECODE_UTF8` | |
+| `slice(from, to)` | primitive | `BYTES_SLICE` | a copy: `Bytes` has no window onto another value's bytes, and the HTTP client's reader cuts at most a few times for each receive |
+| `Bytes.join(parts)` | primitive | `BYTES_JOIN` | joining through a list of single bytes took 6.7 to 7.9 times the instructions in the HTTP prototype (`learnability/phase7/preflight/http-in-mo/`) |
 
 ## Unit
 
@@ -538,6 +540,33 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `Entry(name: n, kind: k)`, and `EntryKind`'s cases | instruction | `construct` and `make_case`; `field` and `switch` | |
+| `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
+
+## Network
+
+The real network is C in `src/host/real-network.c`, and the fake is C in
+`src/host/fake-network.c`. `src/host/network.c` holds the checks both share.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `connect(host, port, within)` | host | `NETWORK_CONNECT` | |
+| `Network.fake(peers)` | host | `NETWORK_FAKE` | a fake, for spec code only (reference 12.4) |
+
+## Connection
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `send(bytes)` | host | `CONNECTION_SEND` | |
+| `receive(most)` | host | `CONNECTION_RECEIVE` | |
+
+## NetworkError
+
+`NetworkError` has no `to_text` of its own, so its text form is the one
+generated for every type with `Text` (the first table).
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Network.Refused(host: h, port: p)`, and the other cases | instruction | `make_case`; `switch` and `case_field` | |
 | `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
 
 ## Json

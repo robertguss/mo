@@ -1,0 +1,6 @@
+unknown nowhere, refused h 80, timed out, closed, broken bad line
+[UnknownHost(host: "nowhere"), Refused(host: "h", port: 80), TimedOut, Closed, Broken(reason: "bad line")]
+true false
+true Greater
+Refused(why: "locked") true Open
+true false

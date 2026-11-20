@@ -13,7 +13,7 @@ struct fixture {
 static void fixture_init(struct fixture *f) {
     host_fixture_init(&f->host, mo_limits_default().heap_size);
     mo_fakes_init(&f->fakes, &f->host.source);
-    MO_ASSERT(mo_fakes_count(&f->fakes) == MO_CAP_RANDOM + 1);
+    MO_ASSERT(mo_fakes_count(&f->fakes) == 8);
     mo_fakes_bind(&f->fakes, &f->host.host);
 }
 
@@ -155,6 +155,33 @@ static void clock_random(void) {
     fixture_free(&f);
 }
 
+static void network_has_no_peers(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct host_fixture *h = &f.host;
+    for (uint32_t which = 0; which < 3; which++) {
+        struct mo_cell fake = boundary(&f, MO_CAP_NETWORK, which);
+        struct mo_cell args[] = {fake, host_text(h, "example.org"), mo_cell_int(80),
+                                 mo_cell_duration(0)};
+        struct mo_host_error error;
+        struct mo_cell result;
+        MO_ASSERT(mo_host_call(&h->host, h->heap, MO_HOST_NETWORK_CONNECT, h->result_connection,
+                               args, &result, &error) == MO_HOST_RETURNED);
+        struct mo_buffer printed;
+        mo_buffer_init(&printed, MO_LIMIT_STRING_SIZE);
+        const char *expected = "Error(UnknownHost(host: \"example.org\"))";
+        CHECK(mo_value_print(h->heap, h->result_connection, result, &printed));
+        CHECK(printed.length == strlen(expected) &&
+              memcmp(printed.bytes, expected, printed.length) == 0);
+        mo_buffer_free(&printed);
+        mo_value_drop(h->heap, h->result_connection, result);
+        mo_value_drop(h->heap, h->types.text, args[1]);
+        drop(&f, MO_CAP_NETWORK, fake);
+    }
+    CHECK(mo_heap_objects(h->heap) == 0);
+    fixture_free(&f);
+}
+
 static void copies_start_from_the_recipe(void) {
     struct fixture f;
     fixture_init(&f);
@@ -274,7 +301,9 @@ static void small_heaps(void) {
         host_fixture_init(&f.host, heap_size);
         mo_fakes_init(&f.fakes, &f.host.source);
         mo_fakes_bind(&f.fakes, &f.host.host);
-        for (unsigned kind = 0; kind <= MO_CAP_RANDOM; kind++) {
+        for (unsigned kind = 0; kind <= MO_CAP_NETWORK; kind++) {
+            if (kind == MO_CAP_SIMULATION)
+                continue;
             const struct mo_input_factory *maker = factory(&f, (enum mo_capability)kind);
             struct mo_input_request request = {.kind = MO_INPUT_BOUNDARY, .boundary = 2};
             struct mo_input_limits limits = mo_input_limits_default();
@@ -299,6 +328,7 @@ int main(void) {
     read_only_files();
     console_args_env();
     clock_random();
+    network_has_no_peers();
     copies_start_from_the_recipe();
     same_request_same_fake();
     limits();

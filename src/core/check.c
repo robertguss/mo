@@ -303,6 +303,7 @@ static MO_MUST_USE struct type *annotation(struct checker *c, mo_core_ty t, size
     case MO_CORE_TY_FILE_ERROR:
     case MO_CORE_TY_SIMULATION:
     case MO_CORE_TY_SIMULATION_ERROR:
+    case MO_CORE_TY_NETWORK_ERROR:
     case MO_CORE_TY_ENTRY:
     case MO_CORE_TY_ENTRY_KIND:
         r = scalar(c, t->tag);
@@ -397,7 +398,7 @@ static MO_MUST_USE struct type *literal(struct checker *c, mo_core_lit l) {
 /* Primitive signatures mirror Syntax.lean. Literal counts are compared to supplied arguments
  * before allocation: a hostile arbitrary-precision Nat cannot request a giant signature. */
 struct signature {
-    struct type *ret, *args[3];
+    struct type *ret, *args[4];
     struct type **selected;
     size_t count;
     bool spec, repeated;
@@ -680,6 +681,10 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
             return sig(O(S(BYTE)), 2, S(BYTES), S(INT), NULL);
         case MO_CORE_BYTES_OP_DECODE_UTF8:
             return sig(O(S(TEXT)), 1, S(BYTES), NULL, NULL);
+        case MO_CORE_BYTES_OP_SLICE:
+            return sig(S(BYTES), 3, S(BYTES), S(INT), S(INT));
+        case MO_CORE_BYTES_OP_JOIN:
+            return sig(S(BYTES), 1, L(S(BYTES)), NULL, NULL);
         }
         break;
     case MO_CORE_PRIM_UNICODE16:
@@ -918,6 +923,23 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_IO_OP_ENV_OF:
             s = sig(C(ENV), 1, binary(c, MO_CORE_TY_MAP, S(TEXT), S(TEXT)), NULL, NULL);
             break;
+        case MO_CORE_IO_OP_CONNECT:
+            s = sig(binary(c, MO_CORE_TY_RESULT, C(CONNECTION), S(NETWORK_ERROR)), 4, C(NETWORK),
+                    S(TEXT), S(INT));
+            s.args[3] = S(DURATION);
+            return s;
+        case MO_CORE_IO_OP_SEND:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), S(NETWORK_ERROR)), 2, C(CONNECTION),
+                       S(BYTES), NULL);
+        case MO_CORE_IO_OP_RECEIVE:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(BYTES), S(NETWORK_ERROR)), 2, C(CONNECTION),
+                       S(INT), NULL);
+        case MO_CORE_IO_OP_NETWORK_FAKE:
+            s = sig(
+                C(NETWORK), 1,
+                binary(c, MO_CORE_TY_MAP, S(TEXT), binary(c, MO_CORE_TY_MAP, S(BYTES), S(BYTES))),
+                NULL, NULL);
+            break;
         }
         s.spec = true;
         return s;
@@ -1046,9 +1068,9 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         return t->constructors;
     }
     struct data *d;
-    const char *names[4] = {0};
-    struct type *fields[4][2] = {{0}};
-    size_t counts[4] = {0}, n = 0;
+    const char *names[5] = {0};
+    struct type *fields[5][2] = {{0}};
+    size_t counts[5] = {0}, n = 0;
     if (t->tag == MO_CORE_TY_OPTION) {
         n = 2;
         names[0] = "None";
@@ -1083,6 +1105,17 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         n = 2;
         names[0] = "ServiceDown";
         names[1] = "ToolFailed";
+    } else if (t->tag == MO_CORE_TY_NETWORK_ERROR) {
+        n = 5;
+        names[0] = "UnknownHost";
+        names[1] = "Refused";
+        names[2] = "TimedOut";
+        names[3] = "Closed";
+        names[4] = "Broken";
+        counts[0] = counts[4] = 1;
+        counts[1] = 2;
+        fields[0][0] = fields[1][0] = fields[4][0] = scalar(c, MO_CORE_TY_TEXT);
+        fields[1][1] = scalar(c, MO_CORE_TY_INT);
     } else if (t->tag == MO_CORE_TY_ENTRY) {
         n = 1;
         names[0] = "Entry";
@@ -1509,12 +1542,13 @@ static MO_MUST_USE bool label_name(struct mo_buffer *b, mo_core_string name) {
 }
 static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, size_t *remaining) {
     static const char *const names[] = {
-        "Int",       "BigInt", "Byte",      "Decimal", "Float",  "Bool",       "Char",
-        "Text",      "Bytes",  "Unit",      "Range",   "Time",   "Duration",   "Tuple",
-        "List",      "Map",    "Set",       "Data",    "Option", "Result",     "Ordering",
-        "FileError", "Entry",  "EntryKind", "Fn",      "Cap",    "Simulation", "SimulationError"};
-    static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",
-                                       "Random",  "Args",  "Env"};
+        "Int",         "BigInt", "Byte",      "Decimal", "Float",  "Bool",       "Char",
+        "Text",        "Bytes",  "Unit",      "Range",   "Time",   "Duration",   "Tuple",
+        "List",        "Map",    "Set",       "Data",    "Option", "Result",     "Ordering",
+        "FileError",   "Entry",  "EntryKind", "Fn",      "Cap",    "Simulation", "SimulationError",
+        "NetworkError"};
+    static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",     "Random",
+                                       "Args",    "Env",   "Network",   "Connection"};
     if (*remaining == 0)
         return mo_buffer_append_text(b, "...");
     (*remaining)--;

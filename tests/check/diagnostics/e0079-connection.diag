@@ -1,0 +1,6 @@
+E0079 11.2
+0:15..19
+main has an invalid signature
+main lists capabilities, at most one of each type (reference 11.2).
+main has an invalid signature
+fixes 0

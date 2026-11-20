@@ -189,6 +189,8 @@ def signatures():
     add("bytes", "size", "(bytes)", I)
     add("bytes", "get", "(bytes)|" + I, O("(byte)"))
     add("bytes", "decodeUtf8", "(bytes)", O(T))
+    add("bytes", "slice", "(bytes)|" + I + "|" + I, "(bytes)")
+    add("bytes", "join", L("(bytes)"), "(bytes)")
     add("unicode16", "graphemes", T, L(T))
     add("unicode16", "displayWidth", T, I)
     add("unicode16", "normalizeNfc lowercase uppercase", T, T)
@@ -252,10 +254,11 @@ def signatures():
         table.append((f"(eq {eq})", [eq, eq], "(bool)", False))
     # Structural observation has no ability requirement, even for functions and capabilities.
     for ty in [I, F, D, T, "(bytes)", "(char)", "(unit)", "(ordering)",
-               "(range)", "(time)", "(duration)", "(fileError)", "(entry)",
+               "(range)", "(time)", "(duration)", "(fileError)", "(networkError)", "(entry)",
                "(fn ((int)) (text))", '(data "undeclared")', L(T), m, se,
                O(T), R(T), "(tuple ((text) (float)))"] + [
-                   C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random"]]:
+                   C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random",
+                                  "network", "connection"]]:
         table.append((f"(structural {ty})", [ty], T, False))
     add("io", "argsList", C("args"), L(T))
     add("io", "envGet", C("env") + "|" + T, O(T))
@@ -285,6 +288,11 @@ def signatures():
     add("io", "randomSeeded", I, C("random"), True)
     add("io", "argsOf", L(T), C("args"), True)
     add("io", "envOf", f"(map {T} {T})", C("env"), True)
+    failed = lambda t: f"(result {t} (networkError))"
+    add("io", "connect", C("network") + "|" + T + "|" + I + "|(duration)", failed(C("connection")))
+    add("io", "send", C("connection") + "|(bytes)", failed(U))
+    add("io", "receive", C("connection") + "|" + I, failed("(bytes)"))
+    add("io", "networkFake", f"(map {T} (map (bytes) (bytes)))", C("network"), True)
     return table
 
 

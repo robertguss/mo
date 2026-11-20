@@ -339,6 +339,49 @@ static MO_MUST_USE enum mo_prim_status byte_primitive(struct mo_prim_call *c, st
     return some_text(c, bytes.bytes, bytes.length, out);
 }
 
+static MO_MUST_USE enum mo_prim_status slice_bytes(struct mo_prim_call *c, struct mo_cell *out) {
+    struct text bytes = view(c->args[0]);
+    int64_t from = mo_cell_get_int(c->args[1]), to = mo_cell_get_int(c->args[2]);
+    if (from < 0 || to < 0) {
+        c->reason = "Bytes.slice with a negative index";
+        return MO_PRIM_OUTSIDE;
+    }
+    size_t end = (uint64_t)to > bytes.length ? bytes.length : (size_t)to;
+    size_t start = (uint64_t)from > end ? end : (size_t)from;
+    const uint8_t *first = start == end ? (const uint8_t *)"" : bytes.bytes + start;
+    return mo_value_bytes(c->heap, first, end - start, out) ? MO_PRIM_RETURNED
+                                                            : MO_PRIM_OUT_OF_MEMORY;
+}
+
+static MO_MUST_USE enum mo_prim_status join_bytes(struct mo_prim_call *c, struct mo_cell *out) {
+    uint32_t count = mo_list_size(c->args[0]);
+    size_t length = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        struct mo_cell part;
+        MO_ASSERT(mo_list_get(c->args[0], i, &part));
+        if (!mo_prim_bytes_fit(c, length + view(part).length))
+            return MO_PRIM_OUT_OF_MEMORY;
+        length += view(part).length;
+    }
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, c->heap);
+    uint8_t *joined = mo_scratch_resize(&scratch, NULL, 0, length == 0 ? 1 : length);
+    bool ok = joined != NULL;
+    size_t at = 0;
+    for (uint32_t i = 0; ok && i < count; i++) {
+        struct mo_cell part;
+        MO_ASSERT(mo_list_get(c->args[0], i, &part));
+        struct text piece = view(part);
+        if (piece.length != 0)
+            memcpy(joined + at, piece.bytes, piece.length);
+        at += piece.length;
+    }
+    if (ok)
+        ok = mo_value_bytes(c->heap, joined, length, out);
+    mo_scratch_free(&scratch);
+    return ok ? MO_PRIM_RETURNED : MO_PRIM_OUT_OF_MEMORY;
+}
+
 static MO_MUST_USE enum mo_prim_status from_chars(struct mo_prim_call *c, struct mo_cell *out) {
     uint32_t count = mo_list_size(c->args[0]);
     size_t length = 0;
@@ -385,6 +428,10 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
         return char_primitive(c, out);
     if (c->id >= MO_PRIM_BYTES_SIZE && c->id <= MO_PRIM_BYTES_DECODE_UTF8)
         return byte_primitive(c, out);
+    if (c->id == MO_PRIM_BYTES_SLICE)
+        return slice_bytes(c, out);
+    if (c->id == MO_PRIM_BYTES_JOIN)
+        return join_bytes(c, out);
     if (c->id == MO_PRIM_TEXT_FROM_CHARS)
         return from_chars(c, out);
     struct text t = view(c->args[0]);

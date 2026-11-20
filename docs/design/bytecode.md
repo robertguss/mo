@@ -63,7 +63,7 @@ monomorphization, each once. A type is one of:
 | `choice` | name; cases, each with a name and its fields' names and types, and whether its one field is unnamed | see 2.3 |
 | `function` | parameter types, result type | reference to a closure |
 | `env` | the closure code's function index | the closure seen from inside (section 5.3) |
-| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random` or `Simulation` | reference |
+| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random`, `Simulation`, `Network` or `Connection` | reference |
 
 Structural types (tuples, lists, sets, maps and functions) are interned, so
 two types are equal exactly when their indices are. Records and choice types
@@ -293,7 +293,7 @@ The numbers below are the enum values in `heap/types.h`.
 | `choice` (18) | name string index, case count, that many cases |
 | `function` (19) | parameter count, that many type indices, result type index; at most `MO_LIMIT_BYTECODE_PARAMETERS`, without `env` |
 | `env` (20) | closure code's function index |
-| `capability` (21) | `mo_capability`: Args = 0, Env = 1, Console = 2, Files = 3, ReadFiles = 4, Clock = 5, Random = 6, Simulation = 7 |
+| `capability` (21) | `mo_capability`: Args = 0, Env = 1, Console = 2, Files = 3, ReadFiles = 4, Clock = 5, Random = 6, Simulation = 7, Network = 8, Connection = 9 |
 
 A **field** is its name string index, then its type index. A **case** is its
 name string index, field count, then its fields in declaration order. Only
@@ -1051,6 +1051,7 @@ A capability is a heap object that carries its own operations. It has:
 - for a fake, an owned reference to the fake's **state**;
 - for `Files` and `ReadFiles`, its folder: an open handle for a real one, and
   a path prefix for a fake one;
+- for a real `Connection`, its socket and its deadline;
 - and whether it is read-only.
 
 `host r_d, h, r_c, …` calls operation `h` of `r_c`'s table. A fake
@@ -1064,8 +1065,10 @@ constructor makes a capability rather than using one, so `host` calls it by
   `make_folder`, `list`, `entries`, `exists?`, `within` and `read_only`;
 - `ReadFiles`: `read_text`, `read_bytes`, `list`, `entries`, `exists?` and `within`;
 - `Clock`: `now`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
+- `Network`: `connect`. `Connection`: `send` and `receive`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
-  `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of` and `Env.of`.
+  `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` and
+  `Network.fake`.
 
 `STOREOP` entries in `hostops.def` (`LOAD`, `APPEND`, `SNAPSHOT`) are runtime-only:
 they have no bytecode opcode and no `host` encoding.
@@ -1099,6 +1102,11 @@ doesn't change a list the test holds. Every handle on one fake shares its
 state: the `Console.fake()` passed to `main` and the one the test reads
 `printed` from are the same object. `files.within("a")` and `files.read_only`
 make new handles on the same state, with a longer prefix or read-only set.
+`Network.fake(peers)` consumes its map and never changes it. Each `connect` on
+it makes a fake `Connection` with a state of its own: the replies of the peer
+it reached, the bytes sent so far, and how much of the reply `receive` has
+handed out. A fake connection holds no reference to its network, and opens no
+socket.
 
 **Simulation** is a VM-owned fake capability. Its native context owns one
 service loop and one open in-memory store. The last reference, or heap
@@ -1114,7 +1122,10 @@ without fields. These names are checked as a built-in shape at send sites.
 
 **A real capability** is made by the runtime, once, for `main`. Dropping a real
 `Files` or `ReadFiles` handle closes its folder's descriptor. The number of
-open handles has a named limit, and `within` past it is a bug. `mo_call_main`
+open handles has a named limit, and `within` past it is a bug. A real
+`Connection` is the one capability a program gets from an operation and never
+from `main`: `connect` makes it, dropping it closes its socket, and the number
+open at once has a named limit, past which `connect` is a bug. `mo_call_main`
 retains each declared kind in the process so repeated calls share it.
 Host refusal keeps the capability and operand ownership intact. Fake updates
 are transactional on allocation failure; real external I/O and bindings cannot
@@ -1420,7 +1431,7 @@ EXPECTATION = "none" | "allows" | "forbids"
 ```
 
 `SIMPLE` is a payload-free kind from section 3 (`unit` through `bigint`).
-`CAP` is one of its eight capability names. `KIND` is one of section 3.3's
+`CAP` is one of its ten capability names. `KIND` is one of section 3.3's
 seven function kinds; `OWNERSHIP` is `owned` or `borrowed`; `BOOL` is `0` or
 `1`; `SIGN` is `zero`, `positive` or `negative`. These names encode the enum
 values in the headers, not extra strings. `P` and `H` are `p` and `h` followed

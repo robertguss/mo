@@ -8,14 +8,18 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/random.h>
+#include <sys/socket.h>
 #include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
-/* Only this target's copies of host.c, random.c, console.c and real-files.c
- * rename these calls. Fixture setup and ordinary builds use the real system. */
+/* Only this target's copies of host.c, random.c, console.c, real-files.c and
+ * real-network.c rename these calls. Fixture setup and ordinary builds use the real system. */
 static bool entropy_failure, clock_override, clock_failure;
 static struct timespec clock_value;
 struct io_plan {
@@ -24,6 +28,12 @@ struct io_plan {
 };
 static struct io_plan reads, writes, polls;
 static bool truncate_failure;
+static int lookup_status, pipe_failure, thread_failure, socket_failure, connect_failure,
+    send_failure, recv_failure;
+static bool lookup_held, connect_stalls;
+static unsigned lookups_waiting;
+static pthread_mutex_t lookup_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t lookup_changed = PTHREAD_COND_INITIALIZER;
 
 MO_MUST_USE int mo_host_fault_entropy(void *bytes, size_t length);
 MO_MUST_USE int mo_host_fault_clock(clockid_t id, struct timespec *out);
@@ -32,6 +42,17 @@ MO_MUST_USE ssize_t mo_host_fault_write(int fd, const void *bytes, size_t length
 MO_MUST_USE ssize_t mo_host_fault_writev(int fd, const struct iovec *pieces, int count);
 MO_MUST_USE int mo_host_fault_poll(struct pollfd *fds, nfds_t count, int timeout);
 MO_MUST_USE int mo_host_fault_truncate(int fd, off_t length);
+MO_MUST_USE int mo_host_fault_lookup(const char *restrict node, const char *restrict service,
+                                     const struct addrinfo *restrict hints,
+                                     struct addrinfo **restrict out);
+MO_MUST_USE int mo_host_fault_pipe(int ends[2]);
+MO_MUST_USE int mo_host_fault_thread(pthread_t *restrict thread,
+                                     const pthread_attr_t *restrict attributes,
+                                     void *(*start)(void *), void *restrict argument);
+MO_MUST_USE int mo_host_fault_socket(int family, int type, int protocol);
+MO_MUST_USE int mo_host_fault_connect(int fd, const struct sockaddr *address, socklen_t length);
+MO_MUST_USE ssize_t mo_host_fault_send(int fd, const void *bytes, size_t length, int flags);
+MO_MUST_USE ssize_t mo_host_fault_recv(int fd, void *bytes, size_t length, int flags);
 
 int mo_host_fault_entropy(void *bytes, size_t length) {
     if (entropy_failure) {
@@ -42,7 +63,7 @@ int mo_host_fault_entropy(void *bytes, size_t length) {
 }
 
 int mo_host_fault_clock(clockid_t id, struct timespec *out) {
-    MO_ASSERT(id == CLOCK_REALTIME);
+    MO_ASSERT(id == CLOCK_REALTIME || id == CLOCK_MONOTONIC);
     if (clock_failure) {
         errno = EIO;
         return -1;
@@ -113,6 +134,61 @@ int mo_host_fault_truncate(int fd, off_t length) {
         return -1;
     }
     return ftruncate(fd, length);
+}
+
+int mo_host_fault_lookup(const char *restrict node, const char *restrict service,
+                         const struct addrinfo *restrict hints, struct addrinfo **restrict out) {
+    MO_ASSERT(pthread_mutex_lock(&lookup_lock) == 0);
+    lookups_waiting++;
+    MO_ASSERT(pthread_cond_broadcast(&lookup_changed) == 0);
+    while (lookup_held)
+        MO_ASSERT(pthread_cond_wait(&lookup_changed, &lookup_lock) == 0);
+    lookups_waiting--;
+    int status = lookup_status;
+    MO_ASSERT(pthread_mutex_unlock(&lookup_lock) == 0);
+    if (status == 0)
+        return getaddrinfo(node, service, hints, out);
+    errno = EIO;
+    return status;
+}
+
+static MO_MUST_USE bool fails(int number) {
+    if (number != 0)
+        errno = number;
+    return number != 0;
+}
+
+int mo_host_fault_pipe(int ends[2]) {
+    return fails(pipe_failure) ? -1 : pipe(ends);
+}
+
+int mo_host_fault_thread(pthread_t *restrict thread, const pthread_attr_t *restrict attributes,
+                         void *(*start)(void *), void *restrict argument) {
+    return thread_failure != 0 ? thread_failure
+                               : pthread_create(thread, attributes, start, argument);
+}
+
+int mo_host_fault_socket(int family, int type, int protocol) {
+    return fails(socket_failure) ? -1 : socket(family, type, protocol);
+}
+
+int mo_host_fault_connect(int fd, const struct sockaddr *address, socklen_t length) {
+    if (connect_stalls) {
+        MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &clock_value) == 0);
+        clock_value.tv_sec += 6;
+        clock_override = true;
+        errno = EINPROGRESS;
+        return -1;
+    }
+    return fails(connect_failure) ? -1 : connect(fd, address, length);
+}
+
+ssize_t mo_host_fault_send(int fd, const void *bytes, size_t length, int flags) {
+    return fails(send_failure) ? -1 : send(fd, bytes, length, flags);
+}
+
+ssize_t mo_host_fault_recv(int fd, void *bytes, size_t length, int flags) {
+    return fails(recv_failure) ? -1 : recv(fd, bytes, length, flags);
 }
 
 static MO_MUST_USE int temporary(void) {
@@ -387,10 +463,179 @@ static void test_files(bool portable) {
     host_fixture_free(&f);
 }
 
+static MO_MUST_USE enum mo_host_outcome network_call(struct host_fixture *f, uint32_t operation,
+                                                     const struct mo_cell *arguments,
+                                                     struct mo_cell *out,
+                                                     struct mo_host_error *error) {
+    return mo_host_call(&f->host, f->heap, operation, host_result_type(f, operation), arguments,
+                        out, error);
+}
+
+static void network_gives(struct host_fixture *f, uint32_t operation,
+                          const struct mo_cell *arguments, const char *before, const char *reason,
+                          const char *after) {
+    struct mo_cell out;
+    struct mo_host_error error;
+    uint32_t type = host_result_type(f, operation);
+    MO_ASSERT(network_call(f, operation, arguments, &out, &error) == MO_HOST_RETURNED);
+    char expected[256];
+    MO_ASSERT(snprintf(expected, sizeof expected, "%s%s%s", before, reason, after) > 0);
+    struct mo_buffer printed;
+    mo_buffer_init(&printed, MO_LIMIT_STRING_SIZE);
+    CHECK(mo_value_print(f->heap, type, out, &printed));
+    bool equal =
+        printed.length == strlen(expected) && memcmp(printed.bytes, expected, printed.length) == 0;
+    if (!equal)
+        CHECK(fprintf(stderr, "expected %s, got %.*s\n", expected, (int)printed.length,
+                      printed.bytes) >= 0);
+    CHECK(equal);
+    mo_buffer_free(&printed);
+    mo_value_drop(f->heap, type, out);
+}
+
+static void broken(struct host_fixture *f, uint32_t operation, const struct mo_cell *arguments,
+                   const char *reason) {
+    network_gives(f, operation, arguments, "Error(Broken(reason: \"", reason, "\"))");
+}
+
+static MO_MUST_USE struct mo_cell network_open(struct host_fixture *f,
+                                               const struct mo_cell *dialing) {
+    struct mo_cell result;
+    struct mo_host_error error;
+    MO_ASSERT(network_call(f, MO_HOST_NETWORK_CONNECT, dialing, &result, &error) ==
+                  MO_HOST_RETURNED &&
+              mo_cell_get_tag(result) == 0);
+    struct mo_cell inside = mo_cell_get_payload(result);
+    if (mo_case_shape(&f->types.types, f->result_connection, 0) == MO_CASE_BOXED)
+        inside = mo_value_field(inside, 0);
+    struct mo_cell connection = mo_value_dup(f->heap, f->capabilities[MO_CAP_CONNECTION], inside);
+    mo_value_drop(f->heap, f->result_connection, result);
+    return connection;
+}
+
+static void settles(unsigned before) {
+    for (unsigned tries = 0; descriptors() != before && tries < 5000; tries++)
+        MO_ASSERT(nanosleep(&(struct timespec){.tv_nsec = 1000000}, NULL) == 0);
+    CHECK(descriptors() == before);
+}
+
+static void test_network(void) {
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    MO_ASSERT(mo_host_start(&f.host) == NULL);
+    struct mo_cell network = real(&f, MO_CAP_NETWORK, -1), out = mo_cell_int(123);
+    struct mo_host_error error;
+    int listening = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in address = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    socklen_t size = sizeof address;
+    MO_ASSERT(listening >= 0 && bind(listening, (const struct sockaddr *)&address, size) == 0 &&
+              listen(listening, 16) == 0 &&
+              getsockname(listening, (struct sockaddr *)&address, &size) == 0);
+    struct mo_cell dialing[] = {network, host_text(&f, "localhost"),
+                                mo_cell_int(ntohs(address.sin_port)), mo_cell_duration(5000000)};
+    unsigned before = descriptors();
+
+    clock_failure = true;
+    CHECK(network_call(&f, MO_HOST_NETWORK_CONNECT, dialing, &out, &error) == MO_HOST_INTERNAL &&
+          mo_cell_get_int(out) == 123 &&
+          strcmp(error.reason, "internal error: monotonic clock unavailable") == 0);
+    clock_failure = false;
+
+    lookup_status = EAI_NONAME;
+    network_gives(&f, MO_HOST_NETWORK_CONNECT, dialing, "Error(UnknownHost(host: \"", "localhost",
+                  "\"))");
+    lookup_status = EAI_AGAIN;
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, gai_strerror(EAI_AGAIN));
+    lookup_status = EAI_SYSTEM;
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, strerror(EIO));
+    lookup_status = 0;
+
+    pipe_failure = EMFILE;
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, strerror(EMFILE));
+    pipe_failure = 0;
+    thread_failure = EAGAIN;
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, strerror(EAGAIN));
+    thread_failure = 0;
+    socket_failure = EMFILE;
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, strerror(EMFILE));
+    socket_failure = 0;
+    connect_failure = ENETUNREACH;
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, strerror(ENETUNREACH));
+    connect_failure = 0;
+    static const int interrupted[] = {-EINTR, -EINTR}, exhausted[] = {-ENOMEM},
+                     retried[] = {1, -ENOMEM};
+    polls = (struct io_plan){.steps = exhausted, .count = 1};
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, strerror(ENOMEM));
+    settles(before);
+    CHECK(f.host.open_connections == 0);
+    connect_stalls = true;
+    network_gives(&f, MO_HOST_NETWORK_CONNECT, dialing, "Error(TimedOut)", "", "");
+    connect_stalls = clock_override = false;
+    settles(before);
+    CHECK(f.host.open_connections == 0);
+
+    MO_ASSERT(pthread_mutex_lock(&lookup_lock) == 0);
+    lookup_held = true;
+    MO_ASSERT(pthread_mutex_unlock(&lookup_lock) == 0);
+    dialing[3] = mo_cell_duration(20000);
+    for (unsigned i = 0; i < MO_LIMIT_LOOKUPS; i++)
+        network_gives(&f, MO_HOST_NETWORK_CONNECT, dialing, "Error(TimedOut)", "", "");
+    broken(&f, MO_HOST_NETWORK_CONNECT, dialing, "too many lookups still running");
+    CHECK(descriptors() == before + 2 * MO_LIMIT_LOOKUPS);
+    MO_ASSERT(pthread_mutex_lock(&lookup_lock) == 0);
+    while (lookups_waiting != MO_LIMIT_LOOKUPS)
+        MO_ASSERT(pthread_cond_wait(&lookup_changed, &lookup_lock) == 0);
+    lookup_held = false;
+    MO_ASSERT(pthread_cond_broadcast(&lookup_changed) == 0 &&
+              pthread_mutex_unlock(&lookup_lock) == 0);
+    settles(before);
+
+    dialing[3] = mo_cell_duration(5000000);
+    polls = (struct io_plan){.steps = interrupted, .count = 2};
+    struct mo_cell connection = network_open(&f, dialing);
+    CHECK(polls.at == 2 && f.host.open_connections == 1 && descriptors() == before + 1);
+    int peer = accept(listening, NULL, NULL);
+    MO_ASSERT(peer >= 0 && send(peer, "x", 1, 0) == 1);
+    struct mo_cell sending[] = {connection, mo_cell_unit()},
+                   receiving[] = {connection, mo_cell_int(8)};
+    MO_ASSERT(mo_value_bytes(f.heap, (const uint8_t *)"y", 1, &sending[1]));
+    send_failure = EIO;
+    broken(&f, MO_HOST_CONNECTION_SEND, sending, strerror(EIO));
+    send_failure = EINTR;
+    polls = (struct io_plan){.steps = retried, .count = 2};
+    broken(&f, MO_HOST_CONNECTION_SEND, sending, strerror(ENOMEM));
+    CHECK(polls.at == 2);
+    send_failure = 0;
+    recv_failure = EIO;
+    broken(&f, MO_HOST_CONNECTION_RECEIVE, receiving, strerror(EIO));
+    recv_failure = 0;
+    clock_failure = true;
+    CHECK(network_call(&f, MO_HOST_CONNECTION_RECEIVE, receiving, &out, &error) ==
+              MO_HOST_INTERNAL &&
+          mo_cell_get_int(out) == 123);
+    clock_failure = false;
+    network_gives(&f, MO_HOST_CONNECTION_RECEIVE, receiving, "Ok(bytes[120])", "", "");
+    MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &clock_value) == 0);
+    clock_value.tv_sec += 6;
+    clock_override = true;
+    network_gives(&f, MO_HOST_CONNECTION_RECEIVE, receiving, "Error(TimedOut)", "", "");
+    network_gives(&f, MO_HOST_CONNECTION_SEND, sending, "Error(TimedOut)", "", "");
+    clock_override = false;
+
+    mo_value_drop(f.heap, f.bytes, sending[1]);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_CONNECTION], connection);
+    CHECK(descriptors() == before + 1 && close(peer) == 0 && close(listening) == 0);
+    mo_value_drop(f.heap, f.types.text, dialing[1]);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_NETWORK], network);
+    CHECK(mo_heap_objects(f.heap) == 0 && f.host.open_connections == 0);
+    host_fixture_free(&f);
+}
+
 int main(void) {
     test_clock_entropy();
     test_console();
     test_files(false);
     test_files(true);
+    test_network();
     return mo_test_report("host faults");
 }

@@ -41,7 +41,9 @@
  * by "; ", or "" for none. Any primitive that allocates can also run out of memory, which isn't
  * listed.
  *
- * The lines follow docs/design/library.md, type by type. */
+ * The lines follow docs/design/library.md, type by type, up to Unicode16. A line added after
+ * that goes at the end, whatever its type, because a primitive's number is its line's position
+ * and bytecode holds that number. */
 
 #ifndef PRIM
 #error "Define PRIM(id, module, name, signature, params, bugs) before including base/prims.def."
@@ -224,5 +226,8 @@ PRIM(UNICODE16_LOWERCASE,       "Unicode16", "lowercase",          "fn(Text) : T
 PRIM(UNICODE16_UPPERCASE,       "Unicode16", "uppercase",          "fn(Text) : Text",                            "o",   "")
 PRIM(UNICODE16_LETTER,          "Unicode16", "letter?",            "fn(Char) : Bool",                            "b",   "")
 PRIM(UNICODE16_DIGIT,           "Unicode16", "digit?",             "fn(Char) : Bool",                            "b",   "")
+
+PRIM(BYTES_SLICE,               "Bytes",     "slice",              "fn(Bytes, Int, Int) : Bytes",                "bbb", "negative index")
+PRIM(BYTES_JOIN,                "Bytes",     "join",               "fn(List(Bytes)) : Bytes",                    "b",   "")
 
 #undef PRIM

@@ -407,7 +407,7 @@ cannot depend on VM. Rows in `hostops.def` have no fixed signature: checking
 resolves a direct module/tool selector, and Core and bytecode validate its
 indices and complete argument/result types against service descriptors. Only
 construction is spec-only; an ordinary helper can operate on a supplied handle.
-Core 0.9 and Lean's explicit evaluation boundary are specified in
+Their Core text and Lean's explicit evaluation boundary are specified in
 `formal/TEXT.md` and `formal/TRANSLATION.md`.
 
 The test and service heaps share an immutable image, never heap-owned values.

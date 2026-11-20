@@ -433,7 +433,7 @@ MO_MUST_USE bool infer_case_receiver(struct inference *p, const struct mo_syntax
         return false;
     /* Only a case without fields is a value on its own; Entry.to_text(e) and a
      * declared Money.to_text(m) name the type (D285). */
-    const struct mo_builtin_case *builtin = mo_builtin_case_by_name(name);
+    const struct mo_builtin_case *builtin = mo_builtin_case_by_name(name, NULL);
     if (builtin != NULL)
         return builtin->count == 0;
     uint32_t count = 0;
@@ -715,7 +715,7 @@ MO_MUST_USE struct value infer_identifier(struct inference *p, const struct mo_s
                 .type = s->active->type, .binding = s->active->name, .bound = s->active->binding};
         }
     }
-    const struct mo_builtin_case *builtin = prefix == NULL ? mo_builtin_case_by_name(node) : NULL;
+    const struct mo_builtin_case *builtin = mo_builtin_case_by_name(node, prefix);
     if (builtin != NULL)
         return infer_builtin_construct(p, builtin, NULL, NULL);
     if (prefix != NULL &&

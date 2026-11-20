@@ -169,7 +169,7 @@ canonical_type(const struct mo_types *types, const struct mo_type *input, struct
         out->function = input->function;
         break;
     case MO_TYPE_CAPABILITY:
-        if (input->capability < MO_CAP_ARGS || input->capability > MO_CAP_SIMULATION) {
+        if (input->capability < MO_CAP_ARGS || input->capability > MO_CAP_CONNECTION) {
             return MO_TYPES_INVALID;
         }
         out->capability = input->capability;

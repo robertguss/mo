@@ -413,7 +413,8 @@ MO_MUST_USE bool infer_finish_patterns(struct inference *p) {
                       type->shape.declaration->declaration->kind == MO_S_ENUM;
         choice = choice || infer_named(type, "Option") || infer_named(type, "Result") ||
                  infer_named(type, "Ordering") || infer_named(type, "EntryKind") ||
-                 infer_named(type, "FileError") || infer_named(type, "SimulationError");
+                 infer_named(type, "FileError") || infer_named(type, "SimulationError") ||
+                 infer_named(type, "NetworkError");
         if (check->catch_all != NULL && choice) {
             infer_defer(p, MO_CODE_CASE_CATCH_ALL, check->catch_all->span,
                         "a choice arm is a catch-all",
@@ -977,8 +978,7 @@ infer_checked_pattern(struct inference *p, const struct mo_syntax *syntax,
         return pattern_output(p, syntax, type, MO_PATTERN_LITERAL, 0);
     const struct note *note = pattern_note(notes, note_count, syntax);
     if (note->output.builtin_case != NULL) {
-        const struct mo_syntax *name = syntax->kind == MO_S_CALL ? syntax->children[0] : syntax;
-        const struct mo_builtin_case *data = mo_builtin_case_by_name(name);
+        const struct mo_builtin_case *data = mo_builtin_case_by_text(note->output.builtin_case);
         MO_ASSERT(data != NULL);
         struct mo_checked_pattern *out =
             pattern_output(p, syntax, type, MO_PATTERN_CONSTRUCTOR, data->count);
@@ -1005,7 +1005,10 @@ infer_checked_pattern(struct inference *p, const struct mo_syntax *syntax,
             if (parts[i].pattern == NULL)
                 return NULL;
         }
-        const struct mo_syntax *args = syntax->kind == MO_S_CALL ? syntax->children[1] : NULL;
+        const struct mo_syntax *args = syntax->kind == MO_S_CALL ? syntax->children[1]
+                                       : syntax->kind == MO_S_POSTFIX
+                                           ? syntax->children[2]->children[0]
+                                           : NULL;
         for (uint32_t i = 0; args != NULL && i < args->count; i++) {
             uint32_t index = infer_builtin_field(data, args->children[i]);
             MO_ASSERT(index < data->count);

@@ -265,7 +265,9 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
             enum mo_core_bytes_op operation;
         } bytes[] = {{"Bytes.size", MO_CORE_BYTES_OP_SIZE},
                      {"Bytes.get", MO_CORE_BYTES_OP_GET},
-                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8}};
+                     {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8},
+                     {"Bytes.slice", MO_CORE_BYTES_OP_SLICE},
+                     {"Bytes.join", MO_CORE_BYTES_OP_JOIN}};
         for (size_t i = 0; i < sizeof bytes / sizeof bytes[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, bytes[i].name) == 0)
@@ -377,7 +379,11 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
                   {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}},
                   {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
-                  {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}}};
+                  {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}},
+                  {"Network.connect", {MO_CORE_IO_OP_CONNECT, false}},
+                  {"Network.fake", {MO_CORE_IO_OP_NETWORK_FAKE, false}},
+                  {"Connection.send", {MO_CORE_IO_OP_SEND, false}},
+                  {"Connection.receive", {MO_CORE_IO_OP_RECEIVE, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)
@@ -617,7 +623,10 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
         strcmp(r->native, "Failed") != 0 && strcmp(r->native, "Entry") != 0 &&
         strcmp(r->native, "File") != 0 && strcmp(r->native, "Folder") != 0 &&
         strcmp(r->native, "Link") != 0 && strcmp(r->native, "Other") != 0 &&
-        strcmp(r->native, "ServiceDown") != 0 && strcmp(r->native, "ToolFailed") != 0)
+        strcmp(r->native, "ServiceDown") != 0 && strcmp(r->native, "ToolFailed") != 0 &&
+        strcmp(r->native, "UnknownHost") != 0 && strcmp(r->native, "Refused") != 0 &&
+        strcmp(r->native, "TimedOut") != 0 && strcmp(r->native, "Closed") != 0 &&
+        strcmp(r->native, "Broken") != 0)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
     if (lower_cps_kind(r) == MO_S_TUPLE || lower_cps_kind(r) == MO_S_MAP_ENTRY) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);

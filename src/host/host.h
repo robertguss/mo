@@ -6,12 +6,12 @@
 #include "base/intent-list.h"
 #include "heap/heap.h"
 
-#define MO_HOST_PRIVATE_TYPES 6
+#define MO_HOST_PRIVATE_TYPES 9
 struct mo_host_types {
     struct mo_types types;
-    uint32_t integer, time, text, texts, folders, files;
-    uint32_t capabilities[MO_CAP_RANDOM + 1];
-    uint32_t parameters[2];
+    uint32_t integer, time, text, bytes, texts, folders, files, replies, peers;
+    uint32_t capabilities[MO_CAP_CONNECTION + 1];
+    uint32_t parameters[6];
 };
 /* Once per image. storage has source->count + MO_HOST_PRIVATE_TYPES entries;
  * it and out must remain at these addresses for the lifetime of every heap.
@@ -22,7 +22,7 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
 
 struct mo_host {
     const struct mo_host_types *types;
-    uint32_t open_folders;
+    uint32_t open_folders, open_connections;
     int input, output, errors;
     bool force_fallback; /* C tests exercise the portable resolver on Linux. */
     bool started, kernel_probed, kernel_available;
@@ -30,7 +30,8 @@ struct mo_host {
 void mo_host_init(struct mo_host *host, const struct mo_host_types *types);
 /* Before running main, once per context and before starting threads. Changes
  * process-wide SIGPIPE to ignored and tries to raise the soft descriptor budget to
- * MO_LIMIT_OPEN_FOLDERS + 32 (never above its hard limit). C embedders calling
+ * MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2 * MO_LIMIT_LOOKUPS + 32 (never above
+ * its hard limit). C embedders calling
  * real Console directly must call this, or arrange SIGPIPE handling themselves.
  * A refused raise leaves the current budget; later opens report exhaustion.
  * NULL on success, otherwise a static internal-stop reason. Prints never change
@@ -62,11 +63,12 @@ MO_MUST_USE enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_he
 /* Semantic backing state for C fixtures/embedders, independent of heap slots.
  * Collections are List(Text), Map(Text,Text), or Set(Text) from this heap.
  * Files and ReadFiles use the same family. Random stores four nonzero-together
- * generator words, including advanced states, not a seed. */
+ * generator words, including advanced states, not a seed. Network holds the
+ * Map(Text, Map(Bytes, Bytes)) its constructor took. */
 struct mo_host_fake_state {
     enum mo_capability kind;
     union {
-        struct mo_cell args, env;
+        struct mo_cell args, env, network;
         struct {
             struct mo_cell input, output, errors;
         } console;

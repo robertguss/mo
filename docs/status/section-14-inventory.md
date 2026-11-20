@@ -31,7 +31,7 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Float | every function | runs in every form; qualified `compare` since MO-144 (#208) | `num-float-convert`, `ref-library-natives` |
 | Text | every function and `Text.from_chars` | runs in every form; qualified `to_text` and `compare` since MO-144 (#208) | `txt-*`, `ref-library-natives` |
 | Char | every function | runs in every form; qualified `compare` since MO-144 (#208) | `txt-case-chars`, `txt-chars-roundtrip` |
-| Bytes | `size`, `get`, `decode_utf8`, `compare` | runs in every form; qualified `compare` since MO-144 (#208) | `ref-library-natives`, `ref-abilities` |
+| Bytes | `size`, `get`, `decode_utf8`, `compare`, and `slice` and `Bytes.join` | runs in every form; qualified `compare` since MO-144 (#208) | `ref-library-natives`, `ref-abilities`, `cap-network-forms` |
 | List | every function, `join` and `to_map` | runs in every form; qualified `to_text` and `compare` since MO-144 (#208) | `col-list-*`, `ref-library-natives` |
 | Map | every function and `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `col-map-*`, `ref-abilities` |
 | Set | every function, `Set.empty` and `to_text` | runs in every form; qualified `to_text` since MO-144 (#208) | `col-set-basics` |
@@ -44,6 +44,8 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Console | `print`, `error`, `read_line`, `printed`, `printed_errors`, the fakes | runs | `cap-console-*` |
 | Files, ReadFiles | every operation and `Files.in_memory` | runs | `cap-files-*` |
 | FileError, Entry | constructors, `to_text`, `compare` | runs in every form; qualified `compare` and `Entry` `to_text` since MO-144 (#208) | `ref-abilities`, `fail-result-declared` |
+| Network, Connection | `connect`, `send`, `receive` and `Network.fake` | runs in every form, on a fake; the real network runs in `tests/test_network.c` | `cap-network-fake`, `cap-network-forms` |
+| NetworkError | constructors, `to_text`, `compare` | runs in every form | `cap-network-error`, `cap-network-forms` |
 | Json | `parse`, `int`, `decimal`, `float`, `to_text`, `pretty`, JsonNumber's conversions, JsonError, and lookup by `get`, `at`, `path`, `text_at`, `int_at`, `bool_at` and `list_at` | runs | `lib-json-query`, `lib-json-errors`, `lib-json-lookup` |
 | Unicode16 | every function | runs | `lib-unicode16` |
 

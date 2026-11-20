@@ -1,0 +1,5 @@
+bug: Bytes.slice with a negative index
+  at Main.main (tests/golden/fail-bug-slice-negative/main.mo:348..354)
+  at Main.main.entry (tests/golden/fail-bug-slice-negative/main.mo:13..404)
+  bytes = bytes[97, 98, 99, 100, 101]
+  console = <Console>

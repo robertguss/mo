@@ -9,9 +9,12 @@ struct mo_builtin_case {
     uintptr_t key; /* normalized coverage constructor, below every symbol address */
     uint32_t first_key, cases, parameters, count, parameter;
     const char *fields[2]; /* NULL for one unnamed type-parameter payload */
+    const char *module;
 };
 
-MO_MUST_USE const struct mo_builtin_case *mo_builtin_case_by_name(const struct mo_syntax *name);
+MO_MUST_USE const struct mo_builtin_case *mo_builtin_case_by_name(const struct mo_syntax *name,
+                                                                  const struct mo_syntax *prefix);
+MO_MUST_USE const struct mo_builtin_case *mo_builtin_case_by_text(const char *name);
 MO_MUST_USE const struct mo_builtin_case *mo_builtin_case_by_key(uintptr_t key);
 /* The first declared constructor, or NULL for a non-constructor type. */
 MO_MUST_USE const struct mo_builtin_case *mo_builtin_case_by_type(const char *name);

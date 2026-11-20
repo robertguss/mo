@@ -48,7 +48,9 @@ enum mo_core_cap_tag {
     MO_CORE_CAP_CLOCK,
     MO_CORE_CAP_RANDOM,
     MO_CORE_CAP_ARGS,
-    MO_CORE_CAP_ENV
+    MO_CORE_CAP_ENV,
+    MO_CORE_CAP_NETWORK,
+    MO_CORE_CAP_CONNECTION
 };
 struct mo_core_cap {
     enum mo_core_cap_tag tag;
@@ -82,7 +84,8 @@ enum mo_core_ty_tag {
     MO_CORE_TY_FN,
     MO_CORE_TY_CAP,
     MO_CORE_TY_SIMULATION,
-    MO_CORE_TY_SIMULATION_ERROR
+    MO_CORE_TY_SIMULATION_ERROR,
+    MO_CORE_TY_NETWORK_ERROR
 };
 struct mo_core_ty {
     enum mo_core_ty_tag tag;
@@ -773,7 +776,7 @@ enum mo_core_text_kind {
     MO_CORE_TEXT_CAP_STATE,
     MO_CORE_TEXT_RANDOM_STATE
 };
-#define MO_CORE_TEXT_VERSION "0.9"
+#define MO_CORE_TEXT_VERSION "0.10"
 /* Core parsing, printing, metadata validation and checking use bounded recursion.
  * Callers must run Core work on MO_SOURCE_STACK_SIZE via mo_with_stack (base/stack.h),
  * rather than relying on platform thread-stack defaults; see architecture section 12. */

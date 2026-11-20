@@ -13,7 +13,7 @@ const char *mo_host_start(struct mo_host *host) {
     struct rlimit budget;
     if (getrlimit(RLIMIT_NOFILE, &budget) != 0)
         return "internal error: descriptor budget unavailable";
-    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + 32u;
+    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2u * MO_LIMIT_LOOKUPS + 32u;
     if (wanted > budget.rlim_max)
         wanted = budget.rlim_max;
     if (budget.rlim_cur < wanted) {
@@ -39,14 +39,18 @@ mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, ui
 
 #define OPERATIONS(fake_)                                                                          \
     {                                                                                              \
-        {MO_CAP_ARGS, fake_, mo_host_misc}, {MO_CAP_ENV, fake_, mo_host_misc},                     \
-            {MO_CAP_CONSOLE, fake_, mo_host_console}, {MO_CAP_FILES, fake_, mo_host_files},        \
-            {MO_CAP_READ_FILES, fake_, mo_host_files}, {MO_CAP_CLOCK, fake_, mo_host_misc}, {      \
-            MO_CAP_RANDOM, fake_, mo_host_misc                                                     \
-        }                                                                                          \
+        [MO_CAP_ARGS] = {MO_CAP_ARGS, fake_, mo_host_misc},                                        \
+        [MO_CAP_ENV] = {MO_CAP_ENV, fake_, mo_host_misc},                                          \
+        [MO_CAP_CONSOLE] = {MO_CAP_CONSOLE, fake_, mo_host_console},                               \
+        [MO_CAP_FILES] = {MO_CAP_FILES, fake_, mo_host_files},                                     \
+        [MO_CAP_READ_FILES] = {MO_CAP_READ_FILES, fake_, mo_host_files},                           \
+        [MO_CAP_CLOCK] = {MO_CAP_CLOCK, fake_, mo_host_misc},                                      \
+        [MO_CAP_RANDOM] = {MO_CAP_RANDOM, fake_, mo_host_misc},                                    \
+        [MO_CAP_NETWORK] = {MO_CAP_NETWORK, fake_, mo_host_network},                               \
+        [MO_CAP_CONNECTION] = {MO_CAP_CONNECTION, fake_, mo_host_network},                         \
     }
-const struct mo_host_operations mo_host_operations[2][MO_CAP_RANDOM + 1] = {OPERATIONS(false),
-                                                                            OPERATIONS(true)};
+const struct mo_host_operations mo_host_operations[2][MO_CAP_CONNECTION + 1] = {OPERATIONS(false),
+                                                                                OPERATIONS(true)};
 #undef OPERATIONS
 
 enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason) {
@@ -106,8 +110,11 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
             mo_value_drop(heap, host->types->texts, args[0]);
         return result;
     }
-    if (operation == MO_HOST_ARGS_OF || operation == MO_HOST_ENV_OF) {
-        uint32_t slot = operation == MO_HOST_ARGS_OF ? host->types->texts : host->types->files;
+    if (operation == MO_HOST_ARGS_OF || operation == MO_HOST_ENV_OF ||
+        operation == MO_HOST_NETWORK_FAKE) {
+        uint32_t slot = operation == MO_HOST_ARGS_OF  ? host->types->texts
+                        : operation == MO_HOST_ENV_OF ? host->types->files
+                                                      : host->types->peers;
         enum mo_host_outcome result =
             mo_host_state_cap(host, heap, type, true, &slot, args, 1, out);
         if (result == MO_HOST_RETURNED)
@@ -193,7 +200,7 @@ enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_heap *heap, ui
     }
     if (cap == MO_CAP_CONSOLE)
         return mo_host_console_real(heap, type, out);
-    if (cap == MO_CAP_CLOCK) {
+    if (cap == MO_CAP_CLOCK || cap == MO_CAP_NETWORK) {
         struct mo_capability_info info = {.operations = &mo_host_operations[false][cap]};
         return mo_value_capability(heap, type, &info, out) ? MO_HOST_RETURNED
                                                            : MO_HOST_OUT_OF_MEMORY;
@@ -212,7 +219,11 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
     *error = (struct mo_host_error){0};
     switch (initial->kind) {
     case MO_CAP_SIMULATION:
+    case MO_CAP_CONNECTION:
         MO_UNREACHABLE();
+    case MO_CAP_NETWORK:
+        return mo_host_state_cap(host, heap, type, true, &host->types->peers, &initial->as.network,
+                                 1, out);
     case MO_CAP_ARGS:
         return mo_host_state_cap(host, heap, type, true, &host->types->texts, &initial->as.args, 1,
                                  out);
@@ -272,7 +283,11 @@ bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo
     struct mo_host_fake_state result = {.kind = operations->capability};
     switch (result.kind) {
     case MO_CAP_SIMULATION:
+    case MO_CAP_CONNECTION:
         MO_UNREACHABLE();
+    case MO_CAP_NETWORK:
+        result.as.network = mo_value_dup(heap, host->types->peers, mo_state_get(info->state, 0));
+        break;
     case MO_CAP_ARGS:
         result.as.args = mo_value_dup(heap, host->types->texts, mo_state_get(info->state, 0));
         break;
@@ -318,7 +333,11 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
                              struct mo_host_fake_state *state) {
     switch (state->kind) {
     case MO_CAP_SIMULATION:
+    case MO_CAP_CONNECTION:
         MO_UNREACHABLE();
+    case MO_CAP_NETWORK:
+        mo_value_drop(heap, host->types->peers, state->as.network);
+        break;
     case MO_CAP_ARGS:
         mo_value_drop(heap, host->types->texts, state->as.args);
         break;

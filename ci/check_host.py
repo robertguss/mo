@@ -50,7 +50,8 @@ CONSTRUCTORS = {
     "CLOCK_FIXED": ("clockFixed", "clock"), "RANDOM_SEEDED": ("randomSeeded", "random"),
 }
 OBSERVATIONS = {"CONSOLE_PRINTED": 4, "CONSOLE_PRINTED_ERRORS": 5}
-assert set(ROWS) == set(OPS) | set(CONSTRUCTORS) | set(OBSERVATIONS)
+OUTSIDE_MODEL = {"NETWORK_CONNECT", "CONNECTION_SEND", "CONNECTION_RECEIVE", "NETWORK_FAKE"}
+assert set(ROWS) == set(OPS) | set(CONSTRUCTORS) | set(OBSERVATIONS) | OUTSIDE_MODEL
 
 
 def text(s):
@@ -191,7 +192,7 @@ def cases():
                         "FILES_LIST", "FILES_ENTRIES", "FILES_REMOVE", "FILES_READ_TEXT"]),
             path=rng.choice(["a", "nest/a", "new/deep", ".", "./new", "new/../a"]),
             value=str(rng.randrange(-1000, 1000)))
-    assert {c[0] for c in commands} == set(ROWS)
+    assert {c[0] for c in commands} == set(ROWS) - OUTSIDE_MODEL
     return commands
 
 
@@ -209,7 +210,7 @@ def main():
             assert len(got) == len(want), (driver, len(got), len(want))
             for command, actual, expected_value in zip(commands, got, want):
                 assert actual == expected_value, (driver, command, actual, expected_value)
-            print(f"host differential: {driver}: {len(want)} persistent fake outcomes match mocore; all {len(ROWS)} operations")
+            print(f"host differential: {driver}: {len(want)} persistent fake outcomes match mocore; {len(ROWS) - len(OUTSIDE_MODEL)} operations, {len(OUTSIDE_MODEL)} outside the model")
 
 
 if __name__ == "__main__":

@@ -53,7 +53,8 @@ Host for every number below, unless a line says otherwise: an exe.dev VM, 8 vCPU
 
 [surface/](surface/README.md): `mo check` on two programs
 
-- The spike program and its tests with no network are valid Mo against stand-in modules.
+- The spike program and its tests with no network were valid Mo against stand-in modules. They
+  stopped checking when the network's types were built, as that folder's README says.
 - Nothing in them runs.
 - What the checker taught the design is listed in that folder's README.
 
