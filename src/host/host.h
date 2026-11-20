@@ -96,10 +96,6 @@ MO_MUST_USE bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *hea
 void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
                              struct mo_host_fake_state *state);
 
-/* Runtime-owned capability; never handed to a Mo handler. A NULL path makes
- * the in-memory fake, retained by the embedding across simulated restarts.
- * A disk path names one service's database, locked exclusively until close.
- * Each handle belongs to at most one live service. Only success writes out. */
 /* Candidate compiler subprocess. Paths and executable are absolute; tools owns a private
  * bundle directory and validates the emitted image. Poll never blocks unless it must reap
  * a child it has just killed. Where the host can confine, the child runs confined by Landlock
@@ -179,6 +175,10 @@ struct mo_store_record {
  * view borrows input; its values still require heap decoding before use. */
 MO_MUST_USE bool mo_store_record_read(enum mo_store_record_kind kind, const uint8_t *bytes,
                                       size_t length, struct mo_store_record *out);
+/* Runtime-owned capability; never handed to a Mo handler. A NULL path makes
+ * the in-memory fake, retained by the embedding across simulated restarts.
+ * A disk path names one service's database, locked exclusively until close.
+ * Each handle belongs to at most one live service. Only success writes out. */
 MO_MUST_USE enum mo_store_status mo_store_open(const char *path, struct mo_store **out);
 /* The same, but a store another connection holds is waited for, up to
  * MO_LIMIT_SERVE_STORE_WAIT_US, before the open returns BUSY. Without the wait a
