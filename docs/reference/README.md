@@ -813,10 +813,11 @@ rate = case rates.get(currency)
 end
 ```
 
-Reaching a `stop` is a bug: the program stops and reports the reason. A `stop`
-fits wherever a value is expected, because control never comes back from it.
-So does a block or arm that ends in `return`: it leaves the function instead
-of giving a value.
+Reaching a `stop` is a bug: the program stops and reports the reason. The
+reason is fixed text, and `#{...}` in it is an error. A `stop` fits wherever a
+value is expected, because control never comes back from it. So does a block
+or arm that ends in `return`: it leaves the function instead of giving a
+value.
 
 ## 9. Generics and abilities
 

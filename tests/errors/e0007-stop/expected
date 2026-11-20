@@ -1,0 +1,7 @@
+error E0007: expected text, found text interpolation  tests/errors/e0007-stop/main.mo:5:8
+
+  5 |   stop "no rate for #{count}"
+    |        ^^^^^^^^^^^^^^^
+
+Use the declaration or statement's syntax and close its delimiters (reference 2.4).
+

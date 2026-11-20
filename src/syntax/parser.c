@@ -684,7 +684,7 @@ static MO_MUST_USE struct mo_syntax *primary(struct parser *p) {
     if (token == MO_T_FN)
         return lambda(p);
     if (take(p, MO_T_STOP))
-        return N(MO_S_STOP, start, text(p));
+        return N(MO_S_STOP, start, name(p, MO_T_TEXT));
     if (token == MO_T_LPAREN || token == MO_T_LBRACK || token == MO_T_LBRACE) {
         enter(p);
         uint16_t code = p->expect_code;
