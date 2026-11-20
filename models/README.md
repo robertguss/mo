@@ -50,7 +50,7 @@ successful updates. TLC explores about 108,000 distinct states in a few seconds.
 - `Apply` and `Snapshot` are the only actions that change application state or the log
   position, and they run only between captures. `Fail` records both values, so
   `RecoveryUntouched` fails if any capture action changes them.
-- `Retain`, `Evict` and `RetainRefuse` apply `src/host/store.c` retention to the record
+- `Retain`, `Evict` and `RetainRefuse` apply `src/host/store-failures.c` retention to the record
   count. A repeat deletes only its own kind's previous latest. If that leaves no room, the
   repeat is refused and no other kind loses a record. A new kind that finds the store full
   evicts the kind whose latest record is oldest, first and latest together.
@@ -111,8 +111,8 @@ snapshot with its key and the log tail, where each record carries the key of the
 appended it. `History` is what a restart replays: the snapshot followed by the tail. Everything
 else (mailbox, upload slot, staged candidate, unsent replies) is volatile and lost on a crash.
 The live boundary, re-admission and removed-tool replies are the contract in
-`docs/design/upgrades.md` (Boundary, replies and catalogs). When this model was written, live
-swapping was not implemented in C, so those rows name the design, not a regression.
+`docs/design/upgrades.md` (Boundary, replies and catalogs). Live swapping is
+`src/vm/service-swap.c`; those rows name that implementation and `tests/test_service_swap.c`.
 
 | Model action | Implementation and regression |
 | --- | --- |
@@ -123,7 +123,7 @@ swapping was not implemented in C, so those rows name the design, not a regressi
 | Snapshot | `mo_store_call` `SNAPSHOT`: the snapshot replaces the old one and clears the tail |
 | Open / Stage / StageRefuse | an upload slot opens only on the active base; pages arrive; the last page stages a compiled candidate or refuses |
 | CommitRequest | commit names the base again and is checked against the active program |
-| Committed / Refused / Uncertain | `mo_store_activate` in `src/host/store.c`, `MO_STORE_ACTIVATED`, `MO_STORE_ACTIVATION_REFUSED` with confirmed rollback, `MO_STORE_ACTIVATION_UNSAFE`; enabled only at a message boundary (no reply pending) |
+| Committed / Refused / Uncertain | `mo_store_activate` in `src/host/store-programs.c`, `MO_STORE_ACTIVATED`, `MO_STORE_ACTIVATION_REFUSED` with confirmed rollback, `MO_STORE_ACTIVATION_UNSAFE`; enabled only at a message boundary (no reply pending) |
 | Crash / Restart | restart reads the program row, restores the snapshot and replays the tail with that program; `serve_upgrade` in `src/tools/upgrade-commands.c` reports `candidate source is already active` and never reruns a migration |
 | Decide | the decision on the event loop after the checks pass: activate under `intent` when every approved item is kept and no migration is named, otherwise store the pending upgrade under its review id and release the slot |
 | Yes / Recheck / RecheckRefuse / No | Robert's answer names a review id; only an exact match rechecks the stored bundle; a failed recheck or a no drops the pending upgrade |

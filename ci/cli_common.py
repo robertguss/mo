@@ -213,8 +213,6 @@ class Served:
 STORE_FAILED = b"service store failed; reopen it to see whether the last change was saved"
 STORE_BUSY = (b"another process holds the service store, such as a second mo serve or a reader "
               b"of its data folder; stopped waiting")
-SAVED_REFUSED = (b"saved service data is damaged or was written by a different program; "
-                 b"recovery refused")
 
 
 def serve_events(errors):

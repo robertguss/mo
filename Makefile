@@ -13,9 +13,7 @@
 #   make grammar      check that Mo code parses with the executable grammar (needs bison):
 #                     the grammar's own tests, examples/, services/ and the reference's examples
 #   make formal       build Mo Core in Lean (formal/) and check every proof (needs elan)
-#   make cbmc         prove the bytecode reader, the arena, the verifier's transfer
-#                     functions, the primitives' arithmetic and UTF-8, lexical path
-#                     containment and resolution, reference counts and hash tables (needs CBMC)
+#   make cbmc         prove the C functions listed in cbmc/README.md (needs CBMC)
 #
 # ci/check.sh runs every check. Choose a compiler with
 # CC=gcc or CC=clang. Each compiler builds into its own directory, so switching
@@ -167,10 +165,7 @@ formal:
 	cd formal && lake build MoCore mocore
 	sh ci/test_mocore.sh
 
-# CBMC proofs (cbmc/README.md): the bytecode reader on every input of up to MO_CBMC_INPUT bytes,
-# the arena on every size, the verifier's transfer functions on any one instruction, the
-# primitives' arithmetic and UTF-8 on every operand, lexical path containment, bounded path
-# resolution, reference-count updates and hash-table probing.
+# CBMC proofs listed in cbmc/README.md.
 cbmc:
 	bash cbmc/prove.sh
 
@@ -627,8 +622,8 @@ $(BUILD)/debug/tests/test_service_store.test: $(BUILD)/debug/tests/test_service_
 $(BUILD)/sanitize/tests/test_service_store.test: $(BUILD)/sanitize/tests/test_service_store.o $(call objects,$(BUILD)/sanitize,$(filter-out $(SERVICE_LOOP_SOURCES) src/vm/simulation.c $(STORE_SOURCES),$(LIB_SOURCES))) $(patsubst src/%.c,$(BUILD)/sanitize/store-faults/%.o,$(SERVICE_LOOP_SOURCES)) $(patsubst src/%.c,$(BUILD)/sanitize/store-faults/%.o,$(STORE_SOURCES)) $(BUILD)/sanitize/store-faults/simulation.o
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
-# The recovery check's negative control: only this test's service.c reaches the store through a
-# double that can drop or repeat the newest log record a load hands to recovery.
+# The recovery check's negative control: only this test's SERVICE_LOOP_SOURCES objects reach the
+# store through a double that can drop or repeat the newest log record a load hands to recovery.
 $(BUILD)/debug/recovery-faults/vm/%.o: src/vm/%.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(DEBUG) -Dmo_store_call=mo_recovery_fault_call -c $< -o $@
