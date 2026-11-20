@@ -17,7 +17,7 @@ flags = {
     "--max-heap": (["1GiB"], {"run", "test", "query"}),
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
-    "--against": (["old/main.mo"], {"test"}),
+    "--mutants": ([], {"test"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
@@ -87,23 +87,14 @@ def guide_claims(binary):
         assert f"error E{code}: {headline}".encode() in result.stderr, (args, result.stderr)
 
     says("Each mutant that survives is an error, E1439, \"a mutant survived: no check noticed this "
-         "change\"", "the line says `gates: did not run`")
-    survivor = run(binary, ["test", "tests/errors/e1439/main.mo"], 1)
+         "change\"",
+         "the line says `mutants: did not run: a check did not pass`",
+         "`mo test FILE --mutants` is an opt-in diagnostic pass that runs every check with no time "
+         "limit and then tries mutants of the program (reference 12.6).")
+    plain_ok = run(binary, ["test", "tests/errors/e1439/main.mo"], 0)
+    assert not plain_ok.stderr and b"mutants:" not in plain_ok.stdout
+    survivor = run(binary, ["test", "--mutants", "tests/errors/e1439/main.mo"], 1)
     assert b"error E1439: a mutant survived: no check noticed this change" in survivor.stderr
-    assert b"gates: did not run" in run(binary, ["test", "--in", "Main",
-                                                 "tests/errors/e1439/main.mo"], 0).stdout
-    says("Each one without is an error, E1440, \"an exposed function states no intent\" or \"a "
-         "service tool states no intent\", and no mutant is tried.")
-    unstated = run(binary, ["test", "tests/errors/e1440/main.mo"], 1)
-    assert b"error E1440: an exposed function states no intent" in unstated.stderr
-    assert b"gates: did not run" in unstated.stdout and b"E1439" not in unstated.stderr
-    says("`gates: not the full run: N functions carried over untried from previous version DIGEST`",
-         "then one `changes against previous version DIGEST:` line")
-    base = "tests/cli/against/base/main.mo"
-    shorter = run(binary, ["test", base, "--against", base], 0).stdout
-    assert b"gates: not the full run: 5 functions carried over untried from previous version " \
-        in shorter, shorter
-    assert b"changes against previous version " in shorter, shorter
     says("`mo replay`, `mo query` and `mo history` exit 0 when the requested result holds, 1 when "
          "it does not or a check refused, and 2 for a mistake in the command")
     assert ("The function is not generic (E1410), holds no capability or function in its "
@@ -186,9 +177,7 @@ def guide_claims(binary):
          "For `counter.mo` under Run a service, `mo test counter.mo` prints "
          "`passed Counter.service.promise.1  counter.mo:8:3`, "
          "`passed Counter.service.promise.2  counter.mo:15:3` and "
-         "`passed Counter.service.recovery  counter.mo:3:1`, then `gates: 2 mutants tried, 2 killed "
-         "(2 promise, 0 example, 0 test, 0 recovery, 0 start), 0 survived, 0 dropped`",
-         "Last comes `3 passed, 0 failed, 0 stopped`.",
+         "`passed Counter.service.recovery  counter.mo:3:1`, then `3 passed, 0 failed, 0 stopped`.",
          "When the start value stops, the check stops with that bug.",
          "`mo test FILE` checks its examples, promises, tests and recovery checks.",
          "1 when the program has errors or an example, promise, test or recovery check fails")
@@ -201,16 +190,19 @@ def guide_claims(binary):
             b"passed Counter.service.promise.1  counter.mo:8:3\n"
             b"passed Counter.service.promise.2  counter.mo:15:3\n"
             b"passed Counter.service.recovery  counter.mo:3:1\n"
-            b"gates: 2 mutants tried, 2 killed (2 promise, 0 example, 0 test, 0 recovery, 0 start), "
-            b"0 survived, 0 dropped\n"
             b"3 passed, 0 failed, 0 stopped\n"), counter.stdout
         listed = subprocess.run([str(binary), "test", "--list", "counter.mo"], cwd=directory,
                                 capture_output=True, timeout=30)
         assert listed.stdout.decode().splitlines() == [
+            "Counter.service.promise.1", "Counter.service.promise.2",
+            "Counter.service.recovery"], listed
+        mutant_listed = subprocess.run([str(binary), "test", "--mutants", "--list", "counter.mo"],
+                                       cwd=directory, capture_output=True, timeout=30)
+        assert mutant_listed.stdout.decode().splitlines() == [
             "Counter.service.promise.1", "Counter.service.promise.2", "Counter.service.recovery",
             "mutant counter.mo:24:10 Counter.add: arithmetic, `+` to `-`",
             "mutant counter.mo:24:26 Counter.add: arithmetic, `+` to `-`",
-            "function Counter.add: 2 mutants", "function Counter.read: 0 mutants"], listed
+            "function Counter.add: 2 mutants", "function Counter.read: 0 mutants"], mutant_listed
         run(binary, ["format", str(pathlib.Path(directory) / "counter.mo")], 0)
         assert (pathlib.Path(directory) / "counter.mo").read_text() == SERVE_COUNTER
     with tempfile.TemporaryDirectory(prefix="mo-guide-") as directory:
@@ -341,9 +333,12 @@ def guide_claims(binary):
              "prints them.")
         listed = run(binary, ["test", "--list", str(twice)], 0).stdout
         assert listed.decode().splitlines() == [
+            "Twice.twice.promise.1", "Twice.one.example.1"], listed
+        mutant_listed = run(binary, ["test", "--mutants", "--list", str(twice)], 0).stdout
+        assert mutant_listed.decode().splitlines() == [
             "Twice.twice.promise.1", "Twice.one.example.1",
             f"mutant {twice}:18:3 Twice.one: int, `1` to `2`",
-            "function Twice.twice: 0 mutants", "function Twice.one: 1 mutant"], listed
+            "function Twice.twice: 0 mutants", "function Twice.one: 1 mutant"], mutant_listed
         result = run(binary, ["test", "--only", "Twice.one.example.1", str(twice)], 0)
         assert result.stdout.endswith(b"1 passed, 0 failed, 0 stopped\n")
 

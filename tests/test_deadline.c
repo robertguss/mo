@@ -82,12 +82,10 @@ int main(int argc, char *argv[]) {
     size_t length = fread(text, 1, sizeof text - 1, out);
     text[length] = '\0';
     char expected[512];
-    MO_ASSERT(
-        snprintf(expected, sizeof expected,
-                 "passed Main.service.promise.1  %s:6:1\npassed Main.service.recovery  "
-                 "%s:2:1\ngates: 1 mutants tried, 1 killed (1 promise, 0 example, 0 test, "
-                 "0 recovery, 0 start), 0 survived, 0 dropped\n2 passed, 0 failed, 0 stopped\n",
-                 path, path) > 0);
+    MO_ASSERT(snprintf(expected, sizeof expected,
+                       "passed Main.service.promise.1  %s:6:1\npassed Main.service.recovery  "
+                       "%s:2:1\n2 passed, 0 failed, 0 stopped\n",
+                       path, path) > 0);
     CHECK(strcmp(text, expected) == 0);
     MO_ASSERT(fclose(out) == 0 && fclose(err) == 0);
     MO_ASSERT(unlink(path) == 0 && unlink(output) == 0 && unlink(errors) == 0 &&

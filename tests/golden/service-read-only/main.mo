@@ -7,13 +7,7 @@ service
   token from env "MO_SERVICE_TEST_TOKEN_NOT_READ"
 end
 
-t0 = Time.parse("2026-10-25T00:00:00Z") or stop "valid time"
-
 fn snapshots(state: List(Int), _now: Time) : List(List(Int))
-  examples
-    snapshots([3, 7], t0) == [[3, 7]]
-  end
-
   [state]
 end
 

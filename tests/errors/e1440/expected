@@ -1,5 +1,0 @@
-error E1440: an exposed function states no intent  tests/errors/e1440/main.mo:4:4
-
-  4 | fn double(n: Int) : Int
-    |    ^^^^^^ Main.double: give it a promise or an example
-

@@ -41,14 +41,6 @@ def records(result, command):
     return items
 
 
-def gated(items):
-    """A full run's check results and its totals without the gates' fields, once its gates ran
-    and no mutant survived."""
-    total = dict(items[-1])
-    assert total.pop("gates") == "ran" and total.pop("mutants")["survived"] == 0, items[-1]
-    return [r for r in items if r["record"] == "result"], total
-
-
 SERVE_COUNTER = """module Counter
 
 service

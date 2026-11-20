@@ -69,13 +69,9 @@ def lower_source_fixtures(binary):
         assert result.stdout == expected and not result.stderr, (name, result)
 
     random_tests = records(run(binary, ["test", "--json",
-                                       str(fixtures / "random-natives/main.mo")], 1), "test")
+                                       str(fixtures / "random-natives/main.mo")], 0), "test")
     assert random_tests[-1]["passed"] == 1 and random_tests[-1]["failed"] == 0
-    assert random_tests[-1]["stopped"] == 0
-    assert [r["primary"]["label"] for r in random_tests if r["record"] == "diagnostic"] == [
-        f"Main.main: {change}; no check runs this function" for change in (
-            "int, `3` to `4`", "int, `2` to `3`", "negate, `==` to `!=`", "int, `3` to `4`",
-            "int, `0` to `1`", "int, `1` to `2`")], random_tests
+    assert random_tests[-1]["stopped"] == 0 and random_tests[-1]["errors"] == 0
 
     with tempfile.TemporaryDirectory(prefix="mo-numeric-bytes-") as directory:
         path = pathlib.Path(directory) / "main.mo"

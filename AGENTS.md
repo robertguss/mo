@@ -68,10 +68,9 @@ exception: after editing `docs/agent-guide.md`, `docs/reference/README.md` or
 `docs/design/library.md`, which the build embeds or checks, also run
 `bash ci/check.sh drivers static` once.
 
-A PR that changes a Mo program the nightly gates, a file under `lib/`, `examples/` or
-`services/task-queue/`, also runs plain `mo test` on each changed program and puts its last line
-in the PR body. For the task queue the program is `services/task-queue/queue-tests.mo`, and the run
-takes about five minutes; the others take under half a minute.
+A PR that changes a Mo program under `lib/`, `examples/` or `services/task-queue/` also runs plain
+`mo test` on each changed program and puts its last line in the PR body. For the task queue the
+program is `services/task-queue/queue-tests.mo`.
 
 The `nightly` GitHub Actions workflow checks `main` daily at 07:17 UTC and on manual dispatch,
 never on pull requests or pushes. It runs `gcc clang sanitize drivers static lean bench` with

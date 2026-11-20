@@ -11,7 +11,7 @@ import tempfile
 
 from cli_common import records, root, run, utf8_locale
 from cli_fixtures import anchors, constants, filenames, lower_source_fixtures, source_stack
-from cli_gates import change_summary, gates, shorter_run, stated_intent
+from cli_gates import mutants
 from cli_guide import emit_command, flags, guide_claims
 from cli_intent import (
     fix_command, intent_command, promise_selection, recovery_checks, service_promise_checks,
@@ -58,10 +58,7 @@ def check(binary):
     recovery_checks(binary)
     service_promise_checks(binary)
     strength_checks(binary)
-    gates(binary)
-    stated_intent(binary)
-    shorter_run(binary)
-    change_summary(binary)
+    mutants(binary)
     intent_command(binary)
     imported_constants(binary)
     fix_command(binary)
@@ -99,11 +96,8 @@ def check(binary):
     run(binary, ["check", "--emit=bytecode", library], 0)
     records(run(binary, ["check", "--json", library], 0), "check")
     assert b"E0079" in run(binary, ["run", library], 1).stderr
-    tested_lib = records(run(binary, ["test", "--json", library], 1), "test")
-    assert [(r["name"], r["outcome"]) for r in tested_lib if r["record"] == "result"] == [
-        ("Main.test.1", "passed")]
-    assert [r["primary"]["label"] for r in tested_lib if r["record"] == "diagnostic"] == [
-        "Main.entry: give it a promise or an example", "Main.run: give it a promise or an example"]
+    tested_lib = records(run(binary, ["test", "--json", library], 0), "test")
+    assert [(r["name"], r["outcome"]) for r in tested_lib[1:-1]] == [("Main.test.1", "passed")]
     test_fixture = "tests/cli/test/main.mo"
     listed_fixture = run(binary, ["test", "--json", "--list", test_fixture], 0)
     assert listed_fixture.stdout == (root / "tests/cli/test/list.golden").read_bytes()

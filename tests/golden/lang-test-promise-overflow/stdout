@@ -6,5 +6,4 @@ stopped Main.negate.promise.1  tests/golden/lang-test-promise-overflow/main.mo:4
   at Main.negate  tests/golden/lang-test-promise-overflow/main.mo:10:3
   n = -9223372036854775808
 passed Main.test.1  tests/golden/lang-test-promise-overflow/main.mo:13:1
-gates: did not run: a check did not pass
 1 passed, 0 failed, 1 stopped

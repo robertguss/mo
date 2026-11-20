@@ -1523,8 +1523,8 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
             unsigned_number(&w, counts.failed);
             text(&w, ",\"stopped\":");
             unsigned_number(&w, counts.stopped);
-            if (counts.gates.asked && w.ok)
-                w.ok = mo_render_gates(w.out, &counts.gates, true);
+            if (counts.mutants.asked && w.ok)
+                w.ok = mo_render_gates(w.out, &counts.mutants, true);
         }
         text(&w, ",\"status\":");
         unsigned_number(&w, (uint32_t)status);
@@ -1536,9 +1536,9 @@ int mo_write_diagnostics(FILE *output, FILE *errors, bool json, enum mo_command 
     if (ok && buffer.length != 0)
         ok = w.ok && write_buffer(json ? output : errors, &buffer);
     bool counted = counts.passed != 0 || counts.failed != 0 || counts.stopped != 0;
-    if (ok && !json && counted && counts.gates.asked) {
+    if (ok && !json && counted && counts.mutants.asked) {
         mo_buffer_clear(&buffer);
-        ok = mo_render_gates(&buffer, &counts.gates, false) && write_buffer(output, &buffer);
+        ok = mo_render_gates(&buffer, &counts.mutants, false) && write_buffer(output, &buffer);
     }
     if (ok && !json && counted) {
         mo_buffer_clear(&buffer);

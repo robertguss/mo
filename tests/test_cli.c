@@ -205,6 +205,17 @@ static void parse_intent(void) {
     refused(2, none, "command needs a file: \"intent\"");
     const char *check[] = {"mo", "check", "--against", "old.mo", "f.mo"};
     refused(5, check, "flag is not accepted by this command: \"--against\"");
+    const char *test_against[] = {"mo", "test", "--against", "old.mo", "f.mo"};
+    refused(5, test_against, "flag is not accepted by this command: \"--against\"");
+    const char *mutants[] = {"mo", "test", "--mutants", "--json", "f.mo"};
+    CHECK(mo_cli_parse(5, mutants, &cli, &error) && cli.mutants && cli.json && !cli.list);
+    const char *mutants_list[] = {"mo", "test", "--mutants", "--list", "f.mo"};
+    CHECK(mo_cli_parse(5, mutants_list, &cli, &error) && cli.mutants && cli.list);
+    const char *mutants_only[] = {"mo", "test", "--mutants", "--only", "Main.test.1", "f.mo"};
+    refused(6, mutants_only,
+            "--mutants runs every check and tries every mutant; it takes no -o, --only, --in, "
+            "--calls, --seconds, --max-stack, --max-depth, --max-heap, --bundle or --strength: "
+            "\"--mutants\"");
 }
 
 static void parse_serve(void) {

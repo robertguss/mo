@@ -13,5 +13,4 @@ failed Main.service.promise.2  tests/golden/service-promise-two/main.mo:16:3
   17 |     after < 100
      |     ^^^^^^^^^^^ this promise condition was false
 passed Main.service.recovery  tests/golden/service-promise-two/main.mo:5:1
-gates: did not run: a check did not pass
 1 passed, 2 failed, 0 stopped

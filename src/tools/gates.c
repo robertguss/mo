@@ -3,7 +3,6 @@
 #include "tools/gates.h"
 
 #include "base/codes.h"
-#include "tools/changes.h"
 #include "tools/mutants.h"
 
 #include <stdlib.h>
@@ -19,9 +18,7 @@ struct gate {
     struct mo_gated_check *sorted, *plan;
     FILE *quiet, *output;
     struct mo_diags *diags;
-    struct mo_gate_totals *totals;
-    const bool *tried;
-    bool *carried;
+    struct mo_mutant_totals *totals;
 };
 
 static const struct mo_span nowhere = {UINT32_MAX, 0, 0};
@@ -128,7 +125,7 @@ done:
 static const char *const kinds[MO_GATE_KILL_KINDS] = {"promise", "example", "test", "recovery",
                                                       "start"};
 
-static void count_kill(struct mo_gate_totals *totals, const char *kind) {
+static void count_kill(struct mo_mutant_totals *totals, const char *kind) {
     for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
         if (strcmp(kind, kinds[i]) == 0) {
             totals->killed[i]++;
@@ -207,89 +204,9 @@ static void survived(const struct gate *g, const struct mo_mutant *m, bool unrun
     mo_buffer_free(&detail);
 }
 
-static bool exposed(const struct mo_program *program, uint32_t function) {
-    const struct mo_symbol *symbol = program->functions[function].signature->function;
-    return symbol->exported && mo_module_tested(program, symbol->module) &&
-           function != program->entry.function && symbol->declaration != NULL &&
-           symbol->declaration->kind == MO_S_FN;
-}
-
-static void unstated(struct mo_diags *diags, const struct mo_program *program, uint32_t function,
-                     bool tool) {
-    const struct mo_symbol *symbol = program->functions[function].signature->function;
-    struct mo_buffer detail;
-    mo_buffer_init(&detail, MO_CLI_DIAGNOSTIC_SIZE);
-    bool ok = mo_append_function_name(&detail, program, function) &&
-              mo_buffer_append_text(&detail, ": ") &&
-              (!tool || (mo_buffer_append_text(&detail, "write a service promise on ") &&
-                         mo_buffer_append_text(&detail, symbol->name) &&
-                         mo_buffer_append_text(&detail, ", or "))) &&
-              mo_buffer_append_text(&detail, "give it a promise or an example") &&
-              mo_buffer_append_byte(&detail, 0);
-    struct mo_diag diag = {.code = MO_CODE_INTENT_UNSTATED,
-                           .message = tool ? "a service tool states no intent"
-                                           : "an exposed function states no intent",
-                           .primary = {symbol->declaration->children[0]->span,
-                                       ok ? (const char *)detail.bytes : symbol->name}};
-    bool added = mo_diags_add(diags, &diag);
-    (void)added;
-    mo_buffer_free(&detail);
-}
-
-static const char *intent(struct mo_arena *arena, const struct mo_program *program,
-                          struct mo_diags *diags) {
-    bool *stated = mo_arena_allocate_array(
-        arena, program->function_count == 0 ? 1 : program->function_count, 1, _Alignof(bool));
-    if (stated == NULL) {
-        mo_test_report_error(diags, "stated intent could not be read", nowhere,
-                             "it exceeds tool resources");
-        return "stated intent could not be read";
-    }
-    memset(stated, 0, program->function_count);
-    for (uint32_t i = 0; i < program->spec_count; i++) {
-        const struct mo_checked_spec *spec = &program->specs[i];
-        if ((spec->kind == MO_SPEC_PROMISE || spec->kind == MO_SPEC_EXAMPLE) &&
-            spec->subject != UINT32_MAX)
-            stated[spec->subject] = true;
-    }
-    bool missing = false;
-    for (uint32_t i = 0; i < program->function_count; i++)
-        if (exposed(program, i) && !stated[i]) {
-            unstated(diags, program, i, false);
-            missing = true;
-        }
-    for (uint32_t i = 0; i < program->service_count; i++) {
-        const struct mo_checked_service *service = &program->services[i];
-        if (!mo_module_tested(program, service->module))
-            continue;
-        for (uint32_t t = 0; t < service->tool_count; t++) {
-            uint32_t function = service->tools[t].function;
-            bool met = stated[function] || exposed(program, function);
-            for (uint32_t p = 0; p < service->promise_count; p++)
-                met = met || service->promises[p].tool == t;
-            if (!met) {
-                unstated(diags, program, function, true);
-                missing = true;
-            }
-        }
-    }
-    return missing ? "a function or tool states no intent" : NULL;
-}
-
-static bool carried(const struct gate *g, uint32_t function) {
-    if (g->tried == NULL || g->tried[function] ||
-        (plan(g, function) == 0 && !g->first->start_entered[function]))
-        return false;
-    if (!g->carried[function])
-        g->totals->carried++;
-    return g->carried[function] = true;
-}
-
 static bool try_all(struct gate *g, const struct mo_mutants *mutants) {
     for (uint32_t i = 0; i < mutants->count; i++) {
         const struct mo_mutant *m = &mutants->items[i];
-        if (carried(g, m->function))
-            continue;
         const char *kind = NULL, *check = NULL;
         enum verdict verdict = try_mutant(g, m, &kind, &check);
         switch (verdict) {
@@ -326,11 +243,8 @@ static void try_mutants(struct gate *g, struct mo_arena *arena, const struct mo_
         mo_arena_allocate_array(arena, count, sizeof *g->sorted, _Alignof(struct mo_gated_check));
     g->plan =
         mo_arena_allocate_array(arena, count, sizeof *g->plan, _Alignof(struct mo_gated_check));
-    g->carried = mo_arena_allocate_array(
-        arena, g->program->function_count == 0 ? 1 : g->program->function_count, sizeof *g->carried,
-        _Alignof(bool));
     g->quiet = fopen("/dev/null", "w");
-    if (g->sorted == NULL || g->plan == NULL || g->carried == NULL || g->quiet == NULL) {
+    if (g->sorted == NULL || g->plan == NULL || g->quiet == NULL) {
         mo_test_report_error(g->diags, "the mutants could not be tried", nowhere,
                              g->quiet == NULL ? "could not open /dev/null for their results"
                                               : "they exceed tool resources");
@@ -338,61 +252,29 @@ static void try_mutants(struct gate *g, struct mo_arena *arena, const struct mo_
             (void)fclose(g->quiet);
         return;
     }
-    memset(g->carried, 0, g->program->function_count * sizeof *g->carried);
     memcpy(g->sorted, first->checks, first->count * sizeof *g->sorted);
     qsort(g->sorted, first->count, sizeof *g->sorted, cheaper);
     bool finished = try_all(g, mutants);
     (void)fclose(g->quiet);
-    if (finished) {
+    if (finished)
         g->totals->ran = true;
-        g->totals->skipped = NULL;
-    }
-}
-
-static const bool *compare(const struct mo_cli *cli, struct mo_arena *arena,
-                           struct mo_previous *old, struct mo_version *now, FILE *output,
-                           struct mo_diags *diags) {
-    if (!mo_intent_code(arena, now->program, now->run->checks, now->run->count, &now->code)) {
-        mo_test_report_error(diags, "the program's code could not be read", nowhere,
-                             "it exceeds tool resources");
-        return NULL;
-    }
-    mo_changes(cli, arena, &old->version, old->digest, now, output, diags);
-    const bool *tried = mo_previous_select(arena, &old->version, now);
-    if (tried == NULL)
-        mo_test_report_error(diags, "the changed functions could not be found", nowhere,
-                             "they exceed tool resources");
-    return tried;
 }
 
 void mo_gates(const struct mo_cli *cli, struct mo_arena *arena, const struct mo_program *program,
-              const struct mo_sources *sources, const char *library,
-              const struct mo_test_selection *selection, FILE *output, struct mo_diags *diags,
-              struct mo_test_totals *totals) {
-    struct mo_gate_totals *gates = &totals->gates;
-    *gates = (struct mo_gate_totals){.asked = true, .skipped = "a check did not pass"};
-    struct mo_previous old;
-    bool against = cli->against != NULL;
-    if (against && !mo_previous_open(&old, cli, arena, program, library, diags)) {
-        gates->skipped = "the previous version could not be compared";
-        goto done;
-    }
+              const struct mo_sources *sources, const struct mo_test_selection *selection,
+              FILE *output, struct mo_diags *diags, struct mo_test_totals *totals) {
+    struct mo_mutant_totals *mutants = &totals->mutants;
+    *mutants = (struct mo_mutant_totals){.asked = true};
     struct mo_gated_run first = {.record = true, .shrink = true, .start_limit = UINT64_MAX};
     mo_run_gated(cli, arena, program, sources, selection, output, diags, totals, &first);
     bool ran = first.started && first.ran == first.count && !mo_diags_any(diags);
-    struct mo_version now = {.program = program, .sources = sources, .run = &first};
-    const bool *tried = against && ran ? compare(cli, arena, &old, &now, output, diags) : NULL;
-    if (!ran || totals->failed != 0 || totals->stopped != 0 || mo_diags_any(diags))
-        goto done;
-    gates->skipped = intent(arena, program, diags);
-    if (gates->skipped != NULL)
-        goto done;
-    struct mo_mutants mutants;
-    const char *problem = mo_list_mutants(arena, program, sources, &mutants);
-    gates->skipped = "a mutant could not be tried";
+    if (!ran || totals->failed != 0 || totals->stopped != 0)
+        return;
+    struct mo_mutants listed;
+    const char *problem = mo_list_mutants(arena, program, sources, &listed);
     if (problem != NULL) {
         mo_test_report_error(diags, "the mutants could not be listed", nowhere, problem);
-        goto done;
+        return;
     }
     struct gate g = {.cli = cli,
                      .program = program,
@@ -400,63 +282,42 @@ void mo_gates(const struct mo_cli *cli, struct mo_arena *arena, const struct mo_
                      .first = &first,
                      .output = output,
                      .diags = diags,
-                     .totals = gates,
-                     .tried = tried};
-    try_mutants(&g, arena, &first, &mutants);
-    if (gates->ran && against) {
-        gates->shorter = true;
-        memcpy(gates->previous, old.digest, sizeof gates->previous);
-    }
-done:
-    if (against)
-        mo_previous_close(&old);
+                     .totals = mutants};
+    try_mutants(&g, arena, &first, &listed);
 }
 
-bool mo_render_gates(struct mo_buffer *out, const struct mo_gate_totals *gates, bool json) {
+bool mo_render_gates(struct mo_buffer *out, const struct mo_mutant_totals *mutants, bool json) {
     uint32_t killed = 0;
     for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
-        killed += gates->killed[i];
-    if (!gates->ran)
-        return json ? mo_buffer_append_text(out, ",\"gates\":\"did not run\"")
-                    : mo_buffer_append_text(out, "gates: did not run: ") &&
-                          mo_buffer_append_text(out, gates->skipped) &&
-                          mo_buffer_append_text(out, "\n");
+        killed += mutants->killed[i];
+    if (!mutants->ran)
+        return json ? mo_buffer_append_text(out, ",\"mutants\":null")
+                    : mo_buffer_append_text(out, "mutants: did not run: a check did not pass\n");
     bool ok;
     if (json) {
-        ok = mo_buffer_append_text(out, gates->shorter ? ",\"gates\":\"ran shorter\",\"carried\":"
-                                                       : ",\"gates\":\"ran\"") &&
-             (!gates->shorter ||
-              (mo_buffer_append_uint(out, gates->carried) &&
-               mo_buffer_append_text(out, ",\"previous\":\"") &&
-               mo_buffer_append_text(out, gates->previous) && mo_buffer_append_text(out, "\""))) &&
-             mo_buffer_append_text(out, ",\"mutants\":{\"tried\":") &&
-             mo_buffer_append_uint(out, gates->tried) &&
+        ok = mo_buffer_append_text(out, ",\"mutants\":{\"tried\":") &&
+             mo_buffer_append_uint(out, mutants->tried) &&
              mo_buffer_append_text(out, ",\"killed\":{");
         for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
             ok = ok && mo_buffer_append_text(out, i == 0 ? "\"" : ",\"") &&
                  mo_buffer_append_text(out, kinds[i]) && mo_buffer_append_text(out, "\":") &&
-                 mo_buffer_append_uint(out, gates->killed[i]);
+                 mo_buffer_append_uint(out, mutants->killed[i]);
         return ok && mo_buffer_append_text(out, "},\"survived\":") &&
-               mo_buffer_append_uint(out, gates->survived) &&
+               mo_buffer_append_uint(out, mutants->survived) &&
                mo_buffer_append_text(out, ",\"dropped\":") &&
-               mo_buffer_append_uint(out, gates->dropped) && mo_buffer_append_text(out, "}");
+               mo_buffer_append_uint(out, mutants->dropped) && mo_buffer_append_text(out, "}");
     }
-    ok = (!gates->shorter ||
-          (mo_buffer_append_text(out, "gates: not the full run: ") &&
-           mo_buffer_append_uint(out, gates->carried) &&
-           mo_buffer_append_text(out, gates->carried == 1 ? " function" : " functions") &&
-           mo_buffer_append_text(out, " carried over untried from previous version ") &&
-           mo_buffer_append_text(out, gates->previous) && mo_buffer_append_text(out, "\n"))) &&
-         mo_buffer_append_text(out, "gates: ") && mo_buffer_append_uint(out, gates->tried) &&
-         mo_buffer_append_text(out, " mutants tried, ") && mo_buffer_append_uint(out, killed) &&
+    ok = mo_buffer_append_text(out, "mutants: ") && mo_buffer_append_uint(out, mutants->tried) &&
+         mo_buffer_append_text(out, " tried, ") && mo_buffer_append_uint(out, killed) &&
          mo_buffer_append_text(out, " killed (");
     for (size_t i = 0; i < MO_GATE_KILL_KINDS; i++)
         ok = ok && mo_buffer_append_text(out, i == 0 ? "" : ", ") &&
-             mo_buffer_append_uint(out, gates->killed[i]) && mo_buffer_append_text(out, " ") &&
+             mo_buffer_append_uint(out, mutants->killed[i]) && mo_buffer_append_text(out, " ") &&
              mo_buffer_append_text(out, kinds[i]);
-    return ok && mo_buffer_append_text(out, "), ") && mo_buffer_append_uint(out, gates->survived) &&
+    return ok && mo_buffer_append_text(out, "), ") &&
+           mo_buffer_append_uint(out, mutants->survived) &&
            mo_buffer_append_text(out, " survived, ") &&
-           mo_buffer_append_uint(out, gates->dropped) && mo_buffer_append_text(out, " dropped\n");
+           mo_buffer_append_uint(out, mutants->dropped) && mo_buffer_append_text(out, " dropped\n");
 }
 
 void mo_gates_list(struct mo_arena *arena, const struct mo_program *program,

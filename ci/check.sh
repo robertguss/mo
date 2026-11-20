@@ -243,10 +243,6 @@ if have python3; then
 		if [[ -x "$driver" ]]; then checks_fail=$driver; break; fi
 	done
 	if ((${#drivers[@]})); then
-		if ((shared)); then
-			later "The gates: lib/, examples/ and the task queue pass mo test (${drivers[0]})" \
-				python3 ci/check_gates.py "${drivers[0]}"
-		fi
 		for driver in "${drivers[@]}"; do
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
 				python3 ci/check_cli.py "$driver"

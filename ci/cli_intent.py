@@ -2,7 +2,7 @@ import pathlib
 import shutil
 import tempfile
 
-from cli_common import gated, records, root, run
+from cli_common import records, root, run
 
 
 def promise_selection(binary):
@@ -58,10 +58,9 @@ def promise_selection(binary):
             items = records(run(binary, ['test', '--json', '--only', 'Main.test.1', str(path)], 0), 'test')
             assert items[1]['outcome'] == 'passed' and items[-1]['passed'] == 1
             if built:
-                items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
-                assert [r['outcome'] for r in items if r['record'] == 'result'] == ['passed'] * 3
-                assert [r['primary']['label'] for r in items if r['record'] == 'diagnostic'] == [
-                    'Shapes.make: give it a promise or an example'], items
+                items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+                assert [r['outcome'] for r in items[1:-1]] == ['passed'] * 3
+                assert items[-1]['errors'] == 0
 
         # Same-module written access to exported opaque fields remains legal;
         # only structural generation is refused. A private local type is not
@@ -109,8 +108,7 @@ def recovery_checks(binary):
     (reference 12.5 and 13.4). The failure report is tested in tests/test_recovery.c, and a
     deadline that passed before the plan began in tests/test_deadline.c."""
     queue = "services/task-queue/main.mo"
-    listed = [line for line in run(binary, ["test", "--list", queue], 0).stdout.decode().splitlines()
-              if not line.startswith(("mutant ", "function "))]
+    listed = run(binary, ["test", "--list", queue], 0).stdout.decode().splitlines()
     assert listed[-1] == "Main.service.recovery" and "JobQueue.test.1" in listed, listed
     assert len(listed) == len(set(listed)), listed
     items = records(run(binary, ["test", "--list", "--json", "--in", "Main", queue], 0), "test")
@@ -145,19 +143,11 @@ def recovery_checks(binary):
         # A service and nothing else is a program with one check to run, not a command mistake.
         path.write_text(COUNTER)
         expected = (f"passed Main.service.recovery  {path}:3:1\n"
-                    "gates: did not run: a function or tool states no intent\n"
                     "1 passed, 0 failed, 0 stopped\n")
-        first, second = (run(binary, ["test", str(path)], 1) for _ in range(2))
+        first, second = (run(binary, ["test", str(path)], 0) for _ in range(2))
         assert first.stdout == second.stdout == expected.encode(), first
-        assert [line for line in first.stderr.decode().splitlines() if "^" in line] == [
-            "     |    ^^^ Main.add: write a service promise on add, or give it a promise or an "
-            "example",
-            "     |    ^^^^^ Main.total: write a service promise on total, or give it a promise or "
-            "an example"], first
-        assert run(binary, ["test", "--list", str(path)], 0).stdout == (
-            b"Main.service.recovery\nmutant " + str(path).encode() +
-            b":14:10 Main.add: arithmetic, `+` to `-`\n"
-            b"function Main.add: 1 mutant\nfunction Main.total: 0 mutants\n")
+        assert not first.stderr and not second.stderr, first
+        assert run(binary, ["test", "--list", str(path)], 0).stdout == b"Main.service.recovery\n"
         items = records(run(binary, ["test", "--json", "--calls", "7", str(path)], 0), "test")
         assert items[1]["sequences"] == 7 and items[1]["restarts"] >= 7, items
         for selectors, message in (
@@ -182,7 +172,6 @@ def recovery_checks(binary):
         assert result.stdout == (f"stopped Main.service.recovery  {path}:3:1\n"
                                  "  bug: stop\n  detail: no start\n"
                                  f"  in the start value  {path}:4:15\n"
-                                 "gates: did not run: a check did not pass\n"
                                  "0 passed, 0 failed, 1 stopped\n").encode(), result
         items = records(run(binary, ["test", "--json", str(path)], 1), "test")
         defect = items[1]["defect"]
@@ -220,22 +209,27 @@ def service_promise_checks(binary):
         path.write_text(SERVICE_PROMISES)
         listed = run(binary, ["test", "--list", str(path)], 0).stdout
         assert listed == (b"Main.service.promise.1\nMain.service.promise.2\n"
-                          b"Main.service.recovery\nmutant " + str(path).encode() +
-                          b":26:10 Main.add: arithmetic, `+` to `-`\n"
-                          b"function Main.add: 1 mutant\nfunction Main.total: 0 mutants\n"), listed
+                          b"Main.service.recovery\n"), listed
+        mutant_listed = run(binary, ["test", "--mutants", "--list", str(path)], 0).stdout
+        assert mutant_listed == (b"Main.service.promise.1\nMain.service.promise.2\n"
+                                 b"Main.service.recovery\nmutant " + str(path).encode() +
+                                 b":26:10 Main.add: arithmetic, `+` to `-`\n"
+                                 b"function Main.add: 1 mutant\nfunction Main.total: 0 mutants\n"), mutant_listed
         full = without_time(run(binary, ["test", "--json", str(path)], 0))
-        items, total = gated(full)
+        items = full[1:-1]
+        assert "mutants" not in full[-1] and "gates" not in full[-1], full
         assert [(r["name"], r["kind"], r["outcome"]) for r in items] == [
             ("Main.service.promise.1", "promise", "passed"),
             ("Main.service.promise.2", "promise", "passed"),
             ("Main.service.recovery", "recovery", "passed")], items
-        assert full[-1]["mutants"] == {"tried": 1, "killed": {
+        mutated = without_time(run(binary, ["test", "--mutants", "--json", str(path)], 0))
+        assert mutated[-1]["mutants"] == {"tried": 1, "killed": {
             "promise": 1, "example": 0, "test": 0, "recovery": 0, "start": 0},
-            "survived": 0, "dropped": 0}, full
+            "survived": 0, "dropped": 0}, mutated
         assert all(r["sequences"] == 200 for r in items), items
         assert "restarts" not in items[0] and items[2]["restarts"] >= 200, items
         limited = without_time(run(binary, ["test", "--json", "--seconds", "1", str(path)], 0))
-        assert limited[1:-1] == items and limited[-1]["gates"] == "did not run", limited
+        assert limited == full, limited
         only = records(run(binary, ["test", "--json", "--only", "Main.service.promise.2", str(path)],
                            0), "test")
         assert [r["name"] for r in only[1:-1]] == ["Main.service.promise.2"], only
@@ -363,7 +357,7 @@ def intent_command(binary):
          ["Main.limit"]),
         ("item", "Main.clamp.example.3", "example", "Main.clamp", "clamp(-1) == 0\n", [])], listed
     tested = without_time(run(binary, ["test", "--list", "--json", f"{INTENT}/before/main.mo"], 0))
-    assert [r["digest"] for r in tested if r["record"] == "test"] == [r["digest"] for r in listed], tested
+    assert [r["digest"] for r in tested[1:-1]] == [r["digest"] for r in listed], tested
     changes, end = intent_records(binary, [f"{INTENT}/after/main.mo", "--against",
                                            f"{INTENT}/before/main.mo"])
     assert end == {"record": "intent", "items": 5, "unchanged": 2, "edited": 1, "removed": 1,

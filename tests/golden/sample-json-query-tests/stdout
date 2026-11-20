@@ -1,4 +1,3 @@
 passed JsonQuery.test.1  examples/json-query.mo:44:1
 passed JsonQuery.test.2  examples/json-query.mo:53:1
-gates: 4 mutants tried, 4 killed (0 promise, 0 example, 4 test, 0 recovery, 0 start), 0 survived, 0 dropped
 2 passed, 0 failed, 0 stopped

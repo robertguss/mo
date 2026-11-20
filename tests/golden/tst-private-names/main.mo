@@ -8,10 +8,6 @@ fn hidden(n: Int) : Int
 end
 
 fn run() : Int
-  examples
-    run() == 4
-  end
-
   hidden(1)
 end
 

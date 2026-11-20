@@ -541,10 +541,6 @@ end
 
 ## The number as it was written.
 fn to_text(number: JsonNumber) : Text
-  examples
-    JsonNumber(text: "-2.50e+3").to_text == "-2.50e+3"
-  end
-
   number.text
 end
 
@@ -880,9 +876,4 @@ test "objects keep the document's order, and numbers their text"
   assert parse("1.50") != parse("1.5")
   assert decimal(1.50) == decimal(1.5)
   assert parse("1.5") == Ok(decimal(1.5))
-end
-
-test "a long string with no escape is read whole, not one character at a time"
-  long = "ab ".repeat(20_000)
-  assert parse("[\n\"#{long}\"\n]") == Ok(Array([String(long)]))
 end

@@ -21,20 +21,6 @@ _Avoid_: mechanical mutant, mutation
 **Survivor**:
 A mutant or wrong version that every check of the program still passes.
 
-**Mutation gate**:
-The rule that a program's checks fail while one of its mutants survives.
-
-**Behaviour change**:
-A check of the previous version of a program that the new version fails.
-
-**Change summary**:
-The account of a change in terms of checks: those no longer true, those newly true, those about
-something new, and those that could not be compared.
-
-**Full run**:
-Plain `mo test` on a program: every check, then stated intent, then every mutant. Only a
-full run that passes is a pass.
-
-**Shorter run**:
-A gated run against the previous version of a program that tries only the mutants of functions
-whose code changed or whose checks changed, and carries the rest over untried.
+**Mutants pass**:
+The opt-in `mo test FILE --mutants` run, which runs every check and then reports any surviving
+mutant as E1439. Plain `mo test FILE` runs checks only.

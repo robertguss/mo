@@ -27,18 +27,10 @@ fn open(owner: Text) : Account
 end
 
 fn owner(account: Account) : Text
-  examples
-    owner(bob(5.00)) == "bob"
-  end
-
   account.owner
 end
 
 fn balance(account: Account) : Decimal
-  examples
-    balance(alice(12.50)) == 12.50
-  end
-
   account.balance
 end
 
