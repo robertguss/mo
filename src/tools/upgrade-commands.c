@@ -208,9 +208,8 @@ struct serve_upgrade_work {
 static void serve_upgrade(void *context) {
     struct serve_upgrade_work *work = context;
     const struct mo_cli *cli = work->cli;
-    struct mo_arena arena, door;
+    struct mo_arena arena;
     mo_arena_init(&arena, MO_LIMIT_UPGRADE_RESTART_HEAP);
-    mo_arena_init(&door, MO_DOOR_BYTES);
     struct mo_sources sources = {0};
     struct mo_diags diags;
     if (!mo_diags_init(&diags)) {
@@ -248,12 +247,6 @@ static void serve_upgrade(void *context) {
         (void)mo_upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         goto done;
     }
-    struct mo_bearer upgrade_secret, approval_secret;
-    bool secrets = mo_serve_secrets(cli, NULL, &diags, &upgrade_secret, &approval_secret);
-    mo_host_wipe(&upgrade_secret, sizeof upgrade_secret);
-    mo_host_wipe(&approval_secret, sizeof approval_secret);
-    if (!secrets)
-        goto done;
     /* Capture original files before opening a new database. UpgradeOld placeholders
      * only resolve imports here; the child needs validated recorded context to type them. */
     if (cli->file_count != 0 &&
@@ -439,11 +432,6 @@ static void serve_upgrade(void *context) {
         (void)mo_upgrade_error(&diags, MO_CODE_TOOL_SERVICE_START, report.detail);
         goto done;
     }
-    secrets = mo_serve_secrets(cli, environment, &diags, &upgrade_secret, &approval_secret);
-    mo_host_wipe(&upgrade_secret, sizeof upgrade_secret);
-    mo_host_wipe(&approval_secret, sizeof approval_secret);
-    if (!secrets)
-        goto done;
     const struct upgrade_image *recovery = changed ? &old : &next;
     if (!found && head.found && head.image != next.program.image && !cli->adopt) {
         (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_SOURCE_MISMATCH, "adoption",
@@ -496,10 +484,6 @@ static void serve_upgrade(void *context) {
             .report_json = (const char *)json.bytes,
             .report_size = json.length,
             .time = wall_us()};
-        struct mo_store_decision decision;
-        if (!mo_upgrade_restart_door(cli, store, &door, &activation, &decision, work->errors,
-                                     &report))
-            goto done;
         if (mo_store_activate(store, &activation) != MO_STORE_ACTIVATED) {
             (void)mo_upgrade_refuse(&report, MO_CODE_UPGRADE_INVALID_VALUE, "store",
                                     "activation failed; reopen the folder before retrying");
@@ -597,7 +581,6 @@ cleanup_serve:
     mo_buffer_free(&json);
     mo_sources_free(&sources);
     mo_diags_free(&diags);
-    mo_arena_free(&door);
     mo_arena_free(&arena);
 }
 int mo_upgrade_serve(const struct mo_cli *cli, FILE *output, FILE *errors) {

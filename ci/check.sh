@@ -202,8 +202,7 @@ if [[ -n "$groups" ]] && { enter drivers || enter bench || enter lean; }; then
 	if [[ -n "${MO_DRIVERS:-}" ]]; then
 		for driver in $MO_DRIVERS; do
 			if [[ "${driver#*/}" == sanitize ]]; then
-				make --no-print-directory sanitize-executables "build/${driver%/*}/debug/mo-checks-fail" \
-					CC="${driver%/*}"
+				make --no-print-directory sanitize-executables CC="${driver%/*}"
 			else
 				make --no-print-directory test-executables CC="${driver%/*}"
 			fi
@@ -238,10 +237,6 @@ if have python3; then
 			python3 ci/test_conformance.py
 	fi
 	built mo
-	checks_fail=
-	for driver in build/{gcc,clang}/debug/mo-checks-fail; do
-		if [[ -x "$driver" ]]; then checks_fail=$driver; break; fi
-	done
 	if ((${#drivers[@]})); then
 		for driver in "${drivers[@]}"; do
 			later "The mo command: text/JSON goldens, argument matrix and JSON validity ($driver)" \
@@ -255,8 +250,6 @@ if have python3; then
 				python3 ci/check_upgrade_live.py "$driver"
 			later "Remote upgrades: proxy, tunnel and rate retry ($driver)" \
 				python3 ci/check_upgrade_remote.py "$driver"
-			later "Approvals and the review setting on a real service ($driver)" \
-				python3 ci/check_review.py "$driver" "$checks_fail"
 			later "Private state fetch ($driver)" python3 ci/check_fetch.py "$driver"
 			later "The Http client against a live peer on loopback ($driver)" \
 				python3 ci/check_network.py "$driver"
@@ -270,11 +263,6 @@ if have python3; then
 				python3 ci/check_kill_loop.py "$driver" --kills "${MO_KILL_COUNT:-15}" \
 				--seed "${MO_KILL_SEED:-1}" --keep
 		done
-		if ((shared)); then
-			later "Review door: planted changes and wrong versions under both settings, and the bypassed build fails (${drivers[0]})" \
-				python3 ci/check_door.py "${drivers[0]}" learnability/phase6/door/planted \
-				--bypass "$(dirname "${drivers[0]}")/mo-door-bypass"
-		fi
 		for driver in "${drivers[@]}"; do
 			later "Reference examples: check every block and run complete programs ($driver)" \
 				python3 ci/check_reference_examples.py "$driver"

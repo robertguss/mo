@@ -49,16 +49,17 @@ def mutants(binary):
             r.pop("microseconds", None)
     assert json.dumps(items) == json.dumps(again)
 
-    refused = (b"--mutants runs every check and tries every mutant; it takes no -o, "
+    refused = (b"--mutants runs every check and tries every mutant; it takes no "
                b"--only, --in, --calls, --seconds, --max-stack, --max-depth, --max-heap, "
                b"--bundle or --strength: \"--mutants\"\n")
     for args in (["--only", "Main.test.1"], ["--in", "Main"], ["--calls", "10"],
-                 ["--seconds", "5"], ["--max-depth", "100"], ["--bundle"], ["--strength", "x"],
-                 ["-o", "a.bc"]):
+                 ["--seconds", "5"], ["--max-depth", "100"], ["--bundle"], ["--strength", "x"]):
         assert run(binary, ["test", "--mutants", *args, SURVIVOR], 2).stderr == refused, args
+    assert run(binary, ["test", "--mutants", "-o", "a.bc", SURVIVOR], 2).stderr == (
+        b'flag is not accepted by this command: "-o"\n')
     assert run(binary, ["test", "--gates", SURVIVOR], 2).stderr == b'unknown flag: "--gates"\n'
     assert run(binary, ["test", "--against", SURVIVOR, SURVIVOR], 2).stderr == (
-        b'flag is not accepted by this command: "--against"\n')
+        b'unknown flag: "--against"\n')
     strength = run(binary, ["test", SURVIVOR, "--strength", "tests/cli/strength/versions"], 0)
     assert b"mutants" not in strength.stdout and not strength.stderr, strength
     with tempfile.TemporaryDirectory() as scratch:

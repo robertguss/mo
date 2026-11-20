@@ -356,6 +356,7 @@ MO_MUST_USE bool mo_state_new(struct mo_heap *process, const uint32_t *types,
                               const struct mo_cell *values, uint32_t count, struct mo_state **out);
 MO_MUST_USE struct mo_state *mo_state_dup(struct mo_state *state);
 void mo_state_drop(struct mo_heap *process, struct mo_state *state);
+MO_MUST_USE uint32_t mo_state_length(struct mo_state *state);
 MO_MUST_USE struct mo_cell mo_state_get(struct mo_state *state, uint32_t index);
 MO_MUST_USE uint32_t mo_state_type(struct mo_state *state, uint32_t index);
 /* Host-only owned slot access for transactional collection updates. Keep its

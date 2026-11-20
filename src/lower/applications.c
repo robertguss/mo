@@ -413,6 +413,7 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
                   {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}},
                   {"Network.connect", {MO_CORE_IO_OP_CONNECT, false}},
+                  {"Network.allow_hosts", {MO_CORE_IO_OP_ALLOW_HOSTS, false}},
                   {"Network.fake", {MO_CORE_IO_OP_NETWORK_FAKE, false}},
                   {"Connection.send", {MO_CORE_IO_OP_SEND, false}},
                   {"Connection.receive", {MO_CORE_IO_OP_RECEIVE, false}}};

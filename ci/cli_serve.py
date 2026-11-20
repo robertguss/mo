@@ -14,7 +14,7 @@ import time
 from cli_common import (
     SERVE_ADD, SERVE_COUNTER, SERVE_EDITS, SERVE_FORGED, SERVE_FORGING, SERVE_HALT, SERVE_HALTING,
     SERVE_INITIALIZE, SERVE_INITIALIZED, SERVE_LIST, SERVE_OPERATOR_NAMES, SERVE_OVERLOADED,
-    SERVE_READ, SERVE_REVIEW_NAMES, SERVE_SIGNALLED, SERVE_TOOL_PAGE, SERVE_UPGRADE_NAMES,
+    SERVE_READ, SERVE_SIGNALLED, SERVE_TOOL_PAGE, SERVE_UPGRADE_NAMES,
     STORE_BUSY, STORE_FAILED, Served, records, root, run, serve_events, serve_spellings,
     serve_structured, serve_supervised,
 )
@@ -290,13 +290,21 @@ def serve_command(binary):
             return errors
 
         with serving() as served:
+            assert stat.S_IMODE(served.admin_socket.stat().st_mode) == 0o600
             status, body = served.post(SERVE_INITIALIZE, token)
             assert status == 200 and json.loads(body)["result"]["protocolVersion"] == "2025-11-25"
             assert served.post(SERVE_INITIALIZED, token)[0] == 202
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES
+            assert status == 200 and [tool["name"] for tool in tools] == ["add", "read", "halt"]
             assert all(tool["inputSchema"]["type"] == "object" for tool in tools), tools
+            admin_status, admin_body = served.admin_post(SERVE_LIST)
+            admin_tools = json.loads(admin_body)["result"]["tools"]
+            assert admin_status == 200 and [tool["name"] for tool in admin_tools] == SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES
+            public_op = served.post('{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"mo-overview"}}', token)
+            assert public_op[0] == 200 and json.loads(public_op[1])["error"]["code"] == -32602
+            admin_author = served.admin_post(SERVE_READ)
+            assert admin_author[0] == 200 and json.loads(admin_author[1])["error"]["code"] == -32602
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "0"}
             assert serve_structured(served.post(SERVE_ADD, token)) == {"value": "5"}
             assert serve_structured(served.post(SERVE_READ, token)) == {"value": "5"}
@@ -306,6 +314,7 @@ def serve_command(binary):
             named = {"Host": f"localhost:{served.port}"}
             assert serve_structured(served.post(SERVE_READ, token, named)) == {"value": "5"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
+            assert not served.admin_socket.exists()
         assert (data / "service.sqlite").is_file()
         for path in data.iterdir():
             assert stat.S_IMODE(path.stat().st_mode) == 0o600, path
@@ -460,7 +469,7 @@ def serve_command(binary):
                 {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {"cursor": cursor}}),
                 token)
             assert status == 200, body
-            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES, body
+            assert [tool["name"] for tool in json.loads(body)["result"]["tools"]] == names[-1:], body
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED
 
         with serving() as served:
@@ -555,7 +564,7 @@ def serve_command(binary):
         with serving(entry, imported) as served:
             status, body = served.post(SERVE_LIST, token)
             tools = json.loads(body)["result"]["tools"]
-            assert status == 200 and [tool["name"] for tool in tools] == ["look"] + SERVE_OPERATOR_NAMES + SERVE_UPGRADE_NAMES + SERVE_REVIEW_NAMES, body
+            assert status == 200 and [tool["name"] for tool in tools] == ["look"], body
             look = SERVE_READ.replace('"read"', '"look"')
             assert serve_structured(served.post(look, token)) == {"value": "31"}
             assert served.finish(0, signal.SIGTERM) == SERVE_SIGNALLED

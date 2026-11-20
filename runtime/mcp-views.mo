@@ -81,6 +81,7 @@ struct Observation
   events: List(Event)
   log: List(Message)
   uptime: Text
+  program_source: Text
 end
 
 fn names() : List(Text)
@@ -96,14 +97,7 @@ fn names() : List(Text)
     "mo-failures",
     "mo-upgrade-open",
     "mo-upgrade-page",
-    "mo-upgrade-commit",
-    "mo-intent-items",
-    "mo-intent-approve",
-    "mo-review-setting",
-    "mo-review-pending",
-    "mo-review-answer",
-    "mo-upgrade-status",
-    "mo-review-source"
+    "mo-upgrade-commit"
   ]
 end
 
@@ -113,13 +107,6 @@ fn upgrade_kind(index: Int) : Int
     Some("mo-upgrade-open"): 1
     Some("mo-upgrade-page"): 2
     Some("mo-upgrade-commit"): 3
-    Some("mo-intent-items"): 4
-    Some("mo-intent-approve"): 5
-    Some("mo-review-setting"): 6
-    Some("mo-review-pending"): 7
-    Some("mo-review-answer"): 8
-    Some("mo-upgrade-status"): 9
-    Some("mo-review-source"): 10
     Some(_) | None: 0
   end
 end
@@ -141,11 +128,6 @@ fn arguments_of(index: Int) : List(Text)
     Some("mo-upgrade-open"): ["base", "candidate", "total", "migration"]
     Some("mo-upgrade-page"): ["slot", "index", "offset", "total", "bytes"]
     Some("mo-upgrade-commit"): ["slot", "base"]
-    Some("mo-intent-items"): ["offset"]
-    Some("mo-intent-approve"): ["program", "digest"]
-    Some("mo-review-setting"): ["setting"]
-    Some("mo-review-answer"): ["review", "answer"]
-    Some("mo-review-source"): ["review", "source", "offset"]
     Some(_) | None: []
   end
 end
@@ -156,9 +138,6 @@ fn required_of(index: Int) : List(Text)
     Some("mo-upgrade-open"): ["base", "candidate", "total"]
     Some("mo-upgrade-page"): ["slot", "index", "offset", "total", "bytes"]
     Some("mo-upgrade-commit"): ["slot", "base"]
-    Some("mo-intent-approve"): ["program", "digest"]
-    Some("mo-review-answer"): ["review", "answer"]
-    Some("mo-review-source"): ["review", "source"]
     Some(_) | None: []
   end
 end
@@ -181,18 +160,11 @@ fn catalog() : List(Json.Json)
     "Live heap use, peak and limit, stack capacity and encoded state bytes. Includes native export pin bytes. Retained diagnostics use separate bounded native storage.",
     "Retained in-memory supervisor events, newest first, optionally after or before an event number. A truncated page names the next arguments. Events are lost on process exit; capture refusals include an explicit reason.",
     "Committed message metadata since the last snapshot, oldest first, optionally after a sequence. Older successful messages are not retained. Does not execute handlers.",
-    "Export saved state as immutable MOEX v1 pages. Start with kind state; continue with returned export id and offset. Pages expire after 60 seconds idle or replacement. Final page releases the pin. Use mo fetch on the service host to obtain a verified private state artifact. Failure export selects a retained record id.",
+    "Export saved state as immutable MOEX v1 pages. Start with kind state; continue with returned export id and offset. Pages expire after 60 seconds idle or replacement. Final page releases the pin. Use mo fetch --admin-socket PATH on the service host to obtain a verified private state artifact. Failure export selects a retained record id.",
     "Retained failure records, oldest first; after selects a later page. Capture refusals remain in mo-supervisor.",
-    "Reserve the single upload slot for a canonical MOSB bundle (at most 1048576 bytes), naming base and candidate SHA-256 digests and total bytes. Optional migration names a pure function. Returns slot; expires after 60 seconds without progress. Does not activate. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
-    "Write the next page to slot: zero-based consecutive index and byte offset, unchanged total, padded base64 bytes. Each decoded page is 8192 bytes except the shorter final page. Final page verifies the candidate digest and starts compilation, without activation. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
-    "Commit slot against base SHA-256: waits for compilation and the candidate's promises, examples and tests, then replaces the program and migrates state at a message boundary in one transaction. Returns the activation report with committed ordinal, or status held with a review id while the old program serves. Failed checks refuse with E1433, unfinished ones with E1432; refusal preserves the old program and state. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
-    "The active program's items, one page from offset: digest, kind, owner, name, sentence, the declarations it reads and whether it is approved, with the review setting. A truncated page names the next offset. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
-    "Approve one item: program is the active program's SHA-256 and digest an item it has. Any approval makes a held upgrade stale. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
-    "Read the review setting, or set it to everything or intent. Under everything every push is held; under intent a push that keeps every approved item and names no migration activates. A change never decides an upgrade already held. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
-    "The held upgrade: its review id, base and candidate digests, migration, approval version and intent difference. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
-    "Answer the held upgrade named by review, yes or no. Yes compiles and checks it again, then activates it at a message boundary and approves the items its review showed; no drops it. Any other review id changes nothing. Requires the service token and Mo-Approval-Authorization: Bearer VALUE.",
-    "The held upgrade's review id and state, and the latest review decisions, without source. Requires the service token and Mo-Upgrade-Authorization: Bearer VALUE.",
-    "One page of the held upgrade's source bundle, or the active program's, from offset: padded base64 bytes, each page 8192 bytes except the last. Served only while review is the held upgrade's id. Requires the service token and Mo-Approval-Authorization: Bearer VALUE."
+    "Reserve the single upload slot for a canonical MOSB bundle (at most 1048576 bytes), naming base and candidate SHA-256 digests and total bytes. Optional migration names a pure function. Returns slot; expires after 60 seconds without progress. Does not activate.",
+    "Write the next page to slot: zero-based consecutive index and byte offset, unchanged total, padded base64 bytes. Each decoded page is 8192 bytes except the shorter final page. Final page verifies the candidate digest and starts compilation, without activation.",
+    "Commit slot against base SHA-256: waits for compilation and the candidate's promises, examples and tests, then replaces the program and migrates state at a message boundary in one transaction. Returns the activation report with committed ordinal. Failed checks refuse with E1433, unfinished ones with E1432; refusal preserves the old program and state."
   ]
   tool_names = names()
   integer = Json.Object({"type": Json.String("integer"), "minimum": Json.int(0)})
@@ -214,30 +186,17 @@ fn catalog() : List(Json.Json)
         }) else if key == "export" or key == "slot": Json.Object({
           "type": Json.String("string"),
           "pattern": Json.String("^[0-9a-f]{32}$")
-        }) else if key == "base" or
-          key == "candidate" or
-          key == "program" or
-          key == "digest" or
-          key == "review": Json.Object({
-            "type": Json.String("string"),
-            "pattern": Json.String("^[0-9a-f]{64}$")
-          }) else if key == "migration": Json.Object({
-            "type": Json.String("string"),
-            "minLength": Json.int(1),
-            "maxLength": Json.int(255)
-          }) else if key == "setting": Json.Object({
-            "type": Json.String("string"),
-            "enum": Json.Array([Json.String("everything"), Json.String("intent")])
-          }) else if key == "answer": Json.Object({
-            "type": Json.String("string"),
-            "enum": Json.Array([Json.String("yes"), Json.String("no")])
-          }) else if key == "source": Json.Object({
-            "type": Json.String("string"),
-            "enum": Json.Array([Json.String("pending"), Json.String("active")])
-          }) else if key == "bytes": Json.Object({
-            "type": Json.String("string"),
-            "maxLength": Json.int(page_text())
-          }) else: integer
+        }) else if key == "base" or key == "candidate": Json.Object({
+          "type": Json.String("string"),
+          "pattern": Json.String("^[0-9a-f]{64}$")
+        }) else if key == "migration": Json.Object({
+          "type": Json.String("string"),
+          "minLength": Json.int(1),
+          "maxLength": Json.int(255)
+        }) else if key == "bytes": Json.Object({
+          "type": Json.String("string"),
+          "maxLength": Json.int(page_text())
+        }) else: integer
       )
     end
     name = tool_names.get(i) or stop "view name"
@@ -253,12 +212,12 @@ fn catalog() : List(Json.Json)
           "additionalProperties": Json.Boolean(false)
         }),
         "annotations": Json.Object(
-          if kind != 0 and kind != 4 and kind != 7 and kind != 9 and kind != 10: {
+          if kind != 0: {
             "readOnlyHint": Json.Boolean(false),
-            "destructiveHint": Json.Boolean(kind == 3 or kind == 8),
+            "destructiveHint": Json.Boolean(kind == 3),
             "idempotentHint": Json.Boolean(false),
             "openWorldHint": Json.Boolean(false)
-          } else if name == "mo-export" or kind == 4 or kind == 7 or kind == 9 or kind == 10: {
+          } else if name == "mo-export": {
             "readOnlyHint": Json.Boolean(true),
             "idempotentHint": Json.Boolean(true),
             "openWorldHint": Json.Boolean(false)
@@ -305,12 +264,7 @@ fn valid(index: Int, arguments: Json.Json) : Bool
           Json.Null | Json.Boolean(_) | Json.Array(_) | Json.Object(_): return false
         end
       end
-    else if key == "base" or
-      key == "candidate" or
-      key == "slot" or
-      key == "program" or
-      key == "digest" or
-      key == "review"
+    else if key == "base" or key == "candidate" or key == "slot"
       case value
         Json.String(text): return false if not hex?(text, if key == "slot": 32 else: 64)
         Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
@@ -322,12 +276,6 @@ fn valid(index: Int, arguments: Json.Json) : Bool
           return false if key == "migration" and text == ""
         Json.Null | Json.Boolean(_) | Json.Number(_) | Json.Array(_) | Json.Object(_): return false
       end
-    else if key == "setting"
-      return false if value != Json.String("everything") and value != Json.String("intent")
-    else if key == "answer"
-      return false if value != Json.String("yes") and value != Json.String("no")
-    else if key == "source"
-      return false if value != Json.String("pending") and value != Json.String("active")
     else if index == 7 and key == "kind"
       return false if value != Json.String("state") and value != Json.String("failure")
     else if index == 7 and key == "export"
@@ -355,36 +303,17 @@ fn valid(index: Int, arguments: Json.Json) : Bool
     return false if offset % 8192 != 0 or offset >= 17825792
     return false if fields.get("export") == None and offset != 0
   end
-  if names().get(index) == Some("mo-review-source")
-    return false if (argument(fields, "offset") or 0) % 8192 != 0
-  end
   true
 end
 
 ## Validated upgrade-tool arguments as text, "" where absent: base, candidate, total, migration,
-## slot, index, offset, bytes, program, digest, setting, review, answer, source. The native side
-## parses digits and hex again.
+## slot, index, offset, bytes. The native side parses digits and hex again.
 fn upgrade_arguments(arguments: Json.Json) : List(Text)
   fields = case arguments
     Json.Object(value): value
     Json.Null | Json.Boolean(_) | Json.Number(_) | Json.String(_) | Json.Array(_): return []
   end
-  [
-    "base",
-    "candidate",
-    "total",
-    "migration",
-    "slot",
-    "index",
-    "offset",
-    "bytes",
-    "program",
-    "digest",
-    "setting",
-    "review",
-    "answer",
-    "source"
-  ].map(fn(key)
+  ["base", "candidate", "total", "migration", "slot", "index", "offset", "bytes"].map(fn(key)
     case fields.get(key)
       Some(Json.String(text)): text
       Some(Json.Number(n)): Json.Number(n).to_text
@@ -429,6 +358,9 @@ fn render(index: Int, arguments: Json.Json, observation: Observation, saved: Byt
     return Json.Object({
       "service": Json.String(observation.service_name),
       "program_identity": Json.String(observation.program),
+      "program_source": if observation.program_source == "": Json.Null else: Json.String(
+        observation.program_source
+      ),
       "runtime_identity": if observation.build == "": Json.Null else: Json.String(observation.build),
       "runtime_build": Json.String(observation.build_label),
       "observed_elapsed_us": Json.String(stats.elapsed),

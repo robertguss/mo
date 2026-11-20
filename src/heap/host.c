@@ -56,6 +56,10 @@ void mo_state_drop(struct mo_heap *process, struct mo_state *state) {
     }
 }
 
+uint32_t mo_state_length(struct mo_state *state) {
+    return state == NULL ? 0 : state_allocation(state)->length;
+}
+
 struct mo_cell mo_state_get(struct mo_state *state, uint32_t index) {
     struct mo_allocation *a = state_allocation(state);
     MO_ASSERT(index < a->length);

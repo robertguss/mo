@@ -3,7 +3,6 @@
 #define MO_HOST_H
 
 #include "base/hostops.h"
-#include "base/intent-list.h"
 #include "heap/heap.h"
 
 #define MO_HOST_PRIVATE_TYPES 9
@@ -131,11 +130,6 @@ MO_MUST_USE enum mo_compile_status mo_compile_start(const struct mo_compiler *co
                                                     const char *old_bundle, const char *migration,
                                                     const char *context, uint64_t now,
                                                     struct mo_compile_child *child);
-MO_MUST_USE enum mo_compile_status mo_list_start(const struct mo_compiler *compiler,
-                                                 const char *folder, const char *bundle,
-                                                 const char *output, const char *diagnostics,
-                                                 const char *old_bundle, const char *context,
-                                                 uint64_t now, struct mo_compile_child *child);
 MO_MUST_USE enum mo_compile_status mo_check_start(const struct mo_compiler *compiler,
                                                   const char *folder, const char *bundle,
                                                   const char *diagnostics, const char *old_bundle,
@@ -204,14 +198,6 @@ struct mo_store_program {
     size_t bundle_size;
     const uint8_t *context;
     size_t context_size;
-    const uint8_t *items;
-    size_t items_size;
-};
-struct mo_store_decision {
-    const char *kind, *detail;
-    uint8_t base[32], candidate[32], review[32];
-    bool has_candidate, has_review, intent, unattended;
-    int64_t time;
 };
 struct mo_store_activation {
     struct mo_store_program previous, candidate;
@@ -219,12 +205,6 @@ struct mo_store_activation {
     const char *migration, *report_json;
     size_t migration_size, report_size;
     int64_t time;
-    const struct mo_store_decision *decision;
-    uint64_t approval_version;
-    const uint8_t (*approve)[32];
-    uint32_t approve_count;
-    const uint8_t (*retire)[32];
-    uint32_t retire_count;
 };
 enum mo_store_activation_status {
     MO_STORE_ACTIVATED,
@@ -248,55 +228,6 @@ mo_store_activate(struct mo_store *store, const struct mo_store_activation *acti
  * stored snapshot; candidate_state is at the current head. Legacy adoption has no
  * previous program, uses zero old source (unavailable), and installs ordinal 1.
  * Recorded rebuilds retain the previous program and increment its ordinal. */
-struct mo_store_review {
-    bool reviewed, intent, pending;
-    uint64_t version, records;
-    struct mo_store_program program;
-    struct mo_intent_list items;
-    uint8_t (*approved)[32];
-    uint32_t approved_count;
-};
-enum mo_store_review_status {
-    MO_STORE_REVIEW_OK,
-    MO_STORE_REVIEW_STALE,
-    MO_STORE_REVIEW_ABSENT,
-    MO_STORE_REVIEW_FULL,
-    MO_STORE_REVIEW_FAILED
-};
-enum {
-    MO_STORE_REVIEW_READ_BYTES =
-        MO_LIMIT_INTENT_LIST_BYTES + 2 * MO_LIMIT_INTENT_ITEMS * 32 + 3 * MO_ARENA_CHUNK_HEADER
-};
-MO_MUST_USE enum mo_store_status
-mo_store_review_read(struct mo_store *store, struct mo_arena *arena, struct mo_store_review *out);
-MO_MUST_USE bool mo_store_review_approved(const struct mo_store_review *review,
-                                          const uint8_t digest[32]);
-const char *mo_store_setting_name(bool intent);
-MO_MUST_USE enum mo_store_review_status mo_store_approve(struct mo_store *store,
-                                                         const uint8_t program[32],
-                                                         const uint8_t digest[32], int64_t time);
-MO_MUST_USE enum mo_store_review_status mo_store_set_review(struct mo_store *store, bool intent,
-                                                            int64_t time);
-struct mo_store_pending {
-    uint8_t review[32], base[32], candidate[32];
-    const char *migration;
-    uint64_t version;
-    const uint8_t *difference, *bundle;
-    size_t difference_size, bundle_size;
-};
-MO_MUST_USE enum mo_store_review_status mo_store_hold(struct mo_store *store,
-                                                      const struct mo_store_pending *pending,
-                                                      const struct mo_store_decision *decision);
-MO_MUST_USE enum mo_store_status mo_store_pending_read(struct mo_store *store,
-                                                       struct mo_arena *arena,
-                                                       struct mo_store_pending *out, bool *found);
-MO_MUST_USE enum mo_store_review_status mo_store_decide(struct mo_store *store,
-                                                        const struct mo_store_decision *decision,
-                                                        const uint8_t *drop);
-MO_MUST_USE enum mo_store_status
-mo_store_decisions(struct mo_store *store,
-                   bool (*consume)(const struct mo_store_decision *decision, void *context),
-                   void *context);
 MO_MUST_USE enum mo_store_activation_status
 mo_store_adopt(struct mo_store *store, const struct mo_store_activation *activation, bool legacy);
 
@@ -405,19 +336,6 @@ struct mo_store_history_program {
     struct mo_store_history_program *next;
     struct mo_store_program program; /* identities only; bundle/context pointers are NULL */
 };
-struct mo_store_history_approval {
-    struct mo_store_history_approval *next;
-    uint8_t digest[32];
-    uint64_t version;
-};
-struct mo_store_history_decision {
-    struct mo_store_history_decision *next;
-    uint64_t sequence;
-    int64_t time;
-    uint8_t base[32];
-    bool intent;
-    const char *kind, *detail;
-};
 struct mo_store_history {
     struct mo_arena arena;
     bool has_program;
@@ -426,11 +344,6 @@ struct mo_store_history {
     struct mo_store_history_upgrade *upgrades;
     uint64_t upgrade_count;
     bool upgrades_truncated;
-    bool reviewed, review_intent;
-    uint64_t review_version, decision_count;
-    struct mo_store_history_approval *approvals;
-    struct mo_store_history_decision *decisions;
-    bool review_truncated;
     bool recovered;      /* opened read-write and rolled a journal back */
     bool failure_tables; /* false for a store from before failure capture */
     bool has_snapshot;   /* false only for a store a first start never finished */
@@ -566,8 +479,11 @@ MO_MUST_USE const char *mo_listener_status_text(enum mo_listener_status status);
 MO_MUST_USE enum mo_listener_status mo_listener_open(const struct mo_listener_config *config,
                                                      const char *environment,
                                                      struct mo_listener **out);
+MO_MUST_USE enum mo_listener_status mo_listener_open_unix(const char *path,
+                                                          struct mo_listener **out);
 MO_MUST_USE enum mo_listener_status mo_listener_fake(const char *environment,
                                                      struct mo_listener **out);
+MO_MUST_USE enum mo_listener_status mo_listener_fake_admin(struct mo_listener **out);
 void mo_listener_close(struct mo_listener *listener);
 void mo_listener_stop_accepting(struct mo_listener *listener);
 MO_MUST_USE uint16_t mo_listener_port(const struct mo_listener *listener);
@@ -575,6 +491,11 @@ MO_MUST_USE enum mo_listener_status mo_listener_call(struct mo_listener *listene
                                                      enum mo_listener_operation operation,
                                                      const union mo_listener_request *request,
                                                      union mo_listener_result *out);
+MO_MUST_USE enum mo_listener_status
+mo_listener_wait_pair(struct mo_listener *primary, const struct mo_listener_wait *primary_req,
+                      struct mo_listener_ready *primary_out, struct mo_listener *admin,
+                      const struct mo_listener_wait *admin_req,
+                      struct mo_listener_ready *admin_out);
 MO_MUST_USE enum mo_listener_status mo_listener_fake_connect(struct mo_listener *listener,
                                                              struct mo_listener_fake_peer *peer);
 MO_MUST_USE enum mo_listener_status mo_listener_fake_advance(struct mo_listener *listener,

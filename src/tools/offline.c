@@ -9,6 +9,7 @@
 #include "check/check.h"
 #include "codegen/codegen.h"
 #include "lower/lower.h"
+#include "tools/fetch.h"
 #include "tools/run.h"
 #include "tools/upgrade.h"
 #include "vm/vm.h"
@@ -174,7 +175,7 @@ static bool read_artifact(struct offline *o, struct input *in) {
     if (o->cli->failure != 0 && !failure)
         return refuse(o, "kind",
                       "the artifact holds an exported state, not a failure; fetch one with mo "
-                      "fetch URL --export failure ID",
+                      "fetch --admin-socket PATH --export failure ID --out FILE",
                       "state", "failure");
     if (o->cli->failure == 0 && failure)
         return refuse(o, "kind",
@@ -263,8 +264,60 @@ static bool read_folder(struct offline *o, struct input *in) {
     return true;
 }
 
+static bool read_live(struct offline *o, struct input *in) {
+    const uint8_t *bytes = NULL;
+    size_t size = 0;
+    enum mo_fetch_live_status status =
+        mo_fetch_live_export(o->cli->admin_socket, o->cli->failure, &in->arena, &bytes, &size);
+    if (status != MO_FETCH_LIVE_OK) {
+        const char *message =
+            status == MO_FETCH_LIVE_SOCKET
+                ? "the admin socket path is empty or longer than UNIX_PATH_MAX"
+            : status == MO_FETCH_LIVE_CONNECT  ? "could not connect to the admin socket"
+            : status == MO_FETCH_LIVE_REPLACED ? "the live export was replaced while reading; retry"
+            : status == MO_FETCH_LIVE_RELEASED ? "the live export expired while reading; retry"
+                                               : "the admin socket refused the export";
+        return refuse(o, "live", message, NULL, o->cli->admin_socket);
+    }
+    if (!mo_export_read(bytes, size, &in->artifact))
+        return refuse(o, "format", "the live export failed its format, frame or digest check", NULL,
+                      NULL);
+    const struct mo_export_identity *id = &in->artifact.identity;
+    bool failure = id->kind == 2;
+    if (o->cli->failure != 0 && !failure)
+        return refuse(o, "kind", "the live export returned a state instead of a failure", "state",
+                      "failure");
+    if (o->cli->failure == 0 && failure)
+        return refuse(o, "kind", "the live export returned a failure instead of a state", "failure",
+                      "state");
+    if (failure && id->failure_id != o->cli->failure) {
+        char recorded[24], wanted[24];
+        int a = snprintf(recorded, sizeof recorded, "%llu", (unsigned long long)id->failure_id);
+        int b = snprintf(wanted, sizeof wanted, "%llu", (unsigned long long)o->cli->failure);
+        MO_ASSERT(a > 0 && b > 0);
+        (void)refuse(o, "failure", "the live export returned another failure", recorded, wanted);
+        o->refusal.found_label = "asked for";
+        return false;
+    }
+    in->state = in->artifact.state.bytes;
+    in->state_length = in->artifact.state.length;
+    in->schema = in->artifact.schema;
+    in->build = id->build;
+    in->label = in->artifact.label;
+    in->program = id->program;
+    in->service = id->service;
+    in->image_key = false;
+    if (failure) {
+        in->record = in->artifact.failure;
+        in->has_record = true;
+    }
+    return true;
+}
+
 static bool read_input(struct offline *o, struct input *in) {
-    return o->cli->artifact != NULL ? read_artifact(o, in) : read_folder(o, in);
+    return o->cli->admin_socket != NULL ? read_live(o, in)
+           : o->cli->artifact != NULL   ? read_artifact(o, in)
+                                        : read_folder(o, in);
 }
 
 static void input_free(struct input *in) {

@@ -79,6 +79,8 @@ struct protocol_fallback {
     struct protocol_bytes prefix, suffix;
 };
 
+#define MO_PROTOCOL_TOTAL_CONNECTIONS (2 * MO_LIMIT_MCP_CONNECTIONS)
+
 struct protocol_connection {
     enum protocol_phase phase;
     struct mo_listener_key key;
@@ -99,8 +101,8 @@ struct protocol_connection {
     uint8_t stream[MO_LIMIT_MCP_STREAM_BYTES];
     size_t stream_size, session;
     uint64_t epoch; /* program epoch whose catalog this request borrowed */
-    bool borrowed;
-    bool reply_ready, retained, authenticated, upgrade_authorized, approval_authorized;
+    bool borrowed, admin;
+    bool reply_ready, retained, authenticated;
 };
 
 /* The program a live upgrade replaced, kept until nothing borrows it: requests that began
@@ -129,17 +131,13 @@ struct protocol_upgrade {
     struct mo_arena active_arena;
     struct mo_store_program active;
     bool active_found;
-    bool decided, yes, intent, would;
-    uint8_t review[32];
-    uint64_t approval_version;
-    char message[192];
 };
 
 struct protocol_session {
     char id[MO_LIMIT_MCP_SESSION_ID_BYTES];
     uint64_t used;
     size_t stream; /* connection slot of the session's one stream, or SIZE_MAX */
-    bool live;
+    bool live, admin;
 };
 
 struct mo_protocol_server {
@@ -150,24 +148,24 @@ struct mo_protocol_server {
     const struct mo_bytecode_service *descriptor;
     struct mo_service_loop *service;
     struct mo_heap *service_heap;
-    struct mo_listener *listener;
+    struct mo_listener *listener, *admin_listener;
     struct mo_protocol_events events;
     struct mo_listener_time now;
     struct mo_process *catalog_process;
     struct mo_scratch catalog_scratch;
-    struct mo_cell authorities, cached_descriptor, cached_catalog;
+    struct mo_cell authorities, admin_authorities;
+    struct mo_cell cached_descriptor, cached_catalog, cached_admin_catalog;
     uint32_t functions[PF_COUNT];
     uint32_t service_index;
-    uint64_t sequence, sequence_sessions, rate_at, rate_credit, started_at;
-    size_t next_slot, fallback_body_max, view_scratch_peak;
+    uint64_t sequence, sequence_sessions, rate_at[2], rate_credit[2], started_at;
+    size_t next_slot, next_admin_slot, fallback_body_max, view_scratch_peak;
     struct protocol_fallback fallbacks[PE_COUNT][EFFECT_COUNT];
     struct protocol_bytes *fallback_headers;
     struct protocol_bytes errors[506];
-    struct protocol_connection connections[MO_LIMIT_MCP_CONNECTIONS];
+    struct protocol_connection connections[MO_PROTOCOL_TOTAL_CONNECTIONS];
     struct protocol_session sessions[MO_LIMIT_MCP_SESSIONS];
     struct protocol_bytes stream_head, list_changed;
-    struct mo_bearer upgrade_bearer, approval_bearer;
-    bool upgrade_enabled, approval_enabled;
+    bool upgrade_enabled;
     /* The current program's epoch, its image when the server owns it, and the process
      * holding its descriptor and catalog (the initial catalog lives in catalog_process). */
     uint64_t epoch;
@@ -179,6 +177,12 @@ struct mo_protocol_server {
     struct mo_protocol_metrics metrics;
     bool io_failed, closing;
 };
+
+static inline struct mo_listener *
+mo_protocol_connection_listener(const struct mo_protocol_server *s,
+                                const struct protocol_connection *c) {
+    return c->admin ? s->admin_listener : s->listener;
+}
 
 MO_MUST_USE uint64_t mo_protocol_deadline(uint64_t now, uint64_t interval);
 /* Lowercase hex of length bytes and a terminating NUL into out[2 * length + 1]. */
@@ -211,21 +215,20 @@ MO_MUST_USE bool mo_protocol_body_complete(const struct protocol_connection *con
 void mo_protocol_receive(struct mo_protocol_server *server, struct protocol_connection *connection);
 void mo_protocol_complete(struct mo_protocol_server *server,
                           struct protocol_connection *connection);
-/* A program's descriptor and prepared catalog, made immortal in a new process. */
+/* A program's descriptor and prepared catalogs, made immortal in a new process. */
 MO_MUST_USE bool mo_protocol_catalog(struct mo_protocol_server *server,
                                      const struct mo_image *image, uint32_t index,
                                      struct mo_process **process, struct mo_cell *descriptor,
-                                     struct mo_cell *catalog);
+                                     struct mo_cell *catalog, struct mo_cell *admin_catalog);
 void mo_protocol_respond(struct mo_protocol_server *server, struct protocol_connection *connection,
                          int status, struct mo_cell body, enum protocol_effect effect);
-/* Upgrade tools, called for an authenticated operator call; the reply may wait for commit. */
+/* Upgrade tools, called for an operator call on the admin socket; the reply may wait for commit. */
 void mo_protocol_upgrade_call(struct mo_protocol_server *server,
                               struct protocol_connection *connection, uint32_t kind);
-/* Text fields of a validated upgrade or review call, "" where absent. */
+/* Text fields of a validated upgrade call, "" where absent. */
 struct upgrade_arguments {
     char base[65], candidate[65], total[21], migration[MO_LIMIT_UPGRADE_MIGRATION_NAME + 1],
-        slot[33], index[21], offset[21], program[65], digest[65], setting[11], review[65],
-        answer[4], source[8];
+        slot[33], index[21], offset[21];
     char bytes[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
 };
 MO_MUST_USE bool mo_protocol_upgrade_arguments(struct mo_protocol_server *server,
@@ -239,21 +242,6 @@ void mo_protocol_upgrade_refuse(struct mo_protocol_server *server,
                                 const char *class, const char *message, const uint8_t *candidate);
 MO_MUST_USE bool mo_protocol_unhex(const char *text, uint8_t *out, size_t length);
 MO_MUST_USE bool mo_protocol_decimal(const char *text, uint64_t *out);
-void mo_protocol_review_call(struct mo_protocol_server *server,
-                             struct protocol_connection *connection, uint32_t kind);
-void mo_protocol_door_call(struct mo_protocol_server *server,
-                           struct protocol_connection *connection, uint32_t kind,
-                           const struct upgrade_arguments *arguments);
-void mo_protocol_door_status(struct mo_protocol_server *server,
-                             struct protocol_connection *connection);
-enum door_outcome { DOOR_PROCEED, DOOR_REFUSED, DOOR_HELD };
-MO_MUST_USE enum door_outcome mo_protocol_door_decide(struct mo_protocol_server *server,
-                                                      struct protocol_connection *caller);
-MO_MUST_USE bool mo_protocol_door_activation(struct mo_protocol_server *server,
-                                             struct mo_store_activation *activation,
-                                             struct mo_store_decision *decision,
-                                             struct mo_arena *arena);
-void mo_protocol_door_refused(struct mo_protocol_server *server, uint16_t code);
 /* Slot expiry, compilation progress and the boundary swap, after each service step. */
 void mo_protocol_upgrade_poll(struct mo_protocol_server *server);
 /* The latest time the poll may sleep to while an upgrade is in progress. */
@@ -263,9 +251,10 @@ void mo_protocol_upgrade_free(struct mo_protocol_server *server);
 MO_MUST_USE bool mo_protocol_request_process(struct mo_protocol_server *server,
                                              struct protocol_connection *connection);
 /* Session lookup by the bytes a request carried; SIZE_MAX when no live session matches. */
-MO_MUST_USE size_t mo_protocol_session_find(struct mo_protocol_server *server, const uint8_t *id,
-                                            size_t length);
-MO_MUST_USE bool mo_protocol_session_open(struct mo_protocol_server *server, size_t *out);
+MO_MUST_USE size_t mo_protocol_session_find(struct mo_protocol_server *server, bool admin,
+                                            const uint8_t *id, size_t length);
+MO_MUST_USE bool mo_protocol_session_open(struct mo_protocol_server *server, bool admin,
+                                          size_t *out);
 void mo_protocol_stream_open(struct mo_protocol_server *server,
                              struct protocol_connection *connection, size_t session);
 /* Queue a tools/list_changed notification on each session's one stream. */

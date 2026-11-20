@@ -205,7 +205,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c
 13.3/8	txt-ordering,col-list-map-find,col-list-order-ties					measured:tests/test_lower.c:test_source_sort_work
 13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
-13.4/1	ref-shout,col-test-passing				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run
+13.4/1	ref-shout,col-test-passing				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:diff_command,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run
 13.4/2					ci/cli_intent.py:promise_selection,ci/cli_intent.py:recovery_checks,ci/cli_intent.py:strength_checks
 13.4/3	tst-passing,col-test-passing,sample-job-queue-tests	e1439,tst-fake-files-bugs			ci/cli_gates.py:mutants,ci/cli_guide.py:guide_claims,tests/test_deadline.c:main
 13.4/4	lang-recursion-tail				ci/cli_programs.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults

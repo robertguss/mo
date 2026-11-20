@@ -12,9 +12,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char review_auth[] = "Authorization: Bearer McpSecretCanary42\r\n"
-                                  "Mo-Approval-Authorization: Bearer ApprovalCanary012345678\r\n";
-
 static const char source[] =
     "module Main\n"
     "service\n state Int = 0\n tools add, read, reject, fail, large, grow, work\n"
@@ -39,6 +36,7 @@ struct fixture_server {
     struct mo_image *image;
     struct mo_store *store;
     struct mo_listener *listener;
+    struct mo_listener *admin_listener;
     struct mo_protocol_server *server;
     uint64_t tick_us;
 };
@@ -65,12 +63,16 @@ static struct fixture_server start_events(const char *text, struct event_log *lo
     struct fixture_server f = {.image = compile(text)};
     CHECK(setenv("MO_TEST_MCP_TOKEN", "McpSecretCanary42", 1) == 0);
     MO_ASSERT(mo_listener_fake("MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
+    MO_ASSERT(mo_listener_fake_admin(&f.admin_listener) == MO_LISTENER_OK);
     MO_ASSERT(mo_store_open(NULL, &f.store) == MO_STORE_OK);
     const char *authorities[] = {"localhost"};
     const struct mo_protocol_events events = {note_event, log};
+    const struct mo_compiler compiler = {"/bin/false", NULL};
     MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1,
                                      log == NULL ? NULL : &events,
                                      &f.server) == MO_PROTOCOL_SERVER_OK);
+    MO_ASSERT(mo_protocol_server_admin(f.server, f.admin_listener, &compiler,
+                                       MO_CHILDREN_CONFINED) == MO_PROTOCOL_SERVER_OK);
     return f;
 }
 
@@ -84,6 +86,7 @@ static struct fixture_server start(void) {
 
 static void finish(struct fixture_server *f) {
     mo_protocol_server_free(f->server);
+    mo_listener_close(f->admin_listener);
     mo_listener_close(f->listener);
     mo_store_close(f->store);
     mo_image_free(f->image);
@@ -100,8 +103,11 @@ static void input_request(struct mo_buffer *input, const char *body, const char 
 }
 
 static void poll_server(struct fixture_server *f) {
-    if (f->tick_us != 0)
+    if (f->tick_us != 0) {
         MO_ASSERT(mo_listener_fake_advance(f->listener, f->tick_us) == MO_LISTENER_OK);
+        if (f->admin_listener != NULL)
+            MO_ASSERT(mo_listener_fake_advance(f->admin_listener, f->tick_us) == MO_LISTENER_OK);
+    }
     CHECK(mo_protocol_server_poll(f->server, 0) == MO_PROTOCOL_SERVER_OK);
 }
 
@@ -117,8 +123,8 @@ static void check_wire(const char *out) {
         CHECK(strtoull(length + strlen("Content-Length: "), NULL, 10) == strlen(body + 4));
 }
 
-static void request(struct fixture_server *f, const char *body, const char *fields, char *out,
-                    size_t capacity, size_t quantum) {
+static void request_on(struct fixture_server *f, struct mo_listener *target, const char *body,
+                       const char *fields, char *out, size_t capacity, size_t quantum) {
     struct mo_buffer input;
     input_request(&input, body, fields);
     struct mo_listener_fake_peer peer = {.input = input.bytes,
@@ -130,13 +136,22 @@ static void request(struct fixture_server *f, const char *body, const char *fiel
                                          .readable = true,
                                          .writable = true,
                                          .eof = true};
-    MO_ASSERT(mo_listener_fake_connect(f->listener, &peer) == MO_LISTENER_OK);
+    MO_ASSERT(mo_listener_fake_connect(target, &peer) == MO_LISTENER_OK);
     for (size_t i = 0; i < 2 * (input.length + capacity) && !peer.closed; i++)
         poll_server(f);
     CHECK(peer.closed && peer.half_closed);
     out[peer.output_size] = '\0';
     check_wire(out);
     mo_buffer_free(&input);
+}
+
+static void request(struct fixture_server *f, const char *body, const char *fields, char *out,
+                    size_t capacity, size_t quantum) {
+    request_on(f, f->listener, body, fields, out, capacity, quantum);
+}
+
+static bool is_admin_tool(const char *name) {
+    return strncmp(name, "mo-", 3) == 0;
 }
 
 static void tool_request(struct fixture_server *f, const char *name, const char *arguments,
@@ -147,7 +162,10 @@ static void tool_request(struct fixture_server *f, const char *name, const char 
                         "\"params\":{\"name\":\"%s\",\"arguments\":%s}}",
                         id, name, arguments);
     MO_ASSERT(size > 0 && (size_t)size < sizeof body);
-    request(f, body, auth, out, capacity, 0);
+    if (is_admin_tool(name))
+        request_on(f, f->admin_listener, body, "", out, capacity, 0);
+    else
+        request(f, body, auth, out, capacity, 0);
 }
 
 static void tool_error(const char *out, const char *code, const char *effect, const char *id) {
@@ -271,9 +289,6 @@ static void wire(void *context) {
 
 /* Upgrade-call helpers, shared with the activation fault test. */
 #if !defined(MO_PROTOCOL_SERVER_FAULT_TEST) || defined(MO_PROTOCOL_SERVER_UPGRADE_TEST)
-static const char upgrade_auth[] = "Authorization: Bearer McpSecretCanary42\r\n"
-                                   "Mo-Upgrade-Authorization: Bearer UpgradeCanary0123456789\r\n";
-
 static void hex64(const uint8_t *digest, char out[65]) {
     const char digits[] = "0123456789abcdef";
     for (size_t i = 0; i < 32; i++) {
@@ -283,19 +298,16 @@ static void hex64(const uint8_t *digest, char out[65]) {
     out[64] = 0;
 }
 
-static void upgrade_call(struct fixture_server *f, const char *fields, const char *tool,
-                         const char *arguments, char *out, size_t capacity) {
+static void upgrade_call(struct fixture_server *f, const char *tool, const char *arguments,
+                         char *out, size_t capacity) {
     char body[16384];
     int n = snprintf(body, sizeof body,
                      "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{"
                      "\"name\":\"%s\",\"arguments\":%s}}",
                      tool, arguments);
     MO_ASSERT(n > 0 && (size_t)n < sizeof body);
-    request(f, body, fields, out, capacity, 0);
-    CHECK(strstr(out, "UpgradeCanary0123456789") == NULL);
+    request_on(f, f->admin_listener, body, "", out, capacity, 0);
 }
-
-/* Refusal events carry only their code and digests; code 0 counts every refusal. */
 #endif
 
 #ifndef MO_PROTOCOL_SERVER_FAULT_TEST
@@ -325,12 +337,12 @@ bool mo_protocol_routing_sources(struct mo_sources *sources, const char *path, c
     mo_buffer_init(&names, MO_LIMIT_FILE_SIZE);
     mo_buffer_init(&catalog, MO_LIMIT_FILE_SIZE);
     mo_buffer_init(&renderer, MO_LIMIT_FILE_SIZE);
-    replace_fixture(&names, bytes, length, "    \"mo-review-source\"\n",
-                    "    \"mo-review-source\",\n    \"mo-future-view\"\n");
+    replace_fixture(&names, bytes, length, "    \"mo-upgrade-commit\"\n",
+                    "    \"mo-upgrade-commit\",\n    \"mo-future-view\"\n");
     replace_fixture(&catalog, names.bytes, names.length, "stop \"view description\"",
                     "\"fixture appended view\"");
     replace_fixture(&renderer, catalog.bytes, catalog.length, "  stats = observation.stats\n",
-                    "  if index == 19\n"
+                    "  if index == 12\n"
                     "    return Json.Object({\"appended_view\": Json.Boolean(true)})\n"
                     "  end\n  stats = observation.stats\n");
     bool added =
@@ -350,7 +362,6 @@ static void appended_view_routes_as_view(void) {
     CHECK(strstr(out, "HTTP/1.1 200 ") == out);
     CHECK(strstr(out, "\"isError\":false") != NULL);
     CHECK(strstr(out, "\"appended_view\":true") != NULL);
-    CHECK(strstr(out, "E1414") == NULL);
     tool_request(&f, "read", "{}", "102", out, sizeof out);
     CHECK(strstr(out, "\"value\":\"0\"") != NULL);
     finish(&f);
@@ -381,10 +392,9 @@ static void rate(void) {
     CHECK(mo_protocol_server_metrics(f.server).admitted == 20);
     tool_request(&f, "read", "{}", "2", out, sizeof out);
     tool_error(out, "rate_limited", "none", "2");
+    /* Public HTTP saturation never starves the admin listener's separate rate bucket. */
     tool_request(&f, "mo-state", "{}", "2", out, sizeof out);
-    tool_error(out, "rate_limited", "none", "2");
-    tool_request(&f, "mo-export", "{\"kind\":\"state\"}", "2", out, sizeof out);
-    tool_error(out, "rate_limited", "none", "2");
+    CHECK(strstr(out, "\"isError\":false") != NULL);
     MO_ASSERT(mo_listener_fake_advance(f.listener, 49999) == MO_LISTENER_OK);
     tool_request(&f, "read", "{}", "3", out, sizeof out);
     tool_error(out, "rate_limited", "none", "3");
@@ -826,12 +836,27 @@ static uint64_t uptime(const char *out) {
 static void operator_views(void) {
     struct fixture_server f = start();
     char out[32768];
+    /* Public HTTP exposes only author tools; admin socket exposes only operator/upgrade tools. */
     request(&f, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", auth, out, sizeof out,
             0);
+    CHECK(strstr(out, "\"name\":\"add\"") != NULL && strstr(out, "\"name\":\"mo-state\"") == NULL);
+    request(&f,
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
+            "\"params\":{\"name\":\"mo-overview\",\"arguments\":{}}}",
+            auth, out, sizeof out, 0);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
+
+    request_on(&f, f.admin_listener, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}", "",
+               out, sizeof out, 0);
     char depth[32];
     int written = snprintf(depth, sizeof depth, "\"maxItems\":%d", MO_LIMIT_SAVED_DEPTH);
     MO_ASSERT(written > 0 && (size_t)written < sizeof depth);
-    CHECK(strstr(out, depth) != NULL);
+    CHECK(strstr(out, depth) != NULL && strstr(out, "\"name\":\"add\"") == NULL);
+    request_on(&f, f.admin_listener,
+               "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
+               "\"params\":{\"name\":\"read\",\"arguments\":{}}}",
+               "", out, sizeof out, 0);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
     struct mo_protocol_metrics before = mo_protocol_server_metrics(f.server);
     tool_request(&f, "mo-overview", "{}", "1", out, sizeof out);
     CHECK(strstr(out, "\"recovery_sequence\":\"0\"") != NULL);
@@ -859,10 +884,10 @@ static void operator_views(void) {
     }
     tool_request(&f, "mo-overview", "{}", "8", out, sizeof out);
     CHECK(strstr(out, "\"running\":false") != NULL);
-    uint64_t stopped = uptime(out);
+    uint64_t stopped_at = uptime(out);
     MO_ASSERT(mo_listener_fake_advance(f.listener, 7000000) == MO_LISTENER_OK);
     tool_request(&f, "mo-overview", "{}", "9", out, sizeof out);
-    CHECK(uptime(out) >= stopped + 7000000);
+    CHECK(uptime(out) >= stopped_at + 7000000);
     finish(&f);
 }
 
@@ -968,6 +993,8 @@ static void export_generations(void) {
     n = snprintf(args, sizeof args, "{\"kind\":\"state\",\"export\":\"%s\",\"offset\":8192}",
                  second);
     MO_ASSERT(n > 0 && (size_t)n < sizeof args);
+    MO_ASSERT(mo_listener_fake_advance(f.admin_listener, MO_LIMIT_EXPORT_IDLE_US) ==
+              MO_LISTENER_OK);
     MO_ASSERT(mo_listener_fake_advance(f.listener, MO_LIMIT_EXPORT_IDLE_US) == MO_LISTENER_OK);
     tool_request(&f, "mo-export", args, "12", out, sizeof out);
     CHECK(strstr(out, "export_released") != NULL);
@@ -1047,8 +1074,11 @@ static void export_expiry_refresh(void) {
                  "\"params\":{\"name\":\"mo-export\",\"arguments\":%s}}",
                  args);
     MO_ASSERT(n > 0 && (size_t)n < sizeof body);
+    /* Public HTTP cannot call mo-export even with a valid or wrong bearer token. */
     request(&f, body, "Authorization: Bearer WrongExportCanary\r\n", out, sizeof out, 0);
     CHECK(strstr(out, "HTTP/1.1 401") != NULL);
+    request(&f, body, auth, out, sizeof out, 0);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
     MO_ASSERT(mo_listener_fake_advance(f.listener, 1) == MO_LISTENER_OK);
     tool_request(&f, "mo-export", args, "7", out, sizeof out);
     CHECK(strstr(out, "export_released") != NULL);
@@ -1342,30 +1372,11 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
               mo_binary_write(&bundle, strlen(source_text_for_upgrade), 4) &&
               mo_buffer_append(&bundle, source_text_for_upgrade, strlen(source_text_for_upgrade)));
     static const uint8_t context[13] = {'M', 'O', 'C', 'C', 1};
-    struct mo_buffer items;
-    mo_buffer_init(&items, 16384);
-    MO_ASSERT(mo_buffer_append(&items, "MOIL\2\1", 6) && mo_binary_write(&items, 2, 4));
-    for (uint8_t letter = 'A'; letter <= 'B'; letter++) {
-        uint8_t item[32];
-        memset(item, letter, sizeof item);
-        MO_ASSERT(mo_buffer_append(&items, item, sizeof item) && mo_buffer_append_byte(&items, 0) &&
-                  mo_buffer_append_byte(&items, 1));
-        for (unsigned j = 0; j < 2; j++)
-            MO_ASSERT(mo_binary_write(&items, 1, 4) && mo_buffer_append_byte(&items, letter));
-        uint32_t length = letter == 'B' ? 9000 : 1;
-        MO_ASSERT(mo_binary_write(&items, length, 4));
-        for (uint32_t j = 0; j < length; j++)
-            MO_ASSERT(mo_buffer_append_byte(&items, letter));
-        MO_ASSERT(mo_binary_write(&items, 1, 4) && mo_binary_write(&items, 4, 4) &&
-                  mo_buffer_append(&items, "Main", 4));
-    }
     struct mo_store_program program = {.image = mo_image_key(f->image, 0),
                                        .bundle = bundle.bytes,
                                        .bundle_size = bundle.length,
                                        .context = context,
-                                       .context_size = sizeof context,
-                                       .items = items.bytes,
-                                       .items_size = items.length};
+                                       .context_size = sizeof context};
     struct mo_sha256 hash;
     mo_sha256_init(&hash);
     mo_sha256_update(&hash, bundle.bytes, bundle.length);
@@ -1378,135 +1389,27 @@ static void record_program(struct fixture_server *f, uint8_t digest[32]) {
     MO_ASSERT(mo_export_schema(saved.bytes, saved.length, program.schema));
     struct mo_store_record state = {MO_STORE_STATE, 0, program.image, saved.bytes, saved.length};
     MO_ASSERT(mo_store_program_record(f->store, &program, &state) == MO_STORE_OK);
-    mo_buffer_free(&items);
     mo_buffer_free(&bundle);
     mo_buffer_free(&saved);
     mo_process_free(process);
 }
 
-static struct fixture_server start_secrets(struct event_log *log, uint8_t digest[32],
-                                           const char *token, const char *upgrade,
-                                           const char *approval,
-                                           enum mo_upgrade_children children) {
+static struct fixture_server start_admin(struct event_log *log, uint8_t digest[32],
+                                         enum mo_upgrade_children children) {
     struct fixture_server f = {.image = compile(source_text_for_upgrade)};
-    CHECK(setenv("MO_TEST_MCP_TOKEN", token, 1) == 0);
+    CHECK(setenv("MO_TEST_MCP_TOKEN", "McpSecretCanary42", 1) == 0);
     MO_ASSERT(mo_listener_fake("MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
+    MO_ASSERT(mo_listener_fake_admin(&f.admin_listener) == MO_LISTENER_OK);
     MO_ASSERT(mo_store_open(NULL, &f.store) == MO_STORE_OK);
     record_program(&f, digest);
     const char *authorities[] = {"localhost"};
     const struct mo_protocol_events events = {note_event, log};
     MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &events,
                                      &f.server) == MO_PROTOCOL_SERVER_OK);
-    struct mo_bearer bearer = {.length = upgrade == NULL ? 0 : strlen(upgrade)},
-                     door = {.length = approval == NULL ? 0 : strlen(approval)};
-    memcpy(bearer.bytes, upgrade == NULL ? "" : upgrade, bearer.length);
-    memcpy(door.bytes, approval == NULL ? "" : approval, door.length);
     const struct mo_compiler compiler = {"/bin/false", NULL};
-    CHECK(mo_protocol_server_upgrades(f.server, upgrade == NULL ? NULL : &bearer,
-                                      approval == NULL ? NULL : &door, &compiler,
-                                      children) == MO_PROTOCOL_SERVER_OK);
+    CHECK(mo_protocol_server_admin(f.server, f.admin_listener, &compiler, children) ==
+          MO_PROTOCOL_SERVER_OK);
     return f;
-}
-
-static struct fixture_server start_upgradable(struct event_log *log, uint8_t digest[32],
-                                              bool credential) {
-    return start_secrets(log, digest, "McpSecretCanary42",
-                         credential ? "UpgradeCanary0123456789" : NULL,
-                         credential ? "ApprovalCanary012345678" : NULL, MO_CHILDREN_CONFINED);
-}
-
-static void review_call(struct fixture_server *f, const char *fields, const char *tool,
-                        const char *arguments, char *out, size_t capacity) {
-    upgrade_call(f, fields, tool, arguments, out, capacity);
-    CHECK(strstr(out, "ApprovalCanary") == NULL);
-}
-
-static void review_tools(void) {
-    struct event_log log = {0};
-    uint8_t active[32];
-    struct fixture_server f = start_upgradable(&log, active, true);
-    char program[65], other[65], a[65], c[65], arguments[512], out[16384];
-    hex64(active, program);
-    memset(other, 'a', 64);
-    memset(a, '4', 64);
-    memset(c, '4', 64);
-    for (size_t i = 1; i < 64; i += 2)
-        c[i] = '3';
-    other[64] = a[64] = c[64] = 0;
-    for (size_t i = 1; i < 64; i += 2)
-        a[i] = '1';
-    int n =
-        snprintf(arguments, sizeof arguments, "{\"program\":\"%s\",\"digest\":\"%s\"}", program, a);
-    MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    review_call(&f, auth, "mo-intent-items", "{}", out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL && strstr(out, a) == NULL);
-    review_call(&f, auth, "mo-review-setting", "{}", out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL && strstr(out, "everything") == NULL);
-    review_call(&f, upgrade_auth, "mo-intent-approve", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL);
-    review_call(&f,
-                "Authorization: Bearer McpSecretCanary42\r\n"
-                "Mo-Approval-Authorization: Bearer ApprovalCanary012345679\r\n",
-                "mo-intent-approve", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL);
-    const char both[] = "Authorization: Bearer McpSecretCanary42\r\n"
-                        "Mo-Upgrade-Authorization: Bearer UpgradeCanary0123456789\r\n"
-                        "Mo-Approval-Authorization: Bearer ApprovalCanary012345678\r\n";
-    review_call(&f, both, "mo-intent-approve", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL);
-    char opening[256];
-    n = snprintf(opening, sizeof opening, "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":10}",
-                 program, other);
-    MO_ASSERT(n > 0 && (size_t)n < sizeof opening);
-    review_call(&f, both, "mo-upgrade-open", opening, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL);
-    review_call(&f, review_auth, "mo-intent-items", "{}", out, sizeof out);
-    CHECK(strstr(out, "\"isError\":false") != NULL && strstr(out, a) != NULL &&
-          strstr(out, "\"approved\":true") == NULL && strstr(out, "\"total\":2") != NULL &&
-          strstr(out, "\"reads\":[\"Main\"]") != NULL);
-    review_call(&f, review_auth, "mo-intent-approve", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"isError\":false") != NULL && strstr(out, "approved ") != NULL);
-    review_call(&f, review_auth, "mo-intent-items", "{\"offset\":0}", out, sizeof out);
-    CHECK(strstr(out, "\"approved\":true") != NULL && strstr(out, "\"approved\":false") != NULL);
-    review_call(&f, review_auth, "mo-intent-items", "{\"offset\":1}", out, sizeof out);
-    CHECK(strstr(out, a) == NULL && strstr(out, "\"approved\":false,\"clipped\":true") != NULL &&
-          strstr(out, "\"truncated\"") == NULL);
-    n = snprintf(arguments, sizeof arguments, "{\"program\":\"%s\",\"digest\":\"%s\"}", other, a);
-    MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    review_call(&f, review_auth, "mo-intent-approve", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1416\"") != NULL && strstr(out, program) != NULL);
-    n = snprintf(arguments, sizeof arguments, "{\"program\":\"%s\",\"digest\":\"%s\"}", program, c);
-    MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    review_call(&f, review_auth, "mo-intent-approve", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1416\"") != NULL && strstr(out, "has no item") != NULL);
-    review_call(&f, review_auth, "mo-review-setting", "{}", out, sizeof out);
-    CHECK(strstr(out, "\"setting\":\"everything\"") != NULL);
-    review_call(&f, review_auth, "mo-review-setting", "{\"setting\":\"intent\"}", out, sizeof out);
-    CHECK(strstr(out, "\"setting\":\"intent\"") != NULL);
-    unsigned toggles = 0;
-    while (mo_store_set_review(f.store, toggles % 2 == 1, 0) == MO_STORE_REVIEW_OK)
-        toggles++;
-    CHECK(toggles > MO_LIMIT_REVIEW_RECORDS - 16);
-    review_call(&f, review_auth, "mo-review-setting", "{\"setting\":\"everything\"}", out,
-                sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1437\"") != NULL);
-    finish(&f);
-    char token[MO_LIMIT_MCP_TOKEN_BYTES + 1], door[MO_LIMIT_MCP_TOKEN_BYTES + 1],
-        upgrade[MO_LIMIT_MCP_TOKEN_BYTES + 1], fields[1024];
-    memset(token, 'T', MO_LIMIT_MCP_TOKEN_BYTES);
-    memset(door, 'D', MO_LIMIT_MCP_TOKEN_BYTES);
-    memset(upgrade, 'U', MO_LIMIT_MCP_TOKEN_BYTES);
-    token[MO_LIMIT_MCP_TOKEN_BYTES] = door[MO_LIMIT_MCP_TOKEN_BYTES] =
-        upgrade[MO_LIMIT_MCP_TOKEN_BYTES] = 0;
-    f = start_secrets(&log, active, token, upgrade, door, MO_CHILDREN_CONFINED);
-    n = snprintf(fields, sizeof fields,
-                 "Authorization: Bearer %s\r\nMo-Approval-Authorization: Bearer %s\r\n"
-                 "Connection: close\r\n",
-                 token, door);
-    MO_ASSERT(n > 0 && (size_t)n < sizeof fields);
-    review_call(&f, fields, "mo-review-setting", "{}", out, sizeof out);
-    CHECK(strstr(out, "\"setting\":\"everything\"") != NULL);
-    finish(&f);
 }
 
 static unsigned upgrade_events(const struct event_log *log, uint16_t code) {
@@ -1520,73 +1423,70 @@ static unsigned upgrade_events(const struct event_log *log, uint16_t code) {
 static void upgrade_tools(void) {
     struct event_log log = {0};
     uint8_t active[32];
-    struct fixture_server f = start_upgradable(&log, active, true);
+    struct fixture_server f = start_admin(&log, active, MO_CHILDREN_CONFINED);
     char base[65], other[65], arguments[1024], out[16384];
     hex64(active, base);
     memset(other, 'a', 64);
     other[64] = 0;
-    /* The service token alone, or a wrong upgrade credential, is refused before any argument. */
+    /* mo-overview on admin socket reports program_source; public HTTP refuses mo-upgrade-open. */
+    tool_request(&f, "mo-overview", "{}", "1", out, sizeof out);
+    CHECK(strstr(out, base) != NULL);
     int n = snprintf(arguments, sizeof arguments,
                      "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":10}", base, other);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    upgrade_call(&f, auth, "mo-upgrade-open", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"isError\":true") != NULL && strstr(out, "\"code\":\"E1414\"") != NULL);
-    upgrade_call(&f,
-                 "Authorization: Bearer McpSecretCanary42\r\n"
-                 "Mo-Upgrade-Authorization: Bearer UpgradeCanary0123456788\r\n",
-                 "mo-upgrade-open", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL && strstr(out, "UpgradeCanary") == NULL);
-    /* The upgrade credential without the service token is the ordinary author refusal. */
-    upgrade_call(&f, "Mo-Upgrade-Authorization: Bearer UpgradeCanary0123456789\r\n",
-                 "mo-upgrade-open", arguments, out, sizeof out);
-    CHECK(strstr(out, "HTTP/1.1 401 ") == out);
-    unsigned refusals = upgrade_events(&log, 1414);
-    CHECK(refusals == 2);
+    char pub_body[1024];
+    int pn = snprintf(pub_body, sizeof pub_body,
+                      "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{"
+                      "\"name\":\"mo-upgrade-open\",\"arguments\":%s}}",
+                      arguments);
+    MO_ASSERT(pn > 0 && (size_t)pn < sizeof pub_body);
+    request(&f, pub_body, auth, out, sizeof out, 0);
+    CHECK(strstr(out, "\"code\":-32602") != NULL);
     /* Bases and sizes are checked at open. */
     n = snprintf(arguments, sizeof arguments, "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":10}",
                  other, other);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1416\"") != NULL && strstr(out, base) != NULL);
     n = snprintf(arguments, sizeof arguments, "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":10}",
                  base, base);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     CHECK(strstr(out, "\"status\":\"already_active\"") != NULL &&
           strstr(out, "\"isError\":false") != NULL);
     /* A push repeated after a lost reply still names the old base; it is already active. */
     n = snprintf(arguments, sizeof arguments, "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":10}",
                  other, base);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     CHECK(strstr(out, "\"status\":\"already_active\"") != NULL);
     n = snprintf(arguments, sizeof arguments,
                  "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":1048577}", base, other);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1417\"") != NULL);
     /* One slot at a time; it closes after a minute without progress. */
     n = snprintf(arguments, sizeof arguments, "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":3}",
                  base, other);
     MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     const char *slot_at = strstr(out, "\\\"slot\\\":\\\"");
     CHECK(slot_at != NULL && strstr(out, "\"isError\":false") != NULL);
     char slot[33] = {0};
     if (slot_at != NULL)
         memcpy(slot, slot_at + strlen("\\\"slot\\\":\\\""), 32);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1415\"") != NULL);
     char page[512];
     n = snprintf(page, sizeof page,
                  "{\"slot\":\"%s\",\"index\":1,\"offset\":0,\"total\":3,\"bytes\":\"YWJj\"}", slot);
     MO_ASSERT(n > 0 && (size_t)n < sizeof page);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-page", page, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-page", page, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1418\"") != NULL);
     n = snprintf(page, sizeof page,
                  "{\"slot\":\"%s\",\"index\":0,\"offset\":0,\"total\":3,\"bytes\":\"YWJ=\"}", slot);
     MO_ASSERT(n > 0 && (size_t)n < sizeof page);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-page", page, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-page", page, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1418\"") != NULL);
     n = snprintf(page, sizeof page,
                  "{\"slot\":\"%s\",\"index\":0,\"offset\":0,\"total\":3,\"bytes\":\"YWJj\"}", slot);
@@ -1594,16 +1494,16 @@ static void upgrade_tools(void) {
     char commit[256];
     n = snprintf(commit, sizeof commit, "{\"slot\":\"%s\",\"base\":\"%s\"}", slot, base);
     MO_ASSERT(n > 0 && (size_t)n < sizeof commit);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-commit", commit, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-commit", commit, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1418\"") != NULL &&
           strstr(out, "the upload is incomplete") != NULL);
     MO_ASSERT(mo_listener_fake_advance(f.listener, MO_LIMIT_UPGRADE_SLOT_IDLE_US) ==
               MO_LISTENER_OK);
     poll_server(&f);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-page", page, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-page", page, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1418\"") != NULL && strstr(out, "closed") != NULL);
     /* After expiry a new slot opens; bytes that miss the candidate digest close it. */
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     slot_at = strstr(out, "\\\"slot\\\":\\\"");
     CHECK(slot_at != NULL);
     if (slot_at != NULL)
@@ -1611,7 +1511,7 @@ static void upgrade_tools(void) {
     n = snprintf(page, sizeof page,
                  "{\"slot\":\"%s\",\"index\":0,\"offset\":0,\"total\":3,\"bytes\":\"YWJj\"}", slot);
     MO_ASSERT(n > 0 && (size_t)n < sizeof page);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-page", page, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-page", page, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1418\"") != NULL &&
           strstr(out, "do not match the candidate digest") != NULL);
     char migrating[1024];
@@ -1620,23 +1520,12 @@ static void upgrade_tools(void) {
                  "\"migration\":\"Main.secret_migration\"}",
                  base, other);
     MO_ASSERT(n > 0 && (size_t)n < sizeof migrating);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", migrating, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", migrating, out, sizeof out);
     CHECK(strstr(out, "\"isError\":false") != NULL);
-    /* A caller without the credential learns nothing about the open slot. */
-    upgrade_call(&f, auth, "mo-upgrade-open", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL && strstr(out, "secret_migration") == NULL);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+    upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
     CHECK(strstr(out, "\"code\":\"E1415\"") != NULL && strstr(out, "secret_migration") != NULL);
-    /* Refusals are events: class and digests only. */
     CHECK(upgrade_events(&log, 1416) == 1 && upgrade_events(&log, 1415) == 2 &&
           upgrade_events(&log, 1418) == 5 && upgrade_events(&log, 1417) == 1);
-    finish(&f);
-    /* Without the credential at start, every upgrade call is refused. */
-    struct event_log quiet = {0};
-    f = start_upgradable(&quiet, active, false);
-    upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
-    CHECK(strstr(out, "\"code\":\"E1414\"") != NULL &&
-          strstr(out, "started without an upgrade credential") != NULL);
     finish(&f);
 }
 
@@ -1645,8 +1534,7 @@ static void upgrade_children(void) {
     for (size_t p = 0; p < 2; p++) {
         struct event_log log = {0};
         uint8_t active[32], digest[32];
-        struct fixture_server f = start_secrets(&log, active, "McpSecretCanary42",
-                                                "UpgradeCanary0123456789", NULL, policies[p]);
+        struct fixture_server f = start_admin(&log, active, policies[p]);
         struct mo_sha256 hash;
         mo_sha256_init(&hash);
         mo_sha256_update(&hash, (const uint8_t *)"abc", 3);
@@ -1657,7 +1545,7 @@ static void upgrade_children(void) {
         int n = snprintf(arguments, sizeof arguments,
                          "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":3}", base, candidate);
         MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-        upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+        upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
         const char *slot_at = strstr(out, "\\\"slot\\\":\\\"");
         CHECK(slot_at != NULL);
         if (slot_at != NULL)
@@ -1666,11 +1554,11 @@ static void upgrade_children(void) {
                      "{\"slot\":\"%s\",\"index\":0,\"offset\":0,\"total\":3,\"bytes\":\"YWJj\"}",
                      slot);
         MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-        upgrade_call(&f, upgrade_auth, "mo-upgrade-page", arguments, out, sizeof out);
+        upgrade_call(&f, "mo-upgrade-page", arguments, out, sizeof out);
         CHECK(strstr(out, "\\\"complete\\\":true") != NULL);
         n = snprintf(arguments, sizeof arguments, "{\"slot\":\"%s\",\"base\":\"%s\"}", slot, base);
         MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-        upgrade_call(&f, upgrade_auth, "mo-upgrade-commit", arguments, out, sizeof out);
+        upgrade_call(&f, "mo-upgrade-commit", arguments, out, sizeof out);
         if (policies[p] == MO_CHILDREN_REFUSED)
             CHECK(strstr(out, "\"code\":\"E1438\"") != NULL &&
                   strstr(out, "start it with --unconfined") != NULL &&
@@ -1709,7 +1597,6 @@ static void run(void *context) {
     streams();
     upgrade_tools();
     upgrade_children();
-    review_tools();
 }
 
 int main(void) {

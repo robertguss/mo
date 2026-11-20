@@ -47,6 +47,8 @@ import pathlib
 import re
 import shlex
 import signal
+import socket
+import socketserver
 import sys
 import threading
 import time
@@ -114,12 +116,15 @@ def reply_fields(body):
     return is_error, error, listed
 
 
-def handler(upstream, recorder, token):
-    parts = urllib.parse.urlsplit(upstream)
+def handler(upstream, recorder, token, upstream_admin=None):
+    parts = urllib.parse.urlsplit(upstream) if upstream else None
     connections = itertools.count(1)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
+
+        def address_string(self):
+            return 'unix' if upstream_admin is not None else super().address_string()
 
         def log_message(self, *args):
             pass
@@ -156,7 +161,8 @@ def handler(upstream, recorder, token):
             tool = None
             if rpc == 'tools/call' and isinstance(message.get('params'), dict):
                 tool = message['params'].get('name')
-            authorized = bool(token) and self.headers.get('Authorization') == f'Bearer {token}'
+            authorized = (True if upstream_admin is not None else
+                          (bool(token) and self.headers.get('Authorization') == f'Bearer {token}'))
             request = recorder.write({
                 'direction': 'request', 'connection': self.number, 'http': self.command,
                 'path': self.path, 'rpc': rpc, 'id': ident, 'tool': tool, 'body': message,
@@ -165,8 +171,15 @@ def handler(upstream, recorder, token):
             headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP}
             try:
                 if self.upstream is None:
-                    self.upstream = http.client.HTTPConnection(parts.hostname, parts.port,
-                                                               timeout=300)
+                    if upstream_admin is not None:
+                        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        raw.settimeout(300)
+                        raw.connect(str(upstream_admin))
+                        self.upstream = http.client.HTTPConnection('localhost', timeout=300)
+                        self.upstream.sock = raw
+                    else:
+                        self.upstream = http.client.HTTPConnection(parts.hostname, parts.port,
+                                                                   timeout=300)
                 self.upstream.request(self.command, self.path, data, headers)
                 response = self.upstream.getresponse()
                 status, reply = response.status, response.read()
@@ -196,18 +209,38 @@ def handler(upstream, recorder, token):
     return Handler
 
 
-class Proxy:
-    """A running proxy: its URL, and stop()."""
+class UnixHTTPServer(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    daemon_threads = True
 
-    def __init__(self, upstream, log, token):
+
+class Proxy:
+    """A running proxy: its URL, optional admin socket, and stop()."""
+
+    def __init__(self, upstream, log, token, upstream_admin=None, admin_socket=None):
         self.recorder = Recorder(log, token)
         self.server = http.server.ThreadingHTTPServer(
             ('127.0.0.1', 0), handler(upstream, self.recorder, token))
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = f'http://127.0.0.1:{self.server.server_address[1]}/mcp'
+        self.admin_server = None
+        self.admin_thread = None
+        self.admin_socket = pathlib.Path(admin_socket) if admin_socket else None
+        if upstream_admin is not None and self.admin_socket is not None:
+            self.admin_socket.unlink(missing_ok=True)
+            self.admin_server = UnixHTTPServer(
+                str(self.admin_socket),
+                handler(None, self.recorder, token, upstream_admin=upstream_admin))
+            os.chmod(self.admin_socket, 0o666)
+            self.admin_thread = threading.Thread(target=self.admin_server.serve_forever,
+                                                 daemon=True)
+            self.admin_thread.start()
 
     def stop(self):
+        if self.admin_server is not None:
+            self.admin_server.shutdown()
+            self.admin_server.server_close()
+            self.admin_socket.unlink(missing_ok=True)
         self.server.shutdown()
         self.server.server_close()
         self.recorder.close()

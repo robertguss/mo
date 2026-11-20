@@ -1,12 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 #include "test.h"
 #include "tools/tools.h"
-#include <arpa/inet.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -52,11 +52,10 @@ int mo_fetch_deadline_connect(int fd, const struct sockaddr *address, socklen_t 
 }
 int mo_fetch_deadline_peer(int fd, struct sockaddr *address, socklen_t *size) {
     (void)fd;
-    struct sockaddr_in peer = {.sin_family = AF_INET,
-                               .sin_addr = {.s_addr = htonl(UINT32_C(0x7f000001))}};
+    struct sockaddr_un peer = {.sun_family = AF_UNIX};
     MO_ASSERT(*size >= sizeof peer);
     memcpy(address, &peer, sizeof peer);
-    *size = sizeof peer;
+    *size = sizeof(sa_family_t);
     return 0;
 }
 ssize_t mo_fetch_deadline_send(int fd, const void *bytes, size_t size, int flags) {
@@ -74,15 +73,13 @@ int mo_fetch_deadline_sync(int fd) {
 int main(void) {
     char directory[] = "/tmp/mo-fetch-deadline-XXXXXX";
     MO_ASSERT(mkdtemp(directory) != NULL);
-    char path[128];
+    char path[128], sock[128];
     int n = snprintf(path, sizeof path, "%s/artifact", directory);
-    MO_ASSERT(n > 0 && (size_t)n < sizeof path);
-    MO_ASSERT(setenv("MO_FETCH_DEADLINE_TOKEN", "FetchDeadlineCanary", 1) == 0);
+    int m = snprintf(sock, sizeof sock, "%s/admin.sock", directory);
+    MO_ASSERT(n > 0 && (size_t)n < sizeof path && m > 0 && (size_t)m < sizeof sock);
     FILE *errors = tmpfile();
     MO_ASSERT(errors != NULL);
-    struct mo_cli cli = {.fetch_url = "http://127.0.0.1:1234/mcp",
-                         .output = path,
-                         .fetch_token = "MO_FETCH_DEADLINE_TOKEN"};
+    struct mo_cli cli = {.admin_socket = sock, .output = path};
     for (mode = 0; mode < 2; mode++) {
         struct timespec before, after;
         MO_ASSERT(clock_gettime(CLOCK_MONOTONIC, &before) == 0);

@@ -14,7 +14,7 @@ from cli_fixtures import anchors, constants, filenames, lower_source_fixtures, s
 from cli_gates import mutants
 from cli_guide import emit_command, flags, guide_claims
 from cli_intent import (
-    fix_command, intent_command, promise_selection, recovery_checks, service_promise_checks,
+    diff_command, fix_command, promise_selection, recovery_checks, service_promise_checks,
     strength_checks,
 )
 from cli_programs import captures, generic_imports, imported_constants, imports, observations
@@ -60,7 +60,7 @@ def check(binary):
     service_promise_checks(binary)
     strength_checks(binary)
     mutants(binary)
-    intent_command(binary)
+    diff_command(binary)
     imported_constants(binary)
     fix_command(binary)
     items = records(run(faults, ["--json"], 1), "check")
@@ -156,20 +156,24 @@ def check(binary):
             'invalid port (expected a decimal integer from 0 to 65535): "--port" "65536"')
     mistake(["serve", good, "--port", "0", "--data", "-x"],
             'flag needs a nonempty value: "--data" "-x"')
-    mistake(["fetch"], 'usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME')
-    mistake(["fetch", "http://localhost:80/mcp", "--export", "failure", "--out", "unused", "--token-env", "TOKEN"],
-            'usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME')
+    mistake(["fetch"], 'usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE')
+    mistake(["fetch", "--admin-socket", "admin.sock", "--export", "state"],
+            'usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE')
+    mistake(["fetch", "--admin-socket", "admin.sock", "--export", "failure", "--out", "unused"],
+            "failure id must be positive")
     for failure_id in ["0", "", "x1", "9223372036854775808"]:
-        mistake(["fetch", "http://localhost:80/mcp", "--export", "failure", failure_id, "--out",
-                 "unused", "--token-env", "TOKEN"], "failure id must be positive")
+        mistake(["fetch", "--admin-socket", "admin.sock", "--export", "failure", failure_id,
+                 "--out", "unused"], "failure id must be positive")
     mistake(["serve", good, "--data", "state"], 'serve needs --port N: "serve"')
     mistake(["serve", good, "--port", "0"], 'serve needs --data DIR: "serve"')
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, review, replay, query, rehearse, history or intent): "bad\\x0a\\x09\\xc3\\xbf"')
-    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, review, replay, query, rehearse, history or intent')
-    mistake(["push", "main.mo", "--url", "http://127.0.0.1:1/mcp"], 'usage: mo push FILE --url URL --base DIGEST --token-env NAME --upgrade-token-env NAME [--migrate Module.function] [--json]: "push"')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or diff): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or diff')
+    mistake(["push", "main.mo"], 'usage: mo push FILE --admin-socket PATH [--base DIGEST] [--migrate Module.function] [--json]: "push"')
+    mistake(["diff"], 'command needs a file: "diff"')
+    mistake(["diff", good, good, good], f'diff takes one or two files: "{good}"')
     for args, message in (
             (["replay", good, "--data", "state"], 'replay needs --failure ID: "replay"'),
             (["replay", good, "--failure", "1"],
@@ -179,7 +183,7 @@ def check(binary):
             (["replay", good, "--failure", "0", "--data", "d"],
              'failure id must be positive: "--failure" "0"'),
             (["replay", good, "--failure", "1", "--export", "a", "--recover"],
-             '--recover reads a data folder, not --export: "--recover"'),
+             '--recover reads a data folder, not --export or --admin-socket: "--recover"'),
             (["replay", good, "--failure", "1", "--failure", "1", "--data", "d"],
              'flag may be given only once (except --only): "--failure"'),
             (["query", good, "--export", "a"], 'query needs a file and a function: "query"'),
@@ -187,6 +191,10 @@ def check(binary):
              'query takes exactly one file and one function: "g"'),
             (["query", good, "f", "--data", "d"],
              'a query over a data folder needs --failure ID: "query"'),
+            (["query", good, "f"],
+             'give exactly one of --data DIR, --export ARTIFACT and --admin-socket PATH: "query"'),
+            (["query", good, "f", "--export", "a", "--admin-socket", "s.sock"],
+             'give exactly one of --data DIR, --export ARTIFACT and --admin-socket PATH: "query"'),
             (["query", good, "f", "--export", "a", "--fix", "r.mo"],
              'flag is not accepted by this command: "--fix"'),
             (["query", good, "f", "--export", "a", "--max-work", "0"],

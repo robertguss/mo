@@ -187,20 +187,9 @@ enum flag_id {
     FLAG_CONTEXT,
     FLAG_ARTIFACT,
     FLAG_CANDIDATE,
-    FLAG_URL,
+    FLAG_ADMIN_SOCKET,
     FLAG_BASE,
-    FLAG_TOKEN_ENV,
-    FLAG_UPGRADE_TOKEN_ENV,
     FLAG_STRENGTH,
-    FLAG_AGAINST,
-    FLAG_APPROVAL_TOKEN_ENV,
-    FLAG_ITEMS,
-    FLAG_APPROVE,
-    FLAG_SETTING,
-    FLAG_YES,
-    FLAG_NO,
-    FLAG_OUT,
-    FLAG_REVIEW,
     FLAG_MUTANTS,
     FLAG_LIB,
     FLAG_COUNT
@@ -222,7 +211,7 @@ static uint32_t command_bit(enum mo_command command) {
 static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_JSON, "--json", false, false, VALUE_NONE, 0,
      ON(CHECK) | ON(TEST) | ON(REPLAY) | ON(QUERY) | ON(HISTORY) | ON(REHEARSE) | ON(PUSH) |
-         ON(INTENT)},
+         ON(DIFF)},
     {FLAG_LIST, "--list", false, false, VALUE_NONE, 0, ON(TEST)},
     {FLAG_REFERENCE, "--reference", false, false, VALUE_NONE, 0, ON(GUIDE)},
     {FLAG_ONLY, "--only", false, true, VALUE_TEXT, 0, ON(TEST)},
@@ -235,7 +224,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
      ON(RUN) | ON(TEST) | ON(QUERY)},
     {FLAG_CALLS, "--calls", false, false, VALUE_COUNT, UINT32_MAX, ON(TEST)},
     {FLAG_SECONDS, "--seconds", false, false, VALUE_COUNT, UINT32_MAX, ON(TEST)},
-    {FLAG_OUTPUT, "-o", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(TEST)},
+    {FLAG_OUTPUT, "-o", false, false, VALUE_TEXT, 0, ON(EMIT)},
     {FLAG_PORT, "--port", false, false, VALUE_PORT, 0, ON(SERVE)},
     {FLAG_DATA, "--data", false, false, VALUE_TEXT, 0, ON(SERVE) | ON(REPLAY) | ON(QUERY)},
     {FLAG_ALLOW_HOST, "--allow-host", false, false, VALUE_TEXT, 0, ON(SERVE)},
@@ -257,26 +246,14 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_CONTEXT, "--context", false, false, VALUE_TEXT, 0, ON(EMIT) | ON(TEST) | ON(REHEARSE)},
     {FLAG_ARTIFACT, "--artifact", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
     {FLAG_CANDIDATE, "--candidate", false, false, VALUE_TEXT, 0, ON(REHEARSE)},
-    {FLAG_URL, "--url", false, false, VALUE_TEXT, 0, ON(PUSH) | ON(REVIEW)},
-    {FLAG_BASE, "--base", false, false, VALUE_TEXT, 0, ON(PUSH) | ON(REVIEW)},
-    {FLAG_TOKEN_ENV, "--token-env", false, false, VALUE_TEXT, 0, ON(PUSH) | ON(REVIEW)},
-    {FLAG_UPGRADE_TOKEN_ENV, "--upgrade-token-env", false, false, VALUE_TEXT, 0,
-     ON(SERVE) | ON(PUSH)},
+    {FLAG_ADMIN_SOCKET, "--admin-socket", false, false, VALUE_TEXT, 0,
+     ON(SERVE) | ON(PUSH) | ON(QUERY)},
+    {FLAG_BASE, "--base", false, false, VALUE_TEXT, 0, ON(PUSH)},
     {FLAG_STRENGTH, "--strength", false, false, VALUE_TEXT, 0, ON(TEST)},
-    {FLAG_AGAINST, "--against", false, false, VALUE_TEXT, 0, ON(INTENT)},
-    {FLAG_APPROVAL_TOKEN_ENV, "--approval-token-env", false, false, VALUE_TEXT, 0,
-     ON(SERVE) | ON(REVIEW)},
-    {FLAG_ITEMS, "--items", false, false, VALUE_NONE, 0, ON(REVIEW)},
-    {FLAG_APPROVE, "--approve", false, true, VALUE_TEXT, 0, ON(REVIEW)},
-    {FLAG_SETTING, "--setting", false, false, VALUE_TEXT, 0, ON(REVIEW)},
-    {FLAG_YES, "--yes", false, false, VALUE_TEXT, 0, ON(REVIEW)},
-    {FLAG_NO, "--no", false, false, VALUE_TEXT, 0, ON(REVIEW)},
-    {FLAG_OUT, "--out", false, false, VALUE_TEXT, 0, ON(REVIEW)},
-    {FLAG_REVIEW, "--review", false, false, VALUE_TEXT, 0, ON(SERVE)},
     {FLAG_MUTANTS, "--mutants", false, false, VALUE_NONE, 0, ON(TEST)},
     {FLAG_LIB, "--lib", false, false, VALUE_TEXT, 0,
      ON(CHECK) | ON(RUN) | ON(TEST) | ON(FIX) | ON(EMIT) | ON(SERVE) | ON(REPLAY) | ON(QUERY) |
-         ON(PUSH) | ON(INTENT)},
+         ON(PUSH) | ON(DIFF)},
 };
 #undef ON
 
@@ -289,43 +266,11 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
     case FLAG_CANDIDATE:
         out->candidate = operand;
         break;
-    case FLAG_URL:
-        out->push_url = operand;
+    case FLAG_ADMIN_SOCKET:
+        out->admin_socket = operand;
         break;
     case FLAG_BASE:
         out->push_base = operand;
-        break;
-    case FLAG_TOKEN_ENV:
-        out->fetch_token = operand;
-        break;
-    case FLAG_UPGRADE_TOKEN_ENV:
-        out->upgrade_token = operand;
-        break;
-    case FLAG_APPROVAL_TOKEN_ENV:
-        out->approval_token = operand;
-        break;
-    case FLAG_ITEMS:
-        out->items = true;
-        break;
-    case FLAG_APPROVE:
-        out->approve[out->approve_count++] = operand;
-        break;
-    case FLAG_SETTING:
-        if (strcmp(operand, "everything") != 0 && strcmp(operand, "intent") != 0)
-            return refuse(out, error, "--setting takes everything or intent", arg, operand);
-        out->setting = operand;
-        break;
-    case FLAG_YES:
-    case FLAG_NO:
-        out->answer = id == FLAG_YES ? "yes" : "no";
-        out->review = operand;
-        out->answers++;
-        break;
-    case FLAG_OUT:
-        out->output = operand;
-        break;
-    case FLAG_REVIEW:
-        out->review = operand;
         break;
     case FLAG_MUTANTS:
         out->mutants = true;
@@ -335,9 +280,6 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
-        break;
-    case FLAG_AGAINST:
-        out->against = operand;
         break;
     case FLAG_CONTEXT:
         out->compile_context = operand;
@@ -448,7 +390,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (argc < 2)
         return refuse(out, error,
                       "expected a command: check, run, test, format, fix, guide, emit, serve, "
-                      "fetch, push, review, replay, query, rehearse, history or intent",
+                      "fetch, push, replay, query, rehearse, history or diff",
                       NULL, NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];
@@ -465,20 +407,63 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     }
     if (strcmp(command, "fetch") == 0) {
         out->command = MO_COMMAND_FETCH;
-        bool failure = argc == 10 && strcmp(argv[4], "failure") == 0;
-        int shift = failure ? 1 : 0;
-        if ((!failure && argc != 9) || strcmp(argv[3], "--export") != 0 ||
-            (!failure && strcmp(argv[4], "state") != 0) || strcmp(argv[5 + shift], "--out") != 0 ||
-            strcmp(argv[7 + shift], "--token-env") != 0)
+        bool seen_socket = false, seen_export = false, seen_out = false;
+        for (int i = 2; i < argc; i++) {
+            const char *arg = argv[i];
+            MO_ASSERT(arg != NULL);
+            if (!option(out, error, arg, &count, &total))
+                return false;
+            if (strcmp(arg, "--admin-socket") == 0 && !seen_socket && i + 1 < argc) {
+                seen_socket = true;
+                out->admin_socket = argv[++i];
+                if (!option(out, error, out->admin_socket, &count, &total))
+                    return false;
+                if (out->admin_socket[0] == '\0' || out->admin_socket[0] == '-')
+                    return refuse(
+                        out, error,
+                        "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE",
+                        NULL, NULL);
+            } else if (strcmp(arg, "--out") == 0 && !seen_out && i + 1 < argc) {
+                seen_out = true;
+                out->output = argv[++i];
+                if (!option(out, error, out->output, &count, &total))
+                    return false;
+                if (out->output[0] == '\0' || out->output[0] == '-')
+                    return refuse(
+                        out, error,
+                        "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE",
+                        NULL, NULL);
+            } else if (strcmp(arg, "--export") == 0 && !seen_export && i + 1 < argc) {
+                seen_export = true;
+                const char *kind = argv[++i];
+                if (!option(out, error, kind, &count, &total))
+                    return false;
+                if (strcmp(kind, "state") == 0) {
+                    out->fetch_failure = 0;
+                } else if (strcmp(kind, "failure") == 0 && i + 1 < argc) {
+                    const char *id = argv[++i];
+                    if (!option(out, error, id, &count, &total))
+                        return false;
+                    if (!failure_id(id, &out->fetch_failure))
+                        return refuse(out, error, "failure id must be positive", NULL, NULL);
+                } else {
+                    return refuse(
+                        out, error,
+                        "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE",
+                        NULL, NULL);
+                }
+            } else {
+                return refuse(
+                    out, error,
+                    "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE",
+                    NULL, NULL);
+            }
+        }
+        if (!seen_socket || !seen_export || !seen_out)
             return refuse(
                 out, error,
-                "usage: mo fetch URL --export state|failure ID --out FILE --token-env NAME", NULL,
+                "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE", NULL,
                 NULL);
-        if (failure && !failure_id(argv[5], &out->fetch_failure))
-            return refuse(out, error, "failure id must be positive", NULL, NULL);
-        out->fetch_url = argv[2];
-        out->output = argv[6 + shift];
-        out->fetch_token = argv[8 + shift];
         return true;
     }
     static const struct {
@@ -490,8 +475,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                  {"emit", MO_COMMAND_EMIT},         {"serve", MO_COMMAND_SERVE},
                  {"replay", MO_COMMAND_REPLAY},     {"query", MO_COMMAND_QUERY},
                  {"rehearse", MO_COMMAND_REHEARSE}, {"history", MO_COMMAND_HISTORY},
-                 {"push", MO_COMMAND_PUSH},         {"intent", MO_COMMAND_INTENT},
-                 {"review", MO_COMMAND_REVIEW}};
+                 {"push", MO_COMMAND_PUSH},         {"diff", MO_COMMAND_DIFF}};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
         if (strcmp(command, names[c].name) == 0)
@@ -500,7 +484,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(
             out, error,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, "
-            "fetch, push, review, replay, query, rehearse, history or intent)",
+            "fetch, push, replay, query, rehearse, history or diff)",
             command, NULL);
     out->command = names[c].command;
     bool flags = true;
@@ -564,9 +548,10 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         if (out->file_count != 0 &&
             (out->command == MO_COMMAND_CHECK || out->command == MO_COMMAND_TEST ||
              out->command == MO_COMMAND_EMIT || out->command == MO_COMMAND_SERVE ||
-             out->command == MO_COMMAND_REPLAY || out->command == MO_COMMAND_PUSH ||
-             out->command == MO_COMMAND_INTENT))
+             out->command == MO_COMMAND_REPLAY || out->command == MO_COMMAND_PUSH))
             return refuse(out, error, "command takes exactly one file", arg, NULL);
+        if (out->file_count == 2 && out->command == MO_COMMAND_DIFF)
+            return refuse(out, error, "diff takes one or two files", arg, NULL);
         if (out->file_count != 0 && out->command == MO_COMMAND_HISTORY)
             return refuse(out, error, "history takes exactly one data folder", arg, NULL);
         if (out->file_count == 2 && out->command == MO_COMMAND_QUERY)
@@ -580,23 +565,11 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             break;
         }
     }
-    if (out->command == MO_COMMAND_REVIEW &&
-        (out->file_count != 0 || out->push_url == NULL || out->fetch_token == NULL ||
-         out->approval_token == NULL ||
-         (out->items ? 1u : 0u) + (out->approve_count != 0 ? 1u : 0u) +
-                 (out->setting != NULL ? 1u : 0u) + (out->output != NULL ? 1u : 0u) +
-                 out->answers !=
-             1))
-        return refuse(out, error,
-                      "usage: mo review --url URL --token-env NAME --approval-token-env NAME "
-                      "(--out DIR | --items | --base PROGRAM --approve DIGEST... | --setting "
-                      "everything|intent | --yes ID | --no ID)",
-                      command, NULL);
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
     if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&
-        out->command != MO_COMMAND_REHEARSE && out->command != MO_COMMAND_REVIEW &&
-        out->file_count == 0 && !(out->command == MO_COMMAND_REPLAY && out->data != NULL))
+        out->command != MO_COMMAND_REHEARSE && out->file_count == 0 &&
+        !(out->command == MO_COMMAND_REPLAY && out->data != NULL))
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_QUERY && out->file_count != 2)
         return refuse(out, error, "query needs a file and a function", command, NULL);
@@ -605,13 +578,20 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     bool replay = out->command == MO_COMMAND_REPLAY, query = out->command == MO_COMMAND_QUERY;
     if (replay && out->failure == 0)
         return refuse(out, error, "replay needs --failure ID", command, NULL);
-    if ((replay || query) && (out->data == NULL) == (out->artifact == NULL))
+    if (replay && (out->data == NULL) == (out->artifact == NULL))
         return refuse(out, error, "give exactly one of --data DIR and --export ARTIFACT", command,
                       NULL);
+    uint32_t query_sources = (out->data != NULL ? 1u : 0u) + (out->artifact != NULL ? 1u : 0u) +
+                             (out->admin_socket != NULL ? 1u : 0u);
+    if (query && query_sources != 1)
+        return refuse(out, error,
+                      "give exactly one of --data DIR, --export ARTIFACT and --admin-socket PATH",
+                      command, NULL);
     if (query && out->data != NULL && out->failure == 0)
         return refuse(out, error, "a query over a data folder needs --failure ID", command, NULL);
-    if (out->recover && out->artifact != NULL)
-        return refuse(out, error, "--recover reads a data folder, not --export", "--recover", NULL);
+    if (out->recover && (out->artifact != NULL || out->admin_socket != NULL))
+        return refuse(out, error, "--recover reads a data folder, not --export or --admin-socket",
+                      "--recover", NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
     uint64_t planned = (UINT64_C(1) << FLAG_LIST) | (UINT64_C(1) << FLAG_ONLY) |
@@ -620,26 +600,21 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                        (UINT64_C(1) << FLAG_CALLS) | (UINT64_C(1) << FLAG_SECONDS) |
                        (UINT64_C(1) << FLAG_MAX_STACK) | (UINT64_C(1) << FLAG_MAX_DEPTH) |
                        (UINT64_C(1) << FLAG_MAX_HEAP);
-    if (out->mutants && (out->output != NULL || out->source_bundle || out->strength != NULL ||
-                         (seen & limited) != 0))
+    if (out->mutants && (out->source_bundle || out->strength != NULL || (seen & limited) != 0))
         return refuse(out, error,
-                      "--mutants runs every check and tries every mutant; it takes no -o, "
+                      "--mutants runs every check and tries every mutant; it takes no "
                       "--only, --in, --calls, --seconds, --max-stack, --max-depth, --max-heap, "
                       "--bundle or --strength",
                       "--mutants", NULL);
-    bool checks = out->command == MO_COMMAND_TEST && out->source_bundle && !out->list;
-    if (checks && (out->output != NULL || out->json || out->strength != NULL ||
+    bool checks = out->command == MO_COMMAND_TEST && out->source_bundle;
+    if (checks && (out->json || out->strength != NULL ||
                    (seen & (planned | (UINT64_C(1) << FLAG_SECONDS))) != 0))
         return refuse(out, error,
-                      "test --bundle without --list runs the door's checks over the whole bundle; "
-                      "it takes no -o, --json, --only, --in, --calls, --seconds or --strength",
+                      "test --bundle runs upgrade checks over the whole bundle; "
+                      "it takes no --list, --json, --only, --in, --calls, --seconds or --strength",
                       "--bundle", NULL);
     if (checks)
         out->seconds = (uint32_t)(MO_LIMIT_CHECK_WALL_US / UINT64_C(1000000));
-    if (out->command == MO_COMMAND_TEST && !checks && (out->output != NULL || out->source_bundle) &&
-        (!out->list || out->output == NULL || !out->source_bundle || out->json))
-        return refuse(out, error, "test writes an item list only as --bundle --list -o FILE",
-                      command, NULL);
     if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_PORT)) == 0)
         return refuse(out, error, "serve needs --port N", command, NULL);
     if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_DATA)) == 0)
@@ -647,14 +622,11 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (out->command == MO_COMMAND_SERVE && out->file_count == 0 &&
         (out->upgrade || out->adopt || out->migration != NULL))
         return refuse(out, error, "upgrade or adoption needs a source file", command, NULL);
-    if (out->command == MO_COMMAND_PUSH && (out->push_url == NULL || out->push_base == NULL ||
-                                            out->fetch_token == NULL || out->upgrade_token == NULL))
+    if (out->command == MO_COMMAND_PUSH && out->admin_socket == NULL)
         return refuse(out, error,
-                      "usage: mo push FILE --url URL --base DIGEST --token-env NAME "
-                      "--upgrade-token-env NAME [--migrate Module.function] [--json]",
+                      "usage: mo push FILE --admin-socket PATH [--base DIGEST] "
+                      "[--migrate Module.function] [--json]",
                       command, NULL);
-    if (out->command == MO_COMMAND_SERVE && out->review != NULL && !out->upgrade)
-        return refuse(out, error, "--review needs --upgrade", "--review", NULL);
     if (out->migration != NULL && out->command != MO_COMMAND_PUSH &&
         !(out->upgrade || out->upgrade_from != NULL || out->old_bundle != NULL ||
           out->compile_context != NULL))

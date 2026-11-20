@@ -14,7 +14,6 @@
 #include "base/compile-metadata.h"
 #include "base/export.h"
 #include "base/failure.h"
-#include "base/intent-list.h"
 #include "base/log-record.h"
 #include "base/sha256.h"
 #include "base/store-memory.h"
@@ -332,7 +331,7 @@ enum mo_store_status store_version(struct mo_store *s, int *version) {
     *version = step == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : -1;
     enum mo_store_status result =
         store_finish(stmt, step == SQLITE_ROW ? MO_STORE_OK : store_sqlite_status(step));
-    return result == MO_STORE_OK && (*version < 0 || *version > 3) ? MO_STORE_CORRUPT : result;
+    return result == MO_STORE_OK && (*version < 0 || *version > 2) ? MO_STORE_CORRUPT : result;
 }
 
 /* An empty store has no snapshot, so no callback. A refusing callback is CORRUPT. */

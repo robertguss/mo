@@ -719,6 +719,21 @@ static struct mo_cell protocol_call(const struct mo_bytecode *file, struct mo_pr
     return result;
 }
 
+static struct mo_cell protocol_catalog_call(const struct mo_bytecode *file,
+                                            struct mo_process *process, uint32_t index,
+                                            struct mo_cell descriptor, bool admin) {
+    const struct mo_bytecode_function *function = &file->functions[index];
+    MO_ASSERT(function->parameter_count == 2);
+    struct mo_cell arguments[2] = {descriptor, mo_cell_bool(admin)};
+    if (function->parameters[0].ownership == MO_PARAMETER_OWNED)
+        arguments[0] =
+            mo_value_dup(mo_process_heap(process), function->parameters[0].type, arguments[0]);
+    struct mo_cell result;
+    struct mo_defect defect;
+    MO_ASSERT(mo_call(process, index, arguments, 2, &result, &defect) == MO_RETURNED);
+    return result;
+}
+
 static struct mo_cell json_property(struct mo_heap *heap, const struct mo_types *types,
                                     uint32_t json, struct mo_cell object, const char *name) {
     MO_ASSERT(mo_cell_get_tag(object) == 5);
@@ -770,9 +785,15 @@ static void descriptor_results(struct mo_image *service) {
     const struct mo_types *types = mo_image_types(image);
     uint32_t catalog = protocol_function(file, "Mcp.catalog");
     uint32_t json = file->functions[catalog].result_type;
-    struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
+    struct mo_cell admin_result =
+        protocol_catalog_call(file, process, catalog, descriptor.value, true);
+    struct mo_cell admin_tools =
+        mo_cell_get_payload(json_property(heap, types, json, admin_result, "tools"));
+    CHECK(mo_list_size(admin_tools) == 12);
+    mo_value_drop(heap, json, admin_result);
+    struct mo_cell result = protocol_catalog_call(file, process, catalog, descriptor.value, false);
     struct mo_cell tools = mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
-    CHECK(mo_list_size(tools) == 27);
+    CHECK(mo_list_size(tools) == 8);
     const char *expected[] = {"array",      "boolean", "boolean", "#/$defs/t0",
                               "#/$defs/t0", "array",   "boolean", "array"};
     for (uint32_t i = 0; i < 8; i++) {
@@ -818,10 +839,17 @@ static void descriptor_catalog(struct mo_image *service) {
         uint32_t catalog = protocol_function(file, "Mcp.catalog");
         uint32_t text = protocol_function(file, "Json.to_text@Json");
         uint32_t json = file->functions[catalog].result_type;
-        struct mo_cell result = protocol_call(file, process, catalog, descriptor.value);
+        struct mo_cell admin_result =
+            protocol_catalog_call(file, process, catalog, descriptor.value, true);
+        struct mo_cell admin_tools =
+            mo_cell_get_payload(json_property(heap, types, json, admin_result, "tools"));
+        CHECK(mo_list_size(admin_tools) == 12);
+        mo_value_drop(heap, json, admin_result);
+        struct mo_cell result =
+            protocol_catalog_call(file, process, catalog, descriptor.value, false);
         struct mo_cell tools =
             mo_cell_get_payload(json_property(heap, types, json, result, "tools"));
-        CHECK(mo_list_size(tools) == 22);
+        CHECK(mo_list_size(tools) == 3);
         struct mo_cell entry, record;
         MO_ASSERT(mo_list_get(tools, 1, &entry) && mo_list_get(tools, 2, &record));
         const char *keys[] = {"inputSchema", "outputSchema"};

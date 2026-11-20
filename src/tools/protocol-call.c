@@ -8,7 +8,7 @@
 
 bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *image, uint32_t index,
                          struct mo_process **out, struct mo_cell *descriptor_out,
-                         struct mo_cell *catalog_out) {
+                         struct mo_cell *catalog_out, struct mo_cell *admin_catalog_out) {
     struct mo_limits limits = mo_limits_default();
     limits.heap_size = MO_LIMIT_MCP_CATALOG_MEMORY;
     struct mo_process *process = mo_process_new(s->protocol, &limits);
@@ -17,7 +17,7 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *im
     mo_process_confidential(process);
     struct mo_heap *heap = mo_process_heap(process);
     struct mo_protocol_descriptor descriptor;
-    struct mo_cell args[3], catalog;
+    struct mo_cell args[4], catalog = mo_cell_unit(), admin_catalog = mo_cell_unit();
     PAUSE_START(descriptor_time);
     bool ok = mo_protocol_descriptor(s->protocol, heap, image, index, &descriptor);
     PAUSE_END(descriptor_time, "catalog_descriptor", ok ? "ok" : "refused");
@@ -29,23 +29,31 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *im
     args[0] = descriptor.value;
     ok = ok && mo_value_text(heap, hex, sizeof hex, &args[1]);
     args[2] = mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES);
+    args[3] = mo_cell_bool(false);
     PAUSE_START(prepare_time);
     bool prepared = ok && mo_protocol_invoke_on(s, process, PF_PREPARE, args, &catalog);
-    PAUSE_END(prepare_time, "catalog_prepare", prepared ? "ok" : "refused");
+    args[3] = mo_cell_bool(true);
+    bool admin_prepared =
+        prepared && mo_protocol_invoke_on(s, process, PF_PREPARE, args, &admin_catalog);
+    PAUSE_END(prepare_time, "catalog_prepare", admin_prepared ? "ok" : "refused");
     if (ok)
         mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->parameters[1].type, args[1]);
-    ok = prepared && mo_cell_get_tag(catalog) == 1;
+    ok = admin_prepared && mo_cell_get_tag(catalog) == 1 && mo_cell_get_tag(admin_catalog) == 1;
     uint32_t catalog_type = mo_protocol_function(s, PF_RECEIVE)->parameters[3].type;
+    uint32_t result_type = mo_protocol_function(s, PF_PREPARE)->result_type;
     struct mo_cell value =
-        ok ? mo_protocol_field(s->protocol, mo_protocol_function(s, PF_PREPARE)->result_type,
-                               catalog, 0)
-           : mo_cell_unit();
+        ok ? mo_protocol_field(s->protocol, result_type, catalog, 0) : mo_cell_unit();
+    struct mo_cell admin_value =
+        ok ? mo_protocol_field(s->protocol, result_type, admin_catalog, 0) : mo_cell_unit();
     PAUSE_START(retain_time);
     ok = ok && mo_value_make_immortal(heap, descriptor.type, descriptor.value) &&
-         mo_value_make_immortal(heap, catalog_type, value);
+         mo_value_make_immortal(heap, catalog_type, value) &&
+         mo_value_make_immortal(heap, catalog_type, admin_value);
     PAUSE_END(retain_time, "catalog_retain", ok ? "ok" : "refused");
     if (prepared)
-        mo_value_drop(heap, mo_protocol_function(s, PF_PREPARE)->result_type, catalog);
+        mo_value_drop(heap, result_type, catalog);
+    if (admin_prepared)
+        mo_value_drop(heap, result_type, admin_catalog);
     if (!ok) {
         mo_process_free(process);
         return false;
@@ -53,6 +61,7 @@ bool mo_protocol_catalog(struct mo_protocol_server *s, const struct mo_image *im
     *out = process;
     *descriptor_out = descriptor.value;
     *catalog_out = value;
+    *admin_catalog_out = admin_value;
     return true;
 }
 
@@ -108,17 +117,18 @@ void mo_protocol_respond(struct mo_protocol_server *s, struct protocol_connectio
     mo_protocol_start_write(s, c, (struct protocol_bytes){bytes, size});
 }
 
-static bool token(struct mo_protocol_server *s) {
-    uint64_t elapsed = s->now.monotonic_us - s->rate_at;
+static bool token(struct mo_protocol_server *s, bool admin) {
+    size_t bucket = admin ? 1 : 0;
+    uint64_t elapsed = s->now.monotonic_us - s->rate_at[bucket];
     uint64_t full = MO_LIMIT_MCP_BURST * UINT64_C(1000000);
-    s->rate_at = s->now.monotonic_us;
-    if (elapsed >= (full - s->rate_credit + MO_LIMIT_MCP_RATE - 1) / MO_LIMIT_MCP_RATE)
-        s->rate_credit = full;
+    s->rate_at[bucket] = s->now.monotonic_us;
+    if (elapsed >= (full - s->rate_credit[bucket] + MO_LIMIT_MCP_RATE - 1) / MO_LIMIT_MCP_RATE)
+        s->rate_credit[bucket] = full;
     else
-        s->rate_credit += elapsed * MO_LIMIT_MCP_RATE;
-    if (s->rate_credit < UINT64_C(1000000))
+        s->rate_credit[bucket] += elapsed * MO_LIMIT_MCP_RATE;
+    if (s->rate_credit[bucket] < UINT64_C(1000000))
         return false;
-    s->rate_credit -= UINT64_C(1000000);
+    s->rate_credit[bucket] -= UINT64_C(1000000);
     return true;
 }
 
@@ -148,7 +158,7 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
     MO_ASSERT(size <= sizeof c->escaped_id);
     memcpy(c->escaped_id, bytes, size);
     c->id_size = size;
-    if (!token(s)) {
+    if (!token(s, c->admin)) {
         mo_protocol_fallback(s, c, PE_RATE, EFFECT_NONE);
         return;
     }
@@ -159,14 +169,6 @@ static void call_tool(struct mo_protocol_server *s, struct protocol_connection *
             return;
         }
         int64_t upgrade = mo_cell_get_int(kind);
-        if (upgrade == 9) {
-            mo_protocol_door_status(s, c);
-            return;
-        }
-        if (upgrade >= 4) {
-            mo_protocol_review_call(s, c, (uint32_t)upgrade);
-            return;
-        }
         if (upgrade != 0) {
             mo_protocol_upgrade_call(s, c, (uint32_t)upgrade);
             return;
@@ -274,7 +276,7 @@ static void session_reply(struct mo_protocol_server *s, struct protocol_connecti
         s->protocol, mo_protocol_function(s, PF_RECEIVE)->result_type, c->action, 0);
     size_t session;
     struct mo_cell args[2];
-    if (!mo_protocol_session_open(s, &session)) {
+    if (!mo_protocol_session_open(s, c->admin, &session)) {
         mo_protocol_fail(s, c, 503);
         return;
     }
@@ -309,11 +311,11 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
         return;
     }
     c->descriptor = s->cached_descriptor;
-    c->catalog = s->cached_catalog;
+    c->catalog = c->admin ? s->cached_admin_catalog : s->cached_catalog;
     c->epoch = s->epoch;
     c->borrowed = true;
     struct mo_heap *heap = mo_process_heap(c->process);
-    struct mo_cell args[5];
+    struct mo_cell args[6];
     const uint8_t *body = c->body;
     size_t size = c->body_size;
     if (!mo_utf8_valid(body, size)) {
@@ -328,6 +330,7 @@ void mo_protocol_receive(struct mo_protocol_server *s, struct protocol_connectio
     args[1] = c->version;
     args[2] = c->descriptor;
     args[3] = c->catalog;
+    args[5] = mo_cell_bool(c->admin);
     if (!mo_protocol_invoke(s, c, PF_RECEIVE, args, &c->action)) {
         mo_protocol_fail(s, c, 413);
         return;

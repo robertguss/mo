@@ -49,14 +49,11 @@ bool mo_protocol_upgrade_arguments(struct mo_protocol_server *s, struct protocol
     struct mo_cell json = mo_value_field(fields, 2), list;
     if (!mo_protocol_invoke(s, c, PF_UPGRADE_ARGUMENTS, &json, &list))
         return false;
-    char *targets[] = {out->base,    out->candidate, out->total,  out->migration, out->slot,
-                       out->index,   out->offset,    out->bytes,  out->program,   out->digest,
-                       out->setting, out->review,    out->answer, out->source};
+    char *targets[] = {out->base, out->candidate, out->total,  out->migration,
+                       out->slot, out->index,     out->offset, out->bytes};
     const size_t sizes[] = {sizeof out->base,      sizeof out->candidate, sizeof out->total,
                             sizeof out->migration, sizeof out->slot,      sizeof out->index,
-                            sizeof out->offset,    sizeof out->bytes,     sizeof out->program,
-                            sizeof out->digest,    sizeof out->setting,   sizeof out->review,
-                            sizeof out->answer,    sizeof out->source};
+                            sizeof out->offset,    sizeof out->bytes};
     enum { FIELDS = sizeof sizes / sizeof *sizes };
     bool ok = mo_list_size(list) == FIELDS;
     for (uint32_t i = 0; ok && i < FIELDS; i++) {
@@ -126,9 +123,7 @@ static void refuse(struct mo_protocol_server *s, struct protocol_connection *c, 
     struct mo_buffer json, text;
     mo_buffer_init(&json, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
     mo_buffer_init(&text, MO_LIMIT_UPGRADE_REPORT_JSON_BYTES);
-    /* A caller without the upgrade credential learns nothing about the slot. */
-    const char *migration =
-        c != NULL && c->upgrade_authorized && u->open && u->has_migration ? u->migration : NULL;
+    const char *migration = c != NULL && u->open && u->has_migration ? u->migration : NULL;
     if (mo_live_refusal(&json, true, code, class, message, base, candidate, migration) &&
         mo_live_refusal(&text, false, code, class, message, base, candidate, migration))
         reply(s, c, &json, &text, code != 0, EFFECT_NONE);
@@ -157,8 +152,6 @@ static void close_slot(struct mo_protocol_server *s) {
     mo_buffer_free(&u->bytes);
     u->open = false;
     u->compiling = false;
-    u->decided = false;
-    u->yes = false;
     u->waiting = SIZE_MAX;
     mo_host_wipe(u->slot, sizeof u->slot);
 }
@@ -384,12 +377,9 @@ static void commit(struct mo_protocol_server *s, struct protocol_connection *c,
 void mo_protocol_upgrade_call(struct mo_protocol_server *s, struct protocol_connection *c,
                               uint32_t kind) {
     MO_ASSERT(kind >= UPGRADE_OPEN && kind <= UPGRADE_COMMIT);
-    if (!s->upgrade_enabled || !c->upgrade_authorized) {
-        /* Refused before any argument is read; nothing presented is echoed. */
-        refuse(s, c, MO_CODE_UPGRADE_CREDENTIAL, "credential",
-               s->upgrade_enabled ? "the upgrade credential is missing or wrong"
-                                  : "this service was started without an upgrade credential",
-               NULL);
+    if (!c->admin || !s->upgrade_enabled) {
+        refuse(s, c, MO_CODE_UPGRADE_SOURCE_MISMATCH, "source",
+               "live upgrades are not configured on this server", NULL);
         return;
     }
     struct mo_arena arena;
@@ -412,7 +402,7 @@ void mo_protocol_upgrade_call(struct mo_protocol_server *s, struct protocol_conn
 }
 
 static bool previous_borrowed(const struct mo_protocol_server *s) {
-    for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++) {
+    for (size_t i = 0; i < MO_PROTOCOL_TOTAL_CONNECTIONS; i++) {
         const struct protocol_connection *c = &s->connections[i];
         if (c->phase != PS_EMPTY && c->borrowed && c->epoch == s->previous.epoch)
             return true;
@@ -482,9 +472,10 @@ static void activate(struct mo_protocol_server *s) {
     uint32_t index;
     const struct mo_image *image = mo_live_image(live, &index);
     struct mo_process *catalog;
-    struct mo_cell descriptor, prepared;
+    struct mo_cell descriptor, prepared, admin_prepared;
     PAUSE_START(catalog_time);
-    bool catalog_ok = mo_protocol_catalog(s, image, index, &catalog, &descriptor, &prepared);
+    bool catalog_ok =
+        mo_protocol_catalog(s, image, index, &catalog, &descriptor, &prepared, &admin_prepared);
     PAUSE_END(catalog_time, "protocol_catalog", catalog_ok ? "ok" : "refused");
     if (!catalog_ok) {
         mo_live_refuse(live, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "catalog",
@@ -540,14 +531,9 @@ static void activate(struct mo_protocol_server *s) {
         .report_json = report,
         .report_size = report_size,
         .time = s->now.wall_us};
-    struct mo_store_decision decision;
-    struct mo_arena door;
     PAUSE_START(commit);
-    bool decided = report != NULL && mo_protocol_door_activation(s, &activation, &decision, &door);
     enum mo_store_activation_status stored =
-        decided ? mo_store_activate(s->store, &activation) : MO_STORE_ACTIVATION_REFUSED;
-    if (report != NULL)
-        mo_arena_free(&door);
+        report != NULL ? mo_store_activate(s->store, &activation) : MO_STORE_ACTIVATION_REFUSED;
     PAUSE_START(committed_at);
     /* Capture boundary end before diagnostic I/O and before cleanup. */
     PAUSE_AT(boundary, committed_at, "boundary_to_commit",
@@ -589,6 +575,7 @@ static void activate(struct mo_protocol_server *s) {
     s->service_catalog = catalog;
     s->cached_descriptor = descriptor;
     s->cached_catalog = prepared;
+    s->cached_admin_catalog = admin_prepared;
     s->epoch++;
     /* Re-admitted calls are answered by the new program against the new tool table. */
     for (size_t i = 0; i < MO_LIMIT_MCP_CONNECTIONS; i++)
@@ -647,22 +634,9 @@ void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
     struct protocol_connection *caller = c->phase == PS_UPGRADE ? c : NULL;
     if (!mo_live_staged(u->live)) {
         refuse(s, NULL, mo_live_code(u->live), "compile", "", u->candidate);
-        if (u->yes)
-            mo_protocol_door_refused(s, mo_live_code(u->live));
         finish_commit(s, caller, false);
         close_slot(s);
         return;
-    }
-    if (!u->decided) {
-        enum door_outcome outcome = mo_protocol_door_decide(s, caller);
-        if (outcome == DOOR_REFUSED) {
-            refuse(s, NULL, mo_live_code(u->live), "", "", u->candidate);
-            finish_commit(s, caller, false);
-        }
-        if (outcome != DOOR_PROCEED) {
-            close_slot(s);
-            return;
-        }
     }
     /* Two programs at most: events and earlier requests keep the previous one; the boundary
      * waits until no request borrows it, and the activation then releases it. */
@@ -674,10 +648,8 @@ void mo_protocol_upgrade_poll(struct mo_protocol_server *s) {
     } else
         activate(s);
     bool activated = mo_live_code(u->live) == 0;
-    if (!activated) {
+    if (!activated)
         refuse(s, NULL, mo_live_code(u->live), "", "", u->candidate);
-        mo_protocol_door_refused(s, mo_live_code(u->live));
-    }
     finish_commit(s, caller, activated);
     close_slot(s);
     if (activated)
@@ -701,12 +673,11 @@ void mo_protocol_upgrade_free(struct mo_protocol_server *s) {
     mo_arena_free(&s->upgrade.active_arena);
 }
 
-enum mo_protocol_server_status mo_protocol_server_upgrades(struct mo_protocol_server *s,
-                                                           const struct mo_bearer *credential,
-                                                           const struct mo_bearer *approval,
-                                                           const struct mo_compiler *compiler,
-                                                           enum mo_upgrade_children children) {
-    MO_ASSERT(s != NULL && compiler != NULL);
+enum mo_protocol_server_status mo_protocol_server_admin(struct mo_protocol_server *s,
+                                                        struct mo_listener *admin_listener,
+                                                        const struct mo_compiler *compiler,
+                                                        enum mo_upgrade_children children) {
+    MO_ASSERT(s != NULL);
     struct mo_arena arena;
     mo_arena_init_confidential(&arena, MO_LIMIT_UPGRADE_RESTART_HEAP);
     struct mo_store_program program;
@@ -716,13 +687,10 @@ enum mo_protocol_server_status mo_protocol_server_upgrades(struct mo_protocol_se
     mo_arena_free(&arena);
     if (!ok)
         return read == MO_STORE_OK ? MO_PROTOCOL_SERVER_MEMORY : MO_PROTOCOL_SERVER_SERVICE;
-    s->upgrade.compiler = *compiler;
+    s->admin_listener = admin_listener;
     s->upgrade.children = children;
-    s->upgrade_enabled = credential != NULL;
-    if (credential != NULL)
-        s->upgrade_bearer = *credential;
-    s->approval_enabled = approval != NULL;
-    if (approval != NULL)
-        s->approval_bearer = *approval;
+    s->upgrade_enabled = compiler != NULL;
+    if (compiler != NULL)
+        s->upgrade.compiler = *compiler;
     return MO_PROTOCOL_SERVER_OK;
 }

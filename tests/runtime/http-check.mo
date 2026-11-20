@@ -84,8 +84,14 @@ fn main() : Int
   require(head.after == input.size)
   require(
     head.fields == [
-      HttpServer.Field(name: HttpServer.Span(start: 20, size: 4), value: HttpServer.Span(start: 26, size: 9)),
-      HttpServer.Field(name: HttpServer.Span(start: 37, size: 13), value: HttpServer.Span(start: 52, size: 17))
+      HttpServer.Field(
+        name: HttpServer.Span(start: 20, size: 4),
+        value: HttpServer.Span(start: 26, size: 9)
+      ),
+      HttpServer.Field(
+        name: HttpServer.Span(start: 37, size: 13),
+        value: HttpServer.Span(start: 52, size: 17)
+      )
     ]
   )
   initial = HttpServer.HeaderScan(matched: 0, size: 0, complete: false)
@@ -102,11 +108,17 @@ fn main() : Int
   end
   require(HttpServer.scan_headers(input, initial, input.size - 1) == Error(HttpServer.TooLarge))
   require(
-    HttpServer.parse_headers(input, HttpServer.HeaderLimits(bytes: input.size - 1, line: 128, fields: 2)) ==
+    HttpServer.parse_headers(
+      input,
+      HttpServer.HeaderLimits(bytes: input.size - 1, line: 128, fields: 2)
+    ) ==
       Error(HttpServer.TooLarge)
   )
   require(
-    HttpServer.parse_headers(input, HttpServer.HeaderLimits(bytes: input.size, line: 128, fields: 1)) ==
+    HttpServer.parse_headers(
+      input,
+      HttpServer.HeaderLimits(bytes: input.size, line: 128, fields: 1)
+    ) ==
       Error(HttpServer.TooLarge)
   )
   require(
@@ -130,7 +142,9 @@ fn main() : Int
     HttpServer.parse_headers(bare, HttpServer.HeaderLimits(bytes: 22, line: 17, fields: 1)) ==
       Error(HttpServer.TooLarge)
   )
-  require(HttpServer.parse_headers(input.take(input.size - 1), limits) == Error(HttpServer.Incomplete))
+  require(
+    HttpServer.parse_headers(input.take(input.size - 1), limits) == Error(HttpServer.Incomplete)
+  )
   for bad in [
     "POST /mcp HTTP/1.1\nHost: localhost\r\n\r\n",
     "POST /mcp HTTP/1.1\rXHost: localhost\r\n\r\n",
@@ -141,7 +155,10 @@ fn main() : Int
     "POST /mcp\tHTTP/1.1\r\n\r\n"
   ]
     require(
-      HttpServer.parse_headers(octets(bad), HttpServer.HeaderLimits(bytes: 256, line: 128, fields: 4)) ==
+      HttpServer.parse_headers(
+        octets(bad),
+        HttpServer.HeaderLimits(bytes: 256, line: 128, fields: 4)
+      ) ==
         Error(HttpServer.Malformed)
     )
   end
@@ -149,7 +166,10 @@ fn main() : Int
   case HttpServer.parse_headers(short, limits)
     Ok(value): require(
       value.fields == [
-        HttpServer.Field(name: HttpServer.Span(start: 20, size: 1), value: HttpServer.Span(start: 24, size: 0))
+        HttpServer.Field(
+          name: HttpServer.Span(start: 20, size: 1),
+          value: HttpServer.Span(start: 24, size: 0)
+        )
       ]
     )
     Error(_): stop "empty field"
@@ -165,7 +185,10 @@ fn main() : Int
     ("Bearerx", None)
   ]
     bytes = octets("POST /mcp HTTP/1.1\r\naUtHoRiZaTiOn: #{value}\r\n\r\n")
-    parsed = case HttpServer.parse_headers(bytes, HttpServer.HeaderLimits(bytes: 256, line: 128, fields: 4))
+    parsed = case HttpServer.parse_headers(
+      bytes,
+      HttpServer.HeaderLimits(bytes: 256, line: 128, fields: 4)
+    )
       Ok(parsed_head): parsed_head
       Error(_): stop "authorization header"
     end
@@ -177,7 +200,10 @@ fn main() : Int
     "Authorization: Basic x\r\nAuthorization: Bearer x\r\n"
   ]
     bytes = octets("POST /mcp HTTP/1.1\r\n#{fields}\r\n")
-    parsed = case HttpServer.parse_headers(bytes, HttpServer.HeaderLimits(bytes: 256, line: 128, fields: 4))
+    parsed = case HttpServer.parse_headers(
+      bytes,
+      HttpServer.HeaderLimits(bytes: 256, line: 128, fields: 4)
+    )
       Ok(value): value
       Error(_): stop "authorization cardinality"
     end

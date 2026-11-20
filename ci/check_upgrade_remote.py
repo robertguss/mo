@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Loopback transport equivalence and rate-limited page retry against a real service."""
+"""Unix-socket transport equivalence, tunnel forwarding, and rate-limited page retry against a real service."""
 import http.client
 import http.server
 import json
+import os
 import pathlib
 import select
-import shutil
 import socket
 import socketserver
 import subprocess
@@ -13,20 +13,18 @@ import sys
 import tempfile
 import threading
 
-from check_upgrade_live import (Service, V1, V2, V3, TOKEN, UPGRADE, ENV, push, review,
-                                write, digests, assert_no_secrets)
-
-RELAY = pathlib.Path(__file__).resolve().parent.parent / "docs/ops/live-relay.py"
+from check_upgrade_live import (Service, V1, V2, V3, ENV, push, write, digests, assert_no_secrets)
 
 
-class Relay(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
+class UnixRelay(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
 
 class Forward(socketserver.BaseRequestHandler):
     def handle(self):
-        with socket.create_connection(("127.0.0.1", self.server.upstream)) as upstream:
+        upstream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        upstream.connect(str(self.server.upstream))
+        with upstream:
             peers = [self.request, upstream]
             reading = list(peers)
             while reading:
@@ -44,6 +42,9 @@ class Forward(socketserver.BaseRequestHandler):
 
 
 class Recording(http.server.BaseHTTPRequestHandler):
+    def address_string(self):
+        return "unix"
+
     def log_message(self, *args):
         pass
 
@@ -75,7 +76,11 @@ class Recording(http.server.BaseHTTPRequestHandler):
             assert body == self.server.retry_body, (name, "retry changed the rejected request")
             self.server.retry_body = None
             self.server.retried = True
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.upstream, timeout=120)
+        raw_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw_sock.settimeout(120)
+        raw_sock.connect(str(self.server.upstream))
+        connection = http.client.HTTPConnection("localhost", timeout=120)
+        connection.sock = raw_sock
         headers = {k: v for k, v in self.headers.items() if k.lower() not in
                    ("host", "content-length", "connection")}
         connection.request("POST", "/mcp", body, headers)
@@ -97,47 +102,34 @@ def run(binary):
     with tempfile.TemporaryDirectory() as root:
         old, new, invalid = (write(root, name, source) for name, source in
                              [("old", V1), ("new", V2), ("invalid", V3)])
-        base, candidate = digests(binary, old, new)
+        base, _ = digests(binary, old, new)
         outputs = []
         for mode in ("direct", "recording", "forward", "throttled"):
             data = pathlib.Path(root) / mode
             data.mkdir()
-            server = Relay(("127.0.0.1", 0), Forward) if mode == "forward" else None
-            flags = ("--allow-host", f"127.0.0.1:{server.server_address[1]}") if server else ()
-            service = Service(binary, data, old, flags=flags)
+            service = Service(binary, data, old)
+            server = None
+            proxy_sock = pathlib.Path(root) / f"{mode}-proxy.sock"
             try:
-                url = None
+                target_sock = service.admin_socket
                 if mode != "direct":
-                    server = server or http.server.ThreadingHTTPServer(("127.0.0.1", 0), Recording)
-                    server.upstream, server.service = service.port, service
+                    handler = Forward if mode == "forward" else Recording
+                    server = UnixRelay(str(proxy_sock), handler)
+                    os.chmod(proxy_sock, 0o600)
+                    server.upstream, server.service = service.admin_socket, service
                     server.record, server.throttle = [], mode == "throttled"
                     server.retry_body, server.retried = None, False
                     thread = threading.Thread(target=server.serve_forever, daemon=True)
                     thread.start()
-                    url = f"http://127.0.0.1:{server.server_address[1]}/mcp"
-                params = {"name": "mo-upgrade-open", "arguments":
-                          {"base": base, "candidate": candidate, "total": 1}}
-                status, body, _ = service.rpc("tools/call", params,
-                    headers={"Authorization": "Bearer WrongServiceToken012345",
-                             "Mo-Upgrade-Authorization": f"Bearer {UPGRADE}"})
-                author_status, author_body, _ = service.rpc("tools/call",
-                    {"name": "read", "arguments": {}},
-                    headers={"Authorization": "Bearer WrongServiceToken012345"})
-                assert (status, body) == (author_status, author_body)
-                assert status == 401, (status, body)
-                for credential in ("", "Bearer WrongUpgradeToken012345"):
-                    status, body, _ = service.rpc("tools/call", params,
-                        headers={"Mo-Upgrade-Authorization": credential} if credential else {})
-                    assert status == 200 and body["result"]["isError"], body
-                    assert body["result"]["structuredContent"]["code"] == "E1414", body
-                # Successful subsequent open proves neither refusal reserved a slot.
-                refused = push(binary, service, invalid, base, url=url)
+                    target_sock = proxy_sock
+                # Successful subsequent open proves an earlier refusal reserved no slot.
+                refused = push(binary, service, invalid, base, admin_socket=target_sock)
                 assert refused.returncode == 1 and refused.stderr.startswith(b"error E1421:"), \
                     (mode, refused)
                 if mode == "throttled":
                     assert server.retried and server.retry_body is None, server.record
                     server.throttle, server.retried = True, False
-                accepted = push(binary, service, new, base, url=url)
+                accepted = push(binary, service, new, None, admin_socket=target_sock)
                 assert accepted.returncode == 0, (mode, accepted, server.record if server else [])
                 outputs.append((refused.stdout, refused.stderr, accepted.stdout, accepted.stderr))
                 assert service.value("read") == "v2:0"
@@ -152,14 +144,10 @@ def run(binary):
                     server.shutdown()
                     server.server_close()
                     thread.join()
+                proxy_sock.unlink(missing_ok=True)
                 service.stop()
         assert all(output == outputs[0] for output in outputs), outputs
-    print("remote upgrades: direct/proxy/forward reports match; credentials and rate retry passed")
-
-
-def tree(folder):
-    return {str(path.relative_to(folder)): path.read_bytes()
-            for path in sorted(pathlib.Path(folder).rglob("*")) if path.is_file()}
+    print("remote upgrades: direct/proxy/forward reports match and rate retry passed")
 
 
 def tunnel(binary):
@@ -167,42 +155,45 @@ def tunnel(binary):
     with tempfile.TemporaryDirectory() as root:
         old, new = write(root, "old", V1), write(root, "new", V2)
         query = write(root, "query", V1 + "\nfn total(state: Int) : Int\n  state\nend\n")
-        base, _ = digests(binary, old, new)
         data = pathlib.Path(root) / "data"
         data.mkdir()
-        service = Service(binary, data, old, setting="everything")
-        relay = subprocess.Popen([sys.executable, str(RELAY), "0",
-                                  f"http://127.0.0.1:{service.port}"],
-                                 stdout=subprocess.PIPE, text=True)
+        service = Service(binary, data, old)
+        forwarded_sock = pathlib.Path(root) / "forwarded.sock"
+        relay = UnixRelay(str(forwarded_sock), Forward)
+        os.chmod(forwarded_sock, 0o600)
+        relay.upstream = service.admin_socket
+        thread = threading.Thread(target=relay.serve_forever, daemon=True)
+        thread.start()
         try:
-            forwarded = int(relay.stdout.readline().rsplit(":", 1)[1].split("/")[0])
             assert service.value("add", amount="5") == "5"
-            held = push(binary, service, new, base, url=f"http://127.0.0.1:{forwarded}/mcp")
-            assert held.returncode == 3 and held.stdout.startswith(b"held "), held
             seen = []
-            for port in (service.port, forwarded):
-                out, state = pathlib.Path(root) / "review", pathlib.Path(root) / "state.moex"
-                listed = review(binary, port, "--out", str(out))
-                assert listed.returncode == 0, listed
-                fetched = subprocess.run([binary, "fetch", f"http://127.0.0.1:{port}/mcp",
-                                          "--export", "state", "--out", str(state),
-                                          "--token-env", "TOKEN"],
+            for sock in (service.admin_socket, forwarded_sock):
+                state = pathlib.Path(root) / "state.moex"
+                fetched = subprocess.run([binary, "fetch", "--admin-socket", str(sock),
+                                          "--export", "state", "--out", str(state)],
                                          capture_output=True, timeout=300, env=ENV)
                 assert fetched.returncode == 0, fetched
                 queried = subprocess.run([binary, "query", str(query), "total", "--export",
                                           str(state)], capture_output=True, timeout=60)
-                assert queried.stdout == b"5\n", queried
-                seen.append((listed.stdout, tree(out), queried.stdout))
-                shutil.rmtree(out)
+                live_queried = subprocess.run([binary, "query", str(query), "total",
+                                               "--admin-socket", str(sock)],
+                                              capture_output=True, timeout=60, env=ENV)
+                assert queried.stdout == b"5\n" and live_queried.stdout == b"5\n", (
+                    queried, live_queried)
+                seen.append((queried.stdout, live_queried.stdout))
                 state.unlink()
-            assert seen[0] == seen[1], "tunnel changed a review listing or an export"
-            assert seen[0][0].rstrip().endswith(b"review " + held.stdout.split()[1]), seen[0][0]
-            assert_no_secrets(held.stdout, held.stderr, seen[0][0])
+            assert seen[0] == seen[1], "tunnel changed an export or live query"
+            accepted = push(binary, service, new, None, admin_socket=forwarded_sock)
+            assert accepted.returncode == 0, accepted
+            assert service.value("read") == "v2:5"
+            assert_no_secrets(accepted.stdout, accepted.stderr)
         finally:
-            relay.kill()
-            relay.wait()
+            relay.shutdown()
+            relay.server_close()
+            thread.join()
+            forwarded_sock.unlink(missing_ok=True)
             service.stop()
-    print("relay: push, review listing, held source and state export match direct")
+    print("tunnel: forwarded Unix socket push, live query and state export match direct")
 
 
 if __name__ == "__main__":

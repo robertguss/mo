@@ -9,7 +9,6 @@ uint64_t mo_pause_attempt;
 #include "base/codes.h"
 #include "base/compile-context.h"
 #include "base/compile-metadata.h"
-#include "base/intent-list.h"
 #include "base/runtime-identity.h"
 #include "base/sha256.h"
 #include "base/utf8.h"
@@ -156,11 +155,8 @@ void mo_upgrade_compile_cleanup(struct compile_job *job) {
     (void)unlink(job->previous);
     (void)unlink(job->image);
     (void)unlink(job->diagnostics);
-    (void)unlink(job->items);
-    (void)unlink(job->list_diagnostics);
     (void)unlink(job->check_diagnostics);
     (void)rmdir(job->compile_folder);
-    (void)rmdir(job->list_folder);
     (void)rmdir(job->check_folder);
     (void)rmdir(job->folder);
     job->scratch = false;
@@ -180,23 +176,17 @@ bool mo_upgrade_compile_begin(const struct mo_compiler *compiler, const struct m
     int c = snprintf(job->compile_folder, sizeof job->compile_folder, "%s/compile", job->folder);
     int d = snprintf(job->diagnostics, sizeof job->diagnostics, "%s/diagnostics", job->folder);
     int e = snprintf(job->input_context, sizeof job->input_context, "%s/input.mocc", job->folder);
-    int f = snprintf(job->list_folder, sizeof job->list_folder, "%s/list", job->folder);
     int g = snprintf(job->check_folder, sizeof job->check_folder, "%s/check", job->folder);
-    int h = snprintf(job->list_diagnostics, sizeof job->list_diagnostics, "%s/list-diagnostics",
-                     job->folder);
     int i = snprintf(job->check_diagnostics, sizeof job->check_diagnostics, "%s/check-diagnostics",
                      job->folder);
     int j = snprintf(job->image, sizeof job->image, "%s/image.bc", job->compile_folder);
     int k = snprintf(job->output_context, sizeof job->output_context, "%s.mocc", job->image);
-    int l = snprintf(job->items, sizeof job->items, "%s/items.moil", job->list_folder);
-    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && f > 0 && g > 0 && h > 0 && i > 0 &&
-              j > 0 && k > 0 && l > 0);
+    MO_ASSERT(a > 0 && b > 0 && c > 0 && d > 0 && e > 0 && g > 0 && i > 0 && j > 0 && k > 0);
     job->compiler = *compiler;
     job->has_old = old != NULL;
     job->has_context = context != NULL;
     bool ok =
-        mkdir(job->compile_folder, 0700) == 0 && mkdir(job->list_folder, 0700) == 0 &&
-        mkdir(job->check_folder, 0700) == 0 &&
+        mkdir(job->compile_folder, 0700) == 0 && mkdir(job->check_folder, 0700) == 0 &&
         mo_upgrade_write_file_bytes(job->source, bundle->bytes, bundle->length) &&
         (old == NULL || mo_upgrade_write_file_bytes(job->previous, old->bytes, old->length)) &&
         (context == NULL ||
@@ -217,28 +207,20 @@ bool mo_upgrade_compile_begin(const struct mo_compiler *compiler, const struct m
 enum mo_compile_status mo_upgrade_compile_poll(struct compile_job *job) {
     uint64_t now = monotonic_us();
     enum mo_compile_status status = mo_compile_poll(&job->child, now);
-    if (status != MO_COMPILE_OK || job->checking || (job->listing && !job->check))
+    if (status != MO_COMPILE_OK || !job->check || job->checking)
         return status;
     const char *old = job->has_old ? job->previous : NULL;
     const char *context = job->has_context ? job->input_context : NULL;
-    if (job->listing) {
-        job->checking = true;
-        status = mo_check_start(&job->compiler, job->check_folder, job->source,
-                                job->check_diagnostics, old, context, now, &job->child);
-    } else {
-        job->listing = true;
-        status = mo_list_start(&job->compiler, job->list_folder, job->source, job->items,
-                               job->list_diagnostics, old, context, now, &job->child);
-    }
+    job->checking = true;
+    status = mo_check_start(&job->compiler, job->check_folder, job->source, job->check_diagnostics,
+                            old, context, now, &job->child);
     return status == MO_COMPILE_RUNNING ? status : MO_COMPILE_IO;
 }
 void mo_upgrade_image_buffers_init(struct upgrade_image *image) {
     mo_buffer_init(&image->context, MO_LIMIT_BUNDLE_BYTES);
-    mo_buffer_init(&image->items, MO_LIMIT_INTENT_LIST_BYTES);
 }
 void mo_upgrade_image_buffers_free(struct upgrade_image *image) {
     mo_buffer_free(&image->context);
-    mo_buffer_free(&image->items);
 }
 bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status status,
                             const struct mo_buffer *bundle, struct upgrade_image *out,
@@ -249,10 +231,7 @@ bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status stat
     bool ok = true;
     report->compilation = status;
     if (status != MO_COMPILE_OK) {
-        FILE *errors = fopen(job->checking  ? job->check_diagnostics
-                             : job->listing ? job->list_diagnostics
-                                            : job->diagnostics,
-                             "rb");
+        FILE *errors = fopen(job->checking ? job->check_diagnostics : job->diagnostics, "rb");
         report->detail[0] = 0;
         if (errors != NULL) {
             size_t n = fread(report->detail, 1, sizeof report->detail - 1, errors);
@@ -297,15 +276,6 @@ bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status stat
                                "compiler context failed validation");
         goto done;
     }
-    struct mo_intent_list items;
-    if (!mo_upgrade_file_bytes(job->items, MO_LIMIT_INTENT_LIST_BYTES, &out->items) ||
-        !mo_intent_list_read(out->items.bytes, out->items.length, &items)) {
-        ok = mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
-                               "the candidate's intent item list failed validation");
-        goto done;
-    }
-    out->program.items = out->items.bytes;
-    out->program.items_size = out->items.length;
     out->program.context = out->context.bytes;
     out->program.context_size = out->context.length;
     struct mo_sha256 context_hash;

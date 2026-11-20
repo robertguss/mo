@@ -7,7 +7,6 @@
 #include <time.h>
 #include <unistd.h>
 
-static const uint8_t no_items[] = {'M', 'O', 'I', 'L', 1, 1, 0, 0, 0, 0};
 static struct mo_protocol_server *fault_server;
 static uint64_t admitted_before;
 static bool exhaust_reply, record_resizes, fail_append;
@@ -167,10 +166,11 @@ static void reserved_fallback(void) {
     record_resizes = true;
     struct fixture_server f = start();
     record_resizes = false;
+    const size_t total_slots = 2 * MO_LIMIT_MCP_CONNECTIONS;
     size_t first = SIZE_MAX;
-    for (size_t i = 0; i + 8 <= resize_calls; i++) {
+    for (size_t i = 0; i + total_slots <= resize_calls; i++) {
         bool reserve = resize_sizes[i] > 6 * MO_LIMIT_MCP_ID_BYTES;
-        for (size_t j = 1; j < 8; j++)
+        for (size_t j = 1; j < total_slots; j++)
             reserve = reserve && resize_sizes[i + j] == resize_sizes[i];
         if (reserve) {
             CHECK(first == SIZE_MAX);
@@ -181,7 +181,7 @@ static void reserved_fallback(void) {
     mo_protocol_server_free(f.server);
     f.server = NULL;
     const char *authorities[] = {"localhost"};
-    for (size_t i = 0; i < 8; i += 7) {
+    for (size_t i = 0; i < total_slots; i += total_slots - 1) {
         resize_after = first + i + 1;
         CHECK(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, NULL,
                                      &f.server) == MO_PROTOCOL_SERVER_MEMORY);
@@ -324,6 +324,24 @@ enum mo_listener_status mo_protocol_server_fault_listener(struct mo_listener *li
                                                           enum mo_listener_operation operation,
                                                           const union mo_listener_request *request,
                                                           union mo_listener_result *result);
+enum mo_listener_status mo_protocol_server_fault_wait_pair(
+    struct mo_listener *first, const struct mo_listener_wait *first_wait,
+    struct mo_listener_ready *first_out, struct mo_listener *second,
+    const struct mo_listener_wait *second_wait, struct mo_listener_ready *second_out);
+
+enum mo_listener_status mo_protocol_server_fault_wait_pair(
+    struct mo_listener *first, const struct mo_listener_wait *first_wait,
+    struct mo_listener_ready *first_out, struct mo_listener *second,
+    const struct mo_listener_wait *second_wait, struct mo_listener_ready *second_out) {
+    if (first == wait_listener && wait_advance != 0) {
+        MO_ASSERT(mo_listener_fake_advance(first, wait_advance) == MO_LISTENER_OK);
+        if (second != NULL)
+            MO_ASSERT(mo_listener_fake_advance(second, wait_advance) == MO_LISTENER_OK);
+        wait_advance = 0;
+        injected_waits++;
+    }
+    return mo_listener_wait_pair(first, first_wait, first_out, second, second_wait, second_out);
+}
 
 enum mo_listener_status mo_protocol_server_fault_listener(struct mo_listener *listener,
                                                           enum mo_listener_operation operation,
@@ -470,7 +488,7 @@ static void slow_call(struct fixture_server *f, const char *tool, const char *ar
                      tool, arguments);
     MO_ASSERT(n > 0 && (size_t)n < sizeof body);
     struct mo_buffer input;
-    input_request(&input, body, upgrade_auth);
+    input_request(&input, body, "");
     struct mo_listener_fake_peer peer = {.input = input.bytes,
                                          .input_size = input.length,
                                          .output = (uint8_t *)out,
@@ -478,7 +496,7 @@ static void slow_call(struct fixture_server *f, const char *tool, const char *ar
                                          .readable = true,
                                          .writable = true,
                                          .eof = true};
-    MO_ASSERT(mo_listener_fake_connect(f->listener, &peer) == MO_LISTENER_OK);
+    MO_ASSERT(mo_listener_fake_connect(f->admin_listener, &peer) == MO_LISTENER_OK);
     for (unsigned i = 0; i < 6000 && !peer.closed; i++) {
         poll_server(f);
         struct timespec pause = {0, 5000000};
@@ -532,6 +550,7 @@ static void activation_outcomes(void) {
         MO_ASSERT(mo_image_init(f.image, &limits, &defect) == MO_RETURNED);
         CHECK(setenv("MO_TEST_MCP_TOKEN", "McpSecretCanary42", 1) == 0);
         MO_ASSERT(mo_listener_fake("MO_TEST_MCP_TOKEN", &f.listener) == MO_LISTENER_OK);
+        MO_ASSERT(mo_listener_fake_admin(&f.admin_listener) == MO_LISTENER_OK);
         MO_ASSERT(mo_store_open(NULL, &f.store) == MO_STORE_OK);
         struct mo_limits service = mo_service_limits();
         struct mo_process *process = mo_process_new(f.image, &service);
@@ -544,9 +563,7 @@ static void activation_outcomes(void) {
                                            .bundle = old_bundle.bytes,
                                            .bundle_size = old_bundle.length,
                                            .context = context.bytes,
-                                           .context_size = context.length,
-                                           .items = no_items,
-                                           .items_size = sizeof no_items};
+                                           .context_size = context.length};
         MO_ASSERT(mo_type_schema_digest(mo_process_heap(process), state_type, program.schema));
         mo_process_free(process);
         struct mo_sha256 hash;
@@ -560,19 +577,16 @@ static void activation_outcomes(void) {
         struct mo_store_record first = {MO_STORE_STATE, 0, program.image, saved.bytes,
                                         saved.length};
         MO_ASSERT(mo_store_program_record(f.store, &program, &first) == MO_STORE_OK);
-        MO_ASSERT(mo_store_set_review(f.store, true, 1) == MO_STORE_REVIEW_OK);
         mo_buffer_free(&saved);
         struct event_log log = {0};
         const char *authorities[] = {"localhost"};
         const struct mo_protocol_events events = {note_event, &log};
         MO_ASSERT(mo_protocol_server_new(f.image, 0, f.store, f.listener, authorities, 1, &events,
                                          &f.server) == MO_PROTOCOL_SERVER_OK);
-        struct mo_bearer bearer = {.length = 23};
-        memcpy(bearer.bytes, "UpgradeCanary0123456789", 23);
         struct mo_compiler compiler = mo_upgrade_compiler();
         compiler.executable = exe;
-        CHECK(mo_protocol_server_upgrades(f.server, &bearer, NULL, &compiler,
-                                          MO_CHILDREN_CONFINED) == MO_PROTOCOL_SERVER_OK);
+        CHECK(mo_protocol_server_admin(f.server, f.admin_listener, &compiler,
+                                       MO_CHILDREN_CONFINED) == MO_PROTOCOL_SERVER_OK);
         char base[65], candidate[65], arguments[16384], out[32768];
         hex64(program.source, base);
         uint8_t digest[32];
@@ -584,7 +598,7 @@ static void activation_outcomes(void) {
                          "{\"base\":\"%s\",\"candidate\":\"%s\",\"total\":%zu}", base, candidate,
                          next_bundle.length);
         MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-        upgrade_call(&f, upgrade_auth, "mo-upgrade-open", arguments, out, sizeof out);
+        upgrade_call(&f, "mo-upgrade-open", arguments, out, sizeof out);
         const char *slot_at = strstr(out, "\\\"slot\\\":\\\"");
         MO_ASSERT(slot_at != NULL);
         char slot[33] = {0}, text[MO_LIMIT_UPGRADE_PAGE_TEXT + 1];
@@ -594,7 +608,7 @@ static void activation_outcomes(void) {
                      "{\"slot\":\"%s\",\"index\":0,\"offset\":0,\"total\":%zu,\"bytes\":\"%s\"}",
                      slot, next_bundle.length, text);
         MO_ASSERT(n > 0 && (size_t)n < sizeof arguments);
-        upgrade_call(&f, upgrade_auth, "mo-upgrade-page", arguments, out, sizeof out);
+        upgrade_call(&f, "mo-upgrade-page", arguments, out, sizeof out);
         CHECK(strstr(out, "\\\"complete\\\":true") != NULL);
         activation_faulted = mode != 0;
         activation_result = mode == 1 ? MO_STORE_ACTIVATION_REFUSED : MO_STORE_ACTIVATION_UNSAFE;

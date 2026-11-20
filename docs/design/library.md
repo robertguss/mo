@@ -550,6 +550,7 @@ The real network is C in `src/host/real-network.c`, and the fake is C in
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `connect(host, port, within)` | host | `NETWORK_CONNECT` | |
+| `allow_hosts(hosts)` | host | `NETWORK_ALLOW_HOSTS` | |
 | `Network.fake(peers)` | host | `NETWORK_FAKE` | a fake, for spec code only (reference 12.4) |
 
 ## Connection

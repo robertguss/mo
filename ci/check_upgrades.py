@@ -71,10 +71,6 @@ def serve(binary, source, data, expected, *flags, tool="read", arguments=None):
                 if not byte:
                     errors.seek(0)
                     stderr = errors.read()
-                    shown = re.search(rb"error E1435: .*--review ([0-9a-f]{64})", stderr)
-                    if shown and process.wait(timeout=30) == 1 and "--review" not in flags:
-                        return serve(binary, source, data, expected, *flags, "--review",
-                                     shown.group(1).decode(), tool=tool, arguments=arguments)
                     raise AssertionError((args, process.poll(), stderr))
                 line += byte
                 if byte == b"\n":
@@ -254,7 +250,7 @@ def main():
         serve(binary, legacy_source, legacy, preserved, "--adopt", tool="list",
               arguments={"filter": {"case": "AllJobs"}, "after": "0", "limit": "10"})
         with sqlite3.connect(legacy_db) as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert db.execute("PRAGMA user_version").fetchone()[0] == 2
             assert db.execute("SELECT ordinal FROM program").fetchone()[0] == 1
             assert db.execute("SELECT record FROM previous_snapshots WHERE ordinal=1").fetchone()[0] == original_snapshot
             assert db.execute("SELECT old_source FROM upgrades WHERE ordinal=1").fetchone()[0] == bytes(32)

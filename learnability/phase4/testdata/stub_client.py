@@ -147,17 +147,18 @@ def main():
                 {'type': 'tool_result', 'tool_use_id': 'toolu_lost', 'content': '{}'}]}})
         say('Fixed: stats now counts dead jobs.')
     elif mode == 'instruments':
-        call('mo-overview')
+        call('list', filter={'case': 'AllJobs'}, after='0', limit='1')
         text = main_mo.read_text()
         main_mo.write_text(text.replace(
             '  if dead > 0\n    stop "dead jobs are not counted yet"\n  end\n', ''))
         data, deployed = settings['data'], settings['deployed']
+        admin_socket = settings['admin_socket']
 
         def run(command):
             shell(' '.join(command))
             return subprocess.run(command, capture_output=True, text=True, timeout=300)
-        fetched = run(['mo', 'fetch', endpoint(), '--export', 'state', '--out', 'state.moex',
-                       '--token-env', 'QUEUE_TOKEN'])
+        fetched = run(['mo', 'fetch', '--admin-socket', admin_socket, '--export', 'state',
+                       '--out', 'state.moex'])
         history = run(['mo', 'history', '--json', data])
         failures = [f['id'] for r in map(json.loads, history.stdout.splitlines())
                     for f in r.get('failures', [])]

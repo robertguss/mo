@@ -9,11 +9,11 @@
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "prim/prim.h"
+#include "tools/diff.h"
 #include "tools/embedded.h"
 #include "tools/fix.h"
 #include "tools/format.h"
 #include "tools/gates.h"
-#include "tools/intent.h"
 #include "tools/offline.h"
 #include "tools/promises.h"
 #include "tools/run.h"
@@ -165,10 +165,6 @@ static void execute_pipeline(void *argument) {
         (void)added;
         return;
     }
-    if (cli->command == MO_COMMAND_INTENT) {
-        mo_intent_show(cli, arena, program, library, work->output, diags);
-        return;
-    }
     /* Test observations are separate from the compiler's anchor checks. */
     if (cli->command == MO_COMMAND_TEST && cli->strength != NULL) {
         struct mo_strength_run run = {
@@ -193,26 +189,9 @@ static void execute_pipeline(void *argument) {
             }
         }
         if (cli->list) {
-            struct mo_intent intent = {0};
-            if (cli->json && !mo_intent_items(arena, program, &intent)) {
-                tool_error(diags, MO_CODE_TOOL_PIPELINE, "intent items exceed tool resources",
-                           NULL);
-                return;
-            }
-            uint32_t next = 0;
             for (uint32_t i = 0; i < selection->count; i++) {
                 const struct mo_observation *o = &selection->items[i];
-                const struct mo_checked_spec *spec =
-                    o->promise != NULL ? &o->promise->spec : o->source;
-                const uint8_t *digest = NULL;
-                if (spec != NULL && spec->kind != MO_SPEC_TEST) {
-                    while (next < intent.count && intent.items[next].spec != spec)
-                        next++;
-                    MO_ASSERT(!cli->json || next < intent.count);
-                    if (next < intent.count)
-                        digest = intent.items[next].digest;
-                }
-                if (!mo_write_test(work->output, cli->json, sources, o, digest)) {
+                if (!mo_write_test(work->output, cli->json, sources, o)) {
                     tool_error(diags, MO_CODE_TOOL_PIPELINE, "test inventory could not be written",
                                NULL);
                     return;
@@ -470,8 +449,8 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
         return mo_fetch(cli, errors);
     if (cli->command == MO_COMMAND_PUSH)
         return mo_push(cli, output, errors);
-    if (cli->command == MO_COMMAND_REVIEW)
-        return mo_review(cli, output, errors);
+    if (cli->command == MO_COMMAND_DIFF)
+        return mo_diff(cli, output, errors);
     if (cli->command == MO_COMMAND_HISTORY)
         return mo_history(cli, output, errors);
     if (cli->command == MO_COMMAND_VERSION) {

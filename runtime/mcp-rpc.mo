@@ -103,14 +103,17 @@ fn integer_id(text: Text) : Bool
   true
 end
 
-fn method(request: Request, tools: List(Text), image_key: Text) : Method
-  case validate(request, tools, image_key)
+fn method(request: Request, tools: List(Text), image_key: Text, admin: Bool) : Method
+  case validate(request, tools, image_key, admin)
     Ok(value): value
     Error(_): InvalidParams
   end
 end
 
-fn validate(request: Request, tools: List(Text), image_key: Text) : Result(Method, Text)
+fn validate(request: Request, tools: List(Text), image_key: Text, admin: Bool) : Result(
+  Method,
+  Text
+)
   name = request.method
   if name != "initialize" and name != "ping" and name != "tools/list" and name != "tools/call"
     return Ok(UnknownMethod)
@@ -146,7 +149,8 @@ fn validate(request: Request, tools: List(Text), image_key: Text) : Result(Metho
           parts.get(1) != Some(image_key)
         spelling = parts.get(0) or stop "MCP cursor index"
         index = spelling.to_int or -1
-        if index < 0 or index >= tools.size + McpViews.names().size or index.to_text != spelling
+        limit = if admin: McpViews.names().size else: tools.size
+        if index < 0 or index >= limit or index.to_text != spelling
           return Error("Invalid params: invalid cursor")
         end
         Ok(ListTools(index))
@@ -164,8 +168,11 @@ fn validate(request: Request, tools: List(Text), image_key: Text) : Result(Metho
         "Invalid params: arguments must be an object"
       )
     end
-    for i in 0..tools.size
-      return Ok(Call(tool: i, arguments: arguments)) if tools.get(i) == Some(tool_name)
+    if not admin
+      for i in 0..tools.size
+        return Ok(Call(tool: i, arguments: arguments)) if tools.get(i) == Some(tool_name)
+      end
+      return Error("Invalid params: unknown tool")
     end
     for i in 0..McpViews.names().size
       if McpViews.names().get(i) == Some(tool_name)

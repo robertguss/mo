@@ -28,7 +28,8 @@ fn receive(
   version: Option(Text),
   descriptor: McpType.Service,
   catalog: Mcp.Catalog,
-  server_version: Text
+  server_version: Text,
+  admin: Bool
 ) : Action
   body = case Json.parse(text)
     Ok(value): value
@@ -60,7 +61,7 @@ fn receive(
     McpRpc.Message(value): value
   end
   tools = descriptor.tools.map(fn(tool) tool.name end)
-  method = case McpRpc.validate(request, tools, catalog.image_key)
+  method = case McpRpc.validate(request, tools, catalog.image_key, admin)
     Ok(value): value
     Error(message): return protocol_error(Some(request.id), -32602, message)
   end

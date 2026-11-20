@@ -103,7 +103,7 @@ def ioOps : List (String × IoOp) :=
    ("filesInMemory", .filesInMemory), ("clockFixed", .clockFixed),
    ("randomSeeded", .randomSeeded), ("argsOf", .argsOf), ("envOf", .envOf),
    ("connect", .connect), ("send", .send), ("receive", .receive),
-   ("networkFake", .networkFake)]
+   ("networkFake", .networkFake), ("allowHosts", .allowHosts)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

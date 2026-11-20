@@ -41,7 +41,7 @@ def check(binary):
             assert value["state_effect"] == "none", value
             return value
 
-        status, catalog = rpc("tools/list", {})
+        status, catalog = rpc("tools/list", {}, admin=True)
         tool = next(t for t in catalog["result"]["tools"] if t["name"] == "mo-export")
         assert status == 200 and tool["inputSchema"]["required"] == ["kind"]
         assert tool["annotations"] == {"readOnlyHint": True, "idempotentHint": True,
@@ -52,10 +52,14 @@ def check(binary):
         assert first["pages"] == 3 and first["offset"] == 0 and first["length"] == 8192
         assert first["digest"] is None and first["sequence"] == first["encoded_sequence"] == "0"
         assert call("mo-memory")["pinned_export_bytes"] > first["total"]
-        # Authentication refuses before replacing, reading, or refreshing the current generation.
+        # Public HTTP refuses bad tokens before routing, and refuses operator views even with valid token.
         for token in ["", "WrongExportCanary"]:
-            status, _ = rpc("tools/call", {"name": "mo-export", "arguments": {"kind": "state"}}, token)
+            status, _ = rpc("tools/call", {"name": "mo-export", "arguments": {"kind": "state"}},
+                            token, admin=False)
             assert status == 401
+        status, denied = rpc("tools/call", {"name": "mo-export", "arguments": {"kind": "state"}},
+                             admin=False)
+        assert status == 200 and denied["error"]["code"] == -32602, denied
         call("change")
         page, data, offset = first, bytearray(), 0
         while True:
