@@ -398,15 +398,20 @@ and what was built.
 - **An `https` URL gives `Unreachable(Network.Broken(reason))`**, and the reason reads
   `HTTPS is not built yet, so URL can't be reached` with the request's URL. A malformed `https`
   URL is `BadUrl` first.
-- **The reader starts again from the first byte after each receive.** It keeps no position. A
+- **The reader reads the headers again after each receive, and a chunked body on from the
+  chunk it stopped at.** It keeps where that chunk starts and the data of the chunks before it,
+  so a body that arrives a chunk at a time costs work in step with its size. A request can
+  still end later than its timeout by the time it takes to read one receive's bytes. A
   receive asks for 1 MiB, the most the capability gives. The 1 MiB fetch meets its bar this way
   ([the measurement](../../learnability/phase7/preflight/http-in-mo/README.md#the-client-as-built)).
 - **A response to `HEAD`, and one with status 204 or 304, has an empty body.** A status from
   100 to 199 is read like any other response.
-- **Line ends are a carriage return and a line feed, and nothing else.** A status line
+- **Line ends are a carriage return and a line feed, and nothing else.** A line that holds a
+  control character other than a tab, such as a line feed by itself, is `BadResponse`. A status line
   starts with `HTTP/1.`, and three digits follow its first space. A header line needs a `:` and a name with no
   space in it, and its value is trimmed.
-- **A `Transfer-Encoding` other than `chunked` is `BadResponse`**, in any case of the word. A
+- **A `Transfer-Encoding` other than `chunked` is `BadResponse`**, in any case of the word, and
+  so is more than one `Transfer-Encoding` header, whose values are read as one list. A
   `Content-Length` and a chunk's size are read digit by digit, so a sign is refused. A chunk's
   size line may take 256 bytes and its size 8 hexadecimal digits, and what follows a `;` on it
   is ignored. The trailers after the last chunk may take as much as the headers, and are

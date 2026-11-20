@@ -593,7 +593,7 @@ them and reads none.
 | --- | --- | --- | --- |
 | `Http.get(url)`, `Http.post(url)`, `Http.request(method, url)` | Mo | `lib/http.mo` | |
 | `header`, `query`, `json`, `text` and `within` on a `Request` | Mo | `lib/http.mo` | each gives a changed copy and checks nothing; `send` reports a bad URL, method or header |
-| `request.send(network)` | Mo | `lib/http.mo` | one `connect`, one `send`, then `receive` of up to 1 MiB at a time until the response is whole; the reader starts again from the first byte after each receive; the limits, 64 KiB of headers and 16 MiB of body, are in `limits()` |
+| `request.send(network)` | Mo | `lib/http.mo` | one `connect`, one `send`, then `receive` of up to 1 MiB at a time until the response is whole; after each receive the reader reads the headers again and reads a chunked body on from the chunk it stopped at; the limits, 64 KiB of headers and 16 MiB of body, are in `limits()` |
 | `ok?`, `header(name)`, `text` and `json` on a `Response` | Mo | `lib/http.mo` | `json` is `Json.parse` on the body |
 | `Http.reply(status, body)`, `Http.replies(exchanges)` | Mo | `lib/http.mo` | for tests: `replies` writes each request with the writer `send` uses, under its host and port |
 

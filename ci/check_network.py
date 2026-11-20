@@ -45,6 +45,7 @@ REPLIES = {
         b"lo \r\nd;note=1\r\nfrom the peer\r\n",
         b"0\r\nX-Trailer: 1\r\n\r\n",
     ],
+    b"/close": [b"HTTP/1.1 200 OK\r\nX-Reply: close\r\n\r\n" + BODY[:9], BODY[9:]],
     b"/cut": [b"HTTP/1.1 200 OK\r\nX-Reply: yes\r\nContent-Length: 19\r\n\r\n" + BODY[:9]],
     b"/silent": None,
 }
@@ -128,6 +129,7 @@ def main():
 
         succeeds("/ok", b"yes")
         succeeds("/chunked", b"chunked")
+        succeeds("/close", b"close")
 
         elapsed, usual = refused(here + "/silent", "Unreachable(TimedOut)")
         assert TIMEOUT <= elapsed <= TIMEOUT + usual + 10, (elapsed, usual)
@@ -149,7 +151,7 @@ def main():
         name = "a" * 254
         refused(f"http://{name}/ok", f'Unreachable(UnknownHost(host: "{name}"))')
 
-    print("network: 6 checks against a live peer pass, each refusal beside a success")
+    print("network: 7 checks against a live peer pass, each refusal beside a success")
 
 
 if __name__ == "__main__":

@@ -2009,8 +2009,9 @@ errors, and a status from 100 to 199 is read like any other. `send` follows no
 redirect, retries nothing, keeps no cookie, uses no proxy, reuses no connection
 and asks for no compression. Headers longer than 65,536 bytes, a status line or
 header line that is malformed, a line that doesn't end with a carriage return
-and a line feed, another transfer encoding, and a connection closed before the
-response was whole each give `Error(BadResponse(reason))`. A body longer than
+and a line feed or that holds a control character other than a tab, another
+transfer encoding or more than one, and a connection closed before the response
+was whole each give `Error(BadResponse(reason))`. A body longer than
 16,777,216 bytes gives `Error(TooLarge(limit: 16777216))`. A failure of the
 network gives `Error(Unreachable(error))`, as in
 `Unreachable(Network.TimedOut)`. An `HttpError`'s text forms are those of

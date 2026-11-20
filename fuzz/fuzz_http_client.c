@@ -64,7 +64,7 @@ static void prepare(void) {
         if (name->length == sizeof wanted - 1 && memcmp(name->bytes, wanted, name->length) == 0)
             break;
     }
-    MO_ASSERT(reader < file->function_count && file->functions[reader].parameter_count == 4);
+    MO_ASSERT(reader < file->function_count && file->functions[reader].parameter_count == 5);
 }
 
 static bool inside(uint32_t *type, struct mo_cell *value, const char *wanted) {
@@ -121,6 +121,20 @@ static void chunks_equal(const uint8_t *data, size_t size, const uint8_t *body, 
     MO_ASSERT(at + 4 <= size);
 }
 
+static struct mo_cell read_from(struct mo_process *process, const struct mo_cell *mine) {
+    struct mo_heap *heap = mo_process_heap(process);
+    const struct mo_bytecode_function *fn = &mo_image_bytecode(image)->functions[reader];
+    struct mo_cell passed[5], result;
+    struct mo_defect defect;
+    for (uint32_t i = 0; i < 5; i++)
+        passed[i] = fn->parameters[i].ownership == MO_PARAMETER_OWNED
+                        ? mo_value_dup(heap, fn->parameters[i].type, mine[i])
+                        : mine[i];
+    mo_process_instruction_limit(process, WORK);
+    MO_ASSERT(mo_call(process, reader, passed, 5, &result, &defect) == MO_RETURNED);
+    return result;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     static uint8_t received[sizeof chunked_head - 1 + MOST];
     if (size < 3 || size - 3 > MOST)
@@ -129,6 +143,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     bool finished = (data[0] & 1) != 0, chunked = (data[0] & 2) != 0, head = (data[0] & 4) != 0;
     int64_t headers = 64 + data[1], body = data[2];
     size_t prefix = chunked ? sizeof chunked_head - 1 : 0, length = prefix + size - 3;
+    size_t first = (data[1] * 251u + data[2]) % (length + 1);
     memcpy(received, chunked_head, prefix);
     memcpy(received + prefix, data + 3, size - 3);
 
@@ -136,41 +151,56 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     struct mo_process *process = mo_process_new(image, &limits);
     MO_ASSERT(process != NULL);
     struct mo_heap *heap = mo_process_heap(process);
+    const struct mo_types *types = mo_image_types(image);
     const struct mo_bytecode_function *fn = &mo_image_bytecode(image)->functions[reader];
+    uint32_t walk_type = fn->parameters[4].type;
     struct mo_cell fields[] = {mo_cell_int(headers), mo_cell_int(body)};
-    struct mo_cell mine[4], passed[4], result;
+    struct mo_cell start[] = {mo_cell_int(0), mo_cell_int(0), mo_cell_int(0)};
+    struct mo_cell mine[5];
+    MO_ASSERT(types->items[walk_type].cases[0].field_count == 3);
+    MO_ASSERT(
+        mo_value_list(heap, types->items[walk_type].cases[0].fields[1].type, NULL, 0, &start[1]));
     MO_ASSERT(mo_value_text(heap, head ? "HEAD" : "GET", head ? 4 : 3, &mine[0]));
-    MO_ASSERT(mo_value_bytes(heap, received, length, &mine[1]));
+    MO_ASSERT(mo_value_bytes(heap, received, first, &mine[1]));
     MO_ASSERT(mo_value_case(heap, fn->parameters[3].type, 0, fields, 2, &mine[3]));
-    mine[2] = mo_cell_bool(finished);
-    for (uint32_t i = 0; i < 4; i++)
-        passed[i] = fn->parameters[i].ownership == MO_PARAMETER_OWNED
-                        ? mo_value_dup(heap, fn->parameters[i].type, mine[i])
-                        : mine[i];
-    struct mo_defect defect;
-    mo_process_instruction_limit(process, WORK);
-    MO_ASSERT(mo_call(process, reader, passed, 4, &result, &defect) == MO_RETURNED);
+    MO_ASSERT(mo_value_case(heap, walk_type, 0, start, 3, &mine[4]));
+    mine[2] = mo_cell_bool(false);
 
+    struct mo_cell early = read_from(process, mine);
     uint32_t type = fn->result_type;
-    struct mo_cell value = result;
-    if (inside(&type, &value, "Ok")) {
-        if (inside(&type, &value, "Some")) {
-            size_t got;
-            MO_ASSERT(mo_case_shape(mo_image_types(image), type, 0) == MO_CASE_BOXED);
-            const uint8_t *bytes =
-                mo_value_data(mo_value_field(mo_cell_get_payload(value), 2), &got);
-            MO_ASSERT(got <= (size_t)body && (!head || got == 0));
-            size_t blank = 0;
-            while (blank + 4 <= length && memcmp(received + blank, "\r\n\r\n", 4) != 0)
-                blank++;
-            MO_ASSERT(blank + 4 <= length && blank + 4 <= (size_t)headers);
-            if (chunked && !head)
-                chunks_equal(received + prefix, size - 3, bytes, got);
-        } else
-            MO_ASSERT(!finished);
+    struct mo_cell value = early;
+    if (inside(&type, &value, "Error") && inside(&type, &value, "More")) {
+        struct mo_cell walk = mo_value_dup(heap, walk_type, value);
+        mo_value_drop(heap, walk_type, mine[4]);
+        mine[4] = walk;
     }
+    mo_value_drop(heap, fn->result_type, early);
+    mo_value_drop(heap, fn->parameters[1].type, mine[1]);
+    MO_ASSERT(mo_value_bytes(heap, received, length, &mine[1]));
+    mine[2] = mo_cell_bool(finished);
+
+    struct mo_cell result = read_from(process, mine);
+    type = fn->result_type;
+    value = result;
+    if (inside(&type, &value, "Ok")) {
+        size_t got;
+        MO_ASSERT(mo_case_shape(types, type, 0) == MO_CASE_BOXED);
+        const uint8_t *bytes = mo_value_data(mo_value_field(mo_cell_get_payload(value), 2), &got);
+        MO_ASSERT(got <= (size_t)body && (!head || got == 0));
+        size_t blank = 0;
+        while (blank + 4 <= length && memcmp(received + blank, "\r\n\r\n", 4) != 0)
+            blank++;
+        MO_ASSERT(blank + 4 <= length && blank + 4 <= (size_t)headers);
+        for (size_t i = 0; i < blank; i++)
+            MO_ASSERT(received[i] == '\t' || (received[i] >= ' ' && received[i] != 127) ||
+                      (received[i] == '\r' && received[i + 1] == '\n') ||
+                      (received[i] == '\n' && i > 0 && received[i - 1] == '\r'));
+        if (chunked && !head)
+            chunks_equal(received + prefix, size - 3, bytes, got);
+    } else if (inside(&type, &value, "Error") && inside(&type, &value, "More"))
+        MO_ASSERT(!finished);
     mo_value_drop(heap, fn->result_type, result);
-    for (uint32_t i = 0; i < 4; i++)
+    for (uint32_t i = 0; i < 5; i++)
         mo_value_drop(heap, fn->parameters[i].type, mine[i]);
     mo_process_free(process);
     return 0;

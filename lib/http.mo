@@ -62,9 +62,18 @@ struct Limits
   body: Int
 end
 
-## Why reading stopped short of a whole response: more bytes must come, or it can never be one.
+## How far a chunked body has been read: where the next chunk starts in what follows the
+## headers, the data of the chunks before it, and how many bytes that data is.
+struct Walk
+  at: Int
+  parts: List(Bytes)
+  total: Int
+end
+
+## Why reading stopped short of a whole response: more bytes must come, and the walk says where
+## a chunked body is read on from, or it can never be one.
 enum Halt
-  More
+  More(Walk)
   Bad(HttpError)
 end
 
@@ -220,13 +229,17 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
   connection = try network.connect(written.target.host, written.target.port, request.timeout)
   try connection.send(written.bytes)
   var received = "".bytes
-  var found = None
-  while found is None
+  var walk = start()
+  while true
     part = try connection.receive(1048576)
     received = Bytes.join([received, part])
-    found = try read(request.method, received, part.size == 0, limits())
+    case read(request.method, received, part.size == 0, limits(), walk)
+      Ok(response): return Ok(response)
+      Error(Bad(refusal)): return Error(refusal)
+      Error(More(next)): walk = next
+    end
   end
-  found.or_fail(BadResponse(reason: "the response was never whole"))
+  Error(BadResponse(reason: "the response was never whole"))
 end
 
 ## The limits `send` reads within: 64 KiB of headers and 16 MiB of body.
@@ -285,117 +298,173 @@ fn text(response: Response) : Option(Text)
   response.body.decode_utf8
 end
 
-## What the bytes received so far hold: `Some` whole response, or `None` while more must come.
-## `finished` says the other side has sent all it will, so a response still short is an error.
-fn read(method: Text, received: Bytes, finished: Bool, limits: Limits) : Result(
-  Option(Response),
-  HttpError
+## What the bytes received so far hold: a whole response, or `More` while more must come, with
+## the walk to pass as `from` next time. `finished` says the other side has sent all it will,
+## so a response still short is an error.
+fn read(method: Text, received: Bytes, finished: Bool, limits: Limits, from: Walk) : Result(
+  Response,
+  Halt
 )
   examples
-    read("GET", "HTTP/1.1 200 OK\r\nA: b\r\nContent-Length: 2\r\n\r\nhi!".bytes, false, limits()) ==
-      Ok(
-        Some(
-          Response(status: 200, headers: [("A", "b"), ("Content-Length", "2")], body: "hi".bytes)
-        )
-      )
-    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh".bytes, false, limits()) == Ok(None)
-    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh".bytes, true, limits()) ==
-      Error(BadResponse(reason: "the connection closed before the response was whole"))
-    read("GET", "HTTP/1.1 200 OK\r\nContent-Len".bytes, false, limits()) == Ok(None)
-    read("GET", "HTTP/2 200\r\n\r\n".bytes, false, limits()) ==
-      Error(BadResponse(reason: "the status line is malformed"))
-    read("GET", "\r\n\r\n".bytes, false, limits()) ==
-      Error(BadResponse(reason: "the status line is malformed"))
-    read("GET", "HTTP/1.1 200 OK\r\nno colon\r\n\r\n".bytes, false, limits()) ==
-      Error(BadResponse(reason: "a header line is malformed"))
-    read("GET", "HTTP/1.1 200 OK\r\nA: é".bytes.slice(0, 21), true, limits()) ==
-      Error(BadResponse(reason: "the connection closed before the response was whole"))
+    read(
+      "GET",
+      "HTTP/1.1 200 OK\r\nA: b\r\nContent-Length: 2\r\n\r\nhi!".bytes,
+      false,
+      limits(),
+      start()
+    ) ==
+      Ok(Response(status: 200, headers: [("A", "b"), ("Content-Length", "2")], body: "hi".bytes))
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh".bytes, false, limits(), start()) ==
+      Error(More(start()))
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nh".bytes, true, limits(), start()) ==
+      Error(bad("the connection closed before the response was whole"))
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Len".bytes, false, limits(), start()) ==
+      Error(More(start()))
+    read("GET", "HTTP/2 200\r\n\r\n".bytes, false, limits(), start()) ==
+      Error(bad("the status line is malformed"))
+    read("GET", "\r\n\r\n".bytes, false, limits(), start()) ==
+      Error(bad("the status line is malformed"))
+    read("GET", "HTTP/1.1 200 OK\r\nno colon\r\n\r\n".bytes, false, limits(), start()) ==
+      Error(bad("a header line is malformed"))
+    read("GET", "HTTP/1.1 200 OK\r\nA: é".bytes.slice(0, 21), true, limits(), start()) ==
+      Error(bad("the connection closed before the response was whole"))
     read(
       "GET",
       Bytes.join(["HTTP/1.1 200 OK\r\nA: ".bytes, "é".bytes.slice(0, 1), "\r\n\r\n".bytes]),
       true,
-      limits()
+      limits(),
+      start()
     ) ==
-      Error(BadResponse(reason: "the headers are not text"))
-    read("HEAD", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n".bytes, false, limits()) ==
-      Ok(Some(Response(status: 200, headers: [("Content-Length", "5")], body: "".bytes)))
-    read("GET", "HTTP/1.1 204 No Content\r\n\r\n".bytes, false, limits()) ==
-      Ok(Some(Response(status: 204, headers: [], body: "".bytes)))
-    read("GET", "HTTP/1.1 304 Not Modified\r\n\r\n".bytes, false, limits()) ==
-      Ok(Some(Response(status: 304, headers: [], body: "".bytes)))
-    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, false, limits()) == Ok(None)
-    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, limits()) ==
-      Ok(Some(Response(status: 200, headers: [], body: "hi".bytes)))
-    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, Limits(headers: 19, body: 2)) ==
-      Ok(Some(Response(status: 200, headers: [], body: "hi".bytes)))
-    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, Limits(headers: 18, body: 2)) ==
-      Error(BadResponse(reason: "the headers are longer than 18 bytes"))
-    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi!".bytes, false, Limits(headers: 19, body: 2)) ==
-      Error(TooLarge(limit: 2))
+      Error(bad("the headers are not text"))
+    read("HEAD", "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n".bytes, false, limits(), start()) ==
+      Ok(Response(status: 200, headers: [("Content-Length", "5")], body: "".bytes))
+    read("GET", "HTTP/1.1 204 No Content\r\n\r\n".bytes, false, limits(), start()) ==
+      Ok(Response(status: 204, headers: [], body: "".bytes))
+    read("GET", "HTTP/1.1 304 Not Modified\r\n\r\n".bytes, false, limits(), start()) ==
+      Ok(Response(status: 304, headers: [], body: "".bytes))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, false, limits(), start()) == Error(More(start()))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, limits(), start()) ==
+      Ok(Response(status: 200, headers: [], body: "hi".bytes))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, Limits(headers: 19, body: 2), start()) ==
+      Ok(Response(status: 200, headers: [], body: "hi".bytes))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi".bytes, true, Limits(headers: 18, body: 2), start()) ==
+      Error(bad("the headers are longer than 18 bytes"))
+    read("GET", "HTTP/1.1 200 OK\r\n\r\nhi!".bytes, false, Limits(headers: 19, body: 2), start()) ==
+      Error(Bad(TooLarge(limit: 2)))
     read(
       "GET",
       "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi".bytes,
       false,
-      Limits(headers: 64, body: 2)
+      Limits(headers: 64, body: 2),
+      start()
     ) ==
-      Ok(Some(Response(status: 200, headers: [("Content-Length", "2")], body: "hi".bytes)))
+      Ok(Response(status: 200, headers: [("Content-Length", "2")], body: "hi".bytes))
     read(
       "GET",
       "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\n".bytes,
       false,
-      Limits(headers: 64, body: 2)
+      Limits(headers: 64, body: 2),
+      start()
     ) ==
-      Error(TooLarge(limit: 2))
-    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: -5\r\n\r\n".bytes, false, limits()) ==
-      Error(BadResponse(reason: "the Content-Length is not a number"))
-    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\nhello".bytes, false, limits()) ==
-      Error(BadResponse(reason: "the Content-Length is not a number"))
+      Error(Bad(TooLarge(limit: 2)))
+    read("GET", "HTTP/1.1 200 OK\r\nContent-Length: -5\r\n\r\n".bytes, false, limits(), start()) ==
+      Error(bad("the Content-Length is not a number"))
+    read(
+      "GET",
+      "HTTP/1.1 200 OK\r\nContent-Length: +5\r\n\r\nhello".bytes,
+      false,
+      limits(),
+      start()
+    ) ==
+      Error(bad("the Content-Length is not a number"))
     read(
       "GET",
       "HTTP/1.1 200 OK\r\nTransfer-Encoding: Chunked\r\nContent-Length: 9\r\n\r\n2\r\nhi\r\n0\r\n\r\n"
         .bytes,
       false,
-      limits()
+      limits(),
+      start()
     ) ==
       Ok(
-        Some(
-          Response(
-            status: 200,
-            headers: [("Transfer-Encoding", "Chunked"), ("Content-Length", "9")],
-            body: "hi".bytes
-          )
+        Response(
+          status: 200,
+          headers: [("Transfer-Encoding", "Chunked"), ("Content-Length", "9")],
+          body: "hi".bytes
         )
       )
-    read("GET", "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".bytes, false, limits()) ==
-      Error(BadResponse(reason: "the transfer encoding gzip is not supported"))
-    read("GET", "HTTP/1.1 200 OK\nContent-Length: 2\n\nhi".bytes, true, limits()) ==
-      Error(BadResponse(reason: "the connection closed before the response was whole"))
+    read(
+      "GET",
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n".bytes,
+      false,
+      limits(),
+      start()
+    ) ==
+      Error(bad("the transfer encoding gzip is not supported"))
+    read("GET", "HTTP/1.1 200 OK\nContent-Length: 2\n\nhi".bytes, true, limits(), start()) ==
+      Error(bad("the connection closed before the response was whole"))
+    read("GET", "HTTP/1.1 200 OK\nContent-Length: 2\r\n\r\nhi".bytes, true, limits(), start()) ==
+      Error(bad("a line holds a control character"))
+    read("GET", "HTTP/1.1 200 OK\r\nA: b\nC: d\r\n\r\n".bytes, true, limits(), start()) ==
+      Error(bad("a line holds a control character"))
+    read("GET", "HTTP/1.1 200 OK\r\nA: b\u{0}c\r\n\r\n".bytes, true, limits(), start()) ==
+      Error(bad("a line holds a control character"))
+    read("GET", "HTTP/1.1 200 OK\r\nA: b\u{7f}c\r\n\r\n".bytes, true, limits(), start()) ==
+      Error(bad("a line holds a control character"))
+    read("GET", "HTTP/1.1 200 OK\r\nA: b\tc\r\n\r\n".bytes, true, limits(), start()) ==
+      Ok(Response(status: 200, headers: [("A", "b\tc")], body: "".bytes))
+    read(
+      "GET",
+      "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTransfer-Encoding: gzip\r\n\r\n0\r\n\r\n"
+        .bytes,
+      false,
+      limits(),
+      start()
+    ) ==
+      Error(bad("the transfer encoding chunked, gzip is not supported"))
+    read(
+      "GET",
+      "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n".bytes,
+      true,
+      limits(),
+      start()
+    ) ==
+      Ok(Response(status: 100, headers: [], body: "HTTP/1.1 200 OK\r\n\r\n".bytes))
   end
 
-  case whole(method, received, finished, limits)
-    Ok(response): Ok(Some(response))
-    Error(Bad(refusal)): Error(refusal)
-    Error(More):
-      return Ok(None) if not finished
-      Error(BadResponse(reason: "the connection closed before the response was whole"))
+  found = whole(method, received, finished, limits, from)
+  if finished and found is Error(More(_))
+    Error(bad("the connection closed before the response was whole"))
+  else
+    found
   end
+end
+
+## The walk of a chunked body none of which has been read.
+fn start() : Walk
+  Walk(at: 0, parts: [], total: 0)
 end
 
 fn bad(reason: Text) : Halt
   Bad(BadResponse(reason: reason))
 end
 
-fn whole(method: Text, received: Bytes, finished: Bool, limits: Limits) : Result(Response, Halt)
+fn whole(method: Text, received: Bytes, finished: Bool, limits: Limits, from: Walk) : Result(
+  Response,
+  Halt
+)
   cut = try mark_at(received, "\r\n\r\n".bytes, 0, limits.headers, "the headers are")
   head = try received.slice(0, cut).decode_utf8.or_fail(bad("the headers are not text"))
   lines = head.split("\r\n")
+  if not lines.all?(fn(line) plain?(line.replace("\t", " "), 32) end)
+    return Error(bad("a line holds a control character"))
+  end
   status = try code(lines.first or "").or_fail(bad("the status line is malformed"))
   headers = lines.drop(1).filter_map(fn(line) field(line) end)
   return Error(bad("a header line is malformed")) if headers.size != lines.size - 1
   body = if method == "HEAD" or status == 204 or status == 304
     "".bytes
   else
-    try content(headers, received.slice(cut + 4, received.size), finished, limits)
+    try content(headers, received.slice(cut + 4, received.size), finished, limits, from)
   end
   Ok(Response(status: status, headers: headers, body: body))
 end
@@ -410,8 +479,8 @@ fn mark_at(received: Bytes, mark: Bytes, from: Int, most: Int, what: Text) : Res
       Error(Bad(BadResponse(reason: "a line is longer than 3 bytes")))
     mark_at("abc".bytes, "\r\n".bytes, 0, 3, "a line is") ==
       Error(Bad(BadResponse(reason: "a line is longer than 3 bytes")))
-    mark_at("ab".bytes, "\r\n".bytes, 0, 3, "a line is") == Error(More)
-    mark_at("ab\r".bytes, "\r\n".bytes, 1, 3, "a line is") == Error(More)
+    mark_at("ab".bytes, "\r\n".bytes, 0, 3, "a line is") == Error(More(start()))
+    mark_at("ab\r".bytes, "\r\n".bytes, 1, 3, "a line is") == Error(More(start()))
   end
 
   last = received.size.min(from + most) - mark.size
@@ -421,7 +490,7 @@ fn mark_at(received: Bytes, mark: Bytes, from: Int, most: Int, what: Text) : Res
     at += 1
   end
   return Error(bad("#{what} longer than #{most} bytes")) if received.size >= from + most
-  Error(More)
+  Error(More(start()))
 end
 
 ## The status in a status line such as `HTTP/1.1 200 OK`: three digits after the version.
@@ -464,72 +533,111 @@ end
 
 ## The body in what followed the headers, by the framing the headers name: chunks, a length,
 ## or everything until the other side has finished.
-fn content(headers: List((Text, Text)), rest: Bytes, finished: Bool, limits: Limits) : Result(
+fn content(headers: List((Text, Text)), rest: Bytes, finished: Bool, limits: Limits, from: Walk) : Result(
   Bytes,
   Halt
 )
-  if named(headers, "transfer-encoding") is Some(coding)
+  codings = headers.filter(fn(h) h.0.ascii_lowercase == "transfer-encoding" end)
+  if not codings.empty?
+    coding = codings.map(fn(h) h.1 end).join(", ")
     if coding.ascii_lowercase != "chunked"
       return Error(bad("the transfer encoding #{coding} is not supported"))
     end
-    return chunks(rest, limits)
+    return chunks(rest, limits, from)
   end
   if named(headers, "content-length") is Some(written)
     length = try number(written).or_fail(bad("the Content-Length is not a number"))
     return Error(Bad(TooLarge(limit: limits.body))) if length > limits.body
-    return Error(More) if rest.size < length
+    return Error(More(from)) if rest.size < length
     return Ok(rest.slice(0, length))
   end
   return Error(Bad(TooLarge(limit: limits.body))) if rest.size > limits.body
-  return Error(More) if not finished
+  return Error(More(from)) if not finished
   Ok(rest)
 end
 
 ## The data of a chunked body, once its last chunk and the line that ends its trailers are in.
-fn chunks(rest: Bytes, limits: Limits) : Result(Bytes, Halt)
+## It reads on from the walk an earlier call stopped with, so no chunk is read twice.
+fn chunks(rest: Bytes, limits: Limits, from: Walk) : Result(Bytes, Halt)
   examples
-    chunks("3\r\nabc\r\n0\r\n\r\n".bytes, Limits(headers: 8, body: 3)) == Ok("abc".bytes)
-    chunks("1;x=y\r\na\r\n2\r\nbc\r\n0\r\nA: b\r\n\r\n".bytes, limits()) == Ok("abc".bytes)
-    chunks("0\r\n\r\n".bytes, limits()) == Ok("".bytes)
-    chunks("3\r\nabc\r\n0\r\n".bytes, limits()) == Error(More)
-    chunks("3\r\nabc\r\n".bytes, limits()) == Error(More)
-    chunks("3\r\nabc\r".bytes, limits()) == Error(More)
-    chunks("3\r\nabcde".bytes, limits()) ==
+    chunks("3\r\nabc\r\n0\r\n\r\n".bytes, Limits(headers: 8, body: 3), start()) == Ok("abc".bytes)
+    chunks("1;x=y\r\na\r\n2\r\nbc\r\n0\r\nA: b\r\n\r\n".bytes, limits(), start()) == Ok("abc".bytes)
+    chunks("0\r\n\r\n".bytes, limits(), start()) == Ok("".bytes)
+    chunks("3\r\nabc\r\n0\r\n".bytes, limits(), start()) ==
+      Error(More(Walk(at: 8, parts: ["abc".bytes], total: 3)))
+    chunks("3\r\nabc\r\n".bytes, limits(), start()) ==
+      Error(More(Walk(at: 8, parts: ["abc".bytes], total: 3)))
+    chunks("3\r\nabc\r\n2\r\nd".bytes, limits(), start()) ==
+      Error(More(Walk(at: 8, parts: ["abc".bytes], total: 3)))
+    chunks("3\r\nabc\r".bytes, limits(), start()) == Error(More(start()))
+    chunks(
+      "3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n".bytes,
+      Limits(headers: 8, body: 5),
+      Walk(at: 8, parts: ["abc".bytes], total: 3)
+    ) ==
+      Ok("abcde".bytes)
+    chunks(
+      "3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n".bytes,
+      Limits(headers: 8, body: 4),
+      Walk(at: 8, parts: ["abc".bytes], total: 3)
+    ) ==
+      Error(Bad(TooLarge(limit: 4)))
+    chunks("3\r\nabcde".bytes, limits(), start()) ==
       Error(Bad(BadResponse(reason: "a chunk's data doesn't end with a line break")))
-    chunks("-3\r\nabc\r\n0\r\n\r\n".bytes, limits()) ==
+    chunks("-3\r\nabc\r\n0\r\n\r\n".bytes, limits(), start()) ==
       Error(Bad(BadResponse(reason: "a chunk's size is malformed")))
-    chunks("2\r\nab\r\n2\r\ncd\r\n0\r\n\r\n".bytes, Limits(headers: 8, body: 3)) ==
+    chunks("2\r\nab\r\n2\r\ncd\r\n0\r\n\r\n".bytes, Limits(headers: 8, body: 3), start()) ==
       Error(Bad(TooLarge(limit: 3)))
-    chunks("0\r\nA: b\r\n\r\n".bytes, Limits(headers: 8, body: 3)) ==
+    chunks("2\r\nab\r\n2\r\nc".bytes, Limits(headers: 8, body: 3), start()) ==
+      Error(Bad(TooLarge(limit: 3)))
+    chunks("0\r\nA: b\r\n\r\n".bytes, Limits(headers: 8, body: 3), start()) ==
       Error(Bad(BadResponse(reason: "the trailers are longer than 8 bytes")))
-    chunks("1;#{"x".repeat(252)}\r\na\r\n0\r\n\r\n".bytes, limits()) == Ok("a".bytes)
-    chunks("1;#{"x".repeat(253)}\r\na\r\n0\r\n\r\n".bytes, limits()) ==
+    chunks("1;#{"x".repeat(252)}\r\na\r\n0\r\n\r\n".bytes, limits(), start()) == Ok("a".bytes)
+    chunks("1;#{"x".repeat(253)}\r\na\r\n0\r\n\r\n".bytes, limits(), start()) ==
       Error(Bad(BadResponse(reason: "a chunk's size line is longer than 256 bytes")))
   end
 
-  var at = 0
-  var parts = []
-  var total = 0
+  var at = from.at
+  var parts = from.parts
+  var total = from.total
   var last = false
   while not last
-    cut = try mark_at(rest, "\r\n".bytes, at, 256, "a chunk's size line is")
+    line = mark_at(rest, "\r\n".bytes, at, 256, "a chunk's size line is")
+    cut = try held(line, at, parts, total)
     size = try chunk_size(rest.slice(at, cut)).or_fail(bad("a chunk's size is malformed"))
-    total += size
-    return Error(Bad(TooLarge(limit: limits.body))) if total > limits.body
+    return Error(Bad(TooLarge(limit: limits.body))) if total + size > limits.body
     last = size == 0
     if not last
       data = cut + 2
       after = data + size
-      return Error(More) if rest.size < after + 2
+      return Error(More(Walk(at: at, parts: parts, total: total))) if rest.size < after + 2
       if rest.slice(after, after + 2) != "\r\n".bytes
         return Error(bad("a chunk's data doesn't end with a line break"))
       end
       parts = parts.append(rest.slice(data, after))
+      total += size
       at = after + 2
     end
   end
-  _trailers = try mark_at(rest, "\r\n\r\n".bytes, at, limits.headers, "the trailers are")
+  trailers = mark_at(rest, "\r\n\r\n".bytes, at, limits.headers, "the trailers are")
+  _end = try held(trailers, at, parts, total)
   Ok(Bytes.join(parts))
+end
+
+## `found`, with the walk so far in place of an empty one when more bytes must come.
+fn held(found: Result(Int, Halt), at: Int, parts: List(Bytes), total: Int) : Result(Int, Halt)
+  examples
+    held(Ok(4), 8, [], 3) == Ok(4)
+    held(Error(More(start())), 8, ["abc".bytes], 3) ==
+      Error(More(Walk(at: 8, parts: ["abc".bytes], total: 3)))
+    held(Error(bad("no")), 8, [], 3) == Error(bad("no"))
+  end
+
+  if found is Error(More(_))
+    Error(More(Walk(at: at, parts: parts, total: total)))
+  else
+    found
+  end
 end
 
 ## The size a chunk's first line gives, in hexadecimal, before any `;` and extension.
@@ -899,6 +1007,19 @@ test "a response is read whole however it says where it ends"
   closed = Response(status: 500, headers: [], body: "to the end".bytes)
   assert asked.send(Network.fake(replies([(asked, closed)]))) == Ok(closed)
   assert not closed.ok?
+end
+
+test "a chunked response read as each byte arrives is read on from where the walk stopped"
+  encoded = "4;note=1\r\nWiki\r\n5\r\npedia\r\n0\r\nExpires: never\r\n\r\n".bytes
+  all = answered(Response(status: 200, headers: [("Transfer-Encoding", "chunked")], body: encoded))
+  var walk = start()
+  for size in 1..all.size
+    assert read("GET", all.slice(0, size), false, limits(), walk) is Error(More(next))
+    walk = next
+  end
+  assert walk == Walk(at: 26, parts: ["Wiki".bytes, "pedia".bytes], total: 9)
+  assert read("GET", all, false, limits(), walk) is Ok(response)
+  assert response.body == "Wikipedia".bytes
 end
 
 test "a response that is cut off or past a limit is an error"
