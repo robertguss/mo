@@ -12,7 +12,14 @@ to_text,
 pretty,
 to_int,
 to_decimal,
-to_float
+to_float,
+get,
+at,
+path,
+text_at,
+int_at,
+bool_at,
+list_at
 
 enum Json
   Null
@@ -616,6 +623,147 @@ fn hex_digit(n: Int) : Text
   case "0123456789abcdef".chars.get(n)
     Some(digit): digit.to_text
     None: stop "a hexadecimal digit is from 0 to 15"
+  end
+end
+
+## The field of an object with this key, or None when the value isn't an object that has it.
+fn get(value: Json, key: Text) : Option(Json)
+  examples
+    Object({"a": Null}).get("a") == Some(Null)
+    Object({"a": Null}).get("b") == None
+    Array([Null]).get("0") == None
+  end
+
+  case value
+    Object(fields): fields.get(key)
+    Null | Boolean(_) | Number(_) | String(_) | Array(_): None
+  end
+end
+
+## The item of an array at this index, counted from 0, or None when the value isn't an array
+## that long.
+fn at(value: Json, index: Int) : Option(Json)
+  examples
+    Array([Null, int(7)]).at(0) == Some(Null)
+    Array([Null, int(7)]).at(1) == Some(int(7))
+    Array([Null]).at(1) == None
+    Array([Null]).at(-1) == None
+    Object({"0": Null}).at(0) == None
+  end
+
+  case value
+    Array(items): items.get(index)
+    Null | Boolean(_) | Number(_) | String(_) | Object(_): None
+  end
+end
+
+## The value at a path of steps separated by `.`, such as `items.0.user.login`. A step is a key
+## in an object and an index, counted from 0, in an array. The empty path is the value itself.
+fn path(value: Json, steps: Text) : Option(Json)
+  examples
+    Object({"items": Array([Object({"user": Object({"login": String("mo")})})])}).path(
+      "items.0.user.login"
+    ) ==
+      Some(String("mo"))
+    Array([Null]).path("") == Some(Array([Null]))
+    Array([Null]).path("5") == None
+    Object({"0": int(1)}).path("0") == Some(int(1))
+    String("pen").path("0") == None
+  end
+
+  if steps == ""
+    Some(value)
+  else
+    walked(value, steps.split("."))
+  end
+end
+
+fn walked(value: Json, steps: List(Text)) : Option(Json)
+  case steps
+    []: Some(value)
+    [step, ..rest]:
+      inner = case value
+        Object(fields): fields.get(step)
+        Array(items): items.get(try index(step))
+        Null | Boolean(_) | Number(_) | String(_): None
+      end
+      walked(try inner, rest)
+  end
+end
+
+## A step as an index: ASCII digits and nothing else.
+fn index(step: Text) : Option(Int)
+  examples
+    index("10") == Some(10)
+    index("-0") == None
+    index("x") == None
+  end
+
+  if step.starts_with?("-")
+    None
+  else
+    step.to_int
+  end
+end
+
+## The string at a path, or None when the path is absent or holds another kind of value.
+fn text_at(value: Json, steps: Text) : Option(Text)
+  examples
+    Object({"name": String("pen")}).text_at("name") == Some("pen")
+    Object({"name": int(1)}).text_at("name") == None
+    Object({}).text_at("name") == None
+  end
+
+  if path(value, steps) is Some(String(text))
+    Some(text)
+  else
+    None
+  end
+end
+
+## The whole number at a path, or None when the path is absent, holds another kind of value, or
+## holds a number that isn't a whole number that fits an Int.
+fn int_at(value: Json, steps: Text) : Option(Int)
+  examples
+    Array([int(7)]).int_at("0") == Some(7)
+    Array([decimal(1.5)]).int_at("0") == None
+    Array([String("7")]).int_at("0") == None
+  end
+
+  if path(value, steps) is Some(Number(number))
+    number.to_int
+  else
+    None
+  end
+end
+
+## The true or false at a path, or None when the path is absent or holds another kind of value.
+fn bool_at(value: Json, steps: Text) : Option(Bool)
+  examples
+    Object({"open": Boolean(false)}).bool_at("open") == Some(false)
+    Object({"open": Null}).bool_at("open") == None
+  end
+
+  if path(value, steps) is Some(Boolean(flag))
+    Some(flag)
+  else
+    None
+  end
+end
+
+## The items of the array at a path, or None when the path is absent or holds another kind of
+## value.
+fn list_at(value: Json, steps: Text) : Option(List(Json))
+  examples
+    Array([Null]).list_at("") == Some([Null])
+    Object({"items": Array([])}).list_at("items") == Some([])
+    Object({"items": Null}).list_at("items") == None
+  end
+
+  if path(value, steps) is Some(Array(items))
+    Some(items)
+  else
+    None
   end
 end
 

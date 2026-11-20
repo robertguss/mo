@@ -1,0 +1,8 @@
+{
+  "items": [
+    {"number": 1.5, "user": {"login": "mo"}},
+    {"number": 42, "open": false}
+  ],
+  "a.b": true,
+  "0": [null, "by key, then by index"]
+}

@@ -391,6 +391,21 @@ def guide_claims(binary):
             source.write_text(program.format(use=use, type=type_name))
             result = run(binary, ["run", str(source)], 0)
             assert result.stdout == b"null\n", (use, result.stdout, result.stderr)
+    says("with lookup by `get`, `at`, `path`, `text_at`, `int_at`, `bool_at` and `list_at`: "
+         "`reply.text_at(\"items.0.user.login\")` is `Some` of the string there, and `None` when "
+         "the path is absent or holds another kind of value")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\nuse Json\nfn main(console: Console)\n"
+            "  case Json.parse(\"{\\\"items\\\": [{\\\"user\\\": {\\\"login\\\": \\\"mo\\\"}}]}\")\n"
+            "    Ok(reply):\n"
+            "      console.print(\"#{reply.text_at(\"items.0.user.login\")}\")\n"
+            "      console.print(\"#{reply.text_at(\"items.1.user.login\")}\")\n"
+            "      console.print(\"#{reply.text_at(\"items.0.user\")}\")\n"
+            "    Error(_): console.print(\"not JSON\")\n  end\nend\n")
+        result = run(binary, ["run", str(source)], 0)
+        assert result.stdout == b'Some("mo")\nNone\nNone\n', (result.stdout, result.stderr)
 
 
 def emit_command(binary):

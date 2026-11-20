@@ -234,7 +234,8 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes						No program can move the system clock outside the years 1 to 9999; Clock.fixed, Args, Env and Random fakes are asserted.
 14/21	lib-json-query,lib-json-errors			
 14/22	lib-json-query,lib-json-errors,lib-json-numbers				lib/json.mo:to_decimal
-14/23	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
+14/23	lib-json-lookup				lib/json.mo:path
+14/24	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases
 A/2		e0412			ci/check_errors.py:check_cases

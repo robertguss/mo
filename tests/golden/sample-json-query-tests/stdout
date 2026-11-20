@@ -1,28 +1,4 @@
-passed JsonQuery.parse.example.1  examples/json-query.mo:35:5
-passed JsonQuery.parse.example.2  examples/json-query.mo:36:5
-passed JsonQuery.parse.example.3  examples/json-query.mo:37:5
-passed JsonQuery.parse.example.4  examples/json-query.mo:38:5
-passed JsonQuery.parse.example.5  examples/json-query.mo:39:5
-passed JsonQuery.parse.example.6  examples/json-query.mo:40:5
-passed JsonQuery.parse.example.7  examples/json-query.mo:41:5
-passed JsonQuery.parse.example.8  examples/json-query.mo:42:5
-passed JsonQuery.parse.example.9  examples/json-query.mo:43:5
-passed JsonQuery.parse.example.10  examples/json-query.mo:44:5
-passed JsonQuery.parse.example.11  examples/json-query.mo:45:5
-passed JsonQuery.parse.example.12  examples/json-query.mo:46:5
-passed JsonQuery.hex_value.example.1  examples/json-query.mo:105:5
-passed JsonQuery.hex_value.example.2  examples/json-query.mo:106:5
-passed JsonQuery.hex_value.example.3  examples/json-query.mo:107:5
-passed JsonQuery.hex_value.example.4  examples/json-query.mo:108:5
-passed JsonQuery.pretty.example.1  examples/json-query.mo:207:5
-passed JsonQuery.pretty.example.2  examples/json-query.mo:208:5
-passed JsonQuery.quoted.example.1  examples/json-query.mo:232:5
-passed JsonQuery.quoted.example.2  examples/json-query.mo:233:5
-passed JsonQuery.quoted.example.3  examples/json-query.mo:234:5
-passed JsonQuery.at_path.example.1  examples/json-query.mo:265:5
-passed JsonQuery.at_path.example.2  examples/json-query.mo:270:5
-passed JsonQuery.at_path.example.3  examples/json-query.mo:271:5
-passed JsonQuery.test.1  examples/json-query.mo:321:1
-passed JsonQuery.test.2  examples/json-query.mo:327:1
-gates: 88 mutants tried, 88 killed (0 promise, 83 example, 5 test, 0 recovery, 0 start), 0 survived, 0 dropped
-26 passed, 0 failed, 0 stopped
+passed JsonQuery.test.1  examples/json-query.mo:44:1
+passed JsonQuery.test.2  examples/json-query.mo:53:1
+gates: 4 mutants tried, 4 killed (0 promise, 0 example, 4 test, 0 recovery, 0 start), 0 survived, 0 dropped
+2 passed, 0 failed, 0 stopped
