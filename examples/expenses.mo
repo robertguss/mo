@@ -67,16 +67,13 @@ fn layout(rows: List((Text, Decimal))) : List(Text)
 
   names = rows.map(fn(row) row.0 end)
   amounts = rows.map(fn(row) row.1.to_fixed(2) end)
-  widths = (
-    names.map(fn(name) name.char_count end).max,
-    amounts.map(fn(amount) amount.char_count end).max
-  )
-  case widths
-    (Some(name_width), Some(amount_width)): names.zip(amounts).map(
-      fn(pair) "#{pair.0.pad_right(name_width)}  #{pair.1.pad_left(amount_width)}" end
-    )
-    _: []
+  name_width = names.map(fn(name) name.char_count end).max or 0
+  amount_width = amounts.map(fn(amount) amount.char_count end).max or 0
+  var lines = []
+  for (name, amount) in names.zip(amounts)
+    lines = lines.append("#{name.pad_right(name_width)}  #{amount.pad_left(amount_width)}")
   end
+  lines
 end
 
 fn main(args: Args, console: Console, files: ReadFiles) : Int

@@ -5,5 +5,4 @@ failed Main.test.2  tests/golden/tst-failing-assert/main.mo:11:1
   12 |   assert triple(5) == 16
      |   ^^^^^^^^^^^^^^^^^^^^^^ this assertion was false
 passed Main.test.3  tests/golden/tst-failing-assert/main.mo:15:1
-gates: did not run: a check did not pass
 2 passed, 1 failed, 0 stopped

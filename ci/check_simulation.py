@@ -28,13 +28,12 @@ end
 '''
 
 
-def results(binary, path, status=0, *flags, unstated=()):
+def results(binary, path, status=0, *flags):
     result = subprocess.run([str(binary), 'test', '--json', *flags, str(path)],
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == status and not result.stderr, result
     records = [json.loads(line) for line in result.stdout.splitlines()]
-    assert [r['primary']['label'] for r in records if r['record'] == 'diagnostic'] == list(
-        unstated), records
+    assert not any(r['record'] == 'diagnostic' for r in records), records
     return [r for r in records if r['record'] == 'result']
 
 
@@ -66,9 +65,7 @@ test "exactly 10000 scheduled firings succeed"
   assert Simulation.send(sim, Main.snapshot) == Ok([10001])
 end
 ''')
-        assert results(binary, path, 1, unstated=[
-            'Main.snapshot: write a service promise on snapshot, or give it a promise or an '
-            'example'])[0]['outcome'] == 'passed'
+        assert results(binary, path)[0]['outcome'] == 'passed'
 
         paired = SERVICE.replace('every 1.minute tick',
                                  'every 1.minute tick\n  every 1.minute second')

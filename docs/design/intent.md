@@ -317,10 +317,8 @@ child, the same executable running `mo test --bundle FILE`, follows it:
    bundle carries, under the door's plan, and reports only pass, fail or
    incomplete.
 
-The check child calls the checks directly, not through plain `mo test`, so it
-tries no mutants and asks no function or tool to state intent (reference 12.6).
-Its checks, plan and limits are the same as before plain `mo test` gained those
-gates; the door will get them only under a plan of its own.
+The check child runs the checks under the door's plan and limits and never
+runs `mo test --mutants` (reference 12.6).
 
 The door runs only what the pushed program carries: the modules its entry
 imports. Tests in a module the served program does not import, such as the task

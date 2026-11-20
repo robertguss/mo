@@ -22,12 +22,9 @@ def imported_constants(binary):
                         'test "foreign owned text"\nassert greeting == "λ\\u{0}owned"\nend\n'
                         'fn main() : Int\nprobe(["main"])\nend\n')
         items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
-        assert [r['name'] for r in items if r['record'] == 'result'] == [
+        assert [r['name'] for r in items[1:-1]] == [
             'Main.probe.promise.1', 'Main.test.1', 'Origin.test.1']
         assert items[-1]['passed'] == 3 and items[-1]['errors'] == 0
-        assert items[-1]['mutants'] == {'tried': 5, 'killed': {'promise': 3, 'example': 0,
-                                        'test': 2, 'recovery': 0, 'start': 0},
-                                        'survived': 0, 'dropped': 0}, items[-1]
         assert items[3]['span']['file'] == str(origin)
         result = run(binary, ['run', str(path)], 52)
         assert not result.stdout and not result.stderr
@@ -49,13 +46,10 @@ def imported_constants(binary):
                         'test "dependency constants"\nassert answer == 42\n'
                         'assert snapshot() == "λ\\u{0}owned"\nend\n'
                         'fn main() : Int\nprobe(None)\nend\n')
-        items = records(run(binary, ['test', '--json', str(path)], 1), 'test')
-        assert [r['name'] for r in items if r['record'] == 'result'] == [
+        items = records(run(binary, ['test', '--json', str(path)], 0), 'test')
+        assert [r['name'] for r in items[1:-1]] == [
             'Main.test.1', 'Bridge.probe.promise.1']
-        assert [(r['code'], r['primary']['label']) for r in items if r['record'] == 'diagnostic'] == [
-            ('E1440', 'Origin.evaluate: give it a promise or an example'),
-            ('E1440', 'Origin.freeze: give it a promise or an example')], items
-        assert items[-1]['passed'] == 2 and items[-1]['gates'] == 'did not run'
+        assert items[-1]['passed'] == 2 and items[-1]['errors'] == 0
         assert items[2]['span']['file'] == str(bridge)
         result = run(binary, ['run', str(path)], 42)
         assert not result.stdout and not result.stderr
@@ -197,11 +191,9 @@ def observations(binary):
                                     "start": 144, "end": 184,
                                     "line": 14, "column": 1, "end_line": 14, "end_column": 36}
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 2, "failed": 2, "stopped": 0, "gates": "did not run",
-                             "status": 1}
+                             "passed": 2, "failed": 2, "stopped": 0, "status": 1}
         text = run(binary, ["test", str(path)], 1)
-        assert not text.stderr and text.stdout.endswith(
-            b"gates: did not run: a check did not pass\n2 passed, 2 failed, 0 stopped\n")
+        assert not text.stderr and text.stdout.endswith(b"2 passed, 2 failed, 0 stopped\n")
         assert b"this example was false" in text.stdout and b"this assertion was false" in text.stdout
         assert "λ\\x00right 2:X,\\x0a".encode() in text.stdout and b"main ran" not in text.stdout
         selected = records(run(binary, ["test", "--json", "--only", "Main.test.2",
@@ -218,15 +210,11 @@ def observations(binary):
                         'value\nend\ntest "selected control"\nassert true\nend\n'
                         'fn main()\nstop "main ran"\nend\n')
         listed = records(run(binary, ["test", "--json", "--list", str(path)], 0), "test")
-        assert [(r["record"], r["name"], r.get("mutants")) for r in listed[1:-1]] == [
-            ("test", "Main.keep.promise.1", None), ("test", "Main.test.1", None),
-            ("function", "Main.keep", 0), ("function", "Main.main", 0)]
+        assert [r["name"] for r in listed[1:-1]] == ["Main.keep.promise.1", "Main.test.1"]
         original = path.read_text()
         path.write_text(original.replace('allows value: 3, result: 3', 'allows value: 3, result: 4'))
         listed = records(run(binary, ["test", "--json", "--list", str(path)], 0), "test")
-        assert [(r["record"], r["name"], r.get("mutants")) for r in listed[1:-1]] == [
-            ("test", "Main.keep.promise.1", None), ("test", "Main.test.1", None),
-            ("function", "Main.keep", 0), ("function", "Main.main", 0)]
+        assert [r["name"] for r in listed[1:-1]] == ["Main.keep.promise.1", "Main.test.1"]
         anchored = records(run(binary, ["test", "--json", "--only", "Main.test.1", str(path)], 1), "test")
         assert anchored[1]["code"] == "E1405" and anchored[-1]["passed"] == 0
         path.write_text(original)
@@ -303,7 +291,7 @@ def observations(binary):
         assert [f["function"] for f in defect["stack"]] == ["Main.divide", "Main.divide.example.1"]
         assert defect["variables"] == [{"name": "n", "value": "7"}]
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 1, "failed": 1, "stopped": 1, "gates": "did not run", "status": 1}
+                             "passed": 1, "failed": 1, "stopped": 1, "status": 1}
         text = run(binary, ["test", str(path)], 1)
         assert not text.stderr and b"bug: dividing by zero" in text.stdout
         assert b"n = 7" in text.stdout and b"main must not run" not in text.stdout
@@ -428,7 +416,7 @@ def captures(binary):
         assert [f["function"] for f in defect["stack"]] == ["Main.divide.fn.1", "Main.test.4"]
         assert defect["variables"] == [{"name": "base", "value": "17"}, {"name": "value", "value": "0"}]
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 3, "failed": 1, "stopped": 1, "gates": "did not run", "status": 1}
+                             "passed": 3, "failed": 1, "stopped": 1, "status": 1}
         text = run(binary, ["test", str(path)], 1)
         assert not text.stderr and text.stdout.endswith(b"3 passed, 1 failed, 1 stopped\n")
         assert b"main must not execute" not in text.stdout and b"base = 17" in text.stdout
@@ -523,7 +511,7 @@ def imports(binary):
         assert [f["span"]["file"] for f in defect["stack"]] == [str(owner), str(path)]
         assert defect["variables"] == [{"name": "base", "value": "17"}, {"name": "value", "value": "0"}]
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 4, "failed": 1, "stopped": 1, "gates": "did not run", "status": 1}
+                             "passed": 4, "failed": 1, "stopped": 1, "status": 1}
         text = run(binary, ["test", str(path)], 1)
         assert not text.stderr and text.stdout.endswith(b"4 passed, 1 failed, 1 stopped\n")
         assert b"base = 17" in text.stdout and b"shapes.mo:16:11" in text.stdout
@@ -634,7 +622,7 @@ def generic_imports(binary):
         assert [f["span"]["file"] for f in defect["stack"]] == [str(owner), str(path)]
         assert defect["variables"] == [{"name": "base", "value": "23"}, {"name": "value", "value": "0"}]
         assert items[-1] == {"record": "totals", "errors": 0, "dropped": 0,
-                             "passed": 7, "failed": 1, "stopped": 1, "gates": "did not run", "status": 1}
+                             "passed": 7, "failed": 1, "stopped": 1, "status": 1}
         text = run(binary, ["test", str(path)], 1)
         assert not text.stderr and text.stdout.endswith(b"7 passed, 1 failed, 1 stopped\n")
         assert b"base = 23" in text.stdout and b"Main::Calc.ratio(Int).fn.1" in text.stdout

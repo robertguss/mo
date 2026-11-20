@@ -79,12 +79,8 @@ end
 ## A column's title and cells, padded to the same width.
 fn pad_column(rows: List(T), column: Column(T)) : List(Text)
   cells = [column.title].concat(rows.map(column.cell))
-  case cells.map(fn(cell) cell.char_count end).max
-    Some(width): cells.map(
-      fn(cell) if column.numeric?: cell.pad_left(width) else: cell.pad_right(width) end
-    )
-    None: cells
-  end
+  width = cells.map(fn(cell) cell.char_count end).max or 0
+  cells.map(fn(cell) if column.numeric?: cell.pad_left(width) else: cell.pad_right(width) end)
 end
 
 kettle = Product(name: "Kettle", category: "kitchen", price: 39.90, stock: 12)

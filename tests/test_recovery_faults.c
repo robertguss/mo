@@ -338,9 +338,7 @@ static void promise_after_refusal(void) {
 int main(void) {
     CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, directly, NULL) == 0);
     CHECK(mo_with_stack(MO_SOURCE_STACK_SIZE, shrunk_advance, NULL) == 0);
-    check_command(1, 0, "passed",
-                  "gates: did not run: the run selects checks or sets a limit\n"
-                  "1 passed, 0 failed, 0 stopped\n");
+    check_command(1, 0, "passed", "1 passed, 0 failed, 0 stopped\n");
     check_command(0, 1, "failed",
                   "  sequences: 3\n"
                   "  1. add(1)  replied Unit, committed\n"
@@ -348,7 +346,6 @@ int main(void) {
                   "  3. restart  recovered a different state\n"
                   "  state before step 2: 1\n"
                   "  state after step 3: 0\n"
-                  "gates: did not run: the run selects checks or sets a limit\n"
                   "0 passed, 1 failed, 0 stopped\n");
     char refused[512];
     int written = snprintf(refused, sizeof refused,
@@ -357,7 +354,6 @@ int main(void) {
                            "  2. crash\n"
                            "  3. restart  recovery refused the store: %s\n"
                            "  state before step 2: 0\n"
-                           "gates: did not run: the run selects checks or sets a limit\n"
                            "0 passed, 1 failed, 0 stopped\n",
                            mo_service_status_text(MO_SERVICE_SAVED_INVALID));
     MO_ASSERT(written > 0 && (size_t)written < sizeof refused);

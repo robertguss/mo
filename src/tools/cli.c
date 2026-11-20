@@ -201,6 +201,7 @@ enum flag_id {
     FLAG_NO,
     FLAG_OUT,
     FLAG_REVIEW,
+    FLAG_MUTANTS,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -261,7 +262,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_UPGRADE_TOKEN_ENV, "--upgrade-token-env", false, false, VALUE_TEXT, 0,
      ON(SERVE) | ON(PUSH)},
     {FLAG_STRENGTH, "--strength", false, false, VALUE_TEXT, 0, ON(TEST)},
-    {FLAG_AGAINST, "--against", false, false, VALUE_TEXT, 0, ON(INTENT) | ON(TEST)},
+    {FLAG_AGAINST, "--against", false, false, VALUE_TEXT, 0, ON(INTENT)},
     {FLAG_APPROVAL_TOKEN_ENV, "--approval-token-env", false, false, VALUE_TEXT, 0,
      ON(SERVE) | ON(REVIEW)},
     {FLAG_ITEMS, "--items", false, false, VALUE_NONE, 0, ON(REVIEW)},
@@ -271,6 +272,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_NO, "--no", false, false, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_OUT, "--out", false, false, VALUE_TEXT, 0, ON(REVIEW)},
     {FLAG_REVIEW, "--review", false, false, VALUE_TEXT, 0, ON(SERVE)},
+    {FLAG_MUTANTS, "--mutants", false, false, VALUE_NONE, 0, ON(TEST)},
 };
 #undef ON
 
@@ -320,6 +322,9 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_REVIEW:
         out->review = operand;
+        break;
+    case FLAG_MUTANTS:
+        out->mutants = true;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -608,17 +613,13 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                        (UINT64_C(1) << FLAG_CALLS) | (UINT64_C(1) << FLAG_SECONDS) |
                        (UINT64_C(1) << FLAG_MAX_STACK) | (UINT64_C(1) << FLAG_MAX_DEPTH) |
                        (UINT64_C(1) << FLAG_MAX_HEAP);
-    bool against = out->command == MO_COMMAND_TEST && out->against != NULL;
-    if (against &&
-        (out->list || out->source_bundle || out->strength != NULL || (seen & limited) != 0))
+    if (out->mutants && (out->output != NULL || out->source_bundle || out->strength != NULL ||
+                         (seen & limited) != 0))
         return refuse(out, error,
-                      "--against runs every check and tries the mutants of what changed; it takes "
-                      "no --only, --in, --calls, --seconds, --max-stack, --max-depth, --max-heap, "
-                      "--list, --bundle or --strength",
-                      "--against", NULL);
-    out->gates = out->command == MO_COMMAND_TEST && !out->source_bundle && out->strength == NULL;
-    out->gates_skipped = out->gates && (seen & limited) != 0;
-    out->gates = out->gates && !out->gates_skipped;
+                      "--mutants runs every check and tries every mutant; it takes no -o, "
+                      "--only, --in, --calls, --seconds, --max-stack, --max-depth, --max-heap, "
+                      "--bundle or --strength",
+                      "--mutants", NULL);
     bool checks = out->command == MO_COMMAND_TEST && out->source_bundle && !out->list;
     if (checks && (out->output != NULL || out->json || out->strength != NULL ||
                    (seen & (planned | (UINT64_C(1) << FLAG_SECONDS))) != 0))

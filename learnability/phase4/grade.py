@@ -49,7 +49,6 @@ import fixture  # noqa: E402
 
 SECONDS = 240  # per command: the queue's own tests take about a minute on a debug build
 SESSION_FILES = ('main.mo', 'job-queue.mo', 'queue-tests.mo')
-QUEUE_MODULES = ('JobQueue', 'QueueTests', 'Main')
 BLOCK = re.compile(r'^(\s*)(test "|examples\s*$|promise ")')
 LEAK_WORDS = re.compile(r'\b(handler|function|expire|release|checked|shown\?|leased_job|put|'
                         r'JobQueue|QueueTests|Main)\b|mo-|\.mo\b', re.IGNORECASE)
@@ -89,16 +88,15 @@ def check_problems(work, mo):
     return found
 
 
-def test_problems(work, mo, file, modules):
-    """Runs the checks of each module named, in one file's program, one module at a time so that
-    no mutant is tried; every result must pass. Returns (compiled, problems)."""
-    found, status = [], 0
-    for module in modules:
-        result = run([mo, 'test', '--json', file, '--in', module], work)
-        if result is None:
-            return True, [f'{file}: did not finish within {SECONDS} seconds']
-        found += records(result)
-        status = status or result.returncode
+def test_problems(work, mo, file, module=None):
+    """Runs the checks of a file's program (or one module when named); every result must pass.
+    Returns (compiled, problems)."""
+    extra = ['--in', module] if module else []
+    result = run([mo, 'test', '--json', file, *extra], work)
+    if result is None:
+        return True, [f'{file}: did not finish within {SECONDS} seconds']
+    found = records(result)
+    status = result.returncode
     diagnostics = [f'{r["code"]} {r["headline"]}' for r in found
                    if r.get('record') == 'diagnostic']
     if diagnostics:
@@ -189,7 +187,7 @@ def hidden_problems(variant, work, mo):
         if target.is_symlink() or target.exists():
             target.unlink()
         shutil.copyfile(source, target)
-    return test_problems(work, mo, 'hidden-tests.mo', ['HiddenTests'])
+    return test_problems(work, mo, 'hidden-tests.mo', 'HiddenTests')
 
 
 def grade_folder(variant, mo, folder, answer_problems=None):
@@ -200,7 +198,7 @@ def grade_folder(variant, mo, folder, answer_problems=None):
         notes, problems = prepared(variant, pathlib.Path(folder), work)
         problems += check_problems(work, mo)  # a changed tool's compile error is a reason too
         if not problems:
-            _, failed = test_problems(work, mo, 'queue-tests.mo', QUEUE_MODULES)
+            _, failed = test_problems(work, mo, 'queue-tests.mo')
             problems += failed
         if not problems and defect(variant):
             _, failed = hidden_problems(variant, work, mo)
@@ -371,7 +369,7 @@ def check_variant(variant, mo, built):
             work = pathlib.Path(second) / 'work'
             prepared(variant, start, work)
             problems += check_problems(work, mo)
-            _, failed = test_problems(work, mo, 'queue-tests.mo', QUEUE_MODULES)
+            _, failed = test_problems(work, mo, 'queue-tests.mo')
             problems += [f'its own tests: {line}' for line in failed]
             if defect(variant):
                 problems += must_fail(variant, work, mo, 'the unfixed variant')

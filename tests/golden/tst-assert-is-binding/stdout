@@ -1,3 +1,2 @@
 passed Main.test.1  tests/golden/tst-assert-is-binding/main.mo:16:1
-gates: 3 mutants tried, 1 killed (0 promise, 0 example, 1 test, 0 recovery, 0 start), 2 survived, 0 dropped
 1 passed, 0 failed, 0 stopped

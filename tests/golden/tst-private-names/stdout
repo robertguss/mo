@@ -1,4 +1,2 @@
-passed Main.run.example.1  tests/golden/tst-private-names/main.mo:12:5
-passed Main.test.1  tests/golden/tst-private-names/main.mo:18:1
-gates: 2 mutants tried, 2 killed (0 promise, 2 example, 0 test, 0 recovery, 0 start), 0 survived, 0 dropped
-2 passed, 0 failed, 0 stopped
+passed Main.test.1  tests/golden/tst-private-names/main.mo:14:1
+1 passed, 0 failed, 0 stopped

@@ -1,5 +1,0 @@
-error E1439: a mutant survived: no check noticed this change  tests/golden/tst-passing/main.mo:21:8
-
-  21 |   if a <= b: (a, b) else: (b, a)
-     |        ^^ Main.ordered: boundary, `<=` to `<`
-

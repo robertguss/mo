@@ -5,5 +5,4 @@ stopped Main.test.2  tests/golden/tst-stop-in-test/main.mo:11:1
   at Main.halve  tests/golden/tst-stop-in-test/main.mo:4:18
   at Main.test.2  tests/golden/tst-stop-in-test/main.mo:12:10
   n = 7
-gates: did not run: a check did not pass
 1 passed, 0 failed, 1 stopped

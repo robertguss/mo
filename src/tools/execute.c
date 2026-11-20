@@ -182,10 +182,6 @@ static void execute_pipeline(void *argument) {
             work->mistake = selection->mistake;
             return;
         }
-        if (cli->against != NULL && stat(cli->against, &st) != 0) {
-            work->mistake = "--against names no file";
-            return;
-        }
         if (cli->json) {
             work->version = mo_write_version(work->output, cli->command);
             if (!work->version) {
@@ -219,18 +215,14 @@ static void execute_pipeline(void *argument) {
                     return;
                 }
             }
-            if (cli->gates)
+            if (cli->mutants)
                 mo_gates_list(arena, program, sources, cli->json, work->output, diags);
             return;
         }
-        if (cli->gates) {
-            mo_gates(cli, arena, program, sources, library, selection, work->output, diags,
-                     &work->totals);
+        if (cli->mutants) {
+            mo_gates(cli, arena, program, sources, selection, work->output, diags, &work->totals);
             return;
         }
-        if (cli->gates_skipped)
-            work->totals.gates = (struct mo_gate_totals){
-                .asked = true, .skipped = "the run selects checks or sets a limit"};
         mo_run_tests(cli, arena, program, sources, selection, work->output, diags, &work->totals);
         return;
     }

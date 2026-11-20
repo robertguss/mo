@@ -1,5 +1,4 @@
 passed Greet.greeting.example.1  examples/greet.mo:6:5
 passed Greet.greeting.example.2  examples/greet.mo:7:5
 passed Greet.test.1  examples/greet.mo:17:1
-gates: 0 mutants tried, 0 killed (0 promise, 0 example, 0 test, 0 recovery, 0 start), 0 survived, 1 dropped
 3 passed, 0 failed, 0 stopped

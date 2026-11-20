@@ -14,5 +14,4 @@ passed Todo.apply.example.3  examples/todo.mo:102:5
 passed Todo.apply.example.4  examples/todo.mo:103:5
 passed Todo.test.1  examples/todo.mo:141:1
 passed Todo.test.2  examples/todo.mo:152:1
-gates: 22 mutants tried, 22 killed (0 promise, 18 example, 4 test, 0 recovery, 0 start), 0 survived, 0 dropped
 16 passed, 0 failed, 0 stopped
