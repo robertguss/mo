@@ -8,7 +8,7 @@ The language headings below use the present tense of the reference.
 
 This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history`, `mo diff` and `mo install`. The program below checks with no errors, runs, and passes its examples and its test.
 
-`mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks again, and prints the errors that are left, as `mo check` does. It rewrites only the files it is given.
+`mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks again, and prints the errors that are left, as `mo check` does. It rewrites only the files it is given. `mo format --stdin` formats standard input to standard output for editors without touching files on disk.
 
 `mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A module with neither `main` nor a service is E0079, as for `mo run`, and a file that cannot be written is E1404. `mo run OUT [ARGS...]` loads, verifies and runs an emitted bytecode file directly without source files; an unreadable or invalid bytecode file is E1404, a service entry module is E1408, and a module without `main` is E0079.
 

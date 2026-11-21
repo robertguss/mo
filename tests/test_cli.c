@@ -167,6 +167,13 @@ static void parse_commands(void) {
     }
     const char *inst_two[] = {"mo", "install", "a.mo", "b.mo"};
     CHECK(!mo_cli_parse(4, inst_two, &cli, &error));
+
+    const char *fmt_stdin[] = {"mo", "format", "--stdin"};
+    CHECK(mo_cli_parse(3, fmt_stdin, &cli, &error) && cli.command == MO_COMMAND_FORMAT &&
+          cli.stdin_mode && cli.file_count == 0);
+    const char *fmt_stdin_file[] = {"mo", "format", "--stdin", "a.mo"};
+    CHECK(!mo_cli_parse(4, fmt_stdin_file, &cli, &error));
+    CHECK(strcmp(error, "format --stdin takes no files: \"--stdin\"") == 0);
 }
 
 static void refused(int argc, const char *const *argv, const char *expected) {

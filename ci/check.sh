@@ -550,6 +550,9 @@ make --no-print-directory library-map
 step "Every fuzz target has a committed corpus or a Makefile generated-seed branch"
 if have python3; then python3 ci/check_fuzz_seeds.py; else missing "python3 is not installed"; fi
 
+step "Editor grammars, queries and installer (Zed & Cursor/VS Code)"
+if have python3; then python3 ci/check_editors.py; else missing "python3 is not installed"; fi
+
 step "Formatting"
 if have clang-format; then make --no-print-directory format-check; else missing "clang-format is not installed"; fi
 

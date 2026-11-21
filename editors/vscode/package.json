@@ -1,0 +1,74 @@
+{
+  "name": "mo-language",
+  "displayName": "Mo",
+  "description": "Syntax highlighting, indentation, snippets, and mo format integration for the Mo language.",
+  "version": "0.3.0",
+  "publisher": "mo-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters"
+  ],
+  "activationEvents": [
+    "onLanguage:mo"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "mo",
+        "aliases": [
+          "Mo",
+          "mo"
+        ],
+        "extensions": [
+          ".mo"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mo",
+        "scopeName": "source.mo",
+        "path": "./syntaxes/mo.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.mo.codeblock",
+        "path": "./syntaxes/mo.markdown.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.mo": "mo"
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "mo",
+        "path": "./snippets/mo.code-snippets"
+      }
+    ],
+    "configuration": {
+      "title": "Mo",
+      "properties": {
+        "mo.executablePath": {
+          "type": "string",
+          "default": "mo",
+          "description": "Path to the mo executable used for document formatting (falls back to ~/.local/bin/mo when not on PATH)."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[mo]": {
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true,
+        "editor.defaultFormatter": "mo-lang.mo-language"
+      }
+    }
+  }
+}

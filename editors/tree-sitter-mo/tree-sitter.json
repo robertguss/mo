@@ -1,0 +1,20 @@
+{
+  "grammars": [
+    {
+      "name": "mo",
+      "camelcase": "Mo",
+      "scope": "source.mo",
+      "path": ".",
+      "file-types": ["mo"],
+      "highlights": "../zed/languages/mo/highlights.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.3.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for the Mo programming language",
+    "links": {
+      "repository": "https://github.com/robertguss/mo"
+    }
+  }
+}

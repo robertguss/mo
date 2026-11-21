@@ -196,6 +196,7 @@ enum flag_id {
     FLAG_STATE_DIR,
     FLAG_NAME,
     FLAG_BIN_DIR,
+    FLAG_STDIN,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -262,6 +263,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_STATE_DIR, "--state-dir", false, false, VALUE_TEXT, 0, ON(RUN) | ON(INSTALL)},
     {FLAG_NAME, "--name", false, false, VALUE_TEXT, 0, ON(INSTALL)},
     {FLAG_BIN_DIR, "--bin-dir", false, false, VALUE_TEXT, 0, ON(INSTALL)},
+    {FLAG_STDIN, "--stdin", false, false, VALUE_NONE, 0, ON(FORMAT)},
 };
 #undef ON
 
@@ -323,6 +325,9 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_BIN_DIR:
         out->bin_dir = operand;
+        break;
+    case FLAG_STDIN:
+        out->stdin_mode = true;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -614,10 +619,13 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
             break;
         }
     }
+    if (out->command == MO_COMMAND_FORMAT && out->stdin_mode && out->file_count != 0)
+        return refuse(out, error, "format --stdin takes no files", "--stdin", NULL);
     if (out->command == MO_COMMAND_HISTORY && out->file_count == 0)
         return refuse(out, error, "history needs a data folder", command, NULL);
     if (out->command != MO_COMMAND_GUIDE && out->command != MO_COMMAND_SERVE &&
         out->command != MO_COMMAND_REHEARSE && out->file_count == 0 &&
+        !(out->command == MO_COMMAND_FORMAT && out->stdin_mode) &&
         !(out->command == MO_COMMAND_REPLAY && out->data != NULL))
         return refuse(out, error, "command needs a file", command, NULL);
     if (out->command == MO_COMMAND_QUERY && out->file_count != 2)
