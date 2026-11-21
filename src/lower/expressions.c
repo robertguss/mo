@@ -266,6 +266,11 @@ static void pattern_task(struct body *b, struct task t) {
         pattern_parts(b, pattern, values, yes, t.else_, t.out);
         return;
     }
+    if (pattern->kind == MO_PATTERN_CONSTRUCTOR && ty->tag == MO_CORE_TY_UNIT) {
+        MO_ASSERT(pattern->part_count == 0);
+        *t.out = yes;
+        return;
+    }
     mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
     *t.out = e;
     if (pattern->kind == MO_PATTERN_LIST) {

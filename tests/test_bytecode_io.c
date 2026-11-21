@@ -559,7 +559,8 @@ static void test_refusals(void) {
     BAD_TABLE(types, 18, parameter_count, 0, "invalid type parameter count");
     BAD_TABLE(types, 19, parameter_count, 1, "invalid type parameter count");
     BAD_TABLE(types, 20, field_count, MO_LIMIT_FIELDS + 1U, "invalid array or count past limit");
-    BAD_TABLE(types, 25, capability, (enum mo_capability)12, "unknown capability");
+    BAD_TABLE(types, 25, capability, (enum mo_capability)(MO_CAP_COMMAND + 1),
+              "unknown capability");
     BAD_TABLE(types, 31, kind, MO_TYPE_INT, "duplicate interned type");
     const uint32_t bad_index[] = {UINT32_MAX}, cycle[] = {4};
     BAD_TABLE(types, 4, parameters, bad_index, "type index out of range");
@@ -1824,7 +1825,7 @@ static void test_refusal_details(void) {
         LOCAL(p.types[3] + 4, ARRAY_COUNT(strings), "name string index out of range"),
         LOCAL(p.types[3] + 4, 22, "name is empty or contains NUL"),
         LOCAL(p.types[3] + 4, 21, "name is empty or contains NUL"),
-        LOCAL(p.types[25] + 4, 12, "unknown capability"),
+        LOCAL(p.types[25] + 4, MO_CAP_COMMAND + 1, "unknown capability"),
         LOCAL(p.types[3] + 8, 0, "choice has no cases"),
         LOCAL(p.types[4] + 4, 0, "invalid type parameter count"),
         LOCAL(p.types[5] + 4, 1, "invalid type parameter count"),

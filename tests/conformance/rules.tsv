@@ -144,6 +144,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.1/10	cap-network-fake				tests/test_network.c:test_round_trip
 11.1/11	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
 11.1/12	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
+11.1/13	cap-command-fake				tests/test_command.c:test_real_command
 11.2/1	cap-files-read,cap-args-list,cap-network-error	e0079			tests/test_check.c:corpus
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
 11.3/1	cap-files-fake,cap-files-within-escape			
@@ -181,7 +182,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/10		e0107,e0107-no-tool,e0107-reserved,e1109,service-promise-result,service-promise-restart			ci/check_task_queue.py:simulation,ci/cli_intent.py:service_promise_checks
 12.2/11	mod-hidden-type,fail-result-declared	e0007-requires
 12.3/1	tst-passing,tst-private-names,sample-job-queue-tests	tst-failing-assert		
-12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes,cap-network-fake,api-server	e0098,e0098-constant,e0098-printed,e0098-simulation,e0098-network			ci/check_simulation.py:main,tests/test_program.c:api_server_checks
+12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes,cap-network-fake,cap-command-fake,api-server	e0098,e0098-constant,e0098-printed,e0098-simulation,e0098-network,e0098-command			ci/check_simulation.py:main,tests/test_program.c:api_server_checks
 12.4/2		e0050-simulation-dot,e0050-simulation-operation,e0055-simulation-value,e0055-simulation-start,e0055-simulation-send,e0055-simulation-advance,e0055-simulation-crash,e0055-simulation-restart,e0100-simulation-start,e0100-simulation-send			ci/check_simulation.py:main,tests/test_program.c:simulation_inputs,tests/test_service_store.c:simulation_persistence
 12.4/3					ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence
 12.4/4					ci/check_simulation.py:main,tests/test_program.c:simulation_inputs
@@ -259,6 +260,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/35	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
 14/36	cap-sqlite-fake,api-server	e0098-sqlite			tests/test_sqlite.c:test_fake_sqlite,tests/test_fakes.c:sqlite_starts_empty
 14/37	api-server				lib/api.mo:request,lib/api.mo:match_path,lib/api.mo:sse_response,tests/test_api_server.c:main
+14/38	cap-command-fake	e0098-command			lib/command.mo:run,lib/command.mo:replies,tests/test_command.c:test_real_command,tests/test_command.c:test_containment_and_allowlist,tests/test_command.c:test_fake_command,tests/test_fakes.c:command_starts_empty,fuzz/fuzz_command.c:LLVMFuzzerTestOneInput
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases
 A/2		e0412			ci/check_errors.py:check_cases

@@ -958,6 +958,21 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_IO_OP_SQLITE_QUERY:
             return sig(binary(c, MO_CORE_TY_RESULT, S(SQLITE_ROWS), S(SQLITE_ERROR)), 3,
                        C(DATABASE), S(TEXT), L(S(SQLITE_VALUE)));
+        case MO_CORE_IO_OP_COMMAND_RUN_RAW: {
+            struct type *parts[3] = {S(INT), S(BYTES), S(BYTES)};
+            struct type *tup =
+                intern(c, MO_CORE_TY_TUPLE, parts, 3, (mo_core_string){0}, MO_CORE_CAP_CONSOLE);
+            s = sig(binary(c, MO_CORE_TY_RESULT, tup, S(TEXT)), 4, C(COMMAND), S(TEXT), L(S(TEXT)));
+            s.args[3] = S(DURATION);
+            return s;
+        }
+        case MO_CORE_IO_OP_COMMAND_WITHIN:
+            return sig(C(COMMAND), 2, C(COMMAND), S(TEXT), NULL);
+        case MO_CORE_IO_OP_COMMAND_ALLOW_PROGRAMS:
+            return sig(C(COMMAND), 2, C(COMMAND), L(S(TEXT)), NULL);
+        case MO_CORE_IO_OP_COMMAND_FAKE:
+            s = sig(C(COMMAND), 1, binary(c, MO_CORE_TY_MAP, S(BYTES), S(BYTES)), NULL, NULL);
+            break;
         }
         s.spec = true;
         return s;
@@ -1596,8 +1611,8 @@ static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, si
         "Fn",           "Cap",          "Simulation",  "SimulationError",
         "NetworkError", "Sqlite.Value", "Sqlite.Rows", "SqliteError"};
     static const char *const caps[] = {
-        "Console", "Files",   "ReadFiles",  "Clock",  "Random",         "Args",
-        "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database"};
+        "Console", "Files",   "ReadFiles",  "Clock",  "Random",          "Args",
+        "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database", "Command"};
     if (*remaining == 0)
         return mo_buffer_append_text(b, "...");
     (*remaining)--;

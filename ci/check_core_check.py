@@ -259,7 +259,7 @@ def signatures():
                "(fn ((int)) (text))", '(data "undeclared")', L(T), m, se,
                O(T), R(T), "(tuple ((text) (float)))"] + [
                    C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random",
-                                  "network", "connection", "sqlite", "database"]]:
+                                  "network", "connection", "sqlite", "database", "command"]]:
         table.append((f"(structural {ty})", [ty], T, False))
     add("io", "argsList", C("args"), L(T))
     add("io", "envGet", C("env") + "|" + T, O(T))
@@ -302,6 +302,11 @@ def signatures():
     add("io", "sqliteRun", C("database") + "|" + T + "|" + L("(sqliteValue)"), sqlite_err(U))
     add("io", "sqliteQuery", C("database") + "|" + T + "|" + L("(sqliteValue)"),
         sqlite_err("(sqliteRows)"))
+    add("io", "commandRunRaw", C("command") + "|" + T + "|" + L(T) + "|(duration)",
+        f"(result (tuple ({I} (bytes) (bytes))) {T})")
+    add("io", "commandWithin", C("command") + "|" + T, C("command"))
+    add("io", "commandAllowPrograms", C("command") + "|" + L(T), C("command"))
+    add("io", "commandFake", "(map (bytes) (bytes))", C("command"), True)
     return table
 
 

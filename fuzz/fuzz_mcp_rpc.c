@@ -29,9 +29,9 @@ static struct mo_cell call(struct mo_process *process, uint32_t index,
                            const struct mo_cell *values) {
     const struct mo_bytecode_function *fn = &mo_image_bytecode(image)->functions[index];
     struct mo_heap *heap = mo_process_heap(process);
-    struct mo_cell arguments[5], result;
+    struct mo_cell arguments[6], result;
     struct mo_defect defect;
-    MO_ASSERT(fn->parameter_count <= 5);
+    MO_ASSERT(fn->parameter_count <= 6);
     mo_process_instruction_limit(process, MO_LIMIT_MCP_REQUEST_WORK);
     for (uint32_t i = 0; i < fn->parameter_count; i++)
         arguments[i] = fn->parameters[i].ownership == MO_PARAMETER_OWNED
@@ -63,7 +63,8 @@ static struct transport transport_new(struct mo_process *process) {
     mo_value_drop(heap, shape->fields[0].type, fields[0]);
     mo_value_drop(heap, shape->fields[1].type, fields[1]);
     MO_ASSERT(mo_value_text(heap, "0123456789abcdef", 16, &key));
-    struct mo_cell args[] = {out.descriptor, key, mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES)};
+    struct mo_cell args[] = {out.descriptor, key, mo_cell_int(MO_LIMIT_MCP_RESPONSE_BYTES),
+                             mo_cell_bool(false)};
     struct mo_cell catalog = call(process, prepare, args);
     MO_ASSERT(mo_cell_get_tag(catalog) == 1);
     out.catalog = mo_value_dup(heap, fn->parameters[3].type,
@@ -77,8 +78,12 @@ static struct transport transport_new(struct mo_process *process) {
 static int64_t transport_receive(struct mo_process *process, const struct transport *transport,
                                  struct mo_cell text, struct mo_cell version) {
     const struct mo_bytecode_function *fn = &mo_image_bytecode(image)->functions[receive];
-    struct mo_cell args[] = {text, version, transport->descriptor, transport->catalog,
-                             transport->version};
+    struct mo_cell args[] = {text,
+                             version,
+                             transport->descriptor,
+                             transport->catalog,
+                             transport->version,
+                             mo_cell_bool(false)};
     struct mo_cell action = call(process, receive, args);
     /* An initialize result is a Session reply: status 200 with a session header. */
     uint32_t tag = mo_cell_get_tag(action);
@@ -99,7 +104,7 @@ static struct mo_cell classify(struct mo_process *process, struct mo_cell reques
     MO_ASSERT(mo_value_list(heap, fn->parameters[1].type, &name, 1, &names));
     mo_value_drop(heap, text_type, name);
     MO_ASSERT(mo_value_text(heap, "0123456789abcdef", 16, &key));
-    struct mo_cell args[] = {request, names, key};
+    struct mo_cell args[] = {request, names, key, mo_cell_bool(false)};
     struct mo_cell result = call(process, method, args);
     mo_value_drop(heap, text_type, key);
     mo_value_drop(heap, fn->parameters[1].type, names);

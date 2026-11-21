@@ -701,9 +701,9 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
     const struct mo_types *types = mo_image_types(pool->image);
     const struct mo_bytecode_function *fn = &bc->functions[pool->wire_fn];
     uint32_t pcount = fn->parameter_count;
-    MO_ASSERT(pcount >= 4 && pcount <= 4 + 8 + MO_LIMIT_API_ACTORS);
+    MO_ASSERT(pcount >= 4 && pcount <= 4 + 9 + MO_LIMIT_API_ACTORS);
 
-    struct mo_cell call_args[32] = {{{0}}};
+    struct mo_cell call_args[48] = {{{0}}};
     uint32_t built_args = 0;
     bool have_env = false;
     struct mo_cell env_map = {{0}};

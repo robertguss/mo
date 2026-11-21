@@ -145,8 +145,8 @@ static bool write_all_file(const char *path, const uint8_t *bytes, size_t length
 
 /* Materializes Git HEAD's .mo tree into tmp_dir_out and writes the OLD entry path into
  * old_entry_out. */
-static bool materialize_git_head(const char *new_path, char tmp_dir_out[64],
-                                 char old_entry_out[MO_LIMIT_PATH_SIZE + 128]) {
+static bool materialize_git_head(const char *new_path, char tmp_dir_out[MO_LIMIT_PATH_SIZE],
+                                 char old_entry_out[MO_LIMIT_PATH_SIZE * 2]) {
     tmp_dir_out[0] = '\0';
     char resolved_new[PATH_MAX];
     if (realpath(new_path, resolved_new) == NULL)
@@ -193,10 +193,15 @@ static bool materialize_git_head(const char *new_path, char tmp_dir_out[64],
                              "-z",  "--name-only", "HEAD",        NULL};
     if (!run_git(ls_argv, &files))
         goto done;
-    char tmpl[] = "/tmp/mo-diff-XXXXXX";
-    if (mkdtemp(tmpl) == NULL)
+    const char *env_tmp = getenv("TMPDIR");
+    char tmpl[MO_LIMIT_PATH_SIZE + 32];
+    int tn = snprintf(tmpl, sizeof tmpl, "%s/mo-diff-XXXXXX",
+                      (env_tmp != NULL && env_tmp[0] != '\0' && strlen(env_tmp) < 512) ? env_tmp
+                                                                                       : "/tmp");
+    if (tn <= 0 || (size_t)tn >= sizeof tmpl || strlen(tmpl) >= MO_LIMIT_PATH_SIZE ||
+        mkdtemp(tmpl) == NULL)
         goto done;
-    memcpy(tmp_dir_out, tmpl, sizeof tmpl);
+    memcpy(tmp_dir_out, tmpl, strlen(tmpl) + 1);
     size_t pos = 0;
     uint32_t count = 0;
     ok = true;
@@ -211,7 +216,7 @@ static bool materialize_git_head(const char *new_path, char tmp_dir_out[64],
             ok = false;
             break;
         }
-        char show_spec[PATH_MAX + 16], dest[MO_LIMIT_PATH_SIZE + 128];
+        char show_spec[PATH_MAX + 16], dest[MO_LIMIT_PATH_SIZE * 2];
         int sn = snprintf(show_spec, sizeof show_spec, "HEAD:%s", rel);
         int wn = snprintf(dest, sizeof dest, "%s/%s", tmp_dir_out, rel);
         if (sn <= 0 || (size_t)sn >= sizeof show_spec || wn <= 0 || (size_t)wn >= sizeof dest) {
@@ -222,8 +227,8 @@ static bool materialize_git_head(const char *new_path, char tmp_dir_out[64],
         ok = run_git(show_argv, &blob) && write_all_file(dest, blob.bytes, blob.length);
     }
     if (ok) {
-        int en = snprintf(old_entry_out, MO_LIMIT_PATH_SIZE + 128, "%s/%s", tmp_dir_out, rel_entry);
-        ok = en > 0 && (size_t)en < MO_LIMIT_PATH_SIZE + 128;
+        int en = snprintf(old_entry_out, MO_LIMIT_PATH_SIZE * 2, "%s/%s", tmp_dir_out, rel_entry);
+        ok = en > 0 && (size_t)en < MO_LIMIT_PATH_SIZE * 2;
     }
     if (!ok && tmp_dir_out[0] != '\0') {
         remove_tree(tmp_dir_out);
@@ -369,7 +374,7 @@ static const char *copy_buf_cstr(struct mo_arena *arena, struct mo_buffer *b) {
 static bool is_capability_name(const char *name) {
     static const char *const caps[] = {"Console", "Clock",   "Random",    "Environment",
                                        "Env",     "Process", "ReadFiles", "Files",
-                                       "Network", "Sqlite",  "Service"};
+                                       "Network", "Sqlite",  "Command",   "Service"};
     for (size_t i = 0; i < sizeof caps / sizeof caps[0]; i++)
         if (strcmp(name, caps[i]) == 0)
             return true;
@@ -460,10 +465,12 @@ static void scan_attenuations_body(struct mo_arena *arena, const struct side *s,
         const struct mo_checked_expression *e = &body->items[i];
         if (e->native == NULL)
             continue;
-        bool is_within =
-            strcmp(e->native, "Files.within") == 0 || strcmp(e->native, "ReadFiles.within") == 0;
+        bool is_within = strcmp(e->native, "Files.within") == 0 ||
+                         strcmp(e->native, "ReadFiles.within") == 0 ||
+                         strcmp(e->native, "Command.within") == 0;
         bool is_ro = strcmp(e->native, "Files.read_only") == 0;
-        bool is_hosts = strcmp(e->native, "Network.allow_hosts") == 0;
+        bool is_hosts = strcmp(e->native, "Network.allow_hosts") == 0 ||
+                        strcmp(e->native, "Command.allow_programs") == 0;
         if (!is_within && !is_ro && !is_hosts)
             continue;
         mo_buffer_clear(&buf);
@@ -1813,8 +1820,8 @@ cleanup:
 }
 
 int mo_diff(const struct mo_cli *cli, FILE *output, FILE *errors) {
-    char tmp_dir[64] = "";
-    char git_old_entry[MO_LIMIT_PATH_SIZE + 128] = "";
+    char tmp_dir[MO_LIMIT_PATH_SIZE] = "";
+    char git_old_entry[MO_LIMIT_PATH_SIZE * 2] = "";
     const char *old_path = NULL;
     const char *new_path = NULL;
     if (cli->file_count == 2) {

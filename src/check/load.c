@@ -258,7 +258,7 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
     return 0;
 }
 
-static const char *const on_use[] = {"Api", "Http", "Json", "Unicode16"};
+static const char *const on_use[] = {"Api", "Command", "Http", "Json", "Unicode16"};
 
 static MO_MUST_USE bool loaded_on_use(const char *name) {
     for (size_t i = 0; i < sizeof on_use / sizeof *on_use; i++)

@@ -436,10 +436,10 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
     }
     case MO_CORE_TY_SIMULATION:
     case MO_CORE_TY_CAP: {
-        static const enum mo_capability caps[] = {MO_CAP_CONSOLE, MO_CAP_FILES,   MO_CAP_READ_FILES,
-                                                  MO_CAP_CLOCK,   MO_CAP_RANDOM,  MO_CAP_ARGS,
-                                                  MO_CAP_ENV,     MO_CAP_NETWORK, MO_CAP_CONNECTION,
-                                                  MO_CAP_SQLITE,  MO_CAP_DATABASE};
+        static const enum mo_capability caps[] = {
+            MO_CAP_CONSOLE,    MO_CAP_FILES,  MO_CAP_READ_FILES, MO_CAP_CLOCK,
+            MO_CAP_RANDOM,     MO_CAP_ARGS,   MO_CAP_ENV,        MO_CAP_NETWORK,
+            MO_CAP_CONNECTION, MO_CAP_SQLITE, MO_CAP_DATABASE,   MO_CAP_COMMAND};
         uint32_t id = MO_NO_INDEX;
         enum mo_type_problem status = mo_types_intern(
             &c->types,
@@ -523,8 +523,8 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
         }
         if (!found) {
             static const char *const caps[] = {
-                "Console", "Files",   "ReadFiles",  "Clock",  "Random",         "Args",
-                "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database"};
+                "Console", "Files",   "ReadFiles",  "Clock",  "Random",          "Args",
+                "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database", "Command"};
             for (uint32_t i = 0; i < sizeof caps / sizeof *caps; i++)
                 if (strlen(caps[i]) == length && memcmp(start, caps[i], length) == 0) {
                     t->tag = MO_CORE_TY_CAP;

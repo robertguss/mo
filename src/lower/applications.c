@@ -560,7 +560,11 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Sqlite.open", {MO_CORE_IO_OP_SQLITE_OPEN, false}},
                   {"Sqlite.fake", {MO_CORE_IO_OP_SQLITE_FAKE, false}},
                   {"Sqlite.run", {MO_CORE_IO_OP_SQLITE_RUN, false}},
-                  {"Sqlite.query", {MO_CORE_IO_OP_SQLITE_QUERY, false}}};
+                  {"Sqlite.query", {MO_CORE_IO_OP_SQLITE_QUERY, false}},
+                  {"Command.run_raw", {MO_CORE_IO_OP_COMMAND_RUN_RAW, false}},
+                  {"Command.within", {MO_CORE_IO_OP_COMMAND_WITHIN, false}},
+                  {"Command.allow_programs", {MO_CORE_IO_OP_COMMAND_ALLOW_PROGRAMS, false}},
+                  {"Command.fake", {MO_CORE_IO_OP_COMMAND_FAKE, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)

@@ -104,7 +104,9 @@ def ioOps : List (String × IoOp) :=
    ("randomSeeded", .randomSeeded), ("argsOf", .argsOf), ("envOf", .envOf),
    ("connect", .connect), ("connectSecure", .connectSecure), ("send", .send), ("receive", .receive),
    ("networkFake", .networkFake), ("allowHosts", .allowHosts), ("sqliteOpen", .sqliteOpen),
-   ("sqliteFake", .sqliteFake), ("sqliteRun", .sqliteRun), ("sqliteQuery", .sqliteQuery)]
+   ("sqliteFake", .sqliteFake), ("sqliteRun", .sqliteRun), ("sqliteQuery", .sqliteQuery),
+   ("commandRunRaw", .commandRunRaw), ("commandWithin", .commandWithin),
+   ("commandAllowPrograms", .commandAllowPrograms), ("commandFake", .commandFake)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

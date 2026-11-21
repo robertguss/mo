@@ -9,7 +9,7 @@
 struct mo_host_types {
     struct mo_types types;
     uint32_t integer, time, text, bytes, texts, folders, files, replies, peers, databases;
-    uint32_t capabilities[MO_CAP_DATABASE + 1];
+    uint32_t capabilities[MO_CAP_COMMAND + 1];
     uint32_t parameters[8];
 };
 /* Once per image. storage has source->count + MO_HOST_PRIVATE_TYPES entries;
@@ -67,7 +67,7 @@ MO_MUST_USE enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_he
 struct mo_host_fake_state {
     enum mo_capability kind;
     union {
-        struct mo_cell args, env, network, sqlite;
+        struct mo_cell args, env, network, sqlite, command;
         struct {
             struct mo_cell input, output, errors;
         } console;

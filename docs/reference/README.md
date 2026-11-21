@@ -981,9 +981,9 @@ declare a type with its own name, as the module `Account` declares `Account`:
 `Account.open(...)` calls the module's function, and `Account` in a type is the
 type. There are no wildcards and no aliases. A clash between names is an error that suggests the
 qualified form, and so is a cycle of modules that use each other. The
-library's `Http`, `Json` and `Unicode16` modules are used the same way. Every
+library's `Command`, `Http`, `Json` and `Unicode16` modules are used the same way. Every
 library module reserves its name, so a program can't declare a module named
-`FileError`, `Files`, `Http`, `Json`, `List`, `Map`, `Option`, `ReadFiles`,
+`Command`, `FileError`, `Files`, `Http`, `Json`, `List`, `Map`, `Option`, `ReadFiles`,
 `Result`, `Set`, `Text`, `Time` or `Unicode16`. The built-in `Simulation` and
 `Sqlite` modules also reserve their names.
 
@@ -1044,12 +1044,13 @@ the same arguments, it always gives the same result.
 | `Connection` | send and receive bytes on one open connection |
 | `Sqlite` | open and query SQLite databases in the program's folder |
 | `Sqlite.Database` | run SQL statements and queries on one open database |
+| `Command` | run confined external programs inside one folder (with `use Command`) |
 
 ### 11.2 main
 
 `main` lists the capabilities the program needs, in any order and at most one
 of each type. The runtime hands over exactly those, so a program's whole
-authority is on its first line. The `Files`, `ReadFiles` or `Sqlite` it gets reach the
+authority is on its first line. The `Files`, `ReadFiles`, `Sqlite` or `Command` it gets reach the
 folder the program was started in. `main` can't list a `Connection` or a `Sqlite.Database`:
 a program gets them only from a `Network` or a `Sqlite`.
 
@@ -1074,8 +1075,10 @@ end
 
 A capability can be narrowed before it is passed on. `files.within("reports")`
 reaches only that folder, `files.read_only` returns a `ReadFiles`, which can
-only read, and `network.allow_hosts(["api.example.com:443"])` returns a
-`Network` that opens connections only to the listed destinations (section 14).
+only read, `network.allow_hosts(["api.example.com:443"])` returns a
+`Network` that opens connections only to the listed destinations, and
+`command.within("work").allow_programs(["mo", "git"])` narrows a `Command` to
+that folder and those program basenames (section 14).
 Calling `within` with a path that would leave the folder, such as `".."`, gives
 a capability that reaches nothing (section 14). Pass each function the least it
 needs:
@@ -1209,7 +1212,7 @@ parameters bind by type and name in any order: `Principal` (running `auth`
 before the handler), `Api.Request`, `Sqlite.Database` (matching a `sqlite`
 clause by parameter name, ignoring a leading `_`), an actor handle (matching an
 `actor` clause by parameter name and type, ignoring a leading `_`), a capability (`Sqlite`,
-`Network`, `Clock`, `Random`, `Files`, `ReadFiles`, `Env` or `Console`), a
+`Network`, `Command`, `Clock`, `Random`, `Files`, `ReadFiles`, `Env` or `Console`), a
 `:param` scalar (`Int`, `Byte`, `BigInt`, `Decimal`, `Bool` or `Text`), an
 `Option` scalar query parameter, a required scalar query parameter on `get` or
 `delete`, or at most one `Json` request body parameter on `post`, `put` or
@@ -1476,6 +1479,7 @@ the lines written to standard output and standard error;
 `Random.seeded(n)`; `Args.of(list)`; `Env.of(map)`; `Network.fake(peers)`, from a
 map of the requests it answers (section 14); `Sqlite.fake()` and
 `Sqlite.in_memory()`, an in-memory SQLite capability (section 14);
+`Command.fake(replies)`, from a map of encoded command exchanges (section 14);
 `Simulation.start(module, at)` for a test service; and
 `ApiTest.send(Module, request, ...)` to dispatch an `Api.Request` directly
 against `Module`'s `api` block in memory with optional fake capabilities
@@ -1687,7 +1691,7 @@ reports the program's errors, `mo run FILE [ARGS...]` runs it with the
 arguments after the file's name, and `mo test FILE` checks its examples,
 promises and tests. `mo diff [OLD] NEW` compares `NEW` against `OLD`, or against
 Git `HEAD` when `OLD` is omitted: it reports authority changes (capability
-parameters and literal `within`, `read_only` and `allow_hosts` narrowings),
+parameters and literal `within`, `read_only`, `allow_hosts` and `allow_programs` narrowings),
 exposed signature, `api` route and `cors`, and service tool changes, state schema changes, and runs
 `OLD`'s promises, service promises and examples against `NEW`, exiting 1 when
 authority expands or a contract fails or stops. `mo emit FILE -o OUT` checks the program as `mo check` does
@@ -2287,6 +2291,40 @@ html: Text)`, `Api.no_content()`, `Api.redirect(location: Text)` and
 response has `with_header(name: Text, value: Text)`, `ok? : Bool`,
 `header(name: Text) : Option(Text)`, `text : Text` and
 `json : Result(Json, Json.JsonError)`.
+
+**Command**, with `use Command`, runs confined external programs without a
+shell: `command.run(program: Text, args: List(Text), within: Duration) : Result(Command.Output, Command.CommandError)`
+resolves `program` (a plain basename with no `/`, `\`, `.` or `..`) and runs it
+directly with `args` inside `command`'s working folder, closing extra file
+descriptors, enforcing `within` (`1.millisecond` to `1.hour`, up to 64
+arguments and 4 MiB per output stream; outside those bounds `within` and
+argument count are bugs, 13.2), and on Linux confining filesystem writes to the
+working folder and a fresh temporary folder while blocking network sockets via
+Landlock and seccomp. `Output(status: Int, stdout: Text, stderr: Text)` has
+`ok? : Bool` (`status == 0`), `Command.output(status, stdout, stderr)` and
+`Command.ok_output(stdout)`; `CommandError` has `OutsideFolder(path: Text)`,
+`NotPermitted(program: Text)`, `TimedOut`, `OutputTooLarge` and
+`SpawnFailed(reason: Text)`. `command.within(folder: Text) : Command` narrows
+the working folder by `Files`'s containment rules, and
+`command.allow_programs(programs: List(Text)) : Command` monotonically
+intersects allowed program basenames so disallowed or path-bearing names fail
+with `Error(Command.NotPermitted(program: program))`. In tests, examples and
+promises, `Command.fake(Command.replies(exchanges)) : Command` answers `(Spec, Output)`
+pairs built with `Command.spec(program: Text, args: List(Text)) : Spec` and
+`spec.in_folder(folder: Text) : Spec` without spawning a process; the `Command`
+that `mo test` makes for a promise starts with no replies.
+
+<!-- mo-example: fragment -->
+```mo
+test "a fake command capability enforces folder and program narrowing"
+  replies = Command.replies([
+    (Command.spec("mo", ["test", "app.mo"]).in_folder("work"), Command.ok_output("1 passed\n"))
+  ])
+  cmd = Command.fake(replies).within("work").allow_programs(["mo"])
+  assert cmd.run("mo", ["test", "app.mo"], 5.seconds) is Ok(out) and out.ok?
+  assert cmd.run("curl", ["http://x"], 5.seconds) == Error(Command.NotPermitted(program: "curl"))
+end
+```
 
 ## 15. What comes later
 

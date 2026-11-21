@@ -585,6 +585,27 @@ starting folder; the fake keeps each database as serialized bytes in memory.
 | `run(statement, values)` | host | `SQLITE_RUN` | |
 | `query(statement, values)` | host | `SQLITE_QUERY` | |
 
+## Command
+
+`Command` (`use Command`) runs confined child processes in `src/host/command.c`
+(`mo_command_confine` in `src/host/confine.c` applies Landlock filesystem scoping
+and seccomp network/mount/signal filtering on Linux) and decodes structured
+results in `lib/command.mo`.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `run_raw(program, args, within)` | host | `COMMAND_RUN_RAW` | spawns `program` inside the capability's folder with monotonic deadline and 4 MiB pipe cap, or looks up a `Command.fake` exchange |
+| `within(folder)` | host | `COMMAND_WITHIN` | narrows the working folder with `mo_host_resolve` (`RESOLVE_BENEATH`), poisoning escapes |
+| `allow_programs(programs)` | host | `COMMAND_ALLOW_PROGRAMS` | intersects allowed program basenames so authority only narrows |
+| `Command.fake(replies)` | host | `COMMAND_FAKE` | a fake, for spec code only (reference 12.4) |
+| `run(program, args, within)` | Mo | `lib/command.mo` | decodes UTF-8 `stdout`/`stderr` into `Output` and maps error tags into `CommandError` |
+| `Command.spec(program, args)` | Mo | `lib/command.mo` | starts a `Spec` at the capability's root folder |
+| `in_folder(folder)` | Mo | `lib/command.mo` | narrows a `Spec` to a relative subfolder |
+| `Command.output(status, stdout, stderr)` | Mo | `lib/command.mo` | builds an `Output` |
+| `Command.ok_output(stdout)` | Mo | `lib/command.mo` | builds a zero-exit `Output` with empty `stderr` |
+| `ok?` | Mo | `lib/command.mo` | whether `status == 0` |
+| `Command.replies(exchanges)` | Mo | `lib/command.mo` | encodes `(Spec, Output)` pairs into the length-prefixed `Map(Bytes, Bytes)` table `Command.fake` reads |
+
 ## Json
 
 `Json` is a module of the library, written in Mo (D232). The VM needs nothing

@@ -777,6 +777,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     outside "Network is not modeled by mocore" w
   | .sqliteOpen, _ | .sqliteFake, _ | .sqliteRun, _ | .sqliteQuery, _ =>
     outside "Sqlite is not modeled by mocore" w
+  | .commandRunRaw, _ | .commandWithin, _ | .commandAllowPrograms, _ | .commandFake, _ =>
+    outside "Command is not modeled by mocore" w
   | _, _ => wrongArgs "capability primitive"
 
 /-- A derived handle retains the selected fake's identity. Ordinary returned

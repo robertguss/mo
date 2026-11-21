@@ -71,7 +71,8 @@ def guide_claims(binary):
             "the rate as not killed.") in guide
     assert ("`mo diff [OLD] NEW` checks how a program changed from `OLD` (or Git `HEAD` when only "
             "`NEW` is given) to `NEW`: capability authority (including `Files.within`, "
-            "`ReadFiles.within`, `Files.read_only` and `Network.allow_hosts` narrowings), exposed "
+            "`ReadFiles.within`, `Files.read_only`, `Network.allow_hosts`, `Command.within` and "
+            "`Command.allow_programs` narrowings), exposed "
             "signatures and service tools, saved state schema (`migration_required`), and "
             "behavioral contracts by running `OLD`'s promises, service promises and examples "
             "against `NEW`.") in guide
@@ -351,7 +352,7 @@ def guide_claims(binary):
     says("The `lib/` folder holds library modules written in Mo, embedded into the `mo` binary so "
          "a single `mo` executable runs anywhere without an external `lib/` directory "
          "(`--lib DIR` overrides the embedded library with a folder on disk).",
-         "Every `mo` command loads them with your program, `Http`, `Json` and `Unicode16` only "
+         "Every `mo` command loads them with your program, `Command`, `Http`, `Json` and `Unicode16` only "
          "when a `use` line names them.",
          "`mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own.")
     for library_file in sorted((root / "lib").glob("*.mo")):
@@ -538,6 +539,25 @@ def guide_claims(binary):
             "  assert first.run(\"ATTACH 'b.db' AS b\", []) is Error(Sqlite.NotPermitted(reason: _))\n"
             "  assert sqlite.open(\"../escape.db\") is Error(Sqlite.OutsideFolder(path: escaped))\n"
             "  assert escaped == \"../escape.db\"\n"
+            "end\n")
+        result = run(binary, ["test", str(source)], 0)
+        assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
+    says("After `use Command`, `Command` runs confined external programs without a shell (reference section 14).",
+         "`command.within(folder)` narrows the working folder",
+         "`command.allow_programs(programs)` monotonically intersects allowed program basenames",
+         "`Command.fake(Command.replies(exchanges))` answers `(Command.Spec, Command.Output)` pairs")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\nuse Command\n\ntest \"fake command claim\"\n"
+            "  cmd = Command.fake(Command.replies([\n"
+            "    (Command.spec(\"mo\", [\"test\"]).in_folder(\"sub\"), Command.ok_output(\"ok\\n\"))\n"
+            "  ]))\n"
+            "  scoped = cmd.within(\"sub\").allow_programs([\"mo\"])\n"
+            "  assert scoped.run(\"mo\", [\"test\"], 5.seconds) ==\n"
+            "    Ok(Command.Output(status: 0, stdout: \"ok\\n\", stderr: \"\"))\n"
+            "  assert scoped.run(\"sh\", [], 5.seconds) == Error(Command.NotPermitted(program: \"sh\"))\n"
+            "  assert cmd.within(\"../x\").run(\"mo\", [], 5.seconds) == Error(Command.OutsideFolder(path: \"../x\"))\n"
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)

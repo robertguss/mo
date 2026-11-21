@@ -18,8 +18,8 @@ struct mo_process {
     struct mo_vm_image *runtime;
     struct mo_heap *heap;
     struct mo_host host;
-    struct mo_cell capabilities[MO_CAP_DATABASE + 1];
-    bool capability_set[MO_CAP_DATABASE + 1];
+    struct mo_cell capabilities[MO_CAP_COMMAND + 1];
+    bool capability_set[MO_CAP_COMMAND + 1];
     struct mo_limits limits;
     uint8_t *stack;
     size_t used, capacity, top;

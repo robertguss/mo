@@ -620,7 +620,11 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
     if (symbol == NULL)
         return name->kind == MO_S_CAPNAME ? module_member(p, scope, name, name, name) : NULL;
     const struct mo_symbol *own = own_type(p, scope, name);
-    if (own != NULL && own != symbol) {
+    const struct mo_module_alias *cmd_alias =
+        name->kind == MO_S_CAPNAME && spelled(name, "Command") ? alias(scope, name) : NULL;
+    bool cmd_clash = cmd_alias != NULL && p->interfaces->scopes[cmd_alias->module].library &&
+                     strcmp(p->interfaces->scopes[cmd_alias->module].name, "Command") == 0;
+    if ((own != NULL && own != symbol) || cmd_clash) {
         bool reported =
             problem(p, MO_CODE_NAME_CLASH, name->span, "a clash between names",
                     "A clash between names is an error; use the qualified form (reference 10.3).");
@@ -699,6 +703,24 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
         arity = parameters == NULL ? 0 : parameters->count;
     } else if (symbol == NULL && name->kind == MO_S_CAPNAME) {
         type.name = mo_builtin_type(name, &arity);
+        if (type.name == NULL && spelled(name, "Command")) {
+            if (p->function->module == UINT32_MAX) {
+                type.name = "Command";
+            } else {
+                const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
+                if (scope->library && scope->name != NULL && strcmp(scope->name, "Command") == 0) {
+                    type.name = "Command";
+                } else {
+                    const struct mo_module_alias *used = alias(scope, name);
+                    if (used != NULL && p->interfaces->scopes[used->module].library &&
+                        strcmp(p->interfaces->scopes[used->module].name, "Command") == 0) {
+                        if (!use_origin(p, name, used->origin))
+                            return NULL;
+                        type.name = "Command";
+                    }
+                }
+            }
+        }
         if (type.name == NULL && name->span.end - name->span.start == 1 &&
             p->function->declaration->kind == MO_S_FN) {
             if (count != 0) {
@@ -715,6 +737,16 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
             type.module = p->function->module;
             type.declaration = p->function;
             return intern(p, type);
+        }
+    } else if (symbol == NULL && name->kind == MO_S_QUALIFIED &&
+               spelled(name->children[1], "Command") && p->function->module != UINT32_MAX) {
+        const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
+        const struct mo_module_alias *used = alias(scope, name->children[0]);
+        if (used != NULL && p->interfaces->scopes[used->module].library &&
+            strcmp(p->interfaces->scopes[used->module].name, "Command") == 0) {
+            if (!use_origin(p, name, used->origin))
+                return NULL;
+            type.name = "Command";
         }
     } else if (symbol == NULL && name->kind == MO_S_QUALIFIED &&
                spelled(name->children[0], "Sqlite")) {

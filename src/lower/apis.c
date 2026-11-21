@@ -1354,6 +1354,23 @@ static mo_core_expr default_fake_cap(struct lowering *p, const char *cap_name) {
                                                 .as.io = {MO_CORE_IO_OP_READ_ONLY, false}},
                           ro);
     }
+    if (strcmp(cap_name, "Command") == 0) {
+        mo_core_ty bytes_ty = builtin_ty(p, "Bytes");
+        mo_core_expr empty_cmd =
+            lower_prim(p,
+                       (struct mo_core_prim){.tag = MO_CORE_PRIM_MAP,
+                                             .as.map = {.k = bytes_ty,
+                                                        .v = bytes_ty,
+                                                        .op = {.tag = MO_CORE_MAP_OP_LIT,
+                                                               .lit.digits = lower_text(p, "0")}}},
+                       api_args(p, 0));
+        mo_core_expr_list a = api_args(p, 1);
+        a.items[0] = empty_cmd;
+        return lower_prim(p,
+                          (struct mo_core_prim){.tag = MO_CORE_PRIM_IO,
+                                                .as.io = {MO_CORE_IO_OP_COMMAND_FAKE, false}},
+                          a);
+    }
     MO_ASSERT(strcmp(cap_name, "Network") == 0);
     static const struct mo_source_type bytes_src = {
         .kind = MO_SOURCE_NAMED, .name = "Bytes", .module = UINT32_MAX};

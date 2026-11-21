@@ -2174,8 +2174,9 @@ refuses malformed fake file keys at construction. Version 0.9 adds the
 Simulation interface and its fifteenth fuzz seed. Version 0.10 adds `NetworkError`, the
 `Network` and `Connection` capability kinds, the four network operations, which stop at
 the model's boundary, and a sixteenth fuzz seed. Version 0.11 adds `Sqlite.Value`, `Sqlite.Rows`,
-`SqliteError`, the `Sqlite` and `Sqlite.Database` capability kinds, the four SQLite operations
-which stop at the model's boundary, and a seventeenth fuzz seed. TEXT.md specifies exact fields and boundary reports.
+`SqliteError`, the `Sqlite`, `Sqlite.Database` and `Command` capability kinds, the four SQLite
+and four Command operations which stop at the model's boundary, and seventeenth and eighteenth
+fuzz seeds. TEXT.md specifies exact fields and boundary reports.
 
 ### Simulation's checked interface, not its service runtime (D306)
 

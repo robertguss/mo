@@ -53,6 +53,9 @@ CASES = {
                      "[a, .._tail] if a == 2: 2\n[a, b]: a * b\n[_, .._]: 4\nend\nend", 15),
     "option_scope": ("fn main() : Int\nx = Some(7)\n"
                      "if x is Some(n) and n > 3: n + 13 else: 1\nend", 20),
+    "unit_pattern": ("fn step(r: Result(Unit, Int)) : Int\ncase r\n"
+                     "Ok(Unit): 29\nError(n): n\nend\nend\n"
+                     "fn main() : Int\nstep(Ok(Unit))\nend", 29),
     "alternatives": ("enum Choice\nFirst(Int)\nSecond(Int)\nEmpty\nend\n"
                      "fn main() : Int\ncase Second(11)\n"
                      "First(n) | Second(n) if n < 5: 1\n"

@@ -82,5 +82,7 @@
     X(CONNECT, "connect") X(CONNECT_SECURE, "connectSecure") X(SEND, "send") X(RECEIVE, "receive") \
     X(NETWORK_FAKE, "networkFake") X(ALLOW_HOSTS, "allowHosts") \
     X(SQLITE_OPEN, "sqliteOpen") X(SQLITE_FAKE, "sqliteFake") \
-    X(SQLITE_RUN, "sqliteRun") X(SQLITE_QUERY, "sqliteQuery")
+    X(SQLITE_RUN, "sqliteRun") X(SQLITE_QUERY, "sqliteQuery") \
+    X(COMMAND_RUN_RAW, "commandRunRaw") X(COMMAND_WITHIN, "commandWithin") \
+    X(COMMAND_ALLOW_PROGRAMS, "commandAllowPrograms") X(COMMAND_FAKE, "commandFake")
 // clang-format on

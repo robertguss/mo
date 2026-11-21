@@ -302,7 +302,8 @@ def fuzzSeeds : List (String × Sexp) :=
    ("simulation", primOut (.sim (.send 2 3 [.int, .list .text] (.result .unit .text)))),
    ("entries", primOut (.io (.entries true))),
    ("network", primOut (.io .connect)),
-   ("sqlite", primOut (.io .sqliteOpen))]
+   ("sqlite", primOut (.io .sqliteOpen)),
+   ("command", primOut (.io .commandRunRaw))]
 
 #guard (structural Greet.program (.list .entry)
   (.list [.con "Entry" [.text "é", .con "Folder" []]])).toOption ==
