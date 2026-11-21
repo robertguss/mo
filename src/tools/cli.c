@@ -342,6 +342,7 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         if (!port_number(operand, &out->port))
             return refuse(out, error, "invalid port (expected a decimal integer from 0 to 65535)",
                           arg, operand);
+        out->has_port = true;
         break;
     case FLAG_DATA:
         out->data = operand;
@@ -615,10 +616,12 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                       "--bundle", NULL);
     if (checks)
         out->seconds = (uint32_t)(MO_LIMIT_CHECK_WALL_US / UINT64_C(1000000));
-    if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_PORT)) == 0)
-        return refuse(out, error, "serve needs --port N", command, NULL);
-    if (out->command == MO_COMMAND_SERVE && (seen & (UINT64_C(1) << FLAG_DATA)) == 0)
-        return refuse(out, error, "serve needs --data DIR", command, NULL);
+    if (out->command == MO_COMMAND_SERVE && out->file_count == 0) {
+        if ((seen & (UINT64_C(1) << FLAG_PORT)) == 0)
+            return refuse(out, error, "serve needs --port N", command, NULL);
+        if ((seen & (UINT64_C(1) << FLAG_DATA)) == 0)
+            return refuse(out, error, "serve needs --data DIR", command, NULL);
+    }
     if (out->command == MO_COMMAND_SERVE && out->file_count == 0 &&
         (out->upgrade || out->adopt || out->migration != NULL))
         return refuse(out, error, "upgrade or adoption needs a source file", command, NULL);

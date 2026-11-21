@@ -140,6 +140,9 @@ void lower_constants(struct lowering *p);
 void lower_constant_prefixes(struct lowering *p);
 void lower_specs(struct lowering *p);
 void lower_subject_specs(struct lowering *p, struct instance *subject);
+void lower_apis(struct lowering *p);
+mo_core_expr lower_apitest_send(struct lowering *p, uint32_t api_index, mo_core_expr_list args,
+                                const struct mo_source_type *const *arg_types);
 void lower_metadata(struct lowering *p, struct mo_core *core);
 
 #endif

@@ -581,6 +581,7 @@ starting folder; the fake keeps each database as serialized bytes in memory.
 | --- | --- | --- | --- |
 | `open(path)` | host | `SQLITE_OPEN` | |
 | `Sqlite.fake()` | host | `SQLITE_FAKE` | a fake, for spec code only (reference 12.4) |
+| `Sqlite.in_memory()` | lowering | `src/lower/applications.c` | spec-only alias for `Sqlite.fake()`, matching `Files.in_memory` |
 | `run(statement, values)` | host | `SQLITE_RUN` | |
 | `query(statement, values)` | host | `SQLITE_QUERY` | |
 
@@ -616,6 +617,21 @@ them and reads none.
 | `request.send(network)` | Mo | `lib/http.mo` | one `connect` or `connect_secure`, one `send`, then `receive` of up to 1 MiB at a time until the response is whole; after each receive the reader reads the headers again and reads a chunked body on from the chunk it stopped at; the limits, 64 KiB of headers and 16 MiB of body, are in `limits()` |
 | `ok?`, `header(name)`, `text` and `json` on a `Response` | Mo | `lib/http.mo` | `json` is `Json.parse` on the body |
 | `Http.reply(status, body)`, `Http.replies(exchanges)` | Mo | `lib/http.mo` | for tests: `replies` writes each request with the writer `send` uses, under its host and port |
+
+## Api
+
+`Api` is a module of the library, written in Mo (`lib/api.mo`), supplying the
+`Request` and `Response` types and routing, query, path, CORS, SSE and OpenAPI
+helpers that lowered `api` servers (`src/lower/apis.c`) and handlers call.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Api.request(method, target)`, `Api.get(target)`, `Api.post(target)`, `Api.put(target)`, `Api.patch(target)`, `Api.delete(target)` | Mo | `lib/api.mo` | splits `target` at `?` into normalized path and percent-decoded query list |
+| `with_header`, `with_bearer`, `with_query`, `with_json`, `with_text` and `with_bytes` on an `Api.Request` | Mo | `lib/api.mo` | immutable request builders for `ApiTest.send` and middleware helpers |
+| `header`, `bearer_token`, `query_param` and `text` on an `Api.Request` | Mo | `lib/api.mo` | case-insensitive header and Bearer extraction |
+| `Api.response(status, headers, body)`, `Api.json_response(status, value)`, `Api.text_response(status, body)`, `Api.html_response(status, html)`, `Api.no_content()`, `Api.redirect(location)`, `Api.sse_response(events)` | Mo | `lib/api.mo` | response constructors for custom and SSE routes |
+| `ok?`, `with_header`, `header`, `text` and `json` on an `Api.Response` | Mo | `lib/api.mo` | response inspection in tests and wrappers |
+| `ApiTest.send(module, request, ...)` | lowering | `src/lower/apis.c` | spec-only direct call to `Module.%api.dispatch` with real or synthesized fake capabilities |
 
 ## Clock
 

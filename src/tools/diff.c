@@ -367,8 +367,9 @@ static const char *copy_buf_cstr(struct mo_arena *arena, struct mo_buffer *b) {
 }
 
 static bool is_capability_name(const char *name) {
-    static const char *const caps[] = {"Console",   "Clock", "Random",  "Environment", "Process",
-                                       "ReadFiles", "Files", "Network", "Service"};
+    static const char *const caps[] = {"Console", "Clock",   "Random",    "Environment",
+                                       "Env",     "Process", "ReadFiles", "Files",
+                                       "Network", "Sqlite",  "Service"};
     for (size_t i = 0; i < sizeof caps / sizeof caps[0]; i++)
         if (strcmp(name, caps[i]) == 0)
             return true;
@@ -408,6 +409,19 @@ static void collect_program_caps(const struct side *s, const char **out, uint32_
         const struct mo_symbol *sym = p->functions[f].signature->function;
         if (!p->set->library[sym->module] && sym->exported)
             collect_caps_in_type(p->functions[f].signature->type, out, count, 32);
+    }
+    for (uint32_t a = 0; a < p->api_count; a++) {
+        const struct mo_checked_api *api = &p->apis[a];
+        if (p->set->library[api->module])
+            continue;
+        for (uint32_t c = 0; c < api->capability_count; c++) {
+            bool found = false;
+            for (uint32_t k = 0; k < *count; k++)
+                if (strcmp(out[k], api->capabilities[c]) == 0)
+                    found = true;
+            if (!found && *count < 32)
+                out[(*count)++] = api->capabilities[c];
+        }
     }
     if (*count > 1)
         qsort(out, *count, sizeof(const char *), cmp_cstr);
@@ -541,6 +555,8 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
     uint32_t cap = p->function_count + p->constant_count + p->signatures->data_count + 64;
     for (uint32_t i = 0; i < p->service_count; i++)
         cap += p->services[i].tool_count + p->services[i].timer_count + 4;
+    for (uint32_t i = 0; i < p->api_count; i++)
+        cap += p->apis[i].route_count + p->apis[i].sqlite_count + 4;
     struct pub_item *items = mo_arena_allocate_array(arena, cap == 0 ? 1 : cap, sizeof *items,
                                                      _Alignof(struct pub_item));
     MO_ASSERT(items != NULL);
@@ -660,6 +676,35 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
             MO_ASSERT(bok);
             items[n++] =
                 (struct pub_item){"timer", copy_buf_cstr(arena, &nb), copy_buf_cstr(arena, &sb)};
+        }
+    }
+    for (uint32_t a = 0; a < p->api_count; a++) {
+        const struct mo_checked_api *api = &p->apis[a];
+        if (p->set->library[api->module])
+            continue;
+        if (api->cors != NULL)
+            items[n++] = (struct pub_item){"api_cors", "api.cors", api->cors};
+        static const char *const mnames[] = {"GET", "POST", "PUT", "PATCH", "DELETE"};
+        for (uint32_t r = 0; r < api->route_count; r++) {
+            const struct mo_checked_api_route *rt = &api->routes[r];
+            const struct mo_checked_function *fn = &p->functions[rt->function];
+            mo_buffer_clear(&nb);
+            mo_buffer_clear(&sb);
+            bool bok = mo_buffer_append_text(&nb, mnames[rt->method]) &&
+                       mo_buffer_append_byte(&nb, ' ') && mo_buffer_append_text(&nb, rt->path);
+            if (bok) {
+                if (rt->authenticated && api->has_auth)
+                    bok = mo_buffer_append_text(&sb, "[auth ") &&
+                          format_type(p, api->auth.principal, &sb) &&
+                          mo_buffer_append_text(&sb, "] ");
+                else
+                    bok = mo_buffer_append_text(&sb, "[public] ");
+                bok = bok && mo_buffer_append_text(&sb, fn->signature->function->name) &&
+                      format_function_sig(p, fn->signature, &sb);
+            }
+            MO_ASSERT(bok);
+            items[n++] =
+                (struct pub_item){"route", copy_buf_cstr(arena, &nb), copy_buf_cstr(arena, &sb)};
         }
     }
     mo_buffer_free(&nb);

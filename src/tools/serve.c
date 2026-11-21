@@ -22,9 +22,14 @@ static void note_signal(int number) {
 }
 
 bool mo_serve_watch_signals(void) {
+    atomic_store(&signalled, false);
     struct sigaction action = {.sa_handler = note_signal};
     return sigemptyset(&action.sa_mask) == 0 && sigaction(SIGTERM, &action, NULL) == 0 &&
            sigaction(SIGINT, &action, NULL) == 0;
+}
+
+bool mo_serve_is_signalled(void) {
+    return atomic_load(&signalled);
 }
 
 struct serve_log {

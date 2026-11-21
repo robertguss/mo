@@ -628,6 +628,98 @@ struct mo_checked_service {
     const struct mo_checked_service_promise *promises; /* source order */
 };
 
+enum mo_api_method {
+    MO_API_GET,
+    MO_API_POST,
+    MO_API_PUT,
+    MO_API_PATCH,
+    MO_API_DELETE,
+};
+
+enum mo_api_param_kind {
+    MO_API_PARAM_AUTH,
+    MO_API_PARAM_REQUEST,
+    MO_API_PARAM_SQLITE_DB,
+    MO_API_PARAM_CAPABILITY,
+    MO_API_PARAM_PATH,
+    MO_API_PARAM_QUERY_REQUIRED,
+    MO_API_PARAM_QUERY_OPTIONAL,
+    MO_API_PARAM_BODY,
+};
+
+enum mo_api_reply_kind {
+    MO_API_REPLY_RESPONSE,
+    MO_API_REPLY_RESULT_RESPONSE,
+    MO_API_REPLY_UNIT,
+    MO_API_REPLY_JSON,
+    MO_API_REPLY_RESULT_UNIT,
+    MO_API_REPLY_RESULT_JSON,
+};
+
+struct mo_checked_api_sqlite {
+    const struct mo_syntax *syntax;
+    const char *name;
+    const char *path;
+};
+
+struct mo_checked_api_param {
+    enum mo_api_param_kind kind;
+    const char *name;
+    const struct mo_source_type *type;
+    uint32_t index;
+    const struct mo_ability_implementation *json;
+};
+
+struct mo_checked_api_auth {
+    const struct mo_syntax *syntax;
+    const struct mo_source_type *principal;
+    uint32_t function;
+    uint32_t param_count;
+    const struct mo_checked_api_param *params;
+    const struct mo_source_type *error_type;
+    const struct mo_ability_implementation *error_json;
+};
+
+struct mo_checked_api_route {
+    const struct mo_syntax *syntax;
+    enum mo_api_method method;
+    const char *path;
+    uint32_t function;
+    bool authenticated;
+    uint32_t param_count;
+    const struct mo_checked_api_param *params;
+    enum mo_api_reply_kind reply;
+    const struct mo_source_type *ok_type;
+    const struct mo_ability_implementation *ok_json;
+    const struct mo_source_type *error_type;
+    const struct mo_ability_implementation *error_json;
+};
+
+struct mo_checked_api_status {
+    const struct mo_syntax *syntax;
+    const struct mo_symbol *error_enum;
+    const struct mo_symbol *variant;
+    uint16_t status_code;
+};
+
+struct mo_checked_api {
+    const struct mo_syntax *syntax;
+    uint32_t module;
+    bool has_port;
+    uint16_t port;
+    const char *cors;
+    uint32_t sqlite_count;
+    const struct mo_checked_api_sqlite *sqlites;
+    bool has_auth;
+    struct mo_checked_api_auth auth;
+    uint32_t route_count;
+    const struct mo_checked_api_route *routes;
+    uint32_t status_count;
+    const struct mo_checked_api_status *statuses;
+    uint32_t capability_count;
+    const char *const *capabilities;
+};
+
 enum mo_checked_entry_result { MO_ENTRY_UNIT, MO_ENTRY_STATUS, MO_ENTRY_RESULT };
 
 struct mo_checked_entry {
@@ -662,6 +754,8 @@ struct mo_program {
     const struct mo_checked_spec *specs;
     uint32_t service_count;
     const struct mo_checked_service *services;
+    uint32_t api_count;
+    const struct mo_checked_api *apis;
     struct mo_checked_entry entry;
 };
 

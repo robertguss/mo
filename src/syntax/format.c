@@ -86,6 +86,7 @@ static const char *const spellings[MO_T_PERCENT + 1] = {[MO_T_MODULE] = "module"
                                                         [MO_T_WHERE] = "where",
                                                         [MO_T_END] = "end",
                                                         [MO_T_SERVICE] = "service",
+                                                        [MO_T_API] = "api",
                                                         [MO_T_LPAREN] = "(",
                                                         [MO_T_RPAREN] = ")",
                                                         [MO_T_LBRACK] = "[",
@@ -499,6 +500,48 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         clause_word(f, "env");
         node(f, n->children[0]);
         break;
+    case MO_S_API:
+        text(f, "api");
+        block_body(f, n->children[0], n);
+        text(f, "end");
+        break;
+    case MO_S_API_PORT:
+        clause_word(f, "port");
+        node(f, n->children[0]);
+        break;
+    case MO_S_API_CORS:
+        clause_word(f, "cors");
+        node(f, n->children[0]);
+        break;
+    case MO_S_API_SQLITE:
+        clause_word(f, "sqlite");
+        node(f, n->children[0]);
+        text(f, " ");
+        clause_word(f, "from");
+        node(f, n->children[1]);
+        break;
+    case MO_S_API_AUTH:
+        clause_word(f, "auth");
+        node(f, n->children[0]);
+        text(f, " ");
+        clause_word(f, "via");
+        node(f, n->children[1]);
+        break;
+    case MO_S_API_ROUTE:
+        node(f, n->children[0]);
+        text(f, " ");
+        node(f, n->children[1]);
+        text(f, " ");
+        node(f, n->children[2]);
+        break;
+    case MO_S_API_STATUS:
+        clause_word(f, "status");
+        node(f, n->children[0]);
+        if (n->children[1] != NULL)
+            sequence_brackets(f, NULL, n->children[1], "(", ")");
+        text(f, " = ");
+        node(f, n->children[2]);
+        break;
     case MO_S_PROMISE:
     case MO_S_EXAMPLES: {
         bool promise = n->kind == MO_S_PROMISE;
@@ -803,7 +846,8 @@ static void node(struct printer *f, const struct mo_syntax *n) {
     bool block = n->kind == MO_S_FN || n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM ||
                  n->kind == MO_S_TEST || n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES ||
                  n->kind == MO_S_FOR || n->kind == MO_S_WHILE || n->kind == MO_S_IF ||
-                 n->kind == MO_S_CASE || n->kind == MO_S_LAMBDA || n->kind == MO_S_SERVICE;
+                 n->kind == MO_S_CASE || n->kind == MO_S_LAMBDA || n->kind == MO_S_SERVICE ||
+                 n->kind == MO_S_API;
     if (block)
         op(f, MO_DOC_ALIGN_LINE);
     op(f, MO_DOC_GROUP);

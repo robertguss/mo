@@ -221,6 +221,7 @@ static const struct native_text {
 #define HOSTOP(id, module, name, signature, params, bugs, spec_only)                               \
     {module, name, module "." name, signature, spec_only},
 #include "base/hostops.def"
+    {"Sqlite", "in_memory", "Sqlite.fake", "fn() : Sqlite", true},
 };
 
 static const struct mo_symbol option_owner = {.name = "Option", .module = UINT32_MAX};
@@ -1512,7 +1513,7 @@ const struct mo_source_type *
 mo_resolve_service_type(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                         const struct mo_signatures *signatures, uint32_t module,
                         const struct mo_syntax *clause, struct mo_diags *diags) {
-    MO_ASSERT(clause->kind == MO_S_SERVICE_STATE);
+    MO_ASSERT(clause->kind == MO_S_SERVICE_STATE || clause->kind == MO_S_API_AUTH);
     struct mo_symbol owner = {.name = "service", .declaration = clause, .module = module};
     struct mo_signatures view = *signatures;
     struct preparation p = {.arena = arena,

@@ -482,6 +482,11 @@ def guide_claims(binary):
          "`database.query(statement, values)` returns `Sqlite.Rows(columns, rows)`.",
          "`SqliteError` cases (`OutsideFolder`, `NotPermitted`, `SqlFailed`) and `Sqlite.Value` cases are written with `Sqlite.` in front.",
          "`Sqlite.fake()` keeps databases in memory so two opens of one path on one fake share tables and rows.")
+    says("This build checks, formats, fixes, tests and serves declarative `api ... end` HTTP/REST "
+         "servers (reference 11.6) alongside `lib/api.mo` (`use Api`).",
+         "In `mo test`, `ApiTest.send(Module, req, ...)` dispatches an `Api.Request` directly in "
+         "memory with zero sockets (using `Sqlite.in_memory()` or `Sqlite.fake()`, `Env.of(...)`, "
+         "etc.).")
     with tempfile.TemporaryDirectory() as folder:
         source = pathlib.Path(folder) / "main.mo"
         source.write_text(

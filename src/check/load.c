@@ -258,7 +258,7 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
     return 0;
 }
 
-static const char *const on_use[] = {"Http", "Json", "Unicode16"};
+static const char *const on_use[] = {"Api", "Http", "Json", "Unicode16"};
 
 static MO_MUST_USE bool loaded_on_use(const char *name) {
     for (size_t i = 0; i < sizeof on_use / sizeof *on_use; i++)
@@ -717,14 +717,56 @@ static MO_MUST_USE bool prepare(struct loader *l) {
     return !l->failed;
 }
 
+static MO_MUST_USE bool load_named_library(struct loader *l, const char *name, const char *file) {
+    if (find(l, name) != 0)
+        return true;
+    struct mo_span unavailable = {UINT32_MAX, 0, 0};
+    if (l->real_library != NULL) {
+        char *prefix = join(l, l->real_library, "/", unavailable);
+        char *full = prefix == NULL ? NULL : join(l, prefix, file, unavailable);
+        return full != NULL && read_module(l, full, name, unavailable, true) != 0;
+    }
+    if (l->embedded != NULL) {
+        for (uint32_t i = 0; i < l->embedded->count; i++)
+            if (strcmp(l->embedded->files[i].path, file) == 0)
+                return read_embedded_module(l, &l->embedded->files[i], name, unavailable) != 0;
+    }
+    if (!l->memory_only) {
+        char *full = join(l, "lib/", file, unavailable);
+        return full != NULL && read_module(l, full, name, unavailable, true) != 0;
+    }
+    return true;
+}
+
 static MO_MUST_USE struct mo_module_set *parse_modules(struct loader *l) {
     if (!graph(l))
         return NULL;
     uint32_t before = l->diags->count;
+    bool has_api = false;
     for (uint32_t i = 0; i < l->out->count; i++) {
         l->out->modules[i] = mo_parse(l->arena, l->sources, l->items[i].file, l->diags);
         if (l->out->modules[i] == NULL)
             return NULL;
+        const struct mo_syntax *items = l->out->modules[i]->tree->children[1];
+        for (uint32_t j = 0; j < items->count; j++)
+            if (items->children[j]->kind == MO_S_API)
+                has_api = true;
+    }
+    if (has_api && (find(l, "Api") == 0 || find(l, "Json") == 0)) {
+        uint32_t prev_count = l->out->count;
+        if (!load_named_library(l, "Json", "json.mo") || !load_named_library(l, "Api", "api.mo"))
+            return NULL;
+        if (l->out->count > prev_count) {
+            for (uint32_t i = prev_count; i < l->out->count; i++) {
+                l->out->modules[i] = mo_parse(l->arena, l->sources, l->items[i].file, l->diags);
+                if (l->out->modules[i] == NULL)
+                    return NULL;
+            }
+            for (uint32_t i = 0; i < l->out->count; i++)
+                l->items[i].state = 0;
+            if (!graph(l))
+                return NULL;
+        }
     }
     mo_diags_sort(l->diags);
     return l->diags->count == before && l->diags->dropped == 0 ? l->out : NULL;

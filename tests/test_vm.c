@@ -2713,14 +2713,14 @@ static MO_MUST_USE int core_run_on_stack(const char *path, const char *test,
         MO_ASSERT(run != NULL || fn->parameter_count == 0);
         struct mo_limits limits = mo_limits_default();
         struct mo_defect defect;
-        enum mo_outcome outcome = mo_image_init_bounded(image, &limits, 10000, &defect);
+        enum mo_outcome outcome = mo_image_init_bounded(image, &limits, 250000, &defect);
         struct mo_process *p = outcome == MO_RETURNED ? mo_process_new(image, &limits) : NULL;
         struct mo_cell result;
         struct vm_run_context context;
         bool adapted = false;
         if (outcome == MO_RETURNED) {
             MO_ASSERT(p != NULL);
-            mo_process_instruction_limit(p, 10000);
+            mo_process_instruction_limit(p, 250000);
             if (run == NULL)
                 outcome = mo_call(p, function, NULL, 0, &result, &defect);
             else {

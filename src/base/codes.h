@@ -133,6 +133,9 @@
     X(105, SERVICE_HIDDEN_TYPE, "11.5")                                                            \
     X(106, SERVICE_TOOL_NAME, "11.5")                                                              \
     X(107, SERVICE_PROMISE, "12.2")                                                                \
+    X(108, API_BLOCK, "11.6")                                                                      \
+    X(109, API_ROUTE, "11.6")                                                                      \
+    X(110, API_STATUS, "11.6")                                                                     \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

@@ -1,0 +1,7 @@
+error E0109: two api routes have the same HTTP method and path shape  tests/errors/e0109/main.mo:5:7
+
+  5 |   get "/users/:uid" second_user
+    |       ^^^^^^^^^^^^^ two api routes have the same HTTP method and path shape
+
+Each (method, path) pair in an api block must be distinct (reference 11.6).
+

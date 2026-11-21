@@ -260,8 +260,12 @@ static void parse_serve(void) {
     REFUSED("flag needs a nonempty value: \"--data\" \"-x\"", "main.mo", "--port", "1", "--data",
             "-x");
     REFUSED("flag needs a nonempty value: \"--data\"", "main.mo", "--port", "1", "--data");
-    REFUSED("serve needs --port N: \"serve\"", "main.mo", "--data", "state");
-    REFUSED("serve needs --data DIR: \"serve\"", "main.mo", "--port", "1");
+    REFUSED("serve needs --port N: \"serve\"", "--data", "state");
+    REFUSED("serve needs --data DIR: \"serve\"", "--port", "1");
+    const char *api_zero[] = {"mo", "serve", "main.mo"};
+    CHECK(mo_cli_parse(3, api_zero, &cli, &error) && !cli.has_port && cli.data == NULL);
+    const char *api_port_only[] = {"mo", "serve", "main.mo", "--port", "0"};
+    CHECK(mo_cli_parse(5, api_port_only, &cli, &error) && cli.has_port && cli.port == 0);
     REFUSED("flag may be given only once (except --only): \"--port\"", "main.mo", "--port", "1",
             "--port", "2", "--data", "state");
     REFUSED("flag may be given only once (except --only): \"--data\"", "main.mo", "--port", "1",

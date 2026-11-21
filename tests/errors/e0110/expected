@@ -1,0 +1,13 @@
+error E0110: an api error case has no status clause: AppError.Forbidden  tests/errors/e0110/main.mo:8:1
+
+  8 | api
+    | ^^^
+  9 |   get "/items/:id" read_item
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  10 |   status ItemMissing(_) = 404
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  11 | end
+     | ^^^ an api error case has no status clause: AppError.Forbidden
+
+Every case of every error enum returned by an api must map to an HTTP status code (reference 11.6).
+

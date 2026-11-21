@@ -161,6 +161,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.5/7	service-read-only	e0103-interval			ci/cli_serve.py:service_refusals,tests/test_program.c:service_inputs,tests/test_service_runtime.c:timers
 11.5/8	service-read-only	e0102,e1408			ci/cli_serve.py:service_commands,ci/cli_serve.py:service_refusals,ci/cli_guide.py:guide_claims
 11.5/9					tests/test_protocol_server.c:wire,tests/test_protocol_server.c:response_limit,tests/test_protocol_server.c:small_body_reads,tests/test_protocol_server.c:rejection_paths,tests/test_protocol_server.c:result_updates,tests/test_protocol_server_faults.c:exhausted_fallback,tests/test_protocol_server_faults.c:store_failure,tests/test_protocol_server_faults.c:preauth_failure,tests/test_protocol_server_faults.c:poll_failures,tests/test_protocol_bounds.c:header_bytes,tests/test_protocol_bounds.c:header_fields,tests/test_protocol_bounds.c:body_ceiling,tests/test_protocol_bounds.c:chunk_ceilings,tests/test_protocol_bounds.c:response_ceiling,tests/test_protocol_composites.c:output_nodes,tests/test_listener.c:real_io,tests/test_listener_faults.c:retry_accept,tests/test_lower.c:test_embedded_protocol
+11.6/1	api-server	e0108			tests/test_program.c:api_server_checks,tests/test_api_server.c:main
+11.6/2	api-server	e0109			tests/test_program.c:api_server_checks,tests/test_api_server.c:main,lib/api.mo:match_path
+11.6/3	api-server	e0110			tests/test_program.c:api_server_checks,tests/test_api_server.c:main,ci/cli_guide.py:guide_claims
 12/1	lang-test-passing,col-test-passing	e0015-after-code,e0018-after-code			tests/test_format.c:check_source,ci/check_cli.py:check
 12.1/1	col-test-passing	tst-failing-example		
 12.2/1	sample-account-tests	e0015			ci/cli_promises.py:vacuous_promises
@@ -175,7 +178,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 12.2/10		e0107,e0107-no-tool,e0107-reserved,e1109,service-promise-result,service-promise-restart			ci/check_task_queue.py:simulation,ci/cli_intent.py:service_promise_checks
 12.2/11	mod-hidden-type,fail-result-declared	e0007-requires
 12.3/1	tst-passing,tst-private-names,sample-job-queue-tests	tst-failing-assert		
-12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes,cap-network-fake	e0098,e0098-constant,e0098-printed,e0098-simulation,e0098-network			ci/check_simulation.py:main
+12.4/1	tst-fakes,cap-files-fake,cap-clock-fixed,ref-capability-fakes,cap-network-fake,api-server	e0098,e0098-constant,e0098-printed,e0098-simulation,e0098-network			ci/check_simulation.py:main,tests/test_program.c:api_server_checks
 12.4/2		e0050-simulation-dot,e0050-simulation-operation,e0055-simulation-value,e0055-simulation-start,e0055-simulation-send,e0055-simulation-advance,e0055-simulation-crash,e0055-simulation-restart,e0100-simulation-start,e0100-simulation-send			ci/check_simulation.py:main,tests/test_program.c:simulation_inputs,tests/test_service_store.c:simulation_persistence
 12.4/3					ci/check_simulation.py:main,tests/test_service_store.c:simulation_persistence
 12.4/4					ci/check_simulation.py:main,tests/test_program.c:simulation_inputs
@@ -210,7 +213,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 13.3/7	txt-counts,txt-lines-words,txt-search					tests/test_prim.c
 13.3/8	txt-ordering,col-list-map-find,col-list-order-ties					measured:tests/test_lower.c:test_source_sort_work
 13.3/9	col-shared-values,lang-records-update					tests/test_prim.c:shared_copy_charge,tests/test_prim.c:reuse_aliases,tests/test_heap.c:test_reuse_and_images
-13.4/1	ref-shout,col-test-passing				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:diff_command,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run
+13.4/1	ref-shout,col-test-passing,api-server				ci/check_cli.py:check,ci/cli_guide.py:emit_command,ci/cli_guide.py:guide_claims,ci/cli_intent.py:diff_command,ci/cli_intent.py:fix_command,ci/cli_serve.py:serve_command,ci/check_fetch.py:run,ci/check_operator.py:run,tests/test_api_server.c:main,tests/test_diff.c:main
 13.4/2					ci/cli_intent.py:promise_selection,ci/cli_intent.py:recovery_checks,ci/cli_intent.py:strength_checks
 13.4/3	tst-passing,col-test-passing,sample-job-queue-tests	e1439,tst-fake-files-bugs			ci/cli_gates.py:mutants,ci/cli_guide.py:guide_claims,tests/test_deadline.c:main
 13.4/4	lang-recursion-tail				ci/cli_programs.py:observations,ci/check_cli.py:check,tests/test_limits.c:test_the_defaults
@@ -251,7 +254,8 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/33	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
 14/34	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud,tests/test_sqlite.c:test_real_errors,tests/test_sqlite.c:test_containment,tests/test_sqlite.c:test_authorizer,tests/test_sqlite.c:test_open_limit,fuzz/fuzz_sqlite.c:LLVMFuzzerTestOneInput
 14/35	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
-14/36	cap-sqlite-fake	e0098-sqlite			tests/test_sqlite.c:test_fake_sqlite,tests/test_fakes.c:sqlite_starts_empty
+14/36	cap-sqlite-fake,api-server	e0098-sqlite			tests/test_sqlite.c:test_fake_sqlite,tests/test_fakes.c:sqlite_starts_empty
+14/37	api-server				lib/api.mo:request,lib/api.mo:match_path,lib/api.mo:sse_response,tests/test_api_server.c:main
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases
 A/2		e0412			ci/check_errors.py:check_cases

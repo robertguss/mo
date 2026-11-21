@@ -54,6 +54,7 @@ struct mo_cli {
     const char *module;
     const char *library;
     const char *output; /* emit's -o file */
+    bool has_port;
     uint16_t port;
     const char *data;
     const char *allow_host;
