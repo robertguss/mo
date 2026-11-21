@@ -365,8 +365,8 @@ What `send` does:
   `BadResponse` or `TooLarge`. Both are in `limits()` in `lib/http.mo`.
 
 All parsing of what the network sends is Mo. The only new C that reads network bytes is the
-`receive` operation, which copies them into a `Bytes` and inspects nothing, and later the TLS
-library. Each gets a fuzz target with seeds.
+`receive` operation, which copies them into a `Bytes` and inspects nothing, and the TLS
+library in `src/host/tls.c`. Each gets a fuzz target with seeds.
 
 ### The client as built
 
