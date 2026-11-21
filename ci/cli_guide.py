@@ -476,6 +476,29 @@ def guide_claims(binary):
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"2 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
+    says("`Sqlite` and `Sqlite.Database` run (reference section 14).",
+         "`sqlite.open(path)` opens or creates a SQLite database inside the capability's folder",
+         "`database.run(statement, values)` runs one statement with `Sqlite.Value` arguments",
+         "`database.query(statement, values)` returns `Sqlite.Rows(columns, rows)`.",
+         "`SqliteError` cases (`OutsideFolder`, `NotPermitted`, `SqlFailed`) and `Sqlite.Value` cases are written with `Sqlite.` in front.",
+         "`Sqlite.fake()` keeps databases in memory so two opens of one path on one fake share tables and rows.")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\n\ntest \"fake sqlite shares tables and enforces sandbox rules\"\n"
+            "  sqlite = Sqlite.fake()\n"
+            "  assert sqlite.open(\"app.db\") is Ok(first)\n"
+            "  assert first.run(\"CREATE TABLE items(n INT, s TEXT)\", []) == Ok(Unit)\n"
+            "  assert first.run(\"INSERT INTO items VALUES (?, ?)\", [Sqlite.Integer(7), Sqlite.String(\"mo\")]) == Ok(Unit)\n"
+            "  assert sqlite.open(\"./app.db\") is Ok(second)\n"
+            "  assert second.query(\"SELECT n, s FROM items\", []) ==\n"
+            "    Ok(Sqlite.Rows(columns: [\"n\", \"s\"], rows: [[Sqlite.Integer(7), Sqlite.String(\"mo\")]]))\n"
+            "  assert first.run(\"ATTACH 'b.db' AS b\", []) is Error(Sqlite.NotPermitted(reason: _))\n"
+            "  assert sqlite.open(\"../escape.db\") is Error(Sqlite.OutsideFolder(path: escaped))\n"
+            "  assert escaped == \"../escape.db\"\n"
+            "end\n")
+        result = run(binary, ["test", str(source)], 0)
+        assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
 
 
 def emit_command(binary):

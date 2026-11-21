@@ -775,6 +775,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     | none => wrongArgs "Random.int"
   | .connect, _ | .connectSecure, _ | .allowHosts, _ | .send, _ | .receive, _ | .networkFake, _ =>
     outside "Network is not modeled by mocore" w
+  | .sqliteOpen, _ | .sqliteFake, _ | .sqliteRun, _ | .sqliteQuery, _ =>
+    outside "Sqlite is not modeled by mocore" w
   | _, _ => wrongArgs "capability primitive"
 
 /-- A derived handle retains the selected fake's identity. Ordinary returned

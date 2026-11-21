@@ -206,7 +206,7 @@ static MO_MUST_USE bool scalar_text(struct mo_heap *process, enum mo_type_kind k
         MO_ASSERT((unsigned)capability < MO_CAPABILITY_COUNT);
         const char *name = mo_capability_names[capability];
         size_t length = strlen(name);
-        char wrapped[16];
+        char wrapped[32];
         MO_ASSERT(length + 2 < sizeof wrapped);
         wrapped[0] = '<';
         memcpy(wrapped + 1, name, length);

@@ -346,7 +346,9 @@ static void derive_order(struct lowering *p, struct derived *d) {
     if (d->type->tag != MO_CORE_TY_DATA && d->type->tag != MO_CORE_TY_OPTION &&
         d->type->tag != MO_CORE_TY_RESULT && d->type->tag != MO_CORE_TY_ORDERING &&
         d->type->tag != MO_CORE_TY_FILE_ERROR && d->type->tag != MO_CORE_TY_ENTRY &&
-        d->type->tag != MO_CORE_TY_ENTRY_KIND && d->type->tag != MO_CORE_TY_NETWORK_ERROR)
+        d->type->tag != MO_CORE_TY_ENTRY_KIND && d->type->tag != MO_CORE_TY_NETWORK_ERROR &&
+        d->type->tag != MO_CORE_TY_SQLITE_VALUE && d->type->tag != MO_CORE_TY_SQLITE_ROWS &&
+        d->type->tag != MO_CORE_TY_SQLITE_ERROR)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived order shape is not lowered yet");
     mo_core_ctors ctors = lower_ctors(p, d->type);
     mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
@@ -563,7 +565,8 @@ static void derive_text(struct lowering *p, struct derived *d) {
     if (d->type->tag != MO_CORE_TY_DATA && d->type->tag != MO_CORE_TY_OPTION &&
         d->type->tag != MO_CORE_TY_RESULT && d->type->tag != MO_CORE_TY_ORDERING &&
         d->type->tag != MO_CORE_TY_ENTRY && d->type->tag != MO_CORE_TY_ENTRY_KIND &&
-        d->type->tag != MO_CORE_TY_NETWORK_ERROR)
+        d->type->tag != MO_CORE_TY_NETWORK_ERROR && d->type->tag != MO_CORE_TY_SQLITE_VALUE &&
+        d->type->tag != MO_CORE_TY_SQLITE_ROWS && d->type->tag != MO_CORE_TY_SQLITE_ERROR)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this derived text shape is not lowered yet");
     mo_core_ctors ctors = lower_ctors(p, d->type);
     mo_core_expr e = lower_expr(p, MO_CORE_EXPR_CASE);
@@ -591,14 +594,22 @@ static void derive_text(struct lowering *p, struct derived *d) {
             const struct mo_core_param *fields = NULL;
             if (d->type->tag == MO_CORE_TY_DATA)
                 fields = ctor->fields.items;
-            else if (d->type->tag == MO_CORE_TY_ENTRY || d->type->tag == MO_CORE_TY_NETWORK_ERROR) {
+            else if (d->type->tag == MO_CORE_TY_ENTRY || d->type->tag == MO_CORE_TY_NETWORK_ERROR ||
+                     d->type->tag == MO_CORE_TY_SQLITE_ROWS ||
+                     d->type->tag == MO_CORE_TY_SQLITE_ERROR) {
                 static const char *const entry[] = {"name", "kind"};
+                static const char *const sqlite_rows[] = {"columns", "rows"};
+                static const char *const sqlite_errors[] = {"path", "reason", "message"};
                 static const char *const network[][2] = {{"host"}, {"host", "port"}, {NULL},
                                                          {NULL},   {"reason"},       {"reason"}};
                 struct mo_core_param *named = LOWER_NEW(p, struct mo_core_param, count);
-                for (size_t j = 0; j < count; j++)
-                    named[j].name =
-                        lower_text(p, d->type->tag == MO_CORE_TY_ENTRY ? entry[j] : network[i][j]);
+                for (size_t j = 0; j < count; j++) {
+                    const char *label = d->type->tag == MO_CORE_TY_ENTRY          ? entry[j]
+                                        : d->type->tag == MO_CORE_TY_SQLITE_ROWS  ? sqlite_rows[j]
+                                        : d->type->tag == MO_CORE_TY_SQLITE_ERROR ? sqlite_errors[i]
+                                                                                  : network[i][j];
+                    named[j].name = lower_text(p, label);
+                }
                 fields = named;
             }
             fields_text(p, d, first, values, fields,

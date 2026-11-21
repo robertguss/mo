@@ -5,12 +5,12 @@
 #include "base/hostops.h"
 #include "heap/heap.h"
 
-#define MO_HOST_PRIVATE_TYPES 9
+#define MO_HOST_PRIVATE_TYPES 10
 struct mo_host_types {
     struct mo_types types;
-    uint32_t integer, time, text, bytes, texts, folders, files, replies, peers;
-    uint32_t capabilities[MO_CAP_CONNECTION + 1];
-    uint32_t parameters[6];
+    uint32_t integer, time, text, bytes, texts, folders, files, replies, peers, databases;
+    uint32_t capabilities[MO_CAP_DATABASE + 1];
+    uint32_t parameters[8];
 };
 /* Once per image. storage has source->count + MO_HOST_PRIVATE_TYPES entries;
  * it and out must remain at these addresses for the lifetime of every heap.
@@ -21,7 +21,7 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
 
 struct mo_host {
     const struct mo_host_types *types;
-    uint32_t open_folders, open_connections;
+    uint32_t open_folders, open_connections, open_databases;
     int input, output, errors;
     bool force_fallback; /* C tests exercise the portable resolver on Linux. */
     bool started, kernel_probed, kernel_available;
@@ -67,7 +67,7 @@ MO_MUST_USE enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_he
 struct mo_host_fake_state {
     enum mo_capability kind;
     union {
-        struct mo_cell args, env, network;
+        struct mo_cell args, env, network, sqlite;
         struct {
             struct mo_cell input, output, errors;
         } console;

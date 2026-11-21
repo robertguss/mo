@@ -197,18 +197,19 @@ static bool input_supported(struct eligibility *walk, const struct mo_program *p
     }
     if (type->kind == MO_SOURCE_NAMED) {
         if (type->module == UINT32_MAX) {
-            static const char *const scalars[] = {
-                "Unit", "Bool", "Byte", "Int", "Float", "Char", "Time", "Duration", "Decimal",
-                "Range", "Text", "Bytes", "BigInt",
-                /* Capabilities, as generated fakes. */
-                "Console", "Files", "ReadFiles", "Clock", "Random", "Args", "Env", "Network"};
+            static const char *const scalars[] = {"Unit", "Bool", "Byte", "Int", "Float", "Char",
+                                                  "Time", "Duration", "Decimal", "Range", "Text",
+                                                  "Bytes", "BigInt",
+                                                  /* Capabilities, as generated fakes. */
+                                                  "Console", "Files", "ReadFiles", "Clock",
+                                                  "Random", "Args", "Env", "Network", "Sqlite"};
             bool supported = (type->count == 1 &&
                               (strcmp(type->name, "List") == 0 || strcmp(type->name, "Set") == 0 ||
                                strcmp(type->name, "Option") == 0)) ||
                              (type->count == 2 && (strcmp(type->name, "Map") == 0 ||
                                                    strcmp(type->name, "Result") == 0));
             size_t scalar_count =
-                sizeof scalars / sizeof scalars[0] - (walk->plain || walk->copied ? 8 : 0);
+                sizeof scalars / sizeof scalars[0] - (walk->plain || walk->copied ? 9 : 0);
             for (size_t i = 0; type->count == 0 && i < scalar_count; i++)
                 supported |= strcmp(type->name, scalars[i]) == 0;
             if (!supported)

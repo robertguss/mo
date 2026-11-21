@@ -282,7 +282,8 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
             ok = have_args = arguments(cli, host, heap, &args);
         else if (cap == MO_CAP_ENV && !have_env)
             ok = have_env = environment(host, heap, &env);
-        else if ((cap == MO_CAP_FILES || cap == MO_CAP_READ_FILES) && folder < 0) {
+        else if ((cap == MO_CAP_FILES || cap == MO_CAP_READ_FILES || cap == MO_CAP_SQLITE) &&
+                 folder < 0) {
             folder = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
             if (folder < 0) {
                 status = stopped(process, "could not open the starting folder", NULL, 0, errors);

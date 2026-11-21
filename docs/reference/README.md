@@ -958,8 +958,8 @@ qualified form, and so is a cycle of modules that use each other. The
 library's `Http`, `Json` and `Unicode16` modules are used the same way. Every
 library module reserves its name, so a program can't declare a module named
 `FileError`, `Files`, `Http`, `Json`, `List`, `Map`, `Option`, `ReadFiles`,
-`Result`, `Set`, `Text`, `Time` or `Unicode16`. The built-in `Simulation` module
-also reserves its name.
+`Result`, `Set`, `Text`, `Time` or `Unicode16`. The built-in `Simulation` and
+`Sqlite` modules also reserve their names.
 
 ### 10.4 Constants
 
@@ -986,9 +986,10 @@ an argument and return any replacement state.
 Always in scope: the built-in types of section 3, `Option` with `Some` and
 `None`, `Result` with `Ok` and `Error`, `Ordering` with its cases, the
 capability types, `FileError` with its cases, `SimulationError` with `ServiceDown` and `ToolFailed`,
-`Entry` with `EntryKind` and its cases, and `NetworkError`. The cases of
-`NetworkError` are not in scope by themselves: they are written with `Network.`
-in front, as in `Network.TimedOut` (section 14). The functions of section 14 belong to their types' modules:
+`Entry` with `EntryKind` and its cases, `NetworkError`, and `SqliteError`. The cases of
+`NetworkError` and `SqliteError` are not in scope by themselves: they are written
+with `Network.` or `Sqlite.` in front, as in `Network.TimedOut` and
+`Sqlite.OutsideFolder` (section 14). The functions of section 14 belong to their types' modules:
 call them with a dot, as in `text.lines`, or through the module, as in
 `Set.empty` and `Time.parse(text)`. So a local may be called `lines` or
 `count` without clashing with them.
@@ -1015,14 +1016,16 @@ the same arguments, it always gives the same result.
 | `Random` | draw random numbers |
 | `Network` | open connections to other computers |
 | `Connection` | send and receive bytes on one open connection |
+| `Sqlite` | open and query SQLite databases in the program's folder |
+| `Sqlite.Database` | run SQL statements and queries on one open database |
 
 ### 11.2 main
 
 `main` lists the capabilities the program needs, in any order and at most one
 of each type. The runtime hands over exactly those, so a program's whole
-authority is on its first line. The `Files` or `ReadFiles` it gets reach the
-folder the program was started in. `main` can't list a `Connection`: a program
-gets one only from a `Network`.
+authority is on its first line. The `Files`, `ReadFiles` or `Sqlite` it gets reach the
+folder the program was started in. `main` can't list a `Connection` or a `Sqlite.Database`:
+a program gets them only from a `Network` or a `Sqlite`.
 
 `main` returns nothing, and the program exits with status 0; or an `Int`, the
 exit status, from 0 to 255; or `Result(Unit, E)`, where `Error(e)` prints `e`'s
@@ -1315,7 +1318,8 @@ the lines written to standard output and standard error;
 `Console.fake_input(lines)`, which also has those lines to read;
 `Files.in_memory(files)`, from a map of paths to texts; `Clock.fixed(time)`;
 `Random.seeded(n)`; `Args.of(list)`; `Env.of(map)`; `Network.fake(peers)`, from a
-map of the requests it answers (section 14); and `Simulation.start(module, at)`
+map of the requests it answers (section 14); `Sqlite.fake()`, an in-memory
+SQLite capability (section 14); and `Simulation.start(module, at)`
 for a test service. Fakes are made only
 there, never in a module's constants or its functions. `printed` and
 `printed_errors` can be used only there too, where every console is a fake,
@@ -2055,6 +2059,49 @@ character; 0 for one made only of control characters, marks and invisible
 characters; and 1 otherwise, ambiguous characters and a lone flag letter
 included. A later runtime adds `Unicode17` beside it, so what a program computes
 changes only when its `use` line does.
+
+**Sqlite**: `open(path: Text) : Result(Sqlite.Database, SqliteError)` opens or
+creates a SQLite database at `path` inside the capability's folder (an existing
+non-database file gives `Error(Sqlite.SqlFailed(message: ...))`, while an empty
+file counts as a new database), checking paths by `Files`'s rules and checking
+the database file and its `-journal`, `-wal` and `-shm` files for links so
+anything leaving the folder gives `Error(Sqlite.OutsideFolder(path: path))`.
+**Sqlite.Database**: `run(statement: Text, values: List(Sqlite.Value)) : Result(Unit, SqliteError)`
+executes one SQL statement with positional `?` parameters, and
+`query(statement: Text, values: List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)`
+gives `Sqlite.Rows(columns: List(Text), rows: List(List(Sqlite.Value)))`. More
+than 16 databases open at once is a bug (13.2); a statement longer than
+1,048,576 bytes, more than 32,766 parameters, a parameter count mismatch,
+multiple statements, embedded NUL, invalid UTF-8 result text or invalid SQL
+gives `Error(Sqlite.SqlFailed(message: ...))`; and `ATTACH`, `DETACH`,
+`VACUUM INTO`, extension loading and disk temporary storage give
+`Error(Sqlite.NotPermitted(reason: ...))`.
+
+**Sqlite.Value**: `Null`, `Integer(Int)`, `Real(Float)`, `String(Text)`, and
+`Blob(Bytes)`. **SqliteError**: `OutsideFolder(path: Text)`,
+`NotPermitted(reason: Text)`, and `SqlFailed(message: Text)`. The cases of both
+types are written with `Sqlite.` in front, in expressions and in patterns, as in
+`Sqlite.Integer(7)` and `Sqlite.NotPermitted(reason: _)`. Both have text forms
+and comparisons.
+
+`Sqlite.fake() : Sqlite` makes an empty in-memory SQLite capability that touches
+no file. Opening the same path twice on one fake shares the same database, while
+distinct fakes share nothing, and escaping paths give
+`Error(Sqlite.OutsideFolder(path: path))` as on a real `Sqlite`. The `Sqlite`
+that `mo test` makes for a promise starts empty.
+
+<!-- mo-example: fragment -->
+```mo
+test "a fake sqlite database shares state across opens"
+  sqlite = Sqlite.fake()
+  assert sqlite.open("app.db") is Ok(db)
+  assert db.run("CREATE TABLE t(n INT)", []) == Ok(Unit)
+  assert db.run("INSERT INTO t VALUES (?)", [Sqlite.Integer(7)]) == Ok(Unit)
+  assert sqlite.open("./app.db") is Ok(same)
+  assert same.query("SELECT n FROM t", []) ==
+    Ok(Sqlite.Rows(columns: ["n"], rows: [[Sqlite.Integer(7)]]))
+end
+```
 
 ## 15. What comes later
 

@@ -165,7 +165,7 @@ static struct mo_type_field *any_fields(uint32_t n) {
  * them (a pass that did would fail its proof on the null table). */
 static void any_type(struct mo_type *t, uint32_t functions, bool contents) {
     *t = (struct mo_type){.kind = (enum mo_type_kind)any_count(MO_TYPE_CAPABILITY),
-                          .capability = (enum mo_capability)any_count(MO_CAP_CONNECTION),
+                          .capability = (enum mo_capability)any_count(MO_CAP_DATABASE),
                           .name = "type",
                           .defined = nondet_bool(),
                           .reference = nondet_bool(),

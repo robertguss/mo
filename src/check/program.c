@@ -497,6 +497,7 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
             for (unsigned j = 0; j < MO_CAPABILITY_COUNT; j++)
                 if (strcmp(mo_capability_names[j], "Simulation") != 0 &&
                     strcmp(mo_capability_names[j], "Connection") != 0 &&
+                    strcmp(mo_capability_names[j], "Sqlite.Database") != 0 &&
                     native_type(entry->parameters[i]->type, mo_capability_names[j]))
                     capability = 1u << j;
             if (capability == 0 || (capabilities & capability) != 0) {

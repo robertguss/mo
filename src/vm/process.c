@@ -342,7 +342,8 @@ enum mo_outcome mo_call_main(struct mo_process *process, uint32_t function,
         uint32_t type = fn->parameters[i].type;
         MO_ASSERT(process->types->items[type].kind == MO_TYPE_CAPABILITY &&
                   process->types->items[type].capability != MO_CAP_SIMULATION &&
-                  process->types->items[type].capability != MO_CAP_CONNECTION);
+                  process->types->items[type].capability != MO_CAP_CONNECTION &&
+                  process->types->items[type].capability != MO_CAP_DATABASE);
         if (supplied != NULL)
             continue;
         enum mo_capability cap = process->types->items[type].capability;

@@ -45,6 +45,8 @@ enum mo_capability {
     MO_CAP_SIMULATION,
     MO_CAP_NETWORK,
     MO_CAP_CONNECTION,
+    MO_CAP_SQLITE,
+    MO_CAP_DATABASE,
 };
 
 enum mo_case_shape { MO_CASE_EMPTY, MO_CASE_INLINE, MO_CASE_REF, MO_CASE_BOXED };

@@ -139,6 +139,8 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.1/8	ref-capability-fakes			
 11.1/9	cap-network-fake				tests/test_network.c:test_round_trip
 11.1/10	cap-network-fake				tests/test_network.c:test_round_trip
+11.1/11	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
+11.1/12	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
 11.2/1	cap-files-read,cap-args-list,cap-network-error	e0079			tests/test_check.c:corpus
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
 11.3/1	cap-files-fake,cap-files-within-escape			
@@ -244,6 +246,9 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/31	http-fake				lib/http.mo:named,lib/http.mo:json,lib/http.mo:text
 14/32	http-fake			No golden program shows the bug in Http.replies: its report names a place in lib/http.mo by byte offset, which moves with every edit there.	lib/http.mo:reply,lib/http.mo:replies,ci/cli_guide.py:guide_claims
 14/33	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
+14/34	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud,tests/test_sqlite.c:test_real_errors,tests/test_sqlite.c:test_containment,tests/test_sqlite.c:test_authorizer,tests/test_sqlite.c:test_open_limit,fuzz/fuzz_sqlite.c:LLVMFuzzerTestOneInput
+14/35	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
+14/36	cap-sqlite-fake	e0098-sqlite			tests/test_sqlite.c:test_fake_sqlite,tests/test_fakes.c:sqlite_starts_empty
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases
 A/2		e0412			ci/check_errors.py:check_cases

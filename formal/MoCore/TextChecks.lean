@@ -112,11 +112,12 @@ def world : World :=
 
 #guard (["", "(core 0.1 (unit))", "(core 0.2 (unit))", "(core 0.3 (unit))", "(core 0.4 (unit))",
   "(core 0.5 (unit))", "(core 0.6 (unit))", "(core 0.7 (unit))", "(core 0.8 (unit))",
-  "(core 0.10 (unit)) extra", "(core 0.10 (unit)",
-  "(core 0.10 \"\\q\")", "(core 0.10 \"\\u{d800}\")", "(core 0.10 \"\\u{110000}\")",
-  "(core 0.10 \"\\u{}\")", "(core 0.10 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
-#guard (parseDocument ";before\n(core ;version\n0.10 (int -00012));after" >>= litIn).toOption == some (.int (-12))
-#guard (parseDocument "(core 0.10 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
+  "(core 0.9 (unit))", "(core 0.10 (unit))",
+  "(core 0.11 (unit)) extra", "(core 0.11 (unit)",
+  "(core 0.11 \"\\q\")", "(core 0.11 \"\\u{d800}\")", "(core 0.11 \"\\u{110000}\")",
+  "(core 0.11 \"\\u{}\")", "(core 0.11 \"unterminated)"]).all fun s => (parseDocument s).toOption.isNone
+#guard (parseDocument ";before\n(core ;version\n0.11 (int -00012));after" >>= litIn).toOption == some (.int (-12))
+#guard (parseDocument "(core 0.11 (float 0xFFFFFFFFFFFFFFFF))" >>= litIn).toOption == some (.float 0xffffffffffffffff)
 #guard (["(float 0x123)", "(float 0x10000000000000000)", "(char \"ab\")", "(unit extra)",
   "(int +1)", "(int 1_0)"]).all fun s => (parseSexp s >>= litIn).toOption.isNone
 
@@ -300,7 +301,8 @@ def fuzzSeeds : List (String × Sexp) :=
    ("unicode16", primOut (.unicode16 .normalizeNfc)),
    ("simulation", primOut (.sim (.send 2 3 [.int, .list .text] (.result .unit .text)))),
    ("entries", primOut (.io (.entries true))),
-   ("network", primOut (.io .connect))]
+   ("network", primOut (.io .connect)),
+   ("sqlite", primOut (.io .sqliteOpen))]
 
 #guard (structural Greet.program (.list .entry)
   (.list [.con "Entry" [.text "é", .con "Folder" []]])).toOption ==
@@ -308,6 +310,17 @@ def fuzzSeeds : List (String × Sexp) :=
 #guard (structural Greet.program (.list .networkError)
   (.list [.con "Refused" [.text "h", .int 80], .con "TimedOut" []])).toOption ==
   some "[Refused(host: \"h\", port: 80), TimedOut]"
+#guard (structural Greet.program (.list .sqliteError)
+  (.list [.con "OutsideFolder" [.text "a"], .con "NotPermitted" [.text "b"],
+          .con "SqlFailed" [.text "c"]])).toOption ==
+  some "[OutsideFolder(path: \"a\"), NotPermitted(reason: \"b\"), SqlFailed(message: \"c\")]"
+#guard (structural Greet.program (.list .sqliteValue)
+  (.list [.con "Null" [], .con "Integer" [.int 7], .con "String" [.text "ok"],
+          .con "Blob" [.bytes [1, 2]]])).toOption ==
+  some "[Null, Integer(7), String(\"ok\"), Blob(bytes[1, 2])]"
+#guard (structural Greet.program .sqliteRows
+  (.con "Rows" [.list [.text "c"], .list [.list [.con "Null" []]]])).toOption ==
+  some "Rows(columns: [\"c\"], rows: [[Null]])"
 #guard ["File", "Folder", "Link", "Other"].all fun c =>
   valueFits Greet.program {} .entryKind (.con c []) &&
   !valueFits Greet.program {} .entryKind (.con c [.text "extra"])

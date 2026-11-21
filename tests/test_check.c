@@ -282,6 +282,7 @@ static void corpus(void) {
         {"e0078.mo", "e0078.diag", BODIES},
         {"e0079.mo", "e0079.diag", PROGRAM},
         {"e0079-connection.mo", "e0079-connection.diag", PROGRAM},
+        {"e0079-database.mo", "e0079-database.diag", PROGRAM},
         {"e0080.mo", "e0080.diag", PROGRAM},
         {"e0081.mo", "e0081.diag", SIGNATURES},
         {"e0082.mo", "e0082.diag", SIGNATURES},

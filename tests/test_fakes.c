@@ -13,7 +13,7 @@ struct fixture {
 static void fixture_init(struct fixture *f) {
     host_fixture_init(&f->host, mo_limits_default().heap_size);
     mo_fakes_init(&f->fakes, &f->host.source);
-    MO_ASSERT(mo_fakes_count(&f->fakes) == 8);
+    MO_ASSERT(mo_fakes_count(&f->fakes) == 9);
     mo_fakes_bind(&f->fakes, &f->host.host);
 }
 
@@ -182,6 +182,52 @@ static void network_has_no_peers(void) {
     fixture_free(&f);
 }
 
+static struct mo_cell unwrap_ok(struct host_fixture *h, uint32_t result_type, struct mo_cell res) {
+    MO_ASSERT(mo_cell_get_tag(res) == 0);
+    struct mo_cell payload = mo_cell_get_payload(res);
+    if (mo_case_shape(&h->types.types, result_type, 0) == MO_CASE_BOXED)
+        return mo_value_field(payload, 0);
+    return payload;
+}
+
+static void sqlite_starts_empty(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct host_fixture *h = &f.host;
+    uint32_t rows_list_type = h->types.types.items[h->sqlite_rows].fields[1].type;
+    uint32_t params_type = h->types.types.items[rows_list_type].parameters[0];
+    for (uint32_t which = 0; which < 3; which++) {
+        struct mo_cell fake = boundary(&f, MO_CAP_SQLITE, which);
+        struct mo_cell open_args[] = {fake, host_text(h, "test.db")};
+        struct mo_host_error error;
+        struct mo_cell opened;
+        MO_ASSERT(mo_host_call(&h->host, h->heap, MO_HOST_SQLITE_OPEN, h->result_database,
+                               open_args, &opened, &error) == MO_HOST_RETURNED);
+        struct mo_cell db = unwrap_ok(h, h->result_database, opened);
+        struct mo_cell params;
+        MO_ASSERT(mo_value_list(h->heap, params_type, NULL, 0, &params));
+        struct mo_cell query_args[] = {db, host_text(h, "SELECT name FROM sqlite_master"), params};
+        struct mo_cell queried;
+        MO_ASSERT(mo_host_call(&h->host, h->heap, MO_HOST_SQLITE_QUERY, h->result_sqlite_rows,
+                               query_args, &queried, &error) == MO_HOST_RETURNED);
+        struct mo_buffer printed;
+        mo_buffer_init(&printed, MO_LIMIT_STRING_SIZE);
+        const char *expected = "Ok(Sqlite.Rows(columns: [\"name\"], rows: []))";
+        CHECK(mo_value_print(h->heap, h->result_sqlite_rows, queried, &printed));
+        CHECK(printed.length == strlen(expected) &&
+              memcmp(printed.bytes, expected, printed.length) == 0);
+        mo_buffer_free(&printed);
+        mo_value_drop(h->heap, h->result_sqlite_rows, queried);
+        mo_value_drop(h->heap, h->types.text, query_args[1]);
+        mo_value_drop(h->heap, params_type, params);
+        mo_value_drop(h->heap, h->result_database, opened);
+        mo_value_drop(h->heap, h->types.text, open_args[1]);
+        drop(&f, MO_CAP_SQLITE, fake);
+    }
+    CHECK(mo_heap_objects(h->heap) == 0);
+    fixture_free(&f);
+}
+
 static void copies_start_from_the_recipe(void) {
     struct fixture f;
     fixture_init(&f);
@@ -301,8 +347,8 @@ static void small_heaps(void) {
         host_fixture_init(&f.host, heap_size);
         mo_fakes_init(&f.fakes, &f.host.source);
         mo_fakes_bind(&f.fakes, &f.host.host);
-        for (unsigned kind = 0; kind <= MO_CAP_NETWORK; kind++) {
-            if (kind == MO_CAP_SIMULATION)
+        for (unsigned kind = 0; kind <= MO_CAP_SQLITE; kind++) {
+            if (kind == MO_CAP_SIMULATION || kind == MO_CAP_CONNECTION)
                 continue;
             const struct mo_input_factory *maker = factory(&f, (enum mo_capability)kind);
             struct mo_input_request request = {.kind = MO_INPUT_BOUNDARY, .boundary = 2};
@@ -329,6 +375,7 @@ int main(void) {
     console_args_env();
     clock_random();
     network_has_no_peers();
+    sqlite_starts_empty();
     copies_start_from_the_recipe();
     same_request_same_fake();
     limits();

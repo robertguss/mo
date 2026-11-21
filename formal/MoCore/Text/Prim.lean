@@ -103,7 +103,8 @@ def ioOps : List (String × IoOp) :=
    ("filesInMemory", .filesInMemory), ("clockFixed", .clockFixed),
    ("randomSeeded", .randomSeeded), ("argsOf", .argsOf), ("envOf", .envOf),
    ("connect", .connect), ("connectSecure", .connectSecure), ("send", .send), ("receive", .receive),
-   ("networkFake", .networkFake), ("allowHosts", .allowHosts)]
+   ("networkFake", .networkFake), ("allowHosts", .allowHosts), ("sqliteOpen", .sqliteOpen),
+   ("sqliteFake", .sqliteFake), ("sqliteRun", .sqliteRun), ("sqliteQuery", .sqliteQuery)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

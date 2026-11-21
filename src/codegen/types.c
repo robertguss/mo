@@ -165,6 +165,8 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
     case MO_CORE_TY_FILE_ERROR:
     case MO_CORE_TY_SIMULATION_ERROR:
     case MO_CORE_TY_NETWORK_ERROR:
+    case MO_CORE_TY_SQLITE_VALUE:
+    case MO_CORE_TY_SQLITE_ERROR:
     case MO_CORE_TY_ENTRY_KIND: {
         uint32_t a = MO_NO_INDEX, b = MO_NO_INDEX;
         if (t->tag == MO_CORE_TY_OPTION)
@@ -186,6 +188,8 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                            : t->tag == MO_CORE_TY_FILE_ERROR       ? "FileError"
                            : t->tag == MO_CORE_TY_SIMULATION_ERROR ? "SimulationError"
                            : t->tag == MO_CORE_TY_NETWORK_ERROR    ? "NetworkError"
+                           : t->tag == MO_CORE_TY_SQLITE_VALUE     ? "Sqlite.Value"
+                           : t->tag == MO_CORE_TY_SQLITE_ERROR     ? "SqliteError"
                                                                    : "EntryKind";
         struct mo_buffer buf;
         mo_buffer_init(&buf, MO_LIMIT_STRING_SIZE);
@@ -216,6 +220,10 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                                  *const network_errors[] = {"UnknownHost", "Refused",
                                                             "TimedOut",    "Closed",
                                                             "Broken",      "Certificate"},
+                                 *const sqlite_values[] = {"Null", "Integer", "Real", "String",
+                                                           "Blob"},
+                                 *const sqlite_errors[] = {"OutsideFolder", "NotPermitted",
+                                                           "SqlFailed"},
                                  *const errors[] = {"NotFound", "NotAllowed", "NotText", "Failed"};
         names = t->tag == MO_CORE_TY_OPTION             ? option
                 : t->tag == MO_CORE_TY_RESULT           ? result
@@ -223,6 +231,8 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
                 : t->tag == MO_CORE_TY_FILE_ERROR       ? errors
                 : t->tag == MO_CORE_TY_SIMULATION_ERROR ? simulation_errors
                 : t->tag == MO_CORE_TY_NETWORK_ERROR    ? network_errors
+                : t->tag == MO_CORE_TY_SQLITE_VALUE     ? sqlite_values
+                : t->tag == MO_CORE_TY_SQLITE_ERROR     ? sqlite_errors
                                                         : entry;
         struct mo_type_field fields[] = {{NULL, a}, {NULL, b}};
         if (t->tag == MO_CORE_TY_FILE_ERROR) {
@@ -250,10 +260,34 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             network[1] = (struct mo_type_field){"port", int_type};
             network[2] = (struct mo_type_field){"reason", text_type};
         }
+        struct mo_type_field sqlite_val_fields[4] = {{0}};
+        if (t->tag == MO_CORE_TY_SQLITE_VALUE) {
+            static const enum mo_type_kind kinds[4] = {MO_TYPE_INT, MO_TYPE_FLOAT, MO_TYPE_TEXT,
+                                                       MO_TYPE_BYTES};
+            for (uint32_t i = 0; i < 4; i++) {
+                uint32_t ft = codegen_scalar(c, kinds[i]);
+                if (ft == MO_NO_INDEX)
+                    return MO_NO_INDEX;
+                sqlite_val_fields[i] = (struct mo_type_field){NULL, ft};
+            }
+        }
+        struct mo_type_field sqlite_err_fields[3] = {{0}};
+        if (t->tag == MO_CORE_TY_SQLITE_ERROR) {
+            static const char *const field_names[3] = {"path", "reason", "message"};
+            uint32_t text_type = codegen_scalar(c, MO_TYPE_TEXT);
+            if (text_type == MO_NO_INDEX)
+                return MO_NO_INDEX;
+            for (uint32_t i = 0; i < 3; i++) {
+                if (codegen_string(c, codegen_text(field_names[i])) == MO_NO_INDEX)
+                    return MO_NO_INDEX;
+                sqlite_err_fields[i] = (struct mo_type_field){field_names[i], text_type};
+            }
+        }
         struct mo_type_case cases[6] = {{0}};
         uint32_t n = t->tag == MO_CORE_TY_NETWORK_ERROR                                   ? 6
+                     : t->tag == MO_CORE_TY_SQLITE_VALUE                                  ? 5
                      : t->tag == MO_CORE_TY_ENTRY_KIND || t->tag == MO_CORE_TY_FILE_ERROR ? 4
-                     : t->tag == MO_CORE_TY_ORDERING                                      ? 3
+                     : t->tag == MO_CORE_TY_ORDERING || t->tag == MO_CORE_TY_SQLITE_ERROR ? 3
                                                                                           : 2;
         for (uint32_t i = 0; i < n; i++) {
             if (codegen_string(c, codegen_text(names[i])) == MO_NO_INDEX)
@@ -271,6 +305,15 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             if (t->tag == MO_CORE_TY_NETWORK_ERROR && network_fields[i].count != 0) {
                 cases[i].field_count = network_fields[i].count;
                 cases[i].fields = &network[network_fields[i].first];
+            }
+            if (t->tag == MO_CORE_TY_SQLITE_VALUE && i != 0) {
+                cases[i].field_count = 1;
+                cases[i].fields = &sqlite_val_fields[i - 1];
+                cases[i].unnamed = true;
+            }
+            if (t->tag == MO_CORE_TY_SQLITE_ERROR) {
+                cases[i].field_count = 1;
+                cases[i].fields = &sqlite_err_fields[i];
             }
         }
         status = mo_types_define_choice(&c->types, id, cases, n);
@@ -360,11 +403,43 @@ static MO_MUST_USE uint32_t type_uncached(struct compiler *c, mo_core_ty t, unsi
             return MO_NO_INDEX;
         return id;
     }
+    case MO_CORE_TY_SQLITE_ROWS: {
+        const uint32_t key[] = {MO_CORE_TY_SQLITE_ROWS, MO_NO_INDEX, MO_NO_INDEX};
+        mo_core_string bytes = {(const char *)key, sizeof key};
+        struct mo_codegen_index *old = mo_codegen_find(c->builtin_index, bytes);
+        if (old != NULL)
+            return old->value;
+        struct mo_core_ty text = {.tag = MO_CORE_TY_TEXT},
+                          sqlite_val = {.tag = MO_CORE_TY_SQLITE_VALUE},
+                          list_text = {.tag = MO_CORE_TY_LIST, .as.list = &text},
+                          list_val = {.tag = MO_CORE_TY_LIST, .as.list = &sqlite_val},
+                          list_rows = {.tag = MO_CORE_TY_LIST, .as.list = &list_val};
+        uint32_t columns_type = type_uncached(c, &list_text, 0),
+                 rows_type = type_uncached(c, &list_rows, 0);
+        if (columns_type == MO_NO_INDEX || rows_type == MO_NO_INDEX ||
+            codegen_string(c, codegen_text("Sqlite.Rows")) == MO_NO_INDEX ||
+            codegen_string(c, codegen_text("columns")) == MO_NO_INDEX ||
+            codegen_string(c, codegen_text("rows")) == MO_NO_INDEX)
+            return MO_NO_INDEX;
+        uint32_t id = MO_NO_INDEX;
+        enum mo_type_problem status =
+            mo_types_declare(&c->types, MO_TYPE_RECORD, "Sqlite.Rows", &id);
+        if (codegen_type_result(c, status, id) == MO_NO_INDEX)
+            return MO_NO_INDEX;
+        const struct mo_type_field fields[] = {{"columns", columns_type}, {"rows", rows_type}};
+        status = mo_types_define_record(&c->types, id, fields, 2);
+        if (codegen_type_result(c, status, id) == MO_NO_INDEX ||
+            !codegen_service_shape(c, id, &(struct mo_service_shape){.is_struct = true}) ||
+            codegen_index_add(c, &c->builtin_index, bytes, id, true) == NULL)
+            return MO_NO_INDEX;
+        return id;
+    }
     case MO_CORE_TY_SIMULATION:
     case MO_CORE_TY_CAP: {
-        static const enum mo_capability caps[] = {
-            MO_CAP_CONSOLE, MO_CAP_FILES, MO_CAP_READ_FILES, MO_CAP_CLOCK,     MO_CAP_RANDOM,
-            MO_CAP_ARGS,    MO_CAP_ENV,   MO_CAP_NETWORK,    MO_CAP_CONNECTION};
+        static const enum mo_capability caps[] = {MO_CAP_CONSOLE, MO_CAP_FILES,   MO_CAP_READ_FILES,
+                                                  MO_CAP_CLOCK,   MO_CAP_RANDOM,  MO_CAP_ARGS,
+                                                  MO_CAP_ENV,     MO_CAP_NETWORK, MO_CAP_CONNECTION,
+                                                  MO_CAP_SQLITE,  MO_CAP_DATABASE};
         uint32_t id = MO_NO_INDEX;
         enum mo_type_problem status = mo_types_intern(
             &c->types,
@@ -400,7 +475,8 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
         t->tag = MO_CORE_TY_TUPLE;
     } else {
         const char *start = *cursor;
-        while ((**cursor >= 'A' && **cursor <= 'Z') || (**cursor >= 'a' && **cursor <= 'z'))
+        while ((**cursor >= 'A' && **cursor <= 'Z') || (**cursor >= 'a' && **cursor <= 'z') ||
+               **cursor == '.')
             (*cursor)++;
         size_t length = (size_t)(*cursor - start);
         if (length == 1) {
@@ -433,7 +509,10 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
                      {"Ordering", MO_CORE_TY_ORDERING},
                      {"Entry", MO_CORE_TY_ENTRY},
                      {"FileError", MO_CORE_TY_FILE_ERROR},
-                     {"NetworkError", MO_CORE_TY_NETWORK_ERROR}};
+                     {"NetworkError", MO_CORE_TY_NETWORK_ERROR},
+                     {"Sqlite.Value", MO_CORE_TY_SQLITE_VALUE},
+                     {"Sqlite.Rows", MO_CORE_TY_SQLITE_ROWS},
+                     {"SqliteError", MO_CORE_TY_SQLITE_ERROR}};
         bool found = false;
         for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
             if (strlen(names[i].name) == length && memcmp(start, names[i].name, length) == 0) {
@@ -443,9 +522,9 @@ static MO_MUST_USE mo_core_ty signature_type(struct compiler *c, const char **cu
             }
         }
         if (!found) {
-            static const char *const caps[] = {"Console", "Files",   "ReadFiles",
-                                               "Clock",   "Random",  "Args",
-                                               "Env",     "Network", "Connection"};
+            static const char *const caps[] = {
+                "Console", "Files",   "ReadFiles",  "Clock",  "Random",         "Args",
+                "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database"};
             for (uint32_t i = 0; i < sizeof caps / sizeof *caps; i++)
                 if (strlen(caps[i]) == length && memcmp(start, caps[i], length) == 0) {
                     t->tag = MO_CORE_TY_CAP;
@@ -799,7 +878,8 @@ MO_MUST_USE uint32_t codegen_binding_name(struct function *f, uint32_t node, uin
 }
 MO_MUST_USE uint32_t codegen_constructor(struct compiler *c, uint32_t ty, mo_core_string key) {
     if (c->types.items[ty].kind == MO_TYPE_RECORD) {
-        MO_ASSERT(key.length == 5 && memcmp(key.bytes, "Entry", 5) == 0);
+        MO_ASSERT((key.length == 5 && memcmp(key.bytes, "Entry", 5) == 0) ||
+                  (key.length == 4 && memcmp(key.bytes, "Rows", 4) == 0));
         return 0;
     }
     if (c->constructors.count < c->types.count) {

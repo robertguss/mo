@@ -160,7 +160,8 @@ static MO_MUST_USE bool type(struct match *m, uint32_t index, unsigned depth) {
         return take(m, ')');
     }
     const char *start = m->cursor;
-    while ((*m->cursor >= 'A' && *m->cursor <= 'Z') || (*m->cursor >= 'a' && *m->cursor <= 'z')) {
+    while ((*m->cursor >= 'A' && *m->cursor <= 'Z') || (*m->cursor >= 'a' && *m->cursor <= 'z') ||
+           *m->cursor == '.') {
         m->cursor++;
     }
     size_t length = (size_t)(m->cursor - start);
@@ -284,6 +285,61 @@ static MO_MUST_USE bool type(struct match *m, uint32_t index, unsigned depth) {
             }
         }
         return true;
+    }
+    if (word_is(start, length, "SqliteError")) {
+        static const char *const names[] = {"OutsideFolder", "NotPermitted", "SqlFailed"};
+        static const char *const fields[] = {"path", "reason", "message"};
+        if (!cases(t, names, 3) || !layouts(m, index)) {
+            return false;
+        }
+        for (uint32_t i = 0; i < 3; i++) {
+            const struct mo_type_case *c = &t->cases[i];
+            if (c->field_count != 1U || c->unnamed || strcmp(c->fields[0].name, fields[i]) != 0 ||
+                m->file->types[c->fields[0].type].kind != MO_TYPE_TEXT) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (word_is(start, length, "Sqlite.Value")) {
+        static const char *const names[] = {"Null", "Integer", "Real", "String", "Blob"};
+        static const enum mo_type_kind kinds[] = {MO_TYPE_INT, MO_TYPE_FLOAT, MO_TYPE_TEXT,
+                                                  MO_TYPE_BYTES};
+        if (!cases(t, names, 5) || !layouts(m, index)) {
+            return false;
+        }
+        if (t->cases[0].field_count != 0) {
+            return false;
+        }
+        for (uint32_t i = 1; i < 5; i++) {
+            const struct mo_type_case *c = &t->cases[i];
+            if (c->field_count != 1U || !c->unnamed ||
+                m->file->types[c->fields[0].type].kind != kinds[i - 1]) {
+                return false;
+            }
+        }
+        return true;
+    }
+    if (word_is(start, length, "Sqlite.Rows")) {
+        if (t->kind != MO_TYPE_RECORD || t->field_count != 2 ||
+            strcmp(t->fields[0].name, "columns") != 0 || strcmp(t->fields[1].name, "rows") != 0 ||
+            mo_verify_layout_lookup(m->v->layouts, m->file->layout_count, index, MO_NO_INDEX) ==
+                MO_NO_INDEX) {
+            return false;
+        }
+        const struct mo_type *cols = &m->file->types[t->fields[0].type];
+        const struct mo_type *rows = &m->file->types[t->fields[1].type];
+        if (cols->kind != MO_TYPE_LIST || cols->parameter_count != 1 ||
+            m->file->types[cols->parameters[0]].kind != MO_TYPE_TEXT ||
+            rows->kind != MO_TYPE_LIST || rows->parameter_count != 1) {
+            return false;
+        }
+        const struct mo_type *row = &m->file->types[rows->parameters[0]];
+        if (row->kind != MO_TYPE_LIST || row->parameter_count != 1) {
+            return false;
+        }
+        struct match sub = {m->file, m->v, "Sqlite.Value", {0}};
+        return type(&sub, row->parameters[0], depth + 1);
     }
     return false;
 }

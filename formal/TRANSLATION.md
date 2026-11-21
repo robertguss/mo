@@ -1699,6 +1699,7 @@ that every library primitive in the model's table below is source-lowered yet.
 | `Time`: `+ -` with durations, `-` of two times, `checked_add`, `to_text`, `Time.parse`; `Duration`: `+ - *`, `in_milliseconds`, `in_seconds`, `to_text` | prim (`%time.*`) |
 | `Args.list`, `Env.get`, `Console.print`, `error`, `read_line`, `printed`, `printed_errors`, `Files.read_text`, `read_bytes`, `write_text`, `append_text`, `remove`, `make_folder`, `list`, `entries`, `exists?`, `within`, `read_only`, `Clock.now`, `Random.int` | prim (`%io.*`); `make_folder` is `%io.makeFolder`, Files only; `ReadFiles` has the read-only forms; `read_bytes` gives a file's text as UTF-8 (11.1); Random uses xoshiro256**/SplitMix64/Lemire |
 | `Network.connect`, `Network.connect_secure`, `Network.allow_hosts`, `Connection.send`, `Connection.receive`, `Network.fake` | prim (`%io.connect`, `connectSecure`, `allowHosts`, `send`, `receive`, `networkFake`), typed and not modeled: a reached call stops in the executable oracle with `Network is not modeled by mocore`; `networkFake` is spec-only, as the other fake constructors are |
+| `Sqlite.open`, `Sqlite.fake`, `Sqlite.Database.run`, `Sqlite.Database.query` | prim (`%io.sqliteOpen`, `sqliteFake`, `sqliteRun`, `sqliteQuery`), typed and not modeled: a reached call stops in the executable oracle with `Sqlite is not modeled by mocore`; `sqliteFake` is spec-only, as the other fake constructors are |
 | `Files.walk`, `ReadFiles.walk` | Mo library code in `lib/`, not a Core primitive; lowering supplies recursive calls to `entries` |
 | `FileError`'s text form | Core (`FileError.to_text`) |
 | `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; a set's is `Lib.setText` (3.4), and the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
@@ -2037,7 +2038,7 @@ silently added by `runProgram`.
    dangling host handles as `invalidRun`; lossless decoding preserves them
    for debugging. Real console observations stop with `outside "console
    observation needs a fake"`; capability types do not encode provenance.
-5. **Interchange.** Core text is 0.10 only. Every modeled host handle explicitly carries
+5. **Interchange.** Core text is 0.11 only. Every modeled host handle explicitly carries
    real/fake provenance, and World transports the full store. Reports include
    all final fake states, including unreachable states and random words, in allocation
    order, alongside the existing real effects. Fuel exhaustion still has no
@@ -2172,7 +2173,9 @@ the freshness check compares both directories byte for byte. Version 0.8
 refuses malformed fake file keys at construction. Version 0.9 adds the
 Simulation interface and its fifteenth fuzz seed. Version 0.10 adds `NetworkError`, the
 `Network` and `Connection` capability kinds, the four network operations, which stop at
-the model's boundary, and a sixteenth fuzz seed. TEXT.md specifies exact fields and boundary reports.
+the model's boundary, and a sixteenth fuzz seed. Version 0.11 adds `Sqlite.Value`, `Sqlite.Rows`,
+`SqliteError`, the `Sqlite` and `Sqlite.Database` capability kinds, the four SQLite operations
+which stop at the model's boundary, and a seventeenth fuzz seed. TEXT.md specifies exact fields and boundary reports.
 
 ### Simulation's checked interface, not its service runtime (D306)
 

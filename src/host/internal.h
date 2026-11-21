@@ -11,7 +11,8 @@ struct mo_host_operations {
     bool fake;
     mo_host_operation call;
 };
-extern const struct mo_host_operations mo_host_operations[2][MO_CAP_CONNECTION + 1];
+extern const struct mo_host_operations mo_host_operations[2][MO_CAP_DATABASE + 1];
+MO_MUST_USE bool mo_host_sqlite_init(void);
 MO_MUST_USE bool mo_compile_confine(const struct mo_compiler *compiler, const char *folder,
                                     const char *const reads[3]);
 MO_MUST_USE enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason);

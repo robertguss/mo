@@ -273,6 +273,9 @@
  * stops the program (bytecode.md section 7). It stays well below the 1,024 descriptors a process
  * usually gets, leaving room for the files the program reads and writes. */
 #define MO_LIMIT_OPEN_FOLDERS 256
+#define MO_LIMIT_OPEN_DATABASES 16
+#define MO_LIMIT_SQL_BYTES (1024 * 1024)
+#define MO_LIMIT_SQL_PARAMETERS 32766
 #define MO_LIMIT_OPEN_CONNECTIONS 64
 #define MO_LIMIT_RECEIVE_BYTES (1U << 20)
 #define MO_LIMIT_HOST_NAME 253

@@ -167,6 +167,15 @@ static const struct mo_builtin_case builtin_cases[] = {
     {"Closed", "NetworkError", 29, 26, 6, 0, 0, 0, {NULL, NULL}, "Network"},
     {"Broken", "NetworkError", 30, 26, 6, 0, 1, 0, {"reason", NULL}, "Network"},
     {"Certificate", "NetworkError", 31, 26, 6, 0, 1, 0, {"reason", NULL}, "Network"},
+    {"OutsideFolder", "SqliteError", 32, 32, 3, 0, 1, 0, {"path", NULL}, "Sqlite"},
+    {"NotPermitted", "SqliteError", 33, 32, 3, 0, 1, 0, {"reason", NULL}, "Sqlite"},
+    {"SqlFailed", "SqliteError", 34, 32, 3, 0, 1, 0, {"message", NULL}, "Sqlite"},
+    {"Null", "Sqlite.Value", 35, 35, 5, 0, 0, 0, {NULL, NULL}, "Sqlite"},
+    {"Integer", "Sqlite.Value", 36, 35, 5, 0, 1, 0, {NULL, NULL}, "Sqlite"},
+    {"Real", "Sqlite.Value", 37, 35, 5, 0, 1, 0, {NULL, NULL}, "Sqlite"},
+    {"String", "Sqlite.Value", 38, 35, 5, 0, 1, 0, {NULL, NULL}, "Sqlite"},
+    {"Blob", "Sqlite.Value", 39, 35, 5, 0, 1, 0, {NULL, NULL}, "Sqlite"},
+    {"Rows", "Sqlite.Rows", 40, 40, 1, 0, 2, 0, {"columns", "rows"}, "Sqlite"},
 };
 
 static const struct native_text {
@@ -467,7 +476,9 @@ const char *mo_builtin_type(const struct mo_syntax *name, uint32_t *arity) {
                    {"SimulationError", 0},
                    {"Network", 0},
                    {"Connection", 0},
-                   {"NetworkError", 0}};
+                   {"NetworkError", 0},
+                   {"Sqlite", 0},
+                   {"SqliteError", 0}};
     for (size_t i = 0; i < sizeof(natives) / sizeof(natives[0]); i++)
         if (compare_name(name, natives[i].name) == 0) {
             *arity = natives[i].arity;
@@ -667,6 +678,16 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
             type.module = p->function->module;
             type.declaration = p->function;
             return intern(p, type);
+        }
+    } else if (symbol == NULL && name->kind == MO_S_QUALIFIED &&
+               spelled(name->children[0], "Sqlite")) {
+        static const char *const sqlite_types[][2] = {
+            {"Database", "Sqlite.Database"}, {"Value", "Sqlite.Value"}, {"Rows", "Sqlite.Rows"}};
+        for (size_t i = 0; i < sizeof sqlite_types / sizeof sqlite_types[0]; i++) {
+            if (spelled(name->children[1], sqlite_types[i][0])) {
+                type.name = sqlite_types[i][1];
+                break;
+            }
         }
     }
     if (type.name == NULL) {

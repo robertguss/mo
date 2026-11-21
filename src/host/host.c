@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "host/files.h"
+#include "host/sqlite.h"
 
 #include <fcntl.h>
 #include <signal.h>
@@ -13,7 +14,8 @@ const char *mo_host_start(struct mo_host *host) {
     struct rlimit budget;
     if (getrlimit(RLIMIT_NOFILE, &budget) != 0)
         return "internal error: descriptor budget unavailable";
-    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2u * MO_LIMIT_LOOKUPS + 32u;
+    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2u * MO_LIMIT_LOOKUPS +
+                    2u * MO_LIMIT_OPEN_DATABASES + 32u;
     if (wanted > budget.rlim_max)
         wanted = budget.rlim_max;
     if (budget.rlim_cur < wanted) {
@@ -48,9 +50,11 @@ mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, ui
         [MO_CAP_RANDOM] = {MO_CAP_RANDOM, fake_, mo_host_misc},                                    \
         [MO_CAP_NETWORK] = {MO_CAP_NETWORK, fake_, mo_host_network},                               \
         [MO_CAP_CONNECTION] = {MO_CAP_CONNECTION, fake_, mo_host_network},                         \
+        [MO_CAP_SQLITE] = {MO_CAP_SQLITE, fake_, mo_host_sqlite_call},                             \
+        [MO_CAP_DATABASE] = {MO_CAP_DATABASE, fake_, mo_host_sqlite_call},                         \
     }
-const struct mo_host_operations mo_host_operations[2][MO_CAP_CONNECTION + 1] = {OPERATIONS(false),
-                                                                                OPERATIONS(true)};
+const struct mo_host_operations mo_host_operations[2][MO_CAP_DATABASE + 1] = {OPERATIONS(false),
+                                                                              OPERATIONS(true)};
 #undef OPERATIONS
 
 enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason) {
@@ -108,6 +112,14 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
             host, heap, type, operation == MO_HOST_CONSOLE_FAKE_INPUT ? args : NULL, out);
         if (result == MO_HOST_RETURNED && operation == MO_HOST_CONSOLE_FAKE_INPUT)
             mo_value_drop(heap, host->types->texts, args[0]);
+        return result;
+    }
+    if (operation == MO_HOST_SQLITE_FAKE) {
+        struct mo_cell empty;
+        if (!mo_value_map(heap, host->types->databases, NULL, NULL, 0, &empty))
+            return MO_HOST_OUT_OF_MEMORY;
+        enum mo_host_outcome result = mo_host_sqlite_fake_new(host, heap, type, empty, out, error);
+        mo_value_drop(heap, host->types->databases, empty);
         return result;
     }
     if (operation == MO_HOST_ARGS_OF || operation == MO_HOST_ENV_OF ||
@@ -193,6 +205,8 @@ enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_heap *heap, ui
             mo_host_close(fd);
         return result;
     }
+    if (cap == MO_CAP_SQLITE)
+        return mo_host_sqlite_real(host, heap, type, folder, out, error);
     if (cap == MO_CAP_ARGS || cap == MO_CAP_ENV) {
         MO_ASSERT(contents != NULL);
         uint32_t slot = cap == MO_CAP_ARGS ? host->types->texts : host->types->files;
@@ -220,7 +234,10 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
     switch (initial->kind) {
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
+    case MO_CAP_DATABASE:
         MO_UNREACHABLE();
+    case MO_CAP_SQLITE:
+        return mo_host_sqlite_fake_new(host, heap, type, initial->as.sqlite, out, error);
     case MO_CAP_NETWORK:
         return mo_host_state_cap(host, heap, type, true, &host->types->peers, &initial->as.network,
                                  1, out);
@@ -284,7 +301,12 @@ bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo
     switch (result.kind) {
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
+    case MO_CAP_DATABASE:
         MO_UNREACHABLE();
+    case MO_CAP_SQLITE:
+        if (!mo_host_sqlite_snapshot(host, heap, capability, &result.as.sqlite))
+            return false;
+        break;
     case MO_CAP_NETWORK:
         result.as.network = mo_value_dup(heap, host->types->peers, mo_state_get(info->state, 0));
         break;
@@ -334,7 +356,11 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
     switch (state->kind) {
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
+    case MO_CAP_DATABASE:
         MO_UNREACHABLE();
+    case MO_CAP_SQLITE:
+        mo_value_drop(heap, host->types->databases, state->as.sqlite);
+        break;
     case MO_CAP_NETWORK:
         mo_value_drop(heap, host->types->peers, state->as.network);
         break;

@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env | network | connection
+  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -57,6 +57,9 @@ inductive Ty where
   | simulation
   | simulationError
   | networkError
+  | sqliteValue
+  | sqliteRows
+  | sqliteError
   | entry
   | entryKind
   | fn (params : List Ty) (ret : Ty)
@@ -77,6 +80,7 @@ def Ty.beq : Ty → Ty → Bool
   | .fileError, .fileError | .entry, .entry | .entryKind, .entryKind => true
   | .simulation, .simulation | .simulationError, .simulationError => true
   | .networkError, .networkError => true
+  | .sqliteValue, .sqliteValue | .sqliteRows, .sqliteRows | .sqliteError, .sqliteError => true
   | .tuple as, .tuple bs => Ty.beqList as bs
   | .list a, .list b => Ty.beq a b
   | .map k v, .map k' v' => Ty.beq k k' && Ty.beq v v'
@@ -99,6 +103,7 @@ theorem Ty.beq_refl : ∀ (a : Ty), Ty.beq a a = true
   | .int | .bigInt | .byte | .decimal | .float | .bool | .char | .text | .bytes | .unit
   | .range | .time | .duration | .ordering | .fileError | .entry | .entryKind => rfl
   | .simulation | .simulationError | .networkError => rfl
+  | .sqliteValue | .sqliteRows | .sqliteError => rfl
   | .tuple as => by simp only [Ty.beq]; exact Ty.beqList_refl as
   | .list a => by simp only [Ty.beq]; exact Ty.beq_refl a
   | .map k v => by simp only [Ty.beq, Ty.beq_refl k, Ty.beq_refl v, Bool.and_self]
@@ -119,6 +124,7 @@ theorem Ty.eq_of_beq : ∀ (a b : Ty), Ty.beq a b = true → a = b
   | .char, b, h | .text, b, h | .bytes, b, h | .unit, b, h | .range, b, h | .time, b, h
   | .duration, b, h | .ordering, b, h | .fileError, b, h
   | .simulation, b, h | .simulationError, b, h | .networkError, b, h
+  | .sqliteValue, b, h | .sqliteRows, b, h | .sqliteError, b, h
   | .entry, b, h | .entryKind, b, h => by cases b <;> simp_all [Ty.beq]
   | .data s, b, h | .cap s, b, h => by cases b <;> simp_all [Ty.beq]
   | .tuple as, b, h => by
@@ -158,6 +164,7 @@ def Cap.name : Cap → String
   | .console => "Console" | .files => "Files" | .readFiles => "ReadFiles"
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
   | .network => "Network" | .connection => "Connection"
+  | .sqlite => "Sqlite" | .database => "Sqlite.Database"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -169,6 +176,7 @@ def Ty.render : Ty → String
   | .duration => "Duration" | .ordering => "Ordering" | .fileError => "FileError"
   | .simulation => "Simulation" | .simulationError => "SimulationError"
   | .networkError => "NetworkError"
+  | .sqliteValue => "Sqlite.Value" | .sqliteRows => "Sqlite.Rows" | .sqliteError => "SqliteError"
   | .entry => "Entry" | .entryKind => "EntryKind"
   | .tuple ts => "(" ++ Ty.renderList ts ++ ")"
   | .list t => "List(" ++ Ty.render t ++ ")"
@@ -363,9 +371,10 @@ inductive IoOp where
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | randomInt
   | connect | connectSecure | allowHosts | send | receive
+  | sqliteOpen | sqliteRun | sqliteQuery
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
-  | networkFake
+  | networkFake | sqliteFake
   deriving DecidableEq, Repr, Inhabited
 
 inductive SimOp where
@@ -582,6 +591,10 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .argsOf => ([.list .text], .cap .args)
   | .envOf => ([.map .text .text], .cap .env)
   | .networkFake => ([.map .text (.map .bytes .bytes)], .cap .network)
+  | .sqliteOpen => ([.cap .sqlite, .text], .result (.cap .database) .sqliteError)
+  | .sqliteFake => ([], .cap .sqlite)
+  | .sqliteRun => ([.cap .database, .text, .list .sqliteValue], .result .unit .sqliteError)
+  | .sqliteQuery => ([.cap .database, .text, .list .sqliteValue], .result .sqliteRows .sqliteError)
 
 def SimOp.sig : SimOp → List Ty × Ty
   | .start _ => ([.time], .simulation)
@@ -779,7 +792,7 @@ def Prim.specOnly : Prim → Bool
   | .sim (.start _) => true
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
-  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake => true
+  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake | .io .sqliteFake => true
   | _ => false
 
 /-! ## Lookups -/
@@ -840,6 +853,16 @@ def networkErrorCtors : List Ctor :=
    ⟨"TimedOut", []⟩, ⟨"Closed", []⟩, ⟨"Broken", [("reason", .text)]⟩,
    ⟨"Certificate", [("reason", .text)]⟩]
 
+/-- The constructors of `SqliteError` (reference 14). -/
+def sqliteErrorCtors : List Ctor :=
+  [⟨"OutsideFolder", [("path", .text)]⟩, ⟨"NotPermitted", [("reason", .text)]⟩,
+   ⟨"SqlFailed", [("message", .text)]⟩]
+
+/-- The constructors of `Sqlite.Value` (reference 14). -/
+def sqliteValueCtors : List Ctor :=
+  [⟨"Null", []⟩, ⟨"Integer", [("0", .int)]⟩, ⟨"Real", [("0", .float)]⟩,
+   ⟨"String", [("0", .text)]⟩, ⟨"Blob", [("0", .bytes)]⟩]
+
 /-- The constructors of a type that has them: declared data types, and the
 library's always-in-scope choice types. -/
 def ctorsOf (P : Program) : Ty → Option (List Ctor)
@@ -850,6 +873,9 @@ def ctorsOf (P : Program) : Ty → Option (List Ctor)
   | .fileError => some fileErrorCtors
   | .simulationError => some [⟨"ServiceDown", []⟩, ⟨"ToolFailed", []⟩]
   | .networkError => some networkErrorCtors
+  | .sqliteValue => some sqliteValueCtors
+  | .sqliteRows => some [⟨"Rows", [("columns", .list .text), ("rows", .list (.list .sqliteValue))]⟩]
+  | .sqliteError => some sqliteErrorCtors
   | .entry => some [⟨"Entry", [("name", .text), ("kind", .entryKind)]⟩]
   | .entryKind => some [⟨"File", []⟩, ⟨"Folder", []⟩, ⟨"Link", []⟩, ⟨"Other", []⟩]
   | _ => none

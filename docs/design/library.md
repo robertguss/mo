@@ -572,6 +572,18 @@ generated for every type with `Text` (the first table).
 | `Network.Refused(host: h, port: p)`, and the other cases | instruction | `make_case`; `switch` and `case_field` | |
 | `a == b`, `a != b` | generic | `equal`, and `not` for `!=` | |
 
+## Sqlite
+
+Real databases use `src/host/sqlite.c` with SQLite inside the program's
+starting folder; the fake keeps each database as serialized bytes in memory.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `open(path)` | host | `SQLITE_OPEN` | |
+| `Sqlite.fake()` | host | `SQLITE_FAKE` | a fake, for spec code only (reference 12.4) |
+| `run(statement, values)` | host | `SQLITE_RUN` | |
+| `query(statement, values)` | host | `SQLITE_QUERY` | |
+
 ## Json
 
 `Json` is a module of the library, written in Mo (D232). The VM needs nothing
