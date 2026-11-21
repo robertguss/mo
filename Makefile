@@ -138,8 +138,7 @@ build/generated/tools/library-sources.h: ci/embed_library.py $(LIBRARY_SOURCES) 
 	@touch $@
 
 $(BUILD)/debug/src/tools/upgrade-bundle.o $(BUILD)/release/src/tools/upgrade-bundle.o $(BUILD)/sanitize/src/tools/upgrade-bundle.o \
-$(FUZZ_BUILD)/src/tools/upgrade-bundle.o \
-$(BUILD)/debug/checks-fail/tools/upgrade-bundle.o $(BUILD)/sanitize/checks-fail/tools/upgrade-bundle.o: build/generated/tools/embedded.h build/generated/tools/library-sources.h $(GUIDE_STAMP)
+$(FUZZ_BUILD)/src/tools/upgrade-bundle.o: build/generated/tools/embedded.h build/generated/tools/library-sources.h $(GUIDE_STAMP)
 
 PROTOCOL_SOURCES := runtime/mcp-fetch.mo runtime/http-server.mo runtime/http-authority.mo runtime/http-policy.mo runtime/http-body.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo runtime/mcp-transport.mo runtime/mcp-views.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
 build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCES) Makefile
@@ -151,7 +150,7 @@ $(BUILD)/debug/src/tools/protocol.o $(BUILD)/release/src/tools/protocol.o $(BUIL
 $(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
 
 # The test executables without running them, for ci/check.sh's drivers, bench and lean groups.
-test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo $(BUILD)/debug/mo-checks-fail
+test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo
 sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 
 # Each test runs as its own target, so make -j runs them side by side (they share
