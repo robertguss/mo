@@ -616,8 +616,92 @@ static void test_fake_sqlite(void) {
     host_fixture_free(&f);
 }
 
+static void test_ephemeral_memory(void) {
+    char template[] = "/tmp/mo-sqlite-mem-XXXXXX";
+    char *dir = mkdtemp(template);
+    MO_ASSERT(dir != NULL);
+
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    struct mo_cell sq = make_real_sqlite(&f, dir);
+
+    struct mo_cell o1 = open_db_res(&f, sq, ":memory:");
+    struct mo_cell db1 = unwrap_ok(&f, f.result_database, o1);
+    struct mo_cell o2 = open_db_res(&f, sq, ":memory:");
+    struct mo_cell db2 = unwrap_ok(&f, f.result_database, o2);
+
+    struct mo_cell c1 = run_sql_res(&f, db1, "CREATE TABLE eph(v INTEGER)", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_unit, c1, "Ok(Unit)");
+    mo_value_drop(f.heap, f.result_sqlite_unit, c1);
+
+    struct mo_cell v1[] = {val_int(&f, 42)};
+    struct mo_cell i1 = run_sql_res(&f, db1, "INSERT INTO eph VALUES (?)", make_list(&f, v1, 1));
+    expect_printed(&f, f.result_sqlite_unit, i1, "Ok(Unit)");
+    mo_value_drop(f.heap, f.result_sqlite_unit, i1);
+
+    struct mo_cell q1 = query_sql_res(&f, db1, "SELECT v FROM eph", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_rows, q1,
+                   "Ok(Sqlite.Rows(columns: [\"v\"], rows: [[Integer(42)]]))");
+    mo_value_drop(f.heap, f.result_sqlite_rows, q1);
+
+    /* Second :memory: open on the same real Sqlite capability is isolated. */
+    struct mo_cell q2 = query_sql_res(&f, db2, "SELECT name FROM sqlite_master WHERE type='table'",
+                                      empty_values(&f));
+    expect_printed(&f, f.result_sqlite_rows, q2, "Ok(Sqlite.Rows(columns: [\"name\"], rows: []))");
+    mo_value_drop(f.heap, f.result_sqlite_rows, q2);
+
+    /* Authorizer rules still hold on ephemeral databases. */
+    struct mo_cell bad_att = run_sql_res(&f, db1, "ATTACH 'x.db' AS x", empty_values(&f));
+    CHECK(strcmp(err_case_name(&f, f.result_sqlite_unit, bad_att), "NotPermitted") == 0);
+    mo_value_drop(f.heap, f.result_sqlite_unit, bad_att);
+
+    /* No :memory: file or sidecar was created in the folder on disk. */
+    DIR *dp = opendir(dir);
+    MO_ASSERT(dp != NULL);
+    size_t entries = 0;
+    struct dirent *de;
+    while ((de = readdir(dp)) != NULL) {
+        if (strcmp(de->d_name, ".") != 0 && strcmp(de->d_name, "..") != 0)
+            entries++;
+    }
+    (void)closedir(dp);
+    CHECK(entries == 0);
+
+    mo_value_drop(f.heap, f.result_database, o1);
+    mo_value_drop(f.heap, f.result_database, o2);
+    CHECK(f.host.open_databases == 0);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+
+    /* Fake Sqlite also treats :memory: as private and ephemeral without snapshotting it. */
+    struct mo_cell fake = call_op(&f, MO_HOST_SQLITE_FAKE, NULL);
+    struct mo_cell fo1 = open_db_res(&f, fake, ":memory:");
+    struct mo_cell fdb1 = unwrap_ok(&f, f.result_database, fo1);
+    struct mo_cell fo2 = open_db_res(&f, fake, ":memory:");
+    struct mo_cell fdb2 = unwrap_ok(&f, f.result_database, fo2);
+    struct mo_cell fc1 = run_sql_res(&f, fdb1, "CREATE TABLE only_one(x INT)", empty_values(&f));
+    mo_value_drop(f.heap, f.result_sqlite_unit, fc1);
+    struct mo_cell fq2 = query_sql_res(
+        &f, fdb2, "SELECT name FROM sqlite_master WHERE type='table'", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_rows, fq2, "Ok(Sqlite.Rows(columns: [\"name\"], rows: []))");
+    mo_value_drop(f.heap, f.result_sqlite_rows, fq2);
+    struct mo_host_fake_state snap = {0};
+    MO_ASSERT(mo_host_fake_snapshot(&f.host, f.heap, fake, &snap));
+    uint32_t pos = 0;
+    struct mo_cell sk, sv;
+    CHECK(!mo_table_next(snap.as.sqlite, &pos, &sk, &sv));
+    mo_value_drop(f.heap, f.types.databases, snap.as.sqlite);
+    mo_value_drop(f.heap, f.result_database, fo1);
+    mo_value_drop(f.heap, f.result_database, fo2);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], fake);
+
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+    remove_tree(dir);
+}
+
 int main(void) {
     test_real_crud();
+    test_ephemeral_memory();
     test_real_errors();
     test_containment();
     test_authorizer();

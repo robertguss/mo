@@ -903,6 +903,8 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
             return sig(C(READ_FILES), 1, C(FILES), NULL, NULL);
         case MO_CORE_IO_OP_NOW:
             return sig(S(TIME), 1, C(CLOCK), NULL, NULL);
+        case MO_CORE_IO_OP_SLEEP:
+            return sig(S(UNIT), 2, C(CLOCK), S(DURATION), NULL);
         case MO_CORE_IO_OP_RANDOM_INT:
             return sig(S(INT), 3, C(RANDOM), S(INT), S(INT));
         case MO_CORE_IO_OP_CONSOLE_FAKE:

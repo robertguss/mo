@@ -1153,12 +1153,41 @@ static MO_MUST_USE enum mo_host_outcome exec_sql(struct mo_host *host, struct mo
     return wrapped ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
 }
 
+static MO_MUST_USE enum mo_host_outcome open_ephemeral(struct mo_host *host, struct mo_heap *heap,
+                                                       uint32_t result_type, struct mo_cell *out,
+                                                       struct mo_host_error *error) {
+    if (host->open_databases == MO_LIMIT_OPEN_DATABASES)
+        return mo_host_bug(error, "too many databases open at once");
+    sqlite3 *db = NULL;
+    int rc = sqlite3_open_v2(
+        ":memory:", &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_EXRESCODE, NULL);
+    if (rc == SQLITE_NOMEM || db == NULL) {
+        if (db != NULL)
+            (void)sqlite3_close(db);
+        return MO_HOST_OUT_OF_MEMORY;
+    }
+    if (rc != SQLITE_OK || !configure_connection(db)) {
+        char msg[256];
+        (void)snprintf(msg, sizeof msg, "%s", sqlite3_errmsg(db));
+        (void)sqlite3_close(db);
+        return error_failed(host, heap, result_type, msg, out);
+    }
+    enum mo_host_outcome res = wrap_database(host, heap, result_type, db, NULL, out, error);
+    if (res != MO_HOST_RETURNED)
+        (void)sqlite3_close(db);
+    return res;
+}
+
 enum mo_host_outcome mo_host_sqlite_call(struct mo_host *host, struct mo_heap *heap,
                                          uint32_t operation, uint32_t type,
                                          const struct mo_cell *args, struct mo_cell *out,
                                          struct mo_host_error *error) {
     if (operation == MO_HOST_SQLITE_OPEN) {
         const struct mo_capability_info *info = mo_capability_get(args[0]);
+        size_t raw_len = 0;
+        const uint8_t *raw = mo_value_data(args[1], &raw_len);
+        if (raw_len == 8 && memcmp(raw, ":memory:", 8) == 0)
+            return open_ephemeral(host, heap, type, out, error);
         bool fake = info->operations == &mo_host_operations[true][MO_CAP_SQLITE];
         char norm[MO_LIMIT_HOST_PATH_SIZE];
         size_t norm_len = 0;

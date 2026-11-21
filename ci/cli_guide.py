@@ -465,6 +465,32 @@ def guide_claims(binary):
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
+    says("`clock.sleep(duration)` pauses on a real `Clock` and advances `Clock.fixed` by "
+         "`duration` without waiting.")
+    says("`.form(pairs)`", "`.max_body(bytes)`", "`response.headers_named(name)`")
+    says("`sqlite.open(\":memory:\")` opens a private ephemeral in-memory database without "
+         "touching disk")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\n\n"
+            "fn main(sqlite: Sqlite, clock: Clock, io: Console) : Int\n"
+            "  clock.sleep(1.millisecond)\n"
+            "  case sqlite.open(\":memory:\")\n"
+            "    Ok(db):\n"
+            "      _c = db.run(\"CREATE TABLE t(n INT)\", [])\n"
+            "      _i = db.run(\"INSERT INTO t VALUES (?)\", [Sqlite.Integer(9)])\n"
+            "      case db.query(\"SELECT n FROM t\", [])\n"
+            "        Ok(r): io.print(\"#{r.rows.size}\")\n"
+            "        Error(_): return 1\n"
+            "      end\n"
+            "      0\n"
+            "    Error(_): 1\n"
+            "  end\n"
+            "end\n")
+        result = run(binary, ["run", "--state-dir", folder, str(source)], 0)
+        assert result.stdout == b"1\n", (result.stdout, result.stderr)
+        assert not (pathlib.Path(folder) / ":memory:").exists()
     says("`.send(network)` gives `Result(Response, Http.HttpError)`.",
          "A status such as 404 is a response and not an error.",
          "`Network.fake(Http.replies([(request, Http.reply(200, body))]))` answers exactly that "

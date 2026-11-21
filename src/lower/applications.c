@@ -548,6 +548,7 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"ReadFiles.exists?", {MO_CORE_IO_OP_EXISTS, true}},
                   {"ReadFiles.within", {MO_CORE_IO_OP_WITHIN, true}},
                   {"Clock.now", {MO_CORE_IO_OP_NOW, false}},
+                  {"Clock.sleep", {MO_CORE_IO_OP_SLEEP, false}},
                   {"Clock.fixed", {MO_CORE_IO_OP_CLOCK_FIXED, false}},
                   {"Random.int", {MO_CORE_IO_OP_RANDOM_INT, false}},
                   {"Random.seeded", {MO_CORE_IO_OP_RANDOM_SEEDED, false}},

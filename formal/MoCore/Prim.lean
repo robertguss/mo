@@ -763,6 +763,15 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     match capRoot .clock h with
     | some _ => okTime w.now w
     | none => wrongArgs "Clock.now"
+  | .sleep, [h, .duration d] =>
+    match capRoot .clock h with
+    | some _ =>
+      if d < 0 then outside "negative sleep duration" w
+      else
+        let next := w.now + d
+        if InTime next then .ok .unit { w with now := next }
+        else outside "time outside the years 1 to 9999" w
+    | none => wrongArgs "Clock.sleep"
   | .randomInt, [h, .int lo, .int hi] =>
     match capRoot .random h with
     | some _ =>

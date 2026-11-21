@@ -242,7 +242,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid	e0098-printed		
 14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape	tst-fake-files-bugs			tests/test_host.c:test_real_files,tests/test_host.c:test_hostile_links
 14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
-14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes						No program can move the system clock outside the years 1 to 9999; Clock.fixed, Args, Env and Random fakes are asserted.
+14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes				tests/test_host.c:test_clock_random		No program can move the system clock outside the years 1 to 9999; Clock.fixed, Clock.sleep, Args, Env and Random fakes are asserted.
 14/21	cap-network-fake,cap-network-forms		fail-bug-network-port		tests/test_network.c:test_round_trip,tests/test_network.c:test_errors,tests/test_network.c:test_deadline,tests/test_network.c:test_reset,tests/test_network.c:test_bugs,tests/test_network.c:test_large_send
 14/22	cap-network-error,cap-network-fake,cap-network-forms				tests/test_network.c:test_errors
 14/23	cap-network-fake	e0098-network			tests/test_network.c:test_fake_reply,tests/test_network.c:test_fake_no_reply,tests/test_network.c:test_fake_snapshot,tests/test_network.c:test_fake_bugs,tests/test_fakes.c:network_has_no_peers
@@ -250,13 +250,13 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/25	lib-json-query,lib-json-errors,lib-json-numbers				lib/json.mo:to_decimal
 14/26	lib-json-lookup				lib/json.mo:path
 14/27	http-fake				lib/http.mo:request,ci/check_network.py:main
-14/28	http-fake				lib/http.mo:request,lib/http.mo:query,lib/http.mo:with_body,lib/http.mo:within
+14/28	http-fake				lib/http.mo:request,lib/http.mo:query,lib/http.mo:form,lib/http.mo:with_body,lib/http.mo:within,lib/http.mo:max_body
 14/29	http-fake	e0050-network		No test opens two connections to show that a second request reuses none.	lib/http.mo:wire,lib/http.mo:parsed,lib/http.mo:send,ci/check_network.py:main
 14/30	http-fake			No test sends a redirect, a cookie or a compressed body to show that send leaves each alone. The 16 MiB limit is tested with a Content-Length of 16777217, not with a body that long.	lib/http.mo:read,lib/http.mo:whole,lib/http.mo:content,lib/http.mo:chunks,ci/check_network.py:main,fuzz/fuzz_http_client.c:LLVMFuzzerTestOneInput
-14/31	http-fake				lib/http.mo:named,lib/http.mo:json,lib/http.mo:text
+14/31	http-fake				lib/http.mo:named,lib/http.mo:headers_named,lib/http.mo:json,lib/http.mo:text
 14/32	http-fake			No golden program shows the bug in Http.replies: its report names a place in lib/http.mo by byte offset, which moves with every edit there.	lib/http.mo:reply,lib/http.mo:replies,ci/cli_guide.py:guide_claims
 14/33	lib-unicode16				ci/check_unicode16.py:corpus		No program can test the promise about a future Unicode17 module.
-14/34	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud,tests/test_sqlite.c:test_real_errors,tests/test_sqlite.c:test_containment,tests/test_sqlite.c:test_authorizer,tests/test_sqlite.c:test_open_limit,fuzz/fuzz_sqlite.c:LLVMFuzzerTestOneInput
+14/34	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud,tests/test_sqlite.c:test_ephemeral_memory,tests/test_sqlite.c:test_real_errors,tests/test_sqlite.c:test_containment,tests/test_sqlite.c:test_authorizer,tests/test_sqlite.c:test_open_limit,fuzz/fuzz_sqlite.c:LLVMFuzzerTestOneInput
 14/35	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
 14/36	cap-sqlite-fake,api-server	e0098-sqlite			tests/test_sqlite.c:test_fake_sqlite,tests/test_fakes.c:sqlite_starts_empty
 14/37	api-server				lib/api.mo:request,lib/api.mo:match_path,lib/api.mo:sse_response,tests/test_api_server.c:main

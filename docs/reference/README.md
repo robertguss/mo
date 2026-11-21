@@ -1038,7 +1038,7 @@ the same arguments, it always gives the same result.
 | `Console` | print to standard output and standard error, and read standard input |
 | `Files` | read and write files in one folder and the folders inside it |
 | `ReadFiles` | only read them |
-| `Clock` | read the current time |
+| `Clock` | read the current time and sleep |
 | `Random` | draw random numbers |
 | `Network` | open connections to other computers |
 | `Connection` | send and receive bytes on one open connection |
@@ -1984,7 +1984,9 @@ and `Failed(path: Text, reason: Text)`. Its text forms are
 `PATH: REASON`, as in `notes/a.md: no such file`.
 
 **Clock**: `now : Time`, a bug if the system's clock is outside the years 1 to
-9999; `Clock.fixed(time: Time) : Clock`. **Random**:
+9999; `sleep(duration: Duration)`, which waits on a real clock and advances a
+fixed clock by `duration` (a bug if `duration` is negative or moves the time
+outside the years 1 to 9999); `Clock.fixed(time: Time) : Clock`. **Random**:
 `int(low: Int, high: Int) : Int`, from `low` up to, but not including, `high`,
 which must be greater; `Random.seeded(seed: Int) : Random`. **Args** and
 **Env** fakes: `Args.of(list: List(Text))`, `Env.of(map: Map(Text, Text))`.
@@ -2109,6 +2111,7 @@ struct Request
   headers: List((Text, Text))
   body: Bytes
   timeout: Duration
+  body_limit: Int
 end
 
 struct Response
@@ -2129,15 +2132,20 @@ end
 
 `Http.get(url: Text)` and `Http.post(url: Text)` give a `Request`, and
 `Http.request(method: Text, url: Text)` gives one with any other method. It
-starts with no headers, an empty body and a timeout of 30 seconds.
+starts with no headers, an empty body, a timeout of 30 seconds and a
+`body_limit` of 16,777,216 bytes.
 `request.header(name: Text, value: Text)` adds a header.
 `request.query(name: Text, value: Text)` adds a query parameter to the URL, and
 writes every byte of the name and the value as `%` and two hexadecimal digits
 except ASCII letters, digits, `-`, `.`, `_` and `~`.
+`request.form(pairs: List((Text, Text)))` sets the body to `pairs` written with
+that same percent-encoding as `name=value` joined by `&`, with the content type
+`application/x-www-form-urlencoded`;
 `request.json(value: Json)` sets the body to `value` as compact JSON with the
 content type `application/json`, and `request.text(text: Text)` sets it to
 `text` with `text/plain; charset=utf-8`; each replaces a `Content-Type` header
-the request already had. `request.within(timeout: Duration)` sets the timeout.
+the request already had. `request.within(timeout: Duration)` sets the timeout,
+and `request.max_body(bytes: Int)` sets `body_limit`.
 Each gives a new `Request`, and none of them fails: `send` reports a bad URL,
 method or header.
 
@@ -2170,15 +2178,17 @@ and asks for no compression. Headers longer than 65,536 bytes, a status line or
 header line that is malformed, a line that doesn't end with a carriage return
 and a line feed or that holds a control character other than a tab, another
 transfer encoding or more than one, and a connection closed before the response
-was whole each give `Error(BadResponse(reason))`. A body longer than
-16,777,216 bytes gives `Error(TooLarge(limit: 16777216))`. A failure of the
+was whole each give `Error(BadResponse(reason))`. A body longer than the
+request's `body_limit` (16,777,216 bytes unless `max_body` changed it) gives
+`Error(TooLarge(limit: limit))`. A failure of the
 network gives `Error(Unreachable(error))`, as in
 `Unreachable(Network.TimedOut)`. An `HttpError`'s text forms are those of
 section 9.2.
 
 `response.ok? : Bool` is true for a status from 200 to 299.
 `response.header(name: Text) : Option(Text)` gives the first header with that
-name, without regard to case. `response.text : Option(Text)` gives the body
+name, without regard to case, and `response.headers_named(name: Text) : List(Text)`
+gives every header value with that name in response order. `response.text : Option(Text)` gives the body
 when it is UTF-8. `response.json : Result(Json, HttpError)` parses the body:
 `Error(NotJson(error))` holds `Json.parse`'s error, and a body that isn't UTF-8
 gives `Error(BadResponse(reason))`.
@@ -2232,7 +2242,9 @@ creates a SQLite database at `path` inside the capability's folder (an existing
 non-database file gives `Error(Sqlite.SqlFailed(message: ...))`, while an empty
 file counts as a new database), checking paths by `Files`'s rules and checking
 the database file and its `-journal`, `-wal` and `-shm` files for links so
-anything leaving the folder gives `Error(Sqlite.OutsideFolder(path: path))`.
+anything leaving the folder gives `Error(Sqlite.OutsideFolder(path: path))`;
+`open(":memory:")` opens a private ephemeral in-memory database without touching
+any file.
 **Sqlite.Database**: `run(statement: Text, values: List(Sqlite.Value)) : Result(Unit, SqliteError)`
 executes one SQL statement with positional `?` parameters, and
 `query(statement: Text, values: List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)`

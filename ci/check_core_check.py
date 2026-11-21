@@ -281,6 +281,7 @@ def signatures():
     add("io", "remove makeFolder", C("files") + "|" + T, R(U))
     add("io", "readOnly", C("files"), C("readFiles"))
     add("io", "now", C("clock"), "(time)")
+    add("io", "sleep", C("clock") + "|(duration)", U)
     add("io", "randomInt", C("random") + "|" + I + "|" + I, I)
     add("io", "consoleFake", "", C("console"), True)
     add("io", "consoleFakeInput", L(T), C("console"), True)

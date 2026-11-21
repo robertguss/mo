@@ -1065,7 +1065,7 @@ constructor makes a capability rather than using one, so `host` calls it by
 - `Files`: `read_text`, `read_bytes`, `write_text`, `append_text`, `remove`,
   `make_folder`, `list`, `entries`, `exists?`, `within` and `read_only`;
 - `ReadFiles`: `read_text`, `read_bytes`, `list`, `entries`, `exists?` and `within`;
-- `Clock`: `now`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
+- `Clock`: `now` and `sleep`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
 - `Network`: `connect`, `connect_secure` and `allow_hosts`. `Connection`: `send` and `receive`;
 - `Sqlite`: `open`. `Sqlite.Database`: `run` and `query`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,

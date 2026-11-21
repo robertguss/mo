@@ -744,6 +744,9 @@ def fakeChecks : Expr :=
   and_ (eq (tOpt tText) (io .envGet [v "env2", str "K"]) (some_ tText (str "right"))) <|
   and_ (eq tTime (io .now [v "clock1"]) (timeE "1970-01-01T00:00:00Z")) <|
   and_ (eq tTime (io .now [v "clock2"]) (timeE "1970-01-01T00:00:00.000123Z")) <|
+  lets [("_s", io .sleep [v "clock1", .lit (.duration 2500000)])] <|
+  and_ (eq tTime (io .now [v "clock1"]) (timeE "1970-01-01T00:00:02.5Z")) <|
+  and_ (eq tTime (io .now [v "clock2"]) (timeE "1970-01-01T00:00:00.000123Z")) <|
   and_ (not_ (ieq (v "first") (v "second"))) <|
   and_ (ieq (v "first") (io .randomInt [v "rng2", int 0, int 9223372036854775807])) <|
   ieq (v "second") (io .randomInt [v "rng2", int 0, int 9223372036854775807])

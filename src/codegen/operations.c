@@ -349,6 +349,7 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_FILES_MAKE_FOLDER,
                                                MO_HOST_FILES_READ_ONLY,
                                                MO_HOST_CLOCK_NOW,
+                                               MO_HOST_CLOCK_SLEEP,
                                                MO_HOST_RANDOM_INT,
                                                MO_HOST_CONSOLE_FAKE,
                                                MO_HOST_CONSOLE_FAKE_INPUT,

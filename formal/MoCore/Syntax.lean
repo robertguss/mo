@@ -369,7 +369,7 @@ inductive IoOp where
   | readBytes (ro : Bool)
   | writeText | appendText | remove | makeFolder
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
-  | now | randomInt
+  | now | sleep | randomInt
   | connect | connectSecure | allowHosts | send | receive
   | sqliteOpen | sqliteRun | sqliteQuery
   | commandRunRaw | commandWithin | commandAllowPrograms
@@ -578,6 +578,7 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .within ro => ([filesCap ro, .text], filesCap ro)
   | .readOnly => ([.cap .files], .cap .readFiles)
   | .now => ([.cap .clock], .time)
+  | .sleep => ([.cap .clock, .duration], .unit)
   | .randomInt => ([.cap .random, .int, .int], .int)
   | .connect | .connectSecure =>
     ([.cap .network, .text, .int, .duration], .result (.cap .connection) .networkError)

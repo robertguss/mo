@@ -839,6 +839,13 @@ SPEC_CASES["env-natives"] = (body[len("module Main\n"):], {
     "Main.test.1": ["returned", "Unit"],
 })
 
+body = pathlib.Path("tests/lower-source/clock-sleep/main.mo").read_text()
+assert body.startswith("module Main\n")
+SPEC_CASES["clock-sleep"] = (body[len("module Main\n"):], {
+    "Main.test.1": ["returned", "Unit"],
+    None: ["returned", "0"],
+})
+
 body = pathlib.Path("tests/lower-source/network-error/main.mo").read_text()
 assert body.startswith("module Main\n")
 SPEC_CASES["network-error"] = (body[len("module Main\n"):], {
