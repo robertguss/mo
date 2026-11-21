@@ -54,6 +54,16 @@ fn main(console: Console)
     Ok(_): console.print("unexpected ok")
     Error(e): console.print(e.to_text)
   end
+  raw_user = Json.Object({
+    "name": Json.String("Ada"),
+    "role": Json.String("team_lead"),
+    "extra": Json.Boolean(true)
+  })
+  console.print("#{Json.from_json[User](raw_user) == Ok(u)}")
+  case Json.from_json_strict[User](raw_user)
+    Ok(_): console.print("unexpected ok")
+    Error(e): console.print(e.to_text)
+  end
   console.print(
     "#{Json.schema[User]().list_at("required") == Some([Json.String("name"), Json.String("role")])}"
   )

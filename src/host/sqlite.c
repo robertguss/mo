@@ -221,6 +221,11 @@ wrap_database(struct mo_host *host, struct mo_heap *heap, uint32_t result_type, 
     return wrapped ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
 }
 
+static MO_MUST_USE bool sqlite_is_busy(int rc) {
+    int primary = rc & 0xff;
+    return primary == SQLITE_BUSY || primary == SQLITE_LOCKED;
+}
+
 static MO_MUST_USE bool configure_connection(sqlite3 *db) {
     (void)sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, NULL);
     return sqlite3_exec(db, "PRAGMA temp_store = MEMORY;", NULL, NULL, NULL) == SQLITE_OK;
@@ -231,12 +236,58 @@ static MO_MUST_USE bool check_db_header(sqlite3 *db, char err_buf[256]) {
         (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
         return false;
     }
-    int rc = sqlite3_exec(db, "SELECT count(*) FROM sqlite_schema;", NULL, NULL, NULL);
+    int rc = SQLITE_OK;
+    for (int attempt = 0; attempt < 100; attempt++) {
+        rc = sqlite3_exec(db, "SELECT count(*) FROM sqlite_schema;", NULL, NULL, NULL);
+        if (rc == SQLITE_OK || !sqlite_is_busy(rc))
+            break;
+        (void)sqlite3_sleep(5);
+    }
     if (rc != SQLITE_OK) {
         (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
         return false;
     }
     return true;
+}
+
+static MO_MUST_USE bool ensure_wal_mode(sqlite3 *db, char err_buf[256]) {
+    for (int attempt = 0; attempt < 100; attempt++) {
+        sqlite3_stmt *stmt = NULL;
+        int rc = sqlite3_prepare_v2(db, "PRAGMA journal_mode;", -1, &stmt, NULL);
+        if (rc == SQLITE_OK && stmt != NULL) {
+            int step_rc = sqlite3_step(stmt);
+            bool already_wal = false;
+            if (step_rc == SQLITE_ROW) {
+                const unsigned char *mode = sqlite3_column_text(stmt, 0);
+                if (mode != NULL && strcmp((const char *)mode, "wal") == 0)
+                    already_wal = true;
+            }
+            (void)sqlite3_finalize(stmt);
+            if (already_wal)
+                return true;
+            if (step_rc != SQLITE_ROW && !sqlite_is_busy(step_rc)) {
+                (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
+                return false;
+            }
+        } else {
+            if (stmt != NULL)
+                (void)sqlite3_finalize(stmt);
+            if (!sqlite_is_busy(rc)) {
+                (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
+                return false;
+            }
+        }
+        rc = sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, NULL, NULL);
+        if (rc == SQLITE_OK)
+            return true;
+        if (!sqlite_is_busy(rc)) {
+            (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
+            return false;
+        }
+        (void)sqlite3_sleep(5);
+    }
+    (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
+    return false;
 }
 
 enum mo_host_outcome mo_host_sqlite_real(struct mo_host *host, struct mo_heap *heap, uint32_t type,
@@ -611,8 +662,7 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
         (void)sqlite3_close(db);
         return error_failed(host, heap, result_type, msg, out);
     }
-    if (sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, NULL, NULL) != SQLITE_OK) {
-        (void)snprintf(msg, sizeof msg, "%s", sqlite3_errmsg(db));
+    if (!ensure_wal_mode(db, msg)) {
         (void)sqlite3_close(db);
         return error_failed(host, heap, result_type, msg, out);
     }
