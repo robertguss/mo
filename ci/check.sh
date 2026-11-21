@@ -170,14 +170,14 @@ built() { # sets drivers to the built executables at $1 under build/<compiler>/<
 }
 
 if enter gcc; then
-step "Build and test with gcc (warnings are errors)"
-if have gcc; then make --no-print-directory test CC=gcc; else missing "gcc is not installed"; fi
+step "Build, test and build release with gcc (warnings are errors)"
+if have gcc; then make --no-print-directory test release CC=gcc; else missing "gcc is not installed"; fi
 
 fi
 
 if enter clang; then
-step "Build and test with clang (warnings are errors)"
-if have clang; then make --no-print-directory test CC=clang; else missing "clang is not installed"; fi
+step "Build, test and build release with clang (warnings are errors)"
+if have clang; then make --no-print-directory test release CC=clang; else missing "clang is not installed"; fi
 fi
 
 if enter sanitize; then
@@ -276,6 +276,10 @@ if have python3; then
 		for driver in "${drivers[@]}"; do
 			later "The library: every file passes mo test ($driver)" \
 				python3 ci/check_lib.py "$driver"
+		done
+		for driver in "${drivers[@]}"; do
+			later "Tools and services: every program in tools/ and services/mo-*/ passes mo test ($driver)" \
+				python3 ci/check_programs.py "$driver"
 		done
 		for driver in "${drivers[@]}"; do
 			later "Every tracked Mo source: formatter idempotence, trees, check and execution ($driver)" \

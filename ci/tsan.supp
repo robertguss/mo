@@ -1,0 +1,3 @@
+# Upstream SQLite unixOpen checks and updates randomnessPid without a mutex
+# (see comment in vendor/sqlite/sqlite3.c around randomnessPid).
+race:^unixOpen$

@@ -125,6 +125,8 @@ static MO_MUST_USE enum mo_host_outcome command_error_tag(struct mo_host *host,
                                                           const uint8_t *detail, size_t detail_len,
                                                           struct mo_cell *out) {
     size_t pre_len = strlen(prefix);
+    if (pre_len > MO_LIMIT_VALUE_BYTES || detail_len > (size_t)MO_LIMIT_VALUE_BYTES - pre_len)
+        return MO_HOST_OUT_OF_MEMORY;
     struct mo_scratch scratch;
     mo_scratch_init(&scratch, heap);
     size_t total = pre_len + detail_len;

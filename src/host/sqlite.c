@@ -611,6 +611,11 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
         (void)sqlite3_close(db);
         return error_failed(host, heap, result_type, msg, out);
     }
+    if (sqlite3_exec(db, "PRAGMA journal_mode = WAL;", NULL, NULL, NULL) != SQLITE_OK) {
+        (void)snprintf(msg, sizeof msg, "%s", sqlite3_errmsg(db));
+        (void)sqlite3_close(db);
+        return error_failed(host, heap, result_type, msg, out);
+    }
 
     enum mo_host_outcome res = wrap_database(host, heap, result_type, db, NULL, out, error);
     if (res != MO_HOST_RETURNED)

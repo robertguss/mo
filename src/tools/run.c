@@ -362,7 +362,7 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
                     goto done;
                 }
                 enum mo_service_status ast =
-                    mo_live_actor_new(image, svc_idx, errors, &live_actors[i]);
+                    mo_live_actor_new(image, svc_idx, errors, NULL, &live_actors[i]);
                 if (ast != MO_SERVICE_OK) {
                     status = stopped(process, mo_service_status_text(ast), NULL, 0, errors);
                     goto done;

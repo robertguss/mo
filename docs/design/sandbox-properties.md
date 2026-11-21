@@ -313,36 +313,30 @@ These are not guaranteed today.
 3. **Fuzzing and CBMC do not run on their own.** They run only when someone
    runs them (`AGENTS.md`, "Checks and merging"). A regression in them is
    found when they next run.
-4. **Operating-system confinement covers only the upgrade children.** The three children that
-   `mo serve` starts for each upgrade (the compile, the listing and the checks) run under
-   Landlock and a seccomp filter where the kernel has Landlock ABI 3 or later
+4. **Operating-system confinement covers only child processes.** The children that
+   `mo serve` starts for upgrades (`src/host/compile.c`) and subprocesses started through the
+   `Command` capability (`src/host/command.c`, `src/host/confine.c`) run under Landlock and a
+   seccomp filter where the Linux kernel supports Landlock ABI 3 or later
    ([outside-world.md](outside-world.md#confinement-of-the-children)). `mo serve` itself,
    `mo run` and `mo test` are not confined. A bug in the C runtime there is not contained, and
    capabilities are the only boundary. On a host that cannot confine, `mo serve` accepts no
-   upgrade unless it was started with `--unconfined`, and then it says so at start and in every
-   upgrade report.
-5. **No concurrency checking.** ThreadSanitizer is not a gate (`implementation.md`, condition 1);
-   property P7's process-wide signal handling and any future threads need their own review.
-   One thread exists, and this is its review. `Network.connect` runs each name lookup on a
-   detached helper thread (`resolve` in `src/host/real-network.c`), because `getaddrinfo` has
-   no timeout and the connection's deadline covers the lookup.
-   - What it shares: one slot of a static table of `MO_LIMIT_LOOKUPS` lookups. The caller fills
-     the slot's host name and port before it starts the thread and does not write them again.
-     Every other field, the slot's state included, is read and written only under one mutex.
-     The thread touches no heap value, no capability and no descriptor but its lookup's pipe.
-   - Who owns each descriptor: a lookup has one pipe. The thread closes the write end when it
-     has stored its answer. The caller closes the read end when it takes the answer. A caller
-     whose deadline passes first marks the slot abandoned, and the thread then closes the read
-     end too and frees the slot, so a slot is never taken again while a thread can write to it.
-     Both ends are close-on-exec.
-   - Signals: the thread starts with every signal blocked.
-   - What a stuck resolver costs: a lookup that never ends keeps its slot and its two
-     descriptors. With every slot taken, `connect` gives `Broken` and starts no thread, so the
-     number of threads and of their descriptors is bounded.
-   - Evidence: `tests/test_network.c`, and the fault build (`tests/test_host_faults.c`), which
-     holds every slot busy, checks that `connect` says so, and checks that once the lookups end
-     a `connect` succeeds with no descriptor of theirs left open. No sanitizer run checks the
-     locking: ThreadSanitizer does not run, so the claims about the mutex rest on this review.
+   remote upgrade unless it was started with `--unconfined`, and then it says so at start and in
+   every upgrade report.
+5. **Concurrency checking (`make tsan`).** Three subsystems use POSIX threads, checked on demand
+   under ThreadSanitizer (`make tsan`):
+   - `Network.connect` runs each name lookup on a detached helper thread (`resolve` in
+     `src/host/real-network.c`), because `getaddrinfo` has no timeout and the connection's
+     deadline covers the lookup. It shares one slot of a static table of `MO_LIMIT_LOOKUPS`
+     lookups under one mutex, touches no heap value or capability, blocks signals, and communicates
+     through a close-on-exec pipe (`tests/test_network.c`, `tests/test_host_faults.c`).
+   - Declarative `api` servers (`src/tools/api-server.c`) run a bounded worker pool
+     (`MO_LIMIT_API_WORKERS` threads) pulling accepted sockets from a mutex-guarded queue
+     (`MO_LIMIT_API_QUEUE` slots) and creating an isolated `mo_process` and `mo_heap` per HTTP
+     request (`tests/test_api_server.c`, `fuzz/fuzz_api_server.c`). Error output shares one
+     `log_mutex`.
+   - In-process `actor` capabilities (`struct mo_live_actor` in `src/vm/simulation.c`) serialize
+     state transitions under per-actor mutexes, copying arguments and replies across heaps via the
+     saved-value codec so actor and caller heaps share no mutable cells (`tests/test_api_server.c`).
 6. **Concurrent changes to the filesystem** are outside P8.
 7. **The upgrade credential reaches the compiler.** A live upgrade compiles network input in a
    child process under CPU, memory and wall limits and the confinement of gap 4, and loads its
@@ -392,26 +386,18 @@ assumptions. Successive page starts are paced at the service call rate. VM parse
 work and heap have separate limits. Actual coverage and measurement results belong to the phase
 introspection design evidence; finite page arithmetic proofs do not prove socket or file syscalls.
 
-## Whole-program upgrades and the review door
+## Whole-program upgrades and local administration
 
 Whole-program upgrades are implemented as [the upgrade design](upgrades.md)
 describes. Activation atomically records the source bundle, migrated snapshot and
 program identities in a version-2 folder that older readers refuse. The upgrade
-operator tools change the service and require a separate credential. A compiler
-child limits crashes and stalls, and where the host can confine it reaches only
-the compiler, its library, its inputs and its own folder. A child taken over can
-still forge its own output, so its compiler is part of the upgrade credential's
-trusted base. Write access to the data folder confers the authority to replace
-the running program.
-
-[The review door](intent.md) adds a third secret, the approval credential, held
-only on the service's host; a second child that runs the candidate's checks
-there under the same limits and confinement; and a version-3 folder holding
-approvals. Write access to the data folder therefore confers
-approval authority too, and a memory-safety defect in the compiler or the VM
-that pushed source can reach can make a check child report a pass: a way around
-the door without a shell. A
-service behind the door keeps agents off its host: they reach it only through a
-tunnel limited to its port, as [the live service runbook](../ops/live-service.md)
-sets up. The full list of what the lock does not protect against is in the
-intent design.
+operator tools change the service and require a separate credential, or local
+filesystem access to `mo serve --admin-socket`
+([post-phase7-direction.md](post-phase7-direction.md)). A compiler child limits
+crashes and stalls, and where the host can confine it reaches only the compiler,
+its library, its inputs and its own folder. A child taken over can still forge
+its own output, so its compiler is part of the upgrade credential's trusted base.
+Write access to the data folder confers the authority to replace the running
+program. The earlier Phase 6 external approval file (`mo intent`, recorded in
+[intent.md](intent.md)) was retired in favor of `mo diff` and code-first
+non-vacuous `promise` checks.

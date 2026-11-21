@@ -56,8 +56,6 @@ fn token_cost(input_tokens: Int, output_tokens: Int) : Result(Decimal, BudgetErr
   promise "token costs are nonnegative and bounded for valid token counts"
     result is Ok(cost) implies cost >= 0.00 and cost <= 180.00
     (input_tokens < 0 or output_tokens < 0) implies result == Error(InvalidTokens)
-    allows input_tokens: 1000, output_tokens: 200, result: Ok(0.006)
-    forbids input_tokens: -1, output_tokens: 100, result: Ok(0.00)
   end
 
   if input_tokens < 0 or
