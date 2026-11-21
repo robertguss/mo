@@ -26,6 +26,7 @@ enum mo_command {
     MO_COMMAND_REHEARSE,
     MO_COMMAND_PUSH,
     MO_COMMAND_DIFF,
+    MO_COMMAND_INSTALL,
 };
 
 #define MO_EXIT_SERVICE_STOPPED 69
@@ -54,6 +55,8 @@ struct mo_cli {
     const char *module;
     const char *library;
     const char *output; /* emit's -o file */
+    const char *root, *state_dir;
+    const char *install_name, *bin_dir;
     bool has_port;
     uint16_t port;
     const char *data;
@@ -80,6 +83,7 @@ struct mo_cli {
 MO_MUST_USE bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out,
                               const char **error);
 MO_MUST_USE const char *mo_cli_file(const struct mo_cli *cli, uint32_t index);
+MO_MUST_USE bool mo_valid_install_name(const char *name);
 MO_MUST_USE const char *mo_version(void);
 MO_MUST_USE const char *mo_version_line(void);
 

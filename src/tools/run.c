@@ -287,12 +287,12 @@ static bool find_actor_service_for_param(const struct mo_bytecode *file, uint32_
 }
 
 static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uint32_t main,
-                           FILE *output, FILE *errors) {
+                           int root_fd, int state_fd, FILE *output, FILE *errors) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
     const struct mo_types *types = mo_image_types(image);
     const struct mo_bytecode_function *fn = &file->functions[main];
     struct mo_process *process = NULL;
-    int status = 70, folder = -1;
+    int status = 70, folder = root_fd;
     bool have_args = false, have_env = false, has_actors = false;
     struct mo_cell args, env;
     struct mo_live_actor *live_actors[MO_LIMIT_BYTECODE_PARAMETERS] = {NULL};
@@ -326,8 +326,8 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
             ok = have_args = arguments(cli, host, heap, &args);
         else if (cap == MO_CAP_ENV && !have_env)
             ok = have_env = environment(host, heap, &env);
-        else if ((cap == MO_CAP_FILES || cap == MO_CAP_READ_FILES || cap == MO_CAP_SQLITE ||
-                  cap == MO_CAP_COMMAND) &&
+        else if ((cap == MO_CAP_FILES || cap == MO_CAP_READ_FILES || cap == MO_CAP_COMMAND ||
+                  (cap == MO_CAP_SQLITE && state_fd < 0)) &&
                  folder < 0) {
             folder = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
             if (folder < 0) {
@@ -344,8 +344,9 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
         }
     }
 
+    bool use_supplied = has_actors || state_fd >= 0;
     struct mo_main_capabilities supplied = {0};
-    if (has_actors) {
+    if (use_supplied) {
         const char *setup = mo_host_start(host);
         if (setup != NULL) {
             status = stopped(process, setup, NULL, 0, errors);
@@ -379,7 +380,8 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
                     const struct mo_cell *contents = cap == MO_CAP_ARGS  ? &args
                                                      : cap == MO_CAP_ENV ? &env
                                                                          : NULL;
-                    enum mo_host_outcome hout = mo_host_real(host, heap, type, contents, folder,
+                    int cap_folder = (cap == MO_CAP_SQLITE && state_fd >= 0) ? state_fd : folder;
+                    enum mo_host_outcome hout = mo_host_real(host, heap, type, contents, cap_folder,
                                                              &cached_host_caps[cap], &herr);
                     if (hout != MO_HOST_RETURNED) {
                         const char *reason =
@@ -402,7 +404,7 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
     struct mo_defect defect;
     enum mo_outcome outcome =
         mo_call_main(process, main, have_args ? &args : NULL, have_env ? &env : NULL, folder,
-                     has_actors ? &supplied : NULL, &result, &defect);
+                     use_supplied ? &supplied : NULL, &result, &defect);
     if (outcome == MO_RETURNED) {
         int64_t value = mo_cell_get_int(result);
         MO_ASSERT(value >= 0 && value <= 255);
@@ -437,6 +439,8 @@ done:
     for (uint32_t i = 0; i < fn->parameter_count; i++)
         mo_live_actor_free(live_actors[i]);
     if (folder >= 0 && close(folder) != 0)
+        status = 70;
+    if (state_fd >= 0 && close(state_fd) != 0)
         status = 70;
     return status;
 }
@@ -493,6 +497,41 @@ static void bytecode_error(struct mo_diags *diags, uint16_t code, const char *me
         .code = code, .message = message, .primary = {{UINT32_MAX, 0, 0}, detail}};
     bool added = mo_diags_add(diags, &diag);
     (void)added;
+}
+
+static MO_MUST_USE bool open_cli_folders(const struct mo_cli *cli, int *root_fd, int *state_fd,
+                                         struct mo_diags *diags) {
+    *root_fd = -1;
+    *state_fd = -1;
+    if (cli->root != NULL) {
+        *root_fd = open(cli->root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (*root_fd < 0) {
+            bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "could not open --root folder",
+                           strerror(errno));
+            return false;
+        }
+    }
+    if (cli->state_dir != NULL) {
+        *state_fd = open(cli->state_dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        if (*state_fd < 0) {
+            int err = errno;
+            if (*root_fd >= 0) {
+                (void)close(*root_fd);
+                *root_fd = -1;
+            }
+            bytecode_error(diags, MO_CODE_TOOL_PIPELINE, "could not open --state-dir folder",
+                           strerror(err));
+            return false;
+        }
+    }
+    return true;
+}
+
+static void close_cli_folders(int root_fd, int state_fd) {
+    if (root_fd >= 0)
+        (void)close(root_fd);
+    if (state_fd >= 0)
+        (void)close(state_fd);
 }
 
 int mo_run_bytecode(const struct mo_cli *cli, const char *path, FILE *output, FILE *errors,
@@ -591,15 +630,21 @@ int mo_run_bytecode(const struct mo_cli *cli, const char *path, FILE *output, FI
         mo_image_free(image);
         return 1;
     }
+    int root_fd = -1, state_fd = -1;
+    if (!open_cli_folders(cli, &root_fd, &state_fd, diags)) {
+        mo_image_free(image);
+        return 1;
+    }
     struct mo_defect defect;
     if (mo_image_init(image, &cli->limits, &defect) != MO_RETURNED) {
+        close_cli_folders(root_fd, state_fd);
         bool shown = mo_write_defect(errors, NULL, &defect);
         if (!shown)
             (void)fputs("mo: could not write the initialization defect\n", errors);
         mo_image_free(image);
         return 70;
     }
-    int status = run_loaded_main(cli, image, main, output, errors);
+    int status = run_loaded_main(cli, image, main, root_fd, state_fd, output, errors);
     mo_image_free(image);
     return status;
 }
@@ -608,9 +653,13 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
                    const struct mo_core *core, const struct mo_buffer *wire,
                    const struct mo_sources *sources, FILE *output, FILE *errors,
                    struct mo_diags *diags) {
+    int root_fd = -1, state_fd = -1;
+    if (cli->command == MO_COMMAND_RUN && !open_cli_folders(cli, &root_fd, &state_fd, diags))
+        return 1;
     struct mo_load_error error;
     struct mo_image *image = mo_load(wire->bytes, wire->length, &error);
     if (image == NULL) {
+        close_cli_folders(root_fd, state_fd);
         struct mo_diag diag = {.code = MO_CODE_TOOL_PIPELINE,
                                .message = "compiled bytecode could not be loaded",
                                .primary = {{UINT32_MAX, 0, 0}, error.reason}};
@@ -627,6 +676,7 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
                 : mo_image_init(image, &cli->limits, &defect);
     int status = 70;
     if (outcome != MO_RETURNED) {
+        close_cli_folders(root_fd, state_fd);
         if (anchors) {
             bool added = anchor_stopped(file, sources, MO_NO_INDEX, &defect, diags);
             (void)added;
@@ -640,14 +690,17 @@ int mo_run_program(const struct mo_cli *cli, const struct mo_program *program,
         return status;
     }
     if (!mo_check_anchors(image, cli, sources, program, diags)) {
+        close_cli_folders(root_fd, state_fd);
         mo_image_free(image);
         return 1;
     }
-    if (cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_EMIT) {
+    if (cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_EMIT ||
+        cli->command == MO_COMMAND_INSTALL) {
+        close_cli_folders(root_fd, state_fd);
         mo_image_free(image);
         return 0;
     }
-    status = run_loaded_main(cli, image, main, output, errors);
+    status = run_loaded_main(cli, image, main, root_fd, state_fd, output, errors);
     mo_image_free(image);
     return status;
 }

@@ -192,6 +192,10 @@ enum flag_id {
     FLAG_STRENGTH,
     FLAG_MUTANTS,
     FLAG_LIB,
+    FLAG_ROOT,
+    FLAG_STATE_DIR,
+    FLAG_NAME,
+    FLAG_BIN_DIR,
     FLAG_COUNT
 };
 enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
@@ -253,9 +257,34 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_MUTANTS, "--mutants", false, false, VALUE_NONE, 0, ON(TEST)},
     {FLAG_LIB, "--lib", false, false, VALUE_TEXT, 0,
      ON(CHECK) | ON(RUN) | ON(TEST) | ON(FIX) | ON(EMIT) | ON(SERVE) | ON(REPLAY) | ON(QUERY) |
-         ON(PUSH) | ON(DIFF)},
+         ON(PUSH) | ON(DIFF) | ON(INSTALL)},
+    {FLAG_ROOT, "--root", false, false, VALUE_TEXT, 0, ON(RUN) | ON(INSTALL)},
+    {FLAG_STATE_DIR, "--state-dir", false, false, VALUE_TEXT, 0, ON(RUN) | ON(INSTALL)},
+    {FLAG_NAME, "--name", false, false, VALUE_TEXT, 0, ON(INSTALL)},
+    {FLAG_BIN_DIR, "--bin-dir", false, false, VALUE_TEXT, 0, ON(INSTALL)},
 };
 #undef ON
+
+bool mo_valid_install_name(const char *name) {
+    if (name == NULL || name[0] == '\0')
+        return false;
+    char c0 = name[0];
+    bool ok0 = (c0 >= 'a' && c0 <= 'z') || (c0 >= 'A' && c0 <= 'Z') || (c0 >= '0' && c0 <= '9') ||
+               c0 == '_';
+    if (!ok0)
+        return false;
+    size_t len = 1;
+    for (const char *p = name + 1; *p != '\0'; p++, len++) {
+        if (len >= MO_LIMIT_INSTALL_NAME)
+            return false;
+        char c = *p;
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                  c == '_' || c == '-' || c == '.';
+        if (!ok)
+            return false;
+    }
+    return true;
+}
 
 static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, const char *arg,
                      const char *operand, uint64_t n) {
@@ -277,6 +306,23 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_LIB:
         out->library = operand;
+        break;
+    case FLAG_ROOT:
+        out->root = operand;
+        break;
+    case FLAG_STATE_DIR:
+        out->state_dir = operand;
+        break;
+    case FLAG_NAME:
+        if (!mo_valid_install_name(operand))
+            return refuse(out, error,
+                          "invalid tool name (expected ASCII letters, digits, '.', '_' or '-', "
+                          "starting with a letter, digit or '_')",
+                          arg, operand);
+        out->install_name = operand;
+        break;
+    case FLAG_BIN_DIR:
+        out->bin_dir = operand;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -391,7 +437,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (argc < 2)
         return refuse(out, error,
                       "expected a command: check, run, test, format, fix, guide, emit, serve, "
-                      "fetch, push, replay, query, rehearse, history or diff",
+                      "fetch, push, replay, query, rehearse, history, diff or install",
                       NULL, NULL);
     MO_ASSERT(argv != NULL && argv[1] != NULL);
     const char *command = argv[1];
@@ -476,7 +522,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                  {"emit", MO_COMMAND_EMIT},         {"serve", MO_COMMAND_SERVE},
                  {"replay", MO_COMMAND_REPLAY},     {"query", MO_COMMAND_QUERY},
                  {"rehearse", MO_COMMAND_REHEARSE}, {"history", MO_COMMAND_HISTORY},
-                 {"push", MO_COMMAND_PUSH},         {"diff", MO_COMMAND_DIFF}};
+                 {"push", MO_COMMAND_PUSH},         {"diff", MO_COMMAND_DIFF},
+                 {"install", MO_COMMAND_INSTALL}};
     unsigned c = 0;
     for (; c < sizeof(names) / sizeof(names[0]); c++)
         if (strcmp(command, names[c].name) == 0)
@@ -485,7 +532,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         return refuse(
             out, error,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, "
-            "fetch, push, replay, query, rehearse, history or diff)",
+            "fetch, push, replay, query, rehearse, history, diff or install)",
             command, NULL);
     out->command = names[c].command;
     bool flags = true;
@@ -549,7 +596,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
         if (out->file_count != 0 &&
             (out->command == MO_COMMAND_CHECK || out->command == MO_COMMAND_TEST ||
              out->command == MO_COMMAND_EMIT || out->command == MO_COMMAND_SERVE ||
-             out->command == MO_COMMAND_REPLAY || out->command == MO_COMMAND_PUSH))
+             out->command == MO_COMMAND_REPLAY || out->command == MO_COMMAND_PUSH ||
+             out->command == MO_COMMAND_INSTALL))
             return refuse(out, error, "command takes exactly one file", arg, NULL);
         if (out->file_count == 2 && out->command == MO_COMMAND_DIFF)
             return refuse(out, error, "diff takes one or two files", arg, NULL);

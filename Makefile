@@ -1,6 +1,9 @@
 # Builds and checks the Mo implementation (written in C, decision D207).
 #
 #   make              build build/<compiler>/debug/mo
+#   make release      build build/<compiler>/release/mo (-O2)
+#   make install      install release mo into $(PREFIX)/bin/mo (PREFIX ?= $(HOME)/.local)
+#   make uninstall    remove $(PREFIX)/bin/mo
 #   make test         build and run the unit tests
 #   make sanitize     run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
 #   make host-rename-stress  stress both resolvers against concurrent renames, also sanitized
@@ -24,6 +27,8 @@
 CC ?= cc
 FUZZ_CC ?= clang
 FUZZ_SECONDS ?= 5
+PREFIX ?= $(HOME)/.local
+BINDIR ?= $(PREFIX)/bin
 BUILD := build/$(notdir $(firstword $(CC)))
 FUZZ_BUILD := build/fuzz
 
@@ -110,13 +115,25 @@ UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
 TSAN_OPTIONS ?= halt_on_error=1:second_deadlock_stack=1:suppressions=$(abspath ci/tsan.supp)
 export ASAN_OPTIONS UBSAN_OPTIONS TSAN_OPTIONS
 
-.PHONY: all release test sanitize tsan test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal cbmc \
+.PHONY: all release install uninstall test sanitize tsan test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal cbmc \
 	host-rename-stress clean FORCE
 
 all: $(BUILD)/debug/mo
 
 release: $(BUILD)/release/mo
 	@$(BUILD)/release/mo --version >/dev/null
+
+install: release
+	@mkdir -p "$(DESTDIR)$(BINDIR)"
+	@tmp="$(DESTDIR)$(BINDIR)/.mo.tmp.$$$$"; \
+	if cp "$(BUILD)/release/mo" "$$tmp" && chmod 0755 "$$tmp" && mv -f "$$tmp" "$(DESTDIR)$(BINDIR)/mo"; then \
+		:; \
+	else \
+		rm -f "$$tmp"; exit 1; \
+	fi
+
+uninstall:
+	@rm -f "$(DESTDIR)$(BINDIR)/mo"
 
 # Ordinary prerequisites keep an up-to-date build usable without Python.
 # Mutually exclusive stamps also detect the optional guide appearing/disappearing,

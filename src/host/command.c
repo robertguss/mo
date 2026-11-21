@@ -19,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "base/runtime-identity.h"
 #include "host/files.h"
 
 struct mo_command_root {
@@ -618,25 +619,37 @@ static void remove_temp_tree(const char *dir_path) {
     (void)rmdir(dir_path);
 }
 
+static MO_MUST_USE bool valid_local_bin_dir(char out[MO_LIMIT_HOST_PATH_SIZE]) {
+    const char *home = getenv("HOME");
+    if (home == NULL || home[0] != '/' || strchr(home, ':') != NULL)
+        return false;
+    int n = snprintf(out, MO_LIMIT_HOST_PATH_SIZE, "%s/.local/bin", home);
+    if (n <= 0 || (size_t)n >= MO_LIMIT_HOST_PATH_SIZE)
+        return false;
+    struct stat st;
+    return stat(out, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
 static MO_MUST_USE bool resolve_executable(const uint8_t *prog, size_t prog_len,
                                            char out[MO_LIMIT_HOST_PATH_SIZE]) {
     char name[256];
     memcpy(name, prog, prog_len);
     name[prog_len] = '\0';
     if (strcmp(name, "mo") == 0) {
-#if defined(__linux__)
-        ssize_t n = readlink("/proc/self/exe", out, MO_LIMIT_HOST_PATH_SIZE - 1);
-        if (n > 0 && (size_t)n < MO_LIMIT_HOST_PATH_SIZE - 1) {
-            out[n] = '\0';
-            /* When invoked inside a unit test binary (e.g. test_command.test), look for sibling
-             * ../../mo if the binary isn't mo itself. */
-            const char *slash = strrchr(out, '/');
-            if (slash != NULL && strcmp(slash + 1, "mo") == 0 && access(out, X_OK) == 0)
+        char self_path[MO_LIMIT_PATH_SIZE];
+        if (mo_runtime_executable_path(self_path)) {
+            const char *slash = strrchr(self_path, '/');
+            if (slash != NULL && strcmp(slash + 1, "mo") == 0) {
+                memcpy(out, self_path, strlen(self_path) + 1);
                 return true;
+            }
+            /* When invoked inside a unit test binary (e.g. test_command.test), look for sibling
+             * ../mo if the binary isn't mo itself. */
             if (slash != NULL) {
                 char candidate[MO_LIMIT_HOST_PATH_SIZE];
-                size_t dir_len = (size_t)(slash - out);
-                int cn = snprintf(candidate, sizeof candidate, "%.*s/../mo", (int)dir_len, out);
+                size_t dir_len = (size_t)(slash - self_path);
+                int cn =
+                    snprintf(candidate, sizeof candidate, "%.*s/../mo", (int)dir_len, self_path);
                 if (cn > 0 && (size_t)cn < sizeof candidate && access(candidate, X_OK) == 0) {
                     char real_mo[PATH_MAX];
                     if (realpath(candidate, real_mo) != NULL &&
@@ -647,9 +660,17 @@ static MO_MUST_USE bool resolve_executable(const uint8_t *prog, size_t prog_len,
                 }
             }
         }
-#endif
     }
-    static const char *const dirs[] = {"/usr/local/bin", "/usr/bin", "/bin"};
+    char local_bin[MO_LIMIT_HOST_PATH_SIZE];
+    if (valid_local_bin_dir(local_bin)) {
+        int n = snprintf(out, MO_LIMIT_HOST_PATH_SIZE, "%s/%s", local_bin, name);
+        if (n > 0 && (size_t)n < MO_LIMIT_HOST_PATH_SIZE) {
+            struct stat st;
+            if (stat(out, &st) == 0 && S_ISREG(st.st_mode) && access(out, X_OK) == 0)
+                return true;
+        }
+    }
+    static const char *const dirs[] = {"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"};
     for (size_t i = 0; i < sizeof dirs / sizeof dirs[0]; i++) {
         int n = snprintf(out, MO_LIMIT_HOST_PATH_SIZE, "%s/%s", dirs[i], name);
         if (n > 0 && (size_t)n < MO_LIMIT_HOST_PATH_SIZE) {
@@ -671,15 +692,14 @@ static MO_MUST_USE bool fd_realpath(int fd, char out[MO_LIMIT_HOST_PATH_SIZE]) {
         out[rl] = '\0';
         return true;
     }
+    return false;
+#elif defined(__APPLE__)
+    return fcntl(fd, F_GETPATH, out) == 0;
+#else
+    (void)fd;
+    (void)out;
+    return false;
 #endif
-    int saved = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (saved < 0)
-        return false;
-    bool ok = fchdir(fd) == 0 && getcwd(out, MO_LIMIT_HOST_PATH_SIZE) != NULL;
-    if (fchdir(saved) != 0)
-        ok = false;
-    mo_host_close(saved);
-    return ok;
 }
 
 static MO_MUST_USE bool now_monotonic_ns(uint64_t *out) {
@@ -846,8 +866,16 @@ static MO_MUST_USE enum mo_host_outcome command_run_real(struct mo_host *host, s
 
     char home_env[MO_LIMIT_HOST_PATH_SIZE + 8];
     char tmp_env[MO_LIMIT_HOST_PATH_SIZE + 10];
+    char path_env[MO_LIMIT_HOST_PATH_SIZE + 80];
+    char local_bin[MO_LIMIT_HOST_PATH_SIZE];
     (void)snprintf(home_env, sizeof home_env, "HOME=%s", workdir_path);
     (void)snprintf(tmp_env, sizeof tmp_env, "TMPDIR=%s", tmp_dir);
+    if (valid_local_bin_dir(local_bin))
+        (void)snprintf(path_env, sizeof path_env,
+                       "PATH=%s:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin", local_bin);
+    else
+        (void)snprintf(path_env, sizeof path_env,
+                       "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
     bool can_confine = mo_compile_can_confine();
     rlim_t cpu_seconds = (rlim_t)((timeout_us + 999999) / 1000000 + 1);
 
@@ -865,7 +893,6 @@ static MO_MUST_USE enum mo_host_outcome command_run_real(struct mo_host *host, s
             (void)close(fd);
         if (can_confine && !mo_command_confine(exe_path, workdir_path, tmp_dir))
             _exit(125);
-        char path_env[] = "PATH=/usr/local/bin:/usr/bin:/bin";
         char lang_env[] = "LANG=C.UTF-8";
         char git_nosys[] = "GIT_CONFIG_NOSYSTEM=1";
         char *envp[] = {path_env, home_env, tmp_env, lang_env, git_nosys, NULL};

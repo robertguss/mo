@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <sys/prctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -239,13 +240,14 @@ enum {
     NAMESPACES = CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER |
                  CLONE_NEWPID | CLONE_NEWNET,
     PROGRAM = 4 + X32_CHECK + 2 * REFUSED + 2 + 5 + 2 * 5 + 3 * 6 + 1,
+    COMMAND_PROGRAM = 4 + X32_CHECK + 2 * (REFUSED - 2) + 7 + 7 + 2 + 5 + 2 * 7 + 5 + 2 * 6 + 1,
 };
 struct program {
-    struct sock_filter code[PROGRAM];
+    struct sock_filter code[COMMAND_PROGRAM];
     unsigned short count;
 };
 static void put(struct program *p, struct sock_filter instruction) {
-    MO_ASSERT(p->count < PROGRAM);
+    MO_ASSERT(p->count < COMMAND_PROGRAM);
     p->code[p->count++] = instruction;
 }
 static void when(struct program *p, unsigned call, unsigned argument, const uint32_t *values,
@@ -257,6 +259,25 @@ static void when(struct program *p, unsigned call, unsigned argument, const uint
                                             (uint8_t)(count - 1 - i), (uint8_t)(i + 1 == count)));
     put(p, (struct sock_filter)RETURN(matched));
     put(p, (struct sock_filter)RETURN(otherwise));
+}
+static void when_arg64(struct program *p, unsigned call, unsigned argument, uint32_t low,
+                       uint32_t high, uint32_t matched, uint32_t otherwise) {
+    put(p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, call, 0, 6));
+    put(p, (struct sock_filter)LOAD((uint32_t)ARGUMENT(argument)));
+    put(p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, low, 0, 3));
+    put(p, (struct sock_filter)LOAD((uint32_t)(ARGUMENT(argument) + 4)));
+    put(p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, high, 0, 1));
+    put(p, (struct sock_filter)RETURN(matched));
+    put(p, (struct sock_filter)RETURN(otherwise));
+}
+static void allow_child_signal(struct program *p, unsigned call, uint32_t parent) {
+    put(p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, call, 0, 6));
+    put(p, (struct sock_filter)LOAD((uint32_t)ARGUMENT(0)));
+    put(p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 1u, 3, 0));
+    put(p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, parent, 2, 0));
+    put(p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x80000000u, 1, 0));
+    put(p, (struct sock_filter)RETURN(ALLOW));
+    put(p, (struct sock_filter)RETURN(DENY));
 }
 static bool seccomp(void) {
     struct program p = {.count = 0};
@@ -291,12 +312,50 @@ static bool seccomp(void) {
     struct sock_fprog program = {p.count, p.code};
     return syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program) == 0 || fail("seccomp");
 }
+static bool command_seccomp(pid_t parent_pid) {
+    struct program p = {.count = 0};
+    put(&p, (struct sock_filter)LOAD(offsetof(struct seccomp_data, arch)));
+    put(&p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, NATIVE_ARCH, 1, 0));
+    put(&p, (struct sock_filter)RETURN(KILL));
+    put(&p, (struct sock_filter)LOAD(offsetof(struct seccomp_data, nr)));
+#if X32_CHECK
+    put(&p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x40000000u, 0, 1));
+    put(&p, (struct sock_filter)RETURN(KILL));
+#endif
+    for (unsigned i = 0; i < REFUSED; i++) {
+        if (refused[i] == SYS_socketpair || refused[i] == SYS_sendto)
+            continue;
+        put(&p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, refused[i], 0, 1));
+        put(&p, (struct sock_filter)RETURN(DENY));
+    }
+    when_arg64(&p, SYS_socketpair, 0, AF_UNIX, 0, ALLOW, DENY);
+    when_arg64(&p, SYS_sendto, 4, 0, 0, ALLOW, DENY);
+    put(&p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone3, 0, 1));
+    put(&p, (struct sock_filter)RETURN(SECCOMP_RET_ERRNO | ENOSYS));
+    put(&p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone, 0, 4));
+    put(&p, (struct sock_filter)LOAD((uint32_t)ARGUMENT(0)));
+    put(&p, (struct sock_filter)BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, NAMESPACES, 0, 1));
+    put(&p, (struct sock_filter)RETURN(DENY));
+    put(&p, (struct sock_filter)RETURN(ALLOW));
+    allow_child_signal(&p, SYS_kill, (uint32_t)parent_pid);
+    allow_child_signal(&p, SYS_tgkill, (uint32_t)parent_pid);
+    const uint32_t self_zero[] = {0};
+    when(&p, SYS_prlimit64, 0, self_zero, 1, ALLOW, DENY);
+    const uint32_t owners[] = {F_SETOWN, F_SETOWN_EX}, devices[] = {FIOSETOWN, SIOCSPGRP};
+    when(&p, SYS_fcntl, 1, owners, 2, DENY, ALLOW);
+    when(&p, SYS_ioctl, 1, devices, 2, DENY, ALLOW);
+    put(&p, (struct sock_filter)RETURN(ALLOW));
+    MO_ASSERT(p.count == COMMAND_PROGRAM);
+    struct sock_fprog program = {p.count, p.code};
+    return syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program) == 0 || fail("seccomp");
+}
 
 bool mo_compile_confine(const struct mo_compiler *compiler, const char *folder,
                         const char *const reads[3]) {
     return landlock(compiler, folder, reads) && seccomp();
 }
 bool mo_command_confine(const char *executable, const char *folder, const char *tmpdir) {
+    pid_t parent_pid = getppid();
     long abi = landlock_abi();
     if (abi < 3)
         return fail("landlock_create_ruleset");
@@ -308,6 +367,18 @@ bool mo_command_confine(const char *executable, const char *folder, const char *
     int ruleset = (int)syscall(SYS_landlock_create_ruleset, &attr, size, 0);
     if (ruleset < 0)
         return fail("landlock_create_ruleset");
+    char local_bin[MO_LIMIT_HOST_PATH_SIZE];
+    const char *local_bin_rule = NULL;
+    static const char marker[] = "/.local/bin/";
+    const char *found = strstr(executable, marker);
+    if (found != NULL && strchr(found + sizeof marker - 1, '/') == NULL) {
+        size_t dir_len = (size_t)(found - executable) + (sizeof marker - 2);
+        if (dir_len < sizeof local_bin) {
+            memcpy(local_bin, executable, dir_len);
+            local_bin[dir_len] = '\0';
+            local_bin_rule = local_bin;
+        }
+    }
     uint64_t own_rights = COMMAND_OWN & attr.handled_fs;
     const struct {
         const char *path;
@@ -317,6 +388,8 @@ bool mo_command_confine(const char *executable, const char *folder, const char *
         {"/bin", SYSTEM},
         {"/lib", SYSTEM},
         {"/lib64", SYSTEM},
+        {"/opt/homebrew", SYSTEM},
+        {local_bin_rule, SYSTEM},
         {"/etc/ld.so.cache", FS_READ_FILE},
         {executable, FS_EXECUTE | FS_READ_FILE},
         {folder, own_rights},
@@ -332,7 +405,7 @@ bool mo_command_confine(const char *executable, const char *folder, const char *
         ok = fail("no_new_privs");
     if (ok && syscall(SYS_landlock_restrict_self, ruleset, 0) != 0)
         ok = fail("landlock_restrict_self");
-    return close(ruleset) == 0 && ok && seccomp();
+    return close(ruleset) == 0 && ok && command_seccomp(parent_pid);
 }
 #else
 bool mo_compile_can_confine(void) {

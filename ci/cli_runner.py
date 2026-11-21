@@ -263,6 +263,65 @@ def runner(binary):
         assert not emitted.stdout and not emitted.stderr
         assert service_image.read_bytes()[:4] == b"MOBC"
 
+        # --root and --state-dir grant explicit capability roots while keeping .. escapes refused.
+        granted_root = pathlib.Path(directory) / "granted-root"
+        granted_state = pathlib.Path(directory) / "granted-state"
+        caller_cwd = pathlib.Path(directory) / "caller-cwd"
+        granted_root.mkdir()
+        granted_state.mkdir()
+        caller_cwd.mkdir()
+        (granted_root / "note.txt").write_text("from-root")
+        (caller_cwd / "secret.txt").write_text("from-cwd")
+        root_prog = pathlib.Path(directory) / "root-check.mo"
+        root_prog.write_text(
+            'module RootCheck\n'
+            'fn main(files: Files, sqlite: Sqlite, console: Console) : Int\n'
+            '  if not (files.read_text("../caller-cwd/secret.txt") is Error(NotAllowed(path: _)))\n'
+            '    return 11\n'
+            '  end\n'
+            '  if not (sqlite.open("../caller-cwd/bad.sqlite") is Error(Sqlite.OutsideFolder(path: _)))\n'
+            '    return 12\n'
+            '  end\n'
+            '  note = case files.read_text("note.txt")\n'
+            '    Ok(t): t\n'
+            '    Error(_): "missing"\n'
+            '  end\n'
+            '  _w = files.write_text("written.txt", note)\n'
+            '  case sqlite.open("state.sqlite")\n'
+            '    Error(_): 13\n'
+            '    Ok(db):\n'
+            '      _r1 = db.run("CREATE TABLE t (v TEXT)", [])\n'
+            '      _r2 = db.run("INSERT INTO t VALUES (?)", [Sqlite.String(note)])\n'
+            '      console.print(note)\n'
+            '      0\n'
+            '  end\n'
+            'end\n')
+        root_bc = pathlib.Path(directory) / "root_check.bc"
+        run(binary, ["emit", str(root_prog), "-o", str(root_bc)], 0)
+        for target_entry in (root_prog, root_bc):
+            (granted_root / "written.txt").unlink(missing_ok=True)
+            (granted_state / "state.sqlite").unlink(missing_ok=True)
+            ran_root = subprocess.run(
+                [str(binary), "run", "--root", str(granted_root),
+                 "--state-dir", str(granted_state), str(target_entry)],
+                cwd=caller_cwd, capture_output=True, timeout=30)
+            assert ran_root.returncode == 0 and ran_root.stdout == b"from-root\n", ran_root
+            assert (granted_root / "written.txt").read_text() == "from-root"
+            assert (granted_state / "state.sqlite").exists()
+            assert not (granted_root / "state.sqlite").exists()
+            assert not (caller_cwd / "written.txt").exists()
+            assert not (caller_cwd / "state.sqlite").exists()
+            for bad_flag in ("--root", "--state-dir"):
+                missing_dir = pathlib.Path(directory) / "does-not-exist"
+                refused_dir = subprocess.run(
+                    [str(binary), "run", bad_flag, str(missing_dir), str(target_entry)],
+                    cwd=caller_cwd, capture_output=True, timeout=30)
+                assert refused_dir.returncode == 1 and b"E1404" in refused_dir.stderr, refused_dir
+                file_as_dir = subprocess.run(
+                    [str(binary), "run", bad_flag, str(granted_root / "note.txt"), str(target_entry)],
+                    cwd=caller_cwd, capture_output=True, timeout=30)
+                assert file_as_dir.returncode == 1 and b"E1404" in file_as_dir.stderr, file_as_dir
+
         for sample in ("examples/account.mo", "examples/job-queue.mo",
                        "examples/notes-tool.mo", "examples/rate-limit.mo"):
             result = subprocess.run([str(binary), "check", "--json", sample],

@@ -12,7 +12,7 @@ import tempfile
 from cli_common import records, root, run, utf8_locale
 from cli_fixtures import anchors, constants, filenames, lower_source_fixtures, source_stack
 from cli_gates import mutants
-from cli_guide import emit_command, flags, guide_claims
+from cli_guide import emit_command, flags, guide_claims, install_command
 from cli_intent import (
     diff_command, fix_command, promise_selection, recovery_checks, service_promise_checks,
     strength_checks,
@@ -35,6 +35,7 @@ def check(binary):
     service_refusals(binary)
     serve_command(binary)
     emit_command(binary)
+    install_command(binary)
     runner(binary)
     lower_source_fixtures(binary)
     anchors(binary)
@@ -169,8 +170,8 @@ def check(binary):
     mistake(["serve", good, "--port", "0", "--data", "state", "--allow-host", "a.example",
              "--allow-host", "b.example"],
             'flag may be given only once (except --only): "--allow-host"')
-    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or diff): "bad\\x0a\\x09\\xc3\\xbf"')
-    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history or diff')
+    mistake(["bad\n\t\xff"], 'unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history, diff or install): "bad\\x0a\\x09\\xc3\\xbf"')
+    mistake([], 'expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, replay, query, rehearse, history, diff or install')
     mistake(["push", "main.mo"], 'usage: mo push FILE --admin-socket PATH [--base DIGEST] [--migrate Module.function] [--json]: "push"')
     mistake(["diff"], 'command needs a file: "diff"')
     mistake(["diff", good, good, good], f'diff takes one or two files: "{good}"')
@@ -217,7 +218,8 @@ def check(binary):
         if value:
             for missing in ([], [""], ["--json"]):
                 suffix = ''.join(f' "{v}"' for v in missing)
-                command = next(c for c in ("test", "serve", "replay", "query", "history")
+                command = next(c for c in ("test", "serve", "replay", "query", "history",
+                                           "run", "install")
                                if c in allowed)
                 mistake([command, flag, *missing], f'flag needs a nonempty value: "{flag}"{suffix}')
     for flag in ("--max-stack", "--max-depth", "--max-heap", "--calls", "--seconds"):
