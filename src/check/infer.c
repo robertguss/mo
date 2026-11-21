@@ -296,6 +296,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             if (applied.type != NULL) {
                 applied.graph->output.symbol = prev->output.symbol;
                 applied.graph->output.native = prev->output.native;
+                applied.graph->output.service = prev->output.service;
+                applied.graph->output.tool = prev->output.tool;
                 applied.graph->function_type = prev->function_type;
                 applied.graph->requirements = prev->requirements;
                 applied.graph->parameters = prev->parameters;
@@ -320,6 +322,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         const struct mo_syntax *name =
             qualified ? node->children[1]->children[0] : node->children[0];
         bool simulation = qualified && infer_compare_text(node->children[0], "Simulation") == 0;
+        bool actor_op = qualified && infer_compare_text(node->children[0], "Actor") == 0;
         bool apitest = qualified && infer_compare_text(node->children[0], "ApiTest") == 0;
         const struct mo_data_signature *data = NULL;
         const struct mo_builtin_case *builtin =
@@ -329,7 +332,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         bool ability = qualified && (infer_compare_text(name, "to_text") == 0 ||
                                      infer_compare_text(name, "compare") == 0 ||
                                      infer_compare_text(name, "to_json") == 0);
-        if (!simulation && !apitest && builtin == NULL &&
+        if (!simulation && !actor_op && !apitest && builtin == NULL &&
             (name->kind == MO_S_CAPNAME || qualified) && !ability && start < node->count &&
             node->children[start]->kind == MO_S_CALL) {
             uint32_t count = 0;
@@ -345,6 +348,11 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                                                        node->children[start]->kind == MO_S_CALL
                                                    ? node->children[start]->children[0]
                                                    : NULL)
+            : actor_op
+                ? infer_actor_call(p, name,
+                                   start < node->count && node->children[start]->kind == MO_S_CALL
+                                       ? node->children[start]->children[0]
+                                       : NULL)
             : apitest
                 ? infer_apitest_call(p, name,
                                      start < node->count && node->children[start]->kind == MO_S_CALL
@@ -357,7 +365,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                                              start + 1 == node->count ? expected : NULL)
             : qualified    ? infer_identifier(p, node->children[1]->children[0], node->children[0])
                            : infer_expression(p, node->children[0], NULL);
-        if (simulation || apitest || data != NULL || builtin != NULL)
+        if (simulation || actor_op || apitest || data != NULL || builtin != NULL)
             start++;
         bool standalone_type_args =
             start + 1 == node->count && node->children[start]->kind == MO_S_TYPE_ARGS;
@@ -860,10 +868,13 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_SERVICE_TOOLS:
     case MO_S_SERVICE_EVERY:
     case MO_S_SERVICE_TOKEN:
+    case MO_S_ACTOR:
+    case MO_S_ACTOR_CALLS:
     case MO_S_API:
     case MO_S_API_PORT:
     case MO_S_API_CORS:
     case MO_S_API_SQLITE:
+    case MO_S_API_ACTOR:
     case MO_S_API_AUTH:
     case MO_S_API_ROUTE:
     case MO_S_API_STATUS:

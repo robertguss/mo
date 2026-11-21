@@ -998,6 +998,28 @@ def check_simulation_specs(driver, root, world):
           f'Simulation boundary runs excluded; {len(checks)} recovery checks excluded; '
           '0 programs/functions excluded')
 
+    actor_src = pathlib.Path('tests/lower-source/actors/main.mo')
+    actor_low = subprocess.run([str(driver), str(actor_src), LIBRARY], capture_output=True,
+                               text=True, timeout=30)
+    assert actor_low.returncode == 0, actor_low.stderr
+    actor_path = root / 'actors.core'
+    actor_path.write_text(actor_low.stdout)
+    actor_runs = simulation_results(driver.parent / 'mo', actor_src, 0, '--calls', '10')
+    a_matched = a_boundary = 0
+    for result in actor_runs:
+        assert result['outcome'] == 'passed', result
+        if result['kind'] == 'recovery' or '.service.promise.' in result['name']:
+            continue
+        actual = oracle(actor_path, world, result['name'])
+        if actual == ['stopped', 'Simulation is not modeled by mocore']:
+            a_boundary += 1
+        else:
+            assert actual == ['returned', 'Unit'], (result['name'], actual)
+            a_matched += 1
+    assert (a_matched, a_boundary) == (1, 2), (a_matched, a_boundary)
+    print(f'lower source actors: {a_matched} runs matched; {a_boundary} reached '
+          'Simulation boundary runs excluded')
+
 
 def main():
     driver, vm = map(pathlib.Path, sys.argv[1:3])

@@ -334,6 +334,76 @@ MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
         if (signature != NULL)
             return infer_native_identifier(p, signature);
     }
+    if (!type->variable && type->shape.kind == MO_SOURCE_NAMED && type->shape.declaration != NULL &&
+        type->shape.declaration->declaration->kind == MO_S_ACTOR) {
+        const struct mo_program *program = p->signatures->service_program;
+        const struct mo_checked_service *service = NULL;
+        uint32_t service_index = 0;
+        if (program != NULL) {
+            for (uint32_t i = 0; i < program->service_count; i++) {
+                if (!infer_work(p))
+                    return (struct value){0};
+                if (program->services[i].is_actor &&
+                    program->services[i].actor_symbol == type->shape.declaration) {
+                    service = &program->services[i];
+                    service_index = i;
+                    break;
+                }
+            }
+        }
+        if (service != NULL) {
+            for (uint32_t ti = 0; ti < service->tool_count; ti++) {
+                if (!infer_work(p))
+                    return (struct value){0};
+                if (infer_compare_name(name, service->tools[ti].name) != 0)
+                    continue;
+                const struct mo_source_type *sig =
+                    program->functions[service->tools[ti].function].signature->type;
+                MO_ASSERT(sig->count >= 3);
+                uint32_t fn_arity = sig->count - 1;
+                struct term *fn_term =
+                    infer_make_type(p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
+                                                               .name = "fn",
+                                                               .module = UINT32_MAX,
+                                                               .count = fn_arity});
+                if (fn_term == NULL)
+                    return (struct value){0};
+                fn_term->arguments[0] = type;
+                for (uint32_t k = 2; k < sig->count - 1; k++) {
+                    fn_term->arguments[k - 1] = infer_annotation(p, sig->arguments[k], NULL, 0);
+                    if (fn_term->arguments[k - 1] == NULL)
+                        return (struct value){0};
+                }
+                const struct mo_source_type *raw_ret = sig->arguments[sig->count - 1];
+                struct term *reply_term = NULL;
+                if (service->tools[ti].reply == MO_SERVICE_READ_ONLY) {
+                    reply_term = infer_annotation(p, raw_ret, NULL, 0);
+                } else if (service->tools[ti].reply == MO_SERVICE_UPDATE) {
+                    reply_term = infer_annotation(p, raw_ret->arguments[1], NULL, 0);
+                } else {
+                    reply_term = infer_native(p, "Result", 2);
+                    if (reply_term != NULL) {
+                        reply_term->arguments[0] =
+                            infer_annotation(p, raw_ret->arguments[0]->arguments[1], NULL, 0);
+                        reply_term->arguments[1] =
+                            infer_annotation(p, raw_ret->arguments[1], NULL, 0);
+                        if (reply_term->arguments[0] == NULL || reply_term->arguments[1] == NULL)
+                            return (struct value){0};
+                    }
+                }
+                if (reply_term == NULL)
+                    return (struct value){0};
+                fn_term->arguments[fn_arity - 1] = reply_term;
+                struct value out = infer_graph(p, (struct value){.type = fn_term}, 0);
+                if (p->checked && out.type != NULL) {
+                    out.graph->output.native = "Actor.call";
+                    out.graph->output.service = service_index;
+                    out.graph->output.tool = ti;
+                }
+                return out;
+            }
+        }
+    }
     const struct mo_data_signature *data = type->variable || type->shape.declaration == NULL
                                                ? NULL
                                                : infer_data_type(p, type->shape.declaration);
@@ -375,6 +445,16 @@ MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
                                                     : "A dot call looks in the type's module, then "
                                                       "among the names in scope (reference 5.4).",
                                       NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    if (type->shape.declaration != NULL &&
+        type->shape.declaration->declaration->kind == MO_S_ACTOR) {
+        bool reported = infer_problem(
+            p, MO_CODE_NAME_UNKNOWN, name->span, "the actor declares no such call",
+            "Actor dot calls invoke handlers listed in the actor's calls clause, or visible "
+            "functions taking the actor handle first (reference 11.7).",
+            type->shape.declaration->declaration->children[0]);
         (void)reported;
         return (struct value){0};
     }
@@ -569,11 +649,16 @@ MO_MUST_USE struct value infer_simulation_call(struct inference *p, const struct
             scope = current ? own : infer_prefix_module(p, prefix, &alias);
         }
         const struct mo_checked_service *service = NULL;
+        bool named_actor = false;
         if (scope != NULL && program != NULL) {
             for (uint32_t i = 0; i < program->service_count; i++) {
                 if (!infer_work(p))
                     return (struct value){0};
                 if (&p->interfaces->scopes[program->services[i].module] == scope) {
+                    if (program->services[i].is_actor) {
+                        named_actor = true;
+                        break;
+                    }
                     service = &program->services[i];
                     service_index = i;
                     break;
@@ -598,12 +683,15 @@ MO_MUST_USE struct value infer_simulation_call(struct inference *p, const struct
                 p, MO_CODE_SERVICE_HANDLER, prefix == NULL ? args->span : prefix->span,
                 start ? "Simulation.start must name a service module"
                       : "Simulation.send must name a registered tool",
-                start ? "Name the current module or one it uses directly, as in "
-                        "Simulation.start(TaskQueue, at); that module must declare a "
-                        "service (reference 12.4)."
-                      : "Write the service module and one of its tools directly, as in "
-                        "TaskQueue.submit; timers and other functions are not tools "
-                        "(reference 12.4).",
+                named_actor
+                    ? "That module declares an actor, not a service; use Actor.start and actor "
+                      "dot calls or Actor.send instead (reference 11.7)."
+                : start ? "Name the current module or one it uses directly, as in "
+                          "Simulation.start(TaskQueue, at); that module must declare a "
+                          "service (reference 12.4)."
+                        : "Write the service module and one of its tools directly, as in "
+                          "TaskQueue.submit; timers and other functions are not tools "
+                          "(reference 12.4).",
                 NULL);
             (void)kept;
             return (struct value){0};
@@ -671,6 +759,342 @@ bad_arguments : {
     (void)kept;
     return (struct value){0};
 }
+}
+
+static MO_MUST_USE const struct mo_symbol *resolve_actor_type_arg(struct inference *p,
+                                                                  const struct mo_syntax *arg) {
+    uint32_t count = 0;
+    if (arg->kind == MO_S_CAPNAME)
+        return infer_definition(p, arg, NULL, &count);
+    if (arg->kind == MO_S_QUALIFIED)
+        return infer_definition(p, arg->children[1], arg->children[0], &count);
+    if (arg->kind == MO_S_POSTFIX && arg->count == 2 && arg->children[0]->kind == MO_S_CAPNAME &&
+        arg->children[1]->kind == MO_S_QUALIFIED)
+        return infer_definition(p, arg->children[1]->children[0], arg->children[0], &count);
+    return NULL;
+}
+
+MO_MUST_USE struct value infer_actor_call(struct inference *p, const struct mo_syntax *name,
+                                          const struct mo_syntax *args) {
+    enum actor_op {
+        ACTOR_OP_START,
+        ACTOR_OP_START_AT,
+        ACTOR_OP_SEND,
+        ACTOR_OP_ADVANCE,
+        ACTOR_OP_CRASH,
+        ACTOR_OP_RESTART,
+        ACTOR_OP_COUNT
+    };
+    static const struct {
+        const char *member, *qualified;
+    } ops[ACTOR_OP_COUNT] = {
+        [ACTOR_OP_START] = {"start", "Actor.start"},
+        [ACTOR_OP_START_AT] = {"start_at", "Actor.start_at"},
+        [ACTOR_OP_SEND] = {"send", "Actor.send"},
+        [ACTOR_OP_ADVANCE] = {"advance", "Actor.advance"},
+        [ACTOR_OP_CRASH] = {"crash", "Actor.crash"},
+        [ACTOR_OP_RESTART] = {"restart", "Actor.restart"},
+    };
+    uint32_t op = 0;
+    while (op < ACTOR_OP_COUNT && infer_compare_text(name, ops[op].member) != 0)
+        op++;
+    if (op == ACTOR_OP_COUNT) {
+        bool kept = infer_problem(p, MO_CODE_NAME_UNKNOWN, name->span, infer_unknown_member,
+                                  "Actor's operations are start, start_at, send, advance, crash "
+                                  "and restart (reference 11.7).",
+                                  NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (args == NULL) {
+        bool kept = infer_problem(p, MO_CODE_CALL_ARGUMENTS, name->span,
+                                  "an Actor operation needs a direct call",
+                                  "Actor operations are not values; call one directly, as in "
+                                  "Actor.start(RateLimiter) (reference 11.7).",
+                                  NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (op != ACTOR_OP_SEND && !p->spec) {
+        bool kept = infer_problem(p, MO_CODE_FAKE_OUTSIDE_SPEC, name->span,
+                                  "a fake capability is made only in a test, example or promise",
+                                  "Actor test controls (start, start_at, advance, crash, restart) "
+                                  "are allowed only in tests, examples and promises "
+                                  "(reference 11.7, 12.4).",
+                                  NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+
+    const struct mo_program *program = p->signatures->service_program;
+    if (op == ACTOR_OP_START || op == ACTOR_OP_START_AT) {
+        uint32_t expected_argc = op == ACTOR_OP_START ? 1u : 2u;
+        if (args->count != expected_argc) {
+            bool kept = infer_problem(
+                p, MO_CODE_CALL_ARGUMENTS, args->span,
+                "an Actor call's arguments don't match its parameters",
+                op == ACTOR_OP_START ? "Actor.start takes an actor type name."
+                                     : "Actor.start_at takes an actor type name and a start Time.",
+                NULL);
+            (void)kept;
+            return (struct value){0};
+        }
+        const struct mo_symbol *actor_sym = resolve_actor_type_arg(p, args->children[0]);
+        if (p->failed)
+            return (struct value){0};
+        uint32_t service_index = UINT32_MAX;
+        if (actor_sym != NULL && actor_sym->declaration->kind == MO_S_ACTOR && program != NULL) {
+            for (uint32_t i = 0; i < program->service_count; i++) {
+                if (!infer_work(p))
+                    return (struct value){0};
+                if (program->services[i].is_actor &&
+                    program->services[i].actor_symbol == actor_sym) {
+                    service_index = i;
+                    break;
+                }
+            }
+        }
+        if (service_index == UINT32_MAX) {
+            bool kept = infer_problem(
+                p, MO_CODE_ACTOR_BLOCK, args->children[0]->span,
+                "Actor.start must name a visible actor type",
+                "Write Actor.start(RateLimiter) or Actor.start(Mod.RateLimiter) naming an "
+                "actor declared in scope (reference 11.7).",
+                NULL);
+            (void)kept;
+            return (struct value){0};
+        }
+        const struct mo_nominal_signature *nom =
+            mo_nominal_signature_by_symbol(p->signatures, actor_sym);
+        MO_ASSERT(nom != NULL);
+        struct term *actor_term = infer_annotation(p, nom->type, NULL, 0);
+        if (actor_term == NULL)
+            return (struct value){0};
+        uint32_t emit_argc = op == ACTOR_OP_START ? 0u : 1u;
+        struct value out = infer_graph(p, (struct value){.type = actor_term}, emit_argc);
+        if (out.type == NULL)
+            return out;
+        if (p->checked) {
+            out.graph->output.native = ops[op].qualified;
+            out.graph->output.service = service_index;
+        }
+        if (op == ACTOR_OP_START_AT) {
+            struct term *time_ty = infer_native(p, "Time", 0);
+            if (time_ty == NULL)
+                return (struct value){0};
+            struct value tval = infer_as(p, args->children[1], time_ty, MO_CODE_ARGUMENT_TYPE);
+            if (tval.type == NULL)
+                return (struct value){0};
+            if (p->checked)
+                out.graph->operands[0] = tval.note;
+            out.never = tval.never;
+        }
+        return out;
+    }
+
+    if ((op == ACTOR_OP_SEND && args->count < 2) || (op == ACTOR_OP_ADVANCE && args->count != 2) ||
+        ((op == ACTOR_OP_CRASH || op == ACTOR_OP_RESTART) && args->count != 1)) {
+        const char *reason =
+            op == ACTOR_OP_SEND      ? "Actor.send takes the actor handle, ActorType.call, and the "
+                                       "call's arguments."
+            : op == ACTOR_OP_ADVANCE ? "Actor.advance takes the actor handle and a Duration."
+                                     : "Actor.crash and Actor.restart take only the actor handle.";
+        bool kept =
+            infer_problem(p, MO_CODE_CALL_ARGUMENTS, args->span,
+                          "an Actor call's arguments don't match its parameters", reason, NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+
+    struct value handle = infer_expression(p, args->children[0], NULL);
+    if (handle.type == NULL)
+        return (struct value){0};
+    struct term *hroot = infer_root(handle.type);
+    const struct mo_checked_service *service = NULL;
+    uint32_t service_index = 0;
+    if (!hroot->variable && hroot->shape.kind == MO_SOURCE_NAMED &&
+        hroot->shape.declaration != NULL &&
+        hroot->shape.declaration->declaration->kind == MO_S_ACTOR && program != NULL) {
+        for (uint32_t i = 0; i < program->service_count; i++) {
+            if (!infer_work(p))
+                return (struct value){0};
+            if (program->services[i].is_actor &&
+                program->services[i].actor_symbol == hroot->shape.declaration) {
+                service = &program->services[i];
+                service_index = i;
+                break;
+            }
+        }
+    }
+    if (service == NULL) {
+        bool kept =
+            infer_problem(p, MO_CODE_ARGUMENT_TYPE, args->children[0]->span,
+                          "Actor operations require an actor handle as the first argument",
+                          "Pass a value whose type is a declared actor (reference 11.7).", NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+
+    if (op != ACTOR_OP_SEND) {
+        struct term *unit_ty = infer_native(p, "Unit", 0);
+        uint32_t emit_argc = op == ACTOR_OP_ADVANCE ? 2u : 1u;
+        struct value out =
+            infer_graph(p, (struct value){.type = unit_ty, .never = handle.never}, emit_argc);
+        if (out.type == NULL)
+            return out;
+        if (p->checked) {
+            out.graph->output.native = ops[op].qualified;
+            out.graph->output.service = service_index;
+            out.graph->operands[0] = handle.note;
+        }
+        if (op == ACTOR_OP_ADVANCE) {
+            struct term *dur_ty = infer_native(p, "Duration", 0);
+            if (dur_ty == NULL)
+                return (struct value){0};
+            struct value dval = infer_as(p, args->children[1], dur_ty, MO_CODE_ARGUMENT_TYPE);
+            if (dval.type == NULL)
+                return (struct value){0};
+            if (p->checked)
+                out.graph->operands[1] = dval.note;
+            out.never = out.never || dval.never;
+        }
+        return out;
+    }
+
+    /* Actor.send(handle, Prefix.call_name, ...args) */
+    const struct mo_syntax *sel = args->children[1];
+    const struct mo_syntax *prefix = NULL;
+    const struct mo_syntax *call_name = NULL;
+    if (sel->count == 2 && (sel->kind == MO_S_FIELD_ACCESS || sel->kind == MO_S_QUALIFIED)) {
+        prefix = sel->children[0];
+        call_name = sel->children[1];
+    } else if (sel->kind == MO_S_POSTFIX && sel->count == 2 &&
+               (sel->children[1]->kind == MO_S_FIELD_ACCESS ||
+                sel->children[1]->kind == MO_S_QUALIFIED)) {
+        prefix = sel->children[0];
+        call_name = sel->children[1]->children[0];
+    }
+    bool prefix_matches = false;
+    if (prefix != NULL && prefix->kind == MO_S_CAPNAME) {
+        uint32_t alias = UINT32_MAX;
+        const struct mo_module_scope *own = &p->interfaces->scopes[p->function->function->module];
+        const struct mo_module_scope *svc_scope = &p->interfaces->scopes[service->module];
+        const struct mo_syntax *path =
+            program->set->modules[p->function->function->module]->header.path;
+        bool current_mod = own == svc_scope &&
+                           ((own->name != NULL && infer_compare_text(prefix, own->name) == 0) ||
+                            (path != NULL && path->count == 1 &&
+                             infer_compare_name(prefix, path->children[0]) == 0));
+        if (current_mod || (service->module == p->function->function->module &&
+                            infer_compare_text(prefix, service->actor_symbol->name) == 0)) {
+            prefix_matches = true;
+        } else {
+            const struct mo_module_scope *mod_target = infer_prefix_module(p, prefix, &alias);
+            if (mod_target == svc_scope) {
+                if (!infer_use_alias(p, alias, prefix))
+                    return (struct value){0};
+                prefix_matches = true;
+            } else {
+                uint32_t def_cnt = 0;
+                const struct mo_symbol *sym = infer_definition(p, prefix, NULL, &def_cnt);
+                if (p->failed)
+                    return (struct value){0};
+                if (sym == service->actor_symbol)
+                    prefix_matches = true;
+            }
+        }
+    } else if (prefix != NULL && (prefix->kind == MO_S_QUALIFIED ||
+                                  (prefix->kind == MO_S_POSTFIX && prefix->count == 2 &&
+                                   prefix->children[0]->kind == MO_S_CAPNAME &&
+                                   prefix->children[1]->kind == MO_S_QUALIFIED))) {
+        const struct mo_symbol *sym = resolve_actor_type_arg(p, prefix);
+        if (p->failed)
+            return (struct value){0};
+        if (sym == service->actor_symbol)
+            prefix_matches = true;
+    }
+
+    uint32_t tool_index = UINT32_MAX;
+    const struct mo_source_type *signature = NULL;
+    if (prefix_matches && call_name != NULL) {
+        for (uint32_t ti = 0; ti < service->tool_count; ti++) {
+            if (!infer_work(p))
+                return (struct value){0};
+            if (infer_compare_name(call_name, service->tools[ti].name) == 0) {
+                tool_index = ti;
+                signature = program->functions[service->tools[ti].function].signature->type;
+                break;
+            }
+        }
+    }
+    if (signature == NULL) {
+        bool kept = infer_problem(
+            p, MO_CODE_ACTOR_BLOCK, sel->span, "Actor.send must name one of the actor's calls",
+            "Write ActorType.call_name or Module.call_name matching the handle's actor type "
+            "(reference 11.7).",
+            NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    uint32_t expected_total = signature->count - 1;
+    if (args->count != expected_total) {
+        bool kept = infer_problem(
+            p, MO_CODE_CALL_ARGUMENTS, args->span,
+            "an Actor.send call's arguments don't match its parameters",
+            "Actor.send takes the handle, ActorType.call, then the call's arguments after State "
+            "and Time.",
+            NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+
+    const struct mo_source_type *raw_ret = signature->arguments[signature->count - 1];
+    struct term *proj_reply = NULL;
+    if (service->tools[tool_index].reply == MO_SERVICE_READ_ONLY) {
+        proj_reply = infer_annotation(p, raw_ret, NULL, 0);
+    } else if (service->tools[tool_index].reply == MO_SERVICE_UPDATE) {
+        proj_reply = infer_annotation(p, raw_ret->arguments[1], NULL, 0);
+    } else {
+        proj_reply = infer_native(p, "Result", 2);
+        if (proj_reply != NULL) {
+            proj_reply->arguments[0] =
+                infer_annotation(p, raw_ret->arguments[0]->arguments[1], NULL, 0);
+            proj_reply->arguments[1] = infer_annotation(p, raw_ret->arguments[1], NULL, 0);
+            if (proj_reply->arguments[0] == NULL || proj_reply->arguments[1] == NULL)
+                return (struct value){0};
+        }
+    }
+    struct term *res_term = infer_native(p, "Result", 2);
+    if (proj_reply == NULL || res_term == NULL)
+        return (struct value){0};
+    res_term->arguments[0] = proj_reply;
+    res_term->arguments[1] = infer_native(p, "SimulationError", 0);
+    if (res_term->arguments[1] == NULL)
+        return (struct value){0};
+
+    uint32_t emit_argc = expected_total - 1;
+    struct value out =
+        infer_graph(p, (struct value){.type = res_term, .never = handle.never}, emit_argc);
+    if (out.type == NULL)
+        return out;
+    if (p->checked) {
+        out.graph->output.native = "Actor.send";
+        out.graph->output.service = service_index;
+        out.graph->output.tool = tool_index;
+        out.graph->operands[0] = handle.note;
+    }
+    for (uint32_t i = 2; i < expected_total; i++) {
+        struct term *wanted = infer_annotation(p, signature->arguments[i], NULL, 0);
+        if (wanted == NULL)
+            return (struct value){0};
+        struct value aval = infer_as(p, args->children[i], wanted, MO_CODE_ARGUMENT_TYPE);
+        if (aval.type == NULL)
+            return (struct value){0};
+        if (p->checked)
+            out.graph->operands[i - 1] = aval.note;
+        out.never = out.never || aval.never;
+    }
+    return out;
 }
 
 static MO_MUST_USE const struct mo_source_type *
@@ -795,11 +1219,44 @@ MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo
     static const char *const allowed_caps[] = {"Sqlite", "Network",   "Clock", "Random",
                                                "Files",  "ReadFiles", "Env",   "Console"};
     uint32_t seen_caps = 0;
+    uint32_t seen_actors = 0;
     for (uint32_t i = 2; i < args->count; i++) {
         struct value cap_val = infer_expression(p, args->children[i], NULL);
         if (cap_val.type == NULL)
             return (struct value){0};
         struct term *cap_root = infer_root(cap_val.type);
+        if (!cap_root->variable && cap_root->shape.kind == MO_SOURCE_NAMED &&
+            cap_root->shape.declaration != NULL &&
+            cap_root->shape.declaration->declaration->kind == MO_S_ACTOR) {
+            uint32_t actor_slot = UINT32_MAX;
+            for (uint32_t a = 0; a < api->actor_count; a++)
+                if (api->actors[a].type->declaration == cap_root->shape.declaration) {
+                    actor_slot = a;
+                    break;
+                }
+            if (actor_slot == UINT32_MAX) {
+                bool kept = infer_problem(
+                    p, MO_CODE_ARGUMENT_TYPE, args->children[i]->span,
+                    "ApiTest.send passes an actor not declared by this api",
+                    "Declare actor <name>: <ActorType> in the api block to pass that actor handle.",
+                    NULL);
+                (void)kept;
+                return (struct value){0};
+            }
+            if ((seen_actors & (UINT32_C(1) << actor_slot)) != 0) {
+                bool kept =
+                    infer_problem(p, MO_CODE_CALL_ARGUMENTS, args->children[i]->span,
+                                  "ApiTest.send passes the same actor type twice",
+                                  "Pass at most one handle of each declared actor type.", NULL);
+                (void)kept;
+                return (struct value){0};
+            }
+            seen_actors |= UINT32_C(1) << actor_slot;
+            if (p->checked)
+                out.graph->operands[i - 1] = cap_val.note;
+            out.never = out.never || cap_val.never;
+            continue;
+        }
         uint32_t slot = UINT32_MAX;
         if (!cap_root->variable && cap_root->shape.kind == MO_SOURCE_NAMED &&
             cap_root->shape.module == UINT32_MAX) {
@@ -812,8 +1269,10 @@ MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo
         if (slot == UINT32_MAX) {
             bool kept = infer_problem(
                 p, MO_CODE_ARGUMENT_TYPE, args->children[i]->span,
-                "ApiTest.send optional arguments must be capabilities",
-                "Pass fake capabilities such as Sqlite.in_memory() or Network.fake({}).", NULL);
+                "ApiTest.send optional arguments must be capabilities or declared actors",
+                "Pass fake capabilities such as Sqlite.in_memory() or actor handles from "
+                "Actor.start(...).",
+                NULL);
             (void)kept;
             return (struct value){0};
         }
@@ -945,6 +1404,8 @@ MO_MUST_USE struct value infer_call(struct inference *p, struct value callee,
         result.graph->output.symbol = callee.symbol;
         if (callee.graph != NULL) {
             result.graph->output.native = callee.graph->output.native;
+            result.graph->output.service = callee.graph->output.service;
+            result.graph->output.tool = callee.graph->output.tool;
             result.graph->function_type = callee.graph->function_type;
             result.graph->requirements = callee.graph->requirements;
             result.graph->parameters = callee.graph->parameters;

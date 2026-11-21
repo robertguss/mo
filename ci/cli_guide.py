@@ -486,7 +486,44 @@ def guide_claims(binary):
          "servers (reference 11.6) alongside `lib/api.mo` (`use Api`).",
          "In `mo test`, `ApiTest.send(Module, req, ...)` dispatches an `Api.Request` directly in "
          "memory with zero sockets (using `Sqlite.in_memory()` or `Sqlite.fake()`, `Env.of(...)`, "
-         "etc.).")
+         "`Actor.start(ActorType)`, etc.).")
+    says("This build also checks, formats, fixes, tests and runs composable in-process "
+         "`actor Name ... end` capabilities (reference 11.7, E0111).",
+         "`mo test` automatically runs `Module.service.recovery` and `Module.service.promise.N` "
+         "on every `actor`.")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\nuse Api\n\n"
+            "struct Count\n  value: Int\nend\n\n"
+            "actor Counter\n"
+            "  state Count = Count(value: 0)\n"
+            "  calls add, current\n"
+            "  promise on add\n"
+            "    after.value == before.value + n\n"
+            "  end\n"
+            "end\n\n"
+            "fn add(s: Count, _t: Time, n: Int) : (Count, Int)\n"
+            "  (Count(value: s.value + n), s.value + n)\n"
+            "end\n\n"
+            "fn current(s: Count, _t: Time) : Int\n"
+            "  s.value\n"
+            "end\n\n"
+            "api\n"
+            "  actor ctr: Counter\n"
+            "  post \"/add/:n\" post_add\n"
+            "end\n\n"
+            "fn post_add(ctr: Counter, n: Int) : Int\n"
+            "  ctr.add(n)\n"
+            "end\n\n"
+            "test \"actor claim\"\n"
+            "  ctr = Actor.start(Counter)\n"
+            "  assert ctr.add(4) == 4\n"
+            "  assert ctr.current == 4\n"
+            "  assert ApiTest.send(Main, Api.post(\"/add/3\"), ctr).text == \"7\"\n"
+            "end\n")
+        result = run(binary, ["test", str(source)], 0)
+        assert b"3 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
     with tempfile.TemporaryDirectory() as folder:
         source = pathlib.Path(folder) / "main.mo"
         source.write_text(

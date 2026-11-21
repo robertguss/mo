@@ -128,9 +128,9 @@ static void execute_pipeline(void *argument) {
     uint32_t entry_service = MO_NO_INDEX;
     for (uint32_t i = 0; i < program->service_count; i++) {
         const struct mo_checked_service *service = &program->services[i];
-        if (service->module == 0)
+        if (service->module == 0 && !service->is_actor)
             entry_service = i;
-        if (cli->command == MO_COMMAND_RUN && service->module == 0) {
+        if (cli->command == MO_COMMAND_RUN && service->module == 0 && !service->is_actor) {
             const char *message = "mo run does not start services yet";
             bool added =
                 mo_diags_add(diags, &(struct mo_diag){.code = MO_CODE_TOOL_SERVICE_UNAVAILABLE,

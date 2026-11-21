@@ -138,7 +138,7 @@ static bool declarations(struct mo_buffer *out, const struct old_types *old, uin
 bool mo_upgrade_old_sources(const struct mo_program *program, struct mo_sources *candidate) {
     const struct mo_source_type *state = NULL;
     for (uint32_t i = 0; i < program->service_count; i++)
-        if (program->services[i].module == 0)
+        if (program->services[i].module == 0 && !program->services[i].is_actor)
             state = program->services[i].state;
     if (state == NULL)
         return false;

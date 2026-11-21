@@ -290,7 +290,7 @@ static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_s
         return report(p, abilities.error, abilities.message, abilities.reason);
     if (!mo_check_service_purity(p->arena, program, service->state, state->span, MO_PURITY_SERVICE,
                                  p->diags) ||
-        !token_source(p, token))
+        (!service->is_actor && !token_source(p, token)))
         return false;
     struct mo_checked_service_tool *checked_tools = allocate(
         p, service->tool_count, sizeof(*checked_tools), _Alignof(struct mo_checked_service_tool));
@@ -306,7 +306,7 @@ static MO_MUST_USE bool check_service(struct service_check *p, const struct mo_s
         if (!handler(p, tool->name, false, &tool->function, &tool->reply))
             return false;
     }
-    const struct mo_syntax *clauses = service->syntax->children[0];
+    const struct mo_syntax *clauses = service->syntax->children[service->is_actor ? 1 : 0];
     uint32_t timer = 0;
     for (uint32_t i = 0; i < clauses->count; i++) {
         const struct mo_syntax *clause = clauses->children[i];
@@ -343,55 +343,110 @@ bool mo_prepare_services(struct mo_arena *arena, struct mo_program *program,
         for (uint32_t i = 0; i < items->count; i++) {
             if (!work(&p, 1))
                 return false;
-            if (items->children[i]->kind != MO_S_SERVICE)
+            enum mo_syntax_kind k = items->children[i]->kind;
+            if (k != MO_S_SERVICE && k != MO_S_ACTOR)
                 continue;
             p.span = items->children[i]->span;
-            if (syntax != NULL)
-                return report(&p, MO_CODE_SERVICE_BLOCK, "a module declares two services",
-                              "A module has at most one service block (reference 11.5).");
+            if (syntax != NULL) {
+                bool actor_err = k == MO_S_ACTOR || syntax->kind == MO_S_ACTOR;
+                return report(
+                    &p, actor_err ? MO_CODE_ACTOR_BLOCK : MO_CODE_SERVICE_BLOCK,
+                    actor_err ? "a module declares more than one actor or service"
+                              : "a module declares two services",
+                    actor_err
+                        ? "A module declares at most one actor or service; put additional actors "
+                          "in their own modules and import them (reference 11.7)."
+                        : "A module has at most one service block (reference 11.5).");
+            }
             syntax = items->children[i];
         }
         if (syntax == NULL)
             continue;
+        bool is_actor = syntax->kind == MO_S_ACTOR;
+        const struct mo_symbol *actor_sym = NULL;
+        if (is_actor) {
+            const struct mo_syntax *aname = syntax->children[0];
+            actor_sym = mo_find_symbol(&program->interfaces->scopes[module], aname->text,
+                                       aname->span.end - aname->span.start);
+            MO_ASSERT(actor_sym != NULL && actor_sym->declaration == syntax);
+        }
         p.service = &services[program->service_count++];
-        *p.service = (struct mo_checked_service){.syntax = syntax, .module = module};
+        *p.service = (struct mo_checked_service){
+            .syntax = syntax, .module = module, .is_actor = is_actor, .actor_symbol = actor_sym};
         p.span = syntax->span;
-        const struct mo_syntax *clauses = syntax->children[0];
+        const struct mo_syntax *clauses = syntax->children[is_actor ? 1 : 0];
         uint32_t stage = 0;
         const struct mo_syntax *state = NULL, *tools = NULL, *token = NULL;
-        for (uint32_t i = 0; i < clauses->count; i++) {
-            const struct mo_syntax *clause = clauses->children[i];
-            p.span = clause->span;
-            if (!work(&p, 1))
-                return false;
-            if (stage == 0 && clause->kind == MO_S_SERVICE_STATE) {
-                state = clause;
-                stage = 1;
-            } else if (stage == 1 && clause->kind == MO_S_SERVICE_TOOLS) {
-                tools = clause;
-                p.service->tool_count = tools->children[0]->count;
-                stage = 2;
-            } else if (stage == 2 && clause->kind == MO_S_SERVICE_EVERY)
-                p.service->timer_count++;
-            else if (stage == 2 && clause->kind == MO_S_SERVICE_TOKEN) {
-                token = clause;
-                stage = 3;
-            } else if (stage == 3 && clause->kind == MO_S_PROMISE) {
-                if (++p.service->promise_count > MO_LIMIT_SERVICE_PROMISES)
-                    return report(&p, MO_CODE_TOO_MANY_SERVICE_PROMISES,
-                                  "a service has too many service promises",
-                                  "A service has at most 64 service promises.");
-            } else
-                return report(&p, MO_CODE_SERVICE_BLOCK,
-                              "a service clause is repeated or out of order",
-                              "Write state, tools, zero or more every clauses, token, then any "
-                              "service promises, in that order (reference 11.5).");
+        if (is_actor) {
+            for (uint32_t i = 0; i < clauses->count; i++) {
+                const struct mo_syntax *clause = clauses->children[i];
+                p.span = clause->span;
+                if (!work(&p, 1))
+                    return false;
+                if (stage == 0 && clause->kind == MO_S_SERVICE_STATE) {
+                    state = clause;
+                    stage = 1;
+                } else if (stage == 1 && clause->kind == MO_S_ACTOR_CALLS) {
+                    tools = clause;
+                    p.service->tool_count = tools->children[0]->count;
+                    stage = 2;
+                } else if (stage == 2 && clause->kind == MO_S_SERVICE_EVERY) {
+                    p.service->timer_count++;
+                } else if ((stage == 2 || stage == 3) && clause->kind == MO_S_PROMISE) {
+                    stage = 3;
+                    if (++p.service->promise_count > MO_LIMIT_SERVICE_PROMISES)
+                        return report(&p, MO_CODE_TOO_MANY_SERVICE_PROMISES,
+                                      "an actor has too many promises",
+                                      "An actor has at most 64 promises.");
+                } else {
+                    return report(&p, MO_CODE_ACTOR_BLOCK,
+                                  "an actor clause is repeated or out of order",
+                                  "Write state, calls, zero or more every clauses, then any "
+                                  "promises, in that order (reference 11.7).");
+                }
+            }
+            if (stage < 2 || p.service->tool_count == 0) {
+                p.span = syntax->span;
+                return report(
+                    &p, MO_CODE_ACTOR_BLOCK, "an actor is missing a required clause",
+                    "An actor needs one state clause and one nonempty calls clause, in that "
+                    "order (reference 11.7).");
+            }
+        } else {
+            for (uint32_t i = 0; i < clauses->count; i++) {
+                const struct mo_syntax *clause = clauses->children[i];
+                p.span = clause->span;
+                if (!work(&p, 1))
+                    return false;
+                if (stage == 0 && clause->kind == MO_S_SERVICE_STATE) {
+                    state = clause;
+                    stage = 1;
+                } else if (stage == 1 && clause->kind == MO_S_SERVICE_TOOLS) {
+                    tools = clause;
+                    p.service->tool_count = tools->children[0]->count;
+                    stage = 2;
+                } else if (stage == 2 && clause->kind == MO_S_SERVICE_EVERY)
+                    p.service->timer_count++;
+                else if (stage == 2 && clause->kind == MO_S_SERVICE_TOKEN) {
+                    token = clause;
+                    stage = 3;
+                } else if (stage == 3 && clause->kind == MO_S_PROMISE) {
+                    if (++p.service->promise_count > MO_LIMIT_SERVICE_PROMISES)
+                        return report(&p, MO_CODE_TOO_MANY_SERVICE_PROMISES,
+                                      "a service has too many service promises",
+                                      "A service has at most 64 service promises.");
+                } else
+                    return report(&p, MO_CODE_SERVICE_BLOCK,
+                                  "a service clause is repeated or out of order",
+                                  "Write state, tools, zero or more every clauses, token, then any "
+                                  "service promises, in that order (reference 11.5).");
+            }
+            if (stage != 3 || p.service->tool_count == 0)
+                return report(
+                    &p, MO_CODE_SERVICE_BLOCK, "a service is missing a required clause",
+                    "A service needs one state, one nonempty tools clause and one token "
+                    "clause, in that order, with timers between tools and token (reference 11.5).");
         }
-        if (stage != 3 || p.service->tool_count == 0)
-            return report(
-                &p, MO_CODE_SERVICE_BLOCK, "a service is missing a required clause",
-                "A service needs one state, one nonempty tools clause and one token "
-                "clause, in that order, with timers between tools and token (reference 11.5).");
         uint32_t count = program->interfaces->scopes[module].count;
         p.named = allocate(&p, count, sizeof(*p.named), _Alignof(bool));
         if (p.named == NULL)
@@ -417,7 +472,7 @@ bool mo_check_services(struct mo_arena *arena, struct mo_program *program,
     for (uint32_t i = 0; i < program->service_count; i++) {
         struct mo_checked_service *s = &services[i];
         p.service = s;
-        const struct mo_syntax *state = s->syntax->children[0]->children[0];
+        const struct mo_syntax *state = s->syntax->children[s->is_actor ? 1 : 0]->children[0];
         if (!mo_check_service_value(arena, program->interfaces, program->signatures, constants,
                                     s->module, state, s->state, diags, &s->initializer))
             return false;
@@ -554,7 +609,7 @@ enum mo_query_entry mo_check_query_entry(struct mo_arena *arena, const struct mo
     p.span = group->declaration->children[0]->span;
     const struct mo_checked_service *service = NULL;
     for (uint32_t i = 0; i < program->service_count; i++)
-        if (program->services[i].module == 0)
+        if (program->services[i].module == 0 && !program->services[i].is_actor)
             service = &program->services[i];
     if (service == NULL)
         return refuse_query(&p, MO_CODE_QUERY_STATE, "the program has no service to query",
@@ -648,7 +703,7 @@ enum mo_query_entry mo_check_migration_entry(struct mo_arena *arena,
     p.span = group->declaration->children[0]->span;
     const struct mo_checked_service *service = NULL;
     for (uint32_t i = 0; i < program->service_count; i++)
-        if (program->services[i].module == 0)
+        if (program->services[i].module == 0 && !program->services[i].is_actor)
             service = &program->services[i];
     if (service == NULL)
         return refuse_query(&p, MO_CODE_UPGRADE_MIGRATION_SIGNATURE,

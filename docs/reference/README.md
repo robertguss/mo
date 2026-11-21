@@ -1197,7 +1197,8 @@ A module declares at most one HTTP API server with `api ... end`, and never
 alongside `service` (E0108). An `api` block has at least one route (`get`,
 `post`, `put`, `patch` or `delete`) and optional `port` (`0` to `65535`, by
 default `8000`), `cors` (a nonempty single-line origin or `"*"`), `sqlite name
-from "path"` (up to 16 relative paths inside `--data` with no `..`), `auth
+from "path"` (up to 16 relative paths inside `--data` with no `..`), `actor name:
+ActorType` (up to 16 distinct actor types), `auth
 Principal via handler` (where `Principal` is a concrete `struct` or `enum` and
 `handler` returns `Result(Principal, Error)`), and `status` clauses (E0108).
 
@@ -1206,7 +1207,8 @@ and a non-generic, non-overloaded local function, with distinct `(method, shape)
 pairs across the block after normalizing `:param` segments (E0109). Route
 parameters bind by type and name in any order: `Principal` (running `auth`
 before the handler), `Api.Request`, `Sqlite.Database` (matching a `sqlite`
-clause by parameter name, ignoring a leading `_`), a capability (`Sqlite`,
+clause by parameter name, ignoring a leading `_`), an actor handle (matching an
+`actor` clause by parameter name and type, ignoring a leading `_`), a capability (`Sqlite`,
 `Network`, `Clock`, `Random`, `Files`, `ReadFiles`, `Env` or `Console`), a
 `:param` scalar (`Int`, `Byte`, `BigInt`, `Decimal`, `Bool` or `Text`), an
 `Option` scalar query parameter, a required scalar query parameter on `get` or
@@ -1273,6 +1275,49 @@ test "routes run in memory through ApiTest.send"
   assert ApiTest.send(Notes, Api.get("/notes/7"), env).status == 200
   assert ApiTest.send(Notes, Api.delete("/notes/7"), env).status == 401
   assert ApiTest.send(Notes, Api.delete("/notes/7").with_bearer("secret"), env).status == 204
+end
+```
+
+### 11.7 Actors
+
+A module declares at most one in-process stateful actor capability with `actor Name ... end`, and never alongside `service` (E0111, E0099). Its clauses occur in order: `state Type = expr`, `calls fn1, fn2, ...` naming at least one local handler, zero or more `every Duration fn` timers, and zero or more `promise` or `promise on call` invariants (section 12.2); an `actor` has no `token` clause (E0111). `actor` and `Actor` are reserved, while `calls` remains an ordinary identifier outside its clause position.
+
+`Name` is an opaque capability type (without abilities and never exposed with `(..)`): it can be listed once per actor type on `main` (section 11.2), bound with `actor name: Name` in an `api` block (section 11.6), passed as a function parameter, or started deterministically in tests with `Actor.start(Name)` or `Actor.start_at(Name, at)` (section 12.4). Actor state, call inputs and replies follow `service`'s purity, visibility and update rules (section 11.5): a handler takes `(State, Time, ...)` and returns `Reply` (read-only), `(State, Reply)` (updating), or `Result((State, Reply), E)` (updating on `Ok`).
+
+Calling `handle.call(args...)` (or `handle.call` with no extra arguments) sends a synchronous message into the actor's isolated heap and projects the state out, returning `Reply` or `Result(Reply, E)` and stopping the caller if the actor is stopped or the handler fails with a bug; `Actor.send(handle, Name.call, args...)` returns `Result(ProjectedReply, SimulationError)` instead. In `mo serve` and `mo run`, each declared actor runs in memory with serialized mailbox access, timers and supervisor restarts (5 failures in 60 seconds restart from its initial state, and 3 restarts in 10 minutes stop it); `mo test` runs `Module.service.recovery` and `Module.service.promise.N` on every actor.
+
+```mo
+module RateLimit
+
+actor RateLimiter
+  state Map(Text, Int) = {}
+  calls allow, hits
+  every 1.minute clear
+
+  promise on allow
+    after.size >= before.size
+  end
+end
+
+fn allow(state: Map(Text, Int), _now: Time, key: Text) : (Map(Text, Int), Bool)
+  used = state.get(key) or 0
+  if used >= 2: (state, false) else: (state.set(key, used + 1), true)
+end
+
+fn hits(state: Map(Text, Int), _now: Time, key: Text) : Int
+  state.get(key) or 0
+end
+
+fn clear(_state: Map(Text, Int), _now: Time) : Map(Text, Int)
+  {}
+end
+
+test "actor dot calls and fake clock"
+  limiter = Actor.start(RateLimiter)
+  assert limiter.allow("ada") and limiter.allow("ada")
+  assert not limiter.allow("ada") and limiter.hits("ada") == 2
+  Actor.advance(limiter, 1.minute)
+  assert limiter.allow("ada")
 end
 ```
 
@@ -2284,15 +2329,16 @@ warnings: a problem is an error, or it isn't reported.
 The executable grammar, `grammar/mo.y`, is the authority, and this is its
 summary. `x*` means zero or more, `x+` one or more, `x?` optional, and `NL` a
 line break as section 2.4 defines it.
-Sections 11.5 and 11.6 fix the order and number of `service` and `api` clauses.
+Sections 11.5, 11.6 and 11.7 fix the order and number of `service`, `api` and `actor` clauses.
 
 ```text
 module      = "module" Path NL ("expose" exposed ("," exposed)* NL)? use* item*
 exposed     = name | Name | Name "(" ".." ")"
 use         = "use" Path ("{" (name | Name) ("," (name | Name))* "}")? NL
-item        = function | struct | enum | test | service | api | name "=" expr NL
+item        = function | struct | enum | test | service | actor | api | name "=" expr NL
 service     = "service" NL ("state" type "=" expr NL | "tools" name ("," name)* NL | "every" expr name NL | "token" "from" "env" text NL | promise)* "end" NL
-api         = "api" NL ("port" digits NL | "cors" text NL | "sqlite" name "from" text NL | "auth" type "via" name NL | ("get" | "post" | "put" | "patch" | "delete") text name NL | "status" Name ("." Name)? ("(" "_" ("," "_")* ")")? "=" digits NL)* "end" NL
+actor       = "actor" Name NL ("state" type "=" expr NL | "calls" name ("," name)* NL | "every" expr name NL | promise)* "end" NL
+api         = "api" NL ("port" digits NL | "cors" text NL | "sqlite" name "from" text NL | "actor" name ":" type NL | "auth" type "via" name NL | ("get" | "post" | "put" | "patch" | "delete") text name NL | "status" Name ("." Name)? ("(" "_" ("," "_")* ")")? "=" digits NL)* "end" NL
 function    = "fn" name "(" params? ")" (":" type)? where? NL (promise | examples)* statement* "end" NL
 params      = name ":" type ("," name ":" type)*
 where       = "where" Name ":" Name ("," Name ":" Name)*

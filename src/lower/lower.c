@@ -162,25 +162,42 @@ static void entry(struct lowering *p, struct instance *main) {
     wrapper->fun.params = main->fun.params;
     wrapper->meta.body.params = main->meta.body.params;
     mo_core_string console = {0};
+    bool has_actor_param = false;
     for (size_t i = 0; i < main->fun.params.count; i++) {
         mo_core_ty t = main->fun.params.items[i].ty;
         if (t->tag == MO_CORE_TY_CAP && t->as.cap->tag == MO_CORE_CAP_CONSOLE)
             console = main->fun.params.items[i].name;
+        if (i < checked->capability_count && checked->capabilities[i]->type->declaration != NULL &&
+            checked->capabilities[i]->type->declaration->declaration->kind == MO_S_ACTOR)
+            has_actor_param = true;
     }
-    if (checked->result == MO_ENTRY_RESULT && console.length == 0) {
+    bool add_console = checked->result == MO_ENTRY_RESULT && console.length == 0;
+    if (add_console || has_actor_param) {
         static const struct mo_source_type console_type = {
             .kind = MO_SOURCE_NAMED, .name = "Console", .module = UINT32_MAX};
         size_t count = main->fun.params.count;
-        wrapper->fun.params.items = LOWER_NEW(p, struct mo_core_param, count + 1);
-        wrapper->meta.body.params.items = LOWER_NEW(p, struct mo_core_name, count + 1);
+        size_t total = count + (add_console ? 1u : 0u);
+        wrapper->fun.params.items = LOWER_NEW(p, struct mo_core_param, total);
+        wrapper->meta.body.params.items = LOWER_NEW(p, struct mo_core_name, total);
         for (size_t i = 0; i < count; i++) {
             wrapper->fun.params.items[i] = main->fun.params.items[i];
             wrapper->meta.body.params.items[i] = main->meta.body.params.items[i];
+            if (i < checked->capability_count &&
+                checked->capabilities[i]->type->declaration != NULL &&
+                checked->capabilities[i]->type->declaration->declaration->kind == MO_S_ACTOR) {
+                uint32_t amod = checked->capabilities[i]->type->module;
+                wrapper->meta.body.params.items[i] = (struct mo_core_name){
+                    .some = true,
+                    .value = lower_concat(p, lower_text(p, "%actor."), p->program->set->names[amod],
+                                          lower_text(p, ""))};
+            }
         }
-        console = lower_fresh(p);
-        wrapper->fun.params.items[count] =
-            (struct mo_core_param){console, lower_type(p, &console_type, NULL)};
-        wrapper->fun.params.count = wrapper->meta.body.params.count = count + 1;
+        if (add_console) {
+            console = lower_fresh(p);
+            wrapper->fun.params.items[count] =
+                (struct mo_core_param){console, lower_type(p, &console_type, NULL)};
+        }
+        wrapper->fun.params.count = wrapper->meta.body.params.count = total;
     }
     mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
     call->as.call.name = main->fun.name;
@@ -287,9 +304,13 @@ static struct mo_services services(struct lowering *p) {
         p->span = source->syntax->span;
         s->start = service_value(p, source->module, ".%service.start", 0, source->state,
                                  &source->initializer);
-        struct mo_core_ty text_type = {.tag = MO_CORE_TY_TEXT};
-        mo_core_expr token = lower_literal(p, source->token_source, &text_type, false);
-        s->token_env = token->as.lit->as.text.bytes;
+        if (source->is_actor) {
+            s->token_env = "_MO_ACTOR";
+        } else {
+            struct mo_core_ty text_type = {.tag = MO_CORE_TY_TEXT};
+            mo_core_expr token = lower_literal(p, source->token_source, &text_type, false);
+            s->token_env = token->as.lit->as.text.bytes;
+        }
         s->tool_count = source->tool_count;
         struct mo_service_tool *tools = LOWER_NEW(p, struct mo_service_tool, s->tool_count);
         s->tools = tools;

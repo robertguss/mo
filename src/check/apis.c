@@ -409,6 +409,24 @@ static MO_MUST_USE bool find_sqlite_slot(const struct mo_checked_api *api, const
     return false;
 }
 
+static MO_MUST_USE bool is_actor_type(const struct mo_source_type *type) {
+    return type != NULL && type->kind == MO_SOURCE_NAMED && type->declaration != NULL &&
+           type->declaration->declaration->kind == MO_S_ACTOR;
+}
+
+static MO_MUST_USE bool find_actor_slot(struct api_check *p, const char *name,
+                                        const struct mo_source_type *type, uint32_t *out) {
+    const char *stripped = name[0] == '_' && name[1] != '\0' ? name + 1 : name;
+    for (uint32_t i = 0; i < p->api->actor_count; i++)
+        if ((strcmp(p->api->actors[i].name, name) == 0 ||
+             strcmp(p->api->actors[i].name, stripped) == 0) &&
+            api_same_type(p, type, p->api->actors[i].type, 0)) {
+            *out = i;
+            return true;
+        }
+    return false;
+}
+
 static MO_MUST_USE bool check_auth_clause(struct api_check *p, const struct mo_syntax *clause) {
     p->span = clause->span;
     const struct mo_source_type *principal = mo_resolve_service_type(
@@ -442,6 +460,7 @@ static MO_MUST_USE bool check_auth_clause(struct api_check *p, const struct mo_s
     bool seen_req = false;
     uint32_t seen_caps = 0;
     uint32_t seen_dbs = 0;
+    uint32_t seen_actors = 0;
     for (uint32_t i = 0; i < param_count; i++) {
         const struct mo_syntax *pnode = param_nodes->children[i];
         p->span = pnode->span;
@@ -472,6 +491,23 @@ static MO_MUST_USE bool check_auth_clause(struct api_check *p, const struct mo_s
             seen_dbs |= UINT32_C(1) << db_slot;
             params[i] = (struct mo_checked_api_param){
                 .kind = MO_API_PARAM_SQLITE_DB, .name = pname, .type = ptype, .index = db_slot};
+            continue;
+        }
+        if (is_actor_type(ptype)) {
+            uint32_t actor_slot = 0;
+            if (!find_actor_slot(p, pname, ptype, &actor_slot))
+                return p->failed ? false
+                                 : api_report(p, MO_CODE_API_BLOCK,
+                                              "an api auth actor parameter has no matching actor "
+                                              "clause",
+                                              "Declare actor <name>: <ActorType> in the api block "
+                                              "with the same name and type.");
+            if ((seen_actors & (UINT32_C(1) << actor_slot)) != 0)
+                return api_report(p, MO_CODE_API_BLOCK,
+                                  "an api auth function takes the same actor twice", NULL);
+            seen_actors |= UINT32_C(1) << actor_slot;
+            params[i] = (struct mo_checked_api_param){
+                .kind = MO_API_PARAM_ACTOR, .name = pname, .type = ptype, .index = actor_slot};
             continue;
         }
         uint32_t cap_slot = api_cap_slot(ptype);
@@ -558,7 +594,7 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
         memset(matched_path, 0, path_info.param_count * sizeof(*matched_path));
 
     bool seen_auth = false, seen_req = false, seen_body = false;
-    uint32_t seen_caps = 0, seen_dbs = 0;
+    uint32_t seen_caps = 0, seen_dbs = 0, seen_actors = 0;
     bool allows_body = method == MO_API_POST || method == MO_API_PUT || method == MO_API_PATCH;
 
     for (uint32_t i = 0; i < param_count; i++) {
@@ -600,6 +636,23 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
             seen_dbs |= UINT32_C(1) << db_slot;
             params[i] = (struct mo_checked_api_param){
                 .kind = MO_API_PARAM_SQLITE_DB, .name = pname, .type = ptype, .index = db_slot};
+            continue;
+        }
+        if (is_actor_type(ptype)) {
+            uint32_t actor_slot = 0;
+            if (!find_actor_slot(p, pname, ptype, &actor_slot))
+                return p->failed ? false
+                                 : api_report(p, MO_CODE_API_ROUTE,
+                                              "an api route actor parameter has no matching actor "
+                                              "clause",
+                                              "Declare actor <name>: <ActorType> in the api block "
+                                              "with the same name and type.");
+            if ((seen_actors & (UINT32_C(1) << actor_slot)) != 0)
+                return api_report(p, MO_CODE_API_ROUTE,
+                                  "an api route handler takes the same actor twice", NULL);
+            seen_actors |= UINT32_C(1) << actor_slot;
+            params[i] = (struct mo_checked_api_param){
+                .kind = MO_API_PARAM_ACTOR, .name = pname, .type = ptype, .index = actor_slot};
             continue;
         }
         uint32_t cap_slot = api_cap_slot(ptype);
@@ -985,7 +1038,7 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
         *p.api = (struct mo_checked_api){.syntax = syntax, .module = module, .port = 8000};
 
         const struct mo_syntax *clauses = syntax->children[0];
-        uint32_t sqlite_count = 0, route_count = 0;
+        uint32_t sqlite_count = 0, actor_count = 0, route_count = 0;
         const struct mo_syntax *auth_clause = NULL;
         for (uint32_t i = 0; i < clauses->count; i++) {
             if (!api_work(&p, 1))
@@ -1030,6 +1083,11 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
                     return api_report(&p, MO_CODE_API_BLOCK,
                                       "an api block declares too many sqlite databases",
                                       "An api block declares at most 16 sqlite clauses.");
+            } else if (c->kind == MO_S_API_ACTOR) {
+                if (++actor_count > MO_LIMIT_API_ACTORS)
+                    return api_report(&p, MO_CODE_API_BLOCK,
+                                      "an api block declares too many actors",
+                                      "An api block declares at most 16 actor clauses.");
             } else if (c->kind == MO_S_API_AUTH) {
                 if (auth_clause != NULL)
                     return api_report(&p, MO_CODE_API_BLOCK, "an api block repeats auth",
@@ -1088,6 +1146,62 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
         p.api->sqlites = sqlites;
         if (sq_at != 0)
             p.cap_used[0] = true; /* Sqlite capability opens declared sqlite bindings */
+
+        struct mo_checked_api_actor *actors =
+            api_alloc(&p, actor_count == 0 ? 1 : actor_count, sizeof(*actors),
+                      _Alignof(struct mo_checked_api_actor));
+        if (actors == NULL)
+            return false;
+        uint32_t ac_at = 0;
+        for (uint32_t i = 0; i < clauses->count; i++) {
+            const struct mo_syntax *c = clauses->children[i];
+            if (c->kind != MO_S_API_ACTOR)
+                continue;
+            p.span = c->children[0]->span;
+            const char *aname = api_syntax_cstr(&p, c->children[0]);
+            if (aname == NULL)
+                return false;
+            for (uint32_t prev = 0; prev < sq_at; prev++)
+                if (strcmp(sqlites[prev].name, aname) == 0)
+                    return api_report(
+                        &p, MO_CODE_API_BLOCK,
+                        "an api actor binding has the same name as a sqlite binding",
+                        "Give each sqlite and actor clause in an api block a distinct name.");
+            for (uint32_t prev = 0; prev < ac_at; prev++)
+                if (strcmp(actors[prev].name, aname) == 0)
+                    return api_report(&p, MO_CODE_API_BLOCK,
+                                      "an api block declares two actor clauses with the same name",
+                                      "Give each actor binding in an api block a distinct name.");
+            p.span = c->children[1]->span;
+            const struct mo_source_type *atype = mo_resolve_service_type(
+                p.arena, p.program->interfaces, p.program->signatures, p.api->module, c, p.diags);
+            if (atype == NULL) {
+                p.failed = true;
+                return false;
+            }
+            if (!is_actor_type(atype))
+                return api_report(
+                    &p, MO_CODE_API_BLOCK, "an api actor clause must name a declared actor type",
+                    "Declare actor Name ... end and reference Name in actor <binding>: Name.");
+            for (uint32_t prev = 0; prev < ac_at; prev++)
+                if (actors[prev].type->declaration == atype->declaration)
+                    return api_report(
+                        &p, MO_CODE_API_BLOCK,
+                        "an api block declares two actor clauses of the same actor type",
+                        "Declare at most one actor clause per actor type in an api block.");
+            uint32_t svc_idx = UINT32_MAX;
+            for (uint32_t s = 0; s < program->service_count; s++)
+                if (program->services[s].is_actor &&
+                    program->services[s].actor_symbol == atype->declaration) {
+                    svc_idx = s;
+                    break;
+                }
+            MO_ASSERT(svc_idx != UINT32_MAX);
+            actors[ac_at++] = (struct mo_checked_api_actor){
+                .syntax = c, .name = aname, .type = atype, .service_index = svc_idx};
+        }
+        p.api->actor_count = ac_at;
+        p.api->actors = actors;
 
         if (auth_clause != NULL && !check_auth_clause(&p, auth_clause))
             return false;

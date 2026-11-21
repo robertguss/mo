@@ -42,12 +42,13 @@ static MO_MUST_USE int order_start(const void *left, const void *right) {
 static MO_MUST_USE bool block(const struct mo_syntax *n) {
     return n->kind == MO_S_FILE || n->kind == MO_S_MODULE || n->kind == MO_S_FN ||
            n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM || n->kind == MO_S_TEST ||
-           n->kind == MO_S_SERVICE || n->kind == MO_S_API || n->kind == MO_S_IF ||
-           n->kind == MO_S_ELSE || n->kind == MO_S_CASE || n->kind == MO_S_FOR ||
-           n->kind == MO_S_WHILE || n->kind == MO_S_LAMBDA || n->kind == MO_S_PROMISE ||
-           n->kind == MO_S_EXAMPLES || n->kind == MO_S_ARM || n->kind == MO_S_IF_PART ||
-           n->kind == MO_S_LIST || n->kind == MO_S_MAP || n->kind == MO_S_TUPLE ||
-           n->kind == MO_S_GROUP || n->kind == MO_S_CALL || n->kind == MO_S_TYPE_ARGS;
+           n->kind == MO_S_SERVICE || n->kind == MO_S_ACTOR || n->kind == MO_S_API ||
+           n->kind == MO_S_IF || n->kind == MO_S_ELSE || n->kind == MO_S_CASE ||
+           n->kind == MO_S_FOR || n->kind == MO_S_WHILE || n->kind == MO_S_LAMBDA ||
+           n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES || n->kind == MO_S_ARM ||
+           n->kind == MO_S_IF_PART || n->kind == MO_S_LIST || n->kind == MO_S_MAP ||
+           n->kind == MO_S_TUPLE || n->kind == MO_S_GROUP || n->kind == MO_S_CALL ||
+           n->kind == MO_S_TYPE_ARGS;
 }
 
 static MO_MUST_USE struct mo_syntax *owner(struct mo_syntax *n, uint32_t offset,
@@ -354,8 +355,9 @@ static void blank_trivia(const struct mo_source *source, struct mo_syntax *n) {
     } else if (n->kind == MO_S_STRUCT || n->kind == MO_S_ENUM || n->kind == MO_S_FOR ||
                n->kind == MO_S_ARM)
         body = n->children[2];
-    else if (n->kind == MO_S_TEST || n->kind == MO_S_WHILE || n->kind == MO_S_IF ||
-             n->kind == MO_S_IF_PART || n->kind == MO_S_CASE || n->kind == MO_S_LAMBDA)
+    else if (n->kind == MO_S_TEST || n->kind == MO_S_ACTOR || n->kind == MO_S_WHILE ||
+             n->kind == MO_S_IF || n->kind == MO_S_IF_PART || n->kind == MO_S_CASE ||
+             n->kind == MO_S_LAMBDA)
         body = n->children[1];
     else if (n->kind == MO_S_ELSE || n->kind == MO_S_EXAMPLES || n->kind == MO_S_SERVICE ||
              n->kind == MO_S_API)

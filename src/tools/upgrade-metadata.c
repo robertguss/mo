@@ -90,9 +90,13 @@ enum mo_upgrade_metadata_status mo_upgrade_metadata(const struct mo_program *pro
     }
     const struct mo_bytecode *file = mo_image_bytecode(image);
     const struct mo_bytecode_service *service = NULL;
-    for (uint32_t i = 0; i < file->service_count; i++)
-        if (file->services[i].module == 0)
+    for (uint32_t i = 0; i < file->service_count; i++) {
+        const struct mo_bytecode_string *tok = &file->strings[file->services[i].token_env];
+        bool is_actor = tok->length == sizeof "_MO_ACTOR" - 1 &&
+                        memcmp(tok->bytes, "_MO_ACTOR", sizeof "_MO_ACTOR" - 1) == 0;
+        if (file->services[i].module == 0 && !is_actor)
             service = &file->services[i];
+    }
     struct mo_process *process = ok && service != NULL ? mo_process_new(image, &limits) : NULL;
     struct mo_sources types_sources = {0};
     ok = process != NULL && mo_sources_init(&types_sources) &&

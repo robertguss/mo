@@ -134,6 +134,42 @@ static mo_core_expr list_sum(struct body *b, mo_core_ty number, mo_core_expr val
     return held;
 }
 
+static mo_core_expr project_actor_reply(struct body *b, enum mo_service_reply reply_kind,
+                                        mo_core_ty projected_ty, mo_core_expr raw_val) {
+    struct lowering *p = b->p;
+    if (reply_kind == MO_SERVICE_READ_ONLY)
+        return raw_val;
+    if (reply_kind == MO_SERVICE_UPDATE)
+        return lower_cps_projection(b, raw_val, 1);
+    MO_ASSERT(reply_kind == MO_SERVICE_RESULT_UPDATE && projected_ty->tag == MO_CORE_TY_RESULT);
+    mo_core_expr c = lower_expr(p, MO_CORE_EXPR_CASE);
+    c->as.case_.expr = raw_val;
+    c->as.case_.arms.count = 2;
+    c->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+    mo_core_string pair_v = lower_fresh(p), err_v = lower_fresh(p);
+    c->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+    c->as.case_.arms.items[0].names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+    c->as.case_.arms.items[0].names.items[0] = pair_v;
+    mo_core_expr proj = lower_cps_projection(b, lower_var(p, pair_v), 1);
+    mo_core_expr ok_con = lower_expr(p, MO_CORE_EXPR_CON);
+    ok_con->as.con.ty = projected_ty;
+    ok_con->as.con.ctor = lower_text(p, "Ok");
+    ok_con->as.con.args = lower_cps_arguments(b, 1);
+    ok_con->as.con.args.items[0] = proj;
+    c->as.case_.arms.items[0].body = ok_con;
+
+    c->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+    c->as.case_.arms.items[1].names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+    c->as.case_.arms.items[1].names.items[0] = err_v;
+    mo_core_expr err_con = lower_expr(p, MO_CORE_EXPR_CON);
+    err_con->as.con.ty = projected_ty;
+    err_con->as.con.ctor = lower_text(p, "Error");
+    err_con->as.con.args = lower_cps_arguments(b, 1);
+    err_con->as.con.args.items[0] = lower_var(p, err_v);
+    c->as.case_.arms.items[1].body = err_con;
+    return c;
+}
+
 mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expression *r,
                                    mo_core_expr_list args) {
     struct lowering *p = b->p;
@@ -216,6 +252,101 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
             op.result = lower_cps_type(b, r->type->arguments[0]);
         }
         return lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op}, args);
+    }
+    if (r->native != NULL && strncmp(r->native, "Actor.", 6) == 0) {
+        if (strcmp(r->native, "Actor.start") == 0 || strcmp(r->native, "Actor.start_at") == 0) {
+            struct mo_core_sim_op op = {.tag = MO_SIM_START,
+                                        .descriptor = {.digits = lower_number(p, r->service)},
+                                        .tool = {.digits = lower_text(p, "0")}};
+            mo_core_expr_list sargs = args;
+            if (strcmp(r->native, "Actor.start") == 0) {
+                mo_core_expr tlit = lower_unit(p);
+                tlit->as.lit->tag = MO_CORE_LIT_TIME;
+                tlit->as.lit->as.time.digits =
+                    lower_text(p, "1767225600000000"); /* 2026-01-01T00:00:00Z */
+                sargs = lower_cps_arguments(b, 1);
+                sargs.items[0] = tlit;
+            }
+            return lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op},
+                              sargs);
+        }
+        if (strcmp(r->native, "Actor.advance") == 0 || strcmp(r->native, "Actor.crash") == 0 ||
+            strcmp(r->native, "Actor.restart") == 0) {
+            enum mo_sim_operation tag = strcmp(r->native, "Actor.advance") == 0 ? MO_SIM_ADVANCE
+                                        : strcmp(r->native, "Actor.crash") == 0 ? MO_SIM_CRASH
+                                                                                : MO_SIM_RESTART;
+            struct mo_core_sim_op op = {.tag = tag,
+                                        .descriptor = {.digits = lower_text(p, "0")},
+                                        .tool = {.digits = lower_text(p, "0")}};
+            return lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op},
+                              args);
+        }
+        MO_ASSERT(strcmp(r->native, "Actor.call") == 0 || strcmp(r->native, "Actor.send") == 0);
+        bool is_send = strcmp(r->native, "Actor.send") == 0;
+        const struct mo_checked_service *svc = &p->program->services[r->service];
+        const struct mo_checked_service_tool *tool = &svc->tools[r->tool];
+        const struct mo_source_type *fn_sig = p->program->functions[tool->function].signature->type;
+        const struct mo_source_type *raw_ret_src = fn_sig->arguments[fn_sig->count - 1];
+
+        MO_ASSERT(args.count >= 1);
+        struct mo_core_sim_op op = {.tag = MO_SIM_SEND,
+                                    .descriptor = {.digits = lower_number(p, r->service)},
+                                    .tool = {.digits = lower_number(p, r->tool)}};
+        op.arguments.count = args.count - 1;
+        op.arguments.items = LOWER_NEW(p, mo_core_ty, op.arguments.count);
+        for (size_t i = 0; i < op.arguments.count; i++)
+            op.arguments.items[i] = lower_cps_type(b, fn_sig->arguments[i + 2]);
+        op.result = lower_cps_type(b, raw_ret_src);
+        mo_core_expr sent =
+            lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op}, args);
+
+        mo_core_ty proj_ty = is_send ? result->as.result.t : result;
+        mo_core_expr c = lower_expr(p, MO_CORE_EXPR_CASE);
+        c->as.case_.expr = sent;
+        c->as.case_.arms.count = 2;
+        c->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+        mo_core_string raw_v = lower_fresh(p), sim_err_v = lower_fresh(p);
+        c->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+        c->as.case_.arms.items[0].names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        c->as.case_.arms.items[0].names.items[0] = raw_v;
+        mo_core_expr projected = project_actor_reply(b, tool->reply, proj_ty, lower_var(p, raw_v));
+        if (is_send) {
+            mo_core_expr ok_con = lower_expr(p, MO_CORE_EXPR_CON);
+            ok_con->as.con.ty = result;
+            ok_con->as.con.ctor = lower_text(p, "Ok");
+            ok_con->as.con.args = lower_cps_arguments(b, 1);
+            ok_con->as.con.args.items[0] = projected;
+            c->as.case_.arms.items[0].body = ok_con;
+        } else {
+            c->as.case_.arms.items[0].body = projected;
+        }
+
+        c->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+        c->as.case_.arms.items[1].names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        c->as.case_.arms.items[1].names.items[0] = sim_err_v;
+        if (is_send) {
+            mo_core_expr err_con = lower_expr(p, MO_CORE_EXPR_CON);
+            err_con->as.con.ty = result;
+            err_con->as.con.ctor = lower_text(p, "Error");
+            err_con->as.con.args = lower_cps_arguments(b, 1);
+            err_con->as.con.args.items[0] = lower_var(p, sim_err_v);
+            c->as.case_.arms.items[1].body = err_con;
+        } else {
+            mo_core_expr ec = lower_expr(p, MO_CORE_EXPR_CASE);
+            ec->as.case_.expr = lower_var(p, sim_err_v);
+            ec->as.case_.arms.count = 2;
+            ec->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            mo_core_expr down_stop = lower_expr(p, MO_CORE_EXPR_STOP);
+            down_stop->as.stop = lower_text(p, "actor is stopped");
+            mo_core_expr fail_stop = lower_expr(p, MO_CORE_EXPR_STOP);
+            fail_stop->as.stop = lower_text(p, "actor handler failed");
+            ec->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "ServiceDown"), .body = down_stop};
+            ec->as.case_.arms.items[1] =
+                (struct mo_core_arm){.ctor = lower_text(p, "ToolFailed"), .body = fail_stop};
+            c->as.case_.arms.items[1].body = ec;
+        }
+        return c;
     }
     if (r->native != NULL) {
         static const struct {

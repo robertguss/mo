@@ -70,6 +70,8 @@ struct api_compile_work {
     struct mo_image *image;
     uint32_t wire_fn;
     uint16_t default_port;
+    uint32_t actor_count;
+    uint32_t actor_services[MO_LIMIT_API_ACTORS];
     int status;
 };
 
@@ -127,6 +129,9 @@ static void compile_api_image(void *arg) {
 
     if (entry_api != NULL && !mo_diags_any(&diags)) {
         w->default_port = entry_api->port;
+        w->actor_count = entry_api->actor_count;
+        for (uint32_t a = 0; a < entry_api->actor_count; a++)
+            w->actor_services[a] = entry_api->actors[a].service_index;
         struct mo_services services;
         struct mo_core *core =
             mo_lower_services(&lowered, program, &sources, &diags, NULL, &services);
@@ -628,6 +633,8 @@ struct api_worker_pool {
     FILE *output;
     FILE *errors;
     struct mo_limits limits;
+    uint32_t actor_count;
+    struct mo_live_actor *actors[MO_LIMIT_API_ACTORS];
 
     pthread_mutex_t queue_mutex;
     pthread_cond_t queue_cond;
@@ -694,9 +701,9 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
     const struct mo_types *types = mo_image_types(pool->image);
     const struct mo_bytecode_function *fn = &bc->functions[pool->wire_fn];
     uint32_t pcount = fn->parameter_count;
-    MO_ASSERT(pcount >= 4 && pcount <= 16);
+    MO_ASSERT(pcount >= 4 && pcount <= 4 + 8 + MO_LIMIT_API_ACTORS);
 
-    struct mo_cell call_args[16] = {{{0}}};
+    struct mo_cell call_args[32] = {{{0}}};
     uint32_t built_args = 0;
     bool have_env = false;
     struct mo_cell env_map = {{0}};
@@ -746,6 +753,15 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
     for (uint32_t i = 4; args_ok && i < pcount; i++) {
         uint32_t cap_ty = fn->parameters[i].type;
         enum mo_capability cap_kind = types->items[cap_ty].capability;
+        if (cap_kind == MO_CAP_SIMULATION) {
+            uint32_t actor_base = pcount - pool->actor_count;
+            MO_ASSERT(i >= actor_base && i - actor_base < pool->actor_count);
+            args_ok =
+                mo_value_live_actor(heap, cap_ty, pool->actors[i - actor_base], &call_args[i]);
+            if (args_ok)
+                built_args = i + 1;
+            continue;
+        }
         const struct mo_cell *contents = NULL;
         if (cap_kind == MO_CAP_ENV) {
             if (!have_env) {
@@ -780,11 +796,6 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
     struct mo_cell result;
     struct mo_defect defect;
     enum mo_outcome outcome = mo_call(proc, pool->wire_fn, call_args, pcount, &result, &defect);
-    for (uint32_t i = 0; i < pcount; i++)
-        if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
-            mo_value_drop(heap, fn->parameters[i].type, call_args[i]);
-    if (have_env)
-        mo_value_drop(heap, host->types->files, env_map);
 
     if (outcome != MO_RETURNED) {
         (void)pthread_mutex_lock(&pool->log_mutex);
@@ -794,6 +805,11 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
         (void)wrote;
         (void)fflush(pool->errors);
         (void)pthread_mutex_unlock(&pool->log_mutex);
+        for (uint32_t i = 0; i < pcount; i++)
+            if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
+                mo_value_drop(heap, fn->parameters[i].type, call_args[i]);
+        if (have_env)
+            mo_value_drop(heap, host->types->files, env_map);
         mo_process_free(proc);
         send_fixed_json_error(client_fd, 500, "internal_server_error");
         mo_buffer_free(&req.body);
@@ -801,6 +817,12 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
         (void)close(client_fd);
         return;
     }
+
+    for (uint32_t i = 0; i < pcount; i++)
+        if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
+            mo_value_drop(heap, fn->parameters[i].type, call_args[i]);
+    if (have_env)
+        mo_value_drop(heap, host->types->files, env_map);
 
     int64_t status_code = mo_cell_get_int(mo_value_field(result, 0));
     if (status_code < 100 || status_code > 599)
@@ -1030,7 +1052,24 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
                                    .folder_fd = folder_fd,
                                    .output = output,
                                    .errors = errors,
-                                   .limits = req_limits};
+                                   .limits = req_limits,
+                                   .actor_count = cw.actor_count};
+    for (uint32_t a = 0; a < cw.actor_count; a++) {
+        enum mo_service_status ast =
+            mo_live_actor_new(cw.image, cw.actor_services[a], errors, &pool.actors[a]);
+        if (ast != MO_SERVICE_OK) {
+            char buf[192];
+            (void)snprintf(buf, sizeof buf, "mo serve could not start actor: %s",
+                           mo_service_status_text(ast));
+            for (uint32_t prev = 0; prev < a; prev++)
+                mo_live_actor_free(pool.actors[prev]);
+            (void)close(listen_fd);
+            (void)close(folder_fd);
+            mo_image_free(cw.image);
+            *status_out = report_serve_start_error(output, errors, buf);
+            return true;
+        }
+    }
     MO_ASSERT(pthread_mutex_init(&pool.queue_mutex, NULL) == 0);
     MO_ASSERT(pthread_cond_init(&pool.queue_cond, NULL) == 0);
     MO_ASSERT(pthread_mutex_init(&pool.log_mutex, NULL) == 0);
@@ -1049,6 +1088,11 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     (void)pthread_attr_destroy(&attr);
 
     if (started_workers == 0) {
+        for (uint32_t a = 0; a < pool.actor_count; a++)
+            mo_live_actor_free(pool.actors[a]);
+        (void)pthread_mutex_destroy(&pool.log_mutex);
+        (void)pthread_cond_destroy(&pool.queue_cond);
+        (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
         (void)close(folder_fd);
         mo_image_free(cw.image);
@@ -1065,6 +1109,11 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         MO_ASSERT(pthread_mutex_unlock(&pool.queue_mutex) == 0);
         for (uint32_t i = 0; i < started_workers; i++)
             (void)pthread_join(workers[i], NULL);
+        for (uint32_t a = 0; a < pool.actor_count; a++)
+            mo_live_actor_free(pool.actors[a]);
+        (void)pthread_mutex_destroy(&pool.log_mutex);
+        (void)pthread_cond_destroy(&pool.queue_cond);
+        (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
         (void)close(folder_fd);
         mo_image_free(cw.image);
@@ -1118,6 +1167,9 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
 
     for (uint32_t i = 0; i < started_workers; i++)
         (void)pthread_join(workers[i], NULL);
+
+    for (uint32_t a = 0; a < pool.actor_count; a++)
+        mo_live_actor_free(pool.actors[a]);
 
     (void)fprintf(errors, "mo serve: stop: a signal asked the server to stop\n");
     (void)fflush(errors);

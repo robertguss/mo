@@ -8,6 +8,8 @@
 #include "heap/heap.h"
 #include "host/host.h"
 
+#include <stdio.h>
+
 enum mo_outcome { MO_RETURNED, MO_STOPPED, MO_FAILED };
 struct mo_process;
 struct mo_vm_span {
@@ -558,5 +560,12 @@ MO_MUST_USE uint64_t mo_simulation_restarts(const struct mo_simulation *simulati
 /* Appends the live state's saved encoding. false when the service is crashed or never opened, or
  * the encoding fails. */
 MO_MUST_USE bool mo_simulation_encode(struct mo_simulation *simulation, struct mo_buffer *out);
+
+struct mo_live_actor;
+MO_MUST_USE enum mo_service_status mo_live_actor_new(const struct mo_image *image, uint32_t index,
+                                                     FILE *errors, struct mo_live_actor **out);
+void mo_live_actor_free(struct mo_live_actor *actor);
+MO_MUST_USE bool mo_value_live_actor(struct mo_heap *heap, uint32_t type,
+                                     struct mo_live_actor *actor, struct mo_cell *out);
 
 #endif

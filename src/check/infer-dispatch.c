@@ -81,6 +81,8 @@ static MO_MUST_USE bool finish_dot(struct inference *p, struct dispatch *at) {
         (struct emitted){.output = {.operand_count = at->count + 1 + receiver,
                                     .symbol = selected.symbol,
                                     .native = method ? selected.graph->output.native : NULL,
+                                    .service = method ? selected.graph->output.service : 0,
+                                    .tool = method ? selected.graph->output.tool : 0,
                                     .field = UINT32_MAX,
                                     .receiver = method ? receiver : UINT32_MAX},
                          .operands = operands,

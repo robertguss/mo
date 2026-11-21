@@ -301,7 +301,7 @@ bool mo_check_service_promises(struct mo_arena *arena, struct mo_program *progra
         if (promises == NULL)
             return false;
         service->promises = promises;
-        const struct mo_syntax *clauses = service->syntax->children[0];
+        const struct mo_syntax *clauses = service->syntax->children[service->is_actor ? 1 : 0];
         uint32_t number = 0;
         for (uint32_t j = 0; j < clauses->count; j++) {
             const struct mo_syntax *item = clauses->children[j];

@@ -617,6 +617,8 @@ struct mo_checked_service_promise {
 struct mo_checked_service {
     const struct mo_syntax *syntax;
     uint32_t module;
+    bool is_actor;
+    const struct mo_symbol *actor_symbol;
     const struct mo_source_type *state;
     struct mo_checked_body initializer;
     uint32_t tool_count;
@@ -640,6 +642,7 @@ enum mo_api_param_kind {
     MO_API_PARAM_AUTH,
     MO_API_PARAM_REQUEST,
     MO_API_PARAM_SQLITE_DB,
+    MO_API_PARAM_ACTOR,
     MO_API_PARAM_CAPABILITY,
     MO_API_PARAM_PATH,
     MO_API_PARAM_QUERY_REQUIRED,
@@ -660,6 +663,13 @@ struct mo_checked_api_sqlite {
     const struct mo_syntax *syntax;
     const char *name;
     const char *path;
+};
+
+struct mo_checked_api_actor {
+    const struct mo_syntax *syntax;
+    const char *name;
+    const struct mo_source_type *type;
+    uint32_t service_index;
 };
 
 struct mo_checked_api_param {
@@ -710,6 +720,8 @@ struct mo_checked_api {
     const char *cors;
     uint32_t sqlite_count;
     const struct mo_checked_api_sqlite *sqlites;
+    uint32_t actor_count;
+    const struct mo_checked_api_actor *actors;
     bool has_auth;
     struct mo_checked_api_auth auth;
     uint32_t route_count;
