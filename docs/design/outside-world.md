@@ -153,8 +153,8 @@ What it shows:
 
 ## The network capability
 
-The capability works at the level of a connection. HTTP is Mo code on top of it. TLS, when it
-is added, sits under the connection, so one Mo client serves HTTP and HTTPS.
+The capability works at the level of a connection. HTTP is Mo code on top of it. TLS sits under
+the connection, so one Mo client serves HTTP and HTTPS.
 
 Two types are new. `Network` is the capability `main` lists. `Connection` is one open connection.
 A program gets a `Connection` only from a `Network`, and `main` cannot list one.
@@ -181,6 +181,7 @@ enum NetworkError
   TimedOut
   Closed
   Broken(reason: Text)
+  Certificate(reason: Text)
 end
 ```
 
