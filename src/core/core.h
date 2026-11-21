@@ -52,7 +52,8 @@ enum mo_core_cap_tag {
     MO_CORE_CAP_NETWORK,
     MO_CORE_CAP_CONNECTION,
     MO_CORE_CAP_SQLITE,
-    MO_CORE_CAP_DATABASE
+    MO_CORE_CAP_DATABASE,
+    MO_CORE_CAP_COMMAND
 };
 struct mo_core_cap {
     enum mo_core_cap_tag tag;

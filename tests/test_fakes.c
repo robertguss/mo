@@ -13,7 +13,7 @@ struct fixture {
 static void fixture_init(struct fixture *f) {
     host_fixture_init(&f->host, mo_limits_default().heap_size);
     mo_fakes_init(&f->fakes, &f->host.source);
-    MO_ASSERT(mo_fakes_count(&f->fakes) == 9);
+    MO_ASSERT(mo_fakes_count(&f->fakes) == 10);
     mo_fakes_bind(&f->fakes, &f->host.host);
 }
 
@@ -228,6 +228,30 @@ static void sqlite_starts_empty(void) {
     fixture_free(&f);
 }
 
+static void command_starts_empty(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct host_fixture *h = &f.host;
+    for (uint32_t which = 0; which < 3; which++) {
+        struct mo_cell fake = boundary(&f, MO_CAP_COMMAND, which);
+        struct mo_cell empty_args;
+        MO_ASSERT(mo_value_list(h->heap, h->types.texts, NULL, 0, &empty_args));
+        struct mo_cell run_args[] = {fake, host_text(h, "mo"), empty_args,
+                                     mo_cell_duration(1000000)};
+        struct mo_host_error error;
+        struct mo_cell ran;
+        MO_ASSERT(mo_host_call(&h->host, h->heap, MO_HOST_COMMAND_RUN_RAW, h->result_command,
+                               run_args, &ran, &error) == MO_HOST_RETURNED);
+        CHECK(mo_cell_get_tag(ran) == 1);
+        mo_value_drop(h->heap, h->result_command, ran);
+        mo_value_drop(h->heap, h->types.texts, empty_args);
+        mo_value_drop(h->heap, h->types.text, run_args[1]);
+        drop(&f, MO_CAP_COMMAND, fake);
+    }
+    CHECK(mo_heap_objects(h->heap) == 0);
+    fixture_free(&f);
+}
+
 static void copies_start_from_the_recipe(void) {
     struct fixture f;
     fixture_init(&f);
@@ -347,8 +371,8 @@ static void small_heaps(void) {
         host_fixture_init(&f.host, heap_size);
         mo_fakes_init(&f.fakes, &f.host.source);
         mo_fakes_bind(&f.fakes, &f.host.host);
-        for (unsigned kind = 0; kind <= MO_CAP_SQLITE; kind++) {
-            if (kind == MO_CAP_SIMULATION || kind == MO_CAP_CONNECTION)
+        for (unsigned kind = 0; kind <= MO_CAP_COMMAND; kind++) {
+            if (kind == MO_CAP_SIMULATION || kind == MO_CAP_CONNECTION || kind == MO_CAP_DATABASE)
                 continue;
             const struct mo_input_factory *maker = factory(&f, (enum mo_capability)kind);
             struct mo_input_request request = {.kind = MO_INPUT_BOUNDARY, .boundary = 2};
@@ -376,6 +400,7 @@ int main(void) {
     clock_random();
     network_has_no_peers();
     sqlite_starts_empty();
+    command_starts_empty();
     copies_start_from_the_recipe();
     same_request_same_fake();
     limits();

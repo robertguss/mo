@@ -9,8 +9,8 @@
 #include <stdio.h>
 #include <string.h>
 
-static const char *const api_cap_order[] = {"Sqlite", "Network",   "Clock", "Random",
-                                            "Files",  "ReadFiles", "Env",   "Console"};
+static const char *const api_cap_order[] = {"Sqlite",    "Network", "Clock",   "Random", "Files",
+                                            "ReadFiles", "Env",     "Console", "Command"};
 enum { API_CAP_KIND_COUNT = sizeof api_cap_order / sizeof api_cap_order[0] };
 
 struct api_type_pair {

@@ -366,7 +366,11 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_SQLITE_OPEN,
                                                MO_HOST_SQLITE_FAKE,
                                                MO_HOST_SQLITE_RUN,
-                                               MO_HOST_SQLITE_QUERY};
+                                               MO_HOST_SQLITE_QUERY,
+                                               MO_HOST_COMMAND_RUN_RAW,
+                                               MO_HOST_COMMAND_WITHIN,
+                                               MO_HOST_COMMAND_ALLOW_PROGRAMS,
+                                               MO_HOST_COMMAND_FAKE};
         _Static_assert(sizeof rows / sizeof rows[0] == MO_CORE_IO_OP_READ_TEXT,
                        "one row for each Core IO operation");
         static const enum mo_host_id files[] = {MO_HOST_FILES_READ_TEXT, MO_HOST_FILES_READ_BYTES,

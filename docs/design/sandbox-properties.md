@@ -188,14 +188,14 @@ and `main` receives only the capabilities it declares.*
   `fail` are accepted only in spec code, and non-spec code cannot call, tail-call, make a
   closure of, or load a closure constant of spec code (`bytecode.md` section 9, item 6). So
   `main` and what it reaches cannot make a fake, even in an image that contains tests.
-  `Files.within` and `read_only` only narrow a capability. `Connection` comes only from
-  `connect` on a `Network`, and `Sqlite.Database` comes only from `open` on a `Sqlite`:
-  `main` cannot list either, and a service holds no capability at all.
-  A fake network opens no socket, and a fake `Sqlite` touches no file.
+  `Files.within`, `read_only`, `Command.within` and `Command.allow_programs` only narrow a capability.
+  `Connection` comes only from `connect` on a `Network`, and `Sqlite.Database` comes only from
+  `open` on a `Sqlite`: `main` cannot list either, and a service holds no capability at all.
+  A fake network opens no socket, a fake `Sqlite` touches no file, and a fake `Command` spawns no process.
 - Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_network.c`,
-  `tests/test_sqlite.c`, `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`,
-  `fuzz/fuzz_host_real.c`, `fuzz/fuzz_network.c`, `fuzz/fuzz_network_fake.c` and
-  `fuzz/fuzz_sqlite.c`. The `Http` client is Mo code in
+  `tests/test_sqlite.c`, `tests/test_command.c`, `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`,
+  `fuzz/fuzz_host_real.c`, `fuzz/fuzz_network.c`, `fuzz/fuzz_network_fake.c`,
+  `fuzz/fuzz_sqlite.c` and `fuzz/fuzz_command.c`. The `Http` client is Mo code in
   `lib/http.mo`: it reaches the network only through the `Network` a program passes to `send`,
   and `fuzz/fuzz_http_client.c` runs its reader on arbitrary bytes.
 - Not covered: the primitives (`src/prim`) are trusted C that the VM calls directly; that they

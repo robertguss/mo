@@ -79,7 +79,7 @@ static const struct type types[] = {
     {"Connection", 0, false, true},    {"NetworkError", 0, false, false},
     {"Sqlite", 0, false, true},        {"Sqlite.Database", 0, false, true},
     {"Sqlite.Value", 0, false, false}, {"Sqlite.Rows", 0, false, false},
-    {"SqliteError", 0, false, false},
+    {"SqliteError", 0, false, false},  {"Command", 0, false, true},
 };
 
 /* The six abilities (reference 9.2). */
@@ -694,6 +694,10 @@ static void test_every_capability_operation_is_there(void) {
         {"Sqlite", "fake"},
         {"Sqlite", "run"},
         {"Sqlite", "query"},
+        {"Command", "run_raw"},
+        {"Command", "within"},
+        {"Command", "allow_programs"},
+        {"Command", "fake"},
     };
     size_t count = sizeof operations / sizeof operations[0];
     for (size_t i = 0; i < count; i++) {

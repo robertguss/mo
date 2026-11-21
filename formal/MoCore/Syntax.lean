@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database
+  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -164,7 +164,7 @@ def Cap.name : Cap → String
   | .console => "Console" | .files => "Files" | .readFiles => "ReadFiles"
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
   | .network => "Network" | .connection => "Connection"
-  | .sqlite => "Sqlite" | .database => "Sqlite.Database"
+  | .sqlite => "Sqlite" | .database => "Sqlite.Database" | .command => "Command"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -372,9 +372,10 @@ inductive IoOp where
   | now | randomInt
   | connect | connectSecure | allowHosts | send | receive
   | sqliteOpen | sqliteRun | sqliteQuery
+  | commandRunRaw | commandWithin | commandAllowPrograms
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
-  | networkFake | sqliteFake
+  | networkFake | sqliteFake | commandFake
   deriving DecidableEq, Repr, Inhabited
 
 inductive SimOp where
@@ -595,6 +596,11 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .sqliteFake => ([], .cap .sqlite)
   | .sqliteRun => ([.cap .database, .text, .list .sqliteValue], .result .unit .sqliteError)
   | .sqliteQuery => ([.cap .database, .text, .list .sqliteValue], .result .sqliteRows .sqliteError)
+  | .commandRunRaw =>
+    ([.cap .command, .text, .list .text, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
+  | .commandWithin => ([.cap .command, .text], .cap .command)
+  | .commandAllowPrograms => ([.cap .command, .list .text], .cap .command)
+  | .commandFake => ([.map .bytes .bytes], .cap .command)
 
 def SimOp.sig : SimOp → List Ty × Ty
   | .start _ => ([.time], .simulation)
@@ -792,7 +798,8 @@ def Prim.specOnly : Prim → Bool
   | .sim (.start _) => true
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
-  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake | .io .sqliteFake => true
+  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake | .io .sqliteFake
+  | .io .commandFake => true
   | _ => false
 
 /-! ## Lookups -/

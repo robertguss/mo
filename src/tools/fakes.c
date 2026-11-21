@@ -189,6 +189,7 @@ static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uin
         return MO_INPUT_UNSUPPORTED;
     case MO_CAP_SQLITE:
     case MO_CAP_NETWORK:
+    case MO_CAP_COMMAND:
         break;
     case MO_CAP_ARGS:
         list_contents(arguments, (uint32_t)COUNT(arguments), request, &contents);
@@ -231,6 +232,9 @@ static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uin
         break;
     case MO_CAP_NETWORK:
         ok = mo_value_map(heap, host->types->peers, NULL, NULL, 0, &state.as.network);
+        break;
+    case MO_CAP_COMMAND:
+        ok = mo_value_map(heap, host->types->replies, NULL, NULL, 0, &state.as.command);
         break;
     case MO_CAP_ARGS:
         ok = texts_list(host, heap, &contents, &state.as.args);
@@ -327,7 +331,7 @@ void mo_fakes_init(struct mo_fakes *fakes, const struct mo_types *types) {
             types->items[i].capability == MO_CAP_DATABASE)
             continue;
         uint32_t slot = fakes->factory_count++;
-        MO_ASSERT(slot <= MO_CAP_DATABASE);
+        MO_ASSERT(slot <= MO_CAP_COMMAND);
         fakes->contexts[slot] = (struct mo_fake_context){fakes, i};
         fakes->factories[slot] = (struct mo_input_factory){.type = i,
                                                            .boundaries = BOUNDARIES,

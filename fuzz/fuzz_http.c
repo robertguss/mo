@@ -457,7 +457,7 @@ static void policy_input(struct mo_process *process, const uint8_t *data, size_t
         MO_ASSERT(mo_cell_get_tag(result) == 0);
         struct mo_cell access =
             mo_cell_get_payload(payload(file->functions[inspect].result_type, result));
-        MO_ASSERT(mo_cell_get_bool(mo_value_field(access, 3)) == get);
+        MO_ASSERT(mo_cell_get_bool(mo_value_field(access, 2)) == get);
         struct mo_cell token = mo_value_field(access, 0);
         struct mo_cell actual = call(process, authorization, args);
         MO_ASSERT(equal_values(heap, file->functions[authorization].result_type, token, actual));

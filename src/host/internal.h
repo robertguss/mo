@@ -11,10 +11,11 @@ struct mo_host_operations {
     bool fake;
     mo_host_operation call;
 };
-extern const struct mo_host_operations mo_host_operations[2][MO_CAP_DATABASE + 1];
+extern const struct mo_host_operations mo_host_operations[2][MO_CAP_COMMAND + 1];
 MO_MUST_USE bool mo_host_sqlite_init(void);
 MO_MUST_USE bool mo_compile_confine(const struct mo_compiler *compiler, const char *folder,
                                     const char *const reads[3]);
+MO_MUST_USE bool mo_command_confine(const char *executable, const char *folder, const char *tmpdir);
 MO_MUST_USE enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason);
 MO_MUST_USE uint32_t mo_host_tag(const struct mo_host *host, uint32_t type, const char *name);
 MO_MUST_USE bool mo_host_case(struct mo_host *host, struct mo_heap *heap, uint32_t type,

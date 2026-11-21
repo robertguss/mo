@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "host/command.h"
 #include "host/files.h"
 #include "host/sqlite.h"
 
@@ -52,9 +53,10 @@ mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, ui
         [MO_CAP_CONNECTION] = {MO_CAP_CONNECTION, fake_, mo_host_network},                         \
         [MO_CAP_SQLITE] = {MO_CAP_SQLITE, fake_, mo_host_sqlite_call},                             \
         [MO_CAP_DATABASE] = {MO_CAP_DATABASE, fake_, mo_host_sqlite_call},                         \
+        [MO_CAP_COMMAND] = {MO_CAP_COMMAND, fake_, mo_host_command_call},                          \
     }
-const struct mo_host_operations mo_host_operations[2][MO_CAP_DATABASE + 1] = {OPERATIONS(false),
-                                                                              OPERATIONS(true)};
+const struct mo_host_operations mo_host_operations[2][MO_CAP_COMMAND + 1] = {OPERATIONS(false),
+                                                                             OPERATIONS(true)};
 #undef OPERATIONS
 
 enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason) {
@@ -123,10 +125,11 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
         return result;
     }
     if (operation == MO_HOST_ARGS_OF || operation == MO_HOST_ENV_OF ||
-        operation == MO_HOST_NETWORK_FAKE) {
-        uint32_t slot = operation == MO_HOST_ARGS_OF  ? host->types->texts
-                        : operation == MO_HOST_ENV_OF ? host->types->files
-                                                      : host->types->peers;
+        operation == MO_HOST_NETWORK_FAKE || operation == MO_HOST_COMMAND_FAKE) {
+        uint32_t slot = operation == MO_HOST_ARGS_OF        ? host->types->texts
+                        : operation == MO_HOST_ENV_OF       ? host->types->files
+                        : operation == MO_HOST_NETWORK_FAKE ? host->types->peers
+                                                            : host->types->replies;
         enum mo_host_outcome result =
             mo_host_state_cap(host, heap, type, true, &slot, args, 1, out);
         if (result == MO_HOST_RETURNED)
@@ -207,6 +210,8 @@ enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_heap *heap, ui
     }
     if (cap == MO_CAP_SQLITE)
         return mo_host_sqlite_real(host, heap, type, folder, out, error);
+    if (cap == MO_CAP_COMMAND)
+        return mo_host_command_real(host, heap, type, folder, out, error);
     if (cap == MO_CAP_ARGS || cap == MO_CAP_ENV) {
         MO_ASSERT(contents != NULL);
         uint32_t slot = cap == MO_CAP_ARGS ? host->types->texts : host->types->files;
@@ -241,6 +246,9 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
     case MO_CAP_NETWORK:
         return mo_host_state_cap(host, heap, type, true, &host->types->peers, &initial->as.network,
                                  1, out);
+    case MO_CAP_COMMAND:
+        return mo_host_state_cap(host, heap, type, true, &host->types->replies,
+                                 &initial->as.command, 1, out);
     case MO_CAP_ARGS:
         return mo_host_state_cap(host, heap, type, true, &host->types->texts, &initial->as.args, 1,
                                  out);
@@ -310,6 +318,9 @@ bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo
     case MO_CAP_NETWORK:
         result.as.network = mo_value_dup(heap, host->types->peers, mo_state_get(info->state, 0));
         break;
+    case MO_CAP_COMMAND:
+        result.as.command = mo_value_dup(heap, host->types->replies, mo_state_get(info->state, 0));
+        break;
     case MO_CAP_ARGS:
         result.as.args = mo_value_dup(heap, host->types->texts, mo_state_get(info->state, 0));
         break;
@@ -363,6 +374,9 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
         break;
     case MO_CAP_NETWORK:
         mo_value_drop(heap, host->types->peers, state->as.network);
+        break;
+    case MO_CAP_COMMAND:
+        mo_value_drop(heap, host->types->replies, state->as.command);
         break;
     case MO_CAP_ARGS:
         mo_value_drop(heap, host->types->texts, state->as.args);

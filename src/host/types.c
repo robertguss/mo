@@ -34,7 +34,7 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
     out->types.type_slot_count = 0;
     out->types.layout_slots = NULL;
     out->types.layout_slot_count = 0;
-    for (unsigned i = 0; i <= MO_CAP_DATABASE; i++)
+    for (unsigned i = 0; i <= MO_CAP_COMMAND; i++)
         out->capabilities[i] = MO_NO_INDEX;
     for (uint32_t i = 0; i < source->count; i++) {
         if (source->items[i].kind == MO_TYPE_CAPABILITY &&

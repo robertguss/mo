@@ -69,13 +69,18 @@ enum {
     FS_WRITE_FILE = 1 << 1,
     FS_READ_FILE = 1 << 2,
     FS_READ_DIR = 1 << 3,
+    FS_REMOVE_DIR = 1 << 4,
     FS_REMOVE_FILE = 1 << 5,
+    FS_MAKE_DIR = 1 << 7,
     FS_MAKE_REG = 1 << 8,
+    FS_MAKE_SYM = 1 << 11,
+    FS_REFER = 1 << 13,
     FS_TRUNCATE = 1 << 14,
     FS_IOCTL_DEV = 1 << 15,
     FS_FILE = FS_EXECUTE | FS_WRITE_FILE | FS_READ_FILE | FS_TRUNCATE | FS_IOCTL_DEV,
     SYSTEM = FS_EXECUTE | FS_READ_FILE | FS_READ_DIR,
     OWN = FS_READ_FILE | FS_READ_DIR | FS_WRITE_FILE | FS_MAKE_REG | FS_REMOVE_FILE | FS_TRUNCATE,
+    COMMAND_OWN = OWN | FS_REMOVE_DIR | FS_MAKE_DIR | FS_MAKE_SYM | FS_REFER,
     NET_TCP = (1 << 0) | (1 << 1),
     SCOPES = (1 << 0) | (1 << 1),
     RULE_PATH_BENEATH = 1,
@@ -291,6 +296,44 @@ bool mo_compile_confine(const struct mo_compiler *compiler, const char *folder,
                         const char *const reads[3]) {
     return landlock(compiler, folder, reads) && seccomp();
 }
+bool mo_command_confine(const char *executable, const char *folder, const char *tmpdir) {
+    long abi = landlock_abi();
+    if (abi < 3)
+        return fail("landlock_create_ruleset");
+    if (abi > NEWEST_ABI)
+        abi = NEWEST_ABI;
+    struct ruleset_attr attr = {(UINT64_C(1) << (abi >= 5 ? 16 : 15)) - 1, abi >= 4 ? NET_TCP : 0,
+                                abi >= 6 ? SCOPES : 0};
+    size_t size = abi >= 6 ? 24 : abi >= 4 ? 16 : 8;
+    int ruleset = (int)syscall(SYS_landlock_create_ruleset, &attr, size, 0);
+    if (ruleset < 0)
+        return fail("landlock_create_ruleset");
+    uint64_t own_rights = COMMAND_OWN & attr.handled_fs;
+    const struct {
+        const char *path;
+        uint64_t rights;
+    } rules[] = {
+        {"/usr", SYSTEM},
+        {"/bin", SYSTEM},
+        {"/lib", SYSTEM},
+        {"/lib64", SYSTEM},
+        {"/etc/ld.so.cache", FS_READ_FILE},
+        {executable, FS_EXECUTE | FS_READ_FILE},
+        {folder, own_rights},
+        {tmpdir, own_rights},
+        {"/dev/null", FS_READ_FILE | FS_WRITE_FILE},
+        {"/dev/urandom", FS_READ_FILE},
+        {MO_UPGRADE_COMPILE_ASAN ? "/proc/self" : NULL, FS_READ_FILE | FS_READ_DIR},
+    };
+    bool ok = true;
+    for (size_t i = 0; ok && i < sizeof rules / sizeof *rules; i++)
+        ok = rules[i].path == NULL || allow(ruleset, rules[i].path, rules[i].rights);
+    if (ok && prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0)
+        ok = fail("no_new_privs");
+    if (ok && syscall(SYS_landlock_restrict_self, ruleset, 0) != 0)
+        ok = fail("landlock_restrict_self");
+    return close(ruleset) == 0 && ok && seccomp();
+}
 #else
 bool mo_compile_can_confine(void) {
     return false;
@@ -300,6 +343,12 @@ bool mo_compile_confine(const struct mo_compiler *compiler, const char *folder,
     (void)compiler;
     (void)folder;
     (void)reads;
+    return false;
+}
+bool mo_command_confine(const char *executable, const char *folder, const char *tmpdir) {
+    (void)executable;
+    (void)folder;
+    (void)tmpdir;
     return false;
 }
 #endif

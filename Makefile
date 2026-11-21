@@ -528,7 +528,9 @@ $(BUILD)/sanitize/protocol-server-faults/tools/protocol-upgrade.o: src/tools/pro
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -Dmo_store_activate=mo_protocol_server_fault_activate -c $< -o $@
 
-# The activation test compiles candidates with the sibling mo executable.
+# The activation and command tests invoke the sibling mo executable.
+$(BUILD)/debug/tests/test_command.test.run: $(BUILD)/debug/mo
+$(BUILD)/sanitize/tests/test_command.test.run: $(BUILD)/sanitize/mo
 $(BUILD)/debug/tests/test_protocol_server_faults.test.run: $(BUILD)/debug/mo
 $(BUILD)/sanitize/tests/test_protocol_server_faults.test.run: $(BUILD)/sanitize/mo
 

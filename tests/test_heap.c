@@ -728,8 +728,9 @@ static void test_host_storage(struct heap_fixture *f) {
     CHECK(mo_cell_get_int(capability) == 71);
     const char *names[] = {"<Args>",      "<Env>",        "<Console>", "<Files>",
                            "<ReadFiles>", "<Clock>",      "<Random>",  "<Simulation>",
-                           "<Network>",   "<Connection>", "<Sqlite>",  "<Sqlite.Database>"};
-    for (unsigned i = 0; i <= MO_CAP_DATABASE; i++) {
+                           "<Network>",   "<Connection>", "<Sqlite>",  "<Sqlite.Database>",
+                           "<Command>"};
+    for (unsigned i = 0; i <= MO_CAP_COMMAND; i++) {
         int before = released_handles;
         CHECK(mo_value_capability(p, f->capabilities[i], &info, &capability));
         expect_text(p, f->capabilities[i], capability, names[i]);

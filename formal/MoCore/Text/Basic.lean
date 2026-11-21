@@ -5,7 +5,8 @@ namespace MoCore.Text
 def capTable : List (String × Cap) :=
   [("console", .console), ("files", .files), ("readFiles", .readFiles), ("clock", .clock),
    ("random", .random), ("args", .args), ("env", .env), ("network", .network),
-   ("connection", .connection), ("sqlite", .sqlite), ("database", .database)]
+   ("connection", .connection), ("sqlite", .sqlite), ("database", .database),
+   ("command", .command)]
 
 def enumOut [BEq α] (table : List (String × α)) (v : α) : Sexp :=
   tag ((table.find? (fun (_, a) => a == v)).map Prod.fst |>.getD "invalid")

@@ -265,9 +265,9 @@ static void test_wire_numbers(void) {
     const enum mo_layout_kind layouts[] = {MO_LAYOUT_RECORD, MO_LAYOUT_TUPLE, MO_LAYOUT_CASE,
                                            MO_LAYOUT_CLOSURE};
     const enum mo_capability capabilities[] = {
-        MO_CAP_ARGS,       MO_CAP_ENV,        MO_CAP_CONSOLE, MO_CAP_FILES,
-        MO_CAP_READ_FILES, MO_CAP_CLOCK,      MO_CAP_RANDOM,  MO_CAP_SIMULATION,
-        MO_CAP_NETWORK,    MO_CAP_CONNECTION, MO_CAP_SQLITE,  MO_CAP_DATABASE};
+        MO_CAP_ARGS,   MO_CAP_ENV,      MO_CAP_CONSOLE,    MO_CAP_FILES,   MO_CAP_READ_FILES,
+        MO_CAP_CLOCK,  MO_CAP_RANDOM,   MO_CAP_SIMULATION, MO_CAP_NETWORK, MO_CAP_CONNECTION,
+        MO_CAP_SQLITE, MO_CAP_DATABASE, MO_CAP_COMMAND};
     for (size_t i = 0; i < sizeof kinds / sizeof kinds[0]; i++) {
         CHECK((uint32_t)kinds[i] == i);
     }

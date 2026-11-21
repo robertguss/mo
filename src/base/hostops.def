@@ -94,6 +94,11 @@ HOSTOP(SQLITE_FAKE,            "Sqlite",    "fake",           "fn() : Sqlite",  
 HOSTOP(SQLITE_RUN,             "Sqlite",    "run",            "fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Unit, SqliteError)", "bbb", "",             false)
 HOSTOP(SQLITE_QUERY,           "Sqlite",    "query",          "fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)", "bbb", "",     false)
 
+HOSTOP(COMMAND_RUN_RAW,        "Command",   "run_raw",        "fn(Command, Text, List(Text), Duration) : Result((Int, Bytes, Bytes), Text)", "bbbb", "timeout below 1ms or above 1 hour; too many command arguments", false)
+HOSTOP(COMMAND_WITHIN,         "Command",   "within",         "fn(Command, Text) : Command",                             "bb",  "too many folders open at once",      false)
+HOSTOP(COMMAND_ALLOW_PROGRAMS, "Command",   "allow_programs", "fn(Command, List(Text)) : Command",                       "bb",  "",                                   false)
+HOSTOP(COMMAND_FAKE,           "Command",   "fake",           "fn(Map(Bytes, Bytes)) : Command",                         "o",   "",                                   true)
+
 #undef HOSTOP
 
 /* Runtime-owned store capability. No Mo type, signature or bytecode operation:

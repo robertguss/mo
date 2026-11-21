@@ -1106,6 +1106,18 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
 #guard stops program (io .sqliteFake []) (tCap .sqlite)
   (.outside "Sqlite is not modeled by mocore")
 
+#guard Text.exprRoundTrip (io .commandRunRaw [v "k", str "mo", listOf tText [], .lit (.duration 1000)]) &&
+  Text.exprRoundTrip (io .commandWithin [v "k", str "sub"]) &&
+  Text.exprRoundTrip (io .commandAllowPrograms [v "k", listOf tText [str "mo"]]) &&
+  typedAs? program [("k", tCap .command)]
+    (io .commandRunRaw [v "k", str "mo", listOf tText [], .lit (.duration 1000)])
+    (.result (.tuple [.int, .bytes, .bytes]) .text) &&
+  typedAs? program [("k", tCap .command)] (io .commandWithin [v "k", str "sub"]) (tCap .command) &&
+  typedAs? program [("k", tCap .command)]
+    (io .commandAllowPrograms [v "k", listOf tText [str "mo"]]) (tCap .command) &&
+  stops program (io .commandFake [mapOf tBytes tBytes []]) (tCap .command)
+    (.outside "Command is not modeled by mocore")
+
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program
   (eq (tRes (tList .entry) tFileError) (io (.entries false) [v "files", str "."])

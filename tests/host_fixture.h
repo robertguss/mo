@@ -16,12 +16,13 @@ struct host_fixture {
     struct mo_heap *heap;
     struct mo_host host;
     uint32_t unit, boolean, bytes, time;
-    uint32_t capabilities[MO_CAP_DATABASE + 1];
+    uint32_t capabilities[MO_CAP_COMMAND + 1];
     uint32_t option, file_error, result_text, result_bytes, result_unit, result_names,
         result_entries;
     uint32_t integer, network_error, result_connection, result_sent, result_received;
     uint32_t sqlite_value, sqlite_rows, sqlite_error, result_database, result_sqlite_unit,
         result_sqlite_rows;
+    uint32_t command_tuple, result_command;
     uint32_t entry, entries;
 };
 
@@ -39,7 +40,7 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &text, .parameter_count = 1});
     uint32_t real = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_FLOAT});
     f->integer = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_INT});
-    for (unsigned i = 0; i <= MO_CAP_DATABASE; i++) {
+    for (unsigned i = 0; i <= MO_CAP_COMMAND; i++) {
         if (i != MO_CAP_SIMULATION)
             f->capabilities[i] =
                 heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
@@ -113,6 +114,17 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
               MO_TYPES_OK);
     struct mo_type_field rows_fields[] = {{"columns", names}, {"rows", rows_matrix}};
     MO_ASSERT(mo_types_define_record(&f->source, f->sqlite_rows, rows_fields, 2) == MO_TYPES_OK);
+    uint32_t cmd_parts[3] = {f->integer, f->bytes, f->bytes};
+    f->command_tuple = heap_intern(
+        &f->source,
+        (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = cmd_parts, .parameter_count = 3});
+    MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "Result", &f->result_command) ==
+              MO_TYPES_OK);
+    struct mo_type_field cmd_ok = {NULL, f->command_tuple}, cmd_err = {NULL, text};
+    struct mo_type_case cmd_cases[] = {
+        {.name = "Ok", .fields = &cmd_ok, .field_count = 1, .unnamed = true},
+        {.name = "Error", .fields = &cmd_err, .field_count = 1, .unnamed = true}};
+    MO_ASSERT(mo_types_define_choice(&f->source, f->result_command, cmd_cases, 2) == MO_TYPES_OK);
     uint32_t payloads[] = {text,    f->bytes,      f->unit,
                            names,   f->entries,    f->capabilities[MO_CAP_CONNECTION],
                            f->unit, f->bytes,      f->capabilities[MO_CAP_DATABASE],
@@ -146,6 +158,16 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
                                                            .function = MO_NO_INDEX,
                                                            .fields = rec_types,
                                                            .field_count = t->field_count});
+            MO_ASSERT(layout != MO_NO_INDEX);
+        }
+        if (t->kind == MO_TYPE_TUPLE) {
+            uint32_t layout =
+                heap_layout(&f->source, (struct mo_layout){.kind = MO_LAYOUT_TUPLE,
+                                                           .type = i,
+                                                           .case_index = MO_NO_INDEX,
+                                                           .function = MO_NO_INDEX,
+                                                           .fields = t->parameters,
+                                                           .field_count = t->parameter_count});
             MO_ASSERT(layout != MO_NO_INDEX);
         }
         if (t->kind != MO_TYPE_CHOICE)
@@ -264,6 +286,12 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
         return f->result_sqlite_unit;
     case MO_HOST_SQLITE_QUERY:
         return f->result_sqlite_rows;
+    case MO_HOST_COMMAND_FAKE:
+    case MO_HOST_COMMAND_WITHIN:
+    case MO_HOST_COMMAND_ALLOW_PROGRAMS:
+        return f->capabilities[MO_CAP_COMMAND];
+    case MO_HOST_COMMAND_RUN_RAW:
+        return f->result_command;
     default:
         MO_UNREACHABLE();
     }

@@ -13,7 +13,7 @@ value spelling inside a string. C differential tests compare **reports**.
 ## Changes from 0.10
 
 Version 0.11 adds `(sqliteValue)`, `(sqliteRows)`, `(sqliteError)` and the
-capability kinds `(sqlite)` and `(database)`. Only 0.11 is accepted; 0.10, older
+capability kinds `(sqlite)`, `(database)` and `(command)`. Only 0.11 is accepted; 0.10, older
 and unknown versions are rejected.
 
 `Sqlite.Value` has five constructors in this order (`Integer`, `Real`, `String`,
@@ -44,6 +44,13 @@ effects. `sqliteFake` is spec-only.
 | `sqliteFake` | none | Sqlite |
 | `sqliteRun` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Unit, SqliteError) |
 | `sqliteQuery` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Sqlite.Rows, SqliteError) |
+| `commandRunRaw` | Command, Text, List(Text), Duration | Result((Int, Bytes, Bytes), Text) |
+| `commandWithin` | Command, Text | Command |
+| `commandAllowPrograms` | Command, List(Text) | Command |
+| `commandFake` | Map(Bytes, Bytes) | Command |
+
+The four `command*` operations stop with `Command is not modeled by mocore`,
+keeping prior effects; `commandFake` is spec-only.
 
 ### Earlier changes from 0.9
 

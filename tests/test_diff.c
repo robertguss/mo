@@ -205,6 +205,19 @@ int main(void) {
     CHECK(strstr(text, "+ api_cors api.cors: *") != NULL);
     CHECK(strstr(text, "+ route POST /items: [auth Main.User] add_item") != NULL);
 
+    /* 6. Command capability and within / allow_programs attenuation diff */
+    write_file_str(old_main, "module Main\nfn main()\nend\n");
+    write_file_str(new_main, "module Main\n"
+                             "use Command\n"
+                             "fn main(cmd: Command)\n"
+                             "  _scoped = cmd.within(\"work\").allow_programs([\"mo\", \"git\"])\n"
+                             "end\n");
+    CHECK(run_diff_cmd(4, argv_text, &out, &err) == 0);
+    text = (const char *)out.bytes;
+    CHECK(strstr(text, "+ capability Command") != NULL);
+    CHECK(strstr(text, "+ attenuation Command.within(\"work\")") != NULL);
+    CHECK(strstr(text, "+ attenuation Command.allow_programs([\"mo\", \"git\"])") != NULL);
+
     mo_buffer_free(&err);
     mo_buffer_free(&out);
     MO_ASSERT(snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir) > 0 && system(cmd) == 0);
