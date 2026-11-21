@@ -674,6 +674,7 @@ static void test_every_capability_operation_is_there(void) {
         {"ReadFiles", "exists?"},
         {"ReadFiles", "within"},
         {"Clock", "now"},
+        {"Clock", "sleep"},
         {"Random", "int"},
         {"Args", "list"},
         {"Env", "get"},

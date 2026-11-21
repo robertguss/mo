@@ -262,6 +262,7 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
         return f->boolean;
     case MO_HOST_CONSOLE_PRINT:
     case MO_HOST_CONSOLE_ERROR:
+    case MO_HOST_CLOCK_SLEEP:
         return f->unit;
     case MO_HOST_FILES_WRITE_TEXT:
     case MO_HOST_FILES_APPEND_TEXT:

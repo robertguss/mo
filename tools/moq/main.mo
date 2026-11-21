@@ -220,6 +220,21 @@ fn csv_cell_to_sqlite_val(cell: Text) : Sqlite.Value
   end
 end
 
+fn rollback_quietly(db: Sqlite.Database)
+  case db.run("ROLLBACK", [])
+    Ok(_) | Error(_): Unit
+  end
+end
+
+fn run_in_tx(db: Sqlite.Database, sql: Text, params: List(Sqlite.Value)) : Result(Unit, MoqError)
+  case db.run(sql, params)
+    Ok(_): Ok(Unit)
+    Error(e):
+      rollback_quietly(db)
+      Error(SqlFailed(message: "#{e}"))
+  end
+end
+
 fn load_records_into_sqlite(
   db: Sqlite.Database,
   table_name: Text,
@@ -236,16 +251,16 @@ fn load_records_into_sqlite(
       raw_headers = parse_csv_line(all_lines.first or "")
       cols = raw_headers.enumerate.map(fn(p) sanitize_column(p.1, p.0) end)
       col_defs = cols.map(fn(c) "\"#{c}\"" end).join(", ")
-      try db.run("CREATE TABLE \"#{table_name}\" (#{col_defs})", []).map_error(
-        fn(e) SqlFailed(message: "#{e}") end
-      )
+      try db.run("BEGIN", []).map_error(fn(e) SqlFailed(message: "#{e}") end)
+      try run_in_tx(db, "CREATE TABLE \"#{table_name}\" (#{col_defs})", [])
       placeholders = cols.map(fn(_) "?" end).join(", ")
       insert_sql = "INSERT INTO \"#{table_name}\" VALUES (#{placeholders})"
       for line in all_lines.drop(1)
         parsed_cells = parse_csv_line(line)
         vals = cols.enumerate.map(fn(p) csv_cell_to_sqlite_val(parsed_cells.get(p.0) or "") end)
-        try db.run(insert_sql, vals).map_error(fn(e) SqlFailed(message: "#{e}") end)
+        try run_in_tx(db, insert_sql, vals)
       end
+      try run_in_tx(db, "COMMIT", [])
       Ok(Unit)
     AutoJson:
       docs = try parse_json_or_ndjson(raw)
@@ -272,9 +287,8 @@ fn load_records_into_sqlite(
       return Error(ParseFailed(message: "no JSON object columns found")) if col_names.empty?
       safe_cols = col_names.enumerate.map(fn(p) sanitize_column(p.1, p.0) end)
       col_defs = safe_cols.map(fn(c) "\"#{c}\"" end).join(", ")
-      try db.run("CREATE TABLE \"#{table_name}\" (#{col_defs})", []).map_error(
-        fn(e) SqlFailed(message: "#{e}") end
-      )
+      try db.run("BEGIN", []).map_error(fn(e) SqlFailed(message: "#{e}") end)
+      try run_in_tx(db, "CREATE TABLE \"#{table_name}\" (#{col_defs})", [])
       placeholders = safe_cols.map(fn(_) "?" end).join(", ")
       insert_sql = "INSERT INTO \"#{table_name}\" VALUES (#{placeholders})"
       for item in objects
@@ -285,9 +299,10 @@ fn load_records_into_sqlite(
               None: Sqlite.Null
             end
           end)
-          try db.run(insert_sql, vals).map_error(fn(e) SqlFailed(message: "#{e}") end)
+          try run_in_tx(db, insert_sql, vals)
         end
       end
+      try run_in_tx(db, "COMMIT", [])
       Ok(Unit)
   end
 end
@@ -538,4 +553,17 @@ end
 test "empty CLI arguments exit 2"
   io = Console.fake()
   assert run_cli(Args.of([]), Files.in_memory({}).read_only, Sqlite.in_memory(), io) == 2
+end
+
+test "bulk loader wraps inserts in a transaction and rolls back cleanly on SQL error"
+  sqlite = Sqlite.in_memory()
+  assert sqlite.open(":memory:") is Ok(db)
+  assert load_records_into_sqlite(db, "items", "id,qty\n1,10\n2,25\n", CsvInput) == Ok(Unit)
+  assert db.query("SELECT SUM(qty) FROM items", []) ==
+    Ok(Sqlite.Rows(columns: ["SUM(qty)"], rows: [[Sqlite.Integer(35)]]))
+  assert load_records_into_sqlite(db, "items", "[{\"id\":3,\"qty\":5}]", AutoJson) is
+    Error(SqlFailed(message: _))
+  # Connection is not stranded inside an open transaction after failure:
+  assert db.run("BEGIN", []) == Ok(Unit)
+  assert db.run("COMMIT", []) == Ok(Unit)
 end

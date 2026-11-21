@@ -3,6 +3,7 @@
 #include "host/files.h"
 #include "host/sqlite.h"
 
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <string.h>
@@ -163,8 +164,40 @@ static enum mo_host_outcome mo_host_misc(struct mo_host *host, struct mo_heap *h
     }
     if (operation == MO_HOST_RANDOM_INT)
         return mo_host_random(host, heap, type, args, out, error);
-    MO_ASSERT(operation == MO_HOST_CLOCK_NOW);
     const struct mo_host_operations *operations = info->operations;
+    if (operation == MO_HOST_CLOCK_SLEEP) {
+        int64_t duration = mo_cell_get_duration(args[1]);
+        if (duration < 0)
+            return mo_host_bug(error, "negative sleep duration");
+        if (operations->fake) {
+            int64_t current = mo_cell_get_time(mo_state_get(info->state, 0));
+            mo_i128 next = (mo_i128)current + duration;
+            if (next < MO_TIME_MIN_US || next > MO_TIME_MAX_US)
+                return mo_host_bug(error, "time outside the years 1 to 9999");
+            mo_state_set(heap, info->state, 0, mo_cell_time((int64_t)next));
+            *out = mo_cell_unit();
+            return MO_HOST_RETURNED;
+        }
+        if (duration > (MO_TIME_MAX_US - MO_TIME_MIN_US))
+            return mo_host_bug(error, "time outside the years 1 to 9999");
+        if (duration > 0) {
+            struct timespec req = {
+                .tv_sec = (time_t)(duration / 1000000),
+                .tv_nsec = (long)((duration % 1000000) * 1000),
+            };
+            struct timespec rem = {0};
+            while (nanosleep(&req, &rem) != 0) {
+                if (errno != EINTR) {
+                    *error = (struct mo_host_error){.reason = "internal error: sleep failed"};
+                    return MO_HOST_INTERNAL;
+                }
+                req = rem;
+            }
+        }
+        *out = mo_cell_unit();
+        return MO_HOST_RETURNED;
+    }
+    MO_ASSERT(operation == MO_HOST_CLOCK_NOW);
     if (operations->fake) {
         *out = mo_state_get(info->state, 0);
         return MO_HOST_RETURNED;

@@ -179,10 +179,18 @@ test "parse gives None for a leap second, a 7th fraction digit, or anything else
   assert Time.parse("2026-10-12T02:15:00+02") == None
 end
 
-test "a fixed clock tells the time it was given"
+test "a fixed clock tells the time it was given and advances on sleep"
   t = Time.parse("2026-10-12T02:15:00Z") or stop "valid time"
   clock = Clock.fixed(t)
+  shared = clock
   assert clock.now == t
   assert clock.now - t == 0.seconds
+  clock.sleep(0.seconds)
+  assert clock.now == t
+  clock.sleep(1500.milliseconds)
+  assert clock.now == t + 1500.milliseconds
+  assert shared.now == t + 1500.milliseconds
+  Clock.sleep(clock, 30.seconds)
+  assert clock.now.to_text == "2026-10-12T02:15:31.5Z"
   assert Clock.fixed(t + 1.day).now == t + 1.day
 end

@@ -103,6 +103,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             if (op == MO_HOST_RANDOM_INT) {
                 args[1] = mo_cell_int((int64_t)data[at + 3] - 128);
                 args[2] = mo_cell_int((int64_t)data[at + 4] - 128);
+            } else if (op == MO_HOST_CLOCK_SLEEP) {
+                args[1] = mo_cell_duration((int64_t)data[at + 3] - 64);
             }
         }
         if (!ready) {

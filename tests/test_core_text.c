@@ -246,8 +246,8 @@ static void test_operations(void) {
         {"set (int)",
          "empty size isEmpty has add remove union intersection difference toList ofList"},
         {"io", "argsList envGet print printError readLine printed printedErrors writeText "
-               "appendText remove makeFolder readOnly now randomInt consoleFake consoleFakeInput "
-               "filesInMemory clockFixed randomSeeded argsOf envOf"}};
+               "appendText remove makeFolder readOnly now sleep randomInt consoleFake "
+               "consoleFakeInput filesInMemory clockFixed randomSeeded argsOf envOf"}};
     struct mo_buffer payload;
     mo_buffer_init(&payload, MO_LIMIT_CORE_TEXT_SIZE);
     for (size_t i = 0; i < sizeof families / sizeof families[0]; i++) {

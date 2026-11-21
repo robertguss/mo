@@ -26,6 +26,7 @@ OPS = {
     "CONSOLE_ERROR": ("printError", "(unit)"),
     "CONSOLE_READ_LINE": ("readLine", "(option (text))"),
     "CLOCK_NOW": ("now", "(time)"),
+    "CLOCK_SLEEP": ("sleep", "(unit)"),
     "RANDOM_INT": ("randomInt", "(int)"),
     "FILES_WRITE_TEXT": ("writeText", "(result (unit) (fileError))"),
     "FILES_APPEND_TEXT": ("appendText", "(result (unit) (fileError))"),
@@ -131,6 +132,8 @@ def expected(root, commands):
             args = '(var "h")'
             if name == "RANDOM_INT":
                 args += f" (lit (int {low})) (lit (int {high}))"
+            elif name == "CLOCK_SLEEP":
+                args += f" (lit (duration {low}))"
             elif name in ("CONSOLE_PRINT", "CONSOLE_ERROR"):
                 args += " " + text(value)
             elif name not in ("ARGS_LIST", "CONSOLE_READ_LINE", "CLOCK_NOW", "FILES_READ_ONLY"):
@@ -144,8 +147,10 @@ def expected(root, commands):
                 kind = handles[destination][1][0]
                 got[1] = f"<{kind[0].upper() + kind[1:]}>"
             if got[0] == "stopped":
-                assert got[1] == ["outside", "Random.int needs low below high"], got
-                got[1] = "high not greater than low"
+                assert got[1][0] == "outside", got
+                got[1] = ("high not greater than low"
+                          if got[1][1] == "Random.int needs low below high"
+                          else got[1][1])
         outcomes.append(got)
     return outcomes
 
@@ -187,6 +192,13 @@ def cases():
     for instant in [-62135596800000000, -1, 0, 253402300799999999]:
         add("CLOCK_FIXED", destination=9, low=instant)
         add("CLOCK_NOW", source=9)
+    add("CLOCK_FIXED", destination=9, low=0)
+    add("CLOCK_SLEEP", source=9, low=0)
+    add("CLOCK_SLEEP", source=9, low=1500000)
+    add("CLOCK_NOW", source=9)
+    add("CLOCK_SLEEP", source=9, low=-1)
+    add("CLOCK_SLEEP", source=9, low=253402300799999999)
+    add("CLOCK_NOW", source=9)
     for seed in [0, 1, -1, -2**63, 2**63 - 1]:
         add("RANDOM_SEEDED", destination=10, low=seed)
         for low, high in [(0, 100), (-2**63, 2**63 - 1), (-7, 2), (0, 2**62 + 1), (4, 5)] * 8:

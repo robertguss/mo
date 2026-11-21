@@ -888,6 +888,29 @@ static void test_clock_random(void) {
     CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_NOW, f.time, &clock, &value, &error) ==
           MO_HOST_RETURNED);
     CHECK(mo_cell_get_time(value) == -1);
+    struct mo_cell clock_alias = mo_value_dup(f.heap, f.capabilities[MO_CAP_CLOCK], clock);
+    struct mo_cell sleep_args[] = {clock, mo_cell_duration(0)};
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+          MO_HOST_RETURNED);
+    sleep_args[1] = mo_cell_duration(2500000);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+          MO_HOST_RETURNED);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_NOW, f.time, &clock_alias, &value, &error) ==
+          MO_HOST_RETURNED);
+    CHECK(mo_cell_get_time(value) == 2499999);
+    sleep_args[1] = mo_cell_duration(-1);
+    value = mo_cell_int(77);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+          MO_HOST_BUG);
+    CHECK(mo_cell_get_int(value) == 77 && strcmp(error.reason, "negative sleep duration") == 0);
+    sleep_args[1] = mo_cell_duration(MO_TIME_MAX_US);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+          MO_HOST_BUG);
+    CHECK(strcmp(error.reason, "time outside the years 1 to 9999") == 0);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_NOW, f.time, &clock, &value, &error) ==
+          MO_HOST_RETURNED);
+    CHECK(mo_cell_get_time(value) == 2499999);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_CLOCK], clock_alias);
     struct mo_cell seed = mo_cell_int(0);
     CHECK(mo_host_call(&f.host, f.heap, MO_HOST_RANDOM_SEEDED, f.capabilities[MO_CAP_RANDOM], &seed,
                        &random, &error) == MO_HOST_RETURNED);
@@ -906,8 +929,26 @@ static void test_clock_random(void) {
                            &error) == MO_HOST_RETURNED);
     CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_NOW, f.time, &clock, &value, &error) ==
           MO_HOST_RETURNED);
-    CHECK(mo_cell_get_time(value) >= INT64_C(-62135596800000000) &&
-          mo_cell_get_time(value) <= INT64_C(253402300799999999));
+    int64_t before_real = mo_cell_get_time(value);
+    CHECK(before_real >= INT64_C(-62135596800000000) && before_real <= INT64_C(253402300799999999));
+    sleep_args[0] = clock;
+    sleep_args[1] = mo_cell_duration(0);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+          MO_HOST_RETURNED);
+    sleep_args[1] = mo_cell_duration(2000);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+          MO_HOST_RETURNED);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_NOW, f.time, &clock, &value, &error) ==
+          MO_HOST_RETURNED);
+    CHECK(mo_cell_get_time(value) >= before_real);
+    sleep_args[1] = mo_cell_duration(-5);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+              MO_HOST_BUG &&
+          strcmp(error.reason, "negative sleep duration") == 0);
+    sleep_args[1] = mo_cell_duration(MO_TIME_MAX_US - MO_TIME_MIN_US + 1);
+    CHECK(mo_host_call(&f.host, f.heap, MO_HOST_CLOCK_SLEEP, f.unit, sleep_args, &value, &error) ==
+              MO_HOST_BUG &&
+          strcmp(error.reason, "time outside the years 1 to 9999") == 0);
     MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_RANDOM], NULL, -1, &random,
                            &error) == MO_HOST_RETURNED);
     args[0] = random;
@@ -1149,6 +1190,8 @@ static MO_MUST_USE int sequence(void) {
             args[0] = mo_cell_time((int64_t)low);
         else if (operation == MO_HOST_RANDOM_SEEDED)
             args[0] = mo_cell_int((int64_t)low);
+        else if (operation == MO_HOST_CLOCK_SLEEP)
+            args[1] = mo_cell_duration((int64_t)low);
         else if (operation == MO_HOST_RANDOM_INT) {
             args[1] = mo_cell_int((int64_t)low);
             args[2] = mo_cell_int((int64_t)high);

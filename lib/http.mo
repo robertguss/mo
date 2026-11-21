@@ -8,10 +8,13 @@ get,
 post,
 request,
 header,
+headers_named,
 query,
+form,
 json,
 text,
 within,
+max_body,
 send,
 ok?,
 reply,
@@ -24,6 +27,7 @@ struct Request
   headers: List((Text, Text))
   body: Bytes
   timeout: Duration
+  body_limit: Int
 end
 
 struct Response
@@ -77,7 +81,8 @@ enum Halt
   Bad(HttpError)
 end
 
-## A GET request for a URL, with no headers, no body and 30 seconds to finish in.
+## A GET request for a URL, with no headers, no body, 30 seconds to finish in and a 16 MiB body
+## limit.
 fn get(url: Text) : Request
   examples
     get("http://example.org/a") ==
@@ -86,7 +91,8 @@ fn get(url: Text) : Request
         url: "http://example.org/a",
         headers: [],
         body: "".bytes,
-        timeout: 30.seconds
+        timeout: 30.seconds,
+        body_limit: 16777216
       )
   end
 
@@ -108,9 +114,17 @@ fn request(method: Text, url: Text) : Request
     request("DELETE", "http://example.org/a").method == "DELETE"
     request("DELETE", "http://example.org/a").url == "http://example.org/a"
     request("DELETE", "http://example.org/a").timeout == 30.seconds
+    request("DELETE", "http://example.org/a").body_limit == 16777216
   end
 
-  Request(method: method, url: url, headers: [], body: "".bytes, timeout: 30.seconds)
+  Request(
+    method: method,
+    url: url,
+    headers: [],
+    body: "".bytes,
+    timeout: 30.seconds,
+    body_limit: 16777216
+  )
 end
 
 ## The request with one more header. Headers are sent sorted by name, so the order of calls
@@ -166,6 +180,24 @@ fn percent(bytes: Bytes, at: Int) : Text
   "%#{high}#{low}"
 end
 
+## The request with `pairs` percent-encoded as its `application/x-www-form-urlencoded` body.
+fn form(request: Request, pairs: List((Text, Text))) : Request
+  examples
+    post("http://example.org/token").form([
+      ("grant_type", "client_credentials"),
+      ("scope", "read write&admin")
+    ]).body ==
+      "grant_type=client_credentials&scope=read%20write%26admin".bytes
+    post("http://example.org/token").json(Json.Null).form([("a", "1")]).headers == [
+      ("Content-Type", "application/x-www-form-urlencoded")
+    ]
+    post("http://example.org/token").form([]).body == "".bytes
+  end
+
+  encoded_body = pairs.map(fn(p) "#{encoded(p.0)}=#{encoded(p.1)}" end).join("&")
+  with_body(request, "application/x-www-form-urlencoded", encoded_body.bytes)
+end
+
 ## The request with `value` as its body, written as JSON, and the content type that says so.
 fn json(request: Request, value: Json) : Request
   examples
@@ -208,6 +240,17 @@ fn within(request: Request, timeout: Duration) : Request
   changed
 end
 
+## The request with `bytes` as the largest response body `send` accepts, in place of 16 MiB.
+fn max_body(request: Request, bytes: Int) : Request
+  examples
+    get("http://example.org/").max_body(67108864).body_limit == 67108864
+  end
+
+  var changed = request
+  changed.body_limit = bytes
+  changed
+end
+
 ## Makes the request over a new connection and gives the response, whatever its status. The
 ## request's timeout covers the whole exchange.
 fn send(request: Request, network: Network) : Result(Response, HttpError)
@@ -232,7 +275,7 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
     try network.connect(written.target.host, written.target.port, request.timeout)
   end
   try connection.send(written.bytes)
-  bound = limits()
+  bound = Limits(headers: 65536, body: request.body_limit)
   var head_bytes = "".bytes
   var head_from = 0
   var cut_found = None
@@ -359,6 +402,28 @@ fn header(response: Response, name: Text) : Option(Text)
   end
 
   named(response.headers, name.ascii_lowercase)
+end
+
+## Every header value with this name in response order, matched without regard to case.
+fn headers_named(response: Response, name: Text) : List(Text)
+  examples
+    Response(
+      status: 200,
+      headers: [
+        ("Link", "<https://api.example.org?page=2>; rel=\"next\""),
+        ("Content-Type", "application/json"),
+        ("link", "<https://api.example.org?page=5>; rel=\"last\"")
+      ],
+      body: "".bytes
+    ).headers_named("LINK") == [
+      "<https://api.example.org?page=2>; rel=\"next\"",
+      "<https://api.example.org?page=5>; rel=\"last\""
+    ]
+    reply(200, "four").headers_named("Link") == []
+  end
+
+  lowered = name.ascii_lowercase
+  response.headers.filter(fn(h) h.0.ascii_lowercase == lowered end).map(fn(h) h.1 end)
 end
 
 fn named(headers: List((Text, Text)), name: Text) : Option(Text)
@@ -1132,4 +1197,42 @@ test "a response that is cut off or past a limit is an error"
   assert answered(padded).size == 65537
   assert asked.send(Network.fake(replies([(asked, padded)]))) ==
     Error(BadResponse(reason: "the headers are longer than 65536 bytes"))
+  assert asked.max_body(2).send(Network.fake(replies([(asked, reply(200, "two"))]))) ==
+    Error(TooLarge(limit: 2))
+  assert asked.max_body(3).send(Network.fake(replies([(asked, reply(200, "two"))]))) ==
+    Ok(reply(200, "two"))
+  over_default = Response(status: 200, headers: [("Content-Length", "16777217")], body: "".bytes)
+  assert asked.max_body(33554432).send(Network.fake(replies([(asked, over_default)]))) ==
+    Error(BadResponse(reason: "the connection closed before the response was whole"))
+end
+
+test "form requests and repeated Link pagination headers round-trip over Network.fake"
+  token_req = post("https://lms.example.edu/login/oauth2/token").form([
+    ("grant_type", "refresh_token"),
+    ("client_id", "keel-mo"),
+    ("refresh_token", "r/1+2=3")
+  ])
+  page_req = get("https://lms.example.edu/api/v1/courses").header("Authorization", "Bearer tok")
+  page_res = Response(
+    status: 200,
+    headers: [
+      ("Link", "<https://lms.example.edu/api/v1/courses?page=2>; rel=\"next\""),
+      ("link", "<https://lms.example.edu/api/v1/courses?page=9>; rel=\"last\""),
+      ("Content-Length", "2")
+    ],
+    body: "[]".bytes
+  )
+  network = Network.fake(
+    replies([(token_req, reply(200, "{\"access_token\":\"tok\"}")), (page_req, page_res)])
+  )
+  assert token_req.send(network) is Ok(tok_ans)
+  assert tok_ans.json is Ok(tok_doc)
+  assert tok_doc.text_at("access_token") == Some("tok")
+  assert page_req.send(network) is Ok(courses_ans)
+  assert courses_ans.header("Link") ==
+    Some("<https://lms.example.edu/api/v1/courses?page=2>; rel=\"next\"")
+  assert courses_ans.headers_named("link") == [
+    "<https://lms.example.edu/api/v1/courses?page=2>; rel=\"next\"",
+    "<https://lms.example.edu/api/v1/courses?page=9>; rel=\"last\""
+  ]
 end
