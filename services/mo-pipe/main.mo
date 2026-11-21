@@ -23,7 +23,6 @@ end
 
 struct SchedulerState
   pipelines: Map(Text, PipelineStatus)
-  ticks: Int
 end
 
 struct SyncOutcome
@@ -48,13 +47,9 @@ enum PipeError
 end
 
 actor PipeScheduler
-  state SchedulerState = SchedulerState(pipelines: {}, ticks: 0)
+  state SchedulerState = SchedulerState(pipelines: {})
   calls register_spec, record_run, all_pipelines
   every 30.seconds mark_all_due
-
-  promise
-    after.ticks >= 0
-  end
 
   promise on record_run
     after.pipelines.size == before.pipelines.size
@@ -79,7 +74,7 @@ fn register_spec(state: SchedulerState, _now: Time, spec: PipelineSpec) : Result
     records_synced: 0,
     drift_alerts: 0
   )
-  next = SchedulerState(pipelines: state.pipelines.set(trimmed, st), ticks: state.ticks)
+  next = SchedulerState(pipelines: state.pipelines.set(trimmed, st))
   Ok((next, st))
 end
 
@@ -99,7 +94,7 @@ fn record_run(state: SchedulerState, _now: Time, name: Text, fetched: Int, drift
     records_synced: prev.records_synced.saturating_add(safe_f),
     drift_alerts: prev.drift_alerts.saturating_add(safe_d)
   )
-  next = SchedulerState(pipelines: state.pipelines.set(name, updated), ticks: state.ticks)
+  next = SchedulerState(pipelines: state.pipelines.set(name, updated))
   Ok((next, updated))
 end
 
@@ -123,7 +118,7 @@ fn mark_all_due(state: SchedulerState, _now: Time) : SchedulerState
       )
     )
   end
-  SchedulerState(pipelines: updated, ticks: state.ticks.saturating_add(1))
+  SchedulerState(pipelines: updated)
 end
 
 api

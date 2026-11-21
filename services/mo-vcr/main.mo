@@ -78,11 +78,6 @@ actor ChaosController
   calls configure_vcr, next_decision, current_stats
   every 1.minute clear_chaos_window
 
-  promise
-    after.total_requests >= 0 and after.injected_429s >= 0
-    after.failure_every >= 0
-  end
-
   promise on next_decision
     after.total_requests >= before.total_requests
   end

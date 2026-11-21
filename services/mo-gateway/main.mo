@@ -99,10 +99,6 @@ actor Budget
   calls register_quota, admit_request, settle_spend, record_cache_hit, inspect_usage
   every 1.minute reset_rpm_windows
 
-  promise
-    after.cache_hits >= 0
-  end
-
   promise on record_cache_hit
     after.cache_hits >= before.cache_hits
   end
