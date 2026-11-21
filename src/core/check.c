@@ -304,6 +304,9 @@ static MO_MUST_USE struct type *annotation(struct checker *c, mo_core_ty t, size
     case MO_CORE_TY_SIMULATION:
     case MO_CORE_TY_SIMULATION_ERROR:
     case MO_CORE_TY_NETWORK_ERROR:
+    case MO_CORE_TY_SQLITE_VALUE:
+    case MO_CORE_TY_SQLITE_ROWS:
+    case MO_CORE_TY_SQLITE_ERROR:
     case MO_CORE_TY_ENTRY:
     case MO_CORE_TY_ENTRY_KIND:
         r = scalar(c, t->tag);
@@ -943,6 +946,18 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
             break;
         case MO_CORE_IO_OP_ALLOW_HOSTS:
             return sig(C(NETWORK), 2, C(NETWORK), L(S(TEXT)), NULL);
+        case MO_CORE_IO_OP_SQLITE_OPEN:
+            return sig(binary(c, MO_CORE_TY_RESULT, C(DATABASE), S(SQLITE_ERROR)), 2, C(SQLITE),
+                       S(TEXT), NULL);
+        case MO_CORE_IO_OP_SQLITE_FAKE:
+            s = sig(C(SQLITE), 0, NULL, NULL, NULL);
+            break;
+        case MO_CORE_IO_OP_SQLITE_RUN:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), S(SQLITE_ERROR)), 3, C(DATABASE),
+                       S(TEXT), L(S(SQLITE_VALUE)));
+        case MO_CORE_IO_OP_SQLITE_QUERY:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(SQLITE_ROWS), S(SQLITE_ERROR)), 3,
+                       C(DATABASE), S(TEXT), L(S(SQLITE_VALUE)));
         }
         s.spec = true;
         return s;
@@ -1120,6 +1135,32 @@ static MO_MUST_USE struct data *constructors(struct checker *c, struct type *t) 
         counts[1] = 2;
         fields[0][0] = fields[1][0] = fields[4][0] = fields[5][0] = scalar(c, MO_CORE_TY_TEXT);
         fields[1][1] = scalar(c, MO_CORE_TY_INT);
+    } else if (t->tag == MO_CORE_TY_SQLITE_ERROR) {
+        n = 3;
+        names[0] = "OutsideFolder";
+        names[1] = "NotPermitted";
+        names[2] = "SqlFailed";
+        counts[0] = counts[1] = counts[2] = 1;
+        fields[0][0] = fields[1][0] = fields[2][0] = scalar(c, MO_CORE_TY_TEXT);
+    } else if (t->tag == MO_CORE_TY_SQLITE_VALUE) {
+        n = 5;
+        names[0] = "Null";
+        names[1] = "Integer";
+        names[2] = "Real";
+        names[3] = "String";
+        names[4] = "Blob";
+        counts[1] = counts[2] = counts[3] = counts[4] = 1;
+        fields[1][0] = scalar(c, MO_CORE_TY_INT);
+        fields[2][0] = scalar(c, MO_CORE_TY_FLOAT);
+        fields[3][0] = scalar(c, MO_CORE_TY_TEXT);
+        fields[4][0] = scalar(c, MO_CORE_TY_BYTES);
+    } else if (t->tag == MO_CORE_TY_SQLITE_ROWS) {
+        n = 1;
+        names[0] = "Rows";
+        counts[0] = 2;
+        fields[0][0] = unary(c, MO_CORE_TY_LIST, scalar(c, MO_CORE_TY_TEXT));
+        fields[0][1] = unary(c, MO_CORE_TY_LIST,
+                             unary(c, MO_CORE_TY_LIST, scalar(c, MO_CORE_TY_SQLITE_VALUE)));
     } else if (t->tag == MO_CORE_TY_ENTRY) {
         n = 1;
         names[0] = "Entry";
@@ -1546,13 +1587,17 @@ static MO_MUST_USE bool label_name(struct mo_buffer *b, mo_core_string name) {
 }
 static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, size_t *remaining) {
     static const char *const names[] = {
-        "Int",         "BigInt", "Byte",      "Decimal", "Float",  "Bool",       "Char",
-        "Text",        "Bytes",  "Unit",      "Range",   "Time",   "Duration",   "Tuple",
-        "List",        "Map",    "Set",       "Data",    "Option", "Result",     "Ordering",
-        "FileError",   "Entry",  "EntryKind", "Fn",      "Cap",    "Simulation", "SimulationError",
-        "NetworkError"};
-    static const char *const caps[] = {"Console", "Files", "ReadFiles", "Clock",     "Random",
-                                       "Args",    "Env",   "Network",   "Connection"};
+        "Int",          "BigInt",       "Byte",        "Decimal",
+        "Float",        "Bool",         "Char",        "Text",
+        "Bytes",        "Unit",         "Range",       "Time",
+        "Duration",     "Tuple",        "List",        "Map",
+        "Set",          "Data",         "Option",      "Result",
+        "Ordering",     "FileError",    "Entry",       "EntryKind",
+        "Fn",           "Cap",          "Simulation",  "SimulationError",
+        "NetworkError", "Sqlite.Value", "Sqlite.Rows", "SqliteError"};
+    static const char *const caps[] = {
+        "Console", "Files",   "ReadFiles",  "Clock",  "Random",         "Args",
+        "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database"};
     if (*remaining == 0)
         return mo_buffer_append_text(b, "...");
     (*remaining)--;

@@ -213,6 +213,9 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
                 {"Simulation", MO_CORE_TY_SIMULATION},
                 {"SimulationError", MO_CORE_TY_SIMULATION_ERROR},
                 {"NetworkError", MO_CORE_TY_NETWORK_ERROR},
+                {"Sqlite.Value", MO_CORE_TY_SQLITE_VALUE},
+                {"Sqlite.Rows", MO_CORE_TY_SQLITE_ROWS},
+                {"SqliteError", MO_CORE_TY_SQLITE_ERROR},
             };
             bool found = false;
             for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
@@ -222,9 +225,9 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
                     break;
                 }
             if (!found) {
-                static const char *const caps[] = {"Console", "Files",   "ReadFiles",
-                                                   "Clock",   "Random",  "Args",
-                                                   "Env",     "Network", "Connection"};
+                static const char *const caps[] = {
+                    "Console", "Files",   "ReadFiles",  "Clock",  "Random",         "Args",
+                    "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database"};
                 for (size_t i = 0; i < sizeof caps / sizeof caps[0]; i++)
                     if (strcmp(source->name, caps[i]) == 0) {
                         t->tag = MO_CORE_TY_CAP;
@@ -684,6 +687,55 @@ mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type) {
         counts[1] = 2;
         fields[0][0] = fields[1][0] = fields[4][0] = fields[5][0] = lower_type(p, &text, NULL);
         fields[1][1] = lower_type(p, &integer, NULL);
+    } else if (type->tag == MO_CORE_TY_SQLITE_ERROR) {
+        count = 3;
+        names[0] = "OutsideFolder";
+        names[1] = "NotPermitted";
+        names[2] = "SqlFailed";
+        counts[0] = counts[1] = counts[2] = 1;
+        fields[0][0] = fields[1][0] = fields[2][0] = lower_type(p, &text, NULL);
+    } else if (type->tag == MO_CORE_TY_SQLITE_VALUE) {
+        static const struct mo_source_type floating = {
+            .kind = MO_SOURCE_NAMED, .name = "Float", .module = UINT32_MAX};
+        static const struct mo_source_type bytes = {
+            .kind = MO_SOURCE_NAMED, .name = "Bytes", .module = UINT32_MAX};
+        count = 5;
+        names[0] = "Null";
+        names[1] = "Integer";
+        names[2] = "Real";
+        names[3] = "String";
+        names[4] = "Blob";
+        counts[1] = counts[2] = counts[3] = counts[4] = 1;
+        fields[1][0] = lower_type(p, &integer, NULL);
+        fields[2][0] = lower_type(p, &floating, NULL);
+        fields[3][0] = lower_type(p, &text, NULL);
+        fields[4][0] = lower_type(p, &bytes, NULL);
+    } else if (type->tag == MO_CORE_TY_SQLITE_ROWS) {
+        static const struct mo_source_type sqlite_val = {
+            .kind = MO_SOURCE_NAMED, .name = "Sqlite.Value", .module = UINT32_MAX};
+        static const struct mo_source_type *const list_text_args[] = {&text};
+        static const struct mo_source_type list_text = {.kind = MO_SOURCE_NAMED,
+                                                        .name = "List",
+                                                        .module = UINT32_MAX,
+                                                        .count = 1,
+                                                        .arguments = list_text_args};
+        static const struct mo_source_type *const list_val_args[] = {&sqlite_val};
+        static const struct mo_source_type list_val = {.kind = MO_SOURCE_NAMED,
+                                                       .name = "List",
+                                                       .module = UINT32_MAX,
+                                                       .count = 1,
+                                                       .arguments = list_val_args};
+        static const struct mo_source_type *const list_rows_args[] = {&list_val};
+        static const struct mo_source_type list_rows = {.kind = MO_SOURCE_NAMED,
+                                                        .name = "List",
+                                                        .module = UINT32_MAX,
+                                                        .count = 1,
+                                                        .arguments = list_rows_args};
+        count = 1;
+        names[0] = "Rows";
+        counts[0] = 2;
+        fields[0][0] = lower_type(p, &list_text, NULL);
+        fields[0][1] = lower_type(p, &list_rows, NULL);
     } else
         MO_UNREACHABLE();
     mo_core_ctors ctors = {.count = count, .items = LOWER_NEW(p, struct mo_core_ctor, count)};

@@ -1,1 +1,1 @@
-(core 0.10 (sim (send 2 3 ((int) (list (text))) (result (unit) (text)))))
+(core 0.11 (sim (send 2 3 ((int) (list (text))) (result (unit) (text)))))

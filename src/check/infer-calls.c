@@ -34,6 +34,33 @@ MO_MUST_USE uint32_t infer_builtin_field(const struct mo_builtin_case *data,
 MO_MUST_USE struct term *infer_builtin_part(struct inference *p, const struct mo_builtin_case *data,
                                             struct term *type, uint32_t index) {
     MO_ASSERT(index < data->count);
+    if (strcmp(data->type, "Sqlite.Value") == 0) {
+        const char *kind = strcmp(data->name, "Integer") == 0  ? "Int"
+                           : strcmp(data->name, "Real") == 0   ? "Float"
+                           : strcmp(data->name, "String") == 0 ? "Text"
+                                                               : "Bytes";
+        return infer_native(p, kind, 0);
+    }
+    if (strcmp(data->type, "Sqlite.Rows") == 0) {
+        struct term *element = NULL;
+        if (index == 0)
+            element = infer_native(p, "Text", 0);
+        else {
+            element = infer_native(p, "List", 1);
+            if (element == NULL)
+                return NULL;
+            element->arguments[0] = infer_native(p, "Sqlite.Value", 0);
+            if (element->arguments[0] == NULL)
+                return NULL;
+        }
+        if (element == NULL)
+            return NULL;
+        struct term *list = infer_native(p, "List", 1);
+        if (list == NULL)
+            return NULL;
+        list->arguments[0] = element;
+        return list;
+    }
     if (data->fields[0] == NULL)
         return infer_argument(p, type, data->parameter);
     return infer_native(p,
@@ -269,8 +296,25 @@ MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
             }
             return out;
         }
-        const struct mo_native_signature *signature =
-            infer_native_definition(p, type->shape.name, name);
+        if (infer_named(type, "Sqlite.Rows") &&
+            (infer_compare_text(name, "columns") == 0 || infer_compare_text(name, "rows") == 0)) {
+            *called = false;
+            uint32_t index = infer_compare_text(name, "columns") == 0 ? 0u : 1u;
+            const struct mo_builtin_case *data = mo_builtin_case_by_type("Sqlite.Rows");
+            struct value out = infer_graph(
+                p,
+                (struct value){.type = infer_builtin_part(p, data, type, index), .never = v.never},
+                1);
+            if (p->checked && out.type != NULL) {
+                out.graph->output.field = index;
+                out.graph->output.native = index == 0 ? "Sqlite.Rows.columns" : "Sqlite.Rows.rows";
+                out.graph->operands[0] = v.note;
+            }
+            return out;
+        }
+        const char *module =
+            strcmp(type->shape.name, "Sqlite.Database") == 0 ? "Sqlite" : type->shape.name;
+        const struct mo_native_signature *signature = infer_native_definition(p, module, name);
         if (signature != NULL)
             return infer_native_identifier(p, signature);
     }

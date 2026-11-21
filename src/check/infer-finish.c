@@ -414,7 +414,8 @@ MO_MUST_USE bool infer_finish_patterns(struct inference *p) {
         choice = choice || infer_named(type, "Option") || infer_named(type, "Result") ||
                  infer_named(type, "Ordering") || infer_named(type, "EntryKind") ||
                  infer_named(type, "FileError") || infer_named(type, "SimulationError") ||
-                 infer_named(type, "NetworkError");
+                 infer_named(type, "NetworkError") || infer_named(type, "SqliteError") ||
+                 infer_named(type, "Sqlite.Value");
         if (check->catch_all != NULL && choice) {
             infer_defer(p, MO_CODE_CASE_CATCH_ALL, check->catch_all->span,
                         "a choice arm is a catch-all",
@@ -822,7 +823,7 @@ MO_MUST_USE bool infer_finish_wrapping(struct inference *p) {
                     return false;
                 const struct mo_builtin_case *data = mo_builtin_case_by_key(first->first_key + i);
                 MO_ASSERT(data != NULL);
-                if (data->count != 1 || data->fields[0] != NULL)
+                if (data->count != 1 || data->fields[0] != NULL || target->count == 0)
                     continue;
                 MO_ASSERT(data->parameter < target->count);
                 guesses = NULL;

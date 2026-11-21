@@ -417,7 +417,7 @@ bool mo_patterns_cover(struct mo_arena *arena, const struct mo_module_interfaces
         if (type->declaration != NULL && type->declaration->declaration->kind == MO_S_ENUM)
             domain.choice = type->declaration;
         else if (type->kind == MO_SOURCE_NAMED && type->module == UINT32_MAX) {
-            for (uintptr_t key = 6; key <= 22; key++) {
+            for (uintptr_t key = 6; key <= 40; key++) {
                 const struct mo_builtin_case *builtin = mo_builtin_case_by_key(key);
                 if (builtin != NULL && strcmp(builtin->type, type->name) == 0) {
                     domain.key = key;

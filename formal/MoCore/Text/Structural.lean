@@ -65,9 +65,12 @@ partial def structural (p : Program) (t : Ty) (v : Value) (nested : Bool := fals
         | .files => "<Files>" | .readFiles => "<ReadFiles>"
         | .clock => "<Clock>" | .random => "<Random>"
         | .network => "<Network>" | .connection => "<Connection>"
+        | .sqlite => "<Sqlite>" | .database => "<Sqlite.Database>"
         else (valueOut (.cap c root fake)).render)
   | _, _ => throw "value does not match result type"
 where
-  tNameFields := match t with | .data _ | .fileError | .networkError | .entry => true | _ => false
+  tNameFields := match t with
+    | .data _ | .fileError | .networkError | .sqliteRows | .sqliteError | .entry => true
+    | _ => false
 
 end MoCore.Text

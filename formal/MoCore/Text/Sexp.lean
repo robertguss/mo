@@ -150,10 +150,10 @@ def parseSexp (text : String) : Parse Sexp := do
   if !(skip rest).isEmpty then throw "trailing input"
   pure s
 
-def document (s : Sexp) : String := (tag "core" [.atom "0.10", s]).render ++ "\n"
+def document (s : Sexp) : String := (tag "core" [.atom "0.11", s]).render ++ "\n"
 def parseDocument (text : String) : Parse Sexp := do
   match ← parseSexp text with
-  | .node [.atom "core", .atom "0.10", s] => pure s
-  | _ => throw "expected (core 0.10 payload)"
+  | .node [.atom "core", .atom "0.11", s] => pure s
+  | _ => throw "expected (core 0.11 payload)"
 
 end MoCore.Text

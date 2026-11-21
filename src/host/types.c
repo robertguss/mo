@@ -34,7 +34,7 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
     out->types.type_slot_count = 0;
     out->types.layout_slots = NULL;
     out->types.layout_slot_count = 0;
-    for (unsigned i = 0; i <= MO_CAP_CONNECTION; i++)
+    for (unsigned i = 0; i <= MO_CAP_DATABASE; i++)
         out->capabilities[i] = MO_NO_INDEX;
     for (uint32_t i = 0; i < source->count; i++) {
         if (source->items[i].kind == MO_TYPE_CAPABILITY &&
@@ -46,14 +46,15 @@ void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *sou
     out->text = add(out, MO_TYPE_TEXT, NULL, 0);
     out->bytes = add(out, MO_TYPE_BYTES, NULL, 0);
     uint32_t *parameters = out->parameters;
-    parameters[0] = parameters[1] = parameters[4] = out->text;
-    parameters[2] = parameters[3] = out->bytes;
+    parameters[0] = parameters[1] = parameters[4] = parameters[6] = out->text;
+    parameters[2] = parameters[3] = parameters[7] = out->bytes;
     out->texts = add(out, MO_TYPE_LIST, parameters, 1);
     out->folders = add(out, MO_TYPE_SET, parameters, 1);
     out->files = add(out, MO_TYPE_MAP, parameters, 2);
     out->replies = add(out, MO_TYPE_MAP, parameters + 2, 2);
     parameters[5] = out->replies;
     out->peers = add(out, MO_TYPE_MAP, parameters + 4, 2);
+    out->databases = add(out, MO_TYPE_MAP, parameters + 6, 2);
 }
 
 void mo_host_init(struct mo_host *host, const struct mo_host_types *types) {

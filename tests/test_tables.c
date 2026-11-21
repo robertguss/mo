@@ -61,22 +61,25 @@ struct type {
 };
 
 static const struct type types[] = {
-    {"Unit", 0, true, false},       {"Bool", 0, true, false},
-    {"Int", 0, true, false},        {"BigInt", 0, false, false},
-    {"Byte", 0, true, false},       {"Decimal", 0, true, false},
-    {"Float", 0, true, false},      {"Text", 0, false, false},
-    {"Char", 0, true, false},       {"Bytes", 0, false, false},
-    {"List", 1, false, false},      {"Map", 2, false, false},
-    {"Set", 1, false, false},       {"Range", 0, true, false},
-    {"Time", 0, true, false},       {"Duration", 0, true, false},
-    {"Option", 1, false, false},    {"Result", 2, false, false},
-    {"Ordering", 0, true, false},   {"FileError", 0, false, false},
-    {"Entry", 0, false, false},     {"EntryKind", 0, true, false},
-    {"Args", 0, false, true},       {"Env", 0, false, true},
-    {"Console", 0, false, true},    {"Files", 0, false, true},
-    {"ReadFiles", 0, false, true},  {"Clock", 0, false, true},
-    {"Random", 0, false, true},     {"Network", 0, false, true},
-    {"Connection", 0, false, true}, {"NetworkError", 0, false, false},
+    {"Unit", 0, true, false},          {"Bool", 0, true, false},
+    {"Int", 0, true, false},           {"BigInt", 0, false, false},
+    {"Byte", 0, true, false},          {"Decimal", 0, true, false},
+    {"Float", 0, true, false},         {"Text", 0, false, false},
+    {"Char", 0, true, false},          {"Bytes", 0, false, false},
+    {"List", 1, false, false},         {"Map", 2, false, false},
+    {"Set", 1, false, false},          {"Range", 0, true, false},
+    {"Time", 0, true, false},          {"Duration", 0, true, false},
+    {"Option", 1, false, false},       {"Result", 2, false, false},
+    {"Ordering", 0, true, false},      {"FileError", 0, false, false},
+    {"Entry", 0, false, false},        {"EntryKind", 0, true, false},
+    {"Args", 0, false, true},          {"Env", 0, false, true},
+    {"Console", 0, false, true},       {"Files", 0, false, true},
+    {"ReadFiles", 0, false, true},     {"Clock", 0, false, true},
+    {"Random", 0, false, true},        {"Network", 0, false, true},
+    {"Connection", 0, false, true},    {"NetworkError", 0, false, false},
+    {"Sqlite", 0, false, true},        {"Sqlite.Database", 0, false, true},
+    {"Sqlite.Value", 0, false, false}, {"Sqlite.Rows", 0, false, false},
+    {"SqliteError", 0, false, false},
 };
 
 /* The five abilities (reference 9.2). */
@@ -210,6 +213,20 @@ MO_MUST_USE static bool read_type(const char **at, unsigned depth, struct facts 
     char name[MAX_NAME_LENGTH];
     if (!read_cap_name(at, name)) {
         return false;
+    }
+    if (**at == '.') {
+        const char *dot = *at + 1;
+        char qualified[MAX_NAME_LENGTH];
+        if (!read_cap_name(&dot, qualified)) {
+            return false;
+        }
+        size_t first = strlen(name), second = strlen(qualified);
+        if (first + 1 + second >= MAX_NAME_LENGTH) {
+            return false;
+        }
+        name[first] = '.';
+        memcpy(name + first + 1, qualified, second + 1);
+        *at = dot;
     }
     if (name[1] == '\0') {
         facts->type_parameters |= type_parameter_bit(name[0]);
@@ -613,7 +630,10 @@ static void test_host_operations_take_their_capability(void) {
             continue; /* check_line reports it */
         }
         expect(capability_of(line->module) != NULL, line, "its module isn't a capability's");
-        bool operation = signature.param_count > 0 && span_is(signature.params[0], line->module);
+        bool operation =
+            signature.param_count > 0 && (span_is(signature.params[0], line->module) ||
+                                          (strcmp(line->module, "Sqlite") == 0 &&
+                                           span_is(signature.params[0], "Sqlite.Database")));
         bool constructor =
             span_is(signature.result, line->module) && !signature.param_facts.capability;
         expect(operation != constructor, line,
@@ -670,6 +690,10 @@ static void test_every_capability_operation_is_there(void) {
         {"Connection", "send"},
         {"Connection", "receive"},
         {"Network", "fake"},
+        {"Sqlite", "open"},
+        {"Sqlite", "fake"},
+        {"Sqlite", "run"},
+        {"Sqlite", "query"},
     };
     size_t count = sizeof operations / sizeof operations[0];
     for (size_t i = 0; i < count; i++) {

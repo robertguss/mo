@@ -1,7 +1,7 @@
-# Core text, version 0.10
+# Core text, version 0.11
 
 The Lean implementation in `MoCore/Text/` is the reference codec. Every file
-is `(core 0.10 PAYLOAD)` followed by LF. Constructors are case-sensitive and
+is `(core 0.11 PAYLOAD)` followed by LF. Constructors are case-sensitive and
 named after Lean. A nullary constructor is still a list: `(unit)`.
 
 This is an interchange format, not Mo source or the informal notation in
@@ -10,11 +10,45 @@ transport (`Outcome`, including closures), and observable reports (`Report`,
 the protocol `mocore` writes). The latter uses reference 9.2's structural
 value spelling inside a string. C differential tests compare **reports**.
 
-## Changes from 0.9
+## Changes from 0.10
+
+Version 0.11 adds `(sqliteValue)`, `(sqliteRows)`, `(sqliteError)` and the
+capability kinds `(sqlite)` and `(database)`. Only 0.11 is accepted; 0.10, older
+and unknown versions are rejected.
+
+`Sqlite.Value` has five constructors in this order (`Integer`, `Real`, `String`,
+`Blob` have one unnamed field):
+
+| Constructor | Fields |
+| --- | --- |
+| `Null` | none |
+| `Integer` | `0` Int |
+| `Real` | `0` Float |
+| `String` | `0` Text |
+| `Blob` | `0` Bytes |
+
+`Sqlite.Rows` is a record with one constructor `Rows` (`columns` List(Text),
+`rows` List(List(Sqlite.Value))). `SqliteError` has three constructors
+`OutsideFolder` (`path` Text), `NotPermitted` (`reason` Text), and `SqlFailed`
+(`message` Text). Structural text names the fields of `Sqlite.Rows` and
+`SqliteError`, and omits `"0"` on `Sqlite.Value`. `Sqlite.Database` is never a
+parameter of the entry function. No World or CapState field is added.
+
+It also adds four `IoOp` operations (`sqliteOpen`, `sqliteFake`, `sqliteRun`,
+`sqliteQuery`), which stop with `Sqlite is not modeled by mocore`, keeping prior
+effects. `sqliteFake` is spec-only.
+
+| IoOp | Argument types | Result |
+| --- | --- | --- |
+| `sqliteOpen` | Sqlite, Text | Result(Sqlite.Database, SqliteError) |
+| `sqliteFake` | none | Sqlite |
+| `sqliteRun` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Unit, SqliteError) |
+| `sqliteQuery` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Sqlite.Rows, SqliteError) |
+
+### Earlier changes from 0.9
 
 Version 0.10 adds the type `(networkError)` and the capability kinds `(network)`
-and `(connection)`. Only 0.10 is accepted; 0.9, older and unknown versions are
-rejected. The error type has six constructors, in this order:
+and `(connection)`. The error type has six constructors, in this order:
 
 | Constructor | Fields |
 | --- | --- |

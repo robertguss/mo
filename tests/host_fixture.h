@@ -16,10 +16,12 @@ struct host_fixture {
     struct mo_heap *heap;
     struct mo_host host;
     uint32_t unit, boolean, bytes, time;
-    uint32_t capabilities[MO_CAP_CONNECTION + 1];
+    uint32_t capabilities[MO_CAP_DATABASE + 1];
     uint32_t option, file_error, result_text, result_bytes, result_unit, result_names,
         result_entries;
     uint32_t integer, network_error, result_connection, result_sent, result_received;
+    uint32_t sqlite_value, sqlite_rows, sqlite_error, result_database, result_sqlite_unit,
+        result_sqlite_rows;
     uint32_t entry, entries;
 };
 
@@ -35,8 +37,9 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
     uint32_t names = heap_intern(
         &f->source,
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &text, .parameter_count = 1});
+    uint32_t real = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_FLOAT});
     f->integer = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_INT});
-    for (unsigned i = 0; i <= MO_CAP_CONNECTION; i++) {
+    for (unsigned i = 0; i <= MO_CAP_DATABASE; i++) {
         if (i != MO_CAP_SIMULATION)
             f->capabilities[i] =
                 heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
@@ -80,17 +83,49 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
     f->entries = heap_intern(
         &f->source,
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &f->entry, .parameter_count = 1});
-    uint32_t payloads[] = {text,    f->bytes,   f->unit,
-                           names,   f->entries, f->capabilities[MO_CAP_CONNECTION],
-                           f->unit, f->bytes};
-    uint32_t *results[] = {&f->result_text,  &f->result_bytes,   &f->result_unit,
-                           &f->result_names, &f->result_entries, &f->result_connection,
-                           &f->result_sent,  &f->result_received};
-    for (unsigned i = 0; i < 8; i++) {
+    MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "SqliteError", &f->sqlite_error) ==
+              MO_TYPES_OK);
+    struct mo_type_field sql_path = {"path", text}, sql_reason = {"reason", text},
+                         sql_message = {"message", text};
+    struct mo_type_case sqlite_errors[] = {
+        {.name = "OutsideFolder", .fields = &sql_path, .field_count = 1},
+        {.name = "NotPermitted", .fields = &sql_reason, .field_count = 1},
+        {.name = "SqlFailed", .fields = &sql_message, .field_count = 1}};
+    MO_ASSERT(mo_types_define_choice(&f->source, f->sqlite_error, sqlite_errors, 3) == MO_TYPES_OK);
+    MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "Sqlite.Value", &f->sqlite_value) ==
+              MO_TYPES_OK);
+    struct mo_type_field val_int = {NULL, f->integer}, val_real = {NULL, real},
+                         val_text = {NULL, text}, val_blob = {NULL, f->bytes};
+    struct mo_type_case sqlite_values[] = {
+        {.name = "Null"},
+        {.name = "Integer", .fields = &val_int, .field_count = 1, .unnamed = true},
+        {.name = "Real", .fields = &val_real, .field_count = 1, .unnamed = true},
+        {.name = "String", .fields = &val_text, .field_count = 1, .unnamed = true},
+        {.name = "Blob", .fields = &val_blob, .field_count = 1, .unnamed = true}};
+    MO_ASSERT(mo_types_define_choice(&f->source, f->sqlite_value, sqlite_values, 5) == MO_TYPES_OK);
+    uint32_t value_list = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_LIST,
+                                                                   .parameters = &f->sqlite_value,
+                                                                   .parameter_count = 1});
+    uint32_t rows_matrix = heap_intern(
+        &f->source,
+        (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &value_list, .parameter_count = 1});
+    MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_RECORD, "Sqlite.Rows", &f->sqlite_rows) ==
+              MO_TYPES_OK);
+    struct mo_type_field rows_fields[] = {{"columns", names}, {"rows", rows_matrix}};
+    MO_ASSERT(mo_types_define_record(&f->source, f->sqlite_rows, rows_fields, 2) == MO_TYPES_OK);
+    uint32_t payloads[] = {text,    f->bytes,      f->unit,
+                           names,   f->entries,    f->capabilities[MO_CAP_CONNECTION],
+                           f->unit, f->bytes,      f->capabilities[MO_CAP_DATABASE],
+                           f->unit, f->sqlite_rows};
+    uint32_t *results[] = {&f->result_text,        &f->result_bytes,      &f->result_unit,
+                           &f->result_names,       &f->result_entries,    &f->result_connection,
+                           &f->result_sent,        &f->result_received,   &f->result_database,
+                           &f->result_sqlite_unit, &f->result_sqlite_rows};
+    for (unsigned i = 0; i < 11; i++) {
         MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "Result", results[i]) ==
                   MO_TYPES_OK);
-        struct mo_type_field ok = {NULL, payloads[i]},
-                             error = {NULL, i < 5 ? f->file_error : f->network_error};
+        uint32_t err_type = i < 5 ? f->file_error : (i < 8 ? f->network_error : f->sqlite_error);
+        struct mo_type_field ok = {NULL, payloads[i]}, error = {NULL, err_type};
         struct mo_type_case cases[] = {
             {.name = "Ok", .fields = &ok, .field_count = 1, .unnamed = true},
             {.name = "Error", .fields = &error, .field_count = 1, .unnamed = true}};
@@ -100,13 +135,17 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
     for (uint32_t i = 0; i < f->source.count; i++) {
         const struct mo_type *t = &f->source.items[i];
         if (t->kind == MO_TYPE_RECORD) {
-            uint32_t types[] = {text, kind};
-            uint32_t layout = heap_layout(&f->source, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
-                                                                         .type = i,
-                                                                         .case_index = MO_NO_INDEX,
-                                                                         .function = MO_NO_INDEX,
-                                                                         .fields = types,
-                                                                         .field_count = 2});
+            uint32_t rec_types[2];
+            MO_ASSERT(t->field_count <= 2);
+            for (uint32_t k = 0; k < t->field_count; k++)
+                rec_types[k] = t->fields[k].type;
+            uint32_t layout =
+                heap_layout(&f->source, (struct mo_layout){.kind = MO_LAYOUT_RECORD,
+                                                           .type = i,
+                                                           .case_index = MO_NO_INDEX,
+                                                           .function = MO_NO_INDEX,
+                                                           .fields = rec_types,
+                                                           .field_count = t->field_count});
             MO_ASSERT(layout != MO_NO_INDEX);
         }
         if (t->kind != MO_TYPE_CHOICE)
@@ -141,7 +180,8 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
 
 static inline void host_fixture_free(struct host_fixture *f) {
     mo_heap_free(f->heap);
-    MO_ASSERT(f->host.open_folders == 0 && f->host.open_connections == 0);
+    MO_ASSERT(f->host.open_folders == 0 && f->host.open_connections == 0 &&
+              f->host.open_databases == 0);
     mo_heap_image_free(f->image);
     free(f->storage);
     mo_arena_free(&f->arena);
@@ -216,6 +256,14 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
         return f->result_sent;
     case MO_HOST_CONNECTION_RECEIVE:
         return f->result_received;
+    case MO_HOST_SQLITE_FAKE:
+        return f->capabilities[MO_CAP_SQLITE];
+    case MO_HOST_SQLITE_OPEN:
+        return f->result_database;
+    case MO_HOST_SQLITE_RUN:
+        return f->result_sqlite_unit;
+    case MO_HOST_SQLITE_QUERY:
+        return f->result_sqlite_rows;
     default:
         MO_UNREACHABLE();
     }

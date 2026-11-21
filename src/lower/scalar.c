@@ -379,6 +379,11 @@ mo_core_expr lower_error_text(struct lowering *p, mo_core_ty type, mo_core_expr 
         prim.tag = MO_CORE_PRIM_TIME;
         prim.as.time =
             type->tag == MO_CORE_TY_TIME ? MO_CORE_TIME_OP_TO_TEXT : MO_CORE_TIME_OP_DUR_TO_TEXT;
+    } else if (type->tag == MO_CORE_TY_BYTES) {
+        mo_core_expr_list args = {.count = 1, .items = LOWER_NEW(p, mo_core_expr, 1)};
+        args.items[0] = value;
+        return lower_prim(
+            p, (struct mo_core_prim){.tag = MO_CORE_PRIM_STRUCTURAL, .as.structural = type}, args);
     } else
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED,
                      "this error text implementation is not lowered yet");

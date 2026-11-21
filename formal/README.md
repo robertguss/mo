@@ -143,9 +143,9 @@ canonical printing, result protocol, extension rules and sample timings.
 | `MoCore/Text/*.lean` | The reference text codec: S-expressions, types/literals, primitives, programs, lossless values/worlds/outcomes, structural observations and checked run requests. |
 | `MoCore/TextChecks.lean` | Round trips for all twelve programs, every primitive/value, Builtins programs, reproducible runs and report/lexical checks. |
 | `Main.lean` | The `mocore` file/CLI protocol, with distinct diagnostic and outcome exit codes. |
-| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236/D237 file checks) and synthetic Metadata, in Core text 0.10; optional second directory exports all sixteen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
+| `ExportSamples.lean` | Writes twelve entry runs plus Fakes, Library (including D236/D237 file checks) and synthetic Metadata, in Core text 0.11; optional second directory exports all seventeen fuzz seeds (`lake env lean --run ExportSamples.lean DIR FUZZ_DIR`). |
 | `HeapFloatOracle.lean` | Reads decimal binary64 bits from stdin and prints the model's `Float.toText` spelling. |
-| `TEXT.md` | Complete Core text 0.10 contract shared by Lean and C, compiler metadata, file-operation outcomes, worked runs and measurements. |
+| `TEXT.md` | Complete Core text 0.11 contract shared by Lean and C, compiler metadata, file-operation outcomes, worked runs and measurements. |
 | `TRANSLATION.md` | The lowering from every v0.1 feature to Core, how the model follows the answers D227 gave to the questions writing it raised, the three things D228 added, and what the model decided in making `Byte`, `Bytes`, `Range` and `Set` types of their own. |
 
 ## The twelve programs

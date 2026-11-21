@@ -63,7 +63,7 @@ monomorphization, each once. A type is one of:
 | `choice` | name; cases, each with a name and its fields' names and types, and whether its one field is unnamed | see 2.3 |
 | `function` | parameter types, result type | reference to a closure |
 | `env` | the closure code's function index | the closure seen from inside (section 5.3) |
-| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random`, `Simulation`, `Network` or `Connection` | reference |
+| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random`, `Simulation`, `Network`, `Connection`, `Sqlite` or `Sqlite.Database` | reference |
 
 Structural types (tuples, lists, sets, maps and functions) are interned, so
 two types are equal exactly when their indices are. Records and choice types
@@ -293,7 +293,7 @@ The numbers below are the enum values in `heap/types.h`.
 | `choice` (18) | name string index, case count, that many cases |
 | `function` (19) | parameter count, that many type indices, result type index; at most `MO_LIMIT_BYTECODE_PARAMETERS`, without `env` |
 | `env` (20) | closure code's function index |
-| `capability` (21) | `mo_capability`: Args = 0, Env = 1, Console = 2, Files = 3, ReadFiles = 4, Clock = 5, Random = 6, Simulation = 7, Network = 8, Connection = 9 |
+| `capability` (21) | `mo_capability`: Args = 0, Env = 1, Console = 2, Files = 3, ReadFiles = 4, Clock = 5, Random = 6, Simulation = 7, Network = 8, Connection = 9, Sqlite = 10, Sqlite.Database = 11 |
 
 A **field** is its name string index, then its type index. A **case** is its
 name string index, field count, then its fields in declaration order. Only
@@ -1052,6 +1052,7 @@ A capability is a heap object that carries its own operations. It has:
 - for `Files` and `ReadFiles`, its folder: an open handle for a real one, and
   a path prefix for a fake one;
 - for a real `Connection`, its socket, its optional TLS session and its deadline;
+- for a real `Sqlite`, its root folder descriptor, and for a `Sqlite.Database`, its open SQLite connection (and, for a fake, its shared hub reference);
 - and whether it is read-only.
 
 `host r_d, h, r_c, …` calls operation `h` of `r_c`'s table. A fake
@@ -1066,9 +1067,10 @@ constructor makes a capability rather than using one, so `host` calls it by
 - `ReadFiles`: `read_text`, `read_bytes`, `list`, `entries`, `exists?` and `within`;
 - `Clock`: `now`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
 - `Network`: `connect`, `connect_secure` and `allow_hosts`. `Connection`: `send` and `receive`;
+- `Sqlite`: `open`. `Sqlite.Database`: `run` and `query`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
-  `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` and
-  `Network.fake`.
+  `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of`,
+  `Network.fake` and `Sqlite.fake`.
 
 `STOREOP` entries in `hostops.def` (`LOAD`, `APPEND`, `SNAPSHOT`) are runtime-only:
 they have no bytecode opcode and no `host` encoding.
@@ -1108,6 +1110,11 @@ replies of the peer it reached, the bytes sent so far, and how much of the reply
 `receive` has handed out. A fake connection holds no reference to its network,
 and opens no socket.
 
+`Sqlite.fake()` makes an empty reference-counted in-memory hub of named
+`:memory:` SQLite connections (and C embeddings snapshot and restore it as
+`Map(Text, Bytes)`): every `open` of the same normalized path on one fake shares
+the same underlying in-memory database without touching the filesystem.
+
 **Simulation** is a VM-owned fake capability. Its native context owns one
 service loop and one open in-memory store. The last reference, or heap
 teardown after a stopped test, invokes its release once: free the loop, then
@@ -1121,12 +1128,13 @@ Simulation is excluded from main capabilities and service descriptor types.
 without fields. These names are checked as a built-in shape at send sites.
 
 **A real capability** is made by the runtime, once, for `main`. Dropping a real
-`Files` or `ReadFiles` handle closes its folder's descriptor. The number of
-open handles has a named limit, and `within` past it is a bug. A real
-`Connection` is the one capability a program gets from an operation and never
-from `main`: `connect` or `connect_secure` makes it, dropping it closes its TLS
-session (if any) and socket, and the number open at once has a named limit, past
-which `connect` or `connect_secure` is a bug. `mo_call_main`
+`Files`, `ReadFiles` or `Sqlite` handle closes its folder's descriptor. The number of
+open handles has a named limit, and `within` past it is a bug. `Connection` and
+`Sqlite.Database` are capabilities a program gets from operations and never
+from `main`: `connect` or `connect_secure` makes a `Connection`, `open` makes a
+`Sqlite.Database`, dropping them closes the socket/TLS session or SQLite
+connection, and the number open at once has a named limit (64 connections, 16
+databases), past which opening another is a bug. `mo_call_main`
 retains each declared kind in the process so repeated calls share it.
 Host refusal keeps the capability and operand ownership intact. Fake updates
 are transactional on allocation failure; real external I/O and bindings cannot

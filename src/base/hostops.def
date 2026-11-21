@@ -89,6 +89,11 @@ HOSTOP(CONNECTION_SEND,        "Connection", "send",          "fn(Connection, By
 HOSTOP(CONNECTION_RECEIVE,     "Connection", "receive",       "fn(Connection, Int) : Result(Bytes, NetworkError)",   "bb",  "most below 1 or above the receive limit", false)
 HOSTOP(NETWORK_FAKE,           "Network",   "fake",           "fn(Map(Text, Map(Bytes, Bytes))) : Network",          "o",   "",                                   true)
 
+HOSTOP(SQLITE_OPEN,            "Sqlite",    "open",           "fn(Sqlite, Text) : Result(Sqlite.Database, SqliteError)", "bb", "too many databases open at once", false)
+HOSTOP(SQLITE_FAKE,            "Sqlite",    "fake",           "fn() : Sqlite",                                           "",   "",                                true)
+HOSTOP(SQLITE_RUN,             "Sqlite",    "run",            "fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Unit, SqliteError)", "bbb", "",             false)
+HOSTOP(SQLITE_QUERY,           "Sqlite",    "query",          "fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)", "bbb", "",     false)
+
 #undef HOSTOP
 
 /* Runtime-owned store capability. No Mo type, signature or bytecode operation:

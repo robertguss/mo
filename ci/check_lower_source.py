@@ -842,6 +842,13 @@ SPEC_CASES["network-error"] = (body[len("module Main\n"):], {
     None: ["returned", "0"],
 })
 
+body = pathlib.Path("tests/lower-source/sqlite-types/main.mo").read_text()
+assert body.startswith("module Main\n")
+SPEC_CASES["sqlite-types"] = (body[len("module Main\n"):], {
+    "Main.test.1": ["returned", "Unit"],
+    None: ["returned", "0"],
+})
+
 body = pathlib.Path("tests/lower-source/service-descriptor/main.mo").read_text()
 assert body.startswith("module Main\n")
 SPEC_CASES["service-descriptor"] = (body[len("module Main\n"):], {

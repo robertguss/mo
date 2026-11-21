@@ -89,6 +89,8 @@ NODE(ty_object, struct mo_core_ty, enum mo_core_ty_tag, T(INT, "int", END),
      T(ORDERING, "ordering", END), T(FILE_ERROR, "fileError", END), T(ENTRY, "entry", END),
      T(ENTRY_KIND, "entryKind", END), T(SIMULATION, "simulation", END),
      T(SIMULATION_ERROR, "simulationError", END), T(NETWORK_ERROR, "networkError", END),
+     T(SQLITE_VALUE, "sqliteValue", END), T(SQLITE_ROWS, "sqliteRows", END),
+     T(SQLITE_ERROR, "sqliteError", END),
      T(FN, "fn", F(struct mo_core_ty, as.fn.params, ty_list), F(struct mo_core_ty, as.fn.ret, ty),
        END),
      T(CAP, "cap", F(struct mo_core_ty, as.cap, cap), END));
@@ -96,7 +98,8 @@ NODE(ty_object, struct mo_core_ty, enum mo_core_ty_tag, T(INT, "int", END),
 #define C(tag, wire) V(enum mo_core_cap_tag, MO_CORE_CAP_##tag, wire, END)
 NODE(cap_object, struct mo_core_cap, enum mo_core_cap_tag, C(CONSOLE, "console"), C(FILES, "files"),
      C(READ_FILES, "readFiles"), C(CLOCK, "clock"), C(RANDOM, "random"), C(ARGS, "args"),
-     C(ENV, "env"), C(NETWORK, "network"), C(CONNECTION, "connection"));
+     C(ENV, "env"), C(NETWORK, "network"), C(CONNECTION, "connection"), C(SQLITE, "sqlite"),
+     C(DATABASE, "database"));
 #undef C
 
 /* The literal subset of Value has the same payloads, but distinct tags and C layouts. */

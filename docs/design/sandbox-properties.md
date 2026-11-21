@@ -188,38 +188,44 @@ and `main` receives only the capabilities it declares.*
   `fail` are accepted only in spec code, and non-spec code cannot call, tail-call, make a
   closure of, or load a closure constant of spec code (`bytecode.md` section 9, item 6). So
   `main` and what it reaches cannot make a fake, even in an image that contains tests.
-  `Files.within` and `read_only` only narrow a capability. A `Connection` comes only from
-  `connect` on a `Network`: `main` cannot list one, and a service holds no capability at all.
-  A fake network opens no socket.
+  `Files.within` and `read_only` only narrow a capability. `Connection` comes only from
+  `connect` on a `Network`, and `Sqlite.Database` comes only from `open` on a `Sqlite`:
+  `main` cannot list either, and a service holds no capability at all.
+  A fake network opens no socket, and a fake `Sqlite` touches no file.
 - Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_network.c`,
-  `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`, `fuzz/fuzz_host_real.c`,
-  `fuzz/fuzz_network.c` and `fuzz/fuzz_network_fake.c`. The `Http` client is Mo code in
+  `tests/test_sqlite.c`, `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`,
+  `fuzz/fuzz_host_real.c`, `fuzz/fuzz_network.c`, `fuzz/fuzz_network_fake.c` and
+  `fuzz/fuzz_sqlite.c`. The `Http` client is Mo code in
   `lib/http.mo`: it reaches the network only through the `Network` a program passes to `send`,
   and `fuzz/fuzz_http_client.c` runs its reader on arbitrary bytes.
 - Not covered: the primitives (`src/prim`) are trusted C that the VM calls directly; that they
   perform no I/O is by construction and review, not a mechanical check. The host operations are
   trusted C. Console and entropy sources are process-wide: `mo_host_start` ignores `SIGPIPE`
-  for the whole process (`architecture.md` section 7). A `Network` is not narrowed: a program
-  that holds one can connect to any host and port the machine can reach, where a `Files`
-  reaches one folder. Nothing in this phase limits it to a list of hosts.
+  for the whole process (`architecture.md` section 7). On `Sqlite.Database`, per-call authorizer
+  checks block `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA temp_store*` and extension loading, and
+  temporary storage stays in memory, though SQL statements can still read the wall clock via
+  `datetime('now')` and draw pseudo-random values via `random()` without `Clock` or `Random`
+  (`docs/design/outside-world.md`).
 
-### P8. File capabilities cannot reach outside their folder
+### P8. File and SQLite capabilities cannot reach outside their folder
 
-*A `Files` or `ReadFiles` handle resolves paths beneath the directory object it holds, and
+*A `Files`, `ReadFiles` or `Sqlite` handle resolves paths beneath the directory object it holds, and
 nothing else, through `..` or links.*
 
 - Enforced by: lexical normalization that refuses absolute paths, empty components and a `..`
   that leaves the root; then `openat2` with `RESOLVE_BENEATH` where available, or a
   component-at-a-time `openat` with `O_NOFOLLOW` and link expansion bounded by
   `MO_LIMIT_PATH_LINKS` and `MO_LIMIT_PATH_STEPS`; identity checks of the resolved object before
-  I/O (D236; `architecture.md` section 7, "Files").
+  I/O (D236; `architecture.md` section 7, "Files"). For `Sqlite.open`, parent folders are resolved
+  with the same `mo_host_resolve`, and the database leaf and its `-journal`, `-wal` and `-shm`
+  sidecar names are checked with `AT_SYMLINK_NOFOLLOW` and opened with `SQLITE_OPEN_NOFOLLOW`.
 - Evidence: CBMC `normalize` proof: `mo_host_normalize` accepts exactly the contained relative
   paths of up to 6 bytes over `{'.', '/', 'a'}`, and a refusal is a containment failure
   (`cbmc/path.c`). `resolve_portable` and `resolve_kernel` prove memory/arithmetic safety,
   root-derived descriptor use, no-follow/beneath-root flags and temporary-descriptor cleanup
   with an eight-byte path buffer, two links, eight work steps and three temporary descriptors
-  under modelled syscalls (`cbmc/README.md`). `tests/test_host_resolver.c` and `tests/test_host.c`
-  cover real lookups (including hostile links);
+  under modelled syscalls (`cbmc/README.md`). `tests/test_host_resolver.c`, `tests/test_host.c`
+  and `tests/test_sqlite.c` cover real lookups (including hostile links);
   `fuzz/fuzz_host_real.c` (path resolution never resolves outside the folder, `architecture.md`
   section 11).
 - Not covered: another process renaming an intermediate directory during a lookup can make the

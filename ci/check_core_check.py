@@ -254,11 +254,12 @@ def signatures():
         table.append((f"(eq {eq})", [eq, eq], "(bool)", False))
     # Structural observation has no ability requirement, even for functions and capabilities.
     for ty in [I, F, D, T, "(bytes)", "(char)", "(unit)", "(ordering)",
-               "(range)", "(time)", "(duration)", "(fileError)", "(networkError)", "(entry)",
+               "(range)", "(time)", "(duration)", "(fileError)", "(networkError)",
+               "(sqliteValue)", "(sqliteRows)", "(sqliteError)", "(entry)",
                "(fn ((int)) (text))", '(data "undeclared")', L(T), m, se,
                O(T), R(T), "(tuple ((text) (float)))"] + [
                    C(k) for k in ["args", "env", "console", "files", "readFiles", "clock", "random",
-                                  "network", "connection"]]:
+                                  "network", "connection", "sqlite", "database"]]:
         table.append((f"(structural {ty})", [ty], T, False))
     add("io", "argsList", C("args"), L(T))
     add("io", "envGet", C("env") + "|" + T, O(T))
@@ -295,6 +296,12 @@ def signatures():
     add("io", "send", C("connection") + "|(bytes)", failed(U))
     add("io", "receive", C("connection") + "|" + I, failed("(bytes)"))
     add("io", "networkFake", f"(map {T} (map (bytes) (bytes)))", C("network"), True)
+    sqlite_err = lambda ok: f"(result {ok} (sqliteError))"
+    add("io", "sqliteOpen", C("sqlite") + "|" + T, sqlite_err(C("database")))
+    add("io", "sqliteFake", "", C("sqlite"), True)
+    add("io", "sqliteRun", C("database") + "|" + T + "|" + L("(sqliteValue)"), sqlite_err(U))
+    add("io", "sqliteQuery", C("database") + "|" + T + "|" + L("(sqliteValue)"),
+        sqlite_err("(sqliteRows)"))
     return table
 
 

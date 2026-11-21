@@ -1,3 +1,4 @@
+#include "host/internal.h"
 #include "host/store-internal.h"
 
 #include <errno.h>
@@ -84,6 +85,11 @@ static void initialize(void) {
     initialized = sqlite3_config(SQLITE_CONFIG_MALLOC, &memory);
     if (initialized == SQLITE_OK)
         initialized = sqlite3_initialize();
+}
+
+bool mo_host_sqlite_init(void) {
+    pthread_once(&once, initialize);
+    return initialized == SQLITE_OK;
 }
 
 bool store_exec(struct mo_store *s, const char *sql) {

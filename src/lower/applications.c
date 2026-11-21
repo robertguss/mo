@@ -417,7 +417,11 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Network.allow_hosts", {MO_CORE_IO_OP_ALLOW_HOSTS, false}},
                   {"Network.fake", {MO_CORE_IO_OP_NETWORK_FAKE, false}},
                   {"Connection.send", {MO_CORE_IO_OP_SEND, false}},
-                  {"Connection.receive", {MO_CORE_IO_OP_RECEIVE, false}}};
+                  {"Connection.receive", {MO_CORE_IO_OP_RECEIVE, false}},
+                  {"Sqlite.open", {MO_CORE_IO_OP_SQLITE_OPEN, false}},
+                  {"Sqlite.fake", {MO_CORE_IO_OP_SQLITE_FAKE, false}},
+                  {"Sqlite.run", {MO_CORE_IO_OP_SQLITE_RUN, false}},
+                  {"Sqlite.query", {MO_CORE_IO_OP_SQLITE_QUERY, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)
@@ -644,7 +648,9 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                              args.items[0], args.items[1]);
     }
     if (r->native != NULL &&
-        (strcmp(r->native, "Entry.name") == 0 || strcmp(r->native, "Entry.kind") == 0)) {
+        (strcmp(r->native, "Entry.name") == 0 || strcmp(r->native, "Entry.kind") == 0 ||
+         strcmp(r->native, "Sqlite.Rows.columns") == 0 ||
+         strcmp(r->native, "Sqlite.Rows.rows") == 0)) {
         MO_ASSERT(r->field != UINT32_MAX && r->operand_count == 1 && args.count == 1);
         return lower_cps_field_read(b, lower_cps_type(b, lower_cps_row(b, r->operands[0])->type),
                                     args.items[0], r->field);
@@ -660,7 +666,12 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
         strcmp(r->native, "ServiceDown") != 0 && strcmp(r->native, "ToolFailed") != 0 &&
         strcmp(r->native, "UnknownHost") != 0 && strcmp(r->native, "Refused") != 0 &&
         strcmp(r->native, "TimedOut") != 0 && strcmp(r->native, "Closed") != 0 &&
-        strcmp(r->native, "Broken") != 0 && strcmp(r->native, "Certificate") != 0)
+        strcmp(r->native, "Broken") != 0 && strcmp(r->native, "Certificate") != 0 &&
+        strcmp(r->native, "OutsideFolder") != 0 && strcmp(r->native, "NotPermitted") != 0 &&
+        strcmp(r->native, "SqlFailed") != 0 && strcmp(r->native, "Null") != 0 &&
+        strcmp(r->native, "Integer") != 0 && strcmp(r->native, "Real") != 0 &&
+        strcmp(r->native, "String") != 0 && strcmp(r->native, "Blob") != 0 &&
+        strcmp(r->native, "Rows") != 0)
         lower_refuse(p, MO_CODE_LOWER_UNFINISHED, "this native call is not lowered yet");
     if (lower_cps_kind(r) == MO_S_TUPLE || lower_cps_kind(r) == MO_S_MAP_ENTRY) {
         mo_core_expr e = lower_expr(p, MO_CORE_EXPR_TUPLE);
