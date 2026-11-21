@@ -238,6 +238,18 @@ def check(binary):
     run(binary, ["test", "--only", "a", "--only", "b", "--in", "Main", good], 2)
     run(binary, ["format", good, good], 0)
     run(binary, ["fix", good, good], 0)
+    mistake(["format", "--stdin", good], 'format --stdin takes no files: "--stdin"')
+    for cmd in ("check", "run", "test", "fix", "guide"):
+        mistake([cmd, "--stdin", *([] if cmd == "guide" else [good])],
+                'flag is not accepted by this command: "--stdin"')
+    unformatted = b"module Main\n\nfn add(a:Int,b:Int):Int\na+b\nend\n"
+    expected_fmt = b"module Main\n\nfn add(a: Int, b: Int) : Int\n  a + b\nend\n"
+    fmt_ok = subprocess.run([str(binary), "format", "--stdin"], input=unformatted,
+                            capture_output=True, timeout=30)
+    assert fmt_ok.returncode == 0 and fmt_ok.stdout == expected_fmt and not fmt_ok.stderr, fmt_ok
+    fmt_bad = subprocess.run([str(binary), "format", "--stdin"], input=b"module Main\nfn broken(\n",
+                             capture_output=True, timeout=30)
+    assert fmt_bad.returncode == 1 and not fmt_bad.stdout and b"<stdin>" in fmt_bad.stderr, fmt_bad
     for version in ("--version", "-V"):
         assert run(binary, [version], 0).stdout == b"mo 0.3.0\n"
     read_fd, write_fd = os.pipe()

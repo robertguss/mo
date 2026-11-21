@@ -1,0 +1,13 @@
+id = "mo"
+name = "Mo"
+version = "0.3.0"
+schema_version = 1
+authors = ["Robert Guss"]
+description = "Language support for Mo: syntax highlighting, outline symbols, bracket matching, and auto-indentation."
+repository = "https://github.com/robertguss/mo"
+languages = ["languages/mo"]
+
+[grammars.mo]
+repository = "https://github.com/robertguss/mo"
+rev = "main"
+path = "editors/tree-sitter-mo"

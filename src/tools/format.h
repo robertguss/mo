@@ -7,6 +7,6 @@
 #include "tools/tools.h"
 
 MO_MUST_USE int mo_format_files(const struct mo_cli *cli, struct mo_format_options options,
-                                FILE *errors);
+                                FILE *output, FILE *errors);
 
 #endif

@@ -1,0 +1,6 @@
+("(" @open ")" @close)
+("[" @open "]" @close)
+("{" @open "}" @close)
+(quoted_string "\"" @open "\"" @close)
+(multiline_string (multiline_string_start) @open (multiline_string_end) @close)
+(interpolation "#{" @open "}" @close)

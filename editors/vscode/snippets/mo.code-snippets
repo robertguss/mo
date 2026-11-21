@@ -1,0 +1,95 @@
+{
+  "Module header": {
+    "prefix": "module",
+    "body": [
+      "module ${1:Main}",
+      "",
+      "$0"
+    ],
+    "description": "Declare a Mo module"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:params}) : ${3:Int}",
+      "  $0",
+      "end"
+    ],
+    "description": "Declare a Mo function"
+  },
+  "Main CLI entry": {
+    "prefix": "main",
+    "body": [
+      "fn main(args: Args, console: Console) : Int",
+      "  $0",
+      "  0",
+      "end"
+    ],
+    "description": "Declare a CLI main function"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name}",
+      "  ${2:field}: ${3:Text}",
+      "end"
+    ],
+    "description": "Declare a Mo record type"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name}",
+      "  ${2:Case}",
+      "end"
+    ],
+    "description": "Declare a Mo choice type"
+  },
+  "Test block": {
+    "prefix": "test",
+    "body": [
+      "test \"${1:behaviour}\"",
+      "  assert ${2:true}",
+      "end"
+    ],
+    "description": "Declare a Mo test"
+  },
+  "Promise block": {
+    "prefix": "promise",
+    "body": [
+      "promise \"${1:invariant}\"",
+      "  ${2:result == result}",
+      "end"
+    ],
+    "description": "Declare a function or service promise"
+  },
+  "Examples block": {
+    "prefix": "examples",
+    "body": [
+      "examples",
+      "  ${1:f(1) == 1}",
+      "end"
+    ],
+    "description": "Declare function examples"
+  },
+  "API block": {
+    "prefix": "api",
+    "body": [
+      "api",
+      "  port ${1:8080}",
+      "  get \"/${2:health}\" ${3:health}",
+      "end"
+    ],
+    "description": "Declare an HTTP API server block"
+  },
+  "Actor block": {
+    "prefix": "actor",
+    "body": [
+      "actor ${1:Counter}",
+      "  state ${2:Int} = ${3:0}",
+      "  calls ${4:increment}",
+      "end"
+    ],
+    "description": "Declare an in-process actor capability"
+  }
+}

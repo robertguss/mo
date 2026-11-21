@@ -1710,7 +1710,7 @@ at `PATH` exposing built-in operator views and live `mo push` upgrade tools,
 authenticated by OS filesystem permissions.
 `mo fetch --admin-socket PATH --export state|failure ID --out FILE`,
 run on the same host, saves an export of the state or of one retained failure
-over the admin socket to a new private file. `mo format` and `mo fix` rewrite the files they are given.
+over the admin socket to a new private file. `mo format` and `mo fix` rewrite the files they are given, and `mo format --stdin` formats standard input to standard output.
 `mo guide` needs no file. It prints a short guide for agents writing Mo,
 matched to the installed version: how to work with the `mo` command, a small
 complete program with its tests, and when a task is done. `mo guide

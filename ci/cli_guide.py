@@ -243,6 +243,8 @@ def guide_claims(binary):
         says("`mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks "
              "again, and prints the errors that are left, as `mo check` does. It rewrites only "
              "the files it is given.",
+             "`mo format --stdin` formats standard input to standard output for editors without "
+             "touching files on disk.",
              "`mo format` and `mo fix` rewrite the files they are given.")
         says("`mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode "
              "to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A module "

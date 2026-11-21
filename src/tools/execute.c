@@ -504,7 +504,7 @@ int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     }
     if (cli->command == MO_COMMAND_FORMAT) {
         struct mo_format_options options = {100, display_width};
-        return mo_format_files(cli, options, errors);
+        return mo_format_files(cli, options, output, errors);
     }
     if (cli->command == MO_COMMAND_FIX)
         return fix_files(cli, output, errors);
