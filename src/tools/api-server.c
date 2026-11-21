@@ -25,7 +25,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -146,8 +146,10 @@ static void compile_api_image(void *arg) {
             } else {
                 struct mo_defect init_defect;
                 if (mo_image_init(img, &cli->limits, &init_defect) != MO_RETURNED) {
-                    bool wrote = mo_write_defect(w->errors, NULL, &init_defect);
-                    (void)wrote;
+                    if (w->errors != NULL) {
+                        bool wrote = mo_write_defect(w->errors, NULL, &init_defect);
+                        (void)wrote;
+                    }
                     mo_image_free(img);
                     w->status = 70;
                     goto cleanup;
@@ -179,9 +181,13 @@ static void compile_api_image(void *arg) {
         }
     }
 
-    if (w->image == NULL)
-        w->status = mo_write_diagnostics(w->output, w->errors, false, MO_COMMAND_SERVE, &sources,
-                                         &diags, NULL);
+    if (w->image == NULL) {
+        if (w->output != NULL && w->errors != NULL)
+            w->status = mo_write_diagnostics(w->output, w->errors, false, MO_COMMAND_SERVE,
+                                             &sources, &diags, NULL);
+        else
+            w->status = 1;
+    }
 
 cleanup:
     mo_buffer_free(&wire);
@@ -189,6 +195,29 @@ cleanup:
     mo_arena_free(&arena);
     mo_diags_free(&diags);
     mo_sources_free(&sources);
+}
+
+int mo_api_compile_file(const struct mo_cli *cli, FILE *output, FILE *errors,
+                        struct mo_image **image_out, uint32_t *wire_fn_out,
+                        uint16_t *default_port_out, uint32_t actor_services[MO_LIMIT_API_ACTORS],
+                        uint32_t *actor_count_out) {
+    *image_out = NULL;
+    struct api_compile_work cw = {
+        .cli = cli, .output = output, .errors = errors, .wire_fn = MO_NO_INDEX, .status = 1};
+    if (mo_with_stack(MO_SOURCE_STACK_SIZE, compile_api_image, &cw) != 0)
+        return -1;
+    if (cw.image == NULL)
+        return cw.status;
+    *image_out = cw.image;
+    *wire_fn_out = cw.wire_fn;
+    if (default_port_out != NULL)
+        *default_port_out = cw.default_port;
+    if (actor_count_out != NULL)
+        *actor_count_out = cw.actor_count;
+    if (actor_services != NULL)
+        for (uint32_t i = 0; i < cw.actor_count; i++)
+            actor_services[i] = cw.actor_services[i];
+    return 0;
 }
 
 struct http_header_slice {
@@ -208,16 +237,40 @@ struct parsed_http_request {
     struct mo_buffer body;
 };
 
-static bool send_all(int fd, const uint8_t *buf, size_t len) {
+static uint64_t api_monotonic_us(void) {
+    struct timespec ts = {0, 0};
+    (void)clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * UINT64_C(1000000) + (uint64_t)(ts.tv_nsec / 1000);
+}
+
+static uint64_t add_deadline_us(uint64_t start_us, uint64_t delta_us) {
+    return UINT64_MAX - start_us < delta_us ? UINT64_MAX : start_us + delta_us;
+}
+
+static bool send_all_deadline(int fd, const uint8_t *buf, size_t len, uint64_t deadline_us) {
     size_t sent = 0;
     while (sent < len) {
+        uint64_t now = api_monotonic_us();
+        if (now >= deadline_us)
+            return false;
+        uint64_t rem_us = deadline_us - now;
+        int timeout_ms = rem_us > UINT64_C(60000000) ? 60000 : (int)((rem_us + 999) / 1000);
+        struct pollfd pfd = {.fd = fd, .events = POLLOUT};
+        int pr = poll(&pfd, 1, timeout_ms);
+        if (pr == 0)
+            return false;
+        if (pr < 0) {
+            if (errno == EINTR)
+                continue;
+            return false;
+        }
         int flags = 0;
 #ifdef MSG_NOSIGNAL
         flags |= MSG_NOSIGNAL;
 #endif
         ssize_t n = send(fd, buf + sent, len - sent, flags);
         if (n < 0) {
-            if (errno == EINTR)
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
                 continue;
             return false;
         }
@@ -226,6 +279,37 @@ static bool send_all(int fd, const uint8_t *buf, size_t len) {
         sent += (size_t)n;
     }
     return true;
+}
+
+static ssize_t recv_deadline(int fd, uint8_t *buf, size_t len, uint64_t deadline_us,
+                             bool *timed_out) {
+    for (;;) {
+        uint64_t now = api_monotonic_us();
+        if (now >= deadline_us) {
+            *timed_out = true;
+            return -1;
+        }
+        uint64_t rem_us = deadline_us - now;
+        int timeout_ms = rem_us > UINT64_C(60000000) ? 60000 : (int)((rem_us + 999) / 1000);
+        struct pollfd pfd = {.fd = fd, .events = POLLIN};
+        int pr = poll(&pfd, 1, timeout_ms);
+        if (pr == 0) {
+            *timed_out = true;
+            return -1;
+        }
+        if (pr < 0) {
+            if (errno == EINTR)
+                continue;
+            return -1;
+        }
+        ssize_t got = recv(fd, buf, len, 0);
+        if (got < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            return -1;
+        }
+        return got;
+    }
 }
 
 static const char *status_reason_phrase(int64_t code) {
@@ -254,6 +338,8 @@ static const char *status_reason_phrase(int64_t code) {
         return "Not Found";
     case 405:
         return "Method Not Allowed";
+    case 408:
+        return "Request Timeout";
     case 409:
         return "Conflict";
     case 413:
@@ -275,7 +361,8 @@ static const char *status_reason_phrase(int64_t code) {
     }
 }
 
-static void send_fixed_json_error(int fd, int code, const char *err_code) {
+static void send_fixed_json_error(int fd, int code, const char *err_code, uint64_t write_timeout) {
+    uint64_t deadline = add_deadline_us(api_monotonic_us(), write_timeout);
     char payload[128];
     int plen = snprintf(payload, sizeof payload, "{\"error\":\"%s\"}", err_code);
     if (plen < 0 || (size_t)plen >= sizeof payload)
@@ -286,8 +373,8 @@ static void send_fixed_json_error(int fd, int code, const char *err_code) {
                         "%d\r\nConnection: close\r\n\r\n",
                         code, status_reason_phrase(code), plen);
     if (hlen > 0 && (size_t)hlen < sizeof head) {
-        (void)send_all(fd, (const uint8_t *)head, (size_t)hlen);
-        (void)send_all(fd, (const uint8_t *)payload, (size_t)plen);
+        if (send_all_deadline(fd, (const uint8_t *)head, (size_t)hlen, deadline))
+            (void)send_all_deadline(fd, (const uint8_t *)payload, (size_t)plen, deadline);
     }
 }
 
@@ -308,60 +395,65 @@ static bool ascii_ieq(const char *a, size_t alen, const char *b) {
     return true;
 }
 
-static bool recv_more(int fd, uint8_t *buf, size_t cap, size_t *len) {
-    if (*len >= cap)
-        return false;
-    for (;;) {
-        ssize_t got = recv(fd, buf + *len, cap - *len, 0);
-        if (got < 0) {
-            if (errno == EINTR)
-                continue;
-            return false;
-        }
-        if (got == 0)
-            return false;
-        *len += (size_t)got;
-        return true;
+static bool has_ctl_bytes(const char *s, size_t len, bool allow_tab) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == 0x7f || (c < 0x20 && !(allow_tab && c == '\t')))
+            return true;
     }
+    return false;
 }
 
-static bool read_exact_body(int fd, const uint8_t *initial, size_t initial_len,
-                            size_t content_length, struct mo_buffer *out) {
+static bool recv_more(int fd, uint8_t *buf, size_t cap, size_t *len, uint64_t deadline_us,
+                      bool *timed_out) {
+    if (*len >= cap)
+        return false;
+    ssize_t got = recv_deadline(fd, buf + *len, cap - *len, deadline_us, timed_out);
+    if (got <= 0)
+        return false;
+    *len += (size_t)got;
+    return true;
+}
+
+static int read_exact_body(int fd, const uint8_t *initial, size_t initial_len,
+                           size_t content_length, uint64_t deadline_us, struct mo_buffer *out) {
     if (initial_len > content_length)
         initial_len = content_length;
     if (initial_len != 0 && !mo_buffer_append(out, initial, initial_len))
-        return false;
+        return 413;
     uint8_t chunk[16384];
     while (out->length < content_length) {
         size_t want = content_length - out->length;
         if (want > sizeof chunk)
             want = sizeof chunk;
-        ssize_t got = recv(fd, chunk, want, 0);
-        if (got < 0) {
-            if (errno == EINTR)
-                continue;
-            return false;
-        }
-        if (got == 0)
-            return false;
+        bool timed_out = false;
+        ssize_t got = recv_deadline(fd, chunk, want, deadline_us, &timed_out);
+        if (got <= 0)
+            return timed_out ? 408 : 400;
         if (!mo_buffer_append(out, chunk, (size_t)got))
-            return false;
+            return 413;
     }
-    return true;
+    return 0;
 }
 
 static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len,
-                              struct mo_buffer *out, int *err_status) {
+                              uint64_t deadline_us, struct mo_buffer *out, int *err_status) {
     struct mo_buffer raw;
-    mo_buffer_init(&raw, MO_LIMIT_API_BODY_BYTES + 65536);
+    mo_buffer_init(&raw, 65536);
     if (initial_len != 0 && !mo_buffer_append(&raw, initial, initial_len)) {
         mo_buffer_free(&raw);
         *err_status = 413;
         return false;
     }
     size_t pos = 0;
+    size_t overhead_bytes = 0;
     uint8_t tmp[16384];
     for (;;) {
+        if (pos >= 16384 && pos * 2 >= raw.length) {
+            memmove(raw.bytes, raw.bytes + pos, raw.length - pos);
+            raw.length -= pos;
+            pos = 0;
+        }
         size_t line_end = SIZE_MAX;
         for (size_t i = pos; i + 1 < raw.length; i++)
             if (raw.bytes[i] == '\r' && raw.bytes[i + 1] == '\n') {
@@ -374,12 +466,11 @@ static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len
                 *err_status = 400;
                 return false;
             }
-            ssize_t got = recv(fd, tmp, sizeof tmp, 0);
+            bool timed_out = false;
+            ssize_t got = recv_deadline(fd, tmp, sizeof tmp, deadline_us, &timed_out);
             if (got <= 0) {
-                if (got < 0 && errno == EINTR)
-                    continue;
                 mo_buffer_free(&raw);
-                *err_status = 400;
+                *err_status = timed_out ? 408 : 400;
                 return false;
             }
             if (!mo_buffer_append(&raw, tmp, (size_t)got)) {
@@ -389,6 +480,19 @@ static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len
             }
             continue;
         }
+        size_t line_len = line_end - pos;
+        if (line_len > 1024) {
+            mo_buffer_free(&raw);
+            *err_status = 400;
+            return false;
+        }
+        if (overhead_bytes + line_len + 4 > MO_LIMIT_API_CHUNK_OVERHEAD_BYTES) {
+            mo_buffer_free(&raw);
+            *err_status = 413;
+            return false;
+        }
+        overhead_bytes += line_len + 4;
+
         size_t chunk_sz = 0;
         bool any_hex = false;
         for (size_t i = pos; i < line_end; i++) {
@@ -419,23 +523,54 @@ static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len
         }
         pos = line_end + 2;
         if (chunk_sz == 0) {
-            while (raw.length - pos < 2) {
-                ssize_t got = recv(fd, tmp, sizeof tmp, 0);
-                if (got <= 0) {
-                    if (got < 0 && errno == EINTR)
-                        continue;
+            size_t trailer_bytes = 0;
+            for (;;) {
+                size_t teol = SIZE_MAX;
+                for (size_t i = pos; i + 1 < raw.length; i++)
+                    if (raw.bytes[i] == '\r' && raw.bytes[i + 1] == '\n') {
+                        teol = i;
+                        break;
+                    }
+                if (teol == SIZE_MAX) {
+                    if (trailer_bytes + (raw.length - pos) > MO_LIMIT_API_HEADER_BYTES) {
+                        mo_buffer_free(&raw);
+                        *err_status = 431;
+                        return false;
+                    }
+                    bool timed_out = false;
+                    ssize_t got = recv_deadline(fd, tmp, sizeof tmp, deadline_us, &timed_out);
+                    if (got <= 0) {
+                        mo_buffer_free(&raw);
+                        *err_status = timed_out ? 408 : 400;
+                        return false;
+                    }
+                    if (!mo_buffer_append(&raw, tmp, (size_t)got)) {
+                        mo_buffer_free(&raw);
+                        *err_status = 413;
+                        return false;
+                    }
+                    continue;
+                }
+                if (teol == pos) {
+                    mo_buffer_free(&raw);
+                    return true;
+                }
+                size_t tlen = teol - pos;
+                if (trailer_bytes + tlen + 2 > MO_LIMIT_API_HEADER_BYTES) {
+                    mo_buffer_free(&raw);
+                    *err_status = 431;
+                    return false;
+                }
+                const uint8_t *colon = memchr(raw.bytes + pos, ':', tlen);
+                if (colon == NULL || colon == raw.bytes + pos ||
+                    has_ctl_bytes((const char *)(raw.bytes + pos), tlen, true)) {
                     mo_buffer_free(&raw);
                     *err_status = 400;
                     return false;
                 }
-                if (!mo_buffer_append(&raw, tmp, (size_t)got)) {
-                    mo_buffer_free(&raw);
-                    *err_status = 413;
-                    return false;
-                }
+                trailer_bytes += tlen + 2;
+                pos = teol + 2;
             }
-            mo_buffer_free(&raw);
-            return true;
         }
         if (out->length + chunk_sz > MO_LIMIT_API_BODY_BYTES) {
             mo_buffer_free(&raw);
@@ -443,12 +578,11 @@ static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len
             return false;
         }
         while (raw.length - pos < chunk_sz + 2) {
-            ssize_t got = recv(fd, tmp, sizeof tmp, 0);
+            bool timed_out = false;
+            ssize_t got = recv_deadline(fd, tmp, sizeof tmp, deadline_us, &timed_out);
             if (got <= 0) {
-                if (got < 0 && errno == EINTR)
-                    continue;
                 mo_buffer_free(&raw);
-                *err_status = 400;
+                *err_status = timed_out ? 408 : 400;
                 return false;
             }
             if (!mo_buffer_append(&raw, tmp, (size_t)got)) {
@@ -467,8 +601,9 @@ static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len
     }
 }
 
-/* Returns 0 on success, -1 on clean initial EOF, or HTTP status code (400/413/431) on error. */
-static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, struct parsed_http_request *out) {
+/* Returns 0 on success, -1 on clean initial EOF, or HTTP status code (400/408/413/431). */
+static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, uint64_t deadline_us,
+                             struct parsed_http_request *out) {
     size_t hlen = 0;
     size_t header_end = SIZE_MAX;
     for (;;) {
@@ -483,8 +618,9 @@ static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, struct parsed_h
         if (hlen >= MO_LIMIT_API_HEADER_BYTES)
             return 431;
         size_t prev = hlen;
-        if (!recv_more(fd, hbuf, hcap, &hlen))
-            return prev == 0 ? -1 : 400;
+        bool timed_out = false;
+        if (!recv_more(fd, hbuf, hcap, &hlen, deadline_us, &timed_out))
+            return timed_out ? 408 : (prev == 0 ? -1 : 400);
     }
 
     size_t line_end = 0;
@@ -507,7 +643,11 @@ static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, struct parsed_h
     out->method_len = (size_t)(sp1 - req_line);
     out->target = sp1 + 1;
     out->target_len = (size_t)(sp2 - (sp1 + 1));
-    if (!mo_utf8_valid((const uint8_t *)out->method, out->method_len) ||
+    for (size_t k = 0; k < out->method_len; k++)
+        if ((unsigned char)out->method[k] <= 0x20 || (unsigned char)out->method[k] >= 0x7f)
+            return 400;
+    if (has_ctl_bytes(out->target, out->target_len, false) ||
+        !mo_utf8_valid((const uint8_t *)out->method, out->method_len) ||
         !mo_utf8_valid((const uint8_t *)out->target, out->target_len))
         return 400;
 
@@ -537,7 +677,7 @@ static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, struct parsed_h
         }
         while (vlen > 0 && (vstart[vlen - 1] == ' ' || vstart[vlen - 1] == '\t'))
             vlen--;
-        if (!mo_utf8_valid((const uint8_t *)vstart, vlen))
+        if (has_ctl_bytes(vstart, vlen, true) || !mo_utf8_valid((const uint8_t *)vstart, vlen))
             return 400;
         if (out->header_count >= MO_LIMIT_API_HEADERS)
             return 431;
@@ -560,7 +700,7 @@ static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, struct parsed_h
             has_cl = true;
             content_length = parsed_cl;
         } else if (ascii_ieq(hline, nlen, "transfer-encoding")) {
-            if (has_cl || !ascii_ieq(vstart, vlen, "chunked"))
+            if (has_cl || is_chunked || !ascii_ieq(vstart, vlen, "chunked"))
                 return 400;
             is_chunked = true;
         }
@@ -571,11 +711,13 @@ static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, struct parsed_h
     size_t after_len = hlen - (header_end + 4);
     if (is_chunked) {
         int chunk_err = 400;
-        if (!read_chunked_body(fd, after_headers, after_len, &out->body, &chunk_err))
+        if (!read_chunked_body(fd, after_headers, after_len, deadline_us, &out->body, &chunk_err))
             return chunk_err;
     } else if (content_length > 0) {
-        if (!read_exact_body(fd, after_headers, after_len, content_length, &out->body))
-            return 400;
+        int body_err =
+            read_exact_body(fd, after_headers, after_len, content_length, deadline_us, &out->body);
+        if (body_err != 0)
+            return body_err;
     }
     return 0;
 }
@@ -626,53 +768,41 @@ static bool append_sanitized_header_bytes(struct mo_buffer *out, const uint8_t *
     return true;
 }
 
-struct api_worker_pool {
-    const struct mo_image *image;
-    uint32_t wire_fn;
-    int folder_fd;
-    FILE *output;
-    FILE *errors;
-    struct mo_limits limits;
-    uint32_t actor_count;
-    struct mo_live_actor *actors[MO_LIMIT_API_ACTORS];
-
-    pthread_mutex_t queue_mutex;
-    pthread_cond_t queue_cond;
-    pthread_mutex_t log_mutex;
-    bool stopping;
-    int queue[MO_LIMIT_API_QUEUE];
-    uint32_t head, tail, count;
-};
-
-static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
-    struct timeval tv = {.tv_sec = 15, .tv_usec = 0};
-    (void)setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    (void)setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_fd, int output_fd,
+                     int errors_fd, FILE *errors, pthread_mutex_t *log_mutex,
+                     const struct mo_limits *limits, struct mo_live_actor *const *actors,
+                     uint32_t actor_count, uint64_t read_timeout_us, uint64_t write_timeout_us,
+                     int client_fd) {
+    int fl = fcntl(client_fd, F_GETFL);
+    if (fl >= 0)
+        (void)fcntl(client_fd, F_SETFL, fl | O_NONBLOCK);
 #ifdef SO_NOSIGPIPE
     int one = 1;
     (void)setsockopt(client_fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
 
+    uint64_t read_deadline = add_deadline_us(api_monotonic_us(), read_timeout_us);
     size_t hcap = MO_LIMIT_API_HEADER_BYTES + 16384;
     struct mo_arena req_arena;
     mo_arena_init(&req_arena, hcap + 4096);
     uint8_t *hbuf = mo_arena_allocate(&req_arena, hcap, 1);
     if (hbuf == NULL) {
         mo_arena_free(&req_arena);
-        send_fixed_json_error(client_fd, 500, "internal_server_error");
+        send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
         (void)close(client_fd);
         return;
     }
 
     struct parsed_http_request req = {0};
-    mo_buffer_init(&req.body, MO_LIMIT_API_BODY_BYTES);
-    int parse_err = read_http_request(client_fd, hbuf, hcap, &req);
+    mo_buffer_init(&req.body, 4096);
+    int parse_err = read_http_request(client_fd, hbuf, hcap, read_deadline, &req);
     if (parse_err != 0) {
         if (parse_err > 0) {
-            const char *code_str = parse_err == 413   ? "payload_too_large"
+            const char *code_str = parse_err == 408   ? "request_timeout"
+                                   : parse_err == 413 ? "payload_too_large"
                                    : parse_err == 431 ? "headers_too_large"
                                                       : "bad_request";
-            send_fixed_json_error(client_fd, parse_err, code_str);
+            send_fixed_json_error(client_fd, parse_err, code_str, write_timeout_us);
         }
         mo_buffer_free(&req.body);
         mo_arena_free(&req_arena);
@@ -680,9 +810,9 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
         return;
     }
 
-    struct mo_process *proc = mo_process_new(pool->image, &pool->limits);
+    struct mo_process *proc = mo_process_new(image, limits);
     if (proc == NULL) {
-        send_fixed_json_error(client_fd, 500, "internal_server_error");
+        send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
         mo_buffer_free(&req.body);
         mo_arena_free(&req_arena);
         (void)close(client_fd);
@@ -692,14 +822,14 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
 
     struct mo_heap *heap = mo_process_heap(proc);
     struct mo_host *host = mo_process_host(proc);
-    if (fileno(pool->output) >= 0)
-        host->output = fileno(pool->output);
-    if (fileno(pool->errors) >= 0)
-        host->errors = fileno(pool->errors);
+    if (output_fd >= 0)
+        host->output = output_fd;
+    if (errors_fd >= 0)
+        host->errors = errors_fd;
 
-    const struct mo_bytecode *bc = mo_image_bytecode(pool->image);
-    const struct mo_types *types = mo_image_types(pool->image);
-    const struct mo_bytecode_function *fn = &bc->functions[pool->wire_fn];
+    const struct mo_bytecode *bc = mo_image_bytecode(image);
+    const struct mo_types *types = mo_image_types(image);
+    const struct mo_bytecode_function *fn = &bc->functions[wire_fn];
     uint32_t pcount = fn->parameter_count;
     MO_ASSERT(pcount >= 4 && pcount <= 4 + 9 + MO_LIMIT_API_ACTORS);
 
@@ -754,10 +884,9 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
         uint32_t cap_ty = fn->parameters[i].type;
         enum mo_capability cap_kind = types->items[cap_ty].capability;
         if (cap_kind == MO_CAP_SIMULATION) {
-            uint32_t actor_base = pcount - pool->actor_count;
-            MO_ASSERT(i >= actor_base && i - actor_base < pool->actor_count);
-            args_ok =
-                mo_value_live_actor(heap, cap_ty, pool->actors[i - actor_base], &call_args[i]);
+            uint32_t actor_base = pcount - actor_count;
+            MO_ASSERT(i >= actor_base && i - actor_base < actor_count);
+            args_ok = mo_value_live_actor(heap, cap_ty, actors[i - actor_base], &call_args[i]);
             if (args_ok)
                 built_args = i + 1;
             continue;
@@ -772,7 +901,7 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
             contents = &env_map;
         }
         struct mo_host_error herr;
-        if (mo_host_real(host, heap, cap_ty, contents, pool->folder_fd, &call_args[i], &herr) !=
+        if (mo_host_real(host, heap, cap_ty, contents, folder_fd, &call_args[i], &herr) !=
             MO_HOST_RETURNED) {
             args_ok = false;
             break;
@@ -786,7 +915,7 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
         if (have_env)
             mo_value_drop(heap, host->types->files, env_map);
         mo_process_free(proc);
-        send_fixed_json_error(client_fd, 500, "internal_server_error");
+        send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
         mo_buffer_free(&req.body);
         mo_arena_free(&req_arena);
         (void)close(client_fd);
@@ -795,23 +924,27 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
 
     struct mo_cell result;
     struct mo_defect defect;
-    enum mo_outcome outcome = mo_call(proc, pool->wire_fn, call_args, pcount, &result, &defect);
+    enum mo_outcome outcome = mo_call(proc, wire_fn, call_args, pcount, &result, &defect);
 
     if (outcome != MO_RETURNED) {
-        (void)pthread_mutex_lock(&pool->log_mutex);
-        (void)fprintf(pool->errors, "mo serve: failure: %.*s %.*s\n", (int)req.method_len,
-                      req.method, (int)req.target_len, req.target);
-        bool wrote = mo_write_defect(pool->errors, proc, &defect);
-        (void)wrote;
-        (void)fflush(pool->errors);
-        (void)pthread_mutex_unlock(&pool->log_mutex);
+        if (errors != NULL) {
+            if (log_mutex != NULL)
+                (void)pthread_mutex_lock(log_mutex);
+            (void)fprintf(errors, "mo serve: failure: %.*s %.*s\n", (int)req.method_len, req.method,
+                          (int)req.target_len, req.target);
+            bool wrote = mo_write_defect(errors, proc, &defect);
+            (void)wrote;
+            (void)fflush(errors);
+            if (log_mutex != NULL)
+                (void)pthread_mutex_unlock(log_mutex);
+        }
         for (uint32_t i = 0; i < pcount; i++)
             if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
                 mo_value_drop(heap, fn->parameters[i].type, call_args[i]);
         if (have_env)
             mo_value_drop(heap, host->types->files, env_map);
         mo_process_free(proc);
-        send_fixed_json_error(client_fd, 500, "internal_server_error");
+        send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
         mo_buffer_free(&req.body);
         mo_arena_free(&req_arena);
         (void)close(client_fd);
@@ -836,7 +969,7 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
         (status_code >= 100 && status_code < 200) || status_code == 204 || status_code == 304;
 
     struct mo_buffer wire_out;
-    mo_buffer_init(&wire_out, MO_LIMIT_API_HEADER_BYTES + 4096);
+    mo_buffer_init(&wire_out, 4096);
     char status_line[96];
     int slen = snprintf(status_line, sizeof status_line, "HTTP/1.1 %d %s\r\n", (int)status_code,
                         status_reason_phrase(status_code));
@@ -868,11 +1001,12 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
     wok = wok && clen > 0 && mo_buffer_append(&wire_out, cl_hdr, (size_t)clen);
 
     if (wok) {
-        bool sent = send_all(client_fd, wire_out.bytes, wire_out.length);
+        uint64_t write_deadline = add_deadline_us(api_monotonic_us(), write_timeout_us);
+        bool sent = send_all_deadline(client_fd, wire_out.bytes, wire_out.length, write_deadline);
         if (sent && !no_body_status && !is_head && body_len > 0)
-            (void)send_all(client_fd, body_ptr, body_len);
+            (void)send_all_deadline(client_fd, body_ptr, body_len, write_deadline);
     } else {
-        send_fixed_json_error(client_fd, 500, "internal_server_error");
+        send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
     }
 
     mo_buffer_free(&wire_out);
@@ -883,6 +1017,25 @@ static void dispatch_client_fd(struct api_worker_pool *pool, int client_fd) {
     mo_arena_free(&req_arena);
     (void)close(client_fd);
 }
+
+struct api_worker_pool {
+    const struct mo_image *image;
+    uint32_t wire_fn;
+    int folder_fd;
+    int output_fd;
+    int errors_fd;
+    FILE *errors;
+    struct mo_limits limits;
+    uint32_t actor_count;
+    struct mo_live_actor *actors[MO_LIMIT_API_ACTORS];
+
+    pthread_mutex_t queue_mutex;
+    pthread_cond_t queue_cond;
+    pthread_mutex_t log_mutex;
+    bool stopping;
+    int queue[MO_LIMIT_API_QUEUE];
+    uint32_t head, tail, count;
+};
 
 static void *api_worker_main(void *arg) {
     struct api_worker_pool *pool = arg;
@@ -898,7 +1051,11 @@ static void *api_worker_main(void *arg) {
         pool->head = (pool->head + 1) % MO_LIMIT_API_QUEUE;
         pool->count--;
         MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
-        dispatch_client_fd(pool, fd);
+
+        mo_api_serve_fd(pool->image, pool->wire_fn, pool->folder_fd, pool->output_fd,
+                        pool->errors_fd, pool->errors, &pool->log_mutex, &pool->limits,
+                        pool->actors, pool->actor_count, MO_LIMIT_API_READ_US,
+                        MO_LIMIT_API_WRITE_US, fd);
     }
 }
 
@@ -998,24 +1155,28 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         return true;
     }
 
-    struct api_compile_work cw = {
-        .cli = cli, .output = output, .errors = errors, .wire_fn = MO_NO_INDEX, .status = 1};
-    int stack_err = mo_with_stack(MO_SOURCE_STACK_SIZE, compile_api_image, &cw);
-    if (stack_err != 0) {
+    struct mo_image *image = NULL;
+    uint32_t wire_fn = MO_NO_INDEX;
+    uint16_t default_port = 0;
+    uint32_t actor_services[MO_LIMIT_API_ACTORS] = {0};
+    uint32_t actor_count = 0;
+    int comp_rc = mo_api_compile_file(cli, output, errors, &image, &wire_fn, &default_port,
+                                      actor_services, &actor_count);
+    if (comp_rc < 0) {
         *status_out =
             report_serve_start_error(output, errors, "could not prepare the source pipeline stack");
         return true;
     }
-    if (cw.image == NULL) {
-        *status_out = cw.status;
+    if (image == NULL) {
+        *status_out = comp_rc;
         return true;
     }
 
-    struct mo_process *probe = mo_process_new(cw.image, &cli->limits);
+    struct mo_process *probe = mo_process_new(image, &cli->limits);
     const char *host_err = probe == NULL ? "out of memory" : mo_host_start(mo_process_host(probe));
     mo_process_free(probe);
     if (host_err != NULL) {
-        mo_image_free(cw.image);
+        mo_image_free(image);
         *status_out = report_serve_start_error(output, errors, host_err);
         return true;
     }
@@ -1025,12 +1186,12 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         char buf[MO_CLI_ARGUMENT_SIZE + 128];
         (void)snprintf(buf, sizeof buf, "mo serve can't open the data folder %s: %s", data_dir,
                        strerror(errno));
-        mo_image_free(cw.image);
+        mo_image_free(image);
         *status_out = report_serve_start_error(output, errors, buf);
         return true;
     }
 
-    uint16_t requested_port = cli->has_port ? cli->port : cw.default_port;
+    uint16_t requested_port = cli->has_port ? cli->port : default_port;
     uint16_t actual_port = 0;
     int listen_err = 0;
     int listen_fd = open_api_listen_socket(requested_port, &actual_port, &listen_err);
@@ -1039,7 +1200,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         (void)snprintf(buf, sizeof buf, "mo serve could not listen on port %u: %s",
                        (unsigned)requested_port, strerror(listen_err));
         (void)close(folder_fd);
-        mo_image_free(cw.image);
+        mo_image_free(image);
         *status_out = report_serve_start_error(output, errors, buf);
         return true;
     }
@@ -1047,32 +1208,37 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     struct mo_limits req_limits = cli->limits;
     req_limits.heap_size = MO_LIMIT_API_REQUEST_HEAP;
 
-    struct api_worker_pool pool = {.image = cw.image,
-                                   .wire_fn = cw.wire_fn,
+    struct api_worker_pool pool = {.image = image,
+                                   .wire_fn = wire_fn,
                                    .folder_fd = folder_fd,
-                                   .output = output,
+                                   .output_fd = output != NULL ? fileno(output) : -1,
+                                   .errors_fd = errors != NULL ? fileno(errors) : -1,
                                    .errors = errors,
                                    .limits = req_limits,
-                                   .actor_count = cw.actor_count};
-    for (uint32_t a = 0; a < cw.actor_count; a++) {
+                                   .actor_count = actor_count};
+    MO_ASSERT(pthread_mutex_init(&pool.queue_mutex, NULL) == 0);
+    MO_ASSERT(pthread_cond_init(&pool.queue_cond, NULL) == 0);
+    MO_ASSERT(pthread_mutex_init(&pool.log_mutex, NULL) == 0);
+
+    for (uint32_t a = 0; a < actor_count; a++) {
         enum mo_service_status ast =
-            mo_live_actor_new(cw.image, cw.actor_services[a], errors, &pool.actors[a]);
+            mo_live_actor_new(image, actor_services[a], errors, &pool.log_mutex, &pool.actors[a]);
         if (ast != MO_SERVICE_OK) {
             char buf[192];
             (void)snprintf(buf, sizeof buf, "mo serve could not start actor: %s",
                            mo_service_status_text(ast));
             for (uint32_t prev = 0; prev < a; prev++)
                 mo_live_actor_free(pool.actors[prev]);
+            (void)pthread_mutex_destroy(&pool.log_mutex);
+            (void)pthread_cond_destroy(&pool.queue_cond);
+            (void)pthread_mutex_destroy(&pool.queue_mutex);
             (void)close(listen_fd);
             (void)close(folder_fd);
-            mo_image_free(cw.image);
+            mo_image_free(image);
             *status_out = report_serve_start_error(output, errors, buf);
             return true;
         }
     }
-    MO_ASSERT(pthread_mutex_init(&pool.queue_mutex, NULL) == 0);
-    MO_ASSERT(pthread_cond_init(&pool.queue_cond, NULL) == 0);
-    MO_ASSERT(pthread_mutex_init(&pool.log_mutex, NULL) == 0);
 
     pthread_attr_t attr;
     MO_ASSERT(pthread_attr_init(&attr) == 0);
@@ -1095,7 +1261,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
         (void)close(folder_fd);
-        mo_image_free(cw.image);
+        mo_image_free(image);
         *status_out = report_serve_start_error(output, errors, "mo serve could not start workers");
         return true;
     }
@@ -1116,7 +1282,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
         (void)close(folder_fd);
-        mo_image_free(cw.image);
+        mo_image_free(image);
         *status_out =
             report_serve_start_error(output, errors, "mo serve could not write its listening line");
         return true;
@@ -1153,7 +1319,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
                 MO_ASSERT(pthread_mutex_unlock(&pool.queue_mutex) == 0);
             } else {
                 MO_ASSERT(pthread_mutex_unlock(&pool.queue_mutex) == 0);
-                send_fixed_json_error(cfd, 503, "service_unavailable");
+                send_fixed_json_error(cfd, 503, "service_unavailable", MO_LIMIT_API_WRITE_US);
                 (void)close(cfd);
             }
         }
@@ -1178,7 +1344,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     (void)pthread_cond_destroy(&pool.queue_cond);
     (void)pthread_mutex_destroy(&pool.queue_mutex);
     (void)close(folder_fd);
-    mo_image_free(cw.image);
+    mo_image_free(image);
     *status_out = 0;
     return true;
 }

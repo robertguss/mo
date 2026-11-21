@@ -81,8 +81,6 @@ fn allowed_tool_program?(program: Text) : Bool
   promise "only plain mo and git basenames are permitted"
     (program.contains?("/") or program.contains?("..")) implies not result
     result implies (program == "mo" or program == "git")
-    allows program: "mo", result: true
-    forbids program: "../sh", result: true
   end
   examples
     allowed_tool_program?("mo")

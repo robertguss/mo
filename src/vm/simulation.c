@@ -326,6 +326,7 @@ struct mo_live_actor {
     uint64_t last_elapsed;
     bool have_base_mono;
     FILE *errors;
+    pthread_mutex_t *log_mutex;
     struct mo_heap *caller_heap;
     struct mo_simulation_reply *reply;
     bool replied, refused;
@@ -358,6 +359,8 @@ static void live_actor_event(const struct mo_service_event *ev, void *context) {
     if (actor->errors == NULL)
         return;
     const char *status_txt = mo_service_status_text(ev->reason);
+    if (actor->log_mutex != NULL)
+        (void)pthread_mutex_lock(actor->log_mutex);
     if (ev->kind == MO_SERVICE_FAILURE) {
         const char *hname = ev->handler.bytes == NULL ? "actor" : (const char *)ev->handler.bytes;
         int hlen = ev->handler.bytes == NULL ? 5 : (int)ev->handler.length;
@@ -371,6 +374,8 @@ static void live_actor_event(const struct mo_service_event *ev, void *context) {
         (void)fprintf(actor->errors, "mo: actor stop: %s\n", status_txt);
         (void)fflush(actor->errors);
     }
+    if (actor->log_mutex != NULL)
+        (void)pthread_mutex_unlock(actor->log_mutex);
 }
 
 static void live_actor_reply(const struct mo_service_response *resp, void *context) {
@@ -394,7 +399,7 @@ static void live_actor_reply(const struct mo_service_response *resp, void *conte
 }
 
 enum mo_service_status mo_live_actor_new(const struct mo_image *image, uint32_t index, FILE *errors,
-                                         struct mo_live_actor **out) {
+                                         pthread_mutex_t *log_mutex, struct mo_live_actor **out) {
     MO_ASSERT(image != NULL && out != NULL && index < mo_image_bytecode(image)->service_count);
     struct mo_arena arena;
     mo_arena_init(&arena, sizeof(struct mo_live_actor) + MO_ARENA_CHUNK_HEADER);
@@ -404,8 +409,11 @@ enum mo_service_status mo_live_actor_new(const struct mo_image *image, uint32_t 
         mo_arena_free(&arena);
         return MO_SERVICE_MEMORY;
     }
-    *actor = (struct mo_live_actor){
-        .arena = arena, .image = image, .descriptor = index, .errors = errors};
+    *actor = (struct mo_live_actor){.arena = arena,
+                                    .image = image,
+                                    .descriptor = index,
+                                    .errors = errors,
+                                    .log_mutex = log_mutex};
     if (pthread_mutex_init(&actor->mutex, NULL) != 0) {
         mo_arena_free(&arena);
         return MO_SERVICE_MEMORY;

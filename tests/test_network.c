@@ -203,12 +203,13 @@ static void test_deadline(void) {
     drop_connection(&f, connection);
     CHECK(close(peer) == 0);
 
-    connection = connected(&f, capability, port, 300000);
-    struct mo_cell arguments[] = {connection, mo_cell_unit()};
     size_t size = (size_t)64 << 20;
     uint8_t *flood = calloc(size, 1);
-    MO_ASSERT(flood != NULL && mo_value_bytes(f.heap, flood, size, &arguments[1]));
+    struct mo_cell flood_bytes = mo_cell_unit();
+    MO_ASSERT(flood != NULL && mo_value_bytes(f.heap, flood, size, &flood_bytes));
     free(flood);
+    connection = connected(&f, capability, port, 300000);
+    struct mo_cell arguments[] = {connection, flood_bytes};
     start = milliseconds();
     shows(&f, f.result_sent, call(&f, MO_HOST_CONNECTION_SEND, arguments), "Error(TimedOut)");
     waited = milliseconds() - start;

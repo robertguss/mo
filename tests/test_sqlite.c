@@ -196,6 +196,11 @@ static void test_real_crud(void) {
     struct mo_cell opened = open_db_res(&f, sq, "app.db");
     struct mo_cell db = unwrap_ok(&f, f.result_database, opened);
 
+    struct mo_cell jm = query_sql_res(&f, db, "PRAGMA journal_mode", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_rows, jm,
+                   "Ok(Sqlite.Rows(columns: [\"journal_mode\"], rows: [[String(\"wal\")]]))");
+    mo_value_drop(f.heap, f.result_sqlite_rows, jm);
+
     struct mo_cell create = run_sql_res(
         &f, db, "CREATE TABLE items(id INTEGER PRIMARY KEY, n INTEGER, r REAL, s TEXT, b BLOB)",
         empty_values(&f));

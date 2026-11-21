@@ -244,8 +244,15 @@
 #define MO_LIMIT_API_HEADER_BYTES 32768
 #define MO_LIMIT_API_HEADERS 128
 #define MO_LIMIT_API_BODY_BYTES (16 * 1024 * 1024)
+#define MO_LIMIT_API_CHUNK_OVERHEAD_BYTES (1024 * 1024)
 #define MO_LIMIT_API_REQUEST_WORK UINT64_C(67108864)
 #define MO_LIMIT_API_REQUEST_HEAP (64 * 1024 * 1024)
+#ifndef MO_LIMIT_API_READ_US
+#define MO_LIMIT_API_READ_US UINT64_C(15000000)
+#endif
+#ifndef MO_LIMIT_API_WRITE_US
+#define MO_LIMIT_API_WRITE_US UINT64_C(15000000)
+#endif
 
 /* Service promises in one service block; each runs after every step of every sequence. */
 #define MO_LIMIT_SERVICE_PROMISES 64
@@ -620,12 +627,12 @@ static inline struct mo_limits mo_limits_default(void) {
 /* How often the server checks a compiling candidate or a waiting commit. */
 #define MO_LIMIT_UPGRADE_POLL_US UINT64_C(10000)
 
-/* ASan reserves a very large virtual shadow; sanitizer test builds retain CPU/wall
- * limits but cannot use the production address-space ceiling. */
-#if defined(__SANITIZE_ADDRESS__)
+/* ASan and TSan reserve a very large virtual shadow; sanitizer test builds retain
+ * CPU/wall limits but cannot use the production address-space ceiling. */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
 #define MO_UPGRADE_COMPILE_ASAN 1
 #elif defined(__clang__)
-#if __has_feature(address_sanitizer)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
 #define MO_UPGRADE_COMPILE_ASAN 1
 #endif
 #endif

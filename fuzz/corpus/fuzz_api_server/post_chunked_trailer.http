@@ -1,0 +1,12 @@
+POST /items HTTP/1.1
+Host: 127.0.0.1
+Authorization: Bearer tok
+Transfer-Encoding: chunked
+
+f;ext=1
+{"label":"chunk
+6
+ed-ok"}
+0
+X-Trailer: done
+

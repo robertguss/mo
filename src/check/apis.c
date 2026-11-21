@@ -562,7 +562,7 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
                                            const char **shapes, uint32_t route_idx,
                                            struct mo_checked_api_route *out) {
     enum mo_api_method method = parse_method_word(clause->children[0]);
-    struct route_path_info path_info;
+    struct route_path_info path_info = {0};
     if (!parse_route_path(p, clause->children[1], &path_info))
         return false;
     for (uint32_t i = 0; i < route_idx; i++) {

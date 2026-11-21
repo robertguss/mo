@@ -16,21 +16,35 @@ step for anything a Mo user would notice.
 | 8. Fast | Fast enough for serious services | |
 | 9. Ecosystem | Others build and share | 1.0 |
 
-Phases 0 to 5 are finished. Robert approved v0.2.0 and the close of Phase 5 on
-2026-11-11; annotated tag `v0.2.0` is `3b91e55b` and matches the evaluation
-freeze's build inputs.
+Phases 0 to 7 and the [Post-Phase 7 direction](design/post-phase7-direction.md)
+(`#385`–`#399`) are implemented on `main`.
 
 ## Now
 
-Phase 7, Mo talks to the outside world, is at its design step. The [proposed
-design](design/outside-world.md) waits for Robert's approval, with the prototypes it rests on in
-`learnability/phase7/preflight/`. Nothing it describes is implemented yet. The phase's plan is
-`docs/plans/2026-11-17-1900-feat-phase7-outside-world-plan.md`.
+Daily-driver readiness is active, following the
+[Daily-Driver Readiness Plan](design/daily-driver-plan.md): C runtime hardening,
+macOS and Linux workstation installation (`make install` and `mo install`),
+explicit CLI capability root grants, Zed and Cursor editor support, and minimum
+data-wrangling ergonomics for real external API spikes (Populi, Canvas LMS, and
+local SQLite). Speculative surface-language additions are frozen until earned by
+daily use.
 
-Phase 6, Intent and autonomy, follows the approved design for [intent and the
-review door](design/intent.md), with the prototypes it rests on in
-`learnability/phase6/preflight/`. Nothing it describes is implemented yet. The phase's plan is
-`docs/plans/2026-11-12-1604-feat-phase6-intent-autonomy-plan.md`.
+The Post-Phase 7 sprint ([post-phase7-direction.md](design/post-phase7-direction.md))
+replaced ceremony gates with fast `mo test` (`--mutants` opt-in), code-first
+`promise` blocks with automatic non-vacuity checking, Perceus in-place reuse and
+portable `.bc` execution, `mo diff` and Unix-socket administration, built-in
+`Json` ability, declarative `api` servers with OpenAPI 3.1 and `ApiTest.send`,
+in-process `actor` capabilities, confined `Command` execution, and twelve
+crucible CLI tools and `api` + `actor` servers (`tools/` and `services/mo-*/`).
+
+Phase 7, [Outside world](design/outside-world.md), added TLS (`Network.connect_secure`
+and HTTPS in `lib/http.mo`), `Network.allow_hosts`, and `Sqlite` /
+`Sqlite.Database` capabilities with symlink-safe folder containment and SQLite
+authorizer guards.
+
+Phase 6, Intent and autonomy ([intent.md](design/intent.md)), delivered promise
+strength checking (`v0.3.0`); its external `mo intent` ceremony was later retired
+in `#390` in favor of `mo diff` and code-first non-vacuous `promise` blocks.
 
 Phase 5 follows the approved [whole-program upgrade design](design/upgrades.md).
 Typed migration checking, checked restart, offline rehearsal, live activation,
@@ -85,10 +99,8 @@ PR's description. Robert's Notion page for Mo mirrors this section.
 Parked until a phase needs them: generated function-valued inputs in
 `mo test`; supervisor event logging for the protocol server; the poll loop
 spinning when file descriptors run out, which did not reproduce in the kill
-loop; smaller `mo fix` edits for service adapters; the checker crash
-on an interpolated `stop`; gcc sanitize, fuzz and a bounded arena proof in the
-nightly; running a `.bc` file that `mo emit` wrote; `mo test
---strength` (Phase 6); Fil-C compatibility (no phase yet).
+loop; smaller `mo fix` edits for service adapters; gcc sanitize, fuzz and a
+bounded arena proof in the nightly; Fil-C compatibility (no phase yet).
 
 ## Alongside every phase
 

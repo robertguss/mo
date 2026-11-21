@@ -1,0 +1,7 @@
+POST /items HTTP/1.1
+Host: 127.0.0.1
+Authorization: Bearer tok
+Content-Type: application/json
+Content-Length: 25
+
+{"label":"alpha","count":3}

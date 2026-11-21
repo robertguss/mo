@@ -47,6 +47,7 @@ COMMON := $(CSTD) $(INCLUDES) $(WARNINGS) $(THREADS) -MMD -MP
 DEBUG := -DMO_BUILD_CONFIGURATION=\"debug\" -O0 -g $(THREADS)
 RELEASE := -DMO_BUILD_CONFIGURATION=\"release\" -O2 -g $(THREADS)
 SANITIZE := -DMO_BUILD_CONFIGURATION=\"sanitize\" -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
+TSAN := -DMO_BUILD_CONFIGURATION=\"tsan\" -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=thread -fno-sanitize-recover=all
 FUZZ := -O1 -g $(THREADS) -fno-omit-frame-pointer -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
 LDLIBS += -lssl -lcrypto -lm
 
@@ -84,13 +85,20 @@ GRAMMAR_CHECK = $(1) --fragment grammar/tests/good/*.mo && \
 	$(1) --fragment --expect-error grammar/tests/bad/*.mo && \
 	$(1) --expect-error grammar/tests/bad-files/*.mo && \
 	$(1) examples/*.mo && \
-	$(1) services/task-queue/*.mo && \
+	$(1) lib/*.mo && \
+	$(1) tools/*.mo && \
+	$(1) tools/*/*.mo && \
+	$(1) services/*/*.mo && \
 	$(1) docs/reference/README.md
 
 objects = $(patsubst %.c,$(1)/%.o,$(2))
 
 DEBUG_TESTS := $(patsubst tests/%.c,$(BUILD)/debug/tests/%.test,$(TEST_SOURCES))
 SANITIZE_TESTS := $(patsubst tests/%.c,$(BUILD)/sanitize/tests/%.test,$(TEST_SOURCES))
+TSAN_TESTS := $(BUILD)/tsan/tests/test_api_server.test \
+	$(BUILD)/tsan/tests/test_network.test \
+	$(BUILD)/tsan/tests/test_sqlite.test \
+	$(BUILD)/tsan/tests/test_command.test
 FUZZERS := $(patsubst fuzz/%.c,$(FUZZ_BUILD)/bin/%,$(FUZZ_SOURCES))
 
 # Stop at the first sanitizer error. These are only defaults: options you have set in your
@@ -99,9 +107,10 @@ FUZZERS := $(patsubst fuzz/%.c,$(FUZZ_BUILD)/bin/%,$(FUZZ_SOURCES))
 # default on Linux.
 ASAN_OPTIONS ?= abort_on_error=1
 UBSAN_OPTIONS ?= halt_on_error=1:print_stacktrace=1
-export ASAN_OPTIONS UBSAN_OPTIONS
+TSAN_OPTIONS ?= halt_on_error=1:second_deadlock_stack=1:suppressions=$(abspath ci/tsan.supp)
+export ASAN_OPTIONS UBSAN_OPTIONS TSAN_OPTIONS
 
-.PHONY: all release test sanitize test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal cbmc \
+.PHONY: all release test sanitize tsan test-executables sanitize-executables fuzz fuzz-smoke format format-check deps library-map tidy grammar formal cbmc \
 	host-rename-stress clean FORCE
 
 all: $(BUILD)/debug/mo
@@ -129,7 +138,7 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 
 # Depend directly on the state too: a same-tick header rewrite must still
 # recompile the document consumer when the guide appears or disappears.
-$(BUILD)/debug/src/tools/execute.o $(BUILD)/release/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o \
+$(BUILD)/debug/src/tools/execute.o $(BUILD)/release/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o $(BUILD)/tsan/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
 LIBRARY_SOURCES := $(sort $(wildcard lib/*.mo))
@@ -137,9 +146,8 @@ build/generated/tools/library-sources.h: ci/embed_library.py $(LIBRARY_SOURCES) 
 	python3 ci/embed_library.py $@ $(LIBRARY_SOURCES)
 	@touch $@
 
-$(BUILD)/debug/src/tools/upgrade-bundle.o $(BUILD)/release/src/tools/upgrade-bundle.o $(BUILD)/sanitize/src/tools/upgrade-bundle.o \
-$(FUZZ_BUILD)/src/tools/upgrade-bundle.o \
-$(BUILD)/debug/checks-fail/tools/upgrade-bundle.o $(BUILD)/sanitize/checks-fail/tools/upgrade-bundle.o: build/generated/tools/embedded.h build/generated/tools/library-sources.h $(GUIDE_STAMP)
+$(BUILD)/debug/src/tools/upgrade-bundle.o $(BUILD)/release/src/tools/upgrade-bundle.o $(BUILD)/sanitize/src/tools/upgrade-bundle.o $(BUILD)/tsan/src/tools/upgrade-bundle.o \
+$(FUZZ_BUILD)/src/tools/upgrade-bundle.o: build/generated/tools/embedded.h build/generated/tools/library-sources.h $(GUIDE_STAMP)
 
 PROTOCOL_SOURCES := runtime/mcp-fetch.mo runtime/http-server.mo runtime/http-authority.mo runtime/http-policy.mo runtime/http-body.mo runtime/mcp.mo runtime/mcp-number.mo runtime/mcp-type.mo runtime/mcp-schema.mo runtime/mcp-scalar.mo runtime/mcp-value.mo runtime/mcp-rpc.mo runtime/mcp-transport.mo runtime/mcp-views.mo lib/json.mo lib/list.mo lib/option.mo lib/result.mo
 build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCES) Makefile
@@ -147,11 +155,11 @@ build/generated/tools/protocol-sources.h: ci/embed_protocol.py $(PROTOCOL_SOURCE
 	@touch $@
 
 $(BUILD)/debug/tests/test_lower.o $(BUILD)/sanitize/tests/test_lower.o \
-$(BUILD)/debug/src/tools/protocol.o $(BUILD)/release/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o \
+$(BUILD)/debug/src/tools/protocol.o $(BUILD)/release/src/tools/protocol.o $(BUILD)/sanitize/src/tools/protocol.o $(BUILD)/tsan/src/tools/protocol.o \
 $(FUZZ_BUILD)/src/tools/protocol.o: build/generated/tools/protocol-sources.h
 
 # The test executables without running them, for ci/check.sh's drivers, bench and lean groups.
-test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo $(BUILD)/debug/mo-checks-fail
+test-executables: $(DEBUG_TESTS) $(BUILD)/debug/mo
 sanitize-executables: $(SANITIZE_TESTS) $(BUILD)/sanitize/mo
 
 # Each test runs as its own target, so make -j runs them side by side (they share
@@ -164,8 +172,12 @@ sanitize: $(SANITIZE_TESTS:=.run) $(BUILD)/sanitize/mo
 	@$(BUILD)/sanitize/mo --version >/dev/null
 	python3 ci/check_sha256.py $(BUILD)/sanitize/tests/test_sha256.test
 
-.PHONY: $(DEBUG_TESTS:=.run) $(SANITIZE_TESTS:=.run)
-$(DEBUG_TESTS:=.run) $(SANITIZE_TESTS:=.run): %.run: %
+tsan: $(TSAN_TESTS:=.run) $(BUILD)/tsan/tests/host_rename_stress.test $(BUILD)/tsan/mo
+	$(BUILD)/tsan/tests/host_rename_stress.test
+	@$(BUILD)/tsan/mo --version >/dev/null
+
+.PHONY: $(DEBUG_TESTS:=.run) $(SANITIZE_TESTS:=.run) $(TSAN_TESTS:=.run)
+$(DEBUG_TESTS:=.run) $(SANITIZE_TESTS:=.run) $(TSAN_TESTS:=.run): %.run: %
 	@$<
 
 # Timing-dependent stress stays a separate target, not a unit-test gate.
@@ -214,6 +226,7 @@ fuzz-smoke: $(FUZZERS) $(BUILD)/debug/tests/test_bytecode_verify.test $(BUILD)/d
 		for variant in $$variants; do \
 			name=$$base; options=; \
 			if [ "$$base" = fuzz_protocol_server ]; then options="-max_len=24578"; fi; \
+			if [ "$$base" = fuzz_api_server ]; then options="-max_len=40962"; fi; \
 			if [ "$$base" = fuzz_bytecode_io ]; then options="-max_len=4096 -timeout=15"; fi; \
 			if [ "$$base" = fuzz_bytecode_text ]; then options="-max_len=16777216 -timeout=30"; fi; \
 			if [ "$$base" = fuzz_vm ] || [ "$$base" = fuzz_bytecode_verify ]; then options="-max_len=65536 -timeout=15"; fi; \
@@ -321,6 +334,10 @@ $(BUILD)/sanitize/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(CC) $(COMMON) $(SANITIZE) -c $< -o $@
 
+$(BUILD)/tsan/%.o: %.c Makefile $(SOURCE_LIST)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(TSAN) -c $< -o $@
+
 $(FUZZ_BUILD)/%.o: %.c Makefile $(SOURCE_LIST)
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(COMMON) $(FUZZ) -c $< -o $@
@@ -336,6 +353,9 @@ $(BUILD)/release/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
 $(BUILD)/sanitize/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(SQLITE_FLAGS) $(SANITIZE) -c $< -o $@
+$(BUILD)/tsan/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(SQLITE_FLAGS) $(TSAN) -c $< -o $@
 $(FUZZ_BUILD)/vendor/sqlite/sqlite3.o: vendor/sqlite/sqlite3.c Makefile
 	@mkdir -p $(dir $@)
 	$(FUZZ_CC) $(SQLITE_FLAGS) $(FUZZ) -c $< -o $@
@@ -356,11 +376,17 @@ $(BUILD)/debug/module-path: $(BUILD)/debug/ci/module_path.o $(call objects,$(BUI
 $(BUILD)/sanitize/mo: $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES) $(MAIN_SOURCE))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
 
+$(BUILD)/tsan/mo: $(call objects,$(BUILD)/tsan,$(LIB_SOURCES) $(MAIN_SOURCE))
+	$(CC) $(TSAN) $^ -o $@ $(LDLIBS)
+
 $(BUILD)/debug/tests/%.test: $(BUILD)/debug/tests/%.o $(call objects,$(BUILD)/debug,$(LIB_SOURCES))
 	$(CC) $(DEBUG) $^ -o $@ $(LDLIBS)
 
 $(BUILD)/sanitize/tests/%.test: $(BUILD)/sanitize/tests/%.o $(call objects,$(BUILD)/sanitize,$(LIB_SOURCES))
 	$(CC) $(SANITIZE) $^ -o $@ $(LDLIBS)
+
+$(BUILD)/tsan/tests/%.test: $(BUILD)/tsan/tests/%.o $(call objects,$(BUILD)/tsan,$(LIB_SOURCES))
+	$(CC) $(TSAN) $^ -o $@ $(LDLIBS)
 
 # Exercise the real executable startup without a second process.
 $(BUILD)/debug/runtime-main.o: src/tools/main.c tests/runtime_entry.h Makefile
@@ -531,6 +557,7 @@ $(BUILD)/sanitize/protocol-server-faults/tools/protocol-upgrade.o: src/tools/pro
 # The activation and command tests invoke the sibling mo executable.
 $(BUILD)/debug/tests/test_command.test.run: $(BUILD)/debug/mo
 $(BUILD)/sanitize/tests/test_command.test.run: $(BUILD)/sanitize/mo
+$(BUILD)/tsan/tests/test_command.test.run: $(BUILD)/tsan/mo
 $(BUILD)/debug/tests/test_protocol_server_faults.test.run: $(BUILD)/debug/mo
 $(BUILD)/sanitize/tests/test_protocol_server_faults.test.run: $(BUILD)/sanitize/mo
 

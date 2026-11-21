@@ -2329,13 +2329,9 @@ end
 ## 15. What comes later
 
 Live upgrades, including migrating saved state to a changed type, are tools
-(Phase 5, `docs/design/upgrades.md`) and change no rule in this reference.
-Approving and locking promises (Phase 6, `docs/design/intent.md`). Encrypted
-connections and a SQLite capability for programs (Phase 7,
-`docs/design/outside-world.md`), which add capability types and library
-functions to sections 10 to 14 when they are built. Demanding that a function
-update its input in place (Phase 8); packages and user-defined abilities
-(Phase 9). Phases 8 and 9 change no rule in this reference.
+(`docs/design/upgrades.md`) and change no rule in this reference. Demanding that
+a function update its input in place (Phase 8); packages and user-defined
+abilities (Phase 9). Phases 8 and 9 change no rule in this reference.
 
 ## Appendix A. Errors
 

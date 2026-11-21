@@ -8,6 +8,7 @@
 #include "heap/heap.h"
 #include "host/host.h"
 
+#include <pthread.h>
 #include <stdio.h>
 
 enum mo_outcome { MO_RETURNED, MO_STOPPED, MO_FAILED };
@@ -563,7 +564,8 @@ MO_MUST_USE bool mo_simulation_encode(struct mo_simulation *simulation, struct m
 
 struct mo_live_actor;
 MO_MUST_USE enum mo_service_status mo_live_actor_new(const struct mo_image *image, uint32_t index,
-                                                     FILE *errors, struct mo_live_actor **out);
+                                                     FILE *errors, pthread_mutex_t *log_mutex,
+                                                     struct mo_live_actor **out);
 void mo_live_actor_free(struct mo_live_actor *actor);
 MO_MUST_USE bool mo_value_live_actor(struct mo_heap *heap, uint32_t type,
                                      struct mo_live_actor *actor, struct mo_cell *out);
