@@ -22,15 +22,12 @@ freeze's build inputs.
 
 ## Now
 
-Phase 7, Mo talks to the outside world, is at its design step. The [proposed
-design](design/outside-world.md) waits for Robert's approval, with the prototypes it rests on in
-`learnability/phase7/preflight/`. Nothing it describes is implemented yet. The phase's plan is
-`docs/plans/2026-11-17-1900-feat-phase7-outside-world-plan.md`.
+Phase 7, Mo talks to the outside world, is built: Network, the HTTP client
+(`lib/http.mo`), HTTPS (`network.connect_secure`), and Sqlite
+([outside-world.md](design/outside-world.md)).
 
-Phase 6, Intent and autonomy, follows the approved design for [intent and the
-review door](design/intent.md), with the prototypes it rests on in
-`learnability/phase6/preflight/`. Nothing it describes is implemented yet. The phase's plan is
-`docs/plans/2026-11-12-1604-feat-phase6-intent-autonomy-plan.md`.
+Phase 6's `mo intent` and `mo review` door was replaced by `mo diff` and
+`--admin-socket` ([post-phase7-direction.md](design/post-phase7-direction.md) D3).
 
 Phase 5 follows the approved [whole-program upgrade design](design/upgrades.md).
 Typed migration checking, checked restart, offline rehearsal, live activation,
@@ -85,10 +82,8 @@ PR's description. Robert's Notion page for Mo mirrors this section.
 Parked until a phase needs them: generated function-valued inputs in
 `mo test`; supervisor event logging for the protocol server; the poll loop
 spinning when file descriptors run out, which did not reproduce in the kill
-loop; smaller `mo fix` edits for service adapters; the checker crash
-on an interpolated `stop`; gcc sanitize, fuzz and a bounded arena proof in the
-nightly; running a `.bc` file that `mo emit` wrote; `mo test
---strength` (Phase 6); Fil-C compatibility (no phase yet).
+loop; smaller `mo fix` edits for service adapters; gcc sanitize, fuzz and a
+bounded arena proof in the nightly; Fil-C compatibility (no phase yet).
 
 ## Alongside every phase
 

@@ -1,8 +1,8 @@
 # Post-Phase 7 Direction and Settled Decisions
 
-**Status:** Approved and settled with Robert on 2026-11-20 during the whole-project architectural review, while Phase 7 (`Network`, `Http`, `HTTPS`, `Sqlite`) finishes in parallel.
+**Status:** Approved and settled with Robert on 2026-11-20 during the whole-project architectural review. Phase 7 (`Network`, `Http`, `HTTPS`, `Sqlite`) is built. Tracks 1–3 landed.
 
-This document records the strategic realignment, security boundaries, language/toolchain cleanup ("Track 1"), and web/service architecture ("Track 2: FastAPI in Mo + BEAM Actors") that govern Mo immediately after Phase 7 lands, before building the real-world crucible suite ("Track 3").
+This document records the strategic realignment, security boundaries, language/toolchain cleanup ("Track 1"), and web/service architecture ("Track 2: FastAPI in Mo + BEAM Actors") that govern Mo after Phase 7, and the real-world crucible suite ("Track 3").
 
 ---
 
@@ -151,7 +151,7 @@ end
 
 ## 4. Track 3: Real-World Crucible Suite (Replacing Synthetic Benchmarks)
 
-Once Phase 7 (`HTTPS` and `Sqlite`) finishes and Tracks 1–2 are in place, Mo will be validated and refined by building real tools and servers across three tiers:
+Phase 7 (`HTTPS` and `Sqlite`) is built, and Tracks 1–3 landed. The crucible suite is the three tiers below:
 
 ### Tier 1 — API Spikes & ETL CLIs
 1. **`gh-sync`:** GitHub repository activity (`HTTPS` pagination + `Json.decode[T]` + `Sqlite` incremental upserts + cycle-time analytics).

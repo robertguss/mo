@@ -1,11 +1,10 @@
 # Mo talks to the outside world
 
-Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. Three
-parts are built. The confinement of the children is one, as [As built](#as-built) says. The network
-capability with its fake, and the two `Bytes` operations, are the second, as
-[The network and `Bytes` as built](#the-network-and-bytes-as-built) says. The HTTP client is the
-third, as [The client as built](#the-client-as-built) says. The SQLite capability and HTTPS are
-not built. Every choice that was his to make is in
+Status: proposed on 2026-11-17 as Phase 7's design, and approved by Robert on 2026-11-18. Built:
+confinement of the children ([As built](#as-built)); the network capability with its fake, and
+the two `Bytes` operations ([The network and `Bytes` as built](#the-network-and-bytes-as-built));
+the HTTP client ([The client as built](#the-client-as-built)); HTTPS (`network.connect_secure`);
+and Sqlite. Every choice that was his to make is in
 [Decisions for Robert](#decisions-for-robert), with his answer. The evidence, with its commands
 and raw outputs, is in [the preflight](../../learnability/phase7/preflight/README.md).
 
@@ -171,9 +170,9 @@ A connection has no `close`. It closes when the program drops its last reference
 folder from `files.within` does. One connection carries one request in this phase, so one
 deadline is enough.
 
-The HTTPS milestone adds one operation, `network.connect_secure(host, port, within)`. It gives
+HTTPS is `network.connect_secure(host, port, within)`. It gives
 the same `Connection` with TLS under it, and verifies the server's certificate against `host`.
-It also adds one error case for a certificate that fails.
+A certificate that fails is `Network.Certificate`.
 
 ```mo
 enum NetworkError
@@ -206,7 +205,7 @@ bytes a connection sends to the bytes it then receives.
 - With an entry, `receive` hands out the reply, at most `most` bytes at a time, and then the
   end.
 - A fake never opens a socket and never reads a clock. `within` is ignored.
-- `connect_secure`, when the HTTPS milestone adds it, answers from the same map. A fake does no
+- `connect_secure` answers from the same map. A fake does no
   TLS, so a test of an `https` URL states the request as plain bytes.
 
 A test does not write these bytes. `Http.replies` builds the map from requests and responses
@@ -301,13 +300,8 @@ numbers are positions in that file and four of them are pinned in `src/prim/prim
 ## The HTTP client
 
 The client is the library module `Http`, in `lib/http.mo`. It is written new, on `Bytes`.
-
-`runtime/http.mo` declared `module Http`. It is the server-side header parser that `mo serve`
-uses, it works on `List(Byte)`, and its limits are sized for MCP. A user program cannot `use` a
-module in `runtime/`. The runtime's module is renamed to `HttpServer`. The clash was `mo check`
-on a runtime module with the library installed: every `mo` command loads `lib/` beside the
-program it is given, so `mo check runtime/http.mo` would have met two modules called `Http`. The
-protocol server's image never held `lib/http.mo`. The two parsers stay separate in this phase.
+The two parsers stay separate in this phase; the runtime's module is `HttpServer`
+([Names this takes](#names-this-takes)).
 
 ```mo
 struct Request
@@ -363,7 +357,7 @@ What `send` does:
 - It follows no redirect, retries nothing, keeps no cookie, uses no proxy, reuses no
   connection, and asks for no compression. Robert's spike shows which of these he misses.
 - A URL is `http://` or `https://`, a host, an optional port, a path and a query. Anything else
-  is `BadUrl`. Until the HTTPS milestone is built, an `https` URL is an error that says so.
+  is `BadUrl`.
 - A header whose name or value holds a line break is `BadHeader`, and nothing is sent. A token
   read from a file with its last newline would otherwise add a line to the request.
 - The response's headers may take 64 KiB and its body 16 MiB. Past either, the result is
@@ -395,8 +389,7 @@ and what was built.
 - **`json` and `text` on a request replace a `Content-Type` header** the request already had.
   `query` writes every byte but ASCII letters, digits, `-`, `.`, `_` and `~` as `%` and two
   uppercase hexadecimal digits.
-- **An `https` URL gives `Unreachable(Network.Broken(reason))`**, and the reason reads
-  `HTTPS is not built yet, so URL can't be reached` with the request's URL. A malformed `https`
+- **An `https` URL calls `network.connect_secure`.** A malformed `https`
   URL is `BadUrl` first.
 - **The reader reads the headers again after each receive, and a chunked body on from the
   chunk it stopped at.** It keeps where that chunk starts and the data of the chunks before it,

@@ -50,6 +50,10 @@ including `Bool`, `Unit`, tuples, `Ordering`, `Entry`, `EntryKind` and `FileErro
 | Http | every function | runs on a fake; against a live peer in `ci/check_network.py` | `http-fake` |
 | Unicode16 | every function | runs | `lib-unicode16` |
 
+Sqlite (`open`, `fake`, `Database.run`, `Database.query`) and HTTPS (`Network.connect_secure`,
+`https://` in `Http`) were not in this probe. They are built (#391, #392); goldens
+`cap-sqlite-fake`, `cap-network-forms` and `http-fake` exist.
+
 ## What did not run, and what happened
 
 | Form | On main `fc53746` | Now |
