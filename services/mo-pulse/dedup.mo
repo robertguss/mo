@@ -17,10 +17,6 @@ actor AlertDedup
   state DedupState = DedupState(counts: {}, suppressed: 0)
   calls observe_fingerprint, suppressed_total
   every 5.minutes clear_window
-
-  promise
-    after.suppressed >= 0
-  end
 end
 
 fn observe_fingerprint(state: DedupState, _now: Time, fingerprint: Text) : (
