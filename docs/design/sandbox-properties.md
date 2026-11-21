@@ -317,7 +317,13 @@ These are not guaranteed today.
    `mo serve` starts for upgrades (`src/host/compile.c`) and subprocesses started through the
    `Command` capability (`src/host/command.c`, `src/host/confine.c`) run under Landlock and a
    seccomp filter where the Linux kernel supports Landlock ABI 3 or later
-   ([outside-world.md](outside-world.md#confinement-of-the-children)). `mo serve` itself,
+   ([outside-world.md](outside-world.md#confinement-of-the-children)): `Command` children use
+   `command_seccomp`, which allows local `AF_UNIX` `socketpair` IPC, connected `send` and signals
+   within the child subtree (additionally kernel-scoped by `LANDLOCK_SCOPE_SIGNAL` on ABI 6+) while
+   denying external sockets and signals to the parent or init. On hosts without Landlock (such as
+   macOS), `Command` enforces `allow_programs`, `RESOLVE_BENEATH`-equivalent working-folder
+   containment, scrubbed environments, closed descriptors, `rlimit` bounds and process-group
+   timeouts without an OS filesystem/syscall sandbox. `mo serve` itself,
    `mo run` and `mo test` are not confined. A bug in the C runtime there is not contained, and
    capabilities are the only boundary. On a host that cannot confine, `mo serve` accepts no
    remote upgrade unless it was started with `--unconfined`, and then it says so at start and in

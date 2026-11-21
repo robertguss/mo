@@ -657,6 +657,10 @@ static inline struct mo_limits mo_limits_default(void) {
 #define MO_LIMIT_BUNDLE_PATH_BYTES 255
 #define MO_LIMIT_BUNDLE_BYTES (1024 * 1024)
 
+/* Installed CLI launcher name and generated wrapper script size (mo install). */
+#define MO_LIMIT_INSTALL_NAME 128
+#define MO_LIMIT_INSTALL_SCRIPT 16384
+
 /* How the limits depend on each other and on the formats. */
 _Static_assert(MO_LIMIT_FILE_SIZE < UINT32_MAX, "spans hold byte offsets in 32 bits");
 _Static_assert(MO_LIMIT_PROGRAM_SIZE >= MO_LIMIT_FILE_SIZE, "a program can be one large file");

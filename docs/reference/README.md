@@ -1687,8 +1687,8 @@ first, and its other holders keep the old value.
 
 Each command is given the file of the program's main module; `mo check` and `mo
 test` also accept a library module. `mo check FILE`
-reports the program's errors, `mo run FILE [ARGS...]` runs it with the
-arguments after the file's name, and `mo test FILE` checks its examples,
+reports the program's errors, `mo run [--root DIR] [--state-dir DIR] FILE [ARGS...]` runs it with the
+arguments after the file's name (granting `DIR`, `.` by default, as the starting folder for `Files`, `ReadFiles` and `Command`, and for `Sqlite` unless `--state-dir` names another folder), and `mo test FILE` checks its examples,
 promises and tests. `mo diff [OLD] NEW` compares `NEW` against `OLD`, or against
 Git `HEAD` when `OLD` is omitted: it reports authority changes (capability
 parameters and literal `within`, `read_only`, `allow_hosts` and `allow_programs` narrowings),
@@ -1696,7 +1696,7 @@ exposed signature, `api` route and `cors`, and service tool changes, state schem
 `OLD`'s promises, service promises and examples against `NEW`, exiting 1 when
 authority expands or a contract fails or stops. `mo emit FILE -o OUT` checks the program as `mo check` does
 and writes its bytecode to `OUT`; `-o` is required, and a library module has no
-main to emit (E0079). `mo serve FILE --port N --data DIR [--allow-host NAME]
+main to emit (E0079). `mo install FILE [--name NAME] [--bin-dir DIR] [--root DIR] [--state-dir DIR]` compiles a main program to verified bytecode and installs an executable launcher in `DIR` (`~/.local/bin` by default). `mo serve FILE --port N --data DIR [--allow-host NAME]
 [--admin-socket PATH]` runs the service `FILE` declares (section 11.5) over MCP
 on 127.0.0.1, with its saved state in the folder `DIR`, which must exist;
 `--allow-host` also accepts requests that give `NAME` as their host, as a proxy

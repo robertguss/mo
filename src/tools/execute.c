@@ -15,6 +15,7 @@
 #include "tools/fix.h"
 #include "tools/format.h"
 #include "tools/gates.h"
+#include "tools/install.h"
 #include "tools/offline.h"
 #include "tools/promises.h"
 #include "tools/run.h"
@@ -130,7 +131,8 @@ static void execute_pipeline(void *argument) {
         const struct mo_checked_service *service = &program->services[i];
         if (service->module == 0 && !service->is_actor)
             entry_service = i;
-        if (cli->command == MO_COMMAND_RUN && service->module == 0 && !service->is_actor) {
+        if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_INSTALL) &&
+            service->module == 0 && !service->is_actor) {
             const char *message = "mo run does not start services yet";
             bool added =
                 mo_diags_add(diags, &(struct mo_diag){.code = MO_CODE_TOOL_SERVICE_UNAVAILABLE,
@@ -145,8 +147,8 @@ static void execute_pipeline(void *argument) {
         const struct mo_checked_api *api = &program->apis[i];
         if (api->module == 0)
             entry_api = i;
-        if (cli->command == MO_COMMAND_RUN && api->module == 0 &&
-            program->entry.function == UINT32_MAX) {
+        if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_INSTALL) &&
+            api->module == 0 && program->entry.function == UINT32_MAX) {
             const char *message = "mo run does not start api servers; use mo serve";
             bool added =
                 mo_diags_add(diags, &(struct mo_diag){.code = MO_CODE_TOOL_SERVICE_UNAVAILABLE,
@@ -170,7 +172,7 @@ static void execute_pipeline(void *argument) {
         work->totals.status = work->status;
         return;
     }
-    if ((cli->command == MO_COMMAND_RUN ||
+    if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_INSTALL ||
          (cli->command == MO_COMMAND_EMIT && entry_service == MO_NO_INDEX &&
           entry_api == MO_NO_INDEX)) &&
         program->entry.function == UINT32_MAX) {
@@ -240,13 +242,15 @@ static void execute_pipeline(void *argument) {
     /* Plain check and fix validate lowering too, but never execute the user's main. */
     bool checking = cli->command == MO_COMMAND_CHECK || cli->command == MO_COMMAND_FIX;
     bool emitting = cli->command == MO_COMMAND_EMIT;
+    bool installing = cli->command == MO_COMMAND_INSTALL;
     if (checking && cli->emit == MO_EMIT_NONE && !anchors)
         goto done;
-    if (anchors || cli->command == MO_COMMAND_RUN || cli->emit == MO_EMIT_BYTECODE || emitting) {
+    if (anchors || cli->command == MO_COMMAND_RUN || cli->emit == MO_EMIT_BYTECODE || emitting ||
+        installing) {
         if (!mo_compile_services(core, &services, &wire, diags))
             goto done;
     }
-    if (anchors || cli->command == MO_COMMAND_RUN) {
+    if (anchors || cli->command == MO_COMMAND_RUN || installing) {
         work->status =
             mo_run_program(cli, program, core, &wire, sources, work->output, work->errors, diags);
         if (work->status != 0 || mo_diags_any(diags))
@@ -263,6 +267,8 @@ static void execute_pipeline(void *argument) {
     }
     if (emitting && !mo_diags_any(diags))
         write_bytecode(cli->output, sources, &wire, diags);
+    if (installing && !mo_diags_any(diags))
+        mo_install_program(cli, sources, &wire, work->output, diags);
     if (cli->emit != MO_EMIT_NONE && !mo_diags_any(diags) &&
         (fwrite(printed.bytes, 1, printed.length, work->output) != printed.length ||
          fflush(work->output) != 0))

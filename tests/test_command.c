@@ -323,9 +323,145 @@ void test_fake_command(void) {
     host_fixture_free(&f);
 }
 
+static void test_workstation_and_confinement(void) {
+#if defined(__linux__)
+    if (access("/usr/bin/python3", X_OK) != 0)
+        return;
+    char base[] = "/tmp/mo-cmd-ws-XXXXXX";
+    MO_ASSERT(mkdtemp(base) != NULL);
+    char fake_home[320], local_bin[360], workdir[320], secret[360], tool_path[380];
+    MO_ASSERT(snprintf(fake_home, sizeof fake_home, "%s/home", base) > 0 &&
+              mkdir(fake_home, 0700) == 0);
+    MO_ASSERT(snprintf(secret, sizeof secret, "%s/secret.txt", fake_home) > 0);
+    write_file_str(secret, "top-secret");
+    MO_ASSERT(snprintf(workdir, sizeof workdir, "%s/work", base) > 0 && mkdir(workdir, 0700) == 0);
+    MO_ASSERT(snprintf(local_bin, sizeof local_bin, "%s/.local", fake_home) > 0 &&
+              mkdir(local_bin, 0755) == 0);
+    MO_ASSERT(snprintf(local_bin, sizeof local_bin, "%s/.local/bin", fake_home) > 0 &&
+              mkdir(local_bin, 0755) == 0);
+    MO_ASSERT(snprintf(tool_path, sizeof tool_path, "%s/local-hello", local_bin) > 0);
+    write_file_str(tool_path, "#!/bin/sh\necho local-ok\n");
+    MO_ASSERT(chmod(tool_path, 0755) == 0);
+
+    const char *old_home = getenv("HOME");
+    char saved_home[512] = "";
+    bool had_home = old_home != NULL;
+    if (had_home) {
+        MO_ASSERT(strlen(old_home) < sizeof saved_home);
+        memcpy(saved_home, old_home, strlen(old_home) + 1);
+    }
+    MO_ASSERT(setenv("HOME", fake_home, 1) == 0);
+
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    int dir_fd = open(workdir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    MO_ASSERT(dir_fd >= 0);
+    struct mo_cell cmd;
+    struct mo_host_error err = {0};
+    MO_ASSERT(mo_host_real(&f.host, f.heap, f.capabilities[MO_CAP_COMMAND], NULL, dir_fd, &cmd,
+                           &err) == MO_HOST_RETURNED);
+    (void)close(dir_fd);
+    const char *progs[] = {"python3", "local-hello"};
+    struct mo_cell progs_list = make_texts(&f, progs, 2);
+    struct mo_cell allow_args[] = {cmd, progs_list};
+    struct mo_cell allowed = call_op(&f, MO_HOST_COMMAND_ALLOW_PROGRAMS, allow_args);
+    mo_value_drop(f.heap, f.types.texts, progs_list);
+
+    /* 1. Tool in $HOME/.local/bin resolves and executes under Landlock. */
+    struct mo_cell local_res = run_cmd(&f, allowed, "local-hello", NULL, 0, 5000000);
+    CHECK(mo_cell_get_tag(local_res) == 0);
+    if (mo_cell_get_tag(local_res) == 0) {
+        struct mo_cell tup = unwrap_ok_tuple(&f, local_res);
+        CHECK(mo_cell_get_int(mo_value_field(tup, 0)) == 0);
+        CHECK(cell_text_equals(mo_value_field(tup, 1), "local-ok\n"));
+    }
+    mo_value_drop(f.heap, f.result_command, local_res);
+
+    /* 2. AF_UNIX socketpair + connected send, grandchild tgkill (raise) and child->grandchild kill
+     * succeed, while AF_INET sockets, signaling parent/all, and reading $HOME/secret.txt fail. */
+    char parent_pid_arg[32];
+    MO_ASSERT(snprintf(parent_pid_arg, sizeof parent_pid_arg, "%ld", (long)getpid()) > 0);
+    const char *py_script =
+        "import os, signal, socket, sys\n"
+        "parent_pid = int(sys.argv[1])\n"
+        "secret_path = sys.argv[2]\n"
+        "a, b = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)\n"
+        "assert a.send(b'ping') == 4\n"
+        "assert b.recv(4) == b'ping'\n"
+        "a.close(); b.close()\n"
+        "for fn in (lambda: socket.socket(socket.AF_INET, socket.SOCK_STREAM),\n"
+        "           lambda: socket.socketpair(socket.AF_INET, socket.SOCK_STREAM)):\n"
+        "    try:\n"
+        "        fn()\n"
+        "        sys.exit(11)\n"
+        "    except PermissionError:\n"
+        "        pass\n"
+        "for target in (parent_pid, -1, 1):\n"
+        "    try:\n"
+        "        os.kill(target, 0)\n"
+        "        sys.exit(12)\n"
+        "    except PermissionError:\n"
+        "        pass\n"
+        "try:\n"
+        "    open(secret_path, 'rb').close()\n"
+        "    if sys.argv[3] == '1':\n"
+        "        sys.exit(13)\n"
+        "except PermissionError:\n"
+        "    pass\n"
+        "pid = os.fork()\n"
+        "if pid == 0:\n"
+        "    got = []\n"
+        "    signal.signal(signal.SIGUSR1, lambda s, f: got.append(s))\n"
+        "    signal.raise_signal(signal.SIGUSR1)\n"
+        "    os._exit(0 if got == [signal.SIGUSR1] else 21)\n"
+        "_, st = os.waitpid(pid, 0)\n"
+        "assert os.WIFEXITED(st) and os.WEXITSTATUS(st) == 0, st\n"
+        "rfd, wfd = os.pipe()\n"
+        "helper = os.fork()\n"
+        "if helper == 0:\n"
+        "    os.close(rfd)\n"
+        "    os.write(wfd, b'1')\n"
+        "    signal.pause()\n"
+        "    os._exit(0)\n"
+        "os.close(wfd)\n"
+        "assert os.read(rfd, 1) == b'1'\n"
+        "os.close(rfd)\n"
+        "os.kill(helper, signal.SIGTERM)\n"
+        "_, hst = os.waitpid(helper, 0)\n"
+        "assert os.WIFSIGNALED(hst) and os.WTERMSIG(hst) == signal.SIGTERM\n"
+        "print('confinement-ok')\n";
+    const char *can_conf = mo_compile_can_confine() ? "1" : "0";
+    if (mo_compile_can_confine()) {
+        const char *py_argv[] = {"-c", py_script, parent_pid_arg, secret, can_conf};
+        struct mo_cell py_res = run_cmd(&f, allowed, "python3", py_argv, 5, 5000000);
+        CHECK(mo_cell_get_tag(py_res) == 0);
+        if (mo_cell_get_tag(py_res) == 0) {
+            struct mo_cell tup = unwrap_ok_tuple(&f, py_res);
+            CHECK(mo_cell_get_int(mo_value_field(tup, 0)) == 0);
+            CHECK(cell_text_equals(mo_value_field(tup, 1), "confinement-ok\n"));
+        }
+        mo_value_drop(f.heap, f.result_command, py_res);
+    }
+
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_COMMAND], allowed);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_COMMAND], cmd);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+
+    if (had_home)
+        MO_ASSERT(setenv("HOME", saved_home, 1) == 0);
+    else
+        MO_ASSERT(unsetenv("HOME") == 0);
+
+    char cleanup[400];
+    MO_ASSERT(snprintf(cleanup, sizeof cleanup, "rm -rf '%s'", base) > 0 && system(cleanup) == 0);
+#endif
+}
+
 int main(void) {
     test_real_command();
     test_containment_and_allowlist();
     test_fake_command();
+    test_workstation_and_confinement();
     return mo_test_report("test_command");
 }

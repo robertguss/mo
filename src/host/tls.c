@@ -5,7 +5,9 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static const char *save_reason(struct mo_tls *tls, const char *message, const char *fallback) {
     const char *chosen = (message != NULL && message[0] != '\0') ? message : fallback;
@@ -99,8 +101,17 @@ struct mo_network_error mo_tls_open(struct mo_tls *tls, int fd, const uint8_t *h
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, NULL);
     (void)SSL_CTX_set_mode(ctx,
                            SSL_MODE_ENABLE_PARTIAL_WRITE | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER);
-    if (SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) != 1 ||
-        SSL_CTX_set_default_verify_paths(ctx) != 1) {
+    bool paths_ok = SSL_CTX_set_default_verify_paths(ctx) == 1;
+#ifdef __APPLE__
+    if (getenv("SSL_CERT_FILE") == NULL && getenv("SSL_CERT_DIR") == NULL &&
+        access("/etc/ssl/cert.pem", R_OK) == 0) {
+        if (SSL_CTX_load_verify_locations(ctx, "/etc/ssl/cert.pem", NULL) == 1)
+            paths_ok = true;
+        if (paths_ok)
+            ERR_clear_error();
+    }
+#endif
+    if (SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) != 1 || !paths_ok) {
         unsigned long queued = ERR_get_error();
         ERR_clear_error();
         SSL_CTX_free(ctx);

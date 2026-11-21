@@ -137,6 +137,36 @@ static void parse_commands(void) {
     CHECK(!mo_cli_parse(6, two, &cli, &error));
     const char *json[] = {"mo", "emit", "--json", "main.mo", "-o", "main.bc"};
     CHECK(!mo_cli_parse(6, json, &cli, &error));
+
+    const char *run_roots[] = {"mo",          "run",     "--root", "/tmp/work",
+                               "--state-dir", "/tmp/db", "app.mo", "--flag"};
+    CHECK(mo_cli_parse(8, run_roots, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_RUN && strcmp(cli.root, "/tmp/work") == 0 &&
+          strcmp(cli.state_dir, "/tmp/db") == 0 && cli.argument_count == 1 &&
+          strcmp(cli.arguments[0], "--flag") == 0);
+
+    const char *inst[] = {
+        "mo",     "install", "tools/moloc/main.mo", "--name",      "moloc_1.0-rc", "--bin-dir",
+        "/tmp/b", "--root",  "/tmp/work",           "--state-dir", "/tmp/db"};
+    CHECK(mo_cli_parse(11, inst, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_INSTALL && strcmp(cli.install_name, "moloc_1.0-rc") == 0 &&
+          strcmp(cli.bin_dir, "/tmp/b") == 0 && strcmp(cli.root, "/tmp/work") == 0 &&
+          strcmp(cli.state_dir, "/tmp/db") == 0);
+
+    char max_name[MO_LIMIT_INSTALL_NAME + 2];
+    memset(max_name, 'a', MO_LIMIT_INSTALL_NAME + 1);
+    max_name[MO_LIMIT_INSTALL_NAME] = '\0';
+    CHECK(mo_valid_install_name(max_name));
+    max_name[MO_LIMIT_INSTALL_NAME] = 'b';
+    max_name[MO_LIMIT_INSTALL_NAME + 1] = '\0';
+    CHECK(!mo_valid_install_name(max_name));
+    const char *bad_names[] = {".hidden", "..", "a/b", "bad space", "bad$name", max_name};
+    for (size_t i = 0; i < sizeof bad_names / sizeof bad_names[0]; i++) {
+        const char *bad_inst[] = {"mo", "install", "main.mo", "--name", bad_names[i]};
+        CHECK(!mo_cli_parse(5, bad_inst, &cli, &error));
+    }
+    const char *inst_two[] = {"mo", "install", "a.mo", "b.mo"};
+    CHECK(!mo_cli_parse(4, inst_two, &cli, &error));
 }
 
 static void refused(int argc, const char *const *argv, const char *expected) {
@@ -295,11 +325,11 @@ static void parse_serve(void) {
     const char *none[] = {"mo"};
     refused(1, none,
             "expected a command: check, run, test, format, fix, guide, emit, serve, fetch, push, "
-            "replay, query, rehearse, history or diff");
+            "replay, query, rehearse, history, diff or install");
     const char *what[] = {"mo", "what"};
     refused(2, what,
             "unknown command (expected check, run, test, format, fix, guide, emit, serve, fetch, "
-            "push, replay, query, rehearse, history or diff): \"what\"");
+            "push, replay, query, rehearse, history, diff or install): \"what\"");
 }
 
 #define OFFLINE(expected, ...)                                                                     \

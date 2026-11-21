@@ -1,9 +1,12 @@
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "base/runtime-identity.h"
-#include "base/limits.h"
 #include "base/sha256.h"
+#include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -12,6 +15,33 @@
 #endif
 static bool initialized, available;
 static uint8_t executable_digest[32];
+
+bool mo_runtime_executable_path(char out[MO_LIMIT_PATH_SIZE]) {
+    MO_ASSERT(out != NULL);
+#ifdef __linux__
+    ssize_t n = readlink("/proc/self/exe", out, MO_LIMIT_PATH_SIZE - 1);
+    if (n > 0 && (size_t)n < MO_LIMIT_PATH_SIZE - 1) {
+        out[n] = '\0';
+        return access(out, X_OK) == 0;
+    }
+#elif defined(__APPLE__)
+    char raw[MO_LIMIT_PATH_SIZE];
+    uint32_t size = sizeof raw;
+    if (_NSGetExecutablePath(raw, &size) == 0) {
+        char resolved[PATH_MAX];
+        if (realpath(raw, resolved) != NULL) {
+            size_t len = strlen(resolved);
+            if (len > 0 && len < MO_LIMIT_PATH_SIZE && access(resolved, X_OK) == 0) {
+                memcpy(out, resolved, len + 1);
+                return true;
+            }
+        }
+    }
+#endif
+    out[0] = '\0';
+    return false;
+}
+
 void mo_runtime_identity_init(void) {
     if (initialized)
         return;

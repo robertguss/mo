@@ -6,11 +6,13 @@ This page is the procedure for a finished Mo program. Correct Mo is Language Ref
 
 The language headings below use the present tense of the reference.
 
-This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history` and `mo diff`. The program below checks with no errors, runs, and passes its examples and its test.
+This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history`, `mo diff` and `mo install`. The program below checks with no errors, runs, and passes its examples and its test.
 
 `mo fix FILE` makes each edit that `mo check` shows as an error's only fix, checks again, and prints the errors that are left, as `mo check` does. It rewrites only the files it is given.
 
 `mo emit FILE -o OUT` checks the program as `mo check` does, then writes its bytecode to `OUT`. `-o` is required, and `OUT` is never a source file of the program. A module with neither `main` nor a service is E0079, as for `mo run`, and a file that cannot be written is E1404. `mo run OUT [ARGS...]` loads, verifies and runs an emitted bytecode file directly without source files; an unreadable or invalid bytecode file is E1404, a service entry module is E1408, and a module without `main` is E0079.
+
+`mo run [--root DIR] [--state-dir DIR] FILE [ARGS...]` grants `DIR` (`.` by default) as the starting folder for `Files`, `ReadFiles` and `Command` (and `Sqlite` unless `--state-dir` sets a separate folder for `Sqlite`), refusing an unreadable folder with E1404 while keeping relative-path containment inside each folder. `mo install FILE [--name NAME] [--bin-dir DIR] [--root DIR] [--state-dir DIR]` compiles `FILE` to verified bytecode under `DIR/.mo-libexec/<name>.bc` (`~/.local/bin` by default) and writes an executable launcher `DIR/<name>` (accepting leading `--mo-root` and `--mo-state-dir` overrides at run time).
 
 This build checks, formats, fixes and serves `service ... end` blocks (reference 11.5). `mo test` never reads a service's token, and starts a service on its own only in the service's recovery check, below. Tests and examples can explicitly start one with `Simulation.start(Module, at)`, send registered tools with `Simulation.send(handle, Module.tool, args...)`, advance its fake clock, and crash/restart through the real log and snapshot path backed by an in-memory store. `send` returns the complete declared handler result inside another `Result`; an application `Error` is still inside `Ok`. Helpers may receive the handle. A promise whose inputs include a `Simulation` is E1400; promises over a service's sequences of steps are deferred. `mo run` on a service entry module still refuses with E1408, "mo run does not start services yet". Importing a service module does not start it.
 

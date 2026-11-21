@@ -19,7 +19,11 @@ flags = {
     "--calls": (["30"], {"test"}),
     "--seconds": (["3"], {"test"}),
     "--mutants": ([], {"test"}),
-    "--lib": (["lib"], {"check", "run", "test", "fix", "emit", "serve", "replay", "query", "push", "diff"}),
+    "--lib": (["lib"], {"check", "run", "test", "fix", "emit", "serve", "replay", "query", "push", "diff", "install"}),
+    "--root": (["."], {"run", "install"}),
+    "--state-dir": (["."], {"run", "install"}),
+    "--name": (["tool"], {"install"}),
+    "--bin-dir": (["bin"], {"install"}),
     "--port": (["0"], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
@@ -116,7 +120,15 @@ def guide_claims(binary):
     result = run(binary, ["query", "tests/errors/e1413/main.mo", "nothing", "--export",
                           "tests/errors/missing.moex"], 2)
     assert result.stderr == b"mo query: no function of that name in that module\n", result
-    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history` and `mo diff`.",
+    says("This build runs `mo check`, `mo run`, `mo test`, `mo format`, `mo fix`, `mo guide`, `mo emit`, `mo serve`, `mo fetch`, `mo push`, `mo replay`, `mo query`, `mo history`, `mo diff` and `mo install`.",
+         "`mo run [--root DIR] [--state-dir DIR] FILE [ARGS...]` grants `DIR` (`.` by default) as "
+         "the starting folder for `Files`, `ReadFiles` and `Command` (and `Sqlite` unless "
+         "`--state-dir` sets a separate folder for `Sqlite`), refusing an unreadable folder with "
+         "E1404 while keeping relative-path containment inside each folder.",
+         "`mo install FILE [--name NAME] [--bin-dir DIR] [--root DIR] [--state-dir DIR]` compiles "
+         "`FILE` to verified bytecode under `DIR/.mo-libexec/<name>.bc` (`~/.local/bin` by "
+         "default) and writes an executable launcher `DIR/<name>` (accepting leading `--mo-root` "
+         "and `--mo-state-dir` overrides at run time).",
          "The program below checks with no errors, runs, and passes its examples and its test.",
          "E1103 and E1150 mean this toolchain has not implemented that form.",
          "`mo run` and `mo test` report the same code for the same form.",
@@ -701,3 +713,102 @@ def emit_command(binary):
                 "test --bundle runs upgrade checks over the whole bundle; "
                 'it takes no --list, --json, --only, --in, --calls, --seconds or --strength: "--bundle"')
     assert not (root / "a.bc").exists()
+
+
+def install_command(binary):
+    """mo install compiles a CLI program to bytecode + launcher and honors root/state-dir grants."""
+    with tempfile.TemporaryDirectory(prefix="mo-install-") as directory:
+        folder = pathlib.Path(directory)
+        bin_dir = folder / "bin"
+        other_cwd = folder / "elsewhere"
+        target_root = folder / "target-project"
+        state_dir = folder / "tool-state"
+        other_cwd.mkdir()
+        target_root.mkdir()
+        state_dir.mkdir()
+        (target_root / "sample.mo").write_text("module Sample\n\nfn add(a: Int, b: Int) : Int\n  a + b\nend\n")
+
+        # 1. Install tools/moloc/main.mo -> derives tool name "moloc", runs from another CWD
+        #    with --mo-root pointing at target_root.
+        installed = run(binary, ["install", "tools/moloc/main.mo", "--bin-dir", str(bin_dir)], 0)
+        launcher = bin_dir / "moloc"
+        bc_file = bin_dir / ".mo-libexec" / "moloc.bc"
+        assert launcher.exists() and bc_file.read_bytes().startswith(b"MOBC")
+        assert installed.stdout.decode().strip() == f"installed {launcher.resolve()}"
+        ran = subprocess.run([str(launcher), "--mo-root", str(target_root), "."],
+                             cwd=other_cwd, capture_output=True, timeout=30)
+        assert ran.returncode == 0 and b"Mo " in ran.stdout and not ran.stderr, ran
+
+        # 2. Install a tool using both Files and Sqlite with a baked-in --state-dir; verify CWD
+        #    files are read while the SQLite database stays inside state_dir, not other_cwd.
+        spike_dir = folder / "spike-tool"
+        spike_dir.mkdir()
+        (spike_dir / "main.mo").write_text(
+            'module Main\n'
+            'fn main(args: Args, files: ReadFiles, sqlite: Sqlite, console: Console) : Int\n'
+            '  name = args.list.first or "input.txt"\n'
+            '  body = case files.read_text(name)\n'
+            '    Ok(t): t\n'
+            '    Error(_): "missing"\n'
+            '  end\n'
+            '  case sqlite.open("history.sqlite")\n'
+            '    Error(_): 2\n'
+            '    Ok(db):\n'
+            '      _r1 = db.run("CREATE TABLE IF NOT EXISTS log (body TEXT)", [])\n'
+            '      _r2 = db.run("INSERT INTO log VALUES (?)", [Sqlite.String(body)])\n'
+            '      case db.query("SELECT COUNT(*) FROM log", [])\n'
+            '        Ok(rows):\n'
+            '          first = rows.rows.first or []\n'
+            '          n = if first.first is Some(Sqlite.Integer(v)): v else: -1\n'
+            '          console.print("#{body.trim}:#{n}")\n'
+            '          0\n'
+            '        Error(_): 3\n'
+            '      end\n'
+            '  end\n'
+            'end\n')
+        (other_cwd / "input.txt").write_text("alpha\n")
+        (target_root / "input.txt").write_text("beta\n")
+        # Install from inside spike_dir using relative "main.mo" -> derives parent name "spike-tool"
+        rel_inst = subprocess.run(
+            [str(binary), "install", "main.mo", "--bin-dir", str(bin_dir),
+             "--state-dir", str(state_dir)],
+            cwd=spike_dir, capture_output=True, timeout=30)
+        assert rel_inst.returncode == 0 and not rel_inst.stderr, rel_inst
+        spike_bin = bin_dir / "spike-tool"
+        assert spike_bin.exists()
+        r1 = subprocess.run([str(spike_bin)], cwd=other_cwd, capture_output=True, timeout=30)
+        assert r1.returncode == 0 and r1.stdout == b"alpha:1\n", r1
+        assert not (other_cwd / "history.sqlite").exists()
+        assert (state_dir / "history.sqlite").exists()
+        r2 = subprocess.run([str(spike_bin), "--mo-root", str(target_root)],
+                            cwd=other_cwd, capture_output=True, timeout=30)
+        assert r2.returncode == 0 and r2.stdout == b"beta:2\n", r2
+        # Missing --mo-root value exits 2 cleanly
+        bad_override = subprocess.run([str(spike_bin), "--mo-root"],
+                                      cwd=other_cwd, capture_output=True, timeout=30)
+        assert bad_override.returncode == 2 and b"--root" in bad_override.stderr
+
+        # 3. Default ~/.local/bin via HOME, --name override, and refusal controls
+        fake_home = folder / "fake-home"
+        fake_home.mkdir()
+        env = dict(subprocess.os.environ, HOME=str(fake_home))
+        run(binary, ["install", "examples/greet.mo", "--name", "greeter"], 0, env=env)
+        greeter = fake_home / ".local" / "bin" / "greeter"
+        assert greeter.exists()
+        g_out = subprocess.run([str(greeter), "Robert"], cwd=other_cwd, env=env,
+                               capture_output=True, timeout=30)
+        assert g_out.returncode == 0 and g_out.stdout == b"Hello, Robert!\n", g_out
+
+        # Refusals: library without main (E0079), service (E1408), missing --root (E1404),
+        # symlink at target launcher (E1404), invalid --name (exit 2).
+        assert b"E0079" in run(binary, ["install", "tests/cli/library/main.mo",
+                                        "--bin-dir", str(bin_dir)], 1).stderr
+        assert b"E1408" in run(binary, ["install", "tests/errors/e1408/main.mo",
+                                        "--bin-dir", str(bin_dir)], 1).stderr
+        assert b"E1404" in run(binary, ["install", "examples/greet.mo", "--bin-dir", str(bin_dir),
+                                        "--root", str(folder / "missing-dir")], 1).stderr
+        sym = bin_dir / "symtool"
+        sym.symlink_to(other_cwd / "input.txt")
+        assert b"E1404" in run(binary, ["install", "examples/greet.mo", "--bin-dir", str(bin_dir),
+                                        "--name", "symtool"], 1).stderr
+        assert run(binary, ["install", "examples/greet.mo", "--name", "../bad"], 2).returncode == 2
