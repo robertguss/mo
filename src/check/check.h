@@ -276,6 +276,7 @@ enum mo_source_ability {
     MO_SOURCE_ORDER,
     MO_SOURCE_TEXT,
     MO_SOURCE_NUMBER,
+    MO_SOURCE_JSON,
 };
 
 enum mo_ability_implementation_kind {
@@ -321,6 +322,16 @@ struct mo_ability_implementation {
     uint32_t part_count;
     const struct mo_ability_implementation *const *parts;
     const struct mo_source_type *const *part_parameters; /* FUNCTION requirement keys */
+    const struct mo_symbol *encode_function;
+    struct mo_type_arguments encode_arguments;
+    uint32_t encode_part_count;
+    const struct mo_ability_implementation *const *encode_parts;
+    const struct mo_source_type *const *encode_part_parameters;
+    const struct mo_symbol *decode_function;
+    struct mo_type_arguments decode_arguments;
+    uint32_t decode_part_count;
+    const struct mo_ability_implementation *const *decode_parts;
+    const struct mo_source_type *const *decode_part_parameters;
 };
 
 struct mo_checked_binding {

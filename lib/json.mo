@@ -4,12 +4,20 @@ expose Json(..),
 JsonNumber,
 JsonError(..),
 JsonProblem(..),
+JsonDecodeError(..),
 parse,
 int,
 decimal,
 float,
 to_text,
 pretty,
+encode,
+encode_pretty,
+decode,
+decode_strict,
+from_json,
+from_json_strict,
+schema,
 to_int,
 to_decimal,
 to_float,
@@ -49,6 +57,448 @@ enum JsonProblem
   BadEscape
   DuplicateKey(key: Text)
   TooDeep
+end
+
+## Why decoding JSON into a typed Mo value stopped.
+enum JsonDecodeError
+  NotUtf8
+  Syntax(JsonError)
+  Mismatch(path: Text, message: Text)
+end
+
+## The decode error as a readable message.
+fn to_text(error: JsonDecodeError) : Text
+  case error
+    NotUtf8: "JSON input isn't valid UTF-8"
+    Syntax(e): "JSON syntax error at #{e.line}:#{e.column}: #{e.problem}"
+    Mismatch(path: p, message: m): if p == "": m else: "#{p}: #{m}"
+  end
+end
+
+## The value encoded as compact JSON text.
+fn encode(value: T) : Text where T: Json
+  value.to_json.to_text
+end
+
+## The value encoded as JSON indented by two spaces at each level.
+fn encode_pretty(value: T) : Text where T: Json
+  value.to_json.pretty
+end
+
+## Decodes a parsed Json value into T, ignoring unknown object fields.
+fn from_json(value: Json) : Result(T, JsonDecodeError) where T: Json
+  if value == Null
+    stop "compiler-lowered Json.from_json"
+  else
+    stop "compiler-lowered Json.from_json"
+  end
+end
+
+## Decodes a parsed Json value into T, rejecting unknown object fields.
+fn from_json_strict(value: Json) : Result(T, JsonDecodeError) where T: Json
+  if value == Null
+    stop "compiler-lowered Json.from_json_strict"
+  else
+    stop "compiler-lowered Json.from_json_strict"
+  end
+end
+
+## Decodes UTF-8 JSON text or bytes into T, ignoring unknown object fields.
+fn decode(input: Text) : Result(T, JsonDecodeError) where T: Json
+  if input == ""
+    stop "compiler-lowered Json.decode"
+  else
+    stop "compiler-lowered Json.decode"
+  end
+end
+
+## Decodes UTF-8 JSON text or bytes into T, rejecting unknown object fields.
+fn decode_strict(input: Text) : Result(T, JsonDecodeError) where T: Json
+  if input == ""
+    stop "compiler-lowered Json.decode_strict"
+  else
+    stop "compiler-lowered Json.decode_strict"
+  end
+end
+
+## The JSON Schema object describing values of type T.
+fn schema() : Json where T: Json
+  Object({})
+end
+
+fn parse_text_input(text: Text) : Result(Json, JsonDecodeError)
+  parse(text).map_error(fn(e) Syntax(e) end)
+end
+
+fn parse_bytes_input(bytes: Bytes) : Result(Json, JsonDecodeError)
+  text = try bytes.decode_utf8.or_fail(NotUtf8)
+  parse_text_input(text)
+end
+
+fn encode_byte(b: Byte) : Json
+  int(b.to_int)
+end
+
+fn encode_float(f: Float) : Json
+  if f.nan? or f.infinite?
+    stop "non-finite Float has no JSON number"
+  end
+  Number(JsonNumber(text: f.to_text))
+end
+
+fn encode_big_int(n: BigInt) : Json
+  String(n.to_text)
+end
+
+fn encode_decimal_str(d: Decimal) : Json
+  String(d.to_text)
+end
+
+fn encode_char(c: Char) : Json
+  String(c.to_text)
+end
+
+fn encode_time(t: Time) : Json
+  String(t.to_text)
+end
+
+fn json_kind_name(v: Json) : Text
+  case v
+    Null: "null"
+    Boolean(_): "boolean"
+    Number(_): "number"
+    String(_): "string"
+    Array(_): "array"
+    Object(_): "object"
+  end
+end
+
+fn join_path(prefix: Text, step: Text) : Text
+  if prefix == ""
+    step
+  else
+    "#{prefix}.#{step}"
+  end
+end
+
+fn index_path(prefix: Text, idx: Int) : Text
+  join_path(prefix, idx.to_text)
+end
+
+fn mismatch_at(at_path: Text, expected: Text, v: Json) : JsonDecodeError
+  Mismatch(path: at_path, message: "expected #{expected}, found #{json_kind_name(v)}")
+end
+
+fn decode_unit(v: Json, at_path: Text) : Result(Unit, JsonDecodeError)
+  case v
+    Null: Ok(Unit)
+    Boolean(_) | Number(_) | String(_) | Array(_) | Object(_): Error(
+      mismatch_at(at_path, "null", v)
+    )
+  end
+end
+
+fn decode_bool(v: Json, at_path: Text) : Result(Bool, JsonDecodeError)
+  case v
+    Boolean(b): Ok(b)
+    Null | Number(_) | String(_) | Array(_) | Object(_): Error(mismatch_at(at_path, "boolean", v))
+  end
+end
+
+fn decode_int(v: Json, at_path: Text) : Result(Int, JsonDecodeError)
+  case v
+    Number(num): num.to_int.or_fail(
+      Mismatch(path: at_path, message: "expected 64-bit integer, found #{num.text}")
+    )
+    Null | Boolean(_) | String(_) | Array(_) | Object(_): Error(mismatch_at(at_path, "integer", v))
+  end
+end
+
+fn decode_byte(v: Json, at_path: Text) : Result(Byte, JsonDecodeError)
+  case v
+    Number(num):
+      n = try num.to_int.or_fail(
+        Mismatch(path: at_path, message: "expected byte 0..255, found #{num.text}")
+      )
+      n.to_byte.or_fail(Mismatch(path: at_path, message: "expected byte 0..255, found #{num.text}"))
+    Null | Boolean(_) | String(_) | Array(_) | Object(_): Error(mismatch_at(at_path, "byte", v))
+  end
+end
+
+fn decode_float(v: Json, at_path: Text) : Result(Float, JsonDecodeError)
+  case v
+    Number(num):
+      f = try num.to_float.or_fail(
+        Mismatch(path: at_path, message: "number #{num.text} overflows Float")
+      )
+      return Error(Mismatch(path: at_path, message: "number #{num.text} overflows Float")) if f.nan? or
+        f.infinite?
+      Ok(f)
+    Null | Boolean(_) | String(_) | Array(_) | Object(_): Error(mismatch_at(at_path, "number", v))
+  end
+end
+
+fn decode_decimal(v: Json, at_path: Text) : Result(Decimal, JsonDecodeError)
+  case v
+    String(s): s.to_decimal.or_fail(
+      Mismatch(path: at_path, message: "expected Decimal string, found #{quoted(s)}")
+    )
+    Null | Boolean(_) | Number(_) | Array(_) | Object(_): Error(
+      mismatch_at(at_path, "Decimal string", v)
+    )
+  end
+end
+
+fn parse_big_int(s: Text) : Option(BigInt)
+  chars = s.chars
+  negative = chars.first == Some('-')
+  digits = if negative: chars.drop(1) else: chars
+  return None if digits.empty?
+  var acc = 0.to_big
+  ten = 10.to_big
+  for c in digits
+    return None if not c.ascii_digit?
+    acc = acc * ten + (c.code - '0'.code).to_big
+  end
+  Some(if negative: -acc else: acc)
+end
+
+fn decode_big_int(v: Json, at_path: Text) : Result(BigInt, JsonDecodeError)
+  case v
+    String(s): parse_big_int(s).or_fail(
+      Mismatch(path: at_path, message: "expected BigInt string, found #{quoted(s)}")
+    )
+    Null | Boolean(_) | Number(_) | Array(_) | Object(_): Error(
+      mismatch_at(at_path, "BigInt string", v)
+    )
+  end
+end
+
+fn decode_text(v: Json, at_path: Text) : Result(Text, JsonDecodeError)
+  case v
+    String(s): Ok(s)
+    Null | Boolean(_) | Number(_) | Array(_) | Object(_): Error(mismatch_at(at_path, "string", v))
+  end
+end
+
+fn decode_char(v: Json, at_path: Text) : Result(Char, JsonDecodeError)
+  case v
+    String(s):
+      chars = s.chars
+      if chars.size == 1
+        case chars.first
+          Some(c): Ok(c)
+          None: stop "single-character list has first"
+        end
+      else
+        Error(Mismatch(path: at_path, message: "expected 1-character string, found #{quoted(s)}"))
+      end
+    Null | Boolean(_) | Number(_) | Array(_) | Object(_): Error(
+      mismatch_at(at_path, "1-character string", v)
+    )
+  end
+end
+
+fn decode_time(v: Json, at_path: Text) : Result(Time, JsonDecodeError)
+  case v
+    String(s): Time.parse(s).or_fail(
+      Mismatch(path: at_path, message: "expected RFC 3339 timestamp, found #{quoted(s)}")
+    )
+    Null | Boolean(_) | Number(_) | Array(_) | Object(_): Error(
+      mismatch_at(at_path, "RFC 3339 timestamp string", v)
+    )
+  end
+end
+
+fn decode_json_number(v: Json, at_path: Text) : Result(JsonNumber, JsonDecodeError)
+  case v
+    Number(num): Ok(num)
+    Null | Boolean(_) | String(_) | Array(_) | Object(_): Error(mismatch_at(at_path, "number", v))
+  end
+end
+
+fn expect_object(v: Json, at_path: Text) : Result(Map(Text, Json), JsonDecodeError)
+  case v
+    Object(fields): Ok(fields)
+    Null | Boolean(_) | Number(_) | String(_) | Array(_): Error(mismatch_at(at_path, "object", v))
+  end
+end
+
+fn expect_array(v: Json, at_path: Text) : Result(List(Json), JsonDecodeError)
+  case v
+    Array(items): Ok(items)
+    Null | Boolean(_) | Number(_) | String(_) | Object(_): Error(mismatch_at(at_path, "array", v))
+  end
+end
+
+fn expect_tuple_array(v: Json, expected_size: Int, at_path: Text) : Result(
+  List(Json),
+  JsonDecodeError
+)
+  items = try expect_array(v, at_path)
+  if items.size != expected_size
+    return Error(
+      Mismatch(
+        path: at_path,
+        message: "expected array of #{expected_size} items, found #{items.size}"
+      )
+    )
+  end
+  Ok(items)
+end
+
+fn missing_field_error(at_path: Text, field: Text) : JsonDecodeError
+  Mismatch(path: join_path(at_path, field), message: "missing field '#{field}'")
+end
+
+fn unknown_case_error(v: Json, at_path: Text, type_name: Text) : JsonDecodeError
+  Mismatch(path: at_path, message: "invalid #{type_name} case #{v.to_text}")
+end
+
+fn wrap_custom_error(res: Result(T, Text), at_path: Text) : Result(T, JsonDecodeError)
+  res.map_error(fn(msg) Mismatch(path: at_path, message: msg) end)
+end
+
+fn check_strict_keys(fields: Map(Text, Json), present: Int, known: List(Text), at_path: Text) : Result(
+  Unit,
+  JsonDecodeError
+)
+  return Ok(Unit) if fields.size == present
+  for (key, _) in fields.entries
+    if not known.contains?(key)
+      return Error(Mismatch(path: join_path(at_path, key), message: "unknown field '#{key}'"))
+    end
+  end
+  Ok(Unit)
+end
+
+fn encode_list(items: List(T), to_item: fn(T) : Json) : Json
+  Array(items.map(to_item))
+end
+
+fn encode_map(entries: Map(Text, V), to_val: fn(V) : Json) : Json
+  var out = {}
+  for (k, v) in entries.entries
+    out = out.set(k, to_val(v))
+  end
+  Object(out)
+end
+
+fn encode_option(opt: Option(T), to_item: fn(T) : Json) : Json
+  case opt
+    None: Null
+    Some(v): to_item(v)
+  end
+end
+
+fn decode_list(
+  v: Json,
+  at_path: Text,
+  strict: Bool,
+  from_item: fn(Json, Text, Bool) : Result(T, JsonDecodeError)
+) : Result(List(T), JsonDecodeError)
+  items = try expect_array(v, at_path)
+  var out = []
+  for (i, item) in items.enumerate
+    decoded = try from_item(item, index_path(at_path, i), strict)
+    out = out.append(decoded)
+  end
+  Ok(out)
+end
+
+fn decode_map(
+  v: Json,
+  at_path: Text,
+  strict: Bool,
+  from_val: fn(Json, Text, Bool) : Result(V, JsonDecodeError)
+) : Result(Map(Text, V), JsonDecodeError)
+  fields = try expect_object(v, at_path)
+  var out = {}
+  for (k, val) in fields.entries
+    decoded = try from_val(val, join_path(at_path, k), strict)
+    out = out.set(k, decoded)
+  end
+  Ok(out)
+end
+
+fn decode_option(
+  v: Json,
+  at_path: Text,
+  strict: Bool,
+  from_item: fn(Json, Text, Bool) : Result(T, JsonDecodeError)
+) : Result(Option(T), JsonDecodeError)
+  case v
+    Null: Ok(None)
+    Boolean(_) | Number(_) | String(_) | Array(_) | Object(_):
+      decoded = try from_item(v, at_path, strict)
+      Ok(Some(decoded))
+  end
+end
+
+fn schema_ref(name: Text) : Json
+  Object({"$ref": String("#/$defs/#{name}")})
+end
+
+fn schema_type(kind: Text) : Json
+  Object({"type": String(kind)})
+end
+
+fn schema_format(kind: Text, fmt: Text) : Json
+  Object({"type": String(kind), "format": String(fmt)})
+end
+
+fn schema_byte() : Json
+  Object({"type": String("integer"), "minimum": int(0), "maximum": int(255)})
+end
+
+fn schema_char() : Json
+  Object({"type": String("string"), "minLength": int(1), "maxLength": int(1)})
+end
+
+fn schema_array(item_schema: Json) : Json
+  Object({"type": String("array"), "items": item_schema})
+end
+
+fn schema_tuple(item_schemas: List(Json)) : Json
+  Object({
+    "type": String("array"),
+    "prefixItems": Array(item_schemas),
+    "minItems": int(item_schemas.size),
+    "maxItems": int(item_schemas.size)
+  })
+end
+
+fn schema_map(val_schema: Json) : Json
+  Object({"type": String("object"), "additionalProperties": val_schema})
+end
+
+fn schema_nullable(inner: Json) : Json
+  Object({"anyOf": Array([inner, Object({"type": String("null")})])})
+end
+
+fn schema_object(props: Map(Text, Json), required: List(Text)) : Json
+  Object({
+    "type": String("object"),
+    "properties": Object(props),
+    "required": Array(required.map(fn(r) String(r) end))
+  })
+end
+
+fn schema_enum_strings(cases: List(Text)) : Json
+  Object({"type": String("string"), "enum": Array(cases.map(fn(c) String(c) end))})
+end
+
+fn schema_any_of(variants: List(Json)) : Json
+  Object({"anyOf": Array(variants)})
+end
+
+fn schema_tagged_case(tag: Text, payload: Json) : Json
+  Object({
+    "type": String("object"),
+    "properties": Object({tag: payload}),
+    "required": Array([String(tag)]),
+    "additionalProperties": Boolean(false)
+  })
 end
 
 ## Where reading stopped, as a position in the document's characters.
@@ -876,4 +1326,106 @@ test "objects keep the document's order, and numbers their text"
   assert parse("1.50") != parse("1.5")
   assert decimal(1.50) == decimal(1.5)
   assert parse("1.5") == Ok(decimal(1.5))
+end
+
+struct UserPatch
+  name: Text
+  bio: Option(Text)
+  age: Option(Int)
+end
+
+struct TeamPayload
+  team: Text
+  members: List(UserPatch)
+end
+
+enum JobState
+  Pending
+  InProgress
+  HTTPSError
+  RetryAfter(Int)
+  Halted(code: Int, detail: Option(Text))
+end
+
+enum IntTree
+  Leaf(Int)
+  Branch(left: IntTree, right: IntTree)
+end
+
+fn round_trip_strict(value: T) : Result(T, JsonDecodeError) where T: Json
+  decode_strict[T](encode(value))
+end
+
+test "derived Json ability round-trips scalars, collections and tuples"
+  assert round_trip_strict(Unit) == Ok(Unit)
+  assert round_trip_strict(true) == Ok(true)
+  assert round_trip_strict(-42) == Ok(-42)
+  b255 = 255.to_byte or stop "valid byte"
+  assert round_trip_strict(b255) == Ok(b255)
+  assert decode[Byte]("256") is Error(Mismatch(path: "", message: _))
+  assert decode[Byte]("-1") is Error(Mismatch(path: "", message: _))
+  assert round_trip_strict(3.5) == Ok(3.5)
+  assert round_trip_strict(12.340) == Ok(12.34)
+  assert encode(12.34) == "\"12.34\""
+  assert decode[Decimal]("12.34") is Error(Mismatch(path: "", message: _))
+  big = 10.to_big.pow(30) + 7.to_big
+  assert round_trip_strict(big) == Ok(big)
+  assert round_trip_strict(-big) == Ok(-big)
+  assert round_trip_strict('é') == Ok('é')
+  assert decode[Char]("\"ab\"") is Error(Mismatch(path: "", message: _))
+  stamp = Time.parse("2026-03-15T10:30:00Z") or stop "valid timestamp"
+  assert round_trip_strict(stamp) == Ok(stamp)
+  assert round_trip_strict([1, 2, 3]) == Ok([1, 2, 3])
+  assert round_trip_strict(["a", "b"].to_set) == Ok(["a", "b"].to_set)
+  assert round_trip_strict({"k": 9, "m": 4}) == Ok({"k": 9, "m": 4})
+  assert round_trip_strict(("ada", 7, false)) == Ok(("ada", 7, false))
+  assert decode[(Int, Int)]("[1]") ==
+    Error(Mismatch(path: "", message: "expected array of 2 items, found 1"))
+end
+
+test "structs support Option omission, lenient vs strict decoding, Bytes input and dotted paths"
+  assert decode[UserPatch]("{\"name\":\"Ada\"}") == Ok(UserPatch(name: "Ada", bio: None, age: None))
+  assert decode_strict[UserPatch]("{\"name\":\"Ada\"}") ==
+    Ok(UserPatch(name: "Ada", bio: None, age: None))
+  assert decode_strict[UserPatch]("{\"name\":\"Ada\",\"bio\":null,\"age\":37}") ==
+    Ok(UserPatch(name: "Ada", bio: None, age: Some(37)))
+  lenient = "{\"name\":\"Ada\",\"extra\":true}"
+  assert decode[UserPatch](lenient) == Ok(UserPatch(name: "Ada", bio: None, age: None))
+  assert decode_strict[UserPatch](lenient) ==
+    Error(Mismatch(path: "extra", message: "unknown field 'extra'"))
+  nested_bad = "{\"team\":\"core\",\"members\":[{\"name\":\"Ada\"},{\"name\":99}]}"
+  assert decode[TeamPayload](nested_bad) ==
+    Error(Mismatch(path: "members.1.name", message: "expected string, found number"))
+  assert decode[UserPatch]("{\"name\":\"Grace\"}".bytes) ==
+    Ok(UserPatch(name: "Grace", bio: None, age: None))
+  bad_utf8 = "x".bytes.slice(0, 0)
+  assert decode[UserPatch](bad_utf8) is Error(Syntax(_))
+end
+
+test "enums encode snake_case strings and single-key tagged payloads"
+  assert encode(Pending) == "\"pending\""
+  assert encode(InProgress) == "\"in_progress\""
+  assert encode(HTTPSError) == "\"https_error\""
+  assert encode(RetryAfter(15)) == "{\"retry_after\":15}"
+  assert encode(Halted(code: 502, detail: Some("bad gateway"))) ==
+    "{\"halted\":{\"code\":502,\"detail\":\"bad gateway\"}}"
+  assert round_trip_strict(InProgress) == Ok(InProgress)
+  assert round_trip_strict(HTTPSError) == Ok(HTTPSError)
+  assert round_trip_strict(RetryAfter(15)) == Ok(RetryAfter(15))
+  assert decode_strict[JobState]("{\"halted\":{\"code\":502}}") ==
+    Ok(Halted(code: 502, detail: None))
+  assert decode_strict[JobState]("{\"halted\":{\"code\":502,\"extra\":1}}") ==
+    Error(Mismatch(path: "halted.extra", message: "unknown field 'extra'"))
+end
+
+test "recursive types, first-class adapters and schema work"
+  tree = Branch(left: Leaf(1), right: Branch(left: Leaf(2), right: Leaf(3)))
+  assert round_trip_strict(tree) == Ok(tree)
+  assert ["10", "20"].map(decode[Int]) == [Ok(10), Ok(20)]
+  assert [1, 2].map(Int.to_json) == [int(1), int(2)]
+  patch_schema = schema[UserPatch]()
+  assert patch_schema.text_at("type") == Some("object")
+  assert patch_schema.list_at("required") == Some([String("name")])
+  tree_schema = schema[IntTree]()
+  assert tree_schema.list_at("anyOf").map(fn(xs) xs.size end) == Some(2)
 end

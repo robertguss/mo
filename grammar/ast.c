@@ -296,6 +296,12 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
     }
     case K_CALL:
         return check_call(lx, n, stack);
+    case K_TYPE_ARGS:
+        if (n->kids[0]->kind != K_NAME && n->kids[0]->kind != K_FIELD_ACCESS) {
+            return fail(lx, n, "type arguments apply only to a named function");
+        }
+        pending(stack, n->kids[0], false);
+        return true;
     case K_FIELD_ACCESS:
     case K_QUALIFIED:
     case K_POSITION:

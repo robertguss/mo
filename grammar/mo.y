@@ -496,6 +496,7 @@ postfix
     | postfix "." identifier                { $$ = MK(K_FIELD_ACCESS, @$, $1, $3); }
     | postfix "." CAPNAME                   { $$ = MK(K_QUALIFIED, @$, $1, $3); }
     | postfix "." INT                       { $$ = MK(K_POSITION, @$, $1, $3); }
+    | postfix "[" types "]"                 { $$ = MK(K_TYPE_ARGS, @$, $1, $3); }
     | postfix "(" arguments ")"             { $$ = MK(K_CALL, @$, $1, $3); }
     ;
 

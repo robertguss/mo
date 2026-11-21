@@ -508,6 +508,10 @@ another `Tree(T)`, is fine. Each type a generic function is used with gets its
 own copy of the function, and such a call would need copies without end: for
 `Tree(List(T))`, `Tree(List(List(T)))`, and so on.
 
+When a generic function's type parameters aren't decided by its arguments,
+supply them in brackets before the call, in alphabetical order:
+`Json.decode[User](text)` or `Json.schema[User]()`.
+
 ### 5.6 Functions as values
 
 A named function is a value: `prices.map(with_tax)`. An anonymous function is
@@ -838,9 +842,9 @@ generic type is used with becomes a type of its own, and that one would need
 types without end, as such a call would for a generic function (section 5.5).
 `children: List(Tree(T))` is fine.
 
-### 9.2 The five abilities
+### 9.2 The six abilities
 
-An ability is something a type can do. There are five, all built in:
+An ability is something a type can do. There are six, all built in:
 
 | Ability | What it gives | Customized with |
 | --- | --- | --- |
@@ -917,7 +921,29 @@ end
 ```
 
 There are no user-defined abilities in v0.1. Code that needs something other
-than these five takes a function as a parameter.
+than these six takes a function as a parameter.
+
+`Json` (with `use Json`) gives `x.to_json : Json`, `Json.encode(x)`,
+`Json.encode_pretty(x)`, `Json.decode[T](input)` and
+`Json.decode_strict[T](input)` (where `input` is `Text` or `Bytes`),
+`Json.from_json[T](json)`, `Json.from_json_strict[T](json)` and
+`Json.schema[T]()`. `Bool`, `Int`, `Byte`, `Float`, `Text`, `Char`, `Decimal`,
+`BigInt`, `Time`, `Unit`, `Json` and `JsonNumber` have `Json`; `Decimal` and
+`BigInt` encode as exact JSON strings, `Time` as RFC 3339 text, `Byte` as `0`
+to `255`, and `Unit` as `null`. `Bytes`, `Range`, `Duration`, functions,
+capabilities and maps whose keys aren't `Text` don't have `Json`. Tuples,
+`List(T)`, `Set(T)`, `Map(Text, V)`, `Option(T)` (`None` is `null`), records
+and choice types have `Json` whenever all their parts do and no two cases of a
+choice share a `snake_case` JSON tag.
+
+A record's JSON form is an object of its fields; a missing field of type
+`Option(T)` decodes as `None`, `decode` and `from_json` ignore unknown object
+fields, and `decode_strict` and `from_json_strict` reject an unknown field with
+`Mismatch(path: path, message: message)` naming the dotted path. A choice case
+with no fields is its `snake_case` string (`InProgress` is `"in_progress"`), a
+case with one unnamed value is `{"case_name": value}`, and a case with named
+fields is `{"case_name": {...}}`. A type customizes `Json` in its own module
+with `fn to_json(x: T) : Json` and `fn from_json(value: Json) : Result(T, Text)`.
 
 ## 10. Modules
 
@@ -2176,7 +2202,7 @@ expr        = "if" expr ":" expr "else" (":" expr | expr)        # one-line if; 
             | expr ("implies" | "or" | "and") expr | "not" expr
             | expr ("==" | "!=" | "<" | "<=" | ">" | ">=") expr | expr "is" pattern
             | expr ".." expr | expr ("+" | "-" | "*" | "/" | "%") expr | ("-" | "try") expr
-            | expr "." (name | Name | digits) | expr "(" (arg ("," arg)*)? ")"
+            | expr "." (name | Name | digits) | expr "[" type ("," type)* "]" | expr "(" (arg ("," arg)*)? ")"
             | literal | name | Name | "(" expr ")" | "(" expr ("," expr)+ ")"
             | "[" (expr ("," expr)*)? "]" | "{" (expr ":" expr ("," expr ":" expr)*)? "}"
             | "case" expr NL arm (arm | statement)* "end"
@@ -2210,7 +2236,7 @@ chain; the others do, left to right.
 | 8 | `+` `-` |
 | 9 | `*` `/` `%` |
 | 10 | `-` (negation) and `try` |
-| 11 | `.name`, `.0`, and calls |
+| 11 | `.name`, `.0`, `[T]`, and calls |
 
 ## Appendix C. Habits from other languages
 

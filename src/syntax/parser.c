@@ -750,7 +750,8 @@ static MO_MUST_USE struct mo_syntax *primary(struct parser *p) {
 
 static MO_MUST_USE struct mo_syntax *postfix(struct parser *p) {
     struct mo_syntax *n = primary(p);
-    while (p->current.kind == MO_T_DOT || p->current.kind == MO_T_LPAREN) {
+    while (p->current.kind == MO_T_DOT || p->current.kind == MO_T_LPAREN ||
+           p->current.kind == MO_T_LBRACK) {
         struct mo_span start = n->span;
         struct mo_syntax *step;
         if (take(p, MO_T_DOT)) {
@@ -763,6 +764,22 @@ static MO_MUST_USE struct mo_syntax *postfix(struct parser *p) {
                      : token == MO_T_INT   ? MO_S_POSITION
                                            : MO_S_FIELD_ACCESS,
                      dot, field);
+        } else if (p->current.kind == MO_T_LBRACK) {
+            enter(p);
+            uint16_t code = p->expect_code;
+            p->expect_code = MO_CODE_SOURCE_TYPE;
+            struct mo_span args_start = p->current.span;
+            expect(p, MO_T_LBRACK);
+            struct mo_syntax *args = sequence(p);
+            do {
+                append(p, args, type(p));
+            } while (take(p, MO_T_COMMA));
+            expect(p, MO_T_RBRACK);
+            limit(p, args, MO_LIMIT_PARAMETERS, MO_CODE_TOO_MANY_PARAMETERS,
+                  "a call has too many type arguments");
+            step = N(MO_S_TYPE_ARGS, args_start, args);
+            p->depth--;
+            p->expect_code = code;
         } else {
             enter(p);
             uint16_t code = p->expect_code;
@@ -794,8 +811,8 @@ static MO_MUST_USE struct mo_syntax *postfix(struct parser *p) {
             p->expect_code = code;
         }
         if (n->kind != MO_S_POSTFIX) {
-            if (n->kind == MO_S_CALL || n->kind == MO_S_QUALIFIED || n->kind == MO_S_POSITION ||
-                n->kind == MO_S_FIELD_ACCESS) {
+            if (n->kind == MO_S_CALL || n->kind == MO_S_TYPE_ARGS || n->kind == MO_S_QUALIFIED ||
+                n->kind == MO_S_POSITION || n->kind == MO_S_FIELD_ACCESS) {
                 struct mo_syntax *base = n->children[0];
                 n->children[0] = n->children[1];
                 n->count = 1;
@@ -1373,6 +1390,13 @@ static void validate(struct parser *p, struct mo_syntax *n, bool pattern) {
                 if (step->kind == MO_S_CALL)
                     validate_call(p, step, step->children[0], constructor(n->children[i - 1]),
                                   false);
+                if (step->kind == MO_S_TYPE_ARGS &&
+                    (i == 1 ? n->children[0]->kind != MO_S_NAME
+                            : n->children[i - 1]->kind != MO_S_FIELD_ACCESS))
+                    error(p, MO_CODE_SOURCE_CALL, step->span,
+                          "type arguments apply only to a named function",
+                          "Type arguments follow a function name in brackets, as in "
+                          "Json.decode[User](text).");
             }
         }
         return;
@@ -1398,6 +1422,14 @@ static void validate(struct parser *p, struct mo_syntax *n, bool pattern) {
             error(p, MO_CODE_SOURCE_PATTERN, n->span,
                   "a pattern is a name, _, a literal, a case, a tuple or a list",
                   "A pattern matches the forms listed in reference 7.3.");
+    }
+    if (kind == MO_S_TYPE_ARGS) {
+        if (n->children[0]->kind != MO_S_NAME)
+            error(p, MO_CODE_SOURCE_CALL, n->span, "type arguments apply only to a named function",
+                  "Type arguments follow a function name in brackets, as in "
+                  "Json.decode[User](text).");
+        validate(p, n->children[0], false);
+        return;
     }
     if (kind == MO_S_CALL) {
         validate_call(p, n, n->children[1], constructor(n->children[0]), pattern);

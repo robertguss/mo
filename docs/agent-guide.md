@@ -159,7 +159,7 @@ Read the section for the rule.
 - Section 6 is a name bound once, and `var` for a later assignment.
 - Section 7 is `if`, `case`, `is`, and loops.
 - Section 8 is `Option` and `Result`. The sample uses `Option` and `or`.
-- Section 9 is the five abilities, `where`, and `to_text` on a type with `Text`.
+- Section 9 is the six abilities (`Equal`, `Hash`, `Order`, `Text`, `Number` and `Json`), `where`, `to_text` on a type with `Text`, and `to_json` / `Json.decode[T]` on a type with `Json`.
 - Section 10 is `expose`, `use`, and constants. The sample is one module.
 - Section 11 is the capabilities besides `Args` and `Console`, and narrowing a capability.
 - Section 12 is examples, promises, and tests. The sample has examples and a test, and no promise.

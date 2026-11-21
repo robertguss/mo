@@ -449,20 +449,29 @@ void lower_proof(struct lowering *p, const struct mo_ability_implementation **pr
     }
 }
 
+struct instance *lower_customizer_fn(struct lowering *p, const struct mo_symbol *function,
+                                     struct mo_type_arguments arguments, uint32_t part_count,
+                                     const struct mo_ability_implementation *const *parts,
+                                     const struct mo_source_type *const *part_parameters,
+                                     const struct substitution *substitution, uint32_t owner,
+                                     uint32_t depth) {
+    MO_ASSERT(function != NULL);
+    struct mo_checked_ability_use *uses = LOWER_NEW(p, struct mo_checked_ability_use, part_count);
+    for (uint32_t i = 0; i < part_count; i++) {
+        lower_work(p, 1);
+        uses[i] = (struct mo_checked_ability_use){
+            .operand = UINT32_MAX, .implementation = parts[i], .parameter = part_parameters[i]};
+    }
+    return lower_instance(p, function, arguments, substitution, part_count, uses, owner,
+                          depth + (arguments.count != 0));
+}
+
 struct instance *lower_customizer(struct lowering *p, const struct mo_ability_implementation *proof,
                                   const struct substitution *substitution, uint32_t owner,
                                   uint32_t depth) {
     MO_ASSERT(proof->kind == MO_ABILITY_FUNCTION);
-    struct mo_checked_ability_use *uses =
-        LOWER_NEW(p, struct mo_checked_ability_use, proof->part_count);
-    for (uint32_t i = 0; i < proof->part_count; i++) {
-        lower_work(p, 1);
-        uses[i] = (struct mo_checked_ability_use){.operand = UINT32_MAX,
-                                                  .implementation = proof->parts[i],
-                                                  .parameter = proof->part_parameters[i]};
-    }
-    return lower_instance(p, proof->function, proof->arguments, substitution, proof->part_count,
-                          uses, owner, depth + (proof->arguments.count != 0));
+    return lower_customizer_fn(p, proof->function, proof->arguments, proof->part_count,
+                               proof->parts, proof->part_parameters, substitution, owner, depth);
 }
 
 mo_core_string lower_function_name(struct lowering *p, const struct mo_symbol *symbol) {
@@ -675,6 +684,12 @@ mo_core_ctors lower_ctors(struct lowering *p, mo_core_ty type) {
         counts[0] = 2;
         fields[0][0] = lower_type(p, &text, NULL);
         fields[0][1] = lower_type(p, &entry_kind, NULL);
+    } else if (type->tag == MO_CORE_TY_SIMULATION_ERROR) {
+        count = 2;
+        names[0] = "ServiceDown";
+        names[1] = "ToolFailed";
+        counts[1] = 1;
+        fields[1][0] = lower_type(p, &text, NULL);
     } else if (type->tag == MO_CORE_TY_NETWORK_ERROR) {
         count = 6;
         names[0] = "UnknownHost";

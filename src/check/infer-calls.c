@@ -1,4 +1,5 @@
 #include "check/infer.h"
+#include "check/signatures.h"
 
 #include "base/codes.h"
 #include "base/simops.h"
@@ -250,21 +251,36 @@ MO_MUST_USE struct value infer_construct(struct inference *p, const struct mo_da
 MO_MUST_USE struct value infer_ability_function(struct inference *p, struct value receiver,
                                                 const struct mo_syntax *name) {
     bool text = infer_compare_text(name, "to_text") == 0;
-    struct term *type = infer_make_type(p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
-                                                                   .name = "fn",
-                                                                   .module = UINT32_MAX,
-                                                                   .count = text ? 2u : 3u});
-    if (type == NULL)
+    bool json = infer_compare_text(name, "to_json") == 0;
+    struct term *result_term = NULL;
+    if (json) {
+        const struct mo_source_type *json_ty = mo_json_type(p->interfaces, p->signatures, "Json");
+        if (json_ty == NULL) {
+            bool reported = infer_problem(
+                p, MO_CODE_IMPORT_MISSING, name->span, "to_json needs use Json",
+                "Bring the Json module into scope with use Json (reference 9.2, 10.3).", NULL);
+            (void)reported;
+            return (struct value){0};
+        }
+        result_term = infer_annotation(p, json_ty, NULL, 0);
+    } else
+        result_term = infer_native(p, text ? "Text" : "Ordering", 0);
+    struct term *type =
+        infer_make_type(p, (struct mo_source_type){.kind = MO_SOURCE_FUNCTION,
+                                                   .name = "fn",
+                                                   .module = UINT32_MAX,
+                                                   .count = text || json ? 2u : 3u});
+    if (type == NULL || result_term == NULL)
         return (struct value){0};
     type->arguments[0] = receiver.type;
-    if (!text)
+    if (!text && !json)
         type->arguments[1] = receiver.type;
-    type->arguments[type->shape.count - 1] = infer_native(p, text ? "Text" : "Ordering", 0);
+    type->arguments[type->shape.count - 1] = result_term;
     if (p->failed)
         return (struct value){0};
     struct value out = infer_graph(p, (struct value){.type = type}, 0);
     if (p->checked && out.type != NULL)
-        out.graph->output.native = text ? "to_text" : "compare";
+        out.graph->output.native = json ? "to_json" : text ? "to_text" : "compare";
     return out;
 }
 
@@ -325,7 +341,8 @@ MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
     bool visible = data != NULL && (type->shape.module == p->function->function->module ||
                                     type->shape.declaration->insides);
     if ((field == NULL || !visible) &&
-        (infer_compare_text(name, "to_text") == 0 || infer_compare_text(name, "compare") == 0))
+        (infer_compare_text(name, "to_text") == 0 || infer_compare_text(name, "compare") == 0 ||
+         infer_compare_text(name, "to_json") == 0))
         return infer_ability_function(p, v, name);
     if (field == NULL || !visible) {
         uint32_t count = 0;
@@ -772,10 +789,12 @@ MO_MUST_USE struct value infer_call(struct inference *p, struct value callee,
             result.graph->function_type = callee.graph->function_type;
             result.graph->requirements = callee.graph->requirements;
             result.graph->parameters = callee.graph->parameters;
+            result.graph->json_decode = callee.graph->json_decode;
         }
         if (receiver != NULL)
             result.graph->output.receiver = extra;
     }
+    result.json_decode = callee.json_decode;
     struct note *before = p->last;
     for (unsigned pass = 0; pass < 2; pass++) {
         for (uint32_t i = 0; i < count; i++) {
@@ -801,6 +820,88 @@ MO_MUST_USE struct value infer_call(struct inference *p, struct value callee,
     result.callee = callee.note;
     result.never = never;
     return result;
+}
+
+static const char *copy_diag_text(struct inference *p, const char *text) {
+    if (text == NULL)
+        return NULL;
+    size_t n = strlen(text) + 1;
+    char *copy = infer_allocate(p, n, 1, 1);
+    if (copy != NULL)
+        memcpy(copy, text, n);
+    return copy;
+}
+
+MO_MUST_USE struct value infer_type_application(struct inference *p, struct value callee,
+                                                const struct mo_syntax *args) {
+    if (callee.type == NULL)
+        return (struct value){0};
+    if (callee.function_type == NULL || callee.parameters == NULL) {
+        bool reported = infer_problem(
+            p, MO_CODE_TYPE_ARGUMENTS, args->span, "this function doesn't take type arguments",
+            "Bracketed type arguments instantiate a generic function's type "
+            "parameters, as in Json.decode[User](text) (reference 5.5).",
+            NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    uint32_t expected_count = 0;
+    for (unsigned i = 0; i < 26; i++)
+        expected_count += (callee.function_type->parameters & (UINT32_C(1) << i)) != 0 ? 1u : 0u;
+    if (expected_count != args->count) {
+        bool reported =
+            infer_problem(p, MO_CODE_TYPE_ARGUMENTS, args->span,
+                          "a function's type arguments don't match its type parameters",
+                          "Pass one type argument for each type parameter of the generic function "
+                          "(reference 5.5).",
+                          NULL);
+        (void)reported;
+        return (struct value){0};
+    }
+    for (uint32_t i = 0; i < args->count; i++) {
+        struct mo_diags local_diags = {0};
+        if (!mo_diags_init(&local_diags)) {
+            bool reported = infer_problem(p, MO_CODE_CHECK_NO_MEMORY, args->children[i]->span,
+                                          "the checking arena has no room", NULL, NULL);
+            (void)reported;
+            p->fatal = true;
+            return (struct value){0};
+        }
+        const struct mo_source_type *resolved = mo_resolve_expression_type(
+            p->arena, p->interfaces, p->signatures, p->function, args->children[i], &local_diags);
+        if (resolved == NULL || mo_diags_any(&local_diags)) {
+            if (local_diags.count != 0) {
+                const struct mo_diag *d = &local_diags.items[0];
+                const char *msg = copy_diag_text(p, d->message);
+                const char *rsn = copy_diag_text(p, d->reason);
+                uint16_t code = d->code;
+                struct mo_span span = d->primary.span;
+                mo_diags_free(&local_diags);
+                if (code >= 1000)
+                    p->fatal = true;
+                bool reported = infer_problem(p, code, span, msg, rsn, NULL);
+                (void)reported;
+            } else {
+                mo_diags_free(&local_diags);
+                bool reported = infer_problem(p, MO_CODE_CHECK_NO_MEMORY, args->children[i]->span,
+                                              "the checking arena has no room", NULL, NULL);
+                (void)reported;
+                p->fatal = true;
+            }
+            return (struct value){0};
+        }
+        mo_diags_free(&local_diags);
+        if (!mo_check_type_abilities(&p->abilities, resolved)) {
+            bool reported = infer_problem(p, p->abilities.error, args->children[i]->span,
+                                          p->abilities.message, p->abilities.reason, NULL);
+            (void)reported;
+            return (struct value){0};
+        }
+        struct term *term = infer_annotation(p, resolved, NULL, 0);
+        if (term == NULL || !infer_unify(p, callee.parameters[i], term, 0))
+            return (struct value){0};
+    }
+    return callee;
 }
 
 MO_MUST_USE struct value infer_binary(struct inference *p, enum mo_syntax_token op, struct value a,

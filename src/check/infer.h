@@ -100,6 +100,7 @@ struct emitted {
     const struct mo_source_type *function_type;
     const uint8_t *requirements;
     struct term **parameters; /* compact A-Z substitution terms */
+    bool json_decode;
 };
 
 /* M.to_text or M.compare: its graph takes only types the module M declares. */
@@ -225,6 +226,9 @@ struct value {
     struct note *bound;
     struct note *callee;
     struct dispatch *dispatch;
+    const struct mo_source_type *function_type;
+    struct term **parameters;
+    bool json_decode;
     bool never;
 };
 
@@ -368,6 +372,8 @@ MO_MUST_USE struct value infer_sequence(struct inference *p, const struct mo_syn
                                         struct term *expected);
 MO_MUST_USE struct value infer_call(struct inference *p, struct value callee,
                                     const struct mo_syntax *args, const struct value *receiver);
+MO_MUST_USE struct value infer_type_application(struct inference *p, struct value callee,
+                                                const struct mo_syntax *args);
 MO_MUST_USE struct value infer_binary(struct inference *p, enum mo_syntax_token op, struct value a,
                                       const struct mo_syntax *right, struct term *expected);
 MO_MUST_USE struct value infer_propagate(struct inference *p, struct value input,

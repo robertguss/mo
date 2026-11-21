@@ -316,8 +316,9 @@ static bool integer_is_one(const struct mo_syntax *n) {
 
 static void postfix_step(struct printer *f, const struct mo_syntax *n,
                          const struct mo_syntax *receiver) {
-    if (n->kind == MO_S_CALL) {
-        sequence_brackets(f, n, n->children[n->count - 1], "(", ")");
+    if (n->kind == MO_S_CALL || n->kind == MO_S_TYPE_ARGS) {
+        sequence_brackets(f, n, n->children[n->count - 1], n->kind == MO_S_TYPE_ARGS ? "[" : "(",
+                          n->kind == MO_S_TYPE_ARGS ? "]" : ")");
     } else {
         const struct mo_syntax *field = n->children[n->count - 1];
         soft(f, 0);
@@ -717,15 +718,16 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         node(f, n->children[n->count - 1]);
         break;
     case MO_S_CALL:
+    case MO_S_TYPE_ARGS:
     case MO_S_FIELD_ACCESS:
     case MO_S_QUALIFIED:
     case MO_S_POSITION:
         if (n->count == 2)
             node(f, n->children[0]);
-        if (n->kind != MO_S_CALL)
+        if (n->kind != MO_S_CALL && n->kind != MO_S_TYPE_ARGS)
             op(f, MO_DOC_NEST);
         postfix_step(f, n, n->count == 2 ? n->children[0] : NULL);
-        if (n->kind != MO_S_CALL)
+        if (n->kind != MO_S_CALL && n->kind != MO_S_TYPE_ARGS)
             op(f, MO_DOC_UNNEST);
         break;
     case MO_S_POSTFIX: {

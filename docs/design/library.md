@@ -597,6 +597,11 @@ new for it: it parses and prints with text and list primitives.
 | `text_at`, `int_at`, `bool_at` and `list_at` on a `Json` | Mo | `lib/json.mo` | `path`, then the one kind of value each gives |
 | `Json.int(n)`, `Json.decimal(d)`, `Json.float(f)` | Mo | `lib/json.mo` | |
 | `to_int`, `to_decimal`, `to_float` and `to_text` on a `JsonNumber` | Mo | `lib/json.mo` | the parser has already checked JSON's own number syntax; `to_float` is `Text.to_float` on the number's text, and `to_int` and `to_decimal` first write it without its exponent, so `1.5e1` is the `Int` 15 |
+| `value.to_json`, `T.to_json(value)` | lowering | `src/lower/abilities.c` | derived over records, choice cases (`snake_case` tags), tuples and collections, or calls the declaring module's `to_json` |
+| `Json.encode(value)`, `Json.encode_pretty(value)` | Mo | `lib/json.mo` | `value.to_json` followed by `to_text` or `pretty` |
+| `Json.decode[T](input)`, `Json.decode_strict[T](input)` | lowering | `src/lower/abilities.c` | `Json.parse` (after `Bytes.decode_utf8` for `Bytes`), then derived or custom `from_json` with dotted error paths |
+| `Json.from_json[T](json)`, `Json.from_json_strict[T](json)` | lowering | `src/lower/abilities.c` | derived field and case decoding, or the declaring module's `from_json` |
+| `Json.schema[T]()` | lowering | `src/lower/abilities.c` | structural JSON Schema object for `T`, with `$ref` on recursive nominal types |
 
 ## Http
 

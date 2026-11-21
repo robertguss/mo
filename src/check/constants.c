@@ -286,15 +286,29 @@ static MO_MUST_USE bool proof_edges(struct dependencies *p, uint32_t from,
         return false;
     *seen = (struct proof_seen){proof, p->seen};
     p->seen = seen;
-    if (proof->kind == MO_ABILITY_FUNCTION)
-        return add_edge(p, from, function_index(p, proof->function), span);
+    if (proof->kind == MO_ABILITY_FUNCTION && proof->function != NULL &&
+        !add_edge(p, from, function_index(p, proof->function), span))
+        return false;
+    if (proof->encode_function != NULL &&
+        !add_edge(p, from, function_index(p, proof->encode_function), span))
+        return false;
+    if (proof->decode_function != NULL &&
+        !add_edge(p, from, function_index(p, proof->decode_function), span))
+        return false;
     if (proof->kind == MO_ABILITY_PARAMETER && !trusted &&
-        (proof->ability == MO_SOURCE_TEXT || proof->ability == MO_SOURCE_ORDER)) {
+        (proof->ability == MO_SOURCE_TEXT || proof->ability == MO_SOURCE_ORDER ||
+         proof->ability == MO_SOURCE_JSON)) {
         p->vertices[from].unknown = true;
         p->vertices[from].span = span;
     }
     for (uint32_t i = 0; i < proof->part_count; i++)
         if (!proof_edges(p, from, proof->parts[i], span, depth + 1))
+            return false;
+    for (uint32_t i = 0; i < proof->encode_part_count; i++)
+        if (!proof_edges(p, from, proof->encode_parts[i], span, depth + 1))
+            return false;
+    for (uint32_t i = 0; i < proof->decode_part_count; i++)
+        if (!proof_edges(p, from, proof->decode_parts[i], span, depth + 1))
             return false;
     return true;
 }
@@ -373,9 +387,9 @@ static MO_MUST_USE bool body_edges(struct dependencies *p, uint32_t from,
         }
         for (uint32_t i = 0; i < row->ability_count; i++)
             if ((row->abilities[i].operand != UINT32_MAX ||
-                 (library_call &&
-                  (row->abilities[i].implementation->ability == MO_SOURCE_TEXT ||
-                   row->abilities[i].implementation->ability == MO_SOURCE_ORDER))) &&
+                 (library_call && (row->abilities[i].implementation->ability == MO_SOURCE_TEXT ||
+                                   row->abilities[i].implementation->ability == MO_SOURCE_ORDER ||
+                                   row->abilities[i].implementation->ability == MO_SOURCE_JSON))) &&
                 !proof_edges(p, from, row->abilities[i].implementation, span, 0))
                 return false;
         for (uint32_t i = 0; i < row->operand_count; i++) {

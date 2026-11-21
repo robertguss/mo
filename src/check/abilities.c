@@ -14,7 +14,7 @@ struct mo_ability_cache {
     const struct mo_source_type *type;
     struct mo_ability_cache **arguments;
     uint64_t hash;
-    const struct mo_ability_implementation *proofs[5];
+    const struct mo_ability_implementation *proofs[6];
     bool constraints;
 };
 
@@ -299,7 +299,7 @@ static MO_MUST_USE bool preview_type(struct mo_ability_context *p, struct type_p
 
 static MO_MUST_USE bool missing(struct mo_ability_context *p, const struct mo_source_type *type,
                                 enum mo_source_ability ability) {
-    static const char *const names[] = {"Equal", "Hash", "Order", "Text", "Number"};
+    static const char *const names[] = {"Equal", "Hash", "Order", "Text", "Number", "Json"};
     struct type_preview preview = {0};
     if (!preview_type(p, &preview, type, 0))
         return false;
@@ -342,12 +342,54 @@ static MO_MUST_USE unsigned parameter_requirements(struct mo_ability_context *p,
     return 0;
 }
 
+static size_t snake_case_name(const char *name, char *out, size_t capacity) {
+    size_t length = strlen(name), n = 0;
+    for (size_t i = 0; i < length; i++) {
+        unsigned char c = (unsigned char)name[i];
+        bool cap = c >= 'A' && c <= 'Z';
+        bool word = i != 0 && cap &&
+                    ((name[i - 1] >= 'a' && name[i - 1] <= 'z') ||
+                     (name[i - 1] >= '0' && name[i - 1] <= '9') ||
+                     (i + 1 < length && name[i + 1] >= 'a' && name[i + 1] <= 'z'));
+        if (word && n + 1 < capacity)
+            out[n++] = '_';
+        if (n + 1 < capacity)
+            out[n++] = (char)(cap ? c + ('a' - 'A') : c);
+    }
+    if (capacity != 0)
+        out[n] = '\0';
+    return n;
+}
+
 static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
                                     struct mo_ability_implementation *out, uint32_t depth) {
     const struct mo_source_type *type = out->type;
     const struct mo_nominal_signature *nominal =
         mo_nominal_signature_by_symbol(p->signatures, type->declaration);
     MO_ASSERT(nominal != NULL);
+    const struct mo_symbol *owner = type->declaration;
+    uint32_t cases = owner->declaration->kind == MO_S_ENUM ? owner->case_count : 1;
+    if (out->ability == MO_SOURCE_JSON && owner->declaration->kind == MO_S_ENUM) {
+        const char **tags = allocate(p, cases, sizeof(*tags), _Alignof(const char *));
+        if (tags == NULL)
+            return false;
+        for (uint32_t i = 0; i < cases; i++) {
+            const struct mo_symbol *symbol =
+                &p->interfaces->scopes[owner->module].symbols[owner->cases[i]];
+            size_t cap = strlen(symbol->name) * 2 + 2;
+            char *buf = allocate(p, (uint32_t)cap, 1, 1);
+            if (buf == NULL)
+                return false;
+            (void)snake_case_name(symbol->name, buf, cap);
+            for (uint32_t j = 0; j < i; j++) {
+                if (!work(p, 0))
+                    return false;
+                if (strcmp(tags[j], buf) == 0)
+                    return missing(p, type, out->ability);
+            }
+            tags[i] = buf;
+        }
+    }
     uint32_t count = nominal->field_count;
     const struct mo_ability_implementation **parts =
         allocate(p, count, sizeof(*parts), _Alignof(const struct mo_ability_implementation *));
@@ -356,8 +398,6 @@ static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
     out->parts = parts;
     out->part_count = count;
     uint32_t at = 0;
-    const struct mo_symbol *owner = type->declaration;
-    uint32_t cases = owner->declaration->kind == MO_S_ENUM ? owner->case_count : 1;
     for (uint32_t i = 0; i < cases; i++) {
         const struct mo_symbol *symbol =
             owner->declaration->kind == MO_S_ENUM
@@ -379,9 +419,84 @@ static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
     return true;
 }
 
+static MO_MUST_USE bool
+bind_customizer_fn(struct mo_ability_context *p, const struct mo_source_type *type,
+                   const struct mo_function_signature *fn, const struct mo_source_type *receiver,
+                   const struct mo_symbol **fn_out, struct mo_type_arguments *args_out,
+                   uint32_t *part_count_out,
+                   const struct mo_ability_implementation *const **parts_out,
+                   const struct mo_source_type *const **params_out, uint32_t depth) {
+    *fn_out = fn->function;
+    struct mo_type_argument *arguments =
+        allocate(p, type->count, sizeof(*arguments), _Alignof(struct mo_type_argument));
+    if (arguments == NULL)
+        return false;
+    MO_ASSERT(type->count <= 26);
+    for (uint32_t j = 0; j < type->count; j++) {
+        struct mo_type_argument argument = {receiver->arguments[j], type->arguments[j]};
+        uint32_t at = j;
+        while (at > 0 && arguments[at - 1].parameter->name[0] > argument.parameter->name[0]) {
+            arguments[at] = arguments[at - 1];
+            at--;
+        }
+        arguments[at] = argument;
+    }
+    *args_out = (struct mo_type_arguments){type->count, arguments};
+    uint32_t count = 0;
+    for (uint32_t j = 0; j < type->count; j++) {
+        unsigned letter = (unsigned)(arguments[j].parameter->name[0] - 'A');
+        for (unsigned k = 0; k < 6; k++)
+            count += (fn->requirements[letter] & (1u << k)) != 0 ? 1u : 0u;
+    }
+    const struct mo_ability_implementation **parts =
+        allocate(p, count, sizeof(*parts), _Alignof(const struct mo_ability_implementation *));
+    const struct mo_source_type **parameters =
+        allocate(p, count, sizeof(*parameters), _Alignof(const struct mo_source_type *));
+    if (parts == NULL || parameters == NULL)
+        return false;
+    *part_count_out = count;
+    *parts_out = parts;
+    *params_out = parameters;
+    uint32_t at = 0;
+    for (uint32_t j = 0; j < type->count; j++) {
+        unsigned letter = (unsigned)(arguments[j].parameter->name[0] - 'A');
+        for (unsigned k = 0; k < 6; k++) {
+            if ((fn->requirements[letter] & (1u << k)) == 0)
+                continue;
+            parameters[at] = arguments[j].parameter;
+            parts[at] = prove(p, arguments[j].type, (enum mo_source_ability)k, depth + 1);
+            if (parts[at++] == NULL)
+                return false;
+        }
+    }
+    return true;
+}
+
 static MO_MUST_USE bool customizer(struct mo_ability_context *p,
                                    struct mo_ability_implementation *out, uint32_t depth) {
     const struct mo_source_type *type = out->type;
+    if (out->ability == MO_SOURCE_JSON) {
+        if (type->declaration == NULL)
+            return true;
+        const struct mo_function_signature *to_fn =
+            mo_customizer_signature_by_name(p->signatures, type, "to_json");
+        const struct mo_function_signature *from_fn =
+            mo_customizer_signature_by_name(p->signatures, type, "from_json");
+        if (to_fn != NULL &&
+            !bind_customizer_fn(p, type, to_fn, to_fn->type->arguments[0], &out->encode_function,
+                                &out->encode_arguments, &out->encode_part_count, &out->encode_parts,
+                                &out->encode_part_parameters, depth))
+            return false;
+        if (from_fn != NULL &&
+            !bind_customizer_fn(
+                p, type, from_fn, from_fn->type->arguments[from_fn->type->count - 1]->arguments[0],
+                &out->decode_function, &out->decode_arguments, &out->decode_part_count,
+                &out->decode_parts, &out->decode_part_parameters, depth))
+            return false;
+        if (to_fn != NULL && from_fn != NULL)
+            out->kind = MO_ABILITY_FUNCTION;
+        return true;
+    }
     bool file_error = named(type, "FileError") && out->ability == MO_SOURCE_TEXT;
     if ((type->declaration == NULL && !file_error) ||
         (out->ability != MO_SOURCE_TEXT && out->ability != MO_SOURCE_ORDER))
@@ -389,52 +504,10 @@ static MO_MUST_USE bool customizer(struct mo_ability_context *p,
     const struct mo_function_signature *fn =
         mo_customizer_signature(p->signatures, type, out->ability);
     if (fn != NULL) {
-        const struct mo_source_type *receiver = fn->type->arguments[0];
         out->kind = MO_ABILITY_FUNCTION;
-        out->function = fn->function;
-        struct mo_type_argument *arguments =
-            allocate(p, type->count, sizeof(*arguments), _Alignof(struct mo_type_argument));
-        if (arguments == NULL)
-            return false;
-        MO_ASSERT(type->count <= 26);
-        for (uint32_t j = 0; j < type->count; j++) {
-            struct mo_type_argument argument = {receiver->arguments[j], type->arguments[j]};
-            uint32_t at = j;
-            while (at > 0 && arguments[at - 1].parameter->name[0] > argument.parameter->name[0]) {
-                arguments[at] = arguments[at - 1];
-                at--;
-            }
-            arguments[at] = argument;
-        }
-        out->arguments = (struct mo_type_arguments){type->count, arguments};
-        uint32_t count = 0;
-        for (uint32_t j = 0; j < type->count; j++) {
-            unsigned letter = (unsigned)(arguments[j].parameter->name[0] - 'A');
-            for (unsigned k = 0; k < 5; k++)
-                count += (fn->requirements[letter] & (1u << k)) != 0 ? 1u : 0u;
-        }
-        const struct mo_ability_implementation **parts =
-            allocate(p, count, sizeof(*parts), _Alignof(const struct mo_ability_implementation *));
-        const struct mo_source_type **parameters =
-            allocate(p, count, sizeof(*parameters), _Alignof(const struct mo_source_type *));
-        if (parts == NULL || parameters == NULL)
-            return false;
-        out->part_count = count;
-        out->parts = parts;
-        out->part_parameters = parameters;
-        uint32_t at = 0;
-        for (uint32_t j = 0; j < type->count; j++) {
-            unsigned letter = (unsigned)(arguments[j].parameter->name[0] - 'A');
-            for (unsigned k = 0; k < 5; k++) {
-                if ((fn->requirements[letter] & (1u << k)) == 0)
-                    continue;
-                parameters[at] = arguments[j].parameter;
-                parts[at] = prove(p, arguments[j].type, (enum mo_source_ability)k, depth + 1);
-                if (parts[at++] == NULL)
-                    return false;
-            }
-        }
-        return true;
+        return bind_customizer_fn(p, type, fn, fn->type->arguments[0], &out->function,
+                                  &out->arguments, &out->part_count, &out->parts,
+                                  &out->part_parameters, depth);
     }
     return true;
 }
@@ -561,7 +634,10 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
                   (ability == MO_SOURCE_HASH && named(type, "Float")) ||
                   (ability == MO_SOURCE_TEXT && named(type, "Bytes")) ||
                   (ability == MO_SOURCE_ORDER &&
-                   (named(type, "Range") || named(type, "Map") || named(type, "Set")));
+                   (named(type, "Range") || named(type, "Map") || named(type, "Set"))) ||
+                  (ability == MO_SOURCE_JSON &&
+                   (named(type, "Bytes") || named(type, "Range") || named(type, "Duration") ||
+                    (named(type, "Map") && !named(type->arguments[0], "Text"))));
     for (unsigned i = 0; i < MO_CAPABILITY_COUNT; i++)
         denied = denied || named(type, mo_capability_names[i]);
     if (denied) {
@@ -573,6 +649,12 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
      * Any failed descendant fails the entire context; provisional edges can
      * therefore never escape in a certified program. */
     entry->proofs[ability] = out;
+    if (ability == MO_SOURCE_JSON && type->declaration != NULL &&
+        p->interfaces->scopes[type->module].library &&
+        p->interfaces->scopes[type->module].name != NULL &&
+        strcmp(p->interfaces->scopes[type->module].name, "Json") == 0 &&
+        (strcmp(type->name, "Json") == 0 || strcmp(type->name, "JsonNumber") == 0))
+        return out;
     if ((ability == MO_SOURCE_HASH || ability == MO_SOURCE_ORDER) &&
         prove(p, type, MO_SOURCE_EQUAL, depth) == NULL)
         return NULL;

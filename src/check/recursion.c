@@ -143,10 +143,18 @@ static MO_MUST_USE bool proofs(struct recursion *p, uint32_t caller,
         return false;
     *seen = (struct proof_seen){proof, p->seen};
     p->seen = seen;
-    if (!add(p, caller, proof->function, &proof->arguments))
+    if (!add(p, caller, proof->function, &proof->arguments) ||
+        !add(p, caller, proof->encode_function, &proof->encode_arguments) ||
+        !add(p, caller, proof->decode_function, &proof->decode_arguments))
         return false;
     for (uint32_t i = 0; i < proof->part_count; i++)
         if (!proofs(p, caller, proof->parts[i], depth + 1))
+            return false;
+    for (uint32_t i = 0; i < proof->encode_part_count; i++)
+        if (!proofs(p, caller, proof->encode_parts[i], depth + 1))
+            return false;
+    for (uint32_t i = 0; i < proof->decode_part_count; i++)
+        if (!proofs(p, caller, proof->decode_parts[i], depth + 1))
             return false;
     return true;
 }

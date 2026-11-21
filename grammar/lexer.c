@@ -624,6 +624,34 @@ static int character(struct lexer *lx, struct node **value, int line, int col) {
     return CHAR;
 }
 
+static bool starts_type_after_bracket(const unsigned char *bytes, size_t length, size_t pos) {
+    for (;;) {
+        while (pos < length && (bytes[pos] == ' ' || bytes[pos] == '\t' || bytes[pos] == '\n' ||
+                                bytes[pos] == '\r')) {
+            pos++;
+        }
+        if (pos < length && bytes[pos] == '#') {
+            while (pos < length && bytes[pos] != '\n' && bytes[pos] != '\r') {
+                pos++;
+            }
+            continue;
+        }
+        break;
+    }
+    if (pos >= length) {
+        return false;
+    }
+    if (is_upper(bytes[pos]) || bytes[pos] == '(') {
+        return true;
+    }
+    if (pos + 2 <= length && bytes[pos] == 'f' && bytes[pos + 1] == 'n') {
+        int after = pos + 2 < length ? bytes[pos + 2] : -1;
+        return !is_lower(after) && !is_upper(after) && !is_digit(after) && after != '_' &&
+               after != '?';
+    }
+    return false;
+}
+
 // Reads one token, skipping spaces, line breaks and comments before it.
 // *newline says whether a line break was skipped, and *nl_line and *nl_col
 // where the first one was.
@@ -678,8 +706,9 @@ static int scan(struct lexer *lx, struct node **value, int *line, int *col, bool
         return text_body(lx, value, *line, *col, false, open->triple, open->indent, false);
     }
     if (c == '[' && !*newline &&
-        (lx->last == NAME || lx->last == CAPNAME || (lx->last == RPAREN && !lx->lambda_close) ||
-         lx->last == RBRACK || lx->last == TEXT || lx->last == TEXT_TAIL)) {
+        ((lx->last == NAME && !starts_type_after_bracket(lx->src, lx->len, lx->pos + 1)) ||
+         lx->last == CAPNAME || (lx->last == RPAREN && !lx->lambda_close) || lx->last == RBRACK ||
+         lx->last == TEXT || lx->last == TEXT_TAIL)) {
         mo_lexer_error(lx, *line, *col,
                        "Mo has no indexing with [...]: items.get(i) and map.get(key) return an "
                        "Option");

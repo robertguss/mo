@@ -39,6 +39,14 @@ MO_MUST_USE const struct mo_source_type *
 mo_resolve_service_type(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                         const struct mo_signatures *signatures, uint32_t module,
                         const struct mo_syntax *clause, struct mo_diags *diags);
+MO_MUST_USE const struct mo_source_type *
+mo_resolve_expression_type(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                           const struct mo_signatures *signatures,
+                           const struct mo_function_signature *enclosing,
+                           const struct mo_syntax *syntax, struct mo_diags *diags);
+MO_MUST_USE const struct mo_source_type *mo_json_type(const struct mo_module_interfaces *interfaces,
+                                                      const struct mo_signatures *signatures,
+                                                      const char *name);
 
 MO_MUST_USE const struct mo_data_signature *
 mo_data_signature_by_symbol(const struct mo_signatures *signatures, const struct mo_symbol *symbol);
@@ -51,6 +59,9 @@ mo_nominal_signature_by_symbol(const struct mo_signatures *signatures,
 MO_MUST_USE const struct mo_function_signature *
 mo_customizer_signature(const struct mo_signatures *signatures, const struct mo_source_type *type,
                         enum mo_source_ability ability);
+MO_MUST_USE const struct mo_function_signature *
+mo_customizer_signature_by_name(const struct mo_signatures *signatures,
+                                const struct mo_source_type *type, const char *name);
 /* A type name always in scope (reference 10.5) and its arity, or NULL. */
 MO_MUST_USE const char *mo_builtin_type(const struct mo_syntax *name, uint32_t *arity);
 

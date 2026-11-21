@@ -47,7 +47,7 @@ static MO_MUST_USE bool block(const struct mo_syntax *n) {
            n->kind == MO_S_LAMBDA || n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES ||
            n->kind == MO_S_ARM || n->kind == MO_S_IF_PART || n->kind == MO_S_LIST ||
            n->kind == MO_S_MAP || n->kind == MO_S_TUPLE || n->kind == MO_S_GROUP ||
-           n->kind == MO_S_CALL;
+           n->kind == MO_S_CALL || n->kind == MO_S_TYPE_ARGS;
 }
 
 static MO_MUST_USE struct mo_syntax *owner(struct mo_syntax *n, uint32_t offset,
@@ -130,7 +130,10 @@ static struct item_list bracket_items(struct mo_syntax *n) {
         seq = n->children[1];
     else if (n->kind == MO_S_CALL)
         seq = n->children[n->count - 1];
-    else if (n->kind == MO_S_CASE_DECL && n->children[1] != NULL) {
+    else if (n->kind == MO_S_TYPE_ARGS) {
+        seq = n->children[n->count - 1];
+        list.closer = MO_T_RBRACK;
+    } else if (n->kind == MO_S_CASE_DECL && n->children[1] != NULL) {
         seq = n->children[1];
         if (seq->kind != MO_S_SEQUENCE)
             return list;
