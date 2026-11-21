@@ -1,11 +1,15 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "vm/internal.h"
 
 #include "base/simops.h"
 
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 struct mo_simulation {
     struct mo_arena arena;
@@ -310,6 +314,129 @@ struct call {
 };
 
 static const char simulation_operations;
+static const char live_actor_operations;
+
+struct mo_live_actor {
+    struct mo_arena arena;
+    pthread_mutex_t mutex;
+    const struct mo_image *image;
+    struct mo_service_loop *loop;
+    uint32_t descriptor;
+    uint64_t base_mono;
+    uint64_t last_elapsed;
+    bool have_base_mono;
+    FILE *errors;
+    struct mo_heap *caller_heap;
+    struct mo_simulation_reply *reply;
+    bool replied, refused;
+};
+
+static struct mo_service_time live_actor_clock(void *context) {
+    struct mo_live_actor *actor = context;
+    struct timespec rt = {0, 0}, mt = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &rt);
+    (void)clock_gettime(CLOCK_MONOTONIC, &mt);
+    int64_t now_us = (int64_t)rt.tv_sec * INT64_C(1000000) + (int64_t)(rt.tv_nsec / 1000);
+    if (now_us < MO_TIME_MIN_US)
+        now_us = MO_TIME_MIN_US;
+    if (now_us > MO_TIME_MAX_US)
+        now_us = MO_TIME_MAX_US;
+    uint64_t mono_us = (uint64_t)mt.tv_sec * UINT64_C(1000000) + (uint64_t)(mt.tv_nsec / 1000);
+    if (!actor->have_base_mono) {
+        actor->base_mono = mono_us;
+        actor->have_base_mono = true;
+    }
+    uint64_t elapsed = mono_us >= actor->base_mono ? mono_us - actor->base_mono : 0;
+    if (elapsed < actor->last_elapsed)
+        elapsed = actor->last_elapsed;
+    actor->last_elapsed = elapsed;
+    return (struct mo_service_time){.now = now_us, .elapsed = elapsed};
+}
+
+static void live_actor_event(const struct mo_service_event *ev, void *context) {
+    struct mo_live_actor *actor = context;
+    if (actor->errors == NULL)
+        return;
+    const char *status_txt = mo_service_status_text(ev->reason);
+    if (ev->kind == MO_SERVICE_FAILURE) {
+        const char *hname = ev->handler.bytes == NULL ? "actor" : (const char *)ev->handler.bytes;
+        int hlen = ev->handler.bytes == NULL ? 5 : (int)ev->handler.length;
+        (void)fprintf(actor->errors, "mo: actor failure: %.*s: %s\n", hlen, hname, status_txt);
+        (void)fflush(actor->errors);
+    } else if (ev->kind == MO_SERVICE_RESTART) {
+        (void)fprintf(actor->errors, "mo: actor restart: %u of %d: %s\n", (unsigned)ev->restart,
+                      MO_LIMIT_SERVICE_RESTARTS, status_txt);
+        (void)fflush(actor->errors);
+    } else if (ev->kind == MO_SERVICE_STOP) {
+        (void)fprintf(actor->errors, "mo: actor stop: %s\n", status_txt);
+        (void)fflush(actor->errors);
+    }
+}
+
+static void live_actor_reply(const struct mo_service_response *resp, void *context) {
+    struct mo_live_actor *actor = context;
+    if (resp->timer)
+        return;
+    MO_ASSERT(!actor->replied && actor->reply != NULL);
+    actor->replied = true;
+    struct mo_simulation_reply *out = actor->reply;
+    out->status = resp->status;
+    out->updated = resp->updated;
+    out->type = resp->type;
+    if (resp->status != MO_SERVICE_OK)
+        return;
+    size_t encoded_length = 0;
+    if (!mo_value_copy_saved(mo_service_heap(actor->loop), actor->caller_heap, resp->type,
+                             resp->value, &out->reply, &encoded_length, &out->refusal)) {
+        out->reply = (struct mo_cell){0};
+        actor->refused = true;
+    }
+}
+
+enum mo_service_status mo_live_actor_new(const struct mo_image *image, uint32_t index, FILE *errors,
+                                         struct mo_live_actor **out) {
+    MO_ASSERT(image != NULL && out != NULL && index < mo_image_bytecode(image)->service_count);
+    struct mo_arena arena;
+    mo_arena_init(&arena, sizeof(struct mo_live_actor) + MO_ARENA_CHUNK_HEADER);
+    struct mo_live_actor *actor =
+        mo_arena_allocate(&arena, sizeof *actor, _Alignof(struct mo_live_actor));
+    if (actor == NULL) {
+        mo_arena_free(&arena);
+        return MO_SERVICE_MEMORY;
+    }
+    *actor = (struct mo_live_actor){
+        .arena = arena, .image = image, .descriptor = index, .errors = errors};
+    if (pthread_mutex_init(&actor->mutex, NULL) != 0) {
+        mo_arena_free(&arena);
+        return MO_SERVICE_MEMORY;
+    }
+    struct mo_service_hooks hooks = {live_actor_clock, live_actor_reply, live_actor_event, actor};
+    enum mo_service_status status = mo_service_new(image, index, &hooks, &actor->loop);
+    if (status != MO_SERVICE_OK) {
+        (void)pthread_mutex_destroy(&actor->mutex);
+        mo_arena_free(&arena);
+        return status;
+    }
+    *out = actor;
+    return MO_SERVICE_OK;
+}
+
+void mo_live_actor_free(struct mo_live_actor *actor) {
+    if (actor == NULL)
+        return;
+    mo_service_free(actor->loop);
+    (void)pthread_mutex_destroy(&actor->mutex);
+    struct mo_arena arena = actor->arena;
+    mo_arena_free(&arena);
+}
+
+bool mo_value_live_actor(struct mo_heap *heap, uint32_t type, struct mo_live_actor *actor,
+                         struct mo_cell *out) {
+    MO_ASSERT(heap != NULL && actor != NULL && out != NULL);
+    const struct mo_capability_info info = {.operations = &live_actor_operations,
+                                            .handle = (intptr_t)actor};
+    return mo_value_capability(heap, type, &info, out);
+}
 
 static void release(intptr_t handle) {
     mo_simulation_free(((struct simulation *)handle)->simulation);
@@ -506,6 +633,147 @@ static void advance(struct call *c, const struct mo_simulation_hooks *hooks, int
     MO_UNREACHABLE();
 }
 
+static void live_send(struct call *c, struct mo_live_actor *actor, uint32_t descriptor,
+                      uint32_t tool, const struct mo_cell *arguments, uint32_t result_type,
+                      struct mo_cell *out) {
+    struct mo_process *p = c->caller;
+    const struct mo_bytecode_service *service = &p->file->services[descriptor];
+    const struct mo_bytecode_service_tool *handler = &service->tools[tool];
+    const struct mo_bytecode_string *tool_name = &p->file->strings[handler->name];
+    if (descriptor != actor->descriptor) {
+        report(c, "Actor call selected mismatched actor descriptor");
+        return;
+    }
+
+    struct mo_simulation_reply r = {.status = MO_SERVICE_DOWN};
+    enum mo_simulation_sent sent = MO_SENT_REPLIED;
+
+    MO_ASSERT(pthread_mutex_lock(&actor->mutex) == 0);
+    if (actor->loop == NULL || !mo_service_running(actor->loop)) {
+        sent = MO_SENT_DOWN;
+    } else {
+        while (mo_service_step(actor->loop)) {
+        }
+        if (!mo_service_running(actor->loop)) {
+            sent = MO_SENT_DOWN;
+        } else {
+            struct mo_heap *service_heap = mo_service_heap(actor->loop);
+            struct mo_cell copied[MO_LIMIT_BYTECODE_PARAMETERS];
+            uint32_t count = 0;
+            uint64_t message_bytes = 25;
+            for (; count < handler->argument_count; count++) {
+                size_t encoded_length = 0;
+                if (!mo_value_copy_saved(p->heap, service_heap, handler->argument_types[count],
+                                         arguments[count], &copied[count], &encoded_length,
+                                         &r.refusal)) {
+                    r.argument = count;
+                    sent = MO_SENT_ARGUMENT;
+                    break;
+                }
+                message_bytes += 4 + encoded_length;
+            }
+            if (sent == MO_SENT_REPLIED && !handler->read_only &&
+                message_bytes > MO_LIMIT_SAVED_BYTES) {
+                r.bytes = message_bytes;
+                sent = MO_SENT_TOO_LARGE;
+            }
+            if (sent == MO_SENT_REPLIED) {
+                r.status = mo_service_send(actor->loop, tool, copied, count, 0);
+                if (r.status == MO_SERVICE_MEMORY)
+                    sent = MO_SENT_REFUSED;
+            }
+            for (uint32_t i = 0; i < count; i++)
+                mo_value_drop(service_heap, handler->argument_types[i], copied[i]);
+            if (sent == MO_SENT_REPLIED && r.status == MO_SERVICE_OK) {
+                actor->caller_heap = p->heap;
+                actor->reply = &r;
+                actor->replied = false;
+                actor->refused = false;
+                while (mo_service_step(actor->loop)) {
+                }
+                actor->caller_heap = NULL;
+                actor->reply = NULL;
+                if (actor->refused)
+                    sent = MO_SENT_REPLY_COPY;
+                else if (!actor->replied)
+                    sent = MO_SENT_DOWN;
+            }
+            if (sent == MO_SENT_REPLIED) {
+                switch (r.status) {
+                case MO_SERVICE_OK:
+                    sent = r.updated || handler->read_only ? MO_SENT_REPLIED : MO_SENT_REJECTED;
+                    break;
+                case MO_SERVICE_DOWN:
+                    sent = MO_SENT_DOWN;
+                    break;
+                case MO_SERVICE_DEFECT:
+                case MO_SERVICE_WORK:
+                case MO_SERVICE_MEMORY:
+                    sent = MO_SENT_TOOL_FAILED;
+                    break;
+                case MO_SERVICE_BUSY:
+                case MO_SERVICE_INTERVAL:
+                case MO_SERVICE_STORE:
+                case MO_SERVICE_SAVED_INVALID:
+                case MO_SERVICE_REMOVED:
+                    sent = MO_SENT_FAILED;
+                    break;
+                }
+            }
+        }
+    }
+    MO_ASSERT(pthread_mutex_unlock(&actor->mutex) == 0);
+
+    switch (sent) {
+    case MO_SENT_STOPPED:
+        MO_UNREACHABLE();
+    case MO_SENT_ARGUMENT: {
+        const struct mo_bytecode_string *aname =
+            &p->file->strings[handler->argument_names[r.argument]];
+        report(c, "Actor argument %.*s copy-in: %s; nothing was queued or committed",
+               (int)aname->length, aname->bytes, r.refusal);
+        return;
+    }
+    case MO_SENT_TOO_LARGE:
+        report(c,
+               "Actor admission: aggregate message is %" PRIu64
+               " bytes, exceeding MO_LIMIT_SAVED_BYTES (%u)",
+               r.bytes, MO_LIMIT_SAVED_BYTES);
+        return;
+    case MO_SENT_REFUSED:
+        report(c, "Actor admission refused; mailbox or memory full");
+        return;
+    case MO_SENT_REPLY_COPY:
+        report(c, "Actor reply copy-out: %s; call %.*s executed", r.refusal, (int)tool_name->length,
+               tool_name->bytes);
+        return;
+    case MO_SENT_FAILED:
+        report(c, "Actor call: %s", mo_service_status_text(r.status));
+        return;
+    case MO_SENT_REPLIED:
+    case MO_SENT_REJECTED: {
+        uint32_t reply_type = p->types->items[result_type].cases[0].fields[0].type;
+        bool ok = mo_value_case(p->heap, result_type, 0, &r.reply, 1, out);
+        mo_value_drop(p->heap, reply_type, r.reply);
+        if (!ok)
+            report(c, "Actor reply copy-out: allocation failed");
+        return;
+    }
+    case MO_SENT_DOWN:
+    case MO_SENT_TOOL_FAILED: {
+        struct mo_cell error;
+        uint32_t error_type = p->types->items[result_type].cases[1].fields[0].type;
+        bool made =
+            mo_value_case(p->heap, error_type, sent == MO_SENT_DOWN ? 0 : 1, NULL, 0, &error);
+        if (!made || !mo_value_case(p->heap, result_type, 1, &error, 1, out))
+            report(c, "Actor call: allocation failed while returning error");
+        if (made)
+            mo_value_drop(p->heap, error_type, error);
+        return;
+    }
+    }
+}
+
 enum mo_outcome mo_vm_simulate(struct mo_process *p, uint32_t operation, uint32_t descriptor,
                                uint32_t tool, uint32_t result_type, const struct mo_cell *arguments,
                                struct mo_cell *out) {
@@ -534,6 +802,16 @@ enum mo_outcome mo_vm_simulate(struct mo_process *p, uint32_t operation, uint32_
         start(&c, &hooks);
     } else {
         const struct mo_capability_info *info = mo_capability_get(arguments[0]);
+        if (info->operations == &live_actor_operations) {
+            MO_ASSERT(operation == MO_SIM_SEND);
+            struct mo_live_actor *actor = (struct mo_live_actor *)info->handle;
+            MO_ASSERT(actor->image == p->image);
+            *out = mo_cell_unit();
+            live_send(&c, actor, descriptor, tool, arguments + 1, result_type, out);
+            return c.failed ? mo_vm_stop(p, p->simulation_report, NULL, false, mo_cell_unit(),
+                                         MO_STOPPED)
+                            : MO_RETURNED;
+        }
         MO_ASSERT(info->operations == &simulation_operations);
         c.s = (const struct simulation *)info->handle;
         MO_ASSERT(c.s->image == p->image);

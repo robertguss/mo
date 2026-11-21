@@ -630,14 +630,17 @@ static MO_MUST_USE const struct mo_ability_implementation *prove(struct mo_abili
     }
     bool numeric = named(type, "Int") || named(type, "BigInt") || named(type, "Decimal") ||
                    named(type, "Float");
-    bool denied = type->kind == MO_SOURCE_FUNCTION || (ability == MO_SOURCE_NUMBER && !numeric) ||
-                  (ability == MO_SOURCE_HASH && named(type, "Float")) ||
-                  (ability == MO_SOURCE_TEXT && named(type, "Bytes")) ||
-                  (ability == MO_SOURCE_ORDER &&
-                   (named(type, "Range") || named(type, "Map") || named(type, "Set"))) ||
-                  (ability == MO_SOURCE_JSON &&
-                   (named(type, "Bytes") || named(type, "Range") || named(type, "Duration") ||
-                    (named(type, "Map") && !named(type->arguments[0], "Text"))));
+    bool denied =
+        type->kind == MO_SOURCE_FUNCTION ||
+        (type->declaration != NULL && type->declaration->declaration->kind == MO_S_ACTOR) ||
+        (ability == MO_SOURCE_NUMBER && !numeric) ||
+        (ability == MO_SOURCE_HASH && named(type, "Float")) ||
+        (ability == MO_SOURCE_TEXT && named(type, "Bytes")) ||
+        (ability == MO_SOURCE_ORDER &&
+         (named(type, "Range") || named(type, "Map") || named(type, "Set"))) ||
+        (ability == MO_SOURCE_JSON &&
+         (named(type, "Bytes") || named(type, "Range") || named(type, "Duration") ||
+          (named(type, "Map") && !named(type->arguments[0], "Text"))));
     for (unsigned i = 0; i < MO_CAPABILITY_COUNT; i++)
         denied = denied || named(type, mo_capability_names[i]);
     if (denied) {

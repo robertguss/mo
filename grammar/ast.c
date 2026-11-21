@@ -235,9 +235,11 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
     case K_API_PORT:
     case K_API_CORS:
     case K_API_SQLITE:
+    case K_API_ACTOR:
     case K_API_AUTH:
     case K_API_ROUTE:
     case K_API_STATUS:
+    case K_ACTOR_CALLS:
         return true;
     case K_STRUCT:
         if (n->kids[2]->count == 0) {
@@ -317,6 +319,7 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
     case K_MODULE:
     case K_CASE_DECL:
     case K_SERVICE:
+    case K_ACTOR:
     case K_SERVICE_STATE:
     case K_SERVICE_TOOLS:
     case K_SERVICE_EVERY:

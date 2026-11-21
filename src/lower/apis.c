@@ -502,6 +502,7 @@ struct dispatch_env {
     mo_core_string req_path;
     mo_core_string req_body;
     mo_core_string *cap_vars;
+    mo_core_string *actor_vars;
 };
 
 static mo_core_expr encode_domain_error(struct lowering *p, const struct dispatch_env *env,
@@ -651,6 +652,9 @@ static mo_core_expr bind_route_params(struct lowering *p, const struct dispatch_
     case MO_API_PARAM_SQLITE_DB:
         arg_vars[idx] = db_vars[pm->index];
         return bind_route_params(p, env, route, captured_var, auth_var, db_vars, idx + 1, arg_vars);
+    case MO_API_PARAM_ACTOR:
+        arg_vars[idx] = env->actor_vars[pm->index];
+        return bind_route_params(p, env, route, captured_var, auth_var, db_vars, idx + 1, arg_vars);
     case MO_API_PARAM_CAPABILITY:
         arg_vars[idx] = env->cap_vars[pm->index];
         return bind_route_params(p, env, route, captured_var, auth_var, db_vars, idx + 1, arg_vars);
@@ -779,6 +783,8 @@ static mo_core_expr execute_matched_route(struct lowering *p, const struct dispa
                 acall->as.call.args.items[i] = lower_var(p, env->req_var);
             else if (pm->kind == MO_API_PARAM_SQLITE_DB)
                 acall->as.call.args.items[i] = lower_var(p, db_vars[pm->index]);
+            else if (pm->kind == MO_API_PARAM_ACTOR)
+                acall->as.call.args.items[i] = lower_var(p, env->actor_vars[pm->index]);
             else
                 acall->as.call.args.items[i] = lower_var(p, env->cap_vars[pm->index]);
         }
@@ -948,16 +954,23 @@ emit_single_route_fn(struct lowering *p, const struct dispatch_env *base_env, ui
                                                         .arguments = t_args};
     mo_core_ty list_text_ty = lower_type(p, &list_text_src, NULL);
 
-    size_t pcount = 3 + api->capability_count;
+    size_t pcount = 3 + api->capability_count + api->actor_count;
     struct mo_core_param *params = LOWER_NEW(p, struct mo_core_param, pcount);
     mo_core_string *rcaps =
         LOWER_NEW(p, mo_core_string, api->capability_count == 0 ? 1 : api->capability_count);
+    mo_core_string *ractors =
+        LOWER_NEW(p, mo_core_string, api->actor_count == 0 ? 1 : api->actor_count);
     params[0] = (struct mo_core_param){lower_fresh(p), base_env->req_ty};
     params[1] = (struct mo_core_param){lower_fresh(p), base_env->bytes_ty};
     params[2] = (struct mo_core_param){lower_fresh(p), list_text_ty};
     for (uint32_t c = 0; c < api->capability_count; c++) {
         rcaps[c] = lower_fresh(p);
         params[3 + c] = (struct mo_core_param){rcaps[c], builtin_ty(p, api->capabilities[c])};
+    }
+    mo_core_ty sim_ty = builtin_ty(p, "Simulation");
+    for (uint32_t a = 0; a < api->actor_count; a++) {
+        ractors[a] = lower_fresh(p);
+        params[3 + api->capability_count + a] = (struct mo_core_param){ractors[a], sim_ty};
     }
 
     char suffix[48];
@@ -969,6 +982,7 @@ emit_single_route_fn(struct lowering *p, const struct dispatch_env *base_env, ui
     renv.req_var = params[0].name;
     renv.req_body = params[1].name;
     renv.cap_vars = rcaps;
+    renv.actor_vars = ractors;
     fn->fun.body = execute_matched_route(p, &renv, route, params[2].name);
     return fn;
 }
@@ -1005,7 +1019,7 @@ static mo_core_expr build_route_chain(struct lowering *p, const struct dispatch_
         api_lib_call2(p, "match_path", api_cstr(p, route->path), lower_var(p, env->req_path));
     mo_core_string captured = lower_fresh(p);
 
-    size_t call_argc = 3 + env->api->capability_count;
+    size_t call_argc = 3 + env->api->capability_count + env->api->actor_count;
     mo_core_expr rcall = lower_expr(p, MO_CORE_EXPR_CALL);
     rcall->as.call.name = route_fns[route_idx]->fun.name;
     rcall->as.call.args = api_args(p, call_argc);
@@ -1014,6 +1028,9 @@ static mo_core_expr build_route_chain(struct lowering *p, const struct dispatch_
     rcall->as.call.args.items[2] = lower_var(p, captured);
     for (uint32_t c = 0; c < env->api->capability_count; c++)
         rcall->as.call.args.items[3 + c] = lower_var(p, env->cap_vars[c]);
+    for (uint32_t a = 0; a < env->api->actor_count; a++)
+        rcall->as.call.args.items[3 + env->api->capability_count + a] =
+            lower_var(p, env->actor_vars[a]);
 
     mo_core_expr method_if = lower_expr(p, MO_CORE_EXPR_IF);
     method_if->as.if_.cond = text_eq(p, env->text_ty, lower_var(p, env->req_method),
@@ -1047,15 +1064,22 @@ static void emit_dispatch_fns(struct lowering *p, const struct mo_checked_api *a
     mo_core_ty text_ty = builtin_ty(p, "Text");
     mo_core_ty bytes_ty = builtin_ty(p, "Bytes");
 
-    size_t param_count = 1 + api->capability_count;
+    size_t param_count = 1 + api->capability_count + api->actor_count;
     struct mo_core_param *route_params = LOWER_NEW(p, struct mo_core_param, param_count);
     mo_core_string *cap_vars =
         LOWER_NEW(p, mo_core_string, api->capability_count == 0 ? 1 : api->capability_count);
+    mo_core_string *actor_vars =
+        LOWER_NEW(p, mo_core_string, api->actor_count == 0 ? 1 : api->actor_count);
     route_params[0] = (struct mo_core_param){lower_fresh(p), req_ty};
     for (uint32_t c = 0; c < api->capability_count; c++) {
         cap_vars[c] = lower_fresh(p);
         route_params[1 + c] =
             (struct mo_core_param){cap_vars[c], builtin_ty(p, api->capabilities[c])};
+    }
+    mo_core_ty sim_ty = builtin_ty(p, "Simulation");
+    for (uint32_t a = 0; a < api->actor_count; a++) {
+        actor_vars[a] = lower_fresh(p);
+        route_params[1 + api->capability_count + a] = (struct mo_core_param){actor_vars[a], sim_ty};
     }
 
     struct instance *route_fn =
@@ -1071,7 +1095,8 @@ static void emit_dispatch_fns(struct lowering *p, const struct mo_checked_api *a
                                .req_method = lower_fresh(p),
                                .req_path = lower_fresh(p),
                                .req_body = lower_fresh(p),
-                               .cap_vars = cap_vars};
+                               .cap_vars = cap_vars,
+                               .actor_vars = actor_vars};
 
     struct instance **route_fns =
         LOWER_NEW(p, struct instance *, api->route_count == 0 ? 1 : api->route_count);
@@ -1172,7 +1197,7 @@ static void emit_wire_fn(struct lowering *p, const struct mo_checked_api *api,
     mo_core_ty ret_ty = lower_type(p, &ret_src, NULL);
     (void)int_ty;
 
-    size_t param_count = 4 + api->capability_count;
+    size_t param_count = 4 + api->capability_count + api->actor_count;
     struct mo_core_param *params = LOWER_NEW(p, struct mo_core_param, param_count);
     params[0] = (struct mo_core_param){lower_fresh(p), text_ty};  /* method */
     params[1] = (struct mo_core_param){lower_fresh(p), text_ty};  /* target */
@@ -1180,6 +1205,9 @@ static void emit_wire_fn(struct lowering *p, const struct mo_checked_api *api,
     params[3] = (struct mo_core_param){lower_fresh(p), bytes_ty}; /* body */
     for (uint32_t c = 0; c < api->capability_count; c++)
         params[4 + c] = (struct mo_core_param){lower_fresh(p), builtin_ty(p, api->capabilities[c])};
+    mo_core_ty sim_ty = builtin_ty(p, "Simulation");
+    for (uint32_t a = 0; a < api->actor_count; a++)
+        params[4 + api->capability_count + a] = (struct mo_core_param){lower_fresh(p), sim_ty};
 
     struct instance *wire_fn =
         new_generated_fn(p, api->module, ".%api.wire", param_count, params, ret_ty);
@@ -1196,12 +1224,16 @@ static void emit_wire_fn(struct lowering *p, const struct mo_checked_api *api,
     mo_core_expr full_req = api_con(p, req_ty, "Request", full_fields);
 
     mo_core_string req_v = lower_fresh(p);
+    size_t disp_argc = 1 + api->capability_count + api->actor_count;
     mo_core_expr call_disp = lower_expr(p, MO_CORE_EXPR_CALL);
     call_disp->as.call.name = disp_fn->fun.name;
-    call_disp->as.call.args = api_args(p, 1 + api->capability_count);
+    call_disp->as.call.args = api_args(p, disp_argc);
     call_disp->as.call.args.items[0] = lower_var(p, req_v);
     for (uint32_t c = 0; c < api->capability_count; c++)
         call_disp->as.call.args.items[1 + c] = lower_var(p, params[4 + c].name);
+    for (uint32_t a = 0; a < api->actor_count; a++)
+        call_disp->as.call.args.items[1 + api->capability_count + a] =
+            lower_var(p, params[4 + api->capability_count + a].name);
 
     mo_core_string st_v = lower_fresh(p), rh_v = lower_fresh(p), rb_v = lower_fresh(p);
     mo_core_expr tup = lower_expr(p, MO_CORE_EXPR_TUPLE);
@@ -1359,7 +1391,7 @@ mo_core_expr lower_apitest_send(struct lowering *p, uint32_t api_index, mo_core_
         sup_vars[i] = lower_fresh(p);
 
     mo_core_string req_var = lower_fresh(p);
-    size_t call_arity = 1 + api->capability_count;
+    size_t call_arity = 1 + api->capability_count + api->actor_count;
     mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
     call->as.call.name = lower_concat(p, lower_text(p, p->program->set->names[api->module]),
                                       ".%api.dispatch", lower_text(p, ""));
@@ -1370,11 +1402,37 @@ mo_core_expr lower_apitest_send(struct lowering *p, uint32_t api_index, mo_core_
         const char *wanted = api->capabilities[c];
         mo_core_expr chosen = NULL;
         for (size_t i = 0; i < supplied; i++)
-            if (strcmp(arg_types[1 + i]->name, wanted) == 0) {
+            if (arg_types[1 + i]->declaration == NULL &&
+                strcmp(arg_types[1 + i]->name, wanted) == 0) {
                 chosen = lower_var(p, sup_vars[i]);
                 break;
             }
         call->as.call.args.items[1 + c] = chosen != NULL ? chosen : default_fake_cap(p, wanted);
+    }
+
+    for (uint32_t a = 0; a < api->actor_count; a++) {
+        const struct mo_symbol *wanted_actor = api->actors[a].type->declaration;
+        mo_core_expr chosen = NULL;
+        for (size_t i = 0; i < supplied; i++)
+            if (arg_types[1 + i]->declaration == wanted_actor) {
+                chosen = lower_var(p, sup_vars[i]);
+                break;
+            }
+        if (chosen == NULL) {
+            mo_core_expr tlit = lower_unit(p);
+            tlit->as.lit->tag = MO_CORE_LIT_TIME;
+            tlit->as.lit->as.time.digits =
+                lower_text(p, "1767225600000000"); /* 2026-01-01T00:00:00Z */
+            mo_core_expr_list sargs = api_args(p, 1);
+            sargs.items[0] = tlit;
+            struct mo_core_sim_op op = {
+                .tag = MO_SIM_START,
+                .descriptor = {.digits = lower_number(p, api->actors[a].service_index)},
+                .tool = {.digits = lower_text(p, "0")}};
+            chosen =
+                lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op}, sargs);
+        }
+        call->as.call.args.items[1 + api->capability_count + a] = chosen;
     }
 
     mo_core_expr body = call;

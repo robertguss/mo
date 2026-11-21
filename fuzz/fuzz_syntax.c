@@ -173,7 +173,8 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
     const struct node *items = root->kids[1];
     for (int i = 0; i < items->count; i++) {
         enum node_kind k = items->kids[i]->kind;
-        names += k == K_FN || k == K_STRUCT || k == K_ENUM || k == K_CONST ? 1u : 0u;
+        names +=
+            k == K_FN || k == K_STRUCT || k == K_ENUM || k == K_ACTOR || k == K_CONST ? 1u : 0u;
     }
     if (names > MO_LIMIT_MODULE_NAMES)
         found |= bit(MO_CODE_TOO_MANY_NAMES);
@@ -188,9 +189,9 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
         enum node_kind k = n->kind;
         bool nested =
             k == K_FN || k == K_STRUCT || k == K_ENUM || k == K_TEST || k == K_SERVICE ||
-            k == K_API || k == K_CASE || k == K_LAMBDA || k == K_FOR || k == K_WHILE ||
-            k == K_LIST || k == K_MAP || k == K_GROUP || k == K_TUPLE || k == K_CALL ||
-            k == K_TYPE_ARGS || k == K_PROMISE || k == K_EXAMPLES ||
+            k == K_ACTOR || k == K_API || k == K_CASE || k == K_LAMBDA || k == K_FOR ||
+            k == K_WHILE || k == K_LIST || k == K_MAP || k == K_GROUP || k == K_TUPLE ||
+            k == K_CALL || k == K_TYPE_ARGS || k == K_PROMISE || k == K_EXAMPLES ||
             (k == K_CASE_DECL && n->kids[1] != NULL) || (k == K_API_STATUS && n->kids[1] != NULL) ||
             ((k == K_IF || k == K_LINE_IF || k == K_TEXT_INTERPOLATED) && !v.continuation) ||
             (k == K_TYPE && (type_form(source, n) != 0 || n->count == 2));

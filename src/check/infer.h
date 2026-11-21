@@ -368,6 +368,8 @@ MO_MUST_USE struct value infer_field_value(struct inference *p, struct value rec
                                            const struct mo_syntax *site, bool *called);
 MO_MUST_USE struct value infer_simulation_call(struct inference *p, const struct mo_syntax *name,
                                                const struct mo_syntax *args);
+MO_MUST_USE struct value infer_actor_call(struct inference *p, const struct mo_syntax *name,
+                                          const struct mo_syntax *args);
 MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo_syntax *name,
                                             const struct mo_syntax *args);
 MO_MUST_USE struct value infer_sequence(struct inference *p, const struct mo_syntax *node,

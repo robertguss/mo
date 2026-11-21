@@ -309,7 +309,7 @@ static bool load_side(struct side *s, const char *path, const char *library) {
     if (s->program == NULL || mo_diags_any(&s->diags))
         return false;
     for (uint32_t i = 0; i < s->program->service_count; i++)
-        if (s->program->services[i].module == 0)
+        if (s->program->services[i].module == 0 && !s->program->services[i].is_actor)
             s->entry_service = i;
     return compute_service_schema(s);
 }
@@ -556,7 +556,7 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
     for (uint32_t i = 0; i < p->service_count; i++)
         cap += p->services[i].tool_count + p->services[i].timer_count + 4;
     for (uint32_t i = 0; i < p->api_count; i++)
-        cap += p->apis[i].route_count + p->apis[i].sqlite_count + 4;
+        cap += p->apis[i].route_count + p->apis[i].sqlite_count + p->apis[i].actor_count + 4;
     struct pub_item *items = mo_arena_allocate_array(arena, cap == 0 ? 1 : cap, sizeof *items,
                                                      _Alignof(struct pub_item));
     MO_ASSERT(items != NULL);
@@ -572,6 +572,33 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
             const struct mo_symbol *sym = &scope->symbols[k];
             if (!sym->exported || sym->declaration == NULL)
                 continue;
+            if (sym->declaration->kind == MO_S_ACTOR) {
+                mo_buffer_clear(&nb);
+                mo_buffer_clear(&sb);
+                bool bok = mo_buffer_append_text(&nb, p->set->names[m]) &&
+                           mo_buffer_append_byte(&nb, '.') &&
+                           mo_buffer_append_text(&nb, sym->name) &&
+                           mo_buffer_append_text(&sb, "actor");
+                for (uint32_t si = 0; bok && si < p->service_count; si++) {
+                    const struct mo_checked_service *asvc = &p->services[si];
+                    if (!asvc->is_actor || asvc->actor_symbol != sym)
+                        continue;
+                    bok = mo_buffer_append_text(&sb, " calls(");
+                    for (uint32_t ti = 0; bok && ti < asvc->tool_count; ti++) {
+                        if (ti > 0)
+                            bok = mo_buffer_append_text(&sb, ", ");
+                        bok = bok &&
+                              mo_buffer_append_text(
+                                  &sb,
+                                  p->functions[asvc->tools[ti].function].signature->function->name);
+                    }
+                    bok = bok && mo_buffer_append_byte(&sb, ')');
+                }
+                MO_ASSERT(bok);
+                items[n++] = (struct pub_item){"actor", copy_buf_cstr(arena, &nb),
+                                               copy_buf_cstr(arena, &sb)};
+                continue;
+            }
             if (sym->declaration->kind != MO_S_STRUCT && sym->declaration->kind != MO_S_ENUM)
                 continue;
             mo_buffer_clear(&nb);
@@ -684,6 +711,16 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
             continue;
         if (api->cors != NULL)
             items[n++] = (struct pub_item){"api_cors", "api.cors", api->cors};
+        for (uint32_t ac = 0; ac < api->actor_count; ac++) {
+            mo_buffer_clear(&nb);
+            mo_buffer_clear(&sb);
+            bool bok = mo_buffer_append_text(&nb, "api.actor.") &&
+                       mo_buffer_append_text(&nb, api->actors[ac].name) &&
+                       format_type(p, api->actors[ac].type, &sb);
+            MO_ASSERT(bok);
+            items[n++] = (struct pub_item){"api_actor", copy_buf_cstr(arena, &nb),
+                                           copy_buf_cstr(arena, &sb)};
+        }
         static const char *const mnames[] = {"GET", "POST", "PUT", "PATCH", "DELETE"};
         for (uint32_t r = 0; r < api->route_count; r++) {
             const struct mo_checked_api_route *rt = &api->routes[r];

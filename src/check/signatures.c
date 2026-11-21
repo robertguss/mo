@@ -586,7 +586,8 @@ own_type(struct preparation *p, const struct mo_module_scope *scope, const struc
         used == NULL ? NULL : lookup(&p->interfaces->scopes[used->module], name);
     return symbol != NULL && symbol->exported && symbol->owner == UINT32_MAX &&
                    (symbol->declaration->kind == MO_S_STRUCT ||
-                    symbol->declaration->kind == MO_S_ENUM)
+                    symbol->declaration->kind == MO_S_ENUM ||
+                    symbol->declaration->kind == MO_S_ACTOR)
                ? symbol
                : NULL;
 }
@@ -688,11 +689,13 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
     struct mo_source_type type = {.kind = MO_SOURCE_NAMED, .module = UINT32_MAX, .count = count};
     uint32_t arity = 0;
     if (symbol != NULL && symbol->owner == UINT32_MAX &&
-        (symbol->declaration->kind == MO_S_STRUCT || symbol->declaration->kind == MO_S_ENUM)) {
+        (symbol->declaration->kind == MO_S_STRUCT || symbol->declaration->kind == MO_S_ENUM ||
+         symbol->declaration->kind == MO_S_ACTOR)) {
         type.name = symbol->name;
         type.module = symbol->module;
         type.declaration = symbol;
-        const struct mo_syntax *parameters = symbol->declaration->children[1];
+        const struct mo_syntax *parameters =
+            symbol->declaration->kind == MO_S_ACTOR ? NULL : symbol->declaration->children[1];
         arity = parameters == NULL ? 0 : parameters->count;
     } else if (symbol == NULL && name->kind == MO_S_CAPNAME) {
         type.name = mo_builtin_type(name, &arity);
@@ -793,15 +796,37 @@ static MO_MUST_USE int nominal_order(const void *a, const void *b) {
 
 static MO_MUST_USE bool nominal_index(struct preparation *p) {
     struct mo_signatures *s = p->signatures;
-    s->nominals =
-        allocate(p, s->data_count, sizeof(*s->nominals), _Alignof(struct mo_nominal_signature));
-    if (s->nominals == NULL)
+    uint32_t actor_count = 0;
+    for (uint32_t m = 0; m < p->interfaces->count; m++)
+        for (uint32_t j = 0; j < p->interfaces->scopes[m].count; j++)
+            if (p->interfaces->scopes[m].symbols[j].declaration->kind == MO_S_ACTOR)
+                actor_count++;
+    uint32_t total = s->data_count + actor_count;
+    s->nominals = allocate(p, total, sizeof(*s->nominals), _Alignof(struct mo_nominal_signature));
+    if (s->nominals == NULL && total != 0)
         return false;
     for (uint32_t i = 0; i < s->data_count; i++)
         s->nominals[i] = (struct mo_nominal_signature){
             .type = s->data[i].type, .field_count = s->data[i].count, .case_count = 1};
-    qsort(s->nominals, s->data_count, sizeof(*s->nominals), nominal_order);
-    for (uint32_t i = 0; i < s->data_count; i++) {
+    uint32_t at = s->data_count;
+    for (uint32_t m = 0; m < p->interfaces->count; m++)
+        for (uint32_t j = 0; j < p->interfaces->scopes[m].count; j++) {
+            const struct mo_symbol *sym = &p->interfaces->scopes[m].symbols[j];
+            if (sym->declaration->kind != MO_S_ACTOR)
+                continue;
+            const struct mo_source_type *actor_ty =
+                intern(p, (struct mo_source_type){.kind = MO_SOURCE_NAMED,
+                                                  .name = sym->name,
+                                                  .module = sym->module,
+                                                  .declaration = sym});
+            if (actor_ty == NULL)
+                return false;
+            s->nominals[at++] =
+                (struct mo_nominal_signature){.type = actor_ty, .holds_capability = true};
+        }
+    if (total != 0)
+        qsort(s->nominals, total, sizeof(*s->nominals), nominal_order);
+    for (uint32_t i = 0; i < total; i++) {
         struct mo_nominal_signature value = s->nominals[i];
         if (s->nominal_count != 0 &&
             s->nominals[s->nominal_count - 1].type->declaration == value.type->declaration) {
@@ -814,7 +839,9 @@ static MO_MUST_USE bool nominal_index(struct preparation *p) {
     }
     for (uint32_t i = 0; i < s->nominal_count; i++) {
         const struct mo_symbol *owner = s->nominals[i].type->declaration;
-        uint32_t cases = owner->declaration->kind == MO_S_ENUM ? owner->case_count : 1;
+        uint32_t cases = owner->declaration->kind == MO_S_ENUM    ? owner->case_count
+                         : owner->declaration->kind == MO_S_ACTOR ? 0
+                                                                  : 1;
         s->nominals[i].invalid = s->nominals[i].case_count != cases;
     }
     return true;
@@ -1513,7 +1540,8 @@ const struct mo_source_type *
 mo_resolve_service_type(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
                         const struct mo_signatures *signatures, uint32_t module,
                         const struct mo_syntax *clause, struct mo_diags *diags) {
-    MO_ASSERT(clause->kind == MO_S_SERVICE_STATE || clause->kind == MO_S_API_AUTH);
+    MO_ASSERT(clause->kind == MO_S_SERVICE_STATE || clause->kind == MO_S_API_AUTH ||
+              clause->kind == MO_S_API_ACTOR);
     struct mo_symbol owner = {.name = "service", .declaration = clause, .module = module};
     struct mo_signatures view = *signatures;
     struct preparation p = {.arena = arena,
@@ -1523,7 +1551,7 @@ mo_resolve_service_type(struct mo_arena *arena, const struct mo_module_interface
                             .signatures = &view,
                             .span = clause->span,
                             .checked = true};
-    return resolve(&p, clause->children[0]);
+    return resolve(&p, clause->children[clause->kind == MO_S_API_ACTOR ? 1 : 0]);
 }
 
 static void collect_function_parameters(const struct mo_source_type *type,

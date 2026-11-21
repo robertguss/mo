@@ -726,6 +726,8 @@ MO_MUST_USE struct value infer_identifier(struct inference *p, const struct mo_s
     }
     if (prefix != NULL && infer_compare_text(prefix, "Simulation") == 0)
         return infer_simulation_call(p, node, NULL);
+    if (prefix != NULL && infer_compare_text(prefix, "Actor") == 0)
+        return infer_actor_call(p, node, NULL);
     if (prefix != NULL && infer_compare_text(prefix, "ApiTest") == 0)
         return infer_apitest_call(p, node, NULL);
     if (prefix == NULL && node->kind == MO_S_NAME) {
@@ -812,6 +814,15 @@ MO_MUST_USE struct value infer_identifier(struct inference *p, const struct mo_s
         bool reported =
             infer_missing_field(p, node->span, field == NULL ? NULL : field->text,
                                 field == NULL ? 0 : field->span.end - field->span.start, field);
+        (void)reported;
+        return (struct value){0};
+    }
+    if (s->declaration->kind == MO_S_ACTOR) {
+        bool reported = infer_problem(
+            p, MO_CODE_ACTOR_BLOCK, node->span, "an actor type is not a value",
+            "Receive an actor handle as a parameter, declare actor <name>: <Type> in an api "
+            "block, or call Actor.start(<Type>) in a test (reference 11.7).",
+            s->declaration->children[0]);
         (void)reported;
         return (struct value){0};
     }

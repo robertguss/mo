@@ -164,7 +164,7 @@ bool mo_source_builtin(const uint8_t *name, size_t length) {
                                         "ServiceDown",  "ToolFailed",
                                         "Network",      "Connection",
                                         "NetworkError", "Sqlite",
-                                        "SqliteError"};
+                                        "SqliteError",  "Actor"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
         if (length == strlen(names[i]) && memcmp(name, names[i], length) == 0)
             return true;
@@ -358,6 +358,14 @@ static MO_MUST_USE bool expose(struct resolver *r, uint32_t module) {
                         r, MO_CODE_EXPOSE_INSIDES, item->span, "a case is exposed without its type",
                         "Exposing a type without (..) hides its fields or cases (reference 10.2).",
                         symbol->name, scope->symbols[symbol->owner].declaration->children[0]))
+                    return false;
+                continue;
+            }
+            if (all && symbol->declaration->kind == MO_S_ACTOR) {
+                if (!error(r, MO_CODE_EXPOSE_INSIDES, item->span,
+                           "an actor has no insides to expose",
+                           "Expose an actor by name without (..) (reference 11.7).", symbol->name,
+                           symbol->declaration->children[0]))
                     return false;
                 continue;
             }

@@ -494,12 +494,29 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
         struct mo_span entry_span = entry->signature->function->declaration->children[0]->span;
         unsigned capabilities = 0;
         for (uint32_t i = 0; i < entry->parameter_count; i++) {
+            const struct mo_source_type *ptype = entry->parameters[i]->type;
+            if (ptype->kind == MO_SOURCE_NAMED && ptype->declaration != NULL &&
+                ptype->declaration->declaration->kind == MO_S_ACTOR) {
+                bool duplicate = false;
+                for (uint32_t prev = 0; prev < i; prev++)
+                    if (entry->parameters[prev]->type->declaration == ptype->declaration)
+                        duplicate = true;
+                if (duplicate) {
+                    bool kept = report(diags, MO_CODE_MAIN_CONTRACT, entry_span,
+                                       "main has an invalid signature",
+                                       "main lists capabilities and actors, at most one of each "
+                                       "type (reference 11.2, 11.7).");
+                    (void)kept;
+                    return NULL;
+                }
+                continue;
+            }
             unsigned capability = 0;
             for (unsigned j = 0; j < MO_CAPABILITY_COUNT; j++)
                 if (strcmp(mo_capability_names[j], "Simulation") != 0 &&
                     strcmp(mo_capability_names[j], "Connection") != 0 &&
                     strcmp(mo_capability_names[j], "Sqlite.Database") != 0 &&
-                    native_type(entry->parameters[i]->type, mo_capability_names[j]))
+                    native_type(ptype, mo_capability_names[j]))
                     capability = 1u << j;
             if (capability == 0 || (capabilities & capability) != 0) {
                 bool kept = report(diags, MO_CODE_MAIN_CONTRACT, entry_span,

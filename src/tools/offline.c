@@ -379,7 +379,7 @@ static bool check_program(struct offline *o, const struct input *in, const struc
 static uint32_t main_service(const struct mo_program *program) {
     uint32_t service = MO_NO_INDEX;
     for (uint32_t i = 0; i < program->service_count; i++)
-        if (program->services[i].module == 0)
+        if (program->services[i].module == 0 && !program->services[i].is_actor)
             service = i;
     return service;
 }

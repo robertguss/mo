@@ -178,7 +178,10 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
     } else {
         MO_ASSERT(source->kind == MO_SOURCE_NAMED);
         name = lower_text(p, source->name);
-        if (source->module != UINT32_MAX) {
+        if (source->declaration != NULL && source->declaration->declaration->kind == MO_S_ACTOR) {
+            name = lower_text(p, "Simulation");
+            t->tag = MO_CORE_TY_SIMULATION;
+        } else if (source->module != UINT32_MAX) {
             MO_ASSERT(source->module < p->program->set->count);
             name =
                 lower_concat(p, lower_text(p, p->program->set->names[source->module]), ".", name);

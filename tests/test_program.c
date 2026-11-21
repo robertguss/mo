@@ -405,7 +405,8 @@ static void init_with_library(struct fixture *f, const char *text) {
     MO_ASSERT(fclose(out) == 0);
     struct mo_module_set *loaded =
         mo_load_program(&f->syntax, &f->sources, f->path, "lib", &f->diags);
-    MO_ASSERT(loaded != NULL && !mo_diags_any(&f->diags));
+    if (loaded == NULL || mo_diags_any(&f->diags))
+        return;
     f->set = *loaded;
     f->module = f->set.modules[0];
     f->program = mo_check(&f->arena, &f->set, &f->diags);
@@ -3152,12 +3153,92 @@ static void api_server_checks(void) {
     free_fixture(&ok);
 }
 
+static void actor_checks(void) {
+    const struct {
+        const char *source;
+        uint16_t code;
+    } rejected[] = {
+        {"module Main\nactor Empty\nend\n", MO_CODE_ACTOR_BLOCK},
+        {"module Main\nactor WithTok\nstate Int = 0\ncalls get_v\ntoken from env \"TOK\"\nend\n"
+         "fn get_v(s: Int, _t: Time) : List(Int)\n[s]\nend\n",
+         MO_CODE_ACTOR_BLOCK},
+        {"module Main\nactor A\nstate Int = 0\ncalls a\nend\n"
+         "actor B\nstate Int = 0\ncalls b\nend\n"
+         "fn a(s: Int, _t: Time) : List(Int)\n[s]\nend\n"
+         "fn b(s: Int, _t: Time) : List(Int)\n[s]\nend\n",
+         MO_CODE_ACTOR_BLOCK},
+        {"module Main\nservice\nstate Int = 0\ntools a\ntoken from env \"TOK\"\nend\n"
+         "actor B\nstate Int = 0\ncalls b\nend\n"
+         "fn a(s: Int, _t: Time) : List(Int)\n[s]\nend\n"
+         "fn b(s: Int, _t: Time) : List(Int)\n[s]\nend\n",
+         MO_CODE_ACTOR_BLOCK},
+        {"module Main\nexpose Counter(..)\nactor Counter\nstate Int = 0\ncalls read\nend\n"
+         "fn read(s: Int, _t: Time) : List(Int)\n[s]\nend\n",
+         MO_CODE_EXPOSE_INSIDES},
+        {"module Main\nactor Counter\nstate Int = 0\ncalls read\nend\n"
+         "fn read(s: Int, _t: Time) : List(Int)\n[s]\nend\n"
+         "fn bad() : Counter\nActor.start(Counter)\nend\n",
+         MO_CODE_FAKE_OUTSIDE_SPEC},
+        {"module Main\nactor Counter\nstate Int = 0\ncalls read\nend\n"
+         "fn read(s: Int, _t: Time) : List(Int)\n[s]\nend\n"
+         "fn bad() : Int\n_x = Counter\n1\nend\n",
+         MO_CODE_ACTOR_BLOCK},
+        {"module Main\nactor Counter\nstate Int = 0\ncalls read\nend\n"
+         "fn read(s: Int, _t: Time) : List(Int)\n[s]\nend\n"
+         "test \"sim on actor\"\n"
+         "t = Time.parse(\"2026-01-01T00:00:00Z\") or stop \"bad\"\n"
+         "_s = Simulation.start(Main, t)\nend\n",
+         MO_CODE_SERVICE_HANDLER},
+        {"module Main\nuse Api\nactor Counter\nstate Int = 0\ncalls read\nend\n"
+         "fn read(s: Int, _t: Time) : List(Int)\n[s]\nend\n"
+         "api\nget \"/c\" get_c\nend\n"
+         "fn get_c(c: Counter) : List(Int)\nc.read\nend\n",
+         MO_CODE_API_ROUTE},
+        {"module Main\nactor Counter\nstate Int = 0\ncalls read\nend\n"
+         "fn read(s: Int, _t: Time) : List(Int)\n[s]\nend\n"
+         "fn main(_a: Counter, _b: Counter)\nend\n",
+         MO_CODE_MAIN_CONTRACT},
+    };
+    for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
+        struct fixture f;
+        init_with_library(&f, rejected[i].source);
+        CHECK(f.program == NULL && f.diags.count >= 1);
+        if (f.diags.count >= 1)
+            CHECK(f.diags.items[0].code == rejected[i].code);
+        free_fixture(&f);
+    }
+
+    struct fixture ok;
+    init_with_library(&ok, "module Main\nuse Api\n"
+                           "struct CounterState\n  total: Int\nend\n"
+                           "actor Counter\nstate CounterState = CounterState(total: 0)\ncalls inc, "
+                           "current\nend\n"
+                           "fn inc(s: CounterState, _t: Time, d: Int) : (CounterState, Int)\n"
+                           "  (CounterState(total: s.total + d), s.total + d)\nend\n"
+                           "fn current(s: CounterState, _t: Time) : Int\ns.total\nend\n"
+                           "api\nactor ctr: Counter\nget \"/c\" read_c\nend\n"
+                           "fn read_c(ctr: Counter) : Int\nctr.current\nend\n"
+                           "fn main(io: Console, ctr: Counter)\n"
+                           "_v = ctr.inc(5)\nio.print(\"#{ctr.current}\")\nend\n"
+                           "test \"actor test\"\n"
+                           "c = Actor.start(Counter)\nassert c.inc(3) == 3\n"
+                           "assert ApiTest.send(Main, Api.get(\"/c\"), c).text == \"3\"\nend\n");
+    CHECK(ok.program != NULL && !mo_diags_any(&ok.diags));
+    if (ok.program != NULL) {
+        CHECK(ok.program->service_count == 1 && ok.program->services[0].is_actor);
+        CHECK(ok.program->api_count == 1 && ok.program->apis[0].actor_count == 1);
+        CHECK(ok.program->entry.capability_count == 2);
+    }
+    free_fixture(&ok);
+}
+
 static void run(void *argument) {
     (void)argument;
     simulation_inputs();
     service_inputs();
     json_ability_graph();
     api_server_checks();
+    actor_checks();
     service_handlers();
     service_rules();
     map_graph();

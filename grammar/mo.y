@@ -67,13 +67,13 @@ static struct node *OP(struct node *node, int token) {
 %token AND "and" OR "or" NOT "not" IS "is" IMPLIES "implies" TRUE "true" FALSE "false"
 %token STOP "stop" PROMISE "promise" ALLOWS "allows" FORBIDS "forbids"
 %token EXAMPLES "examples" TEST "test" ASSERT "assert" WHERE "where" END "end"
-%token SERVICE "service" API "api"
+%token SERVICE "service" API "api" ACTOR "actor"
 %token LPAREN "(" RPAREN ")" LBRACK "[" RBRACK "]" LBRACE "{" RBRACE "}"
 %token COMMA "," COLON ":" DOT "." DOTDOT ".." BAR "|"
 %token ASSIGN "=" PLUSEQ "+=" MINUSEQ "-="
 %token EQ "==" NE "!=" LT "<" LE "<=" GT ">" GE ">="
 %token PLUS "+" MINUS "-" STAR "*" SLASH "/" PERCENT "%"
-%token SOFT_STATE "state" SOFT_TOOLS "tools" SOFT_EVERY "every"
+%token SOFT_STATE "state" SOFT_TOOLS "tools" SOFT_CALLS "calls" SOFT_EVERY "every"
 %token SOFT_TOKEN "token" SOFT_FROM "from" SOFT_ENV "env" SOFT_ON "on"
 %token SOFT_PORT "port" SOFT_CORS "cors" SOFT_SQLITE "sqlite"
 %token SOFT_AUTH "auth" SOFT_VIA "via"
@@ -106,6 +106,7 @@ identifier
     : NAME
     | SOFT_STATE
     | SOFT_TOOLS
+    | SOFT_CALLS
     | SOFT_EVERY
     | SOFT_TOKEN
     | SOFT_FROM
@@ -181,6 +182,7 @@ top_item
     | enum
     | test
     | service
+    | actor_decl
     | api_decl
     | identifier "=" expr NL                { $$ = MK(K_CONST, @$, $1, $3); }
     ;
@@ -196,12 +198,30 @@ fragment_item
     | enum
     | test
     | service
+    | actor_decl
     | api_decl
     | statement
     ;
 
 service
     : "service" NL service_clauses "end" NL { $$ = MK(K_SERVICE, @$, $3); }
+    ;
+
+actor_decl
+    : "actor" CAPNAME NL actor_clauses "end" NL
+                                            { $$ = MK(K_ACTOR, @$, $2, $4); }
+    ;
+
+actor_clauses
+    : %empty                                { $$ = LEAF(K_LIST_OF, @$); }
+    | actor_clauses actor_clause            { $$ = ADD($1, $2); }
+    ;
+
+actor_clause
+    : "state" type "=" expr NL             { $$ = MK(K_SERVICE_STATE, @$, $2, $4); }
+    | "calls" service_tools NL              { $$ = MK(K_ACTOR_CALLS, @$, $2); }
+    | "every" expr identifier NL            { $$ = MK(K_SERVICE_EVERY, @$, $2, $3); }
+    | promise
     ;
 
 service_clauses
@@ -235,6 +255,7 @@ api_clause
     : "port" INT NL                         { $$ = MK(K_API_PORT, @$, $2); }
     | "cors" TEXT NL                        { $$ = MK(K_API_CORS, @$, $2); }
     | "sqlite" identifier "from" TEXT NL    { $$ = MK(K_API_SQLITE, @$, $2, $4); }
+    | "actor" identifier ":" type NL        { $$ = MK(K_API_ACTOR, @$, $2, $4); }
     | "auth" type "via" identifier NL       { $$ = MK(K_API_AUTH, @$, $2, $4); }
     | api_method TEXT identifier NL         { $$ = MK(K_API_ROUTE, @$, $1, $2, $3); }
     | "status" type_name api_status_fields "=" INT NL

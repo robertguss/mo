@@ -128,20 +128,39 @@ int main(void) {
         "struct Principal\n  login: Text\nend\n"
         "struct NewItem\n  name: Text\nend\n"
         "struct Item\n  id: Int\n  name: Text\n  owner: Text\nend\n"
-        "enum AppError\n  Unauthorized\n  ItemMissing(Int)\n  SqlProblem(Text)\nend\n"
+        "enum AppError\n  Unauthorized\n  ItemMissing(Int)\n  SqlProblem(Text)\n  "
+        "RateLimited\nend\n"
+        "actor RateLimiter\n"
+        "  state Map(Text, Int) = {}\n"
+        "  calls allow_hit, crash_actor, hit_count\n"
+        "end\n"
+        "fn allow_hit(s: Map(Text, Int), _t: Time, key: Text) : (Map(Text, Int), Bool)\n"
+        "  n = s.get(key) or 0\n"
+        "  if n >= 2: (s, false) else: (s.set(key, n + 1), true)\n"
+        "end\n"
+        "fn crash_actor(_s: Map(Text, Int), _t: Time) : (Map(Text, Int), Int)\n"
+        "  stop \"actor boom\"\n"
+        "end\n"
+        "fn hit_count(s: Map(Text, Int), _t: Time, key: Text) : Int\n"
+        "  s.get(key) or 0\n"
+        "end\n"
         "api\n"
         "  port 8080\n"
         "  cors \"*\"\n"
         "  sqlite db from \"items.db\"\n"
+        "  actor limiter: RateLimiter\n"
         "  auth Principal via authenticate\n"
         "  get \"/health\" health\n"
         "  post \"/items\" create_item\n"
         "  get \"/items/:id\" get_item\n"
         "  get \"/items\" list_items\n"
+        "  post \"/limited/:key\" limited_hit\n"
+        "  get \"/actor-crash\" route_actor_crash\n"
         "  get \"/crash\" crash_route\n"
         "  status Unauthorized = 401\n"
         "  status ItemMissing(_) = 404\n"
         "  status SqlProblem(_) = 500\n"
+        "  status RateLimited = 429\n"
         "end\n"
         "fn sql_ok(r: Result(T, SqliteError)) : Result(T, AppError)\n"
         "  r.map_error(fn(e) SqlProblem(\"#{e}\") end)\n"
@@ -193,6 +212,13 @@ int main(void) {
         "    end\n"
         "  end\n"
         "  Ok(acc)\n"
+        "end\n"
+        "fn limited_hit(limiter: RateLimiter, key: Text) : Result(Int, AppError)\n"
+        "  return Error(RateLimited) if not limiter.allow_hit(key)\n"
+        "  Ok(limiter.hit_count(key))\n"
+        "end\n"
+        "fn route_actor_crash(limiter: RateLimiter) : Int\n"
+        "  limiter.crash_actor\n"
         "end\n"
         "fn crash_route() : Int\n"
         "  stop \"handler crashed\"\n"
@@ -290,7 +316,28 @@ int main(void) {
                         resp, sizeof resp) == 200);
     CHECK(strstr(resp, "\"name\":\"chunked\"") != NULL);
 
-    /* 3. Fault isolation: /crash stops its request VM with 500, while server & DB stay alive! */
+    /* 3. Live in-process actor state + fault isolation across requests */
+    CHECK(http_exchange(
+              port, "POST /limited/ada HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 200);
+    CHECK(http_exchange(
+              port, "POST /limited/ada HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 200);
+    CHECK(http_exchange(
+              port, "POST /limited/ada HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 429);
+    /* Actor handler crash returns 500 for that request without losing prior committed state! */
+    CHECK(http_exchange(port,
+                        "GET /actor-crash HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 500);
+    CHECK(http_exchange(
+              port, "POST /limited/ada HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 429);
+    CHECK(http_exchange(
+              port, "POST /limited/grace HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 200);
+
+    /* 4. Fault isolation: /crash stops its request VM with 500, while server & DB stay alive! */
     CHECK(http_exchange(port, "GET /crash HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 500);
     CHECK(strstr(resp, "{\"error\":\"internal_server_error\"}") != NULL);
@@ -302,7 +349,7 @@ int main(void) {
                         "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 200);
 
-    /* 4. Graceful SIGTERM shutdown */
+    /* 5. Graceful SIGTERM shutdown */
     MO_ASSERT(kill(pid, SIGTERM) == 0);
     char err_log[8192];
     size_t elen = 0;
@@ -319,6 +366,7 @@ int main(void) {
     int wstatus = 0;
     MO_ASSERT(waitpid(pid, &wstatus, 0) == pid);
     CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+    CHECK(strstr(err_log, "mo: actor failure: crash_actor:") != NULL);
     CHECK(strstr(err_log, "mo serve: failure:") != NULL);
     CHECK(strstr(err_log, "handler crashed") != NULL);
     CHECK(strstr(err_log, "mo serve: stop: a signal asked the server to stop") != NULL);

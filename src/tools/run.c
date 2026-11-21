@@ -252,13 +252,55 @@ static int stopped(struct mo_process *process, const char *reason, const char *l
     return 70;
 }
 
+static bool is_bytecode_actor(const struct mo_bytecode *file, uint32_t service_idx) {
+    const struct mo_bytecode_string *tok = &file->strings[file->services[service_idx].token_env];
+    return tok->length == sizeof "_MO_ACTOR" - 1 &&
+           memcmp(tok->bytes, "_MO_ACTOR", sizeof "_MO_ACTOR" - 1) == 0;
+}
+
+static bool find_actor_service_for_param(const struct mo_bytecode *file, uint32_t main_fn,
+                                         uint32_t param_idx, uint32_t *service_out) {
+    static const char prefix[] = "%actor.";
+    size_t plen = sizeof prefix - 1;
+    const struct mo_bytecode_debug *dbg = &file->debug[main_fn];
+    for (uint32_t i = 0; i < dbg->name_count; i++) {
+        if (dbg->names[i].reg != param_idx || dbg->names[i].code_start != 0)
+            continue;
+        const struct mo_bytecode_string *nm = &file->strings[dbg->names[i].name];
+        if (nm->length <= plen || memcmp(nm->bytes, prefix, plen) != 0)
+            return false;
+        const uint8_t *mod_bytes = nm->bytes + plen;
+        size_t mod_len = nm->length - plen;
+        for (uint32_t s = 0; s < file->service_count; s++) {
+            if (!is_bytecode_actor(file, s))
+                continue;
+            const struct mo_bytecode_string *mname =
+                &file->strings[file->modules[file->services[s].module].name];
+            if (mname->length == mod_len && memcmp(mname->bytes, mod_bytes, mod_len) == 0) {
+                *service_out = s;
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
 static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uint32_t main,
                            FILE *output, FILE *errors) {
     const struct mo_bytecode *file = mo_image_bytecode(image);
+    const struct mo_types *types = mo_image_types(image);
+    const struct mo_bytecode_function *fn = &file->functions[main];
     struct mo_process *process = NULL;
     int status = 70, folder = -1;
-    bool have_args = false, have_env = false;
+    bool have_args = false, have_env = false, has_actors = false;
     struct mo_cell args, env;
+    struct mo_live_actor *live_actors[MO_LIMIT_BYTECODE_PARAMETERS] = {NULL};
+    struct mo_cell supplied_cells[MO_LIMIT_BYTECODE_PARAMETERS] = {{{0}}};
+    bool supplied_owned_by_us[MO_LIMIT_BYTECODE_PARAMETERS] = {false};
+    struct mo_cell cached_host_caps[MO_CAP_DATABASE + 1] = {{{0}}};
+    bool cached_host_set[MO_CAP_DATABASE + 1] = {false};
+
     errno = 0;
     process = mo_process_new(image, &cli->limits);
     if (process == NULL) {
@@ -274,11 +316,13 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
     }
     host->output = fileno(output);
     host->errors = fileno(errors);
-    for (uint32_t i = 0; i < file->functions[main].parameter_count; i++) {
-        uint32_t type = file->functions[main].parameters[i].type;
-        enum mo_capability cap = mo_image_types(image)->items[type].capability;
+    for (uint32_t i = 0; i < fn->parameter_count; i++) {
+        uint32_t type = fn->parameters[i].type;
+        enum mo_capability cap = types->items[type].capability;
         bool ok = true;
-        if (cap == MO_CAP_ARGS && !have_args)
+        if (cap == MO_CAP_SIMULATION)
+            has_actors = true;
+        else if (cap == MO_CAP_ARGS && !have_args)
             ok = have_args = arguments(cli, host, heap, &args);
         else if (cap == MO_CAP_ENV && !have_env)
             ok = have_env = environment(host, heap, &env);
@@ -298,26 +342,99 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
             goto done;
         }
     }
+
+    struct mo_main_capabilities supplied = {0};
+    if (has_actors) {
+        const char *setup = mo_host_start(host);
+        if (setup != NULL) {
+            status = stopped(process, setup, NULL, 0, errors);
+            goto done;
+        }
+        for (uint32_t i = 0; i < fn->parameter_count; i++) {
+            uint32_t type = fn->parameters[i].type;
+            enum mo_capability cap = types->items[type].capability;
+            if (cap == MO_CAP_SIMULATION) {
+                uint32_t svc_idx = 0;
+                if (!find_actor_service_for_param(file, main, i, &svc_idx)) {
+                    status =
+                        stopped(process, "could not resolve main actor parameter", NULL, 0, errors);
+                    goto done;
+                }
+                enum mo_service_status ast =
+                    mo_live_actor_new(image, svc_idx, errors, &live_actors[i]);
+                if (ast != MO_SERVICE_OK) {
+                    status = stopped(process, mo_service_status_text(ast), NULL, 0, errors);
+                    goto done;
+                }
+                if (!mo_value_live_actor(heap, type, live_actors[i], &supplied_cells[i])) {
+                    status = stopped(process, "running out of memory", "--max-heap",
+                                     cli->limits.heap_size, errors);
+                    goto done;
+                }
+                supplied_owned_by_us[i] = true;
+            } else {
+                if (!cached_host_set[cap]) {
+                    struct mo_host_error herr;
+                    const struct mo_cell *contents = cap == MO_CAP_ARGS  ? &args
+                                                     : cap == MO_CAP_ENV ? &env
+                                                                         : NULL;
+                    enum mo_host_outcome hout = mo_host_real(host, heap, type, contents, folder,
+                                                             &cached_host_caps[cap], &herr);
+                    if (hout != MO_HOST_RETURNED) {
+                        const char *reason =
+                            hout == MO_HOST_OUT_OF_MEMORY ? "running out of memory" : herr.reason;
+                        const char *limit =
+                            hout == MO_HOST_OUT_OF_MEMORY && errno != ENOMEM ? "--max-heap" : NULL;
+                        status = stopped(process, reason, limit, cli->limits.heap_size, errors);
+                        goto done;
+                    }
+                    cached_host_set[cap] = true;
+                }
+                supplied_cells[i] = cached_host_caps[cap];
+            }
+        }
+        supplied =
+            (struct mo_main_capabilities){.values = supplied_cells, .count = fn->parameter_count};
+    }
+
     struct mo_cell result;
     struct mo_defect defect;
-    enum mo_outcome outcome = mo_call_main(process, main, have_args ? &args : NULL,
-                                           have_env ? &env : NULL, folder, NULL, &result, &defect);
+    enum mo_outcome outcome =
+        mo_call_main(process, main, have_args ? &args : NULL, have_env ? &env : NULL, folder,
+                     has_actors ? &supplied : NULL, &result, &defect);
     if (outcome == MO_RETURNED) {
         int64_t value = mo_cell_get_int(result);
         MO_ASSERT(value >= 0 && value <= 255);
         status = (int)value;
-        mo_value_drop(heap, file->functions[main].result_type, result);
+        mo_value_drop(heap, fn->result_type, result);
     } else {
         bool shown = mo_write_defect(errors, process, &defect);
         if (!shown)
             (void)fputs("mo: could not write the defect report\n", errors);
     }
 done:
-    if (have_args)
-        mo_value_drop(mo_process_heap(process), mo_process_host(process)->types->texts, args);
-    if (have_env)
-        mo_value_drop(mo_process_heap(process), mo_process_host(process)->types->files, env);
+    if (process != NULL) {
+        for (uint32_t i = 0; i < fn->parameter_count; i++)
+            if (supplied_owned_by_us[i])
+                mo_value_drop(mo_process_heap(process), fn->parameters[i].type, supplied_cells[i]);
+        for (uint32_t c = 0; c <= MO_CAP_DATABASE; c++)
+            if (cached_host_set[c]) {
+                uint32_t cty = 0;
+                for (uint32_t i = 0; i < fn->parameter_count; i++)
+                    if (types->items[fn->parameters[i].type].capability == (enum mo_capability)c) {
+                        cty = fn->parameters[i].type;
+                        break;
+                    }
+                mo_value_drop(mo_process_heap(process), cty, cached_host_caps[c]);
+            }
+        if (have_args)
+            mo_value_drop(mo_process_heap(process), mo_process_host(process)->types->texts, args);
+        if (have_env)
+            mo_value_drop(mo_process_heap(process), mo_process_host(process)->types->files, env);
+    }
     mo_process_free(process);
+    for (uint32_t i = 0; i < fn->parameter_count; i++)
+        mo_live_actor_free(live_actors[i]);
     if (folder >= 0 && close(folder) != 0)
         status = 70;
     return status;
@@ -345,11 +462,22 @@ static bool valid_bytecode_entry(const struct mo_image *image, uint32_t main) {
     if (fn->kind != MO_FUNCTION_FUNCTION || types->items[fn->result_type].kind != MO_TYPE_INT)
         return false;
     uint32_t seen = 0;
+    uint32_t seen_actors[MO_LIMIT_BYTECODE_PARAMETERS];
+    uint32_t actor_n = 0;
     for (uint32_t i = 0; i < fn->parameter_count; i++) {
         const struct mo_type *t = &types->items[fn->parameters[i].type];
-        if (t->kind != MO_TYPE_CAPABILITY || t->capability == MO_CAP_SIMULATION ||
-            t->capability >= 31)
+        if (t->kind != MO_TYPE_CAPABILITY || t->capability >= 31)
             return false;
+        if (t->capability == MO_CAP_SIMULATION) {
+            uint32_t svc_idx = 0;
+            if (!find_actor_service_for_param(file, main, i, &svc_idx))
+                return false;
+            for (uint32_t prev = 0; prev < actor_n; prev++)
+                if (seen_actors[prev] == svc_idx)
+                    return false;
+            seen_actors[actor_n++] = svc_idx;
+            continue;
+        }
         uint32_t bit = UINT32_C(1) << t->capability;
         if ((seen & bit) != 0)
             return false;
@@ -428,7 +556,7 @@ int mo_run_bytecode(const struct mo_cli *cli, const char *path, FILE *output, FI
     }
     const struct mo_bytecode *file = mo_image_bytecode(image);
     for (uint32_t i = 0; i < file->service_count; i++) {
-        if (file->services[i].module == 0) {
+        if (file->services[i].module == 0 && !is_bytecode_actor(file, i)) {
             bytecode_error(diags, MO_CODE_TOOL_SERVICE_UNAVAILABLE,
                            "mo run does not start services yet", NULL);
             mo_image_free(image);

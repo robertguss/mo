@@ -136,6 +136,7 @@
     X(108, API_BLOCK, "11.6")                                                                      \
     X(109, API_ROUTE, "11.6")                                                                      \
     X(110, API_STATUS, "11.6")                                                                     \
+    X(111, ACTOR_BLOCK, "11.7")                                                                    \
     /* A Result is dropped without being handled or passed upward. */                              \
     X(412, FAILURE_IGNORED, "8.3")                                                                 \
     /* A source file is longer than MO_LIMIT_FILE_SIZE bytes. */                                   \

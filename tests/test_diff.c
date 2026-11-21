@@ -173,27 +173,35 @@ int main(void) {
                              "  get \"/health\" health\n"
                              "end\n"
                              "fn health() : Int\n  1\nend\n");
-    write_file_str(new_main, "module Main\n"
-                             "use Api\n"
-                             "struct User\n  login: Text\nend\n"
-                             "enum AuthErr\n  Denied\nend\n"
-                             "api\n"
-                             "  cors \"*\"\n"
-                             "  sqlite db from \"app.db\"\n"
-                             "  auth User via check_auth\n"
-                             "  get \"/health\" health\n"
-                             "  post \"/items\" add_item\n"
-                             "  status Denied = 401\n"
-                             "end\n"
-                             "fn check_auth(_r: Api.Request, _env: Env) : Result(User, AuthErr)\n"
-                             "  Ok(User(login: \"ada\"))\n"
-                             "end\n"
-                             "fn health() : Int\n  1\nend\n"
-                             "fn add_item(_u: User, _db: Sqlite.Database) : Int\n  2\nend\n");
+    write_file_str(
+        new_main,
+        "module Main\n"
+        "expose RateLimiter\n"
+        "use Api\n"
+        "struct User\n  login: Text\nend\n"
+        "enum AuthErr\n  Denied\nend\n"
+        "actor RateLimiter\n  state Int = 0\n  calls check_rate\nend\n"
+        "fn check_rate(s: Int, _t: Time) : (Int, Bool)\n  (s + 1, true)\nend\n"
+        "api\n"
+        "  cors \"*\"\n"
+        "  sqlite db from \"app.db\"\n"
+        "  actor limiter: RateLimiter\n"
+        "  auth User via check_auth\n"
+        "  get \"/health\" health\n"
+        "  post \"/items\" add_item\n"
+        "  status Denied = 401\n"
+        "end\n"
+        "fn check_auth(_r: Api.Request, _env: Env) : Result(User, AuthErr)\n"
+        "  Ok(User(login: \"ada\"))\n"
+        "end\n"
+        "fn health() : Int\n  1\nend\n"
+        "fn add_item(_u: User, _db: Sqlite.Database, _limiter: RateLimiter) : Int\n  2\nend\n");
     CHECK(run_diff_cmd(4, argv_text, &out, &err) == 0);
     text = (const char *)out.bytes;
     CHECK(strstr(text, "+ capability Sqlite") != NULL);
     CHECK(strstr(text, "+ capability Env") != NULL);
+    CHECK(strstr(text, "+ actor Main.RateLimiter: actor calls(check_rate)") != NULL);
+    CHECK(strstr(text, "+ api_actor api.actor.limiter: Main.RateLimiter") != NULL);
     CHECK(strstr(text, "+ api_cors api.cors: *") != NULL);
     CHECK(strstr(text, "+ route POST /items: [auth Main.User] add_item") != NULL);
 

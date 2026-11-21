@@ -284,9 +284,13 @@ bool mo_upgrade_compile_end(struct compile_job *job, enum mo_compile_status stat
     mo_sha256_finish(&context_hash, out->program.context_digest);
     const struct mo_bytecode *file = mo_image_bytecode(out->image);
     out->service = UINT32_MAX;
-    for (uint32_t i = 0; i < file->service_count; i++)
-        if (file->services[i].module == 0)
+    for (uint32_t i = 0; i < file->service_count; i++) {
+        const struct mo_bytecode_string *tok = &file->strings[file->services[i].token_env];
+        bool is_actor = tok->length == sizeof "_MO_ACTOR" - 1 &&
+                        memcmp(tok->bytes, "_MO_ACTOR", sizeof "_MO_ACTOR" - 1) == 0;
+        if (file->services[i].module == 0 && !is_actor)
             out->service = i;
+    }
     if (out->service == UINT32_MAX) {
         ok = mo_upgrade_refuse(report, MO_CODE_UPGRADE_COMPILE_DIAGNOSTIC, "compile",
                                "entry module declares no service");

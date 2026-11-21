@@ -631,7 +631,20 @@ helpers that lowered `api` servers (`src/lower/apis.c`) and handlers call.
 | `header`, `bearer_token`, `query_param` and `text` on an `Api.Request` | Mo | `lib/api.mo` | case-insensitive header and Bearer extraction |
 | `Api.response(status, headers, body)`, `Api.json_response(status, value)`, `Api.text_response(status, body)`, `Api.html_response(status, html)`, `Api.no_content()`, `Api.redirect(location)`, `Api.sse_response(events)` | Mo | `lib/api.mo` | response constructors for custom and SSE routes |
 | `ok?`, `with_header`, `header`, `text` and `json` on an `Api.Response` | Mo | `lib/api.mo` | response inspection in tests and wrappers |
-| `ApiTest.send(module, request, ...)` | lowering | `src/lower/apis.c` | spec-only direct call to `Module.%api.dispatch` with real or synthesized fake capabilities |
+| `ApiTest.send(module, request, ...)` | lowering | `src/lower/apis.c` | spec-only direct call to `Module.%api.dispatch` with real or synthesized fake capabilities and actors |
+
+## Actor
+
+`actor Name ... end` declares a typed in-process BEAM actor capability (reference 11.7). Its
+handlers compile to a service descriptor (`_MO_ACTOR`) without durable storage or tokens, and calls
+dispatch over `MO_SIM_SEND` against either a deterministic `mo_simulation` in tests or a
+mutex-serialized `mo_live_actor` in `mo serve` and `mo run`.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Actor.start(Type)`, `Actor.start_at(Type, time)` | lowering | `src/lower/applications.c` | spec-only deterministic actor handles backed by `MO_SIM_START` |
+| `Actor.send(handle, Type.call, ...)` | lowering | `src/lower/applications.c` | explicit `MO_SIM_SEND` returning `Result(Reply, SimulationError)` with state projected out |
+| `Actor.advance(handle, duration)`, `Actor.crash(handle)`, `Actor.restart(handle)` | lowering | `src/lower/applications.c` | spec-only fake clock and supervisor controls backed by `MO_SIM_ADVANCE`, `MO_SIM_CRASH` and `MO_SIM_RESTART` |
 
 ## Clock
 
