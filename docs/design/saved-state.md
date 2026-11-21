@@ -265,10 +265,13 @@ child limits crashes and stalls but shares the host identity, files and secrets:
 its compiler is part of the upgrade credential's trusted base. Write access to
 the data folder confers the authority to replace the running program.
 
-Phase 6's approved design adds [the review door](intent.md), not yet implemented: a third
-secret, the approval credential, held only on the service's host; a second
-child that runs the candidate's checks there under limits but without
-operating-system confinement; and a version-3 folder holding approvals. Write
-access to the data folder then confers approval authority too, and a
-memory-safety defect in the compiler or the VM that pushed source can reach is a
-way around the door without a shell.
+[The review door](intent.md) adds a third secret, the approval credential, held
+only on the service's host; a second child that runs the candidate's checks
+there under limits but without operating-system confinement; and a version-3
+folder holding approvals. Write access to the data folder therefore confers
+approval authority too, and a memory-safety defect in the compiler or the VM
+that pushed source can reach is a way around the door without a shell. A
+service behind the door keeps agents off its host: they reach it only through a
+tunnel limited to its port, as [the live service runbook](../ops/live-service.md)
+sets up. The full list of what the lock does not protect against is in the
+intent design.

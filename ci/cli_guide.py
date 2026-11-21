@@ -145,8 +145,6 @@ def guide_claims(binary):
          "`send` returns the complete declared handler result inside another `Result`; "
          "an application `Error` is still inside `Ok`.",
          "Helpers may receive the handle.",
-         "A promise whose inputs include a `Simulation` is E1400; promises over a service's "
-         "sequences of steps are deferred.",
          "Importing a service module does not start it.",
          "`mo fix` applies neither alternative.",
          "A `Result(State, E)` tool receives no fixes.",
