@@ -86,7 +86,8 @@ static MO_MUST_USE bool finish_dot(struct inference *p, struct dispatch *at) {
                          .operands = operands,
                          .function_type = method ? selected.graph->function_type : NULL,
                          .requirements = method ? selected.graph->requirements : NULL,
-                         .parameters = method ? selected.graph->parameters : NULL};
+                         .parameters = method ? selected.graph->parameters : NULL,
+                         .json_decode = method && selected.graph->json_decode};
     at->note->callee = method ? function : NULL;
     at->note->output.symbol = selected.symbol;
     return true;
@@ -294,7 +295,19 @@ MO_MUST_USE bool infer_finish_dispatches(struct inference *p) {
                     p, MO_CODE_CALL_ARGUMENTS, p->span,
                     "an overloaded function needs a first argument",
                     "Overloads differ in their first parameter's type (reference 5.1).", NULL);
-            struct term *receiver = infer_argument(p, type, 0);
+            struct term *receiver = NULL;
+            if (strcmp(at->group->name, "from_json") == 0) {
+                struct term *ret = infer_argument(p, type, type->shape.count - 1);
+                if (ret == NULL)
+                    return false;
+                if (infer_root(ret)->variable)
+                    continue;
+                if (infer_named(ret, "Result"))
+                    receiver = infer_argument(p, ret, 0);
+                else
+                    receiver = ret;
+            } else
+                receiver = infer_argument(p, type, 0);
             if (receiver == NULL)
                 return false;
             if (infer_root(receiver)->variable && infer_root(receiver)->numeric == 0)

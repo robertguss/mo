@@ -63,7 +63,8 @@ enum node_kind {
     K_TRY,
     K_IS,
     K_RANGE,
-    K_CALL, // callee, then arguments
+    K_CALL,      // callee, then arguments
+    K_TYPE_ARGS, // callee, then bracketed type arguments
     K_NAMED_ARG,
     K_FIELD_ACCESS, // `x.name`
     K_QUALIFIED,    // `Module.Name`

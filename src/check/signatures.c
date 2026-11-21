@@ -108,23 +108,32 @@ bool mo_signature_type_available(const struct mo_signatures *signatures,
     return type != NULL && (!signatures->recovering || available(signatures, type));
 }
 
+static MO_MUST_USE const struct mo_source_type *
+customizer_target(const struct mo_function_signature *fn) {
+    if (strcmp(fn->function->name, "from_json") == 0) {
+        const struct mo_source_type *result = fn->type->arguments[fn->type->count - 1];
+        MO_ASSERT(result->count == 2);
+        return result->arguments[0];
+    }
+    return fn->type->arguments[0];
+}
+
 static MO_MUST_USE int customizer_order(const void *a, const void *b) {
     const struct mo_function_signature *x = *(const struct mo_function_signature *const *)a;
     const struct mo_function_signature *y = *(const struct mo_function_signature *const *)b;
-    uintptr_t left = (uintptr_t)x->type->arguments[0]->declaration;
-    uintptr_t right = (uintptr_t)y->type->arguments[0]->declaration;
+    uintptr_t left = (uintptr_t)customizer_target(x)->declaration;
+    uintptr_t right = (uintptr_t)customizer_target(y)->declaration;
     return left < right ? -1 : left > right ? 1 : strcmp(x->function->name, y->function->name);
 }
 
-const struct mo_function_signature *mo_customizer_signature(const struct mo_signatures *signatures,
-                                                            const struct mo_source_type *type,
-                                                            enum mo_source_ability ability) {
-    const char *name = ability == MO_SOURCE_TEXT ? "to_text" : "compare";
+const struct mo_function_signature *
+mo_customizer_signature_by_name(const struct mo_signatures *signatures,
+                                const struct mo_source_type *type, const char *name) {
     uint32_t lo = 0, hi = signatures->customizer_count;
     while (lo < hi) {
         uint32_t mid = lo + (hi - lo) / 2;
         const struct mo_function_signature *at = signatures->customizers[mid];
-        uintptr_t left = (uintptr_t)at->type->arguments[0]->declaration;
+        uintptr_t left = (uintptr_t)customizer_target(at)->declaration;
         uintptr_t right = (uintptr_t)type->declaration;
         int order = left < right ? -1 : left > right ? 1 : strcmp(at->function->name, name);
         if (order < 0)
@@ -135,10 +144,34 @@ const struct mo_function_signature *mo_customizer_signature(const struct mo_sign
     if (lo == signatures->customizer_count)
         return NULL;
     const struct mo_function_signature *out = signatures->customizers[lo];
-    return out->type->arguments[0]->declaration == type->declaration &&
+    return customizer_target(out)->declaration == type->declaration &&
                    strcmp(out->function->name, name) == 0
                ? out
                : NULL;
+}
+
+const struct mo_function_signature *mo_customizer_signature(const struct mo_signatures *signatures,
+                                                            const struct mo_source_type *type,
+                                                            enum mo_source_ability ability) {
+    const char *name = ability == MO_SOURCE_TEXT ? "to_text" : "compare";
+    return mo_customizer_signature_by_name(signatures, type, name);
+}
+
+const struct mo_source_type *mo_json_type(const struct mo_module_interfaces *interfaces,
+                                          const struct mo_signatures *signatures,
+                                          const char *name) {
+    for (uint32_t i = 0; i < interfaces->count; i++) {
+        const struct mo_module_scope *scope = &interfaces->scopes[i];
+        if (!scope->library || scope->name == NULL || strcmp(scope->name, "Json") != 0)
+            continue;
+        const struct mo_symbol *symbol = mo_find_symbol(scope, (const uint8_t *)name, strlen(name));
+        if (symbol == NULL)
+            return NULL;
+        const struct mo_nominal_signature *nominal =
+            mo_nominal_signature_by_symbol(signatures, symbol);
+        return nominal == NULL ? NULL : nominal->type;
+    }
+    return NULL;
 }
 
 static const struct mo_builtin_case builtin_cases[] = {
@@ -982,7 +1015,7 @@ static MO_MUST_USE bool requirements(struct preparation *p, const struct mo_sour
         if ((keys & (UINT32_C(1) << i)) != 0)
             out[i] |= (uint8_t)(1u << MO_SOURCE_HASH);
     const struct mo_syntax *where = p->function->declaration->children[3];
-    static const char *const names[] = {"Equal", "Hash", "Order", "Text", "Number"};
+    static const char *const names[] = {"Equal", "Hash", "Order", "Text", "Number", "Json"};
     for (uint32_t i = 0; where != NULL && i < where->count; i++) {
         const struct mo_syntax *name = where->children[i]->children[0];
         const struct mo_syntax *ability = where->children[i]->children[1];
@@ -1000,8 +1033,8 @@ static MO_MUST_USE bool requirements(struct preparation *p, const struct mo_sour
         if (mask == 0)
             return problem(
                 p, MO_CODE_ABILITY_REQUIREMENT, ability->span,
-                "where names an ability other than the five built in",
-                "Where asks for one of Equal, Hash, Order, Text or Number (reference 5.5).");
+                "where names an ability other than the six built in",
+                "Where asks for one of Equal, Hash, Order, Text, Number or Json (reference 5.5).");
         out[letter] |= (uint8_t)mask;
     }
     for (unsigned i = 0; i < 26; i++)
@@ -1010,7 +1043,59 @@ static MO_MUST_USE bool requirements(struct preparation *p, const struct mo_sour
     return true;
 }
 
+static MO_MUST_USE bool is_json_nominal(const struct mo_module_interfaces *interfaces,
+                                        const struct mo_source_type *type, const char *name) {
+    return type != NULL && type->kind == MO_SOURCE_NAMED && type->declaration != NULL &&
+           type->count == 0 && strcmp(type->name, name) == 0 &&
+           interfaces->scopes[type->module].library &&
+           interfaces->scopes[type->module].name != NULL &&
+           strcmp(interfaces->scopes[type->module].name, "Json") == 0;
+}
+
 static MO_MUST_USE bool customizer(struct preparation *p, const struct mo_source_type *type) {
+    bool to_json = strcmp(p->function->name, "to_json") == 0;
+    bool from_json = strcmp(p->function->name, "from_json") == 0;
+    if (to_json || from_json) {
+        const struct mo_module_scope *scope = &p->interfaces->scopes[p->function->module];
+        const struct mo_source_type *result = type->arguments[type->count - 1];
+        if (from_json && scope->library && scope->name != NULL &&
+            strcmp(scope->name, "Json") == 0 && result->kind == MO_SOURCE_NAMED &&
+            result->module == UINT32_MAX && strcmp(result->name, "Result") == 0 &&
+            result->count == 2 && result->arguments[0]->kind == MO_SOURCE_PARAMETER)
+            return true;
+        bool valid = type->count == 2u;
+        const struct mo_source_type *receiver = NULL;
+        if (to_json && valid) {
+            receiver = type->arguments[0];
+            valid = is_json_nominal(p->interfaces, result, "Json");
+        } else if (from_json && valid) {
+            valid = is_json_nominal(p->interfaces, type->arguments[0], "Json") &&
+                    result->kind == MO_SOURCE_NAMED && result->module == UINT32_MAX &&
+                    strcmp(result->name, "Result") == 0 && result->count == 2 &&
+                    result->arguments[1]->kind == MO_SOURCE_NAMED &&
+                    result->arguments[1]->module == UINT32_MAX &&
+                    strcmp(result->arguments[1]->name, "Text") == 0;
+            if (valid)
+                receiver = result->arguments[0];
+        }
+        bool owned = receiver != NULL && receiver->kind == MO_SOURCE_NAMED &&
+                     receiver->declaration != NULL && receiver->module == p->function->module;
+        valid = valid && owned;
+        uint32_t parameters = 0;
+        for (uint32_t i = 0; valid && i < receiver->count; i++) {
+            const struct mo_source_type *argument = receiver->arguments[i];
+            valid =
+                argument->kind == MO_SOURCE_PARAMETER && (parameters & argument->parameters) == 0;
+            parameters |= argument->parameters;
+        }
+        if (valid && parameters == type->parameters)
+            return true;
+        return problem(p, MO_CODE_ABILITY_CUSTOMIZER, p->function->declaration->children[0]->span,
+                       to_json ? "to_json doesn't have the type's JSON signature"
+                               : "from_json doesn't have the type's JSON signature",
+                       "A type customizes Json in its own module with to_json(T): Json and/or "
+                       "from_json(Json): Result(T, Text) (reference 9.2).");
+    }
     bool compare = strcmp(p->function->name, "compare") == 0;
     if (!compare && strcmp(p->function->name, "to_text") != 0)
         return true;
@@ -1342,6 +1427,17 @@ struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
                                                    .arguments = arguments});
             if (type == NULL || !question_name(&p, function->declaration->children[0], type))
                 goto invalid_function;
+            if (interfaces->scopes[i].library && interfaces->scopes[i].name != NULL &&
+                strcmp(interfaces->scopes[i].name, "Json") == 0 &&
+                strcmp(function->name, "schema") == 0) {
+                struct mo_source_type *schema_type =
+                    allocate(&p, 1, sizeof(*schema_type), _Alignof(struct mo_source_type));
+                if (schema_type == NULL)
+                    goto failed;
+                *schema_type = *type;
+                schema_type->parameters = UINT32_C(1) << ('T' - 'A');
+                type = schema_type;
+            }
             if (!requirements(&p, type, signature->requirements) || !customizer(&p, type))
                 goto invalid_function;
             signature->type = type;
@@ -1358,10 +1454,16 @@ struct mo_signatures *mo_prepare_available_signatures(struct mo_arena *arena,
                                 _Alignof(const struct mo_function_signature *));
     if (out->customizers == NULL)
         goto failed;
-    for (uint32_t i = 0; i < count; i++)
-        if (items[i].type != NULL && (strcmp(items[i].function->name, "to_text") == 0 ||
-                                      strcmp(items[i].function->name, "compare") == 0))
+    for (uint32_t i = 0; i < count; i++) {
+        if (items[i].type == NULL)
+            continue;
+        const char *fn_name = items[i].function->name;
+        if (strcmp(fn_name, "to_text") == 0 || strcmp(fn_name, "compare") == 0 ||
+            strcmp(fn_name, "to_json") == 0 ||
+            (strcmp(fn_name, "from_json") == 0 &&
+             customizer_target(&items[i])->declaration != NULL))
             out->customizers[out->customizer_count++] = &items[i];
+    }
     qsort(out->customizers, out->customizer_count, sizeof(*out->customizers), customizer_order);
     uint32_t prim_count = (uint32_t)(sizeof(native_texts) / sizeof(native_texts[0]));
     MO_ASSERT(mo_duration_unit_count <= UINT32_MAX - prim_count);
@@ -1421,4 +1523,40 @@ mo_resolve_service_type(struct mo_arena *arena, const struct mo_module_interface
                             .span = clause->span,
                             .checked = true};
     return resolve(&p, clause->children[0]);
+}
+
+static void collect_function_parameters(const struct mo_source_type *type,
+                                        const struct mo_symbol *owner,
+                                        const struct mo_source_type *out[26]) {
+    if (type->parameters == 0)
+        return;
+    if (type->kind == MO_SOURCE_PARAMETER) {
+        if (type->declaration == owner)
+            out[(unsigned)(type->name[0] - 'A')] = type;
+        return;
+    }
+    for (uint32_t i = 0; i < type->count; i++)
+        collect_function_parameters(type->arguments[i], owner, out);
+}
+
+const struct mo_source_type *
+mo_resolve_expression_type(struct mo_arena *arena, const struct mo_module_interfaces *interfaces,
+                           const struct mo_signatures *signatures,
+                           const struct mo_function_signature *enclosing,
+                           const struct mo_syntax *syntax, struct mo_diags *diags) {
+    struct mo_symbol fallback = {
+        .name = "expression", .declaration = syntax, .module = enclosing->function->module};
+    /* Use a non-MO_S_FN owner so unknown single capital letters report E0048 instead of inventing
+     * new function parameters inside a body. */
+    struct mo_signatures view = *signatures;
+    struct preparation p = {.arena = arena,
+                            .interfaces = interfaces,
+                            .diags = diags,
+                            .function = &fallback,
+                            .signatures = &view,
+                            .span = syntax->span,
+                            .checked = true};
+    if (enclosing->type != NULL)
+        collect_function_parameters(enclosing->type, enclosing->function, p.parameters);
+    return resolve(&p, syntax);
 }

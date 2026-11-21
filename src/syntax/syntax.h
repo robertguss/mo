@@ -63,6 +63,7 @@ enum mo_syntax_kind {
     MO_S_IS,
     MO_S_RANGE,
     MO_S_CALL,
+    MO_S_TYPE_ARGS,
     MO_S_NAMED_ARG,
     MO_S_FIELD_ACCESS,
     MO_S_QUALIFIED,

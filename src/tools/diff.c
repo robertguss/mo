@@ -523,9 +523,9 @@ static bool format_function_sig(const struct mo_program *p, const struct mo_func
         ok = mo_buffer_append_text(out, any_req ? ", " : " where ") &&
              mo_buffer_append_byte(out, (uint8_t)('A' + i)) && mo_buffer_append_text(out, ": ");
         any_req = true;
-        static const char *const ab_names[] = {"Equal", "Hash", "Order", "Text", "Number"};
+        static const char *const ab_names[] = {"Equal", "Hash", "Order", "Text", "Number", "Json"};
         bool first = true;
-        for (uint32_t b = 0; ok && b < 5; b++)
+        for (uint32_t b = 0; ok && b < 6; b++)
             if ((mask & (UINT8_C(1) << b)) != 0) {
                 ok = (first || mo_buffer_append_text(out, " + ")) &&
                      mo_buffer_append_text(out, ab_names[b]);

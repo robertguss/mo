@@ -453,7 +453,8 @@ MO_MUST_USE bool infer_type_reading(const struct mo_syntax *prefix, const struct
     if (mo_builtin_type(prefix, &arity) == NULL)
         return false;
     bool compare = infer_compare_text(name, "compare") == 0;
-    if (!compare && infer_compare_text(name, "to_text") != 0)
+    if (!compare && infer_compare_text(name, "to_text") != 0 &&
+        infer_compare_text(name, "to_json") != 0)
         return false;
     if (call == NULL)
         return compare;
@@ -505,21 +506,31 @@ MO_MUST_USE struct value infer_function_value(struct inference *p,
     struct term *parameters[26] = {NULL};
     struct value out =
         infer_graph(p, (struct value){.type = infer_annotation(p, type, parameters, 0)}, 0);
-    if (!p->checked || out.type == NULL || type->parameters == 0)
+    if (out.type == NULL || type->parameters == 0)
         return out;
     uint32_t count = 0;
     for (unsigned i = 0; i < 26; i++)
         count += (type->parameters & (UINT32_C(1) << i)) != 0 ? 1u : 0u;
-    out.graph->parameters =
-        infer_allocate(p, count, sizeof(*out.graph->parameters), _Alignof(struct term *));
+    struct term **compact = infer_allocate(p, count, sizeof(*compact), _Alignof(struct term *));
     if (p->failed)
         return (struct value){0};
-    out.graph->function_type = type;
-    out.graph->requirements = requirements;
     uint32_t at = 0;
     for (unsigned i = 0; i < 26; i++)
-        if ((type->parameters & (UINT32_C(1) << i)) != 0)
-            out.graph->parameters[at++] = parameters[i];
+        if ((type->parameters & (UINT32_C(1) << i)) != 0) {
+            if (parameters[i] == NULL) {
+                parameters[i] = infer_fresh(p, 0);
+                if (parameters[i] == NULL)
+                    return (struct value){0};
+            }
+            compact[at++] = parameters[i];
+        }
+    out.function_type = type;
+    out.parameters = compact;
+    if (p->checked) {
+        out.graph->function_type = type;
+        out.graph->requirements = requirements;
+        out.graph->parameters = compact;
+    }
     return out;
 }
 
@@ -572,6 +583,18 @@ MO_MUST_USE struct value infer_declared_function(struct inference *p, const stru
     }
     struct value out = infer_function_value(p, signature->type, signature->requirements);
     out.symbol = s;
+    const struct mo_module_scope *fn_scope = &p->interfaces->scopes[s->module];
+    if (out.type != NULL && fn_scope->library && fn_scope->name != NULL &&
+        strcmp(fn_scope->name, "Json") == 0 &&
+        (strcmp(s->name, "decode") == 0 || strcmp(s->name, "decode_strict") == 0)) {
+        struct term *input = infer_fresh(p, 0);
+        if (input == NULL)
+            return (struct value){0};
+        out.type->arguments[0] = input;
+        out.json_decode = true;
+        if (p->checked && out.graph != NULL)
+            out.graph->json_decode = true;
+    }
     return out;
 }
 
@@ -719,7 +742,8 @@ MO_MUST_USE struct value infer_identifier(struct inference *p, const struct mo_s
     if (builtin != NULL)
         return infer_builtin_construct(p, builtin, NULL, NULL);
     if (prefix != NULL &&
-        (infer_compare_text(node, "to_text") == 0 || infer_compare_text(node, "compare") == 0))
+        (infer_compare_text(node, "to_text") == 0 || infer_compare_text(node, "compare") == 0 ||
+         infer_compare_text(node, "to_json") == 0))
         return qualified_ability(p, prefix, node);
     uint32_t count = 0;
     const struct mo_symbol *s = infer_definition(p, node, prefix, &count);

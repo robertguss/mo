@@ -3071,10 +3071,44 @@ static void time_arithmetic_graph(void) {
     }
 }
 
+static void json_ability_graph(void) {
+    const struct {
+        const char *source;
+        uint16_t code;
+    } rejected[] = {
+        {"module Main\nfn bad(b: Bytes)\n_x = b.to_json\nend\n", MO_CODE_IMPORT_MISSING},
+        {"module Main\nfn need_json(x: T) : T where T: Json\nx\nend\n"
+         "fn bad(b: Bytes) : Bytes\nneed_json(b)\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"module Main\nfn need_json(x: T) : T where T: Json\nx\nend\n"
+         "fn bad(r: Range) : Range\nneed_json(r)\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"module Main\nfn need_json(x: T) : T where T: Json\nx\nend\n"
+         "fn bad(d: Duration) : Duration\nneed_json(d)\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"module Main\nfn need_json(x: T) : T where T: Json\nx\nend\n"
+         "fn bad(m: Map(Int, Text)) : Map(Int, Text)\nneed_json(m)\nend\n",
+         MO_CODE_ABILITY_MISSING},
+        {"module Main\nenum Clash\nHTTP2Server\nHttp2Server\nend\n"
+         "fn need_json(x: T) : T where T: Json\nx\nend\n"
+         "fn bad() : Clash\nneed_json(HTTP2Server)\nend\n",
+         MO_CODE_ABILITY_MISSING},
+    };
+    for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
+        struct fixture f;
+        init(&f, rejected[i].source);
+        CHECK(f.program == NULL && f.diags.count == 1);
+        if (f.diags.count == 1)
+            CHECK(f.diags.items[0].code == rejected[i].code);
+        free_fixture(&f);
+    }
+}
+
 static void run(void *argument) {
     (void)argument;
     simulation_inputs();
     service_inputs();
+    json_ability_graph();
     service_handlers();
     service_rules();
     map_graph();

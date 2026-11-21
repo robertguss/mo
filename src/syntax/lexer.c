@@ -645,6 +645,29 @@ static MO_MUST_USE bool continues(enum mo_syntax_token token, bool before) {
                          token == MO_T_NOT || token == MO_T_TRY);
 }
 
+static MO_MUST_USE bool starts_type_after_bracket(const uint8_t *bytes, size_t length, size_t pos) {
+    for (;;) {
+        while (pos < length &&
+               (bytes[pos] == ' ' || bytes[pos] == 9 || bytes[pos] == 10 || bytes[pos] == 13))
+            pos++;
+        if (pos < length && bytes[pos] == '#') {
+            while (pos < length && bytes[pos] != 10 && bytes[pos] != 13)
+                pos++;
+            continue;
+        }
+        break;
+    }
+    if (pos >= length)
+        return false;
+    if (upper(bytes[pos]) || bytes[pos] == '(')
+        return true;
+    if (pos + 2 <= length && bytes[pos] == 'f' && bytes[pos + 1] == 'n') {
+        int after = pos + 2 < length ? bytes[pos + 2] : -1;
+        return !alnum(after) && after != '_' && after != '?';
+    }
+    return false;
+}
+
 struct mo_token mo_syntax_next(struct mo_lex *lx) {
     struct mo_token token = {
         .span = {lx->file, lx->pos, lx->pos}, .line = lx->line, .column = lx->column};
@@ -747,9 +770,10 @@ struct mo_token mo_syntax_next(struct mo_lex *lx) {
     else if (digit(c) || c == '"' || c == '\'')
         token.kind = scan_literal(lx);
     else if (c == '[' && !newline &&
-             (lx->last == MO_T_NAME || lx->last == MO_T_CAPNAME ||
-              (lx->last == MO_T_RPAREN && !lx->lambda_close) || lx->last == MO_T_RBRACK ||
-              lx->last == MO_T_TEXT || lx->last == MO_T_TEXT_TAIL)) {
+             ((lx->last == MO_T_NAME &&
+               !starts_type_after_bracket(lx->source->bytes, lx->source->length, lx->pos + 1)) ||
+              lx->last == MO_T_CAPNAME || (lx->last == MO_T_RPAREN && !lx->lambda_close) ||
+              lx->last == MO_T_RBRACK || lx->last == MO_T_TEXT || lx->last == MO_T_TEXT_TAIL)) {
         (void)lex_error(
             lx, MO_CODE_SOURCE_INDEX,
             "Mo has no indexing with [...]: items.get(i) and map.get(key) return an Option");

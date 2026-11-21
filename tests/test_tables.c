@@ -82,8 +82,8 @@ static const struct type types[] = {
     {"SqliteError", 0, false, false},
 };
 
-/* The five abilities (reference 9.2). */
-static const char *const abilities[] = {"Equal", "Hash", "Order", "Text", "Number"};
+/* The six abilities (reference 9.2). */
+static const char *const abilities[] = {"Equal", "Hash", "Order", "Text", "Number", "Json"};
 
 static bool is_upper(char c) {
     return c >= 'A' && c <= 'Z';

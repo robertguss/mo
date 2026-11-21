@@ -64,6 +64,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 5.4/3	ref-qualified-abilities,ref-unit-qualified	e0077-module-ability		
 5.5/1	lang-generic-functions	e0081		
 5.5/2	lang-enum-tree	e0083		
+5.5/3	json-ability				tests/test_syntax.c:type_args_syntax
 5.6/1	lang-closures,lang-generic-functions			
 5.6/2	lang-closures,ref-functions	e0090,e0091		
 5.6/3	ref-functions	e0092		
@@ -122,6 +123,8 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 9.2/22	lang-abilities-order,lang-abilities-custom-order,lang-dot-calls-cases,ref-abilities,ref-case-receivers			
 9.2/23	lang-abilities-custom-order,lang-abilities-custom-text,mod-hidden-customized	e0082		
 9.2/24	lang-generic-functions	e0081		
+9.2/25	json-ability				tests/test_program.c:json_ability_graph
+9.2/26	json-ability				lib/json.mo:encode,lib/json.mo:encode_pretty
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
 10.1/2	tst-private-names	e0041		
 10.2/1	mod-hidden-type	e0040,e0047,e0064		

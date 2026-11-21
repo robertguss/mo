@@ -258,6 +258,25 @@ static MO_MUST_USE bool declarations(struct resolver *r, uint32_t module) {
                                      receiver->declaration->kind == MO_S_ENUM))
                 symbol->receiver = (uint32_t)(receiver - scope->symbols);
         }
+        if (symbol->receiver == UINT32_MAX && strcmp(symbol->name, "from_json") == 0 &&
+            params->count == 1) {
+            const struct mo_syntax *ret = symbol->declaration->children[2];
+            if (ret != NULL && ret->token != MO_T_FN && ret->token != MO_T_LPAREN &&
+                ret->children[0]->kind == MO_S_CAPNAME &&
+                ret->children[0]->span.end - ret->children[0]->span.start == 6 &&
+                memcmp(ret->children[0]->text, "Result", 6) == 0 &&
+                lookup(scope, ret->children[0]) == NULL && ret->children[1] != NULL &&
+                ret->children[1]->count == 2) {
+                const struct mo_syntax *ok_type = ret->children[1]->children[0];
+                if (ok_type->token != MO_T_FN && ok_type->token != MO_T_LPAREN &&
+                    ok_type->children[0]->kind == MO_S_CAPNAME) {
+                    struct mo_symbol *receiver = lookup(scope, ok_type->children[0]);
+                    if (receiver != NULL && (receiver->declaration->kind == MO_S_STRUCT ||
+                                             receiver->declaration->kind == MO_S_ENUM))
+                        symbol->receiver = (uint32_t)(receiver - scope->symbols);
+                }
+            }
+        }
     }
     for (uint32_t i = 0; i < count;) {
         struct mo_symbol *first = &scope->symbols[i];

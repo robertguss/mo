@@ -30,9 +30,10 @@ const struct mo_ability_implementation *lower_cps_ability(struct body *b,
     lower_refuse(b->p, MO_CODE_LOWER_UNFINISHED, "this operation has no selected ability proof");
 }
 
-/* to_text or compare through an ability: a dot call, or qualified (T.to_text). */
+/* to_text, compare, or to_json through an ability: a dot call, or qualified (T.to_text). */
 bool lower_cps_ability_native(const struct mo_checked_expression *r) {
-    return strcmp(r->native, "to_text") == 0 || strcmp(r->native, "compare") == 0;
+    return strcmp(r->native, "to_text") == 0 || strcmp(r->native, "compare") == 0 ||
+           strcmp(r->native, "to_json") == 0;
 }
 
 bool lower_cps_direct_function(struct body *b, const struct mo_checked_expression *r) {
@@ -647,6 +648,12 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                              &b->instance->substitution, b->instance->owner, b->instance->depth,
                              args.items[0], args.items[1]);
     }
+    if (r->native != NULL && strcmp(r->native, "to_json") == 0) {
+        MO_ASSERT(args.count == 1);
+        return lower_to_json(p, lower_cps_ability(b, r, MO_SOURCE_JSON, proved),
+                             &b->instance->substitution, b->instance->owner, b->instance->depth,
+                             args.items[0]);
+    }
     if (r->native != NULL &&
         (strcmp(r->native, "Entry.name") == 0 || strcmp(r->native, "Entry.kind") == 0 ||
          strcmp(r->native, "Sqlite.Rows.columns") == 0 ||
@@ -699,6 +706,53 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
         return lower_prim(p, prim, args);
     }
     if (lower_cps_direct_function(b, r)) {
+        const struct mo_module_scope *fn_scope =
+            p->program->interfaces != NULL && r->symbol->module < p->program->interfaces->count
+                ? &p->program->interfaces->scopes[r->symbol->module]
+                : NULL;
+        if (fn_scope != NULL && fn_scope->library && fn_scope->name != NULL &&
+            strcmp(fn_scope->name, "Json") == 0 && r->symbol->receiver == UINT32_MAX &&
+            r->arguments.count == 1) {
+            const char *fn_name = r->symbol->name;
+            if (strcmp(fn_name, "from_json") == 0 || strcmp(fn_name, "from_json_strict") == 0) {
+                MO_ASSERT(args.count == 1);
+                mo_core_expr empty_path = lower_unit(p);
+                empty_path->as.lit->tag = MO_CORE_LIT_TEXT;
+                empty_path->as.lit->as.text = lower_text(p, "");
+                return lower_from_json(p, lower_cps_ability(b, r, MO_SOURCE_JSON, UINT32_MAX),
+                                       &b->instance->substitution, b->instance->owner,
+                                       b->instance->depth, args.items[0], empty_path,
+                                       lower_bool(p, strcmp(fn_name, "from_json_strict") == 0));
+            }
+            if (strcmp(fn_name, "decode") == 0 || strcmp(fn_name, "decode_strict") == 0) {
+                MO_ASSERT(args.count == 1);
+                mo_core_ty input_ty =
+                    r->operand_count == 0
+                        ? lower_cps_type(b, r->type)->as.fn.params.items[0]
+                        : lower_cps_type(b,
+                                         lower_cps_row(b, r->operands[r->operand_count - 1])->type);
+                return lower_json_decode_call(
+                    p, lower_cps_ability(b, r, MO_SOURCE_JSON, UINT32_MAX),
+                    &b->instance->substitution, b->instance->owner, b->instance->depth, input_ty,
+                    args.items[0], strcmp(fn_name, "decode_strict") == 0);
+            }
+            if (strcmp(fn_name, "schema") == 0) {
+                MO_ASSERT(args.count == 0);
+                static const struct mo_source_type text_src = {
+                    .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};
+                mo_core_ty text_ty = lower_cps_type(b, &text_src);
+                mo_core_expr seen = lower_prim(
+                    p,
+                    (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                                          .as.list = {.t = text_ty,
+                                                      .op = {.tag = MO_CORE_LIST_OP_LIT,
+                                                             .as.lit.digits = lower_text(p, "0")}}},
+                    lower_cps_arguments(b, 0));
+                return lower_json_schema(p, lower_cps_ability(b, r, MO_SOURCE_JSON, UINT32_MAX),
+                                         &b->instance->substitution, b->instance->owner,
+                                         b->instance->depth, seen);
+            }
+        }
         struct instance *f = lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
                                             r->ability_count, r->abilities, b->instance->owner,
                                             b->instance->depth + (r->arguments.count != 0));

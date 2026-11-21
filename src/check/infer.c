@@ -283,6 +283,27 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         }
         return infer_call(p, infer_expression(p, node->children[0], NULL), node->children[1], NULL);
     }
+    case MO_S_TYPE_ARGS: {
+        struct value callee =
+            node->children[0]->kind == MO_S_NAME || node->children[0]->kind == MO_S_QUALIFIED
+                ? infer_identifier(p, node->children[0], NULL)
+                : infer_expression(p, node->children[0], NULL);
+        struct value applied = infer_type_application(p, callee, node->children[1]);
+        if (p->checked && applied.type != NULL && applied.note != NULL && applied.graph != NULL) {
+            struct emitted *prev = applied.graph;
+            applied.note = NULL;
+            applied = infer_graph(p, applied, 0);
+            if (applied.type != NULL) {
+                applied.graph->output.symbol = prev->output.symbol;
+                applied.graph->output.native = prev->output.native;
+                applied.graph->function_type = prev->function_type;
+                applied.graph->requirements = prev->requirements;
+                applied.graph->parameters = prev->parameters;
+                applied.graph->json_decode = prev->json_decode;
+            }
+        }
+        return applied;
+    }
     case MO_S_POSITION:
         return infer_position(p, infer_expression(p, node->children[0], NULL), node->children[1]);
     case MO_S_POSTFIX: {
@@ -305,7 +326,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 ? mo_builtin_case_by_name(name, qualified ? node->children[0] : NULL)
                 : NULL;
         bool ability = qualified && (infer_compare_text(name, "to_text") == 0 ||
-                                     infer_compare_text(name, "compare") == 0);
+                                     infer_compare_text(name, "compare") == 0 ||
+                                     infer_compare_text(name, "to_json") == 0);
         if (!simulation && builtin == NULL && (name->kind == MO_S_CAPNAME || qualified) &&
             !ability && start < node->count && node->children[start]->kind == MO_S_CALL) {
             uint32_t count = 0;
@@ -330,7 +352,10 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                            : infer_expression(p, node->children[0], NULL);
         if (simulation || data != NULL || builtin != NULL)
             start++;
-        if (p->checked && v.type != NULL && v.note == NULL && start < node->count) {
+        bool standalone_type_args =
+            start + 1 == node->count && node->children[start]->kind == MO_S_TYPE_ARGS;
+        if (p->checked && v.type != NULL && v.note == NULL && start < node->count &&
+            !standalone_type_args) {
             if (v.graph == NULL)
                 v = infer_graph(p, v, 0);
             if (v.type == NULL || !infer_record(p, node->children[start - 1], v))
@@ -341,16 +366,63 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             const struct mo_syntax *step = node->children[i];
             if (step->kind == MO_S_POSITION)
                 v = infer_position(p, v, step->children[0]);
-            else if (step->kind == MO_S_CALL)
+            else if (step->kind == MO_S_TYPE_ARGS) {
+                v = infer_type_application(p, v, step->children[0]);
+                continue;
+            } else if (step->kind == MO_S_CALL)
                 v = infer_call(p, v, step->children[0], NULL);
             else if (step->kind == MO_S_FIELD_ACCESS) {
-                const struct mo_syntax *site = NULL;
-                if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
-                    site = node->children[i + 1];
-                bool called;
-                v = infer_field_value(p, v, step->children[0], step, site, &called);
-                if (called && site != NULL)
+                if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_TYPE_ARGS) {
+                    struct value receiver = v;
+                    bool called = true;
+                    if (infer_root(receiver.type)->variable) {
+                        bool reported = infer_problem(
+                            p, MO_CODE_CANNOT_INFER, step->children[0]->span,
+                            "no use decides this receiver's type before type arguments",
+                            "Give the receiver a known type before calling a generic dot method.",
+                            NULL);
+                        (void)reported;
+                        return (struct value){0};
+                    }
+                    struct value method = infer_member(p, receiver, step->children[0], &called);
+                    if (method.type == NULL)
+                        return (struct value){0};
+                    if (!called) {
+                        bool reported =
+                            infer_problem(p, MO_CODE_TYPE_ARGUMENTS, node->children[i + 1]->span,
+                                          "a record field doesn't take type arguments",
+                                          "Type arguments instantiate a generic function.", NULL);
+                        (void)reported;
+                        return (struct value){0};
+                    }
+                    method = infer_type_application(p, method, node->children[i + 1]->children[0]);
+                    if (method.type == NULL)
+                        return (struct value){0};
                     i++;
+                    const struct mo_syntax *site = NULL;
+                    if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL) {
+                        site = node->children[i + 1];
+                        i++;
+                    }
+                    const struct mo_syntax *args = site == NULL ? NULL : site->children[0];
+                    if (args != NULL && args->count == 0 && infer_receiver_only(method.type) &&
+                        !infer_empty_dot_call(p, site))
+                        return (struct value){0};
+                    if (p->checked && method.symbol != NULL) {
+                        if (!infer_record(p, step->children[0], method))
+                            return (struct value){0};
+                        method.note = p->last;
+                    }
+                    v = infer_call(p, method, args, &receiver);
+                } else {
+                    const struct mo_syntax *site = NULL;
+                    if (i + 1 < node->count && node->children[i + 1]->kind == MO_S_CALL)
+                        site = node->children[i + 1];
+                    bool called;
+                    v = infer_field_value(p, v, step->children[0], step, site, &called);
+                    if (called && site != NULL)
+                        i++;
+                }
             } else {
                 bool reported = infer_unfinished(p);
                 (void)reported;
@@ -829,9 +901,9 @@ MO_MUST_USE struct value infer_expression(struct inference *p, const struct mo_s
         node->kind != MO_S_FALSE && node->kind != MO_S_NAME && node->kind != MO_S_VAR &&
         node->kind != MO_S_BIND && node->kind != MO_S_BINARY && node->kind != MO_S_BINARY_CHAIN &&
         node->kind != MO_S_RANGE && node->kind != MO_S_NEGATE && node->kind != MO_S_NOT &&
-        node->kind != MO_S_PREFIX && node->kind != MO_S_CALL && node->kind != MO_S_POSTFIX &&
-        node->kind != MO_S_LAMBDA && node->kind != MO_S_IF && node->kind != MO_S_LINE_IF &&
-        node->kind != MO_S_CAPNAME && node->kind != MO_S_QUALIFIED &&
+        node->kind != MO_S_PREFIX && node->kind != MO_S_CALL && node->kind != MO_S_TYPE_ARGS &&
+        node->kind != MO_S_POSTFIX && node->kind != MO_S_LAMBDA && node->kind != MO_S_IF &&
+        node->kind != MO_S_LINE_IF && node->kind != MO_S_CAPNAME && node->kind != MO_S_QUALIFIED &&
         node->kind != MO_S_FIELD_ACCESS && node->kind != MO_S_RETURN && node->kind != MO_S_STOP &&
         node->kind != MO_S_ASSERT && node->kind != MO_S_CASE && node->kind != MO_S_IS &&
         node->kind != MO_S_FOR && node->kind != MO_S_WHILE && node->kind != MO_S_BREAK &&

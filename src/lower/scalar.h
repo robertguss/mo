@@ -15,5 +15,20 @@ mo_core_expr lower_to_text(struct lowering *p, const struct mo_ability_implement
 mo_core_expr lower_compare(struct lowering *p, const struct mo_ability_implementation *proof,
                            const struct substitution *substitution, uint32_t owner, uint32_t depth,
                            mo_core_expr left, mo_core_expr right);
+mo_core_expr lower_to_json(struct lowering *p, const struct mo_ability_implementation *proof,
+                           const struct substitution *substitution, uint32_t owner, uint32_t depth,
+                           mo_core_expr value);
+mo_core_expr lower_from_json(struct lowering *p, const struct mo_ability_implementation *proof,
+                             const struct substitution *substitution, uint32_t owner,
+                             uint32_t depth, mo_core_expr value, mo_core_expr path,
+                             mo_core_expr strict);
+mo_core_expr lower_json_decode_call(struct lowering *p,
+                                    const struct mo_ability_implementation *proof,
+                                    const struct substitution *substitution, uint32_t owner,
+                                    uint32_t depth, mo_core_ty input_ty, mo_core_expr input,
+                                    bool strict);
+mo_core_expr lower_json_schema(struct lowering *p, const struct mo_ability_implementation *proof,
+                               const struct substitution *substitution, uint32_t owner,
+                               uint32_t depth, mo_core_expr seen);
 
 #endif

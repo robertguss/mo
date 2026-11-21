@@ -108,6 +108,12 @@ struct instance *lower_instance(struct lowering *p, const struct mo_symbol *symb
                                 uint32_t depth);
 void lower_proof(struct lowering *p, const struct mo_ability_implementation **proof,
                  const struct substitution **substitution);
+struct instance *lower_customizer_fn(struct lowering *p, const struct mo_symbol *function,
+                                     struct mo_type_arguments arguments, uint32_t part_count,
+                                     const struct mo_ability_implementation *const *parts,
+                                     const struct mo_source_type *const *part_parameters,
+                                     const struct substitution *substitution, uint32_t owner,
+                                     uint32_t depth);
 struct instance *lower_customizer(struct lowering *p, const struct mo_ability_implementation *proof,
                                   const struct substitution *substitution, uint32_t owner,
                                   uint32_t depth);

@@ -1182,6 +1182,33 @@ static void lambda_lists(void) {
     }
 }
 
+static void type_args_syntax(void) {
+    const char *good[] = {
+        "x = Json.decode[User](raw)\n",
+        "x = decode[Map(Text, List((Int, Bool)))](raw)\n",
+        "x = Json.schema[fn(Int) : Bool]()\n",
+        "f = Json.from_json[User]\n",
+    };
+    for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+        struct fixture f;
+        init(&f, good[i], true);
+        CHECK(f.module != NULL && !mo_diags_any(&f.diags));
+        free_fixture(&f);
+    }
+    const char *still_indexed[] = {
+        "x = items[0]\n",
+        "x = items[idx]\n",
+        "x = Cap[0]\n",
+        "x = call(1)[Int]\n",
+    };
+    for (size_t i = 0; i < sizeof(still_indexed) / sizeof(still_indexed[0]); i++) {
+        struct fixture f;
+        init(&f, still_indexed[i], true);
+        CHECK(f.module != NULL && f.diags.count == 1);
+        free_fixture(&f);
+    }
+}
+
 int main(void) {
     shapes();
     declarations_and_statements();
@@ -1200,6 +1227,7 @@ int main(void) {
     arena_sweeps();
     nesting_and_chains();
     lambda_lists();
+    type_args_syntax();
     performance();
     return mo_test_report("test_syntax");
 }

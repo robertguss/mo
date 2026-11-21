@@ -202,6 +202,7 @@ MO_MUST_USE bool infer_finish_notes(struct inference *p, struct mo_inferred_expr
                 n->graph->function_type = callee->function_type;
                 n->graph->requirements = callee->requirements;
                 n->graph->parameters = callee->parameters;
+                n->graph->json_decode = callee->json_decode;
             }
         }
         if (p->partial && p->span.start >= p->error.primary.span.start)
@@ -451,22 +452,36 @@ MO_MUST_USE bool infer_finish_patterns(struct inference *p) {
 
 MO_MUST_USE bool infer_finish_operator(struct inference *p, struct note *note) {
     struct emitted *graph = note->graph;
+    if (graph->json_decode) {
+        p->span = note->output.syntax->span;
+        const struct mo_source_type *input =
+            graph->output.operand_count == 0
+                ? note->output.type->arguments[0]
+                : graph->operands[graph->output.operand_count - 1]->output.type;
+        if (input->kind != MO_SOURCE_NAMED || input->module != UINT32_MAX ||
+            (strcmp(input->name, "Text") != 0 && strcmp(input->name, "Bytes") != 0))
+            return infer_problem(
+                p, MO_CODE_ARGUMENT_TYPE, p->span, "Json.decode takes Text or Bytes",
+                "Pass UTF-8 JSON Text or raw Bytes to Json.decode or Json.decode_strict.", NULL);
+    }
     enum mo_syntax_token op = graph->output.operation;
     const char *native = graph->output.native;
     bool text = native != NULL && strcmp(native, "to_text") == 0;
     bool compare = native != NULL && strcmp(native, "compare") == 0;
-    if ((op == MO_T_EOF && !text && !compare) || op == MO_T_AND || op == MO_T_OR ||
+    bool to_json = native != NULL && strcmp(native, "to_json") == 0;
+    if ((op == MO_T_EOF && !text && !compare && !to_json) || op == MO_T_AND || op == MO_T_OR ||
         op == MO_T_IMPLIES || op == MO_T_NOT || op == MO_T_DOTDOT)
         return true;
     enum mo_source_ability ability =
-        text                             ? MO_SOURCE_TEXT
+        to_json                          ? MO_SOURCE_JSON
+        : text                           ? MO_SOURCE_TEXT
         : op == MO_T_EQ || op == MO_T_NE ? MO_SOURCE_EQUAL
         : compare || op == MO_T_LT || op == MO_T_LE || op == MO_T_GT || op == MO_T_GE
             ? MO_SOURCE_ORDER
             : MO_SOURCE_NUMBER;
     /* A qualified ability function, as a value or called, proves its
      * ability on its first parameter; a dot call on its receiver. */
-    bool qualified = (text || compare) &&
+    bool qualified = (text || compare || to_json) &&
                      (graph->output.operand_count == 0 || graph->output.receiver == UINT32_MAX);
     MO_ASSERT(qualified || (graph->output.operand_count != 0 && graph->operands[0] != NULL));
     struct note *operand = graph->output.operand_count == 0 ? note : graph->operands[0];
@@ -551,7 +566,7 @@ MO_MUST_USE bool infer_finish_function_use(struct inference *p, struct emitted *
     uint32_t count = 0, proof_count = 0;
     for (unsigned i = 0; i < 26; i++) {
         count += (type->parameters & (UINT32_C(1) << i)) != 0 ? 1u : 0u;
-        for (unsigned j = 0; j < 5; j++)
+        for (unsigned j = 0; j < 6; j++)
             proof_count += (graph->requirements[i] & (1u << j)) != 0 ? 1u : 0u;
     }
     struct mo_type_argument *arguments =
@@ -568,8 +583,24 @@ MO_MUST_USE bool infer_finish_function_use(struct inference *p, struct emitted *
         const struct mo_source_type *actual = infer_finish_type(p, graph->parameters[at], 0);
         if (actual == NULL)
             return false;
-        arguments[at++] = (struct mo_type_argument){infer_parameter_type(type, bit), actual};
-        for (unsigned j = 0; j < 5; j++) {
+        const struct mo_source_type *param_type = infer_parameter_type(type, bit);
+        if (param_type == NULL) {
+            char *pname = infer_allocate(p, 2, 1, 1);
+            struct mo_source_type *synth =
+                infer_allocate(p, 1, sizeof(*synth), _Alignof(struct mo_source_type));
+            if (pname == NULL || synth == NULL)
+                return false;
+            pname[0] = (char)('A' + i);
+            pname[1] = '\0';
+            *synth = (struct mo_source_type){.kind = MO_SOURCE_PARAMETER,
+                                             .name = pname,
+                                             .module = graph->output.symbol->module,
+                                             .declaration = graph->output.symbol,
+                                             .parameters = bit};
+            param_type = synth;
+        }
+        arguments[at++] = (struct mo_type_argument){param_type, actual};
+        for (unsigned j = 0; j < 6; j++) {
             if ((graph->requirements[i] & (1u << j)) == 0)
                 continue;
             const struct mo_ability_implementation *implementation =

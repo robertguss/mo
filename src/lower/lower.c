@@ -408,7 +408,7 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
                 }
             }
         }
-        if (!pending)
+        if (!pending && p->derived_pending == NULL)
             break;
     }
     lower_constant_prefixes(p);

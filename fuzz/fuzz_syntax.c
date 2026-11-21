@@ -189,8 +189,8 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
         bool nested =
             k == K_FN || k == K_STRUCT || k == K_ENUM || k == K_TEST || k == K_SERVICE ||
             k == K_CASE || k == K_LAMBDA || k == K_FOR || k == K_WHILE || k == K_LIST ||
-            k == K_MAP || k == K_GROUP || k == K_TUPLE || k == K_CALL || k == K_PROMISE ||
-            k == K_EXAMPLES || (k == K_CASE_DECL && n->kids[1] != NULL) ||
+            k == K_MAP || k == K_GROUP || k == K_TUPLE || k == K_CALL || k == K_TYPE_ARGS ||
+            k == K_PROMISE || k == K_EXAMPLES || (k == K_CASE_DECL && n->kids[1] != NULL) ||
             ((k == K_IF || k == K_LINE_IF || k == K_TEXT_INTERPOLATED) && !v.continuation) ||
             (k == K_TYPE && (type_form(source, n) != 0 || n->count == 2));
         uint32_t depth = v.depth + (nested ? 1u : 0u);
@@ -199,7 +199,7 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
         const struct node *params = k == K_FN ? n->kids[1] : k == K_LAMBDA ? n->kids[0] : NULL;
         if (k == K_TYPE && type_form(source, n) == FN && n->count == 2)
             params = n->kids[0];
-        if (k == K_CALL && !constructor(n->kids[0]))
+        if (k == K_TYPE_ARGS || (k == K_CALL && !constructor(n->kids[0])))
             params = n->kids[1];
         if (params != NULL && params->count > MO_LIMIT_PARAMETERS)
             found |= bit(MO_CODE_TOO_MANY_PARAMETERS);
@@ -219,7 +219,8 @@ static MO_MUST_USE uint32_t limits(const struct mo_source *source, const struct 
             bool continuation =
                 index == 2 && (k == K_IF || k == K_TEXT_INTERPOLATED ||
                                (k == K_LINE_IF && line_continuation(source, n->kids[index])));
-            uint32_t child_depth = k == K_CALL && index == 0 ? v.depth : depth;
+            uint32_t child_depth =
+                (k == K_CALL || k == K_TYPE_ARGS) && index == 0 ? v.depth : depth;
             if (k == K_FN && index == 1)
                 child_depth++;
             push(&stack, n->kids[index], child_depth, continuation);
