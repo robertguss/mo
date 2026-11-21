@@ -32,7 +32,7 @@ def check_mutants(total, tried, survived=0, dropped=0, **killed):
 
 
 def mutants(binary):
-    # Plain `mo test` runs checks only and emits no mutant pass or E1439/E1440 diagnostics.
+    # Plain `mo test` runs checks only and emits no mutant pass.
     plain = run(binary, ["test", SURVIVOR], 0)
     assert not plain.stderr and b"mutants:" not in plain.stdout and b"gates:" not in plain.stdout
     plain_json = records(run(binary, ["test", "--json", SURVIVOR], 0), "test")[-1]
@@ -65,8 +65,8 @@ def mutants(binary):
     with tempfile.TemporaryDirectory() as scratch:
         survivor = pathlib.Path(scratch) / "survivor.mosb"
         survivor.write_bytes(bundle(root / "tests/errors/e1439", "main.mo", ["main.mo"]))
-        door = run(binary, ["test", "--bundle", survivor], 0)
-    assert b"mutants" not in door.stdout and not door.stderr, door
+        bundled = run(binary, ["test", "--bundle", survivor], 0)
+    assert b"mutants" not in bundled.stdout and not bundled.stderr, bundled
 
     items, total = totals(binary, f"{GATES}/killed/main.mo", 0)
     check_mutants(total, 3, promise=1, example=1, test=1)
@@ -125,7 +125,7 @@ def mutants(binary):
     check_mutants(total, 0)
 
     # Exposed functions and service tools without examples/promises pass both `mo test` and
-    # `mo test --mutants` whenever tests exercise their code (no E1440 gate).
+    # `mo test --mutants` whenever tests exercise their code.
     with tempfile.TemporaryDirectory(prefix="mo-mutants-exposed-") as scratch:
         path = pathlib.Path(scratch) / "main.mo"
         path.write_text(

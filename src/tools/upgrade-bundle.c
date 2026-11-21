@@ -304,7 +304,7 @@ static void run_checks(struct mo_arena *arena, const struct mo_cli *cli,
                                            : "a check did not finish";
     struct mo_diag diag = {.code = failed ? MO_CODE_CHECKS_FAILED : MO_CODE_PLAN_UNFINISHED,
                            .message =
-                               failed ? "the door's checks failed" : "the plan did not finish",
+                               failed ? "the checks failed" : "the plan did not finish",
                            .primary = {{UINT32_MAX, 0, 0}, reason}};
     if (failed || run.count != 0 || run.dropped != 0 || selection == NULL) {
         bool added = mo_diags_add(diags, &diag);
