@@ -1,0 +1,9 @@
+error E0108: an api block has no routes  tests/errors/e0108/main.mo:3:1
+
+  3 | api
+    | ^^^
+  4 | end
+    | ^^^ an api block has no routes
+
+Declare at least one get, post, put, patch or delete route (reference 11.6).
+

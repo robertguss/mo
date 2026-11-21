@@ -466,7 +466,8 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
     for (uint32_t i = 0; i < signatures->count; i++)
         functions[i] = (struct mo_checked_function){.signature = order[i]};
     if (!signatures->recovering) {
-        if (!mo_prepare_services(arena, program, diags))
+        if (!mo_prepare_services(arena, program, diags) ||
+            !mo_check_apis(arena, program, &abilities, diags))
             return NULL;
         signatures->service_program = program;
     }

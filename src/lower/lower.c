@@ -392,6 +392,7 @@ static struct mo_core *lower(struct mo_arena *arena, const struct mo_program *pr
     lower_constants(p);
     lower_specs(p);
     struct mo_services service_data = services(p);
+    lower_apis(p);
     entry(p, main);
     for (;;) {
         lower_derived_functions(p);

@@ -167,6 +167,36 @@ int main(void) {
     CHECK(run_diff_cmd(3, argv_nongit, &out, &err) == 1);
     CHECK(strstr((const char *)err.bytes, "E1404") != NULL);
 
+    /* 5. Api server route, auth, cors, and capability authority diff */
+    write_file_str(old_main, "module Main\n"
+                             "api\n"
+                             "  get \"/health\" health\n"
+                             "end\n"
+                             "fn health() : Int\n  1\nend\n");
+    write_file_str(new_main, "module Main\n"
+                             "use Api\n"
+                             "struct User\n  login: Text\nend\n"
+                             "enum AuthErr\n  Denied\nend\n"
+                             "api\n"
+                             "  cors \"*\"\n"
+                             "  sqlite db from \"app.db\"\n"
+                             "  auth User via check_auth\n"
+                             "  get \"/health\" health\n"
+                             "  post \"/items\" add_item\n"
+                             "  status Denied = 401\n"
+                             "end\n"
+                             "fn check_auth(_r: Api.Request, _env: Env) : Result(User, AuthErr)\n"
+                             "  Ok(User(login: \"ada\"))\n"
+                             "end\n"
+                             "fn health() : Int\n  1\nend\n"
+                             "fn add_item(_u: User, _db: Sqlite.Database) : Int\n  2\nend\n");
+    CHECK(run_diff_cmd(4, argv_text, &out, &err) == 0);
+    text = (const char *)out.bytes;
+    CHECK(strstr(text, "+ capability Sqlite") != NULL);
+    CHECK(strstr(text, "+ capability Env") != NULL);
+    CHECK(strstr(text, "+ api_cors api.cors: *") != NULL);
+    CHECK(strstr(text, "+ route POST /items: [auth Main.User] add_item") != NULL);
+
     mo_buffer_free(&err);
     mo_buffer_free(&out);
     MO_ASSERT(snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir) > 0 && system(cmd) == 0);

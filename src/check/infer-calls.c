@@ -673,6 +673,165 @@ bad_arguments : {
 }
 }
 
+static MO_MUST_USE const struct mo_source_type *
+find_api_lib_type(const struct mo_module_interfaces *interfaces,
+                  const struct mo_signatures *signatures, const char *name) {
+    for (uint32_t i = 0; i < interfaces->count; i++) {
+        const struct mo_module_scope *scope = &interfaces->scopes[i];
+        if (!scope->library || scope->name == NULL || strcmp(scope->name, "Api") != 0)
+            continue;
+        const struct mo_symbol *sym = mo_find_symbol(scope, (const uint8_t *)name, strlen(name));
+        if (sym == NULL)
+            return NULL;
+        const struct mo_nominal_signature *nom = mo_nominal_signature_by_symbol(signatures, sym);
+        return nom == NULL ? NULL : nom->type;
+    }
+    return NULL;
+}
+
+MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo_syntax *name,
+                                            const struct mo_syntax *args) {
+    if (infer_compare_text(name, "send") != 0) {
+        bool kept =
+            infer_problem(p, MO_CODE_NAME_UNKNOWN, name->span, infer_unknown_member,
+                          "ApiTest's operation is send(Module, req, ...capabilities).", NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (args == NULL) {
+        bool kept =
+            infer_problem(p, MO_CODE_CALL_ARGUMENTS, name->span, "ApiTest.send needs a direct call",
+                          "Call ApiTest.send(Module, req) directly.", NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (!p->spec) {
+        bool kept = infer_problem(p, MO_CODE_FAKE_OUTSIDE_SPEC, name->span,
+                                  "a fake capability is made only in a test, example or promise",
+                                  "ApiTest.send runs only in tests, examples and promises, never "
+                                  "in a module's constants or its functions (reference 12.4).",
+                                  NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (args->count < 2) {
+        bool kept = infer_problem(
+            p, MO_CODE_CALL_ARGUMENTS, args->span, "ApiTest.send needs a module and a Request",
+            "Write ApiTest.send(Module, req) with optional fake capabilities.", NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    const struct mo_syntax *prefix = args->children[0];
+    const struct mo_module_scope *scope = NULL;
+    uint32_t alias = UINT32_MAX;
+    const struct mo_program *program = p->signatures->service_program;
+    if (prefix->kind == MO_S_CAPNAME) {
+        const struct mo_module_scope *own = &p->interfaces->scopes[p->function->function->module];
+        const struct mo_syntax *path =
+            program == NULL ? NULL
+                            : program->set->modules[p->function->function->module]->header.path;
+        bool current = own->name != NULL ? infer_compare_text(prefix, own->name) == 0
+                                         : path != NULL && path->count == 1 &&
+                                               infer_compare_name(prefix, path->children[0]) == 0;
+        scope = current ? own : infer_prefix_module(p, prefix, &alias);
+    }
+    const struct mo_checked_api *api = NULL;
+    uint32_t api_index = 0;
+    if (scope != NULL && program != NULL) {
+        for (uint32_t i = 0; i < program->api_count; i++) {
+            if (!infer_work(p))
+                return (struct value){0};
+            if (&p->interfaces->scopes[program->apis[i].module] == scope) {
+                api = &program->apis[i];
+                api_index = i;
+                break;
+            }
+        }
+    }
+    if (api == NULL) {
+        bool kept = infer_problem(
+            p, MO_CODE_API_BLOCK, prefix->span, "ApiTest.send must name an api module",
+            "Name the current module or one it uses directly, and that module must declare an "
+            "api block.",
+            NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (!infer_use_alias(p, alias, prefix))
+        return (struct value){0};
+
+    const struct mo_source_type *req_src =
+        find_api_lib_type(p->interfaces, p->signatures, "Request");
+    const struct mo_source_type *res_src =
+        find_api_lib_type(p->interfaces, p->signatures, "Response");
+    if (req_src == NULL || res_src == NULL) {
+        bool kept = infer_problem(p, MO_CODE_IMPORT_MISSING, name->span,
+                                  "ApiTest.send needs the Api library module",
+                                  "Bring Api into scope with use Api.", NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    struct term *req_term = infer_annotation(p, req_src, NULL, 0);
+    struct term *res_term = infer_annotation(p, res_src, NULL, 0);
+    if (req_term == NULL || res_term == NULL)
+        return (struct value){0};
+
+    uint32_t operand_count = args->count - 1;
+    struct value out = infer_graph(p, (struct value){.type = res_term}, operand_count);
+    if (out.type == NULL)
+        return out;
+    if (p->checked) {
+        out.graph->output.native = "ApiTest.send";
+        out.graph->output.service = api_index;
+    }
+
+    struct value req_val = infer_as(p, args->children[1], req_term, MO_CODE_ARGUMENT_TYPE);
+    if (req_val.type == NULL)
+        return (struct value){0};
+    if (p->checked)
+        out.graph->operands[0] = req_val.note;
+    out.never = req_val.never;
+
+    static const char *const allowed_caps[] = {"Sqlite", "Network",   "Clock", "Random",
+                                               "Files",  "ReadFiles", "Env",   "Console"};
+    uint32_t seen_caps = 0;
+    for (uint32_t i = 2; i < args->count; i++) {
+        struct value cap_val = infer_expression(p, args->children[i], NULL);
+        if (cap_val.type == NULL)
+            return (struct value){0};
+        struct term *cap_root = infer_root(cap_val.type);
+        uint32_t slot = UINT32_MAX;
+        if (!cap_root->variable && cap_root->shape.kind == MO_SOURCE_NAMED &&
+            cap_root->shape.module == UINT32_MAX) {
+            for (uint32_t c = 0; c < sizeof allowed_caps / sizeof allowed_caps[0]; c++)
+                if (strcmp(cap_root->shape.name, allowed_caps[c]) == 0) {
+                    slot = c;
+                    break;
+                }
+        }
+        if (slot == UINT32_MAX) {
+            bool kept = infer_problem(
+                p, MO_CODE_ARGUMENT_TYPE, args->children[i]->span,
+                "ApiTest.send optional arguments must be capabilities",
+                "Pass fake capabilities such as Sqlite.in_memory() or Network.fake({}).", NULL);
+            (void)kept;
+            return (struct value){0};
+        }
+        if ((seen_caps & (UINT32_C(1) << slot)) != 0) {
+            bool kept = infer_problem(p, MO_CODE_CALL_ARGUMENTS, args->children[i]->span,
+                                      "ApiTest.send passes the same capability type twice",
+                                      "Pass at most one capability of each type.", NULL);
+            (void)kept;
+            return (struct value){0};
+        }
+        seen_caps |= UINT32_C(1) << slot;
+        if (p->checked)
+            out.graph->operands[i - 1] = cap_val.note;
+        out.never = out.never || cap_val.never;
+    }
+    return out;
+}
+
 MO_MUST_USE struct value infer_sequence(struct inference *p, const struct mo_syntax *node,
                                         struct term *expected) {
     struct value last = {.type = infer_native(p, "Unit", 0)};

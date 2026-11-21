@@ -230,9 +230,21 @@
 /* Entries in the modules section: one per source file. */
 #define MO_LIMIT_MODULES MO_LIMIT_FILES
 
-/* One service per module; distinct local handler names share the module bound. */
+/* One service or api per module; distinct local handler names share the module bound. */
 #define MO_LIMIT_SERVICES MO_LIMIT_MODULES
 #define MO_LIMIT_SERVICE_HANDLERS MO_LIMIT_MODULE_NAMES
+#define MO_LIMIT_APIS MO_LIMIT_MODULES
+#define MO_LIMIT_API_ROUTES 1024
+#define MO_LIMIT_API_SQLITES 16
+#define MO_LIMIT_API_STATUSES 256
+#define MO_LIMIT_API_PATH_SEGMENTS 64
+#define MO_LIMIT_API_WORKERS 8
+#define MO_LIMIT_API_QUEUE 64
+#define MO_LIMIT_API_HEADER_BYTES 32768
+#define MO_LIMIT_API_HEADERS 128
+#define MO_LIMIT_API_BODY_BYTES (16 * 1024 * 1024)
+#define MO_LIMIT_API_REQUEST_WORK UINT64_C(67108864)
+#define MO_LIMIT_API_REQUEST_HEAP (64 * 1024 * 1024)
 
 /* Service promises in one service block; each runs after every step of every sequence. */
 #define MO_LIMIT_SERVICE_PROMISES 64

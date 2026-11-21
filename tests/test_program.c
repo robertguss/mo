@@ -3104,11 +3104,60 @@ static void json_ability_graph(void) {
     }
 }
 
+static void api_server_checks(void) {
+    const struct {
+        const char *source;
+        uint16_t code;
+    } rejected[] = {
+        {"module Main\napi\nend\n", MO_CODE_API_BLOCK},
+        {"module Main\nservice\nstate Int = 0\ntools read\ntoken from env \"TOK\"\nend\n"
+         "api\nget \"/health\" health\nend\n"
+         "fn read(s: Int, _t: Time) : Int\ns\nend\nfn health() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        {"module Main\napi\nsqlite db from \"../escape.db\"\nget \"/h\" health\nend\n"
+         "fn health() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        {"module Main\napi\nget \"/u/:id\" a\nget \"/u/:other\" b\nend\n"
+         "fn a(id: Int) : Int\nid\nend\nfn b(other: Int) : Int\nother\nend\n",
+         MO_CODE_API_ROUTE},
+        {"module Main\napi\nget \"/u/:id\" a\nend\nfn a() : Int\n1\nend\n", MO_CODE_API_ROUTE},
+        {"module Main\nenum E\nA\nB(Int)\nend\n"
+         "api\nget \"/h\" h\nstatus A = 400\nend\n"
+         "fn h() : Result(Int, E)\nreturn Error(A) if false\nError(B(1))\nend\n",
+         MO_CODE_API_STATUS},
+        {"module Main\napi\nget \"/h\" h\nend\nfn h() : Int\nApiTest.send(Main, "
+         "Api.get(\"/h\")).status\nend\n",
+         MO_CODE_FAKE_OUTSIDE_SPEC},
+    };
+    for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
+        struct fixture f;
+        init_with_library(&f, rejected[i].source);
+        CHECK(f.program == NULL && f.diags.count >= 1);
+        if (f.diags.count >= 1)
+            CHECK(f.diags.items[0].code == rejected[i].code);
+        free_fixture(&f);
+    }
+
+    struct fixture ok;
+    init_with_library(
+        &ok, "module Main\nuse Api\n"
+             "api\nport 9000\nsqlite db from \"app.db\"\nget \"/items/:id\" get_item\nend\n"
+             "fn get_item(_db: Sqlite.Database, id: Int) : Int\nid\nend\n"
+             "test \"in-memory dispatch\"\n"
+             "assert ApiTest.send(Main, Api.get(\"/items/5\")).status == 200\nend\n");
+    CHECK(ok.program != NULL && !mo_diags_any(&ok.diags));
+    if (ok.program != NULL)
+        CHECK(ok.program->api_count == 1 && ok.program->apis[0].port == 9000 &&
+              ok.program->apis[0].route_count == 1 && ok.program->apis[0].sqlite_count == 1);
+    free_fixture(&ok);
+}
+
 static void run(void *argument) {
     (void)argument;
     simulation_inputs();
     service_inputs();
     json_ability_graph();
+    api_server_checks();
     service_handlers();
     service_rules();
     map_graph();

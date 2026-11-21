@@ -10,6 +10,7 @@ struct mo_bytecode;
 struct mo_image;
 struct mo_store;
 MO_MUST_USE bool mo_serve_watch_signals(void);
+MO_MUST_USE bool mo_serve_is_signalled(void);
 /* Exact filename-byte lookup shared by anchor and observation reports. */
 MO_MUST_USE struct mo_span mo_runtime_span(const struct mo_bytecode *file,
                                            const struct mo_sources *sources, uint32_t path,

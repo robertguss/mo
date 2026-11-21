@@ -1191,6 +1191,91 @@ an effect of `none`, `applied` or `unknown` on this call's service state. An eff
 does not promise retry safety; an updating call whose response is lost has an
 unknown effect from the client's perspective.
 
+### 11.6 API servers
+
+A module declares at most one HTTP API server with `api ... end`, and never
+alongside `service` (E0108). An `api` block has at least one route (`get`,
+`post`, `put`, `patch` or `delete`) and optional `port` (`0` to `65535`, by
+default `8000`), `cors` (a nonempty single-line origin or `"*"`), `sqlite name
+from "path"` (up to 16 relative paths inside `--data` with no `..`), `auth
+Principal via handler` (where `Principal` is a concrete `struct` or `enum` and
+`handler` returns `Result(Principal, Error)`), and `status` clauses (E0108).
+
+Each route names an HTTP method, a plain text path template starting with `/`,
+and a non-generic, non-overloaded local function, with distinct `(method, shape)`
+pairs across the block after normalizing `:param` segments (E0109). Route
+parameters bind by type and name in any order: `Principal` (running `auth`
+before the handler), `Api.Request`, `Sqlite.Database` (matching a `sqlite`
+clause by parameter name, ignoring a leading `_`), a capability (`Sqlite`,
+`Network`, `Clock`, `Random`, `Files`, `ReadFiles`, `Env` or `Console`), a
+`:param` scalar (`Int`, `Byte`, `BigInt`, `Decimal`, `Bool` or `Text`), an
+`Option` scalar query parameter, a required scalar query parameter on `get` or
+`delete`, or at most one `Json` request body parameter on `post`, `put` or
+`patch` decoded strictly with `Json.from_json_strict` so invalid path segments,
+missing or malformed query parameters, malformed JSON and unknown fields answer
+status `422` without calling the handler (E0109).
+
+A route returns `Api.Response`, `Unit` (status `204`), a `Json` value (status
+`200`), or `Result` of one of those and either `Api.Response` or a concrete
+error `enum` whose cases are visible and have `Json`. Every case of every error
+`enum` returned by `auth` or any route is mapped once to a status code from
+`100` to `599` with `status Case = code`, or `status Case(_) = code` when the
+case carries fields, and a response encodes the error with `to_json` at that
+status (E0110). Every `api` also serves OpenAPI 3.1.0 JSON at `GET
+/openapi.json` (with route summaries from `##` comments, `bearerAuth` on
+authenticated routes, parameter and body schemas from `Json.schema`, and mapped
+error status codes), an interactive HTML page at `GET /docs`, `204` CORS
+preflight on `OPTIONS` when `cors` is set, `405` when a path matches another
+method, and `404` otherwise.
+
+```mo
+module Notes
+use Api
+
+struct Principal
+  login: Text
+end
+
+enum NoteError
+  Unauthorized
+  NoteMissing(id: Int)
+end
+
+api
+  port 8080
+  cors "*"
+  auth Principal via authenticate
+  get "/notes/:id" read_note
+  delete "/notes/:id" delete_note
+  status Unauthorized = 401
+  status NoteMissing(_) = 404
+end
+
+fn authenticate(req: Api.Request, env: Env) : Result(Principal, NoteError)
+  return Error(Unauthorized) if req.bearer_token != Some(env.get("API_TOKEN") or "dev")
+  Ok(Principal(login: "ada"))
+end
+
+## Reads a note by id.
+fn read_note(id: Int) : Result(Map(Text, Int), NoteError)
+  return Error(NoteMissing(id: id)) if id <= 0
+  Ok({"id": id})
+end
+
+## Deletes a note when authenticated.
+fn delete_note(_user: Principal, id: Int) : Result(Unit, NoteError)
+  return Error(NoteMissing(id: id)) if id <= 0
+  Ok(Unit)
+end
+
+test "routes run in memory through ApiTest.send"
+  env = Env.of({"API_TOKEN": "secret"})
+  assert ApiTest.send(Notes, Api.get("/notes/7"), env).status == 200
+  assert ApiTest.send(Notes, Api.delete("/notes/7"), env).status == 401
+  assert ApiTest.send(Notes, Api.delete("/notes/7").with_bearer("secret"), env).status == 204
+end
+```
+
 ## 12. Examples, promises and tests
 
 A function's specification sits at the top of its body: its promises and
@@ -1344,9 +1429,12 @@ the lines written to standard output and standard error;
 `Console.fake_input(lines)`, which also has those lines to read;
 `Files.in_memory(files)`, from a map of paths to texts; `Clock.fixed(time)`;
 `Random.seeded(n)`; `Args.of(list)`; `Env.of(map)`; `Network.fake(peers)`, from a
-map of the requests it answers (section 14); `Sqlite.fake()`, an in-memory
-SQLite capability (section 14); and `Simulation.start(module, at)`
-for a test service. Fakes are made only
+map of the requests it answers (section 14); `Sqlite.fake()` and
+`Sqlite.in_memory()`, an in-memory SQLite capability (section 14);
+`Simulation.start(module, at)` for a test service; and
+`ApiTest.send(Module, request, ...)` to dispatch an `Api.Request` directly
+against `Module`'s `api` block in memory with optional fake capabilities
+(synthesizing empty fakes for any capabilities omitted). Fakes are made only
 there, never in a module's constants or its functions. `printed` and
 `printed_errors` can be used only there too, where every console is a fake,
 and using them anywhere else is an error.
@@ -1555,7 +1643,7 @@ arguments after the file's name, and `mo test FILE` checks its examples,
 promises and tests. `mo diff [OLD] NEW` compares `NEW` against `OLD`, or against
 Git `HEAD` when `OLD` is omitted: it reports authority changes (capability
 parameters and literal `within`, `read_only` and `allow_hosts` narrowings),
-exposed signature and service tool changes, state schema changes, and runs
+exposed signature, `api` route and `cors`, and service tool changes, state schema changes, and runs
 `OLD`'s promises, service promises and examples against `NEW`, exiting 1 when
 authority expands or a contract fails or stops. `mo emit FILE -o OUT` checks the program as `mo check` does
 and writes its bytecode to `OUT`; `-o` is required, and a library module has no
@@ -1563,7 +1651,11 @@ main to emit (E0079). `mo serve FILE --port N --data DIR [--allow-host NAME]
 [--admin-socket PATH]` runs the service `FILE` declares (section 11.5) over MCP
 on 127.0.0.1, with its saved state in the folder `DIR`, which must exist;
 `--allow-host` also accepts requests that give `NAME` as their host, as a proxy
-in front of it does. Public HTTP exposes only the service's declared tools. When
+in front of it does, and `mo serve FILE [--port N] [--data DIR]` runs an `api`
+server `FILE` declares (section 11.6) over concurrent HTTP/1.1 on 127.0.0.1
+(defaulting to the `api` block's `port` and `.` for `--data`), isolating each
+request so a handler bug logs a failure and answers status `500` without
+stopping the server. Public HTTP on a service exposes only the service's declared tools. When
 `--admin-socket PATH` is given, `mo serve` binds a mode-0600 Unix domain socket
 at `PATH` exposing built-in operator views and live `mo push` upgrade tools,
 authenticated by OS filesystem permissions.
@@ -2110,7 +2202,8 @@ types are written with `Sqlite.` in front, in expressions and in patterns, as in
 `Sqlite.Integer(7)` and `Sqlite.NotPermitted(reason: _)`. Both have text forms
 and comparisons.
 
-`Sqlite.fake() : Sqlite` makes an empty in-memory SQLite capability that touches
+`Sqlite.fake() : Sqlite` and `Sqlite.in_memory() : Sqlite` make an empty
+in-memory SQLite capability that touches
 no file. Opening the same path twice on one fake shares the same database, while
 distinct fakes share nothing, and escaping paths give
 `Error(Sqlite.OutsideFolder(path: path))` as on a real `Sqlite`. The `Sqlite`
@@ -2128,6 +2221,27 @@ test "a fake sqlite database shares state across opens"
     Ok(Sqlite.Rows(columns: ["n"], rows: [[Sqlite.Integer(7)]]))
 end
 ```
+
+**Api**, with `use Api` (loaded automatically for modules declaring `api`),
+defines `Request(method: Text, path: Text, query: List((Text, Text)), headers:
+List((Text, Text)), body: Bytes)` and `Response(status: Int, headers:
+List((Text, Text)), body: Bytes)` for section 11.6's HTTP servers and
+`ApiTest.send`. `Api.request(method: Text, target: Text)` and `Api.get`,
+`Api.post`, `Api.put`, `Api.patch` and `Api.delete(target: Text)` split `target`
+at `?` into a normalized path and percent-decoded query list; `with_header(name:
+Text, value: Text)`, `with_bearer(token: Text)`, `with_query(name: Text, value:
+Text)`, `with_json(value: T)` (where `T: Json`), `with_text(body: Text)` and
+`with_bytes(body: Bytes, content_type: Text)` build requests; and
+`header(name: Text) : Option(Text)`, `bearer_token : Option(Text)`,
+`query_param(name: Text) : Option(Text)` and `text : Option(Text)` inspect them.
+`Api.response(status: Int, headers: List((Text, Text)), body: Bytes)`,
+`Api.json_response(status: Int, value: T)` (where `T: Json`),
+`Api.text_response(status: Int, body: Text)`, `Api.html_response(status: Int,
+html: Text)`, `Api.no_content()`, `Api.redirect(location: Text)` and
+`Api.sse_response(events: List((Option(Text), Text)))` build responses, and a
+response has `with_header(name: Text, value: Text)`, `ok? : Bool`,
+`header(name: Text) : Option(Text)`, `text : Text` and
+`json : Result(Json, Json.JsonError)`.
 
 ## 15. What comes later
 
@@ -2170,14 +2284,15 @@ warnings: a problem is an error, or it isn't reported.
 The executable grammar, `grammar/mo.y`, is the authority, and this is its
 summary. `x*` means zero or more, `x+` one or more, `x?` optional, and `NL` a
 line break as section 2.4 defines it.
-Section 11.5 fixes the order and number of a service's clauses.
+Sections 11.5 and 11.6 fix the order and number of `service` and `api` clauses.
 
 ```text
 module      = "module" Path NL ("expose" exposed ("," exposed)* NL)? use* item*
 exposed     = name | Name | Name "(" ".." ")"
 use         = "use" Path ("{" (name | Name) ("," (name | Name))* "}")? NL
-item        = function | struct | enum | test | service | name "=" expr NL
+item        = function | struct | enum | test | service | api | name "=" expr NL
 service     = "service" NL ("state" type "=" expr NL | "tools" name ("," name)* NL | "every" expr name NL | "token" "from" "env" text NL | promise)* "end" NL
+api         = "api" NL ("port" digits NL | "cors" text NL | "sqlite" name "from" text NL | "auth" type "via" name NL | ("get" | "post" | "put" | "patch" | "delete") text name NL | "status" Name ("." Name)? ("(" "_" ("," "_")* ")")? "=" digits NL)* "end" NL
 function    = "fn" name "(" params? ")" (":" type)? where? NL (promise | examples)* statement* "end" NL
 params      = name ":" type ("," name ":" type)*
 where       = "where" Name ":" Name ("," Name ":" Name)*

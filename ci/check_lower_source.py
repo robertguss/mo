@@ -850,6 +850,19 @@ SPEC_CASES["sqlite-types"] = (body[len("module Main\n"):], {
     None: ["returned", "0"],
 })
 
+body = pathlib.Path("tests/lower-source/api-server/main.mo").read_text()
+assert body.startswith("module Main\n")
+SPEC_CASES["api-server"] = (body[len("module Main\n"):], {
+    "Main.test.1": ["returned", "Unit"],
+    "Main.test.2": ["returned", "Unit"],
+    "Main.test.3": ["returned", "Unit"],
+    "Main.test.4": ["returned", "Unit"],
+    "Main.test.5": ["returned", "Unit"],
+    "Main.test.6": ["returned", "Unit"],
+    "Main.test.7": ["returned", "Unit"],
+    None: ["returned", "0"],
+})
+
 body = pathlib.Path("tests/lower-source/service-descriptor/main.mo").read_text()
 assert body.startswith("module Main\n")
 SPEC_CASES["service-descriptor"] = (body[len("module Main\n"):], {
@@ -877,7 +890,7 @@ def check_specs(driver, vm, root, world):
         source = root / "main.mo"
         original = ("module Main\n" + body + "\n").encode()
         source.write_bytes(original)
-        report = subprocess.run([str(driver), str(source)], capture_output=True,
+        report = subprocess.run([str(driver), str(source), LIBRARY], capture_output=True,
                                 text=True, timeout=30)
         assert report.returncode == 0, (name, report.returncode, report.stderr)
         path = root / f"spec-{name}.core"

@@ -605,6 +605,7 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
     }
     mo_host_close(dir_fd);
 
+    (void)sqlite3_busy_timeout(db, 5000);
     char msg[256];
     if (!check_db_header(db, msg)) {
         (void)sqlite3_close(db);

@@ -67,7 +67,7 @@ static struct node *OP(struct node *node, int token) {
 %token AND "and" OR "or" NOT "not" IS "is" IMPLIES "implies" TRUE "true" FALSE "false"
 %token STOP "stop" PROMISE "promise" ALLOWS "allows" FORBIDS "forbids"
 %token EXAMPLES "examples" TEST "test" ASSERT "assert" WHERE "where" END "end"
-%token SERVICE "service"
+%token SERVICE "service" API "api"
 %token LPAREN "(" RPAREN ")" LBRACK "[" RBRACK "]" LBRACE "{" RBRACE "}"
 %token COMMA "," COLON ":" DOT "." DOTDOT ".." BAR "|"
 %token ASSIGN "=" PLUSEQ "+=" MINUSEQ "-="
@@ -75,6 +75,10 @@ static struct node *OP(struct node *node, int token) {
 %token PLUS "+" MINUS "-" STAR "*" SLASH "/" PERCENT "%"
 %token SOFT_STATE "state" SOFT_TOOLS "tools" SOFT_EVERY "every"
 %token SOFT_TOKEN "token" SOFT_FROM "from" SOFT_ENV "env" SOFT_ON "on"
+%token SOFT_PORT "port" SOFT_CORS "cors" SOFT_SQLITE "sqlite"
+%token SOFT_AUTH "auth" SOFT_VIA "via"
+%token SOFT_GET "get" SOFT_POST "post" SOFT_PUT "put" SOFT_PATCH "patch" SOFT_DELETE "delete"
+%token SOFT_STATUS "status"
 
 %start start
 
@@ -107,6 +111,17 @@ identifier
     | SOFT_FROM
     | SOFT_ENV
     | SOFT_ON
+    | SOFT_PORT
+    | SOFT_CORS
+    | SOFT_SQLITE
+    | SOFT_AUTH
+    | SOFT_VIA
+    | SOFT_GET
+    | SOFT_POST
+    | SOFT_PUT
+    | SOFT_PATCH
+    | SOFT_DELETE
+    | SOFT_STATUS
     ;
 
 module_header
@@ -166,6 +181,7 @@ top_item
     | enum
     | test
     | service
+    | api_decl
     | identifier "=" expr NL                { $$ = MK(K_CONST, @$, $1, $3); }
     ;
 
@@ -180,6 +196,7 @@ fragment_item
     | enum
     | test
     | service
+    | api_decl
     | statement
     ;
 
@@ -203,6 +220,43 @@ service_clause
 service_tools
     : identifier                            { $$ = MK(K_LIST_OF, @$, $1); }
     | service_tools "," identifier          { $$ = ADD($1, $3); }
+    ;
+
+api_decl
+    : "api" NL api_clauses "end" NL         { $$ = MK(K_API, @$, $3); }
+    ;
+
+api_clauses
+    : %empty                                { $$ = LEAF(K_LIST_OF, @$); }
+    | api_clauses api_clause                { $$ = ADD($1, $2); }
+    ;
+
+api_clause
+    : "port" INT NL                         { $$ = MK(K_API_PORT, @$, $2); }
+    | "cors" TEXT NL                        { $$ = MK(K_API_CORS, @$, $2); }
+    | "sqlite" identifier "from" TEXT NL    { $$ = MK(K_API_SQLITE, @$, $2, $4); }
+    | "auth" type "via" identifier NL       { $$ = MK(K_API_AUTH, @$, $2, $4); }
+    | api_method TEXT identifier NL         { $$ = MK(K_API_ROUTE, @$, $1, $2, $3); }
+    | "status" type_name api_status_fields "=" INT NL
+                                            { $$ = MK(K_API_STATUS, @$, $2, $3, $5); }
+    ;
+
+api_method
+    : "get"
+    | "post"
+    | "put"
+    | "patch"
+    | "delete"
+    ;
+
+api_status_fields
+    : %empty                                { $$ = NULL; }
+    | "(" api_status_wildcards ")"          { $$ = $2; }
+    ;
+
+api_status_wildcards
+    : "_"                                   { $$ = MK(K_LIST_OF, @$, $1); }
+    | api_status_wildcards "," "_"          { $$ = ADD($1, $3); }
     ;
 
 /* Types */

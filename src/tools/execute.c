@@ -9,6 +9,7 @@
 #include "codegen/codegen.h"
 #include "lower/lower.h"
 #include "prim/prim.h"
+#include "tools/api-server.h"
 #include "tools/diff.h"
 #include "tools/embedded.h"
 #include "tools/fix.h"
@@ -139,6 +140,22 @@ static void execute_pipeline(void *argument) {
             return;
         }
     }
+    uint32_t entry_api = MO_NO_INDEX;
+    for (uint32_t i = 0; i < program->api_count; i++) {
+        const struct mo_checked_api *api = &program->apis[i];
+        if (api->module == 0)
+            entry_api = i;
+        if (cli->command == MO_COMMAND_RUN && api->module == 0 &&
+            program->entry.function == UINT32_MAX) {
+            const char *message = "mo run does not start api servers; use mo serve";
+            bool added =
+                mo_diags_add(diags, &(struct mo_diag){.code = MO_CODE_TOOL_SERVICE_UNAVAILABLE,
+                                                      .primary = {api->syntax->span, message},
+                                                      .message = message});
+            (void)added;
+            return;
+        }
+    }
     if (cli->command == MO_COMMAND_REPLAY || cli->command == MO_COMMAND_QUERY) {
         struct mo_offline_pipeline offline = {.arena = arena,
                                               .program = program,
@@ -154,7 +171,8 @@ static void execute_pipeline(void *argument) {
         return;
     }
     if ((cli->command == MO_COMMAND_RUN ||
-         (cli->command == MO_COMMAND_EMIT && entry_service == MO_NO_INDEX)) &&
+         (cli->command == MO_COMMAND_EMIT && entry_service == MO_NO_INDEX &&
+          entry_api == MO_NO_INDEX)) &&
         program->entry.function == UINT32_MAX) {
         const char *message = "the entry module has no main function";
         struct mo_diag diag = {.code = MO_CODE_MAIN_CONTRACT,
@@ -439,8 +457,12 @@ static int fix_files(const struct mo_cli *cli, FILE *output, FILE *errors) {
 int mo_cli_execute(const struct mo_cli *cli, FILE *output, FILE *errors) {
     if (cli->source_bundle)
         return mo_upgrade_emit(cli, output, errors);
-    if (cli->command == MO_COMMAND_SERVE)
+    if (cli->command == MO_COMMAND_SERVE) {
+        int api_status = 0;
+        if (mo_serve_maybe_api(cli, output, errors, &api_status))
+            return api_status;
         return mo_upgrade_serve(cli, output, errors);
+    }
     if (cli->upgrade_from != NULL)
         return mo_upgrade_check(cli, output, errors);
     if (cli->command == MO_COMMAND_REHEARSE)

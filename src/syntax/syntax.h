@@ -33,6 +33,13 @@ enum mo_syntax_kind {
     MO_S_SERVICE_TOOLS, /* local names sequence */
     MO_S_SERVICE_EVERY, /* interval, local handler name */
     MO_S_SERVICE_TOKEN, /* plain text */
+    MO_S_API,           /* clauses sequence, in source order */
+    MO_S_API_PORT,      /* port integer literal */
+    MO_S_API_CORS,      /* origin plain text */
+    MO_S_API_SQLITE,    /* binding name, path plain text */
+    MO_S_API_AUTH,      /* principal type, local handler name */
+    MO_S_API_ROUTE,     /* method name, path plain text, local handler name */
+    MO_S_API_STATUS,    /* variant name/qualified, optional wildcards sequence, status integer */
     MO_S_PROMISE,
     MO_S_ANCHOR,
     MO_S_EXAMPLES,
@@ -141,6 +148,7 @@ enum mo_syntax_token {
     MO_T_WHERE,
     MO_T_END,
     MO_T_SERVICE,
+    MO_T_API,
     MO_T_LPAREN,
     MO_T_RPAREN,
     MO_T_LBRACK,

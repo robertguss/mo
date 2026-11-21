@@ -186,7 +186,7 @@ static MO_MUST_USE bool declarations(struct resolver *r, uint32_t module) {
     uint32_t count = 0, case_count = 0;
     for (uint32_t i = 0; i < items->count; i++) {
         const struct mo_syntax *node = items->children[i];
-        if (node->kind != MO_S_TEST && node->kind != MO_S_SERVICE)
+        if (node->kind != MO_S_TEST && node->kind != MO_S_SERVICE && node->kind != MO_S_API)
             count++;
         if (node->kind == MO_S_ENUM)
             case_count += node->children[2]->count;
@@ -197,7 +197,7 @@ static MO_MUST_USE bool declarations(struct resolver *r, uint32_t module) {
         return false;
     for (uint32_t i = 0; i < items->count; i++) {
         const struct mo_syntax *node = items->children[i];
-        if (node->kind == MO_S_TEST || node->kind == MO_S_SERVICE)
+        if (node->kind == MO_S_TEST || node->kind == MO_S_SERVICE || node->kind == MO_S_API)
             continue;
         uint32_t owner = scope->count;
         if (!add_symbol(r, scope, module, node, UINT32_MAX))

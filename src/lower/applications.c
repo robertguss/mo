@@ -183,6 +183,13 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
         }
         return e;
     }
+    if (r->native != NULL && strcmp(r->native, "ApiTest.send") == 0) {
+        const struct mo_source_type **arg_types =
+            LOWER_NEW(p, const struct mo_source_type *, r->operand_count);
+        for (uint32_t i = 0; i < r->operand_count; i++)
+            arg_types[i] = lower_cps_row(b, r->operands[i])->type;
+        return lower_apitest_send(p, r->service, args, arg_types);
+    }
     if (r->native != NULL && strncmp(r->native, "Simulation.", 11) == 0) {
         static const struct {
             const char *name;

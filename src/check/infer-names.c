@@ -726,6 +726,8 @@ MO_MUST_USE struct value infer_identifier(struct inference *p, const struct mo_s
     }
     if (prefix != NULL && infer_compare_text(prefix, "Simulation") == 0)
         return infer_simulation_call(p, node, NULL);
+    if (prefix != NULL && infer_compare_text(prefix, "ApiTest") == 0)
+        return infer_apitest_call(p, node, NULL);
     if (prefix == NULL && node->kind == MO_S_NAME) {
         struct name_slot *s = infer_slot(p, node, false);
         if (s != NULL && s->active != NULL) {

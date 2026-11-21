@@ -207,6 +207,7 @@ static const struct {
     {"where", WHERE},
     {"while", WHILE},
     {"service", SERVICE},
+    {"api", API},
     {"state", SOFT_STATE},
     {"tools", SOFT_TOOLS},
     {"every", SOFT_EVERY},
@@ -214,10 +215,21 @@ static const struct {
     {"from", SOFT_FROM},
     {"env", SOFT_ENV},
     {"on", SOFT_ON},
+    {"port", SOFT_PORT},
+    {"cors", SOFT_CORS},
+    {"sqlite", SOFT_SQLITE},
+    {"auth", SOFT_AUTH},
+    {"via", SOFT_VIA},
+    {"get", SOFT_GET},
+    {"post", SOFT_POST},
+    {"put", SOFT_PUT},
+    {"patch", SOFT_PATCH},
+    {"delete", SOFT_DELETE},
+    {"status", SOFT_STATUS},
 };
 
 static int name_context_token(int token) {
-    return token >= SOFT_STATE && token <= SOFT_ON ? NAME : token;
+    return token >= SOFT_STATE && token <= SOFT_STATUS ? NAME : token;
 }
 
 static int keyword(const unsigned char *text, size_t length) {
