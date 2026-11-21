@@ -1356,6 +1356,10 @@ fn round_trip_strict(value: T) : Result(T, JsonDecodeError) where T: Json
   decode_strict[T](encode(value))
 end
 
+fn round_trip_value_strict(value: T) : Result(T, JsonDecodeError) where T: Json
+  from_json_strict[T](value.to_json)
+end
+
 test "derived Json ability round-trips scalars, collections and tuples"
   assert round_trip_strict(Unit) == Ok(Unit)
   assert round_trip_strict(true) == Ok(true)
@@ -1428,4 +1432,25 @@ test "recursive types, first-class adapters and schema work"
   assert patch_schema.list_at("required") == Some([String("name")])
   tree_schema = schema[IntTree]()
   assert tree_schema.list_at("anyOf").map(fn(xs) xs.size end) == Some(2)
+end
+
+test "from_json and from_json_strict decode Json values directly, by dot call and as adapters"
+  doc = Object({"name": String("Ada"), "extra": Boolean(true)})
+  expected_patch = UserPatch(name: "Ada", bio: None, age: None)
+  assert from_json[UserPatch](doc) == Ok(expected_patch)
+  assert doc.from_json[UserPatch] == Ok(expected_patch)
+  assert from_json(doc) == Ok(expected_patch)
+  assert [int(3), int(4)].map(fn(v) v.from_json end) == [Ok(3), Ok(4)]
+  assert from_json_strict[UserPatch](doc) ==
+    Error(Mismatch(path: "extra", message: "unknown field 'extra'"))
+  assert doc.from_json_strict[UserPatch] ==
+    Error(Mismatch(path: "extra", message: "unknown field 'extra'"))
+  assert from_json[Json](doc) == Ok(doc)
+  assert from_json_strict[Json](doc) == Ok(doc)
+  tree = Branch(left: Leaf(1), right: Leaf(2))
+  assert round_trip_value_strict(tree) == Ok(tree)
+  assert [int(10), int(20)].map(from_json[Int]) == [Ok(10), Ok(20)]
+  assert [doc].map(from_json_strict[UserPatch]) == [
+    Error(Mismatch(path: "extra", message: "unknown field 'extra'"))
+  ]
 end

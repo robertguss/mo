@@ -854,10 +854,11 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                 ? &p->program->interfaces->scopes[r->symbol->module]
                 : NULL;
         if (fn_scope != NULL && fn_scope->library && fn_scope->name != NULL &&
-            strcmp(fn_scope->name, "Json") == 0 && r->symbol->receiver == UINT32_MAX &&
-            r->arguments.count == 1) {
+            strcmp(fn_scope->name, "Json") == 0 && r->arguments.count == 1) {
             const char *fn_name = r->symbol->name;
-            if (strcmp(fn_name, "from_json") == 0 || strcmp(fn_name, "from_json_strict") == 0) {
+            if (r->symbol->receiver < fn_scope->count &&
+                strcmp(fn_scope->symbols[r->symbol->receiver].name, "Json") == 0 &&
+                (strcmp(fn_name, "from_json") == 0 || strcmp(fn_name, "from_json_strict") == 0)) {
                 MO_ASSERT(args.count == 1);
                 mo_core_expr empty_path = lower_unit(p);
                 empty_path->as.lit->tag = MO_CORE_LIT_TEXT;
@@ -867,7 +868,8 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                                        b->instance->depth, args.items[0], empty_path,
                                        lower_bool(p, strcmp(fn_name, "from_json_strict") == 0));
             }
-            if (strcmp(fn_name, "decode") == 0 || strcmp(fn_name, "decode_strict") == 0) {
+            if (r->symbol->receiver == UINT32_MAX &&
+                (strcmp(fn_name, "decode") == 0 || strcmp(fn_name, "decode_strict") == 0)) {
                 MO_ASSERT(args.count == 1);
                 mo_core_ty input_ty =
                     r->operand_count == 0
@@ -879,7 +881,7 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                     &b->instance->substitution, b->instance->owner, b->instance->depth, input_ty,
                     args.items[0], strcmp(fn_name, "decode_strict") == 0);
             }
-            if (strcmp(fn_name, "schema") == 0) {
+            if (r->symbol->receiver == UINT32_MAX && strcmp(fn_name, "schema") == 0) {
                 MO_ASSERT(args.count == 0);
                 static const struct mo_source_type text_src = {
                     .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};

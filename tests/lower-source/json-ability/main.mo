@@ -66,6 +66,10 @@ fn echo_json(x: T) : Result(T, Json.JsonDecodeError) where T: Json
   Json.decode_strict[T](Json.encode(x))
 end
 
+fn echo_json_value(x: T) : Result(T, Json.JsonDecodeError) where T: Json
+  Json.from_json_strict[T](x.to_json)
+end
+
 fn main() : Int
   p1 = Profile(login: "ada", nickname: None)
   if Json.decode[Profile]("{\"login\":\"ada\",\"ignored\":1}") != Ok(p1)
@@ -73,6 +77,27 @@ fn main() : Int
   end
   if not (Json.decode_strict[Profile]("{\"login\":\"ada\",\"ignored\":1}") is Error(_))
     return 2
+  end
+  raw_p1 = Json.Object({"login": Json.String("ada"), "ignored": Json.int(1)})
+  if Json.from_json[Profile](raw_p1) != Ok(p1)
+    return 12
+  end
+  if raw_p1.from_json[Profile] != Ok(p1)
+    return 13
+  end
+  if Json.from_json_strict[Profile](raw_p1) !=
+    Error(Json.Mismatch(path: "ignored", message: "unknown field 'ignored'"))
+    return 14
+  end
+  if echo_json_value(Invoice(id: Slug(raw: "inv-2"), total: Amount(cents: 900))) !=
+    Ok(Invoice(id: Slug(raw: "inv-2"), total: Amount(cents: 900)))
+    return 15
+  end
+  if Json.from_json[Amount](Json.int(-3)) != Error(Json.Mismatch(path: "", message: "negative"))
+    return 16
+  end
+  if [Json.int(7), Json.int(8)].map(Json.from_json[Int]) != [Ok(7), Ok(8)]
+    return 17
   end
   if echo_json(InProgress) != Ok(InProgress)
     return 3

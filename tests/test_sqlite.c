@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -699,9 +700,83 @@ static void test_ephemeral_memory(void) {
     remove_tree(dir);
 }
 
+struct wal_worker_job {
+    const char *dir;
+    int worker_id;
+    bool ok;
+};
+
+static void *wal_worker_run(void *arg) {
+    struct wal_worker_job *job = arg;
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    struct mo_cell sq = make_real_sqlite(&f, job->dir);
+    struct mo_cell opened = open_db_res(&f, sq, "concurrent.db");
+    if (mo_cell_get_tag(opened) != 0) {
+        mo_value_drop(f.heap, f.result_database, opened);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+        host_fixture_free(&f);
+        return NULL;
+    }
+    struct mo_cell db = unwrap_ok(&f, f.result_database, opened);
+    struct mo_cell cr = run_sql_res(
+        &f, db, "CREATE TABLE IF NOT EXISTS hits(id INTEGER PRIMARY KEY AUTOINCREMENT, w INT)",
+        empty_values(&f));
+    bool cr_ok = mo_cell_get_tag(cr) == 0;
+    mo_value_drop(f.heap, f.result_sqlite_unit, cr);
+    bool ins_ok = false;
+    if (cr_ok) {
+        struct mo_cell wval[] = {val_int(&f, job->worker_id)};
+        struct mo_cell ins =
+            run_sql_res(&f, db, "INSERT INTO hits(w) VALUES (?)", make_list(&f, wval, 1));
+        ins_ok = mo_cell_get_tag(ins) == 0;
+        mo_value_drop(f.heap, f.result_sqlite_unit, ins);
+    }
+    mo_value_drop(f.heap, f.result_database, opened);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+    host_fixture_free(&f);
+    job->ok = cr_ok && ins_ok;
+    return NULL;
+}
+
+static void test_concurrent_wal_open(void) {
+    for (int round = 0; round < 5; round++) {
+        char template[] = "/tmp/mo-sqlite-wal-XXXXXX";
+        char *dir = mkdtemp(template);
+        MO_ASSERT(dir != NULL);
+
+        enum { NWORKERS = 8 };
+        pthread_t tids[NWORKERS];
+        struct wal_worker_job jobs[NWORKERS];
+        for (int i = 0; i < NWORKERS; i++) {
+            jobs[i] = (struct wal_worker_job){.dir = dir, .worker_id = i + 1, .ok = false};
+            MO_ASSERT(pthread_create(&tids[i], NULL, wal_worker_run, &jobs[i]) == 0);
+        }
+        for (int i = 0; i < NWORKERS; i++) {
+            MO_ASSERT(pthread_join(tids[i], NULL) == 0);
+            CHECK(jobs[i].ok);
+        }
+
+        struct host_fixture f;
+        host_fixture_init(&f, mo_limits_default().heap_size);
+        struct mo_cell sq = make_real_sqlite(&f, dir);
+        struct mo_cell opened = open_db_res(&f, sq, "concurrent.db");
+        struct mo_cell db = unwrap_ok(&f, f.result_database, opened);
+        struct mo_cell q = query_sql_res(&f, db, "SELECT COUNT(*) FROM hits", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_rows, q,
+                       "Ok(Sqlite.Rows(columns: [\"COUNT(*)\"], rows: [[Integer(8)]]))");
+        mo_value_drop(f.heap, f.result_sqlite_rows, q);
+        mo_value_drop(f.heap, f.result_database, opened);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+        host_fixture_free(&f);
+        remove_tree(dir);
+    }
+}
+
 int main(void) {
     test_real_crud();
     test_ephemeral_memory();
+    test_concurrent_wal_open();
     test_real_errors();
     test_containment();
     test_authorizer();
