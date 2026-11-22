@@ -32,7 +32,10 @@ daily use.
 Alongside daily-driver hardening, web-application primitives and the pure-Mo
 Arvo framework are tracked in [arvo-plan.md](design/arvo-plan.md) and
 [arvo-spec.md](design/arvo-spec.md) (`Crypto`, `SecureRandom`, `Bytes` hex and
-base64url, `Date`, `api`/`mo serve` web upgrades, and typed `Sqlite` decoding).
+base64url, `Date`, declarative `api` `scope`/`static`/optional-auth/`Module.fn`
+upgrades, `mo serve` `--bind`/`--workers`/`--watch`/keep-alive, and typed
+`Sqlite.decode[T]`/`db.execute`/`Sqlite.transaction` are implemented; `lib/arvo/`
+is next).
 
 The Post-Phase 7 sprint ([post-phase7-direction.md](design/post-phase7-direction.md))
 replaced ceremony gates with fast `mo test` (`--mutants` opt-in), code-first

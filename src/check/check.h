@@ -640,6 +640,7 @@ enum mo_api_method {
 
 enum mo_api_param_kind {
     MO_API_PARAM_AUTH,
+    MO_API_PARAM_AUTH_OPTIONAL,
     MO_API_PARAM_REQUEST,
     MO_API_PARAM_SQLITE_DB,
     MO_API_PARAM_ACTOR,
@@ -648,6 +649,12 @@ enum mo_api_param_kind {
     MO_API_PARAM_QUERY_REQUIRED,
     MO_API_PARAM_QUERY_OPTIONAL,
     MO_API_PARAM_BODY,
+};
+
+enum mo_api_auth_mode {
+    MO_API_AUTH_NONE,
+    MO_API_AUTH_REQUIRED,
+    MO_API_AUTH_OPTIONAL,
 };
 
 enum mo_api_reply_kind {
@@ -663,6 +670,12 @@ struct mo_checked_api_sqlite {
     const struct mo_syntax *syntax;
     const char *name;
     const char *path;
+};
+
+struct mo_checked_api_static {
+    const struct mo_syntax *syntax;
+    const char *prefix;
+    const char *dir;
 };
 
 struct mo_checked_api_actor {
@@ -695,7 +708,7 @@ struct mo_checked_api_route {
     enum mo_api_method method;
     const char *path;
     uint32_t function;
-    bool authenticated;
+    enum mo_api_auth_mode auth_mode;
     uint32_t param_count;
     const struct mo_checked_api_param *params;
     enum mo_api_reply_kind reply;
@@ -722,6 +735,8 @@ struct mo_checked_api {
     const struct mo_checked_api_sqlite *sqlites;
     uint32_t actor_count;
     const struct mo_checked_api_actor *actors;
+    uint32_t static_count;
+    const struct mo_checked_api_static *statics;
     bool has_auth;
     struct mo_checked_api_auth auth;
     uint32_t route_count;

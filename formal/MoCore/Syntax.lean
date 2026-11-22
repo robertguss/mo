@@ -377,7 +377,7 @@ inductive IoOp where
   | list (ro : Bool) | entries (ro : Bool) | «exists» (ro : Bool) | within (ro : Bool) | readOnly
   | now | sleep | randomInt
   | connect | connectSecure | allowHosts | send | receive
-  | sqliteOpen | sqliteRun | sqliteQuery
+  | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw
   | commandRunRaw | commandWithin | commandAllowPrograms
   | secureRandomBytes
   /-- Fake constructors: only spec code may allocate these handles. -/
@@ -617,6 +617,8 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .sqliteFake => ([], .cap .sqlite)
   | .sqliteRun => ([.cap .database, .text, .list .sqliteValue], .result .unit .sqliteError)
   | .sqliteQuery => ([.cap .database, .text, .list .sqliteValue], .result .sqliteRows .sqliteError)
+  | .sqliteExecuteRaw =>
+    ([.cap .database, .text, .list .sqliteValue], .result (.tuple [.int, .int]) .sqliteError)
   | .commandRunRaw =>
     ([.cap .command, .text, .list .text, .duration], .result (.tuple [.int, .bytes, .bytes]) .text)
   | .commandWithin => ([.cap .command, .text], .cap .command)

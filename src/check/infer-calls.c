@@ -1216,9 +1216,9 @@ MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo
         out.graph->operands[0] = req_val.note;
     out.never = req_val.never;
 
-    static const char *const allowed_caps[] = {"Sqlite", "Network", "Clock",
-                                               "Random", "Files",   "ReadFiles",
-                                               "Env",    "Console", "SecureRandom"};
+    static const char *const allowed_caps[] = {"Sqlite",  "Network",     "Clock", "Random",
+                                               "Files",   "ReadFiles",   "Env",   "Console",
+                                               "Command", "SecureRandom"};
     uint32_t seen_caps = 0;
     uint32_t seen_actors = 0;
     for (uint32_t i = 2; i < args->count; i++) {

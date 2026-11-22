@@ -1085,12 +1085,16 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
 #guard Text.exprRoundTrip (io .sqliteOpen [v "s", str "a.db"]) &&
   Text.exprRoundTrip (io .sqliteRun [v "d", str "SELECT 1", listOf .sqliteValue []]) &&
   Text.exprRoundTrip (io .sqliteQuery [v "d", str "SELECT 1", listOf .sqliteValue []]) &&
+  Text.exprRoundTrip (io .sqliteExecuteRaw [v "d", str "INSERT INTO t VALUES (1)", listOf .sqliteValue []]) &&
   typedAs? program [("s", tCap .sqlite)] (io .sqliteOpen [v "s", str "a.db"])
     (sqliteTy (tCap .database)) &&
   typedAs? program [("d", tCap .database)]
     (io .sqliteRun [v "d", str "SELECT 1", listOf .sqliteValue []]) (sqliteTy .unit) &&
   typedAs? program [("d", tCap .database)]
     (io .sqliteQuery [v "d", str "SELECT 1", listOf .sqliteValue []]) (sqliteTy .sqliteRows) &&
+  typedAs? program [("d", tCap .database)]
+    (io .sqliteExecuteRaw [v "d", str "INSERT INTO t VALUES (1)", listOf .sqliteValue []])
+    (sqliteTy (.tuple [.int, .int])) &&
   !typedAs? program [("s", tCap .database)] (io .sqliteOpen [v "s", str "a.db"])
     (sqliteTy (tCap .database)) &&
   stops program (io .sqliteFake []) (tCap .sqlite)
@@ -1102,7 +1106,8 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
     w.stdout == ["before sqlite"] && w.files == [("kept", "value")] && w.now == 123
   | _ => false
 #guard [(IoOp.sqliteRun, [v "d", str "SELECT 1", listOf .sqliteValue []]),
-    (.sqliteQuery, [v "d", str "SELECT 1", listOf .sqliteValue []])].all fun (op, args) =>
+    (.sqliteQuery, [v "d", str "SELECT 1", listOf .sqliteValue []]),
+    (.sqliteExecuteRaw, [v "d", str "INSERT INTO t VALUES (1)", listOf .sqliteValue []])].all fun (op, args) =>
   match run program (io op args) {} (handles [("d", .database)]) with
   | .stopped (.outside "Sqlite is not modeled by mocore") _ => true
   | _ => false

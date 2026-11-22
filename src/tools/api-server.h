@@ -25,4 +25,7 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
                      uint32_t actor_count, uint64_t read_timeout_us, uint64_t write_timeout_us,
                      int client_fd);
 
+/* Forces static asset path confinement onto the portable O_NOFOLLOW resolver (for C tests). */
+void mo_api_set_force_fallback(bool force);
+
 #endif

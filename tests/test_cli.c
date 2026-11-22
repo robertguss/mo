@@ -300,7 +300,20 @@ static void parse_serve(void) {
     REFUSED("serve needs --port N: \"serve\"", "--data", "state");
     REFUSED("serve needs --data DIR: \"serve\"", "--port", "1");
     const char *api_zero[] = {"mo", "serve", "main.mo"};
-    CHECK(mo_cli_parse(3, api_zero, &cli, &error) && !cli.has_port && cli.data == NULL);
+    CHECK(mo_cli_parse(3, api_zero, &cli, &error) && !cli.has_port && cli.data == NULL &&
+          cli.bind_host == NULL && !cli.has_workers && cli.workers == MO_LIMIT_API_WORKERS &&
+          !cli.watch);
+    const char *api_flags[] = {"mo",      "serve",     "main.mo", "--bind",
+                               "0.0.0.0", "--workers", "16",      "--watch"};
+    CHECK(mo_cli_parse(8, api_flags, &cli, &error) && strcmp(cli.bind_host, "0.0.0.0") == 0 &&
+          cli.has_workers && cli.workers == 16 && cli.watch);
+    REFUSED("invalid bind address (expected an IPv4 address such as 127.0.0.1 or 0.0.0.0): "
+            "\"--bind\" \"999.0.0.1\"",
+            "main.mo", "--bind", "999.0.0.1");
+    REFUSED("invalid worker count (expected a decimal integer from 1 to 64): \"--workers\" \"0\"",
+            "main.mo", "--workers", "0");
+    REFUSED("invalid worker count (expected a decimal integer from 1 to 64): \"--workers\" \"65\"",
+            "main.mo", "--workers", "65");
     const char *api_port_only[] = {"mo", "serve", "main.mo", "--port", "0"};
     CHECK(mo_cli_parse(5, api_port_only, &cli, &error) && cli.has_port && cli.port == 0);
     REFUSED("flag may be given only once (except --only): \"--port\"", "main.mo", "--port", "1",

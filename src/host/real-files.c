@@ -413,3 +413,37 @@ enum mo_host_outcome mo_host_real_files_call(struct mo_host *host, struct mo_hea
         errno = number;
     return outcome;
 }
+
+bool mo_host_open_confined_file(int root_fd, const char *mount_dir, const char *rel_path,
+                                bool force_fallback, int *fd_out, uint64_t *size_out,
+                                int64_t *mtime_sec_out, int64_t *mtime_nsec_out) {
+    MO_ASSERT(root_fd >= 0 && mount_dir != NULL && rel_path != NULL && fd_out != NULL &&
+              size_out != NULL && mtime_sec_out != NULL && mtime_nsec_out != NULL);
+    *fd_out = -1;
+    if (mount_dir[0] == '\0' || rel_path[0] == '\0')
+        return false;
+    struct mo_host dummy = {.force_fallback = force_fallback};
+    struct mo_path_result mount_res;
+    struct mo_file_error err = mo_host_resolve(&dummy, root_fd, mount_dir, PATH_FOLDER, &mount_res);
+    if (err.status != FILE_OK)
+        return false;
+    struct mo_path_result file_res;
+    err = mo_host_resolve(&dummy, mount_res.descriptor, rel_path, PATH_READ, &file_res);
+    mo_host_close(mount_res.descriptor);
+    if (err.status != FILE_OK)
+        return false;
+    if (!S_ISREG(file_res.stat.st_mode) || file_res.stat.st_size < 0) {
+        mo_host_close(file_res.descriptor);
+        return false;
+    }
+    *fd_out = file_res.descriptor;
+    *size_out = (uint64_t)file_res.stat.st_size;
+#if defined(__APPLE__)
+    *mtime_sec_out = (int64_t)file_res.stat.st_mtimespec.tv_sec;
+    *mtime_nsec_out = (int64_t)file_res.stat.st_mtimespec.tv_nsec;
+#else
+    *mtime_sec_out = (int64_t)file_res.stat.st_mtim.tv_sec;
+    *mtime_nsec_out = (int64_t)file_res.stat.st_mtim.tv_nsec;
+#endif
+    return true;
+}

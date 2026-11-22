@@ -139,6 +139,44 @@ static bool port_number(const char *text, uint16_t *out) {
     return true;
 }
 
+static bool worker_count(const char *text, uint32_t *out) {
+    uint32_t value = 0;
+    const char *p = text;
+    for (; *p >= '0' && *p <= '9'; p++) {
+        value = value * 10 + (uint32_t)(*p - '0');
+        if (value > MO_LIMIT_API_WORKERS_MAX)
+            return false;
+    }
+    if (p == text || *p != '\0' || value == 0)
+        return false;
+    *out = value;
+    return true;
+}
+
+static bool ipv4_address(const char *text) {
+    const char *p = text;
+    for (unsigned part = 0; part < 4; part++) {
+        if (part > 0) {
+            if (*p != '.')
+                return false;
+            p++;
+        }
+        if (*p < '0' || *p > '9')
+            return false;
+        const char *start = p;
+        uint32_t octet = 0;
+        while (*p >= '0' && *p <= '9') {
+            octet = octet * 10 + (uint32_t)(*p - '0');
+            p++;
+            if (octet > 255)
+                return false;
+        }
+        if (p - start > 1 && *start == '0')
+            return false;
+    }
+    return *p == '\0';
+}
+
 /* A retained failure's id: a positive decimal no larger than INT64_MAX, as the store keeps it. */
 static bool failure_id(const char *text, uint64_t *out) {
     uint64_t id = 0;
@@ -197,9 +235,21 @@ enum flag_id {
     FLAG_NAME,
     FLAG_BIN_DIR,
     FLAG_STDIN,
+    FLAG_BIND,
+    FLAG_WORKERS,
+    FLAG_WATCH,
     FLAG_COUNT
 };
-enum flag_value { VALUE_NONE, VALUE_TEXT, VALUE_BYTES, VALUE_COUNT, VALUE_PORT, VALUE_ID };
+_Static_assert(FLAG_COUNT <= 64, "seen bitset fits in 64 bits");
+enum flag_value {
+    VALUE_NONE,
+    VALUE_TEXT,
+    VALUE_BYTES,
+    VALUE_COUNT,
+    VALUE_PORT,
+    VALUE_WORKERS,
+    VALUE_ID
+};
 struct flag {
     enum flag_id id;
     const char *name;
@@ -264,6 +314,9 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_NAME, "--name", false, false, VALUE_TEXT, 0, ON(INSTALL)},
     {FLAG_BIN_DIR, "--bin-dir", false, false, VALUE_TEXT, 0, ON(INSTALL)},
     {FLAG_STDIN, "--stdin", false, false, VALUE_NONE, 0, ON(FORMAT)},
+    {FLAG_BIND, "--bind", false, false, VALUE_TEXT, 0, ON(SERVE)},
+    {FLAG_WORKERS, "--workers", false, false, VALUE_WORKERS, 0, ON(SERVE)},
+    {FLAG_WATCH, "--watch", false, false, VALUE_NONE, 0, ON(SERVE)},
 };
 #undef ON
 
@@ -328,6 +381,24 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_STDIN:
         out->stdin_mode = true;
+        break;
+    case FLAG_BIND:
+        if (!ipv4_address(operand))
+            return refuse(
+                out, error,
+                "invalid bind address (expected an IPv4 address such as 127.0.0.1 or 0.0.0.0)", arg,
+                operand);
+        out->bind_host = operand;
+        break;
+    case FLAG_WORKERS:
+        if (!worker_count(operand, &out->workers))
+            return refuse(out, error,
+                          "invalid worker count (expected a decimal integer from 1 to 64)", arg,
+                          operand);
+        out->has_workers = true;
+        break;
+    case FLAG_WATCH:
+        out->watch = true;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -436,6 +507,7 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     *out = (struct mo_cli){.limits = mo_limits_default(),
                            .calls = 200,
                            .seconds = 2,
+                           .workers = MO_LIMIT_API_WORKERS,
                            .file_separator = UINT32_MAX,
                            .max_work = MO_LIMIT_QUERY_WORK};
     *error = NULL;
@@ -681,6 +753,10 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
     if (out->command == MO_COMMAND_SERVE && out->file_count == 0 &&
         (out->upgrade || out->adopt || out->migration != NULL))
         return refuse(out, error, "upgrade or adoption needs a source file", command, NULL);
+    if (out->command == MO_COMMAND_SERVE && out->file_count == 0 &&
+        (out->bind_host != NULL || out->has_workers || out->watch))
+        return refuse(out, error, "--bind, --workers and --watch apply only to api servers",
+                      command, NULL);
     if (out->command == MO_COMMAND_PUSH && out->admin_socket == NULL)
         return refuse(out, error,
                       "usage: mo push FILE --admin-socket PATH [--base DIGEST] "

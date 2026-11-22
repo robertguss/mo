@@ -391,7 +391,8 @@ enum item_context {
     ANCHOR_ITEM,
     SERVICE_ITEM,
     ACTOR_ITEM,
-    API_ITEM
+    API_ITEM,
+    API_SCOPE_ITEM
 };
 static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_context context);
 static void recover(struct parser *p, uint32_t first_line);
@@ -1278,9 +1279,50 @@ static MO_MUST_USE bool api_method_word(const struct parser *p) {
     return false;
 }
 
-static MO_MUST_USE struct mo_syntax *api_clause(struct parser *p) {
+static MO_MUST_USE struct mo_syntax *api_handler_ref(struct parser *p) {
+    if (p->current.kind == MO_T_CAPNAME) {
+        struct mo_syntax *mod = name(p, MO_T_CAPNAME);
+        expect(p, MO_T_DOT);
+        return N(MO_S_QUALIFIED, mod->span, mod, name(p, MO_T_NAME));
+    }
+    return name(p, MO_T_NAME);
+}
+
+static MO_MUST_USE struct mo_syntax *api_scope_block(struct parser *p, struct mo_span start) {
+    enter(p);
+    struct mo_syntax *prefix = name(p, MO_T_TEXT);
+    expect(p, MO_T_NL);
+    struct mo_syntax *items = sequence(p);
+    while (p->current.kind != MO_T_END && p->current.kind != MO_T_EOF) {
+        struct mo_syntax *child = read_item(p, API_SCOPE_ITEM);
+        if (child != NULL)
+            append(p, items, child);
+        else
+            items->incomplete = true;
+    }
+    expect(p, MO_T_END);
+    p->depth--;
+    return N(MO_S_API_SCOPE, start, prefix, items);
+}
+
+static MO_MUST_USE struct mo_syntax *api_clause(struct parser *p, bool in_scope) {
     struct mo_span start = p->current.span;
-    struct mo_syntax *n;
+    struct mo_syntax *n = NULL;
+    if (in_scope) {
+        if (api_method_word(p)) {
+            struct mo_syntax *method = leaf(p);
+            struct mo_syntax *route_path = name(p, MO_T_TEXT);
+            n = N(MO_S_API_ROUTE, start, method, route_path, api_handler_ref(p));
+        } else if (clause_word(p, "scope")) {
+            n = api_scope_block(p, start);
+        } else {
+            error(p, MO_CODE_SOURCE_SYNTAX, start,
+                  "an api scope clause starts with get, post, put, patch, delete or scope",
+                  "Put routes or nested scope blocks inside scope ... end.");
+        }
+        expect(p, MO_T_NL);
+        return n;
+    }
     if (clause_word(p, "port")) {
         n = N(MO_S_API_PORT, start, name(p, MO_T_INT));
     } else if (clause_word(p, "cors")) {
@@ -1302,11 +1344,20 @@ static MO_MUST_USE struct mo_syntax *api_clause(struct parser *p) {
             error(p, MO_CODE_SOURCE_SYNTAX, p->current.span,
                   "an auth clause is auth <Type> via <function>",
                   "Write auth CurrentUser via authenticate.");
-        n = N(MO_S_API_AUTH, start, principal, name(p, MO_T_NAME));
+        n = N(MO_S_API_AUTH, start, principal, api_handler_ref(p));
+    } else if (clause_word(p, "static")) {
+        struct mo_syntax *prefix = name(p, MO_T_TEXT);
+        if (!clause_word(p, "from"))
+            error(p, MO_CODE_SOURCE_SYNTAX, p->current.span,
+                  "a static clause is static \"/prefix\" from \"folder\"",
+                  "Write static \"/assets\" from \"public/assets\" with plain text strings.");
+        n = N(MO_S_API_STATIC, start, prefix, name(p, MO_T_TEXT));
     } else if (api_method_word(p)) {
         struct mo_syntax *method = leaf(p);
         struct mo_syntax *route_path = name(p, MO_T_TEXT);
-        n = N(MO_S_API_ROUTE, start, method, route_path, name(p, MO_T_NAME));
+        n = N(MO_S_API_ROUTE, start, method, route_path, api_handler_ref(p));
+    } else if (clause_word(p, "scope")) {
+        n = api_scope_block(p, start);
     } else if (clause_word(p, "status")) {
         struct mo_syntax *variant = name(p, MO_T_CAPNAME);
         if (take(p, MO_T_DOT))
@@ -1328,8 +1379,8 @@ static MO_MUST_USE struct mo_syntax *api_clause(struct parser *p) {
         n = N(MO_S_API_STATUS, start, variant, wildcards, name(p, MO_T_INT));
     } else {
         error(p, MO_CODE_SOURCE_SYNTAX, start,
-              "an api clause starts with port, cors, sqlite, actor, auth, get, post, put, patch, "
-              "delete or status",
+              "an api clause starts with port, cors, sqlite, actor, auth, static, scope, get, "
+              "post, put, patch, delete or status",
               "Put each api clause on its own logical line, then close the api block with end.");
     }
     expect(p, MO_T_NL);
@@ -1572,7 +1623,7 @@ static void validate(struct parser *p, struct mo_syntax *n, bool pattern) {
         kind == MO_S_EXPOSE || kind == MO_S_EXPOSE_ALL || kind == MO_S_USE || kind == MO_S_BINDER ||
         kind == MO_S_API_PORT || kind == MO_S_API_CORS || kind == MO_S_API_SQLITE ||
         kind == MO_S_API_ACTOR || kind == MO_S_API_AUTH || kind == MO_S_API_ROUTE ||
-        kind == MO_S_API_STATUS)
+        kind == MO_S_API_STATIC || kind == MO_S_API_STATUS)
         return;
     if (kind == MO_S_STRUCT || kind == MO_S_ENUM) {
         if (!n->incomplete && n->children[2]->count == 0)
@@ -1843,8 +1894,8 @@ static MO_MUST_USE struct mo_syntax *read_item(struct parser *p, enum item_conte
         n = service_clause(p);
     else if (context == ACTOR_ITEM)
         n = actor_clause(p);
-    else if (context == API_ITEM)
-        n = api_clause(p);
+    else if (context == API_ITEM || context == API_SCOPE_ITEM)
+        n = api_clause(p, context == API_SCOPE_ITEM);
     else if (context == SPEC_ITEM)
         n = specification_item(p);
     else if (context == ANCHOR_ITEM)

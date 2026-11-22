@@ -34,8 +34,8 @@ and unknown versions are rejected.
 `SqliteError`, and omits `"0"` on `Sqlite.Value`. `Sqlite.Database` is never a
 parameter of the entry function. No World or CapState field is added.
 
-It also adds four `IoOp` operations (`sqliteOpen`, `sqliteFake`, `sqliteRun`,
-`sqliteQuery`), which stop with `Sqlite is not modeled by mocore`, keeping prior
+It also adds five `IoOp` operations (`sqliteOpen`, `sqliteFake`, `sqliteRun`,
+`sqliteQuery`, `sqliteExecuteRaw`), which stop with `Sqlite is not modeled by mocore`, keeping prior
 effects. `sqliteFake` is spec-only.
 
 | IoOp | Argument types | Result |
@@ -44,6 +44,7 @@ effects. `sqliteFake` is spec-only.
 | `sqliteFake` | none | Sqlite |
 | `sqliteRun` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Unit, SqliteError) |
 | `sqliteQuery` | Sqlite.Database, Text, List(Sqlite.Value) | Result(Sqlite.Rows, SqliteError) |
+| `sqliteExecuteRaw` | Sqlite.Database, Text, List(Sqlite.Value) | Result((Int, Int), SqliteError) |
 | `commandRunRaw` | Command, Text, List(Text), Duration | Result((Int, Bytes, Bytes), Text) |
 | `commandWithin` | Command, Text | Command |
 | `commandAllowPrograms` | Command, List(Text) | Command |

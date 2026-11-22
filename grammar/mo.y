@@ -78,7 +78,7 @@ static struct node *OP(struct node *node, int token) {
 %token SOFT_PORT "port" SOFT_CORS "cors" SOFT_SQLITE "sqlite"
 %token SOFT_AUTH "auth" SOFT_VIA "via"
 %token SOFT_GET "get" SOFT_POST "post" SOFT_PUT "put" SOFT_PATCH "patch" SOFT_DELETE "delete"
-%token SOFT_STATUS "status"
+%token SOFT_STATIC "static" SOFT_SCOPE "scope" SOFT_STATUS "status"
 
 %start start
 
@@ -122,6 +122,8 @@ identifier
     | SOFT_PUT
     | SOFT_PATCH
     | SOFT_DELETE
+    | SOFT_STATIC
+    | SOFT_SCOPE
     | SOFT_STATUS
     ;
 
@@ -256,10 +258,36 @@ api_clause
     | "cors" TEXT NL                        { $$ = MK(K_API_CORS, @$, $2); }
     | "sqlite" identifier "from" TEXT NL    { $$ = MK(K_API_SQLITE, @$, $2, $4); }
     | "actor" identifier ":" type NL        { $$ = MK(K_API_ACTOR, @$, $2, $4); }
-    | "auth" type "via" identifier NL       { $$ = MK(K_API_AUTH, @$, $2, $4); }
-    | api_method TEXT identifier NL         { $$ = MK(K_API_ROUTE, @$, $1, $2, $3); }
+    | "auth" type "via" api_handler NL      { $$ = MK(K_API_AUTH, @$, $2, $4); }
+    | "static" TEXT "from" TEXT NL          { $$ = MK(K_API_STATIC, @$, $2, $4); }
+    | api_route
+    | api_scope
     | "status" type_name api_status_fields "=" INT NL
                                             { $$ = MK(K_API_STATUS, @$, $2, $3, $5); }
+    ;
+
+api_handler
+    : identifier
+    | CAPNAME "." identifier                { $$ = MK(K_QUALIFIED, @$, $1, $3); }
+    ;
+
+api_route
+    : api_method TEXT api_handler NL        { $$ = MK(K_API_ROUTE, @$, $1, $2, $3); }
+    ;
+
+api_scope
+    : "scope" TEXT NL api_scope_items "end" NL
+                                            { $$ = MK(K_API_SCOPE, @$, $2, $4); }
+    ;
+
+api_scope_items
+    : %empty                                { $$ = LEAF(K_LIST_OF, @$); }
+    | api_scope_items api_scope_item        { $$ = ADD($1, $2); }
+    ;
+
+api_scope_item
+    : api_route
+    | api_scope
     ;
 
 api_method

@@ -240,6 +240,136 @@ static MO_MUST_USE bool valid_sqlite_path(const uint8_t *bytes, size_t len) {
     return true;
 }
 
+static MO_MUST_USE bool valid_static_dir(const uint8_t *bytes, size_t len) {
+    if (len == 0 || bytes[0] == '/' || bytes[0] == '\\')
+        return false;
+    for (size_t i = 0; i < len; i++)
+        if (bytes[i] == '\0' || bytes[i] == '\\')
+            return false;
+    size_t i = 0;
+    while (i < len) {
+        size_t start = i;
+        while (i < len && bytes[i] != '/')
+            i++;
+        size_t seg = i - start;
+        if (seg == 0 || (seg == 1 && bytes[start] == '.') ||
+            (seg == 2 && bytes[start] == '.' && bytes[start + 1] == '.'))
+            return false;
+        if (i < len)
+            i++;
+    }
+    return true;
+}
+
+static MO_MUST_USE bool url_prefixes_overlap(const char *a, const char *b) {
+    size_t alen = strlen(a), blen = strlen(b);
+    if (alen == blen)
+        return memcmp(a, b, alen) == 0;
+    if (alen < blen)
+        return b[alen] == '/' && memcmp(a, b, alen) == 0;
+    return a[blen] == '/' && memcmp(a, b, blen) == 0;
+}
+
+static MO_MUST_USE bool parse_static_prefix(struct api_check *p, const struct mo_syntax *lit,
+                                            const char **out_prefix) {
+    p->span = lit->span;
+    struct mo_map_literal_key raw;
+    if (!decode_plain_text(p, lit, &raw))
+        return false;
+    if (raw.length < 2 || raw.bytes[0] != '/')
+        return api_report(p, MO_CODE_API_BLOCK,
+                          "an api static prefix must be a non-root URL path starting with /",
+                          "Write a static mount prefix such as \"/assets\" or \"/static\".");
+    size_t clean_len = raw.length;
+    if (clean_len > 1 && raw.bytes[clean_len - 1] == '/')
+        clean_len--;
+    if (clean_len < 2)
+        return api_report(p, MO_CODE_API_BLOCK,
+                          "an api static prefix must be a non-root URL path starting with /",
+                          "Write a static mount prefix such as \"/assets\" or \"/static\".");
+    for (size_t i = 0; i < clean_len; i++) {
+        uint8_t c = raw.bytes[i];
+        if (c <= 0x20 || c == 0x7f || c == '?' || c == '#' || c == ':' || c == '\\')
+            return api_report(p, MO_CODE_API_BLOCK,
+                              "an api static prefix contains an invalid character",
+                              "Static URL prefixes cannot contain whitespace, ?, #, : or \\.");
+    }
+    size_t pos = 1;
+    while (pos <= clean_len) {
+        size_t start = pos;
+        while (pos < clean_len && raw.bytes[pos] != '/')
+            pos++;
+        size_t seg = pos - start;
+        if (seg == 0 || (seg == 1 && raw.bytes[start] == '.') ||
+            (seg == 2 && raw.bytes[start] == '.' && raw.bytes[start + 1] == '.'))
+            return api_report(p, MO_CODE_API_BLOCK,
+                              "an api static prefix has an empty or relative segment",
+                              "Use clean URL path segments in static mount prefixes.");
+        pos++;
+    }
+    const char *clean = api_copy_text(p, raw.bytes, clean_len);
+    if (clean == NULL)
+        return false;
+    if (url_prefixes_overlap(clean, "/openapi.json") || url_prefixes_overlap(clean, "/docs"))
+        return api_report(p, MO_CODE_API_BLOCK,
+                          "an api static prefix conflicts with built-in /openapi.json or /docs",
+                          "Mount static assets on a distinct prefix such as \"/assets\".");
+    *out_prefix = clean;
+    return true;
+}
+
+static MO_MUST_USE bool parse_scope_prefix(struct api_check *p, const struct mo_syntax *lit,
+                                           const char *parent_prefix, const char **out_prefix) {
+    p->span = lit->span;
+    struct mo_map_literal_key raw;
+    if (!decode_plain_text(p, lit, &raw))
+        return false;
+    if (raw.length == 0 || raw.bytes[0] != '/')
+        return api_report(p, MO_CODE_API_BLOCK, "an api scope prefix must start with /",
+                          "Write a scope prefix starting with /, such as \"/bills\".");
+    for (size_t i = 0; i < raw.length; i++) {
+        uint8_t c = raw.bytes[i];
+        if (c <= 0x20 || c == 0x7f || c == '?' || c == '#')
+            return api_report(p, MO_CODE_API_BLOCK,
+                              "an api scope prefix contains an invalid character",
+                              "Scope prefixes cannot contain whitespace, control bytes, ? or #.");
+    }
+    size_t clean_len = raw.length;
+    if (clean_len > 1 && raw.bytes[clean_len - 1] == '/')
+        clean_len--;
+    if (clean_len > 1) {
+        size_t pos = 1;
+        while (pos <= clean_len) {
+            size_t start = pos;
+            while (pos < clean_len && raw.bytes[pos] != '/')
+                pos++;
+            if (pos == start)
+                return api_report(p, MO_CODE_API_BLOCK, "an api scope prefix has an empty segment",
+                                  "Avoid repeated slashes in scope prefixes.");
+            pos++;
+        }
+    }
+    const char *sub = api_copy_text(p, raw.bytes, clean_len);
+    if (sub == NULL)
+        return false;
+    if (parent_prefix == NULL || strcmp(parent_prefix, "/") == 0) {
+        *out_prefix = sub;
+        return true;
+    }
+    if (strcmp(sub, "/") == 0) {
+        *out_prefix = parent_prefix;
+        return true;
+    }
+    size_t plen = strlen(parent_prefix), slen = strlen(sub);
+    char *joined = api_alloc(p, plen + slen + 1, 1, 1);
+    if (joined == NULL)
+        return false;
+    memcpy(joined, parent_prefix, plen);
+    memcpy(joined + plen, sub, slen + 1);
+    *out_prefix = joined;
+    return true;
+}
+
 struct route_path_info {
     const char *clean_path;
     const char *shape;
@@ -248,25 +378,50 @@ struct route_path_info {
 };
 
 static MO_MUST_USE bool parse_route_path(struct api_check *p, const struct mo_syntax *lit,
-                                         struct route_path_info *out) {
+                                         const char *scope_prefix, struct route_path_info *out) {
     p->span = lit->span;
     struct mo_map_literal_key raw;
     if (!decode_plain_text(p, lit, &raw))
         return false;
-    if (raw.length == 0 || raw.bytes[0] != '/')
+    const uint8_t *full_bytes = raw.bytes;
+    size_t full_len = raw.length;
+    if (scope_prefix != NULL) {
+        if (raw.length != 0 && raw.bytes[0] != '/')
+            return api_report(p, MO_CODE_API_ROUTE,
+                              "an api route path inside scope must be \"\" or start with /",
+                              "Write \"\" for the scope root or a suffix starting with /, such as "
+                              "\"/:id\".");
+        size_t plen = strlen(scope_prefix);
+        if (raw.length == 0 || (raw.length == 1 && raw.bytes[0] == '/')) {
+            full_bytes = (const uint8_t *)scope_prefix;
+            full_len = plen;
+        } else if (strcmp(scope_prefix, "/") == 0) {
+            full_bytes = raw.bytes;
+            full_len = raw.length;
+        } else {
+            uint8_t *buf = api_alloc(p, plen + raw.length + 1, 1, 1);
+            if (buf == NULL)
+                return false;
+            memcpy(buf, scope_prefix, plen);
+            memcpy(buf + plen, raw.bytes, raw.length);
+            full_bytes = buf;
+            full_len = plen + raw.length;
+        }
+    } else if (full_len == 0 || full_bytes[0] != '/') {
         return api_report(p, MO_CODE_API_ROUTE, "an api route path must start with /",
                           "Write a path template starting with /, such as \"/users/:id\".");
-    for (size_t i = 0; i < raw.length; i++) {
-        uint8_t c = raw.bytes[i];
+    }
+    for (size_t i = 0; i < full_len; i++) {
+        uint8_t c = full_bytes[i];
         if (c <= 0x20 || c == 0x7f || c == '?' || c == '#')
             return api_report(p, MO_CODE_API_ROUTE,
                               "an api route path contains an invalid character",
                               "Route templates cannot contain whitespace, control bytes, ? or #.");
     }
-    size_t clean_len = raw.length;
-    if (clean_len > 1 && raw.bytes[clean_len - 1] == '/')
+    size_t clean_len = full_len;
+    if (clean_len > 1 && full_bytes[clean_len - 1] == '/')
         clean_len--;
-    char *clean = api_copy_text(p, raw.bytes, clean_len);
+    char *clean = api_copy_text(p, full_bytes, clean_len);
     char *shape = api_alloc(p, clean_len + 2, 1, 1);
     const char **params =
         api_alloc(p, MO_LIMIT_API_PATH_SEGMENTS, sizeof(*params), _Alignof(const char *));
@@ -330,21 +485,65 @@ static MO_MUST_USE bool parse_route_path(struct api_check *p, const struct mo_sy
     return true;
 }
 
-static MO_MUST_USE bool resolve_local_fn(struct api_check *p, const struct mo_syntax *name_node,
-                                         uint16_t err_code, const char *role,
-                                         const struct mo_function_signature **out_sig,
-                                         uint32_t *out_fn_index) {
-    p->span = name_node->span;
+static MO_MUST_USE bool resolve_api_fn(struct api_check *p, const struct mo_syntax *handler_node,
+                                       uint16_t err_code, const char *role,
+                                       const struct mo_function_signature **out_sig,
+                                       uint32_t *out_fn_index) {
+    p->span = handler_node->span;
     const struct mo_module_scope *scope = &p->program->interfaces->scopes[p->api->module];
-    const struct mo_symbol *group =
-        mo_find_symbol(scope, name_node->text, name_node->span.end - name_node->span.start);
-    if (group == NULL || group->declaration->kind != MO_S_FN) {
-        char *msg = api_alloc(p, 128, 1, 1);
-        if (msg == NULL)
-            return false;
-        (void)snprintf(msg, 128, "an api %s names an unknown local function", role);
-        return api_report(p, err_code, msg,
-                          "Name a function declared in the same module as the api block.");
+    const struct mo_symbol *group = NULL;
+    if (handler_node->kind == MO_S_QUALIFIED) {
+        const struct mo_syntax *prefix = handler_node->children[0];
+        const struct mo_syntax *fname = handler_node->children[1];
+        size_t plen = prefix->span.end - prefix->span.start;
+        uint32_t alias_idx = UINT32_MAX;
+        for (uint32_t a = 0; a < scope->alias_count; a++) {
+            if (strlen(scope->aliases[a].name) == plen &&
+                memcmp(scope->aliases[a].name, prefix->text, plen) == 0) {
+                alias_idx = a;
+                break;
+            }
+        }
+        if (alias_idx == UINT32_MAX) {
+            p->span = prefix->span;
+            return api_report(p, MO_CODE_IMPORT_MISSING, "a module prefix isn't in scope",
+                              "Use names the modules available to this file (reference 10.3).");
+        }
+        if (!mo_use_import(p->program->signatures, p->api->module,
+                           scope->aliases[alias_idx].origin))
+            return api_report(p, MO_CODE_CHECK_PROGRAM_WORK,
+                              "the program needs too much import-checking work", NULL);
+        const struct mo_module_scope *target =
+            &p->program->interfaces->scopes[scope->aliases[alias_idx].module];
+        group = mo_find_symbol(target, fname->text, fname->span.end - fname->span.start);
+        if (group == NULL || group->declaration->kind != MO_S_FN) {
+            p->span = fname->span;
+            char *msg = api_alloc(p, 128, 1, 1);
+            if (msg == NULL)
+                return false;
+            (void)snprintf(msg, 128, "an api %s names an unknown function", role);
+            return api_report(p, err_code, msg,
+                              "Name an exposed function declared in the imported module.");
+        }
+        if (!group->exported && group->module != p->api->module) {
+            p->span = fname->span;
+            return api_report(p, MO_CODE_IMPORT_PRIVATE,
+                              "everything not on expose is private to the module",
+                              "Everything not on expose is private to the module "
+                              "(reference 10.1).");
+        }
+    } else {
+        group = mo_find_symbol(scope, handler_node->text,
+                               handler_node->span.end - handler_node->span.start);
+        if (group == NULL || group->declaration->kind != MO_S_FN) {
+            char *msg = api_alloc(p, 128, 1, 1);
+            if (msg == NULL)
+                return false;
+            (void)snprintf(msg, 128, "an api %s names an unknown local function", role);
+            return api_report(p, err_code, msg,
+                              "Name a function declared in the same module as the api block, or "
+                              "Module.fn for an imported module.");
+        }
     }
     if (group->overload_count > 1) {
         char *msg = api_alloc(p, 128, 1, 1);
@@ -449,7 +648,7 @@ static MO_MUST_USE bool check_auth_clause(struct api_check *p, const struct mo_s
                           "Declare a nominal principal type such as struct CurrentUser.");
     const struct mo_function_signature *sig = NULL;
     uint32_t fn_idx = 0;
-    if (!resolve_local_fn(p, clause->children[1], MO_CODE_API_BLOCK, "auth", &sig, &fn_idx))
+    if (!resolve_api_fn(p, clause->children[1], MO_CODE_API_BLOCK, "auth", &sig, &fn_idx))
         return false;
     const struct mo_syntax *fn_decl = sig->function->declaration;
     const struct mo_syntax *param_nodes = fn_decl->children[1];
@@ -560,11 +759,11 @@ static MO_MUST_USE enum mo_api_method parse_method_word(const struct mo_syntax *
 }
 
 static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_syntax *clause,
-                                           const char **shapes, uint32_t route_idx,
-                                           struct mo_checked_api_route *out) {
+                                           const char *scope_prefix, const char **shapes,
+                                           uint32_t route_idx, struct mo_checked_api_route *out) {
     enum mo_api_method method = parse_method_word(clause->children[0]);
     struct route_path_info path_info = {0};
-    if (!parse_route_path(p, clause->children[1], &path_info))
+    if (!parse_route_path(p, clause->children[1], scope_prefix, &path_info))
         return false;
     for (uint32_t i = 0; i < route_idx; i++) {
         if (!api_work(p, 1))
@@ -580,7 +779,7 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
 
     const struct mo_function_signature *sig = NULL;
     uint32_t fn_idx = 0;
-    if (!resolve_local_fn(p, clause->children[2], MO_CODE_API_ROUTE, "route", &sig, &fn_idx))
+    if (!resolve_api_fn(p, clause->children[2], MO_CODE_API_ROUTE, "route", &sig, &fn_idx))
         return false;
     const struct mo_syntax *fn_decl = sig->function->declaration;
     const struct mo_syntax *param_nodes = fn_decl->children[1];
@@ -594,7 +793,8 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
     if (path_info.param_count != 0)
         memset(matched_path, 0, path_info.param_count * sizeof(*matched_path));
 
-    bool seen_auth = false, seen_req = false, seen_body = false;
+    enum mo_api_auth_mode auth_mode = MO_API_AUTH_NONE;
+    bool seen_req = false, seen_body = false;
     uint32_t seen_caps = 0, seen_dbs = 0, seen_actors = 0;
     bool allows_body = method == MO_API_POST || method == MO_API_PUT || method == MO_API_PATCH;
 
@@ -606,12 +806,22 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
             return false;
         const struct mo_source_type *ptype = sig->type->arguments[i];
         if (p->api->has_auth && api_same_type(p, ptype, p->api->auth.principal, 0)) {
-            if (seen_auth)
+            if (auth_mode != MO_API_AUTH_NONE)
                 return api_report(p, MO_CODE_API_ROUTE,
                                   "an api route handler takes the auth principal twice", NULL);
-            seen_auth = true;
+            auth_mode = MO_API_AUTH_REQUIRED;
             params[i] = (struct mo_checked_api_param){
                 .kind = MO_API_PARAM_AUTH, .name = pname, .type = ptype};
+            continue;
+        }
+        if (p->api->has_auth && api_native_type(ptype, "Option") &&
+            api_same_type(p, ptype->arguments[0], p->api->auth.principal, 0)) {
+            if (auth_mode != MO_API_AUTH_NONE)
+                return api_report(p, MO_CODE_API_ROUTE,
+                                  "an api route handler takes the auth principal twice", NULL);
+            auth_mode = MO_API_AUTH_OPTIONAL;
+            params[i] = (struct mo_checked_api_param){
+                .kind = MO_API_PARAM_AUTH_OPTIONAL, .name = pname, .type = ptype};
             continue;
         }
         if (api_same_type(p, ptype, p->req_type, 0)) {
@@ -770,7 +980,7 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
                                          .method = method,
                                          .path = path_info.clean_path,
                                          .function = fn_idx,
-                                         .authenticated = seen_auth,
+                                         .auth_mode = auth_mode,
                                          .param_count = param_count,
                                          .params = params,
                                          .reply = reply,
@@ -778,6 +988,50 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
                                          .ok_json = ok_json,
                                          .error_type = err_ty,
                                          .error_json = err_json};
+    return true;
+}
+
+static MO_MUST_USE bool count_scope_routes(struct api_check *p, const struct mo_syntax *items,
+                                           uint32_t depth, uint32_t *route_count) {
+    if (depth > MO_LIMIT_API_SCOPE_DEPTH)
+        return api_report(p, MO_CODE_API_BLOCK, "api scope blocks nest more than 8 levels deep",
+                          "Keep scope blocks nested at most 8 levels deep.");
+    for (uint32_t i = 0; i < items->count; i++) {
+        if (!api_work(p, 1))
+            return false;
+        const struct mo_syntax *c = items->children[i];
+        p->span = c->span;
+        if (c->kind == MO_S_API_ROUTE) {
+            if (++(*route_count) > MO_LIMIT_API_ROUTES)
+                return api_report(p, MO_CODE_API_ROUTE, "an api block has too many routes",
+                                  "An api block declares at most 1024 routes.");
+        } else if (c->kind == MO_S_API_SCOPE) {
+            if (!count_scope_routes(p, c->children[1], depth + 1, route_count))
+                return false;
+        }
+    }
+    return true;
+}
+
+static MO_MUST_USE bool collect_routes_in(struct api_check *p, const struct mo_syntax *items,
+                                          const char *scope_prefix, const char **shapes,
+                                          struct mo_checked_api_route *routes, uint32_t *rt_at) {
+    for (uint32_t i = 0; i < items->count; i++) {
+        if (!api_work(p, 1))
+            return false;
+        const struct mo_syntax *c = items->children[i];
+        if (c->kind == MO_S_API_ROUTE) {
+            if (!check_route_clause(p, c, scope_prefix, shapes, *rt_at, &routes[*rt_at]))
+                return false;
+            (*rt_at)++;
+        } else if (c->kind == MO_S_API_SCOPE) {
+            const char *nested_prefix = NULL;
+            if (!parse_scope_prefix(p, c->children[0], scope_prefix, &nested_prefix))
+                return false;
+            if (!collect_routes_in(p, c->children[1], nested_prefix, shapes, routes, rt_at))
+                return false;
+        }
+    }
     return true;
 }
 
@@ -1039,7 +1293,7 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
         *p.api = (struct mo_checked_api){.syntax = syntax, .module = module, .port = 8000};
 
         const struct mo_syntax *clauses = syntax->children[0];
-        uint32_t sqlite_count = 0, actor_count = 0, route_count = 0;
+        uint32_t sqlite_count = 0, actor_count = 0, static_count = 0, route_count = 0;
         const struct mo_syntax *auth_clause = NULL;
         for (uint32_t i = 0; i < clauses->count; i++) {
             if (!api_work(&p, 1))
@@ -1089,6 +1343,11 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
                     return api_report(&p, MO_CODE_API_BLOCK,
                                       "an api block declares too many actors",
                                       "An api block declares at most 16 actor clauses.");
+            } else if (c->kind == MO_S_API_STATIC) {
+                if (++static_count > MO_LIMIT_API_STATICS)
+                    return api_report(&p, MO_CODE_API_BLOCK,
+                                      "an api block declares too many static mounts",
+                                      "An api block declares at most 8 static clauses.");
             } else if (c->kind == MO_S_API_AUTH) {
                 if (auth_clause != NULL)
                     return api_report(&p, MO_CODE_API_BLOCK, "an api block repeats auth",
@@ -1098,16 +1357,58 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
                 if (++route_count > MO_LIMIT_API_ROUTES)
                     return api_report(&p, MO_CODE_API_ROUTE, "an api block has too many routes",
                                       "An api block declares at most 1024 routes.");
+            } else if (c->kind == MO_S_API_SCOPE) {
+                if (!count_scope_routes(&p, c->children[1], 1, &route_count))
+                    return false;
             } else {
                 MO_ASSERT(c->kind == MO_S_API_STATUS);
             }
         }
 
-        if (route_count == 0) {
+        if (route_count == 0 && static_count == 0) {
             p.span = syntax->span;
             return api_report(&p, MO_CODE_API_BLOCK, "an api block has no routes",
                               "Declare at least one get, post, put, patch or delete route.");
         }
+
+        struct mo_checked_api_static *statics =
+            api_alloc(&p, static_count == 0 ? 1 : static_count, sizeof(*statics),
+                      _Alignof(struct mo_checked_api_static));
+        if (statics == NULL)
+            return false;
+        uint32_t st_at = 0;
+        for (uint32_t i = 0; i < clauses->count; i++) {
+            const struct mo_syntax *c = clauses->children[i];
+            if (c->kind != MO_S_API_STATIC)
+                continue;
+            const char *sprefix = NULL;
+            if (!parse_static_prefix(&p, c->children[0], &sprefix))
+                return false;
+            for (uint32_t prev = 0; prev < st_at; prev++)
+                if (url_prefixes_overlap(statics[prev].prefix, sprefix)) {
+                    p.span = c->children[0]->span;
+                    return api_report(
+                        &p, MO_CODE_API_BLOCK,
+                        "two api static clauses have duplicate or overlapping prefixes",
+                        "Each static mount must serve a distinct, non-overlapping URL prefix.");
+                }
+            p.span = c->children[1]->span;
+            struct mo_map_literal_key sdir;
+            if (!decode_plain_text(&p, c->children[1], &sdir))
+                return false;
+            if (!valid_static_dir(sdir.bytes, sdir.length))
+                return api_report(&p, MO_CODE_API_BLOCK,
+                                  "an api static folder must be a relative path without ..",
+                                  "Use a relative directory inside the data folder, such as "
+                                  "\"public/assets\".");
+            const char *copied_dir = api_copy_text(&p, sdir.bytes, sdir.length);
+            if (copied_dir == NULL)
+                return false;
+            statics[st_at++] =
+                (struct mo_checked_api_static){.syntax = c, .prefix = sprefix, .dir = copied_dir};
+        }
+        p.api->static_count = st_at;
+        p.api->statics = statics;
 
         struct mo_checked_api_sqlite *sqlites =
             api_alloc(&p, sqlite_count == 0 ? 1 : sqlite_count, sizeof(*sqlites),
@@ -1207,22 +1508,17 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
         if (auth_clause != NULL && !check_auth_clause(&p, auth_clause))
             return false;
 
+        uint32_t alloc_routes = route_count == 0 ? 1 : route_count;
         struct mo_checked_api_route *routes =
-            api_alloc(&p, route_count, sizeof(*routes), _Alignof(struct mo_checked_api_route));
-        const char **shapes = api_alloc(&p, route_count, sizeof(*shapes), _Alignof(const char *));
+            api_alloc(&p, alloc_routes, sizeof(*routes), _Alignof(struct mo_checked_api_route));
+        const char **shapes = api_alloc(&p, alloc_routes, sizeof(*shapes), _Alignof(const char *));
         if (routes == NULL || shapes == NULL)
             return false;
         p.api->routes = routes;
 
         uint32_t rt_at = 0;
-        for (uint32_t i = 0; i < clauses->count; i++) {
-            const struct mo_syntax *c = clauses->children[i];
-            if (c->kind != MO_S_API_ROUTE)
-                continue;
-            if (!check_route_clause(&p, c, shapes, rt_at, &routes[rt_at]))
-                return false;
-            rt_at++;
-        }
+        if (!collect_routes_in(&p, clauses, NULL, shapes, routes, &rt_at))
+            return false;
         p.api->route_count = rt_at;
 
         if (!check_statuses(&p, clauses))

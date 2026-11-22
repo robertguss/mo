@@ -94,6 +94,7 @@ HOSTOP(SQLITE_OPEN,            "Sqlite",    "open",           "fn(Sqlite, Text) 
 HOSTOP(SQLITE_FAKE,            "Sqlite",    "fake",           "fn() : Sqlite",                                           "",   "",                                true)
 HOSTOP(SQLITE_RUN,             "Sqlite",    "run",            "fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Unit, SqliteError)", "bbb", "",             false)
 HOSTOP(SQLITE_QUERY,           "Sqlite",    "query",          "fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)", "bbb", "",     false)
+HOSTOP(SQLITE_EXECUTE_RAW,     "Sqlite",    "execute_raw",    "fn(Sqlite.Database, Text, List(Sqlite.Value)) : Result((Int, Int), SqliteError)", "bbb", "",      false)
 
 HOSTOP(COMMAND_RUN_RAW,        "Command",   "run_raw",        "fn(Command, Text, List(Text), Duration) : Result((Int, Bytes, Bytes), Text)", "bbbb", "timeout below 1ms or above 1 hour; too many command arguments", false)
 HOSTOP(COMMAND_WITHIN,         "Command",   "within",         "fn(Command, Text) : Command",                             "bb",  "too many folders open at once",      false)

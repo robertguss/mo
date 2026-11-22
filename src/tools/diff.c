@@ -563,7 +563,8 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
     for (uint32_t i = 0; i < p->service_count; i++)
         cap += p->services[i].tool_count + p->services[i].timer_count + 4;
     for (uint32_t i = 0; i < p->api_count; i++)
-        cap += p->apis[i].route_count + p->apis[i].sqlite_count + p->apis[i].actor_count + 4;
+        cap += p->apis[i].route_count + p->apis[i].sqlite_count + p->apis[i].actor_count +
+               p->apis[i].static_count + 4;
     struct pub_item *items = mo_arena_allocate_array(arena, cap == 0 ? 1 : cap, sizeof *items,
                                                      _Alignof(struct pub_item));
     MO_ASSERT(items != NULL);
@@ -728,6 +729,14 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
             items[n++] = (struct pub_item){"api_actor", copy_buf_cstr(arena, &nb),
                                            copy_buf_cstr(arena, &sb)};
         }
+        for (uint32_t st = 0; st < api->static_count; st++) {
+            mo_buffer_clear(&nb);
+            bool bok = mo_buffer_append_text(&nb, "api.static.") &&
+                       mo_buffer_append_text(&nb, api->statics[st].prefix);
+            MO_ASSERT(bok);
+            items[n++] =
+                (struct pub_item){"api_static", copy_buf_cstr(arena, &nb), api->statics[st].dir};
+        }
         static const char *const mnames[] = {"GET", "POST", "PUT", "PATCH", "DELETE"};
         for (uint32_t r = 0; r < api->route_count; r++) {
             const struct mo_checked_api_route *rt = &api->routes[r];
@@ -737,8 +746,12 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
             bool bok = mo_buffer_append_text(&nb, mnames[rt->method]) &&
                        mo_buffer_append_byte(&nb, ' ') && mo_buffer_append_text(&nb, rt->path);
             if (bok) {
-                if (rt->authenticated && api->has_auth)
+                if (rt->auth_mode == MO_API_AUTH_REQUIRED && api->has_auth)
                     bok = mo_buffer_append_text(&sb, "[auth ") &&
+                          format_type(p, api->auth.principal, &sb) &&
+                          mo_buffer_append_text(&sb, "] ");
+                else if (rt->auth_mode == MO_API_AUTH_OPTIONAL && api->has_auth)
+                    bok = mo_buffer_append_text(&sb, "[auth? ") &&
                           format_type(p, api->auth.principal, &sb) &&
                           mo_buffer_append_text(&sb, "] ");
                 else

@@ -19,6 +19,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -29,6 +30,107 @@
 #include <unistd.h>
 
 extern char **environ;
+
+static pthread_mutex_t fallback_mutex = PTHREAD_MUTEX_INITIALIZER;
+static bool api_force_fallback = false;
+
+void mo_api_set_force_fallback(bool force) {
+    MO_ASSERT(pthread_mutex_lock(&fallback_mutex) == 0);
+    api_force_fallback = force;
+    MO_ASSERT(pthread_mutex_unlock(&fallback_mutex) == 0);
+}
+
+static bool get_force_fallback(void) {
+    MO_ASSERT(pthread_mutex_lock(&fallback_mutex) == 0);
+    bool v = api_force_fallback;
+    MO_ASSERT(pthread_mutex_unlock(&fallback_mutex) == 0);
+    return v;
+}
+
+struct api_static_mount {
+    const char *prefix;
+    size_t prefix_len;
+    const char *dir;
+};
+
+struct api_generation {
+    uint32_t refs;
+    struct mo_arena meta_arena;
+    struct mo_image *image;
+    uint32_t wire_fn;
+    uint16_t default_port;
+    const char *cors;
+    uint32_t static_count;
+    struct api_static_mount statics[MO_LIMIT_API_STATICS];
+    uint32_t actor_count;
+    uint32_t actor_services[MO_LIMIT_API_ACTORS];
+    struct mo_live_actor *actors[MO_LIMIT_API_ACTORS];
+};
+
+struct watched_file {
+    const char *path;
+    bool exists;
+    uint64_t dev;
+    uint64_t ino;
+    uint64_t size;
+    int64_t mtime_sec;
+    int64_t mtime_nsec;
+};
+
+struct watch_set {
+    struct mo_arena arena;
+    struct watched_file *items;
+    uint32_t count;
+};
+
+static void stat_watched_file(const char *path, struct watched_file *out) {
+    out->path = path;
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        out->exists = false;
+        out->dev = 0;
+        out->ino = 0;
+        out->size = 0;
+        out->mtime_sec = 0;
+        out->mtime_nsec = 0;
+        return;
+    }
+    out->exists = true;
+    out->dev = (uint64_t)st.st_dev;
+    out->ino = (uint64_t)st.st_ino;
+    out->size = st.st_size >= 0 ? (uint64_t)st.st_size : 0;
+#if defined(__APPLE__)
+    out->mtime_sec = (int64_t)st.st_mtimespec.tv_sec;
+    out->mtime_nsec = (int64_t)st.st_mtimespec.tv_nsec;
+#else
+    out->mtime_sec = (int64_t)st.st_mtim.tv_sec;
+    out->mtime_nsec = (int64_t)st.st_mtim.tv_nsec;
+#endif
+}
+
+static bool watch_set_has_changed(const struct watch_set *ws) {
+    for (uint32_t i = 0; i < ws->count; i++) {
+        struct watched_file cur;
+        stat_watched_file(ws->items[i].path, &cur);
+        if (cur.exists != ws->items[i].exists || cur.dev != ws->items[i].dev ||
+            cur.ino != ws->items[i].ino || cur.size != ws->items[i].size ||
+            cur.mtime_sec != ws->items[i].mtime_sec || cur.mtime_nsec != ws->items[i].mtime_nsec)
+            return true;
+    }
+    return false;
+}
+
+static void watch_set_add_unique(struct watch_set *ws, uint32_t cap, const char *path) {
+    if (path == NULL || path[0] == '\0' || ws->count >= cap)
+        return;
+    for (uint32_t i = 0; i < ws->count; i++)
+        if (strcmp(ws->items[i].path, path) == 0)
+            return;
+    char *copy = mo_arena_copy_text(&ws->arena, path);
+    if (copy == NULL)
+        return;
+    stat_watched_file(copy, &ws->items[ws->count++]);
+}
 
 struct probe_work {
     const char *path;
@@ -67,11 +169,9 @@ static void probe_entry_api(void *arg) {
 struct api_compile_work {
     const struct mo_cli *cli;
     FILE *output, *errors;
-    struct mo_image *image;
-    uint32_t wire_fn;
-    uint16_t default_port;
-    uint32_t actor_count;
-    uint32_t actor_services[MO_LIMIT_API_ACTORS];
+    pthread_mutex_t *diag_mutex;
+    struct api_generation *gen;
+    struct watch_set *watch_out;
     int status;
 };
 
@@ -86,6 +186,86 @@ static void api_tool_diag(struct mo_diags *diags, uint16_t code, const char *msg
                         .primary = {.span = {.file = UINT32_MAX}, .text = detail}};
     bool added = mo_diags_add(diags, &d);
     (void)added;
+}
+
+static void destroy_gen_unlocked(struct api_generation *gen) {
+    if (gen == NULL)
+        return;
+    for (uint32_t a = 0; a < gen->actor_count; a++)
+        if (gen->actors[a] != NULL)
+            mo_live_actor_free(gen->actors[a]);
+    if (gen->image != NULL)
+        mo_image_free(gen->image);
+    struct mo_arena meta = gen->meta_arena;
+    mo_arena_free(&meta);
+}
+
+static struct api_generation *alloc_generation_meta(const struct mo_checked_api *entry_api,
+                                                    struct mo_image *img, uint32_t wire_fn) {
+    struct mo_arena meta;
+    mo_arena_init(&meta, 128u << 10);
+    struct api_generation *gen =
+        mo_arena_allocate(&meta, sizeof *gen, _Alignof(struct api_generation));
+    if (gen == NULL) {
+        mo_arena_free(&meta);
+        return NULL;
+    }
+    *gen = (struct api_generation){
+        .refs = 1,
+        .image = img,
+        .wire_fn = wire_fn,
+        .default_port = entry_api != NULL ? entry_api->port : 0,
+    };
+    if (entry_api != NULL) {
+        if (entry_api->cors != NULL) {
+            char *c = mo_arena_copy_text(&meta, entry_api->cors);
+            if (c == NULL) {
+                mo_arena_free(&meta);
+                return NULL;
+            }
+            gen->cors = c;
+        }
+        gen->static_count = entry_api->static_count;
+        for (uint32_t s = 0; s < entry_api->static_count; s++) {
+            char *pfx = mo_arena_copy_text(&meta, entry_api->statics[s].prefix);
+            char *dir = mo_arena_copy_text(&meta, entry_api->statics[s].dir);
+            if (pfx == NULL || dir == NULL) {
+                mo_arena_free(&meta);
+                return NULL;
+            }
+            gen->statics[s] =
+                (struct api_static_mount){.prefix = pfx, .prefix_len = strlen(pfx), .dir = dir};
+        }
+        gen->actor_count = entry_api->actor_count;
+        for (uint32_t a = 0; a < entry_api->actor_count; a++)
+            gen->actor_services[a] = entry_api->actors[a].service_index;
+    }
+    gen->meta_arena = meta;
+    return gen;
+}
+
+static void collect_watch_files(struct watch_set *ws, const struct mo_cli *cli,
+                                const struct mo_sources *sources, const struct mo_module_set *set) {
+    mo_arena_init(&ws->arena, 4u << 20);
+    uint32_t cap = sources->count + 16;
+    if (cap > MO_LIMIT_FILES + 16)
+        cap = MO_LIMIT_FILES + 16;
+    ws->items =
+        mo_arena_allocate_array(&ws->arena, cap, sizeof *ws->items, _Alignof(struct watched_file));
+    ws->count = 0;
+    if (ws->items == NULL)
+        return;
+    if (cli->file_count > 0)
+        watch_set_add_unique(ws, cap, mo_cli_file(cli, 0));
+    for (uint32_t i = 0; i < sources->count; i++) {
+        bool is_embedded_lib =
+            set != NULL && i < set->count && set->library[i] && cli->library == NULL;
+        if (is_embedded_lib)
+            continue;
+        struct stat st;
+        if (sources->files[i].path != NULL && stat(sources->files[i].path, &st) == 0)
+            watch_set_add_unique(ws, cap, sources->files[i].path);
+    }
 }
 
 static void compile_api_image(void *arg) {
@@ -109,6 +289,9 @@ static void compile_api_image(void *arg) {
         &arena, &sources, mo_cli_file(cli, 0), cli->library,
         cli->library == NULL ? mo_default_embedded_library() : NULL,
         cli->library == NULL ? mo_default_library_root() : NULL, &diags);
+    if (w->watch_out != NULL)
+        collect_watch_files(w->watch_out, cli, &sources, set);
+
     struct mo_program *program =
         set == NULL || mo_diags_any(&diags) ? NULL : mo_check(&arena, set, &diags);
 
@@ -128,10 +311,6 @@ static void compile_api_image(void *arg) {
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
 
     if (entry_api != NULL && !mo_diags_any(&diags)) {
-        w->default_port = entry_api->port;
-        w->actor_count = entry_api->actor_count;
-        for (uint32_t a = 0; a < entry_api->actor_count; a++)
-            w->actor_services[a] = entry_api->actors[a].service_index;
         struct mo_services services;
         struct mo_core *core =
             mo_lower_services(&lowered, program, &sources, &diags, NULL, &services);
@@ -147,8 +326,13 @@ static void compile_api_image(void *arg) {
                 struct mo_defect init_defect;
                 if (mo_image_init(img, &cli->limits, &init_defect) != MO_RETURNED) {
                     if (w->errors != NULL) {
+                        if (w->diag_mutex != NULL)
+                            (void)pthread_mutex_lock(w->diag_mutex);
                         bool wrote = mo_write_defect(w->errors, NULL, &init_defect);
                         (void)wrote;
+                        (void)fflush(w->errors);
+                        if (w->diag_mutex != NULL)
+                            (void)pthread_mutex_unlock(w->diag_mutex);
                     }
                     mo_image_free(img);
                     w->status = 70;
@@ -173,20 +357,31 @@ static void compile_api_image(void *arg) {
                         }
                     }
                     MO_ASSERT(found_fn != MO_NO_INDEX);
-                    w->image = img;
-                    w->wire_fn = found_fn;
+                    struct api_generation *gen = alloc_generation_meta(entry_api, img, found_fn);
+                    if (gen == NULL) {
+                        mo_image_free(img);
+                        w->status = 1;
+                        goto cleanup;
+                    }
+                    w->gen = gen;
                     w->status = 0;
                 }
             }
         }
     }
 
-    if (w->image == NULL) {
-        if (w->output != NULL && w->errors != NULL)
+    if (w->gen == NULL) {
+        if (w->output != NULL && w->errors != NULL) {
+            if (w->diag_mutex != NULL)
+                (void)pthread_mutex_lock(w->diag_mutex);
             w->status = mo_write_diagnostics(w->output, w->errors, false, MO_COMMAND_SERVE,
                                              &sources, &diags, NULL);
-        else
+            (void)fflush(w->errors);
+            if (w->diag_mutex != NULL)
+                (void)pthread_mutex_unlock(w->diag_mutex);
+        } else {
             w->status = 1;
+        }
     }
 
 cleanup:
@@ -197,26 +392,46 @@ cleanup:
     mo_sources_free(&sources);
 }
 
+static int compile_api_generation(const struct mo_cli *cli, FILE *output, FILE *errors,
+                                  pthread_mutex_t *diag_mutex, struct api_generation **gen_out,
+                                  struct watch_set *watch_out) {
+    *gen_out = NULL;
+    struct api_compile_work cw = {
+        .cli = cli,
+        .output = output,
+        .errors = errors,
+        .diag_mutex = diag_mutex,
+        .watch_out = watch_out,
+        .status = 1,
+    };
+    if (mo_with_stack(MO_SOURCE_STACK_SIZE, compile_api_image, &cw) != 0)
+        return -1;
+    if (cw.gen == NULL)
+        return cw.status;
+    *gen_out = cw.gen;
+    return 0;
+}
+
 int mo_api_compile_file(const struct mo_cli *cli, FILE *output, FILE *errors,
                         struct mo_image **image_out, uint32_t *wire_fn_out,
                         uint16_t *default_port_out, uint32_t actor_services[MO_LIMIT_API_ACTORS],
                         uint32_t *actor_count_out) {
     *image_out = NULL;
-    struct api_compile_work cw = {
-        .cli = cli, .output = output, .errors = errors, .wire_fn = MO_NO_INDEX, .status = 1};
-    if (mo_with_stack(MO_SOURCE_STACK_SIZE, compile_api_image, &cw) != 0)
-        return -1;
-    if (cw.image == NULL)
-        return cw.status;
-    *image_out = cw.image;
-    *wire_fn_out = cw.wire_fn;
+    struct api_generation *gen = NULL;
+    int rc = compile_api_generation(cli, output, errors, NULL, &gen, NULL);
+    if (rc != 0 || gen == NULL)
+        return rc;
+    *image_out = gen->image;
+    gen->image = NULL;
+    *wire_fn_out = gen->wire_fn;
     if (default_port_out != NULL)
-        *default_port_out = cw.default_port;
+        *default_port_out = gen->default_port;
     if (actor_count_out != NULL)
-        *actor_count_out = cw.actor_count;
+        *actor_count_out = gen->actor_count;
     if (actor_services != NULL)
-        for (uint32_t i = 0; i < cw.actor_count; i++)
-            actor_services[i] = cw.actor_services[i];
+        for (uint32_t i = 0; i < gen->actor_count; i++)
+            actor_services[i] = gen->actor_services[i];
+    destroy_gen_unlocked(gen);
     return 0;
 }
 
@@ -232,6 +447,7 @@ struct parsed_http_request {
     size_t method_len;
     const char *target;
     size_t target_len;
+    bool http_1_1;
     uint32_t header_count;
     struct http_header_slice headers[MO_LIMIT_API_HEADERS];
     struct mo_buffer body;
@@ -326,8 +542,14 @@ static const char *status_reason_phrase(int64_t code) {
         return "Moved Permanently";
     case 302:
         return "Found";
+    case 303:
+        return "See Other";
     case 304:
         return "Not Modified";
+    case 307:
+        return "Temporary Redirect";
+    case 308:
+        return "Permanent Redirect";
     case 400:
         return "Bad Request";
     case 401:
@@ -361,21 +583,39 @@ static const char *status_reason_phrase(int64_t code) {
     }
 }
 
-static void send_fixed_json_error(int fd, int code, const char *err_code, uint64_t write_timeout) {
+static bool send_json_status_with_cors(int fd, int code, const char *err_code, const char *cors,
+                                       bool keep_alive, bool is_head, uint64_t write_timeout) {
     uint64_t deadline = add_deadline_us(api_monotonic_us(), write_timeout);
     char payload[128];
     int plen = snprintf(payload, sizeof payload, "{\"error\":\"%s\"}", err_code);
     if (plen < 0 || (size_t)plen >= sizeof payload)
-        return;
-    char head[256];
-    int hlen = snprintf(head, sizeof head,
-                        "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: "
-                        "%d\r\nConnection: close\r\n\r\n",
-                        code, status_reason_phrase(code), plen);
-    if (hlen > 0 && (size_t)hlen < sizeof head) {
-        if (send_all_deadline(fd, (const uint8_t *)head, (size_t)hlen, deadline))
-            (void)send_all_deadline(fd, (const uint8_t *)payload, (size_t)plen, deadline);
+        return false;
+    struct mo_buffer head;
+    mo_buffer_init(&head, 512);
+    char top[160];
+    int tlen =
+        snprintf(top, sizeof top,
+                 "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n", code,
+                 status_reason_phrase(code), plen);
+    bool ok = tlen > 0 && (size_t)tlen < sizeof top && mo_buffer_append(&head, top, (size_t)tlen);
+    if (ok && cors != NULL && cors[0] != '\0') {
+        ok = mo_buffer_append_text(&head, "Access-Control-Allow-Origin: ") &&
+             mo_buffer_append_text(&head, cors) && mo_buffer_append_text(&head, "\r\n");
     }
+    ok = ok && mo_buffer_append_text(&head, keep_alive ? "Connection: keep-alive\r\n\r\n"
+                                                       : "Connection: close\r\n\r\n");
+    bool sent = false;
+    if (ok) {
+        sent = send_all_deadline(fd, head.bytes, head.length, deadline);
+        if (sent && !is_head)
+            sent = send_all_deadline(fd, (const uint8_t *)payload, (size_t)plen, deadline);
+    }
+    mo_buffer_free(&head);
+    return sent;
+}
+
+static void send_fixed_json_error(int fd, int code, const char *err_code, uint64_t write_timeout) {
+    (void)send_json_status_with_cors(fd, code, err_code, NULL, false, false, write_timeout);
 }
 
 static bool ascii_ieq(const char *a, size_t alen, const char *b) {
@@ -393,6 +633,41 @@ static bool ascii_ieq(const char *a, size_t alen, const char *b) {
             return false;
     }
     return true;
+}
+
+static bool ascii_ends_with_icase(const char *s, size_t slen, const char *suffix) {
+    size_t suflen = strlen(suffix);
+    if (slen < suflen)
+        return false;
+    return ascii_ieq(s + (slen - suflen), suflen, suffix);
+}
+
+static void connection_header_flags(const struct parsed_http_request *req, bool *has_close,
+                                    bool *has_keepalive) {
+    *has_close = false;
+    *has_keepalive = false;
+    for (uint32_t i = 0; i < req->header_count; i++) {
+        if (!ascii_ieq(req->headers[i].name, req->headers[i].name_len, "connection"))
+            continue;
+        const char *v = req->headers[i].value;
+        size_t len = req->headers[i].value_len;
+        size_t pos = 0;
+        while (pos < len) {
+            size_t end = pos;
+            while (end < len && v[end] != ',')
+                end++;
+            size_t ts = pos, te = end;
+            while (ts < te && (v[ts] == ' ' || v[ts] == '\t'))
+                ts++;
+            while (te > ts && (v[te - 1] == ' ' || v[te - 1] == '\t'))
+                te--;
+            if (ascii_ieq(v + ts, te - ts, "close"))
+                *has_close = true;
+            else if (ascii_ieq(v + ts, te - ts, "keep-alive"))
+                *has_keepalive = true;
+            pos = end + 1;
+        }
+    }
 }
 
 static bool has_ctl_bytes(const char *s, size_t len, bool allow_tab) {
@@ -416,11 +691,19 @@ static bool recv_more(int fd, uint8_t *buf, size_t cap, size_t *len, uint64_t de
 }
 
 static int read_exact_body(int fd, const uint8_t *initial, size_t initial_len,
-                           size_t content_length, uint64_t deadline_us, struct mo_buffer *out) {
-    if (initial_len > content_length)
-        initial_len = content_length;
-    if (initial_len != 0 && !mo_buffer_append(out, initial, initial_len))
+                           size_t content_length, size_t max_leftover, uint64_t deadline_us,
+                           struct mo_buffer *out, struct mo_buffer *leftover) {
+    size_t take = initial_len > content_length ? content_length : initial_len;
+    if (take != 0 && !mo_buffer_append(out, initial, take))
         return 413;
+    if (initial_len > content_length) {
+        size_t extra = initial_len - content_length;
+        if (extra > max_leftover)
+            return 431;
+        if (!mo_buffer_append(leftover, initial + content_length, extra))
+            return 431;
+        return 0;
+    }
     uint8_t chunk[16384];
     while (out->length < content_length) {
         size_t want = content_length - out->length;
@@ -437,7 +720,8 @@ static int read_exact_body(int fd, const uint8_t *initial, size_t initial_len,
 }
 
 static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len,
-                              uint64_t deadline_us, struct mo_buffer *out, int *err_status) {
+                              size_t max_leftover, uint64_t deadline_us, struct mo_buffer *out,
+                              struct mo_buffer *leftover, int *err_status) {
     struct mo_buffer raw;
     mo_buffer_init(&raw, 65536);
     if (initial_len != 0 && !mo_buffer_append(&raw, initial, initial_len)) {
@@ -552,6 +836,16 @@ static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len
                     continue;
                 }
                 if (teol == pos) {
+                    size_t done_pos = pos + 2;
+                    if (raw.length > done_pos) {
+                        size_t extra = raw.length - done_pos;
+                        if (extra > max_leftover ||
+                            !mo_buffer_append(leftover, raw.bytes + done_pos, extra)) {
+                            mo_buffer_free(&raw);
+                            *err_status = 431;
+                            return false;
+                        }
+                    }
                     mo_buffer_free(&raw);
                     return true;
                 }
@@ -602,9 +896,10 @@ static bool read_chunked_body(int fd, const uint8_t *initial, size_t initial_len
 }
 
 /* Returns 0 on success, -1 on clean initial EOF, or HTTP status code (400/408/413/431). */
-static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, uint64_t deadline_us,
-                             struct parsed_http_request *out) {
-    size_t hlen = 0;
+static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, size_t initial_hlen,
+                             uint64_t deadline_us, struct parsed_http_request *out,
+                             struct mo_buffer *leftover) {
+    size_t hlen = initial_hlen;
     size_t header_end = SIZE_MAX;
     for (;;) {
         for (size_t i = 0; i + 3 < hlen; i++)
@@ -635,14 +930,16 @@ static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, uint64_t deadli
     if (sp2 == NULL || sp2 == sp1 + 1)
         return 400;
     size_t ver_len = line_end - (size_t)(sp2 - req_line) - 1;
-    if (ver_len != 8 ||
-        (memcmp(sp2 + 1, "HTTP/1.1", 8) != 0 && memcmp(sp2 + 1, "HTTP/1.0", 8) != 0))
+    bool is_11 = ver_len == 8 && memcmp(sp2 + 1, "HTTP/1.1", 8) == 0;
+    bool is_10 = ver_len == 8 && memcmp(sp2 + 1, "HTTP/1.0", 8) == 0;
+    if (!is_11 && !is_10)
         return 400;
 
     out->method = req_line;
     out->method_len = (size_t)(sp1 - req_line);
     out->target = sp1 + 1;
     out->target_len = (size_t)(sp2 - (sp1 + 1));
+    out->http_1_1 = is_11;
     for (size_t k = 0; k < out->method_len; k++)
         if ((unsigned char)out->method[k] <= 0x20 || (unsigned char)out->method[k] >= 0x7f)
             return 400;
@@ -711,15 +1008,334 @@ static int read_http_request(int fd, uint8_t *hbuf, size_t hcap, uint64_t deadli
     size_t after_len = hlen - (header_end + 4);
     if (is_chunked) {
         int chunk_err = 400;
-        if (!read_chunked_body(fd, after_headers, after_len, deadline_us, &out->body, &chunk_err))
+        if (!read_chunked_body(fd, after_headers, after_len, hcap, deadline_us, &out->body,
+                               leftover, &chunk_err))
             return chunk_err;
     } else if (content_length > 0) {
-        int body_err =
-            read_exact_body(fd, after_headers, after_len, content_length, deadline_us, &out->body);
+        int body_err = read_exact_body(fd, after_headers, after_len, content_length, hcap,
+                                       deadline_us, &out->body, leftover);
         if (body_err != 0)
             return body_err;
+    } else if (after_len > 0) {
+        if (after_len > hcap || !mo_buffer_append(leftover, after_headers, after_len))
+            return 431;
     }
     return 0;
+}
+
+static const char *static_mime_type(const char *path, size_t len) {
+    if (ascii_ends_with_icase(path, len, ".webmanifest"))
+        return "application/manifest+json";
+    if (ascii_ends_with_icase(path, len, ".mjs") || ascii_ends_with_icase(path, len, ".js"))
+        return "text/javascript; charset=utf-8";
+    if (ascii_ends_with_icase(path, len, ".css"))
+        return "text/css; charset=utf-8";
+    if (ascii_ends_with_icase(path, len, ".html"))
+        return "text/html; charset=utf-8";
+    if (ascii_ends_with_icase(path, len, ".json") || ascii_ends_with_icase(path, len, ".map"))
+        return "application/json";
+    if (ascii_ends_with_icase(path, len, ".svg"))
+        return "image/svg+xml";
+    if (ascii_ends_with_icase(path, len, ".png"))
+        return "image/png";
+    if (ascii_ends_with_icase(path, len, ".jpeg") || ascii_ends_with_icase(path, len, ".jpg"))
+        return "image/jpeg";
+    if (ascii_ends_with_icase(path, len, ".webp"))
+        return "image/webp";
+    if (ascii_ends_with_icase(path, len, ".ico"))
+        return "image/x-icon";
+    if (ascii_ends_with_icase(path, len, ".woff2"))
+        return "font/woff2";
+    if (ascii_ends_with_icase(path, len, ".woff"))
+        return "font/woff";
+    if (ascii_ends_with_icase(path, len, ".txt"))
+        return "text/plain; charset=utf-8";
+    return "application/octet-stream";
+}
+
+static bool is_fingerprint_token(const char *s, size_t len) {
+    if (len < 8 || len > 64)
+        return false;
+    bool has_digit = false, has_alpha = false;
+    for (size_t i = 0; i < len; i++) {
+        char c = s[i];
+        if (c >= '0' && c <= '9')
+            has_digit = true;
+        else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))
+            has_alpha = true;
+        else if (c != '_')
+            return false;
+    }
+    return has_digit && has_alpha;
+}
+
+static bool is_fingerprinted_asset(const char *path, size_t len) {
+    const char *leaf = path;
+    size_t leaf_len = len;
+    for (size_t i = 0; i < len; i++) {
+        if (path[i] == '/') {
+            leaf = path + i + 1;
+            leaf_len = len - (i + 1);
+        }
+    }
+    const char *last_dot = NULL;
+    const char *prev_dot = NULL;
+    for (size_t i = 0; i < leaf_len; i++) {
+        if (leaf[i] == '.') {
+            prev_dot = last_dot;
+            last_dot = leaf + i;
+        }
+    }
+    if (last_dot == NULL || last_dot == leaf)
+        return false;
+    if (prev_dot != NULL && last_dot > prev_dot + 1 &&
+        is_fingerprint_token(prev_dot + 1, (size_t)(last_dot - (prev_dot + 1))))
+        return true;
+    size_t stem_len = (size_t)(last_dot - leaf);
+    const char *last_dash = NULL;
+    for (size_t i = 0; i < stem_len; i++) {
+        if (leaf[i] == '-')
+            last_dash = leaf + i;
+    }
+    if (last_dash != NULL && leaf + stem_len > last_dash + 1 &&
+        is_fingerprint_token(last_dash + 1, (size_t)((leaf + stem_len) - (last_dash + 1))))
+        return true;
+    return false;
+}
+
+static int hex_nibble_val(char c) {
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+static bool decode_and_validate_static_subpath(const char *raw, size_t raw_len, char *out,
+                                               size_t out_cap, size_t *out_len) {
+    if (raw_len == 0 || raw[0] == '/' || raw[raw_len - 1] == '/')
+        return false;
+    size_t dlen = 0;
+    for (size_t i = 0; i < raw_len;) {
+        if (dlen + 1 >= out_cap)
+            return false;
+        char c = raw[i];
+        if (c == '%') {
+            if (i + 2 >= raw_len)
+                return false;
+            int hi = hex_nibble_val(raw[i + 1]);
+            int lo = hex_nibble_val(raw[i + 2]);
+            if (hi < 0 || lo < 0)
+                return false;
+            uint8_t byte = (uint8_t)((hi << 4) | lo);
+            if (byte == 0)
+                return false;
+            out[dlen++] = (char)byte;
+            i += 3;
+        } else {
+            if (c == '\0')
+                return false;
+            out[dlen++] = c;
+            i++;
+        }
+    }
+    out[dlen] = '\0';
+    if (!mo_utf8_valid((const uint8_t *)out, dlen))
+        return false;
+    if (dlen == 0 || out[0] == '/' || out[dlen - 1] == '/')
+        return false;
+    for (size_t i = 0; i < dlen; i++) {
+        if (out[i] == '\\' || out[i] == '\0')
+            return false;
+    }
+    size_t seg_start = 0;
+    for (size_t i = 0; i <= dlen; i++) {
+        if (i == dlen || out[i] == '/') {
+            size_t slen = i - seg_start;
+            if (slen == 0)
+                return false;
+            if ((slen == 1 && out[seg_start] == '.') ||
+                (slen == 2 && out[seg_start] == '.' && out[seg_start + 1] == '.'))
+                return false;
+            seg_start = i + 1;
+        }
+    }
+    *out_len = dlen;
+    return true;
+}
+
+static bool etag_header_matches(const struct parsed_http_request *req, const char *etag) {
+    size_t etag_len = strlen(etag);
+    for (uint32_t i = 0; i < req->header_count; i++) {
+        if (!ascii_ieq(req->headers[i].name, req->headers[i].name_len, "if-none-match"))
+            continue;
+        const char *v = req->headers[i].value;
+        size_t len = req->headers[i].value_len;
+        size_t pos = 0;
+        while (pos < len) {
+            size_t end = pos;
+            while (end < len && v[end] != ',')
+                end++;
+            size_t ts = pos, te = end;
+            while (ts < te && (v[ts] == ' ' || v[ts] == '\t'))
+                ts++;
+            while (te > ts && (v[te - 1] == ' ' || v[te - 1] == '\t'))
+                te--;
+            if (te - ts == 1 && v[ts] == '*')
+                return true;
+            if (te - ts >= 2 && v[ts] == 'W' && v[ts + 1] == '/')
+                ts += 2;
+            if (te - ts == etag_len && memcmp(v + ts, etag, etag_len) == 0)
+                return true;
+            pos = end + 1;
+        }
+    }
+    return false;
+}
+
+/* Returns true if a static mount matched req_path and handled the response. */
+static bool try_serve_static_asset(const struct api_generation *gen, int folder_fd,
+                                   const struct parsed_http_request *req, const char *req_path,
+                                   size_t req_path_len, bool keep_alive, uint64_t write_timeout_us,
+                                   int client_fd, int *status_out, bool *io_ok_out) {
+    if (gen == NULL || gen->static_count == 0 || folder_fd < 0)
+        return false;
+    if (gen->cors != NULL && ascii_ieq(req->method, req->method_len, "OPTIONS"))
+        return false;
+
+    const struct api_static_mount *matched = NULL;
+    const char *raw_sub = NULL;
+    size_t raw_sub_len = 0;
+    for (uint32_t i = 0; i < gen->static_count; i++) {
+        const struct api_static_mount *m = &gen->statics[i];
+        if (req_path_len == m->prefix_len && memcmp(req_path, m->prefix, m->prefix_len) == 0) {
+            matched = m;
+            raw_sub = "";
+            raw_sub_len = 0;
+            break;
+        }
+        if (m->prefix_len == 1 && m->prefix[0] == '/' && req_path_len >= 1 && req_path[0] == '/') {
+            matched = m;
+            raw_sub = req_path + 1;
+            raw_sub_len = req_path_len - 1;
+            break;
+        }
+        if (req_path_len > m->prefix_len && memcmp(req_path, m->prefix, m->prefix_len) == 0 &&
+            req_path[m->prefix_len] == '/') {
+            matched = m;
+            raw_sub = req_path + m->prefix_len + 1;
+            raw_sub_len = req_path_len - m->prefix_len - 1;
+            break;
+        }
+    }
+    if (matched == NULL)
+        return false;
+
+    bool is_get = ascii_ieq(req->method, req->method_len, "GET");
+    bool is_head = ascii_ieq(req->method, req->method_len, "HEAD");
+    if (!is_get && !is_head) {
+        *status_out = 405;
+        *io_ok_out = send_json_status_with_cors(client_fd, 405, "method_not_allowed", gen->cors,
+                                                keep_alive, false, write_timeout_us);
+        return true;
+    }
+
+    char decoded[MO_LIMIT_HOST_PATH_SIZE];
+    size_t decoded_len = 0;
+    if (!decode_and_validate_static_subpath(raw_sub, raw_sub_len, decoded, sizeof decoded,
+                                            &decoded_len)) {
+        *status_out = 404;
+        *io_ok_out = send_json_status_with_cors(client_fd, 404, "not_found", gen->cors, keep_alive,
+                                                is_head, write_timeout_us);
+        return true;
+    }
+
+    int file_fd = -1;
+    uint64_t file_size = 0;
+    int64_t mtime_sec = 0, mtime_nsec = 0;
+    if (!mo_host_open_confined_file(folder_fd, matched->dir, decoded, get_force_fallback(),
+                                    &file_fd, &file_size, &mtime_sec, &mtime_nsec) ||
+        file_size > MO_LIMIT_STATIC_FILE_BYTES) {
+        if (file_fd >= 0)
+            (void)close(file_fd);
+        *status_out = 404;
+        *io_ok_out = send_json_status_with_cors(client_fd, 404, "not_found", gen->cors, keep_alive,
+                                                is_head, write_timeout_us);
+        return true;
+    }
+
+    char etag[96];
+    int elen = snprintf(etag, sizeof etag, "\"%" PRIx64 "-%" PRIx64 "-%" PRIx64 "\"", file_size,
+                        (uint64_t)mtime_sec, (uint64_t)mtime_nsec);
+    MO_ASSERT(elen > 0 && (size_t)elen < sizeof etag);
+
+    const char *cache_ctl = is_fingerprinted_asset(decoded, decoded_len)
+                                ? "public, max-age=31536000, immutable"
+                                : "public, max-age=0, must-revalidate";
+    bool not_modified = etag_header_matches(req, etag);
+    int code = not_modified ? 304 : 200;
+    *status_out = code;
+
+    struct mo_buffer head;
+    mo_buffer_init(&head, 1024);
+    char top[128];
+    int tlen = snprintf(top, sizeof top, "HTTP/1.1 %d %s\r\n", code, status_reason_phrase(code));
+    bool ok = tlen > 0 && (size_t)tlen < sizeof top && mo_buffer_append(&head, top, (size_t)tlen);
+    if (ok && !not_modified) {
+        const char *mime = static_mime_type(decoded, decoded_len);
+        ok = mo_buffer_append_text(&head, "Content-Type: ") && mo_buffer_append_text(&head, mime) &&
+             mo_buffer_append_text(&head, "\r\n");
+    }
+    ok = ok && mo_buffer_append_text(&head, "ETag: ") && mo_buffer_append_text(&head, etag) &&
+         mo_buffer_append_text(&head, "\r\nCache-Control: ") &&
+         mo_buffer_append_text(&head, cache_ctl) &&
+         mo_buffer_append_text(&head, "\r\nX-Content-Type-Options: nosniff\r\n");
+    if (ok && gen->cors != NULL && gen->cors[0] != '\0') {
+        ok = mo_buffer_append_text(&head, "Access-Control-Allow-Origin: ") &&
+             mo_buffer_append_text(&head, gen->cors) && mo_buffer_append_text(&head, "\r\n");
+    }
+    if (ok && !not_modified) {
+        char cl_line[64];
+        int clen = snprintf(cl_line, sizeof cl_line, "Content-Length: %" PRIu64 "\r\n", file_size);
+        ok = clen > 0 && (size_t)clen < sizeof cl_line &&
+             mo_buffer_append(&head, cl_line, (size_t)clen);
+    }
+    ok = ok && mo_buffer_append_text(&head, keep_alive ? "Connection: keep-alive\r\n\r\n"
+                                                       : "Connection: close\r\n\r\n");
+
+    uint64_t write_deadline = add_deadline_us(api_monotonic_us(), write_timeout_us);
+    bool sent = ok && send_all_deadline(client_fd, head.bytes, head.length, write_deadline);
+    mo_buffer_free(&head);
+
+    if (sent && !not_modified && !is_head && file_size > 0) {
+        uint8_t chunk[16384];
+        uint64_t rem = file_size;
+        while (rem > 0) {
+            size_t want = rem > sizeof chunk ? sizeof chunk : (size_t)rem;
+            ssize_t n = read(file_fd, chunk, want);
+            if (n < 0) {
+                if (errno == EINTR)
+                    continue;
+                sent = false;
+                break;
+            }
+            if (n == 0) {
+                sent = false;
+                break;
+            }
+            if (!send_all_deadline(client_fd, chunk, (size_t)n, write_deadline)) {
+                sent = false;
+                break;
+            }
+            rem -= (uint64_t)n;
+        }
+    }
+
+    (void)close(file_fd);
+    *io_ok_out = sent;
+    return true;
 }
 
 static bool build_env_map(struct mo_host *host, struct mo_heap *heap, struct mo_cell *out) {
@@ -768,60 +1384,129 @@ static bool append_sanitized_header_bytes(struct mo_buffer *out, const uint8_t *
     return true;
 }
 
-void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_fd, int output_fd,
-                     int errors_fd, FILE *errors, pthread_mutex_t *log_mutex,
-                     const struct mo_limits *limits, struct mo_live_actor *const *actors,
-                     uint32_t actor_count, uint64_t read_timeout_us, uint64_t write_timeout_us,
-                     int client_fd) {
-    int fl = fcntl(client_fd, F_GETFL);
-    if (fl >= 0)
-        (void)fcntl(client_fd, F_SETFL, fl | O_NONBLOCK);
-#ifdef SO_NOSIGPIPE
-    int one = 1;
-    (void)setsockopt(client_fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
-#endif
-
-    uint64_t read_deadline = add_deadline_us(api_monotonic_us(), read_timeout_us);
-    size_t hcap = MO_LIMIT_API_HEADER_BYTES + 16384;
-    struct mo_arena req_arena;
-    mo_arena_init(&req_arena, hcap + 4096);
-    uint8_t *hbuf = mo_arena_allocate(&req_arena, hcap, 1);
-    if (hbuf == NULL) {
-        mo_arena_free(&req_arena);
-        send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
-        (void)close(client_fd);
+static void log_api_request(FILE *errors, pthread_mutex_t *log_mutex, const char *method,
+                            size_t method_len, const char *path, size_t path_len, int status_code,
+                            uint64_t duration_us) {
+    if (errors == NULL)
         return;
+    struct timespec wall = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &wall);
+    struct tm tm_utc;
+    char ts_buf[96] = "1970-01-01T00:00:00Z";
+    if (gmtime_r(&wall.tv_sec, &tm_utc) != NULL) {
+        (void)snprintf(ts_buf, sizeof ts_buf, "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                       tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday, tm_utc.tm_hour,
+                       tm_utc.tm_min, tm_utc.tm_sec);
     }
+    double dur_ms = (double)duration_us / 1000.0;
+    if (log_mutex != NULL)
+        (void)pthread_mutex_lock(log_mutex);
+    (void)fprintf(errors, "mo serve: request: %s %.*s %.*s %d %.2fms\n", ts_buf, (int)method_len,
+                  method, (int)path_len, path, status_code, dur_ms);
+    (void)fflush(errors);
+    if (log_mutex != NULL)
+        (void)pthread_mutex_unlock(log_mutex);
+}
 
-    struct parsed_http_request req = {0};
-    mo_buffer_init(&req.body, 4096);
-    int parse_err = read_http_request(client_fd, hbuf, hcap, read_deadline, &req);
-    if (parse_err != 0) {
-        if (parse_err > 0) {
-            const char *code_str = parse_err == 408   ? "request_timeout"
-                                   : parse_err == 413 ? "payload_too_large"
-                                   : parse_err == 431 ? "headers_too_large"
-                                                      : "bad_request";
-            send_fixed_json_error(client_fd, parse_err, code_str, write_timeout_us);
+struct api_worker_pool {
+    struct api_generation *active_gen;
+    int folder_fd;
+    int output_fd;
+    int errors_fd;
+    FILE *errors;
+    struct mo_limits limits;
+
+    pthread_mutex_t queue_mutex;
+    pthread_cond_t queue_cond;
+    pthread_mutex_t log_mutex;
+    bool stopping;
+    int queue[MO_LIMIT_API_QUEUE];
+    uint32_t head, tail, count;
+};
+
+static bool pool_is_stopping(struct api_worker_pool *pool) {
+    if (pool == NULL)
+        return false;
+    MO_ASSERT(pthread_mutex_lock(&pool->queue_mutex) == 0);
+    bool s = pool->stopping;
+    MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
+    return s || mo_serve_is_signalled();
+}
+
+static struct api_generation *retain_active_gen(struct api_worker_pool *pool) {
+    MO_ASSERT(pthread_mutex_lock(&pool->queue_mutex) == 0);
+    struct api_generation *gen = pool->active_gen;
+    MO_ASSERT(gen != NULL && gen->refs > 0);
+    gen->refs++;
+    MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
+    return gen;
+}
+
+static void release_gen(struct api_worker_pool *pool, struct api_generation *gen) {
+    if (pool == NULL || gen == NULL)
+        return;
+    MO_ASSERT(pthread_mutex_lock(&pool->queue_mutex) == 0);
+    MO_ASSERT(gen->refs > 0);
+    gen->refs--;
+    bool zero = gen->refs == 0;
+    MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
+    if (zero)
+        destroy_gen_unlocked(gen);
+}
+
+/* Waits for at least 1 byte on an idle keep-alive socket, checking stopping every 50ms. */
+static bool wait_keepalive_first_byte(int fd, struct api_worker_pool *pool, uint8_t *hbuf,
+                                      size_t hcap, size_t *hlen_out, uint64_t idle_timeout_us) {
+    uint64_t deadline = add_deadline_us(api_monotonic_us(), idle_timeout_us);
+    for (;;) {
+        if (pool_is_stopping(pool))
+            return false;
+        uint64_t now = api_monotonic_us();
+        if (now >= deadline)
+            return false;
+        uint64_t rem_us = deadline - now;
+        int wait_ms = rem_us > UINT64_C(50000) ? 50 : (int)((rem_us + 999) / 1000);
+        struct pollfd pfd = {.fd = fd, .events = POLLIN};
+        int pr = poll(&pfd, 1, wait_ms);
+        if (pr == 0)
+            continue;
+        if (pr < 0) {
+            if (errno == EINTR)
+                continue;
+            return false;
         }
-        mo_buffer_free(&req.body);
-        mo_arena_free(&req_arena);
-        (void)close(client_fd);
-        return;
+        ssize_t got = recv(fd, hbuf, hcap, 0);
+        if (got < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            return false;
+        }
+        if (got == 0)
+            return false;
+        *hlen_out = (size_t)got;
+        return true;
     }
+}
 
+static bool dispatch_vm_request(const struct mo_image *image, uint32_t wire_fn, int folder_fd,
+                                int output_fd, int errors_fd, FILE *errors,
+                                pthread_mutex_t *log_mutex, const struct mo_limits *limits,
+                                struct mo_live_actor *const *actors, uint32_t actor_count,
+                                struct mo_sqlite_pool *sql_pool,
+                                const struct parsed_http_request *req, const char *req_path,
+                                size_t req_path_len, bool keep_alive, uint64_t write_timeout_us,
+                                int client_fd, int *status_out) {
     struct mo_process *proc = mo_process_new(image, limits);
     if (proc == NULL) {
+        *status_out = 500;
         send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
-        mo_buffer_free(&req.body);
-        mo_arena_free(&req_arena);
-        (void)close(client_fd);
-        return;
+        return false;
     }
     mo_process_instruction_limit(proc, MO_LIMIT_API_REQUEST_WORK);
 
     struct mo_heap *heap = mo_process_heap(proc);
     struct mo_host *host = mo_process_host(proc);
+    host->sqlite_pool = sql_pool;
     if (output_fd >= 0)
         host->output = output_fd;
     if (errors_fd >= 0)
@@ -831,7 +1516,7 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
     const struct mo_types *types = mo_image_types(image);
     const struct mo_bytecode_function *fn = &bc->functions[wire_fn];
     uint32_t pcount = fn->parameter_count;
-    MO_ASSERT(pcount >= 4 && pcount <= 4 + 10 + MO_LIMIT_API_ACTORS);
+    MO_ASSERT(pcount >= 4 && pcount <= 4 + 12 + MO_LIMIT_API_ACTORS);
 
     struct mo_cell call_args[48] = {{{0}}};
     uint32_t built_args = 0;
@@ -839,10 +1524,10 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
     struct mo_cell env_map = {{0}};
     bool args_ok = true;
 
-    args_ok = mo_value_text(heap, req.method, req.method_len, &call_args[0]);
+    args_ok = mo_value_text(heap, req->method, req->method_len, &call_args[0]);
     if (args_ok) {
         built_args = 1;
-        args_ok = mo_value_text(heap, req.target, req.target_len, &call_args[1]);
+        args_ok = mo_value_text(heap, req->target, req->target_len, &call_args[1]);
     }
     if (args_ok) {
         built_args = 2;
@@ -852,13 +1537,14 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
         args_ok = mo_value_list(heap, list_ty, NULL, 0, &call_args[2]);
         if (args_ok) {
             built_args = 3;
-            for (uint32_t i = 0; args_ok && i < req.header_count; i++) {
+            for (uint32_t i = 0; args_ok && i < req->header_count; i++) {
                 struct mo_cell kv[2];
-                if (!mo_value_text(heap, req.headers[i].name, req.headers[i].name_len, &kv[0])) {
+                if (!mo_value_text(heap, req->headers[i].name, req->headers[i].name_len, &kv[0])) {
                     args_ok = false;
                     break;
                 }
-                if (!mo_value_text(heap, req.headers[i].value, req.headers[i].value_len, &kv[1])) {
+                if (!mo_value_text(heap, req->headers[i].value, req->headers[i].value_len,
+                                   &kv[1])) {
                     mo_value_drop(heap, text_ty, kv[0]);
                     args_ok = false;
                     break;
@@ -875,7 +1561,7 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
         }
     }
     if (args_ok) {
-        args_ok = mo_value_bytes(heap, req.body.bytes, req.body.length, &call_args[3]);
+        args_ok = mo_value_bytes(heap, req->body.bytes, req->body.length, &call_args[3]);
         if (args_ok)
             built_args = 4;
     }
@@ -915,11 +1601,10 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
         if (have_env)
             mo_value_drop(heap, host->types->files, env_map);
         mo_process_free(proc);
+        mo_sqlite_pool_cleanup(sql_pool);
+        *status_out = 500;
         send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
-        mo_buffer_free(&req.body);
-        mo_arena_free(&req_arena);
-        (void)close(client_fd);
-        return;
+        return false;
     }
 
     struct mo_cell result;
@@ -930,8 +1615,8 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
         if (errors != NULL) {
             if (log_mutex != NULL)
                 (void)pthread_mutex_lock(log_mutex);
-            (void)fprintf(errors, "mo serve: failure: %.*s %.*s\n", (int)req.method_len, req.method,
-                          (int)req.target_len, req.target);
+            (void)fprintf(errors, "mo serve: failure: %.*s %.*s\n", (int)req->method_len,
+                          req->method, (int)req_path_len, req_path);
             bool wrote = mo_write_defect(errors, proc, &defect);
             (void)wrote;
             (void)fflush(errors);
@@ -944,11 +1629,10 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
         if (have_env)
             mo_value_drop(heap, host->types->files, env_map);
         mo_process_free(proc);
+        mo_sqlite_pool_cleanup(sql_pool);
+        *status_out = 500;
         send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
-        mo_buffer_free(&req.body);
-        mo_arena_free(&req_arena);
-        (void)close(client_fd);
-        return;
+        return false;
     }
 
     for (uint32_t i = 0; i < pcount; i++)
@@ -960,13 +1644,15 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
     int64_t status_code = mo_cell_get_int(mo_value_field(result, 0));
     if (status_code < 100 || status_code > 599)
         status_code = 500;
+    *status_out = (int)status_code;
     struct mo_cell res_headers = mo_value_field(result, 1);
     struct mo_cell res_body = mo_value_field(result, 2);
     size_t body_len = 0;
     const uint8_t *body_ptr = mo_value_data(res_body, &body_len);
-    bool is_head = ascii_ieq(req.method, req.method_len, "HEAD");
+    bool is_head = ascii_ieq(req->method, req->method_len, "HEAD");
     bool no_body_status =
         (status_code >= 100 && status_code < 200) || status_code == 204 || status_code == 304;
+    bool effective_keep_alive = keep_alive && status_code < 500;
 
     struct mo_buffer wire_out;
     mo_buffer_init(&wire_out, 4096);
@@ -993,19 +1679,22 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
               mo_buffer_append_text(&wire_out, "\r\n");
     }
 
-    char cl_hdr[96];
+    const char *conn_val = effective_keep_alive ? "keep-alive" : "close";
+    char cl_hdr[128];
     int clen = no_body_status
-                   ? snprintf(cl_hdr, sizeof cl_hdr, "Connection: close\r\n\r\n")
+                   ? snprintf(cl_hdr, sizeof cl_hdr, "Connection: %s\r\n\r\n", conn_val)
                    : snprintf(cl_hdr, sizeof cl_hdr,
-                              "Content-Length: %zu\r\nConnection: close\r\n\r\n", body_len);
+                              "Content-Length: %zu\r\nConnection: %s\r\n\r\n", body_len, conn_val);
     wok = wok && clen > 0 && mo_buffer_append(&wire_out, cl_hdr, (size_t)clen);
 
+    bool sent_ok = false;
     if (wok) {
         uint64_t write_deadline = add_deadline_us(api_monotonic_us(), write_timeout_us);
-        bool sent = send_all_deadline(client_fd, wire_out.bytes, wire_out.length, write_deadline);
-        if (sent && !no_body_status && !is_head && body_len > 0)
-            (void)send_all_deadline(client_fd, body_ptr, body_len, write_deadline);
+        sent_ok = send_all_deadline(client_fd, wire_out.bytes, wire_out.length, write_deadline);
+        if (sent_ok && !no_body_status && !is_head && body_len > 0)
+            sent_ok = send_all_deadline(client_fd, body_ptr, body_len, write_deadline);
     } else {
+        *status_out = 500;
         send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
     }
 
@@ -1013,38 +1702,146 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
     mo_value_drop(heap, fn->result_type, result);
     MO_ASSERT(mo_heap_objects(heap) == 0);
     mo_process_free(proc);
-    mo_buffer_free(&req.body);
-    mo_arena_free(&req_arena);
+    mo_sqlite_pool_cleanup(sql_pool);
+    return sent_ok && effective_keep_alive;
+}
+
+static void serve_connection(struct api_worker_pool *pool, const struct api_generation *fixed_gen,
+                             int folder_fd, int output_fd, int errors_fd, FILE *errors,
+                             pthread_mutex_t *log_mutex, const struct mo_limits *limits,
+                             struct mo_sqlite_pool *sql_pool, uint32_t max_requests,
+                             uint64_t idle_timeout_us, uint64_t read_timeout_us,
+                             uint64_t write_timeout_us, int client_fd) {
+    int fl = fcntl(client_fd, F_GETFL);
+    if (fl >= 0)
+        (void)fcntl(client_fd, F_SETFL, fl | O_NONBLOCK);
+#ifdef SO_NOSIGPIPE
+    int one = 1;
+    (void)setsockopt(client_fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+
+    size_t hcap = MO_LIMIT_API_HEADER_BYTES + 16384;
+    struct mo_arena conn_arena;
+    mo_arena_init(&conn_arena, hcap + 4096);
+    uint8_t *conn_buf = mo_arena_allocate(&conn_arena, hcap, 1);
+    if (conn_buf == NULL) {
+        mo_arena_free(&conn_arena);
+        send_fixed_json_error(client_fd, 500, "internal_server_error", write_timeout_us);
+        (void)close(client_fd);
+        return;
+    }
+
+    size_t conn_len = 0;
+    for (uint32_t req_idx = 0; req_idx < max_requests; req_idx++) {
+        if (req_idx > 0 && conn_len == 0) {
+            if (!wait_keepalive_first_byte(client_fd, pool, conn_buf, hcap, &conn_len,
+                                           idle_timeout_us))
+                break;
+        }
+        if (pool_is_stopping(pool))
+            break;
+
+        uint64_t read_deadline = add_deadline_us(api_monotonic_us(), read_timeout_us);
+        struct parsed_http_request req = {0};
+        mo_buffer_init(&req.body, 4096);
+        struct mo_buffer leftover;
+        mo_buffer_init(&leftover, 4096);
+
+        int parse_err =
+            read_http_request(client_fd, conn_buf, hcap, conn_len, read_deadline, &req, &leftover);
+        if (parse_err != 0) {
+            if (parse_err > 0) {
+                const char *code_str = parse_err == 408   ? "request_timeout"
+                                       : parse_err == 413 ? "payload_too_large"
+                                       : parse_err == 431 ? "headers_too_large"
+                                                          : "bad_request";
+                send_fixed_json_error(client_fd, parse_err, code_str, write_timeout_us);
+            }
+            mo_buffer_free(&leftover);
+            mo_buffer_free(&req.body);
+            break;
+        }
+
+        uint64_t req_start_us = api_monotonic_us();
+        const char *qmark = memchr(req.target, '?', req.target_len);
+        size_t req_path_len = qmark != NULL ? (size_t)(qmark - req.target) : req.target_len;
+        const char *req_path = req.target;
+
+        bool has_close = false, has_ka = false;
+        connection_header_flags(&req, &has_close, &has_ka);
+        bool keep_alive = !has_close && (req.http_1_1 || has_ka) && (req_idx + 1 < max_requests) &&
+                          !pool_is_stopping(pool);
+
+        struct api_generation *retained_gen = pool != NULL ? retain_active_gen(pool) : NULL;
+        const struct api_generation *gen = retained_gen != NULL ? retained_gen : fixed_gen;
+        MO_ASSERT(gen != NULL);
+
+        int status_code = 500;
+        bool continue_conn = false;
+        bool static_io_ok = false;
+        if (try_serve_static_asset(gen, folder_fd, &req, req_path, req_path_len, keep_alive,
+                                   write_timeout_us, client_fd, &status_code, &static_io_ok)) {
+            continue_conn = static_io_ok && keep_alive;
+        } else {
+            continue_conn = dispatch_vm_request(
+                gen->image, gen->wire_fn, folder_fd, output_fd, errors_fd, errors, log_mutex,
+                limits, gen->actors, gen->actor_count, sql_pool, &req, req_path, req_path_len,
+                keep_alive, write_timeout_us, client_fd, &status_code);
+        }
+
+        uint64_t req_dur_us = api_monotonic_us() - req_start_us;
+        log_api_request(errors, log_mutex, req.method, req.method_len, req_path, req_path_len,
+                        status_code, req_dur_us);
+
+        if (retained_gen != NULL)
+            release_gen(pool, retained_gen);
+
+        if (continue_conn && leftover.length <= hcap) {
+            if (leftover.length > 0)
+                memcpy(conn_buf, leftover.bytes, leftover.length);
+            conn_len = leftover.length;
+        } else {
+            continue_conn = false;
+        }
+
+        mo_buffer_free(&leftover);
+        mo_buffer_free(&req.body);
+
+        if (!continue_conn)
+            break;
+    }
+
+    mo_arena_free(&conn_arena);
     (void)close(client_fd);
 }
 
-struct api_worker_pool {
-    const struct mo_image *image;
-    uint32_t wire_fn;
-    int folder_fd;
-    int output_fd;
-    int errors_fd;
-    FILE *errors;
-    struct mo_limits limits;
-    uint32_t actor_count;
-    struct mo_live_actor *actors[MO_LIMIT_API_ACTORS];
-
-    pthread_mutex_t queue_mutex;
-    pthread_cond_t queue_cond;
-    pthread_mutex_t log_mutex;
-    bool stopping;
-    int queue[MO_LIMIT_API_QUEUE];
-    uint32_t head, tail, count;
-};
+void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_fd, int output_fd,
+                     int errors_fd, FILE *errors, pthread_mutex_t *log_mutex,
+                     const struct mo_limits *limits, struct mo_live_actor *const *actors,
+                     uint32_t actor_count, uint64_t read_timeout_us, uint64_t write_timeout_us,
+                     int client_fd) {
+    struct api_generation fixed = {
+        .refs = 1,
+        .image = (struct mo_image *)(uintptr_t)image,
+        .wire_fn = wire_fn,
+        .actor_count = actor_count,
+    };
+    for (uint32_t a = 0; a < actor_count && a < MO_LIMIT_API_ACTORS; a++)
+        fixed.actors[a] = actors[a];
+    serve_connection(NULL, &fixed, folder_fd, output_fd, errors_fd, errors, log_mutex, limits, NULL,
+                     1, read_timeout_us, read_timeout_us, write_timeout_us, client_fd);
+}
 
 static void *api_worker_main(void *arg) {
     struct api_worker_pool *pool = arg;
+    struct mo_sqlite_pool *sql_pool = mo_sqlite_pool_new();
     for (;;) {
         MO_ASSERT(pthread_mutex_lock(&pool->queue_mutex) == 0);
         while (pool->count == 0 && !pool->stopping)
             MO_ASSERT(pthread_cond_wait(&pool->queue_cond, &pool->queue_mutex) == 0);
         if (pool->count == 0 && pool->stopping) {
             MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
+            mo_sqlite_pool_free(sql_pool);
             return NULL;
         }
         int fd = pool->queue[pool->head];
@@ -1052,14 +1849,15 @@ static void *api_worker_main(void *arg) {
         pool->count--;
         MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
 
-        mo_api_serve_fd(pool->image, pool->wire_fn, pool->folder_fd, pool->output_fd,
-                        pool->errors_fd, pool->errors, &pool->log_mutex, &pool->limits,
-                        pool->actors, pool->actor_count, MO_LIMIT_API_READ_US,
-                        MO_LIMIT_API_WRITE_US, fd);
+        serve_connection(pool, NULL, pool->folder_fd, pool->output_fd, pool->errors_fd,
+                         pool->errors, &pool->log_mutex, &pool->limits, sql_pool,
+                         MO_LIMIT_API_KEEPALIVE_REQUESTS, MO_LIMIT_API_KEEPALIVE_IDLE_US,
+                         MO_LIMIT_API_READ_US, MO_LIMIT_API_WRITE_US, fd);
     }
 }
 
-static int open_api_listen_socket(uint16_t port, uint16_t *actual_port, int *err_out) {
+static int open_api_listen_socket(const char *bind_host, uint16_t port, uint16_t *actual_port,
+                                  int *err_out) {
     int type = SOCK_STREAM;
 #if defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
     type |= SOCK_NONBLOCK | SOCK_CLOEXEC;
@@ -1080,7 +1878,11 @@ static int open_api_listen_socket(uint16_t port, uint16_t *actual_port, int *err
         return -1;
     }
     struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(port)};
-    MO_ASSERT(inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) == 1);
+    if (inet_pton(AF_INET, bind_host, &addr.sin_addr) != 1) {
+        *err_out = EINVAL;
+        (void)close(fd);
+        return -1;
+    }
     if (bind(fd, (const struct sockaddr *)&addr, sizeof addr) != 0 ||
         listen(fd, MO_LIMIT_API_QUEUE) != 0) {
         *err_out = errno;
@@ -1114,6 +1916,98 @@ static int report_serve_start_error(FILE *output, FILE *errors, const char *msg)
     return st;
 }
 
+static bool start_generation_actors(struct api_generation *gen, FILE *errors,
+                                    pthread_mutex_t *log_mutex, enum mo_service_status *err_out) {
+    for (uint32_t a = 0; a < gen->actor_count; a++) {
+        enum mo_service_status ast = mo_live_actor_new(gen->image, gen->actor_services[a], errors,
+                                                       log_mutex, &gen->actors[a]);
+        if (ast != MO_SERVICE_OK) {
+            for (uint32_t prev = 0; prev < a; prev++) {
+                mo_live_actor_free(gen->actors[prev]);
+                gen->actors[prev] = NULL;
+            }
+            if (err_out != NULL)
+                *err_out = ast;
+            return false;
+        }
+    }
+    return true;
+}
+
+static void maybe_reload_watched_api(const struct mo_cli *cli, FILE *output, FILE *errors,
+                                     struct api_worker_pool *pool, struct watch_set *watched) {
+    if (!watch_set_has_changed(watched))
+        return;
+
+    struct api_generation *next_gen = NULL;
+    struct watch_set next_watch = {0};
+    int rc = compile_api_generation(cli, output, errors, &pool->log_mutex, &next_gen, &next_watch);
+    if (rc == 0 && next_gen != NULL) {
+        enum mo_service_status ast = MO_SERVICE_OK;
+        if (!start_generation_actors(next_gen, errors, &pool->log_mutex, &ast)) {
+            if (errors != NULL) {
+                (void)pthread_mutex_lock(&pool->log_mutex);
+                (void)fprintf(errors, "mo serve: reload: could not start actor: %s\n",
+                              mo_service_status_text(ast));
+                (void)fflush(errors);
+                (void)pthread_mutex_unlock(&pool->log_mutex);
+            }
+            destroy_gen_unlocked(next_gen);
+            for (uint32_t i = 0; i < watched->count; i++)
+                stat_watched_file(watched->items[i].path, &watched->items[i]);
+            mo_arena_free(&next_watch.arena);
+            return;
+        }
+        MO_ASSERT(pthread_mutex_lock(&pool->queue_mutex) == 0);
+        struct api_generation *old_gen = pool->active_gen;
+        pool->active_gen = next_gen;
+        MO_ASSERT(old_gen != NULL && old_gen->refs > 0);
+        old_gen->refs--;
+        bool free_old = old_gen->refs == 0;
+        MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
+        if (free_old)
+            destroy_gen_unlocked(old_gen);
+
+        mo_arena_free(&watched->arena);
+        *watched = next_watch;
+
+        if (errors != NULL) {
+            (void)pthread_mutex_lock(&pool->log_mutex);
+            (void)fprintf(errors, "mo serve: reload: %s\n", mo_cli_file(cli, 0));
+            (void)fflush(errors);
+            (void)pthread_mutex_unlock(&pool->log_mutex);
+        }
+    } else {
+        /* Keep any previously tracked module paths alongside newly seen files,
+         * and refresh all stat snapshots so diagnostics print once per save. */
+        if (next_watch.items != NULL) {
+            uint32_t merged_cap = watched->count + next_watch.count + 8;
+            struct mo_arena merged_arena;
+            mo_arena_init(&merged_arena, 4u << 20);
+            struct watched_file *merged_items = mo_arena_allocate_array(
+                &merged_arena, merged_cap, sizeof *merged_items, _Alignof(struct watched_file));
+            if (merged_items != NULL) {
+                struct watch_set merged = {
+                    .arena = merged_arena, .items = merged_items, .count = 0};
+                for (uint32_t i = 0; i < next_watch.count; i++)
+                    watch_set_add_unique(&merged, merged_cap, next_watch.items[i].path);
+                for (uint32_t i = 0; i < watched->count; i++)
+                    watch_set_add_unique(&merged, merged_cap, watched->items[i].path);
+                mo_arena_free(&watched->arena);
+                *watched = merged;
+            } else {
+                mo_arena_free(&merged_arena);
+                for (uint32_t i = 0; i < watched->count; i++)
+                    stat_watched_file(watched->items[i].path, &watched->items[i]);
+            }
+            mo_arena_free(&next_watch.arena);
+        } else {
+            for (uint32_t i = 0; i < watched->count; i++)
+                stat_watched_file(watched->items[i].path, &watched->items[i]);
+        }
+    }
+}
+
 bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, int *status_out) {
     bool is_api = false;
     if (cli->file_count == 1 && !cli->upgrade && !cli->adopt && cli->migration == NULL &&
@@ -1124,6 +2018,12 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     }
 
     if (!is_api) {
+        if (cli->bind_host != NULL || cli->has_workers || cli->watch) {
+            (void)fprintf(errors,
+                          "--bind, --workers and --watch apply only to api servers: \"serve\"\n");
+            *status_out = 2;
+            return true;
+        }
         if (!cli->has_port) {
             (void)fprintf(errors, "serve needs --port N: \"serve\"\n");
             *status_out = 2;
@@ -1155,28 +2055,31 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         return true;
     }
 
-    struct mo_image *image = NULL;
-    uint32_t wire_fn = MO_NO_INDEX;
-    uint16_t default_port = 0;
-    uint32_t actor_services[MO_LIMIT_API_ACTORS] = {0};
-    uint32_t actor_count = 0;
-    int comp_rc = mo_api_compile_file(cli, output, errors, &image, &wire_fn, &default_port,
-                                      actor_services, &actor_count);
+    struct api_generation *gen = NULL;
+    struct watch_set watched = {0};
+    int comp_rc =
+        compile_api_generation(cli, output, errors, NULL, &gen, cli->watch ? &watched : NULL);
     if (comp_rc < 0) {
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
         *status_out =
             report_serve_start_error(output, errors, "could not prepare the source pipeline stack");
         return true;
     }
-    if (image == NULL) {
+    if (gen == NULL) {
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
         *status_out = comp_rc;
         return true;
     }
 
-    struct mo_process *probe = mo_process_new(image, &cli->limits);
+    struct mo_process *probe = mo_process_new(gen->image, &cli->limits);
     const char *host_err = probe == NULL ? "out of memory" : mo_host_start(mo_process_host(probe));
     mo_process_free(probe);
     if (host_err != NULL) {
-        mo_image_free(image);
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
+        destroy_gen_unlocked(gen);
         *status_out = report_serve_start_error(output, errors, host_err);
         return true;
     }
@@ -1186,21 +2089,26 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         char buf[MO_CLI_ARGUMENT_SIZE + 128];
         (void)snprintf(buf, sizeof buf, "mo serve can't open the data folder %s: %s", data_dir,
                        strerror(errno));
-        mo_image_free(image);
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
+        destroy_gen_unlocked(gen);
         *status_out = report_serve_start_error(output, errors, buf);
         return true;
     }
 
-    uint16_t requested_port = cli->has_port ? cli->port : default_port;
+    const char *bind_host = cli->bind_host != NULL ? cli->bind_host : "127.0.0.1";
+    uint16_t requested_port = cli->has_port ? cli->port : gen->default_port;
     uint16_t actual_port = 0;
     int listen_err = 0;
-    int listen_fd = open_api_listen_socket(requested_port, &actual_port, &listen_err);
+    int listen_fd = open_api_listen_socket(bind_host, requested_port, &actual_port, &listen_err);
     if (listen_fd < 0) {
-        char buf[192];
-        (void)snprintf(buf, sizeof buf, "mo serve could not listen on port %u: %s",
+        char buf[256];
+        (void)snprintf(buf, sizeof buf, "mo serve could not listen on %s:%u: %s", bind_host,
                        (unsigned)requested_port, strerror(listen_err));
         (void)close(folder_fd);
-        mo_image_free(image);
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
+        destroy_gen_unlocked(gen);
         *status_out = report_serve_start_error(output, errors, buf);
         return true;
     }
@@ -1208,45 +2116,43 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     struct mo_limits req_limits = cli->limits;
     req_limits.heap_size = MO_LIMIT_API_REQUEST_HEAP;
 
-    struct api_worker_pool pool = {.image = image,
-                                   .wire_fn = wire_fn,
+    struct api_worker_pool pool = {.active_gen = gen,
                                    .folder_fd = folder_fd,
                                    .output_fd = output != NULL ? fileno(output) : -1,
                                    .errors_fd = errors != NULL ? fileno(errors) : -1,
                                    .errors = errors,
-                                   .limits = req_limits,
-                                   .actor_count = actor_count};
+                                   .limits = req_limits};
     MO_ASSERT(pthread_mutex_init(&pool.queue_mutex, NULL) == 0);
     MO_ASSERT(pthread_cond_init(&pool.queue_cond, NULL) == 0);
     MO_ASSERT(pthread_mutex_init(&pool.log_mutex, NULL) == 0);
 
-    for (uint32_t a = 0; a < actor_count; a++) {
-        enum mo_service_status ast =
-            mo_live_actor_new(image, actor_services[a], errors, &pool.log_mutex, &pool.actors[a]);
-        if (ast != MO_SERVICE_OK) {
-            char buf[192];
-            (void)snprintf(buf, sizeof buf, "mo serve could not start actor: %s",
-                           mo_service_status_text(ast));
-            for (uint32_t prev = 0; prev < a; prev++)
-                mo_live_actor_free(pool.actors[prev]);
-            (void)pthread_mutex_destroy(&pool.log_mutex);
-            (void)pthread_cond_destroy(&pool.queue_cond);
-            (void)pthread_mutex_destroy(&pool.queue_mutex);
-            (void)close(listen_fd);
-            (void)close(folder_fd);
-            mo_image_free(image);
-            *status_out = report_serve_start_error(output, errors, buf);
-            return true;
-        }
+    enum mo_service_status actor_err = MO_SERVICE_OK;
+    if (!start_generation_actors(gen, errors, &pool.log_mutex, &actor_err)) {
+        char buf[192];
+        (void)snprintf(buf, sizeof buf, "mo serve could not start actor: %s",
+                       mo_service_status_text(actor_err));
+        (void)pthread_mutex_destroy(&pool.log_mutex);
+        (void)pthread_cond_destroy(&pool.queue_cond);
+        (void)pthread_mutex_destroy(&pool.queue_mutex);
+        (void)close(listen_fd);
+        (void)close(folder_fd);
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
+        destroy_gen_unlocked(gen);
+        *status_out = report_serve_start_error(output, errors, buf);
+        return true;
     }
 
     pthread_attr_t attr;
     MO_ASSERT(pthread_attr_init(&attr) == 0);
     (void)pthread_attr_setstacksize(&attr, 2u << 20);
 
-    pthread_t workers[MO_LIMIT_API_WORKERS];
+    uint32_t target_workers = cli->workers > 0 ? cli->workers : MO_LIMIT_API_WORKERS;
+    if (target_workers > MO_LIMIT_API_WORKERS_MAX)
+        target_workers = MO_LIMIT_API_WORKERS_MAX;
+    pthread_t workers[MO_LIMIT_API_WORKERS_MAX];
     uint32_t started_workers = 0;
-    for (uint32_t i = 0; i < MO_LIMIT_API_WORKERS; i++) {
+    for (uint32_t i = 0; i < target_workers; i++) {
         if (pthread_create(&workers[i], &attr, api_worker_main, &pool) != 0)
             break;
         started_workers++;
@@ -1254,19 +2160,19 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     (void)pthread_attr_destroy(&attr);
 
     if (started_workers == 0) {
-        for (uint32_t a = 0; a < pool.actor_count; a++)
-            mo_live_actor_free(pool.actors[a]);
         (void)pthread_mutex_destroy(&pool.log_mutex);
         (void)pthread_cond_destroy(&pool.queue_cond);
         (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
         (void)close(folder_fd);
-        mo_image_free(image);
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
+        destroy_gen_unlocked(gen);
         *status_out = report_serve_start_error(output, errors, "mo serve could not start workers");
         return true;
     }
 
-    if (fprintf(output, "mo serve: listening on http://127.0.0.1:%u\n", (unsigned)actual_port) <
+    if (fprintf(output, "mo serve: listening on http://%s:%u\n", bind_host, (unsigned)actual_port) <
             0 ||
         fflush(output) != 0) {
         MO_ASSERT(pthread_mutex_lock(&pool.queue_mutex) == 0);
@@ -1275,20 +2181,30 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         MO_ASSERT(pthread_mutex_unlock(&pool.queue_mutex) == 0);
         for (uint32_t i = 0; i < started_workers; i++)
             (void)pthread_join(workers[i], NULL);
-        for (uint32_t a = 0; a < pool.actor_count; a++)
-            mo_live_actor_free(pool.actors[a]);
         (void)pthread_mutex_destroy(&pool.log_mutex);
         (void)pthread_cond_destroy(&pool.queue_cond);
         (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
         (void)close(folder_fd);
-        mo_image_free(image);
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
+        destroy_gen_unlocked(pool.active_gen);
         *status_out =
             report_serve_start_error(output, errors, "mo serve could not write its listening line");
         return true;
     }
 
+    uint64_t next_watch_us =
+        cli->watch ? add_deadline_us(api_monotonic_us(), MO_LIMIT_API_WATCH_POLL_US) : UINT64_MAX;
+
     while (!mo_serve_is_signalled()) {
+        if (cli->watch) {
+            uint64_t now_us = api_monotonic_us();
+            if (now_us >= next_watch_us) {
+                maybe_reload_watched_api(cli, output, errors, &pool, &watched);
+                next_watch_us = add_deadline_us(api_monotonic_us(), MO_LIMIT_API_WATCH_POLL_US);
+            }
+        }
         struct pollfd pfd = {.fd = listen_fd, .events = POLLIN};
         int ready = poll(&pfd, 1, 50);
         if (ready <= 0)
@@ -1334,8 +2250,10 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     for (uint32_t i = 0; i < started_workers; i++)
         (void)pthread_join(workers[i], NULL);
 
-    for (uint32_t a = 0; a < pool.actor_count; a++)
-        mo_live_actor_free(pool.actors[a]);
+    if (cli->watch)
+        mo_arena_free(&watched.arena);
+
+    destroy_gen_unlocked(pool.active_gen);
 
     (void)fprintf(errors, "mo serve: stop: a signal asked the server to stop\n");
     (void)fflush(errors);
@@ -1344,7 +2262,6 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     (void)pthread_cond_destroy(&pool.queue_cond);
     (void)pthread_mutex_destroy(&pool.queue_mutex);
     (void)close(folder_fd);
-    mo_image_free(image);
     *status_out = 0;
     return true;
 }

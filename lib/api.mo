@@ -9,12 +9,14 @@ put,
 patch,
 delete,
 with_header,
+add_header,
 with_bearer,
 with_query,
 with_json,
 with_text,
 with_bytes,
 header,
+headers_named,
 bearer_token,
 query_param,
 text,
@@ -26,6 +28,8 @@ text_response,
 html_response,
 no_content,
 redirect,
+redirect_see_other,
+redirect_with,
 sse_response,
 percent_decode,
 parse_query_string,
@@ -59,6 +63,7 @@ sqlite_open_error_response,
 cors_preflight,
 apply_cors,
 openapi_docs_html,
+serve_static_fake,
 render_json
 use Json
 
@@ -226,6 +231,13 @@ fn with_header(req: Request, name: Text, value: Text) : Request
   next
 end
 
+## Appends a header on a request without replacing existing headers of the same name.
+fn add_header(req: Request, name: Text, value: Text) : Request
+  var next = req
+  next.headers = req.headers.append((name, value))
+  next
+end
+
 ## Sets `Authorization: Bearer <token>` on a request.
 fn with_bearer(req: Request, token: Text) : Request
   with_header(req, "Authorization", "Bearer #{token}")
@@ -260,6 +272,12 @@ end
 fn header(req: Request, name: Text) : Option(Text)
   low = name.ascii_lowercase
   req.headers.find(fn(h) h.0.ascii_lowercase == low end).map(fn(h) h.1 end)
+end
+
+## Reads all header values matching `name` from a request, ignoring ASCII case.
+fn headers_named(req: Request, name: Text) : List(Text)
+  low = name.ascii_lowercase
+  req.headers.filter(fn(h) h.0.ascii_lowercase == low end).map(fn(h) h.1 end)
 end
 
 ## Extracts a bearer token from `Authorization: Bearer <token>`.
@@ -334,6 +352,19 @@ fn redirect(location: Text) : Response
   Response(status: 302, headers: [("Location", location)], body: "".bytes)
 end
 
+## Builds a `303 See Other` redirect response.
+fn redirect_see_other(location: Text) : Response
+  Response(status: 303, headers: [("Location", location)], body: "".bytes)
+end
+
+## Builds an HTTP redirect response with an explicit 3xx redirect status (`301`, `302`, `303`, `307`, or `308`).
+fn redirect_with(status: Int, location: Text) : Response
+  if status != 301 and status != 302 and status != 303 and status != 307 and status != 308
+    stop "Api.redirect_with requires status 301, 302, 303, 307 or 308"
+  end
+  Response(status: status, headers: [("Location", location)], body: "".bytes)
+end
+
 fn format_sse_frame(event: (Option(Text), Text)) : Text
   head = case event.0
     Some(name): "event: #{name}\n"
@@ -365,6 +396,13 @@ fn with_header(res: Response, name: Text, value: Text) : Response
   next
 end
 
+## Appends a header on a response without overwriting existing headers of the same name.
+fn add_header(res: Response, name: Text, value: Text) : Response
+  var next = res
+  next.headers = res.headers.append((name, value))
+  next
+end
+
 ## Whether a response has a 2xx status code.
 fn ok?(res: Response) : Bool
   200 <= res.status and res.status < 300
@@ -374,6 +412,12 @@ end
 fn header(res: Response, name: Text) : Option(Text)
   low = name.ascii_lowercase
   res.headers.find(fn(h) h.0.ascii_lowercase == low end).map(fn(h) h.1 end)
+end
+
+## Reads all header values matching `name` from a response, ignoring ASCII case.
+fn headers_named(res: Response, name: Text) : List(Text)
+  low = name.ascii_lowercase
+  res.headers.filter(fn(h) h.0.ascii_lowercase == low end).map(fn(h) h.1 end)
 end
 
 ## Decodes a response's body as UTF-8 text (or empty string if non-UTF-8).
@@ -746,6 +790,152 @@ fn openapi_docs_html(title: Text) : Response
   html_response(200, page)
 end
 
+fn static_mime_type(rel_path: Text) : Text
+  low = rel_path.ascii_lowercase
+  return "application/manifest+json" if low.ends_with?(".webmanifest")
+  return "text/javascript; charset=utf-8" if low.ends_with?(".mjs") or low.ends_with?(".js")
+  return "text/css; charset=utf-8" if low.ends_with?(".css")
+  return "text/html; charset=utf-8" if low.ends_with?(".html")
+  return "application/json" if low.ends_with?(".json") or low.ends_with?(".map")
+  return "image/svg+xml" if low.ends_with?(".svg")
+  return "image/png" if low.ends_with?(".png")
+  return "image/jpeg" if low.ends_with?(".jpeg") or low.ends_with?(".jpg")
+  return "image/webp" if low.ends_with?(".webp")
+  return "image/x-icon" if low.ends_with?(".ico")
+  return "font/woff2" if low.ends_with?(".woff2")
+  return "font/woff" if low.ends_with?(".woff")
+  return "text/plain; charset=utf-8" if low.ends_with?(".txt")
+  "application/octet-stream"
+end
+
+fn is_fingerprint_token?(tok: Text) : Bool
+  len = tok.byte_count
+  return false if len < 8 or len > 64
+  var has_digit = false
+  var has_alpha = false
+  for ch in tok.chars
+    if ch.ascii_digit?
+      has_digit = true
+    else if ch.ascii_letter?
+      has_alpha = true
+    else if ch != '_'
+      return false
+    end
+  end
+  has_digit and has_alpha
+end
+
+fn static_fingerprinted?(rel_path: Text) : Bool
+  segs = rel_path.split("/")
+  leaf = segs.last or rel_path
+  dot_parts = leaf.split(".")
+  return false if dot_parts.size < 2
+  if dot_parts.size >= 3
+    mid = dot_parts.get(dot_parts.size - 2) or ""
+    return true if is_fingerprint_token?(mid)
+  end
+  stem = dot_parts.take(dot_parts.size - 1).join(".")
+  dash_parts = stem.split("-")
+  if dash_parts.size >= 2
+    last_tok = dash_parts.last or ""
+    return true if is_fingerprint_token?(last_tok)
+  end
+  false
+end
+
+fn static_etag_bytes(content: Bytes) : Text
+  var h = 2166136261
+  n = content.size
+  var i = 0
+  while i < n
+    b = (content.get(i) or 0).to_int
+    h = (h.wrapping_add(b)).wrapping_mul(16777619)
+    i += 1
+  end
+  tag_num = if h < 0: -(h.wrapping_add(1)) else: h
+  "\"#{n}-#{tag_num}\""
+end
+
+fn etag_matches?(inm_values: List(Text), etag: Text) : Bool
+  for raw in inm_values
+    for item in raw.split(",")
+      cand = item.trim
+      return true if cand == "*"
+      stripped = cand.drop_prefix("W/") or cand
+      return true if stripped == etag
+    end
+  end
+  false
+end
+
+fn valid_static_subpath?(sub: Text) : Bool
+  return false if sub.empty? or sub.starts_with?("/") or sub.ends_with?("/")
+  return false if sub.contains?("\\") or sub.contains?("\u{0}")
+  for seg in sub.split("/")
+    return false if seg.empty? or seg == "." or seg == ".."
+  end
+  true
+end
+
+## Serves a static asset from `ReadFiles` for `ApiTest.send`, returning `None` when `req.path` is outside `prefix`.
+fn serve_static_fake(req: Request, prefix: Text, rel_dir: Text, files: ReadFiles) : Option(Response)
+  matched_sub = if req.path == prefix
+    Some("")
+  else if prefix == "/"
+    req.path.drop_prefix("/")
+  else
+    req.path.drop_prefix("#{prefix}/")
+  end
+  raw_sub = try matched_sub
+  if req.method != "GET" and req.method != "HEAD"
+    return Some(method_not_allowed_response())
+  end
+  return Some(not_found_response()) if raw_sub.empty? or raw_sub.ends_with?("/")
+  decoded_sub = case percent_decode(raw_sub, false)
+    Some(s): s
+    None: return Some(not_found_response())
+  end
+  return Some(not_found_response()) if not valid_static_subpath?(decoded_sub)
+  full_path = if rel_dir.empty? or rel_dir == ".": decoded_sub else: "#{rel_dir}/#{decoded_sub}"
+  content = case files.read_bytes(full_path)
+    Ok(b): b
+    Error(_): return Some(not_found_response())
+  end
+  etag = static_etag_bytes(content)
+  cache_ctl = if static_fingerprinted?(decoded_sub)
+    "public, max-age=31536000, immutable"
+  else
+    "public, max-age=0, must-revalidate"
+  end
+  if etag_matches?(headers_named(req, "If-None-Match"), etag)
+    return Some(
+      Response(
+        status: 304,
+        headers: [
+          ("ETag", etag),
+          ("Cache-Control", cache_ctl),
+          ("X-Content-Type-Options", "nosniff")
+        ],
+        body: "".bytes
+      )
+    )
+  end
+  mime = static_mime_type(decoded_sub)
+  out_body = if req.method == "HEAD": "".bytes else: content
+  Some(
+    Response(
+      status: 200,
+      headers: [
+        ("Content-Type", mime),
+        ("ETag", etag),
+        ("Cache-Control", cache_ctl),
+        ("X-Content-Type-Options", "nosniff")
+      ],
+      body: out_body
+    )
+  )
+end
+
 test "request and response builders, path matching and validation helpers"
   req = post("/users?dry_run=true").with_bearer("tok123").with_json({"name": "Ada"})
   assert req.method == "POST"
@@ -755,6 +945,9 @@ test "request and response builders, path matching and validation helpers"
   assert req.header("content-type") == Some("application/json")
   assert req.text == Some("{\"name\":\"Ada\"}")
 
+  multi_req = get("/items").add_header("Cookie", "a=1").add_header("cookie", "b=2")
+  assert multi_req.headers_named("COOKIE") == ["a=1", "b=2"]
+
   assert match_path("/users/:id/items/:slug", "/users/99/items/my%20item") ==
     Some(["99", "my item"])
   assert parse_path_int("99", "id") == Ok(99)
@@ -763,11 +956,22 @@ test "request and response builders, path matching and validation helpers"
   assert optional_query_bool(req, "dry_run") == Ok(Some(true))
   assert optional_query_int(req, "missing") == Ok(None)
 
-  res = json_response(201, {"id": 1})
+  res = json_response(201, {"id": 1}).add_header("Set-Cookie", "sid=1; HttpOnly").add_header(
+    "Set-Cookie",
+    "csrf=2; SameSite=Lax"
+  )
   assert res.ok?
   assert res.status == 201
   assert res.header("Content-Type") == Some("application/json")
+  assert res.headers_named("set-cookie") == ["sid=1; HttpOnly", "csrf=2; SameSite=Lax"]
   assert res.text == "{\"id\":1}"
+
+  r303 = redirect_see_other("/bills")
+  assert r303.status == 303
+  assert r303.header("Location") == Some("/bills")
+  r307 = redirect_with(307, "/login")
+  assert r307.status == 307
+  assert r307.header("Location") == Some("/login")
 
   sse = sse_response([(Some("token"), "hello"), (None, "done")])
   assert sse.status == 200

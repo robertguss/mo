@@ -1199,18 +1199,26 @@ unknown effect from the client's perspective.
 
 A module declares at most one HTTP API server with `api ... end`, and never
 alongside `service` (E0108). An `api` block has at least one route (`get`,
-`post`, `put`, `patch` or `delete`) and optional `port` (`0` to `65535`, by
+`post`, `put`, `patch` or `delete`, directly or inside `scope "/prefix" ... end`
+blocks nested up to 8 levels deep) and optional `port` (`0` to `65535`, by
 default `8000`), `cors` (a nonempty single-line origin or `"*"`), `sqlite name
 from "path"` (up to 16 relative paths inside `--data` with no `..`), `actor name:
-ActorType` (up to 16 distinct actor types), `auth
-Principal via handler` (where `Principal` is a concrete `struct` or `enum` and
-`handler` returns `Result(Principal, Error)`), and `status` clauses (E0108).
+ActorType` (up to 16 distinct actor types), `static "/prefix" from "dir"` (up to
+8 non-overlapping URL prefixes mapped to confined relative folders inside
+`--data`, served before route dispatch on `GET` and `HEAD` with MIME types,
+`ETag`/`If-None-Match` `304`, `X-Content-Type-Options: nosniff` and
+`Cache-Control`), `auth Principal via handler` (where `Principal` is a concrete
+`struct` or `enum` and `handler`, a local `fn` or imported `Module.fn`, returns
+`Result(Principal, Error)`), and `status` clauses (E0108).
 
-Each route names an HTTP method, a plain text path template starting with `/`,
-and a non-generic, non-overloaded local function, with distinct `(method, shape)`
-pairs across the block after normalizing `:param` segments (E0109). Route
-parameters bind by type and name in any order: `Principal` (running `auth`
-before the handler), `Api.Request`, `Sqlite.Database` (matching a `sqlite`
+Each route names an HTTP method, a plain text path template (`""` inside a
+`scope` or starting with `/`), and a non-generic, non-overloaded local `fn` or
+imported `Module.fn`, with distinct `(method, shape)` pairs across the block
+after concatenating enclosing `scope` prefixes and normalizing `:param` segments
+(E0109). Route parameters bind by type and name in any order: `Principal`
+(running `auth` before the handler and short-circuiting on `Error`),
+`Option(Principal)` (running `auth` and passing `Some(m)` on `Ok(m)` or `None`
+on `Error(_)`), `Api.Request`, `Sqlite.Database` (matching a `sqlite`
 clause by parameter name, ignoring a leading `_`), an actor handle (matching an
 `actor` clause by parameter name and type, ignoring a leading `_`), a capability (`Sqlite`,
 `Network`, `Command`, `Clock`, `Random`, `SecureRandom`, `Files`, `ReadFiles`, `Env` or `Console`), a
@@ -1701,11 +1709,14 @@ main to emit (E0079). `mo install FILE [--name NAME] [--bin-dir DIR] [--root DIR
 [--admin-socket PATH]` runs the service `FILE` declares (section 11.5) over MCP
 on 127.0.0.1, with its saved state in the folder `DIR`, which must exist;
 `--allow-host` also accepts requests that give `NAME` as their host, as a proxy
-in front of it does, and `mo serve FILE [--port N] [--data DIR]` runs an `api`
-server `FILE` declares (section 11.6) over concurrent HTTP/1.1 on 127.0.0.1
-(defaulting to the `api` block's `port` and `.` for `--data`), isolating each
-request so a handler bug logs a failure and answers status `500` without
-stopping the server. Public HTTP on a service exposes only the service's declared tools. When
+in front of it does, and `mo serve FILE [--port N] [--bind HOST] [--workers N]
+[--watch] [--data DIR]` runs an `api` server `FILE` declares (section 11.6)
+over concurrent HTTP/1.1 keep-alive (defaulting to `127.0.0.1`, `8` workers
+from `1` to `64`, the `api` block's `port` and `.` for `--data`), logging
+sanitized request lines, pooling per-worker SQLite connections with automatic
+rollback on defect, reloading changed `.mo` modules under `--watch`, and
+isolating each request so a handler bug logs a failure and answers status `500`
+without stopping the server. Public HTTP on a service exposes only the service's declared tools. When
 `--admin-socket PATH` is given, `mo serve` binds a mode-0600 Unix domain socket
 at `PATH` exposing built-in operator views and live `mo push` upgrade tools,
 authenticated by OS filesystem permissions.
@@ -2255,9 +2266,11 @@ file counts as a new database), checking paths by `Files`'s rules and checking
 the database file and its `-journal`, `-wal` and `-shm` files for links so
 anything leaving the folder gives `Error(Sqlite.OutsideFolder(path: path))`;
 `open(":memory:")` opens a private ephemeral in-memory database without touching
-any file.
+any file; every connection runs with `PRAGMA foreign_keys = ON`.
 **Sqlite.Database**: `run(statement: Text, values: List(Sqlite.Value)) : Result(Unit, SqliteError)`
-executes one SQL statement with positional `?` parameters, and
+executes one SQL statement with positional `?` parameters,
+`execute(statement: Text, values: List(Sqlite.Value)) : Result(Sqlite.ExecResult, SqliteError)`
+executes one statement and returns `Sqlite.ExecResult(changes: Int, last_insert_rowid: Int)`, and
 `query(statement: Text, values: List(Sqlite.Value)) : Result(Sqlite.Rows, SqliteError)`
 gives `Sqlite.Rows(columns: List(Text), rows: List(List(Sqlite.Value)))`. More
 than 16 databases open at once is a bug (13.2); a statement longer than
@@ -2272,7 +2285,19 @@ gives `Error(Sqlite.SqlFailed(message: ...))`; and `ATTACH`, `DETACH`,
 `NotPermitted(reason: Text)`, and `SqlFailed(message: Text)`. The cases of both
 types are written with `Sqlite.` in front, in expressions and in patterns, as in
 `Sqlite.Integer(7)` and `Sqlite.NotPermitted(reason: _)`. Both have text forms
-and comparisons.
+and comparisons. `Sqlite.transaction(db: Sqlite.Database,
+ctx: C, work: fn(Sqlite.Database, C) : Result(T, E), on_sql: fn(SqliteError) :
+E) : Result(T, E)` runs `work` inside `BEGIN IMMEDIATE`, committing on `Ok` and
+rolling back on `Error` while preserving `work`'s error value, and
+`Sqlite.decode[T](rows: Sqlite.Rows) : Result(List(T), SqliteDecodeError)`,
+`Sqlite.decode_one[T](rows: Sqlite.Rows) : Result(T, SqliteDecodeError)` and
+`Sqlite.decode_optional[T](rows: Sqlite.Rows) : Result(Option(T),
+SqliteDecodeError)` decode SQL columns by field name into a struct `T` whose
+fields are `Int`, `Bool` (`0` or `1`), `Float` (`Real` or `Integer`), `Text`,
+`Bytes`, `Decimal`, `Time`, `Date.Date`, `Option(U)` (`Null` gives `None`) or
+any `Json` type decoded from JSON text, reporting `MissingColumn(name: Text)`,
+`TypeMismatch(column: Text, expected: Text, got: Text)`, `InvalidValue(column:
+Text, reason: Text)` or `ExpectedOneRow(got: Int)`.
 
 `Sqlite.fake() : Sqlite` and `Sqlite.in_memory() : Sqlite` make an empty
 in-memory SQLite capability that touches
@@ -2301,18 +2326,22 @@ List((Text, Text)), body: Bytes)` for section 11.6's HTTP servers and
 `ApiTest.send`. `Api.request(method: Text, target: Text)` and `Api.get`,
 `Api.post`, `Api.put`, `Api.patch` and `Api.delete(target: Text)` split `target`
 at `?` into a normalized path and percent-decoded query list; `with_header(name:
-Text, value: Text)`, `with_bearer(token: Text)`, `with_query(name: Text, value:
-Text)`, `with_json(value: T)` (where `T: Json`), `with_text(body: Text)` and
-`with_bytes(body: Bytes, content_type: Text)` build requests; and
-`header(name: Text) : Option(Text)`, `bearer_token : Option(Text)`,
+Text, value: Text)`, `add_header(name: Text, value: Text)`, `with_bearer(token:
+Text)`, `with_query(name: Text, value: Text)`, `with_json(value: T)` (where `T:
+Json`), `with_text(body: Text)` and `with_bytes(body: Bytes, content_type:
+Text)` build requests; and `header(name: Text) : Option(Text)`,
+`headers_named(name: Text) : List(Text)`, `bearer_token : Option(Text)`,
 `query_param(name: Text) : Option(Text)` and `text : Option(Text)` inspect them.
 `Api.response(status: Int, headers: List((Text, Text)), body: Bytes)`,
 `Api.json_response(status: Int, value: T)` (where `T: Json`),
 `Api.text_response(status: Int, body: Text)`, `Api.html_response(status: Int,
-html: Text)`, `Api.no_content()`, `Api.redirect(location: Text)` and
+html: Text)`, `Api.no_content()`, `Api.redirect(location: Text)` (`302`),
+`Api.redirect_see_other(location: Text)` (`303`), `Api.redirect_with(status:
+Int, location: Text)` (`301`, `302`, `303`, `307` or `308`) and
 `Api.sse_response(events: List((Option(Text), Text)))` build responses, and a
-response has `with_header(name: Text, value: Text)`, `ok? : Bool`,
-`header(name: Text) : Option(Text)`, `text : Text` and
+response has `with_header(name: Text, value: Text)`, `add_header(name: Text,
+value: Text)`, `ok? : Bool`, `header(name: Text) : Option(Text)`,
+`headers_named(name: Text) : List(Text)`, `text : Text` and
 `json : Result(Json, Json.JsonError)`.
 
 **Command**, with `use Command`, runs confined external programs without a
@@ -2423,7 +2452,9 @@ use         = "use" Path ("{" (name | Name) ("," (name | Name))* "}")? NL
 item        = function | struct | enum | test | service | actor | api | name "=" expr NL
 service     = "service" NL ("state" type "=" expr NL | "tools" name ("," name)* NL | "every" expr name NL | "token" "from" "env" text NL | promise)* "end" NL
 actor       = "actor" Name NL ("state" type "=" expr NL | "calls" name ("," name)* NL | "every" expr name NL | promise)* "end" NL
-api         = "api" NL ("port" digits NL | "cors" text NL | "sqlite" name "from" text NL | "actor" name ":" type NL | "auth" type "via" name NL | ("get" | "post" | "put" | "patch" | "delete") text name NL | "status" Name ("." Name)? ("(" "_" ("," "_")* ")")? "=" digits NL)* "end" NL
+api         = "api" NL api-clause* "end" NL
+api-clause  = "port" digits NL | "cors" text NL | "sqlite" name "from" text NL | "actor" name ":" type NL | "static" text "from" text NL | "auth" type "via" (Name ".")? name NL | "status" Name ("." Name)? ("(" "_" ("," "_")* ")")? "=" digits NL | api-route
+api-route   = ("get" | "post" | "put" | "patch" | "delete") text (Name ".")? name NL | "scope" text NL api-route* "end" NL
 function    = "fn" name "(" params? ")" (":" type)? where? NL (promise | examples)* statement* "end" NL
 params      = name ":" type ("," name ":" type)*
 where       = "where" Name ":" Name ("," Name ":" Name)*

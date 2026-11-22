@@ -793,7 +793,7 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     | none => wrongArgs "Random.int"
   | .connect, _ | .connectSecure, _ | .allowHosts, _ | .send, _ | .receive, _ | .networkFake, _ =>
     outside "Network is not modeled by mocore" w
-  | .sqliteOpen, _ | .sqliteFake, _ | .sqliteRun, _ | .sqliteQuery, _ =>
+  | .sqliteOpen, _ | .sqliteFake, _ | .sqliteRun, _ | .sqliteQuery, _ | .sqliteExecuteRaw, _ =>
     outside "Sqlite is not modeled by mocore" w
   | .commandRunRaw, _ | .commandWithin, _ | .commandAllowPrograms, _ | .commandFake, _ =>
     outside "Command is not modeled by mocore" w

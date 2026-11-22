@@ -89,6 +89,7 @@
     X(NETWORK_FAKE, "networkFake") X(ALLOW_HOSTS, "allowHosts") \
     X(SQLITE_OPEN, "sqliteOpen") X(SQLITE_FAKE, "sqliteFake") \
     X(SQLITE_RUN, "sqliteRun") X(SQLITE_QUERY, "sqliteQuery") \
+    X(SQLITE_EXECUTE_RAW, "sqliteExecuteRaw") \
     X(COMMAND_RUN_RAW, "commandRunRaw") X(COMMAND_WITHIN, "commandWithin") \
     X(COMMAND_ALLOW_PROGRAMS, "commandAllowPrograms") X(COMMAND_FAKE, "commandFake") \
     X(SECURE_RANDOM_BYTES, "secureRandomBytes") X(SECURE_RANDOM_SEEDED, "secureRandomSeeded")

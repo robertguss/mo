@@ -111,6 +111,7 @@ def ioOps : List (String × IoOp) :=
    ("connect", .connect), ("connectSecure", .connectSecure), ("send", .send), ("receive", .receive),
    ("networkFake", .networkFake), ("allowHosts", .allowHosts), ("sqliteOpen", .sqliteOpen),
    ("sqliteFake", .sqliteFake), ("sqliteRun", .sqliteRun), ("sqliteQuery", .sqliteQuery),
+   ("sqliteExecuteRaw", .sqliteExecuteRaw),
    ("commandRunRaw", .commandRunRaw), ("commandWithin", .commandWithin),
    ("commandAllowPrograms", .commandAllowPrograms), ("commandFake", .commandFake),
    ("secureRandomBytes", .secureRandomBytes), ("secureRandomSeeded", .secureRandomSeeded)]

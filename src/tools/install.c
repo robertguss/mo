@@ -205,18 +205,19 @@ static MO_MUST_USE bool write_atomic_file(const char *dir, const char *name, con
 static MO_MUST_USE bool build_launcher_script(const char *tool_name, const char *fallback_mo,
                                               const char *baked_root, const char *baked_state,
                                               struct mo_buffer *script) {
+    const char *compiler_mo = fallback_mo != NULL && fallback_mo[0] != '\0' ? fallback_mo : "mo";
     if (!append_str(script, "#!/bin/sh\n"
                             "dir=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
                             "if [ -x \"$dir/mo\" ]; then\n"
                             "  mo_bin=\"$dir/mo\"\n"
-                            "elif command -v mo >/dev/null 2>&1; then\n"
+                            "elif [ -x ") ||
+        !append_shell_quoted(script, compiler_mo) ||
+        !append_str(script, " ]; then\n"
+                            "  mo_bin=") ||
+        !append_shell_quoted(script, compiler_mo) ||
+        !append_str(script, "\nelse\n"
                             "  mo_bin=mo\n"
-                            "else\n"
-                            "  mo_bin="))
-        return false;
-    if (!append_shell_quoted(script,
-                             fallback_mo != NULL && fallback_mo[0] != '\0' ? fallback_mo : "mo") ||
-        !append_str(script, "\nfi\nroot_arg="))
+                            "fi\nroot_arg="))
         return false;
     if (!append_shell_quoted(script, baked_root != NULL ? baked_root : "") ||
         !append_str(script, "\nstate_arg=") ||

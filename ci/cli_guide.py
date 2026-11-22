@@ -25,6 +25,9 @@ flags = {
     "--name": (["tool"], {"install"}),
     "--bin-dir": (["bin"], {"install"}),
     "--port": (["0"], {"serve"}),
+    "--bind": (["127.0.0.1"], {"serve"}),
+    "--workers": (["4"], {"serve"}),
+    "--watch": ([], {"serve"}),
     "--data": (["state"], {"serve", "replay", "query"}),
     "--allow-host": (["queue.example"], {"serve"}),
     "--admin-socket": (["admin.sock"], {"serve", "push", "query"}),
@@ -517,17 +520,23 @@ def guide_claims(binary):
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"2 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
-    says("`Sqlite` and `Sqlite.Database` run (reference section 14).",
+    says("`Sqlite` and `Sqlite.Database` run with `PRAGMA foreign_keys = ON` (reference section 14).",
          "`sqlite.open(path)` opens or creates a SQLite database inside the capability's folder",
          "`database.run(statement, values)` runs one statement with `Sqlite.Value` arguments",
+         "`database.execute(statement, values)` returns `Sqlite.ExecResult(changes, last_insert_rowid)`",
          "`database.query(statement, values)` returns `Sqlite.Rows(columns, rows)`.",
+         "`Sqlite.decode[T](rows)`, `Sqlite.decode_one[T](rows)` and `Sqlite.decode_optional[T](rows)` decode rows by column name into a struct `T`",
+         "`Sqlite.transaction(db, ctx, work, on_sql)` runs `BEGIN IMMEDIATE ... COMMIT` with automatic `ROLLBACK` on `Error`.",
          "`SqliteError` cases (`OutsideFolder`, `NotPermitted`, `SqlFailed`) and `Sqlite.Value` cases are written with `Sqlite.` in front.",
          "`Sqlite.fake()` keeps databases in memory so two opens of one path on one fake share tables and rows.")
     says("This build checks, formats, fixes, tests and serves declarative `api ... end` HTTP/REST "
          "servers (reference 11.6) alongside `lib/api.mo` (`use Api`).",
+         "`static \"/prefix\" from \"rel/dir\"`",
+         "nested `scope \"/prefix\" ... end` blocks (up to 8 levels deep)",
+         "`mo serve FILE [--port N] [--bind HOST] [--workers N] [--watch] [--data DIR]`",
          "In `mo test`, `ApiTest.send(Module, req, ...)` dispatches an `Api.Request` directly in "
-         "memory with zero sockets (using `Sqlite.in_memory()` or `Sqlite.fake()`, `Env.of(...)`, "
-         "`Actor.start(ActorType)`, etc.).")
+         "memory with zero sockets (including static mounts via `ReadFiles`, `Sqlite.in_memory()` "
+         "or `Sqlite.fake()`, `Env.of(...)`, `Actor.start(ActorType)`, etc.).")
     says("This build also checks, formats, fixes, tests and runs composable in-process "
          "`actor Name ... end` capabilities (reference 11.7, E0111).",
          "`mo test` automatically runs `Module.service.recovery` and `Module.service.promise.N` "

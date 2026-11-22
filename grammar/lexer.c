@@ -227,6 +227,8 @@ static const struct {
     {"put", SOFT_PUT},
     {"patch", SOFT_PATCH},
     {"delete", SOFT_DELETE},
+    {"static", SOFT_STATIC},
+    {"scope", SOFT_SCOPE},
     {"status", SOFT_STATUS},
 };
 

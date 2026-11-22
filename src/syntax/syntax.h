@@ -40,8 +40,10 @@ enum mo_syntax_kind {
     MO_S_API_CORS,      /* origin plain text */
     MO_S_API_SQLITE,    /* binding name, path plain text */
     MO_S_API_ACTOR,     /* binding name, actor type */
-    MO_S_API_AUTH,      /* principal type, local handler name */
-    MO_S_API_ROUTE,     /* method name, path plain text, local handler name */
+    MO_S_API_AUTH,      /* principal type, local or qualified handler name */
+    MO_S_API_ROUTE,     /* method name, path plain text, local or qualified handler name */
+    MO_S_API_STATIC,    /* url prefix plain text, folder plain text */
+    MO_S_API_SCOPE,     /* url prefix plain text, clauses sequence */
     MO_S_API_STATUS,    /* variant name/qualified, optional wildcards sequence, status integer */
     MO_S_PROMISE,
     MO_S_ANCHOR,

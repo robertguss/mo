@@ -98,6 +98,16 @@ static mo_core_expr api_lib_call2(struct lowering *p, const char *fn_name, mo_co
     return lib_call(p, "Api", fn_name, v);
 }
 
+static mo_core_expr api_lib_call4(struct lowering *p, const char *fn_name, mo_core_expr a,
+                                  mo_core_expr b, mo_core_expr c, mo_core_expr d) {
+    mo_core_expr_list v = api_args(p, 4);
+    v.items[0] = a;
+    v.items[1] = b;
+    v.items[2] = c;
+    v.items[3] = d;
+    return lib_call(p, "Api", fn_name, v);
+}
+
 static mo_core_ty builtin_ty(struct lowering *p, const char *name) {
     struct mo_source_type *src = LOWER_NEW(p, struct mo_source_type, 1);
     *src = (struct mo_source_type){.kind = MO_SOURCE_NAMED, .name = name, .module = UINT32_MAX};
@@ -290,7 +300,7 @@ static mo_core_expr build_route_operation_json(struct lowering *p, const struct 
         vals[n++] = api_con1(p, json_ty, "String", api_text(p, summary));
     }
 
-    if (route->authenticated) {
+    if (route->auth_mode == MO_API_AUTH_REQUIRED) {
         mo_core_string sk = lower_text(p, "bearerAuth");
         mo_core_expr sv = json_arr(p, json_ty, 0, NULL);
         mo_core_expr sec_item = json_obj(p, json_ty, 1, &sk, &sv);
@@ -348,7 +358,7 @@ static mo_core_expr build_route_operation_json(struct lowering *p, const struct 
 
     uint16_t err_codes[MO_LIMIT_API_STATUSES + 4];
     uint32_t err_code_count = 0;
-    if (route->authenticated && api->has_auth)
+    if (route->auth_mode == MO_API_AUTH_REQUIRED && api->has_auth)
         collect_status_codes(api, api->auth.error_type, err_codes, &err_code_count);
     collect_status_codes(api, route->error_type, err_codes, &err_code_count);
 
@@ -432,13 +442,14 @@ static struct instance *emit_openapi_fn(struct lowering *p, const struct mo_chec
     mo_core_ty json_ty = lower_type(p, lib_data_source(p, "Json", "Json"), NULL);
     struct instance *f = new_generated_fn(p, api->module, ".%api.openapi", 0, NULL, text_ty);
 
-    mo_core_string *oa_paths = LOWER_NEW(p, mo_core_string, api->route_count);
+    size_t rcap = api->route_count == 0 ? 1 : api->route_count;
+    mo_core_string *oa_paths = LOWER_NEW(p, mo_core_string, rcap);
     for (uint32_t i = 0; i < api->route_count; i++)
         oa_paths[i] = openapi_path_template(p, api->routes[i].path);
 
-    bool *done = LOWER_NEW(p, bool, api->route_count);
-    mo_core_string *path_keys = LOWER_NEW(p, mo_core_string, api->route_count);
-    mo_core_expr *path_vals = LOWER_NEW(p, mo_core_expr, api->route_count);
+    bool *done = LOWER_NEW(p, bool, rcap);
+    mo_core_string *path_keys = LOWER_NEW(p, mo_core_string, rcap);
+    mo_core_expr *path_vals = LOWER_NEW(p, mo_core_expr, rcap);
     size_t unique_paths = 0;
 
     for (uint32_t i = 0; i < api->route_count; i++) {
@@ -644,6 +655,7 @@ static mo_core_expr bind_route_params(struct lowering *p, const struct dispatch_
     const struct mo_checked_api_param *pm = &route->params[idx];
     switch (pm->kind) {
     case MO_API_PARAM_AUTH:
+    case MO_API_PARAM_AUTH_OPTIONAL:
         arg_vars[idx] = auth_var;
         return bind_route_params(p, env, route, captured_var, auth_var, db_vars, idx + 1, arg_vars);
     case MO_API_PARAM_REQUEST:
@@ -746,7 +758,7 @@ static mo_core_expr execute_matched_route(struct lowering *p, const struct dispa
                                           const struct mo_checked_api_route *route,
                                           mo_core_string captured_var) {
     bool need_db[MO_LIMIT_API_SQLITES] = {false};
-    if (route->authenticated && env->api->has_auth) {
+    if (route->auth_mode != MO_API_AUTH_NONE && env->api->has_auth) {
         for (uint32_t i = 0; i < env->api->auth.param_count; i++)
             if (env->api->auth.params[i].kind == MO_API_PARAM_SQLITE_DB)
                 need_db[env->api->auth.params[i].index] = true;
@@ -763,13 +775,13 @@ static mo_core_expr execute_matched_route(struct lowering *p, const struct dispa
     mo_core_string auth_var = {0};
     mo_core_string *arg_vars =
         LOWER_NEW(p, mo_core_string, route->param_count == 0 ? 1 : route->param_count);
-    if (route->authenticated)
+    if (route->auth_mode != MO_API_AUTH_NONE)
         auth_var = lower_fresh(p);
 
     mo_core_expr inner =
         bind_route_params(p, env, route, captured_var, auth_var, db_vars, 0, arg_vars);
 
-    if (route->authenticated && env->api->has_auth) {
+    if (route->auth_mode != MO_API_AUTH_NONE && env->api->has_auth) {
         const struct mo_checked_api_auth *auth = &env->api->auth;
         const struct mo_symbol *afn_sym = p->program->functions[auth->function].signature->function;
         struct instance *afn_inst = lower_instance(p, afn_sym, (struct mo_type_arguments){0}, NULL,
@@ -792,18 +804,45 @@ static mo_core_expr execute_matched_route(struct lowering *p, const struct dispa
         acase->as.case_.expr = acall;
         acase->as.case_.arms.count = 2;
         acase->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
-        mo_core_string aerr = lower_fresh(p);
-        acase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
-        acase->as.case_.arms.items[0].names =
-            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
-        acase->as.case_.arms.items[0].names.items[0] = auth_var;
-        acase->as.case_.arms.items[0].body = inner;
-        acase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
-        acase->as.case_.arms.items[1].names =
-            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
-        acase->as.case_.arms.items[1].names.items[0] = aerr;
-        acase->as.case_.arms.items[1].body =
-            encode_domain_error(p, env, auth->error_type, auth->error_json, lower_var(p, aerr));
+        if (route->auth_mode == MO_API_AUTH_REQUIRED) {
+            mo_core_string aerr = lower_fresh(p);
+            acase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+            acase->as.case_.arms.items[0].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            acase->as.case_.arms.items[0].names.items[0] = auth_var;
+            acase->as.case_.arms.items[0].body = inner;
+            acase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+            acase->as.case_.arms.items[1].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            acase->as.case_.arms.items[1].names.items[0] = aerr;
+            acase->as.case_.arms.items[1].body =
+                encode_domain_error(p, env, auth->error_type, auth->error_json, lower_var(p, aerr));
+        } else {
+            const struct mo_source_type **prin_arg = LOWER_NEW(p, const struct mo_source_type *, 1);
+            *prin_arg = auth->principal;
+            struct mo_source_type *opt_prin_src = LOWER_NEW(p, struct mo_source_type, 1);
+            *opt_prin_src = (struct mo_source_type){.kind = MO_SOURCE_NAMED,
+                                                    .name = "Option",
+                                                    .module = UINT32_MAX,
+                                                    .count = 1,
+                                                    .arguments = prin_arg};
+            mo_core_ty opt_prin_ty = lower_type(p, opt_prin_src, NULL);
+            mo_core_string ok_m = lower_fresh(p), aerr = lower_fresh(p);
+            mo_core_expr inner_err =
+                bind_route_params(p, env, route, captured_var, auth_var, db_vars, 0, arg_vars);
+            acase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+            acase->as.case_.arms.items[0].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            acase->as.case_.arms.items[0].names.items[0] = ok_m;
+            acase->as.case_.arms.items[0].body =
+                api_let(p, auth_var, api_con1(p, opt_prin_ty, "Some", lower_var(p, ok_m)), inner);
+            acase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+            acase->as.case_.arms.items[1].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            acase->as.case_.arms.items[1].names.items[0] = aerr;
+            acase->as.case_.arms.items[1].body =
+                api_let(p, auth_var, api_con(p, opt_prin_ty, "None", api_args(p, 0)), inner_err);
+        }
         inner = acase;
     }
 
@@ -1136,28 +1175,92 @@ static void emit_dispatch_fns(struct lowering *p, const struct mo_checked_api *a
 
     if (api->cors == NULL) {
         disp_fn->fun.body = call_route;
-        emit_wire_fn(p, api, disp_fn);
-        return;
+    } else {
+        mo_core_string dm = lower_fresh(p);
+        mo_core_expr cors_if = lower_expr(p, MO_CORE_EXPR_IF);
+        cors_if->as.if_.cond = text_eq(p, text_ty, lower_var(p, dm), api_cstr(p, "OPTIONS"));
+        cors_if->as.if_.then_ = api_lib_call1(p, "cors_preflight", api_cstr(p, api->cors));
+        cors_if->as.if_.else_ = api_lib_call2(p, "apply_cors", call_route, api_cstr(p, api->cors));
+
+        mo_core_expr dunpack = lower_expr(p, MO_CORE_EXPR_CASE);
+        dunpack->as.case_.expr = lower_var(p, disp_params[0].name);
+        dunpack->as.case_.arms.count = 1;
+        dunpack->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 1);
+        struct mo_core_arm *darm = &dunpack->as.case_.arms.items[0];
+        darm->ctor = lower_text(p, "Request");
+        darm->names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 5), 5};
+        darm->names.items[0] = dm;
+        for (size_t k = 1; k < 5; k++)
+            darm->names.items[k] = lower_fresh(p);
+        darm->body = cors_if;
+        disp_fn->fun.body = dunpack;
     }
 
-    mo_core_string dm = lower_fresh(p);
-    mo_core_expr cors_if = lower_expr(p, MO_CORE_EXPR_IF);
-    cors_if->as.if_.cond = text_eq(p, text_ty, lower_var(p, dm), api_cstr(p, "OPTIONS"));
-    cors_if->as.if_.then_ = api_lib_call1(p, "cors_preflight", api_cstr(p, api->cors));
-    cors_if->as.if_.else_ = api_lib_call2(p, "apply_cors", call_route, api_cstr(p, api->cors));
+    if (api->static_count > 0) {
+        size_t tparam_count = 2 + api->capability_count + api->actor_count;
+        struct mo_core_param *tparams = LOWER_NEW(p, struct mo_core_param, tparam_count);
+        tparams[0] = (struct mo_core_param){lower_fresh(p), route_params[0].ty};
+        tparams[1] = (struct mo_core_param){lower_fresh(p), builtin_ty(p, "ReadFiles")};
+        for (size_t i = 1; i < param_count; i++)
+            tparams[1 + i] = (struct mo_core_param){lower_fresh(p), route_params[i].ty};
+        struct instance *test_fn =
+            new_generated_fn(p, api->module, ".%api.test_dispatch", tparam_count, tparams, res_ty);
 
-    mo_core_expr dunpack = lower_expr(p, MO_CORE_EXPR_CASE);
-    dunpack->as.case_.expr = lower_var(p, disp_params[0].name);
-    dunpack->as.case_.arms.count = 1;
-    dunpack->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 1);
-    struct mo_core_arm *darm = &dunpack->as.case_.arms.items[0];
-    darm->ctor = lower_text(p, "Request");
-    darm->names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 5), 5};
-    darm->names.items[0] = dm;
-    for (size_t k = 1; k < 5; k++)
-        darm->names.items[k] = lower_fresh(p);
-    darm->body = cors_if;
-    disp_fn->fun.body = dunpack;
+        mo_core_expr fallback = lower_expr(p, MO_CORE_EXPR_CALL);
+        fallback->as.call.name = disp_fn->fun.name;
+        fallback->as.call.args = api_args(p, param_count);
+        fallback->as.call.args.items[0] = lower_var(p, tparams[0].name);
+        for (size_t i = 1; i < param_count; i++)
+            fallback->as.call.args.items[i] = lower_var(p, tparams[1 + i].name);
+
+        mo_core_expr static_chain = fallback;
+        for (uint32_t s = api->static_count; s != 0; s--) {
+            const struct mo_checked_api_static *st = &api->statics[s - 1];
+            mo_core_expr st_call = api_lib_call4(
+                p, "serve_static_fake", lower_var(p, tparams[0].name), api_cstr(p, st->prefix),
+                api_cstr(p, st->dir), lower_var(p, tparams[1].name));
+            mo_core_expr st_case = lower_expr(p, MO_CORE_EXPR_CASE);
+            st_case->as.case_.expr = st_call;
+            st_case->as.case_.arms.count = 2;
+            st_case->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            st_case->as.case_.arms.items[0] =
+                (struct mo_core_arm){.ctor = lower_text(p, "None"), .body = static_chain};
+            mo_core_string sres = lower_fresh(p);
+            st_case->as.case_.arms.items[1].ctor = lower_text(p, "Some");
+            st_case->as.case_.arms.items[1].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            st_case->as.case_.arms.items[1].names.items[0] = sres;
+            st_case->as.case_.arms.items[1].body =
+                api->cors == NULL
+                    ? lower_var(p, sres)
+                    : api_lib_call2(p, "apply_cors", lower_var(p, sres), api_cstr(p, api->cors));
+            static_chain = st_case;
+        }
+
+        if (api->cors != NULL) {
+            mo_core_string tm = lower_fresh(p);
+            mo_core_expr tcors_if = lower_expr(p, MO_CORE_EXPR_IF);
+            tcors_if->as.if_.cond = text_eq(p, text_ty, lower_var(p, tm), api_cstr(p, "OPTIONS"));
+            tcors_if->as.if_.then_ = api_lib_call1(p, "cors_preflight", api_cstr(p, api->cors));
+            tcors_if->as.if_.else_ = static_chain;
+
+            mo_core_expr tunpack = lower_expr(p, MO_CORE_EXPR_CASE);
+            tunpack->as.case_.expr = lower_var(p, tparams[0].name);
+            tunpack->as.case_.arms.count = 1;
+            tunpack->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 1);
+            struct mo_core_arm *tarm = &tunpack->as.case_.arms.items[0];
+            tarm->ctor = lower_text(p, "Request");
+            tarm->names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 5), 5};
+            tarm->names.items[0] = tm;
+            for (size_t k = 1; k < 5; k++)
+                tarm->names.items[k] = lower_fresh(p);
+            tarm->body = tcors_if;
+            test_fn->fun.body = tunpack;
+        } else {
+            test_fn->fun.body = static_chain;
+        }
+    }
+
     emit_wire_fn(p, api, disp_fn);
 }
 
@@ -1417,12 +1520,43 @@ mo_core_expr lower_apitest_send(struct lowering *p, uint32_t api_index, mo_core_
         sup_vars[i] = lower_fresh(p);
 
     mo_core_string req_var = lower_fresh(p);
-    size_t call_arity = 1 + api->capability_count + api->actor_count;
+    bool has_static = api->static_count > 0;
+    size_t extra_static = has_static ? 1u : 0u;
+    size_t call_arity = 1 + extra_static + api->capability_count + api->actor_count;
     mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
-    call->as.call.name = lower_concat(p, lower_text(p, p->program->set->names[api->module]),
-                                      ".%api.dispatch", lower_text(p, ""));
+    call->as.call.name =
+        lower_concat(p, lower_text(p, p->program->set->names[api->module]),
+                     has_static ? ".%api.test_dispatch" : ".%api.dispatch", lower_text(p, ""));
     call->as.call.args = api_args(p, call_arity);
     call->as.call.args.items[0] = lower_var(p, req_var);
+
+    if (has_static) {
+        mo_core_expr st_files = NULL;
+        for (size_t i = 0; i < supplied; i++) {
+            if (arg_types[1 + i]->declaration == NULL &&
+                strcmp(arg_types[1 + i]->name, "ReadFiles") == 0) {
+                st_files = lower_var(p, sup_vars[i]);
+                break;
+            }
+        }
+        if (st_files == NULL) {
+            for (size_t i = 0; i < supplied; i++) {
+                if (arg_types[1 + i]->declaration == NULL &&
+                    strcmp(arg_types[1 + i]->name, "Files") == 0) {
+                    mo_core_expr_list ro = api_args(p, 1);
+                    ro.items[0] = lower_var(p, sup_vars[i]);
+                    st_files =
+                        lower_prim(p,
+                                   (struct mo_core_prim){.tag = MO_CORE_PRIM_IO,
+                                                         .as.io = {MO_CORE_IO_OP_READ_ONLY, false}},
+                                   ro);
+                    break;
+                }
+            }
+        }
+        call->as.call.args.items[1] =
+            st_files != NULL ? st_files : default_fake_cap(p, "ReadFiles");
+    }
 
     for (uint32_t c = 0; c < api->capability_count; c++) {
         const char *wanted = api->capabilities[c];
@@ -1433,7 +1567,8 @@ mo_core_expr lower_apitest_send(struct lowering *p, uint32_t api_index, mo_core_
                 chosen = lower_var(p, sup_vars[i]);
                 break;
             }
-        call->as.call.args.items[1 + c] = chosen != NULL ? chosen : default_fake_cap(p, wanted);
+        call->as.call.args.items[1 + extra_static + c] =
+            chosen != NULL ? chosen : default_fake_cap(p, wanted);
     }
 
     for (uint32_t a = 0; a < api->actor_count; a++) {
@@ -1458,7 +1593,7 @@ mo_core_expr lower_apitest_send(struct lowering *p, uint32_t api_index, mo_core_
             chosen =
                 lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op}, sargs);
         }
-        call->as.call.args.items[1 + api->capability_count + a] = chosen;
+        call->as.call.args.items[1 + extra_static + api->capability_count + a] = chosen;
     }
 
     mo_core_expr body = call;

@@ -987,6 +987,13 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_IO_OP_SQLITE_QUERY:
             return sig(binary(c, MO_CORE_TY_RESULT, S(SQLITE_ROWS), S(SQLITE_ERROR)), 3,
                        C(DATABASE), S(TEXT), L(S(SQLITE_VALUE)));
+        case MO_CORE_IO_OP_SQLITE_EXECUTE_RAW: {
+            struct type *parts[2] = {S(INT), S(INT)};
+            struct type *tup =
+                intern(c, MO_CORE_TY_TUPLE, parts, 2, (mo_core_string){0}, MO_CORE_CAP_CONSOLE);
+            return sig(binary(c, MO_CORE_TY_RESULT, tup, S(SQLITE_ERROR)), 3, C(DATABASE), S(TEXT),
+                       L(S(SQLITE_VALUE)));
+        }
         case MO_CORE_IO_OP_COMMAND_RUN_RAW: {
             struct type *parts[3] = {S(INT), S(BYTES), S(BYTES)};
             struct type *tup =

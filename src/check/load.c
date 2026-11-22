@@ -258,8 +258,8 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
     return 0;
 }
 
-static const char *const on_use[] = {"Api",  "Command", "Crypto",   "Date",
-                                     "Http", "Json",    "Unicode16"};
+static const char *const on_use[] = {"Api",  "Command", "Crypto", "Date",
+                                     "Http", "Json",    "Sqlite", "Unicode16"};
 
 static MO_MUST_USE bool loaded_on_use(const char *name) {
     for (size_t i = 0; i < sizeof on_use / sizeof *on_use; i++)
@@ -739,11 +739,31 @@ static MO_MUST_USE bool load_named_library(struct loader *l, const char *name, c
     return true;
 }
 
+static bool syntax_mentions_sqlite(const struct mo_syntax *node) {
+    if (node == NULL)
+        return false;
+    if (node->kind == MO_S_CAPNAME && node->text != NULL) {
+        size_t len = node->span.end - node->span.start;
+        if ((len == 6 && memcmp(node->text, "Sqlite", 6) == 0) ||
+            (len == 17 && memcmp(node->text, "SqliteDecodeError", 17) == 0) ||
+            (len == 13 && memcmp(node->text, "MissingColumn", 13) == 0) ||
+            (len == 12 && memcmp(node->text, "TypeMismatch", 12) == 0) ||
+            (len == 12 && memcmp(node->text, "InvalidValue", 12) == 0) ||
+            (len == 14 && memcmp(node->text, "ExpectedOneRow", 14) == 0))
+            return true;
+    }
+    for (uint32_t i = 0; i < node->count; i++)
+        if (syntax_mentions_sqlite(node->children[i]))
+            return true;
+    return false;
+}
+
 static MO_MUST_USE struct mo_module_set *parse_modules(struct loader *l) {
     if (!graph(l))
         return NULL;
     uint32_t before = l->diags->count;
     bool has_api = false;
+    bool has_sqlite = false;
     for (uint32_t i = 0; i < l->out->count; i++) {
         l->out->modules[i] = mo_parse(l->arena, l->sources, l->items[i].file, l->diags);
         if (l->out->modules[i] == NULL)
@@ -752,10 +772,20 @@ static MO_MUST_USE struct mo_module_set *parse_modules(struct loader *l) {
         for (uint32_t j = 0; j < items->count; j++)
             if (items->children[j]->kind == MO_S_API)
                 has_api = true;
+        if (!l->out->library[i] && syntax_mentions_sqlite(l->out->modules[i]->tree))
+            has_sqlite = true;
     }
-    if (has_api && (find(l, "Api") == 0 || find(l, "Json") == 0)) {
+    bool need_api = has_api && (find(l, "Api") == 0 || find(l, "Json") == 0);
+    bool need_sqlite = (has_sqlite || has_api) &&
+                       (find(l, "Sqlite") == 0 || find(l, "Json") == 0 || find(l, "Date") == 0);
+    if (need_api || need_sqlite) {
         uint32_t prev_count = l->out->count;
-        if (!load_named_library(l, "Json", "json.mo") || !load_named_library(l, "Api", "api.mo"))
+        if (need_api &&
+            (!load_named_library(l, "Json", "json.mo") || !load_named_library(l, "Api", "api.mo")))
+            return NULL;
+        if (need_sqlite && (!load_named_library(l, "Json", "json.mo") ||
+                            !load_named_library(l, "Date", "date.mo") ||
+                            !load_named_library(l, "Sqlite", "sqlite.mo")))
             return NULL;
         if (l->out->count > prev_count) {
             for (uint32_t i = prev_count; i < l->out->count; i++) {
