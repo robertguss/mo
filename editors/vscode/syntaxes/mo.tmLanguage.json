@@ -97,6 +97,12 @@
           }
         },
         {
+          "match": "^\\s*(scope)(?=\\s+\")",
+          "captures": {
+            "1": { "name": "keyword.other.clause.mo" }
+          }
+        },
+        {
           "match": "^\\s*(auth)\\s+([A-Z][A-Za-z0-9]*(?:\\.[A-Z][A-Za-z0-9]*)?)\\s+(via)\\s+((?:[A-Z][A-Za-z0-9]*\\.)?(?:[a-z][a-z0-9_]*|_[a-z0-9_]+))\\b",
           "captures": {
             "1": { "name": "keyword.other.clause.mo" },
@@ -112,7 +118,7 @@
           }
         },
         {
-          "match": "^\\s*(state|tools|calls|every|port|cors|status|actor|scope|static)\\b",
+          "match": "^\\s*(state|tools|calls|every|port|cors|status|actor)\\b",
           "captures": {
             "1": { "name": "keyword.other.clause.mo" }
           }

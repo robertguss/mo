@@ -23,13 +23,13 @@
   ],
   "wordPattern": "[A-Za-z_][A-Za-z0-9_]*\\??",
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*(?:(?:fn|struct|enum|service|actor|api|scope|test|promise|examples|for|while|case)\\b(?!.*\\bend\\s*(?:#.*)?$).*|(?:else\\s+)?if\\b(?![^#]*:).*|else\\s*(?:#.*)?|.*[\\[({]\\s*(?:#.*)?)$",
+    "increaseIndentPattern": "^\\s*(?:(?:fn|struct|enum|service|actor|api|test|promise|examples|for|while|case)\\b(?!.*\\bend\\s*(?:#.*)?$).*|scope\\s+\".*|(?:else\\s+)?if\\b(?![^#]*:).*|else\\s*(?:#.*)?|.*[\\[({]\\s*(?:#.*)?)$",
     "decreaseIndentPattern": "^\\s*(?:end\\b|else\\b|[\\])}])"
   },
   "folding": {
     "offSide": true,
     "markers": {
-      "start": "^\\s*(?:fn|struct|enum|service|actor|api|scope|test|promise|examples|for|while|case|if)\\b(?!.*\\bend\\s*(?:#.*)?$)",
+      "start": "^\\s*(?:(?:fn|struct|enum|service|actor|api|test|promise|examples|for|while|case|if)\\b(?!.*\\bend\\s*(?:#.*)?$)|scope\\s+\")",
       "end": "^\\s*end\\b"
     }
   }
