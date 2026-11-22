@@ -9,7 +9,7 @@
 struct mo_host_types {
     struct mo_types types;
     uint32_t integer, time, text, bytes, texts, folders, files, replies, peers, databases;
-    uint32_t capabilities[MO_CAP_COMMAND + 1];
+    uint32_t capabilities[MO_CAP_SECURE_RANDOM + 1];
     uint32_t parameters[8];
 };
 /* Once per image. storage has source->count + MO_HOST_PRIVATE_TYPES entries;
@@ -76,6 +76,7 @@ struct mo_host_fake_state {
         } files;
         int64_t time;
         uint64_t random[4];
+        uint64_t secure_random[2];
     } as;
 };
 /* Restore an existing well-formed fake, not a fresh Mo constructor: explicit

@@ -39,6 +39,7 @@ def primitives : List Prim :=
   (floatOps.map fun (_, o) => .float o) ++ (charOps.map fun (_, o) => .char o) ++
   (textOps.map fun (_, o) => .text o) ++ (bytesOps.map fun (_, o) => .bytes o) ++
   (unicodeOps.map fun (_, o) => .unicode16 o) ++
+  (cryptoOps.map fun (_, o) => .crypto o) ++
   ([SimOp.start 2, .send 2 3 [.int, .text] (.result (.tuple [.int, .text]) .text),
     .advance, .crash, .restart].map Prim.sim) ++
   (rangeOps.map fun (_, o) => .range o) ++ (timeOps.map fun (_, o) => .time o) ++
@@ -303,7 +304,9 @@ def fuzzSeeds : List (String × Sexp) :=
    ("entries", primOut (.io (.entries true))),
    ("network", primOut (.io .connect)),
    ("sqlite", primOut (.io .sqliteOpen)),
-   ("command", primOut (.io .commandRunRaw))]
+   ("command", primOut (.io .commandRunRaw)),
+   ("crypto", primOut (.crypto .sha256)),
+   ("secure_random", primOut (.io .secureRandomBytes))]
 
 #guard (structural Greet.program (.list .entry)
   (.list [.con "Entry" [.text "é", .con "Folder" []]])).toOption ==

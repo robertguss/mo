@@ -101,6 +101,24 @@ def text_cases(rng, rows):
                 values = [["(list (" + " ".join(enc(b) for b in parts) + "))"]
                           for parts in [[], [b""], [b"", b""], [b"a", b"", b"\xff\0"], byte_sequences[:9],
                                         byte_sequences]]
+            elif name == "from_hex":
+                hex_texts = [
+                    "", "00", "ff", "000f10ff", "666F6f626172", "DEADBEEF",
+                    "a", "abc", "zz", "0g", "00 ", " 00", "00\n", "éé",
+                ]
+                hex_texts += [b.hex() for b in byte_sequences[:12]]
+                hex_texts += [b.hex().upper() for b in byte_sequences[:6]]
+                values = [[f"(text {quote(s)})"] for s in hex_texts]
+            elif name == "from_base64url":
+                b64_texts = [
+                    "", "Zg", "Zm8", "Zm9v", "Zm9vYg", "Zm9vYmE", "Zm9vYmFy",
+                    "-_8", "AA", "AAA", "AAAA",
+                    "a", "Zg==", "Zm8=", "Zh", "Zi", "Zm9", "Zm_", "+/8", "Zg\n", "éé",
+                ]
+                import base64
+                b64_texts += [base64.urlsafe_b64encode(b).decode().rstrip("=")
+                              for b in byte_sequences[:16]]
+                values = [[f"(text {quote(s)})"] for s in b64_texts]
             else:
                 values = [[enc(b)] for b in byte_sequences]
         for i, args in enumerate(values):
@@ -474,7 +492,7 @@ def main():
     rows = re.findall(r'^PRIM\(\w+,\s*"([^"]+)",\s*"([^"]+)"',
                       pathlib.Path("src/base/prims.def").read_text(), re.M)
     expected_rows = {f"{module}.{name}" for module, name in rows
-                     if module != "Unicode16"}
+                     if module not in {"Unicode16", "Crypto"}}
     covered = {re.search(r'\(text "([^"]+)"\)', raw)[1] for _, raw in generated}
     if covered != expected_rows:
         raise AssertionError(f"primitive oracle coverage differs: {covered ^ expected_rows}")

@@ -286,6 +286,10 @@ no functions, only tests that pin what reference section 14 says they do.
 | `decode_utf8` | primitive | `BYTES_DECODE_UTF8` | |
 | `slice(from, to)` | primitive | `BYTES_SLICE` | a copy: `Bytes` has no window onto another value's bytes, and the HTTP client's reader cuts at most a few times for each receive |
 | `Bytes.join(parts)` | primitive | `BYTES_JOIN` | joining through a list of single bytes took 6.7 to 7.9 times the instructions in the HTTP prototype (`learnability/phase7/preflight/http-in-mo/`) |
+| `to_hex` | primitive | `BYTES_TO_HEX` | lowercase RFC 4648 base16 encoding without per-byte allocation |
+| `Bytes.from_hex(text)` | primitive | `BYTES_FROM_HEX` | accepts ASCII hex (upper or lower), rejects odd length or non-hex |
+| `to_base64url` | primitive | `BYTES_TO_BASE64URL` | RFC 4648 §5 unpadded URL-safe base64 encoding |
+| `Bytes.from_base64url(text)` | primitive | `BYTES_FROM_BASE64URL` | strict RFC 4648 §5 unpadded decoding: rejects invalid chars, `len % 4 == 1`, and non-zero trailing pad bits |
 
 ## Unit
 
@@ -681,6 +685,49 @@ mutex-serialized `mo_live_actor` in `mo serve` and `mo run`.
 | --- | --- | --- | --- |
 | `int(low, high)` | host | `RANDOM_INT` | |
 | `Random.seeded(seed)` | host | `RANDOM_SEEDED` | a fake, for spec code only (reference 12.4) |
+
+## SecureRandom
+
+Real cryptographic randomness wraps OpenSSL 3 `RAND_bytes` in `src/host/random.c`
+(failing closed on OS entropy errors). `SecureRandom.seeded` produces a deterministic
+SHA-256 counter stream for tests, examples, and promises.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `bytes(count)` | host | `SECURERANDOM_BYTES` | CSPRNG byte stream (`0..65536` bytes per call; real uses `RAND_bytes`) |
+| `SecureRandom.seeded(seed)` | host | `SECURERANDOM_SEEDED` | deterministic fake CSPRNG, for spec code only (reference 12.4) |
+
+## Crypto
+
+`Crypto` (`use Crypto`) wraps OpenSSL 3 `libcrypto` in `src/prim/crypto.c` (zero hand-rolled
+cryptographic algorithms) and exposes typed `CryptoError` wrappers in `lib/crypto.mo`.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Crypto.sha256(data)` | primitive | `CRYPTO_SHA256` | OpenSSL `EVP_Digest` + `EVP_sha256()` |
+| `Crypto.hmac_sha256(key, data)` | primitive | `CRYPTO_HMAC_SHA256` | OpenSSL `EVP_Q_mac` HMAC-SHA256 |
+| `Crypto.constant_time_eq?(a, b)` | primitive | `CRYPTO_CONSTANT_TIME_EQ` | OpenSSL `CRYPTO_memcmp` without early exit on equal-length inputs |
+| `Crypto.seal_raw(key, nonce, plaintext, aad)` | primitive | `CRYPTO_SEAL_RAW` | OpenSSL `EVP_aes_256_gcm()` returning ciphertext plus 16-byte tag or error tag |
+| `Crypto.open_raw(key, nonce, ciphertext, aad)` | primitive | `CRYPTO_OPEN_RAW` | OpenSSL `EVP_aes_256_gcm()` verifying the 16-byte tag before releasing plaintext |
+| `Crypto.hash_password_raw(password, salt)` | primitive | `CRYPTO_HASH_PASSWORD_RAW` | OpenSSL `EVP_PBE_scrypt` (`ln=15,r=8,p=1`) producing a PHC string |
+| `Crypto.verify_password(password, encoded)` | primitive | `CRYPTO_VERIFY_PASSWORD` | strict PHC scrypt parser with DoS bounds + `EVP_PBE_scrypt` + `CRYPTO_memcmp` |
+| `Crypto.seal(key, nonce, plaintext, aad)` | Mo | `lib/crypto.mo` | wraps `seal_raw` into `Result(Bytes, CryptoError)` |
+| `Crypto.open(key, nonce, ciphertext, aad)` | Mo | `lib/crypto.mo` | wraps `open_raw` into `Result(Bytes, CryptoError)` |
+| `Crypto.hash_password(password, salt)` | Mo | `lib/crypto.mo` | wraps `hash_password_raw` into `Result(Text, CryptoError)` |
+
+## Date
+
+`Date` (`use Date`) is a pure-Mo calendar date module in `lib/date.mo` providing an opaque
+validated Gregorian `Date` (years 1..9999) with custom `Text` and `Json` (`"YYYY-MM-DD"`).
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `Date.from_ymd(year, month, day)` | Mo | `lib/date.mo` | validates Gregorian year, month, and leap-year day bounds |
+| `Date.parse_iso(text)` | Mo | `lib/date.mo` | strict `"YYYY-MM-DD"` ASCII parser |
+| `Date.from_time_utc(time)` | Mo | `lib/date.mo` | extracts UTC Gregorian calendar date from `Time` |
+| `to_iso`, `to_text`, `to_json`, `from_json` | Mo | `lib/date.mo` | `"YYYY-MM-DD"` formatting and custom `Text` / `Json` abilities |
+| `year`, `month`, `day`, `year_month`, `weekday`, `days_in_month` | Mo | `lib/date.mo` | component accessors and exact Gregorian weekday / month-length helpers |
+| `add_days`, `add_months`, `days_between`, `first_of_month`, `end_of_month`, `short_label` | Mo | `lib/date.mo` | exact integer calendar arithmetic with safe month-end clamping and formatting |
 
 ## Unicode16
 

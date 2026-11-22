@@ -45,10 +45,16 @@
     X(UPPER, "upper") X(TO_INT, "toInt") X(TO_DECIMAL, "toDecimal") X(TO_FLOAT, "toFloat") \
     X(JOIN, "join") X(BYTES, "bytes")
 #define MO_CORE_BYTES_OPS(X) \
-    X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8") X(SLICE, "slice") X(JOIN, "join")
+    X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8") X(SLICE, "slice") X(JOIN, "join") \
+    X(TO_HEX, "toHex") X(FROM_HEX, "fromHex") X(TO_BASE64URL, "toBase64url") \
+    X(FROM_BASE64URL, "fromBase64url")
 #define MO_CORE_UNICODE_OPS(X) \
     X(GRAPHEMES, "graphemes") X(DISPLAY_WIDTH, "displayWidth") X(NORMALIZE_NFC, "normalizeNfc") \
     X(LOWERCASE, "lowercase") X(UPPERCASE, "uppercase") X(LETTER, "letter") X(DIGIT, "digit")
+#define MO_CORE_CRYPTO_OPS(X) \
+    X(SHA256, "sha256") X(HMAC_SHA256, "hmacSha256") X(CONSTANT_TIME_EQ, "constantTimeEq") \
+    X(SEAL_RAW, "sealRaw") X(OPEN_RAW, "openRaw") X(HASH_PASSWORD_RAW, "hashPasswordRaw") \
+    X(VERIFY_PASSWORD, "verifyPassword")
 #define MO_CORE_RANGE_OPS(X) \
     X(MAKE, "make") X(START, "start") X(END, "end") X(TO_LIST, "toList") X(CONTAINS, "contains") \
     X(TO_TEXT, "toText")
@@ -84,5 +90,6 @@
     X(SQLITE_OPEN, "sqliteOpen") X(SQLITE_FAKE, "sqliteFake") \
     X(SQLITE_RUN, "sqliteRun") X(SQLITE_QUERY, "sqliteQuery") \
     X(COMMAND_RUN_RAW, "commandRunRaw") X(COMMAND_WITHIN, "commandWithin") \
-    X(COMMAND_ALLOW_PROGRAMS, "commandAllowPrograms") X(COMMAND_FAKE, "commandFake")
+    X(COMMAND_ALLOW_PROGRAMS, "commandAllowPrograms") X(COMMAND_FAKE, "commandFake") \
+    X(SECURE_RANDOM_BYTES, "secureRandomBytes") X(SECURE_RANDOM_SEEDED, "secureRandomSeeded")
 // clang-format on

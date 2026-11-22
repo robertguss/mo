@@ -79,4 +79,80 @@ def bytesLt : List Int → List Int → Bool
   | _ :: _, [] => false
   | a :: as, b :: bs => if a < b then true else if b < a then false else bytesLt as bs
 
+/-! ## Hex and Base64url (RFC 4648) -/
+
+def hexDigit (n : Int) : Char :=
+  if n < 10 then Char.ofNat ('0'.toNat + n.toNat)
+  else Char.ofNat ('a'.toNat + (n - 10).toNat)
+
+def bytesToHex (bs : List Int) : String :=
+  String.ofList (bs.flatMap fun b => [hexDigit (b / 16), hexDigit (b % 16)])
+
+def hexVal (c : Char) : Option Int :=
+  let n : Int := c.toNat
+  if 48 ≤ n ∧ n ≤ 57 then some (n - 48)
+  else if 97 ≤ n ∧ n ≤ 102 then some (n - 87)
+  else if 65 ≤ n ∧ n ≤ 70 then some (n - 55)
+  else none
+
+def hexDecodeChars : List Char → Option (List Int)
+  | [] => some []
+  | c1 :: c2 :: rest =>
+    match hexVal c1, hexVal c2, hexDecodeChars rest with
+    | some hi, some lo, some tail => some ((hi * 16 + lo) :: tail)
+    | _, _, _ => none
+  | [_] => none
+
+def bytesFromHex (s : String) : Option (List Int) := hexDecodeChars s.toList
+
+def b64urlChar (n : Int) : Char :=
+  if n < 26 then Char.ofNat ('A'.toNat + n.toNat)
+  else if n < 52 then Char.ofNat ('a'.toNat + (n - 26).toNat)
+  else if n < 62 then Char.ofNat ('0'.toNat + (n - 52).toNat)
+  else if n = 62 then '-'
+  else '_'
+
+def b64urlEncodeBytes : List Int → List Char
+  | [] => []
+  | [b0] => [b64urlChar (b0 / 4), b64urlChar ((b0 % 4) * 16)]
+  | [b0, b1] =>
+    [b64urlChar (b0 / 4), b64urlChar ((b0 % 4) * 16 + b1 / 16), b64urlChar ((b1 % 16) * 4)]
+  | b0 :: b1 :: b2 :: rest =>
+    b64urlChar (b0 / 4) :: b64urlChar ((b0 % 4) * 16 + b1 / 16) ::
+    b64urlChar ((b1 % 16) * 4 + b2 / 64) :: b64urlChar (b2 % 64) ::
+    b64urlEncodeBytes rest
+
+def bytesToBase64url (bs : List Int) : String :=
+  String.ofList (b64urlEncodeBytes bs)
+
+def b64urlVal (c : Char) : Option Int :=
+  let n : Int := c.toNat
+  if 65 ≤ n ∧ n ≤ 90 then some (n - 65)
+  else if 97 ≤ n ∧ n ≤ 122 then some (n - 71)
+  else if 48 ≤ n ∧ n ≤ 57 then some (n + 4)
+  else if n = 45 then some 62
+  else if n = 95 then some 63
+  else none
+
+def b64urlDecodeChars : List Char → Option (List Int)
+  | [] => some []
+  | [_] => none
+  | [c0, c1] =>
+    match b64urlVal c0, b64urlVal c1 with
+    | some v0, some v1 =>
+      if v1 % 16 = 0 then some [v0 * 4 + v1 / 16] else none
+    | _, _ => none
+  | [c0, c1, c2] =>
+    match b64urlVal c0, b64urlVal c1, b64urlVal c2 with
+    | some v0, some v1, some v2 =>
+      if v2 % 4 = 0 then some [v0 * 4 + v1 / 16, (v1 % 16) * 16 + v2 / 4] else none
+    | _, _, _ => none
+  | c0 :: c1 :: c2 :: c3 :: rest =>
+    match b64urlVal c0, b64urlVal c1, b64urlVal c2, b64urlVal c3, b64urlDecodeChars rest with
+    | some v0, some v1, some v2, some v3, some tail =>
+      some ((v0 * 4 + v1 / 16) :: ((v1 % 16) * 16 + v2 / 4) :: ((v2 % 4) * 64 + v3) :: tail)
+    | _, _, _, _, _ => none
+
+def bytesFromBase64url (s : String) : Option (List Int) := b64urlDecodeChars s.toList
+
 end MoCore

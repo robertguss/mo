@@ -48,9 +48,14 @@ effects. `sqliteFake` is spec-only.
 | `commandWithin` | Command, Text | Command |
 | `commandAllowPrograms` | Command, List(Text) | Command |
 | `commandFake` | Map(Bytes, Bytes) | Command |
+| `secureRandomBytes` | SecureRandom, Int | Bytes |
+| `secureRandomSeeded` | Int | SecureRandom |
 
 The four `command*` operations stop with `Command is not modeled by mocore`,
-keeping prior effects; `commandFake` is spec-only.
+keeping prior effects; `commandFake` is spec-only. The two `secureRandom*`
+operations stop with `SecureRandom is not modeled by mocore`, keeping prior
+effects; `secureRandomSeeded` is spec-only. The `(crypto CryptoOp)` primitives
+stop with `Crypto is a trusted primitive unavailable in mocore`.
 
 ### Earlier changes from 0.9
 
@@ -428,7 +433,7 @@ bindings, and an absent span. The other Lean-written fixtures use `noSource`.
 P := (int IntOp) | (big BigOp) | (byte ByteOp) | (dec DecOp)
    | (float FloatOp) | (not) | (cmp Base CmpOp) | (char CharOp)
    | (text TextOp) | (bytes BytesOp) | (range RangeOp) | (time TimeOp)
-   | (unicode16 UnicodeOp)
+   | (unicode16 UnicodeOp) | (crypto CryptoOp)
    | (list T ListOp) | (map T T MapOp) | (set T SetOp) | (eq T)
    | (structural T) | (io IoOp)
 ```
@@ -447,8 +452,9 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `CmpOp` | `lt le gt ge` |
 | `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText` |
 | `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes` |
-| `BytesOp` | `size get decodeUtf8 slice join` |
+| `BytesOp` | `size get decodeUtf8 slice join toHex fromHex toBase64url fromBase64url` |
 | `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase letter digit` |
+| `CryptoOp` | `sha256 hmacSha256 constantTimeEq sealRaw openRaw hashPasswordRaw verifyPassword` |
 | `RangeOp` | `make start end toList contains toText` |
 | `TimeOp` | `sub add subDur checkedAdd toText parse durAdd durSub durMul durNeg inMilliseconds inSeconds durToText` |
 | `ListOp` | `size isEmpty get first last append prepend concat reverse take drop set removeAt uncons enumerate contains unique` |

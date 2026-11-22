@@ -81,8 +81,8 @@ static void test_interning_and_kinds(void) {
     uint32_t environment = intern(&types, (struct mo_type){.kind = MO_TYPE_ENV, .function = 71});
     CHECK(environment == intern(&types, (struct mo_type){.kind = MO_TYPE_ENV, .function = 71}));
     CHECK(environment != intern(&types, (struct mo_type){.kind = MO_TYPE_ENV, .function = 72}));
-    uint32_t capabilities[MO_CAP_COMMAND + 1];
-    for (unsigned cap = MO_CAP_ARGS; cap <= MO_CAP_COMMAND; cap++) {
+    uint32_t capabilities[MO_CAP_SECURE_RANDOM + 1];
+    for (unsigned cap = MO_CAP_ARGS; cap <= MO_CAP_SECURE_RANDOM; cap++) {
         struct mo_type key = {.kind = MO_TYPE_CAPABILITY, .capability = (enum mo_capability)cap};
         capabilities[cap] = intern(&types, key);
         CHECK(intern(&types, key) == capabilities[cap]);
@@ -110,7 +110,7 @@ static void test_interning_and_kinds(void) {
     CHECK(mo_type_is_reference(&types, function));
     CHECK(mo_type_is_reference(&types, environment));
     CHECK(mo_type_is_reference(&types, record));
-    for (unsigned cap = MO_CAP_ARGS; cap <= MO_CAP_COMMAND; cap++) {
+    for (unsigned cap = MO_CAP_ARGS; cap <= MO_CAP_SECURE_RANDOM; cap++) {
         CHECK(mo_type_is_reference(&types, capabilities[cap]));
     }
     mo_arena_free(&arena);

@@ -302,9 +302,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     const struct mo_type *signature = &f.types.items[f.signature[id]];
     uint32_t result_type = signature->result;
     size_t count = strlen(ownership[id]);
-    MO_ASSERT(count <= 3);
-    struct mo_cell args[3], held[3], result = mo_cell_int(41), unchanged = result;
-    struct mo_buffer before[3];
+    MO_ASSERT(count <= 4);
+    struct mo_cell args[4], held[4], result = mo_cell_int(41), unchanged = result;
+    struct mo_buffer before[4];
     size_t arguments_at = in.at;
     size_t built = 0;
     for (; built < count; built++) {
@@ -335,7 +335,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 struct prim_fixture reference;
                 prim_fixture_init_type(&reference, 4 << 20, element);
                 struct input replay = {data, size, arguments_at};
-                struct mo_cell operands[3], retained[3], expected;
+                struct mo_cell operands[4], retained[4], expected;
                 for (size_t i = 0; i < count; i++) {
                     MO_ASSERT(cell(&reference, signature->parameters[i], &replay, 0, &operands[i]));
                     retained[i] =

@@ -981,9 +981,9 @@ declare a type with its own name, as the module `Account` declares `Account`:
 `Account.open(...)` calls the module's function, and `Account` in a type is the
 type. There are no wildcards and no aliases. A clash between names is an error that suggests the
 qualified form, and so is a cycle of modules that use each other. The
-library's `Command`, `Http`, `Json` and `Unicode16` modules are used the same way. Every
+library's `Command`, `Crypto`, `Date`, `Http`, `Json` and `Unicode16` modules are used the same way. Every
 library module reserves its name, so a program can't declare a module named
-`Command`, `FileError`, `Files`, `Http`, `Json`, `List`, `Map`, `Option`, `ReadFiles`,
+`Command`, `Crypto`, `Date`, `FileError`, `Files`, `Http`, `Json`, `List`, `Map`, `Option`, `ReadFiles`,
 `Result`, `Set`, `Text`, `Time` or `Unicode16`. The built-in `Simulation` and
 `Sqlite` modules also reserve their names.
 
@@ -1045,6 +1045,7 @@ the same arguments, it always gives the same result.
 | `Sqlite` | open and query SQLite databases in the program's folder |
 | `Sqlite.Database` | run SQL statements and queries on one open database |
 | `Command` | run confined external programs inside one folder (with `use Command`) |
+| `SecureRandom` | draw cryptographically secure random bytes |
 
 ### 11.2 main
 
@@ -1212,7 +1213,7 @@ parameters bind by type and name in any order: `Principal` (running `auth`
 before the handler), `Api.Request`, `Sqlite.Database` (matching a `sqlite`
 clause by parameter name, ignoring a leading `_`), an actor handle (matching an
 `actor` clause by parameter name and type, ignoring a leading `_`), a capability (`Sqlite`,
-`Network`, `Command`, `Clock`, `Random`, `Files`, `ReadFiles`, `Env` or `Console`), a
+`Network`, `Command`, `Clock`, `Random`, `SecureRandom`, `Files`, `ReadFiles`, `Env` or `Console`), a
 `:param` scalar (`Int`, `Byte`, `BigInt`, `Decimal`, `Bool` or `Text`), an
 `Option` scalar query parameter, a required scalar query parameter on `get` or
 `delete`, or at most one `Json` request body parameter on `post`, `put` or
@@ -1476,7 +1477,7 @@ outside the program: `Console.fake()`, whose `printed` and `printed_errors` list
 the lines written to standard output and standard error;
 `Console.fake_input(lines)`, which also has those lines to read;
 `Files.in_memory(files)`, from a map of paths to texts; `Clock.fixed(time)`;
-`Random.seeded(n)`; `Args.of(list)`; `Env.of(map)`; `Network.fake(peers)`, from a
+`Random.seeded(n)`; `SecureRandom.seeded(n)`; `Args.of(list)`; `Env.of(map)`; `Network.fake(peers)`, from a
 map of the requests it answers (section 14); `Sqlite.fake()` and
 `Sqlite.in_memory()`, an in-memory SQLite capability (section 14);
 `Command.fake(replies)`, from a map of encoded command exchanges (section 14);
@@ -1865,7 +1866,13 @@ bytes from position `from` up to, but not including, `to`, counted from 0. A
 position past the end is the end, and `from` at or past `to` gives empty
 `Bytes`; a negative position is a bug (13.2).
 `Bytes.join(parts: List(Bytes)) : Bytes` gives all the parts, in order, as one
-value.
+value. `to_hex : Text` encodes lowercase ASCII hex and
+`Bytes.from_hex(text: Text) : Option(Bytes)` decodes ASCII hex (rejecting odd
+lengths or non-hex characters). `to_base64url : Text` encodes unpadded URL-safe
+Base64 (RFC 4648 section 5), and
+`Bytes.from_base64url(text: Text) : Option(Bytes)` decodes it strictly
+(rejecting invalid characters, length `1 mod 4`, `=` padding, and non-zero
+trailing pad bits).
 
 **List(T)**: `size : Int`, `empty? : Bool`. `get(i: Int)`, `first` and
 `last : Option(T)`; `get` gives `None` for a position below 0 or past the end.
@@ -1988,7 +1995,11 @@ and `Failed(path: Text, reason: Text)`. Its text forms are
 fixed clock by `duration` (a bug if `duration` is negative or moves the time
 outside the years 1 to 9999); `Clock.fixed(time: Time) : Clock`. **Random**:
 `int(low: Int, high: Int) : Int`, from `low` up to, but not including, `high`,
-which must be greater; `Random.seeded(seed: Int) : Random`. **Args** and
+which must be greater; `Random.seeded(seed: Int) : Random`. **SecureRandom**:
+`bytes(count: Int) : Bytes` draws `count` cryptographically secure random bytes
+(`0` to `65536`; outside that range is a bug, 13.2) from the operating system
+CSPRNG, failing closed on error; `SecureRandom.seeded(seed: Int) : SecureRandom`
+makes a deterministic fake in tests, examples and promises. **Args** and
 **Env** fakes: `Args.of(list: List(Text))`, `Env.of(map: Map(Text, Text))`.
 
 **Network**:
@@ -2337,6 +2348,34 @@ test "a fake command capability enforces folder and program narrowing"
   assert cmd.run("curl", ["http://x"], 5.seconds) == Error(Command.NotPermitted(program: "curl"))
 end
 ```
+
+**Crypto**, with `use Crypto`, wraps OpenSSL 3 cryptographic primitives:
+`Crypto.sha256(data: Bytes) : Bytes`, `Crypto.hmac_sha256(key: Bytes, data: Bytes) : Bytes`,
+`Crypto.constant_time_eq?(a: Bytes, b: Bytes) : Bool`,
+`Crypto.seal(key: Bytes, nonce: Bytes, plaintext: Bytes, aad: Bytes) : Result(Bytes, Crypto.CryptoError)`
+(AES-256-GCM with a 32-byte key and 12-byte nonce, returning ciphertext plus its
+16-byte authentication tag),
+`Crypto.open(key: Bytes, nonce: Bytes, ciphertext: Bytes, aad: Bytes) : Result(Bytes, Crypto.CryptoError)`
+(verifying the 16-byte tag before releasing plaintext, returning
+`Error(Crypto.DecryptionFailed)` on any mismatch or truncation),
+`Crypto.hash_password(password: Text, salt: Bytes) : Result(Text, Crypto.CryptoError)`
+(scrypt `ln=15,r=8,p=1` in self-describing PHC format with an explicit 16-to-128-byte
+salt), and `Crypto.verify_password(password: Text, encoded: Text) : Bool`.
+`CryptoError` has `InvalidKeyLength(expected: Int, got: Int)`,
+`InvalidNonceLength(expected: Int, got: Int)`, `InvalidSaltLength(got: Int)`,
+`DecryptionFailed` and `EncodingFailed(reason: Text)`.
+
+**Date**, with `use Date`, provides an opaque validated Gregorian calendar `Date`
+in years 1 to 9999 with `Equal`, `Hash`, `Order`, `Text` (`"YYYY-MM-DD"`) and
+`Json` (`"YYYY-MM-DD"`), plus `Weekday` (`Monday` through `Sunday`),
+`Date.from_ymd(year: Int, month: Int, day: Int) : Option(Date)`,
+`Date.parse_iso(text: Text) : Option(Date)`, `Date.from_time_utc(t: Time) : Date`,
+`to_iso : Text`, `year`, `month`, `day : Int`, `year_month : Text`,
+`weekday : Weekday`, `Date.days_in_month(year: Int, month: Int) : Int`,
+`add_days(days: Int) : Option(Date)`,
+`add_months(months: Int) : Option(Date)` (clamping month-end days safely, e.g.
+`2026-01-31` plus 1 month is `2026-02-28`), `days_between(a: Date, b: Date) : Int`,
+`first_of_month : Date`, `end_of_month : Date` and `short_label : Text`.
 
 ## 15. What comes later
 

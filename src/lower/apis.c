@@ -1302,6 +1302,15 @@ static mo_core_expr default_fake_cap(struct lowering *p, const char *cap_name) {
                                                 .as.io = {MO_CORE_IO_OP_RANDOM_SEEDED, false}},
                           a);
     }
+    if (strcmp(cap_name, "SecureRandom") == 0) {
+        mo_core_expr_list a = api_args(p, 1);
+        a.items[0] = lower_int(p, 0);
+        return lower_prim(
+            p,
+            (struct mo_core_prim){.tag = MO_CORE_PRIM_IO,
+                                  .as.io = {MO_CORE_IO_OP_SECURE_RANDOM_SEEDED, false}},
+            a);
+    }
     if (strcmp(cap_name, "Clock") == 0) {
         mo_core_expr tlit = lower_unit(p);
         tlit->as.lit->tag = MO_CORE_LIT_TIME;

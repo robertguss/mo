@@ -459,6 +459,138 @@ theorem bytesOf_some : ∀ {xs : List Value},
     · exact hbs
     · exact hin p hp
 
+theorem ValTy.optBytes {o : Option (List Int)}
+    (h : ∀ bs, o = some bs → ∀ b ∈ bs, InByte b) : ValTy P (optBytes o) (.option .bytes) := by
+  cases o with
+  | none => exact .noneV
+  | some bs => exact .someV (.bytes (h bs rfl))
+
+theorem hexVal_bounds {c : Char} {v : Int} (h : hexVal c = some v) : 0 ≤ v ∧ v ≤ 15 := by
+  unfold hexVal at h
+  dsimp only at h
+  split at h
+  · simp only [Option.some.injEq] at h; omega
+  · split at h
+    · simp only [Option.some.injEq] at h; omega
+    · split at h
+      · simp only [Option.some.injEq] at h; omega
+      · cases h
+
+theorem hexDecodeChars_inByte : ∀ {cs : List Char} {bs : List Int},
+    hexDecodeChars cs = some bs → ∀ b ∈ bs, InByte b
+  | [], _, h => by
+    simp only [hexDecodeChars, Option.some.injEq] at h; subst h; simp
+  | [_], _, h => by simp [hexDecodeChars] at h
+  | c1 :: c2 :: rest, bs, h => by
+    simp only [hexDecodeChars] at h
+    cases h1 : hexVal c1 with
+    | none => simp [h1] at h
+    | some hi =>
+      cases h2 : hexVal c2 with
+      | none => simp [h1, h2] at h
+      | some lo =>
+        cases h3 : hexDecodeChars rest with
+        | none => simp [h1, h2, h3] at h
+        | some tail =>
+          simp only [h1, h2, h3, Option.some.injEq] at h
+          subst h
+          have hb1 := hexVal_bounds h1
+          have hb2 := hexVal_bounds h2
+          intro b hb
+          rcases List.mem_cons.mp hb with rfl | hb
+          · unfold InByte; omega
+          · exact hexDecodeChars_inByte h3 b hb
+
+theorem b64urlVal_bounds {c : Char} {v : Int} (h : b64urlVal c = some v) : 0 ≤ v ∧ v ≤ 63 := by
+  unfold b64urlVal at h
+  dsimp only at h
+  split at h
+  · simp only [Option.some.injEq] at h; omega
+  · split at h
+    · simp only [Option.some.injEq] at h; omega
+    · split at h
+      · simp only [Option.some.injEq] at h; omega
+      · split at h
+        · simp only [Option.some.injEq] at h; omega
+        · split at h
+          · simp only [Option.some.injEq] at h; omega
+          · cases h
+
+theorem b64urlDecodeChars_inByte : ∀ {cs : List Char} {bs : List Int},
+    b64urlDecodeChars cs = some bs → ∀ b ∈ bs, InByte b
+  | [], _, h => by
+    simp only [b64urlDecodeChars, Option.some.injEq] at h; subst h; simp
+  | [_], _, h => by simp [b64urlDecodeChars] at h
+  | [c0, c1], bs, h => by
+    simp only [b64urlDecodeChars] at h
+    cases h0 : b64urlVal c0 with
+    | none => simp [h0] at h
+    | some v0 =>
+      cases h1 : b64urlVal c1 with
+      | none => simp [h0, h1] at h
+      | some v1 =>
+        simp only [h0, h1] at h
+        split at h
+        · simp only [Option.some.injEq] at h; subst h
+          have hb0 := b64urlVal_bounds h0
+          have hb1 := b64urlVal_bounds h1
+          intro b hb
+          simp only [List.mem_singleton] at hb; subst hb
+          unfold InByte; omega
+        · cases h
+  | [c0, c1, c2], bs, h => by
+    simp only [b64urlDecodeChars] at h
+    cases h0 : b64urlVal c0 with
+    | none => simp [h0] at h
+    | some v0 =>
+      cases h1 : b64urlVal c1 with
+      | none => simp [h0, h1] at h
+      | some v1 =>
+        cases h2 : b64urlVal c2 with
+        | none => simp [h0, h1, h2] at h
+        | some v2 =>
+          simp only [h0, h1, h2] at h
+          split at h
+          · simp only [Option.some.injEq] at h; subst h
+            have hb0 := b64urlVal_bounds h0
+            have hb1 := b64urlVal_bounds h1
+            have hb2 := b64urlVal_bounds h2
+            intro b hb
+            simp only [List.mem_cons, List.not_mem_nil, or_false] at hb
+            rcases hb with rfl | rfl <;> (unfold InByte; omega)
+          · cases h
+  | c0 :: c1 :: c2 :: c3 :: rest, bs, h => by
+    simp only [b64urlDecodeChars] at h
+    cases h0 : b64urlVal c0 with
+    | none => simp [h0] at h
+    | some v0 =>
+      cases h1 : b64urlVal c1 with
+      | none => simp [h0, h1] at h
+      | some v1 =>
+        cases h2 : b64urlVal c2 with
+        | none => simp [h0, h1, h2] at h
+        | some v2 =>
+          cases h3 : b64urlVal c3 with
+          | none => simp [h0, h1, h2, h3] at h
+          | some v3 =>
+            cases hr : b64urlDecodeChars rest with
+            | none => simp [h0, h1, h2, h3, hr] at h
+            | some tail =>
+              simp only [h0, h1, h2, h3, hr, Option.some.injEq] at h
+              subst h
+              have hb0 := b64urlVal_bounds h0
+              have hb1 := b64urlVal_bounds h1
+              have hb2 := b64urlVal_bounds h2
+              have hb3 := b64urlVal_bounds h3
+              intro b hb
+              rcases List.mem_cons.mp hb with rfl | hb
+              · unfold InByte; omega
+              · rcases List.mem_cons.mp hb with rfl | hb
+                · unfold InByte; omega
+                · rcases List.mem_cons.mp hb with rfl | hb
+                  · unfold InByte; omega
+                  · exact b64urlDecodeChars_inByte hr b hb
+
 theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
   cases op
   case slice =>
@@ -479,6 +611,10 @@ theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
   case size => exact okInt_safe
   case get => exact bytesGet_ty ‹_›
   case decodeUtf8 => exact .optText
+  case toHex => exact .text
+  case fromHex => exact .optBytes fun _ h => hexDecodeChars_inByte h
+  case toBase64url => exact .text
+  case fromBase64url => exact .optBytes fun _ h => b64urlDecodeChars_inByte h
 
 /-- The whole numbers of a range between two `Int`s are `Int`s. -/
 theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :
@@ -920,6 +1056,7 @@ theorem prims_safe : PrimsSafe P := by
   | text op => exact textOp_safe op
   | bytes op => exact bytesOp_safe op
   | unicode16 _ => intro vs w h; exact True.intro
+  | crypto _ => intro vs w h; exact True.intro
   | sim _ => intro vs w h; exact True.intro
   | range op => exact rangeOp_safe op
   | time op => exact timeOp_safe op

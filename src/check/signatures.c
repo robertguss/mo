@@ -477,42 +477,17 @@ const char *mo_builtin_type(const struct mo_syntax *name, uint32_t *arity) {
     static const struct {
         const char *name;
         uint32_t arity;
-    } natives[] = {{"Bool", 0},
-                   {"Int", 0},
-                   {"BigInt", 0},
-                   {"Byte", 0},
-                   {"Decimal", 0},
-                   {"Float", 0},
-                   {"Text", 0},
-                   {"Char", 0},
-                   {"Bytes", 0},
-                   {"Unit", 0},
-                   {"List", 1},
-                   {"Map", 2},
-                   {"Set", 1},
-                   {"Range", 0},
-                   {"Time", 0},
-                   {"Duration", 0},
-                   {"Option", 1},
-                   {"Result", 2},
-                   {"Ordering", 0},
-                   {"Args", 0},
-                   {"Env", 0},
-                   {"Console", 0},
-                   {"Files", 0},
-                   {"ReadFiles", 0},
-                   {"Clock", 0},
-                   {"Random", 0},
-                   {"FileError", 0},
-                   {"Entry", 0},
-                   {"EntryKind", 0},
-                   {"Simulation", 0},
-                   {"SimulationError", 0},
-                   {"Network", 0},
-                   {"Connection", 0},
-                   {"NetworkError", 0},
-                   {"Sqlite", 0},
-                   {"SqliteError", 0}};
+    } natives[] = {
+        {"Bool", 0},       {"Int", 0},        {"BigInt", 0},       {"Byte", 0},
+        {"Decimal", 0},    {"Float", 0},      {"Text", 0},         {"Char", 0},
+        {"Bytes", 0},      {"Unit", 0},       {"List", 1},         {"Map", 2},
+        {"Set", 1},        {"Range", 0},      {"Time", 0},         {"Duration", 0},
+        {"Option", 1},     {"Result", 2},     {"Ordering", 0},     {"Args", 0},
+        {"Env", 0},        {"Console", 0},    {"Files", 0},        {"ReadFiles", 0},
+        {"Clock", 0},      {"Random", 0},     {"SecureRandom", 0}, {"FileError", 0},
+        {"Entry", 0},      {"EntryKind", 0},  {"Simulation", 0},   {"SimulationError", 0},
+        {"Network", 0},    {"Connection", 0}, {"NetworkError", 0}, {"Sqlite", 0},
+        {"SqliteError", 0}};
     for (size_t i = 0; i < sizeof(natives) / sizeof(natives[0]); i++)
         if (compare_name(name, natives[i].name) == 0) {
             *arity = natives[i].arity;

@@ -276,6 +276,8 @@ if have python3; then
 		for driver in "${drivers[@]}"; do
 			later "The library: every file passes mo test ($driver)" \
 				python3 ci/check_lib.py "$driver"
+			later "Crypto & Bytes encodings: differential cross-check vs Python stdlib ($driver)" \
+				python3 ci/check_crypto.py "$driver"
 		done
 		for driver in "${drivers[@]}"; do
 			later "Tools and services: every program in tools/ and services/mo-*/ passes mo test ($driver)" \

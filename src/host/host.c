@@ -55,9 +55,10 @@ mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, ui
         [MO_CAP_SQLITE] = {MO_CAP_SQLITE, fake_, mo_host_sqlite_call},                             \
         [MO_CAP_DATABASE] = {MO_CAP_DATABASE, fake_, mo_host_sqlite_call},                         \
         [MO_CAP_COMMAND] = {MO_CAP_COMMAND, fake_, mo_host_command_call},                          \
+        [MO_CAP_SECURE_RANDOM] = {MO_CAP_SECURE_RANDOM, fake_, mo_host_misc},                      \
     }
-const struct mo_host_operations mo_host_operations[2][MO_CAP_COMMAND + 1] = {OPERATIONS(false),
-                                                                             OPERATIONS(true)};
+const struct mo_host_operations mo_host_operations[2][MO_CAP_SECURE_RANDOM + 1] = {
+    OPERATIONS(false), OPERATIONS(true)};
 #undef OPERATIONS
 
 enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason) {
@@ -104,6 +105,9 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
     if (operation == MO_HOST_RANDOM_SEEDED)
         return mo_host_random_new(host, heap, type, true, (uint64_t)mo_cell_get_int(args[0]), out,
                                   error);
+    if (operation == MO_HOST_SECURERANDOM_SEEDED)
+        return mo_host_secure_random_new(host, heap, type, true, (uint64_t)mo_cell_get_int(args[0]),
+                                         out, error);
     if (operation == MO_HOST_FILES_IN_MEMORY) {
         enum mo_host_outcome result = mo_host_files_fake(host, heap, type, args[0], out, error);
         if (result == MO_HOST_RETURNED)
@@ -164,6 +168,8 @@ static enum mo_host_outcome mo_host_misc(struct mo_host *host, struct mo_heap *h
     }
     if (operation == MO_HOST_RANDOM_INT)
         return mo_host_random(host, heap, type, args, out, error);
+    if (operation == MO_HOST_SECURERANDOM_BYTES)
+        return mo_host_secure_random_bytes(host, heap, type, args, out, error);
     const struct mo_host_operations *operations = info->operations;
     if (operation == MO_HOST_CLOCK_SLEEP) {
         int64_t duration = mo_cell_get_duration(args[1]);
@@ -252,7 +258,7 @@ enum mo_host_outcome mo_host_real(struct mo_host *host, struct mo_heap *heap, ui
     }
     if (cap == MO_CAP_CONSOLE)
         return mo_host_console_real(heap, type, out);
-    if (cap == MO_CAP_CLOCK || cap == MO_CAP_NETWORK) {
+    if (cap == MO_CAP_CLOCK || cap == MO_CAP_NETWORK || cap == MO_CAP_SECURE_RANDOM) {
         struct mo_capability_info info = {.operations = &mo_host_operations[false][cap]};
         return mo_value_capability(heap, type, &info, out) ? MO_HOST_RETURNED
                                                            : MO_HOST_OUT_OF_MEMORY;
@@ -329,6 +335,10 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
         return mo_host_random_restore(heap, type, true, initial->as.random, out)
                    ? MO_HOST_RETURNED
                    : MO_HOST_OUT_OF_MEMORY;
+    case MO_CAP_SECURE_RANDOM:
+        return mo_host_secure_random_restore(heap, type, true, initial->as.secure_random, out)
+                   ? MO_HOST_RETURNED
+                   : MO_HOST_OUT_OF_MEMORY;
     }
     MO_UNREACHABLE();
 }
@@ -390,6 +400,9 @@ bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo
     case MO_CAP_RANDOM:
         mo_host_random_snapshot(capability, result.as.random);
         break;
+    case MO_CAP_SECURE_RANDOM:
+        mo_host_secure_random_snapshot(capability, result.as.secure_random);
+        break;
     }
     *out = result;
     return true;
@@ -429,6 +442,7 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
         break;
     case MO_CAP_CLOCK:
     case MO_CAP_RANDOM:
+    case MO_CAP_SECURE_RANDOM:
         break;
     }
 }

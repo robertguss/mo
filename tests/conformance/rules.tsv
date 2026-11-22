@@ -145,6 +145,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.1/11	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
 11.1/12	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
 11.1/13	cap-command-fake				tests/test_command.c:test_real_command
+11.1/14	lib-crypto-date				tests/test_crypto.c:test_secure_random_and_threads,tests/test_fakes.c:secure_random_deterministic
 11.2/1	cap-files-read,cap-args-list,cap-network-error	e0079			tests/test_check.c:corpus
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
 11.3/1	cap-files-fake,cap-files-within-escape			
@@ -261,6 +262,8 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/36	cap-sqlite-fake,api-server	e0098-sqlite			tests/test_sqlite.c:test_fake_sqlite,tests/test_fakes.c:sqlite_starts_empty
 14/37	api-server				lib/api.mo:request,lib/api.mo:match_path,lib/api.mo:sse_response,tests/test_api_server.c:main
 14/38	cap-command-fake	e0098-command			lib/command.mo:run,lib/command.mo:replies,tests/test_command.c:test_real_command,tests/test_command.c:test_containment_and_allowlist,tests/test_command.c:test_fake_command,tests/test_fakes.c:command_starts_empty,fuzz/fuzz_command.c:LLVMFuzzerTestOneInput
+14/39	lib-crypto-date				lib/crypto.mo:seal,lib/crypto.mo:open,lib/crypto.mo:hash_password,tests/test_crypto.c:test_sha256_fips_180_4,tests/test_crypto.c:test_hmac_sha256_rfc_4231,tests/test_crypto.c:test_aes_256_gcm_nist_sp_800_38d,tests/test_crypto.c:test_scrypt_and_constant_time,ci/check_crypto.py:main,fuzz/fuzz_crypto.c:LLVMFuzzerTestOneInput
+14/40	lib-crypto-date				lib/date.mo:from_ymd,lib/date.mo:parse_iso,lib/date.mo:from_time_utc,lib/date.mo:add_months,lib/date.mo:days_between,lib/date.mo:to_json,lib/date.mo:from_json
 15/1							Roadmap only: it names later phases and changes no rule of v0.1.
 A/1		e0412			ci/check_errors.py:check_cases
 A/2		e0412			ci/check_errors.py:check_cases

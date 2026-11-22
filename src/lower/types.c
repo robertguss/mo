@@ -229,8 +229,9 @@ static mo_core_ty make_type(struct lowering *p, const struct mo_source_type *sou
                 }
             if (!found) {
                 static const char *const caps[] = {
-                    "Console", "Files",   "ReadFiles",  "Clock",  "Random",          "Args",
-                    "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database", "Command"};
+                    "Console",     "Files",   "ReadFiles",  "Clock",  "Random",          "Args",
+                    "Env",         "Network", "Connection", "Sqlite", "Sqlite.Database", "Command",
+                    "SecureRandom"};
                 for (size_t i = 0; i < sizeof caps / sizeof caps[0]; i++)
                     if (strcmp(source->name, caps[i]) == 0) {
                         t->tag = MO_CORE_TY_CAP;

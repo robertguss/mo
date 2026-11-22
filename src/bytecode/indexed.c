@@ -105,8 +105,8 @@ static MO_MUST_USE bool type(struct mo_text_reader *r) {
         return function_index(r);
     uint32_t capability;
     source = r->token.start;
-    return mo_text_enum(r, mo_capability_names, MO_CAP_COMMAND + 1, "expected capability name",
-                        &capability) &&
+    return mo_text_enum(r, mo_capability_names, MO_CAP_SECURE_RANDOM + 1,
+                        "expected capability name", &capability) &&
            mo_text_word(r, capability, source);
 }
 

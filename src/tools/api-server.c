@@ -831,7 +831,7 @@ void mo_api_serve_fd(const struct mo_image *image, uint32_t wire_fn, int folder_
     const struct mo_types *types = mo_image_types(image);
     const struct mo_bytecode_function *fn = &bc->functions[wire_fn];
     uint32_t pcount = fn->parameter_count;
-    MO_ASSERT(pcount >= 4 && pcount <= 4 + 9 + MO_LIMIT_API_ACTORS);
+    MO_ASSERT(pcount >= 4 && pcount <= 4 + 10 + MO_LIMIT_API_ACTORS);
 
     struct mo_cell call_args[48] = {{{0}}};
     uint32_t built_args = 0;

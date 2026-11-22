@@ -207,6 +207,13 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
         row = rows[p->as.unicode16];
         break;
     }
+    case MO_CORE_PRIM_CRYPTO: {
+#define ROW(id, wire) MO_PRIM_CRYPTO_##id,
+        static const enum mo_primitive_id rows[] = {MO_CORE_CRYPTO_OPS(ROW)};
+#undef ROW
+        row = rows[p->as.crypto];
+        break;
+    }
     case MO_CORE_PRIM_RANGE:
         if (p->as.range == MO_CORE_RANGE_OP_MAKE) {
             *out = native(MO_OP_MAKE_RANGE, "fn(Int, Int) : Range", "bb");
@@ -371,7 +378,9 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_COMMAND_RUN_RAW,
                                                MO_HOST_COMMAND_WITHIN,
                                                MO_HOST_COMMAND_ALLOW_PROGRAMS,
-                                               MO_HOST_COMMAND_FAKE};
+                                               MO_HOST_COMMAND_FAKE,
+                                               MO_HOST_SECURERANDOM_BYTES,
+                                               MO_HOST_SECURERANDOM_SEEDED};
         _Static_assert(sizeof rows / sizeof rows[0] == MO_CORE_IO_OP_READ_TEXT,
                        "one row for each Core IO operation");
         static const enum mo_host_id files[] = {MO_HOST_FILES_READ_TEXT, MO_HOST_FILES_READ_BYTES,

@@ -1121,6 +1121,34 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
   stops program (io .commandFake [mapOf tBytes tBytes []]) (tCap .command)
     (.outside "Command is not modeled by mocore")
 
+#guard Text.exprRoundTrip (prim (.crypto .sha256) [.lit (.bytes [1, 2])]) &&
+  typedAs? program [] (prim (.crypto .sha256) [.lit (.bytes [1, 2])]) tBytes &&
+  typedAs? program [] (prim (.crypto .hmacSha256) [.lit (.bytes []), .lit (.bytes [])]) tBytes &&
+  typedAs? program [] (prim (.crypto .constantTimeEq) [.lit (.bytes []), .lit (.bytes [])]) tBool &&
+  typedAs? program [] (prim (.crypto .sealRaw) [.lit (.bytes []), .lit (.bytes []), .lit (.bytes []), .lit (.bytes [])])
+    (.result .bytes .text) &&
+  typedAs? program [] (prim (.crypto .openRaw) [.lit (.bytes []), .lit (.bytes []), .lit (.bytes []), .lit (.bytes [])])
+    (.result .bytes .text) &&
+  typedAs? program [] (prim (.crypto .hashPasswordRaw) [str "pw", .lit (.bytes [])])
+    (.result .text .text) &&
+  typedAs? program [] (prim (.crypto .verifyPassword) [str "pw", str "enc"]) tBool &&
+  stops program (prim (.crypto .sha256) [.lit (.bytes [])]) tBytes
+    (.outside "Crypto is a trusted primitive unavailable in mocore")
+
+#guard Text.exprRoundTrip (io .secureRandomBytes [v "r", int 16]) &&
+  Text.exprRoundTrip (io .secureRandomSeeded [int 42]) &&
+  typedAs? program [("r", tCap .secureRandom)] (io .secureRandomBytes [v "r", int 16]) tBytes &&
+  stops program (io .secureRandomSeeded [int 42]) (tCap .secureRandom)
+    (.outside "SecureRandom is not modeled by mocore")
+
+#guard passes program (eq tText (prim (.bytes .toHex) [.lit (.bytes [0, 15, 16, 255])]) (str "000f10ff")) &&
+  passes program (eq (tOpt tBytes) (prim (.bytes .fromHex) [str "000F10ff"]) (some_ tBytes (.lit (.bytes [0, 15, 16, 255])))) &&
+  passes program (eq (tOpt tBytes) (prim (.bytes .fromHex) [str "abc"]) (none_ tBytes)) &&
+  passes program (eq tText (prim (.bytes .toBase64url) [.lit (.bytes [0xfb, 0xff])]) (str "-_8")) &&
+  passes program (eq (tOpt tBytes) (prim (.bytes .fromBase64url) [str "-_8"]) (some_ tBytes (.lit (.bytes [0xfb, 0xff])))) &&
+  passes program (eq (tOpt tBytes) (prim (.bytes .fromBase64url) [str "Zh"]) (none_ tBytes)) &&
+  passes program (eq (tOpt tBytes) (prim (.bytes .fromBase64url) [str "Zg=="]) (none_ tBytes))
+
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program
   (eq (tRes (tList .entry) tFileError) (io (.entries false) [v "files", str "."])

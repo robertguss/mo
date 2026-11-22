@@ -19,6 +19,16 @@ enum mo_prim_status mo_prim_option(struct mo_prim_call *call, bool some, struct 
                : MO_PRIM_OUT_OF_MEMORY;
 }
 
+enum mo_prim_status mo_prim_result(struct mo_prim_call *call, bool ok, struct mo_cell value,
+                                   struct mo_cell *out) {
+    const struct mo_type *t = &call->types->items[call->result];
+    MO_ASSERT(t->kind == MO_TYPE_CHOICE && t->case_count == 2 &&
+              strcmp(t->cases[0].name, "Ok") == 0 && strcmp(t->cases[1].name, "Error") == 0);
+    return mo_value_case(call->heap, call->result, ok ? 0U : 1U, &value, 1U, out)
+               ? MO_PRIM_RETURNED
+               : MO_PRIM_OUT_OF_MEMORY;
+}
+
 enum mo_prim_status mo_prim_print(struct mo_prim_call *call, uint32_t type, struct mo_cell value,
                                   struct mo_cell *out) {
     struct mo_buffer text;
@@ -204,6 +214,10 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     case MO_PRIM_BYTES_DECODE_UTF8:
     case MO_PRIM_BYTES_SLICE:
     case MO_PRIM_BYTES_JOIN:
+    case MO_PRIM_BYTES_TO_HEX:
+    case MO_PRIM_BYTES_FROM_HEX:
+    case MO_PRIM_BYTES_TO_BASE64URL:
+    case MO_PRIM_BYTES_FROM_BASE64URL:
         status = mo_prim_text(&call, &result);
         break;
     case MO_PRIM_LIST_EMPTY:
@@ -269,6 +283,15 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     case MO_PRIM_UNICODE16_LETTER:
     case MO_PRIM_UNICODE16_DIGIT:
         status = mo_prim_unicode(&call, &result);
+        break;
+    case MO_PRIM_CRYPTO_SHA256:
+    case MO_PRIM_CRYPTO_HMAC_SHA256:
+    case MO_PRIM_CRYPTO_CONSTANT_TIME_EQ:
+    case MO_PRIM_CRYPTO_SEAL_RAW:
+    case MO_PRIM_CRYPTO_OPEN_RAW:
+    case MO_PRIM_CRYPTO_HASH_PASSWORD_RAW:
+    case MO_PRIM_CRYPTO_VERIFY_PASSWORD:
+        status = mo_prim_crypto(&call, &result);
         break;
     case MO_PRIM_COUNT:
     default:

@@ -366,7 +366,7 @@ def guide_claims(binary):
     says("The `lib/` folder holds library modules written in Mo, embedded into the `mo` binary so "
          "a single `mo` executable runs anywhere without an external `lib/` directory "
          "(`--lib DIR` overrides the embedded library with a folder on disk).",
-         "Every `mo` command loads them with your program, `Command`, `Http`, `Json` and `Unicode16` only "
+         "Every `mo` command loads them with your program, `Command`, `Crypto`, `Date`, `Http`, `Json` and `Unicode16` only "
          "when a `use` line names them.",
          "`mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own.")
     for library_file in sorted((root / "lib").glob("*.mo")):
@@ -598,6 +598,27 @@ def guide_claims(binary):
             "    Ok(Command.Output(status: 0, stdout: \"ok\\n\", stderr: \"\"))\n"
             "  assert scoped.run(\"sh\", [], 5.seconds) == Error(Command.NotPermitted(program: \"sh\"))\n"
             "  assert cmd.within(\"../x\").run(\"mo\", [], 5.seconds) == Error(Command.OutsideFolder(path: \"../x\"))\n"
+            "end\n")
+        result = run(binary, ["test", str(source)], 0)
+        assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
+    says("`SecureRandom` draws cryptographically secure random bytes via `rng.bytes(count)`",
+         "After `use Crypto`, `Crypto.sha256`, `Crypto.hmac_sha256`, `Crypto.constant_time_eq?`, "
+         "`Crypto.seal`, `Crypto.open`, `Crypto.hash_password` and `Crypto.verify_password`",
+         "After `use Date`, `Date` provides opaque validated Gregorian dates")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\nuse Crypto\nuse Date\nuse Json\n\ntest \"crypto and date claim\"\n"
+            "  rng = SecureRandom.seeded(7)\n"
+            "  key = rng.bytes(32)\n"
+            "  nonce = rng.bytes(12)\n"
+            "  assert Crypto.seal(key, nonce, \"hello\".bytes, \"aad\".bytes) is Ok(ct)\n"
+            "  assert Crypto.open(key, nonce, ct, \"aad\".bytes) == Ok(\"hello\".bytes)\n"
+            "  assert Bytes.from_hex(key.to_hex) == Some(key)\n"
+            "  assert Bytes.from_base64url(key.to_base64url) == Some(key)\n"
+            "  assert Date.parse_iso(\"2026-01-31\") is Some(d)\n"
+            "  assert d.add_months(1) == Date.from_ymd(2026, 2, 28)\n"
+            "  assert Json.encode(d) == \"\\\"2026-01-31\\\"\"\n"
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)

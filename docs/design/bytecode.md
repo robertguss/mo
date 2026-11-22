@@ -63,7 +63,7 @@ monomorphization, each once. A type is one of:
 | `choice` | name; cases, each with a name and its fields' names and types, and whether its one field is unnamed | see 2.3 |
 | `function` | parameter types, result type | reference to a closure |
 | `env` | the closure code's function index | the closure seen from inside (section 5.3) |
-| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random`, `Simulation`, `Network`, `Connection`, `Sqlite`, `Sqlite.Database` or `Command` | reference |
+| `capability` | which: `Args`, `Env`, `Console`, `Files`, `ReadFiles`, `Clock`, `Random`, `Simulation`, `Network`, `Connection`, `Sqlite`, `Sqlite.Database`, `Command` or `SecureRandom` | reference |
 
 Structural types (tuples, lists, sets, maps and functions) are interned, so
 two types are equal exactly when their indices are. Records and choice types
@@ -1065,12 +1065,13 @@ constructor makes a capability rather than using one, so `host` calls it by
 - `Files`: `read_text`, `read_bytes`, `write_text`, `append_text`, `remove`,
   `make_folder`, `list`, `entries`, `exists?`, `within` and `read_only`;
 - `ReadFiles`: `read_text`, `read_bytes`, `list`, `entries`, `exists?` and `within`;
-- `Clock`: `now` and `sleep`. `Random`: `int`. `Args`: `list`. `Env`: `get`;
+- `Clock`: `now` and `sleep`. `Random`: `int`. `SecureRandom`: `bytes`. `Args`: `list`. `Env`: `get`;
 - `Network`: `connect`, `connect_secure` and `allow_hosts`. `Connection`: `send` and `receive`;
 - `Sqlite`: `open`. `Sqlite.Database`: `run` and `query`;
+- `Command`: `run_raw`, `within` and `allow_programs`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
-  `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of`,
-  `Network.fake` and `Sqlite.fake`.
+  `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `SecureRandom.seeded`, `Args.of`, `Env.of`,
+  `Network.fake`, `Sqlite.fake` and `Command.fake`.
 
 `STOREOP` entries in `hostops.def` (`LOAD`, `APPEND`, `SNAPSHOT`) are runtime-only:
 they have no bytecode opcode and no `host` encoding.

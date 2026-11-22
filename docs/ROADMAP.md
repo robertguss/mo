@@ -29,6 +29,11 @@ data-wrangling ergonomics for real external API spikes (Populi, Canvas LMS, and
 local SQLite). Speculative surface-language additions are frozen until earned by
 daily use.
 
+Alongside daily-driver hardening, web-application primitives and the pure-Mo
+Arvo framework are tracked in [arvo-plan.md](design/arvo-plan.md) and
+[arvo-spec.md](design/arvo-spec.md) (`Crypto`, `SecureRandom`, `Bytes` hex and
+base64url, `Date`, `api`/`mo serve` web upgrades, and typed `Sqlite` decoding).
+
 The Post-Phase 7 sprint ([post-phase7-direction.md](design/post-phase7-direction.md))
 replaced ceremony gates with fast `mo test` (`--mutants` opt-in), code-first
 `promise` blocks with automatic non-vacuity checking, Perceus in-place reuse and

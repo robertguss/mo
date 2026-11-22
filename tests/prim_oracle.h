@@ -456,8 +456,8 @@ static void oracle_query(struct prim_fixture *fixtures, const struct mo_buffer *
     const struct mo_type *signature = &f->types.items[instantiation];
     uint32_t result_type = signature->result;
     size_t count = query->as.tuple.count - 2;
-    MO_ASSERT(count <= 3);
-    struct mo_cell args[3], held[3], result = mo_cell_int(41);
+    MO_ASSERT(count <= 4);
+    struct mo_cell args[4], held[4], result = mo_cell_int(41);
     for (size_t i = 0; i < count; i++) {
         args[i] = oracle_cell(f, signature->parameters[i], query->as.tuple.items[i + 2]);
         if (shared)

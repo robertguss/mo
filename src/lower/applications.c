@@ -438,7 +438,11 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                      {"Bytes.get", MO_CORE_BYTES_OP_GET},
                      {"Bytes.decode_utf8", MO_CORE_BYTES_OP_DECODE_UTF8},
                      {"Bytes.slice", MO_CORE_BYTES_OP_SLICE},
-                     {"Bytes.join", MO_CORE_BYTES_OP_JOIN}};
+                     {"Bytes.join", MO_CORE_BYTES_OP_JOIN},
+                     {"Bytes.to_hex", MO_CORE_BYTES_OP_TO_HEX},
+                     {"Bytes.from_hex", MO_CORE_BYTES_OP_FROM_HEX},
+                     {"Bytes.to_base64url", MO_CORE_BYTES_OP_TO_BASE64URL},
+                     {"Bytes.from_base64url", MO_CORE_BYTES_OP_FROM_BASE64URL}};
         for (size_t i = 0; i < sizeof bytes / sizeof bytes[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, bytes[i].name) == 0)
@@ -513,6 +517,24 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                                                         .as.unicode16 = unicodes[i].operation},
                                   args);
         }
+        static const struct {
+            const char *name;
+            enum mo_core_crypto_op operation;
+        } cryptos[] = {{"Crypto.sha256", MO_CORE_CRYPTO_OP_SHA256},
+                       {"Crypto.hmac_sha256", MO_CORE_CRYPTO_OP_HMAC_SHA256},
+                       {"Crypto.constant_time_eq?", MO_CORE_CRYPTO_OP_CONSTANT_TIME_EQ},
+                       {"Crypto.seal_raw", MO_CORE_CRYPTO_OP_SEAL_RAW},
+                       {"Crypto.open_raw", MO_CORE_CRYPTO_OP_OPEN_RAW},
+                       {"Crypto.hash_password_raw", MO_CORE_CRYPTO_OP_HASH_PASSWORD_RAW},
+                       {"Crypto.verify_password", MO_CORE_CRYPTO_OP_VERIFY_PASSWORD}};
+        for (size_t i = 0; i < sizeof cryptos / sizeof cryptos[0]; i++) {
+            lower_work(p, 1);
+            if (strcmp(r->native, cryptos[i].name) == 0)
+                return lower_prim(p,
+                                  (struct mo_core_prim){.tag = MO_CORE_PRIM_CRYPTO,
+                                                        .as.crypto = cryptos[i].operation},
+                                  args);
+        }
     }
     if (r->native != NULL) {
         static const struct {
@@ -565,7 +587,9 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Command.run_raw", {MO_CORE_IO_OP_COMMAND_RUN_RAW, false}},
                   {"Command.within", {MO_CORE_IO_OP_COMMAND_WITHIN, false}},
                   {"Command.allow_programs", {MO_CORE_IO_OP_COMMAND_ALLOW_PROGRAMS, false}},
-                  {"Command.fake", {MO_CORE_IO_OP_COMMAND_FAKE, false}}};
+                  {"Command.fake", {MO_CORE_IO_OP_COMMAND_FAKE, false}},
+                  {"SecureRandom.bytes", {MO_CORE_IO_OP_SECURE_RANDOM_BYTES, false}},
+                  {"SecureRandom.seeded", {MO_CORE_IO_OP_SECURE_RANDOM_SEEDED, false}}};
         for (size_t i = 0; i < sizeof io / sizeof io[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, io[i].name) == 0)

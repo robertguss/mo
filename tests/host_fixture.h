@@ -16,7 +16,7 @@ struct host_fixture {
     struct mo_heap *heap;
     struct mo_host host;
     uint32_t unit, boolean, bytes, time;
-    uint32_t capabilities[MO_CAP_COMMAND + 1];
+    uint32_t capabilities[MO_CAP_SECURE_RANDOM + 1];
     uint32_t option, file_error, result_text, result_bytes, result_unit, result_names,
         result_entries;
     uint32_t integer, network_error, result_connection, result_sent, result_received;
@@ -40,7 +40,7 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &text, .parameter_count = 1});
     uint32_t real = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_FLOAT});
     f->integer = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_INT});
-    for (unsigned i = 0; i <= MO_CAP_COMMAND; i++) {
+    for (unsigned i = 0; i <= MO_CAP_SECURE_RANDOM; i++) {
         if (i != MO_CAP_SIMULATION)
             f->capabilities[i] =
                 heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
@@ -293,6 +293,10 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
         return f->capabilities[MO_CAP_COMMAND];
     case MO_HOST_COMMAND_RUN_RAW:
         return f->result_command;
+    case MO_HOST_SECURERANDOM_SEEDED:
+        return f->capabilities[MO_CAP_SECURE_RANDOM];
+    case MO_HOST_SECURERANDOM_BYTES:
+        return f->bytes;
     default:
         MO_UNREACHABLE();
     }
