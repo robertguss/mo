@@ -106,8 +106,8 @@ enum mo_host_outcome mo_host_call(struct mo_host *host, struct mo_heap *heap, ui
         return mo_host_random_new(host, heap, type, true, (uint64_t)mo_cell_get_int(args[0]), out,
                                   error);
     if (operation == MO_HOST_SECURERANDOM_SEEDED)
-        return mo_host_secure_random_new(host, heap, type, true, (uint64_t)mo_cell_get_int(args[0]),
-                                         out, error);
+        return mo_host_secure_random_new(host, heap, type, (uint64_t)mo_cell_get_int(args[0]), out,
+                                         error);
     if (operation == MO_HOST_FILES_IN_MEMORY) {
         enum mo_host_outcome result = mo_host_files_fake(host, heap, type, args[0], out, error);
         if (result == MO_HOST_RETURNED)
@@ -336,7 +336,7 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
                    ? MO_HOST_RETURNED
                    : MO_HOST_OUT_OF_MEMORY;
     case MO_CAP_SECURE_RANDOM:
-        return mo_host_secure_random_restore(heap, type, true, initial->as.secure_random, out)
+        return mo_host_secure_random_restore(heap, type, initial->as.secure_random, out)
                    ? MO_HOST_RETURNED
                    : MO_HOST_OUT_OF_MEMORY;
     }

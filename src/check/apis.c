@@ -821,7 +821,7 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
                                   "an api route handler takes the auth principal twice", NULL);
             auth_mode = MO_API_AUTH_OPTIONAL;
             params[i] = (struct mo_checked_api_param){
-                .kind = MO_API_PARAM_AUTH_OPTIONAL, .name = pname, .type = ptype};
+                .kind = MO_API_PARAM_AUTH, .name = pname, .type = ptype};
             continue;
         }
         if (api_same_type(p, ptype, p->req_type, 0)) {

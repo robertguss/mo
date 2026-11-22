@@ -655,7 +655,6 @@ static mo_core_expr bind_route_params(struct lowering *p, const struct dispatch_
     const struct mo_checked_api_param *pm = &route->params[idx];
     switch (pm->kind) {
     case MO_API_PARAM_AUTH:
-    case MO_API_PARAM_AUTH_OPTIONAL:
         arg_vars[idx] = auth_var;
         return bind_route_params(p, env, route, captured_var, auth_var, db_vars, idx + 1, arg_vars);
     case MO_API_PARAM_REQUEST:

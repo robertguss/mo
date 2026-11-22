@@ -463,7 +463,7 @@ static MO_MUST_USE enum mo_prim_status crypto_verify_password(struct mo_prim_cal
     if (pos >= encoded.length)
         return MO_PRIM_RETURNED;
     size_t salt_b64_len = pos - salt_start;
-    pos++; /* skip '$' */
+    pos++;
     size_t hash_start = pos;
     size_t hash_b64_len = encoded.length - hash_start;
     if (hash_b64_len == 0)

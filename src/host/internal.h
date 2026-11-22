@@ -49,9 +49,9 @@ MO_MUST_USE enum mo_host_outcome mo_host_random(struct mo_host *host, struct mo_
                                                 uint32_t type, const struct mo_cell *args,
                                                 struct mo_cell *out, struct mo_host_error *error);
 MO_MUST_USE enum mo_host_outcome
-mo_host_secure_random_new(struct mo_host *host, struct mo_heap *heap, uint32_t type, bool fake,
-                          uint64_t seed, struct mo_cell *out, struct mo_host_error *error);
-MO_MUST_USE bool mo_host_secure_random_restore(struct mo_heap *heap, uint32_t type, bool fake,
+mo_host_secure_random_new(struct mo_host *host, struct mo_heap *heap, uint32_t type, uint64_t seed,
+                          struct mo_cell *out, struct mo_host_error *error);
+MO_MUST_USE bool mo_host_secure_random_restore(struct mo_heap *heap, uint32_t type,
                                                const uint64_t state[2], struct mo_cell *out);
 void mo_host_secure_random_snapshot(struct mo_cell capability, uint64_t state[2]);
 MO_MUST_USE enum mo_host_outcome mo_host_secure_random_bytes(struct mo_host *host,

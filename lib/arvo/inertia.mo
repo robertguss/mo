@@ -72,39 +72,7 @@ fn escape_html(raw: Text) : Text
 end
 
 fn hex_upper_char(n: Int) : Text
-  if n == 0
-    "0"
-  else if n == 1
-    "1"
-  else if n == 2
-    "2"
-  else if n == 3
-    "3"
-  else if n == 4
-    "4"
-  else if n == 5
-    "5"
-  else if n == 6
-    "6"
-  else if n == 7
-    "7"
-  else if n == 8
-    "8"
-  else if n == 9
-    "9"
-  else if n == 10
-    "A"
-  else if n == 11
-    "B"
-  else if n == 12
-    "C"
-  else if n == 13
-    "D"
-  else if n == 14
-    "E"
-  else
-    "F"
-  end
+  ("0123456789ABCDEF".chars.get(n) or 'F').to_text
 end
 
 fn unreserved_byte?(b: Int) : Bool

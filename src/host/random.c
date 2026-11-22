@@ -110,9 +110,8 @@ static void write_le64(uint8_t out[8], uint64_t value) {
         out[i] = (uint8_t)((value >> (i * 8)) & 0xffU);
 }
 
-bool mo_host_secure_random_restore(struct mo_heap *heap, uint32_t type, bool fake,
-                                   const uint64_t words[2], struct mo_cell *out) {
-    MO_ASSERT(fake);
+bool mo_host_secure_random_restore(struct mo_heap *heap, uint32_t type, const uint64_t words[2],
+                                   struct mo_cell *out) {
     struct secure_random_state state = {.seed = words[0], .counter = words[1]};
     struct mo_capability_info info = {.operations =
                                           &mo_host_operations[true][MO_CAP_SECURE_RANDOM]};
@@ -127,14 +126,13 @@ void mo_host_secure_random_snapshot(struct mo_cell capability, uint64_t words[2]
 }
 
 enum mo_host_outcome mo_host_secure_random_new(struct mo_host *host, struct mo_heap *heap,
-                                               uint32_t type, bool fake, uint64_t seed,
-                                               struct mo_cell *out, struct mo_host_error *error) {
+                                               uint32_t type, uint64_t seed, struct mo_cell *out,
+                                               struct mo_host_error *error) {
     (void)host;
     (void)error;
-    MO_ASSERT(fake);
     uint64_t words[2] = {seed, 0};
-    return mo_host_secure_random_restore(heap, type, true, words, out) ? MO_HOST_RETURNED
-                                                                       : MO_HOST_OUT_OF_MEMORY;
+    return mo_host_secure_random_restore(heap, type, words, out) ? MO_HOST_RETURNED
+                                                                : MO_HOST_OUT_OF_MEMORY;
 }
 
 enum mo_host_outcome mo_host_secure_random_bytes(struct mo_host *host, struct mo_heap *heap,

@@ -11,10 +11,6 @@ import sys
 import tempfile
 
 
-def mo_escape_bytes_expr(b: bytes) -> str:
-    return f'must_hex("{b.hex()}")'
-
-
 def main() -> int:
     if len(sys.argv) != 2:
         print("usage: ci/check_crypto.py PATH_TO_MO", file=sys.stderr)
@@ -82,7 +78,6 @@ def main() -> int:
     lines.append("end")
     lines.append("")
 
-    # Also print a Mo-generated PHC hash so Python independently re-derives and checks it!
     salt_hex = rng.randbytes(16).hex()
     lines.extend([
         "fn main(console: Console)",

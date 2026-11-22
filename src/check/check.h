@@ -640,7 +640,6 @@ enum mo_api_method {
 
 enum mo_api_param_kind {
     MO_API_PARAM_AUTH,
-    MO_API_PARAM_AUTH_OPTIONAL,
     MO_API_PARAM_REQUEST,
     MO_API_PARAM_SQLITE_DB,
     MO_API_PARAM_ACTOR,
