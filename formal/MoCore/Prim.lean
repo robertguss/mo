@@ -292,6 +292,11 @@ def bytesOf : List Value → Option (List (List Int))
   | .bytes bs :: vs => (bytesOf vs).map (bs :: ·)
   | _ => none
 
+/-- An optional `Bytes`. -/
+def optBytes : Option (List Int) → Value
+  | some bs => someV (.bytes bs)
+  | none => noneV
+
 def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
   | .size, [.bytes bs] => okInt bs.length w
@@ -304,6 +309,10 @@ def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
     match bytesOf xs with
     | some parts => .ok (.bytes parts.flatten) w
     | none => wrongArgs "Bytes.join"
+  | .toHex, [.bytes bs] => .ok (.text (bytesToHex bs)) w
+  | .fromHex, [.text s] => .ok (optBytes (bytesFromHex s)) w
+  | .toBase64url, [.bytes bs] => .ok (.text (bytesToBase64url bs)) w
+  | .fromBase64url, [.text s] => .ok (optBytes (bytesFromBase64url s)) w
   | _, _ => wrongArgs "Bytes primitive"
 
 /-! ## Ranges -/
@@ -788,6 +797,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     outside "Sqlite is not modeled by mocore" w
   | .commandRunRaw, _ | .commandWithin, _ | .commandAllowPrograms, _ | .commandFake, _ =>
     outside "Command is not modeled by mocore" w
+  | .secureRandomBytes, _ | .secureRandomSeeded, _ =>
+    outside "SecureRandom is not modeled by mocore" w
   | _, _ => wrongArgs "capability primitive"
 
 /-- A derived handle retains the selected fake's identity. Ordinary returned
@@ -831,6 +842,7 @@ def Prim.eval (p : Prim) (vs : List Value) (w : World)
   | .text op, vs, w => evalTextOp op vs w
   | .bytes op, vs, w => evalBytesOp op vs w
   | .unicode16 _, _, w => outside "Unicode16 is a trusted primitive unavailable in mocore" w
+  | .crypto _, _, w => outside "Crypto is a trusted primitive unavailable in mocore" w
   | .sim _, _, w => outside "Simulation is not modeled by mocore" w
   | .range op, vs, w => evalRangeOp op vs w
   | .time op, vs, w => evalTimeOp op vs w

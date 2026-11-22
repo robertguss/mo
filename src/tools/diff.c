@@ -372,9 +372,9 @@ static const char *copy_buf_cstr(struct mo_arena *arena, struct mo_buffer *b) {
 }
 
 static bool is_capability_name(const char *name) {
-    static const char *const caps[] = {"Console", "Clock",   "Random",    "Environment",
-                                       "Env",     "Process", "ReadFiles", "Files",
-                                       "Network", "Sqlite",  "Command",   "Service"};
+    static const char *const caps[] = {"Console", "Clock",        "Random", "Environment", "Env",
+                                       "Process", "ReadFiles",    "Files",  "Network",     "Sqlite",
+                                       "Command", "SecureRandom", "Service"};
     for (size_t i = 0; i < sizeof caps / sizeof caps[0]; i++)
         if (strcmp(name, caps[i]) == 0)
             return true;

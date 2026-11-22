@@ -688,6 +688,12 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
             return sig(S(BYTES), 3, S(BYTES), S(INT), S(INT));
         case MO_CORE_BYTES_OP_JOIN:
             return sig(S(BYTES), 1, L(S(BYTES)), NULL, NULL);
+        case MO_CORE_BYTES_OP_TO_HEX:
+        case MO_CORE_BYTES_OP_TO_BASE64URL:
+            return sig(S(TEXT), 1, S(BYTES), NULL, NULL);
+        case MO_CORE_BYTES_OP_FROM_HEX:
+        case MO_CORE_BYTES_OP_FROM_BASE64URL:
+            return sig(O(S(BYTES)), 1, S(TEXT), NULL, NULL);
         }
         break;
     case MO_CORE_PRIM_UNICODE16:
@@ -703,6 +709,27 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_UNICODE_OP_LETTER:
         case MO_CORE_UNICODE_OP_DIGIT:
             return sig(S(BOOL), 1, S(CHAR), NULL, NULL);
+        }
+        break;
+    case MO_CORE_PRIM_CRYPTO:
+        switch (p->as.crypto) {
+        case MO_CORE_CRYPTO_OP_SHA256:
+            return sig(S(BYTES), 1, S(BYTES), NULL, NULL);
+        case MO_CORE_CRYPTO_OP_HMAC_SHA256:
+            return sig(S(BYTES), 2, S(BYTES), S(BYTES), NULL);
+        case MO_CORE_CRYPTO_OP_CONSTANT_TIME_EQ:
+            return sig(S(BOOL), 2, S(BYTES), S(BYTES), NULL);
+        case MO_CORE_CRYPTO_OP_SEAL_RAW:
+        case MO_CORE_CRYPTO_OP_OPEN_RAW: {
+            struct signature s = sig(binary(c, MO_CORE_TY_RESULT, S(BYTES), S(TEXT)), 4, S(BYTES),
+                                     S(BYTES), S(BYTES));
+            s.args[3] = S(BYTES);
+            return s;
+        }
+        case MO_CORE_CRYPTO_OP_HASH_PASSWORD_RAW:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(TEXT), S(TEXT)), 2, S(TEXT), S(BYTES), NULL);
+        case MO_CORE_CRYPTO_OP_VERIFY_PASSWORD:
+            return sig(S(BOOL), 2, S(TEXT), S(TEXT), NULL);
         }
         break;
     case MO_CORE_PRIM_RANGE:
@@ -974,6 +1001,11 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
             return sig(C(COMMAND), 2, C(COMMAND), L(S(TEXT)), NULL);
         case MO_CORE_IO_OP_COMMAND_FAKE:
             s = sig(C(COMMAND), 1, binary(c, MO_CORE_TY_MAP, S(BYTES), S(BYTES)), NULL, NULL);
+            break;
+        case MO_CORE_IO_OP_SECURE_RANDOM_BYTES:
+            return sig(S(BYTES), 2, C(SECURE_RANDOM), S(INT), NULL);
+        case MO_CORE_IO_OP_SECURE_RANDOM_SEEDED:
+            s = sig(C(SECURE_RANDOM), 1, S(INT), NULL, NULL);
             break;
         }
         s.spec = true;
@@ -1613,8 +1645,8 @@ static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, si
         "Fn",           "Cap",          "Simulation",  "SimulationError",
         "NetworkError", "Sqlite.Value", "Sqlite.Rows", "SqliteError"};
     static const char *const caps[] = {
-        "Console", "Files",   "ReadFiles",  "Clock",  "Random",          "Args",
-        "Env",     "Network", "Connection", "Sqlite", "Sqlite.Database", "Command"};
+        "Console", "Files",      "ReadFiles", "Clock",           "Random",  "Args",        "Env",
+        "Network", "Connection", "Sqlite",    "Sqlite.Database", "Command", "SecureRandom"};
     if (*remaining == 0)
         return mo_buffer_append_text(b, "...");
     (*remaining)--;

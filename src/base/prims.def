@@ -229,5 +229,17 @@ PRIM(UNICODE16_DIGIT,           "Unicode16", "digit?",             "fn(Char) : B
 
 PRIM(BYTES_SLICE,               "Bytes",     "slice",              "fn(Bytes, Int, Int) : Bytes",                "bbb", "negative index")
 PRIM(BYTES_JOIN,                "Bytes",     "join",               "fn(List(Bytes)) : Bytes",                    "b",   "")
+PRIM(BYTES_TO_HEX,              "Bytes",     "to_hex",             "fn(Bytes) : Text",                           "b",   "")
+PRIM(BYTES_FROM_HEX,            "Bytes",     "from_hex",           "fn(Text) : Option(Bytes)",                   "b",   "")
+PRIM(BYTES_TO_BASE64URL,        "Bytes",     "to_base64url",       "fn(Bytes) : Text",                           "b",   "")
+PRIM(BYTES_FROM_BASE64URL,      "Bytes",     "from_base64url",     "fn(Text) : Option(Bytes)",                   "b",   "")
+
+PRIM(CRYPTO_SHA256,             "Crypto",    "sha256",             "fn(Bytes) : Bytes",                          "b",   "")
+PRIM(CRYPTO_HMAC_SHA256,        "Crypto",    "hmac_sha256",        "fn(Bytes, Bytes) : Bytes",                   "bb",  "")
+PRIM(CRYPTO_CONSTANT_TIME_EQ,   "Crypto",    "constant_time_eq?",  "fn(Bytes, Bytes) : Bool",                    "bb",  "")
+PRIM(CRYPTO_SEAL_RAW,           "Crypto",    "seal_raw",           "fn(Bytes, Bytes, Bytes, Bytes) : Result(Bytes, Text)", "bbbb", "")
+PRIM(CRYPTO_OPEN_RAW,           "Crypto",    "open_raw",           "fn(Bytes, Bytes, Bytes, Bytes) : Result(Bytes, Text)", "bbbb", "")
+PRIM(CRYPTO_HASH_PASSWORD_RAW,  "Crypto",    "hash_password_raw",  "fn(Text, Bytes) : Result(Text, Text)",       "bb",  "")
+PRIM(CRYPTO_VERIFY_PASSWORD,    "Crypto",    "verify_password",    "fn(Text, Text) : Bool",                      "bb",  "")
 
 #undef PRIM

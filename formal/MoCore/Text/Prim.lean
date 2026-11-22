@@ -44,10 +44,16 @@ def textOps : List (String × TextOp) :=
    ("upper", .upper), ("toInt", .toInt), ("toDecimal", .toDecimal), ("toFloat", .toFloat),
    ("join", .join), ("bytes", .bytes)]
 def bytesOps : List (String × BytesOp) :=
-  [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8), ("slice", .slice), ("join", .join)]
+  [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8), ("slice", .slice), ("join", .join),
+   ("toHex", .toHex), ("fromHex", .fromHex), ("toBase64url", .toBase64url),
+   ("fromBase64url", .fromBase64url)]
 def unicodeOps : List (String × UnicodeOp) :=
   [("graphemes", .graphemes), ("displayWidth", .displayWidth), ("normalizeNfc", .normalizeNfc),
    ("lowercase", .lowercase), ("uppercase", .uppercase), ("letter", .letter), ("digit", .digit)]
+def cryptoOps : List (String × CryptoOp) :=
+  [("sha256", .sha256), ("hmacSha256", .hmacSha256), ("constantTimeEq", .constantTimeEq),
+   ("sealRaw", .sealRaw), ("openRaw", .openRaw), ("hashPasswordRaw", .hashPasswordRaw),
+   ("verifyPassword", .verifyPassword)]
 def rangeOps : List (String × RangeOp) :=
   [("make", .make), ("start", .start), ("end", .«end»), ("toList", .toList),
    ("contains", .contains), ("toText", .toText)]
@@ -106,7 +112,8 @@ def ioOps : List (String × IoOp) :=
    ("networkFake", .networkFake), ("allowHosts", .allowHosts), ("sqliteOpen", .sqliteOpen),
    ("sqliteFake", .sqliteFake), ("sqliteRun", .sqliteRun), ("sqliteQuery", .sqliteQuery),
    ("commandRunRaw", .commandRunRaw), ("commandWithin", .commandWithin),
-   ("commandAllowPrograms", .commandAllowPrograms), ("commandFake", .commandFake)]
+   ("commandAllowPrograms", .commandAllowPrograms), ("commandFake", .commandFake),
+   ("secureRandomBytes", .secureRandomBytes), ("secureRandomSeeded", .secureRandomSeeded)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]
@@ -152,6 +159,7 @@ def primOut : Prim → Sexp
   | .text o => tag "text" [enumOut textOps o]
   | .bytes o => tag "bytes" [enumOut bytesOps o]
   | .unicode16 o => tag "unicode16" [enumOut unicodeOps o]
+  | .crypto o => tag "crypto" [enumOut cryptoOps o]
   | .sim o => tag "sim" [simOut o]
   | .range o => tag "range" [enumOut rangeOps o]
   | .time o => tag "time" [enumOut timeOps o]
@@ -173,6 +181,7 @@ def primIn : Sexp → Parse Prim
   | .node [.atom "text", o] => return .text (← enumIn textOps o)
   | .node [.atom "bytes", o] => return .bytes (← enumIn bytesOps o)
   | .node [.atom "unicode16", o] => return .unicode16 (← enumIn unicodeOps o)
+  | .node [.atom "crypto", o] => return .crypto (← enumIn cryptoOps o)
   | .node [.atom "sim", o] => return .sim (← simIn o)
   | .node [.atom "range", o] => return .range (← enumIn rangeOps o)
   | .node [.atom "time", o] => return .time (← enumIn timeOps o)

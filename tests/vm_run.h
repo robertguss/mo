@@ -38,7 +38,7 @@ struct vm_run_context {
     struct mo_heap *heap;
     struct mo_core_run *run;
     struct vm_run_fake *fakes;
-    struct vm_run_fake real[MO_CAP_COMMAND + 1];
+    struct vm_run_fake real[MO_CAP_SECURE_RANDOM + 1];
     struct mo_cell arguments[MO_LIMIT_BYTECODE_PARAMETERS];
     int folder, streams[3];
 };
@@ -157,6 +157,7 @@ static MO_MUST_USE struct mo_cell vm_run_restore(struct vm_run_context *c, size_
         case MO_CAP_SQLITE:
         case MO_CAP_DATABASE:
         case MO_CAP_COMMAND:
+        case MO_CAP_SECURE_RANDOM:
             MO_UNREACHABLE();
         }
         struct mo_host_error error;
@@ -218,7 +219,7 @@ static void vm_run_setup(struct vm_run_context *c, struct mo_arena *arena,
         } else {
             /* Random's real entropy cannot be replayed from an arbitrary World.
              * No fixture uses it; refuse instead of inventing a passing fake. */
-            MO_ASSERT(kind != MO_CAP_RANDOM);
+            MO_ASSERT(kind != MO_CAP_RANDOM && kind != MO_CAP_SECURE_RANDOM);
             const struct mo_cell *contents = kind == MO_CAP_ARGS  ? &args
                                              : kind == MO_CAP_ENV ? &env
                                                                   : NULL;
@@ -328,6 +329,7 @@ static void vm_run_effects(struct vm_run_context *c) {
             case MO_CAP_SQLITE:
             case MO_CAP_DATABASE:
             case MO_CAP_COMMAND:
+            case MO_CAP_SECURE_RANDOM:
                 MO_UNREACHABLE();
             }
             mo_host_fake_state_drop(c->host, c->heap, &snapshot);
@@ -346,7 +348,7 @@ static void vm_run_dispose(struct vm_run_context *c, const struct mo_bytecode_fu
         if (c->fakes[i].present)
             mo_value_drop(c->heap, c->fakes[i].type, c->fakes[i].value);
     }
-    for (unsigned i = 0; i <= MO_CAP_COMMAND; i++) {
+    for (unsigned i = 0; i <= MO_CAP_SECURE_RANDOM; i++) {
         if (c->real[i].present)
             mo_value_drop(c->heap, c->real[i].type, c->real[i].value);
     }

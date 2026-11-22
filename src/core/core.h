@@ -53,7 +53,8 @@ enum mo_core_cap_tag {
     MO_CORE_CAP_CONNECTION,
     MO_CORE_CAP_SQLITE,
     MO_CORE_CAP_DATABASE,
-    MO_CORE_CAP_COMMAND
+    MO_CORE_CAP_COMMAND,
+    MO_CORE_CAP_SECURE_RANDOM
 };
 struct mo_core_cap {
     enum mo_core_cap_tag tag;
@@ -176,6 +177,9 @@ enum mo_core_bytes_op { MO_CORE_BYTES_OPS(MO_CORE_OP) };
 #define MO_CORE_OP(tag, text) MO_CORE_UNICODE_OP_##tag,
 enum mo_core_unicode_op { MO_CORE_UNICODE_OPS(MO_CORE_OP) };
 #undef MO_CORE_OP
+#define MO_CORE_OP(tag, text) MO_CORE_CRYPTO_OP_##tag,
+enum mo_core_crypto_op { MO_CORE_CRYPTO_OPS(MO_CORE_OP) };
+#undef MO_CORE_OP
 #define MO_CORE_OP(tag, text) MO_CORE_RANGE_OP_##tag,
 enum mo_core_range_op { MO_CORE_RANGE_OPS(MO_CORE_OP) };
 #undef MO_CORE_OP
@@ -236,6 +240,7 @@ enum mo_core_prim_tag {
     MO_CORE_PRIM_TEXT,
     MO_CORE_PRIM_BYTES,
     MO_CORE_PRIM_UNICODE16,
+    MO_CORE_PRIM_CRYPTO,
     MO_CORE_PRIM_RANGE,
     MO_CORE_PRIM_TIME,
     MO_CORE_PRIM_LIST,
@@ -263,6 +268,7 @@ struct mo_core_prim {
         enum mo_core_text_op text;
         enum mo_core_bytes_op bytes;
         enum mo_core_unicode_op unicode16;
+        enum mo_core_crypto_op crypto;
         enum mo_core_range_op range;
         enum mo_core_time_op time;
         struct {

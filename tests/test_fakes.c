@@ -13,7 +13,7 @@ struct fixture {
 static void fixture_init(struct fixture *f) {
     host_fixture_init(&f->host, mo_limits_default().heap_size);
     mo_fakes_init(&f->fakes, &f->host.source);
-    MO_ASSERT(mo_fakes_count(&f->fakes) == 10);
+    MO_ASSERT(mo_fakes_count(&f->fakes) == 11);
     mo_fakes_bind(&f->fakes, &f->host.host);
 }
 
@@ -371,7 +371,7 @@ static void small_heaps(void) {
         host_fixture_init(&f.host, heap_size);
         mo_fakes_init(&f.fakes, &f.host.source);
         mo_fakes_bind(&f.fakes, &f.host.host);
-        for (unsigned kind = 0; kind <= MO_CAP_COMMAND; kind++) {
+        for (unsigned kind = 0; kind <= MO_CAP_SECURE_RANDOM; kind++) {
             if (kind == MO_CAP_SIMULATION || kind == MO_CAP_CONNECTION || kind == MO_CAP_DATABASE)
                 continue;
             const struct mo_input_factory *maker = factory(&f, (enum mo_capability)kind);
@@ -393,6 +393,34 @@ static void small_heaps(void) {
     }
 }
 
+static void secure_random_deterministic(void) {
+    struct fixture f;
+    fixture_init(&f);
+    struct host_fixture *h = &f.host;
+    for (uint32_t which = 0; which < 3; which++) {
+        struct mo_cell a = boundary(&f, MO_CAP_SECURE_RANDOM, which);
+        struct mo_cell b = boundary(&f, MO_CAP_SECURE_RANDOM, which);
+        struct mo_cell args_a[] = {a, mo_cell_int(16)};
+        struct mo_cell args_b[] = {b, mo_cell_int(16)};
+        struct mo_host_error error;
+        struct mo_cell out_a, out_b;
+        MO_ASSERT(mo_host_call(&h->host, h->heap, MO_HOST_SECURERANDOM_BYTES, h->bytes, args_a,
+                               &out_a, &error) == MO_HOST_RETURNED);
+        MO_ASSERT(mo_host_call(&h->host, h->heap, MO_HOST_SECURERANDOM_BYTES, h->bytes, args_b,
+                               &out_b, &error) == MO_HOST_RETURNED);
+        size_t len_a, len_b;
+        const uint8_t *pa = mo_value_data(out_a, &len_a);
+        const uint8_t *pb = mo_value_data(out_b, &len_b);
+        CHECK(len_a == 16 && len_b == 16 && memcmp(pa, pb, 16) == 0);
+        mo_value_drop(h->heap, h->bytes, out_a);
+        mo_value_drop(h->heap, h->bytes, out_b);
+        drop(&f, MO_CAP_SECURE_RANDOM, a);
+        drop(&f, MO_CAP_SECURE_RANDOM, b);
+    }
+    CHECK(mo_heap_objects(h->heap) == 0);
+    fixture_free(&f);
+}
+
 int main(void) {
     files();
     read_only_files();
@@ -401,6 +429,7 @@ int main(void) {
     network_has_no_peers();
     sqlite_starts_empty();
     command_starts_empty();
+    secure_random_deterministic();
     copies_start_from_the_recipe();
     same_request_same_fake();
     limits();

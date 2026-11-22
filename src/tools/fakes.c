@@ -213,6 +213,7 @@ static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uin
                                           : MO_TIME_MAX_US;
         break;
     case MO_CAP_RANDOM:
+    case MO_CAP_SECURE_RANDOM:
         number = request->kind == MO_INPUT_RANDOM ? (int64_t)request->seed
                  : request->boundary == 0         ? 0
                  : request->boundary == 1         ? 1
@@ -268,6 +269,11 @@ static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uin
     case MO_CAP_RANDOM: {
         struct mo_cell seed = mo_cell_int(number);
         return outcome(mo_host_call(host, heap, MO_HOST_RANDOM_SEEDED, type, &seed, out, &error));
+    }
+    case MO_CAP_SECURE_RANDOM: {
+        struct mo_cell seed = mo_cell_int(number);
+        return outcome(
+            mo_host_call(host, heap, MO_HOST_SECURERANDOM_SEEDED, type, &seed, out, &error));
     }
     }
     if (!ok)
@@ -331,7 +337,7 @@ void mo_fakes_init(struct mo_fakes *fakes, const struct mo_types *types) {
             types->items[i].capability == MO_CAP_DATABASE)
             continue;
         uint32_t slot = fakes->factory_count++;
-        MO_ASSERT(slot <= MO_CAP_COMMAND);
+        MO_ASSERT(slot <= MO_CAP_SECURE_RANDOM);
         fakes->contexts[slot] = (struct mo_fake_context){fakes, i};
         fakes->factories[slot] = (struct mo_input_factory){.type = i,
                                                            .boundaries = BOUNDARIES,

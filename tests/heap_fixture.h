@@ -18,7 +18,7 @@ struct heap_fixture {
     uint32_t tuple;
     uint32_t function;
     uint32_t env;
-    uint32_t capabilities[MO_CAP_COMMAND + 1];
+    uint32_t capabilities[MO_CAP_SECURE_RANDOM + 1];
     uint32_t record;
     uint32_t record_layout;
     uint32_t tree;
@@ -86,7 +86,7 @@ static inline void heap_fixture_init(struct heap_fixture *fixture) {
         heap_intern(types, (struct mo_type){.kind = MO_TYPE_FUNCTION,
                                             .result = fixture->builtin[MO_TYPE_UNIT]});
     fixture->env = heap_intern(types, (struct mo_type){.kind = MO_TYPE_ENV, .function = 7});
-    for (unsigned i = 0; i <= MO_CAP_COMMAND; i++) {
+    for (unsigned i = 0; i <= MO_CAP_SECURE_RANDOM; i++) {
         fixture->capabilities[i] =
             heap_intern(types, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
                                                 .capability = (enum mo_capability)i});

@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command
+  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command | secureRandom
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -165,6 +165,7 @@ def Cap.name : Cap → String
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
   | .network => "Network" | .connection => "Connection"
   | .sqlite => "Sqlite" | .database => "Sqlite.Database" | .command => "Command"
+  | .secureRandom => "SecureRandom"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -304,12 +305,17 @@ valid UTF-8 (reference 3.4). `slice` gives the bytes from one index up to,
 not including, another; an index past the end is the end, and a negative
 index is a bug. `join` gives the parts of a list as one value. -/
 inductive BytesOp where
-  | size | get | decodeUtf8 | slice | join
+  | size | get | decodeUtf8 | slice | join | toHex | fromHex | toBase64url | fromBase64url
   deriving DecidableEq, Repr, Inhabited
 
 /-- Unicode 16.0 trusted primitives; Core specifies their interface, not tables. -/
 inductive UnicodeOp where
   | graphemes | displayWidth | normalizeNfc | lowercase | uppercase | letter | digit
+  deriving DecidableEq, Repr, Inhabited
+
+/-- Cryptographic trusted primitives; Core specifies their interface, not OpenSSL implementations. -/
+inductive CryptoOp where
+  | sha256 | hmacSha256 | constantTimeEq | sealRaw | openRaw | hashPasswordRaw | verifyPassword
   deriving DecidableEq, Repr, Inhabited
 
 /-- Operations on `Range`. `make a b` is `a..b`, the whole numbers from `a` up
@@ -373,9 +379,10 @@ inductive IoOp where
   | connect | connectSecure | allowHosts | send | receive
   | sqliteOpen | sqliteRun | sqliteQuery
   | commandRunRaw | commandWithin | commandAllowPrograms
+  | secureRandomBytes
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
-  | networkFake | sqliteFake | commandFake
+  | networkFake | sqliteFake | commandFake | secureRandomSeeded
   deriving DecidableEq, Repr, Inhabited
 
 inductive SimOp where
@@ -398,6 +405,7 @@ inductive Prim where
   | text (op : TextOp)
   | bytes (op : BytesOp)
   | unicode16 (op : UnicodeOp)
+  | crypto (op : CryptoOp)
   | sim (op : SimOp)
   | range (op : RangeOp)
   | time (op : TimeOp)
@@ -488,6 +496,10 @@ def BytesOp.sig : BytesOp → List Ty × Ty
   | .decodeUtf8 => ([.bytes], .option .text)
   | .slice => ([.bytes, .int, .int], .bytes)
   | .join => ([.list .bytes], .bytes)
+  | .toHex => ([.bytes], .text)
+  | .fromHex => ([.text], .option .bytes)
+  | .toBase64url => ([.bytes], .text)
+  | .fromBase64url => ([.text], .option .bytes)
 
 def RangeOp.sig : RangeOp → List Ty × Ty
   | .make => ([.int, .int], .range)
@@ -562,6 +574,14 @@ def UnicodeOp.sig : UnicodeOp → List Ty × Ty
   | .normalizeNfc | .lowercase | .uppercase => ([.text], .text)
   | .letter | .digit => ([.char], .bool)
 
+def CryptoOp.sig : CryptoOp → List Ty × Ty
+  | .sha256 => ([.bytes], .bytes)
+  | .hmacSha256 => ([.bytes, .bytes], .bytes)
+  | .constantTimeEq => ([.bytes, .bytes], .bool)
+  | .sealRaw | .openRaw => ([.bytes, .bytes, .bytes, .bytes], .result .bytes .text)
+  | .hashPasswordRaw => ([.text, .bytes], .result .text .text)
+  | .verifyPassword => ([.text, .text], .bool)
+
 def IoOp.sig : IoOp → List Ty × Ty
   | .argsList => ([.cap .args], .list .text)
   | .envGet => ([.cap .env, .text], .option .text)
@@ -602,6 +622,8 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .commandWithin => ([.cap .command, .text], .cap .command)
   | .commandAllowPrograms => ([.cap .command, .list .text], .cap .command)
   | .commandFake => ([.map .bytes .bytes], .cap .command)
+  | .secureRandomBytes => ([.cap .secureRandom, .int], .bytes)
+  | .secureRandomSeeded => ([.int], .cap .secureRandom)
 
 def SimOp.sig : SimOp → List Ty × Ty
   | .start _ => ([.time], .simulation)
@@ -622,6 +644,7 @@ def Prim.sig : Prim → List Ty × Ty
   | .text op => op.sig
   | .bytes op => op.sig
   | .unicode16 op => op.sig
+  | .crypto op => op.sig
   | .sim op => op.sig
   | .range op => op.sig
   | .time op => op.sig
@@ -800,7 +823,7 @@ def Prim.specOnly : Prim → Bool
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
   | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake | .io .sqliteFake
-  | .io .commandFake => true
+  | .io .commandFake | .io .secureRandomSeeded => true
   | _ => false
 
 /-! ## Lookups -/

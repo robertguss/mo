@@ -382,6 +382,199 @@ static MO_MUST_USE enum mo_prim_status join_bytes(struct mo_prim_call *c, struct
     return ok ? MO_PRIM_RETURNED : MO_PRIM_OUT_OF_MEMORY;
 }
 
+static MO_MUST_USE enum mo_prim_status some_bytes(struct mo_prim_call *c, const uint8_t *bytes,
+                                                  size_t length, struct mo_cell *out) {
+    struct mo_cell value;
+    if (!mo_value_bytes(c->heap, bytes, length, &value))
+        return MO_PRIM_OUT_OF_MEMORY;
+    enum mo_prim_status status = mo_prim_option(c, true, value, out);
+    uint32_t type = c->types->items[c->result].cases[1].fields[0].type;
+    mo_value_drop(c->heap, type, value);
+    return status;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_to_hex(struct mo_prim_call *c, struct mo_cell *out) {
+    static const uint8_t hex[] = "0123456789abcdef";
+    struct text bytes = view(c->args[0]);
+    if (bytes.length > MO_LIMIT_VALUE_BYTES / 2) {
+        c->reason = "result exceeds MO_LIMIT_VALUE_BYTES (u32 byte length)";
+        return MO_PRIM_OUT_OF_MEMORY;
+    }
+    size_t length = bytes.length * 2;
+    if (length == 0)
+        return make_text(c, (const uint8_t *)"", 0, out);
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, c->heap);
+    uint8_t *encoded = mo_scratch_resize(&scratch, NULL, 0, length);
+    enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
+    if (encoded != NULL) {
+        for (size_t i = 0; i < bytes.length; i++) {
+            encoded[2 * i] = hex[bytes.bytes[i] >> 4];
+            encoded[2 * i + 1] = hex[bytes.bytes[i] & 0x0fU];
+        }
+        status = make_text(c, encoded, length, out);
+    }
+    mo_scratch_free(&scratch);
+    return status;
+}
+
+static MO_MUST_USE int hex_nibble(uint8_t ch) {
+    if (ch >= '0' && ch <= '9')
+        return (int)(ch - '0');
+    if (ch >= 'a' && ch <= 'f')
+        return (int)(ch - 'a') + 10;
+    if (ch >= 'A' && ch <= 'F')
+        return (int)(ch - 'A') + 10;
+    return -1;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_from_hex(struct mo_prim_call *c, struct mo_cell *out) {
+    struct text t = view(c->args[0]);
+    if ((t.length & 1U) != 0)
+        return mo_prim_option(c, false, mo_cell_unit(), out);
+    size_t length = t.length / 2;
+    if (length == 0)
+        return some_bytes(c, (const uint8_t *)"", 0, out);
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, c->heap);
+    uint8_t *decoded = mo_scratch_resize(&scratch, NULL, 0, length);
+    enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
+    if (decoded != NULL) {
+        bool valid = true;
+        for (size_t i = 0; i < length; i++) {
+            int hi = hex_nibble(t.bytes[2 * i]);
+            int lo = hex_nibble(t.bytes[2 * i + 1]);
+            if (hi < 0 || lo < 0) {
+                valid = false;
+                break;
+            }
+            decoded[i] = (uint8_t)((hi << 4) | lo);
+        }
+        status = valid ? some_bytes(c, decoded, length, out)
+                       : mo_prim_option(c, false, mo_cell_unit(), out);
+    }
+    mo_scratch_free(&scratch);
+    return status;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_to_base64url(struct mo_prim_call *c,
+                                                          struct mo_cell *out) {
+    static const uint8_t table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    struct text bytes = view(c->args[0]);
+    size_t full = bytes.length / 3;
+    size_t rem = bytes.length % 3;
+    if (full > (MO_LIMIT_VALUE_BYTES - (rem == 0 ? 0U : rem + 1U)) / 4U) {
+        c->reason = "result exceeds MO_LIMIT_VALUE_BYTES (u32 byte length)";
+        return MO_PRIM_OUT_OF_MEMORY;
+    }
+    size_t length = full * 4 + (rem == 0 ? 0U : rem + 1U);
+    if (length == 0)
+        return make_text(c, (const uint8_t *)"", 0, out);
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, c->heap);
+    uint8_t *encoded = mo_scratch_resize(&scratch, NULL, 0, length);
+    enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
+    if (encoded != NULL) {
+        size_t o = 0;
+        for (size_t i = 0; i < full * 3; i += 3) {
+            uint32_t v = ((uint32_t)bytes.bytes[i] << 16) | ((uint32_t)bytes.bytes[i + 1] << 8) |
+                         (uint32_t)bytes.bytes[i + 2];
+            encoded[o++] = table[(v >> 18) & 0x3fU];
+            encoded[o++] = table[(v >> 12) & 0x3fU];
+            encoded[o++] = table[(v >> 6) & 0x3fU];
+            encoded[o++] = table[v & 0x3fU];
+        }
+        if (rem == 1) {
+            uint32_t b0 = bytes.bytes[full * 3];
+            encoded[o++] = table[b0 >> 2];
+            encoded[o++] = table[(b0 & 0x03U) << 4];
+        } else if (rem == 2) {
+            uint32_t b0 = bytes.bytes[full * 3];
+            uint32_t b1 = bytes.bytes[full * 3 + 1];
+            encoded[o++] = table[b0 >> 2];
+            encoded[o++] = table[((b0 & 0x03U) << 4) | (b1 >> 4)];
+            encoded[o++] = table[(b1 & 0x0fU) << 2];
+        }
+        MO_ASSERT(o == length);
+        status = make_text(c, encoded, length, out);
+    }
+    mo_scratch_free(&scratch);
+    return status;
+}
+
+static MO_MUST_USE int base64url_value(uint8_t ch) {
+    if (ch >= 'A' && ch <= 'Z')
+        return (int)(ch - 'A');
+    if (ch >= 'a' && ch <= 'z')
+        return (int)(ch - 'a') + 26;
+    if (ch >= '0' && ch <= '9')
+        return (int)(ch - '0') + 52;
+    if (ch == '-')
+        return 62;
+    if (ch == '_')
+        return 63;
+    return -1;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_from_base64url(struct mo_prim_call *c,
+                                                            struct mo_cell *out) {
+    struct text t = view(c->args[0]);
+    size_t rem = t.length % 4;
+    if (rem == 1)
+        return mo_prim_option(c, false, mo_cell_unit(), out);
+    size_t full = t.length / 4;
+    size_t length = full * 3 + (rem == 0 ? 0U : rem - 1U);
+    if (length == 0)
+        return some_bytes(c, (const uint8_t *)"", 0, out);
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, c->heap);
+    uint8_t *decoded = mo_scratch_resize(&scratch, NULL, 0, length);
+    enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
+    if (decoded != NULL) {
+        bool valid = true;
+        size_t o = 0;
+        for (size_t i = 0; i < full * 4; i += 4) {
+            int v0 = base64url_value(t.bytes[i]);
+            int v1 = base64url_value(t.bytes[i + 1]);
+            int v2 = base64url_value(t.bytes[i + 2]);
+            int v3 = base64url_value(t.bytes[i + 3]);
+            if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0) {
+                valid = false;
+                break;
+            }
+            uint32_t v =
+                ((uint32_t)v0 << 18) | ((uint32_t)v1 << 12) | ((uint32_t)v2 << 6) | (uint32_t)v3;
+            decoded[o++] = (uint8_t)((v >> 16) & 0xffU);
+            decoded[o++] = (uint8_t)((v >> 8) & 0xffU);
+            decoded[o++] = (uint8_t)(v & 0xffU);
+        }
+        if (valid && rem == 2) {
+            int v0 = base64url_value(t.bytes[full * 4]);
+            int v1 = base64url_value(t.bytes[full * 4 + 1]);
+            if (v0 < 0 || v1 < 0 || (v1 & 0x0f) != 0)
+                valid = false;
+            else
+                decoded[o++] = (uint8_t)(((uint32_t)v0 << 2) | ((uint32_t)v1 >> 4));
+        } else if (valid && rem == 3) {
+            int v0 = base64url_value(t.bytes[full * 4]);
+            int v1 = base64url_value(t.bytes[full * 4 + 1]);
+            int v2 = base64url_value(t.bytes[full * 4 + 2]);
+            if (v0 < 0 || v1 < 0 || v2 < 0 || (v2 & 0x03) != 0)
+                valid = false;
+            else {
+                decoded[o++] = (uint8_t)(((uint32_t)v0 << 2) | ((uint32_t)v1 >> 4));
+                decoded[o++] = (uint8_t)((((uint32_t)v1 & 0x0fU) << 4) | ((uint32_t)v2 >> 2));
+            }
+        }
+        MO_ASSERT(!valid || o == length);
+        status = valid ? some_bytes(c, decoded, length, out)
+                       : mo_prim_option(c, false, mo_cell_unit(), out);
+    }
+    mo_scratch_free(&scratch);
+    return status;
+}
+
 static MO_MUST_USE enum mo_prim_status from_chars(struct mo_prim_call *c, struct mo_cell *out) {
     uint32_t count = mo_list_size(c->args[0]);
     size_t length = 0;
@@ -432,6 +625,14 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
         return slice_bytes(c, out);
     if (c->id == MO_PRIM_BYTES_JOIN)
         return join_bytes(c, out);
+    if (c->id == MO_PRIM_BYTES_TO_HEX)
+        return bytes_to_hex(c, out);
+    if (c->id == MO_PRIM_BYTES_FROM_HEX)
+        return bytes_from_hex(c, out);
+    if (c->id == MO_PRIM_BYTES_TO_BASE64URL)
+        return bytes_to_base64url(c, out);
+    if (c->id == MO_PRIM_BYTES_FROM_BASE64URL)
+        return bytes_from_base64url(c, out);
     if (c->id == MO_PRIM_TEXT_FROM_CHARS)
         return from_chars(c, out);
     struct text t = view(c->args[0]);

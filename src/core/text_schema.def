@@ -7,7 +7,8 @@ static const struct schema s_ty_list, s_integer_list, s_expr_list, s_string_list
 static const struct schema s_param, s_arm, s_ctor, s_ctors, s_data, s_data_list, s_fun, s_funs;
 static const struct schema s_const, s_consts, s_program, s_kind, s_prim;
 static const struct schema s_int_op, s_big_op, s_byte_op, s_dec_op, s_float_op, s_base, s_cmp_op;
-static const struct schema s_char_op, s_text_op, s_bytes_op, s_unicode_op, s_range_op, s_time_op;
+static const struct schema s_char_op, s_text_op, s_bytes_op, s_unicode_op, s_crypto_op, s_range_op,
+    s_time_op;
 static const struct schema s_list_op, s_map_op, s_set_op, s_io_op, s_sim_op;
 static const struct schema s_values, s_value_pair, s_value_pairs, s_binding, s_env, s_root;
 static const struct schema s_string_pair, s_string_pairs, s_world, s_bug, s_outcome;
@@ -99,7 +100,7 @@ NODE(ty_object, struct mo_core_ty, enum mo_core_ty_tag, T(INT, "int", END),
 NODE(cap_object, struct mo_core_cap, enum mo_core_cap_tag, C(CONSOLE, "console"), C(FILES, "files"),
      C(READ_FILES, "readFiles"), C(CLOCK, "clock"), C(RANDOM, "random"), C(ARGS, "args"),
      C(ENV, "env"), C(NETWORK, "network"), C(CONNECTION, "connection"), C(SQLITE, "sqlite"),
-     C(DATABASE, "database"), C(COMMAND, "command"));
+     C(DATABASE, "database"), C(COMMAND, "command"), C(SECURE_RANDOM, "secureRandom"));
 #undef C
 
 /* The literal subset of Value has the same payloads, but distinct tags and C layouts. */
@@ -152,6 +153,9 @@ ENUM(bytes_op, enum mo_core_bytes_op, MO_CORE_BYTES_OPS(OP));
 #define OP(tag, wire) V(enum mo_core_unicode_op, MO_CORE_UNICODE_OP_##tag, wire, END),
 ENUM(unicode_op, enum mo_core_unicode_op, MO_CORE_UNICODE_OPS(OP));
 #undef OP
+#define OP(tag, wire) V(enum mo_core_crypto_op, MO_CORE_CRYPTO_OP_##tag, wire, END),
+ENUM(crypto_op, enum mo_core_crypto_op, MO_CORE_CRYPTO_OPS(OP));
+#undef OP
 #define OP(tag, wire) V(enum mo_core_range_op, MO_CORE_RANGE_OP_##tag, wire, END),
 ENUM(range_op, enum mo_core_range_op, MO_CORE_RANGE_OPS(OP));
 #undef OP
@@ -201,7 +205,8 @@ NODE(prim, struct mo_core_prim, enum mo_core_prim_tag, P(INT, "int", PF(int_, in
      P(NOT, "not", END), P(CMP, "cmp", PF(cmp.base, base), PF(cmp.op, cmp_op), END),
      P(CHAR, "char", PF(char_, char_op), END), P(TEXT, "text", PF(text, text_op), END),
      P(BYTES, "bytes", PF(bytes, bytes_op), END), P(RANGE, "range", PF(range, range_op), END),
-     P(UNICODE16, "unicode16", PF(unicode16, unicode_op), END), P(SIM, "sim", PF(sim, sim_op), END),
+     P(UNICODE16, "unicode16", PF(unicode16, unicode_op), END),
+     P(CRYPTO, "crypto", PF(crypto, crypto_op), END), P(SIM, "sim", PF(sim, sim_op), END),
      P(TIME, "time", PF(time, time_op), END),
      P(LIST, "list", PF(list.t, ty), PF(list.op, list_op), END),
      P(MAP, "map", PF(map.k, ty), PF(map.v, ty), PF(map.op, map_op), END),

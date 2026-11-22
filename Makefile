@@ -103,7 +103,8 @@ SANITIZE_TESTS := $(patsubst tests/%.c,$(BUILD)/sanitize/tests/%.test,$(TEST_SOU
 TSAN_TESTS := $(BUILD)/tsan/tests/test_api_server.test \
 	$(BUILD)/tsan/tests/test_network.test \
 	$(BUILD)/tsan/tests/test_sqlite.test \
-	$(BUILD)/tsan/tests/test_command.test
+	$(BUILD)/tsan/tests/test_command.test \
+	$(BUILD)/tsan/tests/test_crypto.test
 FUZZERS := $(patsubst fuzz/%.c,$(FUZZ_BUILD)/bin/%,$(FUZZ_SOURCES))
 
 # Stop at the first sanitizer error. These are only defaults: options you have set in your

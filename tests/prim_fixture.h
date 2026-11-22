@@ -14,6 +14,10 @@ struct prim_fixture {
     uint32_t signature[MO_PRIM_COUNT];
     uint32_t structural[512];
     uint32_t options[512];
+    uint32_t result_ok[16];
+    uint32_t result_err[16];
+    uint32_t result_type[16];
+    uint32_t result_count;
     uint32_t ordering;
     enum mo_type_kind element;
 };
@@ -70,6 +74,36 @@ static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **curso
             }
             *cursor = p;
             return f->options[element];
+        } else if (length == 6 && memcmp(start, "Result", 6) == 0) {
+            MO_ASSERT(*p++ == '(');
+            uint32_t ok = prim_type(f, &p);
+            MO_ASSERT(*p++ == ',');
+            uint32_t err = prim_type(f, &p);
+            MO_ASSERT(*p++ == ')');
+            uint32_t found = MO_NO_INDEX;
+            for (uint32_t i = 0; i < f->result_count; i++) {
+                if (f->result_ok[i] == ok && f->result_err[i] == err) {
+                    found = f->result_type[i];
+                    break;
+                }
+            }
+            if (found == MO_NO_INDEX) {
+                MO_ASSERT(f->result_count < 16);
+                MO_ASSERT(mo_types_declare(&f->types, MO_TYPE_CHOICE, "Result", &found) ==
+                          MO_TYPES_OK);
+                struct mo_type_field ok_field = {.type = ok};
+                struct mo_type_field err_field = {.type = err};
+                struct mo_type_case cases[] = {
+                    {.name = "Ok", .fields = &ok_field, .field_count = 1, .unnamed = true},
+                    {.name = "Error", .fields = &err_field, .field_count = 1, .unnamed = true}};
+                MO_ASSERT(mo_types_define_choice(&f->types, found, cases, 2) == MO_TYPES_OK);
+                f->result_ok[f->result_count] = ok;
+                f->result_err[f->result_count] = err;
+                f->result_type[f->result_count] = found;
+                f->result_count++;
+            }
+            *cursor = p;
+            return found;
         } else if (length == 8 && memcmp(start, "Ordering", 8) == 0) {
             if (f->ordering == MO_NO_INDEX) {
                 MO_ASSERT(mo_types_declare(&f->types, MO_TYPE_CHOICE, "Ordering", &f->ordering) ==

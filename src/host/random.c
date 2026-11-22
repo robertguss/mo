@@ -2,12 +2,21 @@
 #define _POSIX_C_SOURCE 200809L
 #include "host/internal.h"
 
+#include <openssl/crypto.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/rand.h>
 #include <string.h>
 #include <sys/random.h>
 #include <unistd.h>
 
 struct random_state {
     uint64_t words[4];
+};
+
+struct secure_random_state {
+    uint64_t seed;
+    uint64_t counter;
 };
 
 static MO_MUST_USE uint64_t mix(uint64_t *seed) {
@@ -94,4 +103,103 @@ enum mo_host_outcome mo_host_random(struct mo_host *host, struct mo_heap *heap, 
     MO_ASSERT(result >= low && result < high);
     *out = mo_cell_int((int64_t)result);
     return MO_HOST_RETURNED;
+}
+
+static void write_le64(uint8_t out[8], uint64_t value) {
+    for (unsigned i = 0; i < 8; i++)
+        out[i] = (uint8_t)((value >> (i * 8)) & 0xffU);
+}
+
+bool mo_host_secure_random_restore(struct mo_heap *heap, uint32_t type, bool fake,
+                                   const uint64_t words[2], struct mo_cell *out) {
+    MO_ASSERT(fake);
+    struct secure_random_state state = {.seed = words[0], .counter = words[1]};
+    struct mo_capability_info info = {.operations =
+                                          &mo_host_operations[true][MO_CAP_SECURE_RANDOM]};
+    return mo_value_capability_native(heap, type, &info, &state, sizeof state, out);
+}
+
+void mo_host_secure_random_snapshot(struct mo_cell capability, uint64_t words[2]) {
+    const struct secure_random_state *state =
+        (const struct secure_random_state *)mo_capability_get(capability)->handle;
+    words[0] = state->seed;
+    words[1] = state->counter;
+}
+
+enum mo_host_outcome mo_host_secure_random_new(struct mo_host *host, struct mo_heap *heap,
+                                               uint32_t type, bool fake, uint64_t seed,
+                                               struct mo_cell *out, struct mo_host_error *error) {
+    (void)host;
+    (void)error;
+    MO_ASSERT(fake);
+    uint64_t words[2] = {seed, 0};
+    return mo_host_secure_random_restore(heap, type, true, words, out) ? MO_HOST_RETURNED
+                                                                       : MO_HOST_OUT_OF_MEMORY;
+}
+
+enum mo_host_outcome mo_host_secure_random_bytes(struct mo_host *host, struct mo_heap *heap,
+                                                 uint32_t type, const struct mo_cell *args,
+                                                 struct mo_cell *out, struct mo_host_error *error) {
+    (void)host;
+    (void)type;
+    int64_t count = mo_cell_get_int(args[1]);
+    if (count < 0 || count > MO_LIMIT_SECURE_RANDOM_BYTES)
+        return mo_host_bug(error, "count outside 0 to 65536");
+    size_t length = (size_t)count;
+    if (length == 0)
+        return mo_value_bytes(heap, (const uint8_t *)"", 0, out) ? MO_HOST_RETURNED
+                                                                 : MO_HOST_OUT_OF_MEMORY;
+    const struct mo_capability_info *info = mo_capability_get(args[0]);
+    const struct mo_host_operations *operations = info->operations;
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, heap);
+    uint8_t *buffer = mo_scratch_resize(&scratch, NULL, 0, length);
+    if (buffer == NULL) {
+        mo_scratch_free(&scratch);
+        return MO_HOST_OUT_OF_MEMORY;
+    }
+    if (!operations->fake) {
+        ERR_clear_error();
+        int rc = RAND_bytes(buffer, (int)length);
+        ERR_clear_error();
+        if (rc != 1) {
+            OPENSSL_cleanse(buffer, length);
+            mo_scratch_free(&scratch);
+            *error = (struct mo_host_error){
+                .reason = "internal error: cryptographic randomness unavailable"};
+            return MO_HOST_INTERNAL;
+        }
+    } else {
+        struct secure_random_state *state = (struct secure_random_state *)info->handle;
+        MO_ASSERT(state != NULL);
+        size_t offset = 0;
+        uint8_t input[24] = {'M', 'O', '_', 'S', 'R', 'N', 'G', 0};
+        uint8_t block[32];
+        write_le64(input + 8, state->seed);
+        while (offset < length) {
+            write_le64(input + 16, state->counter);
+            unsigned block_len = 0;
+            ERR_clear_error();
+            int rc = EVP_Digest(input, sizeof input, block, &block_len, EVP_sha256(), NULL);
+            ERR_clear_error();
+            if (rc != 1 || block_len != sizeof block) {
+                OPENSSL_cleanse(block, sizeof block);
+                OPENSSL_cleanse(buffer, length);
+                mo_scratch_free(&scratch);
+                *error = (struct mo_host_error){
+                    .reason = "internal error: cryptographic digest unavailable"};
+                return MO_HOST_INTERNAL;
+            }
+            state->counter++;
+            size_t take = length - offset < sizeof block ? length - offset : sizeof block;
+            memcpy(buffer + offset, block, take);
+            offset += take;
+        }
+        OPENSSL_cleanse(block, sizeof block);
+        OPENSSL_cleanse(input, sizeof input);
+    }
+    bool ok = mo_value_bytes(heap, buffer, length, out);
+    OPENSSL_cleanse(buffer, length);
+    mo_scratch_free(&scratch);
+    return ok ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
 }
