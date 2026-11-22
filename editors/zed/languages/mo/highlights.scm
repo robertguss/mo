@@ -33,7 +33,7 @@
 (type_identifier) @type
 
 ((type_identifier) @type.builtin
-  (#match? @type.builtin "^(Bool|Int|BigInt|Byte|Decimal|Float|Text|Char|Bytes|Unit|List|Map|Set|Range|Time|Duration|Option|Result|Ordering|Args|Env|Console|Files|ReadFiles|FileError|Entry|EntryKind|Simulation|SimulationError|Clock|Random|Network|Connection|NetworkError|Sqlite|SqliteError|Command|Actor|Order|Json|Http|Api|ApiTest|Unicode16)$"))
+  (#match? @type.builtin "^(Bool|Int|BigInt|Byte|Decimal|Float|Text|Char|Bytes|Unit|List|Map|Set|Range|Time|Duration|Option|Result|Ordering|Args|Env|Console|Files|ReadFiles|FileError|Entry|EntryKind|Simulation|SimulationError|Clock|Random|Network|Connection|NetworkError|Sqlite|SqliteError|Command|Actor|Order|Json|Http|Api|ApiTest|Unicode16|Date|Crypto|SecureRandom)$"))
 
 ((type_identifier) @constructor
   (#match? @constructor "^(Some|None|Ok|Error|Less|Equal|Greater|NotFound|NotAllowed|NotText|Failed|File|Folder|Link|Other|ServiceDown|ToolFailed)$"))
@@ -101,6 +101,8 @@
   "auth"
   "via"
   "status"
+  "static"
+  "scope"
 ] @keyword
 
 (http_method) @keyword

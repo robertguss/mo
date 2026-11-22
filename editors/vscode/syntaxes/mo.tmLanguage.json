@@ -89,6 +89,14 @@
           }
         },
         {
+          "match": "^\\s*(static)\\s+(\"[^\"]*\")\\s+(from)\\b",
+          "captures": {
+            "1": { "name": "keyword.other.clause.mo" },
+            "2": { "name": "string.quoted.double.mo" },
+            "3": { "name": "keyword.other.clause.mo" }
+          }
+        },
+        {
           "match": "^\\s*(auth)\\s+([A-Z][A-Za-z0-9]*(?:\\.[A-Z][A-Za-z0-9]*)?)\\s+(via)\\s+([a-z][a-z0-9_]*|_[a-z0-9_]+)\\b",
           "captures": {
             "1": { "name": "keyword.other.clause.mo" },
@@ -104,7 +112,7 @@
           }
         },
         {
-          "match": "^\\s*(state|tools|calls|every|port|cors|status|actor)\\b",
+          "match": "^\\s*(state|tools|calls|every|port|cors|status|actor|scope|static)\\b",
           "captures": {
             "1": { "name": "keyword.other.clause.mo" }
           }
@@ -260,7 +268,7 @@
         },
         {
           "name": "support.type.builtin.mo",
-          "match": "\\b(Bool|Int|BigInt|Byte|Decimal|Float|Text|Char|Bytes|List|Map|Set|Range|Time|Duration|Option|Result|Ordering|Args|Env|Console|Files|ReadFiles|FileError|Entry|EntryKind|Simulation|SimulationError|Clock|Random|Network|Connection|NetworkError|Sqlite|SqliteError|Command|Actor|Order|Json|Http|Api|ApiTest|Unicode16)\\b"
+          "match": "\\b(Bool|Int|BigInt|Byte|Decimal|Float|Text|Char|Bytes|List|Map|Set|Range|Time|Duration|Option|Result|Ordering|Args|Env|Console|Files|ReadFiles|FileError|Entry|EntryKind|Simulation|SimulationError|Clock|Random|Network|Connection|NetworkError|Sqlite|SqliteError|Command|Actor|Order|Json|Http|Api|ApiTest|Unicode16|Date|Crypto|SecureRandom)\\b"
         },
         {
           "name": "entity.name.type.mo",

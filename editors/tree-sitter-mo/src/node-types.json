@@ -235,7 +235,15 @@
           "named": true
         },
         {
+          "type": "scope_clause",
+          "named": true
+        },
+        {
           "type": "sqlite_clause",
+          "named": true
+        },
+        {
+          "type": "static_clause",
           "named": true
         },
         {
@@ -333,11 +341,19 @@
     "named": true,
     "fields": {
       "handler": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
           {
+            "type": ".",
+            "named": false
+          },
+          {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
             "named": true
           }
         ]
@@ -1808,11 +1824,19 @@
     "named": true,
     "fields": {
       "handler": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
           {
+            "type": ".",
+            "named": false
+          },
+          {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "type_identifier",
             "named": true
           }
         ]
@@ -1837,6 +1861,36 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "scope_clause",
+    "named": true,
+    "fields": {
+      "prefix": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "route_clause",
+          "named": true
+        },
+        {
+          "type": "scope_clause",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -2019,6 +2073,32 @@
         "types": [
           {
             "type": "_expr",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "static_clause",
+    "named": true,
+    "fields": {
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
+      "source": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string",
             "named": true
           }
         ]
@@ -2819,6 +2899,10 @@
     "named": false
   },
   {
+    "type": "scope",
+    "named": false
+  },
+  {
     "type": "service",
     "named": false
   },
@@ -2828,6 +2912,10 @@
   },
   {
     "type": "state",
+    "named": false
+  },
+  {
+    "type": "static",
     "named": false
   },
   {

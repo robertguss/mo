@@ -40,6 +40,8 @@ const SOFT_KEYWORDS = [
   'put',
   'patch',
   'delete',
+  'static',
+  'scope',
   'status',
 ];
 
@@ -378,7 +380,9 @@ module.exports = grammar({
       $.sqlite_clause,
       $.api_actor_clause,
       $.auth_clause,
+      $.static_clause,
       $.route_clause,
+      $.scope_clause,
       $.status_clause,
     ),
 
@@ -386,13 +390,35 @@ module.exports = grammar({
     cors_clause: $ => seq('cors', field('origin', $.string), $._newline),
     sqlite_clause: $ => seq('sqlite', field('name', $._identifier), 'from', field('path', $.string), $._newline),
     api_actor_clause: $ => seq('actor', field('name', $._identifier), ':', field('type', $._type), $._newline),
-    auth_clause: $ => seq('auth', field('principal', $._type), 'via', field('handler', $._identifier), $._newline),
+    auth_clause: $ => seq(
+      'auth',
+      field('principal', $._type),
+      'via',
+      field('handler', choice($._identifier, seq($.type_identifier, '.', $._identifier))),
+      $._newline,
+    ),
+    static_clause: $ => seq(
+      'static',
+      field('path', $.string),
+      'from',
+      field('source', $.string),
+      $._newline,
+    ),
 
     route_clause: $ => seq(
       field('method', $.http_method),
       field('path', $.string),
-      field('handler', $._identifier),
+      field('handler', choice($._identifier, seq($.type_identifier, '.', $._identifier))),
       $._newline,
+    ),
+
+    scope_clause: $ => seq(
+      'scope',
+      field('prefix', $.string),
+      $._newline,
+      repeat(choice($.route_clause, $.scope_clause)),
+      'end',
+      optional($._newline),
     ),
 
     http_method: _ => choice('get', 'post', 'put', 'patch', 'delete'),
