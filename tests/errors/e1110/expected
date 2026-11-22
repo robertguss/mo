@@ -1,0 +1,4 @@
+error E1110: a dependency folder in mo.toml does not exist  <unavailable>
+
+  tests/errors/e1110/mo.toml
+

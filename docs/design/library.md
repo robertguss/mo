@@ -663,7 +663,8 @@ helpers that lowered `api` servers (`src/lower/apis.c`) and handlers call.
 | `header`, `headers_named`, `bearer_token`, `query_param` and `text` on an `Api.Request` | Mo | `lib/api.mo` | case-insensitive single and multi-header lookup and Bearer extraction |
 | `Api.response(status, headers, body)`, `Api.json_response(status, value)`, `Api.text_response(status, body)`, `Api.html_response(status, html)`, `Api.no_content()`, `Api.redirect(location)`, `Api.redirect_see_other(location)`, `Api.redirect_with(status, location)`, `Api.sse_response(events)`, `Api.serve_static_fake(req, prefix, dir, files)` | Mo | `lib/api.mo` | response constructors, 3xx redirects, SSE and `ApiTest.send` static asset serving |
 | `ok?`, `with_header`, `add_header`, `header`, `headers_named`, `text` and `json` on an `Api.Response` | Mo | `lib/api.mo` | response header appending (including multiple `Set-Cookie` headers) and inspection |
-| `ApiTest.send(module, request, ...)` | lowering | `src/lower/apis.c` | spec-only direct call to `Module.%api.dispatch` with real or synthesized fake capabilities and actors |
+| `Api.encode_job_payload(payload)`, `Api.parse_job_payload(raw)`, `Api.unknown_job_error(name)`, `Api.sqlite_job_error(err)` | Mo | `lib/api.mo` | JSON payload encoding/decoding and error formatting for lowered `%api.job` and `ApiTest.run_job` dispatch |
+| `ApiTest.send(module, request, ...)`, `ApiTest.run_job(module, name, payload, ...)` | lowering | `src/lower/apis.c` | spec-only direct calls to `Module.%api.dispatch` and `Module.%api.job` with real or synthesized fake capabilities and actors |
 
 ## Actor
 
@@ -923,3 +924,13 @@ Functions have no abilities (reference 9.2).
 | --- | --- | --- | --- |
 | `new()`, `with_inertia(client, version)`, `without_inertia(client)`, `with_header(client, name, value)` | Mo | `lib/arvo/web-test.mo` | immutable test client builders |
 | `prepare(client, req)`, `prepare_without_csrf(client, req)`, `absorb(client, res)`, `cookie(client, name)`, `redirect_location(res)`, `inertia_page(res)` | Mo | `lib/arvo/web-test.mo` | cookie jar, CSRF injection and Inertia JSON/HTML `data-page` decoding |
+
+## Arvo.Jobs
+
+`Arvo.Jobs` (`use Arvo.Jobs`) implements a durable SQLite `arvo_jobs` background job queue with transactional enqueueing, atomic `BEGIN IMMEDIATE` claiming, exponential backoff retries and orphaned-job recovery.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `schema_sql()`, `init_schema(db)`, `backoff_seconds(attempts)` | Mo | `lib/arvo/jobs.mo` | `arvo_jobs` DDL + ready index and bounded `15 * 4^(attempts - 1)` backoff (`15..3600` seconds) |
+| `enqueue(db, rng, clock, job_name, payload)`, `enqueue_at(db, rng, clock, queue, job_name, payload, run_at, max_attempts)` | Mo | `lib/arvo/jobs.mo` | transaction-composable ULID job insertion without opening a nested SQLite transaction |
+| `claim_next(db, clock, job_names)`, `complete(db, clock, job_id)`, `fail_or_retry(db, clock, job_id, attempts, max_attempts, error_msg)`, `requeue_stale_running(db, clock, stale_seconds)`, `list_recent(db, limit)` | Mo | `lib/arvo/jobs.mo` | atomic FIFO due-job claiming, completion, retry/terminal-failure transitions, stale lock recovery and `Sqlite.decode[JobRecord]` queries |

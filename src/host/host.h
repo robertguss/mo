@@ -33,6 +33,28 @@ void mo_host_init(struct mo_host *host, const struct mo_host_types *types);
 MO_MUST_USE struct mo_sqlite_pool *mo_sqlite_pool_new(void);
 void mo_sqlite_pool_cleanup(struct mo_sqlite_pool *pool);
 void mo_sqlite_pool_free(struct mo_sqlite_pool *pool);
+
+struct mo_arvo_job_claim {
+    char id[128];
+    char job_name[129];
+    char *payload_json;
+    int64_t attempts;
+    int64_t max_attempts;
+};
+void mo_arvo_job_claim_free(struct mo_arvo_job_claim *claim);
+MO_MUST_USE bool mo_sqlite_jobs_has_table(struct mo_sqlite_pool *pool, int folder_fd,
+                                          const char *rel_path, bool force_fallback);
+void mo_sqlite_jobs_requeue_stale(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                                  bool force_fallback, int64_t stale_seconds);
+MO_MUST_USE bool mo_sqlite_jobs_claim_next(struct mo_sqlite_pool *pool, int folder_fd,
+                                           const char *rel_path, bool force_fallback,
+                                           const char *const *job_names, uint32_t job_count,
+                                           struct mo_arvo_job_claim *out);
+void mo_sqlite_jobs_complete(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                             bool force_fallback, const char *job_id);
+void mo_sqlite_jobs_fail_or_retry(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                                  bool force_fallback, const char *job_id, int64_t attempts,
+                                  int64_t max_attempts, const char *error_msg);
 MO_MUST_USE bool mo_host_open_confined_file(int root_fd, const char *mount_dir,
                                             const char *rel_path, bool force_fallback, int *fd_out,
                                             uint64_t *size_out, int64_t *mtime_sec_out,

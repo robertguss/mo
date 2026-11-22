@@ -591,6 +591,275 @@ static void test_watch_live_reload(const char *base_dir) {
     CHECK(strstr(err_log, "error E") != NULL);
 }
 
+static void test_watch_manifest_dep_reload(const char *base_dir) {
+    char dep_dir[300], dep_src[340], dep_mo[380], app_dir[300], toml_path[340], main_mo[340];
+    MO_ASSERT(snprintf(dep_dir, sizeof dep_dir, "%s/dep_pkg", base_dir) > 0 &&
+              mkdir(dep_dir, 0700) == 0);
+    MO_ASSERT(snprintf(dep_src, sizeof dep_src, "%s/src", dep_dir) > 0 &&
+              mkdir(dep_src, 0700) == 0);
+    MO_ASSERT(snprintf(dep_mo, sizeof dep_mo, "%s/greeter.mo", dep_src) > 0);
+    MO_ASSERT(snprintf(app_dir, sizeof app_dir, "%s/watch_pkg", base_dir) > 0 &&
+              mkdir(app_dir, 0700) == 0);
+    MO_ASSERT(snprintf(toml_path, sizeof toml_path, "%s/mo.toml", app_dir) > 0);
+    MO_ASSERT(snprintf(main_mo, sizeof main_mo, "%s/main.mo", app_dir) > 0);
+
+    write_file_str(dep_mo, "module Greeter\nexpose greet\nfn greet() : Map(Text, Text)\n"
+                           "  {\"msg\": \"dep-v1\"}\nend\n");
+    write_file_str(toml_path, "[package]\nname = \"watch-pkg\"\n\n[dependencies]\n"
+                              "greeter = { path = \"../dep_pkg\" }\n");
+    write_file_str(main_mo, "module Main\nuse Greeter\napi\n  get \"/greet\" Greeter.greet\nend\n");
+
+    const char *argv[] = {"mo",        "serve",     main_mo, "--port", "0",     "--bind",
+                          "127.0.0.1", "--workers", "2",     "--data", app_dir, "--watch"};
+    pid_t pid = -1;
+    int out_rfd = -1, err_rfd = -1;
+    uint16_t port = spawn_server(12, argv, &pid, &out_rfd, &err_rfd);
+
+    char resp[4096];
+    CHECK(http_exchange(port, "GET /greet HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"msg\":\"dep-v1\"") != NULL);
+
+    /* Editing a .mo file inside a mo.toml local path dependency triggers live reload */
+    write_file_str(dep_mo, "module Greeter\nexpose greet\nfn greet() : Map(Text, Text)\n"
+                           "  {\"msg\": \"dep-v2\"}\nend\n");
+    bool saw_v2 = false;
+    for (int attempt = 0; attempt < 25 && !saw_v2; attempt++) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
+        (void)nanosleep(&ts, NULL);
+        if (http_exchange(port,
+                          "GET /greet HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                          resp, sizeof resp) == 200 &&
+            strstr(resp, "\"msg\":\"dep-v2\"") != NULL) {
+            saw_v2 = true;
+        }
+    }
+    CHECK(saw_v2);
+
+    char err_log[32768];
+    stop_server(pid, out_rfd, err_rfd, err_log, sizeof err_log);
+    CHECK(strstr(err_log, "mo serve: reload:") != NULL);
+}
+
+static void test_background_jobs(const char *base_dir) {
+    char japp_dir[300], jdata_dir[300], jobs_mod[340], main_mo[340];
+    MO_ASSERT(snprintf(japp_dir, sizeof japp_dir, "%s/jobs_app", base_dir) > 0 &&
+              mkdir(japp_dir, 0700) == 0);
+    MO_ASSERT(snprintf(jdata_dir, sizeof jdata_dir, "%s/jobs_data", base_dir) > 0 &&
+              mkdir(jdata_dir, 0700) == 0);
+    MO_ASSERT(snprintf(jobs_mod, sizeof jobs_mod, "%s/jobs-mod.mo", japp_dir) > 0);
+    MO_ASSERT(snprintf(main_mo, sizeof main_mo, "%s/main.mo", japp_dir) > 0);
+
+    write_file_str(jobs_mod, "module JobsMod\n"
+                             "expose heartbeat\n"
+                             "use Json\n"
+                             "fn heartbeat(_payload: Json, db: Sqlite.Database) : Unit\n"
+                             "  _i = db.run(\"INSERT INTO ticks(n) VALUES (1)\", [])\n"
+                             "  Unit\n"
+                             "end\n");
+
+    write_file_str(
+        main_mo,
+        "module Main\n"
+        "use Json\n"
+        "use Arvo.Jobs\n"
+        "use JobsMod\n"
+        "struct EnqInput\n"
+        "  mode: Text\n"
+        "  tag: Text\n"
+        "  max_attempts: Int\n"
+        "end\n"
+        "struct ImportedRow\n"
+        "  tag: Text\n"
+        "end\n"
+        "struct Summary\n"
+        "  ticks: Int\n"
+        "  imported: List(Text)\n"
+        "  jobs: List(Jobs.JobRecord)\n"
+        "end\n"
+        "enum AppErr\n"
+        "  SqlErr(Text)\n"
+        "end\n"
+        "enum JobFail\n"
+        "  UpstreamDown(Text)\n"
+        "end\n"
+        "api\n"
+        "  sqlite db from \"jobs.db\"\n"
+        "  job \"heartbeat\" JobsMod.heartbeat every 1.second\n"
+        "  job \"import.batch\" run_import\n"
+        "  post \"/enqueue\" enqueue_job\n"
+        "  get \"/summary\" get_summary\n"
+        "  status SqlErr(_) = 500\n"
+        "end\n"
+        "fn enqueue_in_tx(\n"
+        "  tx_db: Sqlite.Database,\n"
+        "  ctx: (SecureRandom, Clock, EnqInput)\n"
+        ") : Result(Text, Text)\n"
+        "  _d = try tx_db.run(\"INSERT INTO imported(tag) VALUES (?)\", "
+        "[Sqlite.String(\"enq-#{ctx.2.tag}\")]).map_error(fn(e) \"#{e}\" "
+        "end)\n"
+        "  payload = Json.Object({\n"
+        "    \"mode\": Json.String(ctx.2.mode),\n"
+        "    \"tag\": Json.String(ctx.2.tag),\n"
+        "    \"secret\": Json.String(\"top-secret-job-payload\")\n"
+        "  })\n"
+        "  Jobs.enqueue_at(\n"
+        "    tx_db,\n"
+        "    ctx.0,\n"
+        "    ctx.1,\n"
+        "    \"default\",\n"
+        "    \"import.batch\",\n"
+        "    payload,\n"
+        "    ctx.1.now,\n"
+        "    ctx.2.max_attempts\n"
+        "  ).map_error(fn(e) \"#{e}\" end)\n"
+        "end\n"
+        "fn enqueue_job(\n"
+        "  db: Sqlite.Database,\n"
+        "  rng: SecureRandom,\n"
+        "  clock: Clock,\n"
+        "  input: EnqInput\n"
+        ") : Result(Map(Text, Text), AppErr)\n"
+        "  jid = try Sqlite.transaction(db, (rng, clock, input), enqueue_in_tx, fn(e) \"#{e}\" "
+        "end).map_error(fn(m) SqlErr(m) end)\n"
+        "  Ok({\"job_id\": jid})\n"
+        "end\n"
+        "fn run_import(payload: Json, db: Sqlite.Database) : Result(Unit, JobFail)\n"
+        "  mode = payload.text_at(\"mode\") or \"ok\"\n"
+        "  tag = payload.text_at(\"tag\") or \"none\"\n"
+        "  return Error(UpstreamDown(\"502 gateway\")) if mode == \"fail\"\n"
+        "  if mode == \"crash\"\n"
+        "    _b = db.run(\"BEGIN IMMEDIATE\", [])\n"
+        "    _p = db.run(\"INSERT INTO imported(tag) VALUES ('phantom-job-tx')\", [])\n"
+        "    stop \"job worker crashed\"\n"
+        "  end\n"
+        "  _ins = db.run(\"INSERT INTO imported(tag) VALUES (?)\", [Sqlite.String(tag)])\n"
+        "  Ok(Unit)\n"
+        "end\n"
+        "fn get_summary(db: Sqlite.Database) : Result(Summary, AppErr)\n"
+        "  tick_rows = try db.query(\"SELECT COUNT(*) FROM ticks\", []).map_error(fn(e) "
+        "SqlErr(\"#{e}\") end)\n"
+        "  ticks = case tick_rows.rows.first\n"
+        "    Some([Sqlite.Integer(n)]): n\n"
+        "    Some(_): 0\n"
+        "    None: 0\n"
+        "  end\n"
+        "  imp_rows = try db.query(\"SELECT tag FROM imported ORDER BY tag ASC\", "
+        "[]).map_error(fn(e) SqlErr(\"#{e}\") end)\n"
+        "  imp = try Sqlite.decode[ImportedRow](imp_rows).map_error(fn(e) SqlErr(e.to_text) end)\n"
+        "  jobs = try Jobs.list_recent(db, 20).map_error(fn(e) SqlErr(\"#{e}\") end)\n"
+        "  Ok(Summary(ticks: ticks, imported: imp.map(fn(r) r.tag end), jobs: jobs))\n"
+        "end\n"
+        "fn main(sqlite: Sqlite)\n"
+        "  db = case sqlite.open(\"jobs.db\")\n"
+        "    Ok(d): d\n"
+        "    Error(_): stop \"open jobs.db\"\n"
+        "  end\n"
+        "  assert Jobs.init_schema(db) == Ok(Unit)\n"
+        "  assert db.run(\"CREATE TABLE IF NOT EXISTS ticks(n INT NOT NULL) STRICT\", []) == "
+        "Ok(Unit)\n"
+        "  assert db.run(\"CREATE TABLE IF NOT EXISTS imported(tag TEXT NOT NULL) STRICT\", []) == "
+        "Ok(Unit)\n"
+        "  stale = \"2020-01-01T00:00:00.000000Z\"\n"
+        "  assert db.run(\n"
+        "    \"INSERT INTO arvo_jobs (id, queue, job_name, payload_json, state, attempts, "
+        "max_attempts, run_at, locked_at, last_error, created_at, updated_at) VALUES "
+        "('000000000000000000000STALE', 'default', 'import.batch', "
+        "'{\\\"mode\\\":\\\"ok\\\",\\\"tag\\\":\\\"recovered-stale\\\",\\\"secret\\\":\\\"top-"
+        "secret-job-payload\\\"}', 'running', 1, 3, ?, ?, NULL, ?, ?)\",\n"
+        "    [Sqlite.String(stale), Sqlite.String(stale), Sqlite.String(stale), "
+        "Sqlite.String(stale)]\n"
+        "  ) == Ok(Unit)\n"
+        "end\n");
+
+    /* Seed schema + orphaned 'running' job before spawning mo serve */
+    {
+        const char *seed_argv[] = {"mo", "run", "--state-dir", jdata_dir, main_mo};
+        struct mo_cli seed_cli;
+        const char *serr = NULL;
+        MO_ASSERT(mo_cli_parse(5, seed_argv, &seed_cli, &serr));
+        FILE *fnull = tmpfile();
+        MO_ASSERT(fnull != NULL);
+        CHECK(mo_cli_execute(&seed_cli, fnull, fnull) == 0);
+        (void)fclose(fnull);
+    }
+
+    /* Verify mo format accepts job clauses cleanly */
+    {
+        const char *fmt_argv[] = {"mo", "format", main_mo, jobs_mod};
+        struct mo_cli fmt_cli;
+        const char *ferr = NULL;
+        MO_ASSERT(mo_cli_parse(4, fmt_argv, &fmt_cli, &ferr));
+        FILE *fnull = tmpfile();
+        MO_ASSERT(fnull != NULL);
+        CHECK(mo_cli_execute(&fmt_cli, fnull, fnull) == 0);
+        (void)fclose(fnull);
+    }
+
+    const char *argv[] = {"mo",        "serve",     main_mo, "--port", "0",      "--bind",
+                          "127.0.0.1", "--workers", "2",     "--data", jdata_dir};
+    pid_t pid = -1;
+    int out_rfd = -1, err_rfd = -1;
+    uint16_t port = spawn_server(11, argv, &pid, &out_rfd, &err_rfd);
+
+    char resp[32768];
+    const char *enq_ok = "{\"mode\":\"ok\",\"tag\":\"done-one\",\"max_attempts\":3}";
+    const char *enq_fail = "{\"mode\":\"fail\",\"tag\":\"retry-me\",\"max_attempts\":3}";
+    const char *enq_crash = "{\"mode\":\"crash\",\"tag\":\"boom-one\",\"max_attempts\":1}";
+    char req[1024];
+
+    (void)snprintf(req, sizeof req,
+                   "POST /enqueue HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: "
+                   "application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",
+                   strlen(enq_ok), enq_ok);
+    CHECK(http_exchange(port, req, resp, sizeof resp) == 200);
+
+    (void)snprintf(req, sizeof req,
+                   "POST /enqueue HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: "
+                   "application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",
+                   strlen(enq_fail), enq_fail);
+    CHECK(http_exchange(port, req, resp, sizeof resp) == 200);
+
+    (void)snprintf(req, sizeof req,
+                   "POST /enqueue HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: "
+                   "application/json\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n%s",
+                   strlen(enq_crash), enq_crash);
+    CHECK(http_exchange(port, req, resp, sizeof resp) == 200);
+
+    /* Wait up to 6 seconds for periodic heartbeat (>= 1s) + all 4 queued jobs to settle */
+    bool settled = false;
+    for (int attempt = 0; attempt < 60 && !settled; attempt++) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
+        (void)nanosleep(&ts, NULL);
+        if (http_exchange(port,
+                          "GET /summary HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                          resp, sizeof resp) == 200) {
+            bool has_tick =
+                strstr(resp, "\"ticks\":0") == NULL && strstr(resp, "\"ticks\":") != NULL;
+            bool has_stale = strstr(resp, "\"recovered-stale\"") != NULL;
+            bool has_done = strstr(resp, "\"done-one\"") != NULL;
+            bool has_retry_err = strstr(resp, "502 gateway") != NULL;
+            bool has_crash_failed = strstr(resp, "\"state\":\"failed\"") != NULL &&
+                                    strstr(resp, "\"last_error\":\"defect: stop\"") != NULL;
+            if (has_tick && has_stale && has_done && has_retry_err && has_crash_failed)
+                settled = true;
+        }
+    }
+    CHECK(settled);
+    /* Mid-transaction defect inside crashing job rolled back 'phantom-job-tx' cleanly */
+    CHECK(strstr(resp, "phantom-job-tx") == NULL);
+
+    char err_log[65536];
+    stop_server(pid, out_rfd, err_rfd, err_log, sizeof err_log);
+    CHECK(strstr(err_log, "mo serve: job: 20") != NULL);
+    CHECK(strstr(err_log, " heartbeat ok ") != NULL);
+    CHECK(strstr(err_log, " import.batch ok ") != NULL);
+    CHECK(strstr(err_log, " import.batch error ") != NULL);
+    CHECK(strstr(err_log, " import.batch defect ") != NULL);
+    /* Job payload secrets never appear in server stderr logs */
+    CHECK(strstr(err_log, "top-secret-job-payload") == NULL);
+}
+
 int main(void) {
     (void)signal(SIGPIPE, SIG_IGN);
     char dir[] = "/tmp/mo-test-api-srv-XXXXXX";
@@ -1058,8 +1327,12 @@ int main(void) {
     }
     mo_api_set_force_fallback(false);
 
-    /* 8. --watch live reload across multi-module dependency edits and compile errors */
+    /* 8. --watch live reload across multi-module dependency edits, compile errors, and mo.toml */
     test_watch_live_reload(dir);
+    test_watch_manifest_dep_reload(dir);
+
+    /* 9. Periodic and durable SQLite background jobs (retry, defect rollback, stale recovery) */
+    test_background_jobs(dir);
 
     char cmd[512];
     MO_ASSERT(snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir) > 0 && system(cmd) == 0);

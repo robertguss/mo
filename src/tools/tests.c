@@ -135,8 +135,11 @@ struct mo_test_selection *mo_select_tests(struct mo_arena *arena, const struct m
         const struct mo_checked_spec *spec = &program->specs[i];
         if (spec->kind == MO_SPEC_ANCHOR)
             continue;
-        /* A program's tests don't include the toolchain library's; `mo test lib/list.mo` does. */
-        if (spec->module != 0 && program->set->library[spec->module])
+        /* A program's tests don't include the toolchain library's or path dependencies';
+         * `mo test lib/list.mo` does. */
+        if (spec->module != 0 &&
+            (program->set->library[spec->module] ||
+             (program->set->dependency != NULL && program->set->dependency[spec->module])))
             continue;
         char *full = name(arena, program, spec, &work);
         if (full == NULL)

@@ -248,6 +248,8 @@
     X(1108, CHECK_ABILITY_DEPTH, NULL)                                                             \
     /* A service has more than MO_LIMIT_SERVICE_PROMISES service promises. */                      \
     X(1109, TOO_MANY_SERVICE_PROMISES, NULL)                                                       \
+    /* A mo.toml package manifest is malformed, unreadable, circular or ambiguous. */              \
+    X(1110, PACKAGE_MANIFEST, NULL)                                                                \
     /* A checked form not yet implemented by lowering. */                                          \
     X(1150, LOWER_UNFINISHED, NULL)                                                                \
     /* The caller's lowering arena has no room. */                                                 \

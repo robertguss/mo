@@ -64,6 +64,10 @@ cors_preflight,
 apply_cors,
 openapi_docs_html,
 serve_static_fake,
+encode_job_payload,
+parse_job_payload,
+unknown_job_error,
+sqlite_job_error,
 render_json
 use Json
 
@@ -934,6 +938,30 @@ fn serve_static_fake(req: Request, prefix: Text, rel_dir: Text, files: ReadFiles
       body: out_body
     )
   )
+end
+
+## Encodes a JSON job payload for `ApiTest.run_job`.
+fn encode_job_payload(payload: Json) : Text
+  payload.to_text
+end
+
+## Parses a JSON job payload, defaulting `""` to `Json.Null`.
+fn parse_job_payload(raw: Text) : Result(Json, Text)
+  return Ok(Json.Null) if raw.empty?
+  case Json.parse(raw)
+    Ok(j): Ok(j)
+    Error(_): Error("invalid job payload JSON")
+  end
+end
+
+## Formats an unknown background job error for `%api.job`.
+fn unknown_job_error(name: Text) : Result(Unit, Text)
+  Error("unknown job: #{name}")
+end
+
+## Formats a SQLite open failure during `%api.job` execution.
+fn sqlite_job_error(err: SqliteError) : Result(Unit, Text)
+  Error("sqlite open failed: #{err}")
 end
 
 test "request and response builders, path matching and validation helpers"

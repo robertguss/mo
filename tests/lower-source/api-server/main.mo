@@ -30,6 +30,8 @@ api
   cors "https://app.example"
   static "/assets" from "public"
   auth Principal via authenticate
+  job "sync.notes" run_sync_job every 15.minutes
+  job "audit.tick" run_tick_job
   get "/health" health
   get "/whoami" whoami
   scope "/notes"
@@ -99,6 +101,17 @@ end
 fn stream_events(req: Api.Request) : Api.Response
   topic = req.header("X-Topic") or "all"
   Api.sse_response([(Some("ready"), "{\"topic\":\"#{topic}\"}")])
+end
+
+fn run_sync_job(payload: Json, env: Env) : Result(Unit, NoteError)
+  expected = env.get("API_TOKEN") or "secret"
+  return Error(Unauthorized) if payload.text_at("token") != Some(expected)
+  return Error(EmptyTitle) if (payload.text_at("title") or "").trim.empty?
+  Ok(Unit)
+end
+
+fn run_tick_job(_payload: Json) : Unit
+  Unit
 end
 
 fn main() : Int
@@ -229,4 +242,15 @@ test "api static assets, optional auth, multi-headers and see-other redirect"
 
   trav = ApiTest.send(Main, Api.get("/assets/../secret.txt"), files.read_only, env)
   assert trav.status == 404
+end
+
+test "api background jobs via ApiTest.run_job"
+  env = Env.of({"API_TOKEN": "topsecret"})
+  good = Json.Object({"token": Json.String("topsecret"), "title": Json.String("sync")})
+  assert ApiTest.run_job(Main, "sync.notes", good, env) == Ok(Unit)
+  assert ApiTest.run_job(Main, "sync.notes", Json.Null, env) == Error("Unauthorized")
+  bad_title = Json.Object({"token": Json.String("topsecret"), "title": Json.String("  ")})
+  assert ApiTest.run_job(Main, "sync.notes", bad_title, env) == Error("EmptyTitle")
+  assert ApiTest.run_job(Main, "audit.tick", Json.Null, env) == Ok(Unit)
+  assert ApiTest.run_job(Main, "unknown.job", Json.Null, env) == Error("unknown job: unknown.job")
 end

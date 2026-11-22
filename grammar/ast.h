@@ -42,6 +42,7 @@ enum node_kind {
     K_API_AUTH,
     K_API_ROUTE,
     K_API_STATIC,
+    K_API_JOB,
     K_API_SCOPE,
     K_API_STATUS,
     K_PROMISE,

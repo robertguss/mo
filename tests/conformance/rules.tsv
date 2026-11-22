@@ -128,7 +128,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 10.1/1	mod-brace-import,mod-qualified	e0008,e0027,e0039		
 10.1/2	tst-private-names	e0041		
 10.2/1	mod-hidden-type	e0040,e0047,e0064		
-10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0037-http,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048		
+10.3/1	mod-qualified,mod-brace-import,mod-choice-cases,mod-type-named-like-module	e0036,e0037,e0037-http,e0038,e0038-import-repeat,e0038-module-case,e0038-module-imported-case,e0044,e0046,e0048,e1110			tests/test_check.c:package_manifests
 10.4/1	lang-constants,mod-constants			
 10.4/2	lang-constants,mod-constants,service-read-only	e0089	fail-bug-constant-stop				A constant has no effects, so no program can observe how many times it is computed.
 10.5/1	mod-type-bare-after-use,lang-bindings,cap-files-walk,cap-network-error	e0045			ci/check_simulation.py:main

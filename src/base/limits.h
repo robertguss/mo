@@ -41,6 +41,11 @@
  */
 #define MO_LIMIT_LIBRARY_ENTRIES 65536
 
+/* Bytes in one mo.toml package manifest, and declared or transitive path dependencies in a
+ * program: E1110. */
+#define MO_LIMIT_MANIFEST_SIZE (64 << 10)
+#define MO_LIMIT_DEPENDENCIES 64
+
 /* Unqualified names imported by one module, including exposed choice cases: E1060. This
  * bounds expansion when a short use line brings in a large choice interface. */
 #define MO_LIMIT_MODULE_IMPORTS (1 << 20)
@@ -238,6 +243,7 @@
 #define MO_LIMIT_API_SQLITES 16
 #define MO_LIMIT_API_ACTORS 16
 #define MO_LIMIT_API_STATICS 8
+#define MO_LIMIT_API_JOBS 16
 #define MO_LIMIT_API_SCOPE_DEPTH 8
 #define MO_LIMIT_API_STATUSES 256
 #define MO_LIMIT_API_PATH_SEGMENTS 64
@@ -247,12 +253,15 @@
 #define MO_LIMIT_API_KEEPALIVE_REQUESTS 100
 #define MO_LIMIT_API_KEEPALIVE_IDLE_US UINT64_C(15000000)
 #define MO_LIMIT_API_WATCH_POLL_US UINT64_C(250000)
+#define MO_LIMIT_API_JOB_POLL_US UINT64_C(250000)
+#define MO_LIMIT_API_JOB_STALE_SECONDS 300
 #define MO_LIMIT_STATIC_FILE_BYTES (64 * 1024 * 1024)
 #define MO_LIMIT_API_HEADER_BYTES 32768
 #define MO_LIMIT_API_HEADERS 128
 #define MO_LIMIT_API_BODY_BYTES (16 * 1024 * 1024)
 #define MO_LIMIT_API_CHUNK_OVERHEAD_BYTES (1024 * 1024)
 #define MO_LIMIT_API_REQUEST_WORK UINT64_C(67108864)
+#define MO_LIMIT_API_JOB_WORK UINT64_C(67108864)
 #define MO_LIMIT_API_REQUEST_HEAP (64 * 1024 * 1024)
 #ifndef MO_LIMIT_API_READ_US
 #define MO_LIMIT_API_READ_US UINT64_C(15000000)

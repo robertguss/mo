@@ -1352,6 +1352,11 @@ static MO_MUST_USE struct mo_syntax *api_clause(struct parser *p, bool in_scope)
                   "a static clause is static \"/prefix\" from \"folder\"",
                   "Write static \"/assets\" from \"public/assets\" with plain text strings.");
         n = N(MO_S_API_STATIC, start, prefix, name(p, MO_T_TEXT));
+    } else if (clause_word(p, "job")) {
+        struct mo_syntax *job_name = name(p, MO_T_TEXT);
+        struct mo_syntax *handler = api_handler_ref(p);
+        struct mo_syntax *interval = clause_word(p, "every") ? expr(p, 0) : NULL;
+        n = N(MO_S_API_JOB, start, job_name, handler, interval);
     } else if (api_method_word(p)) {
         struct mo_syntax *method = leaf(p);
         struct mo_syntax *route_path = name(p, MO_T_TEXT);
@@ -1379,7 +1384,7 @@ static MO_MUST_USE struct mo_syntax *api_clause(struct parser *p, bool in_scope)
         n = N(MO_S_API_STATUS, start, variant, wildcards, name(p, MO_T_INT));
     } else {
         error(p, MO_CODE_SOURCE_SYNTAX, start,
-              "an api clause starts with port, cors, sqlite, actor, auth, static, scope, get, "
+              "an api clause starts with port, cors, sqlite, actor, auth, static, job, scope, get, "
               "post, put, patch, delete or status",
               "Put each api clause on its own logical line, then close the api block with end.");
     }

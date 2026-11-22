@@ -1098,11 +1098,11 @@ MO_MUST_USE struct value infer_actor_call(struct inference *p, const struct mo_s
 }
 
 static MO_MUST_USE const struct mo_source_type *
-find_api_lib_type(const struct mo_module_interfaces *interfaces,
-                  const struct mo_signatures *signatures, const char *name) {
+find_lib_type(const struct mo_module_interfaces *interfaces, const struct mo_signatures *signatures,
+              const char *mod_name, const char *name) {
     for (uint32_t i = 0; i < interfaces->count; i++) {
         const struct mo_module_scope *scope = &interfaces->scopes[i];
-        if (!scope->library || scope->name == NULL || strcmp(scope->name, "Api") != 0)
+        if (!scope->library || scope->name == NULL || strcmp(scope->name, mod_name) != 0)
             continue;
         const struct mo_symbol *sym = mo_find_symbol(scope, (const uint8_t *)name, strlen(name));
         if (sym == NULL)
@@ -1115,33 +1115,46 @@ find_api_lib_type(const struct mo_module_interfaces *interfaces,
 
 MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo_syntax *name,
                                             const struct mo_syntax *args) {
-    if (infer_compare_text(name, "send") != 0) {
-        bool kept =
-            infer_problem(p, MO_CODE_NAME_UNKNOWN, name->span, infer_unknown_member,
-                          "ApiTest's operation is send(Module, req, ...capabilities).", NULL);
-        (void)kept;
-        return (struct value){0};
-    }
-    if (args == NULL) {
-        bool kept =
-            infer_problem(p, MO_CODE_CALL_ARGUMENTS, name->span, "ApiTest.send needs a direct call",
-                          "Call ApiTest.send(Module, req) directly.", NULL);
-        (void)kept;
-        return (struct value){0};
-    }
-    if (!p->spec) {
-        bool kept = infer_problem(p, MO_CODE_FAKE_OUTSIDE_SPEC, name->span,
-                                  "a fake capability is made only in a test, example or promise",
-                                  "ApiTest.send runs only in tests, examples and promises, never "
-                                  "in a module's constants or its functions (reference 12.4).",
+    bool is_send = infer_compare_text(name, "send") == 0;
+    bool is_job = infer_compare_text(name, "run_job") == 0;
+    if (!is_send && !is_job) {
+        bool kept = infer_problem(p, MO_CODE_NAME_UNKNOWN, name->span, infer_unknown_member,
+                                  "ApiTest's operations are send(Module, req, ...capabilities) and "
+                                  "run_job(Module, name, payload, ...capabilities).",
                                   NULL);
         (void)kept;
         return (struct value){0};
     }
-    if (args->count < 2) {
+    if (args == NULL) {
+        bool kept = infer_problem(p, MO_CODE_CALL_ARGUMENTS, name->span,
+                                  is_send ? "ApiTest.send needs a direct call"
+                                          : "ApiTest.run_job needs a direct call",
+                                  is_send ? "Call ApiTest.send(Module, req) directly."
+                                          : "Call ApiTest.run_job(Module, name, payload) directly.",
+                                  NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    if (!p->spec) {
         bool kept = infer_problem(
-            p, MO_CODE_CALL_ARGUMENTS, args->span, "ApiTest.send needs a module and a Request",
-            "Write ApiTest.send(Module, req) with optional fake capabilities.", NULL);
+            p, MO_CODE_FAKE_OUTSIDE_SPEC, name->span,
+            "a fake capability is made only in a test, example or promise",
+            "ApiTest runs only in tests, examples and promises, never in a module's constants or "
+            "its functions (reference 12.4).",
+            NULL);
+        (void)kept;
+        return (struct value){0};
+    }
+    uint32_t min_args = is_job ? 3u : 2u;
+    if (args->count < min_args) {
+        bool kept = infer_problem(
+            p, MO_CODE_CALL_ARGUMENTS, args->span,
+            is_send ? "ApiTest.send needs a module and a Request"
+                    : "ApiTest.run_job needs a module, job name and Json payload",
+            is_send ? "Write ApiTest.send(Module, req) with optional fake capabilities."
+                    : "Write ApiTest.run_job(Module, \"job.name\", payload) with optional fake "
+                      "capabilities.",
+            NULL);
         (void)kept;
         return (struct value){0};
     }
@@ -1174,7 +1187,9 @@ MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo
     }
     if (api == NULL) {
         bool kept = infer_problem(
-            p, MO_CODE_API_BLOCK, prefix->span, "ApiTest.send must name an api module",
+            p, MO_CODE_API_BLOCK, prefix->span,
+            is_send ? "ApiTest.send must name an api module"
+                    : "ApiTest.run_job must name an api module",
             "Name the current module or one it uses directly, and that module must declare an "
             "api block.",
             NULL);
@@ -1184,44 +1199,82 @@ MO_MUST_USE struct value infer_apitest_call(struct inference *p, const struct mo
     if (!infer_use_alias(p, alias, prefix))
         return (struct value){0};
 
-    const struct mo_source_type *req_src =
-        find_api_lib_type(p->interfaces, p->signatures, "Request");
-    const struct mo_source_type *res_src =
-        find_api_lib_type(p->interfaces, p->signatures, "Response");
-    if (req_src == NULL || res_src == NULL) {
-        bool kept = infer_problem(p, MO_CODE_IMPORT_MISSING, name->span,
-                                  "ApiTest.send needs the Api library module",
-                                  "Bring Api into scope with use Api.", NULL);
-        (void)kept;
-        return (struct value){0};
-    }
-    struct term *req_term = infer_annotation(p, req_src, NULL, 0);
-    struct term *res_term = infer_annotation(p, res_src, NULL, 0);
-    if (req_term == NULL || res_term == NULL)
-        return (struct value){0};
+    struct value out = {0};
+    if (is_send) {
+        const struct mo_source_type *req_src =
+            find_lib_type(p->interfaces, p->signatures, "Api", "Request");
+        const struct mo_source_type *res_src =
+            find_lib_type(p->interfaces, p->signatures, "Api", "Response");
+        if (req_src == NULL || res_src == NULL) {
+            bool kept = infer_problem(p, MO_CODE_IMPORT_MISSING, name->span,
+                                      "ApiTest.send needs the Api library module",
+                                      "Bring Api into scope with use Api.", NULL);
+            (void)kept;
+            return (struct value){0};
+        }
+        struct term *req_term = infer_annotation(p, req_src, NULL, 0);
+        struct term *res_term = infer_annotation(p, res_src, NULL, 0);
+        if (req_term == NULL || res_term == NULL)
+            return (struct value){0};
 
-    uint32_t operand_count = args->count - 1;
-    struct value out = infer_graph(p, (struct value){.type = res_term}, operand_count);
-    if (out.type == NULL)
-        return out;
-    if (p->checked) {
-        out.graph->output.native = "ApiTest.send";
-        out.graph->output.service = api_index;
-    }
+        out = infer_graph(p, (struct value){.type = res_term}, args->count - 1);
+        if (out.type == NULL)
+            return out;
+        if (p->checked) {
+            out.graph->output.native = "ApiTest.send";
+            out.graph->output.service = api_index;
+        }
+        struct value req_val = infer_as(p, args->children[1], req_term, MO_CODE_ARGUMENT_TYPE);
+        if (req_val.type == NULL)
+            return (struct value){0};
+        if (p->checked)
+            out.graph->operands[0] = req_val.note;
+        out.never = req_val.never;
+    } else {
+        const struct mo_source_type *json_src =
+            find_lib_type(p->interfaces, p->signatures, "Json", "Json");
+        if (json_src == NULL) {
+            bool kept = infer_problem(p, MO_CODE_IMPORT_MISSING, name->span,
+                                      "ApiTest.run_job needs the Json library module",
+                                      "Bring Json into scope with use Json.", NULL);
+            (void)kept;
+            return (struct value){0};
+        }
+        struct term *text_term = infer_native(p, "Text", 0);
+        struct term *unit_term = infer_native(p, "Unit", 0);
+        struct term *json_term = infer_annotation(p, json_src, NULL, 0);
+        struct term *res_term = infer_native(p, "Result", 2);
+        if (text_term == NULL || unit_term == NULL || json_term == NULL || res_term == NULL)
+            return (struct value){0};
+        res_term->arguments[0] = unit_term;
+        res_term->arguments[1] = text_term;
 
-    struct value req_val = infer_as(p, args->children[1], req_term, MO_CODE_ARGUMENT_TYPE);
-    if (req_val.type == NULL)
-        return (struct value){0};
-    if (p->checked)
-        out.graph->operands[0] = req_val.note;
-    out.never = req_val.never;
+        out = infer_graph(p, (struct value){.type = res_term}, args->count - 1);
+        if (out.type == NULL)
+            return out;
+        if (p->checked) {
+            out.graph->output.native = "ApiTest.run_job";
+            out.graph->output.service = api_index;
+        }
+        struct value name_val = infer_as(p, args->children[1], text_term, MO_CODE_ARGUMENT_TYPE);
+        if (name_val.type == NULL)
+            return (struct value){0};
+        struct value payload_val = infer_as(p, args->children[2], json_term, MO_CODE_ARGUMENT_TYPE);
+        if (payload_val.type == NULL)
+            return (struct value){0};
+        if (p->checked) {
+            out.graph->operands[0] = name_val.note;
+            out.graph->operands[1] = payload_val.note;
+        }
+        out.never = name_val.never || payload_val.never;
+    }
 
     static const char *const allowed_caps[] = {"Sqlite",  "Network",     "Clock", "Random",
                                                "Files",   "ReadFiles",   "Env",   "Console",
                                                "Command", "SecureRandom"};
     uint32_t seen_caps = 0;
     uint32_t seen_actors = 0;
-    for (uint32_t i = 2; i < args->count; i++) {
+    for (uint32_t i = min_args; i < args->count; i++) {
         struct value cap_val = infer_expression(p, args->children[i], NULL);
         if (cap_val.type == NULL)
             return (struct value){0};

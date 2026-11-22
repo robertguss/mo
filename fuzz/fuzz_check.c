@@ -16,6 +16,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 
 static char root[] = "/tmp/mo-fuzz-check-XXXXXX";
 static char files[3][128], library[128], library_file[160];
+static char manifest_path[160], dep_dir[160], dep_src[192], dep_file[224];
 static bool ready;
 static const char money[] = "module Money\nexpose Money, Choice(..), total\n"
                             "struct Money\n amount: Int\nend\nstruct Line\n amount: Int\nend\n"
@@ -26,8 +27,12 @@ static const char another[] =
     "module Another\nexpose Status(..)\nenum Status\n Ready\n Quit\nend\n";
 
 static void cleanup(void) {
+    (void)unlink(manifest_path);
     for (size_t i = 0; i < 3; i++)
         MO_ASSERT(unlink(files[i]) == 0);
+    MO_ASSERT(unlink(dep_file) == 0);
+    MO_ASSERT(rmdir(dep_src) == 0);
+    MO_ASSERT(rmdir(dep_dir) == 0);
     MO_ASSERT(unlink(library_file) == 0);
     MO_ASSERT(rmdir(library) == 0);
     MO_ASSERT(rmdir(root) == 0);
@@ -59,6 +64,17 @@ static void setup(void) {
                         "struct Item\n value: Int\nend\nenum Choice\n Fresh\n Old\nend\n"
                         "fn read(item: Item) : Int\n item.value\nend\n";
     write_file(library_file, (const uint8_t *)text, sizeof(text) - 1);
+    int m = snprintf(manifest_path, sizeof(manifest_path), "%s/mo.toml", root);
+    int d1 = snprintf(dep_dir, sizeof(dep_dir), "%s/dep", root);
+    int d2 = snprintf(dep_src, sizeof(dep_src), "%s/src", dep_dir);
+    int d3 = snprintf(dep_file, sizeof(dep_file), "%s/dep-mod.mo", dep_src);
+    MO_ASSERT(m > 0 && (size_t)m < sizeof(manifest_path));
+    MO_ASSERT(d1 > 0 && (size_t)d1 < sizeof(dep_dir));
+    MO_ASSERT(d2 > 0 && (size_t)d2 < sizeof(dep_src));
+    MO_ASSERT(d3 > 0 && (size_t)d3 < sizeof(dep_file));
+    MO_ASSERT(mkdir(dep_dir, 0700) == 0 && mkdir(dep_src, 0700) == 0);
+    const char dep_text[] = "module DepMod\nexpose val\nfn val() : Int\n 1\nend\n";
+    write_file(dep_file, (const uint8_t *)dep_text, sizeof(dep_text) - 1);
     MO_ASSERT(atexit(cleanup) == 0);
     ready = true;
 }
@@ -274,7 +290,12 @@ static void fuzz_input(void *argument) {
     mo_sources_free(&sources);
     MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
     mo_arena_init(&arena, limit);
+    bool wrote_manifest = offset <= size;
+    if (wrote_manifest)
+        write_file(manifest_path, data + offset, size - offset);
     set = mo_load_program(&arena, &sources, files[0], library, &diags);
+    if (wrote_manifest)
+        MO_ASSERT(unlink(manifest_path) == 0);
     MO_ASSERT((set == NULL) == mo_diags_any(&diags));
     if (set != NULL)
         resolve(set, limit);

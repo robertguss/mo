@@ -85,7 +85,8 @@ static struct instance *reserve(struct lowering *p, uint32_t index, struct insta
 static bool library_spec(const struct lowering *p, const struct mo_checked_spec *source) {
     const struct mo_module_set *set = p->program->set;
     MO_ASSERT(source->module < set->count);
-    return source->module != 0 && set->library != NULL && set->library[source->module];
+    return source->module != 0 && ((set->library != NULL && set->library[source->module]) ||
+                                   (set->dependency != NULL && set->dependency[source->module]));
 }
 
 void lower_subject_specs(struct lowering *p, struct instance *subject) {

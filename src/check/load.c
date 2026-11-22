@@ -6,13 +6,26 @@
 #include "base/codes.h"
 #include "base/limits.h"
 #include "base/path.h"
+#include "base/utf8.h"
 
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+
+struct dep_package {
+    const char *key;
+    const char *real_dir;
+    const char *src_override;
+    uint32_t root_count;
+    const char *root_slash[3];
+    const char *real_roots[3];
+    uint32_t direct_count;
+    uint32_t direct[MO_LIMIT_DEPENDENCIES];
+};
 
 struct loaded {
     const char *name;
@@ -21,6 +34,7 @@ struct loaded {
     uint32_t left;
     uint32_t right;
     uint32_t height;
+    uint32_t pkg;
     uint8_t state;
 };
 
@@ -35,6 +49,10 @@ struct loader {
     const char *real_entry; /* the entry's real path when the entry is a library file */
     const char *entry_library_rel;
     const struct mo_embedded_library *embedded;
+    uint32_t entry_direct_count;
+    uint32_t entry_direct[MO_LIMIT_DEPENDENCIES];
+    uint32_t dep_count;
+    struct dep_package *deps;
     uint32_t index; /* AVL root, one-based; zero is absent */
     bool memory_only, upgrade;
     bool failed;
@@ -259,16 +277,21 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
 }
 
 static const char *const on_use[] = {
-    "Api",          "Arvo.Audit",   "Arvo.Auth", "Arvo.Changeset", "Arvo.Cookie",
-    "Arvo.Csrf",    "Arvo.Flash",   "Arvo.Form", "Arvo.Inertia",   "Arvo.Migrations",
-    "Arvo.Session", "Arvo.WebTest", "Command",   "Crypto",         "Date",
-    "Http",         "Json",         "Sqlite",    "Unicode16"};
+    "Api",          "Arvo.Audit", "Arvo.Auth",       "Arvo.Changeset",
+    "Arvo.Cookie",  "Arvo.Csrf",  "Arvo.Flash",      "Arvo.Form",
+    "Arvo.Inertia", "Arvo.Jobs",  "Arvo.Migrations", "Arvo.Session",
+    "Arvo.WebTest", "Command",    "Crypto",          "Date",
+    "Http",         "Json",       "Sqlite",          "Unicode16"};
 
 static MO_MUST_USE bool loaded_on_use(const char *name) {
     for (size_t i = 0; i < sizeof on_use / sizeof *on_use; i++)
         if (strcmp(name, on_use[i]) == 0)
             return true;
     return false;
+}
+
+static MO_MUST_USE bool is_reserved_on_use(const char *name) {
+    return loaded_on_use(name) && strncmp(name, "Arvo.", 5) != 0;
 }
 
 static MO_MUST_USE bool file_loaded_on_use(const char *relative) {
@@ -282,8 +305,8 @@ static MO_MUST_USE bool file_loaded_on_use(const char *relative) {
     return false;
 }
 
-static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const char *expected,
-                                         struct mo_span origin, bool library) {
+static MO_MUST_USE uint32_t index_module_pkg(struct loader *l, uint32_t file, const char *expected,
+                                             struct mo_span origin, bool library, uint32_t pkg) {
     struct mo_header header;
     uint32_t before = l->diags->count;
     if (!mo_read_header(l->arena, l->sources, file, &header, l->diags) ||
@@ -308,7 +331,7 @@ static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const 
         return 0;
     }
     uint32_t previous = find(l, name);
-    if (previous != 0 || (!library && loaded_on_use(name))) {
+    if (previous != 0 || (!library && is_reserved_on_use(name))) {
         struct mo_span conflict = library && previous != 0 && !l->out->library[previous - 1]
                                       ? l->items[previous - 1].header.path->span
                                       : header.path->span;
@@ -322,9 +345,11 @@ static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const 
     }
     MO_ASSERT(l->out->count < MO_LIMIT_FILES);
     uint32_t id = ++l->out->count;
-    l->items[id - 1] = (struct loaded){.name = name, .header = header, .file = file, .height = 1};
+    l->items[id - 1] =
+        (struct loaded){.name = name, .header = header, .file = file, .height = 1, .pkg = pkg};
     l->out->names[id - 1] = name;
     l->out->library[id - 1] = library;
+    l->out->dependency[id - 1] = !library && pkg != 0 && pkg != UINT32_MAX;
     l->out->uses[id - 1] = allocate(l, header.uses->count, sizeof(uint32_t), _Alignof(uint32_t));
     if (l->out->uses[id - 1] == NULL)
         return 0;
@@ -332,12 +357,18 @@ static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const 
     return id;
 }
 
-static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
-                                        const char *expected, struct mo_span origin, bool library) {
+static MO_MUST_USE uint32_t index_module(struct loader *l, uint32_t file, const char *expected,
+                                         struct mo_span origin, bool library) {
+    return index_module_pkg(l, file, expected, origin, library, library ? UINT32_MAX : 0);
+}
+
+static MO_MUST_USE uint32_t read_module_in_root(struct loader *l, const char *file_path,
+                                                const char *confine_root, const char *expected,
+                                                struct mo_span origin, bool library, uint32_t pkg) {
     MO_ASSERT(!l->memory_only || library);
     MO_ASSERT(!library || l->real_library != NULL || l->entry_library_rel != NULL);
     if (expected != NULL || (library && l->real_library != NULL)) {
-        const char *root = library ? l->real_library : l->real_root;
+        const char *root = library ? l->real_library : confine_root;
         MO_ASSERT(root != NULL);
         char *real = real_path(l, file_path, origin, false);
         if (real == NULL)
@@ -357,7 +388,13 @@ static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
         (void)kept;
         return 0;
     }
-    return index_module(l, file, expected, origin, library);
+    return index_module_pkg(l, file, expected, origin, library, pkg);
+}
+
+static MO_MUST_USE uint32_t read_module(struct loader *l, const char *file_path,
+                                        const char *expected, struct mo_span origin, bool library) {
+    return read_module_in_root(l, file_path, l->real_root, expected, origin, library,
+                               library ? UINT32_MAX : 0);
 }
 
 static MO_MUST_USE char *join(struct loader *l, const char *root, const char *relative,
@@ -579,6 +616,560 @@ static const struct mo_embedded_source *find_embedded_on_use(struct loader *l,
     return NULL;
 }
 
+static MO_MUST_USE bool manifest_error(struct loader *l, const char *manifest_path,
+                                       const char *message, const char *reason) {
+    struct mo_span unavailable = {UINT32_MAX, 0, 0};
+    const char *shown = manifest_path;
+    if (manifest_path != NULL && l->real_root != NULL && l->out != NULL && l->out->root != NULL) {
+        size_t rlen = strlen(l->real_root);
+        if (strncmp(manifest_path, l->real_root, rlen) == 0 && manifest_path[rlen] == '/') {
+            char *rel = join(l, l->out->root, manifest_path + rlen + 1, unavailable);
+            if (rel != NULL)
+                shown = rel;
+        }
+    }
+    bool kept = report(l, MO_CODE_PACKAGE_MANIFEST, unavailable, message, reason, shown);
+    (void)kept;
+    return false;
+}
+
+static void toml_skip_ws(const char *s, size_t len, size_t *pos) {
+    while (*pos < len && (s[*pos] == ' ' || s[*pos] == '\t'))
+        (*pos)++;
+}
+
+static MO_MUST_USE bool toml_is_bare_char(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+           c == '-';
+}
+
+static MO_MUST_USE char *toml_parse_bare_key(struct loader *l, const char *s, size_t len,
+                                             size_t *pos) {
+    size_t start = *pos;
+    while (*pos < len && toml_is_bare_char(s[*pos]))
+        (*pos)++;
+    if (*pos == start)
+        return NULL;
+    size_t klen = *pos - start;
+    char *out = allocate(l, klen + 1, 1, 1);
+    if (out != NULL) {
+        memcpy(out, s + start, klen);
+        out[klen] = '\0';
+    }
+    return out;
+}
+
+static MO_MUST_USE bool toml_parse_string(struct loader *l, const char *s, size_t len, size_t *pos,
+                                          char **out) {
+    *out = NULL;
+    if (*pos >= len || s[*pos] != '"')
+        return false;
+    (*pos)++;
+    char *buf = allocate(l, len - *pos + 1, 1, 1);
+    if (buf == NULL)
+        return false;
+    size_t n = 0;
+    while (*pos < len) {
+        char c = s[(*pos)++];
+        if (c == '"') {
+            buf[n] = '\0';
+            *out = buf;
+            return true;
+        }
+        if ((unsigned char)c < 0x20 || (unsigned char)c == 0x7f)
+            return false;
+        if (c == '\\') {
+            if (*pos >= len)
+                return false;
+            char esc = s[(*pos)++];
+            switch (esc) {
+            case '"':
+                buf[n++] = '"';
+                break;
+            case '\\':
+                buf[n++] = '\\';
+                break;
+            case 'n':
+                buf[n++] = '\n';
+                break;
+            case 'r':
+                buf[n++] = '\r';
+                break;
+            case 't':
+                buf[n++] = '\t';
+                break;
+            default:
+                return false;
+            }
+        } else {
+            buf[n++] = c;
+        }
+    }
+    return false;
+}
+
+static MO_MUST_USE char *ensure_trailing_slash(struct loader *l, const char *dir) {
+    size_t n = strlen(dir);
+    if (n > 0 && dir[n - 1] == '/')
+        return join(l, dir, "", (struct mo_span){UINT32_MAX, 0, 0});
+    return join(l, dir, "/", (struct mo_span){UINT32_MAX, 0, 0});
+}
+
+static MO_MUST_USE bool load_manifest_recursive(struct loader *l, const char *manifest_path,
+                                                const char *real_manifest_dir,
+                                                const char *stack_dirs[MO_LIMIT_DEPENDENCIES + 1],
+                                                uint32_t stack_depth, uint32_t *direct_out,
+                                                uint32_t *direct_count_out);
+
+static MO_MUST_USE bool resolve_dep_entry(struct loader *l, const char *manifest_path,
+                                          const char *real_manifest_dir, const char *dep_key,
+                                          const char *dep_path, const char *dep_src,
+                                          const char *stack_dirs[MO_LIMIT_DEPENDENCIES + 1],
+                                          uint32_t stack_depth, uint32_t *dep_id_out) {
+    struct mo_span unavailable = {UINT32_MAX, 0, 0};
+    const char *raw_dir = dep_path;
+    if (dep_path[0] != '/') {
+        char *base_slash = ensure_trailing_slash(l, real_manifest_dir);
+        if (base_slash == NULL)
+            return false;
+        raw_dir = join(l, base_slash, dep_path, unavailable);
+        if (raw_dir == NULL)
+            return false;
+    }
+
+    char resolved_dir[MO_LIMIT_PATH_SIZE + 1];
+    struct stat st;
+    if (realpath(raw_dir, resolved_dir) == NULL || stat(resolved_dir, &st) != 0 ||
+        !S_ISDIR(st.st_mode)) {
+        return manifest_error(l, manifest_path, "a dependency folder in mo.toml does not exist",
+                              "Check that each path = \"...\" under [dependencies] points to an "
+                              "existing folder.");
+    }
+
+    for (uint32_t s = 0; s < stack_depth; s++) {
+        if (strcmp(stack_dirs[s], resolved_dir) == 0)
+            return manifest_error(l, manifest_path, "mo.toml dependencies form a cycle",
+                                  "Remove the circular path dependency between mo.toml manifests.");
+    }
+
+    const char *norm_src = dep_src != NULL ? dep_src : "";
+    for (uint32_t d = 0; d < l->dep_count; d++) {
+        if (strcmp(l->deps[d].real_dir, resolved_dir) == 0 &&
+            strcmp(l->deps[d].src_override, norm_src) == 0) {
+            *dep_id_out = d + 1;
+            return true;
+        }
+    }
+
+    if (l->dep_count >= MO_LIMIT_DEPENDENCIES)
+        return manifest_error(l, manifest_path, "the program declares too many dependencies",
+                              "A program may load at most 64 path dependencies via mo.toml.");
+
+    uint32_t idx = l->dep_count++;
+    struct dep_package *pkg = &l->deps[idx];
+    *pkg = (struct dep_package){0};
+
+    size_t dlen = strlen(resolved_dir);
+    char *copied_real = allocate(l, dlen + 1, 1, 1);
+    char *copied_src = allocate(l, strlen(norm_src) + 1, 1, 1);
+    if (copied_real == NULL || copied_src == NULL)
+        return false;
+    memcpy(copied_real, resolved_dir, dlen + 1);
+    memcpy(copied_src, norm_src, strlen(norm_src) + 1);
+    pkg->key = dep_key;
+    pkg->real_dir = copied_real;
+    pkg->src_override = copied_src;
+
+    if (dep_src != NULL) {
+        if (dep_src[0] == '/' || strchr(dep_src, '\\') != NULL)
+            return manifest_error(
+                l, manifest_path, "a dependency src override in mo.toml must be a relative folder",
+                "Use a relative subfolder inside the dependency, such as \"src\".");
+        char *dep_slash = ensure_trailing_slash(l, copied_real);
+        char *sub_cand = dep_slash == NULL ? NULL : join(l, dep_slash, dep_src, unavailable);
+        if (sub_cand == NULL)
+            return false;
+        char resolved_sub[MO_LIMIT_PATH_SIZE + 1];
+        struct stat sub_st;
+        if (realpath(sub_cand, resolved_sub) == NULL || stat(resolved_sub, &sub_st) != 0 ||
+            !S_ISDIR(sub_st.st_mode))
+            return manifest_error(l, manifest_path,
+                                  "a dependency src folder in mo.toml does not exist", NULL);
+        if (strncmp(copied_real, resolved_sub, dlen) != 0 ||
+            (dlen != 1 && resolved_sub[dlen] != '\0' && resolved_sub[dlen] != '/'))
+            return manifest_error(l, manifest_path,
+                                  "a dependency src folder escapes its package folder", NULL);
+        size_t slen = strlen(resolved_sub);
+        char *sub_copy = allocate(l, slen + 1, 1, 1);
+        if (sub_copy == NULL)
+            return false;
+        memcpy(sub_copy, resolved_sub, slen + 1);
+        char *sub_slash = ensure_trailing_slash(l, sub_copy);
+        if (sub_slash == NULL)
+            return false;
+        pkg->real_roots[0] = sub_copy;
+        pkg->root_slash[0] = sub_slash;
+        pkg->root_count = 1;
+    } else {
+        static const char *const defaults[3] = {"src", "lib", ""};
+        char *dep_slash = ensure_trailing_slash(l, copied_real);
+        if (dep_slash == NULL)
+            return false;
+        for (size_t k = 0; k < 3; k++) {
+            char *cand =
+                defaults[k][0] == '\0' ? copied_real : join(l, dep_slash, defaults[k], unavailable);
+            if (cand == NULL)
+                return false;
+            char resolved_sub[MO_LIMIT_PATH_SIZE + 1];
+            struct stat sub_st;
+            if (realpath(cand, resolved_sub) != NULL && stat(resolved_sub, &sub_st) == 0 &&
+                S_ISDIR(sub_st.st_mode) && strncmp(copied_real, resolved_sub, dlen) == 0 &&
+                (dlen == 1 || resolved_sub[dlen] == '\0' || resolved_sub[dlen] == '/')) {
+                bool dup_root = false;
+                for (uint32_t r = 0; r < pkg->root_count; r++)
+                    if (strcmp(pkg->real_roots[r], resolved_sub) == 0)
+                        dup_root = true;
+                if (dup_root)
+                    continue;
+                size_t slen = strlen(resolved_sub);
+                char *sub_copy = allocate(l, slen + 1, 1, 1);
+                if (sub_copy == NULL)
+                    return false;
+                memcpy(sub_copy, resolved_sub, slen + 1);
+                char *sub_slash = ensure_trailing_slash(l, sub_copy);
+                if (sub_slash == NULL)
+                    return false;
+                pkg->real_roots[pkg->root_count] = sub_copy;
+                pkg->root_slash[pkg->root_count] = sub_slash;
+                pkg->root_count++;
+            }
+        }
+    }
+
+    char *dep_slash = ensure_trailing_slash(l, copied_real);
+    char *sub_manifest = dep_slash == NULL ? NULL : join(l, dep_slash, "mo.toml", unavailable);
+    if (sub_manifest == NULL)
+        return false;
+    struct stat mst;
+    if (stat(sub_manifest, &mst) == 0) {
+        if (!S_ISREG(mst.st_mode))
+            return manifest_error(l, sub_manifest, "mo.toml is not a regular file", NULL);
+        stack_dirs[stack_depth] = copied_real;
+        if (!load_manifest_recursive(l, sub_manifest, copied_real, stack_dirs, stack_depth + 1,
+                                     pkg->direct, &pkg->direct_count))
+            return false;
+    }
+
+    *dep_id_out = idx + 1;
+    return true;
+}
+
+static MO_MUST_USE bool load_manifest_recursive(struct loader *l, const char *manifest_path,
+                                                const char *real_manifest_dir,
+                                                const char *stack_dirs[MO_LIMIT_DEPENDENCIES + 1],
+                                                uint32_t stack_depth, uint32_t *direct_out,
+                                                uint32_t *direct_count_out) {
+    *direct_count_out = 0;
+    FILE *fp = fopen(manifest_path, "rb");
+    if (fp == NULL)
+        return manifest_error(l, manifest_path, "mo.toml can't be read", NULL);
+    struct stat st;
+    if (fstat(fileno(fp), &st) != 0 || !S_ISREG(st.st_mode)) {
+        (void)fclose(fp);
+        return manifest_error(l, manifest_path, "mo.toml is not a regular file", NULL);
+    }
+    if (st.st_size < 0 || (uint64_t)st.st_size > MO_LIMIT_MANIFEST_SIZE) {
+        (void)fclose(fp);
+        return manifest_error(l, manifest_path, "mo.toml exceeds 64 KiB", NULL);
+    }
+    size_t fsize = (size_t)st.st_size;
+    char *raw = allocate(l, fsize + 1, 1, 1);
+    if (raw == NULL) {
+        (void)fclose(fp);
+        return false;
+    }
+    size_t got = fsize > 0 ? fread(raw, 1, fsize, fp) : 0;
+    bool read_err = ferror(fp) != 0;
+    (void)fclose(fp);
+    if (read_err || got != fsize)
+        return manifest_error(l, manifest_path, "mo.toml can't be read", NULL);
+    raw[fsize] = '\0';
+
+    if (l->out->manifest_count < MO_LIMIT_DEPENDENCIES + 1)
+        l->out->manifests[l->out->manifest_count++] = manifest_path;
+
+    for (size_t i = 0; i < fsize; i++) {
+        if (raw[i] == '\0')
+            return manifest_error(l, manifest_path, "mo.toml contains a NUL byte", NULL);
+    }
+    if (!mo_utf8_valid((const uint8_t *)raw, fsize))
+        return manifest_error(l, manifest_path, "mo.toml is not valid UTF-8", NULL);
+
+    enum { SEC_NONE, SEC_PACKAGE, SEC_DEPS } section = SEC_NONE;
+    bool seen_pkg = false, seen_pkg_name = false, seen_pkg_version = false, seen_deps = false;
+    const char *dep_keys[MO_LIMIT_DEPENDENCIES];
+    uint32_t local_dep_count = 0;
+
+    size_t pos = 0;
+    while (pos < fsize) {
+        size_t line_start = pos;
+        while (pos < fsize && raw[pos] != '\n')
+            pos++;
+        size_t line_end = pos;
+        if (pos < fsize && raw[pos] == '\n')
+            pos++;
+        if (line_end > line_start && raw[line_end - 1] == '\r')
+            line_end--;
+
+        /* Strip comments outside quoted strings and reject stray control bytes. */
+        bool in_quotes = false;
+        size_t clean_end = line_end;
+        for (size_t i = line_start; i < line_end; i++) {
+            unsigned char c = (unsigned char)raw[i];
+            if (!in_quotes && c == '#') {
+                clean_end = i;
+                break;
+            }
+            if ((c < 0x20 && c != '\t') || c == 0x7f)
+                return manifest_error(l, manifest_path, "mo.toml contains an invalid control byte",
+                                      NULL);
+            if (c == '"')
+                in_quotes = !in_quotes;
+            else if (in_quotes && c == '\\' && i + 1 < line_end)
+                i++;
+        }
+        if (in_quotes)
+            return manifest_error(l, manifest_path, "unterminated string in mo.toml", NULL);
+
+        const char *line = raw + line_start;
+        size_t llen = clean_end - line_start;
+        size_t p = 0;
+        toml_skip_ws(line, llen, &p);
+        while (llen > p && (line[llen - 1] == ' ' || line[llen - 1] == '\t'))
+            llen--;
+        if (p == llen)
+            continue;
+
+        if (line[p] == '[') {
+            if (line[llen - 1] != ']')
+                return manifest_error(l, manifest_path, "malformed section header in mo.toml",
+                                      "Write [package] or [dependencies] on its own line.");
+            p++;
+            size_t sec_end = llen - 1;
+            toml_skip_ws(line, sec_end, &p);
+            while (sec_end > p && (line[sec_end - 1] == ' ' || line[sec_end - 1] == '\t'))
+                sec_end--;
+            size_t slen = sec_end - p;
+            if (slen == 7 && memcmp(line + p, "package", 7) == 0) {
+                if (seen_pkg)
+                    return manifest_error(l, manifest_path,
+                                          "duplicate [package] section in mo.toml", NULL);
+                seen_pkg = true;
+                section = SEC_PACKAGE;
+            } else if (slen == 12 && memcmp(line + p, "dependencies", 12) == 0) {
+                if (seen_deps)
+                    return manifest_error(l, manifest_path,
+                                          "duplicate [dependencies] section in mo.toml", NULL);
+                seen_deps = true;
+                section = SEC_DEPS;
+            } else {
+                return manifest_error(
+                    l, manifest_path, "unknown section in mo.toml",
+                    "Only [package] and [dependencies] are supported in mo.toml.");
+            }
+            continue;
+        }
+
+        if (section == SEC_NONE)
+            return manifest_error(l, manifest_path,
+                                  "keys in mo.toml must appear under [package] or [dependencies]",
+                                  NULL);
+
+        char *key = toml_parse_bare_key(l, line, llen, &p);
+        if (key == NULL)
+            return l->failed ? false
+                             : manifest_error(l, manifest_path, "invalid key in mo.toml", NULL);
+        toml_skip_ws(line, llen, &p);
+        if (p >= llen || line[p] != '=')
+            return manifest_error(l, manifest_path, "expected '=' after key in mo.toml", NULL);
+        p++;
+        toml_skip_ws(line, llen, &p);
+
+        if (section == SEC_PACKAGE) {
+            char *val = NULL;
+            if (!toml_parse_string(l, line, llen, &p, &val))
+                return l->failed
+                           ? false
+                           : manifest_error(l, manifest_path,
+                                            "package fields in mo.toml must be strings", NULL);
+            toml_skip_ws(line, llen, &p);
+            if (p != llen)
+                return manifest_error(l, manifest_path, "unexpected trailing tokens in mo.toml",
+                                      NULL);
+            if (strcmp(key, "name") == 0) {
+                if (seen_pkg_name)
+                    return manifest_error(l, manifest_path, "duplicate package name in mo.toml",
+                                          NULL);
+                if (val[0] == '\0')
+                    return manifest_error(l, manifest_path,
+                                          "package name in mo.toml cannot be empty", NULL);
+                seen_pkg_name = true;
+            } else if (strcmp(key, "version") == 0) {
+                if (seen_pkg_version)
+                    return manifest_error(l, manifest_path, "duplicate package version in mo.toml",
+                                          NULL);
+                if (val[0] == '\0')
+                    return manifest_error(l, manifest_path,
+                                          "package version in mo.toml cannot be empty", NULL);
+                seen_pkg_version = true;
+            } else {
+                return manifest_error(l, manifest_path, "unknown key under [package] in mo.toml",
+                                      "Supported [package] keys are name and version.");
+            }
+        } else {
+            for (uint32_t prev = 0; prev < local_dep_count; prev++) {
+                if (strcmp(dep_keys[prev], key) == 0)
+                    return manifest_error(l, manifest_path, "duplicate dependency key in mo.toml",
+                                          NULL);
+            }
+            if (local_dep_count >= MO_LIMIT_DEPENDENCIES)
+                return manifest_error(l, manifest_path, "too many dependencies in mo.toml", NULL);
+            if (p >= llen || line[p] != '{' || line[llen - 1] != '}')
+                return manifest_error(
+                    l, manifest_path,
+                    "a dependency in mo.toml must be an inline table { path = \"...\" }", NULL);
+            p++;
+            size_t tbl_end = llen - 1;
+            toml_skip_ws(line, tbl_end, &p);
+            char *dep_path = NULL;
+            char *dep_src = NULL;
+            if (p == tbl_end)
+                return manifest_error(l, manifest_path,
+                                      "a dependency table in mo.toml requires path = \"...\"",
+                                      NULL);
+            for (;;) {
+                char *tkey = toml_parse_bare_key(l, line, tbl_end, &p);
+                if (tkey == NULL)
+                    return l->failed ? false
+                                     : manifest_error(l, manifest_path,
+                                                      "invalid inline table key in mo.toml", NULL);
+                toml_skip_ws(line, tbl_end, &p);
+                if (p >= tbl_end || line[p] != '=')
+                    return manifest_error(l, manifest_path,
+                                          "expected '=' in dependency inline table in mo.toml",
+                                          NULL);
+                p++;
+                toml_skip_ws(line, tbl_end, &p);
+                char *tval = NULL;
+                if (!toml_parse_string(l, line, tbl_end, &p, &tval))
+                    return l->failed
+                               ? false
+                               : manifest_error(l, manifest_path,
+                                                "dependency fields in mo.toml must be strings",
+                                                NULL);
+                if (strcmp(tkey, "path") == 0) {
+                    if (dep_path != NULL)
+                        return manifest_error(l, manifest_path,
+                                              "duplicate path key in dependency table", NULL);
+                    if (tval[0] == '\0')
+                        return manifest_error(l, manifest_path,
+                                              "dependency path in mo.toml cannot be empty", NULL);
+                    dep_path = tval;
+                } else if (strcmp(tkey, "src") == 0) {
+                    if (dep_src != NULL)
+                        return manifest_error(l, manifest_path,
+                                              "duplicate src key in dependency table", NULL);
+                    if (tval[0] == '\0')
+                        return manifest_error(l, manifest_path,
+                                              "dependency src in mo.toml cannot be empty", NULL);
+                    dep_src = tval;
+                } else {
+                    return manifest_error(l, manifest_path,
+                                          "unknown key in dependency inline table in mo.toml",
+                                          "Supported dependency keys are path and src.");
+                }
+                toml_skip_ws(line, tbl_end, &p);
+                if (p == tbl_end)
+                    break;
+                if (line[p] != ',')
+                    return manifest_error(l, manifest_path,
+                                          "expected ',' or '}' in dependency inline table", NULL);
+                p++;
+                toml_skip_ws(line, tbl_end, &p);
+                if (p == tbl_end)
+                    return manifest_error(l, manifest_path,
+                                          "trailing comma in dependency inline table in mo.toml",
+                                          NULL);
+            }
+            if (dep_path == NULL)
+                return manifest_error(l, manifest_path,
+                                      "a dependency table in mo.toml requires path = \"...\"",
+                                      NULL);
+
+            dep_keys[local_dep_count++] = key;
+            uint32_t dep_id = 0;
+            if (!resolve_dep_entry(l, manifest_path, real_manifest_dir, key, dep_path, dep_src,
+                                   stack_dirs, stack_depth, &dep_id))
+                return false;
+            direct_out[(*direct_count_out)++] = dep_id;
+        }
+    }
+
+    if (seen_pkg && !seen_pkg_name)
+        return manifest_error(l, manifest_path, "[package] in mo.toml requires name = \"...\"",
+                              NULL);
+    return true;
+}
+
+static MO_MUST_USE bool discover_and_load_manifest(struct loader *l) {
+    if (l->memory_only || l->upgrade || l->real_entry != NULL || l->entry_library_rel != NULL ||
+        l->real_root == NULL)
+        return true;
+
+    char cur[MO_LIMIT_PATH_SIZE + 1];
+    size_t rlen = strlen(l->real_root);
+    if (rlen >= sizeof cur)
+        return true;
+    memcpy(cur, l->real_root, rlen + 1);
+
+    for (;;) {
+        char cand[MO_LIMIT_PATH_SIZE + 16];
+        int n = strcmp(cur, "/") == 0 ? snprintf(cand, sizeof cand, "/mo.toml")
+                                      : snprintf(cand, sizeof cand, "%s/mo.toml", cur);
+        if (n > 0 && (size_t)n < sizeof cand) {
+            struct stat st;
+            if (stat(cand, &st) == 0) {
+                char *manifest_copy = allocate(l, (size_t)n + 1, 1, 1);
+                size_t clen = strlen(cur);
+                char *dir_copy = allocate(l, clen + 1, 1, 1);
+                if (manifest_copy == NULL || dir_copy == NULL)
+                    return false;
+                memcpy(manifest_copy, cand, (size_t)n + 1);
+                memcpy(dir_copy, cur, clen + 1);
+                if (!S_ISREG(st.st_mode))
+                    return manifest_error(l, manifest_copy, "mo.toml is not a regular file", NULL);
+                l->deps = allocate(l, MO_LIMIT_DEPENDENCIES, sizeof *l->deps,
+                                   _Alignof(struct dep_package));
+                if (l->deps == NULL)
+                    return false;
+                const char *stack_dirs[MO_LIMIT_DEPENDENCIES + 1] = {dir_copy};
+                return load_manifest_recursive(l, manifest_copy, dir_copy, stack_dirs, 1,
+                                               l->entry_direct, &l->entry_direct_count);
+            }
+        }
+        if (strcmp(cur, "/") == 0)
+            break;
+        char *slash = strrchr(cur, '/');
+        if (slash == NULL)
+            break;
+        if (slash == cur)
+            cur[1] = '\0';
+        else
+            *slash = '\0';
+    }
+    return true;
+}
+
 static MO_MUST_USE bool graph(struct loader *l) {
     struct frame *stack = allocate(l, MO_LIMIT_FILES, sizeof(*stack), _Alignof(struct frame));
     if (stack == NULL)
@@ -620,14 +1211,14 @@ static MO_MUST_USE bool graph(struct loader *l) {
                 if (!ok || target == 0)
                     return false;
             }
-            if (target == 0 && l->real_library != NULL && loaded_on_use(name)) {
+            if (target == 0 && l->real_library != NULL && is_reserved_on_use(name)) {
                 char *full = library_file(l, path);
                 if (full == NULL)
                     return false;
                 target = read_module(l, full, name, path->span, true);
                 if (target == 0)
                     return false;
-            } else if (target == 0 && l->embedded != NULL && loaded_on_use(name)) {
+            } else if (target == 0 && l->embedded != NULL && is_reserved_on_use(name)) {
                 const struct mo_embedded_source *src = find_embedded_on_use(l, path);
                 if (src != NULL) {
                     target = read_embedded_module(l, src, name, path->span);
@@ -641,6 +1232,23 @@ static MO_MUST_USE bool graph(struct loader *l) {
                     l, (struct mo_source_error){.problem = MO_SOURCE_UNREADABLE}, name, path->span);
                 (void)kept;
                 return false;
+            }
+            if (l->out->library[frame->id - 1] && target == 0 && loaded_on_use(name)) {
+                if (l->real_library != NULL) {
+                    char *full = library_file(l, path);
+                    if (full == NULL)
+                        return false;
+                    target = read_module(l, full, name, path->span, true);
+                    if (target == 0)
+                        return false;
+                } else if (l->embedded != NULL) {
+                    const struct mo_embedded_source *src = find_embedded_on_use(l, path);
+                    if (src != NULL) {
+                        target = read_embedded_module(l, src, name, path->span);
+                        if (target == 0)
+                            return false;
+                    }
+                }
             }
             if (l->out->library[frame->id - 1] && (target == 0 || !l->out->library[target - 1])) {
                 char *full = library_file(l, path);
@@ -656,12 +1264,114 @@ static MO_MUST_USE bool graph(struct loader *l) {
             }
             if (target == 0) {
                 char *relative = path_text(l, path, true);
-                char *full = relative == NULL ? NULL : join(l, l->out->root, relative, path->span);
-                if (full == NULL)
+                if (relative == NULL)
                     return false;
-                target = read_module(l, full, name, path->span, false);
-                if (target == 0)
-                    return false;
+                /* 1. Local module root of the importing package (entry project or current dep). */
+                if (module->pkg == 0) {
+                    char *local_cand = join(l, l->out->root, relative, path->span);
+                    if (local_cand == NULL)
+                        return false;
+                    struct stat lst;
+                    if (lstat(local_cand, &lst) == 0) {
+                        target = read_module_in_root(l, local_cand, l->real_root, name, path->span,
+                                                     false, 0);
+                        if (target == 0)
+                            return false;
+                    }
+                } else if (module->pkg <= l->dep_count) {
+                    const struct dep_package *own_dep = &l->deps[module->pkg - 1];
+                    for (uint32_t r = 0; r < own_dep->root_count; r++) {
+                        char *cand = join(l, own_dep->root_slash[r], relative, path->span);
+                        if (cand == NULL)
+                            return false;
+                        struct stat dst;
+                        if (lstat(cand, &dst) == 0) {
+                            target = read_module_in_root(l, cand, own_dep->real_roots[r], name,
+                                                         path->span, false, module->pkg);
+                            if (target == 0)
+                                return false;
+                            break;
+                        }
+                    }
+                }
+
+                /* 2. Declared [dependencies] from mo.toml (rejecting ambiguous hits). */
+                if (target == 0) {
+                    const uint32_t *direct =
+                        module->pkg == 0 ? l->entry_direct : l->deps[module->pkg - 1].direct;
+                    uint32_t direct_count = module->pkg == 0
+                                                ? l->entry_direct_count
+                                                : l->deps[module->pkg - 1].direct_count;
+                    uint32_t matched_dep = 0;
+                    const char *matched_cand = NULL;
+                    const char *matched_real_root = NULL;
+                    for (uint32_t d = 0; d < direct_count; d++) {
+                        uint32_t dep_id = direct[d];
+                        const struct dep_package *dep = &l->deps[dep_id - 1];
+                        for (uint32_t r = 0; r < dep->root_count; r++) {
+                            char *cand = join(l, dep->root_slash[r], relative, path->span);
+                            if (cand == NULL)
+                                return false;
+                            struct stat dst;
+                            if (lstat(cand, &dst) == 0) {
+                                if (matched_dep != 0 && matched_dep != dep_id) {
+                                    bool kept = report(
+                                        l, MO_CODE_PACKAGE_MANIFEST, path->span,
+                                        "a module is provided by multiple dependencies in mo.toml",
+                                        "Keep module namespaces distinct across [dependencies] in "
+                                        "mo.toml.",
+                                        name);
+                                    (void)kept;
+                                    return false;
+                                }
+                                matched_dep = dep_id;
+                                matched_cand = cand;
+                                matched_real_root = dep->real_roots[r];
+                                break;
+                            }
+                        }
+                    }
+                    if (matched_dep != 0) {
+                        target = read_module_in_root(l, matched_cand, matched_real_root, name,
+                                                     path->span, false, matched_dep);
+                        if (target == 0)
+                            return false;
+                    }
+                }
+
+                /* 3. Mo's built-in lib/ (disk or embedded LIBRARY_SOURCES). */
+                if (target == 0 && loaded_on_use(name)) {
+                    if (l->real_library != NULL) {
+                        char *full = library_file(l, path);
+                        if (full == NULL)
+                            return false;
+                        target = read_module(l, full, name, path->span, true);
+                        if (target == 0)
+                            return false;
+                    } else if (l->embedded != NULL) {
+                        const struct mo_embedded_source *src = find_embedded_on_use(l, path);
+                        if (src != NULL) {
+                            target = read_embedded_module(l, src, name, path->span);
+                            if (target == 0)
+                                return false;
+                        }
+                    }
+                }
+
+                /* 4. Standard missing-module diagnostic under the importing module's root. */
+                if (target == 0) {
+                    const char *miss_slash =
+                        module->pkg == 0 ? l->out->root : l->deps[module->pkg - 1].root_slash[0];
+                    const char *miss_real =
+                        module->pkg == 0 ? l->real_root : l->deps[module->pkg - 1].real_roots[0];
+                    char *full = join(l, miss_slash, relative, path->span);
+                    if (full == NULL)
+                        return false;
+                    target = read_module_in_root(l, full, miss_real, name, path->span, false,
+                                                 module->pkg);
+                    if (target == 0)
+                        return false;
+                }
             }
             l->out->uses[frame->id - 1][frame->use - 1] = target - 1;
             if (l->items[target - 1].state == 1) {
@@ -717,7 +1427,10 @@ static MO_MUST_USE bool prepare(struct loader *l) {
     l->out->order = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->order), _Alignof(uint32_t));
     l->out->names = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->names), _Alignof(const char *));
     l->out->library = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->library), _Alignof(bool));
+    l->out->dependency = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->dependency), _Alignof(bool));
     l->out->uses = allocate(l, MO_LIMIT_FILES, sizeof(*l->out->uses), _Alignof(uint32_t *));
+    l->out->manifests =
+        allocate(l, MO_LIMIT_DEPENDENCIES + 1, sizeof(*l->out->manifests), _Alignof(const char *));
     return !l->failed;
 }
 
@@ -882,6 +1595,8 @@ static MO_MUST_USE struct mo_module_set *load(struct mo_arena *arena, struct mo_
     if (l.real_root == NULL)
         return NULL;
     l.upgrade = upgrade;
+    if (!discover_and_load_manifest(&l))
+        return NULL;
     if (upgrade) {
         static const uint8_t placeholder[] = "module UpgradeOld\n";
         uint32_t file;

@@ -15,7 +15,10 @@ struct mo_module_set {
     uint32_t *order;                   /* dependencies before their users; indices into modules */
     const char **names;                /* dotted module names */
     bool *library;
+    bool *dependency;
     uint32_t **uses; /* one target index per use line, in header order */
+    uint32_t manifest_count;
+    const char **manifests;
     /* Input to mo_check for exact spec text; need only outlive checking.
      * May be NULL for a synthetic set without specifications. */
     const struct mo_sources *sources;
@@ -666,6 +669,11 @@ enum mo_api_reply_kind {
     MO_API_REPLY_RESULT_JSON,
 };
 
+enum mo_api_job_reply_kind {
+    MO_API_JOB_UNIT,
+    MO_API_JOB_RESULT_UNIT,
+};
+
 struct mo_checked_api_sqlite {
     const struct mo_syntax *syntax;
     const char *name;
@@ -725,6 +733,19 @@ struct mo_checked_api_status {
     uint16_t status_code;
 };
 
+struct mo_checked_api_job {
+    const struct mo_syntax *syntax;
+    const char *name;
+    uint32_t function;
+    bool has_schedule;
+    uint64_t interval_us;
+    uint32_t param_count;
+    const struct mo_checked_api_param *params;
+    enum mo_api_job_reply_kind reply;
+    const struct mo_source_type *error_type;
+    const struct mo_ability_implementation *error_text;
+};
+
 struct mo_checked_api {
     const struct mo_syntax *syntax;
     uint32_t module;
@@ -737,6 +758,8 @@ struct mo_checked_api {
     const struct mo_checked_api_actor *actors;
     uint32_t static_count;
     const struct mo_checked_api_static *statics;
+    uint32_t job_count;
+    const struct mo_checked_api_job *jobs;
     bool has_auth;
     struct mo_checked_api_auth auth;
     uint32_t route_count;

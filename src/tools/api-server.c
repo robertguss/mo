@@ -53,15 +53,26 @@ struct api_static_mount {
     const char *dir;
 };
 
+struct api_job_meta {
+    const char *name;
+    bool has_schedule;
+    uint64_t interval_us;
+};
+
 struct api_generation {
     uint32_t refs;
     struct mo_arena meta_arena;
     struct mo_image *image;
     uint32_t wire_fn;
+    uint32_t job_fn;
     uint16_t default_port;
     const char *cors;
     uint32_t static_count;
     struct api_static_mount statics[MO_LIMIT_API_STATICS];
+    uint32_t job_count;
+    struct api_job_meta jobs[MO_LIMIT_API_JOBS];
+    uint32_t sqlite_count;
+    const char *sqlite_paths[MO_LIMIT_API_SQLITES];
     uint32_t actor_count;
     uint32_t actor_services[MO_LIMIT_API_ACTORS];
     struct mo_live_actor *actors[MO_LIMIT_API_ACTORS];
@@ -201,7 +212,8 @@ static void destroy_gen_unlocked(struct api_generation *gen) {
 }
 
 static struct api_generation *alloc_generation_meta(const struct mo_checked_api *entry_api,
-                                                    struct mo_image *img, uint32_t wire_fn) {
+                                                    struct mo_image *img, uint32_t wire_fn,
+                                                    uint32_t job_fn) {
     struct mo_arena meta;
     mo_arena_init(&meta, 128u << 10);
     struct api_generation *gen =
@@ -214,6 +226,7 @@ static struct api_generation *alloc_generation_meta(const struct mo_checked_api 
         .refs = 1,
         .image = img,
         .wire_fn = wire_fn,
+        .job_fn = job_fn,
         .default_port = entry_api != NULL ? entry_api->port : 0,
     };
     if (entry_api != NULL) {
@@ -236,6 +249,26 @@ static struct api_generation *alloc_generation_meta(const struct mo_checked_api 
             gen->statics[s] =
                 (struct api_static_mount){.prefix = pfx, .prefix_len = strlen(pfx), .dir = dir};
         }
+        gen->job_count = entry_api->job_count;
+        for (uint32_t j = 0; j < entry_api->job_count; j++) {
+            char *jname = mo_arena_copy_text(&meta, entry_api->jobs[j].name);
+            if (jname == NULL) {
+                mo_arena_free(&meta);
+                return NULL;
+            }
+            gen->jobs[j] = (struct api_job_meta){.name = jname,
+                                                 .has_schedule = entry_api->jobs[j].has_schedule,
+                                                 .interval_us = entry_api->jobs[j].interval_us};
+        }
+        gen->sqlite_count = entry_api->sqlite_count;
+        for (uint32_t s = 0; s < entry_api->sqlite_count; s++) {
+            char *spath = mo_arena_copy_text(&meta, entry_api->sqlites[s].path);
+            if (spath == NULL) {
+                mo_arena_free(&meta);
+                return NULL;
+            }
+            gen->sqlite_paths[s] = spath;
+        }
         gen->actor_count = entry_api->actor_count;
         for (uint32_t a = 0; a < entry_api->actor_count; a++)
             gen->actor_services[a] = entry_api->actors[a].service_index;
@@ -247,9 +280,10 @@ static struct api_generation *alloc_generation_meta(const struct mo_checked_api 
 static void collect_watch_files(struct watch_set *ws, const struct mo_cli *cli,
                                 const struct mo_sources *sources, const struct mo_module_set *set) {
     mo_arena_init(&ws->arena, 4u << 20);
-    uint32_t cap = sources->count + 16;
-    if (cap > MO_LIMIT_FILES + 16)
-        cap = MO_LIMIT_FILES + 16;
+    uint32_t extra = set != NULL ? set->manifest_count : 0;
+    uint32_t cap = sources->count + extra + 16;
+    if (cap > MO_LIMIT_FILES + MO_LIMIT_DEPENDENCIES + 16)
+        cap = MO_LIMIT_FILES + MO_LIMIT_DEPENDENCIES + 16;
     ws->items =
         mo_arena_allocate_array(&ws->arena, cap, sizeof *ws->items, _Alignof(struct watched_file));
     ws->count = 0;
@@ -257,6 +291,13 @@ static void collect_watch_files(struct watch_set *ws, const struct mo_cli *cli,
         return;
     if (cli->file_count > 0)
         watch_set_add_unique(ws, cap, mo_cli_file(cli, 0));
+    if (set != NULL) {
+        for (uint32_t m = 0; m < set->manifest_count; m++) {
+            struct stat st;
+            if (set->manifests[m] != NULL && stat(set->manifests[m], &st) == 0)
+                watch_set_add_unique(ws, cap, set->manifests[m]);
+        }
+    }
     for (uint32_t i = 0; i < sources->count; i++) {
         bool is_embedded_lib =
             set != NULL && i < set->count && set->library[i] && cli->library == NULL;
@@ -347,17 +388,23 @@ static void compile_api_image(void *arg) {
                     char target_name[512];
                     int tn = snprintf(target_name, sizeof target_name, "%s.%%api.wire", mod_name);
                     MO_ASSERT(tn > 0 && (size_t)tn < sizeof target_name);
+                    char job_target[512];
+                    int jn = snprintf(job_target, sizeof job_target, "%s.%%api.job", mod_name);
+                    MO_ASSERT(jn > 0 && (size_t)jn < sizeof job_target);
                     uint32_t found_fn = MO_NO_INDEX;
+                    uint32_t found_job_fn = MO_NO_INDEX;
                     for (uint32_t i = 0; i < bc->function_count; i++) {
                         const struct mo_bytecode_string *s = &bc->strings[bc->functions[i].name];
                         if (s->length == (size_t)tn &&
-                            memcmp(s->bytes, target_name, (size_t)tn) == 0) {
+                            memcmp(s->bytes, target_name, (size_t)tn) == 0)
                             found_fn = i;
-                            break;
-                        }
+                        if (s->length == (size_t)jn &&
+                            memcmp(s->bytes, job_target, (size_t)jn) == 0)
+                            found_job_fn = i;
                     }
-                    MO_ASSERT(found_fn != MO_NO_INDEX);
-                    struct api_generation *gen = alloc_generation_meta(entry_api, img, found_fn);
+                    MO_ASSERT(found_fn != MO_NO_INDEX && found_job_fn != MO_NO_INDEX);
+                    struct api_generation *gen =
+                        alloc_generation_meta(entry_api, img, found_fn, found_job_fn);
                     if (gen == NULL) {
                         mo_image_free(img);
                         w->status = 1;
@@ -1408,6 +1455,29 @@ static void log_api_request(FILE *errors, pthread_mutex_t *log_mutex, const char
         (void)pthread_mutex_unlock(log_mutex);
 }
 
+static void log_api_job(FILE *errors, pthread_mutex_t *log_mutex, const char *job_name,
+                        const char *outcome_str, uint64_t duration_us) {
+    if (errors == NULL)
+        return;
+    struct timespec wall = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &wall);
+    struct tm tm_utc;
+    char ts_buf[96] = "1970-01-01T00:00:00Z";
+    if (gmtime_r(&wall.tv_sec, &tm_utc) != NULL) {
+        (void)snprintf(ts_buf, sizeof ts_buf, "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                       tm_utc.tm_year + 1900, tm_utc.tm_mon + 1, tm_utc.tm_mday, tm_utc.tm_hour,
+                       tm_utc.tm_min, tm_utc.tm_sec);
+    }
+    double dur_ms = (double)duration_us / 1000.0;
+    if (log_mutex != NULL)
+        (void)pthread_mutex_lock(log_mutex);
+    (void)fprintf(errors, "mo serve: job: %s %s %s %.2fms\n", ts_buf, job_name, outcome_str,
+                  dur_ms);
+    (void)fflush(errors);
+    if (log_mutex != NULL)
+        (void)pthread_mutex_unlock(log_mutex);
+}
+
 struct api_worker_pool {
     struct api_generation *active_gen;
     int folder_fd;
@@ -1418,8 +1488,11 @@ struct api_worker_pool {
 
     pthread_mutex_t queue_mutex;
     pthread_cond_t queue_cond;
+    pthread_cond_t job_cond;
     pthread_mutex_t log_mutex;
     bool stopping;
+    bool job_thread_started;
+    pthread_t job_thread;
     int queue[MO_LIMIT_API_QUEUE];
     uint32_t head, tail, count;
 };
@@ -1856,6 +1929,315 @@ static void *api_worker_main(void *arg) {
     }
 }
 
+enum job_exec_outcome {
+    JOB_EXEC_OK,
+    JOB_EXEC_ERROR,
+    JOB_EXEC_DEFECT,
+};
+
+static size_t utf8_safe_prefix(const uint8_t *bytes, size_t len, size_t max_bytes) {
+    if (len <= max_bytes)
+        return len;
+    size_t cut = max_bytes;
+    while (cut > 0 && (bytes[cut] & 0xc0) == 0x80)
+        cut--;
+    return mo_utf8_valid(bytes, cut) ? cut : 0;
+}
+
+static enum job_exec_outcome
+execute_vm_job(const struct api_generation *gen, int folder_fd, int output_fd, int errors_fd,
+               FILE *errors, pthread_mutex_t *log_mutex, const struct mo_limits *limits,
+               struct mo_sqlite_pool *sql_pool, const char *job_name, const char *payload_json,
+               char *err_buf, size_t err_cap) {
+    if (err_cap > 0)
+        err_buf[0] = '\0';
+    uint64_t start_us = api_monotonic_us();
+    struct mo_process *proc = mo_process_new(gen->image, limits);
+    if (proc == NULL) {
+        if (err_cap > 0)
+            (void)snprintf(err_buf, err_cap, "out of memory starting job process");
+        log_api_job(errors, log_mutex, job_name, "defect", api_monotonic_us() - start_us);
+        return JOB_EXEC_DEFECT;
+    }
+    mo_process_instruction_limit(proc, MO_LIMIT_API_JOB_WORK);
+
+    struct mo_heap *heap = mo_process_heap(proc);
+    struct mo_host *host = mo_process_host(proc);
+    host->sqlite_pool = sql_pool;
+    host->force_fallback = get_force_fallback();
+    if (output_fd >= 0)
+        host->output = output_fd;
+    if (errors_fd >= 0)
+        host->errors = errors_fd;
+
+    const struct mo_bytecode *bc = mo_image_bytecode(gen->image);
+    const struct mo_types *types = mo_image_types(gen->image);
+    const struct mo_bytecode_function *fn = &bc->functions[gen->job_fn];
+    uint32_t pcount = fn->parameter_count;
+    MO_ASSERT(pcount >= 2 && pcount <= 2 + 12 + MO_LIMIT_API_ACTORS);
+
+    struct mo_cell call_args[48] = {{{0}}};
+    uint32_t built_args = 0;
+    bool have_env = false;
+    struct mo_cell env_map = {{0}};
+    bool args_ok = mo_value_text(heap, job_name, strlen(job_name), &call_args[0]);
+    if (args_ok) {
+        built_args = 1;
+        const char *pj = payload_json != NULL ? payload_json : "";
+        args_ok = mo_value_text(heap, pj, strlen(pj), &call_args[1]);
+        if (args_ok)
+            built_args = 2;
+    }
+
+    for (uint32_t i = 2; args_ok && i < pcount; i++) {
+        uint32_t cap_ty = fn->parameters[i].type;
+        enum mo_capability cap_kind = types->items[cap_ty].capability;
+        if (cap_kind == MO_CAP_SIMULATION) {
+            uint32_t actor_base = pcount - gen->actor_count;
+            MO_ASSERT(i >= actor_base && i - actor_base < gen->actor_count);
+            args_ok = mo_value_live_actor(heap, cap_ty, gen->actors[i - actor_base], &call_args[i]);
+            if (args_ok)
+                built_args = i + 1;
+            continue;
+        }
+        const struct mo_cell *contents = NULL;
+        if (cap_kind == MO_CAP_ENV) {
+            if (!have_env) {
+                args_ok = have_env = build_env_map(host, heap, &env_map);
+                if (!args_ok)
+                    break;
+            }
+            contents = &env_map;
+        }
+        struct mo_host_error herr;
+        if (mo_host_real(host, heap, cap_ty, contents, folder_fd, &call_args[i], &herr) !=
+            MO_HOST_RETURNED) {
+            args_ok = false;
+            break;
+        }
+        built_args = i + 1;
+    }
+
+    if (!args_ok) {
+        for (uint32_t i = 0; i < built_args; i++)
+            mo_value_drop(heap, fn->parameters[i].type, call_args[i]);
+        if (have_env)
+            mo_value_drop(heap, host->types->files, env_map);
+        mo_process_free(proc);
+        mo_sqlite_pool_cleanup(sql_pool);
+        if (err_cap > 0)
+            (void)snprintf(err_buf, err_cap, "unable to initialize job capabilities");
+        log_api_job(errors, log_mutex, job_name, "defect", api_monotonic_us() - start_us);
+        return JOB_EXEC_DEFECT;
+    }
+
+    struct mo_cell result;
+    struct mo_defect defect;
+    enum mo_outcome outcome = mo_call(proc, gen->job_fn, call_args, pcount, &result, &defect);
+
+    for (uint32_t i = 0; i < pcount; i++)
+        if (fn->parameters[i].ownership == MO_PARAMETER_BORROWED)
+            mo_value_drop(heap, fn->parameters[i].type, call_args[i]);
+    if (have_env)
+        mo_value_drop(heap, host->types->files, env_map);
+
+    if (outcome != MO_RETURNED) {
+        if (err_cap > 0) {
+            const char *reason = defect.reason != NULL ? defect.reason : "job stopped";
+            if (defect.limit_name != NULL)
+                (void)snprintf(err_buf, err_cap, "defect: %s (%s)", reason, defect.limit_name);
+            else
+                (void)snprintf(err_buf, err_cap, "defect: %s", reason);
+        }
+        mo_process_free(proc);
+        mo_sqlite_pool_cleanup(sql_pool);
+        log_api_job(errors, log_mutex, job_name, "defect", api_monotonic_us() - start_us);
+        return JOB_EXEC_DEFECT;
+    }
+
+    uint32_t tag = mo_cell_get_tag(result);
+    enum job_exec_outcome jres = tag == 0 ? JOB_EXEC_OK : JOB_EXEC_ERROR;
+    if (tag != 0 && err_cap > 1) {
+        struct mo_cell payload = mo_cell_get_payload(result);
+        struct mo_cell err_cell = mo_case_shape(types, fn->result_type, tag) == MO_CASE_BOXED
+                                      ? mo_value_field(payload, 0)
+                                      : payload;
+        size_t elen = 0;
+        const uint8_t *ebytes = mo_value_data(err_cell, &elen);
+        size_t copy_len = utf8_safe_prefix(ebytes, elen, err_cap - 1);
+        if (copy_len > 0)
+            memcpy(err_buf, ebytes, copy_len);
+        err_buf[copy_len] = '\0';
+    }
+    mo_value_drop(heap, fn->result_type, result);
+    MO_ASSERT(mo_heap_objects(heap) == 0);
+    mo_process_free(proc);
+    mo_sqlite_pool_cleanup(sql_pool);
+    log_api_job(errors, log_mutex, job_name, jres == JOB_EXEC_OK ? "ok" : "error",
+                api_monotonic_us() - start_us);
+    return jres;
+}
+
+struct job_schedule_slot {
+    char name[129];
+    bool has_schedule;
+    uint64_t interval_us;
+    uint64_t next_due_us;
+};
+
+static void sleep_job_worker_us(struct api_worker_pool *pool, uint64_t wait_us) {
+    if (wait_us == 0)
+        return;
+    if (wait_us > MO_LIMIT_API_JOB_POLL_US)
+        wait_us = MO_LIMIT_API_JOB_POLL_US;
+    struct timespec abstime = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &abstime);
+    uint64_t add_sec = wait_us / UINT64_C(1000000);
+    long add_nsec = (long)((wait_us % UINT64_C(1000000)) * 1000);
+    abstime.tv_sec += (time_t)add_sec;
+    abstime.tv_nsec += add_nsec;
+    if (abstime.tv_nsec >= 1000000000L) {
+        abstime.tv_sec += 1;
+        abstime.tv_nsec -= 1000000000L;
+    }
+    MO_ASSERT(pthread_mutex_lock(&pool->queue_mutex) == 0);
+    if (!pool->stopping && !mo_serve_is_signalled())
+        (void)pthread_cond_timedwait(&pool->job_cond, &pool->queue_mutex, &abstime);
+    MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
+}
+
+static void *job_worker_main(void *arg) {
+    struct api_worker_pool *pool = arg;
+    struct mo_sqlite_pool *sql_pool = mo_sqlite_pool_new();
+    const struct api_generation *seen_gen = NULL;
+    uint32_t sched_count = 0;
+    struct job_schedule_slot sched[MO_LIMIT_API_JOBS];
+    memset(sched, 0, sizeof sched);
+    bool recovered_db[MO_LIMIT_API_SQLITES] = {false};
+
+    for (;;) {
+        if (pool_is_stopping(pool))
+            break;
+
+        struct api_generation *gen = retain_active_gen(pool);
+        if (gen != seen_gen) {
+            struct job_schedule_slot prev_sched[MO_LIMIT_API_JOBS];
+            uint32_t prev_count = sched_count;
+            memcpy(prev_sched, sched, sizeof sched);
+
+            sched_count = gen->job_count;
+            uint64_t now_us = api_monotonic_us();
+            for (uint32_t j = 0; j < gen->job_count; j++) {
+                const struct api_job_meta *jm = &gen->jobs[j];
+                (void)snprintf(sched[j].name, sizeof sched[j].name, "%s", jm->name);
+                sched[j].has_schedule = jm->has_schedule;
+                sched[j].interval_us = jm->interval_us;
+                sched[j].next_due_us = UINT64_MAX;
+                if (jm->has_schedule) {
+                    uint64_t kept_due = 0;
+                    for (uint32_t p = 0; p < prev_count; p++) {
+                        if (prev_sched[p].has_schedule &&
+                            prev_sched[p].interval_us == jm->interval_us &&
+                            strcmp(prev_sched[p].name, jm->name) == 0) {
+                            kept_due = prev_sched[p].next_due_us;
+                            break;
+                        }
+                    }
+                    sched[j].next_due_us =
+                        kept_due != 0 ? kept_due : add_deadline_us(now_us, jm->interval_us);
+                }
+            }
+            memset(recovered_db, 0, sizeof recovered_db);
+            seen_gen = gen;
+        }
+
+        if (gen->job_count > 0) {
+            for (uint32_t j = 0; j < gen->job_count && !pool_is_stopping(pool); j++) {
+                if (!sched[j].has_schedule)
+                    continue;
+                uint64_t now_us = api_monotonic_us();
+                if (now_us >= sched[j].next_due_us) {
+                    char err_buf[512];
+                    (void)execute_vm_job(gen, pool->folder_fd, pool->output_fd, pool->errors_fd,
+                                         pool->errors, &pool->log_mutex, &pool->limits, sql_pool,
+                                         gen->jobs[j].name, "null", err_buf, sizeof err_buf);
+                    sched[j].next_due_us =
+                        add_deadline_us(api_monotonic_us(), sched[j].interval_us);
+                }
+            }
+
+            if (gen->sqlite_count > 0 && sql_pool != NULL && !pool_is_stopping(pool)) {
+                const char *job_names[MO_LIMIT_API_JOBS];
+                for (uint32_t j = 0; j < gen->job_count; j++)
+                    job_names[j] = gen->jobs[j].name;
+                bool force_fb = get_force_fallback();
+                for (uint32_t s = 0; s < gen->sqlite_count && !pool_is_stopping(pool); s++) {
+                    const char *db_path = gen->sqlite_paths[s];
+                    if (!mo_sqlite_jobs_has_table(sql_pool, pool->folder_fd, db_path, force_fb))
+                        continue;
+                    if (!recovered_db[s]) {
+                        mo_sqlite_jobs_requeue_stale(sql_pool, pool->folder_fd, db_path, force_fb,
+                                                     MO_LIMIT_API_JOB_STALE_SECONDS);
+                        recovered_db[s] = true;
+                    }
+                    while (!pool_is_stopping(pool)) {
+                        struct mo_arvo_job_claim claim = {0};
+                        if (!mo_sqlite_jobs_claim_next(sql_pool, pool->folder_fd, db_path, force_fb,
+                                                       job_names, gen->job_count, &claim))
+                            break;
+                        char err_buf[512];
+                        enum job_exec_outcome out = execute_vm_job(
+                            gen, pool->folder_fd, pool->output_fd, pool->errors_fd, pool->errors,
+                            &pool->log_mutex, &pool->limits, sql_pool, claim.job_name,
+                            claim.payload_json, err_buf, sizeof err_buf);
+                        if (out == JOB_EXEC_OK) {
+                            mo_sqlite_jobs_complete(sql_pool, pool->folder_fd, db_path, force_fb,
+                                                    claim.id);
+                        } else {
+                            mo_sqlite_jobs_fail_or_retry(sql_pool, pool->folder_fd, db_path,
+                                                         force_fb, claim.id, claim.attempts,
+                                                         claim.max_attempts, err_buf);
+                        }
+                        mo_arvo_job_claim_free(&claim);
+                    }
+                }
+            }
+        }
+
+        uint64_t next_wake_us = MO_LIMIT_API_JOB_POLL_US;
+        uint64_t now_after = api_monotonic_us();
+        for (uint32_t j = 0; j < sched_count; j++) {
+            if (!sched[j].has_schedule)
+                continue;
+            uint64_t rem = sched[j].next_due_us > now_after ? sched[j].next_due_us - now_after : 0;
+            if (rem < next_wake_us)
+                next_wake_us = rem;
+        }
+        release_gen(pool, gen);
+
+        if (pool_is_stopping(pool))
+            break;
+        sleep_job_worker_us(pool, next_wake_us);
+    }
+
+    mo_sqlite_pool_free(sql_pool);
+    return NULL;
+}
+
+static bool ensure_job_worker_started(struct api_worker_pool *pool) {
+    if (pool->job_thread_started)
+        return true;
+    pthread_attr_t attr;
+    MO_ASSERT(pthread_attr_init(&attr) == 0);
+    (void)pthread_attr_setstacksize(&attr, 2u << 20);
+    int rc = pthread_create(&pool->job_thread, &attr, job_worker_main, pool);
+    (void)pthread_attr_destroy(&attr);
+    if (rc != 0)
+        return false;
+    pool->job_thread_started = true;
+    return true;
+}
+
 static int open_api_listen_socket(const char *bind_host, uint16_t port, uint16_t *actual_port,
                                   int *err_out) {
     int type = SOCK_STREAM;
@@ -1964,9 +2346,13 @@ static void maybe_reload_watched_api(const struct mo_cli *cli, FILE *output, FIL
         MO_ASSERT(old_gen != NULL && old_gen->refs > 0);
         old_gen->refs--;
         bool free_old = old_gen->refs == 0;
+        if (pool->job_thread_started)
+            MO_ASSERT(pthread_cond_broadcast(&pool->queue_cond) == 0);
         MO_ASSERT(pthread_mutex_unlock(&pool->queue_mutex) == 0);
         if (free_old)
             destroy_gen_unlocked(old_gen);
+        if (next_gen->job_count > 0)
+            (void)ensure_job_worker_started(pool);
 
         mo_arena_free(&watched->arena);
         *watched = next_watch;
@@ -2124,6 +2510,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
                                    .limits = req_limits};
     MO_ASSERT(pthread_mutex_init(&pool.queue_mutex, NULL) == 0);
     MO_ASSERT(pthread_cond_init(&pool.queue_cond, NULL) == 0);
+    MO_ASSERT(pthread_cond_init(&pool.job_cond, NULL) == 0);
     MO_ASSERT(pthread_mutex_init(&pool.log_mutex, NULL) == 0);
 
     enum mo_service_status actor_err = MO_SERVICE_OK;
@@ -2132,6 +2519,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         (void)snprintf(buf, sizeof buf, "mo serve could not start actor: %s",
                        mo_service_status_text(actor_err));
         (void)pthread_mutex_destroy(&pool.log_mutex);
+        (void)pthread_cond_destroy(&pool.job_cond);
         (void)pthread_cond_destroy(&pool.queue_cond);
         (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
@@ -2161,6 +2549,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
 
     if (started_workers == 0) {
         (void)pthread_mutex_destroy(&pool.log_mutex);
+        (void)pthread_cond_destroy(&pool.job_cond);
         (void)pthread_cond_destroy(&pool.queue_cond);
         (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
@@ -2172,16 +2561,42 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
         return true;
     }
 
+    if (gen->job_count > 0 && !ensure_job_worker_started(&pool)) {
+        MO_ASSERT(pthread_mutex_lock(&pool.queue_mutex) == 0);
+        pool.stopping = true;
+        MO_ASSERT(pthread_cond_broadcast(&pool.queue_cond) == 0);
+        MO_ASSERT(pthread_cond_broadcast(&pool.job_cond) == 0);
+        MO_ASSERT(pthread_mutex_unlock(&pool.queue_mutex) == 0);
+        for (uint32_t i = 0; i < started_workers; i++)
+            (void)pthread_join(workers[i], NULL);
+        (void)pthread_mutex_destroy(&pool.log_mutex);
+        (void)pthread_cond_destroy(&pool.job_cond);
+        (void)pthread_cond_destroy(&pool.queue_cond);
+        (void)pthread_mutex_destroy(&pool.queue_mutex);
+        (void)close(listen_fd);
+        (void)close(folder_fd);
+        if (cli->watch)
+            mo_arena_free(&watched.arena);
+        destroy_gen_unlocked(pool.active_gen);
+        *status_out =
+            report_serve_start_error(output, errors, "mo serve could not start job worker");
+        return true;
+    }
+
     if (fprintf(output, "mo serve: listening on http://%s:%u\n", bind_host, (unsigned)actual_port) <
             0 ||
         fflush(output) != 0) {
         MO_ASSERT(pthread_mutex_lock(&pool.queue_mutex) == 0);
         pool.stopping = true;
         MO_ASSERT(pthread_cond_broadcast(&pool.queue_cond) == 0);
+        MO_ASSERT(pthread_cond_broadcast(&pool.job_cond) == 0);
         MO_ASSERT(pthread_mutex_unlock(&pool.queue_mutex) == 0);
         for (uint32_t i = 0; i < started_workers; i++)
             (void)pthread_join(workers[i], NULL);
+        if (pool.job_thread_started)
+            (void)pthread_join(pool.job_thread, NULL);
         (void)pthread_mutex_destroy(&pool.log_mutex);
+        (void)pthread_cond_destroy(&pool.job_cond);
         (void)pthread_cond_destroy(&pool.queue_cond);
         (void)pthread_mutex_destroy(&pool.queue_mutex);
         (void)close(listen_fd);
@@ -2245,10 +2660,13 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     MO_ASSERT(pthread_mutex_lock(&pool.queue_mutex) == 0);
     pool.stopping = true;
     MO_ASSERT(pthread_cond_broadcast(&pool.queue_cond) == 0);
+    MO_ASSERT(pthread_cond_broadcast(&pool.job_cond) == 0);
     MO_ASSERT(pthread_mutex_unlock(&pool.queue_mutex) == 0);
 
     for (uint32_t i = 0; i < started_workers; i++)
         (void)pthread_join(workers[i], NULL);
+    if (pool.job_thread_started)
+        (void)pthread_join(pool.job_thread, NULL);
 
     if (cli->watch)
         mo_arena_free(&watched.arena);
@@ -2259,6 +2677,7 @@ bool mo_serve_maybe_api(const struct mo_cli *cli, FILE *output, FILE *errors, in
     (void)fflush(errors);
 
     (void)pthread_mutex_destroy(&pool.log_mutex);
+    (void)pthread_cond_destroy(&pool.job_cond);
     (void)pthread_cond_destroy(&pool.queue_cond);
     (void)pthread_mutex_destroy(&pool.queue_mutex);
     (void)close(folder_fd);

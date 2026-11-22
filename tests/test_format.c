@@ -314,6 +314,16 @@ int main(int argc, char **argv) {
                        path_source + 7, path_source + 68);
     MO_ASSERT(written > 0 && (size_t)written < sizeof path_expected);
     check_source(path_source, path_expected);
+    check_source("api\njob \"mercury.sync\" MercurySync.run every 15.minutes\n"
+                 "job \"tick\" tick every 1.seconds\n"
+                 "job \"csv.import\" CsvImport.run\n"
+                 "get \"/health\" health\nend\n",
+                 "api\n  job \"mercury.sync\" MercurySync.run every 15.minutes\n"
+                 "  job \"tick\" tick every 1.second\n"
+                 "  job \"csv.import\" CsvImport.run\n"
+                 "  get \"/health\" health\nend\n");
+    check_source("fn run(job: Int) : Int\n  job + 1\nend\n",
+                 "fn run(job: Int) : Int\n  job + 1\nend\n");
     files("grammar/tests/good/*.mo", true, true, true);
     files("examples/*.mo", true, true, true);
     files("examples/*/*.mo", true, true, true);

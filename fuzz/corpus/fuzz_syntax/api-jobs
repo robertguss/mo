@@ -1,0 +1,17 @@
+module JobsCorpus
+use Json
+
+api
+  sqlite db from "jobs.db"
+  job "mercury.sync" MercurySync.run every 15.minutes
+  job "csv.import" import_csv
+  get "/health" health
+end
+
+fn import_csv(_payload: Json, _db: Sqlite.Database) : Unit
+  Unit
+end
+
+fn health() : Int
+  1
+end

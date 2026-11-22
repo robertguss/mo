@@ -634,22 +634,48 @@ def guide_claims(binary):
     says("Under `lib/arvo/` (loaded lazily on `use Arvo.*`), the pure-Mo Arvo web framework provides "
          "`Arvo.Cookie`, `Arvo.Session`",
          "`Arvo.Csrf`", "`Arvo.Flash`", "`Arvo.Form`", "`Arvo.Inertia`",
-         "`Arvo.Changeset`, `Arvo.Migrations`, `Arvo.Audit`, `Arvo.Auth`, and `Arvo.WebTest`")
+         "`Arvo.Changeset`, `Arvo.Migrations`, `Arvo.Audit`, `Arvo.Auth`, and `Arvo.WebTest`",
+         "`Arvo.Jobs` (`use Arvo.Jobs`) provides the durable SQLite `arvo_jobs` queue",
+         "`ApiTest.run_job(Module, name, payload, ...)`",
+         "When a `mo.toml` manifest sits in the entry `.mo` file's folder or an ancestor folder")
     with tempfile.TemporaryDirectory() as folder:
         standalone = pathlib.Path(folder) / "mo"
         shutil.copy2(binary, standalone)
-        source = pathlib.Path(folder) / "main.mo"
+        dep_dir = pathlib.Path(folder) / "dep" / "src"
+        dep_dir.mkdir(parents=True)
+        (dep_dir / "helper.mo").write_text(
+            "module Helper\nexpose tag\nfn tag() : Text\n  \"pkg-ok\"\nend\n")
+        app_dir = pathlib.Path(folder) / "app"
+        app_dir.mkdir()
+        (app_dir / "mo.toml").write_text(
+            "[package]\nname = \"guide-app\"\n[dependencies]\nhelper = { path = \"../dep\" }\n")
+        source = app_dir / "main.mo"
         source.write_text(
             "module Main\n"
             "use Api\n"
+            "use Json\n"
             "use Arvo.Cookie\n"
+            "use Arvo.Jobs\n"
             "use Arvo.Session\n"
-            "use Arvo.WebTest\n\n"
-            "test \"standalone binary loads embedded Arvo.* modules lazily\"\n"
-            "  res = Cookie.set(Api.text_response(200, \"ok\"), \"sid\", \"abc\", Cookie.default_options())\n"
+            "use Arvo.WebTest\n"
+            "use Helper\n\n"
+            "api\n"
+            "  job \"ping\" run_ping every 5.minutes\n"
+            "  get \"/ok\" get_ok\n"
+            "end\n\n"
+            "fn run_ping(_payload: Json) : Unit\n"
+            "  Unit\n"
+            "end\n\n"
+            "fn get_ok() : Text\n"
+            "  Helper.tag()\n"
+            "end\n\n"
+            "test \"standalone binary loads embedded Arvo.*, jobs, and mo.toml dependencies\"\n"
+            "  res = Cookie.set(Api.text_response(200, Helper.tag()), \"sid\", \"abc\", Cookie.default_options())\n"
             "  client = WebTest.absorb(WebTest.new(), res)\n"
             "  assert WebTest.cookie(client, \"sid\") == Some(\"abc\")\n"
             "  assert Session.default_config(true).cookie_name == \"arvo_session\"\n"
+            "  assert Jobs.backoff_seconds(2) == 60\n"
+            "  assert ApiTest.run_job(Main, \"ping\", Json.Null) == Ok(Unit)\n"
             "end\n")
         result = subprocess.run([str(standalone), "test", str(source)],
                                 cwd=folder, check=False, capture_output=True)

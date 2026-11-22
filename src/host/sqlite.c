@@ -5,10 +5,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <sqlite3.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "base/utf8.h"
@@ -61,6 +63,18 @@ struct sqlite_auth {
     bool vacuum_into;
     const char *denied_reason;
 };
+
+/* Serializes real-file open + initial WAL-index header recovery and final close so concurrent
+ * threads never race walTryBeginRead against walIndexRecover's non-atomic shm header reset. */
+static pthread_mutex_t sqlite_open_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void close_real_db(sqlite3 *db) {
+    if (db == NULL)
+        return;
+    MO_ASSERT(pthread_mutex_lock(&sqlite_open_mutex) == 0);
+    (void)sqlite3_close(db);
+    MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
+}
 
 static uint32_t find_case_field_type(const struct mo_host *host, uint32_t choice_type,
                                      const char *case_name, uint32_t field_index) {
@@ -156,12 +170,12 @@ static void release_sqlite_db(intptr_t handle) {
         if (clean) {
             d->pool_entry->in_use = false;
         } else {
-            (void)sqlite3_close(d->db);
+            close_real_db(d->db);
             d->pool_entry->db = NULL;
             d->pool_entry->in_use = false;
         }
     } else if (d->db != NULL) {
-        (void)sqlite3_close(d->db);
+        close_real_db(d->db);
     }
     MO_ASSERT(d->owner->open_databases != 0);
     d->owner->open_databases--;
@@ -186,7 +200,7 @@ void mo_sqlite_pool_cleanup(struct mo_sqlite_pool *pool) {
         if (e->db != NULL && !sqlite3_get_autocommit(e->db)) {
             int rb = sqlite3_exec(e->db, "ROLLBACK;", NULL, NULL, NULL);
             if (rb != SQLITE_OK || !sqlite3_get_autocommit(e->db)) {
-                (void)sqlite3_close(e->db);
+                close_real_db(e->db);
                 e->db = NULL;
             }
         }
@@ -199,7 +213,7 @@ void mo_sqlite_pool_free(struct mo_sqlite_pool *pool) {
     for (uint32_t i = 0; i < pool->count; i++) {
         MO_ASSERT(!pool->entries[i].in_use);
         if (pool->entries[i].db != NULL) {
-            (void)sqlite3_close(pool->entries[i].db);
+            close_real_db(pool->entries[i].db);
             pool->entries[i].db = NULL;
         }
     }
@@ -364,6 +378,25 @@ static MO_MUST_USE bool ensure_wal_mode(sqlite3 *db, char err_buf[256]) {
     }
     (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
     return false;
+}
+
+static MO_MUST_USE bool init_real_wal_connection(sqlite3 *db, char err_buf[256]) {
+    if (!check_db_header(db, err_buf) || !ensure_wal_mode(db, err_buf))
+        return false;
+    /* Touch sqlite_schema once in WAL mode so walIndexRecover initializes the -shm header while
+     * sqlite_open_mutex is still held. */
+    int rc = SQLITE_OK;
+    for (int attempt = 0; attempt < 100; attempt++) {
+        rc = sqlite3_exec(db, "SELECT count(*) FROM sqlite_schema;", NULL, NULL, NULL);
+        if (rc == SQLITE_OK || !sqlite_is_busy(rc))
+            break;
+        (void)sqlite3_sleep(5);
+    }
+    if (rc != SQLITE_OK) {
+        (void)snprintf(err_buf, 256, "%s", sqlite3_errmsg(db));
+        return false;
+    }
+    return true;
 }
 
 enum mo_host_outcome mo_host_sqlite_real(struct mo_host *host, struct mo_heap *heap, uint32_t type,
@@ -703,12 +736,13 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
                     mo_host_close(dir_fd);
                     return wrap_database(host, heap, result_type, pe->db, NULL, pe, out, error);
                 }
-                (void)sqlite3_close(pe->db);
+                close_real_db(pe->db);
                 pe->db = NULL;
             }
         }
     }
 
+    MO_ASSERT(pthread_mutex_lock(&sqlite_open_mutex) == 0);
     sqlite3 *db = NULL;
     int rc = sqlite3_open_v2(full_path, &db,
                              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW |
@@ -720,6 +754,7 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
                        db != NULL ? sqlite3_errmsg(db) : "unable to open database");
         if (db != NULL)
             (void)sqlite3_close(db);
+        MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
         bool after_outside = false;
         const char *after_reason = NULL;
         if (!check_leaf_and_sidecars(dir_fd, leaf, &after_outside, &after_reason)) {
@@ -733,6 +768,7 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
 
     if (!check_leaf_and_sidecars(dir_fd, leaf, &outside, &reason)) {
         (void)sqlite3_close(db);
+        MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
         mo_host_close(dir_fd);
         return outside ? error_outside_folder(host, heap, result_type, path_cell, out)
                        : error_failed(host, heap, result_type, reason, out);
@@ -742,11 +778,13 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
         lstat(full_path, &full_st) != 0 || leaf_st.st_dev != full_st.st_dev ||
         leaf_st.st_ino != full_st.st_ino || !S_ISREG(full_st.st_mode)) {
         (void)sqlite3_close(db);
+        MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
         mo_host_close(dir_fd);
         return error_outside_folder(host, heap, result_type, path_cell, out);
     }
     if (leaf_st.st_size > 0 && leaf_st.st_size < 100) {
         (void)sqlite3_close(db);
+        MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
         mo_host_close(dir_fd);
         return error_failed(host, heap, result_type, "file is not a database", out);
     }
@@ -754,14 +792,12 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
 
     (void)sqlite3_busy_timeout(db, 5000);
     char msg[256];
-    if (!check_db_header(db, msg)) {
+    if (!init_real_wal_connection(db, msg)) {
         (void)sqlite3_close(db);
+        MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
         return error_failed(host, heap, result_type, msg, out);
     }
-    if (!ensure_wal_mode(db, msg)) {
-        (void)sqlite3_close(db);
-        return error_failed(host, heap, result_type, msg, out);
-    }
+    MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
 
     struct sqlite_pool_entry *pool_entry = NULL;
     if (host->sqlite_pool != NULL) {
@@ -789,7 +825,7 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
     if (res != MO_HOST_RETURNED) {
         if (pool_entry != NULL)
             pool_entry->db = NULL;
-        (void)sqlite3_close(db);
+        close_real_db(db);
     }
     return res;
 }
@@ -1392,4 +1428,401 @@ enum mo_host_outcome mo_host_sqlite_call(struct mo_host *host, struct mo_heap *h
     if (operation == MO_HOST_SQLITE_QUERY)
         return exec_sql(host, heap, SQL_EXEC_QUERY, type, args, out);
     MO_UNREACHABLE();
+}
+
+static void format_utc_iso_us(int64_t sec, long nsec, char out[96]) {
+    time_t t = (time_t)sec;
+    struct tm tm_utc;
+    long usec = nsec >= 0 ? (nsec / 1000) % 1000000L : 0;
+    if (gmtime_r(&t, &tm_utc) != NULL) {
+        (void)snprintf(out, 96, "%04d-%02d-%02dT%02d:%02d:%02d.%06ldZ", tm_utc.tm_year + 1900,
+                       tm_utc.tm_mon + 1, tm_utc.tm_mday, tm_utc.tm_hour, tm_utc.tm_min,
+                       tm_utc.tm_sec, usec);
+    } else {
+        (void)snprintf(out, 96, "1970-01-01T00:00:00.000000Z");
+    }
+}
+
+static sqlite3 *borrow_pooled_job_db(struct mo_sqlite_pool *pool, int folder_fd,
+                                     const char *rel_path, bool force_fallback) {
+    if (pool == NULL || folder_fd < 0 || rel_path == NULL || rel_path[0] == '\0')
+        return NULL;
+
+    /* Strip any redundant "./" segments so path resolution matches mo_host_normalize. */
+    char norm[MO_LIMIT_HOST_PATH_SIZE];
+    size_t nlen = 0;
+    size_t rlen = strlen(rel_path);
+    size_t i = 0;
+    while (i < rlen) {
+        while (i < rlen && rel_path[i] == '/')
+            i++;
+        size_t start = i;
+        while (i < rlen && rel_path[i] != '/')
+            i++;
+        size_t slen = i - start;
+        if (slen == 0 || (slen == 1 && rel_path[start] == '.'))
+            continue;
+        if (slen == 2 && rel_path[start] == '.' && rel_path[start + 1] == '.')
+            return NULL;
+        if (nlen + (nlen > 0 ? 1u : 0u) + slen >= sizeof norm)
+            return NULL;
+        if (nlen > 0)
+            norm[nlen++] = '/';
+        memcpy(norm + nlen, rel_path + start, slen);
+        nlen += slen;
+    }
+    if (nlen == 0)
+        return NULL;
+    norm[nlen] = '\0';
+
+    char parent[MO_LIMIT_HOST_PATH_SIZE];
+    const char *slash = strrchr(norm, '/');
+    const char *leaf = slash == NULL ? norm : slash + 1;
+    if (slash == NULL) {
+        parent[0] = '\0';
+    } else {
+        size_t plen = (size_t)(slash - norm);
+        if (plen >= sizeof parent)
+            return NULL;
+        memcpy(parent, norm, plen);
+        parent[plen] = '\0';
+    }
+
+    struct mo_host tmp = {.force_fallback = force_fallback};
+    struct mo_path_result resolved;
+    struct mo_file_error perr =
+        mo_host_resolve(&tmp, folder_fd, parent[0] == '\0' ? "." : parent, PATH_FOLDER, &resolved);
+    if (perr.status != FILE_OK)
+        return NULL;
+    int dir_fd = resolved.descriptor;
+
+    struct stat leaf_st;
+    if (fstatat(dir_fd, leaf, &leaf_st, AT_SYMLINK_NOFOLLOW) != 0 || !S_ISREG(leaf_st.st_mode)) {
+        mo_host_close(dir_fd);
+        return NULL;
+    }
+    bool outside = false;
+    const char *reason = NULL;
+    if (!check_leaf_and_sidecars(dir_fd, leaf, &outside, &reason)) {
+        mo_host_close(dir_fd);
+        return NULL;
+    }
+
+    char dir_path[MO_LIMIT_HOST_PATH_SIZE];
+    char full_path[MO_LIMIT_HOST_PATH_SIZE];
+    if (!dir_fd_path(dir_fd, dir_path)) {
+        mo_host_close(dir_fd);
+        return NULL;
+    }
+    int fn = strcmp(dir_path, "/") == 0
+                 ? snprintf(full_path, sizeof full_path, "/%s", leaf)
+                 : snprintf(full_path, sizeof full_path, "%s/%s", dir_path, leaf);
+    if (fn < 0 || (size_t)fn >= sizeof full_path) {
+        mo_host_close(dir_fd);
+        return NULL;
+    }
+    struct stat full_st;
+    if (lstat(full_path, &full_st) != 0 || !S_ISREG(full_st.st_mode) ||
+        full_st.st_dev != leaf_st.st_dev || full_st.st_ino != leaf_st.st_ino) {
+        mo_host_close(dir_fd);
+        return NULL;
+    }
+    mo_host_close(dir_fd);
+
+    for (uint32_t k = 0; k < pool->count; k++) {
+        struct sqlite_pool_entry *pe = &pool->entries[k];
+        if (pe->db == NULL || pe->in_use || strcmp(pe->path, full_path) != 0)
+            continue;
+        if (pe->dev == leaf_st.st_dev && pe->ino == leaf_st.st_ino)
+            return pe->db;
+        close_real_db(pe->db);
+        pe->db = NULL;
+    }
+
+    MO_ASSERT(pthread_mutex_lock(&sqlite_open_mutex) == 0);
+    sqlite3 *db = NULL;
+    int rc = sqlite3_open_v2(
+        full_path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOFOLLOW | SQLITE_OPEN_EXRESCODE, NULL);
+    if (rc != SQLITE_OK || db == NULL) {
+        if (db != NULL)
+            (void)sqlite3_close(db);
+        MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
+        return NULL;
+    }
+    (void)sqlite3_busy_timeout(db, 5000);
+    char msg[256];
+    if (!init_real_wal_connection(db, msg)) {
+        (void)sqlite3_close(db);
+        MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
+        return NULL;
+    }
+    MO_ASSERT(pthread_mutex_unlock(&sqlite_open_mutex) == 0);
+
+    struct sqlite_pool_entry *slot = NULL;
+    for (uint32_t k = 0; k < pool->count; k++) {
+        if (pool->entries[k].db == NULL && !pool->entries[k].in_use) {
+            slot = &pool->entries[k];
+            break;
+        }
+    }
+    if (slot == NULL && pool->count < MO_LIMIT_OPEN_DATABASES)
+        slot = &pool->entries[pool->count++];
+    if (slot == NULL) {
+        close_real_db(db);
+        return NULL;
+    }
+    size_t flen = strlen(full_path);
+    MO_ASSERT(flen < sizeof slot->path);
+    memcpy(slot->path, full_path, flen + 1);
+    slot->dev = leaf_st.st_dev;
+    slot->ino = leaf_st.st_ino;
+    slot->db = db;
+    slot->in_use = false;
+    return db;
+}
+
+void mo_arvo_job_claim_free(struct mo_arvo_job_claim *claim) {
+    if (claim == NULL)
+        return;
+    sqlite3_free(claim->payload_json);
+    claim->payload_json = NULL;
+}
+
+bool mo_sqlite_jobs_has_table(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                              bool force_fallback) {
+    sqlite3 *db = borrow_pooled_job_db(pool, folder_fd, rel_path, force_fallback);
+    if (db == NULL)
+        return false;
+    sqlite3_stmt *stmt = NULL;
+    int rc = sqlite3_prepare_v2(
+        db, "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'arvo_jobs' LIMIT 1;", -1,
+        &stmt, NULL);
+    if (rc != SQLITE_OK || stmt == NULL) {
+        if (stmt != NULL)
+            (void)sqlite3_finalize(stmt);
+        return false;
+    }
+    bool exists = sqlite3_step(stmt) == SQLITE_ROW;
+    (void)sqlite3_finalize(stmt);
+    return exists;
+}
+
+void mo_sqlite_jobs_requeue_stale(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                                  bool force_fallback, int64_t stale_seconds) {
+    sqlite3 *db = borrow_pooled_job_db(pool, folder_fd, rel_path, force_fallback);
+    if (db == NULL)
+        return;
+    struct timespec wall = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &wall);
+    char now_iso[96], cutoff_iso[96];
+    format_utc_iso_us((int64_t)wall.tv_sec, wall.tv_nsec, now_iso);
+    int64_t clamped = stale_seconds < 0 ? 0 : stale_seconds;
+    format_utc_iso_us((int64_t)wall.tv_sec - clamped, wall.tv_nsec, cutoff_iso);
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "UPDATE arvo_jobs SET state = 'pending', locked_at = NULL, "
+                           "updated_at = ? WHERE state = 'running' AND "
+                           "(locked_at IS NULL OR locked_at <= ?);",
+                           -1, &stmt, NULL) != SQLITE_OK ||
+        stmt == NULL) {
+        if (stmt != NULL)
+            (void)sqlite3_finalize(stmt);
+        return;
+    }
+    (void)sqlite3_bind_text(stmt, 1, now_iso, -1, SQLITE_TRANSIENT);
+    (void)sqlite3_bind_text(stmt, 2, cutoff_iso, -1, SQLITE_TRANSIENT);
+    (void)sqlite3_step(stmt);
+    (void)sqlite3_finalize(stmt);
+}
+
+bool mo_sqlite_jobs_claim_next(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                               bool force_fallback, const char *const *job_names,
+                               uint32_t job_count, struct mo_arvo_job_claim *out) {
+    if (out != NULL)
+        *out = (struct mo_arvo_job_claim){0};
+    if (job_count == 0 || job_count > MO_LIMIT_API_JOBS || out == NULL)
+        return false;
+    sqlite3 *db = borrow_pooled_job_db(pool, folder_fd, rel_path, force_fallback);
+    if (db == NULL)
+        return false;
+
+    struct timespec wall = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &wall);
+    char now_iso[96];
+    format_utc_iso_us((int64_t)wall.tv_sec, wall.tv_nsec, now_iso);
+
+    if (sqlite3_exec(db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK)
+        return false;
+
+    char sql[512];
+    size_t pos =
+        (size_t)snprintf(sql, sizeof sql,
+                         "SELECT id, job_name, payload_json, attempts, max_attempts FROM arvo_jobs "
+                         "WHERE state = 'pending' AND run_at <= ? AND job_name IN (");
+    for (uint32_t i = 0; i < job_count; i++) {
+        pos += (size_t)snprintf(sql + pos, sizeof sql - pos, "%s?", i == 0 ? "" : ", ");
+    }
+    pos += (size_t)snprintf(sql + pos, sizeof sql - pos, ") ORDER BY run_at ASC, id ASC LIMIT 1;");
+    MO_ASSERT(pos < sizeof sql);
+
+    sqlite3_stmt *sel = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &sel, NULL) != SQLITE_OK || sel == NULL) {
+        if (sel != NULL)
+            (void)sqlite3_finalize(sel);
+        (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return false;
+    }
+    (void)sqlite3_bind_text(sel, 1, now_iso, -1, SQLITE_TRANSIENT);
+    for (uint32_t i = 0; i < job_count; i++)
+        (void)sqlite3_bind_text(sel, (int)(2 + i), job_names[i], -1, SQLITE_STATIC);
+
+    int step_rc = sqlite3_step(sel);
+    if (step_rc != SQLITE_ROW) {
+        (void)sqlite3_finalize(sel);
+        (void)sqlite3_exec(db, step_rc == SQLITE_DONE ? "COMMIT;" : "ROLLBACK;", NULL, NULL, NULL);
+        return false;
+    }
+
+    const unsigned char *id_txt = sqlite3_column_text(sel, 0);
+    int id_len = sqlite3_column_bytes(sel, 0);
+    const unsigned char *jname_txt = sqlite3_column_text(sel, 1);
+    int jname_len = sqlite3_column_bytes(sel, 1);
+    const unsigned char *payload_txt = sqlite3_column_text(sel, 2);
+    int payload_len = sqlite3_column_bytes(sel, 2);
+    int64_t prev_attempts = sqlite3_column_int64(sel, 3);
+    int64_t max_attempts = sqlite3_column_int64(sel, 4);
+
+    if (id_txt == NULL || id_len <= 0 || (size_t)id_len >= sizeof out->id || jname_txt == NULL ||
+        jname_len <= 0 || (size_t)jname_len >= sizeof out->job_name || payload_len < 0) {
+        (void)sqlite3_finalize(sel);
+        (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return false;
+    }
+    char *pjson = sqlite3_malloc64((sqlite3_uint64)payload_len + 1);
+    if (pjson == NULL) {
+        (void)sqlite3_finalize(sel);
+        (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return false;
+    }
+    memcpy(out->id, id_txt, (size_t)id_len);
+    out->id[id_len] = '\0';
+    memcpy(out->job_name, jname_txt, (size_t)jname_len);
+    out->job_name[jname_len] = '\0';
+    if (payload_len > 0 && payload_txt != NULL)
+        memcpy(pjson, payload_txt, (size_t)payload_len);
+    pjson[payload_len] = '\0';
+    out->payload_json = pjson;
+    out->attempts = prev_attempts < INT64_MAX ? prev_attempts + 1 : INT64_MAX;
+    out->max_attempts = max_attempts < 1 ? 1 : max_attempts;
+    (void)sqlite3_finalize(sel);
+
+    sqlite3_stmt *upd = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "UPDATE arvo_jobs SET state = 'running', attempts = ?, locked_at = ?, "
+                           "updated_at = ? WHERE id = ?;",
+                           -1, &upd, NULL) != SQLITE_OK ||
+        upd == NULL) {
+        if (upd != NULL)
+            (void)sqlite3_finalize(upd);
+        mo_arvo_job_claim_free(out);
+        (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return false;
+    }
+    (void)sqlite3_bind_int64(upd, 1, out->attempts);
+    (void)sqlite3_bind_text(upd, 2, now_iso, -1, SQLITE_TRANSIENT);
+    (void)sqlite3_bind_text(upd, 3, now_iso, -1, SQLITE_TRANSIENT);
+    (void)sqlite3_bind_text(upd, 4, out->id, -1, SQLITE_TRANSIENT);
+    bool upd_ok = sqlite3_step(upd) == SQLITE_DONE;
+    (void)sqlite3_finalize(upd);
+    if (!upd_ok || sqlite3_exec(db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
+        mo_arvo_job_claim_free(out);
+        (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+        return false;
+    }
+    return true;
+}
+
+void mo_sqlite_jobs_complete(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                             bool force_fallback, const char *job_id) {
+    sqlite3 *db = borrow_pooled_job_db(pool, folder_fd, rel_path, force_fallback);
+    if (db == NULL || job_id == NULL)
+        return;
+    struct timespec wall = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &wall);
+    char now_iso[96];
+    format_utc_iso_us((int64_t)wall.tv_sec, wall.tv_nsec, now_iso);
+
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db,
+                           "UPDATE arvo_jobs SET state = 'completed', locked_at = NULL, "
+                           "updated_at = ? WHERE id = ?;",
+                           -1, &stmt, NULL) != SQLITE_OK ||
+        stmt == NULL) {
+        if (stmt != NULL)
+            (void)sqlite3_finalize(stmt);
+        return;
+    }
+    (void)sqlite3_bind_text(stmt, 1, now_iso, -1, SQLITE_TRANSIENT);
+    (void)sqlite3_bind_text(stmt, 2, job_id, -1, SQLITE_TRANSIENT);
+    (void)sqlite3_step(stmt);
+    (void)sqlite3_finalize(stmt);
+}
+
+void mo_sqlite_jobs_fail_or_retry(struct mo_sqlite_pool *pool, int folder_fd, const char *rel_path,
+                                  bool force_fallback, const char *job_id, int64_t attempts,
+                                  int64_t max_attempts, const char *error_msg) {
+    sqlite3 *db = borrow_pooled_job_db(pool, folder_fd, rel_path, force_fallback);
+    if (db == NULL || job_id == NULL)
+        return;
+    const char *safe_err = error_msg;
+    if (safe_err == NULL || safe_err[0] == '\0' ||
+        !mo_utf8_valid((const uint8_t *)safe_err, strlen(safe_err))) {
+        safe_err = "job execution failed";
+    }
+
+    struct timespec wall = {0, 0};
+    (void)clock_gettime(CLOCK_REALTIME, &wall);
+    char now_iso[96];
+    format_utc_iso_us((int64_t)wall.tv_sec, wall.tv_nsec, now_iso);
+
+    sqlite3_stmt *stmt = NULL;
+    if (attempts < max_attempts) {
+        int64_t delay = 15;
+        for (int64_t step = 1; step < attempts && delay < 3600; step++) {
+            delay *= 4;
+            if (delay > 3600)
+                delay = 3600;
+        }
+        char next_iso[96];
+        format_utc_iso_us((int64_t)wall.tv_sec + delay, wall.tv_nsec, next_iso);
+        if (sqlite3_prepare_v2(db,
+                               "UPDATE arvo_jobs SET state = 'pending', run_at = ?, "
+                               "locked_at = NULL, last_error = ?, updated_at = ? WHERE id = ?;",
+                               -1, &stmt, NULL) != SQLITE_OK ||
+            stmt == NULL) {
+            if (stmt != NULL)
+                (void)sqlite3_finalize(stmt);
+            return;
+        }
+        (void)sqlite3_bind_text(stmt, 1, next_iso, -1, SQLITE_TRANSIENT);
+        (void)sqlite3_bind_text(stmt, 2, safe_err, -1, SQLITE_TRANSIENT);
+        (void)sqlite3_bind_text(stmt, 3, now_iso, -1, SQLITE_TRANSIENT);
+        (void)sqlite3_bind_text(stmt, 4, job_id, -1, SQLITE_TRANSIENT);
+    } else {
+        if (sqlite3_prepare_v2(db,
+                               "UPDATE arvo_jobs SET state = 'failed', locked_at = NULL, "
+                               "last_error = ?, updated_at = ? WHERE id = ?;",
+                               -1, &stmt, NULL) != SQLITE_OK ||
+            stmt == NULL) {
+            if (stmt != NULL)
+                (void)sqlite3_finalize(stmt);
+            return;
+        }
+        (void)sqlite3_bind_text(stmt, 1, safe_err, -1, SQLITE_TRANSIENT);
+        (void)sqlite3_bind_text(stmt, 2, now_iso, -1, SQLITE_TRANSIENT);
+        (void)sqlite3_bind_text(stmt, 3, job_id, -1, SQLITE_TRANSIENT);
+    }
+    (void)sqlite3_step(stmt);
+    (void)sqlite3_finalize(stmt);
 }
