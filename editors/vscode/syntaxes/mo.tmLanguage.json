@@ -97,7 +97,7 @@
           }
         },
         {
-          "match": "^\\s*(auth)\\s+([A-Z][A-Za-z0-9]*(?:\\.[A-Z][A-Za-z0-9]*)?)\\s+(via)\\s+([a-z][a-z0-9_]*|_[a-z0-9_]+)\\b",
+          "match": "^\\s*(auth)\\s+([A-Z][A-Za-z0-9]*(?:\\.[A-Z][A-Za-z0-9]*)?)\\s+(via)\\s+((?:[A-Z][A-Za-z0-9]*\\.)?(?:[a-z][a-z0-9_]*|_[a-z0-9_]+))\\b",
           "captures": {
             "1": { "name": "keyword.other.clause.mo" },
             "2": { "name": "entity.name.type.mo" },
