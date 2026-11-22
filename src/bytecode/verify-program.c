@@ -158,6 +158,8 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
                 uint32_t global = fn->code[pc + 1];
                 MO_ASSERT(global < f->global_count);
                 if (target != MO_NO_INDEX && target != global) {
+                    if (site != NULL)
+                        *site = (struct mo_bytecode_error_site){MO_SECTION_FUNCTIONS, index};
                     return refuse(error, code_offsets[index] + pc * 4,
                                   "init sets different globals");
                 }
@@ -165,6 +167,8 @@ bool mo_verify_program_init(struct mo_arena *arena, const struct mo_bytecode *f,
             }
         }
         if (target == MO_NO_INDEX) {
+            if (site != NULL)
+                *site = (struct mo_bytecode_error_site){MO_SECTION_FUNCTIONS, index};
             return refuse(error, code_offsets[index], "init has no global store");
         }
         if (out->global_rank[target] != 0) {

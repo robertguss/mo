@@ -12,6 +12,7 @@ struct writer {
     struct mo_bytecode_names names;
     const char *reason;
     enum mo_bytecode_error_kind kind;
+    uint32_t function;
 };
 
 static MO_MUST_USE bool word(struct writer *w, uint32_t value) {
@@ -242,6 +243,7 @@ static MO_MUST_USE bool sections(struct writer *w) {
     WRITE(indices(w, f->init, f->init_count, MO_LIMIT_INITS));
     WRITE(count(w, f->function_count, MO_LIMIT_FUNCTIONS, f->functions));
     for (uint32_t i = 0; i < f->function_count; i++) {
+        w->function = i;
         const struct mo_bytecode_function *fn = &f->functions[i];
         WRITE(word(w, fn->name));
         WRITE(word(w, fn->module));
@@ -257,6 +259,7 @@ static MO_MUST_USE bool sections(struct writer *w) {
         WRITE(indices(w, fn->register_types, fn->register_count, MO_LIMIT_FUNCTION_REGISTERS));
         WRITE(indices(w, fn->code, fn->code_count, MO_LIMIT_FUNCTION_CODE_WORDS));
     }
+    w->function = MO_BYTECODE_NO_INDEX;
     WRITE(count(w, f->module_count, MO_LIMIT_MODULES, f->modules));
     for (uint32_t i = 0; i < f->module_count; i++) {
         const struct mo_bytecode_module *m = &f->modules[i];
@@ -276,6 +279,7 @@ static MO_MUST_USE bool sections(struct writer *w) {
     }
     WRITE(count(w, f->debug_count, MO_LIMIT_FUNCTIONS, f->debug));
     for (uint32_t i = 0; i < f->debug_count; i++) {
+        w->function = i < f->function_count ? i : MO_BYTECODE_NO_INDEX;
         const struct mo_bytecode_debug *d = &f->debug[i];
         WRITE(count(w, d->span_count, MO_LIMIT_DEBUG_ENTRIES, d->spans));
         for (uint32_t j = 0; j < d->span_count; j++) {
@@ -305,6 +309,7 @@ static MO_MUST_USE bool sections(struct writer *w) {
             WRITE(word(w, d->lines[j].text));
         }
     }
+    w->function = MO_BYTECODE_NO_INDEX;
     if (f->service_count != 0) {
         WRITE(count(w, f->service_count, MO_LIMIT_SERVICES, f->services));
         for (uint32_t i = 0; i < f->service_count; i++) {
@@ -348,7 +353,11 @@ static MO_MUST_USE bool sections(struct writer *w) {
 bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
                         struct mo_write_error *error_out) {
     MO_ASSERT(file != NULL && out != NULL && error_out != NULL && out->length == 0);
-    struct writer w = {.file = file, .out = out, .reason = "bytecode/output limit or no memory"};
+    error_out->function = MO_BYTECODE_NO_INDEX;
+    struct writer w = {.file = file,
+                       .out = out,
+                       .reason = "bytecode/output limit or no memory",
+                       .function = MO_BYTECODE_NO_INDEX};
     size_t name_bytes = file->string_count <= MO_LIMIT_STRINGS ? (size_t)file->string_count * 4 : 0;
     mo_arena_init(&w.scratch, mo_bytecode_work_budget(MO_BYTECODE_HEADER_SIZE + name_bytes));
     uint8_t header[MO_BYTECODE_HEADER_SIZE];
@@ -360,6 +369,7 @@ bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
         mo_buffer_clear(out);
         error_out->reason = w.reason;
         error_out->kind = w.kind;
+        error_out->function = w.kind == MO_BYTECODE_NO_MEMORY ? MO_BYTECODE_NO_INDEX : w.function;
         return false;
     }
     uint64_t checksum = MO_BYTECODE_FNV_OFFSET;
@@ -371,14 +381,22 @@ bool mo_bytecode_encode(const struct mo_bytecode *file, struct mo_buffer *out,
     }
     /* Validate the actual encoding, so caches and inactive fields cannot influence acceptance. */
     struct mo_arena scratch;
+    struct mo_types view;
+    struct mo_bytecode_error_site site = {MO_SECTION_COUNT, MO_BYTECODE_NO_INDEX};
     struct mo_load_error error;
+    const uint32_t *offsets;
     mo_arena_init(&scratch, mo_bytecode_work_budget(out->length));
-    bool ok = mo_bytecode_decode(&scratch, out->bytes, out->length, &error) != NULL;
+    bool ok = mo_bytecode_decode_info(&scratch, out->bytes, out->length, &offsets, &view, NULL,
+                                      &site, &error) != NULL;
     mo_arena_free(&scratch);
     if (!ok) {
         mo_buffer_clear(out);
         error_out->reason = error.reason;
         error_out->kind = error.kind;
+        error_out->function =
+            site.section == MO_SECTION_FUNCTIONS && site.entry < file->function_count
+                ? site.entry
+                : MO_BYTECODE_NO_INDEX;
     }
     return ok;
 }
@@ -388,12 +406,17 @@ bool mo_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
     if (!mo_bytecode_encode(file, out, error_out)) {
         return false;
     }
+    struct mo_bytecode_error_site site = {MO_SECTION_COUNT, MO_BYTECODE_NO_INDEX};
     struct mo_load_error error;
-    struct mo_image *image = mo_load(out->bytes, out->length, &error);
+    struct mo_image *image = mo_bytecode_load_site(out->bytes, out->length, &site, &error);
     if (image == NULL) {
         mo_buffer_clear(out);
         error_out->reason = error.reason;
         error_out->kind = error.kind;
+        error_out->function =
+            site.section == MO_SECTION_FUNCTIONS && site.entry < file->function_count
+                ? site.entry
+                : MO_BYTECODE_NO_INDEX;
         return false;
     }
     mo_image_free(image);

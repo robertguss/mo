@@ -208,101 +208,236 @@ static MO_MUST_USE uint32_t layout(const struct flow *f, uint32_t type, uint32_t
     return mo_verify_layout_lookup(f->layouts, f->v.file->layout_count, type, tag);
 }
 
-/* Track only choice registers whose case is needed by case_field or reset. Each fact changes
- * at most twice. Both the scans and the work queue are charged before doing their work. */
+struct case_pred {
+    uint32_t from;
+    uint32_t edge_index;
+    uint32_t next;
+};
+struct case_write {
+    uint32_t block;
+    uint32_t next;
+};
+struct case_use {
+    uint32_t block;
+    uint32_t pc;
+    uint32_t next;
+};
+
+/* Track only choice registers whose case is needed by case_field or reset. Instructions are
+ * scanned once to record per-register block writes and unshadowed uses; for each needed register,
+ * backward reachability from its uses finds the relevant blocks and boundary edges, and forward
+ * propagation settles facts on that subgraph (each fact changes at most twice). */
 static MO_MUST_USE bool cases(struct flow *f) {
     const struct mo_bytecode_function *fn = f->v.fn;
-    uint32_t *facts = array(f, f->count, sizeof *facts, _Alignof(uint32_t));
-    uint32_t *last_write = array(f, f->count, sizeof *last_write, _Alignof(uint32_t));
-    bool *queued = array(f, f->count, sizeof *queued, _Alignof(bool));
     bool *needed = array(f, fn->register_count, sizeof *needed, _Alignof(bool));
-    if (facts == NULL || queued == NULL || last_write == NULL || needed == NULL) {
+    if (needed == NULL) {
         return false;
     }
-    memset(needed, 0, fn->register_count * sizeof *needed);
+    if (fn->register_count != 0) {
+        memset(needed, 0, fn->register_count * sizeof *needed);
+    }
+    uint32_t total_uses = 0;
+    bool any_needed = false;
     for (uint32_t pc = 0; pc < fn->code_count; pc = next(fn, pc)) {
         uint32_t op = fn->code[pc] & MO_OPCODE_MASK;
         if (op == MO_OP_CASE_FIELD || op == MO_OP_RESET) {
-            needed[fn->code[pc + 2]] = true;
+            uint32_t r = fn->code[pc + 2];
+            if (f->v.file->types[fn->register_types[r]].kind == MO_TYPE_CHOICE) {
+                needed[r] = true;
+                any_needed = true;
+                total_uses++;
+            }
         }
     }
-    for (uint32_t r = 0; r < fn->register_count; r++) {
-        if (!needed[r] || f->v.file->types[fn->register_types[r]].kind != MO_TYPE_CHOICE) {
-            continue;
+    if (any_needed) {
+        uint32_t total_edges = 0;
+        for (uint32_t b = 0; b < f->count; b++) {
+            uint32_t ec = edge_count(f, b);
+            if (!charge(f, f->blocks[b].last, ec)) {
+                return false;
+            }
+            total_edges += ec;
+        }
+        uint32_t *pred_head = array(f, f->count, sizeof *pred_head, _Alignof(uint32_t));
+        struct case_pred *preds = array(f, total_edges, sizeof *preds, _Alignof(struct case_pred));
+        uint32_t *write_head = array(f, fn->register_count, sizeof *write_head, _Alignof(uint32_t));
+        uint32_t *written_in_block =
+            array(f, fn->register_count, sizeof *written_in_block, _Alignof(uint32_t));
+        struct case_write *writes =
+            array(f, fn->code_count, sizeof *writes, _Alignof(struct case_write));
+        uint32_t *use_head = array(f, fn->register_count, sizeof *use_head, _Alignof(uint32_t));
+        struct case_use *uses = array(f, total_uses, sizeof *uses, _Alignof(struct case_use));
+        uint32_t *writes_stamp = array(f, f->count, sizeof *writes_stamp, _Alignof(uint32_t));
+        uint32_t *relevant_stamp = array(f, f->count, sizeof *relevant_stamp, _Alignof(uint32_t));
+        uint32_t *queued_stamp = array(f, f->count, sizeof *queued_stamp, _Alignof(uint32_t));
+        uint32_t *facts = array(f, f->count, sizeof *facts, _Alignof(uint32_t));
+        uint32_t *r_blocks = array(f, f->count, sizeof *r_blocks, _Alignof(uint32_t));
+        if (pred_head == NULL || preds == NULL || write_head == NULL || written_in_block == NULL ||
+            writes == NULL || use_head == NULL || uses == NULL || writes_stamp == NULL ||
+            relevant_stamp == NULL || queued_stamp == NULL || facts == NULL || r_blocks == NULL) {
+            return false;
         }
         for (uint32_t b = 0; b < f->count; b++) {
-            facts[b] = CASE_UNREACHED;
-            queued[b] = false;
-            last_write[b] = MO_NO_INDEX;
+            pred_head[b] = MO_NO_INDEX;
+            writes_stamp[b] = MO_NO_INDEX;
+            relevant_stamp[b] = MO_NO_INDEX;
+            queued_stamp[b] = MO_NO_INDEX;
+        }
+        for (uint32_t r = 0; r < fn->register_count; r++) {
+            write_head[r] = MO_NO_INDEX;
+            written_in_block[r] = MO_NO_INDEX;
+            use_head[r] = MO_NO_INDEX;
+        }
+        uint32_t pred_count = 0;
+        for (uint32_t b = 0; b < f->count; b++) {
+            uint32_t ec = edge_count(f, b);
+            for (uint32_t e = 0; e < ec; e++) {
+                uint32_t to = edge(f, b, e);
+                preds[pred_count].from = b;
+                preds[pred_count].edge_index = e;
+                preds[pred_count].next = pred_head[to];
+                pred_head[to] = pred_count++;
+            }
+        }
+        uint32_t write_count = 0, use_count = 0;
+        for (uint32_t b = 0; b < f->count; b++) {
             for (uint32_t pc = f->blocks[b].start; pc < f->blocks[b].end; pc = next(fn, pc)) {
                 const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
                 MO_ASSERT(op != NULL);
                 if (!charge(f, pc, 1U + op->fixed_count)) {
                     return false;
                 }
+                if (op->number == MO_OP_CASE_FIELD || op->number == MO_OP_RESET) {
+                    uint32_t r = fn->code[pc + 2];
+                    if (needed[r] && written_in_block[r] != b) {
+                        MO_ASSERT(use_count < total_uses);
+                        uses[use_count].block = b;
+                        uses[use_count].pc = pc;
+                        uses[use_count].next = use_head[r];
+                        use_head[r] = use_count++;
+                    }
+                }
                 for (uint32_t i = 0; i < op->fixed_count; i++) {
-                    if ((op->fixed[i].access == MO_ACCESS_WRITE ||
-                         op->fixed[i].access == MO_ACCESS_TOKEN_WRITE) &&
-                        fn->code[pc + 1 + i] == r) {
-                        last_write[b] = pc;
+                    if (op->fixed[i].access == MO_ACCESS_WRITE ||
+                        op->fixed[i].access == MO_ACCESS_TOKEN_WRITE) {
+                        uint32_t wreg = fn->code[pc + 1 + i];
+                        if (needed[wreg] && written_in_block[wreg] != b) {
+                            MO_ASSERT(write_count < fn->code_count);
+                            written_in_block[wreg] = b;
+                            writes[write_count].block = b;
+                            writes[write_count].next = write_head[wreg];
+                            write_head[wreg] = write_count++;
+                        }
                     }
                 }
             }
         }
-        uint32_t start = 0, end = 0, pending = 1;
-        f->queue[end] = 0;
-        end = (end + 1) % f->count;
-        facts[0] = CASE_UNKNOWN;
-        queued[0] = true;
-        while (pending != 0) {
-            uint32_t b = f->queue[start];
-            start = (start + 1) % f->count;
-            pending--;
-            queued[b] = false;
-            uint32_t out = last_write[b] == MO_NO_INDEX ? facts[b] : CASE_UNKNOWN;
-            uint32_t pc = f->blocks[b].last;
-            bool switches =
-                (fn->code[pc] & MO_OPCODE_MASK) == MO_OP_SWITCH && fn->code[pc + 1] == r;
-            for (uint32_t i = 0; i < edge_count(f, b); i++) {
-                if (!charge(f, pc, 1)) {
+        for (uint32_t r = 0; r < fn->register_count; r++) {
+            if (use_head[r] == MO_NO_INDEX) {
+                continue;
+            }
+            MO_ASSERT(r != MO_NO_INDEX);
+            for (uint32_t wi = write_head[r]; wi != MO_NO_INDEX; wi = writes[wi].next) {
+                uint32_t wb = writes[wi].block;
+                if (!charge(f, f->blocks[wb].start, 1)) {
                     return false;
                 }
-                uint32_t to = edge(f, b, i), incoming = switches ? i : out;
-                uint32_t merged = facts[to] == CASE_UNREACHED ? incoming
-                                  : facts[to] == incoming     ? incoming
+                writes_stamp[wb] = r;
+            }
+            uint32_t rel_count = 0;
+            for (uint32_t ui = use_head[r]; ui != MO_NO_INDEX; ui = uses[ui].next) {
+                uint32_t ub = uses[ui].block;
+                if (!charge(f, uses[ui].pc, 1)) {
+                    return false;
+                }
+                if (relevant_stamp[ub] != r) {
+                    relevant_stamp[ub] = r;
+                    facts[ub] = ub == 0 ? CASE_UNKNOWN : CASE_UNREACHED;
+                    r_blocks[rel_count++] = ub;
+                }
+            }
+            for (uint32_t qi = 0; qi < rel_count; qi++) {
+                uint32_t v = r_blocks[qi];
+                if (v == 0) {
+                    continue;
+                }
+                for (uint32_t pi = pred_head[v]; pi != MO_NO_INDEX; pi = preds[pi].next) {
+                    uint32_t u = preds[pi].from;
+                    uint32_t last_pc = f->blocks[u].last;
+                    if (!charge(f, last_pc, 1)) {
+                        return false;
+                    }
+                    bool switches = (fn->code[last_pc] & MO_OPCODE_MASK) == MO_OP_SWITCH &&
+                                    fn->code[last_pc + 1] == r;
+                    if (switches || writes_stamp[u] == r || u == 0) {
+                        uint32_t incoming = switches ? preds[pi].edge_index : CASE_UNKNOWN;
+                        facts[v] = facts[v] == CASE_UNREACHED ? incoming
+                                   : facts[v] == incoming     ? incoming
                                                               : CASE_UNKNOWN;
-                if (merged != facts[to]) {
-                    facts[to] = merged;
-                    if (!queued[to]) {
-                        MO_ASSERT(pending < f->count);
-                        f->queue[end] = to;
-                        end = (end + 1) % f->count;
-                        pending++;
-                        queued[to] = true;
+                    } else if (relevant_stamp[u] != r) {
+                        relevant_stamp[u] = r;
+                        facts[u] = CASE_UNREACHED;
+                        MO_ASSERT(rel_count < f->count);
+                        r_blocks[rel_count++] = u;
                     }
                 }
             }
-        }
-        for (uint32_t b = 0; b < f->count; b++) {
-            uint32_t fact = facts[b];
-            for (uint32_t pc = f->blocks[b].start; pc < f->blocks[b].end; pc = next(fn, pc)) {
-                const struct mo_opcode_info *op = mo_opcode_find(fn->code[pc] & MO_OPCODE_MASK);
-                MO_ASSERT(op != NULL);
-                uint32_t number = op->number;
-                if ((number == MO_OP_CASE_FIELD || number == MO_OP_RESET) &&
-                    fn->code[pc + 2] == r) {
-                    f->known[pc] = fact;
+            uint32_t start = 0, end = 0, pending = 0;
+            for (uint32_t i = 0; i < rel_count; i++) {
+                uint32_t b = r_blocks[i];
+                if (b == 0 || facts[b] == CASE_UNREACHED || writes_stamp[b] == r) {
+                    continue;
                 }
-                for (uint32_t i = 0; i < op->fixed_count; i++) {
-                    if ((op->fixed[i].access == MO_ACCESS_WRITE ||
-                         op->fixed[i].access == MO_ACCESS_TOKEN_WRITE) &&
-                        fn->code[pc + 1 + i] == r) {
-                        fact = CASE_UNKNOWN;
+                uint32_t last_pc = f->blocks[b].last;
+                bool switches = (fn->code[last_pc] & MO_OPCODE_MASK) == MO_OP_SWITCH &&
+                                fn->code[last_pc + 1] == r;
+                if (!switches) {
+                    f->queue[end] = b;
+                    end = (end + 1) % f->count;
+                    pending++;
+                    queued_stamp[b] = r;
+                }
+            }
+            while (pending != 0) {
+                uint32_t b = f->queue[start];
+                start = (start + 1) % f->count;
+                pending--;
+                queued_stamp[b] = MO_NO_INDEX;
+                uint32_t out = facts[b];
+                uint32_t last_pc = f->blocks[b].last;
+                uint32_t ec = edge_count(f, b);
+                for (uint32_t i = 0; i < ec; i++) {
+                    if (!charge(f, last_pc, 1)) {
+                        return false;
+                    }
+                    uint32_t to = edge(f, b, i);
+                    if (to == 0 || relevant_stamp[to] != r) {
+                        continue;
+                    }
+                    uint32_t merged = facts[to] == CASE_UNREACHED ? out
+                                      : facts[to] == out          ? out
+                                                                  : CASE_UNKNOWN;
+                    if (merged != facts[to]) {
+                        facts[to] = merged;
+                        uint32_t to_last = f->blocks[to].last;
+                        bool to_switches = (fn->code[to_last] & MO_OPCODE_MASK) == MO_OP_SWITCH &&
+                                           fn->code[to_last + 1] == r;
+                        if (!to_switches && writes_stamp[to] != r && queued_stamp[to] != r) {
+                            MO_ASSERT(pending < f->count);
+                            f->queue[end] = to;
+                            end = (end + 1) % f->count;
+                            pending++;
+                            queued_stamp[to] = r;
+                        }
                     }
                 }
-                if (!charge(f, pc, 1U + op->fixed_count)) {
+            }
+            for (uint32_t ui = use_head[r]; ui != MO_NO_INDEX; ui = uses[ui].next) {
+                if (!charge(f, uses[ui].pc, 1)) {
                     return false;
                 }
+                MO_ASSERT(facts[uses[ui].block] != CASE_UNREACHED);
+                f->known[uses[ui].pc] = facts[uses[ui].block];
             }
         }
     }
@@ -677,6 +812,10 @@ bool mo_bytecode_verify(const struct mo_bytecode *file, const struct mo_types *t
             .program = &program,
             .index = i};
         ok = function(&f);
+        if (!ok && site != NULL && error->kind != MO_BYTECODE_NO_MEMORY) {
+            site->section = MO_SECTION_FUNCTIONS;
+            site->entry = i;
+        }
     }
     mo_arena_free(&scratch);
     *out = (struct mo_verification){abilities, layouts};

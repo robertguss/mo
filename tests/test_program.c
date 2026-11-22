@@ -3103,6 +3103,32 @@ static void json_ability_graph(void) {
             CHECK(f.diags.items[0].code == rejected[i].code);
         free_fixture(&f);
     }
+
+    /* Invalid ?-suffixed non-Bool fields leave no nominal/data signature; ability and type-arg
+     * checks (e.g. Json.decode[T], Sqlite.decode[T], closures) must report E0059 cleanly without
+     * hitting a missing-signature assertion. */
+    const char *invalid_bool_field[] = {
+        ("module Main\nuse Json\nstruct BadStruct\n  prev_had_row?: Option(Bool)\nend\n"
+         "fn main()\n  _x = Json.decode[BadStruct](\"{}\")\nend\n"),
+        ("module Main\nuse Json\nstruct BadStruct\n  flag?: Option(Bool)\nend\n"
+         "fn parse(s: Text) : Result(BadStruct, Json.JsonDecodeError)\n"
+         "  Json.decode[BadStruct](s)\nend\n"),
+        ("module Main\nuse Json\nstruct BadStruct\n  flag?: Int\nend\n"
+         "fn main()\n  _x = Json.decode[Option(BadStruct)](\"null\")\nend\n"),
+        ("module Main\nuse Json\nenum BadEnum\n  Good\n  Bad(flag?: Option(Bool))\nend\n"
+         "fn main()\n  _x = Json.decode[BadEnum](\"{}\")\nend\n"),
+        ("module Main\nstruct BadRow\n  flag?: Option(Bool)\nend\n"
+         "fn bad(r: Sqlite.Rows) : Result(List(BadRow), SqliteDecodeError)\n"
+         "  Sqlite.decode[BadRow](r)\nend\n"),
+    };
+    for (size_t i = 0; i < sizeof(invalid_bool_field) / sizeof(invalid_bool_field[0]); i++) {
+        struct fixture f;
+        init_with_library(&f, invalid_bool_field[i]);
+        CHECK(f.program == NULL && f.diags.count == 1);
+        if (f.diags.count == 1)
+            CHECK(f.diags.items[0].code == MO_CODE_BOOL_NAME);
+        free_fixture(&f);
+    }
 }
 
 static void api_server_checks(void) {
@@ -3257,6 +3283,105 @@ static void api_server_checks(void) {
               strcmp(ok.program->apis[0].routes[1].path, "/v1/items/:id") == 0 &&
               ok.program->apis[0].routes[1].auth_mode == MO_API_AUTH_REQUIRED);
     free_fixture(&ok);
+
+    /* Multi-module api status clauses mark imported modules and types as used, while still
+     * reporting E0093 on genuinely unused imports. */
+    static const struct {
+        const char *main_src;
+        uint16_t expected_code;
+    } status_imports[] = {
+        /* Module referenced ONLY in `status Errors.MissingItem = 404` / `Errors.Denied(_) = 403` */
+        {"module Main\nuse Handlers\nuse Errors\n"
+         "api\nget \"/item\" Handlers.get_item\n"
+         "status Errors.MissingItem = 404\nstatus Errors.Denied(_) = 403\nend\n",
+         0},
+        /* Selective type import referenced ONLY in `status AppError.MissingItem = 404` */
+        {"module Main\nuse Handlers\nuse Errors{AppError}\n"
+         "api\nget \"/item\" Handlers.get_item\n"
+         "status AppError.MissingItem = 404\nstatus AppError.Denied(_) = 403\nend\n",
+         0},
+        /* Selective type import referenced ONLY via unqualified `status MissingItem = 404` */
+        {"module Main\nuse Handlers\nuse Errors{AppError}\n"
+         "api\nget \"/item\" Handlers.get_item\n"
+         "status MissingItem = 404\nstatus Denied(_) = 403\nend\n",
+         0},
+        /* Own-type module referenced ONLY via `status OwnErr.OwnMissing = 404` */
+        {"module Main\nuse Handlers\nuse OwnErr\n"
+         "api\nget \"/own\" Handlers.get_own\nstatus OwnErr.OwnMissing = 404\nend\n",
+         0},
+        /* Own-type selective import referenced ONLY via unqualified `status OwnMissing = 404` */
+        {"module Main\nuse Handlers\nuse OwnErr{OwnErr}\n"
+         "api\nget \"/own\" Handlers.get_own\nstatus OwnMissing = 404\nend\n",
+         0},
+        /* Genuinely unused import alongside used status import still reports E0093 */
+        {"module Main\nuse Handlers\nuse Errors\nuse OwnErr\n"
+         "api\nget \"/item\" Handlers.get_item\n"
+         "status Errors.MissingItem = 404\nstatus Errors.Denied(_) = 403\nend\n",
+         MO_CODE_UNUSED_IMPORT},
+        /* Local enum matching `status LocalErr.Bad = 400` does not credit unused `use OwnErr` */
+        {"module Main\nuse OwnErr\nenum LocalErr\n  Bad\nend\n"
+         "api\nget \"/local\" local_h\nstatus LocalErr.Bad = 400\nend\n"
+         "fn local_h() : Result(Int, LocalErr)\nOk(1)\nend\n",
+         MO_CODE_UNUSED_IMPORT},
+    };
+    static const char errors_mod[] =
+        "module Errors\nexpose AppError(..)\nenum AppError\n  MissingItem\n  Denied(Text)\nend\n";
+    static const char own_err_mod[] =
+        "module OwnErr\nexpose OwnErr(..)\nenum OwnErr\n  OwnMissing\nend\n";
+    static const char handlers_mod[] =
+        "module Handlers\nexpose get_item, get_own\nuse Errors\nuse OwnErr\n"
+        "fn get_item() : Result(Int, Errors.AppError)\nOk(1)\nend\n"
+        "fn get_own() : Result(Int, OwnErr)\nOk(2)\nend\n";
+    char dir[] = "/tmp/mo-api-status-XXXXXX";
+    MO_ASSERT(mkdtemp(dir) != NULL);
+    char main_path[128], errors_path[128], own_path[128], handlers_path[128];
+    MO_ASSERT(snprintf(main_path, sizeof main_path, "%s/main.mo", dir) > 0);
+    MO_ASSERT(snprintf(errors_path, sizeof errors_path, "%s/errors.mo", dir) > 0);
+    MO_ASSERT(snprintf(own_path, sizeof own_path, "%s/own-err.mo", dir) > 0);
+    MO_ASSERT(snprintf(handlers_path, sizeof handlers_path, "%s/handlers.mo", dir) > 0);
+    const struct {
+        const char *path, *text;
+    } support[] = {
+        {errors_path, errors_mod}, {own_path, own_err_mod}, {handlers_path, handlers_mod}};
+    for (size_t s = 0; s < sizeof support / sizeof support[0]; s++) {
+        FILE *fp = fopen(support[s].path, "wb");
+        MO_ASSERT(fp != NULL);
+        MO_ASSERT(fwrite(support[s].text, 1, strlen(support[s].text), fp) ==
+                  strlen(support[s].text));
+        MO_ASSERT(fclose(fp) == 0);
+    }
+    for (size_t i = 0; i < sizeof(status_imports) / sizeof(status_imports[0]); i++) {
+        FILE *fp = fopen(main_path, "wb");
+        MO_ASSERT(fp != NULL);
+        size_t mlen = strlen(status_imports[i].main_src);
+        MO_ASSERT(fwrite(status_imports[i].main_src, 1, mlen, fp) == mlen);
+        MO_ASSERT(fclose(fp) == 0);
+        struct mo_arena syntax_arena, arena;
+        struct mo_sources sources;
+        struct mo_diags diags;
+        mo_arena_init(&syntax_arena, 64 << 20);
+        mo_arena_init(&arena, MO_CLI_CHECK_SIZE);
+        MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+        struct mo_module_set *set =
+            mo_load_program(&syntax_arena, &sources, main_path, "lib", &diags);
+        CHECK(set != NULL && !mo_diags_any(&diags));
+        if (set != NULL) {
+            struct mo_program *prog = mo_check(&arena, set, &diags);
+            if (status_imports[i].expected_code == 0) {
+                CHECK(prog != NULL && !mo_diags_any(&diags));
+            } else {
+                CHECK(prog == NULL && diags.count == 1);
+                if (diags.count == 1)
+                    CHECK(diags.items[0].code == status_imports[i].expected_code);
+            }
+        }
+        mo_diags_free(&diags);
+        mo_sources_free(&sources);
+        mo_arena_free(&arena);
+        mo_arena_free(&syntax_arena);
+    }
+    MO_ASSERT(unlink(main_path) == 0 && unlink(errors_path) == 0 && unlink(own_path) == 0 &&
+              unlink(handlers_path) == 0 && rmdir(dir) == 0);
 }
 
 static void sqlite_decode_checks(void) {

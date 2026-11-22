@@ -6,6 +6,9 @@
 
 MO_MUST_USE bool codegen_abilities_valid(struct compiler *c) {
     MO_ASSERT(c->types.finished);
+    c->current = NULL;
+    c->declaration = (struct mo_core_span){0};
+    c->span = (struct mo_core_span){0};
     uint8_t *flags = mo_bytecode_abilities(&c->arena, c->types.items, c->types.count);
     if (flags == NULL)
         return codegen_problem(c, MO_CODE_CODEGEN_MEMORY,

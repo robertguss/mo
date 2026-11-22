@@ -1336,6 +1336,7 @@ static MO_MUST_USE bool check_statuses(struct api_check *p, const struct mo_synt
         p->span = variant_node->span;
         const struct mo_symbol *matched_enum = NULL;
         const struct mo_symbol *matched_case = NULL;
+        uint32_t alias_idx = UINT32_MAX;
 
         if (variant_node->kind == MO_S_QUALIFIED) {
             const struct mo_syntax *prefix = variant_node->children[0];
@@ -1343,10 +1344,13 @@ static MO_MUST_USE bool check_statuses(struct api_check *p, const struct mo_synt
             size_t plen = prefix->span.end - prefix->span.start;
             size_t clen = cname->span.end - cname->span.start;
             uint32_t alias_module = UINT32_MAX;
-            for (uint32_t a = 0; a < own_scope->alias_count; a++)
+            for (uint32_t a = 0; a < own_scope->alias_count; a++) {
                 if (strlen(own_scope->aliases[a].name) == plen &&
-                    memcmp(own_scope->aliases[a].name, prefix->text, plen) == 0)
+                    memcmp(own_scope->aliases[a].name, prefix->text, plen) == 0) {
+                    alias_idx = a;
                     alias_module = own_scope->aliases[a].module;
+                }
+            }
             for (uint32_t e = 0; e < enum_count; e++) {
                 const struct mo_symbol *en = enums[e];
                 bool prefix_ok =
@@ -1392,6 +1396,44 @@ static MO_MUST_USE bool check_statuses(struct api_check *p, const struct mo_synt
                 p, MO_CODE_API_STATUS,
                 "a status clause names an error case not returned by any route or auth function",
                 "Map only cases of error enums returned by this api's routes or auth function.");
+
+        if (variant_node->kind == MO_S_QUALIFIED) {
+            if (alias_idx != UINT32_MAX &&
+                matched_enum->module == own_scope->aliases[alias_idx].module) {
+                if (!mo_use_import(p->program->signatures, p->api->module,
+                                   own_scope->aliases[alias_idx].origin))
+                    return api_report(p, MO_CODE_CHECK_PROGRAM_WORK,
+                                      "the program needs too much import-checking work", NULL);
+            } else if (matched_enum->module != p->api->module) {
+                for (uint32_t k = 0; k < own_scope->imported_count; k++) {
+                    const struct mo_imported_name *imp = &own_scope->imported[k];
+                    bool hit = false;
+                    for (uint32_t m = 0; m < imp->count; m++)
+                        hit = hit || &imp->symbols[m] == matched_enum;
+                    if (hit) {
+                        if (!mo_use_import(p->program->signatures, p->api->module, imp->origin))
+                            return api_report(p, MO_CODE_CHECK_PROGRAM_WORK,
+                                              "the program needs too much import-checking work",
+                                              NULL);
+                        break;
+                    }
+                }
+            }
+        } else if (matched_enum->module != p->api->module) {
+            for (uint32_t k = 0; k < own_scope->imported_count; k++) {
+                const struct mo_imported_name *imp = &own_scope->imported[k];
+                bool hit = false;
+                for (uint32_t m = 0; m < imp->count; m++)
+                    hit =
+                        hit || &imp->symbols[m] == matched_case || &imp->symbols[m] == matched_enum;
+                if (hit) {
+                    if (!mo_use_import(p->program->signatures, p->api->module, imp->origin))
+                        return api_report(p, MO_CODE_CHECK_PROGRAM_WORK,
+                                          "the program needs too much import-checking work", NULL);
+                    break;
+                }
+            }
+        }
 
         const struct mo_data_signature *cdata =
             mo_data_signature_by_symbol(p->program->signatures, matched_case);

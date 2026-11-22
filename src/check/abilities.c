@@ -366,7 +366,10 @@ static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
     const struct mo_source_type *type = out->type;
     const struct mo_nominal_signature *nominal =
         mo_nominal_signature_by_symbol(p->signatures, type->declaration);
-    MO_ASSERT(nominal != NULL);
+    if (nominal == NULL || nominal->invalid) {
+        MO_ASSERT(p->signatures->recovering);
+        return true;
+    }
     const struct mo_symbol *owner = type->declaration;
     uint32_t cases = owner->declaration->kind == MO_S_ENUM ? owner->case_count : 1;
     if (out->ability == MO_SOURCE_JSON && owner->declaration->kind == MO_S_ENUM) {
@@ -406,7 +409,11 @@ static MO_MUST_USE bool derive_data(struct mo_ability_context *p,
         if (!work(p, 0))
             return false;
         const struct mo_data_signature *data = mo_data_signature_by_symbol(p->signatures, symbol);
-        MO_ASSERT(data != NULL);
+        if (data == NULL) {
+            MO_ASSERT(p->signatures->recovering);
+            out->part_count = at;
+            return true;
+        }
         for (uint32_t k = 0; k < data->count; k++) {
             const struct mo_source_type *field =
                 substitute(p, data->by_index[k]->type, data->type, type, 0);
@@ -715,7 +722,10 @@ static MO_MUST_USE bool constraints(struct mo_ability_context *p, const struct m
     if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
         const struct mo_nominal_signature *data =
             mo_nominal_signature_by_symbol(p->signatures, type->declaration);
-        MO_ASSERT(data != NULL);
+        if (data == NULL) {
+            MO_ASSERT(p->signatures->recovering);
+            return true;
+        }
         for (uint32_t j = 0; j < type->count; j++) {
             if ((data->key_parameters & data->type->arguments[j]->parameters) != 0 &&
                 prove(p, type->arguments[j], MO_SOURCE_HASH, 0) == NULL)

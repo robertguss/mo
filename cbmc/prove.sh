@@ -78,7 +78,7 @@ proofs=(
 	"arena_copy_text||strlen.0:9||arena.c"
 	"arena_free||harness_arena_free.0:4,mo_arena_free.0:4||arena.c|--memory-leak-check"
 	"instruction||||verify.c|--object-bits 10 --unwind 10"
-	"lookup||||verify.c|--unwind 10"
+	"lookup||||verify.c|--object-bits 10 --unwind 10"
 	"step||||verify.c|--object-bits 10 --unwind 10"
 	"normalize||mo_host_normalize.0:7,mo_host_normalize.1:7,mo_host_normalize.2:7,spec_normalize.0:7,spec_normalize.1:7,spec_normalize.2:7||path.c|--unwind 7"
 	"text_scalar||||text.c|--unwind 8"
