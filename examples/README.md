@@ -18,3 +18,5 @@ all twelve pass (`docs/status/sample-blockers.md`).
 | `kv.mo` | A Redis-like store: SET, GET, DEL, INCR and EXPIRE | parsing, maps, numbers at their limits |
 | `notes-tool.mo` | An MCP tool's handler that searches Markdown notes | a narrowed, read-only capability, typed results and errors |
 | `inventory.mo` | Generic list helpers and an aligned text table | generics, abilities, functions as values |
+
+`examples/arvo-starter/` is a separate Arvo + Inertia v2 starter; it is not one of the twelve samples.

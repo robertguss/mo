@@ -8,8 +8,8 @@ representation of values, the calling convention and the rules the verifier
 enforces. `src/codegen` writes this format through `src/bytecode`'s writer.
 The loader, verifier, text tools and VM are integrated. `mo emit FILE -o OUT`
 writes a binary file; `mo check --emit=bytecode` prints its indexed text form.
-`mo run` compiles source and runs the resulting image, but no CLI command loads
-an emitted `.bc` file (D271). D318 adds explicit service shapes in version 0.3.
+`mo run` compiles source and runs the resulting image, or loads, verifies and runs an
+emitted bytecode file (a `.bc` suffix or MOBC magic). D318 adds explicit service shapes in version 0.3.
 
 Four files carry the contract as code, and nothing else defines it:
 
@@ -1067,7 +1067,7 @@ constructor makes a capability rather than using one, so `host` calls it by
 - `ReadFiles`: `read_text`, `read_bytes`, `list`, `entries`, `exists?` and `within`;
 - `Clock`: `now` and `sleep`. `Random`: `int`. `SecureRandom`: `bytes`. `Args`: `list`. `Env`: `get`;
 - `Network`: `connect`, `connect_secure` and `allow_hosts`. `Connection`: `send` and `receive`;
-- `Sqlite`: `open`. `Sqlite.Database`: `run` and `query`;
+- `Sqlite`: `open`. `Sqlite.Database`: `run`, `query` and `execute_raw`;
 - `Command`: `run_raw`, `within` and `allow_programs`;
 - the fake constructors: `Console.fake`, `Console.fake_input`,
   `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `SecureRandom.seeded`, `Args.of`, `Env.of`,

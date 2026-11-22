@@ -3,7 +3,7 @@
 > **Named after Arvo Pärt** — *tintinnabuli* for web software: two clear voices in harmony (pure, compiler-verified domain logic and thin, capability-confined web edges), zero clutter, every piece earning its place.
 
 **Companion Spec:** [arvo-spec.md](arvo-spec.md)  
-**Status:** Settled decisions locked in (`2026-11-21`): unified budget model (envelopes + paycheck bills/safe-to-spend) and app-level login (2-email allowlist + encrypted cookie sessions over HTTPS). Ready for Phase 1 execution on `main`.  
+**Status:** Phases 1–2 are on `main` (`#408`–`#410`). Next is Phase 3 (crucible #1 household budget app). Settled decisions locked in (`2026-11-21`): unified budget model (envelopes + paycheck bills/safe-to-spend) and app-level login (2-email allowlist + encrypted cookie sessions over HTTPS).  
 **Database Target:** SQLite-first (WAL mode, single-binary deployment; PostgreSQL adapter deferred until needed).  
 **Frontend Target:** Inertia v2 + React + TypeScript + Vite + Tailwind CSS v4 + shadcn/ui (no Node server in production).  
 **Crucible App #1:** A unified daily-driver personal household budget web app combining `robertguss/hearth-budget` (monthly envelopes, carryover, card reserves, CSV import, Mercury sync) with `household-finance` (app-level auth, biweekly paycheck bills, one-tap "I just paid this" `in_flight`, Safe-to-Spend breakdown, audit log + undo).  
@@ -60,7 +60,7 @@ Mo already links OpenSSL `libcrypto` ([src/host/tls.c](../../src/host/tls.c)) an
   - `Crypto.hmac_sha256(key: Bytes, data: Bytes) : Bytes`
   - `Crypto.constant_time_eq?(a: Bytes, b: Bytes) : Bool` (`CRYPTO_memcmp`)
   - `Crypto.seal(key: Bytes, nonce: Bytes, plaintext: Bytes, aad: Bytes) : Result(Bytes, CryptoError)` and `Crypto.open(...)` (`AES-256-GCM` via OpenSSL EVP)
-  - `Crypto.hash_password(password: Text, salt: Bytes) : Result(Text, CryptoError)` and `Crypto.verify_password(password: Text, encoded: Text) : Bool` (OpenSSL `EVP_PBE_scrypt` with safe defaults, or Argon2id when OpenSSL 3.2+ supports it)
+  - `Crypto.hash_password(password: Text, salt: Bytes) : Result(Text, CryptoError)` and `Crypto.verify_password(password: Text, encoded: Text) : Bool` (OpenSSL `EVP_PBE_scrypt` with safe defaults)
   - `Bytes.to_hex`, `Bytes.from_hex`, `Bytes.to_base64url`, `Bytes.from_base64url`
 - **CSPRNG capability (`src/base/hostops.def`):**
   - `SecureRandom` capability (`rng.bytes(count)` backed by OpenSSL `RAND_bytes`), with deterministic `SecureRandom.seeded(seed)` fake for `mo test` so session tokens, CSRF tokens, and salts remain 100% deterministic in tests.
@@ -85,7 +85,7 @@ Mo already links OpenSSL `libcrypto` ([src/host/tls.c](../../src/host/tls.c)) an
   - Enable `PRAGMA foreign_keys = ON;` in `configure_connection` (for both real and fake DBs).
   - Add `db.execute(sql, params) : Result(Sqlite.ExecResult, SqliteError)` returning `ExecResult(changes: Int, last_insert_rowid: Int)`.
   - Reuse a per-worker pooled `sqlite3*` handle in `api-server.c` instead of reopening the DB file and checking `sqlite_schema` on every HTTP request.
-  - Clean transaction helper (`Sqlite.with_transaction` or `db.begin_immediate` / `commit` / `rollback`) designed around Mo's rule that anonymous functions cannot capture capabilities ([docs/reference/README.md](../reference/README.md)).
+  - Clean transaction helper (`Sqlite.transaction`) designed around Mo's rule that anonymous functions cannot capture capabilities ([docs/reference/README.md](../reference/README.md)).
 
 ### 2.4 Calendar `Date` Module (`lib/date.mo`, pure Mo)
 Pure Gregorian calendar value type `Date` (years 1..9999) with `Order`, `Hash`, `Equal`, `Text`, and `Json` (ISO `YYYY-MM-DD`):

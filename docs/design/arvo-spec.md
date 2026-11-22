@@ -197,7 +197,7 @@ end
 Arvo.Cookie.parse(req: Api.Request) : Map(Text, Text)
 Arvo.Cookie.get(req: Api.Request, name: Text) : Option(Text)
 Arvo.Cookie.set(res: Api.Response, name: Text, value: Text, opts: CookieOptions) : Api.Response
-Arvo.Cookie.clear(res: Api.Response, name: Text, path: Text) : Api.Response
+Arvo.Cookie.clear(res: Api.Response, name: Text, path: Text, secure?: Bool) : Api.Response
 
 ## Arvo.Session (AEAD cookie + revocable `arvo_sessions` SQLite row)
 struct Session
@@ -207,9 +207,15 @@ struct Session
   expires_at: Time
 end
 
-Arvo.Session.create(db: Sqlite.Database, rng: SecureRandom, clock: Clock, key: Bytes, member_id: Text)
+struct SessionConfig
+  cookie_name: Text
+  ttl_seconds: Int
+  secure?: Bool
+end
+
+Arvo.Session.create(db: Sqlite.Database, rng: SecureRandom, clock: Clock, key: Bytes, member_id: Text, cfg: SessionConfig)
   : Result((Session, Text), SessionError)
-Arvo.Session.load(req: Api.Request, db: Sqlite.Database, clock: Clock, key: Bytes)
+Arvo.Session.load(req: Api.Request, db: Sqlite.Database, clock: Clock, key: Bytes, cfg: SessionConfig)
   : Result(Option(Session), SessionError)
 Arvo.Session.revoke(db: Sqlite.Database, session_id: Text) : Result(Unit, SqliteError)
 

@@ -1703,7 +1703,7 @@ that every library primitive in the model's table below is source-lowered yet.
 | `Files.walk`, `ReadFiles.walk` | Mo library code in `lib/`, not a Core primitive; lowering supplies recursive calls to `entries` |
 | `FileError`'s text form | Core (`FileError.to_text`) |
 | `to_text`, at every type with `Text` | lowered as the part `#{x}` of a text is (3.4), so the two give the same text; a set's is `Lib.setText` (3.4), and the `to_text[T]` the lowering derives for records, choice types, tuples, lists and maps without their own `to_text` is not modeled |
-| `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `Args.of`, `Env.of` | spec-only primitives (`%io.consoleFake`, `consoleFakeInput`, `filesInMemory`, `clockFixed`, `randomSeeded`, `argsOf`, `envOf`), with independent shared states (12.4) |
+| `Console.fake`, `fake_input`, `Files.in_memory`, `Clock.fixed`, `Random.seeded`, `SecureRandom.seeded`, `Args.of`, `Env.of`, `Command.fake` | spec-only primitives (`%io.consoleFake`, `consoleFakeInput`, `filesInMemory`, `clockFixed`, `randomSeeded`, `secureRandomSeeded`, `argsOf`, `envOf`, `commandFake`), with independent shared states (12.4) |
 | `Unicode16.graphemes`, `display_width`, `normalize_nfc`, `lowercase`, `uppercase`, `letter?`, `digit?` | trusted prim (`%unicode16.graphemes`, `displayWidth`, `normalizeNfc`, `lowercase`, `uppercase`, `letter`, `digit`), with the signatures below; reached calls stop in the executable oracle |
 
 ## Ambiguities settled by D227

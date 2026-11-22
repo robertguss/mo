@@ -177,7 +177,8 @@ space.*
 
 ### P7. The outside world is reachable only through capabilities
 
-*A program can read files, print, read the clock, draw random numbers, read arguments and
+*A program can read files, print, read the clock, draw random numbers (`Random` or
+`SecureRandom`), read arguments and
 the environment, or open a network connection only through a capability value it was given,
 and `main` receives only the capabilities it declares.*
 
@@ -192,7 +193,7 @@ and `main` receives only the capabilities it declares.*
   `Connection` comes only from `connect` on a `Network`, and `Sqlite.Database` comes only from
   `open` on a `Sqlite`: `main` cannot list either, and a service holds no capability at all.
   A fake network opens no socket, a fake `Sqlite` touches no file, and a fake `Command` spawns no process.
-- Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_network.c`,
+- Evidence: `tests/test_host.c`, `tests/test_fakes.c`, `tests/test_crypto.c`, `tests/test_network.c`,
   `tests/test_sqlite.c`, `tests/test_command.c`, `tests/test_bytecode_verify.c`; `fuzz/fuzz_host.c`,
   `fuzz/fuzz_host_real.c`, `fuzz/fuzz_network.c`, `fuzz/fuzz_network_fake.c`,
   `fuzz/fuzz_sqlite.c` and `fuzz/fuzz_command.c`. The `Http` client is Mo code in

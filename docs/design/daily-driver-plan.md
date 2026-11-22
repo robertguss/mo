@@ -1,6 +1,7 @@
 # Daily-Driver Readiness Plan
 
-Status: Active. Follows the completion of the [Post-Phase 7 direction](post-phase7-direction.md)
+Status: Steps 1–4 are on `main`. Next: install Mo on both machines and drive further work from
+live Populi and Canvas data-wrangling tasks. Follows the completion of the [Post-Phase 7 direction](post-phase7-direction.md)
 (`#385`–`#399`).
 
 ## Goal
@@ -35,7 +36,7 @@ frozen against speculative additions. From this point forward:
 
 ## Execution Plan
 
-### Step 1: C Hardening, Release Build & CI Coverage
+### Step 1: C Hardening, Release Build & CI Coverage (done)
 
 Close the build, fuzzing, concurrency, SQLite, CI, and documentation gaps left by the rapid
 Post-Phase 7 implementation sprint:
@@ -67,7 +68,7 @@ Post-Phase 7 implementation sprint:
    [`docs/reference/README.md`](../reference/README.md) section 15 into agreement with shipped
    main.
 
-### Step 2: Workstation Installation, OS Portability & Capability Root Grants
+### Step 2: Workstation Installation, OS Portability & Capability Root Grants (done)
 
 Make `mo` and Mo-written tools installable and usable from any working directory on macOS (Apple
 Silicon) and Linux without weakening capability security:
@@ -95,7 +96,7 @@ Silicon) and Linux without weakening capability security:
    - Add a macOS `/etc/ssl/cert.pem` root-bundle fallback in
      [`src/host/tls.c`](../../src/host/tls.c) when OpenSSL's compiled-in verify path is absent.
 
-### Step 3: Zed & Cursor Editor Support
+### Step 3: Zed & Cursor Editor Support (done)
 
 Give human authors syntax highlighting, block indentation, comment toggling, and `mo format`
 integration in both daily editors:
@@ -106,7 +107,7 @@ integration in both daily editors:
    with `highlights.scm`, `brackets.scm`, `indents.scm`, and `extension.toml` ready for Zed's
    *Install Dev Extension* workflow.
 
-### Step 4: Minimum Data-Spike Readiness (Populi, Canvas & Local SQLite)
+### Step 4: Minimum Data-Spike Readiness (Populi, Canvas & Local SQLite) (done)
 
 Unblock real-world API extraction and local SQLite data wrangling before starting live spikes:
 
@@ -124,5 +125,5 @@ Unblock real-world API extraction and local SQLite data wrangling before startin
    - `Request.max_body(bytes)` so large JSON/CSV export responses can opt past the default 16 MiB
      ceiling within the VM's heap budget.
 
-After Step 4, pause roadmap additions, install Mo on both machines, and drive further work from
+Steps 1–4 are on `main`. Pause roadmap additions, install Mo on both machines, and drive further work from
 live Populi and Canvas data-wrangling tasks.
