@@ -1079,6 +1079,344 @@ mo_core_expr lower_json_schema(struct lowering *p, const struct mo_ability_imple
     return make_let(p, lower_fresh(p), seen, res);
 }
 
+static const struct mo_module_scope *sqlite_scope(struct lowering *p) {
+    for (uint32_t i = 0; i < p->program->interfaces->count; i++) {
+        const struct mo_module_scope *s = &p->program->interfaces->scopes[i];
+        if (s->library && s->name != NULL && strcmp(s->name, "Sqlite") == 0)
+            return s;
+    }
+    MO_UNREACHABLE();
+}
+
+static const struct mo_symbol *sqlite_fn_symbol(struct lowering *p, const char *name) {
+    const struct mo_module_scope *scope = sqlite_scope(p);
+    const struct mo_symbol *sym = mo_find_symbol(scope, (const uint8_t *)name, strlen(name));
+    MO_ASSERT(sym != NULL && sym->declaration->kind == MO_S_FN);
+    return sym;
+}
+
+static const struct mo_function_signature *find_function_sig(struct lowering *p,
+                                                             const struct mo_symbol *sym) {
+    for (uint32_t i = 0; i < p->program->signatures->count; i++) {
+        lower_work(p, 1);
+        if (p->program->signatures->items[i].function == sym)
+            return &p->program->signatures->items[i];
+    }
+    return NULL;
+}
+
+static const struct mo_data_signature *find_data_sig(struct lowering *p,
+                                                     const struct mo_symbol *sym) {
+    for (uint32_t i = 0; i < p->program->signatures->data_count; i++) {
+        lower_work(p, 1);
+        if (p->program->signatures->data[i].symbol == sym)
+            return &p->program->signatures->data[i];
+    }
+    return NULL;
+}
+
+static const struct mo_source_type *sqlite_data_source(struct lowering *p, const char *name) {
+    const struct mo_module_scope *scope = sqlite_scope(p);
+    const struct mo_symbol *sym = mo_find_symbol(scope, (const uint8_t *)name, strlen(name));
+    MO_ASSERT(sym != NULL);
+    for (uint32_t i = 0; i < p->program->signatures->data_count; i++) {
+        lower_work(p, 1);
+        if (p->program->signatures->data[i].type->declaration == sym)
+            return p->program->signatures->data[i].type;
+    }
+    MO_UNREACHABLE();
+}
+
+static mo_core_expr sqlite_call(struct lowering *p, const char *name, mo_core_expr_list values) {
+    const struct mo_symbol *sym = sqlite_fn_symbol(p, name);
+    struct instance *f =
+        lower_instance(p, sym, (struct mo_type_arguments){0}, NULL, 0, NULL, sym->module, 0);
+    mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
+    call->as.call.name = f->fun.name;
+    call->as.call.args = values;
+    return call;
+}
+
+static mo_core_expr sqlite_call1(struct lowering *p, const char *name, mo_core_expr a) {
+    mo_core_expr_list values = args(p, 1);
+    values.items[0] = a;
+    return sqlite_call(p, name, values);
+}
+
+static mo_core_expr sqlite_call2(struct lowering *p, const char *name, mo_core_expr a,
+                                 mo_core_expr b) {
+    mo_core_expr_list values = args(p, 2);
+    values.items[0] = a;
+    values.items[1] = b;
+    return sqlite_call(p, name, values);
+}
+
+static mo_core_expr sqlite_call3(struct lowering *p, const char *name, mo_core_expr a,
+                                 mo_core_expr b, mo_core_expr c) {
+    mo_core_expr_list values = args(p, 3);
+    values.items[0] = a;
+    values.items[1] = b;
+    values.items[2] = c;
+    return sqlite_call(p, name, values);
+}
+
+static mo_core_expr sqlite_generic_call(struct lowering *p, const char *name,
+                                        const struct mo_source_type *arg_type,
+                                        const struct substitution *substitution, uint32_t owner,
+                                        uint32_t depth, mo_core_expr_list values) {
+    const struct mo_symbol *sym = sqlite_fn_symbol(p, name);
+    const struct mo_function_signature *sig = find_function_sig(p, sym);
+    MO_ASSERT(sig != NULL);
+    const struct mo_source_type *param = find_type_parameter(sig->type);
+    MO_ASSERT(param != NULL);
+    struct mo_type_argument *item = LOWER_NEW(p, struct mo_type_argument, 1);
+    *item = (struct mo_type_argument){param, arg_type};
+    struct instance *f = lower_instance(p, sym, (struct mo_type_arguments){1, item}, substitution,
+                                        0, NULL, owner, depth + 1);
+    mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
+    call->as.call.name = f->fun.name;
+    call->as.call.args = values;
+    return call;
+}
+
+static const struct mo_source_type *subst_struct_field_source(struct lowering *p,
+                                                              const struct mo_source_type *t,
+                                                              const struct mo_source_type *generic,
+                                                              const struct mo_source_type *actual) {
+    if (generic->count == 0 || t->parameters == 0)
+        return t;
+    if (t->kind == MO_SOURCE_PARAMETER) {
+        for (uint32_t i = 0; i < generic->count; i++)
+            if (generic->arguments[i]->name[0] == t->name[0])
+                return actual->arguments[i];
+        return t;
+    }
+    const struct mo_source_type **sub_args =
+        t->count == 0 ? NULL : LOWER_NEW(p, const struct mo_source_type *, t->count);
+    uint32_t mask = 0;
+    for (uint32_t i = 0; i < t->count; i++) {
+        sub_args[i] = subst_struct_field_source(p, t->arguments[i], generic, actual);
+        mask |= sub_args[i]->parameters;
+    }
+    struct mo_source_type *copy = LOWER_NEW(p, struct mo_source_type, 1);
+    *copy = *t;
+    copy->arguments = sub_args;
+    copy->parameters = mask;
+    return copy;
+}
+
+static mo_core_ty sqlite_result_ty(struct lowering *p, const struct mo_source_type *ok_src,
+                                   const struct mo_source_type *err_src,
+                                   const struct substitution *substitution) {
+    const struct mo_source_type **res_args = LOWER_NEW(p, const struct mo_source_type *, 2);
+    res_args[0] = ok_src;
+    res_args[1] = err_src;
+    struct mo_source_type *res_src = LOWER_NEW(p, struct mo_source_type, 1);
+    *res_src = (struct mo_source_type){.kind = MO_SOURCE_NAMED,
+                                       .name = "Result",
+                                       .module = UINT32_MAX,
+                                       .count = 2,
+                                       .arguments = res_args,
+                                       .parameters = ok_src->parameters};
+    return lower_type(p, res_src, substitution);
+}
+
+mo_core_expr lower_sqlite_decode_call(struct lowering *p, const struct mo_source_type *target_src,
+                                      uint32_t ability_count,
+                                      const struct mo_checked_ability_use *abilities,
+                                      const struct substitution *substitution, uint32_t owner,
+                                      uint32_t depth, mo_core_string caller_name,
+                                      const char *fn_name, mo_core_expr rows_expr) {
+    MO_ASSERT(target_src != NULL && target_src->declaration != NULL &&
+              target_src->declaration->declaration->kind == MO_S_STRUCT);
+    static const struct mo_source_type text_src = {
+        .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};
+    static const struct mo_source_type int_src = {
+        .kind = MO_SOURCE_NAMED, .name = "Int", .module = UINT32_MAX};
+    static const struct mo_source_type sval_src = {
+        .kind = MO_SOURCE_NAMED, .name = "Sqlite.Value", .module = UINT32_MAX};
+    static const struct mo_source_type *const int_arg[] = {&int_src};
+    static const struct mo_source_type *const sval_arg[] = {&sval_src};
+    static const struct mo_source_type int_list_src = {.kind = MO_SOURCE_NAMED,
+                                                       .name = "List",
+                                                       .module = UINT32_MAX,
+                                                       .count = 1,
+                                                       .arguments = int_arg};
+    static const struct mo_source_type sval_list_src = {.kind = MO_SOURCE_NAMED,
+                                                        .name = "List",
+                                                        .module = UINT32_MAX,
+                                                        .count = 1,
+                                                        .arguments = sval_arg};
+
+    const struct mo_source_type *err_src = sqlite_data_source(p, "SqliteDecodeError");
+    mo_core_ty text_ty = lower_type(p, &text_src, NULL);
+    mo_core_ty int_list_ty = lower_type(p, &int_list_src, NULL);
+    mo_core_ty sval_list_ty = lower_type(p, &sval_list_src, NULL);
+    mo_core_ty target_ty = lower_type(p, target_src, substitution);
+    mo_core_ty row_res_ty = sqlite_result_ty(p, target_src, err_src, substitution);
+
+    const struct mo_data_signature *data = find_data_sig(p, target_src->declaration);
+    MO_ASSERT(data != NULL);
+    mo_core_ctors ctors = lower_ctors(p, target_ty);
+    MO_ASSERT(ctors.count == 1 && ctors.items[0].fields.count == data->count);
+    const struct mo_core_ctor *ctor = &ctors.items[0];
+    size_t fcount = ctor->fields.count;
+
+    mo_core_expr_list col_items = args(p, fcount);
+    for (size_t j = 0; j < fcount; j++)
+        col_items.items[j] = text(p, ctor->fields.items[j].name);
+    mo_core_expr required_list = lower_prim(
+        p,
+        (struct mo_core_prim){.tag = MO_CORE_PRIM_LIST,
+                              .as.list = {.t = text_ty,
+                                          .op = {.tag = MO_CORE_LIST_OP_LIT,
+                                                 .as.lit.digits = lower_number(p, fcount)}}},
+        col_items);
+
+    mo_core_string indices_var = lower_fresh(p);
+    mo_core_string row_var = lower_fresh(p);
+    mo_core_string *field_vars = fcount == 0 ? NULL : LOWER_NEW(p, mo_core_string, fcount);
+
+    mo_core_expr body_root = NULL;
+    mo_core_expr *cursor = &body_root;
+    for (size_t j = 0; j < fcount; j++) {
+        lower_work(p, 1);
+        const struct mo_source_type *field_src =
+            subst_struct_field_source(p, data->by_index[j]->type, data->type, target_src);
+        mo_core_ty field_ty = ctor->fields.items[j].ty;
+        bool is_opt = field_ty->tag == MO_CORE_TY_OPTION;
+        const struct mo_source_type *u_src = is_opt ? field_src->arguments[0] : field_src;
+        mo_core_ty u_ty = is_opt ? field_ty->as.option : field_ty;
+        mo_core_ty u_res_ty = sqlite_result_ty(p, u_src, err_src, substitution);
+        mo_core_ty field_res_ty =
+            is_opt ? sqlite_result_ty(p, field_src, err_src, substitution) : u_res_ty;
+
+        const struct mo_ability_implementation *json_proof = NULL;
+        for (uint32_t m = 0; m < ability_count; m++) {
+            if (abilities[m].operand == (uint32_t)j &&
+                abilities[m].implementation->ability == MO_SOURCE_JSON) {
+                json_proof = abilities[m].implementation;
+                break;
+            }
+        }
+
+        mo_core_string col_name = ctor->fields.items[j].name;
+        mo_core_string cell_var = lower_fresh(p);
+        mo_core_expr cell_bound = sqlite_call3(p, "row_cell", lower_var(p, row_var),
+                                               lower_var(p, indices_var), lower_int(p, j));
+
+        mo_core_expr decode_u = NULL;
+        if (json_proof != NULL) {
+            mo_core_expr text_res =
+                sqlite_call2(p, "decode_cell_text", lower_var(p, cell_var), text(p, col_name));
+            mo_core_expr tcase = lower_expr(p, MO_CORE_EXPR_CASE);
+            tcase->as.case_.expr = text_res;
+            tcase->as.case_.arms.count = 2;
+            tcase->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            mo_core_string raw_json_var = lower_fresh(p), terr_var = lower_fresh(p);
+            tcase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+            tcase->as.case_.arms.items[0].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            tcase->as.case_.arms.items[0].names.items[0] = raw_json_var;
+            mo_core_expr json_decoded =
+                lower_json_decode_call(p, json_proof, substitution, owner, depth, text_ty,
+                                       lower_var(p, raw_json_var), false);
+            mo_core_expr_list map_args = args(p, 2);
+            map_args.items[0] = json_decoded;
+            map_args.items[1] = text(p, col_name);
+            tcase->as.case_.arms.items[0].body = sqlite_generic_call(
+                p, "map_json_decode_result", u_src, substitution, owner, depth, map_args);
+            tcase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+            tcase->as.case_.arms.items[1].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            tcase->as.case_.arms.items[1].names.items[0] = terr_var;
+            tcase->as.case_.arms.items[1].body =
+                make_con1(p, u_res_ty, "Error", lower_var(p, terr_var));
+            decode_u = tcase;
+        } else {
+            const char *helper = u_ty->tag == MO_CORE_TY_INT       ? "decode_cell_int"
+                                 : u_ty->tag == MO_CORE_TY_BOOL    ? "decode_cell_bool"
+                                 : u_ty->tag == MO_CORE_TY_FLOAT   ? "decode_cell_float"
+                                 : u_ty->tag == MO_CORE_TY_TEXT    ? "decode_cell_text"
+                                 : u_ty->tag == MO_CORE_TY_BYTES   ? "decode_cell_bytes"
+                                 : u_ty->tag == MO_CORE_TY_DECIMAL ? "decode_cell_decimal"
+                                 : u_ty->tag == MO_CORE_TY_TIME    ? "decode_cell_time"
+                                                                   : "decode_cell_date";
+            decode_u = sqlite_call2(p, helper, lower_var(p, cell_var), text(p, col_name));
+        }
+
+        mo_core_expr field_res_expr = decode_u;
+        if (is_opt) {
+            mo_core_expr ocase = lower_expr(p, MO_CORE_EXPR_CASE);
+            ocase->as.case_.expr = decode_u;
+            ocase->as.case_.arms.count = 2;
+            ocase->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+            mo_core_string uv = lower_fresh(p), ue = lower_fresh(p);
+            ocase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+            ocase->as.case_.arms.items[0].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            ocase->as.case_.arms.items[0].names.items[0] = uv;
+            ocase->as.case_.arms.items[0].body =
+                make_con1(p, field_res_ty, "Ok", make_con1(p, field_ty, "Some", lower_var(p, uv)));
+            ocase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+            ocase->as.case_.arms.items[1].names =
+                (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+            ocase->as.case_.arms.items[1].names.items[0] = ue;
+            ocase->as.case_.arms.items[1].body =
+                make_con1(p, field_res_ty, "Error", lower_var(p, ue));
+
+            mo_core_expr null_if = lower_expr(p, MO_CORE_EXPR_IF);
+            null_if->as.if_.cond = sqlite_call1(p, "cell_is_null?", lower_var(p, cell_var));
+            null_if->as.if_.then_ =
+                make_con1(p, field_res_ty, "Ok", make_con(p, field_ty, "None", args(p, 0)));
+            null_if->as.if_.else_ = ocase;
+            field_res_expr = null_if;
+        }
+
+        mo_core_expr fcase = lower_expr(p, MO_CORE_EXPR_CASE);
+        fcase->as.case_.expr = field_res_expr;
+        fcase->as.case_.arms.count = 2;
+        fcase->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+        mo_core_string fv = lower_fresh(p), fe = lower_fresh(p);
+        field_vars[j] = fv;
+        fcase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+        fcase->as.case_.arms.items[0].names =
+            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        fcase->as.case_.arms.items[0].names.items[0] = fv;
+        fcase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+        fcase->as.case_.arms.items[1].names =
+            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        fcase->as.case_.arms.items[1].names.items[0] = fe;
+        fcase->as.case_.arms.items[1].body = make_con1(p, row_res_ty, "Error", lower_var(p, fe));
+
+        *cursor = make_let(p, cell_var, cell_bound, fcase);
+        cursor = &fcase->as.case_.arms.items[0].body;
+    }
+
+    mo_core_expr_list con_args = args(p, fcount);
+    for (size_t j = 0; j < fcount; j++)
+        con_args.items[j] = lower_var(p, field_vars[j]);
+    *cursor = make_con1(p, row_res_ty, "Ok", make_con(p, target_ty, ctor->name.bytes, con_args));
+
+    mo_core_expr lam = lower_expr(p, MO_CORE_EXPR_LAM);
+    lam->as.lam.params.count = 2;
+    lam->as.lam.params.items = LOWER_NEW(p, struct mo_core_param, 2);
+    lam->as.lam.params.items[0] = (struct mo_core_param){indices_var, int_list_ty};
+    lam->as.lam.params.items[1] = (struct mo_core_param){row_var, sval_list_ty};
+    lam->as.lam.body = body_root;
+    ((struct lower_node *)lam)->closure =
+        lower_concat(p, caller_name, ".fn.", lower_number(p, p->serial++));
+
+    const char *driver = strcmp(fn_name, "decode_one") == 0        ? "decode_one_driver"
+                         : strcmp(fn_name, "decode_optional") == 0 ? "decode_optional_driver"
+                                                                   : "decode_rows_driver";
+    mo_core_expr_list drv_args = args(p, 3);
+    drv_args.items[0] = rows_expr;
+    drv_args.items[1] = required_list;
+    drv_args.items[2] = lam;
+    return sqlite_generic_call(p, driver, target_src, substitution, owner, depth, drv_args);
+}
+
 static mo_core_expr part_to_json(struct lowering *p, struct derived *d, uint32_t part,
                                  mo_core_expr value) {
     MO_ASSERT(part < d->proof->part_count);

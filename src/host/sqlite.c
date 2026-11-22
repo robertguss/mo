@@ -36,10 +36,24 @@ struct mo_sqlite_root_fake {
     struct fake_sqlite_hub *hub;
 };
 
+struct sqlite_pool_entry {
+    char path[MO_LIMIT_HOST_PATH_SIZE];
+    dev_t dev;
+    ino_t ino;
+    sqlite3 *db;
+    bool in_use;
+};
+
+struct mo_sqlite_pool {
+    uint32_t count;
+    struct sqlite_pool_entry entries[MO_LIMIT_OPEN_DATABASES];
+};
+
 struct mo_sqlite_db {
     struct mo_host *owner;
     sqlite3 *db;
     struct fake_sqlite_hub *hub;
+    struct sqlite_pool_entry *pool_entry;
 };
 
 struct sqlite_auth {
@@ -127,11 +141,69 @@ static void release_sqlite_db(intptr_t handle) {
     struct mo_sqlite_db *d = (struct mo_sqlite_db *)handle;
     if (d->hub != NULL) {
         hub_release(d->hub);
+    } else if (d->pool_entry != NULL) {
+        MO_ASSERT(d->pool_entry->in_use && d->pool_entry->db == d->db);
+        sqlite3_set_authorizer(d->db, NULL, NULL);
+        bool clean = true;
+        if (!sqlite3_get_autocommit(d->db)) {
+            int rb = sqlite3_exec(d->db, "ROLLBACK;", NULL, NULL, NULL);
+            if (rb != SQLITE_OK || !sqlite3_get_autocommit(d->db))
+                clean = false;
+        }
+        if (clean &&
+            sqlite3_exec(d->db, "PRAGMA foreign_keys = ON;", NULL, NULL, NULL) != SQLITE_OK)
+            clean = false;
+        if (clean) {
+            d->pool_entry->in_use = false;
+        } else {
+            (void)sqlite3_close(d->db);
+            d->pool_entry->db = NULL;
+            d->pool_entry->in_use = false;
+        }
     } else if (d->db != NULL) {
         (void)sqlite3_close(d->db);
     }
     MO_ASSERT(d->owner->open_databases != 0);
     d->owner->open_databases--;
+}
+
+struct mo_sqlite_pool *mo_sqlite_pool_new(void) {
+    if (!mo_host_sqlite_init())
+        return NULL;
+    struct mo_sqlite_pool *pool = sqlite3_malloc64(sizeof *pool);
+    if (pool == NULL)
+        return NULL;
+    memset(pool, 0, sizeof *pool);
+    return pool;
+}
+
+void mo_sqlite_pool_cleanup(struct mo_sqlite_pool *pool) {
+    if (pool == NULL)
+        return;
+    for (uint32_t i = 0; i < pool->count; i++) {
+        struct sqlite_pool_entry *e = &pool->entries[i];
+        MO_ASSERT(!e->in_use);
+        if (e->db != NULL && !sqlite3_get_autocommit(e->db)) {
+            int rb = sqlite3_exec(e->db, "ROLLBACK;", NULL, NULL, NULL);
+            if (rb != SQLITE_OK || !sqlite3_get_autocommit(e->db)) {
+                (void)sqlite3_close(e->db);
+                e->db = NULL;
+            }
+        }
+    }
+}
+
+void mo_sqlite_pool_free(struct mo_sqlite_pool *pool) {
+    if (pool == NULL)
+        return;
+    for (uint32_t i = 0; i < pool->count; i++) {
+        MO_ASSERT(!pool->entries[i].in_use);
+        if (pool->entries[i].db != NULL) {
+            (void)sqlite3_close(pool->entries[i].db);
+            pool->entries[i].db = NULL;
+        }
+    }
+    sqlite3_free(pool);
 }
 
 static MO_MUST_USE enum mo_host_outcome
@@ -201,7 +273,8 @@ file_error_to_sqlite(struct mo_host *host, struct mo_heap *heap, uint32_t result
 
 static MO_MUST_USE enum mo_host_outcome
 wrap_database(struct mo_host *host, struct mo_heap *heap, uint32_t result_type, sqlite3 *db,
-              struct fake_sqlite_hub *hub, struct mo_cell *out, struct mo_host_error *error) {
+              struct fake_sqlite_hub *hub, struct sqlite_pool_entry *pool_entry,
+              struct mo_cell *out, struct mo_host_error *error) {
     if (host->open_databases == MO_LIMIT_OPEN_DATABASES)
         return mo_host_bug(error, "too many databases open at once");
     uint32_t db_type = find_case_field_type(host, result_type, "Ok", 0);
@@ -209,12 +282,14 @@ wrap_database(struct mo_host *host, struct mo_heap *heap, uint32_t result_type, 
         .operations = &mo_host_operations[hub != NULL][MO_CAP_DATABASE],
         .release = release_sqlite_db,
     };
-    struct mo_sqlite_db payload = {.owner = host, .db = db, .hub = hub};
+    struct mo_sqlite_db payload = {.owner = host, .db = db, .hub = hub, .pool_entry = pool_entry};
     struct mo_cell db_cap;
     if (!mo_value_capability_native(heap, db_type, &info, &payload, sizeof payload, &db_cap))
         return MO_HOST_OUT_OF_MEMORY;
     if (hub != NULL)
         hub_retain(hub);
+    if (pool_entry != NULL)
+        pool_entry->in_use = true;
     host->open_databases++;
     bool wrapped = mo_host_case(host, heap, result_type, "Ok", &db_cap, 1, out);
     mo_value_drop(heap, db_type, db_cap);
@@ -228,7 +303,8 @@ static MO_MUST_USE bool sqlite_is_busy(int rc) {
 
 static MO_MUST_USE bool configure_connection(sqlite3 *db) {
     (void)sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 0, NULL);
-    return sqlite3_exec(db, "PRAGMA temp_store = MEMORY;", NULL, NULL, NULL) == SQLITE_OK;
+    return sqlite3_exec(db, "PRAGMA temp_store = MEMORY; PRAGMA foreign_keys = ON;", NULL, NULL,
+                        NULL) == SQLITE_OK;
 }
 
 static MO_MUST_USE bool check_db_header(sqlite3 *db, char err_buf[256]) {
@@ -613,6 +689,26 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
         return mo_host_bug(error, "too many databases open at once");
     }
 
+    if (host->sqlite_pool != NULL) {
+        struct stat cached_leaf_st, cached_full_st;
+        if (fstatat(dir_fd, leaf, &cached_leaf_st, AT_SYMLINK_NOFOLLOW) == 0 &&
+            lstat(full_path, &cached_full_st) == 0 && S_ISREG(cached_full_st.st_mode) &&
+            cached_leaf_st.st_dev == cached_full_st.st_dev &&
+            cached_leaf_st.st_ino == cached_full_st.st_ino) {
+            for (uint32_t i = 0; i < host->sqlite_pool->count; i++) {
+                struct sqlite_pool_entry *pe = &host->sqlite_pool->entries[i];
+                if (pe->db == NULL || pe->in_use || strcmp(pe->path, full_path) != 0)
+                    continue;
+                if (pe->dev == cached_leaf_st.st_dev && pe->ino == cached_leaf_st.st_ino) {
+                    mo_host_close(dir_fd);
+                    return wrap_database(host, heap, result_type, pe->db, NULL, pe, out, error);
+                }
+                (void)sqlite3_close(pe->db);
+                pe->db = NULL;
+            }
+        }
+    }
+
     sqlite3 *db = NULL;
     int rc = sqlite3_open_v2(full_path, &db,
                              SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOFOLLOW |
@@ -667,9 +763,34 @@ open_real(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
         return error_failed(host, heap, result_type, msg, out);
     }
 
-    enum mo_host_outcome res = wrap_database(host, heap, result_type, db, NULL, out, error);
-    if (res != MO_HOST_RETURNED)
+    struct sqlite_pool_entry *pool_entry = NULL;
+    if (host->sqlite_pool != NULL) {
+        for (uint32_t i = 0; i < host->sqlite_pool->count; i++) {
+            if (host->sqlite_pool->entries[i].db == NULL && !host->sqlite_pool->entries[i].in_use) {
+                pool_entry = &host->sqlite_pool->entries[i];
+                break;
+            }
+        }
+        if (pool_entry == NULL && host->sqlite_pool->count < MO_LIMIT_OPEN_DATABASES)
+            pool_entry = &host->sqlite_pool->entries[host->sqlite_pool->count++];
+        if (pool_entry != NULL) {
+            size_t flen = strlen(full_path);
+            MO_ASSERT(flen < sizeof pool_entry->path);
+            memcpy(pool_entry->path, full_path, flen + 1);
+            pool_entry->dev = leaf_st.st_dev;
+            pool_entry->ino = leaf_st.st_ino;
+            pool_entry->db = db;
+            pool_entry->in_use = false;
+        }
+    }
+
+    enum mo_host_outcome res =
+        wrap_database(host, heap, result_type, db, NULL, pool_entry, out, error);
+    if (res != MO_HOST_RETURNED) {
+        if (pool_entry != NULL)
+            pool_entry->db = NULL;
         (void)sqlite3_close(db);
+    }
     return res;
 }
 
@@ -719,7 +840,7 @@ open_fake(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
             }
             found->db = db;
         }
-        return wrap_database(host, heap, result_type, found->db, hub, out, error);
+        return wrap_database(host, heap, result_type, found->db, hub, NULL, out, error);
     }
 
     struct fake_sqlite_entry *entry = sqlite3_malloc64(sizeof *entry);
@@ -746,7 +867,7 @@ open_fake(struct mo_host *host, struct mo_heap *heap, uint32_t result_type,
     else
         tail->next = entry;
 
-    return wrap_database(host, heap, result_type, db, hub, out, error);
+    return wrap_database(host, heap, result_type, db, hub, NULL, out, error);
 }
 
 static bool ascii_ieq(const char *a, const char *b) {
@@ -1006,8 +1127,10 @@ static MO_MUST_USE enum mo_host_outcome finish_stmt(struct mo_host *host, struct
     return MO_HOST_RETURNED;
 }
 
+enum sql_exec_mode { SQL_EXEC_RUN, SQL_EXEC_RAW, SQL_EXEC_QUERY };
+
 static MO_MUST_USE enum mo_host_outcome exec_sql(struct mo_host *host, struct mo_heap *heap,
-                                                 bool is_query, uint32_t result_type,
+                                                 enum sql_exec_mode mode, uint32_t result_type,
                                                  const struct mo_cell *args, struct mo_cell *out) {
     const struct mo_capability_info *info = mo_capability_get(args[0]);
     struct mo_sqlite_db *d = (struct mo_sqlite_db *)info->handle;
@@ -1070,7 +1193,8 @@ static MO_MUST_USE enum mo_host_outcome exec_sql(struct mo_host *host, struct mo
     }
 
     auth.in_step = true;
-    if (!is_query) {
+    if (mode != SQL_EXEC_QUERY) {
+        sqlite3_int64 total_before = sqlite3_total_changes64(d->db);
         int rc;
         while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         }
@@ -1078,6 +1202,18 @@ static MO_MUST_USE enum mo_host_outcome exec_sql(struct mo_host *host, struct mo
             finish_stmt(host, heap, result_type, d->db, stmt, &auth, rc, out, &failed);
         if (fin != MO_HOST_RETURNED || failed)
             return fin;
+        if (mode == SQL_EXEC_RAW) {
+            int64_t changes = (int64_t)(sqlite3_total_changes64(d->db) - total_before);
+            int64_t last_id = sqlite3_last_insert_rowid(d->db);
+            uint32_t tup_type = find_case_field_type(host, result_type, "Ok", 0);
+            struct mo_cell fields[2] = {mo_cell_int(changes), mo_cell_int(last_id)};
+            struct mo_cell tup;
+            if (!mo_value_product(heap, tup_type, fields, 2, &tup))
+                return MO_HOST_OUT_OF_MEMORY;
+            bool wrapped = mo_host_case(host, heap, result_type, "Ok", &tup, 1, out);
+            mo_value_drop(heap, tup_type, tup);
+            return wrapped ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
+        }
         struct mo_cell unit = mo_cell_unit();
         return mo_host_case(host, heap, result_type, "Ok", &unit, 1, out) ? MO_HOST_RETURNED
                                                                           : MO_HOST_OUT_OF_MEMORY;
@@ -1222,7 +1358,7 @@ static MO_MUST_USE enum mo_host_outcome open_ephemeral(struct mo_host *host, str
         (void)sqlite3_close(db);
         return error_failed(host, heap, result_type, msg, out);
     }
-    enum mo_host_outcome res = wrap_database(host, heap, result_type, db, NULL, out, error);
+    enum mo_host_outcome res = wrap_database(host, heap, result_type, db, NULL, NULL, out, error);
     if (res != MO_HOST_RETURNED)
         (void)sqlite3_close(db);
     return res;
@@ -1250,8 +1386,10 @@ enum mo_host_outcome mo_host_sqlite_call(struct mo_host *host, struct mo_heap *h
                     : open_real(host, heap, type, info, args[1], norm, out, error);
     }
     if (operation == MO_HOST_SQLITE_RUN)
-        return exec_sql(host, heap, false, type, args, out);
+        return exec_sql(host, heap, SQL_EXEC_RUN, type, args, out);
+    if (operation == MO_HOST_SQLITE_EXECUTE_RAW)
+        return exec_sql(host, heap, SQL_EXEC_RAW, type, args, out);
     if (operation == MO_HOST_SQLITE_QUERY)
-        return exec_sql(host, heap, true, type, args, out);
+        return exec_sql(host, heap, SQL_EXEC_QUERY, type, args, out);
     MO_UNREACHABLE();
 }

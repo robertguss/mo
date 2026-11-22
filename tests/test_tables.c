@@ -695,6 +695,7 @@ static void test_every_capability_operation_is_there(void) {
         {"Sqlite", "open"},
         {"Sqlite", "fake"},
         {"Sqlite", "run"},
+        {"Sqlite", "execute_raw"},
         {"Sqlite", "query"},
         {"Command", "run_raw"},
         {"Command", "within"},

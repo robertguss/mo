@@ -28,11 +28,15 @@ end
 api
   port 8080
   cors "https://app.example"
+  static "/assets" from "public"
   auth Principal via authenticate
   get "/health" health
-  post "/notes" create_note
-  get "/notes/:id" read_note
-  delete "/notes/:id" remove_note
+  get "/whoami" whoami
+  scope "/notes"
+    post "" create_note
+    get "/:id" read_note
+    delete "/:id" remove_note
+  end
   get "/stream" stream_events
   status Unauthorized = 401
   status NoteMissing(_) = 404
@@ -49,6 +53,20 @@ end
 ## Reports server health.
 fn health() : Map(Text, Text)
   {"status": "ok"}
+end
+
+## Reports optional principal, preserves repeated Set-Cookie headers, or redirects.
+fn whoami(req: Api.Request, viewer: Option(Principal)) : Api.Response
+  return Api.redirect_see_other("/notes") if req.query_param("go") == Some("1")
+  who = case viewer
+    Some(u): u.login
+    None: "guest"
+  end
+  tags = req.headers_named("X-Tag")
+  body = if tags.empty?: "{\"viewer\":\"#{who}\"}" else: "#{who}:#{tags.join(",")}"
+  r0 = Api.text_response(200, body)
+  r1 = r0.add_header("Set-Cookie", "sid=a; HttpOnly")
+  r1.add_header("Set-Cookie", "csrf=b")
 end
 
 ## Creates a note with strict JSON body decoding.
@@ -161,6 +179,54 @@ test "api openapi 3.1 document"
   env = Env.of({"API_TOKEN": "topsecret"})
   r_spec = ApiTest.send(Main, Api.get("/openapi.json"), env)
   assert r_spec.status == 200
-  assert r_spec.text.contains?("\"openapi\":\"3.1.0\"")
-  assert r_spec.text.contains?("\"/notes/{id}\"")
+  spec_text = r_spec.text
+  assert spec_text.contains?("\"openapi\":\"3.1.0\"")
+  assert spec_text.contains?("\"/notes/{id}\"")
+end
+
+test "api static assets, optional auth, multi-headers and see-other redirect"
+  env = Env.of({"API_TOKEN": "topsecret"})
+  files = Files.in_memory({
+    "public/app-a1b2c3d4.js": "console.log(1)",
+    "public/index.html": "<h1>App</h1>",
+    "secret.txt": "nope"
+  })
+
+  guest = ApiTest.send(Main, Api.get("/whoami"), env)
+  assert guest.status == 200 and guest.text == "{\"viewer\":\"guest\"}"
+  bad_tok = ApiTest.send(Main, Api.get("/whoami").with_bearer("wrong"), env)
+  assert bad_tok.status == 200 and bad_tok.text == "{\"viewer\":\"guest\"}"
+  authed = ApiTest.send(Main, Api.get("/whoami").with_bearer("topsecret"), env)
+  assert authed.status == 200 and authed.text == "{\"viewer\":\"ada\"}"
+
+  req_tags = Api.get("/whoami").add_header("X-Tag", "one").add_header("x-tag", "two")
+  cookies = ApiTest.send(Main, req_tags, env)
+  assert cookies.status == 200 and cookies.text == "guest:one,two"
+  assert cookies.headers_named("set-cookie") == ["sid=a; HttpOnly", "csrf=b"]
+
+  redir = ApiTest.send(Main, Api.get("/whoami?go=1"), env)
+  assert redir.status == 303 and redir.header("Location") == Some("/notes")
+
+  js = ApiTest.send(Main, Api.get("/assets/app-a1b2c3d4.js"), files.read_only, env)
+  assert js.status == 200
+  assert js.header("Content-Type") == Some("text/javascript; charset=utf-8")
+  assert js.header("X-Content-Type-Options") == Some("nosniff")
+  assert js.header("Cache-Control") == Some("public, max-age=31536000, immutable")
+  etag = js.header("ETag") or ""
+  assert not etag.empty?
+
+  not_mod = ApiTest.send(
+    Main,
+    Api.get("/assets/app-a1b2c3d4.js").with_header("If-None-Match", etag),
+    files.read_only,
+    env
+  )
+  assert not_mod.status == 304 and not_mod.body.size == 0
+
+  head_res = ApiTest.send(Main, Api.request("HEAD", "/assets/index.html"), files.read_only, env)
+  assert head_res.status == 200 and head_res.body.size == 0
+  assert head_res.header("Cache-Control") == Some("public, max-age=0, must-revalidate")
+
+  trav = ApiTest.send(Main, Api.get("/assets/../secret.txt"), files.read_only, env)
+  assert trav.status == 404
 end

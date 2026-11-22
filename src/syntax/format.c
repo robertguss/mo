@@ -548,6 +548,19 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         text(f, " ");
         node(f, n->children[2]);
         break;
+    case MO_S_API_STATIC:
+        clause_word(f, "static");
+        node(f, n->children[0]);
+        text(f, " ");
+        clause_word(f, "from");
+        node(f, n->children[1]);
+        break;
+    case MO_S_API_SCOPE:
+        clause_word(f, "scope");
+        node(f, n->children[0]);
+        block_body(f, n->children[1], n);
+        text(f, "end");
+        break;
     case MO_S_API_STATUS:
         clause_word(f, "status");
         node(f, n->children[0]);
@@ -861,7 +874,7 @@ static void node(struct printer *f, const struct mo_syntax *n) {
                  n->kind == MO_S_TEST || n->kind == MO_S_PROMISE || n->kind == MO_S_EXAMPLES ||
                  n->kind == MO_S_FOR || n->kind == MO_S_WHILE || n->kind == MO_S_IF ||
                  n->kind == MO_S_CASE || n->kind == MO_S_LAMBDA || n->kind == MO_S_SERVICE ||
-                 n->kind == MO_S_ACTOR || n->kind == MO_S_API;
+                 n->kind == MO_S_ACTOR || n->kind == MO_S_API || n->kind == MO_S_API_SCOPE;
     if (block)
         op(f, MO_DOC_ALIGN_LINE);
     op(f, MO_DOC_GROUP);

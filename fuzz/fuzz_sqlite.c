@@ -68,8 +68,13 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         struct mo_cell t1, t2;
         MO_ASSERT(mo_value_text(f.heap, buf1, n1, &t1) && mo_value_text(f.heap, buf2, n2, &t2));
         struct mo_cell r_args[] = {db, t1, params};
-        struct mo_cell run_res = call_sqlite(&f, MO_HOST_SQLITE_RUN, r_args);
-        mo_value_drop(f.heap, f.result_sqlite_unit, run_res);
+        if ((data[2] & 2) == 0) {
+            struct mo_cell run_res = call_sqlite(&f, MO_HOST_SQLITE_RUN, r_args);
+            mo_value_drop(f.heap, f.result_sqlite_unit, run_res);
+        } else {
+            struct mo_cell ex_res = call_sqlite(&f, MO_HOST_SQLITE_EXECUTE_RAW, r_args);
+            mo_value_drop(f.heap, f.result_sqlite_exec, ex_res);
+        }
 
         struct mo_cell q_args[] = {db, t2, params};
         struct mo_cell q_res = call_sqlite(&f, MO_HOST_SQLITE_QUERY, q_args);

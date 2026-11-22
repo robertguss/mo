@@ -45,7 +45,7 @@ static bool send_all(int fd, const char *data, size_t len) {
     return true;
 }
 
-static int http_exchange(uint16_t port, const char *raw_req, char *resp_buf, size_t cap) {
+static int connect_loopback(uint16_t port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     MO_ASSERT(fd >= 0);
     struct timeval tv = {.tv_sec = 10, .tv_usec = 0};
@@ -58,6 +58,11 @@ static int http_exchange(uint16_t port, const char *raw_req, char *resp_buf, siz
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     MO_ASSERT(connect(fd, (const struct sockaddr *)&addr, sizeof addr) == 0);
+    return fd;
+}
+
+static int http_exchange(uint16_t port, const char *raw_req, char *resp_buf, size_t cap) {
+    int fd = connect_loopback(port);
     MO_ASSERT(send_all(fd, raw_req, strlen(raw_req)));
 
     size_t total = 0;
@@ -81,6 +86,58 @@ static int http_exchange(uint16_t port, const char *raw_req, char *resp_buf, siz
     return status;
 }
 
+/* Reads exactly one framed HTTP/1.1 response from a keep-alive socket, keeping leftover bytes. */
+static int read_one_http_response(int fd, bool is_head, char *carry, size_t carry_cap,
+                                  size_t *carry_len, char *out, size_t out_cap) {
+    size_t header_end = SIZE_MAX;
+    for (;;) {
+        for (size_t i = 0; i + 3 < *carry_len; i++) {
+            if (carry[i] == '\r' && carry[i + 1] == '\n' && carry[i + 2] == '\r' &&
+                carry[i + 3] == '\n') {
+                header_end = i;
+                break;
+            }
+        }
+        if (header_end != SIZE_MAX)
+            break;
+        MO_ASSERT(*carry_len + 1 < carry_cap);
+        ssize_t n = recv(fd, carry + *carry_len, carry_cap - 1 - *carry_len, 0);
+        if (n <= 0)
+            return -1;
+        *carry_len += (size_t)n;
+    }
+    int status = 0;
+    if (header_end >= 12 && strncmp(carry, "HTTP/1.1 ", 9) == 0)
+        status = atoi(carry + 9);
+
+    size_t content_len = 0;
+    if (!is_head && status != 204 && status != 304 && !(status >= 100 && status < 200)) {
+        carry[header_end + 2] = '\0';
+        const char *cl = strstr(carry, "\r\nContent-Length: ");
+        if (cl != NULL)
+            content_len = (size_t)strtoull(cl + 18, NULL, 10);
+        carry[header_end + 2] = '\r';
+    }
+
+    size_t full_len = header_end + 4 + content_len;
+    while (*carry_len < full_len) {
+        MO_ASSERT(*carry_len + 1 < carry_cap);
+        ssize_t n = recv(fd, carry + *carry_len, carry_cap - 1 - *carry_len, 0);
+        if (n <= 0)
+            return -1;
+        *carry_len += (size_t)n;
+    }
+    MO_ASSERT(full_len + 1 <= out_cap);
+    memcpy(out, carry, full_len);
+    out[full_len] = '\0';
+
+    size_t rem = *carry_len - full_len;
+    if (rem > 0)
+        memmove(carry, carry + full_len, rem);
+    *carry_len = rem;
+    return status;
+}
+
 struct client_job {
     uint16_t port;
     int worker_id;
@@ -98,6 +155,7 @@ static void *concurrent_client(void *arg) {
                         "POST /items HTTP/1.1\r\n"
                         "Host: 127.0.0.1:%u\r\n"
                         "Authorization: Bearer secret-key\r\n"
+                        "Cookie: sid=super-secret-cookie\r\n"
                         "Content-Type: application/json\r\n"
                         "Content-Length: %d\r\n"
                         "Connection: close\r\n\r\n%s",
@@ -110,7 +168,7 @@ static void *concurrent_client(void *arg) {
     }
 
     rlen = snprintf(req, sizeof req,
-                    "GET /items?limit=20 HTTP/1.1\r\n"
+                    "GET /items?limit=20&secret_query=never-log-me HTTP/1.1\r\n"
                     "Host: 127.0.0.1:%u\r\n"
                     "Connection: close\r\n\r\n",
                     (unsigned)job->port);
@@ -200,7 +258,6 @@ static void test_monotonic_read_deadline(const char *app_path, const char *data_
     struct mo_limits req_limits = cli.limits;
     req_limits.heap_size = MO_LIMIT_API_REQUEST_HEAP;
 
-    /* Fast control within the same 120ms budget returns 200 OK */
     int fast_sv[2];
     MO_ASSERT(socketpair(AF_UNIX, SOCK_STREAM, 0, fast_sv) == 0);
     const char *fast_req = "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
@@ -215,7 +272,6 @@ static void test_monotonic_read_deadline(const char *app_path, const char *data_
     (void)close(fast_sv[0]);
     CHECK(strncmp(fast_resp, "HTTP/1.1 200 OK", 15) == 0);
 
-    /* Slowloris peer trickling 1 byte every 25ms past 120ms monotonic deadline gets 408 */
     int slow_sv[2];
     MO_ASSERT(socketpair(AF_UNIX, SOCK_STREAM, 0, slow_sv) == 0);
     struct slowloris_peer peer = {.fd = slow_sv[0], .status = 0};
@@ -234,118 +290,51 @@ static void test_monotonic_read_deadline(const char *app_path, const char *data_
     mo_image_free(image);
 }
 
-int main(void) {
-    (void)signal(SIGPIPE, SIG_IGN);
-    char dir[] = "/tmp/mo-test-api-srv-XXXXXX";
-    MO_ASSERT(mkdtemp(dir) != NULL);
-    char data_dir[256], app_path[300];
-    MO_ASSERT(snprintf(data_dir, sizeof data_dir, "%s/data", dir) > 0 &&
-              mkdir(data_dir, 0700) == 0);
-    MO_ASSERT(snprintf(app_path, sizeof app_path, "%s/main.mo", dir) > 0);
+static void test_cli_serve_flags(const char *dir) {
+    struct mo_cli cli;
+    const char *err = NULL;
 
-    write_file_str(
-        app_path,
-        "module Main\n"
-        "use Api\n"
-        "struct Principal\n  login: Text\nend\n"
-        "struct NewItem\n  name: Text\nend\n"
-        "struct Item\n  id: Int\n  name: Text\n  owner: Text\nend\n"
-        "enum AppError\n  Unauthorized\n  ItemMissing(Int)\n  SqlProblem(Text)\n  "
-        "RateLimited\nend\n"
-        "actor RateLimiter\n"
-        "  state Map(Text, Int) = {}\n"
-        "  calls allow_hit, crash_actor, hit_count\n"
-        "end\n"
-        "fn allow_hit(s: Map(Text, Int), _t: Time, key: Text) : (Map(Text, Int), Bool)\n"
-        "  n = s.get(key) or 0\n"
-        "  if n >= 2: (s, false) else: (s.set(key, n + 1), true)\n"
-        "end\n"
-        "fn crash_actor(_s: Map(Text, Int), _t: Time) : (Map(Text, Int), Int)\n"
-        "  stop \"actor boom\"\n"
-        "end\n"
-        "fn hit_count(s: Map(Text, Int), _t: Time, key: Text) : Int\n"
-        "  s.get(key) or 0\n"
-        "end\n"
-        "api\n"
-        "  port 8080\n"
-        "  cors \"*\"\n"
-        "  sqlite db from \"items.db\"\n"
-        "  actor limiter: RateLimiter\n"
-        "  auth Principal via authenticate\n"
-        "  get \"/health\" health\n"
-        "  post \"/items\" create_item\n"
-        "  get \"/items/:id\" get_item\n"
-        "  get \"/items\" list_items\n"
-        "  post \"/limited/:key\" limited_hit\n"
-        "  get \"/actor-crash\" route_actor_crash\n"
-        "  get \"/crash\" crash_route\n"
-        "  status Unauthorized = 401\n"
-        "  status ItemMissing(_) = 404\n"
-        "  status SqlProblem(_) = 500\n"
-        "  status RateLimited = 429\n"
-        "end\n"
-        "fn sql_ok(r: Result(T, SqliteError)) : Result(T, AppError)\n"
-        "  r.map_error(fn(e) SqlProblem(\"#{e}\") end)\n"
-        "end\n"
-        "fn ensure_table(db: Sqlite.Database) : Result(Unit, AppError)\n"
-        "  sql_ok(db.run(\"CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY AUTOINCREMENT, "
-        "name TEXT NOT NULL, owner TEXT NOT NULL)\", []))\n"
-        "end\n"
-        "fn authenticate(req: Api.Request, env: Env) : Result(Principal, AppError)\n"
-        "  expected = env.get(\"API_TOKEN\") or \"secret-key\"\n"
-        "  raw = req.header(\"Authorization\") or \"\"\n"
-        "  tok = raw.drop_prefix(\"Bearer \") or \"\"\n"
-        "  return Error(Unauthorized) if tok != expected\n"
-        "  Ok(Principal(login: \"ada\"))\n"
-        "end\n"
-        "fn health() : Map(Text, Text)\n  {\"status\": \"ok\"}\nend\n"
-        "fn create_item(u: Principal, db: Sqlite.Database, input: NewItem) : Result(Item, "
-        "AppError)\n"
-        "  try ensure_table(db)\n"
-        "  try sql_ok(db.run(\"INSERT INTO items(name, owner) VALUES (?, ?)\", "
-        "[Sqlite.String(input.name), Sqlite.String(u.login)]))\n"
-        "  rows = try sql_ok(db.query(\"SELECT last_insert_rowid()\", []))\n"
-        "  case rows.rows\n"
-        "    [[Sqlite.Integer(id)]]: Ok(Item(id: id, name: input.name, owner: u.login))\n"
-        "    _: Error(SqlProblem(\"no rowid\"))\n"
-        "  end\n"
-        "end\n"
-        "fn get_item(db: Sqlite.Database, id: Int) : Result(Item, AppError)\n"
-        "  try ensure_table(db)\n"
-        "  rows = try sql_ok(db.query(\"SELECT id, name, owner FROM items WHERE id = ?\", "
-        "[Sqlite.Integer(id)]))\n"
-        "  case rows.rows\n"
-        "    [[Sqlite.Integer(rid), Sqlite.String(name), Sqlite.String(owner)]]: Ok(Item(id: rid, "
-        "name: name, owner: owner))\n"
-        "    []: Error(ItemMissing(id))\n"
-        "    _: Error(SqlProblem(\"bad row\"))\n"
-        "  end\n"
-        "end\n"
-        "fn list_items(db: Sqlite.Database, limit: Option(Int)) : Result(List(Item), AppError)\n"
-        "  try ensure_table(db)\n"
-        "  rows = try sql_ok(db.query(\"SELECT id, name, owner FROM items ORDER BY id ASC LIMIT "
-        "?\", [Sqlite.Integer(limit or 50)]))\n"
-        "  var acc = []\n"
-        "  for r in rows.rows\n"
-        "    case r\n"
-        "      [Sqlite.Integer(rid), Sqlite.String(name), Sqlite.String(owner)]:\n"
-        "        acc = acc.append(Item(id: rid, name: name, owner: owner))\n"
-        "      _: return Error(SqlProblem(\"bad row\"))\n"
-        "    end\n"
-        "  end\n"
-        "  Ok(acc)\n"
-        "end\n"
-        "fn limited_hit(limiter: RateLimiter, key: Text) : Result(Int, AppError)\n"
-        "  return Error(RateLimited) if not limiter.allow_hit(key)\n"
-        "  Ok(limiter.hit_count(key))\n"
-        "end\n"
-        "fn route_actor_crash(limiter: RateLimiter) : Int\n"
-        "  limiter.crash_actor\n"
-        "end\n"
-        "fn crash_route() : Int\n"
-        "  stop \"handler crashed\"\n"
-        "end\n");
+    const char *ok_argv[] = {"mo",      "serve",     "app.mo", "--bind",
+                             "0.0.0.0", "--workers", "64",     "--watch"};
+    CHECK(mo_cli_parse(8, ok_argv, &cli, &err));
+    CHECK(cli.bind_host != NULL && strcmp(cli.bind_host, "0.0.0.0") == 0);
+    CHECK(cli.has_workers && cli.workers == 64 && cli.watch);
 
+    static const char *const bad_binds[] = {"localhost", "999.0.0.1", "127.0.0", "01.0.0.1", "::1"};
+    for (size_t i = 0; i < sizeof bad_binds / sizeof bad_binds[0]; i++) {
+        const char *argv[] = {"mo", "serve", "app.mo", "--bind", bad_binds[i]};
+        CHECK(!mo_cli_parse(5, argv, &cli, &err));
+        CHECK(err != NULL && strstr(err, "invalid bind address") != NULL);
+    }
+
+    static const char *const bad_workers[] = {"0", "65", "-1", "abc"};
+    for (size_t i = 0; i < sizeof bad_workers / sizeof bad_workers[0]; i++) {
+        const char *argv[] = {"mo", "serve", "app.mo", "--workers", bad_workers[i]};
+        CHECK(!mo_cli_parse(5, argv, &cli, &err));
+        CHECK(err != NULL && strstr(err, "invalid worker count") != NULL);
+    }
+
+    const char *no_file_watch[] = {"mo", "serve", "--port", "8080", "--data", "d", "--watch"};
+    CHECK(!mo_cli_parse(7, no_file_watch, &cli, &err));
+    CHECK(err != NULL && strstr(err, "apply only to api servers") != NULL);
+
+    /* Non-API MCP service rejects --watch with status 2 */
+    char svc_path[300];
+    MO_ASSERT(snprintf(svc_path, sizeof svc_path, "%s/svc.mo", dir) > 0);
+    write_file_str(svc_path, "module Svc\nservice\n  state Int = 0\n  tools read\n"
+                             "  token from env \"SVC_TOK\"\nend\n"
+                             "fn read(s: Int, _t: Time) : Int\ns\nend\n");
+    const char *svc_argv[] = {"mo", "serve", svc_path, "--port", "0", "--data", dir, "--watch"};
+    MO_ASSERT(mo_cli_parse(8, svc_argv, &cli, &err));
+    FILE *ferr = tmpfile();
+    MO_ASSERT(ferr != NULL);
+    int st = 0;
+    CHECK(mo_serve_maybe_api(&cli, ferr, ferr, &st) && st == 2);
+    (void)fclose(ferr);
+}
+
+static uint16_t spawn_server(int argc, const char *const argv[], pid_t *pid_out, int *out_rfd,
+                             int *err_rfd) {
     int out_pipe[2], err_pipe[2];
     MO_ASSERT(pipe(out_pipe) == 0 && pipe(err_pipe) == 0);
     pid_t pid = fork();
@@ -356,10 +345,9 @@ int main(void) {
         FILE *fout = fdopen(out_pipe[1], "w");
         FILE *ferr = fdopen(err_pipe[1], "w");
         MO_ASSERT(fout != NULL && ferr != NULL);
-        const char *argv[] = {"mo", "serve", app_path, "--port", "0", "--data", data_dir};
         struct mo_cli cli;
         const char *perr = NULL;
-        MO_ASSERT(mo_cli_parse(7, argv, &cli, &perr));
+        MO_ASSERT(mo_cli_parse(argc, argv, &cli, &perr));
         int rc = mo_cli_execute(&cli, fout, ferr);
         (void)fflush(fout);
         (void)fflush(ferr);
@@ -380,10 +368,440 @@ int main(void) {
             break;
     }
     line[pos] = '\0';
+    if (pos == 0) {
+        char diag_buf[4096];
+        ssize_t dn = read(err_pipe[0], diag_buf, sizeof diag_buf - 1);
+        if (dn > 0) {
+            diag_buf[dn] = '\0';
+            (void)fprintf(stderr, "spawn_server stderr:\n%s\n", diag_buf);
+        }
+    }
+    char host_buf[64] = "";
     unsigned port_num = 0;
-    CHECK(sscanf(line, "mo serve: listening on http://127.0.0.1:%u", &port_num) == 1);
+    CHECK(sscanf(line, "mo serve: listening on http://%63[^:]:%u", host_buf, &port_num) == 2);
     CHECK(port_num > 0 && port_num <= 65535);
-    uint16_t port = (uint16_t)port_num;
+    *pid_out = pid;
+    *out_rfd = out_pipe[0];
+    *err_rfd = err_pipe[0];
+    return (uint16_t)port_num;
+}
+
+static void stop_server(pid_t pid, int out_rfd, int err_rfd, char *err_buf, size_t err_cap) {
+    MO_ASSERT(kill(pid, SIGTERM) == 0);
+    size_t elen = 0;
+    while (elen + 1 < err_cap) {
+        ssize_t n = read(err_rfd, err_buf + elen, err_cap - 1 - elen);
+        if (n <= 0)
+            break;
+        elen += (size_t)n;
+    }
+    err_buf[elen] = '\0';
+    (void)close(out_rfd);
+    (void)close(err_rfd);
+    int wstatus = 0;
+    MO_ASSERT(waitpid(pid, &wstatus, 0) == pid);
+    CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+}
+
+static void run_static_checks_for_port(uint16_t port) {
+    char resp[16384], req[1024];
+
+    static const struct {
+        const char *file;
+        const char *mime;
+        bool immutable;
+    } cases[] = {
+        {"app-a1b2c3d4.js", "text/javascript; charset=utf-8", true},
+        {"mod.mjs", "text/javascript; charset=utf-8", false},
+        {"style.9f8e7d6c.css", "text/css; charset=utf-8", true},
+        {"index.html", "text/html; charset=utf-8", false},
+        {"manifest.json", "application/json", false},
+        {"app.js.map", "application/json", false},
+        {"icon.svg", "image/svg+xml", false},
+        {"logo.png", "image/png", false},
+        {"photo.jpg", "image/jpeg", false},
+        {"pic.jpeg", "image/jpeg", false},
+        {"hero.webp", "image/webp", false},
+        {"favicon.ico", "image/x-icon", false},
+        {"font.woff", "font/woff", false},
+        {"font.woff2", "font/woff2", false},
+        {"site.webmanifest", "application/manifest+json", false},
+        {"readme.txt", "text/plain; charset=utf-8", false},
+        {"raw.bin", "application/octet-stream", false},
+    };
+
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        (void)snprintf(req, sizeof req,
+                       "GET /assets/%s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                       cases[i].file);
+        int st = http_exchange(port, req, resp, sizeof resp);
+        CHECK(st == 200);
+        char expected_ct[128];
+        (void)snprintf(expected_ct, sizeof expected_ct, "Content-Type: %s\r\n", cases[i].mime);
+        CHECK(strstr(resp, expected_ct) != NULL);
+        CHECK(strstr(resp, "X-Content-Type-Options: nosniff\r\n") != NULL);
+        if (cases[i].immutable)
+            CHECK(strstr(resp, "Cache-Control: public, max-age=31536000, immutable\r\n") != NULL);
+        else
+            CHECK(strstr(resp, "Cache-Control: public, max-age=0, must-revalidate\r\n") != NULL);
+    }
+
+    /* ETag + If-None-Match -> 304 Not Modified, and HEAD -> 200 with empty body */
+    CHECK(http_exchange(port,
+                        "GET /assets/app-a1b2c3d4.js HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: "
+                        "close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    const char *etag_hdr = strstr(resp, "ETag: ");
+    MO_ASSERT(etag_hdr != NULL);
+    const char *etag_end = strstr(etag_hdr + 6, "\r\n");
+    MO_ASSERT(etag_end != NULL);
+    char etag[96];
+    size_t elen = (size_t)(etag_end - (etag_hdr + 6));
+    MO_ASSERT(elen < sizeof etag);
+    memcpy(etag, etag_hdr + 6, elen);
+    etag[elen] = '\0';
+
+    (void)snprintf(req, sizeof req,
+                   "GET /assets/app-a1b2c3d4.js HTTP/1.1\r\nHost: 127.0.0.1\r\nIf-None-Match: "
+                   "%s\r\nConnection: close\r\n\r\n",
+                   etag);
+    CHECK(http_exchange(port, req, resp, sizeof resp) == 304);
+    const char *body_304 = strstr(resp, "\r\n\r\n");
+    CHECK(body_304 != NULL && body_304[4] == '\0');
+
+    CHECK(http_exchange(port,
+                        "HEAD /assets/app-a1b2c3d4.js HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: "
+                        "close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "Content-Length: 19\r\n") != NULL);
+    const char *body_head = strstr(resp, "\r\n\r\n");
+    CHECK(body_head != NULL && body_head[4] == '\0');
+
+    /* Static mount takes precedence over dynamic route GET /assets/:slug */
+    CHECK(http_exchange(
+              port,
+              "GET /assets/index.html HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "<h1>Hello</h1>") != NULL);
+
+    /* Internal relative symlink within public/ succeeds */
+    CHECK(http_exchange(
+              port,
+              "GET /assets/alias.html HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "<h1>Hello</h1>") != NULL);
+
+    /* POST on static mount returns 405 */
+    CHECK(http_exchange(
+              port,
+              "POST /assets/index.html HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+              resp, sizeof resp) == 405);
+
+    /* Traversal, backslash, NUL, directory, and symlink escape attempts all return 404 */
+    static const char *const blocked[] = {
+        "/assets",
+        "/assets/",
+        "/assets/sub",
+        "/assets/sub/",
+        "/assets/../secret.txt",
+        "/assets/%2e%2e/secret.txt",
+        "/assets/sub/..%2f..%2fsecret.txt",
+        "/assets/a%5cb.txt",
+        "/assets/a%00b.txt",
+        "/assets/escape_rel.txt",
+        "/assets/escape_abs.txt",
+    };
+    for (size_t i = 0; i < sizeof blocked / sizeof blocked[0]; i++) {
+        (void)snprintf(req, sizeof req,
+                       "GET %s HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                       blocked[i]);
+        CHECK(http_exchange(port, req, resp, sizeof resp) == 404);
+        CHECK(strstr(resp, "TOP_SECRET_DATA") == NULL);
+    }
+}
+
+static void test_watch_live_reload(const char *base_dir) {
+    char wdir[300], main_mo[340], routes_mo[340];
+    MO_ASSERT(snprintf(wdir, sizeof wdir, "%s/watch", base_dir) > 0 && mkdir(wdir, 0700) == 0);
+    MO_ASSERT(snprintf(main_mo, sizeof main_mo, "%s/main.mo", wdir) > 0);
+    MO_ASSERT(snprintf(routes_mo, sizeof routes_mo, "%s/routes.mo", wdir) > 0);
+
+    write_file_str(routes_mo, "module Routes\nexpose version\nfn version() : Map(Text, Text)\n"
+                              "  {\"v\": \"v1\"}\nend\n");
+    write_file_str(main_mo, "module Main\nuse Routes\napi\n  scope \"/api\"\n"
+                            "    get \"/version\" Routes.version\n  end\nend\n");
+
+    const char *argv[] = {"mo",        "serve",     main_mo, "--port", "0",  "--bind",
+                          "127.0.0.1", "--workers", "2",     "--data", wdir, "--watch"};
+    pid_t pid = -1;
+    int out_rfd = -1, err_rfd = -1;
+    uint16_t port = spawn_server(12, argv, &pid, &out_rfd, &err_rfd);
+
+    char resp[4096];
+    CHECK(http_exchange(port,
+                        "GET /api/version HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"v\":\"v1\"") != NULL);
+
+    /* 1. Valid edit to imported module reloads into a fresh image without dropping socket */
+    write_file_str(routes_mo, "module Routes\nexpose version\nfn version() : Map(Text, Text)\n"
+                              "  {\"v\": \"v2-reloaded\"}\nend\n");
+    bool saw_v2 = false;
+    for (int attempt = 0; attempt < 25 && !saw_v2; attempt++) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
+        (void)nanosleep(&ts, NULL);
+        if (http_exchange(
+                port, "GET /api/version HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                resp, sizeof resp) == 200 &&
+            strstr(resp, "\"v\":\"v2-reloaded\"") != NULL) {
+            saw_v2 = true;
+        }
+    }
+    CHECK(saw_v2);
+
+    /* 2. Compile error prints diagnostics and keeps serving last good image (v2-reloaded) */
+    write_file_str(routes_mo, "module Routes\nexpose version\nfn version() : Int\n"
+                              "  \"type-error\"\nend\n");
+    struct timespec wait_bad = {.tv_sec = 0, .tv_nsec = 400000000};
+    (void)nanosleep(&wait_bad, NULL);
+    CHECK(http_exchange(port,
+                        "GET /api/version HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"v\":\"v2-reloaded\"") != NULL);
+
+    /* 3. Fixing the error reloads cleanly to v3 */
+    write_file_str(routes_mo, "module Routes\nexpose version\nfn version() : Map(Text, Text)\n"
+                              "  {\"v\": \"v3-fixed\"}\nend\n");
+    bool saw_v3 = false;
+    for (int attempt = 0; attempt < 25 && !saw_v3; attempt++) {
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = 100000000};
+        (void)nanosleep(&ts, NULL);
+        if (http_exchange(
+                port, "GET /api/version HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                resp, sizeof resp) == 200 &&
+            strstr(resp, "\"v\":\"v3-fixed\"") != NULL) {
+            saw_v3 = true;
+        }
+    }
+    CHECK(saw_v3);
+
+    char err_log[32768];
+    stop_server(pid, out_rfd, err_rfd, err_log, sizeof err_log);
+    CHECK(strstr(err_log, "mo serve: reload:") != NULL);
+    CHECK(strstr(err_log, "error E") != NULL);
+}
+
+int main(void) {
+    (void)signal(SIGPIPE, SIG_IGN);
+    char dir[] = "/tmp/mo-test-api-srv-XXXXXX";
+    MO_ASSERT(mkdtemp(dir) != NULL);
+
+    test_cli_serve_flags(dir);
+
+    char data_dir[256], pub_dir[300], sub_dir[340], app_path[300], auth_mod_path[300];
+    MO_ASSERT(snprintf(data_dir, sizeof data_dir, "%s/data", dir) > 0 &&
+              mkdir(data_dir, 0700) == 0);
+    MO_ASSERT(snprintf(pub_dir, sizeof pub_dir, "%s/public", data_dir) > 0 &&
+              mkdir(pub_dir, 0700) == 0);
+    MO_ASSERT(snprintf(sub_dir, sizeof sub_dir, "%s/sub", pub_dir) > 0 &&
+              mkdir(sub_dir, 0700) == 0);
+    MO_ASSERT(snprintf(app_path, sizeof app_path, "%s/main.mo", dir) > 0);
+    MO_ASSERT(snprintf(auth_mod_path, sizeof auth_mod_path, "%s/auth-mod.mo", dir) > 0);
+
+    /* Populate static files + symlink confinement fixtures */
+    char pbuf[380];
+    (void)snprintf(pbuf, sizeof pbuf, "%s/secret.txt", data_dir);
+    write_file_str(pbuf, "TOP_SECRET_DATA");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/app-a1b2c3d4.js", pub_dir);
+    write_file_str(pbuf, "console.log('ok');\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/mod.mjs", pub_dir);
+    write_file_str(pbuf, "export const x = 1;");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/style.9f8e7d6c.css", pub_dir);
+    write_file_str(pbuf, "body{margin:0}");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/index.html", pub_dir);
+    write_file_str(pbuf, "<h1>Hello</h1>");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/manifest.json", pub_dir);
+    write_file_str(pbuf, "{}");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/app.js.map", pub_dir);
+    write_file_str(pbuf, "{}");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/icon.svg", pub_dir);
+    write_file_str(pbuf, "<svg></svg>");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/logo.png", pub_dir);
+    write_file_str(pbuf, "png");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/photo.jpg", pub_dir);
+    write_file_str(pbuf, "jpg");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/pic.jpeg", pub_dir);
+    write_file_str(pbuf, "jpeg");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/hero.webp", pub_dir);
+    write_file_str(pbuf, "webp");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/favicon.ico", pub_dir);
+    write_file_str(pbuf, "ico");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/font.woff", pub_dir);
+    write_file_str(pbuf, "woff");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/font.woff2", pub_dir);
+    write_file_str(pbuf, "woff2");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/site.webmanifest", pub_dir);
+    write_file_str(pbuf, "{}");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/readme.txt", pub_dir);
+    write_file_str(pbuf, "hi");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/raw.bin", pub_dir);
+    write_file_str(pbuf, "bin");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/nested.txt", sub_dir);
+    write_file_str(pbuf, "nested");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/alias.html", pub_dir);
+    MO_ASSERT(symlink("index.html", pbuf) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/escape_rel.txt", pub_dir);
+    MO_ASSERT(symlink("../secret.txt", pbuf) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/escape_abs.txt", pub_dir);
+    MO_ASSERT(symlink("/etc/hosts", pbuf) == 0);
+
+    write_file_str(auth_mod_path,
+                   "module AuthMod\n"
+                   "expose Principal(..), AppError(..), authenticate\n"
+                   "use Api\n"
+                   "struct Principal\n  login: Text\nend\n"
+                   "enum AppError\n"
+                   "  Unauthorized\n  ItemMissing(Int)\n  SqlProblem(Text)\n  RateLimited\n"
+                   "end\n"
+                   "fn authenticate(req: Api.Request, env: Env) : Result(Principal, AppError)\n"
+                   "  expected = env.get(\"API_TOKEN\") or \"secret-key\"\n"
+                   "  raw = req.header(\"Authorization\") or \"\"\n"
+                   "  tok = raw.drop_prefix(\"Bearer \") or \"\"\n"
+                   "  return Error(Unauthorized) if tok != expected\n"
+                   "  Ok(Principal(login: \"ada\"))\n"
+                   "end\n");
+
+    write_file_str(
+        app_path,
+        "module Main\n"
+        "use Api\n"
+        "use AuthMod\n"
+        "struct NewItem\n  name: Text\nend\n"
+        "struct Item\n  id: Int\n  name: Text\n  owner: Text\nend\n"
+        "actor RateLimiter\n"
+        "  state Map(Text, Int) = {}\n"
+        "  calls allow_hit, crash_actor, hit_count\n"
+        "end\n"
+        "fn allow_hit(s: Map(Text, Int), _t: Time, key: Text) : (Map(Text, Int), Bool)\n"
+        "  n = s.get(key) or 0\n"
+        "  if n >= 2: (s, false) else: (s.set(key, n + 1), true)\n"
+        "end\n"
+        "fn crash_actor(_s: Map(Text, Int), _t: Time) : (Map(Text, Int), Int)\n"
+        "  stop \"actor boom\"\n"
+        "end\n"
+        "fn hit_count(s: Map(Text, Int), _t: Time, key: Text) : Int\n"
+        "  s.get(key) or 0\n"
+        "end\n"
+        "api\n"
+        "  port 8080\n"
+        "  cors \"*\"\n"
+        "  sqlite db from \"items.db\"\n"
+        "  actor limiter: RateLimiter\n"
+        "  static \"/assets\" from \"public\"\n"
+        "  auth AuthMod.Principal via AuthMod.authenticate\n"
+        "  get \"/health\" health\n"
+        "  get \"/whoami\" whoami\n"
+        "  get \"/cookies\" set_two_cookies\n"
+        "  get \"/redir-other\" redir_other\n"
+        "  get \"/redir-307\" redir_307\n"
+        "  get \"/assets/:slug\" dynamic_asset_fallback\n"
+        "  scope \"/items\"\n"
+        "    post \"\" create_item\n"
+        "    get \"\" list_items\n"
+        "    get \"/:id\" get_item\n"
+        "  end\n"
+        "  post \"/limited/:key\" limited_hit\n"
+        "  get \"/actor-crash\" route_actor_crash\n"
+        "  get \"/crash\" crash_route\n"
+        "  post \"/tx-defect\" tx_defect_route\n"
+        "  status AuthMod.Unauthorized = 401\n"
+        "  status AuthMod.ItemMissing(_) = 404\n"
+        "  status AuthMod.SqlProblem(_) = 500\n"
+        "  status AuthMod.RateLimited = 429\n"
+        "end\n"
+        "fn sql_ok(r: Result(T, SqliteError)) : Result(T, AuthMod.AppError)\n"
+        "  r.map_error(fn(e) AuthMod.SqlProblem(\"#{e}\") end)\n"
+        "end\n"
+        "fn ensure_table(db: Sqlite.Database) : Result(Unit, AuthMod.AppError)\n"
+        "  sql_ok(db.run(\"CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "name TEXT NOT NULL, owner TEXT NOT NULL)\", []))\n"
+        "end\n"
+        "fn health() : Map(Text, Text)\n  {\"status\": \"ok\"}\nend\n"
+        "fn whoami(viewer: Option(AuthMod.Principal)) : Map(Text, Text)\n"
+        "  case viewer\n"
+        "    Some(u): {\"viewer\": u.login}\n"
+        "    None: {\"viewer\": \"guest\"}\n"
+        "  end\n"
+        "end\n"
+        "fn set_two_cookies(req: Api.Request) : Api.Response\n"
+        "  tags = req.headers_named(\"X-Tag\").join(\",\")\n"
+        "  r0 = Api.json_response(200, {\"tags\": tags})\n"
+        "  r1 = r0.add_header(\"Set-Cookie\", \"sid=one; Path=/; HttpOnly\")\n"
+        "  r1.add_header(\"Set-Cookie\", \"xsrf=two; Path=/\")\n"
+        "end\n"
+        "fn redir_other() : Api.Response\n  Api.redirect_see_other(\"/items\")\nend\n"
+        "fn redir_307() : Api.Response\n  Api.redirect_with(307, \"/health\")\nend\n"
+        "fn dynamic_asset_fallback(slug: Text) : Map(Text, Text)\n  {\"dyn\": slug}\nend\n"
+        "fn create_item(u: AuthMod.Principal, db: Sqlite.Database, input: NewItem) : Result(Item, "
+        "AuthMod.AppError)\n"
+        "  _t = try ensure_table(db)\n"
+        "  ins = try sql_ok(db.execute(\"INSERT INTO items(name, owner) VALUES (?, ?)\", "
+        "[Sqlite.String(input.name), Sqlite.String(u.login)]))\n"
+        "  Ok(Item(id: ins.last_insert_rowid, name: input.name, owner: u.login))\n"
+        "end\n"
+        "fn get_item(db: Sqlite.Database, id: Int) : Result(Item, AuthMod.AppError)\n"
+        "  _t = try ensure_table(db)\n"
+        "  rows = try sql_ok(db.query(\"SELECT id, name, owner FROM items WHERE id = ?\", "
+        "[Sqlite.Integer(id)]))\n"
+        "  opt = try Sqlite.decode_optional[Item](rows).map_error(fn(e) "
+        "AuthMod.SqlProblem(e.to_text) end)\n"
+        "  case opt\n"
+        "    Some(item): Ok(item)\n"
+        "    None: Error(AuthMod.ItemMissing(id))\n"
+        "  end\n"
+        "end\n"
+        "fn list_items(db: Sqlite.Database, limit: Option(Int)) : Result(List(Item), "
+        "AuthMod.AppError)\n"
+        "  _t = try ensure_table(db)\n"
+        "  rows = try sql_ok(db.query(\"SELECT id, name, owner FROM items ORDER BY id ASC LIMIT "
+        "?\", [Sqlite.Integer(limit or 50)]))\n"
+        "  Sqlite.decode[Item](rows).map_error(fn(e) AuthMod.SqlProblem(e.to_text) end)\n"
+        "end\n"
+        "fn limited_hit(limiter: RateLimiter, key: Text) : Result(Int, AuthMod.AppError)\n"
+        "  return Error(AuthMod.RateLimited) if not limiter.allow_hit(key)\n"
+        "  Ok(limiter.hit_count(key))\n"
+        "end\n"
+        "fn route_actor_crash(limiter: RateLimiter) : Int\n"
+        "  limiter.crash_actor\n"
+        "end\n"
+        "fn crash_route() : Int\n"
+        "  stop \"handler crashed\"\n"
+        "end\n"
+        "fn tx_defect_route(db: Sqlite.Database) : Result(Int, AuthMod.AppError)\n"
+        "  _t = try ensure_table(db)\n"
+        "  _b = try sql_ok(db.run(\"BEGIN IMMEDIATE\", []))\n"
+        "  _x = try sql_ok(db.execute(\"INSERT INTO items(name, owner) VALUES ('phantom-tx', "
+        "'nobody')\", []))\n"
+        "  stop \"mid-transaction defect\"\n"
+        "end\n");
+
+    /* Verify mo format round-trip preserves static, scope, and qualified handlers */
+    {
+        const char *fmt_argv[] = {"mo", "format", app_path, auth_mod_path};
+        struct mo_cli fmt_cli;
+        const char *ferr_msg = NULL;
+        MO_ASSERT(mo_cli_parse(4, fmt_argv, &fmt_cli, &ferr_msg));
+        FILE *fnull = tmpfile();
+        MO_ASSERT(fnull != NULL);
+        CHECK(mo_cli_execute(&fmt_cli, fnull, fnull) == 0);
+        (void)fclose(fnull);
+    }
+
+    const char *srv_argv[] = {"mo",        "serve",     app_path, "--port", "0",     "--bind",
+                              "127.0.0.1", "--workers", "4",      "--data", data_dir};
+    pid_t pid = -1;
+    int out_rfd = -1, err_rfd = -1;
+    uint16_t port = spawn_server(11, srv_argv, &pid, &out_rfd, &err_rfd);
 
     /* 1. Parallel concurrent SQLite writes and reads across 8 threads */
     enum { NCLIENTS = 8 };
@@ -399,7 +817,89 @@ int main(void) {
     }
 
     char resp[16384];
-    /* 2. CORS preflight, OpenAPI 3.1, /docs, 401 auth, 422 strict JSON, 404 status mapping */
+    /* 2. Static assets + security confinement (Linux openat2 path) */
+    run_static_checks_for_port(port);
+
+    /* 3. Optional auth (Option(Principal)), multiple Set-Cookie, headers_named, 303/307 redirects
+     */
+    CHECK(http_exchange(port,
+                        "GET /whoami HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"viewer\":\"guest\"") != NULL);
+    CHECK(http_exchange(port,
+                        "GET /whoami HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer "
+                        "wrong\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"viewer\":\"guest\"") != NULL);
+    CHECK(http_exchange(port,
+                        "GET /whoami HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer "
+                        "secret-key\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"viewer\":\"ada\"") != NULL);
+
+    CHECK(
+        http_exchange(port,
+                      "GET /cookies?secret_q=never-log-me HTTP/1.1\r\nHost: "
+                      "127.0.0.1\r\nCookie: session=super-secret-cookie\r\nX-Tag: alpha\r\nx-tag: "
+                      "beta\r\nConnection: close\r\n\r\n",
+                      resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"tags\":\"alpha,beta\"") != NULL);
+    CHECK(strstr(resp, "Set-Cookie: sid=one; Path=/; HttpOnly\r\n") != NULL);
+    CHECK(strstr(resp, "Set-Cookie: xsrf=two; Path=/\r\n") != NULL);
+
+    CHECK(http_exchange(port,
+                        "GET /redir-other HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 303);
+    CHECK(strstr(resp, "HTTP/1.1 303 See Other\r\n") != NULL);
+    CHECK(strstr(resp, "Location: /items\r\n") != NULL);
+
+    CHECK(http_exchange(port,
+                        "GET /redir-307 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                        resp, sizeof resp) == 307);
+    CHECK(strstr(resp, "HTTP/1.1 307 Temporary Redirect\r\n") != NULL);
+    CHECK(strstr(resp, "Location: /health\r\n") != NULL);
+
+    /* 4. HTTP/1.1 keep-alive + pipelined requests on a single TCP socket */
+    {
+        int kfd = connect_loopback(port);
+        char carry[16384], kresp[8192];
+        size_t carry_len = 0;
+
+        const char *r1 = "POST /items HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer "
+                         "secret-key\r\nContent-Type: application/json\r\nContent-Length: "
+                         "17\r\n\r\n{\"name\":\"ka-one\"}";
+        MO_ASSERT(send_all(kfd, r1, strlen(r1)));
+        CHECK(read_one_http_response(kfd, false, carry, sizeof carry, &carry_len, kresp,
+                                     sizeof kresp) == 200);
+        CHECK(strstr(kresp, "Connection: keep-alive\r\n") != NULL);
+        CHECK(strstr(kresp, "\"name\":\"ka-one\"") != NULL);
+
+        const char *r2 = "GET /assets/index.html HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        MO_ASSERT(send_all(kfd, r2, strlen(r2)));
+        CHECK(read_one_http_response(kfd, false, carry, sizeof carry, &carry_len, kresp,
+                                     sizeof kresp) == 200);
+        CHECK(strstr(kresp, "Connection: keep-alive\r\n") != NULL);
+        CHECK(strstr(kresp, "<h1>Hello</h1>") != NULL);
+
+        /* Pipelined POST + final GET with Connection: close sent in one write */
+        const char *pipelined =
+            "POST /items HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer "
+            "secret-key\r\nContent-Type: application/json\r\nContent-Length: "
+            "17\r\n\r\n{\"name\":\"ka-two\"}"
+            "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+        MO_ASSERT(send_all(kfd, pipelined, strlen(pipelined)));
+        CHECK(read_one_http_response(kfd, false, carry, sizeof carry, &carry_len, kresp,
+                                     sizeof kresp) == 200);
+        CHECK(strstr(kresp, "\"name\":\"ka-two\"") != NULL);
+        CHECK(read_one_http_response(kfd, false, carry, sizeof carry, &carry_len, kresp,
+                                     sizeof kresp) == 200);
+        CHECK(strstr(kresp, "Connection: close\r\n") != NULL);
+        char eof_ch = 0;
+        CHECK(recv(kfd, &eof_ch, 1, 0) == 0);
+        (void)close(kfd);
+    }
+
+    /* 5. CORS preflight, OpenAPI 3.1, /docs, 401 auth, 422 strict JSON, 404 status mapping */
     CHECK(http_exchange(port,
                         "OPTIONS /items HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 204);
@@ -430,7 +930,6 @@ int main(void) {
                         "GET /items/999 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 404);
 
-    /* Chunked Transfer-Encoding POST */
     CHECK(http_exchange(port,
                         "POST /items HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer "
                         "secret-key\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
@@ -438,7 +937,6 @@ int main(void) {
                         resp, sizeof resp) == 200);
     CHECK(strstr(resp, "\"name\":\"chunked\"") != NULL);
 
-    /* Hardened HTTP wire checks: bad final chunk CRLF, duplicate Transfer-Encoding, control byte */
     CHECK(http_exchange(port,
                         "POST /items HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer "
                         "secret-key\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
@@ -454,7 +952,7 @@ int main(void) {
                         "GET /items\x01 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 400);
 
-    /* 3. Live in-process actor state + fault isolation across requests */
+    /* 6. Live in-process actor state + fault isolation across requests */
     CHECK(http_exchange(
               port, "POST /limited/ada HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
               resp, sizeof resp) == 200);
@@ -464,7 +962,6 @@ int main(void) {
     CHECK(http_exchange(
               port, "POST /limited/ada HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
               resp, sizeof resp) == 429);
-    /* Actor handler crash returns 500 for that request without losing prior committed state! */
     CHECK(http_exchange(port,
                         "GET /actor-crash HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 500);
@@ -475,7 +972,6 @@ int main(void) {
               port, "POST /limited/grace HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
               resp, sizeof resp) == 200);
 
-    /* 4. Fault isolation: /crash stops its request VM with 500, while server & DB stay alive! */
     CHECK(http_exchange(port, "GET /crash HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 500);
     CHECK(strstr(resp, "{\"error\":\"internal_server_error\"}") != NULL);
@@ -483,11 +979,7 @@ int main(void) {
     CHECK(http_exchange(port,
                         "GET /items/1 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
                         resp, sizeof resp) == 200);
-    CHECK(http_exchange(port,
-                        "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
-                        resp, sizeof resp) == 200);
 
-    /* Concurrent actor failures and route crashes keep stderr log lines serialized */
     pthread_t ctids[4];
     struct crash_job cjobs[4];
     for (int i = 0; i < 4; i++) {
@@ -501,27 +993,73 @@ int main(void) {
 
     test_monotonic_read_deadline(app_path, data_dir);
 
-    /* 5. Graceful SIGTERM shutdown */
-    MO_ASSERT(kill(pid, SIGTERM) == 0);
-    char err_log[8192];
-    size_t elen = 0;
-    while (elen + 1 < sizeof err_log) {
-        ssize_t n = read(err_pipe[0], err_log + elen, sizeof err_log - 1 - elen);
-        if (n <= 0)
-            break;
-        elen += (size_t)n;
+    /* Open an idle keep-alive connection right before SIGTERM to verify shutdown never hangs */
+    int idle_ka_fd = connect_loopback(port);
+    {
+        char carry[4096], kresp[2048];
+        size_t carry_len = 0;
+        const char *ping = "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        MO_ASSERT(send_all(idle_ka_fd, ping, strlen(ping)));
+        CHECK(read_one_http_response(idle_ka_fd, false, carry, sizeof carry, &carry_len, kresp,
+                                     sizeof kresp) == 200);
     }
-    err_log[elen] = '\0';
-    (void)close(out_pipe[0]);
-    (void)close(err_pipe[0]);
 
-    int wstatus = 0;
-    MO_ASSERT(waitpid(pid, &wstatus, 0) == pid);
-    CHECK(WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0);
+    char err_log[65536];
+    stop_server(pid, out_rfd, err_rfd, err_log, sizeof err_log);
+    (void)close(idle_ka_fd);
+
     CHECK(strstr(err_log, "mo: actor failure: crash_actor:") != NULL);
     CHECK(strstr(err_log, "mo serve: failure:") != NULL);
     CHECK(strstr(err_log, "handler crashed") != NULL);
+    CHECK(strstr(err_log, "mo serve: request: 20") != NULL);
+    CHECK(strstr(err_log, "POST /items 200") != NULL);
+    /* Secrets, cookies, query tokens, and request bodies never appear in logs */
+    CHECK(strstr(err_log, "secret-key") == NULL);
+    CHECK(strstr(err_log, "super-secret-cookie") == NULL);
+    CHECK(strstr(err_log, "never-log-me") == NULL);
+    CHECK(strstr(err_log, "ka-one") == NULL);
     CHECK(strstr(err_log, "mo serve: stop: a signal asked the server to stop") != NULL);
+
+    /* 7. Portable O_NOFOLLOW static confinement fallback + 1-worker pooled SQLite auto-rollback */
+    mo_api_set_force_fallback(true);
+    {
+        const char *w1_argv[] = {"mo",        "serve", app_path, "--port", "0",
+                                 "--workers", "1",     "--data", data_dir};
+        pid_t w1_pid = -1;
+        int w1_out = -1, w1_err = -1;
+        uint16_t w1_port = spawn_server(9, w1_argv, &w1_pid, &w1_out, &w1_err);
+
+        run_static_checks_for_port(w1_port);
+
+        /* Trigger mid-transaction stop on the single worker's pooled sqlite3* connection */
+        CHECK(http_exchange(
+                  w1_port,
+                  "POST /tx-defect HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n", resp,
+                  sizeof resp) == 500);
+
+        /* Next write + read on the same single worker must succeed with phantom-tx rolled back */
+        CHECK(http_exchange(w1_port,
+                            "POST /items HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer "
+                            "secret-key\r\nContent-Type: application/json\r\nContent-Length: "
+                            "20\r\nConnection: close\r\n\r\n{\"name\":\"after-tx!\"}",
+                            resp, sizeof resp) == 200);
+        CHECK(strstr(resp, "\"name\":\"after-tx!\"") != NULL);
+
+        CHECK(http_exchange(
+                  w1_port,
+                  "GET /items?limit=100 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+                  resp, sizeof resp) == 200);
+        CHECK(strstr(resp, "phantom-tx") == NULL);
+        CHECK(strstr(resp, "\"name\":\"after-tx!\"") != NULL);
+
+        char w1_log[65536];
+        stop_server(w1_pid, w1_out, w1_err, w1_log, sizeof w1_log);
+        CHECK(strstr(w1_log, "mid-transaction defect") != NULL);
+    }
+    mo_api_set_force_fallback(false);
+
+    /* 8. --watch live reload across multi-module dependency edits and compile errors */
+    test_watch_live_reload(dir);
 
     char cmd[512];
     MO_ASSERT(snprintf(cmd, sizeof cmd, "rm -rf '%s'", dir) > 0 && system(cmd) == 0);

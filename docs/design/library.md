@@ -588,6 +588,13 @@ starting folder; the fake keeps each database as serialized bytes in memory.
 | `Sqlite.in_memory()` | lowering | `src/lower/applications.c` | spec-only alias for `Sqlite.fake()`, matching `Files.in_memory` |
 | `run(statement, values)` | host | `SQLITE_RUN` | |
 | `query(statement, values)` | host | `SQLITE_QUERY` | |
+| `execute_raw(statement, values)` | host | `SQLITE_EXECUTE_RAW` | returns `(changes, last_insert_rowid)` from `sqlite3_total_changes64` delta and `sqlite3_last_insert_rowid` |
+| `execute(statement, values)` | Mo | `lib/sqlite.mo` | wraps `SQLITE_EXECUTE_RAW` in `Sqlite.ExecResult` |
+| `Sqlite.transaction(db, ctx, work, on_sql)` | Mo | `lib/sqlite.mo` | runs `BEGIN IMMEDIATE`, commits on `Ok`, rolls back on `Error` |
+| `Sqlite.decode(rows)` | lowering | `src/lower/abilities.c`, `lib/sqlite.mo` | compiler-derived struct row decoder with column-name matching and cell validation |
+| `Sqlite.decode_one(rows)` | lowering | `src/lower/abilities.c`, `lib/sqlite.mo` | single-row variant returning `ExpectedOneRow` when `rows.rows.size != 1` |
+| `Sqlite.decode_optional(rows)` | lowering | `src/lower/abilities.c`, `lib/sqlite.mo` | optional-row variant (`0` -> `None`, `1` -> `Some`, `>1` -> `ExpectedOneRow`) |
+| `SqliteDecodeError.to_text` | Mo | `lib/sqlite.mo` | |
 
 ## Command
 
@@ -652,10 +659,10 @@ helpers that lowered `api` servers (`src/lower/apis.c`) and handlers call.
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `Api.request(method, target)`, `Api.get(target)`, `Api.post(target)`, `Api.put(target)`, `Api.patch(target)`, `Api.delete(target)` | Mo | `lib/api.mo` | splits `target` at `?` into normalized path and percent-decoded query list |
-| `with_header`, `with_bearer`, `with_query`, `with_json`, `with_text` and `with_bytes` on an `Api.Request` | Mo | `lib/api.mo` | immutable request builders for `ApiTest.send` and middleware helpers |
-| `header`, `bearer_token`, `query_param` and `text` on an `Api.Request` | Mo | `lib/api.mo` | case-insensitive header and Bearer extraction |
-| `Api.response(status, headers, body)`, `Api.json_response(status, value)`, `Api.text_response(status, body)`, `Api.html_response(status, html)`, `Api.no_content()`, `Api.redirect(location)`, `Api.sse_response(events)` | Mo | `lib/api.mo` | response constructors for custom and SSE routes |
-| `ok?`, `with_header`, `header`, `text` and `json` on an `Api.Response` | Mo | `lib/api.mo` | response inspection in tests and wrappers |
+| `with_header`, `add_header`, `with_bearer`, `with_query`, `with_json`, `with_text` and `with_bytes` on an `Api.Request` | Mo | `lib/api.mo` | immutable request builders for `ApiTest.send` and middleware helpers |
+| `header`, `headers_named`, `bearer_token`, `query_param` and `text` on an `Api.Request` | Mo | `lib/api.mo` | case-insensitive single and multi-header lookup and Bearer extraction |
+| `Api.response(status, headers, body)`, `Api.json_response(status, value)`, `Api.text_response(status, body)`, `Api.html_response(status, html)`, `Api.no_content()`, `Api.redirect(location)`, `Api.redirect_see_other(location)`, `Api.redirect_with(status, location)`, `Api.sse_response(events)`, `Api.serve_static_fake(req, prefix, dir, files)` | Mo | `lib/api.mo` | response constructors, 3xx redirects, SSE and `ApiTest.send` static asset serving |
+| `ok?`, `with_header`, `add_header`, `header`, `headers_named`, `text` and `json` on an `Api.Response` | Mo | `lib/api.mo` | response header appending (including multiple `Set-Cookie` headers) and inspection |
 | `ApiTest.send(module, request, ...)` | lowering | `src/lower/apis.c` | spec-only direct call to `Module.%api.dispatch` with real or synthesized fake capabilities and actors |
 
 ## Actor

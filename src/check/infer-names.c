@@ -409,8 +409,22 @@ MO_MUST_USE const struct mo_symbol *infer_definition(struct inference *p,
         else
             hi = mid;
     }
-    if (lo == scope->imported_count || infer_compare_text(name, scope->imported[lo].name) != 0)
+    if (lo == scope->imported_count || infer_compare_text(name, scope->imported[lo].name) != 0) {
+        if (name->kind == MO_S_CAPNAME && (infer_compare_text(name, "MissingColumn") == 0 ||
+                                           infer_compare_text(name, "TypeMismatch") == 0 ||
+                                           infer_compare_text(name, "InvalidValue") == 0 ||
+                                           infer_compare_text(name, "ExpectedOneRow") == 0)) {
+            for (uint32_t i = 0; i < p->interfaces->count; i++) {
+                const struct mo_module_scope *lib = &p->interfaces->scopes[i];
+                if (!lib->library || lib->name == NULL || strcmp(lib->name, "Sqlite") != 0)
+                    continue;
+                const struct mo_symbol *found = infer_find_symbol(lib, name, count);
+                if (found != NULL && found->exported)
+                    return found;
+            }
+        }
         return NULL;
+    }
     if (!mo_use_import(p->signatures, p->function->function->module, scope->imported[lo].origin)) {
         bool reported =
             infer_problem(p, MO_CODE_CHECK_PROGRAM_WORK, name->span,
@@ -646,11 +660,13 @@ MO_MUST_USE const struct mo_module_scope *infer_type_scope(struct inference *p, 
         return &p->interfaces->scopes[type->shape.module];
     if (type->shape.kind != MO_SOURCE_NAMED)
         return NULL;
+    const char *mod_name =
+        strncmp(type->shape.name, "Sqlite.", 7) == 0 ? "Sqlite" : type->shape.name;
     for (uint32_t i = 0; i < p->interfaces->count; i++) {
         if (!infer_work(p))
             return NULL;
         const struct mo_module_scope *scope = &p->interfaces->scopes[i];
-        if (scope->library && scope->name != NULL && strcmp(scope->name, type->shape.name) == 0)
+        if (scope->library && scope->name != NULL && strcmp(scope->name, mod_name) == 0)
             return scope;
     }
     return NULL;

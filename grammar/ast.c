@@ -238,6 +238,7 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
     case K_API_ACTOR:
     case K_API_AUTH:
     case K_API_ROUTE:
+    case K_API_STATIC:
     case K_API_STATUS:
     case K_ACTOR_CALLS:
         return true;
@@ -325,6 +326,7 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
     case K_SERVICE_EVERY:
     case K_SERVICE_TOKEN:
     case K_API:
+    case K_API_SCOPE:
     case K_ANCHOR:
     case K_EXAMPLES:
     case K_LIST_OF:

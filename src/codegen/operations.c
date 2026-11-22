@@ -375,6 +375,7 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_SQLITE_FAKE,
                                                MO_HOST_SQLITE_RUN,
                                                MO_HOST_SQLITE_QUERY,
+                                               MO_HOST_SQLITE_EXECUTE_RAW,
                                                MO_HOST_COMMAND_RUN_RAW,
                                                MO_HOST_COMMAND_WITHIN,
                                                MO_HOST_COMMAND_ALLOW_PROGRAMS,

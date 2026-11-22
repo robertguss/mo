@@ -559,6 +559,101 @@ MO_MUST_USE bool infer_finish_interpolation(struct inference *p, struct note *no
     return true;
 }
 
+static MO_MUST_USE const struct mo_source_type *
+pattern_field_type(struct inference *p, const struct mo_data_signature *data,
+                   const struct mo_source_type *actual, uint32_t index) {
+    struct term *parameters[26] = {NULL};
+    for (uint32_t i = 0; i < actual->count; i++) {
+        unsigned letter = (unsigned)(data->type->arguments[i]->name[0] - 'A');
+        parameters[letter] = infer_annotation(p, actual->arguments[i], NULL, 0);
+        if (parameters[letter] == NULL)
+            return NULL;
+    }
+    struct term *type = infer_annotation(p, data->by_index[index]->type, parameters, 0);
+    return type == NULL ? NULL : infer_finish_type(p, type, 0);
+}
+
+static MO_MUST_USE bool finish_sqlite_decode(struct inference *p, struct emitted *graph,
+                                             const struct mo_source_type *actual) {
+    if (actual->kind != MO_SOURCE_NAMED || actual->declaration == NULL ||
+        actual->declaration->declaration->kind != MO_S_STRUCT || actual->parameters != 0)
+        return infer_problem(
+            p, MO_CODE_ARGUMENT_TYPE, p->span, "Sqlite.decode requires a concrete struct type",
+            "Sqlite.decode maps SQL column names to named struct fields, so its target type T "
+            "must be a concrete struct.",
+            NULL);
+    if (!infer_visible_data(p, actual->declaration))
+        return false;
+    const struct mo_data_signature *data =
+        mo_data_signature_by_symbol(p->signatures, actual->declaration);
+    MO_ASSERT(data != NULL);
+    struct mo_checked_ability_use *json_uses =
+        data->count == 0 ? NULL
+                         : infer_allocate(p, data->count, sizeof(*json_uses),
+                                          _Alignof(struct mo_checked_ability_use));
+    if (p->failed)
+        return false;
+    uint32_t json_use_count = 0;
+    for (uint32_t k = 0; k < data->count; k++) {
+        if (!infer_work(p))
+            return false;
+        const struct mo_source_type *ft = pattern_field_type(p, data, actual, k);
+        if (ft == NULL)
+            return false;
+        bool is_opt = ft->kind == MO_SOURCE_NAMED && ft->module == UINT32_MAX &&
+                      strcmp(ft->name, "Option") == 0 && ft->count == 1;
+        const struct mo_source_type *ut = is_opt ? ft->arguments[0] : ft;
+        if (ut->kind == MO_SOURCE_NAMED && ut->module == UINT32_MAX &&
+            strcmp(ut->name, "Option") == 0)
+            return infer_problem(
+                p, MO_CODE_ARGUMENT_TYPE, p->span,
+                "Sqlite.decode does not support nested Option fields",
+                "SQLite has one SQL NULL state, so struct fields decoded from SQLite may use at "
+                "most one Option(T) layer.",
+                data->by_index[k]->name);
+        bool direct_scalar = false;
+        if (ut->kind == MO_SOURCE_NAMED && ut->module == UINT32_MAX && ut->count == 0) {
+            if (strcmp(ut->name, "Int") == 0 || strcmp(ut->name, "Bool") == 0 ||
+                strcmp(ut->name, "Float") == 0 || strcmp(ut->name, "Text") == 0 ||
+                strcmp(ut->name, "Bytes") == 0 || strcmp(ut->name, "Decimal") == 0 ||
+                strcmp(ut->name, "Time") == 0)
+                direct_scalar = true;
+        } else if (ut->kind == MO_SOURCE_NAMED && ut->declaration != NULL &&
+                   ut->module < p->interfaces->count && p->interfaces->scopes[ut->module].library &&
+                   p->interfaces->scopes[ut->module].name != NULL &&
+                   strcmp(p->interfaces->scopes[ut->module].name, "Date") == 0 &&
+                   strcmp(ut->name, "Date") == 0) {
+            direct_scalar = true;
+        }
+        if (direct_scalar)
+            continue;
+        bool json_eligible = ut->kind == MO_SOURCE_TUPLE ||
+                             (ut->kind == MO_SOURCE_NAMED && ut->declaration != NULL &&
+                              (ut->declaration->declaration->kind == MO_S_STRUCT ||
+                               ut->declaration->declaration->kind == MO_S_ENUM)) ||
+                             (ut->kind == MO_SOURCE_NAMED && ut->module == UINT32_MAX &&
+                              (strcmp(ut->name, "List") == 0 || strcmp(ut->name, "Map") == 0 ||
+                               strcmp(ut->name, "Set") == 0));
+        if (!json_eligible)
+            return infer_problem(
+                p, MO_CODE_ARGUMENT_TYPE, p->span,
+                "Sqlite.decode cannot decode a field of this type",
+                "Supported column types are Int, Bool, Float, Text, Bytes, Decimal, Time, Date, "
+                "Option(U), and Json-capable structs, enums or collections.",
+                data->by_index[k]->name);
+        const struct mo_ability_implementation *jproof =
+            mo_prove_ability(&p->abilities, ut, MO_SOURCE_JSON);
+        if (jproof == NULL)
+            return infer_problem(p, p->abilities.error, p->span, p->abilities.message,
+                                 p->abilities.reason, data->by_index[k]->name);
+        json_uses[json_use_count++] = (struct mo_checked_ability_use){
+            .operand = k, .implementation = jproof, .parameter = NULL};
+    }
+    graph->output.ability_count = json_use_count;
+    graph->output.abilities = json_uses;
+    return true;
+}
+
 MO_MUST_USE bool infer_finish_function_use(struct inference *p, struct emitted *graph) {
     const struct mo_source_type *type = graph->function_type;
     if (type == NULL)
@@ -617,6 +712,16 @@ MO_MUST_USE bool infer_finish_function_use(struct inference *p, struct emitted *
     graph->output.arguments = (struct mo_type_arguments){count, arguments};
     graph->output.ability_count = proof_count;
     graph->output.abilities = proofs;
+    if (graph->output.symbol != NULL && graph->output.symbol->module < p->interfaces->count) {
+        const struct mo_module_scope *sym_scope =
+            &p->interfaces->scopes[graph->output.symbol->module];
+        const char *fn_name = graph->output.symbol->name;
+        if (sym_scope->library && sym_scope->name != NULL &&
+            strcmp(sym_scope->name, "Sqlite") == 0 && count == 1 &&
+            (strcmp(fn_name, "decode") == 0 || strcmp(fn_name, "decode_one") == 0 ||
+             strcmp(fn_name, "decode_optional") == 0))
+            return finish_sqlite_decode(p, graph, arguments[0].type);
+    }
     return true;
 }
 
@@ -709,20 +814,6 @@ static MO_MUST_USE struct mo_checked_pattern *pattern_output(struct inference *p
         *out = (struct mo_checked_pattern){
             .kind = kind, .syntax = syntax, .type = type, .part_count = count};
     return out;
-}
-
-static MO_MUST_USE const struct mo_source_type *
-pattern_field_type(struct inference *p, const struct mo_data_signature *data,
-                   const struct mo_source_type *actual, uint32_t index) {
-    struct term *parameters[26] = {NULL};
-    for (uint32_t i = 0; i < actual->count; i++) {
-        unsigned letter = (unsigned)(data->type->arguments[i]->name[0] - 'A');
-        parameters[letter] = infer_annotation(p, actual->arguments[i], NULL, 0);
-        if (parameters[letter] == NULL)
-            return NULL;
-    }
-    struct term *type = infer_annotation(p, data->by_index[index]->type, parameters, 0);
-    return type == NULL ? NULL : infer_finish_type(p, type, 0);
 }
 
 static MO_MUST_USE bool same_failure_type(struct inference *p, const struct mo_source_type *a,

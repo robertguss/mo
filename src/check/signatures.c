@@ -528,6 +528,18 @@ static MO_MUST_USE const struct mo_module_alias *alias(const struct mo_module_sc
     return &scope->aliases[lo];
 }
 
+static MO_MUST_USE const struct mo_symbol *sqlite_library_symbol(struct preparation *p,
+                                                                 const struct mo_syntax *member) {
+    for (uint32_t i = 0; i < p->interfaces->count; i++) {
+        const struct mo_module_scope *lib = &p->interfaces->scopes[i];
+        if (!lib->library || lib->name == NULL || strcmp(lib->name, "Sqlite") != 0)
+            continue;
+        const struct mo_symbol *symbol = lookup(lib, member);
+        return symbol != NULL && symbol->exported ? symbol : NULL;
+    }
+    return NULL;
+}
+
 /* The declaration `member` names in the module that `use` calls `prefix`, or NULL. Problems
  * are reported at name. */
 static MO_MUST_USE const struct mo_symbol *module_member(struct preparation *p,
@@ -536,8 +548,11 @@ static MO_MUST_USE const struct mo_symbol *module_member(struct preparation *p,
                                                          const struct mo_syntax *prefix,
                                                          const struct mo_syntax *member) {
     const struct mo_module_alias *used = alias(scope, prefix);
-    if (used == NULL)
+    if (used == NULL) {
+        if (spelled(prefix, "Sqlite"))
+            return sqlite_library_symbol(p, member);
         return NULL;
+    }
     const struct mo_symbol *symbol = lookup(&p->interfaces->scopes[used->module], member);
     if (symbol != NULL && !symbol->exported) {
         bool reported = problem(p, MO_CODE_IMPORT_PRIVATE, name->span,
@@ -592,8 +607,11 @@ static MO_MUST_USE const struct mo_symbol *definition(struct preparation *p,
     }
     /* After `use Shop.Account`, a bare Account in a type is the module's own type Account, and
      * a clash with another Account is an error (reference 10.3). */
-    if (symbol == NULL)
+    if (symbol == NULL) {
+        if (name->kind == MO_S_CAPNAME && spelled(name, "SqliteDecodeError"))
+            return sqlite_library_symbol(p, name);
         return name->kind == MO_S_CAPNAME ? module_member(p, scope, name, name, name) : NULL;
+    }
     const struct mo_symbol *own = own_type(p, scope, name);
     const struct mo_module_alias *cmd_alias =
         name->kind == MO_S_CAPNAME && spelled(name, "Command") ? alias(scope, name) : NULL;

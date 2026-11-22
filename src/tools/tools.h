@@ -59,6 +59,10 @@ struct mo_cli {
     const char *install_name, *bin_dir;
     bool has_port;
     uint16_t port;
+    const char *bind_host;
+    bool has_workers;
+    uint32_t workers;
+    bool watch;
     const char *data;
     const char *allow_host;
     /* replay, query and history: a retained failure's id (0 when not given), an artifact, a

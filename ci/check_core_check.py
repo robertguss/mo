@@ -303,6 +303,8 @@ def signatures():
     add("io", "sqliteRun", C("database") + "|" + T + "|" + L("(sqliteValue)"), sqlite_err(U))
     add("io", "sqliteQuery", C("database") + "|" + T + "|" + L("(sqliteValue)"),
         sqlite_err("(sqliteRows)"))
+    add("io", "sqliteExecuteRaw", C("database") + "|" + T + "|" + L("(sqliteValue)"),
+        sqlite_err(f"(tuple ({I} {I}))"))
     add("io", "commandRunRaw", C("command") + "|" + T + "|" + L(T) + "|(duration)",
         f"(result (tuple ({I} (bytes) (bytes))) {T})")
     add("io", "commandWithin", C("command") + "|" + T, C("command"))

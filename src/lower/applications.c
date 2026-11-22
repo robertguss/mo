@@ -584,6 +584,7 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                   {"Sqlite.fake", {MO_CORE_IO_OP_SQLITE_FAKE, false}},
                   {"Sqlite.run", {MO_CORE_IO_OP_SQLITE_RUN, false}},
                   {"Sqlite.query", {MO_CORE_IO_OP_SQLITE_QUERY, false}},
+                  {"Sqlite.execute_raw", {MO_CORE_IO_OP_SQLITE_EXECUTE_RAW, false}},
                   {"Command.run_raw", {MO_CORE_IO_OP_COMMAND_RUN_RAW, false}},
                   {"Command.within", {MO_CORE_IO_OP_COMMAND_WITHIN, false}},
                   {"Command.allow_programs", {MO_CORE_IO_OP_COMMAND_ALLOW_PROGRAMS, false}},
@@ -921,6 +922,17 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                                          &b->instance->substitution, b->instance->owner,
                                          b->instance->depth, seen);
             }
+        }
+        if (fn_scope != NULL && fn_scope->library && fn_scope->name != NULL &&
+            strcmp(fn_scope->name, "Sqlite") == 0 && r->arguments.count == 1 &&
+            r->symbol->receiver == UINT32_MAX &&
+            (strcmp(r->symbol->name, "decode") == 0 || strcmp(r->symbol->name, "decode_one") == 0 ||
+             strcmp(r->symbol->name, "decode_optional") == 0)) {
+            MO_ASSERT(args.count == 1);
+            return lower_sqlite_decode_call(p, r->arguments.items[0].type, r->ability_count,
+                                            r->abilities, &b->instance->substitution,
+                                            b->instance->owner, b->instance->depth,
+                                            b->instance->meta.name, r->symbol->name, args.items[0]);
         }
         struct instance *f = lower_instance(p, r->symbol, r->arguments, &b->instance->substitution,
                                             r->ability_count, r->abilities, b->instance->owner,

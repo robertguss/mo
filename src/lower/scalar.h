@@ -30,5 +30,11 @@ mo_core_expr lower_json_decode_call(struct lowering *p,
 mo_core_expr lower_json_schema(struct lowering *p, const struct mo_ability_implementation *proof,
                                const struct substitution *substitution, uint32_t owner,
                                uint32_t depth, mo_core_expr seen);
+mo_core_expr lower_sqlite_decode_call(struct lowering *p, const struct mo_source_type *target_src,
+                                      uint32_t ability_count,
+                                      const struct mo_checked_ability_use *abilities,
+                                      const struct substitution *substitution, uint32_t owner,
+                                      uint32_t depth, mo_core_string caller_name,
+                                      const char *fn_name, mo_core_expr rows_expr);
 
 #endif

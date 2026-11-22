@@ -19,14 +19,24 @@ struct mo_host_types {
 void mo_host_prepare_types(struct mo_host_types *out, const struct mo_types *source,
                            struct mo_type *storage);
 
+struct mo_sqlite_pool;
+
 struct mo_host {
     const struct mo_host_types *types;
+    struct mo_sqlite_pool *sqlite_pool;
     uint32_t open_folders, open_connections, open_databases;
     int input, output, errors;
     bool force_fallback; /* C tests exercise the portable resolver on Linux. */
     bool started, kernel_probed, kernel_available;
 };
 void mo_host_init(struct mo_host *host, const struct mo_host_types *types);
+MO_MUST_USE struct mo_sqlite_pool *mo_sqlite_pool_new(void);
+void mo_sqlite_pool_cleanup(struct mo_sqlite_pool *pool);
+void mo_sqlite_pool_free(struct mo_sqlite_pool *pool);
+MO_MUST_USE bool mo_host_open_confined_file(int root_fd, const char *mount_dir,
+                                            const char *rel_path, bool force_fallback, int *fd_out,
+                                            uint64_t *size_out, int64_t *mtime_sec_out,
+                                            int64_t *mtime_nsec_out);
 /* Before running main, once per context and before starting threads. Changes
  * process-wide SIGPIPE to ignored and tries to raise the soft descriptor budget to
  * MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2 * MO_LIMIT_LOOKUPS + 32 (never above

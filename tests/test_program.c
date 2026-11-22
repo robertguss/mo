@@ -3129,6 +3129,29 @@ static void api_server_checks(void) {
         {"module Main\napi\nget \"/h\" h\nend\nfn h() : Int\nApiTest.send(Main, "
          "Api.get(\"/h\")).status\nend\n",
          MO_CODE_FAKE_OUTSIDE_SPEC},
+        /* Duplicate route after flattening scope blocks */
+        {"module Main\napi\nscope \"/u\"\nget \"/:id\" a\nend\nget \"/u/:other\" b\nend\n"
+         "fn a(id: Int) : Int\nid\nend\nfn b(other: Int) : Int\nother\nend\n",
+         MO_CODE_API_ROUTE},
+        /* Scope nesting > 8 */
+        {"module Main\napi\nscope \"/a\"\nscope \"/b\"\nscope \"/c\"\nscope \"/d\"\nscope \"/e\"\n"
+         "scope \"/f\"\nscope \"/g\"\nscope \"/h\"\nscope \"/i\"\nget \"\" h\nend\nend\nend\nend\n"
+         "end\nend\nend\nend\nend\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* Overlapping static prefixes */
+        {"module Main\napi\nstatic \"/assets\" from \"pub\"\nstatic \"/assets/js\" from \"js\"\n"
+         "get \"/h\" h\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* Escaping static directory */
+        {"module Main\napi\nstatic \"/assets\" from \"../outside\"\nget \"/h\" h\nend\n"
+         "fn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* >8 static mounts */
+        {"module Main\napi\nstatic \"/s1\" from \"d1\"\nstatic \"/s2\" from \"d2\"\n"
+         "static \"/s3\" from \"d3\"\nstatic \"/s4\" from \"d4\"\nstatic \"/s5\" from \"d5\"\n"
+         "static \"/s6\" from \"d6\"\nstatic \"/s7\" from \"d7\"\nstatic \"/s8\" from \"d8\"\n"
+         "static \"/s9\" from \"d9\"\nget \"/h\" h\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
     };
     for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
         struct fixture f;
@@ -3141,15 +3164,80 @@ static void api_server_checks(void) {
 
     struct fixture ok;
     init_with_library(
-        &ok, "module Main\nuse Api\n"
-             "api\nport 9000\nsqlite db from \"app.db\"\nget \"/items/:id\" get_item\nend\n"
-             "fn get_item(_db: Sqlite.Database, id: Int) : Int\nid\nend\n"
-             "test \"in-memory dispatch\"\n"
-             "assert ApiTest.send(Main, Api.get(\"/items/5\")).status == 200\nend\n");
+        &ok,
+        "module Main\nuse Api\n"
+        "struct Member\n  login: Text\nend\n"
+        "enum AuthErr\n  Denied\nend\n"
+        "api\nport 9000\nsqlite db from \"app.db\"\nstatic \"/assets\" from \"public\"\n"
+        "auth Member via check_member\n"
+        "scope \"/v1\"\nscope \"/items\"\nget \"\" list_items\nget \"/:id\" get_item\nend\nend\n"
+        "status Denied = 401\nend\n"
+        "fn check_member(_req: Api.Request) : Result(Member, AuthErr)\nOk(Member(login: "
+        "\"a\"))\nend\n"
+        "fn list_items(viewer: Option(Member)) : Text\n"
+        "  case viewer\n    Some(m): m.login\n    None: \"guest\"\n  end\nend\n"
+        "fn get_item(_m: Member, _db: Sqlite.Database, id: Int) : Int\nid\nend\n"
+        "test \"in-memory dispatch\"\n"
+        "files = Files.in_memory({\"public/app.js\": \"console.log(1)\"})\n"
+        "assert ApiTest.send(Main, Api.get(\"/assets/app.js\"), files.read_only).status == 200\n"
+        "assert ApiTest.send(Main, Api.get(\"/v1/items\")).status == 200\n"
+        "assert ApiTest.send(Main, Api.get(\"/v1/items/5\")).status == 200\nend\n");
     CHECK(ok.program != NULL && !mo_diags_any(&ok.diags));
     if (ok.program != NULL)
         CHECK(ok.program->api_count == 1 && ok.program->apis[0].port == 9000 &&
-              ok.program->apis[0].route_count == 1 && ok.program->apis[0].sqlite_count == 1);
+              ok.program->apis[0].route_count == 2 && ok.program->apis[0].sqlite_count == 1 &&
+              ok.program->apis[0].static_count == 1 &&
+              strcmp(ok.program->apis[0].routes[0].path, "/v1/items") == 0 &&
+              ok.program->apis[0].routes[0].auth_mode == MO_API_AUTH_OPTIONAL &&
+              strcmp(ok.program->apis[0].routes[1].path, "/v1/items/:id") == 0 &&
+              ok.program->apis[0].routes[1].auth_mode == MO_API_AUTH_REQUIRED);
+    free_fixture(&ok);
+}
+
+static void sqlite_decode_checks(void) {
+    const struct {
+        const char *source;
+        uint16_t code;
+    } rejected[] = {
+        {"module Main\nstruct Row\nid: Int\nend\n"
+         "fn bad(r: Sqlite.Rows) : Result(List(Row), SqliteDecodeError)\n"
+         "Sqlite.decode[Row, Int](r)\nend\n",
+         MO_CODE_TYPE_ARGUMENTS},
+        {"module Main\nfn bad(r: Sqlite.Rows) : Result(List(Int), SqliteDecodeError)\n"
+         "Sqlite.decode[Int](r)\nend\n",
+         MO_CODE_ARGUMENT_TYPE},
+        {"module Main\nstruct BadOpt\nx: Option(Option(Int))\nend\n"
+         "fn bad(r: Sqlite.Rows) : Result(List(BadOpt), SqliteDecodeError)\n"
+         "Sqlite.decode[BadOpt](r)\nend\n",
+         MO_CODE_ARGUMENT_TYPE},
+        {"module Main\nstruct BadFn\nf: fn() : Int\nend\n"
+         "fn bad(r: Sqlite.Rows) : Result(List(BadFn), SqliteDecodeError)\n"
+         "Sqlite.decode[BadFn](r)\nend\n",
+         MO_CODE_ARGUMENT_TYPE},
+        {"module Main\nstruct BadInner\nf: fn() : Int\nend\n"
+         "struct BadOuter\ninner: BadInner\nend\n"
+         "fn bad(r: Sqlite.Rows) : Result(List(BadOuter), SqliteDecodeError)\n"
+         "Sqlite.decode[BadOuter](r)\nend\n",
+         MO_CODE_ABILITY_MISSING},
+    };
+    for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
+        struct fixture f;
+        init_with_library(&f, rejected[i].source);
+        CHECK(f.program == NULL && f.diags.count >= 1);
+        if (f.diags.count >= 1)
+            CHECK(f.diags.items[0].code == rejected[i].code);
+        free_fixture(&f);
+    }
+
+    struct fixture ok;
+    init_with_library(&ok,
+                      "module Main\nuse Date\nstruct Meta\ntag: Text\nend\n"
+                      "struct Item\nid: Int\nactive: Bool\nscore: Float\ntitle: Text\nraw: Bytes\n"
+                      "price: Decimal\nts: Time\nday: Date\nnote: Option(Text)\nmeta: Meta\nend\n"
+                      "fn parse_all(r: Sqlite.Rows) : Result(List(Item), SqliteDecodeError)\n"
+                      "Sqlite.decode[Item](r)\nend\n"
+                      "fn main()\nend\n");
+    CHECK(ok.program != NULL && !mo_diags_any(&ok.diags));
     free_fixture(&ok);
 }
 
@@ -3238,6 +3326,7 @@ static void run(void *argument) {
     service_inputs();
     json_ability_graph();
     api_server_checks();
+    sqlite_decode_checks();
     actor_checks();
     service_handlers();
     service_rules();

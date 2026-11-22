@@ -773,6 +773,192 @@ static void test_concurrent_wal_open(void) {
     }
 }
 
+static struct mo_cell exec_sql_res(struct host_fixture *f, struct mo_cell db, const char *sql,
+                                   struct mo_cell params) {
+    struct mo_cell s = host_text(f, sql);
+    struct mo_cell args[] = {db, s, params};
+    struct mo_cell res = call_op(f, MO_HOST_SQLITE_EXECUTE_RAW, args);
+    mo_value_drop(f->heap, f->types.text, s);
+    mo_value_drop(f->heap, value_list_type(f), params);
+    return res;
+}
+
+static void test_foreign_keys_and_execute_raw(void) {
+    char template[] = "/tmp/mo-sqlite-fk-XXXXXX";
+    char *dir = mkdtemp(template);
+    MO_ASSERT(dir != NULL);
+
+    struct host_fixture f;
+    host_fixture_init(&f, mo_limits_default().heap_size);
+    struct mo_cell sq = make_real_sqlite(&f, dir);
+    struct mo_cell opened = open_db_res(&f, sq, "fk.db");
+    struct mo_cell db = unwrap_ok(&f, f.result_database, opened);
+
+    struct mo_cell fk_q = query_sql_res(&f, db, "PRAGMA foreign_keys", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_rows, fk_q,
+                   "Ok(Sqlite.Rows(columns: [\"foreign_keys\"], rows: [[Integer(1)]]))");
+    mo_value_drop(f.heap, f.result_sqlite_rows, fk_q);
+
+    struct mo_cell c1 = exec_sql_res(
+        &f, db, "CREATE TABLE parents(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)",
+        empty_values(&f));
+    expect_printed(&f, f.result_sqlite_exec, c1, "Ok((0, 0))");
+    mo_value_drop(f.heap, f.result_sqlite_exec, c1);
+
+    struct mo_cell c2 =
+        run_sql_res(&f, db,
+                    "CREATE TABLE kids(id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER NOT "
+                    "NULL REFERENCES parents(id))",
+                    empty_values(&f));
+    mo_value_drop(f.heap, f.result_sqlite_unit, c2);
+
+    struct mo_cell bad_fk =
+        exec_sql_res(&f, db, "INSERT INTO kids(parent_id) VALUES (99)", empty_values(&f));
+    CHECK(strcmp(err_case_name(&f, f.result_sqlite_exec, bad_fk), "SqlFailed") == 0);
+    mo_value_drop(f.heap, f.result_sqlite_exec, bad_fk);
+
+    struct mo_cell p1[] = {val_text_len(&f, "Ada", 3)};
+    struct mo_cell ins1 =
+        exec_sql_res(&f, db, "INSERT INTO parents(name) VALUES (?)", make_list(&f, p1, 1));
+    expect_printed(&f, f.result_sqlite_exec, ins1, "Ok((1, 1))");
+    mo_value_drop(f.heap, f.result_sqlite_exec, ins1);
+
+    struct mo_cell p2[] = {val_text_len(&f, "Grace", 5)};
+    struct mo_cell ins2 =
+        exec_sql_res(&f, db, "INSERT INTO parents(name) VALUES (?)", make_list(&f, p2, 1));
+    expect_printed(&f, f.result_sqlite_exec, ins2, "Ok((1, 2))");
+    mo_value_drop(f.heap, f.result_sqlite_exec, ins2);
+
+    struct mo_cell upd =
+        exec_sql_res(&f, db, "UPDATE parents SET name = name || '!'", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_exec, upd, "Ok((2, 2))");
+    mo_value_drop(f.heap, f.result_sqlite_exec, upd);
+
+    /* Fake SQLite also enforces PRAGMA foreign_keys = ON and supports execute_raw. */
+    struct mo_cell fake = call_op(&f, MO_HOST_SQLITE_FAKE, NULL);
+    struct mo_cell fo = open_db_res(&f, fake, "fake_fk.db");
+    struct mo_cell fdb = unwrap_ok(&f, f.result_database, fo);
+    struct mo_cell ffk = query_sql_res(&f, fdb, "PRAGMA foreign_keys", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_rows, ffk,
+                   "Ok(Sqlite.Rows(columns: [\"foreign_keys\"], rows: [[Integer(1)]]))");
+    mo_value_drop(f.heap, f.result_sqlite_rows, ffk);
+    struct mo_cell fc1 =
+        run_sql_res(&f, fdb, "CREATE TABLE p(id INTEGER PRIMARY KEY)", empty_values(&f));
+    mo_value_drop(f.heap, f.result_sqlite_unit, fc1);
+    struct mo_cell fc2 = run_sql_res(
+        &f, fdb, "CREATE TABLE c(pid INTEGER NOT NULL REFERENCES p(id))", empty_values(&f));
+    mo_value_drop(f.heap, f.result_sqlite_unit, fc2);
+    struct mo_cell fbad = exec_sql_res(&f, fdb, "INSERT INTO c VALUES (42)", empty_values(&f));
+    CHECK(strcmp(err_case_name(&f, f.result_sqlite_exec, fbad), "SqlFailed") == 0);
+    mo_value_drop(f.heap, f.result_sqlite_exec, fbad);
+    struct mo_cell fins = exec_sql_res(&f, fdb, "INSERT INTO p VALUES (42)", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_exec, fins, "Ok((1, 42))");
+    mo_value_drop(f.heap, f.result_sqlite_exec, fins);
+    struct mo_cell fgood = exec_sql_res(&f, fdb, "INSERT INTO c VALUES (42)", empty_values(&f));
+    expect_printed(&f, f.result_sqlite_exec, fgood, "Ok((1, 1))");
+    mo_value_drop(f.heap, f.result_sqlite_exec, fgood);
+
+    mo_value_drop(f.heap, f.result_database, fo);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], fake);
+    mo_value_drop(f.heap, f.result_database, opened);
+    mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+    CHECK(mo_heap_objects(f.heap) == 0);
+    host_fixture_free(&f);
+    remove_tree(dir);
+}
+
+static void test_sqlite_worker_pool_and_rollback(void) {
+    char template[] = "/tmp/mo-sqlite-pool-XXXXXX";
+    char *dir = mkdtemp(template);
+    MO_ASSERT(dir != NULL);
+
+    struct mo_sqlite_pool *pool = mo_sqlite_pool_new();
+    MO_ASSERT(pool != NULL);
+
+    /* Request 1 commits one row and returns the sqlite3* handle to the worker pool. */
+    {
+        struct host_fixture f;
+        host_fixture_init(&f, mo_limits_default().heap_size);
+        f.host.sqlite_pool = pool;
+        struct mo_cell sq = make_real_sqlite(&f, dir);
+        struct mo_cell opened = open_db_res(&f, sq, "pooled.db");
+        struct mo_cell db = unwrap_ok(&f, f.result_database, opened);
+        struct mo_cell cr =
+            run_sql_res(&f, db, "CREATE TABLE items(id INTEGER PRIMARY KEY, label TEXT NOT NULL)",
+                        empty_values(&f));
+        mo_value_drop(f.heap, f.result_sqlite_unit, cr);
+        struct mo_cell ins =
+            exec_sql_res(&f, db, "INSERT INTO items(label) VALUES ('committed')", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_exec, ins, "Ok((1, 1))");
+        mo_value_drop(f.heap, f.result_sqlite_exec, ins);
+        mo_value_drop(f.heap, f.result_database, opened);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+        host_fixture_free(&f);
+        mo_sqlite_pool_cleanup(pool);
+    }
+
+    /* Request 2 starts BEGIN IMMEDIATE, inserts a row, disables FKs, and defects without COMMIT. */
+    {
+        struct host_fixture f;
+        host_fixture_init(&f, mo_limits_default().heap_size);
+        f.host.sqlite_pool = pool;
+        struct mo_cell sq = make_real_sqlite(&f, dir);
+        struct mo_cell opened = open_db_res(&f, sq, "pooled.db");
+        struct mo_cell db = unwrap_ok(&f, f.result_database, opened);
+        struct mo_cell beg = run_sql_res(&f, db, "BEGIN IMMEDIATE", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_unit, beg, "Ok(Unit)");
+        mo_value_drop(f.heap, f.result_sqlite_unit, beg);
+        struct mo_cell leak = exec_sql_res(
+            &f, db, "INSERT INTO items(label) VALUES ('uncommitted_leak')", empty_values(&f));
+        mo_value_drop(f.heap, f.result_sqlite_exec, leak);
+        struct mo_cell fk_off = run_sql_res(&f, db, "PRAGMA foreign_keys = OFF", empty_values(&f));
+        mo_value_drop(f.heap, f.result_sqlite_unit, fk_off);
+        /* Drop heap without COMMIT, as mo_process_free + mo_sqlite_pool_cleanup does on defect. */
+        mo_value_drop(f.heap, f.result_database, opened);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+        host_fixture_free(&f);
+        mo_sqlite_pool_cleanup(pool);
+    }
+
+    /* Request 3 reuses the pooled connection: FKs are ON, no transaction is open, leak is gone. */
+    {
+        struct host_fixture f;
+        host_fixture_init(&f, mo_limits_default().heap_size);
+        f.host.sqlite_pool = pool;
+        struct mo_cell sq = make_real_sqlite(&f, dir);
+        struct mo_cell opened = open_db_res(&f, sq, "pooled.db");
+        struct mo_cell db = unwrap_ok(&f, f.result_database, opened);
+        struct mo_cell fk_q = query_sql_res(&f, db, "PRAGMA foreign_keys", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_rows, fk_q,
+                       "Ok(Sqlite.Rows(columns: [\"foreign_keys\"], rows: [[Integer(1)]]))");
+        mo_value_drop(f.heap, f.result_sqlite_rows, fk_q);
+        struct mo_cell beg = run_sql_res(&f, db, "BEGIN IMMEDIATE", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_unit, beg, "Ok(Unit)");
+        mo_value_drop(f.heap, f.result_sqlite_unit, beg);
+        struct mo_cell ins2 = exec_sql_res(
+            &f, db, "INSERT INTO items(label) VALUES ('after_defect')", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_exec, ins2, "Ok((1, 2))");
+        mo_value_drop(f.heap, f.result_sqlite_exec, ins2);
+        struct mo_cell cmt = run_sql_res(&f, db, "COMMIT", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_unit, cmt, "Ok(Unit)");
+        mo_value_drop(f.heap, f.result_sqlite_unit, cmt);
+
+        struct mo_cell rows =
+            query_sql_res(&f, db, "SELECT label FROM items ORDER BY id", empty_values(&f));
+        expect_printed(&f, f.result_sqlite_rows, rows,
+                       "Ok(Sqlite.Rows(columns: [\"label\"], rows: [[String(\"committed\")], "
+                       "[String(\"after_defect\")]]))");
+        mo_value_drop(f.heap, f.result_sqlite_rows, rows);
+        mo_value_drop(f.heap, f.result_database, opened);
+        mo_value_drop(f.heap, f.capabilities[MO_CAP_SQLITE], sq);
+        host_fixture_free(&f);
+        mo_sqlite_pool_cleanup(pool);
+    }
+
+    mo_sqlite_pool_free(pool);
+    remove_tree(dir);
+}
+
 int main(void) {
     test_real_crud();
     test_ephemeral_memory();
@@ -782,5 +968,7 @@ int main(void) {
     test_authorizer();
     test_open_limit();
     test_fake_sqlite();
+    test_foreign_keys_and_execute_raw();
+    test_sqlite_worker_pool_and_rollback();
     return mo_test_report("test_sqlite");
 }

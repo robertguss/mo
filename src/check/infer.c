@@ -875,6 +875,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
     case MO_S_API_CORS:
     case MO_S_API_SQLITE:
     case MO_S_API_ACTOR:
+    case MO_S_API_STATIC:
+    case MO_S_API_SCOPE:
     case MO_S_API_AUTH:
     case MO_S_API_ROUTE:
     case MO_S_API_STATUS:

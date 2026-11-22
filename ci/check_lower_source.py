@@ -814,6 +814,7 @@ for fixture, expected in {
     "option-result-map": 0,
     "json": 0,
     "json-ability": 0,
+    "sqlite-decode": 0,
     "map-update-sort-desc": 0,
     "map-literals": 0,
     "map-evaluation-order": 0,
@@ -870,6 +871,7 @@ SPEC_CASES["api-server"] = (body[len("module Main\n"):], {
     "Main.test.5": ["returned", "Unit"],
     "Main.test.6": ["returned", "Unit"],
     "Main.test.7": ["returned", "Unit"],
+    "Main.test.8": ["returned", "Unit"],
     None: ["returned", "0"],
 })
 

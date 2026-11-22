@@ -21,7 +21,7 @@ struct host_fixture {
         result_entries;
     uint32_t integer, network_error, result_connection, result_sent, result_received;
     uint32_t sqlite_value, sqlite_rows, sqlite_error, result_database, result_sqlite_unit,
-        result_sqlite_rows;
+        result_sqlite_rows, sqlite_exec_tuple, result_sqlite_exec;
     uint32_t command_tuple, result_command;
     uint32_t entry, entries;
 };
@@ -125,15 +125,19 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
         {.name = "Ok", .fields = &cmd_ok, .field_count = 1, .unnamed = true},
         {.name = "Error", .fields = &cmd_err, .field_count = 1, .unnamed = true}};
     MO_ASSERT(mo_types_define_choice(&f->source, f->result_command, cmd_cases, 2) == MO_TYPES_OK);
-    uint32_t payloads[] = {text,    f->bytes,      f->unit,
-                           names,   f->entries,    f->capabilities[MO_CAP_CONNECTION],
-                           f->unit, f->bytes,      f->capabilities[MO_CAP_DATABASE],
-                           f->unit, f->sqlite_rows};
-    uint32_t *results[] = {&f->result_text,        &f->result_bytes,      &f->result_unit,
-                           &f->result_names,       &f->result_entries,    &f->result_connection,
-                           &f->result_sent,        &f->result_received,   &f->result_database,
-                           &f->result_sqlite_unit, &f->result_sqlite_rows};
-    for (unsigned i = 0; i < 11; i++) {
+    uint32_t exec_parts[2] = {f->integer, f->integer};
+    f->sqlite_exec_tuple = heap_intern(
+        &f->source,
+        (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = exec_parts, .parameter_count = 2});
+    uint32_t payloads[] = {text,    f->bytes,       f->unit,
+                           names,   f->entries,     f->capabilities[MO_CAP_CONNECTION],
+                           f->unit, f->bytes,       f->capabilities[MO_CAP_DATABASE],
+                           f->unit, f->sqlite_rows, f->sqlite_exec_tuple};
+    uint32_t *results[] = {&f->result_text,        &f->result_bytes,       &f->result_unit,
+                           &f->result_names,       &f->result_entries,     &f->result_connection,
+                           &f->result_sent,        &f->result_received,    &f->result_database,
+                           &f->result_sqlite_unit, &f->result_sqlite_rows, &f->result_sqlite_exec};
+    for (unsigned i = 0; i < 12; i++) {
         MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "Result", results[i]) ==
                   MO_TYPES_OK);
         uint32_t err_type = i < 5 ? f->file_error : (i < 8 ? f->network_error : f->sqlite_error);
@@ -287,6 +291,8 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
         return f->result_sqlite_unit;
     case MO_HOST_SQLITE_QUERY:
         return f->result_sqlite_rows;
+    case MO_HOST_SQLITE_EXECUTE_RAW:
+        return f->result_sqlite_exec;
     case MO_HOST_COMMAND_FAKE:
     case MO_HOST_COMMAND_WITHIN:
     case MO_HOST_COMMAND_ALLOW_PROGRAMS:
