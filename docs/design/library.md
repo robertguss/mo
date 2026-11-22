@@ -823,3 +823,103 @@ Functions have no abilities (reference 9.2).
 | Function | Where | Implemented by | Why |
 | --- | --- | --- | --- |
 | `f(a, b)`, calling a function value | instruction | `call_closure`, or `tail_call_closure` in tail position | |
+
+## Arvo.Cookie
+
+`Arvo.Cookie` (`use Arvo.Cookie`) parses `Cookie` headers and appends injection-safe `Set-Cookie` headers in pure Mo.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `default_options()`, `session_options(secure?, max_age)`, `valid_name?(name)`, `valid_value?(value)` | Mo | `lib/arvo/cookie.mo` | RFC 6265 token and value validation |
+| `parse(req)`, `get(req, name)`, `set(res, name, value, opts)`, `clear(res, name, path, secure?)` | Mo | `lib/arvo/cookie.mo` | multi-header parsing and `Set-Cookie` builders |
+
+## Arvo.Session
+
+`Arvo.Session` (`use Arvo.Session`) implements AES-256-GCM encrypted cookies backed by revocable SQLite `arvo_sessions` rows storing SHA-256 token digests.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `default_config(secure?)`, `schema_sql()`, `init_schema(db)` | Mo | `lib/arvo/session.mo` | session configuration and `arvo_sessions` DDL |
+| `create(db, rng, clock, key, member_id, cfg)`, `load(req, db, clock, key, cfg)`, `rotate(db, rng, clock, key, old_id, member_id, cfg)` | Mo | `lib/arvo/session.mo` | AEAD cookie issuance, verification and atomic rotation |
+| `revoke(db, id)`, `revoke_all_for_member(db, member_id)`, `prune_expired(db, clock)`, `attach_cookie(res, val, cfg)`, `clear_cookie(res, cfg)` | Mo | `lib/arvo/session.mo` | revocation, expiry pruning and cookie attachment |
+
+## Arvo.Csrf
+
+`Arvo.Csrf` (`use Arvo.Csrf`) verifies double-submit + session-bound `XSRF-TOKEN` / `X-XSRF-TOKEN` tokens in constant time.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `safe_method?(req)`, `verify(req, session)`, `verify_token(token, session)` | Mo | `lib/arvo/csrf.mo` | constant-time CSRF check compatible with `@inertiajs/react` |
+| `attach_cookie(res, session, secure?)`, `clear_cookie(res, secure?)` | Mo | `lib/arvo/csrf.mo` | readable `XSRF-TOKEN` cookie helpers |
+
+## Arvo.Flash
+
+`Arvo.Flash` (`use Arvo.Flash`) carries AEAD-sealed one-hop notices, alerts and validation error bags across `303 See Other` redirects.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `empty()`, `empty?(data)`, `with_notice(msg)`, `with_alert(msg)`, `with_errors(errs)` | Mo | `lib/arvo/flash.mo` | `FlashData` constructors and predicates |
+| `attach(res, rng, key, data, secure?)`, `take(req, key)`, `clear_if_present(res, had_cookie?, secure?)` | Mo | `lib/arvo/flash.mo` | AES-256-GCM sealing, fail-closed opening and eviction |
+
+## Arvo.Form
+
+`Arvo.Form` (`use Arvo.Form`) parses bounded `application/x-www-form-urlencoded` and binary-safe `multipart/form-data` bodies.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `parse_urlencoded(req)`, `parse_multipart(req, max_bytes)`, `field(fields, name)`, `file(form, field_name)` | Mo | `lib/arvo/form.mo` | bounded form and multipart file upload parsers |
+
+## Arvo.Inertia
+
+`Arvo.Inertia` (`use Arvo.Inertia`) implements the Inertia v2 server protocol with Vite dev HMR and production `manifest.json` asset resolution.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `dev_config(title, dev_url, entry_js, head_extra)`, `version_from_manifest(bytes)`, `config_from_manifest(title, bytes, entry_key, head_extra)` | Mo | `lib/arvo/inertia.mo` | Vite dev and production manifest configuration |
+| `request?(req)`, `escape_html(raw)`, `page_url(req)`, `version_mismatch?(req, cfg)`, `check_version(req, cfg)` | Mo | `lib/arvo/inertia.mo` | Inertia header detection, HTML attribute escaping and `409` version checks |
+| `render(req, cfg, component, props, shared)`, `render_with_status(req, cfg, status, component, props, shared)`, `redirect(target)`, `location(url)`, `validation_error(req, rng, key, fallback_url, errors, secure?)` | Mo | `lib/arvo/inertia.mo` | partial-reload prop filtering, HTML/JSON responses and same-origin `303` error redirects |
+
+## Arvo.Changeset
+
+`Arvo.Changeset` (`use Arvo.Changeset`) accumulates typed field validation errors and formats Inertia error maps.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `new(data)`, `add_error(cs, field, msg)`, `check(cs, field, ok?, msg)`, `valid?(cs)`, `finish(cs)` | Mo | `lib/arvo/changeset.mo` | pure validation accumulator |
+| `require_non_empty`, `require_length`, `require_positive_int`, `require_non_negative_int`, `require_email`, `require_one_of` | Mo | `lib/arvo/changeset.mo` | built-in field validators |
+| `first_errors(errs)`, `errors_json(cs)`, `error_map_json(errs)`, `inertia_errors_json(cs)`, `inertia_error_map_json(errs)` | Mo | `lib/arvo/changeset.mo` | full and flat `useForm().errors` JSON encoders |
+
+## Arvo.Migrations
+
+`Arvo.Migrations` (`use Arvo.Migrations`) runs ordered, SHA-256 checksum-verified SQL migrations tracked in `_arvo_migrations`.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `split_statements(sql)`, `run(db, clock, migrations)`, `applied_versions(db)` | Mo | `lib/arvo/migrations.mo` | trigger-aware SQL splitter and transactional migration runner |
+
+## Arvo.Audit
+
+`Arvo.Audit` (`use Arvo.Audit`) records ULID-ordered `arvo_events` audit entries and checks optimistic concurrency updates.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `schema_sql()`, `init_schema(db)`, `generate_id(rng, clock)`, `ensure_updated(exec)` | Mo | `lib/arvo/audit.mo` | `arvo_events` DDL, Crockford Base32 ULIDs and `version` checks |
+| `record(db, rng, clock, actor_name, action, entity_table, entity_id, before, after, reason, undo)`, `list_recent(db, limit)`, `get_by_id(db, id)` | Mo | `lib/arvo/audit.mo` | audit event insertion and `Sqlite.decode[AuditEntry]` queries |
+
+## Arvo.Auth
+
+`Arvo.Auth` (`use Arvo.Auth`) provides email allowlist checks, CSPRNG-salted password hashing and dual-cookie session/CSRF helpers.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `normalize_email(email)`, `email_allowed?(email, allowlist)`, `hash_password(rng, password)`, `verify_password(password, encoded)` | Mo | `lib/arvo/auth.mo` | normalized allowlist and scrypt password wrappers |
+| `login_response(res, session, cookie_val, cfg)`, `logout_response(res, cfg)`, `require_csrf(req, session)` | Mo | `lib/arvo/auth.mo` | attaches/clears both `arvo_session` and `XSRF-TOKEN` cookies |
+
+## Arvo.WebTest
+
+`Arvo.WebTest` (`use Arvo.WebTest`) wraps `Api.Request` and `Api.Response` in a stateful cookie, CSRF and Inertia v2 test client.
+
+| Function | Where | Implemented by | Why |
+| --- | --- | --- | --- |
+| `new()`, `with_inertia(client, version)`, `without_inertia(client)`, `with_header(client, name, value)` | Mo | `lib/arvo/web-test.mo` | immutable test client builders |
+| `prepare(client, req)`, `prepare_without_csrf(client, req)`, `absorb(client, res)`, `cookie(client, name)`, `redirect_location(res)`, `inertia_page(res)` | Mo | `lib/arvo/web-test.mo` | cookie jar, CSRF injection and Inertia JSON/HTML `data-page` decoding |

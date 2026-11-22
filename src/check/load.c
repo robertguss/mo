@@ -258,8 +258,11 @@ static MO_MUST_USE uint32_t find(const struct loader *l, const char *name) {
     return 0;
 }
 
-static const char *const on_use[] = {"Api",  "Command", "Crypto", "Date",
-                                     "Http", "Json",    "Sqlite", "Unicode16"};
+static const char *const on_use[] = {
+    "Api",          "Arvo.Audit",   "Arvo.Auth", "Arvo.Changeset", "Arvo.Cookie",
+    "Arvo.Csrf",    "Arvo.Flash",   "Arvo.Form", "Arvo.Inertia",   "Arvo.Migrations",
+    "Arvo.Session", "Arvo.WebTest", "Command",   "Crypto",         "Date",
+    "Http",         "Json",         "Sqlite",    "Unicode16"};
 
 static MO_MUST_USE bool loaded_on_use(const char *name) {
     for (size_t i = 0; i < sizeof on_use / sizeof *on_use; i++)
@@ -772,7 +775,8 @@ static MO_MUST_USE struct mo_module_set *parse_modules(struct loader *l) {
         for (uint32_t j = 0; j < items->count; j++)
             if (items->children[j]->kind == MO_S_API)
                 has_api = true;
-        if (!l->out->library[i] && syntax_mentions_sqlite(l->out->modules[i]->tree))
+        if (strcmp(l->items[i].name, "Sqlite") != 0 &&
+            syntax_mentions_sqlite(l->out->modules[i]->tree))
             has_sqlite = true;
     }
     bool need_api = has_api && (find(l, "Api") == 0 || find(l, "Json") == 0);

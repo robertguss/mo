@@ -18,6 +18,7 @@ def main(argv):
         *ROOT.glob("tools/*.mo"),
         *ROOT.glob("tools/*/main.mo"),
         *ROOT.glob("services/mo-*/main.mo"),
+        *ROOT.glob("examples/*/main.mo"),
     ])
     if len(programs) < 15:
         raise SystemExit(f"expected at least 15 programs, found {len(programs)}")
