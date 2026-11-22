@@ -90,7 +90,9 @@ GRAMMAR_CHECK = $(1) --fragment grammar/tests/good/*.mo && \
 	$(1) --fragment --expect-error grammar/tests/bad/*.mo && \
 	$(1) --expect-error grammar/tests/bad-files/*.mo && \
 	$(1) examples/*.mo && \
+	$(1) examples/*/*.mo && \
 	$(1) lib/*.mo && \
+	$(1) lib/*/*.mo && \
 	$(1) tools/*.mo && \
 	$(1) tools/*/*.mo && \
 	$(1) services/*/*.mo && \
@@ -159,7 +161,7 @@ build/generated/tools/embedded.h: ci/embed_docs.py docs/reference/README.md $(GU
 $(BUILD)/debug/src/tools/execute.o $(BUILD)/release/src/tools/execute.o $(BUILD)/sanitize/src/tools/execute.o $(BUILD)/tsan/src/tools/execute.o \
 $(FUZZ_BUILD)/src/tools/execute.o: build/generated/tools/embedded.h $(GUIDE_STAMP)
 
-LIBRARY_SOURCES := $(sort $(wildcard lib/*.mo))
+LIBRARY_SOURCES := $(sort $(wildcard lib/*.mo lib/*/*.mo))
 build/generated/tools/library-sources.h: ci/embed_library.py $(LIBRARY_SOURCES) Makefile
 	python3 ci/embed_library.py $@ $(LIBRARY_SOURCES)
 	@touch $@

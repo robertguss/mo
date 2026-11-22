@@ -372,7 +372,7 @@ def guide_claims(binary):
          "Every `mo` command loads them with your program, `Command`, `Crypto`, `Date`, `Http`, `Json` and `Unicode16` only "
          "when a `use` line names them.",
          "`mo check lib/list.mo` and `mo test lib/list.mo` check and test one of them on its own.")
-    for library_file in sorted((root / "lib").glob("*.mo")):
+    for library_file in sorted((root / "lib").rglob("*.mo")):
         run(binary, ["check", str(library_file)], 0)
         result = run(binary, ["test", str(library_file)], 0, timeout=300)
         assert result.stdout.endswith(b", 0 failed, 0 stopped\n"), (library_file, result.stdout)
@@ -630,6 +630,30 @@ def guide_claims(binary):
             "  assert Json.encode(d) == \"\\\"2026-01-31\\\"\"\n"
             "end\n")
         result = run(binary, ["test", str(source)], 0)
+        assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
+    says("Under `lib/arvo/` (loaded lazily on `use Arvo.*`), the pure-Mo Arvo web framework provides "
+         "`Arvo.Cookie`, `Arvo.Session`",
+         "`Arvo.Csrf`", "`Arvo.Flash`", "`Arvo.Form`", "`Arvo.Inertia`",
+         "`Arvo.Changeset`, `Arvo.Migrations`, `Arvo.Audit`, `Arvo.Auth`, and `Arvo.WebTest`")
+    with tempfile.TemporaryDirectory() as folder:
+        standalone = pathlib.Path(folder) / "mo"
+        shutil.copy2(binary, standalone)
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\n"
+            "use Api\n"
+            "use Arvo.Cookie\n"
+            "use Arvo.Session\n"
+            "use Arvo.WebTest\n\n"
+            "test \"standalone binary loads embedded Arvo.* modules lazily\"\n"
+            "  res = Cookie.set(Api.text_response(200, \"ok\"), \"sid\", \"abc\", Cookie.default_options())\n"
+            "  client = WebTest.absorb(WebTest.new(), res)\n"
+            "  assert WebTest.cookie(client, \"sid\") == Some(\"abc\")\n"
+            "  assert Session.default_config(true).cookie_name == \"arvo_session\"\n"
+            "end\n")
+        result = subprocess.run([str(standalone), "test", str(source)],
+                                cwd=folder, check=False, capture_output=True)
+        assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
         assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
 
 

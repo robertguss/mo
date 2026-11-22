@@ -1,0 +1,24 @@
+{
+  "name": "arvo-starter-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "tsc -b && vite build"
+  },
+  "dependencies": {
+    "@inertiajs/react": "^2.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0"
+  }
+}

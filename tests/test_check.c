@@ -1745,6 +1745,66 @@ static void library_on_use(void) {
         CHECK(set->uses[0][0] == 2);
     }
     finish(&f);
+
+    /* Non-web programs do not eagerly load lib/arvo/ or other on_use modules. */
+    init(&f, 16 << 20);
+    set = mo_load_program(&f.arena, &f.sources, "examples/greet.mo", "lib", &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        bool saw_arvo = false, saw_api = false, saw_sqlite = false;
+        for (uint32_t i = 0; i < set->count; i++) {
+            if (strncmp(set->names[i], "Arvo.", 5) == 0)
+                saw_arvo = true;
+            if (strcmp(set->names[i], "Api") == 0)
+                saw_api = true;
+            if (strcmp(set->names[i], "Sqlite") == 0)
+                saw_sqlite = true;
+        }
+        CHECK(!saw_arvo && !saw_api && !saw_sqlite);
+    }
+    finish(&f);
+
+    /* Arvo.Session loads lazily on use (along with Sqlite when a loaded library module mentions
+     * Sqlite) without pulling in unused Arvo modules; embedded arvo/cookie.mo resolves with NULL
+     * library folder. */
+    const uint8_t arvo_source[] = "module Main\nuse Arvo.Session\n";
+    write_file(entry, arvo_source, sizeof(arvo_source) - 1);
+    init(&f, 32 << 20);
+    set = mo_load_program(&f.arena, &f.sources, entry, "lib", &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        bool saw_session = false, saw_cookie = false, saw_sqlite = false, saw_web_test = false;
+        for (uint32_t i = 0; i < set->count; i++) {
+            if (strcmp(set->names[i], "Arvo.Session") == 0)
+                saw_session = true;
+            if (strcmp(set->names[i], "Arvo.Cookie") == 0)
+                saw_cookie = true;
+            if (strcmp(set->names[i], "Sqlite") == 0)
+                saw_sqlite = true;
+            if (strcmp(set->names[i], "Arvo.WebTest") == 0)
+                saw_web_test = true;
+        }
+        CHECK(saw_session && saw_cookie && saw_sqlite && !saw_web_test);
+    }
+    finish(&f);
+
+    static const uint8_t emb_cookie[] =
+        "module Arvo.Cookie\nexpose SameSite(..)\nenum SameSite\n  Lax\nend\n";
+    static const struct mo_embedded_source emb_files[] = {
+        {"arvo/cookie.mo", emb_cookie, sizeof(emb_cookie) - 1},
+    };
+    const struct mo_embedded_library embedded = {emb_files, 1};
+    const uint8_t emb_entry[] = "module Main\nuse Arvo.Cookie\n";
+    write_file(entry, emb_entry, sizeof(emb_entry) - 1);
+    init(&f, 16 << 20);
+    set =
+        mo_load_program_with_library(&f.arena, &f.sources, entry, NULL, &embedded, NULL, &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        CHECK(set->count == 2 && strcmp(set->names[1], "Arvo.Cookie") == 0 && set->library[1]);
+    }
+    finish(&f);
+
     MO_ASSERT(unlink(entry) == 0 && rmdir(root) == 0);
 }
 
