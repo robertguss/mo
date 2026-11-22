@@ -78,7 +78,7 @@ static struct node *OP(struct node *node, int token) {
 %token SOFT_PORT "port" SOFT_CORS "cors" SOFT_SQLITE "sqlite"
 %token SOFT_AUTH "auth" SOFT_VIA "via"
 %token SOFT_GET "get" SOFT_POST "post" SOFT_PUT "put" SOFT_PATCH "patch" SOFT_DELETE "delete"
-%token SOFT_STATIC "static" SOFT_SCOPE "scope" SOFT_STATUS "status"
+%token SOFT_STATIC "static" SOFT_JOB "job" SOFT_SCOPE "scope" SOFT_STATUS "status"
 
 %start start
 
@@ -123,6 +123,7 @@ identifier
     | SOFT_PATCH
     | SOFT_DELETE
     | SOFT_STATIC
+    | SOFT_JOB
     | SOFT_SCOPE
     | SOFT_STATUS
     ;
@@ -260,6 +261,9 @@ api_clause
     | "actor" identifier ":" type NL        { $$ = MK(K_API_ACTOR, @$, $2, $4); }
     | "auth" type "via" api_handler NL      { $$ = MK(K_API_AUTH, @$, $2, $4); }
     | "static" TEXT "from" TEXT NL          { $$ = MK(K_API_STATIC, @$, $2, $4); }
+    | "job" TEXT api_handler NL             { $$ = MK(K_API_JOB, @$, $2, $3, NULL); }
+    | "job" TEXT api_handler "every" expr NL
+                                            { $$ = MK(K_API_JOB, @$, $2, $3, $5); }
     | api_route
     | api_scope
     | "status" type_name api_status_fields "=" INT NL

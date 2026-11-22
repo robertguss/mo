@@ -194,7 +194,8 @@ static void walk_all(struct walk *w, const struct mo_program *program, const str
 }
 
 bool mo_module_tested(const struct mo_program *program, uint32_t module) {
-    return module == 0 || !program->set->library[module];
+    return module == 0 || (!program->set->library[module] &&
+                           (program->set->dependency == NULL || !program->set->dependency[module]));
 }
 
 const char *mo_list_mutants(struct mo_arena *arena, const struct mo_program *program,

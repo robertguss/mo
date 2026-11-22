@@ -985,7 +985,13 @@ library's `Command`, `Crypto`, `Date`, `Http`, `Json` and `Unicode16` modules ar
 library module reserves its name, so a program can't declare a module named
 `Command`, `Crypto`, `Date`, `FileError`, `Files`, `Http`, `Json`, `List`, `Map`, `Option`, `ReadFiles`,
 `Result`, `Set`, `Text`, `Time` or `Unicode16`. The built-in `Simulation` and
-`Sqlite` modules also reserve their names.
+`Sqlite` modules also reserve their names. When a `mo.toml` manifest sits in
+the entry module's folder or an ancestor folder (with `[package]` `name = "..."`
+and optional `[dependencies]` entries `pkg = { path = "../dir" }` with optional
+`src = "..."`), `use` resolves a module first under the importing package's
+root, then across declared path dependencies (`<dir>/src`, `<dir>/lib` and
+`<dir>`, rejecting malformed manifests, missing folders, dependency cycles or
+ambiguous duplicate modules with E1110), and finally in the built-in library.
 
 ### 10.4 Constants
 
@@ -1209,7 +1215,10 @@ ActorType` (up to 16 distinct actor types), `static "/prefix" from "dir"` (up to
 `ETag`/`If-None-Match` `304`, `X-Content-Type-Options: nosniff` and
 `Cache-Control`), `auth Principal via handler` (where `Principal` is a concrete
 `struct` or `enum` and `handler`, a local `fn` or imported `Module.fn`, returns
-`Result(Principal, Error)`), and `status` clauses (E0108).
+`Result(Principal, Error)`), `job "name" handler` or `job "name" handler every
+Duration` clauses (up to 16 distinct whitespace-free job names with positive
+integer `.second(s)`, `.minute(s)`, `.hour(s)` or `.day(s)` intervals), and
+`status` clauses (E0108).
 
 Each route names an HTTP method, a plain text path template (`""` inside a
 `scope` or starting with `/`), and a non-generic, non-overloaded local `fn` or
@@ -1227,7 +1236,11 @@ clause by parameter name, ignoring a leading `_`), an actor handle (matching an
 `delete`, or at most one `Json` request body parameter on `post`, `put` or
 `patch` decoded strictly with `Json.from_json_strict` so invalid path segments,
 missing or malformed query parameters, malformed JSON and unknown fields answer
-status `422` without calling the handler (E0109).
+status `422` without calling the handler (E0109). Each `job` handler is a
+non-generic, non-overloaded local `fn` or imported `Module.fn` taking `payload:
+Json` first followed by any declared `Sqlite.Database`, `actor` or capability
+parameters in any order and returning `Unit` or `Result(Unit, E)` where `E` has
+`Text` (E0108).
 
 A route returns `Api.Response`, `Unit` (status `204`), a `Json` value (status
 `200`), or `Result` of one of those and either `Api.Response` or a concrete
@@ -1490,7 +1503,8 @@ map of the requests it answers (section 14); `Sqlite.fake()` and
 `Sqlite.in_memory()`, an in-memory SQLite capability (section 14);
 `Command.fake(replies)`, from a map of encoded command exchanges (section 14);
 `Simulation.start(module, at)` for a test service; and
-`ApiTest.send(Module, request, ...)` to dispatch an `Api.Request` directly
+`ApiTest.send(Module, request, ...)` or `ApiTest.run_job(Module, name, payload,
+...)` to dispatch an `Api.Request` or a declared background job directly
 against `Module`'s `api` block in memory with optional fake capabilities
 (synthesizing empty fakes for any capabilities omitted). Fakes are made only
 there, never in a module's constants or its functions. `printed` and
@@ -1714,7 +1728,10 @@ in front of it does, and `mo serve FILE [--port N] [--bind HOST] [--workers N]
 over concurrent HTTP/1.1 keep-alive (defaulting to `127.0.0.1`, `8` workers
 from `1` to `64`, the `api` block's `port` and `.` for `--data`), logging
 sanitized request lines, pooling per-worker SQLite connections with automatic
-rollback on defect, reloading changed `.mo` modules under `--watch`, and
+rollback on defect, running declared `api` background jobs (periodic `every`
+ticks and durable `arvo_jobs` queue rows with exponential-backoff retry and
+stale-lock recovery) in isolated processes, reloading changed `.mo` modules and
+`mo.toml` path dependencies under `--watch`, and
 isolating each request so a handler bug logs a failure and answers status `500`
 without stopping the server. Public HTTP on a service exposes only the service's declared tools. When
 `--admin-socket PATH` is given, `mo serve` binds a mode-0600 Unix domain socket
@@ -2453,7 +2470,7 @@ item        = function | struct | enum | test | service | actor | api | name "="
 service     = "service" NL ("state" type "=" expr NL | "tools" name ("," name)* NL | "every" expr name NL | "token" "from" "env" text NL | promise)* "end" NL
 actor       = "actor" Name NL ("state" type "=" expr NL | "calls" name ("," name)* NL | "every" expr name NL | promise)* "end" NL
 api         = "api" NL api-clause* "end" NL
-api-clause  = "port" digits NL | "cors" text NL | "sqlite" name "from" text NL | "actor" name ":" type NL | "static" text "from" text NL | "auth" type "via" (Name ".")? name NL | "status" Name ("." Name)? ("(" "_" ("," "_")* ")")? "=" digits NL | api-route
+api-clause  = "port" digits NL | "cors" text NL | "sqlite" name "from" text NL | "actor" name ":" type NL | "static" text "from" text NL | "auth" type "via" (Name ".")? name NL | "job" text (Name ".")? name ("every" expr)? NL | "status" Name ("." Name)? ("(" "_" ("," "_")* ")")? "=" digits NL | api-route
 api-route   = ("get" | "post" | "put" | "patch" | "delete") text (Name ".")? name NL | "scope" text NL api-route* "end" NL
 function    = "fn" name "(" params? ")" (":" type)? where? NL (promise | examples)* statement* "end" NL
 params      = name ":" type ("," name ":" type)*

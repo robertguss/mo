@@ -3152,6 +3152,57 @@ static void api_server_checks(void) {
          "static \"/s6\" from \"d6\"\nstatic \"/s7\" from \"d7\"\nstatic \"/s8\" from \"d8\"\n"
          "static \"/s9\" from \"d9\"\nget \"/h\" h\nend\nfn h() : Int\n1\nend\n",
          MO_CODE_API_BLOCK},
+        /* Empty or whitespace job name */
+        {"module Main\nuse Json\napi\njob \"\" j\nget \"/h\" h\nend\n"
+         "fn j(_p: Json) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        {"module Main\nuse Json\napi\njob \"bad name\" j\nget \"/h\" h\nend\n"
+         "fn j(_p: Json) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* Duplicate job names */
+        {"module Main\nuse Json\napi\njob \"sync\" j1\njob \"sync\" j2\nget \"/h\" h\nend\n"
+         "fn j1(_p: Json) : Unit\nUnit\nend\nfn j2(_p: Json) : Unit\nUnit\nend\n"
+         "fn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* Non-positive or sub-second job interval */
+        {"module Main\nuse Json\napi\njob \"sync\" j every 0.seconds\nget \"/h\" h\nend\n"
+         "fn j(_p: Json) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        {"module Main\nuse Json\napi\njob \"sync\" j every 500.milliseconds\nget \"/h\" h\nend\n"
+         "fn j(_p: Json) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* >16 jobs */
+        {"module Main\nuse Json\napi\n"
+         "job \"j1\" j\njob \"j2\" j\njob \"j3\" j\njob \"j4\" j\n"
+         "job \"j5\" j\njob \"j6\" j\njob \"j7\" j\njob \"j8\" j\n"
+         "job \"j9\" j\njob \"j10\" j\njob \"j11\" j\njob \"j12\" j\n"
+         "job \"j13\" j\njob \"j14\" j\njob \"j15\" j\njob \"j16\" j\n"
+         "job \"j17\" j\nget \"/h\" h\nend\n"
+         "fn j(_p: Json) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* Missing or wrong first payload: Json parameter */
+        {"module Main\napi\njob \"sync\" j\nget \"/h\" h\nend\n"
+         "fn j() : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        {"module Main\napi\njob \"sync\" j\nget \"/h\" h\nend\n"
+         "fn j(_x: Int) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* Unsupported job return type or generic handler */
+        {"module Main\nuse Json\napi\njob \"sync\" j\nget \"/h\" h\nend\n"
+         "fn j(_p: Json) : Int\n1\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        {"module Main\nuse Json\napi\njob \"sync\" j\nget \"/h\" h\nend\n"
+         "fn j(_p: Json, _x: T) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* Undeclared Sqlite.Database in job handler */
+        {"module Main\nuse Json\napi\nsqlite db from \"a.db\"\njob \"sync\" j\nget \"/h\" h\nend\n"
+         "fn j(_p: Json, _other: Sqlite.Database) : Unit\nUnit\nend\nfn h() : Int\n1\nend\n",
+         MO_CODE_API_BLOCK},
+        /* ApiTest.run_job outside spec */
+        {"module Main\nuse Json\napi\njob \"sync\" j\nget \"/h\" h\nend\n"
+         "fn j(_p: Json) : Unit\nUnit\nend\n"
+         "fn h() : Int\n_r = ApiTest.run_job(Main, \"sync\", Json.Null)\n1\nend\n",
+         MO_CODE_FAKE_OUTSIDE_SPEC},
     };
     for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); i++) {
         struct fixture f;
@@ -3165,15 +3216,22 @@ static void api_server_checks(void) {
     struct fixture ok;
     init_with_library(
         &ok,
-        "module Main\nuse Api\n"
+        "module Main\nuse Api\nuse Json\n"
         "struct Member\n  login: Text\nend\n"
         "enum AuthErr\n  Denied\nend\n"
+        "enum JobErr\n  SyncFailed\nend\n"
         "api\nport 9000\nsqlite db from \"app.db\"\nstatic \"/assets\" from \"public\"\n"
         "auth Member via check_member\n"
+        "job \"sync\" sync_job every 15.minutes\n"
+        "job \"cleanup\" cleanup_job\n"
         "scope \"/v1\"\nscope \"/items\"\nget \"\" list_items\nget \"/:id\" get_item\nend\nend\n"
         "status Denied = 401\nend\n"
         "fn check_member(_req: Api.Request) : Result(Member, AuthErr)\nOk(Member(login: "
         "\"a\"))\nend\n"
+        "fn sync_job(payload: Json, _db: Sqlite.Database) : Result(Unit, JobErr)\n"
+        "  return Error(SyncFailed) if payload == Json.String(\"fail\")\n"
+        "  Ok(Unit)\nend\n"
+        "fn cleanup_job(_payload: Json, _clock: Clock) : Unit\n  Unit\nend\n"
         "fn list_items(viewer: Option(Member)) : Text\n"
         "  case viewer\n    Some(m): m.login\n    None: \"guest\"\n  end\nend\n"
         "fn get_item(_m: Member, _db: Sqlite.Database, id: Int) : Int\nid\nend\n"
@@ -3181,12 +3239,19 @@ static void api_server_checks(void) {
         "files = Files.in_memory({\"public/app.js\": \"console.log(1)\"})\n"
         "assert ApiTest.send(Main, Api.get(\"/assets/app.js\"), files.read_only).status == 200\n"
         "assert ApiTest.send(Main, Api.get(\"/v1/items\")).status == 200\n"
-        "assert ApiTest.send(Main, Api.get(\"/v1/items/5\")).status == 200\nend\n");
+        "assert ApiTest.send(Main, Api.get(\"/v1/items/5\")).status == 200\n"
+        "assert ApiTest.run_job(Main, \"sync\", Json.Null) == Ok(Unit)\n"
+        "assert ApiTest.run_job(Main, \"sync\", Json.String(\"fail\")) == Error(\"SyncFailed\")\n"
+        "assert ApiTest.run_job(Main, \"cleanup\", Json.Null) == Ok(Unit)\n"
+        "assert ApiTest.run_job(Main, \"missing\", Json.Null) == Error(\"unknown job: missing\")\n"
+        "end\n");
     CHECK(ok.program != NULL && !mo_diags_any(&ok.diags));
     if (ok.program != NULL)
         CHECK(ok.program->api_count == 1 && ok.program->apis[0].port == 9000 &&
               ok.program->apis[0].route_count == 2 && ok.program->apis[0].sqlite_count == 1 &&
-              ok.program->apis[0].static_count == 1 &&
+              ok.program->apis[0].static_count == 1 && ok.program->apis[0].job_count == 2 &&
+              ok.program->apis[0].jobs[0].interval_us == 900 * 1000000 &&
+              ok.program->apis[0].jobs[1].interval_us == 0 &&
               strcmp(ok.program->apis[0].routes[0].path, "/v1/items") == 0 &&
               ok.program->apis[0].routes[0].auth_mode == MO_API_AUTH_OPTIONAL &&
               strcmp(ok.program->apis[0].routes[1].path, "/v1/items/:id") == 0 &&

@@ -1374,12 +1374,169 @@ static void emit_wire_fn(struct lowering *p, const struct mo_checked_api *api,
     wire_fn->fun.body = unpack_req;
 }
 
+static mo_core_expr execute_matched_job(struct lowering *p, const struct mo_checked_api *api,
+                                        const struct mo_checked_api_job *job, mo_core_ty job_ret_ty,
+                                        mo_core_string payload_json_var,
+                                        const mo_core_string *cap_vars,
+                                        const mo_core_string *actor_vars) {
+    p->span = job->syntax->span;
+    bool need_db[MO_LIMIT_API_SQLITES] = {false};
+    for (uint32_t i = 1; i < job->param_count; i++)
+        if (job->params[i].kind == MO_API_PARAM_SQLITE_DB)
+            need_db[job->params[i].index] = true;
+
+    mo_core_string db_vars[MO_LIMIT_API_SQLITES] = {{0}};
+    for (uint32_t s = 0; s < api->sqlite_count; s++)
+        if (need_db[s])
+            db_vars[s] = lower_fresh(p);
+
+    mo_core_string payload_var = lower_fresh(p);
+    const struct mo_symbol *fn_sym = p->program->functions[job->function].signature->function;
+    struct instance *fn_inst =
+        lower_instance(p, fn_sym, (struct mo_type_arguments){0}, NULL, 0, NULL, fn_sym->module, 0);
+    mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
+    call->as.call.name = fn_inst->fun.name;
+    call->as.call.args = api_args(p, job->param_count);
+    call->as.call.args.items[0] = lower_var(p, payload_var);
+    for (uint32_t i = 1; i < job->param_count; i++) {
+        const struct mo_checked_api_param *pm = &job->params[i];
+        if (pm->kind == MO_API_PARAM_SQLITE_DB)
+            call->as.call.args.items[i] = lower_var(p, db_vars[pm->index]);
+        else if (pm->kind == MO_API_PARAM_ACTOR)
+            call->as.call.args.items[i] = lower_var(p, actor_vars[pm->index]);
+        else
+            call->as.call.args.items[i] = lower_var(p, cap_vars[pm->index]);
+    }
+
+    mo_core_expr inner = NULL;
+    if (job->reply == MO_API_JOB_UNIT) {
+        inner = api_let(p, lower_fresh(p), call, api_con1(p, job_ret_ty, "Ok", lower_unit(p)));
+    } else {
+        mo_core_expr rcase = lower_expr(p, MO_CORE_EXPR_CASE);
+        rcase->as.case_.expr = call;
+        rcase->as.case_.arms.count = 2;
+        rcase->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+        mo_core_string uvar = lower_fresh(p), evar = lower_fresh(p);
+        rcase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+        rcase->as.case_.arms.items[0].names =
+            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        rcase->as.case_.arms.items[0].names.items[0] = uvar;
+        rcase->as.case_.arms.items[0].body = api_con1(p, job_ret_ty, "Ok", lower_var(p, uvar));
+        rcase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+        rcase->as.case_.arms.items[1].names =
+            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        rcase->as.case_.arms.items[1].names.items[0] = evar;
+        mo_core_expr err_txt =
+            lower_to_text(p, job->error_text, NULL, api->module, 0, lower_var(p, evar));
+        rcase->as.case_.arms.items[1].body = api_con1(p, job_ret_ty, "Error", err_txt);
+        inner = rcase;
+    }
+
+    for (uint32_t s = api->sqlite_count; s != 0; s--) {
+        uint32_t slot = s - 1;
+        if (!need_db[slot])
+            continue;
+        MO_ASSERT(api->capability_count > 0 && strcmp(api->capabilities[0], "Sqlite") == 0);
+        mo_core_expr_list open_args = api_args(p, 2);
+        open_args.items[0] = lower_var(p, cap_vars[0]);
+        open_args.items[1] = api_cstr(p, api->sqlites[slot].path);
+        mo_core_expr opened =
+            lower_prim(p,
+                       (struct mo_core_prim){.tag = MO_CORE_PRIM_IO,
+                                             .as.io = {MO_CORE_IO_OP_SQLITE_OPEN, false}},
+                       open_args);
+        mo_core_expr dcase = lower_expr(p, MO_CORE_EXPR_CASE);
+        dcase->as.case_.expr = opened;
+        dcase->as.case_.arms.count = 2;
+        dcase->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+        mo_core_string derr = lower_fresh(p);
+        dcase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+        dcase->as.case_.arms.items[0].names =
+            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        dcase->as.case_.arms.items[0].names.items[0] = db_vars[slot];
+        dcase->as.case_.arms.items[0].body = inner;
+        dcase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+        dcase->as.case_.arms.items[1].names =
+            (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+        dcase->as.case_.arms.items[1].names.items[0] = derr;
+        dcase->as.case_.arms.items[1].body =
+            api_lib_call1(p, "sqlite_job_error", lower_var(p, derr));
+        inner = dcase;
+    }
+
+    mo_core_expr parsed = api_lib_call1(p, "parse_job_payload", lower_var(p, payload_json_var));
+    mo_core_expr pcase = lower_expr(p, MO_CORE_EXPR_CASE);
+    pcase->as.case_.expr = parsed;
+    pcase->as.case_.arms.count = 2;
+    pcase->as.case_.arms.items = LOWER_NEW(p, struct mo_core_arm, 2);
+    mo_core_string perr = lower_fresh(p);
+    pcase->as.case_.arms.items[0].ctor = lower_text(p, "Ok");
+    pcase->as.case_.arms.items[0].names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+    pcase->as.case_.arms.items[0].names.items[0] = payload_var;
+    pcase->as.case_.arms.items[0].body = inner;
+    pcase->as.case_.arms.items[1].ctor = lower_text(p, "Error");
+    pcase->as.case_.arms.items[1].names = (mo_core_string_list){LOWER_NEW(p, mo_core_string, 1), 1};
+    pcase->as.case_.arms.items[1].names.items[0] = perr;
+    pcase->as.case_.arms.items[1].body = api_con1(p, job_ret_ty, "Error", lower_var(p, perr));
+    return pcase;
+}
+
+static void emit_job_fn(struct lowering *p, const struct mo_checked_api *api) {
+    static const struct mo_source_type unit_src = {
+        .kind = MO_SOURCE_NAMED, .name = "Unit", .module = UINT32_MAX};
+    static const struct mo_source_type text_src = {
+        .kind = MO_SOURCE_NAMED, .name = "Text", .module = UINT32_MAX};
+    static const struct mo_source_type *const res_args[2] = {&unit_src, &text_src};
+    static const struct mo_source_type res_src = {.kind = MO_SOURCE_NAMED,
+                                                  .name = "Result",
+                                                  .module = UINT32_MAX,
+                                                  .count = 2,
+                                                  .arguments = res_args};
+    mo_core_ty text_ty = builtin_ty(p, "Text");
+    mo_core_ty job_ret_ty = lower_type(p, &res_src, NULL);
+
+    size_t param_count = 2 + api->capability_count + api->actor_count;
+    struct mo_core_param *params = LOWER_NEW(p, struct mo_core_param, param_count);
+    mo_core_string *cap_vars =
+        LOWER_NEW(p, mo_core_string, api->capability_count == 0 ? 1 : api->capability_count);
+    mo_core_string *actor_vars =
+        LOWER_NEW(p, mo_core_string, api->actor_count == 0 ? 1 : api->actor_count);
+    params[0] = (struct mo_core_param){lower_fresh(p), text_ty}; /* job_name */
+    params[1] = (struct mo_core_param){lower_fresh(p), text_ty}; /* payload_json */
+    for (uint32_t c = 0; c < api->capability_count; c++) {
+        cap_vars[c] = lower_fresh(p);
+        params[2 + c] = (struct mo_core_param){cap_vars[c], builtin_ty(p, api->capabilities[c])};
+    }
+    mo_core_ty sim_ty = builtin_ty(p, "Simulation");
+    for (uint32_t a = 0; a < api->actor_count; a++) {
+        actor_vars[a] = lower_fresh(p);
+        params[2 + api->capability_count + a] = (struct mo_core_param){actor_vars[a], sim_ty};
+    }
+
+    struct instance *job_fn =
+        new_generated_fn(p, api->module, ".%api.job", param_count, params, job_ret_ty);
+
+    mo_core_expr chain = api_lib_call1(p, "unknown_job_error", lower_var(p, params[0].name));
+    for (uint32_t j = api->job_count; j != 0; j--) {
+        const struct mo_checked_api_job *job = &api->jobs[j - 1];
+        mo_core_expr branch = lower_expr(p, MO_CORE_EXPR_IF);
+        branch->as.if_.cond =
+            text_eq(p, text_ty, lower_var(p, params[0].name), api_cstr(p, job->name));
+        branch->as.if_.then_ =
+            execute_matched_job(p, api, job, job_ret_ty, params[1].name, cap_vars, actor_vars);
+        branch->as.if_.else_ = chain;
+        chain = branch;
+    }
+    job_fn->fun.body = chain;
+}
+
 void lower_apis(struct lowering *p) {
     for (uint32_t i = 0; i < p->program->api_count; i++) {
         const struct mo_checked_api *api = &p->program->apis[i];
         p->span = api->syntax->span;
         struct instance *oa = emit_openapi_fn(p, api);
         emit_dispatch_fns(p, api, oa);
+        emit_job_fn(p, api);
     }
 }
 
@@ -1600,4 +1757,70 @@ mo_core_expr lower_apitest_send(struct lowering *p, uint32_t api_index, mo_core_
     for (size_t i = supplied; i != 0; i--)
         body = api_let(p, sup_vars[i - 1], args.items[i], body);
     return api_let(p, req_var, args.items[0], body);
+}
+
+mo_core_expr lower_apitest_run_job(struct lowering *p, uint32_t api_index, mo_core_expr_list args,
+                                   const struct mo_source_type *const *arg_types) {
+    MO_ASSERT(api_index < p->program->api_count && args.count >= 2);
+    const struct mo_checked_api *api = &p->program->apis[api_index];
+
+    size_t supplied = args.count - 2;
+    mo_core_string *sup_vars = LOWER_NEW(p, mo_core_string, supplied == 0 ? 1 : supplied);
+    for (size_t i = 0; i < supplied; i++)
+        sup_vars[i] = lower_fresh(p);
+
+    mo_core_string name_var = lower_fresh(p);
+    mo_core_string payload_var = lower_fresh(p);
+    mo_core_expr payload_text = api_lib_call1(p, "encode_job_payload", lower_var(p, payload_var));
+
+    size_t call_arity = 2 + api->capability_count + api->actor_count;
+    mo_core_expr call = lower_expr(p, MO_CORE_EXPR_CALL);
+    call->as.call.name = lower_concat(p, lower_text(p, p->program->set->names[api->module]),
+                                      ".%api.job", lower_text(p, ""));
+    call->as.call.args = api_args(p, call_arity);
+    call->as.call.args.items[0] = lower_var(p, name_var);
+    call->as.call.args.items[1] = payload_text;
+
+    for (uint32_t c = 0; c < api->capability_count; c++) {
+        const char *wanted = api->capabilities[c];
+        mo_core_expr chosen = NULL;
+        for (size_t i = 0; i < supplied; i++)
+            if (arg_types[2 + i]->declaration == NULL &&
+                strcmp(arg_types[2 + i]->name, wanted) == 0) {
+                chosen = lower_var(p, sup_vars[i]);
+                break;
+            }
+        call->as.call.args.items[2 + c] = chosen != NULL ? chosen : default_fake_cap(p, wanted);
+    }
+
+    for (uint32_t a = 0; a < api->actor_count; a++) {
+        const struct mo_symbol *wanted_actor = api->actors[a].type->declaration;
+        mo_core_expr chosen = NULL;
+        for (size_t i = 0; i < supplied; i++)
+            if (arg_types[2 + i]->declaration == wanted_actor) {
+                chosen = lower_var(p, sup_vars[i]);
+                break;
+            }
+        if (chosen == NULL) {
+            mo_core_expr tlit = lower_unit(p);
+            tlit->as.lit->tag = MO_CORE_LIT_TIME;
+            tlit->as.lit->as.time.digits =
+                lower_text(p, "1767225600000000"); /* 2026-01-01T00:00:00Z */
+            mo_core_expr_list sargs = api_args(p, 1);
+            sargs.items[0] = tlit;
+            struct mo_core_sim_op op = {
+                .tag = MO_SIM_START,
+                .descriptor = {.digits = lower_number(p, api->actors[a].service_index)},
+                .tool = {.digits = lower_text(p, "0")}};
+            chosen =
+                lower_prim(p, (struct mo_core_prim){.tag = MO_CORE_PRIM_SIM, .as.sim = op}, sargs);
+        }
+        call->as.call.args.items[2 + api->capability_count + a] = chosen;
+    }
+
+    mo_core_expr body = call;
+    for (size_t i = supplied; i != 0; i--)
+        body = api_let(p, sup_vars[i - 1], args.items[2 + i - 1], body);
+    body = api_let(p, payload_var, args.items[1], body);
+    return api_let(p, name_var, args.items[0], body);
 }

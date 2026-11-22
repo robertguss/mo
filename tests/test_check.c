@@ -2704,6 +2704,180 @@ static void query_entries(void) {
     finish(&f);
 }
 
+static void write_str(const char *path, const char *text) {
+    write_file(path, (const uint8_t *)text, strlen(text));
+}
+
+static void package_manifests(void) {
+    char ws[] = "/tmp/mo-check-manifest-XXXXXX";
+    MO_ASSERT(mkdtemp(ws) != NULL);
+
+    char pbuf[384], entry[384], manifest[384];
+    /* Set up dep_leaf (default root <dep>), dep_lib (<dep>/lib), dep_src (<dep>/src + nested +
+     * transitive dep_leaf), and dep_custom (src = "custom"). */
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_leaf", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_leaf/leaf-mod.mo", ws);
+    write_str(pbuf, "module LeafMod\nexpose leaf_val\nfn leaf_val() : Int\n  10\nend\n");
+
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_lib", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_lib/lib", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_lib/lib/lib-pkg.mo", ws);
+    write_str(pbuf, "module LibPkg\nexpose lib_val\nfn lib_val() : Int\n  20\nend\n");
+
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_src", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_src/src", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_src/src/alpha", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_src/mo.toml", ws);
+    write_str(pbuf, "# transitive dependency\n[package]\nname = \"dep-src\"\nversion = \"0.1.0\"\n"
+                    "[dependencies]\nleaf = { path = \"../dep_leaf\" }\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_src/src/alpha.mo", ws);
+    write_str(pbuf, "module Alpha\nexpose alpha_val\nuse Alpha.Sub\nuse LeafMod\n"
+                    "fn alpha_val() : Int\n  Sub.sub_val() + LeafMod.leaf_val()\nend\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_src/src/alpha/sub.mo", ws);
+    write_str(pbuf, "module Alpha.Sub\nexpose sub_val\nfn sub_val() : Int\n  5\nend\n");
+
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_custom", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_custom/custom", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_custom/custom/custom-mod.mo", ws);
+    write_str(pbuf, "module CustomMod\nexpose custom_val\nfn custom_val() : Int\n  7\nend\n");
+
+    /* 1. Upward mo.toml discovery from app/cmd/main.mo + multi-root + transitive + local shadow */
+    (void)snprintf(pbuf, sizeof pbuf, "%s/app", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/app/cmd", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(manifest, sizeof manifest, "%s/app/mo.toml", ws);
+    write_str(manifest, "# app manifest\n[package]\nname = \"my-app\"\n\n[dependencies]\n"
+                        "alpha = { path = \"../dep_src\" } # inline comment\n"
+                        "lib_pkg = { path = \"../dep_lib\" }\n"
+                        "custom = { path = \"../dep_custom\", src = \"custom\" }\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/app/cmd/local-helper.mo", ws);
+    write_str(pbuf, "module LocalHelper\nexpose local_val\nfn local_val() : Int\n  1\nend\n");
+    (void)snprintf(entry, sizeof entry, "%s/app/cmd/main.mo", ws);
+    write_str(entry, "module Main\nuse Alpha\nuse LibPkg\nuse CustomMod\nuse LocalHelper\n"
+                     "fn main() : Int\n"
+                     "  Alpha.alpha_val() + LibPkg.lib_val() + CustomMod.custom_val() + "
+                     "LocalHelper.local_val()\nend\n");
+
+    struct fixture f;
+    init(&f, MO_CLI_CHECK_SIZE);
+    struct mo_module_set *set = mo_load_program(&f.syntax, &f.sources, entry, "lib", &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        CHECK(set->manifest_count == 2);
+        struct mo_program *prog = mo_check(&f.arena, set, &f.diags);
+        CHECK(prog != NULL && !mo_diags_any(&f.diags));
+        bool saw_dep = false, local_not_dep = true;
+        for (uint32_t i = 0; i < set->count; i++) {
+            if (strcmp(set->names[i], "Alpha") == 0 || strcmp(set->names[i], "LeafMod") == 0)
+                saw_dep = saw_dep || set->dependency[i];
+            if (strcmp(set->names[i], "Main") == 0 || strcmp(set->names[i], "LocalHelper") == 0)
+                local_not_dep = local_not_dep && !set->dependency[i];
+        }
+        CHECK(saw_dep && local_not_dep);
+    }
+    finish(&f);
+
+    /* 2. Local module wins over dependency; Arvo.* in mo.toml overrides embedded lib/arvo/ */
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_arvo", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_arvo/src", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_arvo/src/arvo", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_arvo/src/arvo/cookie.mo", ws);
+    write_str(pbuf,
+              "module Arvo.Cookie\nexpose external_arvo\nfn external_arvo() : Int\n  99\nend\n");
+    write_str(manifest, "[package]\nname = \"override-app\"\n[dependencies]\n"
+                        "arvo = { path = \"../dep_arvo\" }\nalpha = { path = \"../dep_src\" }\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/app/cmd/alpha.mo", ws);
+    write_str(pbuf, "module Alpha\nexpose local_alpha\nfn local_alpha() : Int\n  42\nend\n");
+    write_str(entry, "module Main\nuse Alpha\nuse Arvo.Cookie\nfn main() : Int\n"
+                     "  Alpha.local_alpha() + Cookie.external_arvo()\nend\n");
+    init(&f, MO_CLI_CHECK_SIZE);
+    set = mo_load_program(&f.syntax, &f.sources, entry, "lib", &f.diags);
+    CHECK(set != NULL && f.diags.count == 0);
+    if (set != NULL) {
+        struct mo_program *prog = mo_check(&f.arena, set, &f.diags);
+        CHECK(prog != NULL && !mo_diags_any(&f.diags));
+    }
+    finish(&f);
+    MO_ASSERT(unlink(pbuf) == 0);
+
+    /* 3. Ambiguous module across two dependencies is rejected with E1110 */
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_dup1", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_dup1/shared.mo", ws);
+    write_str(pbuf, "module Shared\nexpose v\nfn v() : Int\n1\nend\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_dup2", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/dep_dup2/shared.mo", ws);
+    write_str(pbuf, "module Shared\nexpose v\nfn v() : Int\n2\nend\n");
+    write_str(manifest, "[package]\nname = \"ambig\"\n[dependencies]\n"
+                        "d1 = { path = \"../dep_dup1\" }\nd2 = { path = \"../dep_dup2\" }\n");
+    write_str(entry, "module Main\nuse Shared\nfn main() : Int\nShared.v()\nend\n");
+    init(&f, MO_CLI_CHECK_SIZE);
+    CHECK(mo_load_program(&f.syntax, &f.sources, entry, "lib", &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PACKAGE_MANIFEST);
+    finish(&f);
+
+    /* 4. Circular mo.toml dependency graph (cyc_a -> cyc_b -> cyc_a) */
+    (void)snprintf(pbuf, sizeof pbuf, "%s/cyc_a", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/cyc_b", ws);
+    MO_ASSERT(mkdir(pbuf, 0700) == 0);
+    (void)snprintf(pbuf, sizeof pbuf, "%s/cyc_a/mo.toml", ws);
+    write_str(pbuf, "[package]\nname = \"a\"\n[dependencies]\nb = { path = \"../cyc_b\" }\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/cyc_b/mo.toml", ws);
+    write_str(pbuf, "[package]\nname = \"b\"\n[dependencies]\na = { path = \"../cyc_a\" }\n");
+    (void)snprintf(pbuf, sizeof pbuf, "%s/cyc_a/main.mo", ws);
+    write_str(pbuf, "module Main\nfn main()\nend\n");
+    init(&f, MO_CLI_CHECK_SIZE);
+    CHECK(mo_load_program(&f.syntax, &f.sources, pbuf, "lib", &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PACKAGE_MANIFEST);
+    finish(&f);
+
+    /* 5. Malformed TOML, unknown section, duplicate key, empty path, missing dir, and NUL byte */
+    const char *bad_manifests[] = {
+        "[broken\n",
+        "[workspace]\nname = \"x\"\n",
+        "orphan = \"x\"\n",
+        "[package]\nversion = \"0.1.0\"\n",
+        "[package]\nname = \"\"\n",
+        ("[package]\nname = \"app\"\n[dependencies]\na = { path = \"../dep_leaf\" }\n"
+         "a = { path = \"../dep_lib\" }\n"),
+        "[package]\nname = \"app\"\n[dependencies]\na = { path = \"\" }\n",
+        "[package]\nname = \"app\"\n[dependencies]\na = { path = \"../no_such_dir\" }\n",
+        "[package]\nname = \"app\"\n[dependencies]\na = {}\n",
+    };
+    write_str(entry, "module Main\nfn main()\nend\n");
+    for (size_t i = 0; i < sizeof bad_manifests / sizeof bad_manifests[0]; i++) {
+        write_str(manifest, bad_manifests[i]);
+        init(&f, MO_CLI_CHECK_SIZE);
+        CHECK(mo_load_program(&f.syntax, &f.sources, entry, "lib", &f.diags) == NULL);
+        CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PACKAGE_MANIFEST);
+        finish(&f);
+    }
+
+    static const uint8_t nul_manifest[] = "[package]\nname = \"app\"\0\n";
+    write_file(manifest, nul_manifest, sizeof nul_manifest - 1);
+    init(&f, MO_CLI_CHECK_SIZE);
+    CHECK(mo_load_program(&f.syntax, &f.sources, entry, "lib", &f.diags) == NULL);
+    CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_PACKAGE_MANIFEST);
+    finish(&f);
+
+    char cmd[512];
+    MO_ASSERT(snprintf(cmd, sizeof cmd, "rm -rf '%s'", ws) > 0 && system(cmd) == 0);
+}
+
 static void run_tests(void *argument) {
     (void)argument;
     load_graph();
@@ -2740,6 +2914,7 @@ static void run_tests(void *argument) {
     import_scaling();
     source_limits();
     query_entries();
+    package_manifests();
 }
 
 int main(void) {

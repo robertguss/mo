@@ -872,6 +872,7 @@ SPEC_CASES["api-server"] = (body[len("module Main\n"):], {
     "Main.test.6": ["returned", "Unit"],
     "Main.test.7": ["returned", "Unit"],
     "Main.test.8": ["returned", "Unit"],
+    "Main.test.9": ["returned", "Unit"],
     None: ["returned", "0"],
 })
 

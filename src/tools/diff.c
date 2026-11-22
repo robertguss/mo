@@ -564,7 +564,7 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
         cap += p->services[i].tool_count + p->services[i].timer_count + 4;
     for (uint32_t i = 0; i < p->api_count; i++)
         cap += p->apis[i].route_count + p->apis[i].sqlite_count + p->apis[i].actor_count +
-               p->apis[i].static_count + 4;
+               p->apis[i].static_count + p->apis[i].job_count + 4;
     struct pub_item *items = mo_arena_allocate_array(arena, cap == 0 ? 1 : cap, sizeof *items,
                                                      _Alignof(struct pub_item));
     MO_ASSERT(items != NULL);
@@ -736,6 +736,29 @@ static uint32_t collect_public_surface(struct mo_arena *arena, const struct side
             MO_ASSERT(bok);
             items[n++] =
                 (struct pub_item){"api_static", copy_buf_cstr(arena, &nb), api->statics[st].dir};
+        }
+        for (uint32_t jb = 0; jb < api->job_count; jb++) {
+            const struct mo_checked_api_job *job = &api->jobs[jb];
+            const struct mo_checked_function *fn = &p->functions[job->function];
+            mo_buffer_clear(&nb);
+            mo_buffer_clear(&sb);
+            bool bok =
+                mo_buffer_append_text(&nb, "api.job.") && mo_buffer_append_text(&nb, job->name);
+            if (bok && job->has_schedule) {
+                const struct mo_syntax *iv = job->syntax->children[2];
+                const struct mo_source *src = &s->sources.files[iv->span.file];
+                bok = mo_buffer_append_text(&sb, "[every ") &&
+                      mo_buffer_append(&sb, src->bytes + iv->span.start,
+                                       iv->span.end - iv->span.start) &&
+                      mo_buffer_append_text(&sb, "] ");
+            } else if (bok) {
+                bok = mo_buffer_append_text(&sb, "[on-demand] ");
+            }
+            bok = bok && mo_buffer_append_text(&sb, fn->signature->function->name) &&
+                  format_function_sig(p, fn->signature, &sb);
+            MO_ASSERT(bok);
+            items[n++] =
+                (struct pub_item){"api_job", copy_buf_cstr(arena, &nb), copy_buf_cstr(arena, &sb)};
         }
         static const char *const mnames[] = {"GET", "POST", "PUT", "PATCH", "DELETE"};
         for (uint32_t r = 0; r < api->route_count; r++) {

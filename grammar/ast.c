@@ -326,6 +326,7 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
     case K_SERVICE_EVERY:
     case K_SERVICE_TOKEN:
     case K_API:
+    case K_API_JOB:
     case K_API_SCOPE:
     case K_ANCHOR:
     case K_EXAMPLES:

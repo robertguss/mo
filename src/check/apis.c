@@ -29,6 +29,7 @@ struct api_check {
     struct api_type_pair *equal;
     const struct mo_source_type *req_type;
     const struct mo_source_type *res_type;
+    const struct mo_source_type *json_type;
     uint32_t *functions;
     bool cap_used[API_CAP_KIND_COUNT];
     bool failed;
@@ -163,6 +164,26 @@ api_prove_json(struct api_check *p, const struct mo_source_type *type, uint16_t 
     *p->abilities->work = 0;
     const struct mo_ability_implementation *proof =
         mo_prove_ability(p->abilities, type, MO_SOURCE_JSON);
+    if (proof != NULL)
+        return proof;
+    uint16_t err = p->abilities->error >= 1000 ? p->abilities->error : fallback_code;
+    const char *msg = p->abilities->error >= 1000 ? p->abilities->message : fallback_msg;
+    const char *rsn = p->abilities->error >= 1000 ? p->abilities->reason : fallback_reason;
+    *p->abilities = (struct mo_ability_context){.arena = p->abilities->arena,
+                                                .interfaces = p->abilities->interfaces,
+                                                .signatures = p->abilities->signatures,
+                                                .work = p->abilities->work};
+    bool reported = api_report(p, err, msg, rsn);
+    (void)reported;
+    return NULL;
+}
+
+static MO_MUST_USE const struct mo_ability_implementation *
+api_prove_text(struct api_check *p, const struct mo_source_type *type, uint16_t fallback_code,
+               const char *fallback_msg, const char *fallback_reason) {
+    *p->abilities->work = 0;
+    const struct mo_ability_implementation *proof =
+        mo_prove_ability(p->abilities, type, MO_SOURCE_TEXT);
     if (proof != NULL)
         return proof;
     uint16_t err = p->abilities->error >= 1000 ? p->abilities->error : fallback_code;
@@ -991,6 +1012,228 @@ static MO_MUST_USE bool check_route_clause(struct api_check *p, const struct mo_
     return true;
 }
 
+static MO_MUST_USE bool valid_job_name(const uint8_t *bytes, size_t len) {
+    if (len == 0 || len > 128)
+        return false;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t c = bytes[i];
+        if (c <= 0x20 || c >= 0x7f)
+            return false;
+    }
+    return true;
+}
+
+static MO_MUST_USE bool parse_job_interval_us(struct api_check *p, const struct mo_syntax *node,
+                                              uint64_t *out_us) {
+    p->span = node->span;
+    if (node->kind != MO_S_FIELD_ACCESS || node->count != 2 ||
+        node->children[0]->kind != MO_S_INT || node->children[1]->kind != MO_S_NAME) {
+        return api_report(
+            p, MO_CODE_API_BLOCK,
+            "an api job schedule must be a positive integer duration such as 15.minutes",
+            "Write every <N>.seconds, <N>.minutes, <N>.hours or <N>.days.");
+    }
+    const struct mo_syntax *unit_node = node->children[1];
+    size_t ulen = unit_node->span.end - unit_node->span.start;
+    uint64_t unit_us = 0;
+    if ((ulen == 6 && memcmp(unit_node->text, "second", 6) == 0) ||
+        (ulen == 7 && memcmp(unit_node->text, "seconds", 7) == 0)) {
+        unit_us = UINT64_C(1000000);
+    } else if ((ulen == 6 && memcmp(unit_node->text, "minute", 6) == 0) ||
+               (ulen == 7 && memcmp(unit_node->text, "minutes", 7) == 0)) {
+        unit_us = UINT64_C(60000000);
+    } else if ((ulen == 4 && memcmp(unit_node->text, "hour", 4) == 0) ||
+               (ulen == 5 && memcmp(unit_node->text, "hours", 5) == 0)) {
+        unit_us = UINT64_C(3600000000);
+    } else if ((ulen == 3 && memcmp(unit_node->text, "day", 3) == 0) ||
+               (ulen == 4 && memcmp(unit_node->text, "days", 4) == 0)) {
+        unit_us = UINT64_C(86400000000);
+    } else {
+        p->span = unit_node->span;
+        return api_report(p, MO_CODE_API_BLOCK,
+                          "an api job schedule unit must be seconds, minutes, hours or days",
+                          "Use .second(s), .minute(s), .hour(s) or .day(s) on a positive integer.");
+    }
+
+    const struct mo_syntax *lit = node->children[0];
+    const uint8_t *bytes = lit->text;
+    uint32_t len = lit->span.end - lit->span.start;
+    uint32_t base = 10, pos = 0;
+    if (len > 2 && bytes[0] == '0' && (bytes[1] == 'x' || bytes[1] == 'b')) {
+        base = bytes[1] == 'x' ? 16u : 2u;
+        pos = 2;
+    }
+    uint64_t max_count = (uint64_t)INT64_MAX / unit_us;
+    uint64_t val = 0;
+    bool any_digit = false;
+    for (; pos < len; pos++) {
+        if (!api_work(p, 1))
+            return false;
+        uint8_t c = bytes[pos];
+        if (c == '_')
+            continue;
+        unsigned d = c >= '0' && c <= '9'   ? (unsigned)(c - '0')
+                     : c >= 'a' && c <= 'f' ? (unsigned)(c - 'a') + 10u
+                     : c >= 'A' && c <= 'F' ? (unsigned)(c - 'A') + 10u
+                                            : 99u;
+        if (d >= base || val > (max_count - d) / base) {
+            p->span = lit->span;
+            return api_report(p, MO_CODE_API_BLOCK,
+                              "an api job interval must be a positive integer duration in range",
+                              "Use an integer duration of at least 1 second.");
+        }
+        any_digit = true;
+        val = val * base + d;
+    }
+    if (!any_digit || val == 0) {
+        p->span = lit->span;
+        return api_report(p, MO_CODE_API_BLOCK, "an api job interval must be at least 1",
+                          "Use a positive integer duration such as 1.second or 15.minutes.");
+    }
+    *out_us = val * unit_us;
+    return true;
+}
+
+static MO_MUST_USE bool check_job_clause(struct api_check *p, const struct mo_syntax *clause,
+                                         const struct mo_checked_api_job *jobs, uint32_t job_idx,
+                                         struct mo_checked_api_job *out) {
+    p->span = clause->children[0]->span;
+    struct mo_map_literal_key jkey;
+    if (!decode_plain_text(p, clause->children[0], &jkey))
+        return false;
+    if (!valid_job_name(jkey.bytes, jkey.length))
+        return api_report(p, MO_CODE_API_BLOCK,
+                          "an api job name must be a nonempty ASCII identifier without whitespace",
+                          "Use a concise job name such as \"mercury.sync\" or \"csv.import\".");
+    const char *jname = api_copy_text(p, jkey.bytes, jkey.length);
+    if (jname == NULL)
+        return false;
+    for (uint32_t prev = 0; prev < job_idx; prev++)
+        if (strcmp(jobs[prev].name, jname) == 0)
+            return api_report(p, MO_CODE_API_BLOCK,
+                              "an api block declares two jobs with the same name",
+                              "Give each job clause in an api block a distinct name.");
+
+    bool has_schedule = clause->children[2] != NULL;
+    uint64_t interval_us = 0;
+    if (has_schedule && !parse_job_interval_us(p, clause->children[2], &interval_us))
+        return false;
+
+    const struct mo_function_signature *sig = NULL;
+    uint32_t fn_idx = 0;
+    if (!resolve_api_fn(p, clause->children[1], MO_CODE_API_BLOCK, "job", &sig, &fn_idx))
+        return false;
+
+    const struct mo_syntax *fn_decl = sig->function->declaration;
+    const struct mo_syntax *param_nodes = fn_decl->children[1];
+    uint32_t param_count = param_nodes->count;
+    if (param_count == 0 || !api_same_type(p, sig->type->arguments[0], p->json_type, 0)) {
+        p->span = param_count > 0 ? param_nodes->children[0]->span : clause->children[1]->span;
+        return api_report(p, MO_CODE_API_BLOCK,
+                          "an api job handler's first parameter must be payload: Json",
+                          "Write fn run(payload: Json, ...) : Result(Unit, E) or : Unit.");
+    }
+
+    struct mo_checked_api_param *params =
+        api_alloc(p, param_count, sizeof(*params), _Alignof(struct mo_checked_api_param));
+    if (params == NULL)
+        return false;
+    const char *p0_name = api_syntax_cstr(p, param_nodes->children[0]->children[0]);
+    if (p0_name == NULL)
+        return false;
+    params[0] = (struct mo_checked_api_param){
+        .kind = MO_API_PARAM_BODY, .name = p0_name, .type = sig->type->arguments[0]};
+
+    uint32_t seen_caps = 0, seen_dbs = 0, seen_actors = 0;
+    for (uint32_t i = 1; i < param_count; i++) {
+        const struct mo_syntax *pnode = param_nodes->children[i];
+        p->span = pnode->span;
+        const char *pname = api_syntax_cstr(p, pnode->children[0]);
+        if (pname == NULL)
+            return false;
+        const struct mo_source_type *ptype = sig->type->arguments[i];
+        if (api_native_type(ptype, "Sqlite.Database")) {
+            uint32_t db_slot = 0;
+            if (!find_sqlite_slot(p->api, pname, &db_slot))
+                return api_report(
+                    p, MO_CODE_API_BLOCK,
+                    "an api job Sqlite.Database parameter has no matching sqlite clause",
+                    "Declare sqlite <name> from \"<path>\" in the api block with the same name.");
+            if ((seen_dbs & (UINT32_C(1) << db_slot)) != 0)
+                return api_report(p, MO_CODE_API_BLOCK,
+                                  "an api job handler takes the same sqlite database twice", NULL);
+            seen_dbs |= UINT32_C(1) << db_slot;
+            params[i] = (struct mo_checked_api_param){
+                .kind = MO_API_PARAM_SQLITE_DB, .name = pname, .type = ptype, .index = db_slot};
+            continue;
+        }
+        if (is_actor_type(ptype)) {
+            uint32_t actor_slot = 0;
+            if (!find_actor_slot(p, pname, ptype, &actor_slot))
+                return p->failed
+                           ? false
+                           : api_report(p, MO_CODE_API_BLOCK,
+                                        "an api job actor parameter has no matching actor clause",
+                                        "Declare actor <name>: <ActorType> in the api block with "
+                                        "the same name and type.");
+            if ((seen_actors & (UINT32_C(1) << actor_slot)) != 0)
+                return api_report(p, MO_CODE_API_BLOCK,
+                                  "an api job handler takes the same actor twice", NULL);
+            seen_actors |= UINT32_C(1) << actor_slot;
+            params[i] = (struct mo_checked_api_param){
+                .kind = MO_API_PARAM_ACTOR, .name = pname, .type = ptype, .index = actor_slot};
+            continue;
+        }
+        uint32_t cap_slot = api_cap_slot(ptype);
+        if (cap_slot != UINT32_MAX) {
+            if ((seen_caps & (UINT32_C(1) << cap_slot)) != 0)
+                return api_report(p, MO_CODE_API_BLOCK,
+                                  "an api job handler repeats a capability type", NULL);
+            seen_caps |= UINT32_C(1) << cap_slot;
+            p->cap_used[cap_slot] = true;
+            params[i] = (struct mo_checked_api_param){
+                .kind = MO_API_PARAM_CAPABILITY, .name = pname, .type = ptype, .index = cap_slot};
+            continue;
+        }
+        return api_report(
+            p, MO_CODE_API_BLOCK, "an api job handler has an unsupported parameter",
+            "After payload: Json, pass declared sqlite databases, actors, or capabilities.");
+    }
+
+    const struct mo_source_type *ret = sig->type->arguments[sig->type->count - 1];
+    p->span = fn_decl->children[2] != NULL ? fn_decl->children[2]->span : clause->span;
+    enum mo_api_job_reply_kind reply = MO_API_JOB_UNIT;
+    const struct mo_source_type *err_ty = NULL;
+    const struct mo_ability_implementation *err_text = NULL;
+    if (api_native_type(ret, "Unit")) {
+        reply = MO_API_JOB_UNIT;
+    } else if (api_native_type(ret, "Result") && api_native_type(ret->arguments[0], "Unit")) {
+        reply = MO_API_JOB_RESULT_UNIT;
+        err_ty = ret->arguments[1];
+        err_text = api_prove_text(
+            p, err_ty, MO_CODE_API_BLOCK, "an api job error type lacks the Text ability",
+            "Job handlers return Unit or Result(Unit, E) where E supports Text formatting.");
+        if (err_text == NULL)
+            return false;
+    } else {
+        return api_report(p, MO_CODE_API_BLOCK,
+                          "an api job handler must return Unit or Result(Unit, E)",
+                          "Write fn run(payload: Json, ...) : Result(Unit, E) or : Unit.");
+    }
+
+    *out = (struct mo_checked_api_job){.syntax = clause,
+                                       .name = jname,
+                                       .function = fn_idx,
+                                       .has_schedule = has_schedule,
+                                       .interval_us = interval_us,
+                                       .param_count = param_count,
+                                       .params = params,
+                                       .reply = reply,
+                                       .error_type = err_ty,
+                                       .error_text = err_text};
+    return true;
+}
+
 static MO_MUST_USE bool count_scope_routes(struct api_check *p, const struct mo_syntax *items,
                                            uint32_t depth, uint32_t *route_count) {
     if (depth > MO_LIMIT_API_SCOPE_DEPTH)
@@ -1247,8 +1490,8 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
 
     p.req_type = find_library_data_type(program, "Api", "Request");
     p.res_type = find_library_data_type(program, "Api", "Response");
-    const struct mo_source_type *json_type = find_library_data_type(program, "Json", "Json");
-    if (p.req_type == NULL || p.res_type == NULL || json_type == NULL)
+    p.json_type = find_library_data_type(program, "Json", "Json");
+    if (p.req_type == NULL || p.res_type == NULL || p.json_type == NULL)
         return api_report(&p, MO_CODE_IMPORT_MISSING,
                           "an api block needs the Api and Json standard library modules",
                           "Load the program with the standard library enabled.");
@@ -1293,7 +1536,8 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
         *p.api = (struct mo_checked_api){.syntax = syntax, .module = module, .port = 8000};
 
         const struct mo_syntax *clauses = syntax->children[0];
-        uint32_t sqlite_count = 0, actor_count = 0, static_count = 0, route_count = 0;
+        uint32_t sqlite_count = 0, actor_count = 0, static_count = 0, job_count = 0,
+                 route_count = 0;
         const struct mo_syntax *auth_clause = NULL;
         for (uint32_t i = 0; i < clauses->count; i++) {
             if (!api_work(&p, 1))
@@ -1348,6 +1592,10 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
                     return api_report(&p, MO_CODE_API_BLOCK,
                                       "an api block declares too many static mounts",
                                       "An api block declares at most 8 static clauses.");
+            } else if (c->kind == MO_S_API_JOB) {
+                if (++job_count > MO_LIMIT_API_JOBS)
+                    return api_report(&p, MO_CODE_API_BLOCK, "an api block declares too many jobs",
+                                      "An api block declares at most 16 job clauses.");
             } else if (c->kind == MO_S_API_AUTH) {
                 if (auth_clause != NULL)
                     return api_report(&p, MO_CODE_API_BLOCK, "an api block repeats auth",
@@ -1365,7 +1613,7 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
             }
         }
 
-        if (route_count == 0 && static_count == 0) {
+        if (route_count == 0 && static_count == 0 && job_count == 0) {
             p.span = syntax->span;
             return api_report(&p, MO_CODE_API_BLOCK, "an api block has no routes",
                               "Declare at least one get, post, put, patch or delete route.");
@@ -1521,6 +1769,22 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
             return false;
         p.api->route_count = rt_at;
 
+        struct mo_checked_api_job *jobs = api_alloc(
+            &p, job_count == 0 ? 1 : job_count, sizeof(*jobs), _Alignof(struct mo_checked_api_job));
+        if (jobs == NULL)
+            return false;
+        uint32_t jb_at = 0;
+        for (uint32_t i = 0; i < clauses->count; i++) {
+            const struct mo_syntax *c = clauses->children[i];
+            if (c->kind != MO_S_API_JOB)
+                continue;
+            if (!check_job_clause(&p, c, jobs, jb_at, &jobs[jb_at]))
+                return false;
+            jb_at++;
+        }
+        p.api->job_count = jb_at;
+        p.api->jobs = jobs;
+
         if (!check_statuses(&p, clauses))
             return false;
 
@@ -1556,6 +1820,13 @@ bool mo_check_apis(struct mo_arena *arena, struct mo_program *program,
             for (uint32_t k = 0; k < routes[r].param_count; k++)
                 if (rparams[k].kind == MO_API_PARAM_CAPABILITY)
                     rparams[k].index = cap_map[rparams[k].index];
+        }
+        for (uint32_t j = 0; j < p.api->job_count; j++) {
+            struct mo_checked_api_param *jparams =
+                (struct mo_checked_api_param *)(uintptr_t)jobs[j].params;
+            for (uint32_t k = 0; k < jobs[j].param_count; k++)
+                if (jparams[k].kind == MO_API_PARAM_CAPABILITY)
+                    jparams[k].index = cap_map[jparams[k].index];
         }
     }
     return true;

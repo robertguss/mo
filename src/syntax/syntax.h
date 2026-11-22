@@ -43,6 +43,7 @@ enum mo_syntax_kind {
     MO_S_API_AUTH,      /* principal type, local or qualified handler name */
     MO_S_API_ROUTE,     /* method name, path plain text, local or qualified handler name */
     MO_S_API_STATIC,    /* url prefix plain text, folder plain text */
+    MO_S_API_JOB,       /* job name plain text, handler ref, optional interval expr */
     MO_S_API_SCOPE,     /* url prefix plain text, clauses sequence */
     MO_S_API_STATUS,    /* variant name/qualified, optional wildcards sequence, status integer */
     MO_S_PROMISE,

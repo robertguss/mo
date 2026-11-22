@@ -555,6 +555,17 @@ static void print_node(struct printer *f, const struct mo_syntax *n) {
         clause_word(f, "from");
         node(f, n->children[1]);
         break;
+    case MO_S_API_JOB:
+        clause_word(f, "job");
+        node(f, n->children[0]);
+        text(f, " ");
+        node(f, n->children[1]);
+        if (n->children[2] != NULL) {
+            text(f, " ");
+            clause_word(f, "every");
+            node(f, n->children[2]);
+        }
+        break;
     case MO_S_API_SCOPE:
         clause_word(f, "scope");
         node(f, n->children[0]);
