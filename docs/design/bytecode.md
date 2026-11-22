@@ -1311,9 +1311,10 @@ point to payload offset 20. Allocation failures have offset zero.
 Ownership visits each basic block once with an explicit depth-first stack and
 an undo log of changed registers. Complete vectors are retained only at joins
 and loop entries; repeated incoming edges compare with those vectors.
-Known-case analysis runs only for choice registers used by `case_field` or `reset`:
-each block's fact can change only from unreached to a case/unknown, then to
-unknown. Before doing work or allocating vectors, verification enforces
+Known-case analysis scans the instructions once to record writes and unshadowed uses
+for choice registers used by `case_field` or `reset`, then propagates each register
+only across blocks reaching those uses (each block's fact can change only from
+unreached to a case/unknown, then to unknown). Before doing work or allocating vectors, verification enforces
 `MO_LIMIT_FUNCTION_REGISTER_BLOCKS` (registers × blocks ≤ 2²²), and charges at
 most `MO_LIMIT_VERIFY_WORK_PER_WORD` (128) steps per encoded code/register word
 plus 32 header words. Exceeding either ceiling is a load error at the entry

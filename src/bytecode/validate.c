@@ -882,6 +882,9 @@ static MO_MUST_USE bool validate(struct validation *v) {
         bool ok = code_debug(v, i);
         mo_arena_free(&v->arena);
         if (!ok) {
+            if (v->info->site != NULL && v->error->kind != MO_BYTECODE_NO_MEMORY) {
+                *v->info->site = (struct mo_bytecode_error_site){MO_SECTION_FUNCTIONS, i};
+            }
             return false;
         }
     }

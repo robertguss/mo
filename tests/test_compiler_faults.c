@@ -6,7 +6,7 @@
 
 #include <string.h>
 
-static bool no_core_memory, corrupt_bytecode;
+static bool no_core_memory, corrupt_bytecode, corrupt_first_function;
 
 MO_MUST_USE void *mo_compiler_fault_allocate_array(struct mo_arena *arena, size_t count,
                                                    size_t size, size_t alignment);
@@ -21,6 +21,21 @@ void *mo_compiler_fault_allocate_array(struct mo_arena *arena, size_t count, siz
 
 bool mo_compiler_fault_bytecode_write(const struct mo_bytecode *file, struct mo_buffer *out,
                                       struct mo_write_error *error) {
+    if (corrupt_first_function) {
+        MO_ASSERT(file->function_count >= 2);
+        struct mo_bytecode_function fns[2];
+        fns[0] = file->functions[0];
+        fns[1] = file->functions[1];
+        /* Replace first_bad's body with `ret r0` on an uninitialized register so it passes
+         * structural decoding/validation and fails mo_bytecode_verify on function 0, while
+         * function 1 (main) was lowered last. */
+        const uint32_t bad_code[] = {MO_OP_RET, 0};
+        fns[0].code = bad_code;
+        fns[0].code_count = 2;
+        struct mo_bytecode invalid = *file;
+        invalid.functions = fns;
+        return mo_bytecode_write(&invalid, out, error);
+    }
     if (!corrupt_bytecode)
         return mo_bytecode_write(file, out, error);
     MO_ASSERT(file->constant_count == 1);
@@ -80,10 +95,31 @@ int main(void) {
     corrupt_bytecode = false;
     exact_message(&diags, MO_CODE_CODEGEN_INVALID, "constant type out of range",
                   "error E1057: code generation produced invalid bytecode: bug in Mo  "
-                  "<unavailable>\n\n  main: constant type out of range\n\n");
+                  "<unavailable>\n\n  constant type out of range\n\n");
     mo_diags_free(&diags);
     MO_ASSERT(mo_diags_init(&diags));
     CHECK(mo_compile(core, &out, &diags) && out.length != 0 && !mo_diags_any(&diags));
+    mo_buffer_free(&out);
+    mo_diags_free(&diags);
+
+    const char *two_fns = "(core " MO_CORE_TEXT_VERSION
+                          " (Program () ((FunDecl \"first_bad\" () (unit) (lit (unit)) \"Main\" "
+                          "(function) 0) (FunDecl \"second_good\" () (unit) (lit (unit)) "
+                          "\"Main\" (function) 0)) () \"second_good\" (noSource)))";
+    MO_ASSERT(mo_diags_init(&diags));
+    mo_buffer_init(&out, MO_LIMIT_BYTECODE_SIZE);
+    struct mo_core *core2 = mo_core_parse(&arena, two_fns, strlen(two_fns), &diags);
+    MO_ASSERT(core2 != NULL && !mo_diags_any(&diags));
+    CHECK(mo_core_check(core2, &diags) && !mo_diags_any(&diags));
+    corrupt_first_function = true;
+    CHECK(!mo_compile(core2, &out, &diags) && out.length == 0);
+    corrupt_first_function = false;
+    exact_message(&diags, MO_CODE_CODEGEN_INVALID, "register is not readable",
+                  "error E1057: code generation produced invalid bytecode: bug in Mo  "
+                  "<unavailable>\n\n  first_bad: register is not readable\n\n");
+    mo_diags_free(&diags);
+    MO_ASSERT(mo_diags_init(&diags));
+    CHECK(mo_compile(core2, &out, &diags) && out.length != 0 && !mo_diags_any(&diags));
     mo_buffer_free(&out);
     mo_diags_free(&diags);
     mo_arena_free(&arena);

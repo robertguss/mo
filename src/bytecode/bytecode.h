@@ -493,6 +493,7 @@ struct mo_load_error {
 struct mo_write_error {
     const char *reason; /* static text: invalid decoded data, a limit, or no memory */
     enum mo_bytecode_error_kind kind;
+    uint32_t function; /* offending function index, or MO_BYTECODE_NO_INDEX */
 };
 
 struct mo_assemble_error {

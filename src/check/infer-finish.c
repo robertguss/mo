@@ -271,7 +271,10 @@ static MO_MUST_USE bool capture_type(struct inference *p, const struct mo_source
     if (type->kind == MO_SOURCE_NAMED && type->declaration != NULL) {
         const struct mo_nominal_signature *owner =
             mo_nominal_signature_by_symbol(p->signatures, type->declaration);
-        MO_ASSERT(owner != NULL);
+        if (owner == NULL) {
+            MO_ASSERT(p->signatures->recovering);
+            return true;
+        }
         *capability = *capability || owner->holds_capability;
         for (uint32_t i = 0; i < type->count; i++)
             if ((owner->capture_parameters & owner->type->arguments[i]->parameters) != 0 &&
@@ -586,7 +589,11 @@ static MO_MUST_USE bool finish_sqlite_decode(struct inference *p, struct emitted
         return false;
     const struct mo_data_signature *data =
         mo_data_signature_by_symbol(p->signatures, actual->declaration);
-    MO_ASSERT(data != NULL);
+    if (data == NULL || !mo_signature_type_available(p->signatures, actual)) {
+        MO_ASSERT(p->signatures->recovering);
+        p->failed = p->fatal = p->unavailable = true;
+        return false;
+    }
     struct mo_checked_ability_use *json_uses =
         data->count == 0 ? NULL
                          : infer_allocate(p, data->count, sizeof(*json_uses),

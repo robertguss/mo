@@ -288,6 +288,9 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                     ? "Register recycling exceeds MO_LIMIT_CODEGEN_REGISTER_WORK."
                     : "No memory for code generation's register recycling pass.");
     }
+    c->current = NULL;
+    c->declaration = (struct mo_core_span){0};
+    c->span = (struct mo_core_span){0};
     struct mo_bytecode file = {
         .string_count = c->strings.count,
         .strings = c->strings.items,
@@ -324,6 +327,12 @@ static MO_MUST_USE bool output(struct compiler *c, struct mo_buffer *out) {
                                           : "Bytecode exceeds the caller's output limit.");
     }
     mo_buffer_free(&encoded);
+    if (error.function < c->function_count) {
+        const struct function *f = &c->bodies[error.function];
+        c->current = f->source;
+        c->declaration = f->declaration;
+        c->span = f->declaration;
+    }
     uint16_t code = error.kind == MO_BYTECODE_NO_MEMORY ? MO_CODE_CODEGEN_MEMORY
                     : error.kind == MO_BYTECODE_LIMIT   ? MO_CODE_BYTECODE_TOO_BIG
                                                         : MO_CODE_CODEGEN_INVALID;

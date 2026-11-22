@@ -560,6 +560,9 @@ static MO_MUST_USE bool service_shapes(struct compiler *c, struct mo_bytecode_se
 MO_MUST_USE bool codegen_service_descriptors(struct compiler *c, struct mo_bytecode *file) {
     if (c->services == NULL || c->services->count == 0)
         return true;
+    c->current = NULL;
+    c->declaration = (struct mo_core_span){0};
+    c->span = (struct mo_core_span){0};
     if (c->services->count > MO_LIMIT_SERVICES)
         return codegen_problem(c, MO_CODE_BYTECODE_TOO_BIG,
                                "Service count exceeds MO_LIMIT_SERVICES.");
@@ -570,9 +573,16 @@ MO_MUST_USE bool codegen_service_descriptors(struct compiler *c, struct mo_bytec
     file->services = items;
     for (uint32_t i = 0; i < file->service_count; i++) {
         const struct mo_service *s = &c->services->items[i];
-        if (s->start >= c->core->funs.count)
+        if (s->start >= c->core->funs.count) {
+            c->current = NULL;
+            c->declaration = (struct mo_core_span){0};
+            c->span = (struct mo_core_span){0};
             return codegen_problem(c, MO_CODE_CODEGEN_INVALID,
                                    "Service function index is out of range.");
+        }
+        c->current = c->bodies[s->start].source;
+        c->declaration = c->bodies[s->start].declaration;
+        c->span = c->declaration;
         if (s->tool_count > MO_LIMIT_SERVICE_HANDLERS ||
             s->timer_count > MO_LIMIT_SERVICE_HANDLERS - s->tool_count)
             return codegen_problem(c, MO_CODE_BYTECODE_TOO_BIG,
@@ -629,6 +639,9 @@ MO_MUST_USE bool codegen_service_descriptors(struct compiler *c, struct mo_bytec
                 (struct mo_bytecode_service_timer){s->timers[j].function, s->timers[j].interval};
         }
     }
+    c->current = NULL;
+    c->declaration = (struct mo_core_span){0};
+    c->span = (struct mo_core_span){0};
     file->string_count = c->strings.count;
     file->strings = c->strings.items;
     return c->error == 0 && service_shapes(c, items, file);

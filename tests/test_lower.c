@@ -2188,6 +2188,166 @@ static uint64_t scalar_work(const struct mo_image *image, const char *name,
     return instructions;
 }
 
+/* Wide Option-heavy Json.decode structs (35+ Option fields) and functions with 45+ sequential
+ * try bindings over Option and Result values must compile, pass bytecode verification within the
+ * linear work budget, and execute accurately. */
+static void test_source_wide_choices(void *unused) {
+    (void)unused;
+    struct mo_buffer source, json_full;
+    mo_buffer_init(&source, MO_LIMIT_FILE_SIZE);
+    mo_buffer_init(&json_full, 4096);
+    MO_ASSERT(mo_buffer_append_text(&source, "module Main\nuse Json\nstruct WideRecord\n"));
+    MO_ASSERT(mo_buffer_append_text(&json_full, "{"));
+    const uint32_t field_count = 35;
+    int64_t expected_full = 0;
+    for (uint32_t i = 0; i < field_count; i++) {
+        char line[128];
+        const char *ty = (i % 2 == 0) ? "Option(Int)" : "Option(Text)";
+        int n = snprintf(line, sizeof line, "  f%u: %s\n", i, ty);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof line && mo_buffer_append_text(&source, line));
+        if (i != 0)
+            MO_ASSERT(mo_buffer_append_text(&json_full, ","));
+        if (i % 2 == 0) {
+            n = snprintf(line, sizeof line, "\"f%u\":%u", i, i + 10);
+            expected_full += (int64_t)(i + 10);
+        } else {
+            n = snprintf(line, sizeof line, "\"f%u\":\"s%u\"", i, i);
+            expected_full += (int64_t)(i < 10 ? 2 : 3);
+        }
+        MO_ASSERT(n > 0 && (size_t)n < sizeof line && mo_buffer_append_text(&json_full, line));
+    }
+    MO_ASSERT(mo_buffer_append_text(&json_full, "}"));
+    MO_ASSERT(mo_buffer_append_text(&source, "end\n"
+                                             "fn decode_wide(raw: Text) : Int\n"
+                                             "  rec = case Json.decode[WideRecord](raw)\n"
+                                             "    Ok(r): r\n"
+                                             "    Error(_): return -1\n"
+                                             "  end\n"
+                                             "  var acc = 0\n"));
+    for (uint32_t i = 0; i < field_count; i++) {
+        char line[128];
+        int n = (i % 2 == 0)
+                    ? snprintf(line, sizeof line, "  acc += (rec.f%u or 0)\n", i)
+                    : snprintf(line, sizeof line, "  acc += (rec.f%u or \"\").byte_count\n", i);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof line && mo_buffer_append_text(&source, line));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source,
+                                    "  acc\nend\n"
+                                    "fn opt_step(i: Int, stop_at: Int) : Option(Int)\n"
+                                    "  return None if i == stop_at\n"
+                                    "  Some(i + 1)\n"
+                                    "end\n"
+                                    "fn res_step(i: Int, stop_at: Int) : Result(Int, Int)\n"
+                                    "  return Error(i) if i == stop_at\n"
+                                    "  Ok(i + 1)\n"
+                                    "end\n"
+                                    "fn many_opt_tries(stop_at: Int) : Option(Int)\n"));
+    const uint32_t try_count = 45;
+    for (uint32_t i = 0; i < try_count; i++) {
+        char line[128];
+        int n = snprintf(line, sizeof line, "  v%u = try opt_step(%u, stop_at)\n", i, i);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof line && mo_buffer_append_text(&source, line));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "  Some("));
+    for (uint32_t i = 0; i < try_count; i++) {
+        char part[32];
+        int n = snprintf(part, sizeof part, "%sv%u", i == 0 ? "" : " + ", i);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof part && mo_buffer_append_text(&source, part));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source,
+                                    ")\nend\n"
+                                    "fn many_res_tries(stop_at: Int) : Result(Int, Int)\n"));
+    for (uint32_t i = 0; i < try_count; i++) {
+        char line[128];
+        int n = snprintf(line, sizeof line, "  v%u = try res_step(%u, stop_at)\n", i, i);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof line && mo_buffer_append_text(&source, line));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "  Ok("));
+    for (uint32_t i = 0; i < try_count; i++) {
+        char part[32];
+        int n = snprintf(part, sizeof part, "%sv%u", i == 0 ? "" : " + ", i);
+        MO_ASSERT(n > 0 && (size_t)n < sizeof part && mo_buffer_append_text(&source, part));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, ")\nend\n"
+                                             "fn run_wide(kind: Int) : Int\n"
+                                             "  if kind == 0\n"
+                                             "    decode_wide(\""));
+    for (size_t i = 0; i < json_full.length; i++) {
+        char c = (char)json_full.bytes[i];
+        if (c == '"')
+            MO_ASSERT(mo_buffer_append_text(&source, "\\\""));
+        else
+            MO_ASSERT(mo_buffer_append_byte(&source, (uint8_t)c));
+    }
+    MO_ASSERT(mo_buffer_append_text(&source, "\")\n"
+                                             "  else if kind == 1\n"
+                                             "    decode_wide(\"{}\")\n"
+                                             "  else if kind == 2\n"
+                                             "    a = many_opt_tries(999) or -1\n"
+                                             "    b = case many_res_tries(999)\n"
+                                             "      Ok(v): v\n"
+                                             "      Error(_): -1\n"
+                                             "    end\n"
+                                             "    a + b\n"
+                                             "  else\n"
+                                             "    a = many_opt_tries(20) or -99\n"
+                                             "    b = case many_res_tries(21)\n"
+                                             "      Ok(v): v\n"
+                                             "      Error(e): -e\n"
+                                             "    end\n"
+                                             "    a + b\n"
+                                             "  end\n"
+                                             "end\n"));
+
+    struct mo_arena input, output;
+    struct mo_sources sources;
+    struct mo_diags diags;
+    struct mo_buffer bytes;
+    mo_arena_init(&input, MO_CLI_CHECK_SIZE);
+    mo_arena_init(&output, MO_LIMIT_LOWER_WORK);
+    MO_ASSERT(mo_sources_init(&sources) && mo_diags_init(&diags));
+    mo_buffer_init(&bytes, MO_LIMIT_BYTECODE_SIZE);
+    uint32_t file;
+    struct mo_source_error src_err;
+    MO_ASSERT(
+        mo_sources_add_bytes(&sources, "main.mo", source.bytes, source.length, &file, &src_err));
+    struct mo_module_set *set = mo_load_bundle_sources(&input, &sources, "lib", &diags);
+    CHECK(set != NULL && !mo_diags_any(&diags));
+    if (set != NULL) {
+        struct mo_program *program = mo_check(&input, set, &diags);
+        CHECK(program != NULL && !mo_diags_any(&diags));
+        if (program != NULL) {
+            struct mo_core *core = mo_lower(&output, program, &sources, &diags);
+            CHECK(core != NULL && !mo_diags_any(&diags));
+            if (core != NULL && mo_core_check(core, &diags)) {
+                CHECK(mo_compile(core, &bytes, &diags) && !mo_diags_any(&diags));
+                struct mo_load_error load_err;
+                struct mo_image *image = mo_load(bytes.bytes, bytes.length, &load_err);
+                CHECK(image != NULL);
+                if (image != NULL) {
+                    struct mo_limits limits = mo_limits_default();
+                    struct mo_defect defect;
+                    MO_ASSERT(mo_image_init(image, &limits, &defect) == MO_RETURNED);
+                    int64_t a0 = 0, a1 = 1, a2 = 2, a3 = 3;
+                    (void)scalar_work(image, "Main.run_wide", &a0, 1, expected_full);
+                    (void)scalar_work(image, "Main.run_wide", &a1, 1, 0);
+                    (void)scalar_work(image, "Main.run_wide", &a2, 1,
+                                      (int64_t)(try_count * (try_count + 1)));
+                    (void)scalar_work(image, "Main.run_wide", &a3, 1, -120);
+                    mo_image_free(image);
+                }
+            }
+        }
+    }
+    mo_buffer_free(&bytes);
+    mo_diags_free(&diags);
+    mo_sources_free(&sources);
+    mo_arena_free(&output);
+    mo_arena_free(&input);
+    mo_buffer_free(&json_full);
+    mo_buffer_free(&source);
+}
+
 /* Perceus in-place field updates, left-to-right interpolation and indexed for loops must scale
  * linearly: quadrupling N from 256 to 1024 multiplies executed instructions by ~4x, never 16x. */
 static void test_source_linear_scaling(void *unused) {
@@ -2578,6 +2738,7 @@ int main(int argc, char **argv) {
                                 "tests/runtime/mcp-upgrade-routing-check.mo") == 0);
     }
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_sort_work, NULL) == 0);
+    MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_wide_choices, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_linear_scaling, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_file_error_text, NULL) == 0);
     MO_ASSERT(mo_with_stack(MO_SOURCE_STACK_SIZE, test_source_captures, NULL) == 0);

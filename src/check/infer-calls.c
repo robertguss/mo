@@ -1565,14 +1565,16 @@ MO_MUST_USE struct value infer_type_application(struct inference *p, struct valu
             return (struct value){0};
         }
         mo_diags_free(&local_diags);
+        struct term *term = infer_annotation(p, resolved, NULL, 0);
+        if (term == NULL)
+            return (struct value){0};
         if (!mo_check_type_abilities(&p->abilities, resolved)) {
             bool reported = infer_problem(p, p->abilities.error, args->children[i]->span,
                                           p->abilities.message, p->abilities.reason, NULL);
             (void)reported;
             return (struct value){0};
         }
-        struct term *term = infer_annotation(p, resolved, NULL, 0);
-        if (term == NULL || !infer_unify(p, callee.parameters[i], term, 0))
+        if (!infer_unify(p, callee.parameters[i], term, 0))
             return (struct value){0};
     }
     return callee;

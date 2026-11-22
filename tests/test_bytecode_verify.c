@@ -2506,6 +2506,151 @@ static void simulation_without_services(void) {
     expect(&t, "simulation send descriptor", 0, 0);
 }
 
+static void choice_scaling_and_attribution(void) {
+    struct fixture t;
+    init(&t);
+    struct mo_arena arena;
+    mo_arena_init(&arena, (size_t)16 << 20);
+    /* 80 distinct needed choice registers (type 15: None | Some(Int, Text)) switched and unpacked
+     * sequentially, with a loop inside each Some arm so Relevant(r) exercises back-edges without
+     * quadratic full-function rescans. */
+    const uint32_t n_choices = 80;
+    const uint32_t r_int = n_choices, r_text = n_choices + 1, r_bool = n_choices + 2,
+                   r_unit = n_choices + 3, reg_count = n_choices + 4;
+    uint32_t *regs = mo_arena_allocate_array(&arena, reg_count, sizeof *regs, _Alignof(uint32_t));
+    uint32_t *words = mo_arena_allocate_array(&arena, 4096, sizeof *words, _Alignof(uint32_t));
+    bool *readable = mo_arena_allocate_array(&arena, reg_count, sizeof *readable, _Alignof(bool));
+    MO_ASSERT(regs != NULL && words != NULL && readable != NULL);
+    for (uint32_t r = 0; r < n_choices; r++) {
+        regs[r] = 15U;
+    }
+    regs[r_int] = 3U;
+    regs[r_text] = 10U;
+    regs[r_bool] = 1U;
+    regs[r_unit] = 0U;
+    t.functions[0].register_types = regs;
+    t.functions[0].register_count = reg_count;
+    t.functions[0].result_type = 0U;
+    uint32_t pc = 0, first_overwrite_at = 0, first_field_at = 0;
+    words[pc++] = MO_OP_CONST;
+    words[pc++] = r_bool;
+    words[pc++] = 2;
+    for (uint32_t r = 0; r < n_choices; r++) {
+        words[pc++] = MO_OP_CONST;
+        words[pc++] = r_int;
+        words[pc++] = 1;
+        words[pc++] = MO_OP_CONST;
+        words[pc++] = r_text;
+        words[pc++] = 3;
+        words[pc++] = MO_OP_DUP;
+        words[pc++] = r_text;
+        words[pc++] = r_text;
+        words[pc++] = MO_OP_MAKE_CASE | (2U << 16);
+        words[pc++] = r;
+        words[pc++] = 15;
+        words[pc++] = 1;
+        words[pc++] = r_int;
+        words[pc++] = r_text;
+        uint32_t switch_pc = pc;
+        words[pc++] = MO_OP_SWITCH | (2U << 16);
+        words[pc++] = r;
+        uint32_t none_pc = pc + 2;
+        uint32_t hdr_pc = none_pc + 4;
+        uint32_t body_pc = hdr_pc + 4;
+        uint32_t use_pc = body_pc + 5;
+        uint32_t join_pc = use_pc + 7;
+        (void)switch_pc;
+        words[pc++] = none_pc;
+        words[pc++] = hdr_pc;
+        /* none_pc: drop r; jump join_pc */
+        words[pc++] = MO_OP_DROP;
+        words[pc++] = r;
+        words[pc++] = MO_OP_JUMP;
+        words[pc++] = join_pc;
+        /* hdr_pc: branch r_bool -> body_pc, use_pc */
+        words[pc++] = MO_OP_BRANCH;
+        words[pc++] = r_bool;
+        words[pc++] = body_pc;
+        words[pc++] = use_pc;
+        /* body_pc: const r_int, 1; jump hdr_pc (3 + 2 = 5 words) */
+        if (r == 0) {
+            first_overwrite_at = pc;
+        }
+        words[pc++] = MO_OP_CONST;
+        words[pc++] = r_int;
+        words[pc++] = 1;
+        words[pc++] = MO_OP_JUMP;
+        words[pc++] = hdr_pc;
+        /* use_pc: case_field r_int, r, 1, 0; drop r (5 + 2 = 7 words) */
+        if (r == 0) {
+            first_field_at = pc;
+        }
+        words[pc++] = MO_OP_CASE_FIELD;
+        words[pc++] = r_int;
+        words[pc++] = r;
+        words[pc++] = 1;
+        words[pc++] = 0;
+        words[pc++] = MO_OP_DROP;
+        words[pc++] = r;
+        MO_ASSERT(pc == join_pc);
+    }
+    words[pc++] = MO_OP_CONST;
+    words[pc++] = r_unit;
+    words[pc++] = 0;
+    words[pc++] = MO_OP_RET;
+    words[pc++] = r_unit;
+    code(&t, words, pc);
+    expect(&t, NULL, 0, 0);
+
+    struct mo_buffer wire;
+    struct mo_write_error we;
+    struct mo_load_error le;
+    struct mo_types view;
+    struct mo_verification verified;
+    const uint32_t *offsets;
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(mo_bytecode_encode(&t.file, &wire, &we));
+    const struct mo_bytecode *f =
+        mo_bytecode_decode_info(&arena, wire.bytes, wire.length, &offsets, &view, NULL, NULL, &le);
+    MO_ASSERT(f != NULL);
+    CHECK(mo_bytecode_verify(f, &view, offsets, wire.length, &arena, &verified, NULL, &le));
+    uint64_t work = 0;
+    CHECK(mo_bytecode_readable(f, &view, &verified, 0, offsets[0], pc - 2, readable, &work, &le));
+    CHECK(work < UINT64_C(16) * (pc + reg_count));
+    mo_buffer_free(&wire);
+
+    /* Overwriting r0 inside the loop body must poison its case fact at loop exit. */
+    words[first_overwrite_at] = MO_OP_MOVE;
+    words[first_overwrite_at + 1] = 0;
+    words[first_overwrite_at + 2] = 0;
+    expect(&t, "case is not known", 0, first_field_at);
+
+    /* mo_write_error.function attributes failures to the offending function index. */
+    init(&t);
+    const uint32_t bad_ret[] = {MO_OP_RET, 0};
+    t.file.function_count = 2;
+    t.file.debug_count = 2;
+    t.functions[0].code = bad_ret;
+    t.functions[0].code_count = N(bad_ret);
+    mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
+    CHECK(!mo_bytecode_write(&t.file, &wire, &we));
+    CHECK(we.function == 0);
+    t.functions[0].code = default_code;
+    t.functions[0].code_count = N(default_code);
+    t.functions[1].code = bad_ret;
+    t.functions[1].code_count = N(bad_ret);
+    CHECK(!mo_bytecode_write(&t.file, &wire, &we));
+    CHECK(we.function == 1);
+    t.functions[1].code = default_code;
+    t.functions[1].code_count = N(default_code);
+    t.constants[4] = (struct mo_bytecode_constant){.type = 17, .value.function = 0};
+    t.file.constant_count = 5;
+    CHECK(!mo_bytecode_write(&t.file, &wire, &we));
+    CHECK(we.function == MO_BYTECODE_NO_INDEX);
+    mo_buffer_free(&wire);
+    mo_arena_free(&arena);
+}
+
 static void service_refusal(void) {
     struct fixture t;
     init(&t);
@@ -2547,6 +2692,7 @@ int main(int argc, char **argv) {
     hostile_work();
     failure_kinds();
     simulation_without_services();
+    choice_scaling_and_attribution();
     service_refusal();
     return mo_test_report("bytecode verifier");
 }
