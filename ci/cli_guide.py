@@ -39,6 +39,7 @@ flags = {
     "--fix": (["revised/main.mo"], {"replay"}),
     "--recover": ([], {"replay", "query", "history"}),
     "--max-work": (["1000"], {"query"}),
+    "--tests": ([], {"emit"}),
 }
 
 
@@ -778,11 +779,15 @@ def emit_command(binary):
         target = folder / "bad.bc"
         refused = run(binary, ["emit", str(bad), "-o", str(target)], 1)
         assert refused.stderr == run(binary, ["check", str(bad)], 1).stderr and not target.exists()
-        # A library has no entry, as for mo run.
+        # A library has no entry, as for mo run; --tests permits emitting test-only modules.
         library = root / "tests/cli/library/main.mo"
         target = folder / "library.bc"
         refused = run(binary, ["emit", str(library), "-o", str(target)], 1)
         assert b"E0079" in refused.stderr and not target.exists()
+        emitted_tests = run(binary, ["emit", "--tests", str(library), "-o", str(target)], 0)
+        assert not emitted_tests.stdout and not emitted_tests.stderr
+        assert target.read_bytes().startswith(b"MOBC")
+        target.unlink()
         # The source is never the output.
         source = folder / "console" / "main.mo"
         before = source.read_bytes()

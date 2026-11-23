@@ -40,7 +40,7 @@ enum mo_emit { MO_EMIT_NONE, MO_EMIT_CORE, MO_EMIT_BYTECODE };
 struct mo_cli {
     enum mo_command command;
     enum mo_emit emit;
-    bool json, list, reference, stdin_mode;
+    bool json, list, reference, stdin_mode, emit_tests;
     bool source_bundle, upgrade, adopt, unconfined;
     const char *upgrade_from, *old_bundle, *migration, *compile_context, *candidate;
     struct mo_limits limits;

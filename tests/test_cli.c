@@ -137,6 +137,14 @@ static void parse_commands(void) {
     CHECK(!mo_cli_parse(6, two, &cli, &error));
     const char *json[] = {"mo", "emit", "--json", "main.mo", "-o", "main.bc"};
     CHECK(!mo_cli_parse(6, json, &cli, &error));
+    const char *emit_tests[] = {"mo", "emit", "--tests", "main.mo", "-o", "main.bc"};
+    CHECK(mo_cli_parse(6, emit_tests, &cli, &error));
+    CHECK(cli.command == MO_COMMAND_EMIT && cli.emit_tests && strcmp(cli.output, "main.bc") == 0);
+    const char *emit_tests_bundle[] = {"mo",      "emit", "--tests", "--bundle",
+                                       "main.mo", "-o",   "main.bc"};
+    CHECK(!mo_cli_parse(7, emit_tests_bundle, &cli, &error));
+    const char *check_tests[] = {"mo", "check", "--tests", "main.mo"};
+    CHECK(!mo_cli_parse(4, check_tests, &cli, &error));
 
     const char *run_roots[] = {"mo",          "run",     "--root", "/tmp/work",
                                "--state-dir", "/tmp/db", "app.mo", "--flag"};
