@@ -709,6 +709,13 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_BYTES_OP_U32_BE_AT:
         case MO_CORE_BYTES_OP_I64_BE_AT:
             return sig(O(S(INT)), 2, S(BYTES), S(INT), NULL);
+        case MO_CORE_BYTES_OP_IS_EMPTY:
+            return sig(S(BOOL), 1, S(BYTES), NULL, NULL);
+        case MO_CORE_BYTES_OP_COMPARE_SLICE_AT: {
+            struct signature s = sig(O(S(ORDERING)), 4, S(BYTES), S(INT), S(INT));
+            s.args[3] = S(BYTES);
+            return s;
+        }
         }
         break;
     case MO_CORE_PRIM_UNICODE16:

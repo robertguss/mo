@@ -109,7 +109,7 @@ static MO_MUST_USE uint32_t prim_type(struct prim_fixture *f, const char **curso
                 MO_ASSERT(mo_types_declare(&f->types, MO_TYPE_CHOICE, "Ordering", &f->ordering) ==
                           MO_TYPES_OK);
                 struct mo_type_case cases[] = {
-                    {.name = "Less"}, {.name = "Same"}, {.name = "More"}};
+                    {.name = "Less"}, {.name = "Equal"}, {.name = "Greater"}};
                 MO_ASSERT(mo_types_define_choice(&f->types, f->ordering, cases, 3) == MO_TYPES_OK);
             }
             *cursor = p;

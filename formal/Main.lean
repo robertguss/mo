@@ -56,7 +56,7 @@ def primitiveEval (p : Sexp) (vs : List Value) : Parse Outcome := do
       let b ← enumIn bases b
       let o ← match baseOrder b x y with
         | some o => pure o | none => throw "invalid comparison operands"
-      let ctor := match o with | .lt => "Less" | .eq => "Same" | .gt => "More"
+      let ctor := match o with | .lt => "Less" | .eq => "Equal" | .gt => "Greater"
       pure (.ok (.con ctor []) {})
   | .node [.atom "sum", b], [.list xs] =>
       let b ← enumIn bases b

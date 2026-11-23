@@ -281,6 +281,38 @@ static void bytes_laws(struct prim_fixture *f, enum mo_primitive_id id, const st
             mo_value_drop(f->heap, f->types.items[f->signature[reader]].result, back);
         } else
             MO_ASSERT(st == MO_PRIM_OUT_OF_MEMORY);
+    } else if (id == MO_PRIM_BYTES_IS_EMPTY) {
+        size_t len = 0;
+        (void)mo_value_data(args[0], &len);
+        MO_ASSERT(mo_cell_get_bool(result) == (len == 0));
+    } else if (id == MO_PRIM_BYTES_COMPARE_SLICE_AT) {
+        size_t len = 0, other_len = 0;
+        const uint8_t *raw = mo_value_data(args[0], &len);
+        const uint8_t *other_raw = mo_value_data(args[3], &other_len);
+        int64_t offset = mo_cell_get_int(args[1]);
+        int64_t slice_len = mo_cell_get_int(args[2]);
+        bool in_bounds = offset >= 0 && slice_len >= 0 && (uint64_t)offset <= len &&
+                         len - (size_t)offset >= (uint64_t)slice_len;
+        if (!in_bounds) {
+            MO_ASSERT(mo_cell_get_tag(result) == 0);
+        } else {
+            MO_ASSERT(mo_cell_get_tag(result) == 1);
+            size_t off = (size_t)offset, slen = (size_t)slice_len;
+            size_t common = slen < other_len ? slen : other_len;
+            int expected = 0;
+            for (size_t i = 0; i < common && expected == 0; i++) {
+                if (raw[off + i] != other_raw[i])
+                    expected = raw[off + i] < other_raw[i] ? -1 : 1;
+            }
+            if (expected == 0)
+                expected = slen < other_len ? -1 : slen > other_len ? 1 : 0;
+            uint32_t want_tag = expected < 0 ? 0U : expected > 0 ? 2U : 1U;
+            uint32_t res_ty = f->types.items[f->signature[id]].result;
+            bool boxed = mo_case_shape(&f->types, res_ty, 1) == MO_CASE_BOXED;
+            struct mo_cell ordering = boxed ? mo_value_field(mo_cell_get_payload(result), 0)
+                                            : mo_cell_get_payload(result);
+            MO_ASSERT(mo_cell_get_tag(ordering) == want_tag);
+        }
     }
 }
 

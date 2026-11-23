@@ -465,6 +465,14 @@ theorem ValTy.optBytes {o : Option (List Int)}
   | none => exact .noneV
   | some bs => exact .someV (.bytes (h bs rfl))
 
+theorem ValTy.orderingV {o : Ordering} : ValTy P (orderingV o) .ordering := by
+  cases o <;> exact .con rfl rfl .nil
+
+theorem ValTy.optOrdering {o : Option Ordering} : ValTy P (optOrdering o) (.option .ordering) := by
+  cases o with
+  | none => exact .noneV
+  | some x => exact .someV .orderingV
+
 theorem hexVal_bounds {c : Char} {v : Int} (h : hexVal c = some v) : 0 ≤ v ∧ v ≤ 15 := by
   unfold hexVal at h
   dsimp only at h
@@ -673,6 +681,8 @@ theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
   case u16BeAt => exact .optIntOf
   case u32BeAt => exact .optIntOf
   case i64BeAt => exact .optIntOf
+  case isEmpty => exact .bool
+  case compareSliceAt => exact .optOrdering
 
 /-- The whole numbers of a range between two `Int`s are `Int`s. -/
 theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :

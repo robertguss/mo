@@ -1429,6 +1429,137 @@ static void bytes_packing_and_unpacking(void) {
     prim_fixture_free(&tight);
 }
 
+static void bytes_empty_and_compare_slice_at(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 4 << 20);
+    size_t baseline = mo_heap_used(f.heap);
+    uint32_t bytes_ty = f.builtin[MO_TYPE_BYTES];
+    uint32_t opt_ord_ty = f.types.items[f.signature[MO_PRIM_BYTES_COMPARE_SLICE_AT]].result;
+    bool opt_ord_boxed = mo_case_shape(&f.types, opt_ord_ty, 1) == MO_CASE_BOXED;
+    const char *reason = NULL;
+    struct mo_cell out;
+
+    /* Bytes.empty? on empty and non-empty Bytes */
+    struct mo_cell empty_b, one_b, hay;
+    MO_ASSERT(mo_value_bytes(f.heap, (const uint8_t *)"", 0, &empty_b));
+    const uint8_t one_raw[] = {0x00};
+    MO_ASSERT(mo_value_bytes(f.heap, one_raw, sizeof one_raw, &one_b));
+    const uint8_t hay_raw[] = {0x00, 0x01, 0x7f, 0x80, 0xff, 0x10, 0x20};
+    MO_ASSERT(mo_value_bytes(f.heap, hay_raw, sizeof hay_raw, &hay));
+
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_IS_EMPTY,
+                       f.signature[MO_PRIM_BYTES_IS_EMPTY], &empty_b, &out,
+                       &reason) == MO_PRIM_RETURNED &&
+          reason == NULL && mo_cell_get_bool(out));
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_IS_EMPTY,
+                       f.signature[MO_PRIM_BYTES_IS_EMPTY], &one_b, &out,
+                       &reason) == MO_PRIM_RETURNED &&
+          reason == NULL && !mo_cell_get_bool(out));
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_IS_EMPTY,
+                       f.signature[MO_PRIM_BYTES_IS_EMPTY], &hay, &out,
+                       &reason) == MO_PRIM_RETURNED &&
+          reason == NULL && !mo_cell_get_bool(out));
+
+    /* Bytes.compare_slice_at in-bounds: Less (0), Equal (1), Greater (2), unsigned, tie-breaking */
+    const struct {
+        int64_t off;
+        int64_t len;
+        const uint8_t *other;
+        size_t other_len;
+        uint32_t want_tag;
+    } ok_cases[] = {
+        {0, 0, (const uint8_t *)"", 0, 1U},
+        {7, 0, (const uint8_t *)"", 0, 1U},
+        {7, 0, one_raw, 1, 0U},
+        {2, 3, (const uint8_t[]){0x7f, 0x80, 0xff}, 3, 1U},
+        {2, 3, (const uint8_t[]){0x7f, 0x80, 0xfe}, 3, 2U},
+        {2, 3, (const uint8_t[]){0x80, 0x00, 0x00}, 3, 0U},
+        /* Unsigned byte comparison: 0x80 > 0x7f, 0xff > 0x00 */
+        {3, 1, (const uint8_t[]){0x7f}, 1, 2U},
+        {2, 1, (const uint8_t[]){0x80}, 1, 0U},
+        {4, 1, (const uint8_t[]){0x00}, 1, 2U},
+        /* Prefix length tie-breaking */
+        {1, 2, (const uint8_t[]){0x01, 0x7f, 0x00}, 3, 0U},
+        {1, 3, (const uint8_t[]){0x01, 0x7f}, 2, 2U},
+        {0, 1, (const uint8_t *)"", 0, 2U},
+    };
+    for (size_t i = 0; i < sizeof ok_cases / sizeof ok_cases[0]; i++) {
+        struct mo_cell other_cell;
+        MO_ASSERT(mo_value_bytes(f.heap, ok_cases[i].other, ok_cases[i].other_len, &other_cell));
+        struct mo_cell args[] = {hay, mo_cell_int(ok_cases[i].off), mo_cell_int(ok_cases[i].len),
+                                 other_cell};
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_COMPARE_SLICE_AT,
+                           f.signature[MO_PRIM_BYTES_COMPARE_SLICE_AT], args, &out,
+                           &reason) == MO_PRIM_RETURNED &&
+              reason == NULL);
+        CHECK(mo_cell_get_tag(out) == 1);
+        struct mo_cell ord =
+            opt_ord_boxed ? mo_value_field(mo_cell_get_payload(out), 0) : mo_cell_get_payload(out);
+        CHECK(mo_cell_get_tag(ord) == ok_cases[i].want_tag);
+        mo_value_drop(f.heap, opt_ord_ty, out);
+        mo_value_drop(f.heap, bytes_ty, other_cell);
+    }
+
+    /* Empty haystack at (0, 0) against empty and non-empty */
+    {
+        struct mo_cell args_eq[] = {empty_b, mo_cell_int(0), mo_cell_int(0), empty_b};
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_COMPARE_SLICE_AT,
+                           f.signature[MO_PRIM_BYTES_COMPARE_SLICE_AT], args_eq, &out,
+                           &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(out) == 1);
+        struct mo_cell ord =
+            opt_ord_boxed ? mo_value_field(mo_cell_get_payload(out), 0) : mo_cell_get_payload(out);
+        CHECK(mo_cell_get_tag(ord) == 1U);
+        mo_value_drop(f.heap, opt_ord_ty, out);
+
+        struct mo_cell args_lt[] = {empty_b, mo_cell_int(0), mo_cell_int(0), one_b};
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_COMPARE_SLICE_AT,
+                           f.signature[MO_PRIM_BYTES_COMPARE_SLICE_AT], args_lt, &out,
+                           &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(out) == 1);
+        ord =
+            opt_ord_boxed ? mo_value_field(mo_cell_get_payload(out), 0) : mo_cell_get_payload(out);
+        CHECK(mo_cell_get_tag(ord) == 0U);
+        mo_value_drop(f.heap, opt_ord_ty, out);
+    }
+
+    /* Out-of-bounds and signed-overflow checks -> None (tag 0) */
+    const struct {
+        int64_t off;
+        int64_t len;
+    } oob_cases[] = {
+        {-1, 0},
+        {-1, 1},
+        {INT64_MIN, 0},
+        {0, -1},
+        {0, INT64_MIN},
+        {8, 0},
+        {7, 1},
+        {5, 3},
+        {0, 8},
+        {INT64_MAX, 0},
+        {INT64_MAX, 1},
+        {1, INT64_MAX},
+        {INT64_MAX / 2 + 2, INT64_MAX / 2 + 2},
+    };
+    for (size_t i = 0; i < sizeof oob_cases / sizeof oob_cases[0]; i++) {
+        struct mo_cell args[] = {hay, mo_cell_int(oob_cases[i].off), mo_cell_int(oob_cases[i].len),
+                                 empty_b};
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_COMPARE_SLICE_AT,
+                           f.signature[MO_PRIM_BYTES_COMPARE_SLICE_AT], args, &out,
+                           &reason) == MO_PRIM_RETURNED &&
+              reason == NULL);
+        CHECK(mo_cell_get_tag(out) == 0);
+        mo_value_drop(f.heap, opt_ord_ty, out);
+    }
+
+    mo_value_drop(f.heap, bytes_ty, hay);
+    mo_value_drop(f.heap, bytes_ty, one_b);
+    mo_value_drop(f.heap, bytes_ty, empty_b);
+    CHECK(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
+    prim_fixture_free(&f);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--big-text-1m") == 0) {
         bigint_text_work(415241);
@@ -1466,6 +1597,7 @@ int main(int argc, char **argv) {
     unchanged_trim();
     bytes_slice_and_join();
     bytes_packing_and_unpacking();
+    bytes_empty_and_compare_slice_at();
     unique_reverse_without_space();
     unique_union_without_space();
     reuse_refusals();

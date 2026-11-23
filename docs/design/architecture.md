@@ -3399,8 +3399,8 @@ binding, not its spelling or a new local; an enclosing lambda also captures
 bindings needed only by its nested lambdas. Written first-use order does not
 depend on inference's argument order. Lowering snapshots these values when
 the lambda is made, so escaped closures keep their parameters and local values.
-E0090 rejects writes to a lambda's own vars; outer-function writes retain
-E0057. E0091 rejects captured capabilities and types that store them. Private
+E0090 rejects writes to a var from an enclosing function inside a lambda (while
+allowing a lambda to declare and assign its own local vars). E0091 rejects captured capabilities and types that store them. Private
 nominal dependency masks reach a fixed point across recursive records/choices;
 phantom parameters and function parameter/result types do not store handles.
 Abstract stored parameters without Number remain E1103: custom Text/Order and

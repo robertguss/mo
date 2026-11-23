@@ -530,9 +530,10 @@ labels = orders.map(fn(order)
 end)
 ```
 
-An anonymous function can read names in scope where it is made, but it can't
-assign a `var` and can't capture a capability (section 11.4), so it can do only
-what its parameters allow; it may take a capability as a parameter. So
+An anonymous function can read names in scope where it is made and can declare
+and assign its own local `var` bindings, but it can't assign a `var` from an
+enclosing function and can't capture a capability (section 11.4), so it can do
+only what its parameters allow; it may take a capability as a parameter. So
 printing each item works in a `for` loop, not inside `map`.
 
 An anonymous function may read a `var` from the function around it only if
@@ -574,8 +575,9 @@ module's functions or constants by a name it uses for a local:
 as `open` doesn't call `owner(...)`.
 
 Unused names, parameters and imports are errors, and so is a result that isn't
-`Unit` and isn't used. A name starting with `_` is unused on purpose, and
-`for _ in 0..3` repeats without a name.
+`Unit` and isn't used. A name starting with `_` is unused on purpose, `_ = value`
+discards a non-`Result` value (an unhandled `Result` is still an error,
+section 8.3), and `for _ in 0..3` repeats without a name.
 
 <!-- mo-example: fragment -->
 ```mo
@@ -586,8 +588,8 @@ tax = subtotal * 0.2
 ### 6.2 Variables
 
 `var name = value` declares a name that can be assigned again within the
-function that declares it. Assigning to a field, or to a field of a field,
-builds a new record with that field changed:
+function or anonymous function that declares it. Assigning to a field, or to a
+field of a field, builds a new record with that field changed:
 
 <!-- mo-example: fragment -->
 ```mo
@@ -1891,7 +1893,7 @@ a number too large to be a finite `Float`. `Text.from_chars(chars: List(Char)) :
 `ascii_white_space? : Bool`, `ascii_lowercase` and `ascii_uppercase : Char`,
 `to_text : Text`.
 
-**Bytes**: `size : Int`, `get(i: Int) : Option(Byte)`,
+**Bytes**: `size : Int`, `empty? : Bool`, `get(i: Int) : Option(Byte)`,
 `decode_utf8 : Option(Text)`. `slice(from: Int, to: Int) : Bytes` gives the
 bytes from position `from` up to, but not including, `to`, counted from 0. A
 position past the end is the end, and `from` at or past `to` gives empty
@@ -1916,7 +1918,10 @@ two's-complement integer. `u16_be_at(offset: Int) : Option(Int)`,
 `u32_be_at(offset: Int) : Option(Int)` and
 `i64_be_at(offset: Int) : Option(Int)` decode 2, 4 or 8 big-endian bytes
 starting at `offset`, giving `None` when `offset < 0` or fewer than the needed
-bytes remain.
+bytes remain. `compare_slice_at(offset: Int, len: Int, other: Bytes) : Option(Ordering)`
+compares the `len` bytes starting at `offset` against `other` in unsigned byte
+order without allocating a slice, giving `None` when `offset < 0`, `len < 0`,
+or `offset + len` exceeds `size`.
 
 **List(T)**: `size : Int`, `empty? : Bool`. `get(i: Int)`, `first` and
 `last : Option(T)`; `get` gives `None` for a position below 0 or past the end.
@@ -2541,7 +2546,7 @@ expr        = "if" expr ":" expr "else" (":" expr | expr)        # one-line if; 
             | "stop" text
 arg         = expr | name ":" expr
 arm         = pattern ("|" pattern)* ("if" expr)? ":" simple? NL
-target      = name ("." name)* | "(" binding ("," binding)+ ")"
+target      = name ("." name)* | "_" | "(" binding ("," binding)+ ")"
 binding     = name | "_" | "(" binding ("," binding)+ ")"
 pattern     = "_" | name | literal | "-" number | Name ("." Name)?
             | Name ("." Name)? "(" (pattern | name ":" pattern ("," name ":" pattern)*) ")"

@@ -34,7 +34,7 @@ MO_MUST_USE bool infer_problem(struct inference *p, uint16_t code, struct mo_spa
         : code == MO_CODE_CALL_ARGUMENTS       ? "pass one positional argument per parameter"
         : code == MO_CODE_UNUSED_VALUE         ? "not Unit and not used"
         : code == MO_CODE_NOT_VARIABLE         ? "no assignable var here"
-        : code == MO_CODE_LAMBDA_WRITE         ? "an anonymous function can't assign a var"
+        : code == MO_CODE_LAMBDA_WRITE         ? "an anonymous function can't assign an outer var"
         : code == MO_CODE_CAPABILITY_CAPTURE   ? "pass capabilities as parameters instead"
         : code == MO_CODE_CAPTURE_ASSIGNMENT   ? "copy this value into a name first"
         : code == MO_CODE_EXIT_OUTSIDE_LOOP    ? "no enclosing loop in this function"
@@ -439,6 +439,23 @@ static MO_MUST_USE bool mismatch(struct inference *p, struct term *found, struct
         reason = "A call applies a function to its arguments (reference 5.2).";
     }
     return infer_problem(p, code, p->span, message, reason, NULL);
+}
+
+MO_MUST_USE bool infer_or_result(struct inference *p, struct term *found) {
+    struct type_preview label = {0};
+    preview_text(&label, "expected Option or Bool, found ");
+    if (!infer_preview_type(p, &label, found, 0))
+        return false;
+    char *text = infer_allocate(p, label.length + 1, 1, 1);
+    if (text == NULL)
+        return false;
+    memcpy(text, label.text, label.length + 1);
+    p->type_label = text;
+    return infer_problem(
+        p, MO_CODE_CONDITION_TYPE, p->span, "or unwraps Option or combines Bool, not Result",
+        "or unwraps Option or combines Bool, not Result; use try, case, or assert ... is Ok(v) "
+        "(reference 8.1, 8.2).",
+        NULL);
 }
 
 /* Each occurs walk visits a shared type once, not once per path through its DAG. */

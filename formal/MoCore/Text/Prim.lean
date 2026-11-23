@@ -49,7 +49,8 @@ def bytesOps : List (String × BytesOp) :=
    ("fromBase64url", .fromBase64url), ("empty", .empty), ("zeroed", .zeroed),
    ("fromList", .fromList), ("toList", .toList), ("fromU16Be", .fromU16Be),
    ("fromU32Be", .fromU32Be), ("fromI64Be", .fromI64Be), ("u16BeAt", .u16BeAt),
-   ("u32BeAt", .u32BeAt), ("i64BeAt", .i64BeAt)]
+   ("u32BeAt", .u32BeAt), ("i64BeAt", .i64BeAt), ("isEmpty", .isEmpty),
+   ("compareSliceAt", .compareSliceAt)]
 def unicodeOps : List (String × UnicodeOp) :=
   [("graphemes", .graphemes), ("displayWidth", .displayWidth), ("normalizeNfc", .normalizeNfc),
    ("lowercase", .lowercase), ("uppercase", .uppercase), ("letter", .letter), ("digit", .digit)]

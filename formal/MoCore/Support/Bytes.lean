@@ -192,4 +192,15 @@ def bytesI64BeAt (bs : List Int) (off : Int) : Option Int :=
     | _ => none
   else none
 
+def bytesCompare : List Int → List Int → Ordering
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | a :: as, b :: bs => if a < b then .lt else if b < a then .gt else bytesCompare as bs
+
+def bytesCompareSliceAt (bs : List Int) (off len : Int) (other : List Int) : Option Ordering :=
+  if 0 ≤ off ∧ 0 ≤ len ∧ off + len ≤ bs.length then
+    some (bytesCompare ((bs.drop off.toNat).take len.toNat) other)
+  else none
+
 end MoCore

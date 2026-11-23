@@ -303,6 +303,17 @@ def optBytes : Option (List Int) → Value
   | some bs => someV (.bytes bs)
   | none => noneV
 
+/-- An `Ordering` value (`Less`, `Equal`, `Greater`). -/
+def orderingV : Ordering → Value
+  | .lt => .con "Less" []
+  | .eq => .con "Equal" []
+  | .gt => .con "Greater" []
+
+/-- An optional `Ordering`. -/
+def optOrdering : Option Ordering → Value
+  | some o => someV (orderingV o)
+  | none => noneV
+
 def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
   match op, vs with
   | .size, [.bytes bs] => okInt bs.length w
@@ -339,6 +350,9 @@ def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
   | .u16BeAt, [.bytes bs, .int off] => .ok (optIntOf (bytesU16BeAt bs off)) w
   | .u32BeAt, [.bytes bs, .int off] => .ok (optIntOf (bytesU32BeAt bs off)) w
   | .i64BeAt, [.bytes bs, .int off] => .ok (optIntOf (bytesI64BeAt bs off)) w
+  | .isEmpty, [.bytes bs] => .ok (.bool bs.isEmpty) w
+  | .compareSliceAt, [.bytes bs, .int off, .int len, .bytes other] =>
+    .ok (optOrdering (bytesCompareSliceAt bs off len other)) w
   | _, _ => wrongArgs "Bytes primitive"
 
 /-! ## Ranges -/

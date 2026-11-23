@@ -1,0 +1,6 @@
+E0074 3.1
+0:54..60
+or unwraps Option or combines Bool, not Result
+or unwraps Option or combines Bool, not Result; use try, case, or assert ... is Ok(v) (reference 8.1, 8.2).
+expected Option or Bool, found Result(Int, Text)
+fixes 0

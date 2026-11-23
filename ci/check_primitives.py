@@ -140,6 +140,21 @@ def text_cases(rng, rows):
                 ] + byte_sequences[:10]
                 values = [[enc(b), f"(int {o})"] for b in be_samples
                           for o in [-(1 << 63), -1, 0, 1, len(b) - 8, len(b) - 4, len(b) - 2, len(b), (1 << 63) - 1]]
+            elif name == "compare_slice_at":
+                cmp_haystacks = [b"", b"\x00", b"\x7f\x80\xff", b"abcdef", b"\x01\x02\x03\x02\x03"] + byte_sequences[:4]
+                cmp_others = [b"", b"\x00", b"\x7f", b"\x80", b"\xff", b"bc", b"bcd", b"bcde", b"\x02\x03"]
+                values = [
+                    [enc(b), f"(int {o})", f"(int {n})", enc(other)]
+                    for b in cmp_haystacks
+                    for o in [-(1 << 63), -1, 0, 1, len(b), (1 << 63) - 1]
+                    for n in [-1, 0, 1, 2, len(b) + 1, (1 << 63) - 1]
+                    for other in cmp_others[:5]
+                ] + [
+                    [enc(b"abcdef"), f"(int {o})", f"(int {n})", enc(other)]
+                    for o in [0, 1, 2, 6]
+                    for n in [0, 1, 2, 3, 4]
+                    for other in cmp_others
+                ]
             else:
                 values = [[enc(b)] for b in byte_sequences]
         for i, args in enumerate(values):

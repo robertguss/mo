@@ -307,7 +307,7 @@ index is a bug. `join` gives the parts of a list as one value. -/
 inductive BytesOp where
   | size | get | decodeUtf8 | slice | join | toHex | fromHex | toBase64url | fromBase64url
   | empty | zeroed | fromList | toList | fromU16Be | fromU32Be | fromI64Be
-  | u16BeAt | u32BeAt | i64BeAt
+  | u16BeAt | u32BeAt | i64BeAt | isEmpty | compareSliceAt
   deriving DecidableEq, Repr, Inhabited
 
 /-- Unicode 16.0 trusted primitives; Core specifies their interface, not tables. -/
@@ -509,6 +509,8 @@ def BytesOp.sig : BytesOp → List Ty × Ty
   | .toList => ([.bytes], .list .byte)
   | .fromU16Be | .fromU32Be | .fromI64Be => ([.int], .bytes)
   | .u16BeAt | .u32BeAt | .i64BeAt => ([.bytes, .int], .option .int)
+  | .isEmpty => ([.bytes], .bool)
+  | .compareSliceAt => ([.bytes, .int, .int, .bytes], .option .ordering)
 
 def RangeOp.sig : RangeOp → List Ty × Ty
   | .make => ([.int, .int], .range)
