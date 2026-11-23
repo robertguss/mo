@@ -727,6 +727,7 @@ pub fn decode(bytes: &[u8]) -> Result<BytecodeFile, LoadError> {
         globals: raw.globals,
         init: raw.init,
         functions: raw.functions,
+        code_offsets: raw.code_positions,
         modules: raw.modules,
         files: raw.files,
         debug: raw.debug,

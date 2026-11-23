@@ -7,6 +7,9 @@ pub mod types;
 pub mod validate;
 pub mod verify;
 
+#[cfg(test)]
+mod verify_tests;
+
 pub const BYTECODE_MAGIC: [u8; 4] = *b"MOBC";
 pub const BYTECODE_MAJOR: u16 = 0;
 pub const BYTECODE_MINOR: u16 = 3;
@@ -494,6 +497,7 @@ pub struct BytecodeFile {
     pub globals: Vec<GlobalDef>,
     pub init: Vec<u32>,
     pub functions: Vec<FunctionDef>,
+    pub code_offsets: Vec<u32>,
     pub modules: Vec<ModuleDef>,
     pub files: Vec<Vec<u8>>,
     pub debug: Vec<DebugEntry>,
@@ -507,6 +511,17 @@ impl BytecodeFile {
 
     pub fn function_name(&self, idx: u32) -> &str {
         self.string(self.functions[idx as usize].name)
+    }
+
+    pub fn code_offset(&self, function: u32) -> u32 {
+        self.code_offsets
+            .get(function as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn registers_readable(&self, function_idx: u32, pc: u32) -> Result<Vec<bool>, LoadError> {
+        verify::registers_readable(self, function_idx, pc)
     }
 
     pub fn find_span(&self, function: u32, pc: u32) -> Option<(u32, u32, u32)> {

@@ -3,6 +3,7 @@
 //! Safe Rust Perceus reference-counted heap, `Value` representation, `HeapBudget`,
 //! insertion-ordered collections, exact Decimal/Float formatting, structural equality/hashing/printing.
 
+pub mod bigint;
 pub mod decimal;
 pub mod equal;
 pub mod float;
@@ -17,7 +18,7 @@ use std::rc::Rc;
 
 use mo_bytecode::types::TypeTable;
 use mo_bytecode::{BigIntSign, Capability, CaseShape, LayoutKind, NO_INDEX};
-use mo_def::limits::MO_LIMIT_COLLECTION_SIZE;
+use mo_def::limits::{MO_LIMIT_COLLECTION_SIZE, MO_LIMIT_VALUE_BYTES};
 
 use crate::hash::inline_payload_to_value;
 use crate::table::{MoMap, MoSet};
@@ -82,6 +83,57 @@ impl HeapBudget {
     pub fn release(&self, bytes: usize) {
         let cur = self.inner.used.get();
         self.inner.used.set(cur.saturating_sub(bytes));
+    }
+
+    pub fn can_charge(&self, bytes: usize) -> bool {
+        self.inner
+            .used
+            .get()
+            .checked_add(bytes)
+            .is_some_and(|next| next <= self.inner.limit)
+    }
+}
+
+/// RAII guard charging temporary scratch buffers (such as BigInt intermediate limbs)
+/// against a process `HeapBudget`, automatically releasing on drop.
+pub struct ScratchGuard<'a> {
+    budget: &'a HeapBudget,
+    charged: usize,
+}
+
+impl<'a> ScratchGuard<'a> {
+    pub fn new(budget: &'a HeapBudget) -> Self {
+        Self { budget, charged: 0 }
+    }
+
+    pub fn charge(&mut self, bytes: usize) -> Result<(), HeapError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        self.budget.charge(bytes)?;
+        self.charged = self.charged.saturating_add(bytes);
+        Ok(())
+    }
+
+    pub fn release(&mut self, bytes: usize) {
+        let n = bytes.min(self.charged);
+        if n != 0 {
+            self.budget.release(n);
+            self.charged -= n;
+        }
+    }
+
+    pub fn charged(&self) -> usize {
+        self.charged
+    }
+}
+
+impl Drop for ScratchGuard<'_> {
+    fn drop(&mut self) {
+        if self.charged != 0 {
+            self.budget.release(self.charged);
+            self.charged = 0;
+        }
     }
 }
 
@@ -157,11 +209,15 @@ impl Drop for HeapNode {
             HeapObj::List(items) => {
                 children.extend(items.drain(..));
             }
+            HeapObj::Map(map) => {
+                map.drain_values(&mut children);
+            }
+            HeapObj::Set(set) => {
+                set.drain_values(&mut children);
+            }
             HeapObj::Text(_)
             | HeapObj::Bytes(_)
             | HeapObj::BigInt { .. }
-            | HeapObj::Map(_)
-            | HeapObj::Set(_)
             | HeapObj::Capability(_) => return,
         }
         if children.is_empty() {
@@ -206,6 +262,14 @@ impl HeapRef {
 
     pub fn is_immortal(&self) -> bool {
         self.0.immortal.get()
+    }
+
+    pub fn strong_count(&self) -> usize {
+        Rc::strong_count(&self.0)
+    }
+
+    pub fn ptr_eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
     }
 
     pub fn can_mutate_in_place(&self) -> bool {
@@ -393,6 +457,13 @@ impl Value {
         }
     }
 
+    pub fn as_bigint(&self) -> (BigIntSign, &[u8]) {
+        match self.as_heap_ref().obj() {
+            HeapObj::BigInt { sign, magnitude } => (*sign, magnitude.as_slice()),
+            _ => panic!("expected BigInt"),
+        }
+    }
+
     pub fn as_list(&self) -> &VecDeque<Value> {
         match self.as_heap_ref().obj() {
             HeapObj::List(l) => l,
@@ -483,6 +554,13 @@ impl Heap {
     }
 
     pub fn alloc_bigint(&self, sign: BigIntSign, magnitude: Vec<u8>) -> Result<Value, HeapError> {
+        if (magnitude.len() as u64) > MO_LIMIT_VALUE_BYTES {
+            return Err(HeapError::OutOfMemory);
+        }
+        assert!(
+            crate::bigint::is_canonical(sign, &magnitude),
+            "BigInt representation must be canonical"
+        );
         let len = magnitude.len() + 8;
         Ok(Value::Ref(
             self.alloc_node(len, HeapObj::BigInt { sign, magnitude })?,
@@ -498,13 +576,45 @@ impl Heap {
     }
 
     pub fn alloc_map(&self, map: MoMap) -> Result<Value, HeapError> {
+        if map.len() as u64 > MO_LIMIT_COLLECTION_SIZE {
+            return Err(HeapError::OutOfMemory);
+        }
         let bytes = map.len().saturating_mul(CELL_SIZE * 2);
         Ok(Value::Ref(self.alloc_node(bytes, HeapObj::Map(map))?))
     }
 
     pub fn alloc_set(&self, set: MoSet) -> Result<Value, HeapError> {
+        if set.len() as u64 > MO_LIMIT_COLLECTION_SIZE {
+            return Err(HeapError::OutOfMemory);
+        }
         let bytes = set.len().saturating_mul(CELL_SIZE);
         Ok(Value::Ref(self.alloc_node(bytes, HeapObj::Set(set))?))
+    }
+
+    pub fn can_alloc_fields(&self, field_count: usize) -> bool {
+        field_count
+            .checked_mul(CELL_SIZE)
+            .and_then(|bytes| OBJECT_OVERHEAD.checked_add(bytes))
+            .is_some_and(|total| self.budget.can_charge(total))
+    }
+
+    pub fn can_reuse(&self, token: &ReuseToken, field_count: usize) -> bool {
+        let Some(new_bytes) = field_count
+            .checked_mul(CELL_SIZE)
+            .and_then(|bytes| OBJECT_OVERHEAD.checked_add(bytes))
+        else {
+            return false;
+        };
+        if let Some(slot) = &token.slot {
+            let old = slot.0.charged_bytes.get();
+            if new_bytes <= old {
+                true
+            } else {
+                self.budget.can_charge(new_bytes - old)
+            }
+        } else {
+            self.budget.can_charge(new_bytes)
+        }
     }
 
     pub fn alloc_capability(
@@ -766,25 +876,39 @@ impl Heap {
             let new_bytes = OBJECT_OVERHEAD + fields.len().saturating_mul(CELL_SIZE);
             slot.update_charge(new_bytes)?;
             let obj = slot.get_mut_unique().expect("token slot must be unique");
+            // Reuse the cleared field Vec capacity retained by `reset` when it already fits.
+            let mut reused = match obj {
+                HeapObj::Record { fields: old, .. }
+                | HeapObj::Tuple { fields: old, .. }
+                | HeapObj::CaseBlock { fields: old, .. } => std::mem::take(old),
+                _ => Vec::new(),
+            };
+            let final_fields = if reused.capacity() >= fields.len() {
+                reused.clear();
+                reused.extend(fields);
+                reused
+            } else {
+                fields
+            };
             match layout.kind {
                 LayoutKind::Record => {
                     *obj = HeapObj::Record {
                         layout: layout_idx,
-                        fields,
+                        fields: final_fields,
                     };
                     return Ok(Value::Ref(slot));
                 }
                 LayoutKind::Tuple => {
                     *obj = HeapObj::Tuple {
                         layout: layout_idx,
-                        fields,
+                        fields: final_fields,
                     };
                     return Ok(Value::Ref(slot));
                 }
                 LayoutKind::Case => {
                     *obj = HeapObj::CaseBlock {
                         layout: layout_idx,
-                        fields,
+                        fields: final_fields,
                     };
                     return Ok(Value::ChoiceRef {
                         tag: layout.case_index,
@@ -848,42 +972,55 @@ impl Heap {
         }
     }
 
-    pub fn text_concat(&self, mut left: Value, right: &Value) -> Result<Value, HeapError> {
+    pub fn text_concat(&self, left: &mut Value, right: &Value) -> Result<Value, HeapError> {
         let rhs = right.as_text();
         if rhs.is_empty() {
-            return Ok(left);
+            return Ok(std::mem::replace(left, Value::Unit));
         }
-        let Value::Ref(ref mut r) = left else {
+        let Value::Ref(ref mut r) = *left else {
             panic!("expected Text");
         };
-        if let Some(HeapObj::Text(s)) = r.get_mut_unique() {
-            let new_len = s
-                .len()
+        if r.can_mutate_in_place() {
+            let cur_len = match r.obj() {
+                HeapObj::Text(s) => s.len(),
+                _ => panic!("expected Text"),
+            };
+            let new_len = cur_len
                 .checked_add(rhs.len())
                 .ok_or(HeapError::OutOfMemory)?;
-            r.update_charge(OBJECT_OVERHEAD + new_len)?;
+            r.update_charge(
+                OBJECT_OVERHEAD
+                    .checked_add(new_len)
+                    .ok_or(HeapError::OutOfMemory)?,
+            )?;
             if let Some(HeapObj::Text(s)) = r.get_mut_unique() {
                 s.push_str(rhs);
             }
-            return Ok(left);
+            return Ok(std::mem::replace(left, Value::Unit));
         }
         let lhs = left.as_text();
-        let mut combined = String::with_capacity(lhs.len() + rhs.len());
+        let new_len = lhs
+            .len()
+            .checked_add(rhs.len())
+            .ok_or(HeapError::OutOfMemory)?;
+        let mut combined = String::with_capacity(new_len);
         combined.push_str(lhs);
         combined.push_str(rhs);
-        self.alloc_text(combined)
+        let out = self.alloc_text(combined)?;
+        *left = Value::Unit;
+        Ok(out)
     }
 
     pub fn text_slice(
         &self,
-        mut text: Value,
+        text: &mut Value,
         start: usize,
         len: usize,
     ) -> Result<Value, HeapError> {
         if start == 0 && len == text.as_text().len() {
-            return Ok(text);
+            return Ok(std::mem::replace(text, Value::Unit));
         }
-        let Value::Ref(ref mut r) = text else {
+        let Value::Ref(ref mut r) = *text else {
             panic!("expected Text");
         };
         if r.can_mutate_in_place() {
@@ -894,91 +1031,123 @@ impl Heap {
                     s.drain(..start);
                 }
             }
-            return Ok(text);
+            return Ok(std::mem::replace(text, Value::Unit));
         }
         let sliced = text.as_text()[start..start + len].to_string();
-        self.alloc_text(sliced)
+        let out = self.alloc_text(sliced)?;
+        *text = Value::Unit;
+        Ok(out)
     }
 
-    pub fn list_append(&self, mut list: Value, elem: Value) -> Result<Value, HeapError> {
+    pub fn text_ascii_case(&self, text: &mut Value, upper: bool) -> Result<Value, HeapError> {
+        let Value::Ref(ref mut r) = *text else {
+            panic!("expected Text");
+        };
+        if let Some(HeapObj::Text(s)) = r.get_mut_unique() {
+            if upper {
+                s.make_ascii_uppercase();
+            } else {
+                s.make_ascii_lowercase();
+            }
+            return Ok(std::mem::replace(text, Value::Unit));
+        }
+        let converted = if upper {
+            text.as_text().to_ascii_uppercase()
+        } else {
+            text.as_text().to_ascii_lowercase()
+        };
+        let out = self.alloc_text(converted)?;
+        *text = Value::Unit;
+        Ok(out)
+    }
+
+    pub fn list_append(&self, list: &mut Value, elem: &mut Value) -> Result<Value, HeapError> {
         let len = list.as_list().len();
         if (len as u64) >= MO_LIMIT_COLLECTION_SIZE {
             return Err(HeapError::OutOfMemory);
         }
-        let Value::Ref(ref mut r) = list else {
+        let Value::Ref(ref mut r) = *list else {
             panic!("expected List");
         };
         if r.can_mutate_in_place() {
             r.update_charge(OBJECT_OVERHEAD + (len + 1) * CELL_SIZE)?;
+            let moved_elem = std::mem::replace(elem, Value::Unit);
             if let Some(HeapObj::List(items)) = r.get_mut_unique() {
-                items.push_back(elem);
+                items.push_back(moved_elem);
             }
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let mut items = list.as_list().clone();
-        items.push_back(elem);
-        self.alloc_list(items)
+        items.push_back(elem.clone());
+        let out = self.alloc_list(items)?;
+        *list = Value::Unit;
+        *elem = Value::Unit;
+        Ok(out)
     }
 
-    pub fn list_prepend(&self, mut list: Value, elem: Value) -> Result<Value, HeapError> {
+    pub fn list_prepend(&self, list: &mut Value, elem: &mut Value) -> Result<Value, HeapError> {
         let len = list.as_list().len();
         if (len as u64) >= MO_LIMIT_COLLECTION_SIZE {
             return Err(HeapError::OutOfMemory);
         }
-        let Value::Ref(ref mut r) = list else {
+        let Value::Ref(ref mut r) = *list else {
             panic!("expected List");
         };
         if r.can_mutate_in_place() {
             r.update_charge(OBJECT_OVERHEAD + (len + 1) * CELL_SIZE)?;
+            let moved_elem = std::mem::replace(elem, Value::Unit);
             if let Some(HeapObj::List(items)) = r.get_mut_unique() {
-                items.push_front(elem);
+                items.push_front(moved_elem);
             }
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let mut items = list.as_list().clone();
-        items.push_front(elem);
-        self.alloc_list(items)
+        items.push_front(elem.clone());
+        let out = self.alloc_list(items)?;
+        *list = Value::Unit;
+        *elem = Value::Unit;
+        Ok(out)
     }
 
-    pub fn list_concat(&self, mut list: Value, right: &Value) -> Result<Value, HeapError> {
+    pub fn list_concat(&self, list: &mut Value, right: &Value) -> Result<Value, HeapError> {
         let rhs = right.as_list();
         if rhs.is_empty() {
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let new_len = list.as_list().len().saturating_add(rhs.len());
         if (new_len as u64) > MO_LIMIT_COLLECTION_SIZE {
             return Err(HeapError::OutOfMemory);
         }
-        let Value::Ref(ref mut r) = list else {
+        let Value::Ref(ref mut r) = *list else {
             panic!("expected List");
         };
         if r.can_mutate_in_place() {
-            // Collect clones first in case left and right alias (verified bytecode forbids alias on owned+borrowed,
-            // but cloning avoids borrow conflict cleanly).
-            let rhs_items: Vec<Value> = rhs.iter().cloned().collect();
             r.update_charge(OBJECT_OVERHEAD + new_len * CELL_SIZE)?;
+            let rhs_items: Vec<Value> = rhs.iter().cloned().collect();
             if let Some(HeapObj::List(items)) = r.get_mut_unique() {
                 items.extend(rhs_items);
             }
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let mut items = VecDeque::with_capacity(new_len);
         items.extend(list.as_list().iter().cloned());
         items.extend(rhs.iter().cloned());
-        self.alloc_list(items)
+        let out = self.alloc_list(items)?;
+        *list = Value::Unit;
+        Ok(out)
     }
 
     pub fn list_slice(
         &self,
-        mut list: Value,
+        list: &mut Value,
         start: usize,
         count: usize,
     ) -> Result<Value, HeapError> {
         let old_len = list.as_list().len();
         if start == 0 && count == old_len {
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
-        let Value::Ref(ref mut r) = list else {
+        let Value::Ref(ref mut r) = *list else {
             panic!("expected List");
         };
         if r.can_mutate_in_place() {
@@ -989,7 +1158,7 @@ impl Heap {
                 }
             }
             r.update_charge(OBJECT_OVERHEAD + count * CELL_SIZE)?;
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let items: VecDeque<Value> = list
             .as_list()
@@ -998,38 +1167,50 @@ impl Heap {
             .take(count)
             .cloned()
             .collect();
-        self.alloc_list(items)
+        let out = self.alloc_list(items)?;
+        *list = Value::Unit;
+        Ok(out)
     }
 
-    pub fn list_reverse(&self, mut list: Value) -> Result<Value, HeapError> {
-        let Value::Ref(ref mut r) = list else {
+    pub fn list_reverse(&self, list: &mut Value) -> Result<Value, HeapError> {
+        let Value::Ref(ref mut r) = *list else {
             panic!("expected List");
         };
         if let Some(HeapObj::List(items)) = r.get_mut_unique() {
             let slice = items.make_contiguous();
             slice.reverse();
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let items: VecDeque<Value> = list.as_list().iter().rev().cloned().collect();
-        self.alloc_list(items)
+        let out = self.alloc_list(items)?;
+        *list = Value::Unit;
+        Ok(out)
     }
 
-    pub fn list_set(&self, mut list: Value, index: usize, elem: Value) -> Result<Value, HeapError> {
-        let Value::Ref(ref mut r) = list else {
+    pub fn list_set(
+        &self,
+        list: &mut Value,
+        index: usize,
+        elem: &mut Value,
+    ) -> Result<Value, HeapError> {
+        let Value::Ref(ref mut r) = *list else {
             panic!("expected List");
         };
         if let Some(HeapObj::List(items)) = r.get_mut_unique() {
-            items[index] = elem;
-            return Ok(list);
+            items[index] = std::mem::replace(elem, Value::Unit);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let mut items = list.as_list().clone();
-        items[index] = elem;
-        self.alloc_list(items)
+        items[index] = elem.clone();
+        let out = self.alloc_list(items)?;
+        *list = Value::Unit;
+        *elem = Value::Unit;
+        Ok(out)
     }
 
-    pub fn list_remove_at(&self, mut list: Value, index: usize) -> Result<Value, HeapError> {
+    pub fn list_remove_at(&self, list: &mut Value, index: usize) -> Result<Value, HeapError> {
         let old_len = list.as_list().len();
-        let Value::Ref(ref mut r) = list else {
+        let Value::Ref(ref mut r) = *list else {
             panic!("expected List");
         };
         if r.can_mutate_in_place() {
@@ -1037,11 +1218,184 @@ impl Heap {
                 items.remove(index);
             }
             r.update_charge(OBJECT_OVERHEAD + (old_len - 1) * CELL_SIZE)?;
-            return Ok(list);
+            return Ok(std::mem::replace(list, Value::Unit));
         }
         let mut items = list.as_list().clone();
         items.remove(index);
-        self.alloc_list(items)
+        let out = self.alloc_list(items)?;
+        *list = Value::Unit;
+        Ok(out)
+    }
+
+    pub fn map_set(
+        &self,
+        types: &TypeTable,
+        map: &mut Value,
+        key: &mut Value,
+        val: &mut Value,
+    ) -> Result<Value, HeapError> {
+        let hash_key = self.hash_key;
+        let cur_len = map.as_map().len();
+        let already_present = map.as_map().contains_key(types, hash_key, key);
+        let new_len = if already_present {
+            cur_len
+        } else {
+            cur_len + 1
+        };
+        if (new_len as u64) > MO_LIMIT_COLLECTION_SIZE {
+            return Err(HeapError::OutOfMemory);
+        }
+        let Value::Ref(ref mut r) = *map else {
+            panic!("expected Map");
+        };
+        if r.can_mutate_in_place() {
+            r.update_charge(OBJECT_OVERHEAD + new_len * (CELL_SIZE * 2))?;
+            let moved_key = std::mem::replace(key, Value::Unit);
+            let moved_val = std::mem::replace(val, Value::Unit);
+            if let Some(HeapObj::Map(m)) = r.get_mut_unique() {
+                m.set(types, hash_key, moved_key, moved_val);
+            }
+            return Ok(std::mem::replace(map, Value::Unit));
+        }
+        let mut copy = map.as_map().clone();
+        copy.set(types, hash_key, key.clone(), val.clone());
+        let out = self.alloc_map(copy)?;
+        *map = Value::Unit;
+        *key = Value::Unit;
+        *val = Value::Unit;
+        Ok(out)
+    }
+
+    pub fn map_remove(
+        &self,
+        types: &TypeTable,
+        map: &mut Value,
+        key: &Value,
+    ) -> Result<Value, HeapError> {
+        let hash_key = self.hash_key;
+        let Value::Ref(ref mut r) = *map else {
+            panic!("expected Map");
+        };
+        if r.can_mutate_in_place() {
+            let new_len = if let Some(HeapObj::Map(m)) = r.get_mut_unique() {
+                m.remove(types, hash_key, key);
+                m.len()
+            } else {
+                panic!("expected Map");
+            };
+            r.update_charge(OBJECT_OVERHEAD + new_len * (CELL_SIZE * 2))?;
+            return Ok(std::mem::replace(map, Value::Unit));
+        }
+        let mut copy = map.as_map().clone();
+        copy.remove(types, hash_key, key);
+        let out = self.alloc_map(copy)?;
+        *map = Value::Unit;
+        Ok(out)
+    }
+
+    pub fn set_add(
+        &self,
+        types: &TypeTable,
+        set: &mut Value,
+        elem: &mut Value,
+    ) -> Result<Value, HeapError> {
+        let hash_key = self.hash_key;
+        let cur_len = set.as_set().len();
+        let already_present = set.as_set().contains(types, hash_key, elem);
+        let new_len = if already_present {
+            cur_len
+        } else {
+            cur_len + 1
+        };
+        if (new_len as u64) > MO_LIMIT_COLLECTION_SIZE {
+            return Err(HeapError::OutOfMemory);
+        }
+        let Value::Ref(ref mut r) = *set else {
+            panic!("expected Set");
+        };
+        if r.can_mutate_in_place() {
+            r.update_charge(OBJECT_OVERHEAD + new_len * CELL_SIZE)?;
+            let moved_elem = std::mem::replace(elem, Value::Unit);
+            if let Some(HeapObj::Set(s)) = r.get_mut_unique() {
+                s.add(types, hash_key, moved_elem);
+            }
+            return Ok(std::mem::replace(set, Value::Unit));
+        }
+        let mut copy = set.as_set().clone();
+        copy.add(types, hash_key, elem.clone());
+        let out = self.alloc_set(copy)?;
+        *set = Value::Unit;
+        *elem = Value::Unit;
+        Ok(out)
+    }
+
+    pub fn set_remove(
+        &self,
+        types: &TypeTable,
+        set: &mut Value,
+        elem: &Value,
+    ) -> Result<Value, HeapError> {
+        let hash_key = self.hash_key;
+        let Value::Ref(ref mut r) = *set else {
+            panic!("expected Set");
+        };
+        if r.can_mutate_in_place() {
+            let new_len = if let Some(HeapObj::Set(s)) = r.get_mut_unique() {
+                s.remove(types, hash_key, elem);
+                s.len()
+            } else {
+                panic!("expected Set");
+            };
+            r.update_charge(OBJECT_OVERHEAD + new_len * CELL_SIZE)?;
+            return Ok(std::mem::replace(set, Value::Unit));
+        }
+        let mut copy = set.as_set().clone();
+        copy.remove(types, hash_key, elem);
+        let out = self.alloc_set(copy)?;
+        *set = Value::Unit;
+        Ok(out)
+    }
+
+    pub fn set_union(
+        &self,
+        types: &TypeTable,
+        left: &mut Value,
+        right: &Value,
+    ) -> Result<Value, HeapError> {
+        let hash_key = self.hash_key;
+        let rhs = right.as_set();
+        if rhs.is_empty() {
+            return Ok(std::mem::replace(left, Value::Unit));
+        }
+        let cur_len = left.as_set().len();
+        let added = rhs
+            .iter()
+            .filter(|item| !left.as_set().contains(types, hash_key, item))
+            .count();
+        let new_len = cur_len.saturating_add(added);
+        if (new_len as u64) > MO_LIMIT_COLLECTION_SIZE {
+            return Err(HeapError::OutOfMemory);
+        }
+        let Value::Ref(ref mut r) = *left else {
+            panic!("expected Set");
+        };
+        if r.can_mutate_in_place() {
+            r.update_charge(OBJECT_OVERHEAD + new_len * CELL_SIZE)?;
+            let rhs_items: Vec<Value> = rhs.iter().cloned().collect();
+            if let Some(HeapObj::Set(s)) = r.get_mut_unique() {
+                for item in rhs_items {
+                    s.add(types, hash_key, item);
+                }
+            }
+            return Ok(std::mem::replace(left, Value::Unit));
+        }
+        let mut copy = left.as_set().clone();
+        for item in rhs.iter() {
+            copy.add(types, hash_key, item.clone());
+        }
+        let out = self.alloc_set(copy)?;
+        *left = Value::Unit;
+        Ok(out)
     }
 }
 
@@ -1079,9 +1433,307 @@ mod tests {
         assert!(s.as_heap_ref().is_immortal());
         assert!(!s.as_heap_ref().can_mutate_in_place());
         let rhs = heap.alloc_text("def".to_string()).unwrap();
-        let combined = heap.text_concat(s.clone(), &rhs).unwrap();
+        let mut s_copy = s.clone();
+        let combined = heap.text_concat(&mut s_copy, &rhs).unwrap();
+        assert!(!s.as_heap_ref().ptr_eq(combined.as_heap_ref()));
         assert_eq!(s.as_text(), "abc");
         assert_eq!(combined.as_text(), "abcdef");
+    }
+
+    #[test]
+    fn perceus_reset_reuse_and_free_token_unique_vs_shared_and_immortal() {
+        use mo_bytecode::{LayoutDef, TypeDef, TypeField, TypeKind};
+
+        let types = TypeTable::finish(
+            vec![
+                TypeDef {
+                    kind: TypeKind::Int,
+                    parameters: Vec::new(),
+                    result: NO_INDEX,
+                    function: NO_INDEX,
+                    capability: None,
+                    name_idx: None,
+                    name: None,
+                    fields: Vec::new(),
+                    cases: Vec::new(),
+                    is_reference: false,
+                    has_fields: false,
+                },
+                TypeDef {
+                    kind: TypeKind::Record,
+                    parameters: Vec::new(),
+                    result: NO_INDEX,
+                    function: NO_INDEX,
+                    capability: None,
+                    name_idx: None,
+                    name: Some("Pair".into()),
+                    fields: vec![
+                        TypeField {
+                            name_idx: None,
+                            name: Some("a".into()),
+                            ty: 0,
+                        },
+                        TypeField {
+                            name_idx: None,
+                            name: Some("b".into()),
+                            ty: 0,
+                        },
+                    ],
+                    cases: Vec::new(),
+                    is_reference: true,
+                    has_fields: true,
+                },
+            ],
+            vec![LayoutDef {
+                kind: LayoutKind::Record,
+                ty: 1,
+                case_index: 0,
+                function: NO_INDEX,
+                fields: vec![0, 0],
+            }],
+        )
+        .unwrap();
+
+        let heap = Heap::new(1024 * 1024);
+
+        // Unique object: RESET captures the slot, REUSE reuses the exact same Rc allocation.
+        let r1 = heap
+            .construct(&types, 0, vec![Value::Int(1), Value::Int(2)])
+            .unwrap();
+        let before_used = heap.budget().used();
+        let before_peak = heap.budget().peak();
+        // Keep raw identity via Weak/ptr check? We can check Rc::strong_count == 1 before reset
+        // and verify budget stays flat with zero peak increase across reset + reuse!
+        assert!(r1.as_heap_ref().can_mutate_in_place());
+        let token = heap.reset(r1);
+        assert!(token.slot.is_some());
+        let slot_ref = token.slot.as_ref().unwrap().clone();
+        // Drop temporary clone before reuse so strong_count returns to 1.
+        let slot_ptr_snapshot = format!("{:p}", slot_ref.obj());
+        drop(slot_ref);
+        let r2 = heap
+            .reuse_owned(&types, token, 0, vec![Value::Int(10), Value::Int(20)])
+            .unwrap();
+        assert_eq!(format!("{:p}", r2.as_heap_ref().obj()), slot_ptr_snapshot);
+        assert_eq!(heap.budget().used(), before_used);
+        assert_eq!(heap.budget().peak(), before_peak);
+        assert_eq!(heap.extract_field(&r2, 0).as_int(), 10);
+        assert_eq!(heap.extract_field(&r2, 1).as_int(), 20);
+
+        // FREE_TOKEN reclaims the unique slot back to the heap budget.
+        let tok_free = heap.reset(r2);
+        assert!(tok_free.slot.is_some());
+        heap.free_token(tok_free);
+        assert_eq!(heap.budget().used(), 0);
+
+        // Shared object: RESET returns an empty token (slot = None) and leaves the other ref intact.
+        let shared = heap
+            .construct(&types, 0, vec![Value::Int(3), Value::Int(4)])
+            .unwrap();
+        let keeper = shared.clone();
+        assert!(!shared.as_heap_ref().can_mutate_in_place());
+        let tok_shared = heap.reset(shared);
+        assert!(tok_shared.slot.is_none());
+        let rebuilt = heap
+            .reuse_owned(&types, tok_shared, 0, vec![Value::Int(30), Value::Int(40)])
+            .unwrap();
+        assert!(!keeper.as_heap_ref().ptr_eq(rebuilt.as_heap_ref()));
+        assert_eq!(heap.extract_field(&keeper, 0).as_int(), 3);
+        assert_eq!(heap.extract_field(&keeper, 1).as_int(), 4);
+        assert_eq!(heap.extract_field(&rebuilt, 0).as_int(), 30);
+        assert_eq!(heap.extract_field(&rebuilt, 1).as_int(), 40);
+
+        // Immortal object: RESET returns empty token and never mutates the immortal object.
+        let imm = heap
+            .construct(&types, 0, vec![Value::Int(5), Value::Int(6)])
+            .unwrap();
+        heap.make_immortal(&imm);
+        let tok_imm = heap.reset(imm.clone());
+        assert!(tok_imm.slot.is_none());
+        let from_imm = heap
+            .reuse_owned(&types, tok_imm, 0, vec![Value::Int(50), Value::Int(60)])
+            .unwrap();
+        assert!(!imm.as_heap_ref().ptr_eq(from_imm.as_heap_ref()));
+        assert_eq!(heap.extract_field(&imm, 0).as_int(), 5);
+        assert_eq!(heap.extract_field(&from_imm, 0).as_int(), 50);
+    }
+
+    #[test]
+    fn perceus_set_field_and_collections_unique_inplace_vs_shared_cow() {
+        use mo_bytecode::{LayoutDef, TypeDef, TypeField, TypeKind};
+
+        let types = TypeTable::finish(
+            vec![
+                TypeDef {
+                    kind: TypeKind::Int,
+                    parameters: Vec::new(),
+                    result: NO_INDEX,
+                    function: NO_INDEX,
+                    capability: None,
+                    name_idx: None,
+                    name: None,
+                    fields: Vec::new(),
+                    cases: Vec::new(),
+                    is_reference: false,
+                    has_fields: false,
+                },
+                TypeDef {
+                    kind: TypeKind::Record,
+                    parameters: Vec::new(),
+                    result: NO_INDEX,
+                    function: NO_INDEX,
+                    capability: None,
+                    name_idx: None,
+                    name: Some("Box".into()),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: Some("v".into()),
+                        ty: 0,
+                    }],
+                    cases: Vec::new(),
+                    is_reference: true,
+                    has_fields: true,
+                },
+            ],
+            vec![LayoutDef {
+                kind: LayoutKind::Record,
+                ty: 1,
+                case_index: 0,
+                function: NO_INDEX,
+                fields: vec![0],
+            }],
+        )
+        .unwrap();
+
+        let heap = Heap::new(1024 * 1024);
+
+        // SET_FIELD unique mutates in place & clears cached hash; shared copies on write.
+        let rec = heap.construct(&types, 0, vec![Value::Int(1)]).unwrap();
+        let rec_addr = format!("{:p}", rec.as_heap_ref().obj());
+        rec.as_heap_ref().set_cached_hash(Some(0x1234));
+        let rec2 = heap.set_field_owned(rec, 0, Value::Int(9)).unwrap();
+        assert_eq!(format!("{:p}", rec2.as_heap_ref().obj()), rec_addr);
+        assert_eq!(rec2.as_heap_ref().cached_hash(), None);
+        assert_eq!(heap.extract_field(&rec2, 0).as_int(), 9);
+
+        let rec_keep = rec2.clone();
+        let rec3 = heap.set_field_owned(rec2, 0, Value::Int(99)).unwrap();
+        assert!(!rec_keep.as_heap_ref().ptr_eq(rec3.as_heap_ref()));
+        assert_eq!(heap.extract_field(&rec_keep, 0).as_int(), 9);
+        assert_eq!(heap.extract_field(&rec3, 0).as_int(), 99);
+
+        // List unique in-place ops preserve allocation address and track HeapBudget accurately.
+        let mut list = heap
+            .alloc_list(VecDeque::from([Value::Int(1), Value::Int(2)]))
+            .unwrap();
+        let list_addr = format!("{:p}", list.as_heap_ref().obj());
+        let mut elem = Value::Int(3);
+        list = heap.list_append(&mut list, &mut elem).unwrap();
+        assert_eq!(format!("{:p}", list.as_heap_ref().obj()), list_addr);
+        let mut head = Value::Int(0);
+        list = heap.list_prepend(&mut list, &mut head).unwrap();
+        assert_eq!(format!("{:p}", list.as_heap_ref().obj()), list_addr);
+        let mut repl = Value::Int(20);
+        list = heap.list_set(&mut list, 2, &mut repl).unwrap();
+        assert_eq!(format!("{:p}", list.as_heap_ref().obj()), list_addr);
+        list = heap.list_reverse(&mut list).unwrap();
+        assert_eq!(format!("{:p}", list.as_heap_ref().obj()), list_addr);
+        list = heap.list_remove_at(&mut list, 0).unwrap();
+        assert_eq!(format!("{:p}", list.as_heap_ref().obj()), list_addr);
+        list = heap.list_slice(&mut list, 0, 2).unwrap();
+        assert_eq!(format!("{:p}", list.as_heap_ref().obj()), list_addr);
+        let vals: Vec<i64> = list.as_list().iter().map(Value::as_int).collect();
+        assert_eq!(vals, vec![20, 1]);
+
+        // Shared list COW preserves original.
+        let list_keep = list.clone();
+        let mut extra = Value::Int(77);
+        let list_cow = heap.list_append(&mut list, &mut extra).unwrap();
+        assert!(!list_keep.as_heap_ref().ptr_eq(list_cow.as_heap_ref()));
+        assert_eq!(list_keep.as_list().len(), 2);
+        assert_eq!(list_cow.as_list().len(), 3);
+
+        // Map unique in-place set/remove updates budget and preserves address; shared does COW.
+        let mut map = heap.alloc_map(MoMap::new(0, 0)).unwrap();
+        let map_addr = format!("{:p}", map.as_heap_ref().obj());
+        let base_used = heap.budget().used();
+        let mut k1 = Value::Int(1);
+        let mut v1 = Value::Int(10);
+        map = heap.map_set(&types, &mut map, &mut k1, &mut v1).unwrap();
+        assert_eq!(format!("{:p}", map.as_heap_ref().obj()), map_addr);
+        assert_eq!(heap.budget().used(), base_used + CELL_SIZE * 2);
+        // Updating existing key keeps budget unchanged.
+        let mut k1b = Value::Int(1);
+        let mut v1b = Value::Int(11);
+        map = heap.map_set(&types, &mut map, &mut k1b, &mut v1b).unwrap();
+        assert_eq!(format!("{:p}", map.as_heap_ref().obj()), map_addr);
+        assert_eq!(heap.budget().used(), base_used + CELL_SIZE * 2);
+        // Removing decrements budget.
+        map = heap.map_remove(&types, &mut map, &Value::Int(1)).unwrap();
+        assert_eq!(format!("{:p}", map.as_heap_ref().obj()), map_addr);
+        assert_eq!(heap.budget().used(), base_used);
+
+        let map_keep = map.clone();
+        let mut k2 = Value::Int(2);
+        let mut v2 = Value::Int(20);
+        let map_cow = heap.map_set(&types, &mut map, &mut k2, &mut v2).unwrap();
+        assert!(!map_keep.as_heap_ref().ptr_eq(map_cow.as_heap_ref()));
+        assert_eq!(map_keep.as_map().len(), 0);
+        assert_eq!(map_cow.as_map().len(), 1);
+
+        // Set unique in-place add/remove/union updates budget and preserves address; shared does COW.
+        let mut set = heap.alloc_set(MoSet::new(0)).unwrap();
+        let set_addr = format!("{:p}", set.as_heap_ref().obj());
+        let set_base = heap.budget().used();
+        let mut s1 = Value::Int(4);
+        set = heap.set_add(&types, &mut set, &mut s1).unwrap();
+        assert_eq!(format!("{:p}", set.as_heap_ref().obj()), set_addr);
+        assert_eq!(heap.budget().used(), set_base + CELL_SIZE);
+        let rhs_set = heap
+            .alloc_set({
+                let mut m = MoSet::new(0);
+                m.add(&types, heap.hash_key(), Value::Int(4));
+                m.add(&types, heap.hash_key(), Value::Int(5));
+                m
+            })
+            .unwrap();
+        let used_with_rhs = heap.budget().used();
+        set = heap.set_union(&types, &mut set, &rhs_set).unwrap();
+        assert_eq!(format!("{:p}", set.as_heap_ref().obj()), set_addr);
+        assert_eq!(set.as_set().len(), 2);
+        assert_eq!(heap.budget().used(), used_with_rhs + CELL_SIZE);
+        set = heap.set_remove(&types, &mut set, &Value::Int(4)).unwrap();
+        assert_eq!(format!("{:p}", set.as_heap_ref().obj()), set_addr);
+        assert_eq!(set.as_set().len(), 1);
+
+        let set_keep = set.clone();
+        let mut s9 = Value::Int(9);
+        let set_cow = heap.set_add(&types, &mut set, &mut s9).unwrap();
+        assert!(!set_keep.as_heap_ref().ptr_eq(set_cow.as_heap_ref()));
+        assert_eq!(set_keep.as_set().len(), 1);
+        assert_eq!(set_cow.as_set().len(), 2);
+
+        // Text unique in-place concat, slice, and ASCII case folding preserve allocation address.
+        let mut txt = heap.alloc_text("  HeLLo ".into()).unwrap();
+        let txt_addr = format!("{:p}", txt.as_heap_ref().obj());
+        let rhs = heap.alloc_text("Mo  ".into()).unwrap();
+        txt = heap.text_concat(&mut txt, &rhs).unwrap();
+        assert_eq!(format!("{:p}", txt.as_heap_ref().obj()), txt_addr);
+        txt = heap.text_slice(&mut txt, 2, 8).unwrap();
+        assert_eq!(format!("{:p}", txt.as_heap_ref().obj()), txt_addr);
+        txt = heap.text_ascii_case(&mut txt, false).unwrap();
+        assert_eq!(format!("{:p}", txt.as_heap_ref().obj()), txt_addr);
+        assert_eq!(txt.as_text(), "hello mo");
+
+        // OOM during in-place growth leaves original operand intact (not replaced with Unit).
+        let tight = Heap::new(OBJECT_OVERHEAD + 6);
+        let mut a = tight.alloc_text("hello".into()).unwrap();
+        let b = heap.alloc_text(" world!".into()).unwrap();
+        assert_eq!(
+            tight.text_concat(&mut a, &b).err(),
+            Some(HeapError::OutOfMemory)
+        );
+        assert_eq!(a.as_text(), "hello");
     }
 
     #[test]

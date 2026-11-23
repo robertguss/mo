@@ -4,16 +4,18 @@
 Run from the repository root:
     python3 ci/check_rust_runtime.py [--mo PATH] [--mo-rt PATH] [--skip-build] [--case=NAME ...]
 
-What this checks for Phase 1, Slice 1A:
+What this checks for Phase 1 (Slices 1A + 1B):
   1. Builds `target/release/mo-rt` (unless `--skip-build`) and locates or builds C `mo`.
   2. Verifies `ldd target/release/mo-rt` has zero `libssl` / `libcrypto` linkage.
-  3. Runs the curated Slice 1A cohort of 165 golden suites from `tests/golden/`
-     (145 `run` + 20 `test`), emitting `.bc` via `mo emit` / `mo emit --tests`,
-     verifying each `.bc` with `mo-rt verify`, and asserting exact byte-for-byte
-     stdout, stderr, and exit-code parity between C `mo`, Rust `mo-rt`, and the
-     hand-written golden expectations.
-  4. Runs an inline differential check for `Env` (real + `Env.of` fake) and
-     runtime limit flags (`--max-depth`, `--max-heap`).
+  3. Runs the curated cohort of 169 golden suites from `tests/golden/`
+     (149 `run` + 20 `test`, including `BigInt`, `List(BigInt).sum`, abilities, and
+     library natives), emitting `.bc` via `mo emit` / `mo emit --tests`,
+     verifying each `.bc` with `mo-rt verify` (full Section-9 ownership/borrow/token
+     verifier), and asserting exact byte-for-byte stdout, stderr, and exit-code parity
+     between C `mo`, Rust `mo-rt`, and the hand-written golden expectations.
+  4. Runs inline differential checks for `Env` (real + `Env.of` fake), runtime limit
+     flags (`--max-depth`), `BigInt` large/edge arithmetic & defects, and `mo-rt verify`
+     rejection of corrupted bytecode.
 """
 
 import argparse
@@ -27,13 +29,13 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests/golden"
 
-# Curated Slice 1A golden cohort (165 suites: 145 run + 20 test).
-# Covers arithmetic (Int/Byte/Float/Decimal/Time/Duration), control flow,
+# Curated Phase 1 (Slices 1A + 1B) golden cohort (169 suites: 149 run + 20 test).
+# Covers arithmetic (Int/Byte/Float/Decimal/BigInt/Time/Duration), control flow,
 # recursion & tail calls, closures, records/structs, enums & pattern matching,
 # abilities (Equal/Hash/Order/Text), strings & interpolation, Bytes, List/Map/Set/Range,
 # modules, JSON library, sample apps (greet, inventory, json-query), defect/bug reports,
 # Console/Args capabilities, and test/example blocks.
-SLICE_1A_GOLDEN_CASES = [
+SLICE_1B_GOLDEN_CASES = [
     # Capabilities: Args & Console
     "cap-args-list",
     "cap-args-none",
@@ -150,7 +152,8 @@ SLICE_1A_GOLDEN_CASES = [
     "mod-type-bare-local-first",
     "mod-type-named-like-module",
     "nested-choice-return",
-    # Numbers: Int, Float, Decimal
+    # Numbers: Int, Float, Decimal, BigInt
+    "num-bigint",
     "num-comparisons",
     "num-decimal-boundaries",
     "num-decimal-exact",
@@ -165,9 +168,12 @@ SLICE_1A_GOLDEN_CASES = [
     "num-int-literals",
     "num-test-failing",
     # Reference examples
+    "ref-abilities",
+    "ref-bigint",
     "ref-case-receivers",
     "ref-evaluation",
     "ref-functions",
+    "ref-library-natives",
     "ref-operators",
     "ref-qualified-abilities",
     "ref-shout",
@@ -467,6 +473,77 @@ end
         f"--- mo-rt\n{rs_depth.stderr.decode()}"
     )
 
+    # Check BigInt large arithmetic (Karatsuba + Knuth D + balanced radix printing),
+    # Map/Set hashing, List.sum, and defect parity (negative pow + stop variable replay).
+    big_prog = tmpdir / "big-check.mo"
+    big_prog.write_text(
+        """module BigCheck
+
+fn main(console: Console, args: Args)
+  mode = args.list.first
+  a = (2.to_big).pow(200)
+  b = (3.to_big).pow(130)
+  prod = a * b
+  q = prod / a
+  r = prod % a
+  console.print("#{q == b} #{r}")
+  console.print("#{(-7.to_big) / 3.to_big} #{(-7.to_big) % 3.to_big}")
+  console.print("#{(-7.to_big).floor_div(3.to_big)} #{(-7.to_big).floor_mod(3.to_big)}")
+  m = {a: "big-a", b: "big-b"}
+  console.print("#{m.get(a)}")
+  xs = [a, b, -a]
+  console.print("#{xs.sum == b}")
+  case mode
+    Some("negpow"):
+      _ = (2.to_big).pow(-1)
+    Some("divzero"):
+      _ = a / 0.to_big
+    Some("stop"):
+      msg = "boom"
+      console.print(msg)
+      stop "stopped with bigints"
+    Some(_):
+      console.print("other")
+    None:
+      console.print("done")
+  end
+end
+""",
+        encoding="utf-8",
+    )
+    big_bc = tmpdir / "bigint_check.bc"
+    subprocess.run([str(mo), "emit", str(big_prog), "-o", str(big_bc)], check=True)
+    subprocess.run([str(mo_rt), "verify", str(big_bc)], check=True)
+
+    for arg_list in ([], ["negpow"], ["divzero"], ["stop"]):
+        c_big = subprocess.run(
+            [str(mo), "run", str(big_prog), *arg_list],
+            capture_output=True,
+            timeout=30,
+        )
+        rt_cmd = [str(mo_rt), "run", str(big_bc)]
+        if arg_list:
+            rt_cmd.extend(["--", *arg_list])
+        rs_big = subprocess.run(rt_cmd, capture_output=True, timeout=30)
+        assert rs_big.returncode == c_big.returncode, (arg_list, c_big, rs_big)
+        assert rs_big.stdout == c_big.stdout, (arg_list, c_big.stdout, rs_big.stdout)
+        assert rs_big.stderr == c_big.stderr, (
+            f"BigInt ({arg_list}) stderr mismatch:\n--- C mo\n{c_big.stderr.decode()}\n"
+            f"--- mo-rt\n{rs_big.stderr.decode()}"
+        )
+
+    # Confirm `mo-rt verify` rejects a corrupted `.bc` file with nonzero exit.
+    corrupt_bc = tmpdir / "corrupt.bc"
+    raw = bytearray(big_bc.read_bytes())
+    raw[-1] ^= 0xFF
+    corrupt_bc.write_bytes(raw)
+    bad_verify = subprocess.run(
+        [str(mo_rt), "verify", str(corrupt_bc)],
+        capture_output=True,
+        timeout=30,
+    )
+    assert bad_verify.returncode != 0, "mo-rt verify must reject corrupted bytecode"
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -489,12 +566,12 @@ def main() -> None:
     mo_rt = find_or_build_mo_rt(args.mo_rt, args.skip_build)
     check_no_openssl_linkage(mo_rt)
 
-    selected = args.case if args.case else SLICE_1A_GOLDEN_CASES
+    selected = args.case if args.case else SLICE_1B_GOLDEN_CASES
     if not args.case:
         assert len(selected) >= MINIMUM_COHORT, (
-            f"Slice 1A cohort has {len(selected)} cases, needs >= {MINIMUM_COHORT}"
+            f"Cohort has {len(selected)} cases, needs >= {MINIMUM_COHORT}"
         )
-        assert len(selected) == len(set(selected)), "duplicate case in SLICE_1A_GOLDEN_CASES"
+        assert len(selected) == len(set(selected)), "duplicate case in SLICE_1B_GOLDEN_CASES"
 
     run_count = 0
     test_count = 0
@@ -523,7 +600,7 @@ def main() -> None:
     total = run_count + test_count
     print(
         f"rust runtime: {total}/{total} golden suites matched C mo byte-for-byte "
-        f"({run_count} run, {test_count} test; + Env/limits check; 0 diffs; no libssl/libcrypto)"
+        f"({run_count} run, {test_count} test; + Env/limits/BigInt/verify checks; 0 diffs; no libssl/libcrypto)"
     )
 
 

@@ -366,8 +366,12 @@ fn format_test_stopped(file: &BytecodeFile, defect: &Defect) -> String {
         };
         out.push_str(&format!("  at {name}  {loc}\n"));
     }
-    for var in &defect.variables {
-        out.push_str(&format!("  {} = {}\n", var.name, var.value));
+    if defect.variables_unavailable {
+        out.push_str("  <variables unavailable>\n");
+    } else {
+        for var in &defect.variables {
+            out.push_str(&format!("  {} = {}\n", var.name, var.value));
+        }
     }
     out
 }
