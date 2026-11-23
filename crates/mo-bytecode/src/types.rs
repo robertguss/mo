@@ -4,7 +4,7 @@ use mo_def::limits::MO_LIMIT_HEAP_WORK;
 
 use crate::{
     ABILITY_EQUAL, ABILITY_HASH, ABILITY_ORDER, CaseShape, LayoutDef, LayoutKind, LoadError,
-    TypeDef, TypeKind,
+    NO_INDEX, TypeDef, TypeKind,
 };
 
 #[derive(Debug, Clone)]
@@ -12,6 +12,7 @@ pub struct TypeTable {
     pub items: Vec<TypeDef>,
     pub layouts: Vec<LayoutDef>,
     pub abilities: Vec<u8>,
+    layout_keys: Vec<(u32, u32, u32)>,
     case_layouts: HashMap<(u32, u32), u32>,
     closure_layouts: HashMap<u32, u32>,
     tuple_layouts: HashMap<u32, u32>,
@@ -40,6 +41,7 @@ impl TypeTable {
 
         let abilities = compute_abilities(&items)?;
 
+        let mut layout_keys = Vec::with_capacity(layouts.len());
         let mut case_layouts = HashMap::new();
         let mut closure_layouts = HashMap::new();
         let mut tuple_layouts = HashMap::new();
@@ -47,28 +49,35 @@ impl TypeTable {
 
         for (idx, layout) in layouts.iter().enumerate() {
             let idx = idx as u32;
-            match layout.kind {
+            let tag = match layout.kind {
                 LayoutKind::Case => {
                     case_layouts.insert((layout.ty, layout.case_index), idx);
+                    layout.case_index
                 }
                 LayoutKind::Closure => {
                     if closure_layouts.insert(layout.function, idx).is_some() {
                         return Err(LoadError::invalid(20, "ambiguous closure layout"));
                     }
+                    layout.function
                 }
                 LayoutKind::Tuple => {
                     tuple_layouts.insert(layout.ty, idx);
+                    NO_INDEX
                 }
                 LayoutKind::Record => {
                     record_layouts.insert(layout.ty, idx);
+                    NO_INDEX
                 }
-            }
+            };
+            layout_keys.push((layout.ty, tag, idx));
         }
+        layout_keys.sort_unstable_by_key(|&(ty, tag, _)| (ty, tag));
 
         Ok(Self {
             items,
             layouts,
             abilities,
+            layout_keys,
             case_layouts,
             closure_layouts,
             tuple_layouts,
@@ -110,6 +119,18 @@ impl TypeTable {
 
     pub fn find_record_layout(&self, ty: u32) -> Option<u32> {
         self.record_layouts.get(&ty).copied()
+    }
+
+    /// Binary search matching `mo_verify_layout_lookup` (`src/bytecode/verify.c`).
+    /// `tag` is `case_index` for `Case`, `function` for `Closure`, and `NO_INDEX` for `Record`/`Tuple`.
+    pub fn find_layout(&self, ty: u32, tag: u32) -> Option<u32> {
+        let pos = self
+            .layout_keys
+            .partition_point(|&(k_ty, k_tag, _)| (k_ty, k_tag) < (ty, tag));
+        self.layout_keys
+            .get(pos)
+            .filter(|&&(k_ty, k_tag, _)| k_ty == ty && k_tag == tag)
+            .map(|&(_, _, idx)| idx)
     }
 }
 

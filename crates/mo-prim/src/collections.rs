@@ -7,7 +7,7 @@ use mo_def::limits::MO_LIMIT_COLLECTION_SIZE;
 use mo_heap::decimal::decimal_add;
 use mo_heap::equal::value_equal;
 use mo_heap::table::{MoMap, MoSet};
-use mo_heap::{Heap, HeapObj, Value};
+use mo_heap::{Heap, Value};
 
 use crate::{PrimError, check_value_bytes_fit};
 
@@ -68,24 +68,22 @@ pub fn call(
             Ok(heap.make_option(types, result_ty, opt)?)
         }
         PrimId::ListAppend => {
-            let elem = std::mem::replace(&mut args[1], Value::Unit);
-            let list = std::mem::replace(&mut args[0], Value::Unit);
+            let [list, elem, ..] = args else {
+                unreachable!()
+            };
             Ok(heap.list_append(list, elem)?)
         }
         PrimId::ListPrepend => {
-            let elem = std::mem::replace(&mut args[1], Value::Unit);
-            let list = std::mem::replace(&mut args[0], Value::Unit);
+            let [list, elem, ..] = args else {
+                unreachable!()
+            };
             Ok(heap.list_prepend(list, elem)?)
         }
         PrimId::ListConcat => {
-            let rhs = std::mem::replace(&mut args[1], Value::Unit);
-            let lhs = std::mem::replace(&mut args[0], Value::Unit);
-            Ok(heap.list_concat(lhs, &rhs)?)
+            let [lhs, rhs, ..] = args else { unreachable!() };
+            Ok(heap.list_concat(lhs, rhs)?)
         }
-        PrimId::ListReverse => {
-            let list = std::mem::replace(&mut args[0], Value::Unit);
-            Ok(heap.list_reverse(list)?)
-        }
+        PrimId::ListReverse => Ok(heap.list_reverse(&mut args[0])?),
         PrimId::ListTake | PrimId::ListDrop => {
             let count = args[1].as_int();
             if count < 0 {
@@ -102,8 +100,7 @@ pub fn call(
             } else {
                 (n, len - n)
             };
-            let list = std::mem::replace(&mut args[0], Value::Unit);
-            Ok(heap.list_slice(list, start, take_len)?)
+            Ok(heap.list_slice(&mut args[0], start, take_len)?)
         }
         PrimId::ListSet => {
             let idx = args[1].as_int();
@@ -111,8 +108,9 @@ pub fn call(
             if idx < 0 || (idx as usize) >= len {
                 return Ok(heap.make_option(types, result_ty, None)?);
             }
-            let elem = std::mem::replace(&mut args[2], Value::Unit);
-            let list = std::mem::replace(&mut args[0], Value::Unit);
+            let [list, _, elem, ..] = args else {
+                unreachable!()
+            };
             let updated = heap.list_set(list, idx as usize, elem)?;
             Ok(heap.make_option(types, result_ty, Some(updated))?)
         }
@@ -122,8 +120,7 @@ pub fn call(
             if idx < 0 || (idx as usize) >= len {
                 return Ok(heap.make_option(types, result_ty, None)?);
             }
-            let list = std::mem::replace(&mut args[0], Value::Unit);
-            let updated = heap.list_remove_at(list, idx as usize)?;
+            let updated = heap.list_remove_at(&mut args[0], idx as usize)?;
             Ok(heap.make_option(types, result_ty, Some(updated))?)
         }
         PrimId::ListEnumerate => {
@@ -227,7 +224,7 @@ pub fn call(
                     }
                     Ok(Value::Float(acc))
                 }
-                TypeKind::BigInt => Err(PrimError::UnimplementedPrim(PrimId::ListSum)),
+                TypeKind::BigInt => crate::bigint::sum_list(heap, list),
                 _ => unreachable!("invalid List.sum result type"),
             }
         }
@@ -281,31 +278,14 @@ pub fn call(
                     "two keys of a map literal that turn out equal",
                 ));
             }
-            let val = std::mem::replace(&mut args[2], Value::Unit);
-            let key = std::mem::replace(&mut args[1], Value::Unit);
-            let mut map_val = std::mem::replace(&mut args[0], Value::Unit);
-            if let Value::Ref(ref mut r) = map_val
-                && let Some(HeapObj::Map(m)) = r.get_mut_unique()
-            {
-                m.set(types, heap.hash_key(), key, val);
-                return Ok(map_val);
-            }
-            let mut copy = map_val.as_map().clone();
-            copy.set(types, heap.hash_key(), key, val);
-            Ok(heap.alloc_map(copy)?)
+            let [map, key, val, ..] = args else {
+                unreachable!()
+            };
+            Ok(heap.map_set(types, map, key, val)?)
         }
         PrimId::MapRemove => {
-            let key = std::mem::replace(&mut args[1], Value::Unit);
-            let mut map_val = std::mem::replace(&mut args[0], Value::Unit);
-            if let Value::Ref(ref mut r) = map_val
-                && let Some(HeapObj::Map(m)) = r.get_mut_unique()
-            {
-                m.remove(types, heap.hash_key(), &key);
-                return Ok(map_val);
-            }
-            let mut copy = map_val.as_map().clone();
-            copy.remove(types, heap.hash_key(), &key);
-            Ok(heap.alloc_map(copy)?)
+            let [map, key, ..] = args else { unreachable!() };
+            Ok(heap.map_remove(types, map, key)?)
         }
         PrimId::MapKeys => {
             let items: VecDeque<Value> = args[0].as_map().iter().map(|(k, _)| k.clone()).collect();
@@ -341,48 +321,22 @@ pub fn call(
             &args[1],
         ))),
         PrimId::SetAdd => {
-            let elem = std::mem::replace(&mut args[1], Value::Unit);
-            let mut set_val = std::mem::replace(&mut args[0], Value::Unit);
-            if let Value::Ref(ref mut r) = set_val
-                && let Some(HeapObj::Set(s)) = r.get_mut_unique()
-            {
-                s.add(types, heap.hash_key(), elem);
-                return Ok(set_val);
-            }
-            let mut copy = set_val.as_set().clone();
-            copy.add(types, heap.hash_key(), elem);
-            Ok(heap.alloc_set(copy)?)
+            let [set, elem, ..] = args else {
+                unreachable!()
+            };
+            Ok(heap.set_add(types, set, elem)?)
         }
         PrimId::SetRemove => {
-            let elem = std::mem::replace(&mut args[1], Value::Unit);
-            let mut set_val = std::mem::replace(&mut args[0], Value::Unit);
-            if let Value::Ref(ref mut r) = set_val
-                && let Some(HeapObj::Set(s)) = r.get_mut_unique()
-            {
-                s.remove(types, heap.hash_key(), &elem);
-                return Ok(set_val);
-            }
-            let mut copy = set_val.as_set().clone();
-            copy.remove(types, heap.hash_key(), &elem);
-            Ok(heap.alloc_set(copy)?)
+            let [set, elem, ..] = args else {
+                unreachable!()
+            };
+            Ok(heap.set_remove(types, set, elem)?)
         }
         PrimId::SetUnion => {
-            let rhs = std::mem::replace(&mut args[1], Value::Unit);
-            let mut set_val = std::mem::replace(&mut args[0], Value::Unit);
-            let rhs_items: Vec<Value> = rhs.as_set().iter().cloned().collect();
-            if let Value::Ref(ref mut r) = set_val
-                && let Some(HeapObj::Set(s)) = r.get_mut_unique()
-            {
-                for item in rhs_items {
-                    s.add(types, heap.hash_key(), item);
-                }
-                return Ok(set_val);
-            }
-            let mut copy = set_val.as_set().clone();
-            for item in rhs_items {
-                copy.add(types, heap.hash_key(), item);
-            }
-            Ok(heap.alloc_set(copy)?)
+            let [left, right, ..] = args else {
+                unreachable!()
+            };
+            Ok(heap.set_union(types, left, right)?)
         }
         PrimId::SetIntersection => {
             let elem_ty = types.get(result_ty).parameters[0];

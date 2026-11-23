@@ -264,9 +264,8 @@ pub fn call(
                 .len()
                 .saturating_add(args[1].as_text().len());
             check_value_bytes_fit(total)?;
-            let rhs = std::mem::replace(&mut args[1], Value::Unit);
-            let lhs = std::mem::replace(&mut args[0], Value::Unit);
-            Ok(heap.text_concat(lhs, &rhs)?)
+            let [lhs, rhs, ..] = args else { unreachable!() };
+            Ok(heap.text_concat(lhs, rhs)?)
         }
         PrimId::TextCompare => Ok(ordering_value(
             args[0]
@@ -348,8 +347,7 @@ pub fn call(
                     end -= 1;
                 }
             }
-            let text = std::mem::replace(&mut args[0], Value::Unit);
-            Ok(heap.text_slice(text, start, end - start)?)
+            Ok(heap.text_slice(&mut args[0], start, end - start)?)
         }
         PrimId::TextStartsWith => Ok(Value::Bool(
             args[0].as_text().starts_with(args[1].as_text()),
@@ -369,8 +367,7 @@ pub fn call(
                 return Ok(heap.make_option(types, result_ty, None)?);
             }
             let start = if is_prefix { pat_len } else { 0 };
-            let text = std::mem::replace(&mut args[0], Value::Unit);
-            let sliced = heap.text_slice(text, start, text_len - pat_len)?;
+            let sliced = heap.text_slice(&mut args[0], start, text_len - pat_len)?;
             Ok(heap.make_option(types, result_ty, Some(sliced))?)
         }
         PrimId::TextReplace => {
@@ -438,14 +435,8 @@ pub fn call(
             }
             Ok(heap.alloc_text(out)?)
         }
-        PrimId::TextAsciiLowercase => {
-            let s = args[0].as_text().to_ascii_lowercase();
-            Ok(heap.alloc_text(s)?)
-        }
-        PrimId::TextAsciiUppercase => {
-            let s = args[0].as_text().to_ascii_uppercase();
-            Ok(heap.alloc_text(s)?)
-        }
+        PrimId::TextAsciiLowercase => Ok(heap.text_ascii_case(&mut args[0], false)?),
+        PrimId::TextAsciiUppercase => Ok(heap.text_ascii_case(&mut args[0], true)?),
         PrimId::TextToInt => {
             let opt =
                 parse_int_or_decimal(args[0].as_text().as_bytes(), (i64::MAX as u128) + 1, false)

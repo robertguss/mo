@@ -132,40 +132,7 @@ pub fn format_time(out: &mut String, micros: i64) {
 }
 
 pub fn format_bigint(out: &mut String, sign: BigIntSign, magnitude: &[u8]) {
-    if sign == BigIntSign::Zero || magnitude.is_empty() {
-        out.push('0');
-        return;
-    }
-    if sign == BigIntSign::Negative {
-        out.push('-');
-    }
-    // Convert little-endian base-256 bytes into base 10^9 chunks.
-    let mut limbs: Vec<u32> = Vec::with_capacity(magnitude.len().div_ceil(4));
-    for chunk in magnitude.chunks(4) {
-        let mut buf = [0u8; 4];
-        buf[..chunk.len()].copy_from_slice(chunk);
-        limbs.push(u32::from_le_bytes(buf));
-    }
-    let mut groups: Vec<u32> = Vec::new();
-    while !limbs.is_empty() {
-        let mut rem: u64 = 0;
-        for limb in limbs.iter_mut().rev() {
-            let cur = (rem << 32) | u64::from(*limb);
-            *limb = (cur / 1_000_000_000) as u32;
-            rem = cur % 1_000_000_000;
-        }
-        groups.push(rem as u32);
-        while limbs.last() == Some(&0) {
-            limbs.pop();
-        }
-    }
-    if let Some((&most, rest)) = groups.split_last() {
-        out.push_str(&most.to_string());
-        for &g in rest.iter().rev() {
-            let s = format!("{g:09}");
-            out.push_str(&s);
-        }
-    }
+    crate::bigint::format_bigint(out, sign, magnitude);
 }
 
 /// Quotes UTF-8 bytes matching `src/heap/print.c:quote` (including C1 escapes).

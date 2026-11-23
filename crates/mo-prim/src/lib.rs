@@ -2,6 +2,7 @@
 
 //! Mo standard-library primitive dispatch over `mo_def::PrimId`.
 
+mod bigint;
 mod collections;
 mod number;
 mod text;
@@ -212,7 +213,24 @@ pub fn call(
         | PrimId::RangeToList
         | PrimId::RangeContains => collections::call(heap, types, prim, params, result_ty, args),
 
-        // Deferred to Slice 1B (BigInt) and Slice 1C (Unicode16, Crypto)
+        // BigInt (15 primitives)
+        PrimId::BigintAdd
+        | PrimId::BigintSub
+        | PrimId::BigintMul
+        | PrimId::BigintDiv
+        | PrimId::BigintRem
+        | PrimId::BigintNeg
+        | PrimId::BigintCompare
+        | PrimId::BigintAbs
+        | PrimId::BigintMin
+        | PrimId::BigintMax
+        | PrimId::BigintPow
+        | PrimId::BigintFloorDiv
+        | PrimId::BigintFloorMod
+        | PrimId::BigintToInt
+        | PrimId::BigintToText => bigint::call(heap, types, prim, result_ty, args),
+
+        // Deferred to Slice 1C (Unicode16, Crypto)
         other => Err(PrimError::UnimplementedPrim(other)),
     }
 }
@@ -330,12 +348,6 @@ mod tests {
 
         let mut dummy = vec![Value::Unit];
         assert_eq!(
-            call(&heap, &types, PrimId::BigintAdd, sig, &mut dummy)
-                .err()
-                .unwrap(),
-            PrimError::UnimplementedPrim(PrimId::BigintAdd)
-        );
-        assert_eq!(
             call(&heap, &types, PrimId::Unicode16Lowercase, sig, &mut dummy)
                 .err()
                 .unwrap(),
@@ -346,6 +358,341 @@ mod tests {
                 .err()
                 .unwrap(),
             PrimError::UnimplementedPrim(PrimId::CryptoSha256)
+        );
+    }
+
+    #[test]
+    fn bigint_all_15_prims_and_list_sum() {
+        use mo_bytecode::{BigIntSign, TypeCase, TypeField};
+        use std::collections::VecDeque;
+
+        let heap = Heap::new(4 * 1024 * 1024);
+        let int_ty = prim_ty(TypeKind::Int); // 0
+        let big_ty = prim_ty(TypeKind::BigInt); // 1
+        let text_ty = prim_ty(TypeKind::Text); // 2
+        let opt_int_ty = TypeDef {
+            kind: TypeKind::Choice,
+            parameters: Vec::new(),
+            result: NO_INDEX,
+            function: NO_INDEX,
+            capability: None,
+            name_idx: None,
+            name: Some("Option".into()),
+            fields: Vec::new(),
+            cases: vec![
+                TypeCase {
+                    name_idx: 0,
+                    name: "None".into(),
+                    fields: Vec::new(),
+                    unnamed: false,
+                },
+                TypeCase {
+                    name_idx: 0,
+                    name: "Some".into(),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: None,
+                        ty: 0,
+                    }],
+                    unnamed: true,
+                },
+            ],
+            is_reference: false,
+            has_fields: false,
+        }; // 3
+        let mut list_big_ty = prim_ty(TypeKind::List); // 4
+        list_big_ty.parameters = vec![1];
+
+        let mut items = vec![int_ty, big_ty, text_ty, opt_int_ty, list_big_ty];
+        let sig_big2 = items.len() as u32;
+        items.push(TypeDef {
+            kind: TypeKind::Function,
+            parameters: vec![1, 1],
+            result: 1,
+            function: NO_INDEX,
+            capability: None,
+            name_idx: None,
+            name: None,
+            fields: Vec::new(),
+            cases: Vec::new(),
+            is_reference: false,
+            has_fields: false,
+        });
+        let sig_to_int = items.len() as u32;
+        items.push(TypeDef {
+            kind: TypeKind::Function,
+            parameters: vec![1],
+            result: 3,
+            function: NO_INDEX,
+            capability: None,
+            name_idx: None,
+            name: None,
+            fields: Vec::new(),
+            cases: Vec::new(),
+            is_reference: false,
+            has_fields: false,
+        });
+        let sig_to_text = items.len() as u32;
+        items.push(TypeDef {
+            kind: TypeKind::Function,
+            parameters: vec![1],
+            result: 2,
+            function: NO_INDEX,
+            capability: None,
+            name_idx: None,
+            name: None,
+            fields: Vec::new(),
+            cases: Vec::new(),
+            is_reference: false,
+            has_fields: false,
+        });
+        let sig_list_sum = items.len() as u32;
+        items.push(TypeDef {
+            kind: TypeKind::Function,
+            parameters: vec![4],
+            result: 1,
+            function: NO_INDEX,
+            capability: None,
+            name_idx: None,
+            name: None,
+            fields: Vec::new(),
+            cases: Vec::new(),
+            is_reference: false,
+            has_fields: false,
+        });
+        let types = TypeTable::finish(items, Vec::new()).unwrap();
+
+        let mk = |n: i64| -> Value {
+            let mut args = vec![Value::Int(n)];
+            call(&heap, &types, PrimId::IntToBig, sig_big2, &mut args).unwrap()
+        };
+        let to_text = |v: &Value| -> String {
+            let mut args = vec![v.clone()];
+            call(&heap, &types, PrimId::BigintToText, sig_to_text, &mut args)
+                .unwrap()
+                .as_text()
+                .to_string()
+        };
+
+        let a = mk(-7);
+        let b = mk(3);
+        let zero = heap.alloc_bigint(BigIntSign::Zero, Vec::new()).unwrap();
+
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintAdd,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "-4"
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintSub,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "-10"
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintMul,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "-21"
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintDiv,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "-2"
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintRem,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "-1"
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintFloorDiv,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "-3"
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintFloorMod,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "2"
+        );
+        assert_eq!(
+            call(
+                &heap,
+                &types,
+                PrimId::BigintDiv,
+                sig_big2,
+                &mut [a.clone(), zero.clone()]
+            )
+            .err(),
+            Some(PrimError::DivByZero("dividing by zero"))
+        );
+        assert_eq!(
+            to_text(&call(&heap, &types, PrimId::BigintNeg, sig_big2, &mut [a.clone()]).unwrap()),
+            "7"
+        );
+        assert_eq!(
+            to_text(&call(&heap, &types, PrimId::BigintAbs, sig_big2, &mut [a.clone()]).unwrap()),
+            "7"
+        );
+        assert_eq!(
+            call(
+                &heap,
+                &types,
+                PrimId::BigintCompare,
+                sig_big2,
+                &mut [a.clone(), b.clone()]
+            )
+            .unwrap()
+            .as_tag(),
+            0
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintMin,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "-7"
+        );
+        assert_eq!(
+            to_text(
+                &call(
+                    &heap,
+                    &types,
+                    PrimId::BigintMax,
+                    sig_big2,
+                    &mut [a.clone(), b.clone()]
+                )
+                .unwrap()
+            ),
+            "3"
+        );
+
+        // Pow + negative exponent error + to_int boundary checks (i64::MIN / i64::MAX / overflow).
+        let two = mk(2);
+        let big63 = call(
+            &heap,
+            &types,
+            PrimId::BigintPow,
+            sig_big2,
+            &mut [two.clone(), Value::Int(63)],
+        )
+        .unwrap();
+        assert_eq!(to_text(&big63), "9223372036854775808");
+        assert_eq!(
+            call(
+                &heap,
+                &types,
+                PrimId::BigintPow,
+                sig_big2,
+                &mut [two.clone(), Value::Int(-1)]
+            )
+            .err(),
+            Some(PrimError::Outside("BigInt.pow with a negative exponent"))
+        );
+        // +2^63 does not fit in i64 -> None (tag 0), -2^63 fits -> Some(i64::MIN) (tag 1).
+        let opt_overflow = call(
+            &heap,
+            &types,
+            PrimId::BigintToInt,
+            sig_to_int,
+            &mut [big63.clone()],
+        )
+        .unwrap();
+        assert_eq!(opt_overflow.as_tag(), 0);
+        let neg63 = call(
+            &heap,
+            &types,
+            PrimId::BigintNeg,
+            sig_big2,
+            &mut [big63.clone()],
+        )
+        .unwrap();
+        let opt_min = call(
+            &heap,
+            &types,
+            PrimId::BigintToInt,
+            sig_to_int,
+            &mut [neg63.clone()],
+        )
+        .unwrap();
+        assert_eq!(opt_min.as_tag(), 1);
+        assert_eq!(
+            heap.extract_case_field(&types, 3, &opt_min, 1, 0).as_int(),
+            i64::MIN
+        );
+
+        // List.sum on BigInt (empty -> 0, non-empty -> exact sum).
+        let empty = heap.alloc_list(VecDeque::new()).unwrap();
+        assert_eq!(
+            to_text(&call(&heap, &types, PrimId::ListSum, sig_list_sum, &mut [empty]).unwrap()),
+            "0"
+        );
+        let list = heap
+            .alloc_list(VecDeque::from([big63.clone(), big63, mk(-8)]))
+            .unwrap();
+        assert_eq!(
+            to_text(&call(&heap, &types, PrimId::ListSum, sig_list_sum, &mut [list]).unwrap()),
+            "18446744073709551608"
         );
     }
 }

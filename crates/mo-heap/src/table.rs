@@ -159,6 +159,16 @@ impl MoMap {
         }
         true
     }
+
+    pub fn drain_values(&mut self, out: &mut Vec<Value>) {
+        for (_, k, v) in self.entries.drain(..).flatten() {
+            out.push(k);
+            out.push(v);
+        }
+        self.slots.clear();
+        self.active = 0;
+        self.tombstones = 0;
+    }
 }
 
 #[derive(Clone)]
@@ -197,5 +207,9 @@ impl MoSet {
 
     pub fn remove(&mut self, types: &TypeTable, hash_key: [u64; 2], elem: &Value) -> bool {
         self.inner.remove(types, hash_key, elem)
+    }
+
+    pub fn drain_values(&mut self, out: &mut Vec<Value>) {
+        self.inner.drain_values(out);
     }
 }
