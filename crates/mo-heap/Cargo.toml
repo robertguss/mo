@@ -1,0 +1,12 @@
+[package]
+name = "mo-heap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mo-def = { path = "../mo-def" }
+mo-bytecode = { path = "../mo-bytecode" }
+
+[lints]
+workspace = true

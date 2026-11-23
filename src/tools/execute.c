@@ -173,7 +173,7 @@ static void execute_pipeline(void *argument) {
         return;
     }
     if ((cli->command == MO_COMMAND_RUN || cli->command == MO_COMMAND_INSTALL ||
-         (cli->command == MO_COMMAND_EMIT && entry_service == MO_NO_INDEX &&
+         (cli->command == MO_COMMAND_EMIT && !cli->emit_tests && entry_service == MO_NO_INDEX &&
           entry_api == MO_NO_INDEX)) &&
         program->entry.function == UINT32_MAX) {
         const char *message = "the entry module has no main function";
@@ -232,7 +232,9 @@ static void execute_pipeline(void *argument) {
     struct mo_arena lowered;
     mo_arena_init(&lowered, MO_LIMIT_LOWER_WORK);
     struct mo_services services;
-    struct mo_core *core = mo_lower_services(&lowered, program, sources, diags, NULL, &services);
+    struct mo_core *core =
+        cli->emit_tests ? mo_lower_test_services(&lowered, program, sources, diags, NULL, &services)
+                        : mo_lower_services(&lowered, program, sources, diags, NULL, &services);
     struct mo_buffer wire, printed;
     mo_buffer_init(&wire, MO_LIMIT_BYTECODE_SIZE);
     mo_buffer_init(&printed, cli->emit == MO_EMIT_CORE ? MO_LIMIT_CORE_TEXT_SIZE

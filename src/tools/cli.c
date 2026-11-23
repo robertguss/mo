@@ -238,6 +238,7 @@ enum flag_id {
     FLAG_BIND,
     FLAG_WORKERS,
     FLAG_WATCH,
+    FLAG_TESTS,
     FLAG_COUNT
 };
 _Static_assert(FLAG_COUNT <= 64, "seen bitset fits in 64 bits");
@@ -317,6 +318,7 @@ static const struct flag flags_table[FLAG_COUNT] = {
     {FLAG_BIND, "--bind", false, false, VALUE_TEXT, 0, ON(SERVE)},
     {FLAG_WORKERS, "--workers", false, false, VALUE_WORKERS, 0, ON(SERVE)},
     {FLAG_WATCH, "--watch", false, false, VALUE_NONE, 0, ON(SERVE)},
+    {FLAG_TESTS, "--tests", false, false, VALUE_NONE, 0, ON(EMIT)},
 };
 #undef ON
 
@@ -399,6 +401,9 @@ static bool set_flag(struct mo_cli *out, const char **error, enum flag_id id, co
         break;
     case FLAG_WATCH:
         out->watch = true;
+        break;
+    case FLAG_TESTS:
+        out->emit_tests = true;
         break;
     case FLAG_STRENGTH:
         out->strength = operand;
@@ -723,6 +728,8 @@ bool mo_cli_parse(int argc, const char *const argv[], struct mo_cli *out, const 
                       "--recover", NULL);
     if (out->command == MO_COMMAND_EMIT && out->output == NULL)
         return refuse(out, error, "emit needs -o FILE", command, NULL);
+    if (out->emit_tests && out->source_bundle)
+        return refuse(out, error, "--tests and --bundle cannot be combined", "--tests", "--bundle");
     uint64_t planned = (UINT64_C(1) << FLAG_LIST) | (UINT64_C(1) << FLAG_ONLY) |
                        (UINT64_C(1) << FLAG_IN) | (UINT64_C(1) << FLAG_CALLS);
     uint64_t limited = (UINT64_C(1) << FLAG_ONLY) | (UINT64_C(1) << FLAG_IN) |
