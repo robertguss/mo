@@ -4,18 +4,22 @@
 Run from the repository root:
     python3 ci/check_rust_runtime.py [--mo PATH] [--mo-rt PATH] [--skip-build] [--case=NAME ...]
 
-What this checks for Phase 1 (Slices 1A + 1B):
+What this checks for Phase 1 (Slices 1A + 1B + 1C):
   1. Builds `target/release/mo-rt` (unless `--skip-build`) and locates or builds C `mo`.
   2. Verifies `ldd target/release/mo-rt` has zero `libssl` / `libcrypto` linkage.
-  3. Runs the curated cohort of 169 golden suites from `tests/golden/`
-     (149 `run` + 20 `test`, including `BigInt`, `List(BigInt).sum`, abilities, and
-     library natives), emitting `.bc` via `mo emit` / `mo emit --tests`,
+  3. Runs the curated cohort of 203 golden suites from `tests/golden/`
+     (171 `run` + 32 `test`, covering all 187/187 primitives including `BigInt`,
+     `Crypto`, and pinned `Unicode16`, plus real & fake `Files` / `ReadFiles` /
+     `Files.File`, `Clock`, `Random`, `SecureRandom`, `Env`, `Args`, `Console`,
+     abilities, and library natives), emitting `.bc` via `mo emit` / `mo emit --tests`,
      verifying each `.bc` with `mo-rt verify` (full Section-9 ownership/borrow/token
      verifier), and asserting exact byte-for-byte stdout, stderr, and exit-code parity
      between C `mo`, Rust `mo-rt`, and the hand-written golden expectations.
   4. Runs inline differential checks for `Env` (real + `Env.of` fake), runtime limit
-     flags (`--max-depth`), `BigInt` large/edge arithmetic & defects, and `mo-rt verify`
-     rejection of corrupted bytecode.
+     flags (`--max-depth`), `BigInt` large/edge arithmetic & defects, `--root DIR`
+     real `Files`/`ReadFiles`/`Files.File` (binary positional I/O, `rename`, `within`,
+     symlink confinement), `Clock.fixed` + `sleep`, `Random.seeded`, `SecureRandom.seeded`,
+     `Crypto`, `Unicode16`, and `mo-rt verify` rejection of corrupted bytecode.
 """
 
 import argparse
@@ -29,21 +33,31 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests/golden"
 
-# Curated Phase 1 (Slices 1A + 1B) golden cohort (169 suites: 149 run + 20 test).
-# Covers arithmetic (Int/Byte/Float/Decimal/BigInt/Time/Duration), control flow,
-# recursion & tail calls, closures, records/structs, enums & pattern matching,
+# Curated Phase 1 (Slices 1A + 1B + 1C) golden cohort (203 suites: 171 run + 32 test).
+# Covers all 187/187 primitives (Int/Byte/Float/Decimal/BigInt/Time/Duration/Crypto/Unicode16),
+# control flow, recursion & tail calls, closures, records/structs, enums & pattern matching,
 # abilities (Equal/Hash/Order/Text), strings & interpolation, Bytes, List/Map/Set/Range,
-# modules, JSON library, sample apps (greet, inventory, json-query), defect/bug reports,
-# Console/Args capabilities, and test/example blocks.
-SLICE_1B_GOLDEN_CASES = [
-    # Capabilities: Args & Console
+# modules, JSON library, sample apps (greet, inventory, json-query, expenses, find, kv, todo, wc),
+# defect/bug reports, Args/Console/Env/Clock/Random/SecureRandom/Files/ReadFiles/Files.File
+# capabilities (real and fake), and test/example blocks.
+SLICE_1C_GOLDEN_CASES = [
+    # Capabilities: Args, Clock, Console, Env, Files, ReadFiles, Random, SecureRandom
     "cap-args-list",
     "cap-args-none",
+    "cap-clock-fixed",
     "cap-console-fake",
     "cap-console-line-endings",
     "cap-console-stdin",
     "cap-console-stdin-invalid",
     "cap-console-streams",
+    "cap-files-binary",
+    "cap-files-fake",
+    "cap-files-fake-folders",
+    "cap-files-read",
+    "cap-files-walk",
+    "cap-files-within-escape",
+    "cap-files-wordcount",
+    "cap-record-of-capabilities",
     # Collections: List, Map, Set, Range, Tuple
     "col-args-lists",
     "col-build-with-var",
@@ -93,7 +107,9 @@ SLICE_1B_GOLDEN_CASES = [
     "fail-bug-time-range",
     "fail-file-error-forms",
     "fail-main-exit-status",
+    "fail-main-result-error",
     "fail-option-basics",
+    "fail-option-result-map",
     "fail-result-declared",
     "fail-test-failing",
     "fail-test-results",
@@ -133,11 +149,13 @@ SLICE_1B_GOLDEN_CASES = [
     "lang-test-failing",
     "lang-test-passing",
     "lang-while-is",
-    # Standard library JSON
+    # Standard library: Crypto, Date, JSON, Unicode16
+    "lib-crypto-date",
     "lib-json-errors",
     "lib-json-lookup",
     "lib-json-numbers",
     "lib-json-query",
+    "lib-unicode16",
     # Modules & visibility
     "mod-brace-import",
     "mod-chain",
@@ -170,6 +188,7 @@ SLICE_1B_GOLDEN_CASES = [
     # Reference examples
     "ref-abilities",
     "ref-bigint",
+    "ref-capability-fakes",
     "ref-case-receivers",
     "ref-evaluation",
     "ref-functions",
@@ -181,6 +200,16 @@ SLICE_1B_GOLDEN_CASES = [
     "ref-time",
     "ref-unit-qualified",
     # Sample programs
+    "sample-expenses",
+    "sample-expenses-malformed",
+    "sample-expenses-tests",
+    "sample-expenses-usage",
+    "sample-find",
+    "sample-find-count",
+    "sample-find-none",
+    "sample-find-tests",
+    "sample-find-unreadable",
+    "sample-find-usage",
     "sample-greet-args",
     "sample-greet-tests",
     "sample-inventory",
@@ -192,11 +221,20 @@ SLICE_1B_GOLDEN_CASES = [
     "sample-json-query-trailing",
     "sample-json-query-truncated",
     "sample-json-query-usage",
+    "sample-kv",
+    "sample-todo-list-empty",
+    "sample-todo-missing-item",
+    "sample-todo-usage",
+    "sample-wc",
+    "sample-wc-missing",
+    "sample-wc-tests",
     # Testing framework (test & example blocks)
     "tst-assert-is-binding",
     "tst-example-uses-text",
     "tst-failing-assert",
     "tst-failing-example",
+    "tst-fake-files-bugs",
+    "tst-fakes",
     "tst-private-names",
     "tst-stop-in-test",
     "tst-two-failures",
@@ -208,6 +246,7 @@ SLICE_1B_GOLDEN_CASES = [
     "txt-escapes",
     "txt-interpolation",
     "txt-interpolation-case",
+    "txt-invalid-utf8-file",
     "txt-lines-words",
     "txt-multiline",
     "txt-ordering",
@@ -220,7 +259,7 @@ SLICE_1B_GOLDEN_CASES = [
     "txt-word-frequency",
 ]
 
-MINIMUM_COHORT = 50
+MINIMUM_COHORT = 200
 
 
 def read_bytes(case: pathlib.Path, name: str, default: bytes = b"") -> bytes:
@@ -545,6 +584,155 @@ end
     assert bad_verify.returncode != 0, "mo-rt verify must reject corrupted bytecode"
 
 
+def check_slice_1c_differential(
+    mo: pathlib.Path,
+    mo_rt: pathlib.Path,
+    tmpdir: pathlib.Path,
+) -> None:
+    """Differential check for Slice 1C: --root DIR, real Files/ReadFiles/Files.File,
+    symlink confinement, Clock, Random.seeded, SecureRandom.seeded, Crypto, Unicode16."""
+    prog = tmpdir / "slice1c-check.mo"
+    prog.write_text(
+        r"""module Slice1cCheck
+use Crypto
+use Unicode16
+
+fn must_unit(r: Result(Unit, FileError)) : Unit
+  case r
+    Ok(_): Unit
+    Error(_): stop "unexpected file error"
+  end
+end
+
+fn must_bytes(r: Result(Bytes, FileError)) : Text
+  case r
+    Ok(b): b.to_hex
+    Error(e): "err:#{e}"
+  end
+end
+
+fn main(console: Console, files: Files, clock: Clock, rng: Random, srng: SecureRandom)
+  ## 1. Real Files / ReadFiles / Files.File under --root DIR
+  must_unit(files.make_folder("sub"))
+  must_unit(files.write_bytes("sub/a.bin", Bytes.from_u32_be(0x01020304)))
+  must_unit(files.rename("sub/a.bin", "sub/b.bin"))
+  ro = files.within("sub").read_only
+  console.print("exists=#{ro.exists?("b.bin")} old=#{ro.exists?("a.bin")}")
+  console.print("entries=#{ro.entries(".")}")
+  console.print("escape=#{ro.read_text("../outside.txt")}")
+  console.print("symlink_escape=#{files.read_text("escape_link")}")
+  fh = case files.open("data.bin")
+    Ok(h): h
+    Error(_): stop "unexpected open error"
+  end
+  must_unit(fh.write_at(4, Bytes.from_u32_be(0x0a141e28)))
+  must_unit(fh.sync)
+  console.print("size=#{fh.size} read=#{must_bytes(fh.read_at(0, 10))}")
+  must_unit(fh.truncate(5))
+  console.print("after_trunc=#{fh.size} read=#{must_bytes(fh.read_at(0, 10))}")
+  ## Real Clock, Random, SecureRandom smoke (non-deterministic values checked for range/length)
+  clock.sleep(0.milliseconds)
+  epoch = Time.parse("2000-01-01T00:00:00Z") or stop "valid epoch"
+  now_ok = clock.now > epoch
+  r_val = rng.int(10, 20)
+  r_ok = r_val >= 10 and r_val < 20
+  s_ok = srng.bytes(16).size == 16
+  console.print("real_caps=#{now_ok} #{r_ok} #{s_ok}")
+  ## Crypto (SHA-256, HMAC, AES-256-GCM, scrypt PHC, constant-time eq)
+  key = Crypto.sha256("slice1c-key".bytes)
+  nonce = "0123456789ab".bytes
+  tag = Crypto.hmac_sha256(key, "payload".bytes)
+  console.print("hmac=#{tag.to_hex} eq=#{Crypto.constant_time_eq?(tag, tag)}")
+  ct = case Crypto.seal(key, nonce, "secret-msg".bytes, "aad".bytes)
+    Ok(c): c
+    Error(_): stop "unexpected seal error"
+  end
+  pt = case Crypto.open(key, nonce, ct, "aad".bytes)
+    Ok(b): b.to_hex
+    Error(e): "err:#{e}"
+  end
+  bad = case Crypto.open(key, nonce, ct, "wrong-aad".bytes)
+    Ok(b): b.to_hex
+    Error(e): "err:#{e}"
+  end
+  console.print("aead=#{pt} bad=#{bad}")
+  salt = "0123456789abcdef".bytes
+  phc = case Crypto.hash_password("hunter2", salt)
+    Ok(h): h
+    Error(_): stop "unexpected phc error"
+  end
+  console.print("scrypt=#{phc} ok=#{Crypto.verify_password("hunter2", phc)} bad=#{Crypto.verify_password("nope", phc)}")
+  ## Unicode16
+  console.print("u16=#{Unicode16.graphemes("e\u{0301}🇺🇸").size} #{Unicode16.display_width("🇺🇸a\u{0301}")} #{Unicode16.lowercase("ΟΣ")} #{Unicode16.uppercase("straße")} #{Unicode16.normalize_nfc("e\u{0301}").bytes.size}")
+end
+
+test "slice 1c deterministic fakes"
+  t0 = Time.parse("2026-10-12T02:15:00Z") or stop "valid time"
+  fc = Clock.fixed(t0)
+  fc.sleep(250.milliseconds)
+  assert fc.now.to_text == "2026-10-12T02:15:00.25Z"
+  fr = Random.seeded(12345)
+  assert fr.int(0, 1000) == Random.seeded(12345).int(0, 1000)
+  fsr = SecureRandom.seeded(98765)
+  b1 = fsr.bytes(12)
+  assert b1 == SecureRandom.seeded(98765).bytes(12)
+  ff = Files.in_memory({"a.txt": "hi"})
+  assert ff.open("bin.dat") is Ok(fh)
+  assert fh.write_at(2, "ok".bytes) == Ok(Unit)
+  assert fh.size == Ok(4)
+  assert fh.read_at(0, 4) == Ok(Bytes.join([Bytes.zeroed(2), "ok".bytes]))
+end
+""",
+        encoding="utf-8",
+    )
+    bc_path = tmpdir / "slice1c_check.bc"
+    subprocess.run([str(mo), "emit", str(prog), "-o", str(bc_path)], check=True)
+    subprocess.run([str(mo_rt), "verify", str(bc_path)], check=True)
+
+    outside = tmpdir / "outside.txt"
+    outside.write_text("do-not-read", encoding="utf-8")
+
+    outputs = []
+    for label, cmd_prefix in (
+        ("c", [str(mo), "run"]),
+        ("rs", [str(mo_rt), "run"]),
+    ):
+        root_dir = tmpdir / f"root_{label}"
+        root_dir.mkdir()
+        os.symlink(str(outside), root_dir / "escape_link")
+        target = str(prog) if label == "c" else str(bc_path)
+        res = subprocess.run(
+            [*cmd_prefix, "--root", str(root_dir), target],
+            capture_output=True,
+            timeout=60,
+        )
+        assert res.returncode == 0, (label, res.returncode, res.stdout, res.stderr)
+        assert res.stderr == b"", (label, res.stderr)
+        outputs.append(res.stdout)
+
+    assert outputs[0] == outputs[1], (
+        f"Slice 1C differential mismatch:\n--- C mo\n{outputs[0].decode()}\n"
+        f"--- mo-rt\n{outputs[1].decode()}"
+    )
+
+    test_bc = tmpdir / "slice1c_check_tests.bc"
+    subprocess.run([str(mo), "emit", "--tests", str(prog), "-o", str(test_bc)], check=True)
+    subprocess.run([str(mo_rt), "verify", str(test_bc)], check=True)
+    c_test = subprocess.run([str(mo), "test", str(prog)], capture_output=True, timeout=60)
+    rs_test = subprocess.run([str(mo_rt), "test", str(test_bc)], capture_output=True, timeout=60)
+    assert c_test.returncode == 0 and rs_test.returncode == 0, (c_test, rs_test)
+    assert rs_test.stdout == c_test.stdout, (c_test.stdout, rs_test.stdout)
+    assert rs_test.stderr == c_test.stderr == b"", (c_test.stderr, rs_test.stderr)
+
+    # Confirm Rust Unicode 16 tables match the pinned UCD 16.0.0 source files.
+    subprocess.run(
+        [sys.executable, str(ROOT / "ci/generate_unicode16.py"), "--rust", "--check"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mo", help="Path to C `mo` executable")
@@ -566,12 +754,12 @@ def main() -> None:
     mo_rt = find_or_build_mo_rt(args.mo_rt, args.skip_build)
     check_no_openssl_linkage(mo_rt)
 
-    selected = args.case if args.case else SLICE_1B_GOLDEN_CASES
+    selected = args.case if args.case else SLICE_1C_GOLDEN_CASES
     if not args.case:
         assert len(selected) >= MINIMUM_COHORT, (
             f"Cohort has {len(selected)} cases, needs >= {MINIMUM_COHORT}"
         )
-        assert len(selected) == len(set(selected)), "duplicate case in SLICE_1B_GOLDEN_CASES"
+        assert len(selected) == len(set(selected)), "duplicate case in SLICE_1C_GOLDEN_CASES"
 
     run_count = 0
     test_count = 0
@@ -592,6 +780,7 @@ def main() -> None:
 
         if not args.case:
             check_env_and_limits_differential(mo, mo_rt, tmpdir)
+            check_slice_1c_differential(mo, mo_rt, tmpdir)
 
     if failures:
         sys.stderr.write("\n\n".join(failures) + "\n")
@@ -600,7 +789,7 @@ def main() -> None:
     total = run_count + test_count
     print(
         f"rust runtime: {total}/{total} golden suites matched C mo byte-for-byte "
-        f"({run_count} run, {test_count} test; + Env/limits/BigInt/verify checks; 0 diffs; no libssl/libcrypto)"
+        f"({run_count} run, {test_count} test; + Env/limits/BigInt/Files/Clock/Random/Crypto/Unicode16/verify checks; 0 diffs; no libssl/libcrypto)"
     )
 
 

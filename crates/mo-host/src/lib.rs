@@ -1,10 +1,21 @@
 #![forbid(unsafe_code)]
 
-//! Capability abstraction and real/fake implementations for Slice 1A (`Args`, `Env`, `Console`).
+//! Capability abstraction and real/fake implementations (`Args`, `Env`, `Console`,
+//! `Files`, `ReadFiles`, `Files.File`, `Clock`, `Random`, `SecureRandom`).
 
+mod clock_random;
+mod fake_files;
+mod files_common;
+#[cfg(unix)]
+mod real_files;
+
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Read, Write};
+#[cfg(unix)]
+use std::os::fd::{AsFd, OwnedFd};
+use std::path::Path;
 use std::rc::Rc;
 
 use mo_bytecode::types::TypeTable;
@@ -13,6 +24,10 @@ use mo_def::HostOpId;
 use mo_def::limits::MO_LIMIT_VALUE_BYTES;
 use mo_heap::table::MoMap;
 use mo_heap::{Heap, HeapError, Value};
+
+use fake_files::{FakeFolderCap, FakeOpenFileCap};
+#[cfg(unix)]
+use real_files::{RealFolder, RealOpenFile, ResolverState};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostError {
@@ -58,6 +73,18 @@ enum ConsoleState {
     Fake(RefCell<FakeConsoleState>),
 }
 
+pub(crate) enum FolderCap {
+    #[cfg(unix)]
+    Real(Rc<RealFolder>),
+    Fake(FakeFolderCap),
+}
+
+pub(crate) enum OpenFileCap {
+    #[cfg(unix)]
+    Real(RealOpenFile),
+    Fake(FakeOpenFileCap),
+}
+
 /// Real I/O handles and OS context for a process.
 pub struct HostContext {
     pub args: Vec<String>,
@@ -65,6 +92,13 @@ pub struct HostContext {
     input: Box<dyn BufRead>,
     output: Box<dyn Write>,
     errors: Box<dyn Write>,
+    #[cfg(unix)]
+    root_fd: Option<OwnedFd>,
+    #[cfg(unix)]
+    resolver: ResolverState,
+    open_folders: Rc<Cell<u32>>,
+    open_files: Rc<Cell<u32>>,
+    started: bool,
 }
 
 impl HostContext {
@@ -75,7 +109,31 @@ impl HostContext {
             input: Box::new(BufReader::new(io::stdin())),
             output: Box::new(io::stdout()),
             errors: Box::new(io::stderr()),
+            #[cfg(unix)]
+            root_fd: None,
+            #[cfg(unix)]
+            resolver: ResolverState::new(),
+            open_folders: Rc::new(Cell::new(0)),
+            open_files: Rc::new(Cell::new(0)),
+            started: false,
         }
+    }
+
+    /// Creates a stdio host context rooted at `root_dir` for real `Files` / `ReadFiles`.
+    #[cfg(unix)]
+    pub fn stdio_with_root(
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+        root_dir: Option<&Path>,
+    ) -> Result<Self, String> {
+        let root_fd = match root_dir {
+            Some(p) => Some(real_files::open_root_dir(p)?),
+            None => None,
+        };
+        Ok(Self {
+            root_fd,
+            ..Self::stdio(args, env)
+        })
     }
 
     pub fn with_io<R, W1, W2>(
@@ -96,7 +154,53 @@ impl HostContext {
             input: Box::new(BufReader::new(input)),
             output: Box::new(output),
             errors: Box::new(errors),
+            #[cfg(unix)]
+            root_fd: None,
+            #[cfg(unix)]
+            resolver: ResolverState::new(),
+            open_folders: Rc::new(Cell::new(0)),
+            open_files: Rc::new(Cell::new(0)),
+            started: false,
         }
+    }
+
+    #[cfg(unix)]
+    pub fn set_root_dir(&mut self, root_dir: &Path) -> Result<(), String> {
+        self.root_fd = Some(real_files::open_root_dir(root_dir)?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    pub fn set_force_fallback(&mut self, force: bool) {
+        self.resolver.force_fallback = force;
+    }
+
+    pub fn open_folders(&self) -> u32 {
+        self.open_folders.get()
+    }
+
+    pub fn open_files(&self) -> u32 {
+        self.open_files.get()
+    }
+
+    fn ensure_started(&mut self) {
+        if !self.started {
+            #[cfg(unix)]
+            real_files::raise_nofile_limit_best_effort();
+            self.started = true;
+        }
+    }
+
+    #[cfg(unix)]
+    fn ensure_root_fd(&mut self) -> Result<&OwnedFd, HostError> {
+        if self.root_fd.is_none() {
+            let fd =
+                real_files::open_root_dir(Path::new(".")).map_err(|_| HostError::Internal {
+                    reason: "could not open the starting folder",
+                })?;
+            self.root_fd = Some(fd);
+        }
+        Ok(self.root_fd.as_ref().unwrap())
     }
 
     pub fn make_real_capability(
@@ -105,6 +209,7 @@ impl HostContext {
         types: &TypeTable,
         ty: u32,
     ) -> Result<Value, HostError> {
+        self.ensure_started();
         let cap = types
             .get(ty)
             .capability
@@ -132,6 +237,15 @@ impl HostContext {
             Capability::Console => {
                 Ok(heap.alloc_capability(cap, ty, Rc::new(ConsoleState::Real))?)
             }
+            #[cfg(unix)]
+            Capability::Files | Capability::ReadFiles => {
+                let open_folders = Rc::clone(&self.open_folders);
+                let root_fd = self.ensure_root_fd()?;
+                real_files::make_real_folder_cap(heap, &open_folders, root_fd.as_fd(), cap, ty)
+            }
+            Capability::Clock => clock_random::make_real_clock(heap, ty),
+            Capability::Random => clock_random::make_real_random(heap, ty),
+            Capability::SecureRandom => clock_random::make_real_secure_random(heap, ty),
             other => Err(HostError::UnimplementedCapability(other)),
         }
     }
@@ -283,6 +397,102 @@ impl HostContext {
                 }));
                 Ok(heap.alloc_capability(Capability::Console, result_ty, Rc::new(state))?)
             }
+
+            // Clock (3 ops)
+            HostOpId::ClockFixed => {
+                clock_random::make_fixed_clock(heap, result_ty, args[0].as_time())
+            }
+            HostOpId::ClockNow => clock_random::clock_now(&args[0]),
+            HostOpId::ClockSleep => clock_random::clock_sleep(&args[0], args[1].as_duration()),
+
+            // Random & SecureRandom (4 ops)
+            HostOpId::RandomSeeded => {
+                clock_random::make_seeded_random(heap, result_ty, args[0].as_int())
+            }
+            HostOpId::RandomInt => {
+                clock_random::random_int(&args[0], args[1].as_int(), args[2].as_int())
+            }
+            HostOpId::SecurerandomSeeded => {
+                clock_random::make_seeded_secure_random(heap, result_ty, args[0].as_int())
+            }
+            HostOpId::SecurerandomBytes => {
+                clock_random::secure_random_bytes(heap, &args[0], args[1].as_int())
+            }
+
+            // Files, ReadFiles, Files.File (26 ops)
+            HostOpId::FilesInMemory => {
+                fake_files::files_in_memory(heap, types, result_ty, &args[0])
+            }
+            HostOpId::FilesReadText
+            | HostOpId::FilesReadBytes
+            | HostOpId::FilesWriteText
+            | HostOpId::FilesAppendText
+            | HostOpId::FilesRemove
+            | HostOpId::FilesMakeFolder
+            | HostOpId::FilesList
+            | HostOpId::FilesEntries
+            | HostOpId::FilesExists
+            | HostOpId::FilesWithin
+            | HostOpId::FilesReadOnly
+            | HostOpId::FilesWriteBytes
+            | HostOpId::FilesRename
+            | HostOpId::FilesOpen
+            | HostOpId::ReadfilesReadText
+            | HostOpId::ReadfilesReadBytes
+            | HostOpId::ReadfilesList
+            | HostOpId::ReadfilesEntries
+            | HostOpId::ReadfilesExists
+            | HostOpId::ReadfilesWithin => {
+                let folder = args[0]
+                    .as_capability()
+                    .inner
+                    .downcast_ref::<FolderCap>()
+                    .expect("Files/ReadFiles capability");
+                match folder {
+                    FolderCap::Fake(fake) => fake_files::call_fake_folder(
+                        heap,
+                        types,
+                        &self.open_files,
+                        fake,
+                        op,
+                        result_ty,
+                        args,
+                    ),
+                    #[cfg(unix)]
+                    FolderCap::Real(real) => real_files::call_real_folder(
+                        heap,
+                        types,
+                        &mut self.resolver,
+                        &self.open_folders,
+                        &self.open_files,
+                        real,
+                        op,
+                        result_ty,
+                        args,
+                    ),
+                }
+            }
+            HostOpId::FilesReadAt
+            | HostOpId::FilesWriteAt
+            | HostOpId::FilesSize
+            | HostOpId::FilesTruncate
+            | HostOpId::FilesSync => {
+                let fh = args[0]
+                    .as_capability()
+                    .inner
+                    .downcast_ref::<OpenFileCap>()
+                    .expect("Files.File capability");
+                match fh {
+                    OpenFileCap::Fake(fake) => {
+                        fake_files::call_fake_file(heap, types, fake, op, result_ty, args)
+                    }
+                    #[cfg(unix)]
+                    OpenFileCap::Real(real) => {
+                        real_files::call_real_file(heap, types, real, op, result_ty, args)
+                    }
+                }
+            }
+
             other => Err(HostError::Unimplemented(other)),
         }
     }
@@ -296,20 +506,17 @@ impl HostContext {
         let mut raw = Vec::new();
         let n = match self.input.read_until(b'\n', &mut raw) {
             Ok(n) => n,
-            Err(e) if e.kind() == io::ErrorKind::Interrupted => {
-                // Retry once on EINTR loop.
-                loop {
-                    match self.input.read_until(b'\n', &mut raw) {
-                        Ok(n) => break n,
-                        Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-                        Err(_) => {
-                            return Err(HostError::Internal {
-                                reason: "internal error: console input unavailable",
-                            });
-                        }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => loop {
+                match self.input.read_until(b'\n', &mut raw) {
+                    Ok(n) => break n,
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(_) => {
+                        return Err(HostError::Internal {
+                            reason: "internal error: console input unavailable",
+                        });
                     }
                 }
-            }
+            },
             Err(_) => {
                 return Err(HostError::Internal {
                     reason: "internal error: console input unavailable",
@@ -356,7 +563,12 @@ fn find_text_type(types: &TypeTable) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mo_bytecode::{NO_INDEX, TypeCase, TypeDef, TypeField};
+    use mo_bytecode::{LayoutDef, LayoutKind, NO_INDEX, TypeCase, TypeDef, TypeField};
+    use mo_def::limits::{
+        MO_LIMIT_FILE_IO_BYTES, MO_LIMIT_OPEN_FILES, MO_LIMIT_OPEN_FOLDERS, MO_LIMIT_PATH_LINKS,
+        MO_LIMIT_SECURE_RANDOM_BYTES, MO_TIME_MAX_US, MO_TIME_MIN_US,
+    };
+    use mo_heap::print::value_print;
 
     fn base_type(kind: TypeKind) -> TypeDef {
         TypeDef {
@@ -380,38 +592,237 @@ mod tests {
         t
     }
 
-    fn host_types() -> TypeTable {
-        let text = base_type(TypeKind::Text); // 0
-        let mut list_text = base_type(TypeKind::List); // 1
-        list_text.parameters = vec![0];
-        let mut opt_text = base_type(TypeKind::Choice); // 2
-        opt_text.name = Some("Option".to_string());
-        opt_text.cases = vec![
-            TypeCase {
-                name_idx: 0,
-                name: "None".to_string(),
-                fields: vec![],
-                unnamed: false,
-            },
-            TypeCase {
-                name_idx: 1,
-                name: "Some".to_string(),
-                fields: vec![TypeField {
+    struct HostFixture {
+        types: TypeTable,
+        text: u32,
+        list_text: u32,
+        opt_text: u32,
+        map_tt: u32,
+        args_cap: u32,
+        env_cap: u32,
+        console_cap: u32,
+        files_cap: u32,
+        readfiles_cap: u32,
+        file_cap: u32,
+        clock_cap: u32,
+        random_cap: u32,
+        securerandom_cap: u32,
+        sqlite_cap: u32,
+        res_unit: u32,
+        res_text: u32,
+        res_bytes: u32,
+        res_int: u32,
+        res_list_text: u32,
+        res_entries: u32,
+        res_file: u32,
+    }
+
+    impl HostFixture {
+        fn new() -> Self {
+            let mut items = Vec::new();
+            let mut layouts = Vec::new();
+            let push = |items: &mut Vec<TypeDef>, t: TypeDef| -> u32 {
+                let id = items.len() as u32;
+                items.push(t);
+                id
+            };
+
+            let unit = push(&mut items, base_type(TypeKind::Unit));
+            let int = push(&mut items, base_type(TypeKind::Int));
+            let text = push(&mut items, base_type(TypeKind::Text));
+            let bytes = push(&mut items, base_type(TypeKind::Bytes));
+            let mut list_text_def = base_type(TypeKind::List);
+            list_text_def.parameters = vec![text];
+            let list_text = push(&mut items, list_text_def);
+
+            let mut opt_text_def = base_type(TypeKind::Choice);
+            opt_text_def.name = Some("Option".into());
+            opt_text_def.has_fields = true;
+            opt_text_def.cases = vec![
+                TypeCase {
+                    name_idx: 0,
+                    name: "None".into(),
+                    fields: vec![],
+                    unnamed: false,
+                },
+                TypeCase {
+                    name_idx: 1,
+                    name: "Some".into(),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: None,
+                        ty: text,
+                    }],
+                    unnamed: true,
+                },
+            ];
+            let opt_text = push(&mut items, opt_text_def);
+
+            let mut map_tt_def = base_type(TypeKind::Map);
+            map_tt_def.parameters = vec![text, text];
+            let map_tt = push(&mut items, map_tt_def);
+
+            let args_cap = push(&mut items, cap_type(Capability::Args));
+            let env_cap = push(&mut items, cap_type(Capability::Env));
+            let console_cap = push(&mut items, cap_type(Capability::Console));
+            let files_cap = push(&mut items, cap_type(Capability::Files));
+            let readfiles_cap = push(&mut items, cap_type(Capability::ReadFiles));
+            let file_cap = push(&mut items, cap_type(Capability::File));
+            let clock_cap = push(&mut items, cap_type(Capability::Clock));
+            let random_cap = push(&mut items, cap_type(Capability::Random));
+            let securerandom_cap = push(&mut items, cap_type(Capability::SecureRandom));
+            let sqlite_cap = push(&mut items, cap_type(Capability::Sqlite));
+
+            let mut file_err_def = base_type(TypeKind::Choice);
+            file_err_def.name = Some("FileError".into());
+            file_err_def.has_fields = true;
+            file_err_def.cases = vec![
+                TypeCase {
+                    name_idx: 0,
+                    name: "NotFound".into(),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: Some("path".into()),
+                        ty: text,
+                    }],
+                    unnamed: false,
+                },
+                TypeCase {
+                    name_idx: 1,
+                    name: "NotAllowed".into(),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: Some("path".into()),
+                        ty: text,
+                    }],
+                    unnamed: false,
+                },
+                TypeCase {
+                    name_idx: 2,
+                    name: "NotText".into(),
+                    fields: vec![TypeField {
+                        name_idx: None,
+                        name: Some("path".into()),
+                        ty: text,
+                    }],
+                    unnamed: false,
+                },
+                TypeCase {
+                    name_idx: 3,
+                    name: "Failed".into(),
+                    fields: vec![
+                        TypeField {
+                            name_idx: None,
+                            name: Some("path".into()),
+                            ty: text,
+                        },
+                        TypeField {
+                            name_idx: None,
+                            name: Some("reason".into()),
+                            ty: text,
+                        },
+                    ],
+                    unnamed: false,
+                },
+            ];
+            let file_err = push(&mut items, file_err_def);
+            layouts.push(LayoutDef {
+                kind: LayoutKind::Case,
+                ty: file_err,
+                case_index: 3,
+                function: NO_INDEX,
+                fields: vec![text, text],
+            });
+
+            let mut entry_kind_def = base_type(TypeKind::Choice);
+            entry_kind_def.name = Some("EntryKind".into());
+            entry_kind_def.cases = ["File", "Folder", "Link", "Other"]
+                .iter()
+                .enumerate()
+                .map(|(i, n)| TypeCase {
+                    name_idx: i as u32,
+                    name: (*n).into(),
+                    fields: vec![],
+                    unnamed: false,
+                })
+                .collect();
+            let entry_kind = push(&mut items, entry_kind_def);
+
+            let mut entry_def = base_type(TypeKind::Record);
+            entry_def.name = Some("Entry".into());
+            entry_def.fields = vec![
+                TypeField {
                     name_idx: None,
-                    name: None,
-                    ty: 0,
-                }],
-                unnamed: true,
-            },
-        ];
-        let mut map_tt = base_type(TypeKind::Map); // 3
-        map_tt.parameters = vec![0, 0];
-        let args_cap = cap_type(Capability::Args); // 4
-        let env_cap = cap_type(Capability::Env); // 5
-        let console_cap = cap_type(Capability::Console); // 6
-        let files_cap = cap_type(Capability::Files); // 7
-        TypeTable::finish(
-            vec![
+                    name: Some("name".into()),
+                    ty: text,
+                },
+                TypeField {
+                    name_idx: None,
+                    name: Some("kind".into()),
+                    ty: entry_kind,
+                },
+            ];
+            let entry = push(&mut items, entry_def);
+            layouts.push(LayoutDef {
+                kind: LayoutKind::Record,
+                ty: entry,
+                case_index: 0,
+                function: NO_INDEX,
+                fields: vec![text, entry_kind],
+            });
+
+            let mut list_entry_def = base_type(TypeKind::List);
+            list_entry_def.parameters = vec![entry];
+            let list_entry = push(&mut items, list_entry_def);
+
+            let mut make_res = |ok_ty: u32| -> u32 {
+                let mut r = base_type(TypeKind::Choice);
+                r.name = Some("Result".into());
+                r.has_fields = true;
+                r.cases = vec![
+                    TypeCase {
+                        name_idx: 0,
+                        name: "Ok".into(),
+                        fields: vec![TypeField {
+                            name_idx: None,
+                            name: None,
+                            ty: ok_ty,
+                        }],
+                        unnamed: true,
+                    },
+                    TypeCase {
+                        name_idx: 1,
+                        name: "Error".into(),
+                        fields: vec![TypeField {
+                            name_idx: None,
+                            name: None,
+                            ty: file_err,
+                        }],
+                        unnamed: true,
+                    },
+                ];
+                let r_ty = push(&mut items, r);
+                layouts.push(LayoutDef {
+                    kind: LayoutKind::Case,
+                    ty: r_ty,
+                    case_index: 1,
+                    function: NO_INDEX,
+                    fields: vec![file_err],
+                });
+                r_ty
+            };
+
+            let res_unit = make_res(unit);
+            let res_text = make_res(text);
+            let res_bytes = make_res(bytes);
+            let res_int = make_res(int);
+            let res_list_text = make_res(list_text);
+            let res_entries = make_res(list_entry);
+            let res_file = make_res(file_cap);
+
+            let types = TypeTable::finish(items, layouts).unwrap();
+            Self {
+                types,
                 text,
                 list_text,
                 opt_text,
@@ -420,207 +831,788 @@ mod tests {
                 env_cap,
                 console_cap,
                 files_cap,
-            ],
-            Vec::new(),
-        )
-        .unwrap()
+                readfiles_cap,
+                file_cap,
+                clock_cap,
+                random_cap,
+                securerandom_cap,
+                sqlite_cap,
+                res_unit,
+                res_text,
+                res_bytes,
+                res_int,
+                res_list_text,
+                res_entries,
+                res_file,
+            }
+        }
     }
 
     #[test]
-    fn real_and_fake_args_and_env() {
-        let types = host_types();
+    fn real_and_fake_args_env_console() {
+        let fx = HostFixture::new();
         let heap = Heap::new(1024 * 1024);
         let mut ctx = HostContext::with_io(
             vec!["alpha".to_string(), "beta".to_string()],
             vec![("KEY".to_string(), "VAL".to_string())],
-            io::empty(),
-            Vec::new(),
-            Vec::new(),
-        );
-
-        let args_cap = ctx.make_real_capability(&heap, &types, 4).unwrap();
-        let all = ctx
-            .call(&heap, &types, HostOpId::ArgsList, 1, &[args_cap])
-            .unwrap();
-        let elems: Vec<&str> = all.as_list().iter().map(Value::as_text).collect();
-        assert_eq!(elems, vec!["alpha", "beta"]);
-
-        let fake_list = heap
-            .alloc_list(VecDeque::from([heap.alloc_text("x".into()).unwrap()]))
-            .unwrap();
-        let fake_args = ctx
-            .call(&heap, &types, HostOpId::ArgsOf, 4, &[fake_list])
-            .unwrap();
-        let fake_all = ctx
-            .call(&heap, &types, HostOpId::ArgsList, 1, &[fake_args])
-            .unwrap();
-        assert_eq!(fake_all.as_list()[0].as_text(), "x");
-
-        let env_cap = ctx.make_real_capability(&heap, &types, 5).unwrap();
-        let k_hit = heap.alloc_text("KEY".into()).unwrap();
-        let k_miss = heap.alloc_text("MISSING".into()).unwrap();
-        let got = ctx
-            .call(
-                &heap,
-                &types,
-                HostOpId::EnvGet,
-                2,
-                &[env_cap.clone(), k_hit.clone()],
-            )
-            .unwrap();
-        assert_eq!(got.as_tag(), 1);
-        let inner = heap.extract_case_field(&types, 2, &got, 1, 0);
-        assert_eq!(inner.as_text(), "VAL");
-
-        let miss = ctx
-            .call(&heap, &types, HostOpId::EnvGet, 2, &[env_cap, k_miss])
-            .unwrap();
-        assert_eq!(miss.as_tag(), 0);
-
-        let mut fake_map = MoMap::new(0, 0);
-        fake_map.set(
-            &types,
-            heap.hash_key(),
-            k_hit.clone(),
-            heap.alloc_text("FAKE".into()).unwrap(),
-        );
-        let fake_map_val = heap.alloc_map(fake_map).unwrap();
-        let fake_env = ctx
-            .call(&heap, &types, HostOpId::EnvOf, 5, &[fake_map_val])
-            .unwrap();
-        let got_fake = ctx
-            .call(&heap, &types, HostOpId::EnvGet, 2, &[fake_env, k_hit])
-            .unwrap();
-        assert_eq!(
-            heap.extract_case_field(&types, 2, &got_fake, 1, 0)
-                .as_text(),
-            "FAKE"
-        );
-    }
-
-    #[test]
-    fn real_and_fake_console_and_unimplemented_errors() {
-        let types = host_types();
-        let heap = Heap::new(1024 * 1024);
-        let mut ctx = HostContext::with_io(
-            Vec::new(),
-            Vec::new(),
             io::Cursor::new(b"first\r\nsecond".to_vec()),
             Vec::new(),
             Vec::new(),
         );
 
-        let real_console = ctx.make_real_capability(&heap, &types, 6).unwrap();
+        let args_cap = ctx
+            .make_real_capability(&heap, &fx.types, fx.args_cap)
+            .unwrap();
+        let all = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ArgsList,
+                fx.list_text,
+                &[args_cap],
+            )
+            .unwrap();
+        let elems: Vec<&str> = all.as_list().iter().map(Value::as_text).collect();
+        assert_eq!(elems, vec!["alpha", "beta"]);
+
+        let env_cap = ctx
+            .make_real_capability(&heap, &fx.types, fx.env_cap)
+            .unwrap();
+        let k_hit = heap.alloc_text("KEY".into()).unwrap();
+        let got = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::EnvGet,
+                fx.opt_text,
+                &[env_cap, k_hit],
+            )
+            .unwrap();
+        assert_eq!(
+            heap.extract_case_field(&fx.types, fx.opt_text, &got, 1, 0)
+                .as_text(),
+            "VAL"
+        );
+
+        let real_console = ctx
+            .make_real_capability(&heap, &fx.types, fx.console_cap)
+            .unwrap();
         let l1 = ctx
             .call(
                 &heap,
-                &types,
+                &fx.types,
                 HostOpId::ConsoleReadLine,
-                2,
+                fx.opt_text,
                 std::slice::from_ref(&real_console),
             )
             .unwrap();
         assert_eq!(
-            heap.extract_case_field(&types, 2, &l1, 1, 0).as_text(),
+            heap.extract_case_field(&fx.types, fx.opt_text, &l1, 1, 0)
+                .as_text(),
             "first"
         );
         let l2 = ctx
             .call(
                 &heap,
-                &types,
+                &fx.types,
                 HostOpId::ConsoleReadLine,
-                2,
+                fx.opt_text,
                 std::slice::from_ref(&real_console),
             )
             .unwrap();
         assert_eq!(
-            heap.extract_case_field(&types, 2, &l2, 1, 0).as_text(),
+            heap.extract_case_field(&fx.types, fx.opt_text, &l2, 1, 0)
+                .as_text(),
             "second"
         );
         let eof = ctx
             .call(
                 &heap,
-                &types,
+                &fx.types,
                 HostOpId::ConsoleReadLine,
-                2,
-                std::slice::from_ref(&real_console),
+                fx.opt_text,
+                &[real_console],
             )
             .unwrap();
         assert_eq!(eof.as_tag(), 0);
 
-        let err = ctx
-            .call(&heap, &types, HostOpId::ConsolePrinted, 1, &[real_console])
-            .err()
-            .unwrap();
         assert_eq!(
-            err,
-            HostError::Bug {
-                reason: "console observation needs a fake",
-                detail: None
-            }
-        );
-
-        let in_list = heap
-            .alloc_list(VecDeque::from([heap.alloc_text("hello".into()).unwrap()]))
-            .unwrap();
-        let fake_console = ctx
-            .call(&heap, &types, HostOpId::ConsoleFakeInput, 6, &[in_list])
-            .unwrap();
-        let msg = heap.alloc_text("out".into()).unwrap();
-        let errmsg = heap.alloc_text("err".into()).unwrap();
-        ctx.call(
-            &heap,
-            &types,
-            HostOpId::ConsolePrint,
-            0,
-            &[fake_console.clone(), msg],
-        )
-        .unwrap();
-        ctx.call(
-            &heap,
-            &types,
-            HostOpId::ConsoleError,
-            0,
-            &[fake_console.clone(), errmsg],
-        )
-        .unwrap();
-        let printed = ctx
-            .call(
-                &heap,
-                &types,
-                HostOpId::ConsolePrinted,
-                1,
-                std::slice::from_ref(&fake_console),
-            )
-            .unwrap();
-        assert_eq!(printed.as_list()[0].as_text(), "out");
-        let printed_err = ctx
-            .call(
-                &heap,
-                &types,
-                HostOpId::ConsolePrintedErrors,
-                1,
-                std::slice::from_ref(&fake_console),
-            )
-            .unwrap();
-        assert_eq!(printed_err.as_list()[0].as_text(), "err");
-        let read = ctx
-            .call(&heap, &types, HostOpId::ConsoleReadLine, 2, &[fake_console])
-            .unwrap();
-        assert_eq!(
-            heap.extract_case_field(&types, 2, &read, 1, 0).as_text(),
-            "hello"
-        );
-
-        assert_eq!(
-            ctx.make_real_capability(&heap, &types, 7).err().unwrap(),
-            HostError::UnimplementedCapability(Capability::Files)
-        );
-        assert_eq!(
-            ctx.call(&heap, &types, HostOpId::ClockNow, 0, &[])
+            ctx.make_real_capability(&heap, &fx.types, fx.sqlite_cap)
                 .err()
                 .unwrap(),
-            HostError::Unimplemented(HostOpId::ClockNow)
+            HostError::UnimplementedCapability(Capability::Sqlite)
         );
+        assert_eq!(
+            ctx.call(&heap, &fx.types, HostOpId::SqliteFake, fx.sqlite_cap, &[])
+                .err()
+                .unwrap(),
+            HostError::Unimplemented(HostOpId::SqliteFake)
+        );
+    }
+
+    #[test]
+    fn clock_random_and_secure_random_parity() {
+        let fx = HostFixture::new();
+        let heap = Heap::new(4 * 1024 * 1024);
+        let mut ctx = HostContext::stdio(Vec::new(), Vec::new());
+
+        // Fake Clock.fixed + alias advance + bounds.
+        let fixed = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ClockFixed,
+                fx.clock_cap,
+                &[Value::Time(-1)],
+            )
+            .unwrap();
+        let alias = fixed.clone();
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::ClockNow,
+                0,
+                std::slice::from_ref(&fixed),
+            )
+            .unwrap()
+            .as_time(),
+            -1
+        );
+        ctx.call(
+            &heap,
+            &fx.types,
+            HostOpId::ClockSleep,
+            0,
+            &[fixed.clone(), Value::Duration(2_500_000)],
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.call(&heap, &fx.types, HostOpId::ClockNow, 0, &[alias])
+                .unwrap()
+                .as_time(),
+            2_499_999
+        );
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::ClockSleep,
+                0,
+                &[fixed.clone(), Value::Duration(-1)],
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "negative sleep duration",
+                detail: None
+            })
+        );
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::ClockSleep,
+                0,
+                &[fixed.clone(), Value::Duration(MO_TIME_MAX_US)],
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "time outside the years 1 to 9999",
+                detail: None
+            })
+        );
+        // Failed sleep must not mutate clock.
+        assert_eq!(
+            ctx.call(&heap, &fx.types, HostOpId::ClockNow, 0, &[fixed])
+                .unwrap()
+                .as_time(),
+            2_499_999
+        );
+
+        // Real Clock.
+        let real_clock = ctx
+            .make_real_capability(&heap, &fx.types, fx.clock_cap)
+            .unwrap();
+        let now = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ClockNow,
+                0,
+                std::slice::from_ref(&real_clock),
+            )
+            .unwrap()
+            .as_time();
+        assert!((MO_TIME_MIN_US..=MO_TIME_MAX_US).contains(&now));
+        ctx.call(
+            &heap,
+            &fx.types,
+            HostOpId::ClockSleep,
+            0,
+            &[real_clock.clone(), Value::Duration(0)],
+        )
+        .unwrap();
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::ClockSleep,
+                0,
+                &[
+                    real_clock,
+                    Value::Duration(MO_TIME_MAX_US - MO_TIME_MIN_US + 1)
+                ],
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "time outside the years 1 to 9999",
+                detail: None
+            })
+        );
+
+        // Random.seeded(0).int(0, 100) == 60 (pinned by C test_host.c:920).
+        let rng = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::RandomSeeded,
+                fx.random_cap,
+                &[Value::Int(0)],
+            )
+            .unwrap();
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::RandomInt,
+                1,
+                &[rng.clone(), Value::Int(0), Value::Int(100)],
+            )
+            .unwrap()
+            .as_int(),
+            60
+        );
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::RandomInt,
+                1,
+                &[rng, Value::Int(5), Value::Int(5)],
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "high not greater than low",
+                detail: None
+            })
+        );
+
+        // Real Random full range.
+        let real_rng = ctx
+            .make_real_capability(&heap, &fx.types, fx.random_cap)
+            .unwrap();
+        for _ in 0..32 {
+            let v = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::RandomInt,
+                    1,
+                    &[real_rng.clone(), Value::Int(i64::MIN), Value::Int(i64::MAX)],
+                )
+                .unwrap()
+                .as_int();
+            assert!(v < i64::MAX);
+        }
+
+        // SecureRandom seeded determinism + bounds + real OS entropy.
+        let sr1 = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomSeeded,
+                fx.securerandom_cap,
+                &[Value::Int(42)],
+            )
+            .unwrap();
+        let sr2 = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomSeeded,
+                fx.securerandom_cap,
+                &[Value::Int(42)],
+            )
+            .unwrap();
+        let b1 = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomBytes,
+                3,
+                &[sr1.clone(), Value::Int(48)],
+            )
+            .unwrap();
+        let b2 = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomBytes,
+                3,
+                &[sr2, Value::Int(48)],
+            )
+            .unwrap();
+        assert_eq!(b1.as_bytes(), b2.as_bytes());
+        assert_eq!(b1.as_bytes().len(), 48);
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomBytes,
+                3,
+                &[sr1.clone(), Value::Int(-1)]
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "count outside 0 to 65536",
+                detail: None
+            })
+        );
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomBytes,
+                3,
+                &[sr1, Value::Int((MO_LIMIT_SECURE_RANDOM_BYTES + 1) as i64)],
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "count outside 0 to 65536",
+                detail: None
+            })
+        );
+
+        let real_sr = ctx
+            .make_real_capability(&heap, &fx.types, fx.securerandom_cap)
+            .unwrap();
+        let r1 = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomBytes,
+                3,
+                &[real_sr.clone(), Value::Int(32)],
+            )
+            .unwrap();
+        let r2 = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::SecurerandomBytes,
+                3,
+                &[real_sr, Value::Int(32)],
+            )
+            .unwrap();
+        assert_ne!(r1.as_bytes(), r2.as_bytes());
+    }
+
+    #[test]
+    fn fake_files_and_file_handles_parity() {
+        let fx = HostFixture::new();
+        let heap = Heap::new(16 * 1024 * 1024);
+        let mut ctx = HostContext::stdio(Vec::new(), Vec::new());
+
+        // Invalid keys rejected with exact bug reason and detail.
+        for bad in ["/a", "", ".", "..", "./a", "../a", "a/", "a//b"] {
+            let mut m = MoMap::new(fx.text, fx.text);
+            m.set(
+                &fx.types,
+                heap.hash_key(),
+                heap.alloc_text(bad.into()).unwrap(),
+                heap.alloc_text("x".into()).unwrap(),
+            );
+            let mv = heap.alloc_map(m).unwrap();
+            assert_eq!(
+                ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesInMemory,
+                    fx.files_cap,
+                    &[mv]
+                )
+                .err(),
+                Some(HostError::Bug {
+                    reason: "fake has a key that is not a plain relative path",
+                    detail: Some(bad.to_string())
+                })
+            );
+        }
+
+        // File-and-folder collision.
+        let mut m = MoMap::new(fx.text, fx.text);
+        m.set(
+            &fx.types,
+            heap.hash_key(),
+            heap.alloc_text("a".into()).unwrap(),
+            heap.alloc_text("x".into()).unwrap(),
+        );
+        m.set(
+            &fx.types,
+            heap.hash_key(),
+            heap.alloc_text("a/b".into()).unwrap(),
+            heap.alloc_text("y".into()).unwrap(),
+        );
+        let mv = heap.alloc_map(m).unwrap();
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesInMemory,
+                fx.files_cap,
+                &[mv]
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "fake has a file that is also a folder",
+                detail: Some("a".to_string())
+            })
+        );
+
+        // Full fake binary file lifecycle + open file cap (64).
+        let empty_map = heap.alloc_map(MoMap::new(fx.text, fx.text)).unwrap();
+        let files = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesInMemory,
+                fx.files_cap,
+                &[empty_map],
+            )
+            .unwrap();
+        let p = heap.alloc_text("db.bin".into()).unwrap();
+        let res = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesOpen,
+                fx.res_file,
+                &[files.clone(), p],
+            )
+            .unwrap();
+        assert_eq!(res.as_tag(), 0);
+        let fh = heap.extract_case_field(&fx.types, fx.res_file, &res, 0, 0);
+        assert_eq!(ctx.open_files(), 1);
+
+        let payload = heap.alloc_bytes(vec![0xaa, 0xbb]).unwrap();
+        ctx.call(
+            &heap,
+            &fx.types,
+            HostOpId::FilesWriteAt,
+            fx.res_unit,
+            &[fh.clone(), Value::Int(4), payload],
+        )
+        .unwrap();
+        let rd = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesReadAt,
+                fx.res_bytes,
+                &[fh.clone(), Value::Int(0), Value::Int(10)],
+            )
+            .unwrap();
+        assert_eq!(
+            heap.extract_case_field(&fx.types, fx.res_bytes, &rd, 0, 0)
+                .as_bytes(),
+            &[0, 0, 0, 0, 0xaa, 0xbb]
+        );
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesReadAt,
+                fx.res_bytes,
+                &[
+                    fh.clone(),
+                    Value::Int(0),
+                    Value::Int((MO_LIMIT_FILE_IO_BYTES + 1) as i64)
+                ],
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "read count outside 0 to the read limit",
+                detail: None
+            })
+        );
+        drop(fh);
+        drop(res);
+        assert_eq!(ctx.open_files(), 0);
+
+        // Enforce 64 open file handle limit on fake files too.
+        let mut handles = Vec::new();
+        for i in 0..MO_LIMIT_OPEN_FILES {
+            let name = heap.alloc_text(format!("f{i}.bin")).unwrap();
+            let r = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesOpen,
+                    fx.res_file,
+                    &[files.clone(), name],
+                )
+                .unwrap();
+            handles.push(r);
+        }
+        let extra = heap.alloc_text("over.bin".into()).unwrap();
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesOpen,
+                fx.res_file,
+                &[files.clone(), extra]
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "too many files open at once",
+                detail: None
+            })
+        );
+        handles.clear();
+        assert_eq!(ctx.open_files(), 0);
+        let _ = fx.map_tt;
+        let _ = fx.file_cap;
+        let _ = fx.res_int;
+        let _ = fx.res_entries;
+        let _ = fx.res_list_text;
+        let _ = fx.res_text;
+        let _ = fx.readfiles_cap;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_files_confinement_symlinks_and_limits() {
+        use std::os::unix::fs::symlink;
+        let fx = HostFixture::new();
+        let heap = Heap::new(16 * 1024 * 1024);
+
+        let base = std::env::temp_dir().join(format!(
+            "mo-rust-host-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "topsecret").unwrap();
+        std::fs::write(root.join("ok.txt"), "hello").unwrap();
+        symlink("../outside/secret.txt", root.join("escape_rel")).unwrap();
+        symlink("/etc/hosts", root.join("escape_abs")).unwrap();
+        symlink("ok.txt", root.join("link_inside")).unwrap();
+        for i in 0..=MO_LIMIT_PATH_LINKS {
+            let target = if i == MO_LIMIT_PATH_LINKS {
+                "ok.txt".to_string()
+            } else {
+                format!("l{}", i + 1)
+            };
+            symlink(target, root.join(format!("l{i}"))).unwrap();
+        }
+
+        for force_fallback in [false, true] {
+            let mut ctx =
+                HostContext::stdio_with_root(Vec::new(), Vec::new(), Some(&root)).unwrap();
+            ctx.set_force_fallback(force_fallback);
+            let files = ctx
+                .make_real_capability(&heap, &fx.types, fx.files_cap)
+                .unwrap();
+            assert_eq!(ctx.open_folders(), 1);
+
+            let call_str = |ctx: &mut HostContext, op: HostOpId, ty: u32, path: &str| -> String {
+                let p = heap.alloc_text(path.into()).unwrap();
+                let res = ctx
+                    .call(&heap, &fx.types, op, ty, &[files.clone(), p])
+                    .unwrap();
+                value_print(&fx.types, ty, &res)
+            };
+
+            assert_eq!(
+                call_str(&mut ctx, HostOpId::FilesReadText, fx.res_text, "ok.txt"),
+                "Ok(\"hello\")"
+            );
+            assert_eq!(
+                call_str(
+                    &mut ctx,
+                    HostOpId::FilesReadText,
+                    fx.res_text,
+                    "link_inside"
+                ),
+                "Ok(\"hello\")"
+            );
+            assert_eq!(
+                call_str(
+                    &mut ctx,
+                    HostOpId::FilesReadText,
+                    fx.res_text,
+                    "../outside/secret.txt"
+                ),
+                "Error(NotAllowed(path: \"../outside/secret.txt\"))"
+            );
+            assert_eq!(
+                call_str(&mut ctx, HostOpId::FilesReadText, fx.res_text, "escape_rel"),
+                "Error(NotAllowed(path: \"escape_rel\"))"
+            );
+            assert_eq!(
+                call_str(&mut ctx, HostOpId::FilesReadText, fx.res_text, "escape_abs"),
+                "Error(NotAllowed(path: \"escape_abs\"))"
+            );
+            assert_eq!(
+                call_str(&mut ctx, HostOpId::FilesReadText, fx.res_text, "l1"),
+                "Ok(\"hello\")"
+            );
+            assert_eq!(
+                call_str(&mut ctx, HostOpId::FilesReadText, fx.res_text, "l0"),
+                "Error(Failed(path: \"l0\", reason: \"too many links\"))"
+            );
+            // Strict no-symlink check on Files.open (even for internal symlinks).
+            assert_eq!(
+                call_str(&mut ctx, HostOpId::FilesOpen, fx.res_file, "link_inside"),
+                "Error(NotAllowed(path: \"link_inside\"))"
+            );
+            assert_eq!(
+                call_str(&mut ctx, HostOpId::FilesOpen, fx.res_file, "escape_rel"),
+                "Error(NotAllowed(path: \"escape_rel\"))"
+            );
+
+            // Open folder limit (256).
+            let mut ro_handles = Vec::new();
+            for _ in 0..(MO_LIMIT_OPEN_FOLDERS - 1) {
+                let h = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesReadOnly,
+                        fx.readfiles_cap,
+                        std::slice::from_ref(&files),
+                    )
+                    .unwrap();
+                ro_handles.push(h);
+            }
+            assert_eq!(ctx.open_folders(), MO_LIMIT_OPEN_FOLDERS as u32);
+            assert_eq!(
+                ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesReadOnly,
+                    fx.readfiles_cap,
+                    std::slice::from_ref(&files),
+                )
+                .err(),
+                Some(HostError::Bug {
+                    reason: "too many folders open at once",
+                    detail: None
+                })
+            );
+            ro_handles.clear();
+            assert_eq!(ctx.open_folders(), 1);
+
+            // Binary file handle write_at / read_at / size / truncate / sync / rename.
+            let p_db = heap.alloc_text("test.modb".into()).unwrap();
+            let opened = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesOpen,
+                    fx.res_file,
+                    &[files.clone(), p_db],
+                )
+                .unwrap();
+            let fh = heap.extract_case_field(&fx.types, fx.res_file, &opened, 0, 0);
+            let data = heap.alloc_bytes(vec![1, 2, 3, 4]).unwrap();
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesWriteAt,
+                fx.res_unit,
+                &[fh.clone(), Value::Int(4), data],
+            )
+            .unwrap();
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesSync,
+                fx.res_unit,
+                std::slice::from_ref(&fh),
+            )
+            .unwrap();
+            let sz = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesSize,
+                    fx.res_int,
+                    std::slice::from_ref(&fh),
+                )
+                .unwrap();
+            assert_eq!(
+                heap.extract_case_field(&fx.types, fx.res_int, &sz, 0, 0)
+                    .as_int(),
+                8
+            );
+            let rd = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesReadAt,
+                    fx.res_bytes,
+                    &[fh.clone(), Value::Int(0), Value::Int(8)],
+                )
+                .unwrap();
+            assert_eq!(
+                heap.extract_case_field(&fx.types, fx.res_bytes, &rd, 0, 0)
+                    .as_bytes(),
+                &[0, 0, 0, 0, 1, 2, 3, 4]
+            );
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesTruncate,
+                fx.res_unit,
+                &[fh.clone(), Value::Int(6)],
+            )
+            .unwrap();
+            drop(fh);
+            drop(opened);
+            assert_eq!(ctx.open_files(), 0);
+            let p_old = heap.alloc_text("test.modb".into()).unwrap();
+            let p_new = heap.alloc_text("renamed.modb".into()).unwrap();
+            let ren = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesRename,
+                    fx.res_unit,
+                    &[files.clone(), p_old, p_new],
+                )
+                .unwrap();
+            assert_eq!(value_print(&fx.types, fx.res_unit, &ren), "Ok(Unit)");
+            let p_rm = heap.alloc_text("renamed.modb".into()).unwrap();
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesRemove,
+                fx.res_unit,
+                &[files.clone(), p_rm],
+            )
+            .unwrap();
+            drop(files);
+            assert_eq!(ctx.open_folders(), 0);
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

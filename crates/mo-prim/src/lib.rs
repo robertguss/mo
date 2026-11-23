@@ -4,8 +4,12 @@
 
 mod bigint;
 mod collections;
+mod crypto;
 mod number;
 mod text;
+mod unicode;
+#[rustfmt::skip]
+mod unicode16_data;
 
 use mo_bytecode::types::TypeTable;
 use mo_def::PrimId;
@@ -230,8 +234,23 @@ pub fn call(
         | PrimId::BigintToInt
         | PrimId::BigintToText => bigint::call(heap, types, prim, result_ty, args),
 
-        // Deferred to Slice 1C (Unicode16, Crypto)
-        other => Err(PrimError::UnimplementedPrim(other)),
+        // Unicode16 (7 primitives)
+        PrimId::Unicode16Graphemes
+        | PrimId::Unicode16DisplayWidth
+        | PrimId::Unicode16NormalizeNfc
+        | PrimId::Unicode16Lowercase
+        | PrimId::Unicode16Uppercase
+        | PrimId::Unicode16Letter
+        | PrimId::Unicode16Digit => unicode::call(heap, prim, args),
+
+        // Crypto (7 primitives)
+        PrimId::CryptoSha256
+        | PrimId::CryptoHmacSha256
+        | PrimId::CryptoConstantTimeEq
+        | PrimId::CryptoSealRaw
+        | PrimId::CryptoOpenRaw
+        | PrimId::CryptoHashPasswordRaw
+        | PrimId::CryptoVerifyPassword => crypto::call(heap, types, prim, result_ty, args),
     }
 }
 
@@ -346,19 +365,13 @@ mod tests {
         let hex = call(&heap, &types, PrimId::BytesToHex, sig, &mut bytes_arg).unwrap();
         assert_eq!(hex.as_text(), "deadbeef");
 
-        let mut dummy = vec![Value::Unit];
-        assert_eq!(
-            call(&heap, &types, PrimId::Unicode16Lowercase, sig, &mut dummy)
-                .err()
-                .unwrap(),
-            PrimError::UnimplementedPrim(PrimId::Unicode16Lowercase)
-        );
-        assert_eq!(
-            call(&heap, &types, PrimId::CryptoSha256, sig, &mut dummy)
-                .err()
-                .unwrap(),
-            PrimError::UnimplementedPrim(PrimId::CryptoSha256)
-        );
+        let mut u_arg = vec![heap.alloc_text("Ça".into()).unwrap()];
+        let lowered = call(&heap, &types, PrimId::Unicode16Lowercase, sig, &mut u_arg).unwrap();
+        assert_eq!(lowered.as_text(), "ça");
+
+        let mut sha_arg = vec![heap.alloc_bytes(b"abc".to_vec()).unwrap()];
+        let digest = call(&heap, &types, PrimId::CryptoSha256, sig, &mut sha_arg).unwrap();
+        assert_eq!(digest.as_bytes().len(), 32);
     }
 
     #[test]
