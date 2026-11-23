@@ -47,7 +47,10 @@
 #define MO_CORE_BYTES_OPS(X) \
     X(SIZE, "size") X(GET, "get") X(DECODE_UTF8, "decodeUtf8") X(SLICE, "slice") X(JOIN, "join") \
     X(TO_HEX, "toHex") X(FROM_HEX, "fromHex") X(TO_BASE64URL, "toBase64url") \
-    X(FROM_BASE64URL, "fromBase64url")
+    X(FROM_BASE64URL, "fromBase64url") X(EMPTY, "empty") X(ZEROED, "zeroed") \
+    X(FROM_LIST, "fromList") X(TO_LIST, "toList") X(FROM_U16_BE, "fromU16Be") \
+    X(FROM_U32_BE, "fromU32Be") X(FROM_I64_BE, "fromI64Be") X(U16_BE_AT, "u16BeAt") \
+    X(U32_BE_AT, "u32BeAt") X(I64_BE_AT, "i64BeAt")
 #define MO_CORE_UNICODE_OPS(X) \
     X(GRAPHEMES, "graphemes") X(DISPLAY_WIDTH, "displayWidth") X(NORMALIZE_NFC, "normalizeNfc") \
     X(LOWERCASE, "lowercase") X(UPPERCASE, "uppercase") X(LETTER, "letter") X(DIGIT, "digit")
@@ -92,5 +95,8 @@
     X(SQLITE_EXECUTE_RAW, "sqliteExecuteRaw") \
     X(COMMAND_RUN_RAW, "commandRunRaw") X(COMMAND_WITHIN, "commandWithin") \
     X(COMMAND_ALLOW_PROGRAMS, "commandAllowPrograms") X(COMMAND_FAKE, "commandFake") \
-    X(SECURE_RANDOM_BYTES, "secureRandomBytes") X(SECURE_RANDOM_SEEDED, "secureRandomSeeded")
+    X(SECURE_RANDOM_BYTES, "secureRandomBytes") X(SECURE_RANDOM_SEEDED, "secureRandomSeeded") \
+    X(WRITE_BYTES, "writeBytes") X(RENAME, "rename") X(FILE_OPEN, "fileOpen") \
+    X(FILE_READ_AT, "fileReadAt") X(FILE_WRITE_AT, "fileWriteAt") X(FILE_SIZE, "fileSize") \
+    X(FILE_TRUNCATE, "fileTruncate") X(FILE_SYNC, "fileSync")
 // clang-format on

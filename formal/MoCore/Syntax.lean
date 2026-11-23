@@ -17,7 +17,7 @@ namespace MoCore
 
 /-- The capability types of reference section 11.1. -/
 inductive Cap where
-  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command | secureRandom
+  | console | files | readFiles | clock | random | args | env | network | connection | sqlite | database | command | secureRandom | file
   deriving DecidableEq, Repr, Inhabited
 
 /-- Core types.
@@ -165,7 +165,7 @@ def Cap.name : Cap → String
   | .clock => "Clock" | .random => "Random" | .args => "Args" | .env => "Env"
   | .network => "Network" | .connection => "Connection"
   | .sqlite => "Sqlite" | .database => "Sqlite.Database" | .command => "Command"
-  | .secureRandom => "SecureRandom"
+  | .secureRandom => "SecureRandom" | .file => "Files.File"
 
 mutual
 /-- A type written as Mo writes it, used to name instantiated functions such
@@ -306,6 +306,8 @@ not including, another; an index past the end is the end, and a negative
 index is a bug. `join` gives the parts of a list as one value. -/
 inductive BytesOp where
   | size | get | decodeUtf8 | slice | join | toHex | fromHex | toBase64url | fromBase64url
+  | empty | zeroed | fromList | toList | fromU16Be | fromU32Be | fromI64Be
+  | u16BeAt | u32BeAt | i64BeAt
   deriving DecidableEq, Repr, Inhabited
 
 /-- Unicode 16.0 trusted primitives; Core specifies their interface, not tables. -/
@@ -380,6 +382,7 @@ inductive IoOp where
   | sqliteOpen | sqliteRun | sqliteQuery | sqliteExecuteRaw
   | commandRunRaw | commandWithin | commandAllowPrograms
   | secureRandomBytes
+  | writeBytes | rename | fileOpen | fileReadAt | fileWriteAt | fileSize | fileTruncate | fileSync
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
   | networkFake | sqliteFake | commandFake | secureRandomSeeded
@@ -500,6 +503,12 @@ def BytesOp.sig : BytesOp → List Ty × Ty
   | .fromHex => ([.text], .option .bytes)
   | .toBase64url => ([.bytes], .text)
   | .fromBase64url => ([.text], .option .bytes)
+  | .empty => ([], .bytes)
+  | .zeroed => ([.int], .bytes)
+  | .fromList => ([.list .byte], .bytes)
+  | .toList => ([.bytes], .list .byte)
+  | .fromU16Be | .fromU32Be | .fromI64Be => ([.int], .bytes)
+  | .u16BeAt | .u32BeAt | .i64BeAt => ([.bytes, .int], .option .int)
 
 def RangeOp.sig : RangeOp → List Ty × Ty
   | .make => ([.int, .int], .range)
@@ -626,6 +635,14 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .commandFake => ([.map .bytes .bytes], .cap .command)
   | .secureRandomBytes => ([.cap .secureRandom, .int], .bytes)
   | .secureRandomSeeded => ([.int], .cap .secureRandom)
+  | .writeBytes => ([.cap .files, .text, .bytes], .result .unit .fileError)
+  | .rename => ([.cap .files, .text, .text], .result .unit .fileError)
+  | .fileOpen => ([.cap .files, .text], .result (.cap .file) .fileError)
+  | .fileReadAt => ([.cap .file, .int, .int], .result .bytes .fileError)
+  | .fileWriteAt => ([.cap .file, .int, .bytes], .result .unit .fileError)
+  | .fileSize => ([.cap .file], .result .int .fileError)
+  | .fileTruncate => ([.cap .file, .int], .result .unit .fileError)
+  | .fileSync => ([.cap .file], .result .unit .fileError)
 
 def SimOp.sig : SimOp → List Ty × Ty
   | .start _ => ([.time], .simulation)

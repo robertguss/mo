@@ -186,6 +186,7 @@ static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uin
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
     case MO_CAP_DATABASE:
+    case MO_CAP_FILE:
         return MO_INPUT_UNSUPPORTED;
     case MO_CAP_SQLITE:
     case MO_CAP_NETWORK:
@@ -227,6 +228,7 @@ static enum mo_input_result make(struct mo_host *host, struct mo_heap *heap, uin
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
     case MO_CAP_DATABASE:
+    case MO_CAP_FILE:
         MO_UNREACHABLE();
     case MO_CAP_SQLITE:
         ok = mo_value_map(heap, host->types->databases, NULL, NULL, 0, &state.as.sqlite);
@@ -334,10 +336,11 @@ void mo_fakes_init(struct mo_fakes *fakes, const struct mo_types *types) {
         if (types->items[i].kind != MO_TYPE_CAPABILITY ||
             types->items[i].capability == MO_CAP_SIMULATION ||
             types->items[i].capability == MO_CAP_CONNECTION ||
-            types->items[i].capability == MO_CAP_DATABASE)
+            types->items[i].capability == MO_CAP_DATABASE ||
+            types->items[i].capability == MO_CAP_FILE)
             continue;
         uint32_t slot = fakes->factory_count++;
-        MO_ASSERT(slot <= MO_CAP_SECURE_RANDOM);
+        MO_ASSERT(slot <= MO_CAP_FILE);
         fakes->contexts[slot] = (struct mo_fake_context){fakes, i};
         fakes->factories[slot] = (struct mo_input_factory){.type = i,
                                                            .boundaries = BOUNDARIES,

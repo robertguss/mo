@@ -2,7 +2,7 @@
 #ifndef MO_CAPABILITIES_H
 #define MO_CAPABILITIES_H
 
-enum { MO_CAPABILITY_COUNT = 14 };
+enum { MO_CAPABILITY_COUNT = 15 };
 extern const char *const mo_capability_names[MO_CAPABILITY_COUNT];
 
 #endif

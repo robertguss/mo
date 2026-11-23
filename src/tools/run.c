@@ -298,8 +298,8 @@ static int run_loaded_main(const struct mo_cli *cli, struct mo_image *image, uin
     struct mo_live_actor *live_actors[MO_LIMIT_BYTECODE_PARAMETERS] = {NULL};
     struct mo_cell supplied_cells[MO_LIMIT_BYTECODE_PARAMETERS] = {{{0}}};
     bool supplied_owned_by_us[MO_LIMIT_BYTECODE_PARAMETERS] = {false};
-    struct mo_cell cached_host_caps[MO_CAP_SECURE_RANDOM + 1] = {{{0}}};
-    bool cached_host_set[MO_CAP_SECURE_RANDOM + 1] = {false};
+    struct mo_cell cached_host_caps[MO_CAP_FILE + 1] = {{{0}}};
+    bool cached_host_set[MO_CAP_FILE + 1] = {false};
 
     errno = 0;
     process = mo_process_new(image, &cli->limits);
@@ -420,7 +420,7 @@ done:
         for (uint32_t i = 0; i < fn->parameter_count; i++)
             if (supplied_owned_by_us[i])
                 mo_value_drop(mo_process_heap(process), fn->parameters[i].type, supplied_cells[i]);
-        for (uint32_t c = 0; c <= MO_CAP_SECURE_RANDOM; c++)
+        for (uint32_t c = 0; c <= MO_CAP_FILE; c++)
             if (cached_host_set[c]) {
                 uint32_t cty = 0;
                 for (uint32_t i = 0; i < fn->parameter_count; i++)

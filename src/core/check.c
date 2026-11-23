@@ -694,6 +694,21 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_BYTES_OP_FROM_HEX:
         case MO_CORE_BYTES_OP_FROM_BASE64URL:
             return sig(O(S(BYTES)), 1, S(TEXT), NULL, NULL);
+        case MO_CORE_BYTES_OP_EMPTY:
+            return sig(S(BYTES), 0, NULL, NULL, NULL);
+        case MO_CORE_BYTES_OP_ZEROED:
+        case MO_CORE_BYTES_OP_FROM_U16_BE:
+        case MO_CORE_BYTES_OP_FROM_U32_BE:
+        case MO_CORE_BYTES_OP_FROM_I64_BE:
+            return sig(S(BYTES), 1, S(INT), NULL, NULL);
+        case MO_CORE_BYTES_OP_FROM_LIST:
+            return sig(S(BYTES), 1, L(S(BYTE)), NULL, NULL);
+        case MO_CORE_BYTES_OP_TO_LIST:
+            return sig(L(S(BYTE)), 1, S(BYTES), NULL, NULL);
+        case MO_CORE_BYTES_OP_U16_BE_AT:
+        case MO_CORE_BYTES_OP_U32_BE_AT:
+        case MO_CORE_BYTES_OP_I64_BE_AT:
+            return sig(O(S(INT)), 2, S(BYTES), S(INT), NULL);
         }
         break;
     case MO_CORE_PRIM_UNICODE16:
@@ -1014,6 +1029,23 @@ static MO_MUST_USE struct signature primitive(struct checker *c, const struct mo
         case MO_CORE_IO_OP_SECURE_RANDOM_SEEDED:
             s = sig(C(SECURE_RANDOM), 1, S(INT), NULL, NULL);
             break;
+        case MO_CORE_IO_OP_WRITE_BYTES:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), error), 3, C(FILES), S(TEXT),
+                       S(BYTES));
+        case MO_CORE_IO_OP_RENAME:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), error), 3, C(FILES), S(TEXT), S(TEXT));
+        case MO_CORE_IO_OP_FILE_OPEN:
+            return sig(binary(c, MO_CORE_TY_RESULT, C(FILE), error), 2, C(FILES), S(TEXT), NULL);
+        case MO_CORE_IO_OP_FILE_READ_AT:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(BYTES), error), 3, C(FILE), S(INT), S(INT));
+        case MO_CORE_IO_OP_FILE_WRITE_AT:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), error), 3, C(FILE), S(INT), S(BYTES));
+        case MO_CORE_IO_OP_FILE_SIZE:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(INT), error), 1, C(FILE), NULL, NULL);
+        case MO_CORE_IO_OP_FILE_TRUNCATE:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), error), 2, C(FILE), S(INT), NULL);
+        case MO_CORE_IO_OP_FILE_SYNC:
+            return sig(binary(c, MO_CORE_TY_RESULT, S(UNIT), error), 1, C(FILE), NULL, NULL);
         }
         s.spec = true;
         return s;
@@ -1652,8 +1684,9 @@ static MO_MUST_USE bool label_type(struct mo_buffer *b, const struct type *t, si
         "Fn",           "Cap",          "Simulation",  "SimulationError",
         "NetworkError", "Sqlite.Value", "Sqlite.Rows", "SqliteError"};
     static const char *const caps[] = {
-        "Console", "Files",      "ReadFiles", "Clock",           "Random",  "Args",        "Env",
-        "Network", "Connection", "Sqlite",    "Sqlite.Database", "Command", "SecureRandom"};
+        "Console",      "Files",     "ReadFiles",  "Clock",  "Random",          "Args",
+        "Env",          "Network",   "Connection", "Sqlite", "Sqlite.Database", "Command",
+        "SecureRandom", "Files.File"};
     if (*remaining == 0)
         return mo_buffer_append_text(b, "...");
     (*remaining)--;

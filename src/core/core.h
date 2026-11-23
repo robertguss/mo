@@ -54,7 +54,8 @@ enum mo_core_cap_tag {
     MO_CORE_CAP_SQLITE,
     MO_CORE_CAP_DATABASE,
     MO_CORE_CAP_COMMAND,
-    MO_CORE_CAP_SECURE_RANDOM
+    MO_CORE_CAP_SECURE_RANDOM,
+    MO_CORE_CAP_FILE
 };
 struct mo_core_cap {
     enum mo_core_cap_tag tag;

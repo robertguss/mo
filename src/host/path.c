@@ -45,7 +45,8 @@ static MO_MUST_USE int directory_flags(void) {
 
 static MO_MUST_USE struct mo_file_error kind(enum mo_path_mode mode, const struct stat *st,
                                              bool trailing_slash) {
-    if ((mode == PATH_FOLDER || mode == PATH_MAKE_FOLDER || trailing_slash) &&
+    if ((mode == PATH_FOLDER || mode == PATH_MAKE_FOLDER || mode == PATH_STRICT_PARENT ||
+         trailing_slash) &&
         !S_ISDIR(st->st_mode))
         return (struct mo_file_error){.status = FILE_FAILED, .reason = "not a folder"};
     if ((mode == PATH_READ || mode == PATH_WRITE || mode == PATH_APPEND) && S_ISDIR(st->st_mode))
@@ -95,7 +96,7 @@ static MO_MUST_USE struct mo_file_error kernel(struct mo_host *host, int root, c
         return (struct mo_file_error){.status = FILE_OK};
     char parent[MO_LIMIT_HOST_PATH_SIZE];
     const char *lookup = path[0] == '\0' ? "." : path;
-    if (mode == PATH_REMOVE) {
+    if (mode == PATH_REMOVE || mode == PATH_STRICT_PARENT) {
         memcpy(parent, lookup, strlen(lookup) + 1);
         char *slash = strrchr(parent, '/');
         const char *leaf = slash == NULL ? parent : slash + 1;
@@ -108,6 +109,10 @@ static MO_MUST_USE struct mo_file_error kernel(struct mo_host *host, int root, c
      * reopening our own retained descriptor cannot race a pathname replacement. */
     long opened = beneath(root, lookup, false);
     if (opened < 0 && errno == ELOOP) {
+        if (mode == PATH_STRICT_PARENT) {
+            *handled = true;
+            return (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
+        }
         /* The kernel need not bound an expanded target plus its remaining
          * path by Mo's buffer size. Apply Mo's link/length limits without
          * opening the leaf for I/O, then pin beneath root with openat2.
@@ -243,6 +248,10 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
         while (pending[at] == '/')
             at++;
         if (pending[at] == '\0') {
+            if (mode == PATH_STRICT_PARENT) {
+                problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "is a folder"};
+                break;
+            }
             int fd = fcntl(current, F_DUPFD_CLOEXEC, 0);
             if (fd < 0) {
                 problem = mo_host_errno(errno);
@@ -311,6 +320,26 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
             at = next;
             continue;
         }
+        if (final && mode == PATH_STRICT_PARENT) {
+            if (trailing_slash) {
+                problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "not a folder"};
+                break;
+            }
+            int fd = fcntl(current, F_DUPFD_CLOEXEC, 0);
+            if (fd < 0) {
+                problem = mo_host_errno(errno);
+                break;
+            }
+            int inspected_parent = fstat(fd, &out->stat);
+            problem = inspected_parent == 0 ? kind(mode, &out->stat, false) : mo_host_errno(errno);
+            if (problem.status != FILE_OK)
+                mo_host_close(fd);
+            else {
+                out->descriptor = fd;
+                memcpy(out->name, component, length + 1);
+            }
+            break;
+        }
         struct stat st;
         int inspected = fstatat(current, component, &st, AT_SYMLINK_NOFOLLOW);
         bool missing = inspected < 0 && errno == ENOENT;
@@ -332,6 +361,10 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
             break;
         }
         if (!creating && S_ISLNK(st.st_mode) && !(final && mode == PATH_REMOVE)) {
+            if (mode == PATH_STRICT_PARENT) {
+                problem = (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
+                break;
+            }
             if (links == MO_LIMIT_PATH_LINKS) {
                 problem = (struct mo_file_error){.status = FILE_FAILED, .reason = "too many links"};
                 break;
@@ -387,6 +420,10 @@ static MO_MUST_USE struct mo_file_error portable(int root, const char *path, enu
             open_flags |= O_EXCL;
         int fd = openat(current, component, open_flags | O_NOFOLLOW, 0666);
         if (fd < 0) {
+            if (mode == PATH_STRICT_PARENT && errno == ELOOP) {
+                problem = (struct mo_file_error){.status = FILE_NOT_ALLOWED, .containment = true};
+                break;
+            }
             if ((errno == ELOOP || errno == ENOTDIR || (creating && errno == EEXIST)) &&
                 races++ < MO_LIMIT_PATH_LINKS)
                 continue;

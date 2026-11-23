@@ -11,6 +11,17 @@ static const struct {
 #include "base/hostops.def"
 };
 
+static bool is_file_handle_op(uint32_t op) {
+    return op == MO_HOST_FILES_READ_AT || op == MO_HOST_FILES_WRITE_AT ||
+           op == MO_HOST_FILES_SIZE || op == MO_HOST_FILES_TRUNCATE || op == MO_HOST_FILES_SYNC;
+}
+
+static bool is_supported_op(uint32_t op) {
+    if (op >= MO_HOST_NETWORK_CONNECT && op <= MO_HOST_SECURERANDOM_SEEDED)
+        return false;
+    return op < MO_HOST_COUNT;
+}
+
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (size == 0)
         return 0;
@@ -61,17 +72,31 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             continue;
         }
         uint32_t op = data[at + 2];
-        struct mo_cell args[3], p, text;
+        if (!is_supported_op(op))
+            continue;
+        struct mo_cell args[3], p, p2, text, raw_bytes;
         static const char *const paths[] = {".", "a", "a/b", "../x", "a/../b", "a//b", "a/"};
         const char *path = paths[data[at + 3] % 7u];
+        const char *path2 = paths[data[at + 4] % 7u];
         if (!mo_value_text(f.heap, path, strlen(path), &p))
             continue;
+        if (!mo_value_text(f.heap, path2, strlen(path2), &p2)) {
+            mo_value_drop(f.heap, f.types.text, p);
+            continue;
+        }
         uint8_t payload[8];
         size_t length = size - at < sizeof payload ? size - at : sizeof payload;
         for (size_t i = 0; i < length; i++)
             payload[i] = data[at + i] & 0x7fu;
         if (!mo_value_text(f.heap, (const char *)payload, length, &text)) {
             mo_value_drop(f.heap, f.types.text, p);
+            mo_value_drop(f.heap, f.types.text, p2);
+            continue;
+        }
+        if (!mo_value_bytes(f.heap, data + at, length, &raw_bytes)) {
+            mo_value_drop(f.heap, f.types.text, p);
+            mo_value_drop(f.heap, f.types.text, p2);
+            mo_value_drop(f.heap, f.types.text, text);
             continue;
         }
         args[1] = p;
@@ -93,10 +118,16 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         else {
             ready = live[source] && f.types.types.items[types[source]].kind == MO_TYPE_CAPABILITY;
             if (ready) {
-                static const char *const modules[] = {"Args",      "Env",   "Console", "Files",
-                                                      "ReadFiles", "Clock", "Random"};
+                static const char *const modules[] = {
+                    "Args",      "Env",          "Console",   "Files",
+                    "ReadFiles", "Clock",        "Random",    "",
+                    "Network",   "Connection",   "Sqlite",    "Sqlite.Database",
+                    "Command",   "SecureRandom", "Files.File"};
                 enum mo_capability cap = f.types.types.items[types[source]].capability;
-                ready = strcmp(modules[cap], operations[op].module) == 0;
+                if (is_file_handle_op(op))
+                    ready = cap == MO_CAP_FILE;
+                else
+                    ready = strcmp(modules[cap], operations[op].module) == 0;
                 if (ready)
                     args[0] = values[source];
             }
@@ -105,11 +136,27 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
                 args[2] = mo_cell_int((int64_t)data[at + 4] - 128);
             } else if (op == MO_HOST_CLOCK_SLEEP) {
                 args[1] = mo_cell_duration((int64_t)data[at + 3] - 64);
+            } else if (op == MO_HOST_FILES_WRITE_BYTES) {
+                args[1] = p;
+                args[2] = raw_bytes;
+            } else if (op == MO_HOST_FILES_RENAME) {
+                args[1] = p;
+                args[2] = p2;
+            } else if (op == MO_HOST_FILES_READ_AT) {
+                args[1] = mo_cell_int((int64_t)data[at + 3] - 16);
+                args[2] = mo_cell_int((int64_t)data[at + 4] - 16);
+            } else if (op == MO_HOST_FILES_WRITE_AT) {
+                args[1] = mo_cell_int((int64_t)data[at + 3] - 16);
+                args[2] = raw_bytes;
+            } else if (op == MO_HOST_FILES_TRUNCATE) {
+                args[1] = mo_cell_int((int64_t)data[at + 3] - 16);
             }
         }
         if (!ready) {
             mo_value_drop(f.heap, f.types.text, p);
+            mo_value_drop(f.heap, f.types.text, p2);
             mo_value_drop(f.heap, f.types.text, text);
+            mo_value_drop(f.heap, f.types.bytes, raw_bytes);
             continue;
         }
         /* Retain snapshots before applying pressure. A failed operation must
@@ -123,9 +170,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             state = mo_capability_get(args[0])->state;
             if (state != NULL) {
                 enum mo_capability cap = f.types.types.items[types[source]].capability;
-                slots = cap == MO_CAP_CONSOLE                             ? 4
-                        : cap == MO_CAP_FILES || cap == MO_CAP_READ_FILES ? 2
-                                                                          : 1;
+                slots = cap == MO_CAP_CONSOLE                                                   ? 4
+                        : cap == MO_CAP_FILES || cap == MO_CAP_READ_FILES || cap == MO_CAP_FILE ? 2
+                                                                                                : 1;
                 MO_ASSERT(slots <= 4);
                 for (uint32_t i = 0; i < slots; i++) {
                     saved_types[i] = mo_state_type(state, i);
@@ -151,11 +198,23 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
             mo_host_call(&f.host, f.heap, op, type, args, &result, &error);
         mo_scratch_free(&pressure);
         if (outcome == MO_HOST_RETURNED) {
-            if (live[destination])
-                mo_value_drop(f.heap, types[destination], values[destination]);
-            values[destination] = result;
-            types[destination] = type;
-            live[destination] = true;
+            if (op == MO_HOST_FILES_OPEN && mo_cell_get_tag(result) == 0) {
+                /* Unwrap Ok(Files.File) so subsequent steps fuzz handle ops too. */
+                struct mo_cell fh =
+                    mo_value_dup(f.heap, f.capabilities[MO_CAP_FILE], mo_cell_get_payload(result));
+                mo_value_drop(f.heap, type, result);
+                if (live[destination])
+                    mo_value_drop(f.heap, types[destination], values[destination]);
+                values[destination] = fh;
+                types[destination] = f.capabilities[MO_CAP_FILE];
+                live[destination] = true;
+            } else {
+                if (live[destination])
+                    mo_value_drop(f.heap, types[destination], values[destination]);
+                values[destination] = result;
+                types[destination] = type;
+                live[destination] = true;
+            }
         } else {
             MO_ASSERT(mo_cell_get_int(result) == 123);
             for (uint32_t i = 0; i < slots; i++) {
@@ -170,12 +229,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         for (uint32_t i = 0; i < slots; i++)
             mo_value_drop(f.heap, saved_types[i], saved[i]);
         mo_value_drop(f.heap, f.types.text, p);
+        mo_value_drop(f.heap, f.types.text, p2);
         mo_value_drop(f.heap, f.types.text, text);
+        mo_value_drop(f.heap, f.types.bytes, raw_bytes);
     }
     for (unsigned i = 0; i < 32; i++)
         if (live[i])
             mo_value_drop(f.heap, types[i], values[i]);
-    MO_ASSERT(mo_heap_objects(f.heap) == 0);
+    MO_ASSERT(mo_heap_objects(f.heap) == 0 && f.host.open_files == 0);
     host_fixture_free(&f);
     return 0;
 }

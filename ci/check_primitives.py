@@ -119,6 +119,27 @@ def text_cases(rng, rows):
                 b64_texts += [base64.urlsafe_b64encode(b).decode().rstrip("=")
                               for b in byte_sequences[:16]]
                 values = [[f"(text {quote(s)})"] for s in b64_texts]
+            elif name == "empty":
+                values = [[]]
+            elif name == "zeroed":
+                values = [[f"(int {n})"] for n in [-(1 << 63), -1, 0, 1, 7, 64, 16777217, (1 << 63) - 1]]
+            elif name == "from_list":
+                values = [["(list (" + " ".join(f"(byte {x})" for x in b) + "))"] for b in byte_sequences]
+            elif name == "from_u16_be":
+                values = [[f"(int {n})"] for n in [-(1 << 63), -1, 0, 1, 255, 256, 65535, 65536, (1 << 63) - 1]]
+            elif name == "from_u32_be":
+                values = [[f"(int {n})"] for n in [-(1 << 63), -1, 0, 1, 65535, 65536, 4294967295, 4294967296, (1 << 63) - 1]]
+            elif name == "from_i64_be":
+                values = [[f"(int {n})"] for n in [-(1 << 63), -(1 << 63) + 1, -1, 0, 1, 255, 65535, 4294967295, (1 << 63) - 2, (1 << 63) - 1]]
+            elif name in {"u16_be_at", "u32_be_at", "i64_be_at"}:
+                be_samples = [
+                    b"", b"\x00", b"\x00\x01", b"\xff\xff",
+                    b"\x00\x00\x00\x00", b"\xff\xff\xff\xff", b"\x12\x34\x56\x78",
+                    b"\x80\x00\x00\x00\x00\x00\x00\x00", b"\x7f\xff\xff\xff\xff\xff\xff\xff",
+                    b"\xff\xff\xff\xff\xff\xff\xff\xff", b"\x01\x02\x03\x04\x05\x06\x07\x08\x09",
+                ] + byte_sequences[:10]
+                values = [[enc(b), f"(int {o})"] for b in be_samples
+                          for o in [-(1 << 63), -1, 0, 1, len(b) - 8, len(b) - 4, len(b) - 2, len(b), (1 << 63) - 1]]
             else:
                 values = [[enc(b)] for b in byte_sequences]
         for i, args in enumerate(values):

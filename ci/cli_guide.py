@@ -631,6 +631,40 @@ def guide_claims(binary):
             "end\n")
         result = run(binary, ["test", str(source)], 0)
         assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
+    says("`Files` also supports binary and random-access file I/O with strict no-symlink "
+         "confinement inside the capability's folder:",
+         "`files.write_bytes(path, data)`",
+         "`files.rename(from, to)`",
+         "`files.open(path)` returns `Result(Files.File, FileError)`",
+         "`Files.in_memory` stores raw bytes so `write_bytes`, `rename`, `open` and every "
+         "`Files.File` operation work identically in `mo test`",
+         "`Bytes` also provides `Bytes.empty`, `Bytes.zeroed(count)`, `Bytes.from_list(bytes)`, "
+         "`bytes.to_list`, `Bytes.from_u16_be(n)`, `Bytes.from_u32_be(n)`, `Bytes.from_i64_be(n)`, "
+         "`bytes.u16_be_at(offset)`, `bytes.u32_be_at(offset)` and `bytes.i64_be_at(offset)`")
+    with tempfile.TemporaryDirectory() as folder:
+        source = pathlib.Path(folder) / "main.mo"
+        source.write_text(
+            "module Main\n\ntest \"binary files and bytes packing claim\"\n"
+            "  files = Files.in_memory({})\n"
+            "  hdr = Bytes.join([Bytes.from_u16_be(513), Bytes.from_u32_be(67305985), "
+            "Bytes.from_i64_be(-42)])\n"
+            "  assert hdr.u16_be_at(0) == Some(513)\n"
+            "  assert hdr.u32_be_at(2) == Some(67305985)\n"
+            "  assert hdr.i64_be_at(6) == Some(-42)\n"
+            "  assert Bytes.from_list(Bytes.empty.to_list) == Bytes.zeroed(0)\n"
+            "  assert files.write_bytes(\"raw.bin\", Bytes.from_list([0, 255])) == Ok(Unit)\n"
+            "  assert files.read_text(\"raw.bin\") == Error(NotText(path: \"raw.bin\"))\n"
+            "  assert files.rename(\"raw.bin\", \"data.bin\") == Ok(Unit)\n"
+            "  assert files.open(\"data.bin\") is Ok(fh)\n"
+            "  assert fh.write_at(4, hdr) == Ok(Unit)\n"
+            "  assert fh.size == Ok(18)\n"
+            "  assert fh.read_at(4, 14) == Ok(hdr)\n"
+            "  assert fh.truncate(4) == Ok(Unit)\n"
+            "  assert fh.sync == Ok(Unit)\n"
+            "  assert files.read_bytes(\"data.bin\") == Ok(Bytes.from_list([0, 255, 0, 0]))\n"
+            "end\n")
+        result = run(binary, ["test", str(source)], 0)
+        assert b"1 passed, 0 failed, 0 stopped" in result.stdout, (result.stdout, result.stderr)
     says("Under `lib/arvo/` (loaded lazily on `use Arvo.*`), the pure-Mo Arvo web framework provides "
          "`Arvo.Cookie`, `Arvo.Session`",
          "`Arvo.Csrf`", "`Arvo.Flash`", "`Arvo.Form`", "`Arvo.Inertia`",

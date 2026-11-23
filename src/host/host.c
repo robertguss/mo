@@ -16,8 +16,8 @@ const char *mo_host_start(struct mo_host *host) {
     struct rlimit budget;
     if (getrlimit(RLIMIT_NOFILE, &budget) != 0)
         return "internal error: descriptor budget unavailable";
-    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2u * MO_LIMIT_LOOKUPS +
-                    2u * MO_LIMIT_OPEN_DATABASES + 32u;
+    rlim_t wanted = MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_FILES + MO_LIMIT_OPEN_CONNECTIONS +
+                    2u * MO_LIMIT_LOOKUPS + 2u * MO_LIMIT_OPEN_DATABASES + 32u;
     if (wanted > budget.rlim_max)
         wanted = budget.rlim_max;
     if (budget.rlim_cur < wanted) {
@@ -56,9 +56,10 @@ mo_host_files(struct mo_host *host, struct mo_heap *heap, uint32_t operation, ui
         [MO_CAP_DATABASE] = {MO_CAP_DATABASE, fake_, mo_host_sqlite_call},                         \
         [MO_CAP_COMMAND] = {MO_CAP_COMMAND, fake_, mo_host_command_call},                          \
         [MO_CAP_SECURE_RANDOM] = {MO_CAP_SECURE_RANDOM, fake_, mo_host_misc},                      \
+        [MO_CAP_FILE] = {MO_CAP_FILE, fake_, mo_host_files},                                       \
     }
-const struct mo_host_operations mo_host_operations[2][MO_CAP_SECURE_RANDOM + 1] = {
-    OPERATIONS(false), OPERATIONS(true)};
+const struct mo_host_operations mo_host_operations[2][MO_CAP_FILE + 1] = {OPERATIONS(false),
+                                                                          OPERATIONS(true)};
 #undef OPERATIONS
 
 enum mo_host_outcome mo_host_bug(struct mo_host_error *error, const char *reason) {
@@ -279,6 +280,7 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
     case MO_CAP_DATABASE:
+    case MO_CAP_FILE:
         MO_UNREACHABLE();
     case MO_CAP_SQLITE:
         return mo_host_sqlite_fake_new(host, heap, type, initial->as.sqlite, out, error);
@@ -303,11 +305,15 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
     }
     case MO_CAP_FILES:
     case MO_CAP_READ_FILES: {
-        struct mo_cell root;
+        struct mo_cell root, raw_files;
         if (!mo_value_text(heap, "", 0, &root))
             return MO_HOST_OUT_OF_MEMORY;
-        uint32_t types[] = {host->types->files, host->types->folders};
-        struct mo_cell values[] = {initial->as.files.contents, initial->as.files.folders};
+        if (!mo_host_texts_to_bytes_map(host, heap, initial->as.files.contents, &raw_files)) {
+            mo_value_drop(heap, host->types->text, root);
+            return MO_HOST_OUT_OF_MEMORY;
+        }
+        uint32_t types[] = {host->types->file_bytes, host->types->folders};
+        struct mo_cell values[] = {raw_files, initial->as.files.folders};
         struct mo_state *state;
         bool ok = mo_state_new(heap, types, values, 2, &state);
         if (ok) {
@@ -320,6 +326,7 @@ enum mo_host_outcome mo_host_fake_restore(struct mo_host *host, struct mo_heap *
             ok = mo_value_capability(heap, type, &info, out);
             mo_state_drop(heap, state);
         }
+        mo_value_drop(heap, host->types->file_bytes, raw_files);
         mo_value_drop(heap, host->types->text, root);
         return ok ? MO_HOST_RETURNED : MO_HOST_OUT_OF_MEMORY;
     }
@@ -353,6 +360,7 @@ bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
     case MO_CAP_DATABASE:
+    case MO_CAP_FILE:
         MO_UNREACHABLE();
     case MO_CAP_SQLITE:
         if (!mo_host_sqlite_snapshot(host, heap, capability, &result.as.sqlite))
@@ -389,8 +397,9 @@ bool mo_host_fake_snapshot(struct mo_host *host, struct mo_heap *heap, struct mo
     }
     case MO_CAP_FILES:
     case MO_CAP_READ_FILES:
-        result.as.files.contents =
-            mo_value_dup(heap, host->types->files, mo_state_get(info->state, 0));
+        if (!mo_host_bytes_to_texts_map(host, heap, mo_state_get(info->state, 0),
+                                        &result.as.files.contents))
+            return false;
         result.as.files.folders =
             mo_value_dup(heap, host->types->folders, mo_state_get(info->state, 1));
         break;
@@ -414,6 +423,7 @@ void mo_host_fake_state_drop(struct mo_host *host, struct mo_heap *heap,
     case MO_CAP_SIMULATION:
     case MO_CAP_CONNECTION:
     case MO_CAP_DATABASE:
+    case MO_CAP_FILE:
         MO_UNREACHABLE();
     case MO_CAP_SQLITE:
         mo_value_drop(heap, host->types->databases, state->as.sqlite);

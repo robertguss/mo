@@ -539,7 +539,8 @@ static void bigint_text_work(size_t count) {
 static void empty_constants_and_rounding(void) {
     struct prim_fixture f;
     prim_fixture_init(&f, 1 << 20);
-    const enum mo_primitive_id ids[] = {MO_PRIM_LIST_EMPTY, MO_PRIM_MAP_EMPTY, MO_PRIM_SET_EMPTY};
+    const enum mo_primitive_id ids[] = {MO_PRIM_LIST_EMPTY, MO_PRIM_MAP_EMPTY, MO_PRIM_SET_EMPTY,
+                                        MO_PRIM_BYTES_EMPTY};
     const char *reason;
     struct mo_cell out;
     for (size_t i = 0; i < sizeof ids / sizeof ids[0]; i++) {
@@ -548,7 +549,14 @@ static void empty_constants_and_rounding(void) {
         CHECK(mo_prim_call(f.heap, &f.types, ids[i], f.signature[ids[i]], NULL, &out, &reason) ==
               MO_PRIM_RETURNED);
         CHECK(reason == NULL);
-        CHECK(ids[i] == MO_PRIM_LIST_EMPTY ? mo_list_size(out) == 0 : mo_table_size(out) == 0);
+        if (ids[i] == MO_PRIM_BYTES_EMPTY) {
+            size_t len = 1;
+            const uint8_t *raw = mo_value_data(out, &len);
+            (void)raw;
+            CHECK(len == 0);
+        } else {
+            CHECK(ids[i] == MO_PRIM_LIST_EMPTY ? mo_list_size(out) == 0 : mo_table_size(out) == 0);
+        }
         mo_value_drop(f.heap, fn->result, out);
     }
     MO_ASSERT(fesetround(FE_UPWARD) == 0);
@@ -1171,6 +1179,256 @@ static void time_boundary(void) {
     prim_fixture_free(&f);
 }
 
+static void check_bytes_eq(struct mo_cell cell, const uint8_t *expected, size_t expected_len) {
+    size_t len = 0;
+    const uint8_t *raw = mo_value_data(cell, &len);
+    CHECK(len == expected_len && (expected_len == 0 || memcmp(raw, expected, expected_len) == 0));
+}
+
+static void bytes_packing_and_unpacking(void) {
+    struct prim_fixture f;
+    prim_fixture_init(&f, 4 << 20);
+    size_t baseline = mo_heap_used(f.heap);
+    uint32_t bytes_ty = f.builtin[MO_TYPE_BYTES];
+    uint32_t list_byte_ty = f.types.items[f.signature[MO_PRIM_BYTES_TO_LIST]].result;
+    uint32_t opt_int_ty = f.types.items[f.signature[MO_PRIM_BYTES_U16_BE_AT]].result;
+    const char *reason = NULL;
+    struct mo_cell out = mo_cell_int(41);
+
+    /* Bytes.empty and Bytes.zeroed valid sizes */
+    struct mo_cell empty_val;
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_EMPTY, f.signature[MO_PRIM_BYTES_EMPTY],
+                       NULL, &empty_val, &reason) == MO_PRIM_RETURNED &&
+          reason == NULL);
+    check_bytes_eq(empty_val, NULL, 0);
+
+    const int64_t zero_sizes[] = {0, 1, 4096};
+    for (size_t i = 0; i < sizeof zero_sizes / sizeof zero_sizes[0]; i++) {
+        struct mo_cell arg = mo_cell_int(zero_sizes[i]);
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_ZEROED,
+                           f.signature[MO_PRIM_BYTES_ZEROED], &arg, &out,
+                           &reason) == MO_PRIM_RETURNED &&
+              reason == NULL);
+        size_t len = 0;
+        const uint8_t *raw = mo_value_data(out, &len);
+        CHECK(len == (size_t)zero_sizes[i]);
+        for (size_t j = 0; j < len; j++)
+            CHECK(raw[j] == 0);
+        if (zero_sizes[i] == 0) {
+            bool eq = false;
+            CHECK(mo_value_equal(f.heap, bytes_ty, empty_val, out, &eq) && eq);
+        }
+        mo_value_drop(f.heap, bytes_ty, out);
+    }
+
+    /* Bytes.zeroed invalid counts: negative and over MO_LIMIT_FILE_IO_BYTES */
+    const int64_t bad_zeros[] = {-1, INT64_MIN, (int64_t)MO_LIMIT_FILE_IO_BYTES + 1, INT64_MAX};
+    for (size_t i = 0; i < sizeof bad_zeros / sizeof bad_zeros[0]; i++) {
+        struct mo_cell arg = mo_cell_int(bad_zeros[i]);
+        out = mo_cell_int(41);
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_ZEROED,
+                           f.signature[MO_PRIM_BYTES_ZEROED], &arg, &out,
+                           &reason) == MO_PRIM_OUTSIDE);
+        CHECK(mo_cell_get_int(out) == 41 && reason != NULL);
+        CHECK(strcmp(reason, bad_zeros[i] < 0 ? "Bytes.zeroed with a negative count"
+                                              : "Bytes.zeroed count exceeds limit") == 0);
+    }
+
+    /* Bytes.from_list and Bytes.to_list round-trip: empty, extremes, all 256 byte values */
+    struct mo_cell empty_list;
+    MO_ASSERT(mo_value_list(f.heap, list_byte_ty, NULL, 0, &empty_list));
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_FROM_LIST,
+                       f.signature[MO_PRIM_BYTES_FROM_LIST], &empty_list, &out,
+                       &reason) == MO_PRIM_RETURNED &&
+          reason == NULL);
+    check_bytes_eq(out, NULL, 0);
+    mo_value_drop(f.heap, bytes_ty, out);
+    mo_value_drop(f.heap, list_byte_ty, empty_list);
+
+    struct mo_cell all_cells[256];
+    uint8_t all_raw[256];
+    for (uint32_t i = 0; i < 256; i++) {
+        all_cells[i] = mo_cell_byte((uint8_t)i);
+        all_raw[i] = (uint8_t)i;
+    }
+    struct mo_cell full_list, full_bytes, back_list;
+    MO_ASSERT(mo_value_list(f.heap, list_byte_ty, all_cells, 256, &full_list));
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_FROM_LIST,
+                       f.signature[MO_PRIM_BYTES_FROM_LIST], &full_list, &full_bytes,
+                       &reason) == MO_PRIM_RETURNED);
+    check_bytes_eq(full_bytes, all_raw, 256);
+    CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_TO_LIST, f.signature[MO_PRIM_BYTES_TO_LIST],
+                       &full_bytes, &back_list, &reason) == MO_PRIM_RETURNED);
+    bool same_list = false;
+    CHECK(mo_value_equal(f.heap, list_byte_ty, full_list, back_list, &same_list) && same_list);
+    mo_value_drop(f.heap, list_byte_ty, full_list);
+    mo_value_drop(f.heap, list_byte_ty, back_list);
+    mo_value_drop(f.heap, bytes_ty, full_bytes);
+
+    /* Bytes.from_u16_be valid + round-trip + out-of-range bugs */
+    const struct {
+        int64_t val;
+        uint8_t want[2];
+    } u16_cases[] = {
+        {0, {0x00, 0x00}},
+        {1, {0x00, 0x01}},
+        {0x1234, {0x12, 0x34}},
+        {65535, {0xff, 0xff}},
+    };
+    for (size_t i = 0; i < sizeof u16_cases / sizeof u16_cases[0]; i++) {
+        struct mo_cell arg = mo_cell_int(u16_cases[i].val), encoded, decoded;
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_FROM_U16_BE,
+                           f.signature[MO_PRIM_BYTES_FROM_U16_BE], &arg, &encoded,
+                           &reason) == MO_PRIM_RETURNED);
+        check_bytes_eq(encoded, u16_cases[i].want, 2);
+        struct mo_cell at_args[] = {encoded, mo_cell_int(0)};
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_U16_BE_AT,
+                           f.signature[MO_PRIM_BYTES_U16_BE_AT], at_args, &decoded,
+                           &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(decoded) == 1 &&
+              mo_cell_get_int(mo_cell_get_payload(decoded)) == u16_cases[i].val);
+        mo_value_drop(f.heap, opt_int_ty, decoded);
+        mo_value_drop(f.heap, bytes_ty, encoded);
+    }
+    const int64_t bad_u16[] = {-1, 65536, INT64_MIN, INT64_MAX};
+    for (size_t i = 0; i < sizeof bad_u16 / sizeof bad_u16[0]; i++) {
+        struct mo_cell arg = mo_cell_int(bad_u16[i]);
+        out = mo_cell_int(41);
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_FROM_U16_BE,
+                           f.signature[MO_PRIM_BYTES_FROM_U16_BE], &arg, &out,
+                           &reason) == MO_PRIM_OUTSIDE);
+        CHECK(mo_cell_get_int(out) == 41 &&
+              strcmp(reason, "Bytes.from_u16_be value outside 0 to 65535") == 0);
+    }
+
+    /* Bytes.from_u32_be valid + round-trip + out-of-range bugs */
+    const struct {
+        int64_t val;
+        uint8_t want[4];
+    } u32_cases[] = {
+        {0, {0x00, 0x00, 0x00, 0x00}},
+        {1, {0x00, 0x00, 0x00, 0x01}},
+        {INT64_C(0x12345678), {0x12, 0x34, 0x56, 0x78}},
+        {INT64_C(0x80000001), {0x80, 0x00, 0x00, 0x01}},
+        {INT64_C(4294967295), {0xff, 0xff, 0xff, 0xff}},
+    };
+    for (size_t i = 0; i < sizeof u32_cases / sizeof u32_cases[0]; i++) {
+        struct mo_cell arg = mo_cell_int(u32_cases[i].val), encoded, decoded;
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_FROM_U32_BE,
+                           f.signature[MO_PRIM_BYTES_FROM_U32_BE], &arg, &encoded,
+                           &reason) == MO_PRIM_RETURNED);
+        check_bytes_eq(encoded, u32_cases[i].want, 4);
+        struct mo_cell at_args[] = {encoded, mo_cell_int(0)};
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_U32_BE_AT,
+                           f.signature[MO_PRIM_BYTES_U32_BE_AT], at_args, &decoded,
+                           &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(decoded) == 1 &&
+              mo_cell_get_int(mo_cell_get_payload(decoded)) == u32_cases[i].val);
+        mo_value_drop(f.heap, opt_int_ty, decoded);
+        mo_value_drop(f.heap, bytes_ty, encoded);
+    }
+    const int64_t bad_u32[] = {-1, INT64_C(4294967296), INT64_MIN, INT64_MAX};
+    for (size_t i = 0; i < sizeof bad_u32 / sizeof bad_u32[0]; i++) {
+        struct mo_cell arg = mo_cell_int(bad_u32[i]);
+        out = mo_cell_int(41);
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_FROM_U32_BE,
+                           f.signature[MO_PRIM_BYTES_FROM_U32_BE], &arg, &out,
+                           &reason) == MO_PRIM_OUTSIDE);
+        CHECK(mo_cell_get_int(out) == 41 &&
+              strcmp(reason, "Bytes.from_u32_be value outside 0 to 4294967295") == 0);
+    }
+
+    /* Bytes.from_i64_be + round-trip at all signed 64-bit boundaries */
+    const struct {
+        int64_t val;
+        uint8_t want[8];
+    } i64_cases[] = {
+        {0, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+        {1, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}},
+        {-1, {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+        {INT64_MIN, {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+        {INT64_MAX, {0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}},
+        {INT64_C(0x0102030405060708), {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}},
+    };
+    for (size_t i = 0; i < sizeof i64_cases / sizeof i64_cases[0]; i++) {
+        struct mo_cell arg = mo_cell_int(i64_cases[i].val), encoded, decoded;
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_FROM_I64_BE,
+                           f.signature[MO_PRIM_BYTES_FROM_I64_BE], &arg, &encoded,
+                           &reason) == MO_PRIM_RETURNED);
+        check_bytes_eq(encoded, i64_cases[i].want, 8);
+        struct mo_cell at_args[] = {encoded, mo_cell_int(0)};
+        CHECK(mo_prim_call(f.heap, &f.types, MO_PRIM_BYTES_I64_BE_AT,
+                           f.signature[MO_PRIM_BYTES_I64_BE_AT], at_args, &decoded,
+                           &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(decoded) == 1 &&
+              mo_cell_get_int(mo_cell_get_payload(decoded)) == i64_cases[i].val);
+        mo_value_drop(f.heap, opt_int_ty, decoded);
+        mo_value_drop(f.heap, bytes_ty, encoded);
+    }
+
+    /* Offset bounds and signed overflow checks on u16_be_at / u32_be_at / i64_be_at */
+    const uint8_t frame[10] = {0xaa, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0xbb};
+    struct mo_cell buf;
+    MO_ASSERT(mo_value_bytes(f.heap, frame, sizeof frame, &buf));
+    const struct {
+        enum mo_primitive_id id;
+        int64_t valid_end;
+        int64_t mid_want;
+    } readers[] = {
+        {MO_PRIM_BYTES_U16_BE_AT, 8, INT64_C(0x0102)},
+        {MO_PRIM_BYTES_U32_BE_AT, 6, INT64_C(0x01020304)},
+        {MO_PRIM_BYTES_I64_BE_AT, 2, INT64_C(0x0102030405060708)},
+    };
+    for (size_t i = 0; i < sizeof readers / sizeof readers[0]; i++) {
+        struct mo_cell mid_args[] = {buf, mo_cell_int(1)};
+        CHECK(mo_prim_call(f.heap, &f.types, readers[i].id, f.signature[readers[i].id], mid_args,
+                           &out, &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(out) == 1 &&
+              mo_cell_get_int(mo_cell_get_payload(out)) == readers[i].mid_want);
+        mo_value_drop(f.heap, opt_int_ty, out);
+
+        struct mo_cell end_args[] = {buf, mo_cell_int(readers[i].valid_end)};
+        CHECK(mo_prim_call(f.heap, &f.types, readers[i].id, f.signature[readers[i].id], end_args,
+                           &out, &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(out) == 1);
+        mo_value_drop(f.heap, opt_int_ty, out);
+
+        const int64_t bad_offsets[] = {
+            -1,       INT64_MIN, readers[i].valid_end + 1, 10, 100, INT64_MAX - 7, INT64_MAX - 1,
+            INT64_MAX};
+        for (size_t j = 0; j < sizeof bad_offsets / sizeof bad_offsets[0]; j++) {
+            struct mo_cell oob_args[] = {buf, mo_cell_int(bad_offsets[j])};
+            CHECK(mo_prim_call(f.heap, &f.types, readers[i].id, f.signature[readers[i].id],
+                               oob_args, &out, &reason) == MO_PRIM_RETURNED);
+            CHECK(mo_cell_get_tag(out) == 0);
+            mo_value_drop(f.heap, opt_int_ty, out);
+        }
+
+        struct mo_cell empty_args[] = {empty_val, mo_cell_int(0)};
+        CHECK(mo_prim_call(f.heap, &f.types, readers[i].id, f.signature[readers[i].id], empty_args,
+                           &out, &reason) == MO_PRIM_RETURNED);
+        CHECK(mo_cell_get_tag(out) == 0);
+        mo_value_drop(f.heap, opt_int_ty, out);
+    }
+    mo_value_drop(f.heap, bytes_ty, buf);
+    mo_value_drop(f.heap, bytes_ty, empty_val);
+    CHECK(mo_heap_objects(f.heap) == 0 && mo_heap_used(f.heap) == baseline);
+    prim_fixture_free(&f);
+
+    /* OOM refusal on Bytes.zeroed leaves output untouched and leaks nothing */
+    struct prim_fixture tight;
+    prim_fixture_init(&tight, 16384);
+    size_t tight_base = mo_heap_used(tight.heap);
+    struct mo_cell big_arg = mo_cell_int(32768);
+    out = mo_cell_int(41);
+    CHECK(mo_prim_call(tight.heap, &tight.types, MO_PRIM_BYTES_ZEROED,
+                       tight.signature[MO_PRIM_BYTES_ZEROED], &big_arg, &out,
+                       &reason) == MO_PRIM_OUT_OF_MEMORY);
+    CHECK(mo_cell_get_int(out) == 41 && reason != NULL);
+    CHECK(mo_heap_objects(tight.heap) == 0 && mo_heap_used(tight.heap) == tight_base);
+    prim_fixture_free(&tight);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--big-text-1m") == 0) {
         bigint_text_work(415241);
@@ -1207,6 +1465,7 @@ int main(int argc, char **argv) {
     growth_near_limit();
     unchanged_trim();
     bytes_slice_and_join();
+    bytes_packing_and_unpacking();
     unique_reverse_without_space();
     unique_union_without_space();
     reuse_refusals();

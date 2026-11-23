@@ -575,6 +575,132 @@ static MO_MUST_USE enum mo_prim_status bytes_from_base64url(struct mo_prim_call 
     return status;
 }
 
+static MO_MUST_USE enum mo_prim_status bytes_empty(struct mo_prim_call *c, struct mo_cell *out) {
+    return mo_value_bytes(c->heap, (const uint8_t *)"", 0, out) ? MO_PRIM_RETURNED
+                                                                : MO_PRIM_OUT_OF_MEMORY;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_zeroed(struct mo_prim_call *c, struct mo_cell *out) {
+    int64_t count = mo_cell_get_int(c->args[0]);
+    if (count < 0) {
+        c->reason = "Bytes.zeroed with a negative count";
+        return MO_PRIM_OUTSIDE;
+    }
+    if ((uint64_t)count > MO_LIMIT_FILE_IO_BYTES) {
+        c->reason = "Bytes.zeroed count exceeds limit";
+        return MO_PRIM_OUTSIDE;
+    }
+    size_t n = (size_t)count;
+    if (n == 0)
+        return mo_value_bytes(c->heap, (const uint8_t *)"", 0, out) ? MO_PRIM_RETURNED
+                                                                    : MO_PRIM_OUT_OF_MEMORY;
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, c->heap);
+    uint8_t *zeros = mo_scratch_resize(&scratch, NULL, 0, n);
+    enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
+    if (zeros != NULL) {
+        memset(zeros, 0, n);
+        status = mo_value_bytes(c->heap, zeros, n, out) ? MO_PRIM_RETURNED : MO_PRIM_OUT_OF_MEMORY;
+    }
+    mo_scratch_free(&scratch);
+    return status;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_from_list(struct mo_prim_call *c,
+                                                       struct mo_cell *out) {
+    uint32_t count = mo_list_size(c->args[0]);
+    if (count == 0)
+        return mo_value_bytes(c->heap, (const uint8_t *)"", 0, out) ? MO_PRIM_RETURNED
+                                                                    : MO_PRIM_OUT_OF_MEMORY;
+    struct mo_scratch scratch;
+    mo_scratch_init(&scratch, c->heap);
+    uint8_t *buf = mo_scratch_resize(&scratch, NULL, 0, count);
+    enum mo_prim_status status = MO_PRIM_OUT_OF_MEMORY;
+    if (buf != NULL) {
+        for (uint32_t i = 0; i < count; i++) {
+            struct mo_cell item;
+            MO_ASSERT(mo_list_get(c->args[0], i, &item));
+            buf[i] = mo_cell_get_byte(item);
+        }
+        status =
+            mo_value_bytes(c->heap, buf, count, out) ? MO_PRIM_RETURNED : MO_PRIM_OUT_OF_MEMORY;
+    }
+    mo_scratch_free(&scratch);
+    return status;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_to_list(struct mo_prim_call *c, struct mo_cell *out) {
+    struct text bytes = view(c->args[0]);
+    struct mo_cell list;
+    if (!mo_value_list(c->heap, c->result, NULL, 0, &list))
+        return MO_PRIM_OUT_OF_MEMORY;
+    for (size_t i = 0; i < bytes.length; i++) {
+        if (!mo_list_append(c->heap, c->result, &list, mo_cell_byte(bytes.bytes[i]))) {
+            mo_value_drop(c->heap, c->result, list);
+            return MO_PRIM_OUT_OF_MEMORY;
+        }
+    }
+    *out = list;
+    return MO_PRIM_RETURNED;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_from_be(struct mo_prim_call *c, struct mo_cell *out) {
+    int64_t n = mo_cell_get_int(c->args[0]);
+    uint8_t buf[8];
+    size_t width;
+    if (c->id == MO_PRIM_BYTES_FROM_U16_BE) {
+        if (n < 0 || n > 65535) {
+            c->reason = "Bytes.from_u16_be value outside 0 to 65535";
+            return MO_PRIM_OUTSIDE;
+        }
+        uint16_t v = (uint16_t)n;
+        buf[0] = (uint8_t)(v >> 8);
+        buf[1] = (uint8_t)(v & 0xffU);
+        width = 2;
+    } else if (c->id == MO_PRIM_BYTES_FROM_U32_BE) {
+        if (n < 0 || n > INT64_C(4294967295)) {
+            c->reason = "Bytes.from_u32_be value outside 0 to 4294967295";
+            return MO_PRIM_OUTSIDE;
+        }
+        uint32_t v = (uint32_t)n;
+        buf[0] = (uint8_t)(v >> 24);
+        buf[1] = (uint8_t)((v >> 16) & 0xffU);
+        buf[2] = (uint8_t)((v >> 8) & 0xffU);
+        buf[3] = (uint8_t)(v & 0xffU);
+        width = 4;
+    } else {
+        MO_ASSERT(c->id == MO_PRIM_BYTES_FROM_I64_BE);
+        uint64_t u;
+        memcpy(&u, &n, sizeof u);
+        for (unsigned i = 0; i < 8; i++)
+            buf[i] = (uint8_t)((u >> (56U - 8U * i)) & 0xffU);
+        width = 8;
+    }
+    return mo_value_bytes(c->heap, buf, width, out) ? MO_PRIM_RETURNED : MO_PRIM_OUT_OF_MEMORY;
+}
+
+static MO_MUST_USE enum mo_prim_status bytes_be_at(struct mo_prim_call *c, struct mo_cell *out) {
+    struct text bytes = view(c->args[0]);
+    int64_t offset = mo_cell_get_int(c->args[1]);
+    size_t width = c->id == MO_PRIM_BYTES_U16_BE_AT ? 2 : c->id == MO_PRIM_BYTES_U32_BE_AT ? 4 : 8;
+    if (offset < 0 || (uint64_t)offset > bytes.length || bytes.length - (size_t)offset < width)
+        return mo_prim_option(c, false, mo_cell_unit(), out);
+    const uint8_t *p = bytes.bytes + (size_t)offset;
+    int64_t value;
+    if (width == 2) {
+        value = (int64_t)(((uint64_t)p[0] << 8) | (uint64_t)p[1]);
+    } else if (width == 4) {
+        value = (int64_t)(((uint64_t)p[0] << 24) | ((uint64_t)p[1] << 16) | ((uint64_t)p[2] << 8) |
+                          (uint64_t)p[3]);
+    } else {
+        uint64_t u = 0;
+        for (unsigned i = 0; i < 8; i++)
+            u = (u << 8) | (uint64_t)p[i];
+        memcpy(&value, &u, sizeof value);
+    }
+    return mo_prim_option(c, true, mo_cell_int(value), out);
+}
+
 static MO_MUST_USE enum mo_prim_status from_chars(struct mo_prim_call *c, struct mo_cell *out) {
     uint32_t count = mo_list_size(c->args[0]);
     size_t length = 0;
@@ -633,6 +759,20 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
         return bytes_to_base64url(c, out);
     if (c->id == MO_PRIM_BYTES_FROM_BASE64URL)
         return bytes_from_base64url(c, out);
+    if (c->id == MO_PRIM_BYTES_EMPTY)
+        return bytes_empty(c, out);
+    if (c->id == MO_PRIM_BYTES_ZEROED)
+        return bytes_zeroed(c, out);
+    if (c->id == MO_PRIM_BYTES_FROM_LIST)
+        return bytes_from_list(c, out);
+    if (c->id == MO_PRIM_BYTES_TO_LIST)
+        return bytes_to_list(c, out);
+    if (c->id == MO_PRIM_BYTES_FROM_U16_BE || c->id == MO_PRIM_BYTES_FROM_U32_BE ||
+        c->id == MO_PRIM_BYTES_FROM_I64_BE)
+        return bytes_from_be(c, out);
+    if (c->id == MO_PRIM_BYTES_U16_BE_AT || c->id == MO_PRIM_BYTES_U32_BE_AT ||
+        c->id == MO_PRIM_BYTES_I64_BE_AT)
+        return bytes_be_at(c, out);
     if (c->id == MO_PRIM_TEXT_FROM_CHARS)
         return from_chars(c, out);
     struct text t = view(c->args[0]);

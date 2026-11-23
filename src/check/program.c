@@ -516,6 +516,7 @@ check_program(struct mo_arena *arena, const struct mo_module_set *set, struct mo
                 if (strcmp(mo_capability_names[j], "Simulation") != 0 &&
                     strcmp(mo_capability_names[j], "Connection") != 0 &&
                     strcmp(mo_capability_names[j], "Sqlite.Database") != 0 &&
+                    strcmp(mo_capability_names[j], "Files.File") != 0 &&
                     native_type(ptype, mo_capability_names[j]))
                     capability = 1u << j;
             if (capability == 0 || (capabilities & capability) != 0) {

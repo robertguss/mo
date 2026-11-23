@@ -46,7 +46,10 @@ def textOps : List (String × TextOp) :=
 def bytesOps : List (String × BytesOp) :=
   [("size", .size), ("get", .get), ("decodeUtf8", .decodeUtf8), ("slice", .slice), ("join", .join),
    ("toHex", .toHex), ("fromHex", .fromHex), ("toBase64url", .toBase64url),
-   ("fromBase64url", .fromBase64url)]
+   ("fromBase64url", .fromBase64url), ("empty", .empty), ("zeroed", .zeroed),
+   ("fromList", .fromList), ("toList", .toList), ("fromU16Be", .fromU16Be),
+   ("fromU32Be", .fromU32Be), ("fromI64Be", .fromI64Be), ("u16BeAt", .u16BeAt),
+   ("u32BeAt", .u32BeAt), ("i64BeAt", .i64BeAt)]
 def unicodeOps : List (String × UnicodeOp) :=
   [("graphemes", .graphemes), ("displayWidth", .displayWidth), ("normalizeNfc", .normalizeNfc),
    ("lowercase", .lowercase), ("uppercase", .uppercase), ("letter", .letter), ("digit", .digit)]
@@ -114,7 +117,10 @@ def ioOps : List (String × IoOp) :=
    ("sqliteExecuteRaw", .sqliteExecuteRaw),
    ("commandRunRaw", .commandRunRaw), ("commandWithin", .commandWithin),
    ("commandAllowPrograms", .commandAllowPrograms), ("commandFake", .commandFake),
-   ("secureRandomBytes", .secureRandomBytes), ("secureRandomSeeded", .secureRandomSeeded)]
+   ("secureRandomBytes", .secureRandomBytes), ("secureRandomSeeded", .secureRandomSeeded),
+   ("writeBytes", .writeBytes), ("rename", .rename), ("fileOpen", .fileOpen),
+   ("fileReadAt", .fileReadAt), ("fileWriteAt", .fileWriteAt), ("fileSize", .fileSize),
+   ("fileTruncate", .fileTruncate), ("fileSync", .fileSync)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

@@ -218,6 +218,16 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     case MO_PRIM_BYTES_FROM_HEX:
     case MO_PRIM_BYTES_TO_BASE64URL:
     case MO_PRIM_BYTES_FROM_BASE64URL:
+    case MO_PRIM_BYTES_EMPTY:
+    case MO_PRIM_BYTES_ZEROED:
+    case MO_PRIM_BYTES_FROM_LIST:
+    case MO_PRIM_BYTES_TO_LIST:
+    case MO_PRIM_BYTES_FROM_U16_BE:
+    case MO_PRIM_BYTES_FROM_U32_BE:
+    case MO_PRIM_BYTES_FROM_I64_BE:
+    case MO_PRIM_BYTES_U16_BE_AT:
+    case MO_PRIM_BYTES_U32_BE_AT:
+    case MO_PRIM_BYTES_I64_BE_AT:
         status = mo_prim_text(&call, &result);
         break;
     case MO_PRIM_LIST_EMPTY:
