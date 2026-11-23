@@ -25,7 +25,7 @@ use crate::files_common::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PathMode {
+pub(crate) enum PathMode {
     Read,
     Write,
     Append,
@@ -36,10 +36,10 @@ enum PathMode {
     StrictParent,
 }
 
-struct PathResult {
-    fd: OwnedFd,
-    name: String,
-    stat: Stat,
+pub(crate) struct PathResult {
+    pub(crate) fd: OwnedFd,
+    pub(crate) name: String,
+    pub(crate) stat: Stat,
 }
 
 struct RealFolderInner {
@@ -580,7 +580,7 @@ fn resolve_portable(
     }
 }
 
-fn resolve(
+pub(crate) fn resolve(
     resolver: &mut ResolverState,
     root: BorrowedFd<'_>,
     path: &str,
@@ -597,6 +597,32 @@ fn resolve(
         return res;
     }
     resolve_portable(root, path, mode, &mut steps)
+}
+
+pub(crate) fn dir_fd_path(dir_fd: BorrowedFd<'_>, verify_identity: bool) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let proc_link = format!("/proc/self/fd/{}", dir_fd.as_raw_fd());
+        let raw = readlinkat(CWD, proc_link.as_str(), Vec::new()).ok()?;
+        let bytes = raw.as_bytes();
+        if bytes.is_empty() || bytes.len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
+            return None;
+        }
+        let path = String::from_utf8(bytes.to_vec()).ok()?;
+        if verify_identity {
+            let dir_st = fstat(dir_fd).ok()?;
+            let path_st = statat(CWD, path.as_str(), AtFlags::empty()).ok()?;
+            if dir_st.st_dev != path_st.st_dev || dir_st.st_ino != path_st.st_ino {
+                return None;
+            }
+        }
+        Some(path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (dir_fd, verify_identity);
+        None
+    }
 }
 
 fn resolve_folder_root(

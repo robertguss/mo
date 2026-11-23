@@ -4,44 +4,45 @@
 Run from the repository root:
     python3 ci/check_rust_runtime.py [--mo PATH] [--mo-rt PATH] [--skip-build] [--case=NAME ...]
 
-What this checks for Phase 1 (Slices 1A + 1B + 1C):
+What this checks for Phase 1 (Slices 1A + 1B + 1C + 1D — 59/59 hostops, 87/87 opcodes):
   1. Builds `target/release/mo-rt` (unless `--skip-build`) and locates or builds C `mo`.
   2. Verifies `ldd target/release/mo-rt` has zero `libssl` / `libcrypto` linkage.
-  3. Runs the curated cohort of 203 golden suites from `tests/golden/`
-     (171 `run` + 32 `test`, covering all 187/187 primitives including `BigInt`,
-     `Crypto`, and pinned `Unicode16`, plus real & fake `Files` / `ReadFiles` /
-     `Files.File`, `Clock`, `Random`, `SecureRandom`, `Env`, `Args`, `Console`,
-     abilities, and library natives), emitting `.bc` via `mo emit` / `mo emit --tests`,
-     verifying each `.bc` with `mo-rt verify` (full Section-9 ownership/borrow/token
-     verifier), and asserting exact byte-for-byte stdout, stderr, and exit-code parity
-     between C `mo`, Rust `mo-rt`, and the hand-written golden expectations.
-  4. Runs inline differential checks for `Env` (real + `Env.of` fake), runtime limit
-     flags (`--max-depth`), `BigInt` large/edge arithmetic & defects, `--root DIR`
-     real `Files`/`ReadFiles`/`Files.File` (binary positional I/O, `rename`, `within`,
-     symlink confinement), `Clock.fixed` + `sleep`, `Random.seeded`, `SecureRandom.seeded`,
-     `Crypto`, `Unicode16`, and `mo-rt verify` rejection of corrupted bytecode.
+  3. Runs the curated cohort of 209 golden suites from `tests/golden/`
+     (174 `run` + 35 `test`, covering all 187/187 primitives, all 87/87 opcodes,
+     and all 59/59 hostops including `Network`/`Connection`, `Sqlite`/`Sqlite.Database`,
+     `Command`, `Simulation` & live actors), emitting `.bc` via `mo emit` /
+     `mo emit --tests`, verifying each `.bc` with `mo-rt verify`, and asserting
+     exact byte-for-byte stdout, stderr, and exit-code parity between C `mo`,
+     Rust `mo-rt`, and the hand-written golden expectations.
+  4. Runs inline differential checks for `Env`, `--max-depth`, `BigInt`, `--root DIR`
+     real `Files`/`ReadFiles`/`Files.File`, `Clock`, `Random`, `SecureRandom`, `Crypto`,
+     `Unicode16`, real & fake `Network` (loopback TCP + loopback TLS with `SSL_CERT_FILE`
+     + `allow_hosts`), real & fake `Sqlite` (`--root`, `--state-dir`, WAL, CRUD,
+     authorizer, confinement), real & fake `Command` (`--root`, `within`, `allow_programs`,
+     timeout), `Simulation` (`start`/`send`/`advance`/`crash`/`restart`/timers/admission),
+     `services/task-queue/queue-tests.mo`, and `mo-rt verify` rejection of corrupted bytecode.
 """
 
 import argparse
 import os
 import pathlib
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
+import threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests/golden"
 
-# Curated Phase 1 (Slices 1A + 1B + 1C) golden cohort (203 suites: 171 run + 32 test).
-# Covers all 187/187 primitives (Int/Byte/Float/Decimal/BigInt/Time/Duration/Crypto/Unicode16),
-# control flow, recursion & tail calls, closures, records/structs, enums & pattern matching,
-# abilities (Equal/Hash/Order/Text), strings & interpolation, Bytes, List/Map/Set/Range,
-# modules, JSON library, sample apps (greet, inventory, json-query, expenses, find, kv, todo, wc),
-# defect/bug reports, Args/Console/Env/Clock/Random/SecureRandom/Files/ReadFiles/Files.File
-# capabilities (real and fake), and test/example blocks.
-SLICE_1C_GOLDEN_CASES = [
-    # Capabilities: Args, Clock, Console, Env, Files, ReadFiles, Random, SecureRandom
+# Curated Phase 1 (Slices 1A + 1B + 1C + 1D) golden cohort (209 suites: 174 run + 35 test).
+SLICE_1D_GOLDEN_CASES = [
+    # Actors & API Server
+    "actor-run",
+    "api-server",
+    # Capabilities: Args, Clock, Console, Env, Files, ReadFiles, Random, SecureRandom, Network
     "cap-args-list",
     "cap-args-none",
     "cap-clock-fixed",
@@ -57,6 +58,8 @@ SLICE_1C_GOLDEN_CASES = [
     "cap-files-walk",
     "cap-files-within-escape",
     "cap-files-wordcount",
+    "cap-network-error",
+    "cap-network-forms",
     "cap-record-of-capabilities",
     # Collections: List, Map, Set, Range, Tuple
     "col-args-lists",
@@ -96,6 +99,7 @@ SLICE_1C_GOLDEN_CASES = [
     "fail-bug-duration-unit-overflow",
     "fail-bug-exit-range",
     "fail-bug-map-duplicate",
+    "fail-bug-network-port",
     "fail-bug-overflow",
     "fail-bug-pow-negative",
     "fail-bug-repeat-negative",
@@ -114,8 +118,9 @@ SLICE_1C_GOLDEN_CASES = [
     "fail-test-failing",
     "fail-test-results",
     "fail-try-wrap",
-    # Samples & JSON
+    # Samples, HTTP & JSON
     "greet-sample",
+    "http-fake",
     "json-ability",
     # Core language: abilities, closures, control flow, enums, records, recursion, tests
     "lang-abilities-custom-order",
@@ -733,6 +738,484 @@ end
     )
 
 
+def check_slice_1d_differential(
+    mo: pathlib.Path,
+    mo_rt: pathlib.Path,
+    tmpdir: pathlib.Path,
+) -> None:
+    """Differential check for Slice 1D: real/fake Network (+ TLS via SSL_CERT_FILE),
+    real/fake Sqlite (--root, --state-dir, WAL, authorizer, confinement),
+    real/fake Command (--root, within, allow_programs, timeout),
+    Simulation (start/send/advance/timers/crash/restart/admission), and task-queue tests."""
+
+    # 1. Generate a local test CA + signed leaf cert (SAN=IP:127.0.0.1,DNS:localhost, CA:FALSE)
+    #    for real TLS parity between OpenSSL (C mo) and pure-Rust rustls (mo-rt).
+    tls_ca_cert = tmpdir / "tls_ca.pem"
+    tls_ca_key = tmpdir / "tls_ca_key.pem"
+    tls_cert = tmpdir / "tls_cert.pem"
+    tls_key = tmpdir / "tls_key.pem"
+    tls_csr = tmpdir / "tls_leaf.csr"
+    tls_ext = tmpdir / "tls_leaf.ext"
+    openssl_bin = shutil.which("openssl")
+    has_tls_fixture = False
+    if openssl_bin is not None:
+        tls_ext.write_text(
+            "basicConstraints=CA:FALSE\n"
+            "keyUsage=digitalSignature,keyEncipherment\n"
+            "extendedKeyUsage=serverAuth\n"
+            "subjectAltName=IP:127.0.0.1,DNS:localhost\n",
+            encoding="utf-8",
+        )
+        g1 = subprocess.run(
+            [
+                openssl_bin,
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(tls_ca_key),
+                "-out",
+                str(tls_ca_cert),
+                "-days",
+                "1",
+                "-nodes",
+                "-subj",
+                "/CN=Mo Test Root CA",
+                "-addext",
+                "basicConstraints=critical,CA:TRUE",
+                "-addext",
+                "keyUsage=critical,keyCertSign,cRLSign",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        g2 = subprocess.run(
+            [
+                openssl_bin,
+                "req",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(tls_key),
+                "-out",
+                str(tls_csr),
+                "-nodes",
+                "-subj",
+                "/CN=localhost",
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        g3 = subprocess.run(
+            [
+                openssl_bin,
+                "x509",
+                "-req",
+                "-in",
+                str(tls_csr),
+                "-CA",
+                str(tls_ca_cert),
+                "-CAkey",
+                str(tls_ca_key),
+                "-CAcreateserial",
+                "-out",
+                str(tls_cert),
+                "-days",
+                "1",
+                "-extfile",
+                str(tls_ext),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        has_tls_fixture = g1.returncode == 0 and g2.returncode == 0 and g3.returncode == 0
+
+    # Spin up local TCP + TLS + plain-HTTP-for-TLS-error servers.
+    tcp_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    tcp_srv.bind(("127.0.0.1", 0))
+    tcp_srv.listen(8)
+    tcp_port = tcp_srv.getsockname()[1]
+
+    stop_flag = threading.Event()
+
+    def serve_tcp() -> None:
+        tcp_srv.settimeout(0.2)
+        while not stop_flag.is_set():
+            try:
+                conn, _ = tcp_srv.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            with conn:
+                data = conn.recv(1024)
+                if data:
+                    conn.sendall(b"ECHO:" + data)
+
+    tls_srv = None
+    tls_port = 0
+    if has_tls_fixture:
+        ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ssl_ctx.load_cert_chain(certfile=str(tls_cert), keyfile=str(tls_key))
+        tls_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tls_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        tls_srv.bind(("127.0.0.1", 0))
+        tls_srv.listen(8)
+        tls_port = tls_srv.getsockname()[1]
+
+        def serve_tls() -> None:
+            assert tls_srv is not None
+            tls_srv.settimeout(0.2)
+            while not stop_flag.is_set():
+                try:
+                    raw, _ = tls_srv.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                try:
+                    with ssl_ctx.wrap_socket(raw, server_side=True) as sconn:
+                        data = sconn.recv(1024)
+                        if data:
+                            sconn.sendall(b"TLS:" + data)
+                except OSError:
+                    pass
+
+        tls_thread = threading.Thread(target=serve_tls, daemon=True)
+        tls_thread.start()
+    else:
+        tls_thread = None
+
+    tcp_thread = threading.Thread(target=serve_tcp, daemon=True)
+    tcp_thread.start()
+
+    try:
+        prog = tmpdir / "slice1d-check.mo"
+        prog.write_text(
+            r"""module Slice1dCheck
+use Command
+
+fn net_kind(r: Result(Connection, NetworkError)) : Text
+  case r
+    Ok(_): "Ok"
+    Error(Network.TimedOut): "TimedOut"
+    Error(Network.Closed): "Closed"
+    Error(Network.Refused(host: h, port: p)): "Refused:#{h}:#{p}"
+    Error(Network.UnknownHost(host: h)): "UnknownHost:#{h}"
+    Error(Network.Broken(reason: _)): "Broken"
+    Error(Network.Certificate(reason: _)): "Certificate"
+  end
+end
+
+fn sql_kind(r: Result(Unit, SqliteError)) : Text
+  case r
+    Ok(_): "Ok"
+    Error(Sqlite.OutsideFolder(path: p)): "Outside:#{p}"
+    Error(Sqlite.NotPermitted(reason: m)): "NotPermitted:#{m}"
+    Error(Sqlite.SqlFailed(message: m)): "SqlFailed:#{m}"
+  end
+end
+
+fn parse_arg_int(args: List(Text), idx: Int) : Int
+  case args.get(idx)
+    Some(s): s.to_int or 0
+    None: 0
+  end
+end
+
+fn decode_utf8_or(b: Bytes, fallback: Text) : Text
+  b.decode_utf8 or fallback
+end
+
+fn must_net(r: Result(Unit, NetworkError))
+  case r
+    Ok(_): Unit
+    Error(_): stop "unexpected network error"
+  end
+end
+
+fn must_sql(r: Result(Unit, SqliteError))
+  case r
+    Ok(_): Unit
+    Error(_): stop "unexpected sqlite error"
+  end
+end
+
+fn main(console: Console, args: Args, net: Network, sql: Sqlite, cmd: Command)
+  tcp_port = parse_arg_int(args.list, 0)
+  tls_port = parse_arg_int(args.list, 1)
+
+  ## 1. Real TCP round-trip + allow_hosts refusal + zero-duration timeout
+  restricted = net.allow_hosts(["127.0.0.1:#{tcp_port}"])
+  c1 = case restricted.connect("127.0.0.1", tcp_port, 5.seconds)
+    Ok(c): c
+    Error(_): stop "unexpected tcp error"
+  end
+  must_net(c1.send("hello".bytes))
+  r1 = case c1.receive(64)
+    Ok(b): decode_utf8_or(b, "bad-utf8")
+    Error(e): "err:#{e}"
+  end
+  console.print("tcp=#{r1}")
+  console.print("refused=#{net_kind(restricted.connect("example.com", 80, 1.seconds))}")
+  console.print("timeout=#{net_kind(net.connect("127.0.0.1", tcp_port, 0.milliseconds))}")
+
+  ## 2. Real TLS round-trip (with SSL_CERT_FILE trusted CA) + plain-TCP Broken
+  if tls_port > 0
+    tc = case net.connect_secure("127.0.0.1", tls_port, 5.seconds)
+      Ok(c): c
+      Error(_): stop "unexpected tls error"
+    end
+    must_net(tc.send("secure".bytes))
+    rt = case tc.receive(64)
+      Ok(b): decode_utf8_or(b, "bad-utf8")
+      Error(e): "err:#{e}"
+    end
+    console.print("tls=#{rt}")
+    console.print("tls_plain=#{net_kind(net.connect_secure("127.0.0.1", tcp_port, 5.seconds))}")
+  end
+
+  ## 3. Real Sqlite under --root/--state-dir: WAL, CRUD, execute_raw, query, authorizer, confinement
+  db = case sql.open("bench.db")
+    Ok(d): d
+    Error(_): stop "unexpected db open"
+  end
+  must_sql(
+    db.run("CREATE TABLE kv (id INTEGER PRIMARY KEY, k TEXT, v BLOB, f REAL, n TEXT)", [])
+  )
+  raw = case db.execute_raw("INSERT INTO kv (k, v, f, n) VALUES (?, ?, ?, ?)", [
+    Sqlite.String("alpha"),
+    Sqlite.Blob("raw".bytes),
+    Sqlite.Real(2.5),
+    Sqlite.Null
+  ])
+    Ok((changes, rowid)): "#{changes}:#{rowid}"
+    Error(e): "err:#{e}"
+  end
+  console.print("sql_raw=#{raw}")
+  q = case db.query("SELECT id, k, f, n FROM kv", [])
+    Ok(res): "#{res.columns.join(",")}|#{res.rows.size}"
+    Error(e): "err:#{e}"
+  end
+  console.print("sql_q=#{q}")
+  console.print("sql_attach=#{sql_kind(db.run("ATTACH DATABASE ':memory:' AS x", []))}")
+  console.print("sql_vacuum=#{sql_kind(db.run("VACUUM", []))}")
+  console.print("sql_vac_into=#{sql_kind(db.run("VACUUM INTO 'leak.db'", []))}")
+  esc_db = case sql.open("../escape.db")
+    Ok(_): "Ok"
+    Error(Sqlite.OutsideFolder(path: p)): "Outside:#{p}"
+    Error(_): "Other"
+  end
+  console.print("sql_esc=#{esc_db}")
+
+  ## 4. Real Command under --root: echo, allow_programs intersection, within escape, timeout
+  c_narrow = cmd.allow_programs(["echo", "pwd"]).allow_programs(["echo"])
+  out1 = case c_narrow.run_raw("echo", ["slice-1d"], 5.seconds)
+    Ok((code, out_b, _)): "#{code}:#{decode_utf8_or(out_b, "")}"
+    Error(e): "err:#{e}"
+  end
+  console.print("cmd_ok=#{out1.trim}")
+  console.print("cmd_deny=#{c_narrow.run("pwd", [], 5.seconds)}")
+  console.print("cmd_esc=#{cmd.within("../nope").run("echo", ["x"], 5.seconds)}")
+  console.print("cmd_to=#{cmd.run("sleep", ["5"], 30.milliseconds)}")
+end
+""",
+            encoding="utf-8",
+        )
+        bc_path = tmpdir / "slice1d_check.bc"
+        subprocess.run([str(mo), "emit", str(prog), "-o", str(bc_path)], check=True)
+        subprocess.run([str(mo_rt), "verify", str(bc_path)], check=True)
+
+        env = os.environ.copy()
+        if has_tls_fixture:
+            env["SSL_CERT_FILE"] = str(tls_ca_cert)
+
+        outputs = []
+        for label, cmd_prefix in (
+            ("c", [str(mo), "run"]),
+            ("rs", [str(mo_rt), "run"]),
+        ):
+            root_dir = tmpdir / f"s1d_root_{label}"
+            state_dir = tmpdir / f"s1d_state_{label}"
+            root_dir.mkdir()
+            state_dir.mkdir()
+            target = str(prog) if label == "c" else str(bc_path)
+            extra_args = [str(tcp_port), str(tls_port)]
+            cmd_line = [
+                *cmd_prefix,
+                "--root",
+                str(root_dir),
+                "--state-dir",
+                str(state_dir),
+                target,
+            ]
+            if label == "rs":
+                cmd_line.extend(["--", *extra_args])
+            else:
+                cmd_line.extend(extra_args)
+            res = subprocess.run(
+                cmd_line,
+                env=env,
+                capture_output=True,
+                timeout=60,
+            )
+            assert res.returncode == 0, (label, res.returncode, res.stdout, res.stderr)
+            assert res.stderr == b"", (label, res.stderr)
+            assert (state_dir / "bench.db").exists(), f"{label}: --state-dir did not receive bench.db"
+            outputs.append(res.stdout)
+
+        assert outputs[0] == outputs[1], (
+            f"Slice 1D differential mismatch:\n--- C mo\n{outputs[0].decode()}\n"
+            f"--- mo-rt\n{outputs[1].decode()}"
+        )
+
+        # Verify untrusted TLS cert returns Certificate error on BOTH C mo and mo-rt.
+        if has_tls_fixture:
+            untrusted_prog = tmpdir / "tls-untrusted.mo"
+            untrusted_prog.write_text(
+                r"""module TlsUntrusted
+
+fn parse_port(args: List(Text)) : Int
+  case args.get(0)
+    Some(s): s.to_int or 0
+    None: 0
+  end
+end
+
+fn main(console: Console, args: Args, net: Network)
+  p = parse_port(args.list)
+  out = case net.connect_secure("127.0.0.1", p, 5.seconds)
+    Ok(_): "Ok"
+    Error(Network.Certificate(reason: _)): "Certificate"
+    Error(Network.Broken(reason: _)): "Broken"
+    Error(Network.Closed): "Closed"
+    Error(Network.TimedOut): "TimedOut"
+    Error(Network.Refused(host: _, port: _)): "Refused"
+    Error(Network.UnknownHost(host: _)): "UnknownHost"
+  end
+  console.print(out)
+end
+""",
+                encoding="utf-8",
+            )
+            ut_bc = tmpdir / "tls_untrusted.bc"
+            subprocess.run([str(mo), "emit", str(untrusted_prog), "-o", str(ut_bc)], check=True)
+            clean_env = os.environ.copy()
+            clean_env.pop("SSL_CERT_FILE", None)
+            clean_env.pop("SSL_CERT_DIR", None)
+            c_ut = subprocess.run(
+                [str(mo), "run", str(untrusted_prog), str(tls_port)],
+                env=clean_env,
+                capture_output=True,
+                timeout=30,
+            )
+            rs_ut = subprocess.run(
+                [str(mo_rt), "run", str(ut_bc), "--", str(tls_port)],
+                env=clean_env,
+                capture_output=True,
+                timeout=30,
+            )
+            assert c_ut.returncode == 0 and rs_ut.returncode == 0, (c_ut, rs_ut)
+            assert c_ut.stdout == rs_ut.stdout == b"Certificate\n", (c_ut.stdout, rs_ut.stdout)
+
+        # Verify Slice 1D test block (Simulation + timers + crash/restart + Sqlite.fake + Command.fake)
+        sim_prog = tmpdir / "slice1d-sim.mo"
+        sim_prog.write_text(
+            r"""module Slice1dSim
+use Command
+
+struct Snapshot
+  value: Int
+end
+
+service
+  state Int = 10
+  tools add, current
+  every 1.second tick
+  token from env "MO_SLICE1D_SIM_TOKEN"
+end
+
+fn add(state: Int, _now: Time, delta: Int) : (Int, Int)
+  next = state + delta
+  (next, next)
+end
+
+fn current(state: Int, _now: Time) : Snapshot
+  Snapshot(value: state)
+end
+
+fn tick(state: Int, _now: Time) : Int
+  state + 1
+end
+
+test "slice 1d simulation and fakes"
+  ## Simulation: start (+1 startup tick -> 11), send, advance (+2 ticks -> 18), crash, restart (+1 tick -> 19)
+  t0 = Time.parse("2026-01-01T00:00:00Z") or stop "time"
+  sim = Simulation.start(Slice1dSim, t0)
+  assert Simulation.send(sim, Slice1dSim.current) == Ok(Snapshot(value: 11))
+  assert Simulation.send(sim, Slice1dSim.add, 5) == Ok((16, 16))
+  Simulation.advance(sim, 2.seconds)
+  assert Simulation.send(sim, Slice1dSim.current) == Ok(Snapshot(value: 18))
+  Simulation.crash(sim)
+  assert Simulation.send(sim, Slice1dSim.current) == Error(ServiceDown)
+  Simulation.restart(sim)
+  assert Simulation.send(sim, Slice1dSim.current) == Ok(Snapshot(value: 19))
+
+  ## Fake Sqlite + Fake Command
+  fsql = Sqlite.fake()
+  assert fsql.open("a.db") is Ok(fdb)
+  assert fdb.run("CREATE TABLE t (x INT)", []) == Ok(Unit)
+  assert fdb.run("INSERT INTO t VALUES (?)", [Sqlite.Integer(42)]) == Ok(Unit)
+  assert fsql.open("./a.db") is Ok(fdb2)
+  assert fdb2.query("SELECT x FROM t", []) == Ok(Sqlite.Rows(columns: ["x"], rows: [[Sqlite.Integer(42)]]))
+
+  fcmd = Command.fake(
+    Command.replies([(Command.spec("echo", ["hi"]), Command.ok_output("hi\n"))])
+  )
+  assert fcmd.run("echo", ["hi"], 1.second) ==
+    Ok(Command.Output(status: 0, stdout: "hi\n", stderr: ""))
+  assert fcmd.allow_programs(["ls"]).run("echo", ["hi"], 1.second) ==
+    Error(Command.NotPermitted(program: "echo"))
+end
+""",
+            encoding="utf-8",
+        )
+        test_bc = tmpdir / "slice1d_sim_tests.bc"
+        subprocess.run([str(mo), "emit", "--tests", str(sim_prog), "-o", str(test_bc)], check=True)
+        subprocess.run([str(mo_rt), "verify", str(test_bc)], check=True)
+        c_sim_test = subprocess.run([str(mo), "test", str(sim_prog)], capture_output=True, timeout=60)
+        rs_test = subprocess.run([str(mo_rt), "test", str(test_bc)], capture_output=True, timeout=60)
+        assert c_sim_test.returncode == 0 and rs_test.returncode == 0, (
+            c_sim_test.stdout.decode(errors="replace"),
+            c_sim_test.stderr.decode(errors="replace"),
+            rs_test.stdout.decode(errors="replace"),
+            rs_test.stderr.decode(errors="replace"),
+        )
+        assert b"1 passed, 0 failed, 0 stopped" in rs_test.stdout, rs_test.stdout
+
+        # Verify services/task-queue/queue-tests.mo passes all 59 tests & examples on mo-rt!
+        q_bc = tmpdir / "queue_tests.bc"
+        subprocess.run(
+            [str(mo), "emit", "--tests", str(ROOT / "services/task-queue/queue-tests.mo"), "-o", str(q_bc)],
+            cwd=ROOT,
+            check=True,
+        )
+        subprocess.run([str(mo_rt), "verify", str(q_bc)], cwd=ROOT, check=True)
+        rs_q = subprocess.run([str(mo_rt), "test", str(q_bc)], cwd=ROOT, capture_output=True, timeout=60)
+        assert rs_q.returncode == 0, (rs_q.stdout.decode(errors="replace"), rs_q.stderr.decode(errors="replace"))
+        assert b"59 passed, 0 failed, 0 stopped" in rs_q.stdout, rs_q.stdout
+    finally:
+        stop_flag.set()
+        tcp_srv.close()
+        if tls_srv is not None:
+            tls_srv.close()
+        tcp_thread.join(timeout=2)
+        if tls_thread is not None:
+            tls_thread.join(timeout=2)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mo", help="Path to C `mo` executable")
@@ -754,12 +1237,12 @@ def main() -> None:
     mo_rt = find_or_build_mo_rt(args.mo_rt, args.skip_build)
     check_no_openssl_linkage(mo_rt)
 
-    selected = args.case if args.case else SLICE_1C_GOLDEN_CASES
+    selected = args.case if args.case else SLICE_1D_GOLDEN_CASES
     if not args.case:
         assert len(selected) >= MINIMUM_COHORT, (
             f"Cohort has {len(selected)} cases, needs >= {MINIMUM_COHORT}"
         )
-        assert len(selected) == len(set(selected)), "duplicate case in SLICE_1C_GOLDEN_CASES"
+        assert len(selected) == len(set(selected)), "duplicate case in SLICE_1D_GOLDEN_CASES"
 
     run_count = 0
     test_count = 0
@@ -781,6 +1264,7 @@ def main() -> None:
         if not args.case:
             check_env_and_limits_differential(mo, mo_rt, tmpdir)
             check_slice_1c_differential(mo, mo_rt, tmpdir)
+            check_slice_1d_differential(mo, mo_rt, tmpdir)
 
     if failures:
         sys.stderr.write("\n\n".join(failures) + "\n")
@@ -789,7 +1273,8 @@ def main() -> None:
     total = run_count + test_count
     print(
         f"rust runtime: {total}/{total} golden suites matched C mo byte-for-byte "
-        f"({run_count} run, {test_count} test; + Env/limits/BigInt/Files/Clock/Random/Crypto/Unicode16/verify checks; 0 diffs; no libssl/libcrypto)"
+        f"({run_count} run, {test_count} test; + Env/limits/BigInt/Files/Clock/Random/Crypto/Unicode16/"
+        f"Network+TLS/Sqlite/Command/Simulation/task-queue/verify checks; 0 diffs; no libssl/libcrypto)"
     )
 
 
