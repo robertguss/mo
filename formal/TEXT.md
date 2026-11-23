@@ -51,12 +51,25 @@ effects. `sqliteFake` is spec-only.
 | `commandFake` | Map(Bytes, Bytes) | Command |
 | `secureRandomBytes` | SecureRandom, Int | Bytes |
 | `secureRandomSeeded` | Int | SecureRandom |
+| `writeBytes` | Files, Text, Bytes | Result(Unit, FileError) |
+| `rename` | Files, Text, Text | Result(Unit, FileError) |
+| `fileOpen` | Files, Text | Result(Files.File, FileError) |
+| `fileReadAt` | Files.File, Int, Int | Result(Bytes, FileError) |
+| `fileWriteAt` | Files.File, Int, Bytes | Result(Unit, FileError) |
+| `fileSize` | Files.File | Result(Int, FileError) |
+| `fileTruncate` | Files.File, Int | Result(Unit, FileError) |
+| `fileSync` | Files.File | Result(Unit, FileError) |
 
 The four `command*` operations stop with `Command is not modeled by mocore`,
 keeping prior effects; `commandFake` is spec-only. The two `secureRandom*`
 operations stop with `SecureRandom is not modeled by mocore`, keeping prior
-effects; `secureRandomSeeded` is spec-only. The `(crypto CryptoOp)` primitives
-stop with `Crypto is a trusted primitive unavailable in mocore`.
+effects; `secureRandomSeeded` is spec-only. The eight binary `Files` /
+`Files.File` operations (`writeBytes`, `rename`, `fileOpen`, `fileReadAt`,
+`fileWriteAt`, `fileSize`, `fileTruncate`, `fileSync`) stop with
+`Files binary handles are not modeled by mocore`, keeping prior effects;
+`Files.File` (`(file)`) is never a parameter of the entry function. The
+`(crypto CryptoOp)` primitives stop with
+`Crypto is a trusted primitive unavailable in mocore`.
 
 ### Earlier changes from 0.9
 
@@ -453,7 +466,7 @@ Each name in the following table means a **nullary S-expression**, e.g.
 | `CmpOp` | `lt le gt ge` |
 | `CharOp` | `code isDigit isLetter isWhiteSpace lower upper toText` |
 | `TextOp` | `concat byteCount charCount isEmpty chars fromChars lines words split trim trimStart trimEnd startsWith endsWith contains dropPrefix dropSuffix replace repeat padLeft padRight lower upper toInt toDecimal toFloat join bytes` |
-| `BytesOp` | `size get decodeUtf8 slice join toHex fromHex toBase64url fromBase64url` |
+| `BytesOp` | `size get decodeUtf8 slice join toHex fromHex toBase64url fromBase64url empty zeroed fromList toList fromU16Be fromU32Be fromI64Be u16BeAt u32BeAt i64BeAt` |
 | `UnicodeOp` | `graphemes displayWidth normalizeNfc lowercase uppercase letter digit` |
 | `CryptoOp` | `sha256 hmacSha256 constantTimeEq sealRaw openRaw hashPasswordRaw verifyPassword` |
 | `RangeOp` | `make start end toList contains toText` |

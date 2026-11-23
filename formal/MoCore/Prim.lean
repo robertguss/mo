@@ -292,6 +292,12 @@ def bytesOf : List Value → Option (List (List Int))
   | .bytes bs :: vs => (bytesOf vs).map (bs :: ·)
   | _ => none
 
+/-- The bytes of a list of `Byte` values. -/
+def byteValsOf : List Value → Option (List Int)
+  | [] => some []
+  | .byte b :: vs => (byteValsOf vs).map (b :: ·)
+  | _ => none
+
 /-- An optional `Bytes`. -/
 def optBytes : Option (List Int) → Value
   | some bs => someV (.bytes bs)
@@ -313,6 +319,26 @@ def evalBytesOp (op : BytesOp) (vs : List Value) (w : World) : Outcome :=
   | .fromHex, [.text s] => .ok (optBytes (bytesFromHex s)) w
   | .toBase64url, [.bytes bs] => .ok (.text (bytesToBase64url bs)) w
   | .fromBase64url, [.text s] => .ok (optBytes (bytesFromBase64url s)) w
+  | .empty, [] => .ok (.bytes []) w
+  | .zeroed, [.int n] =>
+    if n < 0 then outside "Bytes.zeroed with a negative count" w
+    else if n > 16777216 then outside "Bytes.zeroed count exceeds limit" w
+    else .ok (.bytes (List.replicate n.toNat 0)) w
+  | .fromList, [.list xs] =>
+    match byteValsOf xs with
+    | some bs => .ok (.bytes bs) w
+    | none => wrongArgs "Bytes.from_list"
+  | .toList, [.bytes bs] => .ok (.list (bs.map .byte)) w
+  | .fromU16Be, [.int n] =>
+    if n < 0 ∨ n > 65535 then outside "Bytes.from_u16_be value outside 0 to 65535" w
+    else .ok (.bytes (bytesFromU16Be n)) w
+  | .fromU32Be, [.int n] =>
+    if n < 0 ∨ n > 4294967295 then outside "Bytes.from_u32_be value outside 0 to 4294967295" w
+    else .ok (.bytes (bytesFromU32Be n)) w
+  | .fromI64Be, [.int n] => .ok (.bytes (bytesFromI64Be n)) w
+  | .u16BeAt, [.bytes bs, .int off] => .ok (optIntOf (bytesU16BeAt bs off)) w
+  | .u32BeAt, [.bytes bs, .int off] => .ok (optIntOf (bytesU32BeAt bs off)) w
+  | .i64BeAt, [.bytes bs, .int off] => .ok (optIntOf (bytesI64BeAt bs off)) w
   | _, _ => wrongArgs "Bytes primitive"
 
 /-! ## Ranges -/
@@ -799,6 +825,9 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
     outside "Command is not modeled by mocore" w
   | .secureRandomBytes, _ | .secureRandomSeeded, _ =>
     outside "SecureRandom is not modeled by mocore" w
+  | .writeBytes, _ | .rename, _ | .fileOpen, _ | .fileReadAt, _ | .fileWriteAt, _
+  | .fileSize, _ | .fileTruncate, _ | .fileSync, _ =>
+    outside "Files binary handles are not modeled by mocore" w
   | _, _ => wrongArgs "capability primitive"
 
 /-- A derived handle retains the selected fake's identity. Ordinary returned

@@ -235,6 +235,55 @@ static MO_MUST_USE bool cell(struct prim_fixture *f, uint32_t type, struct input
     }
 }
 
+static void bytes_laws(struct prim_fixture *f, enum mo_primitive_id id, const struct mo_cell *args,
+                       struct mo_cell result) {
+    const char *reason = NULL;
+    if (id == MO_PRIM_BYTES_ZEROED) {
+        size_t len = 0;
+        const uint8_t *raw = mo_value_data(result, &len);
+        MO_ASSERT((int64_t)len == mo_cell_get_int(args[0]));
+        for (size_t i = 0; i < len; i++)
+            MO_ASSERT(raw[i] == 0);
+    } else if (id == MO_PRIM_BYTES_FROM_LIST) {
+        struct mo_cell back;
+        enum mo_prim_status st =
+            mo_prim_call(f->heap, &f->types, MO_PRIM_BYTES_TO_LIST,
+                         f->signature[MO_PRIM_BYTES_TO_LIST], &result, &back, &reason);
+        if (st == MO_PRIM_RETURNED) {
+            bool eq = false;
+            uint32_t list_ty = f->types.items[f->signature[MO_PRIM_BYTES_TO_LIST]].result;
+            MO_ASSERT(mo_value_equal(f->heap, list_ty, args[0], back, &eq) && eq);
+            mo_value_drop(f->heap, list_ty, back);
+        } else
+            MO_ASSERT(st == MO_PRIM_OUT_OF_MEMORY);
+    } else if (id == MO_PRIM_BYTES_TO_LIST) {
+        struct mo_cell back;
+        enum mo_prim_status st =
+            mo_prim_call(f->heap, &f->types, MO_PRIM_BYTES_FROM_LIST,
+                         f->signature[MO_PRIM_BYTES_FROM_LIST], &result, &back, &reason);
+        if (st == MO_PRIM_RETURNED) {
+            bool eq = false;
+            MO_ASSERT(mo_value_equal(f->heap, f->builtin[MO_TYPE_BYTES], args[0], back, &eq) && eq);
+            mo_value_drop(f->heap, f->builtin[MO_TYPE_BYTES], back);
+        } else
+            MO_ASSERT(st == MO_PRIM_OUT_OF_MEMORY);
+    } else if (id == MO_PRIM_BYTES_FROM_U16_BE || id == MO_PRIM_BYTES_FROM_U32_BE ||
+               id == MO_PRIM_BYTES_FROM_I64_BE) {
+        enum mo_primitive_id reader = id == MO_PRIM_BYTES_FROM_U16_BE   ? MO_PRIM_BYTES_U16_BE_AT
+                                      : id == MO_PRIM_BYTES_FROM_U32_BE ? MO_PRIM_BYTES_U32_BE_AT
+                                                                        : MO_PRIM_BYTES_I64_BE_AT;
+        struct mo_cell rd_args[] = {result, mo_cell_int(0)}, back;
+        enum mo_prim_status st =
+            mo_prim_call(f->heap, &f->types, reader, f->signature[reader], rd_args, &back, &reason);
+        if (st == MO_PRIM_RETURNED) {
+            MO_ASSERT(mo_cell_get_tag(back) == 1 &&
+                      mo_cell_get_int(mo_cell_get_payload(back)) == mo_cell_get_int(args[0]));
+            mo_value_drop(f->heap, f->types.items[f->signature[reader]].result, back);
+        } else
+            MO_ASSERT(st == MO_PRIM_OUT_OF_MEMORY);
+    }
+}
+
 static void unicode_laws(struct prim_fixture *f, enum mo_primitive_id id,
                          const struct mo_cell *args, struct mo_cell result) {
     if (id == MO_PRIM_UNICODE16_GRAPHEMES) {
@@ -325,6 +374,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         if (status == MO_PRIM_RETURNED) {
             MO_ASSERT(reason == NULL);
             unicode_laws(&f, id, args, result);
+            bytes_laws(&f, id, args, result);
             struct mo_buffer output;
             mo_buffer_init(&output, 262144);
             /* Rendering may exceed its independent output or scratch ceiling. */

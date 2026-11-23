@@ -155,4 +155,41 @@ def b64urlDecodeChars : List Char → Option (List Int)
 
 def bytesFromBase64url (s : String) : Option (List Int) := b64urlDecodeChars s.toList
 
+/-! ## Big-endian binary packing and unpacking -/
+
+def bytesFromU16Be (n : Int) : List Int :=
+  [n / 256 % 256, n % 256]
+
+def bytesFromU32Be (n : Int) : List Int :=
+  [n / 16777216 % 256, n / 65536 % 256, n / 256 % 256, n % 256]
+
+def bytesFromI64Be (n : Int) : List Int :=
+  let u := n % 18446744073709551616
+  [u / 72057594037927936 % 256, u / 281474976710656 % 256,
+   u / 1099511627776 % 256, u / 4294967296 % 256,
+   u / 16777216 % 256, u / 65536 % 256, u / 256 % 256, u % 256]
+
+def bytesU16BeAt (bs : List Int) (off : Int) : Option Int :=
+  if 0 ≤ off ∧ off + 2 ≤ bs.length then
+    match bs.drop off.toNat with
+    | b0 :: b1 :: _ => some (b0 * 256 + b1)
+    | _ => none
+  else none
+
+def bytesU32BeAt (bs : List Int) (off : Int) : Option Int :=
+  if 0 ≤ off ∧ off + 4 ≤ bs.length then
+    match bs.drop off.toNat with
+    | b0 :: b1 :: b2 :: b3 :: _ => some (((b0 * 256 + b1) * 256 + b2) * 256 + b3)
+    | _ => none
+  else none
+
+def bytesI64BeAt (bs : List Int) (off : Int) : Option Int :=
+  if 0 ≤ off ∧ off + 8 ≤ bs.length then
+    match bs.drop off.toNat with
+    | b0 :: b1 :: b2 :: b3 :: b4 :: b5 :: b6 :: b7 :: _ =>
+      let u := ((((((b0 * 256 + b1) * 256 + b2) * 256 + b3) * 256 + b4) * 256 + b5) * 256 + b6) * 256 + b7
+      some (if u ≥ 9223372036854775808 then u - 18446744073709551616 else u)
+    | _ => none
+  else none
+
 end MoCore

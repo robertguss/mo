@@ -264,7 +264,9 @@ user-perceived characters, and converts case beyond ASCII.
 
 `Bytes` is binary data. `text.bytes` always succeeds; `bytes.decode_utf8`
 returns `None` when the bytes aren't valid UTF-8. `bytes.slice(from, to)` cuts
-a part out, and `Bytes.join(parts)` puts parts together (section 14).
+a part out, `Bytes.join(parts)` puts parts together, and `Bytes.empty`,
+`Bytes.zeroed`, `Bytes.from_list`, `to_list`, and the big-endian integer helpers
+pack and unpack binary formats (section 14).
 
 ### 3.5 Unit
 
@@ -1052,14 +1054,15 @@ the same arguments, it always gives the same result.
 | `Sqlite.Database` | run SQL statements and queries on one open database |
 | `Command` | run confined external programs inside one folder (with `use Command`) |
 | `SecureRandom` | draw cryptographically secure random bytes |
+| `Files.File` | read, write, resize and sync bytes at arbitrary offsets on one open file |
 
 ### 11.2 main
 
 `main` lists the capabilities the program needs, in any order and at most one
 of each type. The runtime hands over exactly those, so a program's whole
 authority is on its first line. The `Files`, `ReadFiles`, `Sqlite` or `Command` it gets reach the
-folder the program was started in. `main` can't list a `Connection` or a `Sqlite.Database`:
-a program gets them only from a `Network` or a `Sqlite`.
+folder the program was started in. `main` can't list a `Connection`, a `Sqlite.Database`
+or a `Files.File`: a program gets them only from a `Network`, a `Sqlite` or a `Files`.
 
 `main` returns nothing, and the program exits with status 0; or an `Int`, the
 exit status, from 0 to 255; or `Result(Unit, E)`, where `Error(e)` prints `e`'s
@@ -1900,7 +1903,20 @@ lengths or non-hex characters). `to_base64url : Text` encodes unpadded URL-safe
 Base64 (RFC 4648 section 5), and
 `Bytes.from_base64url(text: Text) : Option(Bytes)` decodes it strictly
 (rejecting invalid characters, length `1 mod 4`, `=` padding, and non-zero
-trailing pad bits).
+trailing pad bits). `Bytes.empty : Bytes` is the zero-byte value.
+`Bytes.zeroed(count: Int) : Bytes` returns `count` zero bytes; a negative count
+or a count above 16 MiB is a bug (13.2).
+`Bytes.from_list(bytes: List(Byte)) : Bytes` and `to_list : List(Byte)` convert
+between `Bytes` and `List(Byte)`. `Bytes.from_u16_be(n: Int) : Bytes` encodes an
+unsigned 16-bit big-endian integer (`0` to `65535`; outside that range is a
+bug), `Bytes.from_u32_be(n: Int) : Bytes` encodes an unsigned 32-bit big-endian
+integer (`0` to `4294967295`; outside that range is a bug), and
+`Bytes.from_i64_be(n: Int) : Bytes` encodes a signed 64-bit big-endian
+two's-complement integer. `u16_be_at(offset: Int) : Option(Int)`,
+`u32_be_at(offset: Int) : Option(Int)` and
+`i64_be_at(offset: Int) : Option(Int)` decode 2, 4 or 8 big-endian bytes
+starting at `offset`, giving `None` when `offset < 0` or fewer than the needed
+bytes remain.
 
 **List(T)**: `size : Int`, `empty? : Bool`. `get(i: Int)`, `first` and
 `last : Option(T)`; `get` gives `None` for a position below 0 or past the end.
@@ -1974,13 +1990,32 @@ outside tests, examples and promises is an error (section 12.4).
 **Files**: `read_text(path: Text) : Result(Text, FileError)`,
 `read_bytes(path: Text) : Result(Bytes, FileError)`,
 `write_text(path: Text, text: Text)` (replaces the whole file),
-`append_text(path: Text, text: Text)`, `remove(path: Text)` and
-`make_folder(folder: Text)`, each `: Result(Unit, FileError)`; `list(folder: Text) : Result(List(Text), FileError)`,
+`write_bytes(path: Text, data: Bytes)` (replaces or creates the file with raw
+bytes), `append_text(path: Text, text: Text)`, `remove(path: Text)`,
+`rename(from: Text, to: Text)` (atomically renames one regular file to another
+path inside the capability's folder, replacing any existing regular file at
+`to`), `make_folder(folder: Text)`, each `: Result(Unit, FileError)`;
+`open(path: Text) : Result(Files.File, FileError)` (opens an existing regular
+file for random-access read/write without truncating, or creates it if missing);
+`list(folder: Text) : Result(List(Text), FileError)`,
 the names in the folder, sorted; `exists?(path: Text) : Bool`;
-`within(folder: Text) : Files`; `read_only : ReadFiles`. Writing or
-appending into a folder that doesn't exist gives `Error(NotFound(path: path))`;
+`within(folder: Text) : Files`; `read_only : ReadFiles`. Writing, renaming or
+opening into a folder that doesn't exist gives `Error(NotFound(path: path))`;
 `make_folder` makes the folder and any missing folders above it, and succeeds
-if the folder already exists.
+if the folder already exists. `write_bytes`, `rename` and `open` refuse any
+symbolic link (final or intermediate) with `Error(NotAllowed(path: path))` and
+sync the parent folder on creation or rename.
+**Files.File** is an open random-access binary file capability returned by
+`Files.open`, closed when dropped. Up to 64 files may be open at once; opening
+another is a bug (13.2). `read_at(offset: Int, count: Int) : Result(Bytes, FileError)`
+reads up to `count` bytes starting at `offset` (giving shorter or empty `Bytes`
+at or past the end; a negative `offset`, negative `count`, or `count` above
+16 MiB is a bug). `write_at(offset: Int, data: Bytes) : Result(Unit, FileError)`
+writes all of `data` at `offset`, zero-extending if `offset` is past the current
+end (a negative `offset` is a bug). `size : Result(Int, FileError)` gives the
+current byte length. `truncate(size: Int) : Result(Unit, FileError)` shrinks or
+zero-extends the file to `size` bytes (a negative `size` is a bug).
+`sync : Result(Unit, FileError)` flushes the file's bytes to durable storage.
 `entries(folder: Text) : Result(List(Entry), FileError)` gives the folder's
 entries in `list`'s order, each an `Entry(name: Text, kind: EntryKind)` whose
 kind is `File`, `Folder`, `Link` or `Other`; a link is reported, never
@@ -1990,8 +2025,10 @@ entries in `list`'s order, each folder followed by what's inside it. It doesn't
 enter links, and stops at the first folder it can't read. A capability from
 `within` or `read_only` holds its folder open while it's used, and having too
 many open at once is a bug (13.2).
-`Files.in_memory(files: Map(Text, Text)) : Files`. In such a fake, the
-folders are those its files are in, those `make_folder` made, and those whose
+`Files.in_memory(files: Map(Text, Text)) : Files`. In such a fake, files are
+stored as raw bytes (so `write_bytes`, `rename`, `open` and `Files.File`
+operations behave identically to real files, while `read_text` gives
+`Error(NotText(path: path))` on non-UTF-8 bytes), the folders are those its files are in, those `make_folder` made, and those whose
 last file was removed, as on a disk, and `list` and `entries` give the names
 directly inside a folder, each subfolder once. Files that make one path both a
 file and a folder, as `{"a": "x", "a/b": "y"}` do, are a bug (13.2).

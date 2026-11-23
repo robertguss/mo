@@ -1154,6 +1154,55 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
   passes program (eq (tOpt tBytes) (prim (.bytes .fromBase64url) [str "Zh"]) (none_ tBytes)) &&
   passes program (eq (tOpt tBytes) (prim (.bytes .fromBase64url) [str "Zg=="]) (none_ tBytes))
 
+#guard passes program (eq tBytes (prim (.bytes .empty) []) (.lit (.bytes []))) &&
+  passes program (eq tBytes (prim (.bytes .zeroed) [int 4]) (.lit (.bytes [0, 0, 0, 0]))) &&
+  stops program (prim (.bytes .zeroed) [int (-1)]) tBytes
+    (.outside "Bytes.zeroed with a negative count") &&
+  stops program (prim (.bytes .zeroed) [int 16777217]) tBytes
+    (.outside "Bytes.zeroed count exceeds limit") &&
+  passes program (eq tBytes (prim (.bytes .fromList) [listOf tByte [byteE 0, byteE 255]])
+    (.lit (.bytes [0, 255]))) &&
+  passes program (eq (tList tByte) (prim (.bytes .toList) [.lit (.bytes [1, 254])])
+    (listOf tByte [byteE 1, byteE 254])) &&
+  passes program (eq tBytes (prim (.bytes .fromU16Be) [int 0x1234]) (.lit (.bytes [0x12, 0x34]))) &&
+  stops program (prim (.bytes .fromU16Be) [int 65536]) tBytes
+    (.outside "Bytes.from_u16_be value outside 0 to 65535") &&
+  passes program (eq tBytes (prim (.bytes .fromU32Be) [int 0x12345678])
+    (.lit (.bytes [0x12, 0x34, 0x56, 0x78]))) &&
+  stops program (prim (.bytes .fromU32Be) [int (-1)]) tBytes
+    (.outside "Bytes.from_u32_be value outside 0 to 4294967295") &&
+  passes program (eq tBytes (prim (.bytes .fromI64Be) [int (-1)])
+    (.lit (.bytes [255, 255, 255, 255, 255, 255, 255, 255]))) &&
+  passes program (eq (tOpt tInt) (prim (.bytes .u16BeAt) [.lit (.bytes [0x12, 0x34]), int 0])
+    (some_ tInt (int 0x1234))) &&
+  passes program (eq (tOpt tInt) (prim (.bytes .u16BeAt) [.lit (.bytes [0x12, 0x34]), int 1])
+    (none_ tInt)) &&
+  passes program (eq (tOpt tInt) (prim (.bytes .u32BeAt) [.lit (.bytes [0x80, 0, 0, 1]), int 0])
+    (some_ tInt (int 0x80000001))) &&
+  passes program (eq (tOpt tInt)
+    (prim (.bytes .i64BeAt) [.lit (.bytes [0x80, 0, 0, 0, 0, 0, 0, 0]), int 0])
+    (some_ tInt (int (-9223372036854775808)))) &&
+  passes program (eq (tOpt tInt)
+    (prim (.bytes .i64BeAt) [.lit (.bytes [0, 0, 0, 0, 0, 0, 0, 0]), int 9223372036854775807])
+    (none_ tInt))
+
+#guard Text.exprRoundTrip (io .fileOpen [v "f", str "a.bin"]) &&
+  typedAs? program [("f", tCap .files)] (io .writeBytes [v "f", str "a.bin", .lit (.bytes [1])])
+    (tRes tUnit tFileError) &&
+  typedAs? program [("f", tCap .files)] (io .rename [v "f", str "a.bin", str "b.bin"])
+    (tRes tUnit tFileError) &&
+  typedAs? program [("f", tCap .files)] (io .fileOpen [v "f", str "a.bin"])
+    (tRes (tCap .file) tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileReadAt [v "h", int 0, int 4])
+    (tRes tBytes tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileWriteAt [v "h", int 0, .lit (.bytes [1])])
+    (tRes tUnit tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileSize [v "h"]) (tRes tInt tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileTruncate [v "h", int 0]) (tRes tUnit tFileError) &&
+  typedAs? program [("h", tCap .file)] (io .fileSync [v "h"]) (tRes tUnit tFileError) &&
+  stops program (io .fileOpen [v "f", str "a.bin"]) (tRes (tCap .file) tFileError)
+    (.outside "Files binary handles are not modeled by mocore") {} [("f", .files)]
+
 -- Real-state dispatch, empty root, inaccessible/narrowed roots and persistent folders.
 #guard passes program
   (eq (tRes (tList .entry) tFileError) (io (.entries false) [v "files", str "."])

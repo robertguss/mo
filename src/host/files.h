@@ -17,6 +17,13 @@ struct mo_folder {
     int descriptor;
     bool pending, forbidden;
 };
+struct mo_open_file {
+    struct mo_host *owner;
+    int descriptor;
+};
+struct mo_fake_open_file {
+    struct mo_host *owner;
+};
 enum mo_path_mode {
     PATH_READ,
     PATH_WRITE,
@@ -24,7 +31,8 @@ enum mo_path_mode {
     PATH_FOLDER,
     PATH_MAKE_FOLDER,
     PATH_REMOVE,
-    PATH_EXISTS
+    PATH_EXISTS,
+    PATH_STRICT_PARENT
 };
 struct mo_path_result {
     int descriptor;
@@ -54,6 +62,10 @@ MO_MUST_USE enum mo_host_outcome mo_host_files_fake(struct mo_host *host, struct
                                                     uint32_t type, struct mo_cell files,
                                                     struct mo_cell *out,
                                                     struct mo_host_error *error);
+MO_MUST_USE bool mo_host_texts_to_bytes_map(struct mo_host *host, struct mo_heap *heap,
+                                            struct mo_cell text_map, struct mo_cell *bytes_map);
+MO_MUST_USE bool mo_host_bytes_to_texts_map(struct mo_host *host, struct mo_heap *heap,
+                                            struct mo_cell bytes_map, struct mo_cell *text_map);
 MO_MUST_USE enum mo_host_outcome mo_host_fake_files_call(struct mo_host *host, struct mo_heap *heap,
                                                          uint32_t operation, uint32_t type,
                                                          const struct mo_cell *args,

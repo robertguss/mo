@@ -381,7 +381,15 @@ bool mo_codegen_operation(const struct mo_core_prim *p, struct mo_codegen_operat
                                                MO_HOST_COMMAND_ALLOW_PROGRAMS,
                                                MO_HOST_COMMAND_FAKE,
                                                MO_HOST_SECURERANDOM_BYTES,
-                                               MO_HOST_SECURERANDOM_SEEDED};
+                                               MO_HOST_SECURERANDOM_SEEDED,
+                                               MO_HOST_FILES_WRITE_BYTES,
+                                               MO_HOST_FILES_RENAME,
+                                               MO_HOST_FILES_OPEN,
+                                               MO_HOST_FILES_READ_AT,
+                                               MO_HOST_FILES_WRITE_AT,
+                                               MO_HOST_FILES_SIZE,
+                                               MO_HOST_FILES_TRUNCATE,
+                                               MO_HOST_FILES_SYNC};
         _Static_assert(sizeof rows / sizeof rows[0] == MO_CORE_IO_OP_READ_TEXT,
                        "one row for each Core IO operation");
         static const enum mo_host_id files[] = {MO_HOST_FILES_READ_TEXT, MO_HOST_FILES_READ_BYTES,

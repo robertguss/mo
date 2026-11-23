@@ -328,8 +328,9 @@ MO_MUST_USE struct value infer_member(struct inference *p, struct value v,
             }
             return out;
         }
-        const char *module =
-            strcmp(type->shape.name, "Sqlite.Database") == 0 ? "Sqlite" : type->shape.name;
+        const char *module = strcmp(type->shape.name, "Sqlite.Database") == 0 ? "Sqlite"
+                             : strcmp(type->shape.name, "Files.File") == 0    ? "Files"
+                                                                              : type->shape.name;
         const struct mo_native_signature *signature = infer_native_definition(p, module, name);
         if (signature != NULL)
             return infer_native_identifier(p, signature);

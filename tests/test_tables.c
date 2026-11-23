@@ -80,7 +80,7 @@ static const struct type types[] = {
     {"Sqlite", 0, false, true},        {"Sqlite.Database", 0, false, true},
     {"Sqlite.Value", 0, false, false}, {"Sqlite.Rows", 0, false, false},
     {"SqliteError", 0, false, false},  {"Command", 0, false, true},
-    {"SecureRandom", 0, false, true},
+    {"SecureRandom", 0, false, true},  {"Files.File", 0, false, true},
 };
 
 /* The six abilities (reference 9.2). */
@@ -632,9 +632,11 @@ static void test_host_operations_take_their_capability(void) {
         }
         expect(capability_of(line->module) != NULL, line, "its module isn't a capability's");
         bool operation =
-            signature.param_count > 0 && (span_is(signature.params[0], line->module) ||
-                                          (strcmp(line->module, "Sqlite") == 0 &&
-                                           span_is(signature.params[0], "Sqlite.Database")));
+            signature.param_count > 0 &&
+            (span_is(signature.params[0], line->module) ||
+             (strcmp(line->module, "Sqlite") == 0 &&
+              span_is(signature.params[0], "Sqlite.Database")) ||
+             (strcmp(line->module, "Files") == 0 && span_is(signature.params[0], "Files.File")));
         bool constructor =
             span_is(signature.result, line->module) && !signature.param_facts.capability;
         expect(operation != constructor, line,
@@ -703,6 +705,14 @@ static void test_every_capability_operation_is_there(void) {
         {"Command", "fake"},
         {"SecureRandom", "bytes"},
         {"SecureRandom", "seeded"},
+        {"Files", "write_bytes"},
+        {"Files", "rename"},
+        {"Files", "open"},
+        {"Files", "read_at"},
+        {"Files", "write_at"},
+        {"Files", "size"},
+        {"Files", "truncate"},
+        {"Files", "sync"},
     };
     size_t count = sizeof operations / sizeof operations[0];
     for (size_t i = 0; i < count; i++) {

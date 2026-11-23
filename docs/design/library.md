@@ -290,6 +290,16 @@ no functions, only tests that pin what reference section 14 says they do.
 | `Bytes.from_hex(text)` | primitive | `BYTES_FROM_HEX` | accepts ASCII hex (upper or lower), rejects odd length or non-hex |
 | `to_base64url` | primitive | `BYTES_TO_BASE64URL` | RFC 4648 §5 unpadded URL-safe base64 encoding |
 | `Bytes.from_base64url(text)` | primitive | `BYTES_FROM_BASE64URL` | strict RFC 4648 §5 unpadded decoding: rejects invalid chars, `len % 4 == 1`, and non-zero trailing pad bits |
+| `Bytes.empty` | primitive | `BYTES_EMPTY` | zero-byte constant, avoiding an empty list conversion |
+| `Bytes.zeroed(count)` | primitive | `BYTES_ZEROED` | zero-filled buffer of length `count` (`0..MO_LIMIT_FILE_IO_BYTES`), allocated once |
+| `Bytes.from_list(bytes)` | primitive | `BYTES_FROM_LIST` | packs a `List(Byte)` into contiguous `Bytes` in one pass |
+| `to_list` | primitive | `BYTES_TO_LIST` | unpacks `Bytes` into `List(Byte)` in byte order |
+| `Bytes.from_u16_be(n)` | primitive | `BYTES_FROM_U16_BE` | 2-byte big-endian unsigned integer (`0..65535`); out of range is a bug |
+| `Bytes.from_u32_be(n)` | primitive | `BYTES_FROM_U32_BE` | 4-byte big-endian unsigned integer (`0..4294967295`); out of range is a bug |
+| `Bytes.from_i64_be(n)` | primitive | `BYTES_FROM_I64_BE` | 8-byte big-endian two's-complement signed 64-bit integer |
+| `u16_be_at(offset)` | primitive | `BYTES_U16_BE_AT` | reads 2 big-endian bytes as unsigned `Int` (`0..65535`), or `None` out of bounds |
+| `u32_be_at(offset)` | primitive | `BYTES_U32_BE_AT` | reads 4 big-endian bytes as unsigned `Int` (`0..4294967295`), or `None` out of bounds |
+| `i64_be_at(offset)` | primitive | `BYTES_I64_BE_AT` | reads 8 big-endian bytes as signed 64-bit `Int`, or `None` out of bounds |
 
 ## Unit
 
@@ -513,7 +523,15 @@ spec code (reference 12.4).
 | `exists?(path)` | host | `FILES_EXISTS` | |
 | `within(folder)` | host | `FILES_WITHIN` | |
 | `read_only` | host | `FILES_READ_ONLY` | |
-| `Files.in_memory(files)` | host | `FILES_IN_MEMORY` | a fake, for spec code only (reference 12.4) |
+| `write_bytes(path, data)` | host | `FILES_WRITE_BYTES` | whole-file binary write with strict no-symlink confinement and parent-dir sync on create |
+| `rename(from, to)` | host | `FILES_RENAME` | atomic `renameat` within the capability's folder with strict confinement and parent-dir sync |
+| `open(path)` | host | `FILES_OPEN` | opens or creates a confined `Files.File` handle for random-access binary I/O |
+| `read_at(offset, count)` | host | `FILES_READ_AT` | positional read on `Files.File` (`pread` loop on real files), capped at `MO_LIMIT_FILE_IO_BYTES` |
+| `write_at(offset, data)` | host | `FILES_WRITE_AT` | positional write on `Files.File` (`pwrite` loop on real files), zero-extending past EOF |
+| `size` | host | `FILES_SIZE` | current byte length of an open `Files.File` |
+| `truncate(size)` | host | `FILES_TRUNCATE` | resizes an open `Files.File` (truncating or zero-extending) |
+| `sync` | host | `FILES_SYNC` | flushes `Files.File` data to durable storage (`F_FULLFSYNC` with `fsync` fallback on macOS, `fsync` on Linux) |
+| `Files.in_memory(files)` | host | `FILES_IN_MEMORY` | a fake, for spec code only (reference 12.4); stores raw bytes so binary and `Files.File` ops match real files |
 
 ## ReadFiles
 

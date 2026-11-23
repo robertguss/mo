@@ -3510,6 +3510,65 @@ static void actor_checks(void) {
     free_fixture(&ok);
 }
 
+static void files_binary_and_bytes_checks(void) {
+    struct fixture f;
+    init(&f, "module Main\n"
+             "fn roundtrip(files: Files) : Result(Int, FileError)\n"
+             "  e = Bytes.empty\n"
+             "  z = Bytes.zeroed(4)\n"
+             "  raw = Bytes.from_list([0, 255])\n"
+             "  _xs = raw.to_list\n"
+             "  hdr = Bytes.join([e, z, Bytes.from_u16_be(513), Bytes.from_u32_be(67305985), "
+             "Bytes.from_i64_be(-42)])\n"
+             "  _a = hdr.u16_be_at(4)\n"
+             "  _b = Bytes.u32_be_at(hdr, 6)\n"
+             "  _c = hdr.i64_be_at(10)\n"
+             "  try files.write_bytes(\"tmp.bin\", hdr)\n"
+             "  try files.rename(\"tmp.bin\", \"data.bin\")\n"
+             "  fh = try files.open(\"data.bin\")\n"
+             "  try fh.write_at(0, raw)\n"
+             "  _got = try fh.read_at(0, 18)\n"
+             "  try fh.truncate(10)\n"
+             "  try fh.sync\n"
+             "  sz = try fh.size\n"
+             "  _sz2 = try Files.size(fh)\n"
+             "  Ok(sz)\n"
+             "end\n");
+    CHECK(f.program != NULL && !mo_diags_any(&f.diags));
+    free_fixture(&f);
+
+    /* ReadFiles must not gain write_bytes, rename, or open */
+    const char *const ro_calls[] = {
+        "module Main\nfn bad(r: ReadFiles) : Result(Unit, FileError)\n"
+        "  r.write_bytes(\"a\", Bytes.empty)\nend\n",
+        "module Main\nfn bad(r: ReadFiles) : Result(Unit, FileError)\n"
+        "  r.rename(\"a\", \"b\")\nend\n",
+        "module Main\nfn bad(r: ReadFiles) : Result(Files.File, FileError)\n"
+        "  r.open(\"a\")\nend\n",
+    };
+    for (size_t i = 0; i < sizeof ro_calls / sizeof ro_calls[0]; i++) {
+        init(&f, ro_calls[i]);
+        CHECK(f.program == NULL && f.diags.count > 0 &&
+              f.diags.items[0].code == MO_CODE_NAME_UNKNOWN);
+        free_fixture(&f);
+    }
+
+    /* Files.File cannot appear in main signature or service state */
+    init(&f, "module Main\nfn main(_fh: Files.File)\nend\n");
+    CHECK(f.program == NULL && mo_diags_any(&f.diags));
+    free_fixture(&f);
+
+    init(&f, "module Main\n"
+             "service\n"
+             "  state Option(Files.File) = None\n"
+             "  tools ping\n"
+             "  token from env \"TOK\"\n"
+             "end\n"
+             "fn ping(_s: Option(Files.File), _now: Time) : Int\n  1\nend\n");
+    CHECK(f.program == NULL && mo_diags_any(&f.diags));
+    free_fixture(&f);
+}
+
 static void run(void *argument) {
     (void)argument;
     simulation_inputs();
@@ -3518,6 +3577,7 @@ static void run(void *argument) {
     api_server_checks();
     sqlite_decode_checks();
     actor_checks();
+    files_binary_and_bytes_checks();
     service_handlers();
     service_rules();
     map_graph();

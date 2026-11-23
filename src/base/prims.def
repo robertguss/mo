@@ -242,4 +242,15 @@ PRIM(CRYPTO_OPEN_RAW,           "Crypto",    "open_raw",           "fn(Bytes, By
 PRIM(CRYPTO_HASH_PASSWORD_RAW,  "Crypto",    "hash_password_raw",  "fn(Text, Bytes) : Result(Text, Text)",       "bb",  "")
 PRIM(CRYPTO_VERIFY_PASSWORD,    "Crypto",    "verify_password",    "fn(Text, Text) : Bool",                      "bb",  "")
 
+PRIM(BYTES_EMPTY,               "Bytes",     "empty",              "Bytes",                                      "",    "")
+PRIM(BYTES_ZEROED,              "Bytes",     "zeroed",             "fn(Int) : Bytes",                            "b",   "negative count; count exceeds limit")
+PRIM(BYTES_FROM_LIST,           "Bytes",     "from_list",          "fn(List(Byte)) : Bytes",                     "b",   "")
+PRIM(BYTES_TO_LIST,             "Bytes",     "to_list",            "fn(Bytes) : List(Byte)",                     "b",   "")
+PRIM(BYTES_FROM_U16_BE,         "Bytes",     "from_u16_be",        "fn(Int) : Bytes",                            "b",   "value outside 0 to 65535")
+PRIM(BYTES_FROM_U32_BE,         "Bytes",     "from_u32_be",        "fn(Int) : Bytes",                            "b",   "value outside 0 to 4294967295")
+PRIM(BYTES_FROM_I64_BE,         "Bytes",     "from_i64_be",        "fn(Int) : Bytes",                            "b",   "")
+PRIM(BYTES_U16_BE_AT,           "Bytes",     "u16_be_at",          "fn(Bytes, Int) : Option(Int)",               "bb",  "")
+PRIM(BYTES_U32_BE_AT,           "Bytes",     "u32_be_at",          "fn(Bytes, Int) : Option(Int)",               "bb",  "")
+PRIM(BYTES_I64_BE_AT,           "Bytes",     "i64_be_at",          "fn(Bytes, Int) : Option(Int)",               "bb",  "")
+
 #undef PRIM

@@ -8,8 +8,9 @@
 #define MO_HOST_PRIVATE_TYPES 10
 struct mo_host_types {
     struct mo_types types;
-    uint32_t integer, time, text, bytes, texts, folders, files, replies, peers, databases;
-    uint32_t capabilities[MO_CAP_SECURE_RANDOM + 1];
+    uint32_t integer, time, text, bytes, texts, folders, files, file_bytes, replies, peers,
+        databases;
+    uint32_t capabilities[MO_CAP_FILE + 1];
     uint32_t parameters[8];
 };
 /* Once per image. storage has source->count + MO_HOST_PRIVATE_TYPES entries;
@@ -24,7 +25,7 @@ struct mo_sqlite_pool;
 struct mo_host {
     const struct mo_host_types *types;
     struct mo_sqlite_pool *sqlite_pool;
-    uint32_t open_folders, open_connections, open_databases;
+    uint32_t open_folders, open_files, open_connections, open_databases;
     int input, output, errors;
     bool force_fallback; /* C tests exercise the portable resolver on Linux. */
     bool started, kernel_probed, kernel_available;
@@ -61,7 +62,8 @@ MO_MUST_USE bool mo_host_open_confined_file(int root_fd, const char *mount_dir,
                                             int64_t *mtime_nsec_out);
 /* Before running main, once per context and before starting threads. Changes
  * process-wide SIGPIPE to ignored and tries to raise the soft descriptor budget to
- * MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_CONNECTIONS + 2 * MO_LIMIT_LOOKUPS + 32 (never above
+ * MO_LIMIT_OPEN_FOLDERS + MO_LIMIT_OPEN_FILES + MO_LIMIT_OPEN_CONNECTIONS +
+ * 2 * MO_LIMIT_LOOKUPS + 2 * MO_LIMIT_OPEN_DATABASES + 32 (never above
  * its hard limit). C embedders calling
  * real Console directly must call this, or arrange SIGPIPE handling themselves.
  * A refused raise leaves the current budget; later opens report exhaustion.

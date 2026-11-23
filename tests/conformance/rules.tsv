@@ -146,6 +146,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 11.1/12	cap-sqlite-fake				tests/test_sqlite.c:test_real_crud
 11.1/13	cap-command-fake				tests/test_command.c:test_real_command
 11.1/14	lib-crypto-date				tests/test_crypto.c:test_secure_random_and_threads,tests/test_fakes.c:secure_random_deterministic
+11.1/15	cap-files-binary				tests/test_files_binary.c:test_parity_core,tests/test_files_binary.c:test_real_strict_confinement,tests/test_files_binary.c:test_open_file_limit
 11.2/1	cap-files-read,cap-args-list,cap-network-error	e0079			tests/test_check.c:corpus
 11.2/2	ref-shout	fail-main-exit-status,fail-main-result-error	fail-bug-exit-range	
 11.3/1	cap-files-fake,cap-files-within-escape			
@@ -231,7 +232,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/5	ref-library-natives,num-decimal-boundaries			
 14/6	txt-counts,txt-lines-words,txt-split-join,txt-trim-pad,txt-search,txt-replace-repeat,txt-parse-numbers,ref-library-natives		fail-bug-split-empty,fail-bug-replace-empty,fail-bug-repeat-negative		tests/test_prim.c:text_split,ci/check_primitives.py:text_cases
 14/7	txt-case-chars,txt-chars-roundtrip			
-14/8	ref-library-natives,txt-invalid-utf8-file,cap-network-forms		fail-bug-slice-negative		tests/test_prim.c:bytes_slice_and_join
+14/8	ref-library-natives,txt-invalid-utf8-file,cap-network-forms,cap-files-binary		fail-bug-slice-negative		tests/test_prim.c:bytes_slice_and_join,tests/test_prim.c:bytes_packing_and_unpacking
 14/9	col-list-basics,col-list-slicing,col-list-map-find,col-list-enumerate-zip,ref-library-natives,col-list-order-ties		fail-bug-take-negative,fail-bug-drop-negative	
 14/10	col-map-basics,col-map-order,col-map-counting,col-map-equality			
 14/11	col-set-basics			
@@ -241,7 +242,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/15	ref-time			
 14/16	cap-args-list,ref-capability-fakes			
 14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid	e0098-printed		
-14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape	tst-fake-files-bugs			tests/test_host.c:test_real_files,tests/test_host.c:test_hostile_links
+14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape,cap-files-binary	tst-fake-files-bugs			tests/test_host.c:test_real_files,tests/test_host.c:test_hostile_links,tests/test_files_binary.c:test_parity_core,tests/test_files_binary.c:test_real_strict_confinement,tests/test_files_binary.c:test_open_file_limit
 14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
 14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes				tests/test_host.c:test_clock_random		No program can move the system clock outside the years 1 to 9999; Clock.fixed, Clock.sleep, Args, Env and Random fakes are asserted.
 14/21	cap-network-fake,cap-network-forms		fail-bug-network-port		tests/test_network.c:test_round_trip,tests/test_network.c:test_errors,tests/test_network.c:test_deadline,tests/test_network.c:test_reset,tests/test_network.c:test_bugs,tests/test_network.c:test_large_send

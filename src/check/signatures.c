@@ -751,6 +751,9 @@ static MO_MUST_USE const struct mo_source_type *resolve_type(struct preparation 
                 break;
             }
         }
+    } else if (symbol == NULL && name->kind == MO_S_QUALIFIED &&
+               spelled(name->children[0], "Files") && spelled(name->children[1], "File")) {
+        type.name = "Files.File";
     }
     if (type.name == NULL) {
         bool reported = problem(p, MO_CODE_TYPE_NAME, name->span, "a type name isn't in scope",

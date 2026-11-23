@@ -104,6 +104,15 @@ HOSTOP(COMMAND_FAKE,           "Command",   "fake",           "fn(Map(Bytes, Byt
 HOSTOP(SECURERANDOM_BYTES,     "SecureRandom", "bytes",       "fn(SecureRandom, Int) : Bytes",                           "bb",  "count outside 0 to 65536",           false)
 HOSTOP(SECURERANDOM_SEEDED,    "SecureRandom", "seeded",      "fn(Int) : SecureRandom",                                  "b",   "",                                   true)
 
+HOSTOP(FILES_WRITE_BYTES,      "Files",     "write_bytes",    "fn(Files, Text, Bytes) : Result(Unit, FileError)",        "bbb", "",                                   false)
+HOSTOP(FILES_RENAME,           "Files",     "rename",         "fn(Files, Text, Text) : Result(Unit, FileError)",         "bbb", "",                                   false)
+HOSTOP(FILES_OPEN,             "Files",     "open",           "fn(Files, Text) : Result(Files.File, FileError)",         "bb",  "too many files open at once",        false)
+HOSTOP(FILES_READ_AT,          "Files",     "read_at",        "fn(Files.File, Int, Int) : Result(Bytes, FileError)",     "bbb", "negative file offset; read count outside 0 to the read limit", false)
+HOSTOP(FILES_WRITE_AT,         "Files",     "write_at",       "fn(Files.File, Int, Bytes) : Result(Unit, FileError)",    "bbb", "negative file offset",               false)
+HOSTOP(FILES_SIZE,             "Files",     "size",           "fn(Files.File) : Result(Int, FileError)",                 "b",   "",                                   false)
+HOSTOP(FILES_TRUNCATE,         "Files",     "truncate",       "fn(Files.File, Int) : Result(Unit, FileError)",           "bb",  "negative file size",                 false)
+HOSTOP(FILES_SYNC,             "Files",     "sync",           "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
+
 #undef HOSTOP
 
 /* Runtime-owned store capability. No Mo type, signature or bytecode operation:

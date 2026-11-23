@@ -371,8 +371,9 @@ static void small_heaps(void) {
         host_fixture_init(&f.host, heap_size);
         mo_fakes_init(&f.fakes, &f.host.source);
         mo_fakes_bind(&f.fakes, &f.host.host);
-        for (unsigned kind = 0; kind <= MO_CAP_SECURE_RANDOM; kind++) {
-            if (kind == MO_CAP_SIMULATION || kind == MO_CAP_CONNECTION || kind == MO_CAP_DATABASE)
+        for (unsigned kind = 0; kind <= MO_CAP_FILE; kind++) {
+            if (kind == MO_CAP_SIMULATION || kind == MO_CAP_CONNECTION || kind == MO_CAP_DATABASE ||
+                kind == MO_CAP_FILE)
                 continue;
             const struct mo_input_factory *maker = factory(&f, (enum mo_capability)kind);
             struct mo_input_request request = {.kind = MO_INPUT_BOUNDARY, .boundary = 2};

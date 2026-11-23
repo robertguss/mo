@@ -16,9 +16,9 @@ struct host_fixture {
     struct mo_heap *heap;
     struct mo_host host;
     uint32_t unit, boolean, bytes, time;
-    uint32_t capabilities[MO_CAP_SECURE_RANDOM + 1];
+    uint32_t capabilities[MO_CAP_FILE + 1];
     uint32_t option, file_error, result_text, result_bytes, result_unit, result_names,
-        result_entries;
+        result_entries, result_file, result_int;
     uint32_t integer, network_error, result_connection, result_sent, result_received;
     uint32_t sqlite_value, sqlite_rows, sqlite_error, result_database, result_sqlite_unit,
         result_sqlite_rows, sqlite_exec_tuple, result_sqlite_exec;
@@ -40,7 +40,7 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
         (struct mo_type){.kind = MO_TYPE_LIST, .parameters = &text, .parameter_count = 1});
     uint32_t real = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_FLOAT});
     f->integer = heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_INT});
-    for (unsigned i = 0; i <= MO_CAP_SECURE_RANDOM; i++) {
+    for (unsigned i = 0; i <= MO_CAP_FILE; i++) {
         if (i != MO_CAP_SIMULATION)
             f->capabilities[i] =
                 heap_intern(&f->source, (struct mo_type){.kind = MO_TYPE_CAPABILITY,
@@ -129,18 +129,29 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
     f->sqlite_exec_tuple = heap_intern(
         &f->source,
         (struct mo_type){.kind = MO_TYPE_TUPLE, .parameters = exec_parts, .parameter_count = 2});
-    uint32_t payloads[] = {text,    f->bytes,       f->unit,
-                           names,   f->entries,     f->capabilities[MO_CAP_CONNECTION],
-                           f->unit, f->bytes,       f->capabilities[MO_CAP_DATABASE],
-                           f->unit, f->sqlite_rows, f->sqlite_exec_tuple};
-    uint32_t *results[] = {&f->result_text,        &f->result_bytes,       &f->result_unit,
-                           &f->result_names,       &f->result_entries,     &f->result_connection,
-                           &f->result_sent,        &f->result_received,    &f->result_database,
-                           &f->result_sqlite_unit, &f->result_sqlite_rows, &f->result_sqlite_exec};
-    for (unsigned i = 0; i < 12; i++) {
+    uint32_t payloads[] = {text,
+                           f->bytes,
+                           f->unit,
+                           names,
+                           f->entries,
+                           f->capabilities[MO_CAP_FILE],
+                           f->integer,
+                           f->capabilities[MO_CAP_CONNECTION],
+                           f->unit,
+                           f->bytes,
+                           f->capabilities[MO_CAP_DATABASE],
+                           f->unit,
+                           f->sqlite_rows,
+                           f->sqlite_exec_tuple};
+    uint32_t *results[] = {&f->result_text,        &f->result_bytes,      &f->result_unit,
+                           &f->result_names,       &f->result_entries,    &f->result_file,
+                           &f->result_int,         &f->result_connection, &f->result_sent,
+                           &f->result_received,    &f->result_database,   &f->result_sqlite_unit,
+                           &f->result_sqlite_rows, &f->result_sqlite_exec};
+    for (unsigned i = 0; i < 14; i++) {
         MO_ASSERT(mo_types_declare(&f->source, MO_TYPE_CHOICE, "Result", results[i]) ==
                   MO_TYPES_OK);
-        uint32_t err_type = i < 5 ? f->file_error : (i < 8 ? f->network_error : f->sqlite_error);
+        uint32_t err_type = i < 7 ? f->file_error : (i < 10 ? f->network_error : f->sqlite_error);
         struct mo_type_field ok = {NULL, payloads[i]}, error = {NULL, err_type};
         struct mo_type_case cases[] = {
             {.name = "Ok", .fields = &ok, .field_count = 1, .unnamed = true},
@@ -206,8 +217,8 @@ static inline void host_fixture_init(struct host_fixture *f, size_t heap_limit) 
 
 static inline void host_fixture_free(struct host_fixture *f) {
     mo_heap_free(f->heap);
-    MO_ASSERT(f->host.open_folders == 0 && f->host.open_connections == 0 &&
-              f->host.open_databases == 0);
+    MO_ASSERT(f->host.open_folders == 0 && f->host.open_files == 0 &&
+              f->host.open_connections == 0 && f->host.open_databases == 0);
     mo_heap_image_free(f->image);
     free(f->storage);
     mo_arena_free(&f->arena);
@@ -303,6 +314,18 @@ static inline uint32_t host_result_type(const struct host_fixture *f, uint32_t o
         return f->capabilities[MO_CAP_SECURE_RANDOM];
     case MO_HOST_SECURERANDOM_BYTES:
         return f->bytes;
+    case MO_HOST_FILES_WRITE_BYTES:
+    case MO_HOST_FILES_RENAME:
+    case MO_HOST_FILES_WRITE_AT:
+    case MO_HOST_FILES_TRUNCATE:
+    case MO_HOST_FILES_SYNC:
+        return f->result_unit;
+    case MO_HOST_FILES_OPEN:
+        return f->result_file;
+    case MO_HOST_FILES_READ_AT:
+        return f->result_bytes;
+    case MO_HOST_FILES_SIZE:
+        return f->result_int;
     default:
         MO_UNREACHABLE();
     }

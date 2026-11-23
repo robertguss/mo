@@ -591,6 +591,33 @@ theorem b64urlDecodeChars_inByte : ∀ {cs : List Char} {bs : List Int},
                   · unfold InByte; omega
                   · exact b64urlDecodeChars_inByte hr b hb
 
+theorem byteValsOf_some : ∀ {xs : List Value},
+    (∀ x ∈ xs, ∃ b, x = .byte b ∧ InByte b) →
+    ∃ bs, byteValsOf xs = some bs ∧ ∀ b ∈ bs, InByte b
+  | [], _ => ⟨[], rfl, by simp⟩
+  | x :: xs, h => by
+    obtain ⟨b, rfl, hb⟩ := h x (by simp)
+    obtain ⟨bs, hbs, hin⟩ := byteValsOf_some (xs := xs) fun y hy => h y (by simp [hy])
+    refine ⟨b :: bs, by simp [byteValsOf, hbs], fun c hc => ?_⟩
+    rcases List.mem_cons.mp hc with rfl | hc
+    · exact hb
+    · exact hin c hc
+
+theorem bytesFromU16Be_inByte (n : Int) : ∀ b ∈ bytesFromU16Be n, InByte b := by
+  intro b hb
+  simp only [bytesFromU16Be, List.mem_cons, List.not_mem_nil, or_false] at hb
+  rcases hb with rfl | rfl <;> (unfold InByte; omega)
+
+theorem bytesFromU32Be_inByte (n : Int) : ∀ b ∈ bytesFromU32Be n, InByte b := by
+  intro b hb
+  simp only [bytesFromU32Be, List.mem_cons, List.not_mem_nil, or_false] at hb
+  rcases hb with rfl | rfl | rfl | rfl <;> (unfold InByte; omega)
+
+theorem bytesFromI64Be_inByte (n : Int) : ∀ b ∈ bytesFromI64Be n, InByte b := by
+  intro b hb
+  simp only [bytesFromI64Be, List.mem_cons, List.not_mem_nil, or_false] at hb
+  rcases hb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> (unfold InByte; omega)
+
 theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
   cases op
   case slice =>
@@ -605,6 +632,32 @@ theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
     refine .bytes fun b hb => ?_
     obtain ⟨p, hp, hb⟩ := List.mem_flatten.mp hb
     exact hin p hp b hb
+  case zeroed =>
+    invert_args
+    simp only [Prim.eval, evalBytesOp, outcomeOk_ite, outcomeOk_ok]
+    refine ⟨fun _ => trivial, fun _ => ⟨fun _ => trivial, fun _ => .bytes fun b hb => ?_⟩⟩
+    obtain ⟨_, rfl⟩ := List.mem_replicate.mp hb
+    unfold InByte; omega
+  case fromList =>
+    invert_args
+    obtain ⟨bs, hbs, hin⟩ := byteValsOf_some ‹_›
+    simp only [Prim.eval, evalBytesOp, hbs, outcomeOk_ok]
+    exact .bytes hin
+  case toList =>
+    invert_args
+    simp only [Prim.eval, evalBytesOp, outcomeOk_ok]
+    refine .list fun x hx => ?_
+    simp only [List.mem_map] at hx
+    obtain ⟨b, hb, rfl⟩ := hx
+    exact .byte (‹∀ b ∈ _, InByte b› b hb)
+  case fromU16Be =>
+    invert_args
+    simp only [Prim.eval, evalBytesOp, outcomeOk_ite, outcomeOk_ok]
+    exact ⟨fun _ => trivial, fun _ => .bytes (bytesFromU16Be_inByte _)⟩
+  case fromU32Be =>
+    invert_args
+    simp only [Prim.eval, evalBytesOp, outcomeOk_ite, outcomeOk_ok]
+    exact ⟨fun _ => trivial, fun _ => .bytes (bytesFromU32Be_inByte _)⟩
   all_goals
     invert_args
     simp only [Prim.eval, evalBytesOp, outcomeOk_ok]
@@ -615,6 +668,11 @@ theorem bytesOp_safe (op : BytesOp) : PrimSafe P (.bytes op) := by
   case fromHex => exact .optBytes fun _ h => hexDecodeChars_inByte h
   case toBase64url => exact .text
   case fromBase64url => exact .optBytes fun _ h => b64urlDecodeChars_inByte h
+  case empty => exact .bytes (by simp)
+  case fromI64Be => exact .bytes (bytesFromI64Be_inByte _)
+  case u16BeAt => exact .optIntOf
+  case u32BeAt => exact .optIntOf
+  case i64BeAt => exact .optIntOf
 
 /-- The whole numbers of a range between two `Int`s are `Int`s. -/
 theorem intRange_ty {a b : Int} (ha : InInt64 a) (hb : InInt64 b) :
