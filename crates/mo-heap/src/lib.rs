@@ -9,6 +9,7 @@ pub mod equal;
 pub mod float;
 pub mod hash;
 pub mod print;
+pub mod saved;
 pub mod table;
 
 use std::any::Any;
@@ -270,6 +271,10 @@ impl HeapRef {
 
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
+    }
+
+    pub fn node_id(&self) -> usize {
+        std::ptr::from_ref(self.0.as_ref()) as usize
     }
 
     pub fn can_mutate_in_place(&self) -> bool {

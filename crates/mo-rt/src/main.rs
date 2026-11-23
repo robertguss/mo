@@ -71,6 +71,7 @@ fn cmd_verify(args: &[String]) -> ExitCode {
 struct CliOptions {
     limits: Limits,
     root: Option<PathBuf>,
+    state_dir: Option<PathBuf>,
     path: String,
     prog_args: Vec<String>,
 }
@@ -78,6 +79,7 @@ struct CliOptions {
 fn parse_run_or_test_args(args: &[String], allow_program_args: bool) -> Result<CliOptions, String> {
     let mut limits = Limits::default();
     let mut root: Option<PathBuf> = None;
+    let mut state_dir: Option<PathBuf> = None;
     let mut i = 0usize;
     let mut file: Option<String> = None;
     let mut prog_args: Vec<String> = Vec::new();
@@ -90,6 +92,11 @@ fn parse_run_or_test_args(args: &[String], allow_program_args: bool) -> Result<C
                     i += 1;
                     let val = args.get(i).ok_or("--root needs a directory path")?;
                     root = Some(PathBuf::from(val));
+                }
+                "--state-dir" => {
+                    i += 1;
+                    let val = args.get(i).ok_or("--state-dir needs a directory path")?;
+                    state_dir = Some(PathBuf::from(val));
                 }
                 "--max-heap" => {
                     i += 1;
@@ -136,6 +143,7 @@ fn parse_run_or_test_args(args: &[String], allow_program_args: bool) -> Result<C
     Ok(CliOptions {
         limits,
         root,
+        state_dir,
         path,
         prog_args,
     })
@@ -159,10 +167,15 @@ fn cmd_run(args: &[String]) -> ExitCode {
     };
 
     let env_vars: Vec<(String, String)> = env::vars().collect();
-    let host = match make_host(opts.prog_args, env_vars, opts.root.as_deref()) {
+    let host = match make_host(
+        opts.prog_args,
+        env_vars,
+        opts.root.as_deref(),
+        opts.state_dir.as_deref(),
+    ) {
         Ok(h) => h,
         Err(msg) => {
-            eprintln!("mo-rt: could not open --root folder: {msg}");
+            eprintln!("mo-rt: could not open folder: {msg}");
             return ExitCode::from(1);
         }
     };
@@ -206,8 +219,9 @@ fn make_host(
     prog_args: Vec<String>,
     env_vars: Vec<(String, String)>,
     root: Option<&Path>,
+    state_dir: Option<&Path>,
 ) -> Result<HostContext, String> {
-    HostContext::stdio_with_root(prog_args, env_vars, root)
+    HostContext::stdio_with_roots(prog_args, env_vars, root, state_dir)
 }
 
 #[cfg(not(unix))]
@@ -215,6 +229,7 @@ fn make_host(
     prog_args: Vec<String>,
     env_vars: Vec<(String, String)>,
     _root: Option<&Path>,
+    _state_dir: Option<&Path>,
 ) -> Result<HostContext, String> {
     Ok(HostContext::stdio(prog_args, env_vars))
 }
@@ -425,10 +440,15 @@ fn cmd_test(args: &[String]) -> ExitCode {
         }
     };
 
-    if let Some(root) = opts.root.as_deref()
-        && let Err(msg) = make_host(Vec::new(), Vec::new(), Some(root))
+    if (opts.root.is_some() || opts.state_dir.is_some())
+        && let Err(msg) = make_host(
+            Vec::new(),
+            Vec::new(),
+            opts.root.as_deref(),
+            opts.state_dir.as_deref(),
+        )
     {
-        eprintln!("mo-rt: could not open --root folder: {msg}");
+        eprintln!("mo-rt: could not open folder: {msg}");
         return ExitCode::from(1);
     }
 
@@ -469,10 +489,15 @@ fn cmd_test(args: &[String]) -> ExitCode {
         let name = file.string(fn_def.name);
         let loc = format_location(file, dbg.file, dbg.start);
 
-        let host = match make_host(Vec::new(), Vec::new(), opts.root.as_deref()) {
+        let host = match make_host(
+            Vec::new(),
+            Vec::new(),
+            opts.root.as_deref(),
+            opts.state_dir.as_deref(),
+        ) {
             Ok(h) => h,
             Err(msg) => {
-                eprintln!("mo-rt: could not open --root folder: {msg}");
+                eprintln!("mo-rt: could not open folder: {msg}");
                 return ExitCode::from(1);
             }
         };

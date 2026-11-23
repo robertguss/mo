@@ -1,13 +1,19 @@
 #![forbid(unsafe_code)]
 
 //! Capability abstraction and real/fake implementations (`Args`, `Env`, `Console`,
-//! `Files`, `ReadFiles`, `Files.File`, `Clock`, `Random`, `SecureRandom`).
+//! `Files`, `ReadFiles`, `Files.File`, `Clock`, `Random`, `SecureRandom`,
+//! `Network`, `Connection`, `Sqlite`, `Sqlite.Database`, `Command`).
 
 mod clock_random;
+mod command;
 mod fake_files;
 mod files_common;
+mod network;
 #[cfg(unix)]
 mod real_files;
+#[cfg(test)]
+mod slice1d_tests;
+mod sqlite;
 
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -41,7 +47,6 @@ pub enum HostError {
     OutOfMemory {
         value_bytes_limit: bool,
     },
-    Unimplemented(HostOpId),
     UnimplementedCapability(Capability),
 }
 
@@ -95,9 +100,13 @@ pub struct HostContext {
     #[cfg(unix)]
     root_fd: Option<OwnedFd>,
     #[cfg(unix)]
+    state_fd: Option<OwnedFd>,
+    #[cfg(unix)]
     resolver: ResolverState,
     open_folders: Rc<Cell<u32>>,
     open_files: Rc<Cell<u32>>,
+    open_connections: Rc<Cell<u32>>,
+    open_databases: Rc<Cell<u32>>,
     started: bool,
 }
 
@@ -112,26 +121,47 @@ impl HostContext {
             #[cfg(unix)]
             root_fd: None,
             #[cfg(unix)]
+            state_fd: None,
+            #[cfg(unix)]
             resolver: ResolverState::new(),
             open_folders: Rc::new(Cell::new(0)),
             open_files: Rc::new(Cell::new(0)),
+            open_connections: Rc::new(Cell::new(0)),
+            open_databases: Rc::new(Cell::new(0)),
             started: false,
         }
     }
 
-    /// Creates a stdio host context rooted at `root_dir` for real `Files` / `ReadFiles`.
+    /// Creates a stdio host context rooted at `root_dir` for real `Files` / `ReadFiles` /
+    /// `Command` / `Sqlite`.
     #[cfg(unix)]
     pub fn stdio_with_root(
         args: Vec<String>,
         env: Vec<(String, String)>,
         root_dir: Option<&Path>,
     ) -> Result<Self, String> {
+        Self::stdio_with_roots(args, env, root_dir, None)
+    }
+
+    /// Creates a stdio host context with optional `--root` and `--state-dir` folders.
+    #[cfg(unix)]
+    pub fn stdio_with_roots(
+        args: Vec<String>,
+        env: Vec<(String, String)>,
+        root_dir: Option<&Path>,
+        state_dir: Option<&Path>,
+    ) -> Result<Self, String> {
         let root_fd = match root_dir {
+            Some(p) => Some(real_files::open_root_dir(p)?),
+            None => None,
+        };
+        let state_fd = match state_dir {
             Some(p) => Some(real_files::open_root_dir(p)?),
             None => None,
         };
         Ok(Self {
             root_fd,
+            state_fd,
             ..Self::stdio(args, env)
         })
     }
@@ -157,9 +187,13 @@ impl HostContext {
             #[cfg(unix)]
             root_fd: None,
             #[cfg(unix)]
+            state_fd: None,
+            #[cfg(unix)]
             resolver: ResolverState::new(),
             open_folders: Rc::new(Cell::new(0)),
             open_files: Rc::new(Cell::new(0)),
+            open_connections: Rc::new(Cell::new(0)),
+            open_databases: Rc::new(Cell::new(0)),
             started: false,
         }
     }
@@ -167,6 +201,12 @@ impl HostContext {
     #[cfg(unix)]
     pub fn set_root_dir(&mut self, root_dir: &Path) -> Result<(), String> {
         self.root_fd = Some(real_files::open_root_dir(root_dir)?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    pub fn set_state_dir(&mut self, state_dir: &Path) -> Result<(), String> {
+        self.state_fd = Some(real_files::open_root_dir(state_dir)?);
         Ok(())
     }
 
@@ -181,6 +221,14 @@ impl HostContext {
 
     pub fn open_files(&self) -> u32 {
         self.open_files.get()
+    }
+
+    pub fn open_connections(&self) -> u32 {
+        self.open_connections.get()
+    }
+
+    pub fn open_databases(&self) -> u32 {
+        self.open_databases.get()
     }
 
     fn ensure_started(&mut self) {
@@ -201,6 +249,14 @@ impl HostContext {
             self.root_fd = Some(fd);
         }
         Ok(self.root_fd.as_ref().unwrap())
+    }
+
+    #[cfg(unix)]
+    fn ensure_sqlite_fd(&mut self) -> Result<&OwnedFd, HostError> {
+        if let Some(ref fd) = self.state_fd {
+            return Ok(fd);
+        }
+        self.ensure_root_fd()
     }
 
     pub fn make_real_capability(
@@ -246,6 +302,19 @@ impl HostContext {
             Capability::Clock => clock_random::make_real_clock(heap, ty),
             Capability::Random => clock_random::make_real_random(heap, ty),
             Capability::SecureRandom => clock_random::make_real_secure_random(heap, ty),
+            Capability::Network => network::make_real_network(heap, ty),
+            #[cfg(unix)]
+            Capability::Sqlite => {
+                let open_folders = Rc::clone(&self.open_folders);
+                let sqlite_fd = self.ensure_sqlite_fd()?;
+                sqlite::make_real_sqlite(heap, &open_folders, sqlite_fd.as_fd(), ty)
+            }
+            #[cfg(unix)]
+            Capability::Command => {
+                let open_folders = Rc::clone(&self.open_folders);
+                let root_fd = self.ensure_root_fd()?;
+                command::make_real_command(heap, &open_folders, root_fd.as_fd(), ty)
+            }
             other => Err(HostError::UnimplementedCapability(other)),
         }
     }
@@ -493,7 +562,46 @@ impl HostContext {
                 }
             }
 
-            other => Err(HostError::Unimplemented(other)),
+            // Network & Connection (6 ops)
+            HostOpId::NetworkFake => network::network_fake(heap, result_ty, args[0].clone()),
+            HostOpId::NetworkConnect
+            | HostOpId::NetworkConnectSecure
+            | HostOpId::NetworkAllowHosts
+            | HostOpId::ConnectionSend
+            | HostOpId::ConnectionReceive => {
+                network::call_network(heap, types, &self.open_connections, op, result_ty, args)
+            }
+
+            // Sqlite & Sqlite.Database (5 ops)
+            HostOpId::SqliteFake => sqlite::sqlite_fake(heap, result_ty, args.first()),
+            HostOpId::SqliteOpen
+            | HostOpId::SqliteRun
+            | HostOpId::SqliteQuery
+            | HostOpId::SqliteExecuteRaw => sqlite::call_sqlite(
+                heap,
+                types,
+                #[cfg(unix)]
+                &mut self.resolver,
+                &self.open_databases,
+                op,
+                result_ty,
+                args,
+            ),
+
+            // Command (4 ops)
+            HostOpId::CommandFake => command::command_fake(heap, result_ty, args[0].clone()),
+            HostOpId::CommandRunRaw | HostOpId::CommandWithin | HostOpId::CommandAllowPrograms => {
+                command::call_command(
+                    heap,
+                    types,
+                    #[cfg(unix)]
+                    &mut self.resolver,
+                    &self.open_folders,
+                    op,
+                    result_ty,
+                    args,
+                )
+            }
         }
     }
 
@@ -936,18 +1044,11 @@ mod tests {
             .unwrap();
         assert_eq!(eof.as_tag(), 0);
 
-        assert_eq!(
-            ctx.make_real_capability(&heap, &fx.types, fx.sqlite_cap)
-                .err()
-                .unwrap(),
-            HostError::UnimplementedCapability(Capability::Sqlite)
-        );
-        assert_eq!(
-            ctx.call(&heap, &fx.types, HostOpId::SqliteFake, fx.sqlite_cap, &[])
-                .err()
-                .unwrap(),
-            HostError::Unimplemented(HostOpId::SqliteFake)
-        );
+        // Verify real Sqlite capability can be constructed under default cwd root.
+        let real_sqlite = ctx
+            .make_real_capability(&heap, &fx.types, fx.sqlite_cap)
+            .expect("real Sqlite capability");
+        assert_eq!(real_sqlite.as_capability().kind, Capability::Sqlite);
     }
 
     #[test]

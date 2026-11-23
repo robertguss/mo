@@ -3,15 +3,16 @@
 //! Safe Rust Mo bytecode interpreter, image initialization, call frames, and defect reporting.
 
 mod number;
+mod simulation;
 
 use std::collections::HashMap;
 
 use mo_bytecode::{
-    BytecodeFile, CaseShape, ConstantValue, FunctionKind, LayoutKind, OPCODE_MASK,
+    BytecodeFile, Capability, CaseShape, ConstantValue, FunctionKind, LayoutKind, OPCODE_MASK,
     OPCODE_VARIABLE_SHIFT, ParamOwnership, TypeKind,
 };
 use mo_def::limits::{MO_DEFAULT_CALL_DEPTH, MO_DEFAULT_HEAP_SIZE, MO_DEFAULT_STACK_SIZE};
-use mo_def::{HostOpId, Opcode, PrimId};
+use mo_def::{HostOpId, Opcode, PrimId, SimOpId};
 use mo_heap::equal::value_equal;
 use mo_heap::print::value_print_literal;
 use mo_heap::{Heap, HeapObj, Value};
@@ -69,8 +70,15 @@ pub enum Outcome {
     Stopped(Defect),
 }
 
+pub(crate) enum ControlledOutcome {
+    Returned(Value),
+    Failed(Defect),
+    Stopped(Defect),
+    Cancelled,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RegState {
+pub(crate) enum RegState {
     Undefined,
     Value,
     Owned,
@@ -79,17 +87,17 @@ enum RegState {
     Token,
 }
 
-struct Frame {
-    function: u32,
-    pc: u32,
-    destination: u32,
-    resume_pc: u32,
-    frame_bytes: usize,
-    regs: Vec<Option<Value>>,
-    states: Vec<RegState>,
+pub(crate) struct Frame {
+    pub(crate) function: u32,
+    pub(crate) pc: u32,
+    pub(crate) destination: u32,
+    pub(crate) resume_pc: u32,
+    pub(crate) frame_bytes: usize,
+    pub(crate) regs: Vec<Option<Value>>,
+    pub(crate) states: Vec<RegState>,
 }
 
-fn frame_size_bytes(register_count: usize) -> usize {
+pub(crate) fn frame_size_bytes(register_count: usize) -> usize {
     (FRAME_HEADER_BYTES + register_count * CELL_AND_STATE_BYTES + 7) & !7
 }
 
@@ -289,6 +297,7 @@ fn run_init_function(image: &mut Image, limits: Limits, fn_idx: u32) -> Outcome 
         limits,
         frames: &mut frames,
         stack_bytes: &mut stack_bytes,
+        work_remaining: None,
     };
     ctx.run()
 }
@@ -314,8 +323,40 @@ impl<'a> Process<'a> {
         let fn_def = &self.image.file.functions[main_fn as usize];
         let mut caps_by_kind: HashMap<u32, Value> = HashMap::new();
         let mut args = Vec::with_capacity(fn_def.parameters.len());
-        for p in &fn_def.parameters {
-            let cap_val = if let Some(existing) = caps_by_kind.get(&p.ty) {
+        for (param_idx, p) in fn_def.parameters.iter().enumerate() {
+            let cap_kind = self.image.file.types.get(p.ty).capability;
+            let cap_val = if cap_kind == Some(Capability::Simulation) {
+                let Some(svc_idx) = simulation::find_actor_service_for_param(
+                    &self.image.file,
+                    main_fn,
+                    param_idx as u32,
+                ) else {
+                    return Outcome::Stopped(Defect {
+                        reason: "unknown actor parameter in main".to_string(),
+                        limit_name: None,
+                        limit: 0,
+                        detail: None,
+                        frames: Vec::new(),
+                        variables: Vec::new(),
+                        variables_unavailable: false,
+                    });
+                };
+                match simulation::make_live_actor_capability(self.image, &self.heap, p.ty, svc_idx)
+                {
+                    Ok(v) => v,
+                    Err(reason) => {
+                        return Outcome::Stopped(Defect {
+                            reason,
+                            limit_name: None,
+                            limit: 0,
+                            detail: None,
+                            frames: Vec::new(),
+                            variables: Vec::new(),
+                            variables_unavailable: false,
+                        });
+                    }
+                }
+            } else if let Some(existing) = caps_by_kind.get(&p.ty) {
                 existing.clone()
             } else {
                 match self
@@ -397,6 +438,7 @@ impl<'a> Process<'a> {
             limits: self.limits,
             frames: &mut frames,
             stack_bytes: &mut stack_bytes,
+            work_remaining: None,
         };
         ctx.run()
     }
@@ -439,19 +481,6 @@ fn host_error_to_defect(err: HostError, heap_limit: usize) -> Defect {
             variables: Vec::new(),
             variables_unavailable: false,
         },
-        HostError::Unimplemented(op) => Defect {
-            reason: format!(
-                "unimplemented host operation: {}.{}",
-                op.info().module,
-                op.info().name
-            ),
-            limit_name: None,
-            limit: 0,
-            detail: None,
-            frames: Vec::new(),
-            variables: Vec::new(),
-            variables_unavailable: false,
-        },
         HostError::UnimplementedCapability(cap) => Defect {
             reason: format!("unimplemented capability: {}", cap.name()),
             limit_name: None,
@@ -464,18 +493,21 @@ fn host_error_to_defect(err: HostError, heap_limit: usize) -> Defect {
     }
 }
 
-enum Globals<'a> {
+pub(crate) enum Globals<'a> {
     ReadOnly(&'a [Option<Value>]),
     Mutable(&'a mut [Option<Value>]),
 }
 
 impl Globals<'_> {
-    fn get(&self, idx: usize) -> Option<&Value> {
-        let slice: &[Option<Value>] = match self {
+    fn as_slice(&self) -> &[Option<Value>] {
+        match self {
             Globals::ReadOnly(s) => s,
             Globals::Mutable(s) => s,
-        };
-        slice.get(idx).and_then(|v| v.as_ref())
+        }
+    }
+
+    fn get(&self, idx: usize) -> Option<&Value> {
+        self.as_slice().get(idx).and_then(|v| v.as_ref())
     }
 
     fn set(&mut self, idx: usize, val: Value) {
@@ -486,16 +518,17 @@ impl Globals<'_> {
     }
 }
 
-struct ExecCtx<'a> {
-    file: &'a BytecodeFile,
-    constants: &'a [Value],
-    captureless: &'a HashMap<u32, Value>,
-    globals: Globals<'a>,
-    heap: &'a Heap,
-    host: &'a mut HostContext,
-    limits: Limits,
-    frames: &'a mut Vec<Frame>,
-    stack_bytes: &'a mut usize,
+pub(crate) struct ExecCtx<'a> {
+    pub(crate) file: &'a BytecodeFile,
+    pub(crate) constants: &'a [Value],
+    pub(crate) captureless: &'a HashMap<u32, Value>,
+    pub(crate) globals: Globals<'a>,
+    pub(crate) heap: &'a Heap,
+    pub(crate) host: &'a mut HostContext,
+    pub(crate) limits: Limits,
+    pub(crate) frames: &'a mut Vec<Frame>,
+    pub(crate) stack_bytes: &'a mut usize,
+    pub(crate) work_remaining: Option<u64>,
 }
 
 impl<'a> ExecCtx<'a> {
@@ -569,15 +602,20 @@ impl<'a> ExecCtx<'a> {
         limit_name: Option<&'static str>,
         limit: usize,
         detail: Option<String>,
-    ) -> Outcome {
-        Outcome::Stopped(self.build_defect(reason.into(), limit_name, limit, detail))
+    ) -> ControlledOutcome {
+        ControlledOutcome::Stopped(self.build_defect(reason.into(), limit_name, limit, detail))
     }
 
-    fn fail(&self, detail: String) -> Outcome {
-        Outcome::Failed(self.build_defect("failed assertion".to_string(), None, 0, Some(detail)))
+    fn fail(&self, detail: String) -> ControlledOutcome {
+        ControlledOutcome::Failed(self.build_defect(
+            "failed assertion".to_string(),
+            None,
+            0,
+            Some(detail),
+        ))
     }
 
-    fn oom(&self) -> Outcome {
+    fn oom(&self) -> ControlledOutcome {
         self.stop(
             "running out of memory",
             Some("--max-heap"),
@@ -623,7 +661,22 @@ impl<'a> ExecCtx<'a> {
     }
 
     fn run(&mut self) -> Outcome {
+        match self.run_controlled() {
+            ControlledOutcome::Returned(v) => Outcome::Returned(v),
+            ControlledOutcome::Failed(d) => Outcome::Failed(d),
+            ControlledOutcome::Stopped(d) => Outcome::Stopped(d),
+            ControlledOutcome::Cancelled => unreachable!("uncontrolled run cannot be cancelled"),
+        }
+    }
+
+    pub(crate) fn run_controlled(&mut self) -> ControlledOutcome {
         loop {
+            if let Some(ref mut rem) = self.work_remaining {
+                if *rem == 0 {
+                    return ControlledOutcome::Cancelled;
+                }
+                *rem -= 1;
+            }
             let (fn_idx, pc) = {
                 let f = self.frames.last().unwrap();
                 (f.function, f.pc)
@@ -639,24 +692,75 @@ impl<'a> ExecCtx<'a> {
             let a = &code[pc as usize + 1..];
             let next_pc = pc + 1 + (fixed as u32) + (var_count as u32);
 
-            if op.number() >= Opcode::AddInt.number() && op.number() <= Opcode::RangeEnd.number() {
-                let left = self.read_reg(a[1] as usize).clone();
-                let right = if fixed == 3 {
-                    Some(self.read_reg(a[2] as usize).clone())
-                } else {
-                    None
-                };
-                match number::eval_number(op, &left, right.as_ref()) {
-                    Ok(val) => {
-                        self.write_reg(a[0] as usize, val, false);
-                        self.frames.last_mut().unwrap().pc = next_pc;
-                        continue;
-                    }
-                    Err(reason) => return self.stop(reason, None, 0, None),
-                }
-            }
-
             match op {
+                Opcode::AddInt
+                | Opcode::SubInt
+                | Opcode::MulInt
+                | Opcode::DivInt
+                | Opcode::RemInt
+                | Opcode::NegInt
+                | Opcode::AddDecimal
+                | Opcode::SubDecimal
+                | Opcode::MulDecimal
+                | Opcode::DivDecimal
+                | Opcode::RemDecimal
+                | Opcode::NegDecimal
+                | Opcode::AddFloat
+                | Opcode::SubFloat
+                | Opcode::MulFloat
+                | Opcode::DivFloat
+                | Opcode::RemFloat
+                | Opcode::NegFloat
+                | Opcode::NegDuration
+                | Opcode::AddDuration
+                | Opcode::SubDuration
+                | Opcode::ScaleDuration
+                | Opcode::AddTime
+                | Opcode::SubTime
+                | Opcode::DiffTime
+                | Opcode::EqInt
+                | Opcode::EqDecimal
+                | Opcode::EqFloat
+                | Opcode::EqBool
+                | Opcode::EqByte
+                | Opcode::EqChar
+                | Opcode::EqTime
+                | Opcode::EqDuration
+                | Opcode::EqChoice
+                | Opcode::LtInt
+                | Opcode::LtDecimal
+                | Opcode::LtFloat
+                | Opcode::LtBool
+                | Opcode::LtByte
+                | Opcode::LtChar
+                | Opcode::LtTime
+                | Opcode::LtDuration
+                | Opcode::LtChoice
+                | Opcode::LeInt
+                | Opcode::LeDecimal
+                | Opcode::LeFloat
+                | Opcode::LeBool
+                | Opcode::LeByte
+                | Opcode::LeChar
+                | Opcode::LeTime
+                | Opcode::LeDuration
+                | Opcode::LeChoice
+                | Opcode::CmpFloat
+                | Opcode::Not
+                | Opcode::MakeRange
+                | Opcode::RangeStart
+                | Opcode::RangeEnd => {
+                    let left = self.read_reg(a[1] as usize).clone();
+                    let right = if fixed == 3 {
+                        Some(self.read_reg(a[2] as usize).clone())
+                    } else {
+                        None
+                    };
+                    match number::eval_number(op, &left, right.as_ref()) {
+                        Ok(val) => self.write_reg(a[0] as usize, val, false),
+                        Err(reason) => return self.stop(reason, None, 0, None),
+                    }
+                }
                 Opcode::Move => {
                     let src = a[1] as usize;
                     let borrowed = self.frames.last().unwrap().states[src] == RegState::Borrowed;
@@ -829,7 +933,7 @@ impl<'a> ExecCtx<'a> {
                     let done = self.frames.pop().unwrap();
                     *self.stack_bytes -= done.frame_bytes;
                     if self.frames.is_empty() {
-                        return Outcome::Returned(ret_val);
+                        return ControlledOutcome::Returned(ret_val);
                     }
                     self.write_reg(done.destination as usize, ret_val, false);
                     self.frames.last_mut().unwrap().pc = done.resume_pc;
@@ -1143,18 +1247,6 @@ impl<'a> ExecCtx<'a> {
                         Err(HostError::Internal { reason }) => {
                             return self.stop(reason, None, 0, None);
                         }
-                        Err(HostError::Unimplemented(op_id)) => {
-                            return self.stop(
-                                format!(
-                                    "unimplemented host operation: {}.{}",
-                                    op_id.info().module,
-                                    op_id.info().name
-                                ),
-                                None,
-                                0,
-                                None,
-                            );
-                        }
                         Err(HostError::UnimplementedCapability(cap)) => {
                             return self.stop(
                                 format!("unimplemented capability: {}", cap.name()),
@@ -1166,9 +1258,28 @@ impl<'a> ExecCtx<'a> {
                     }
                 }
                 Opcode::Sim => {
-                    return self.stop("unimplemented opcode: sim", None, 0, None);
+                    let sim_op = SimOpId::from_u32(a[1]).expect("validated simop id");
+                    let descriptor = a[2];
+                    let tool = a[3];
+                    let arg_regs = &a[4..4 + var_count];
+                    let result_ty = fn_def.register_types[a[0] as usize];
+                    let mut sim_args = Vec::with_capacity(var_count);
+                    for &reg in arg_regs {
+                        sim_args.push(self.read_reg(reg as usize).clone());
+                    }
+                    let prog = simulation::ProgramView {
+                        file: self.file,
+                        constants: self.constants,
+                        captureless: self.captureless,
+                        globals: self.globals.as_slice(),
+                    };
+                    match simulation::exec_sim(
+                        &prog, self.heap, sim_op, descriptor, tool, result_ty, &sim_args,
+                    ) {
+                        Ok(val) => self.write_reg(a[0] as usize, val, false),
+                        Err(report) => return self.stop(report, None, 0, None),
+                    }
                 }
-                _ => unreachable!("handled numeric opcodes above"),
             }
 
             self.frames.last_mut().unwrap().pc = next_pc;
