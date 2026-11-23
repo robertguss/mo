@@ -8,6 +8,12 @@ license.workspace = true
 mo-def = { path = "../mo-def" }
 mo-bytecode = { path = "../mo-bytecode" }
 mo-heap = { path = "../mo-heap" }
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc", "zeroize"] }
+hmac = { version = "0.13", features = ["zeroize"] }
+scrypt = { version = "0.12", default-features = false }
+sha2 = { version = "0.11", features = ["zeroize"] }
+subtle = "2.6"
+zeroize = "1.9"
 
 [lints]
 workspace = true

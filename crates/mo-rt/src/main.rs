@@ -2,13 +2,13 @@
 
 //! Thin CLI driver for the pure-Rust Mo runtime:
 //!   - `mo-rt verify FILE.bc`
-//!   - `mo-rt run [--max-heap N] [--max-stack N] [--max-depth N] FILE.bc [-- args...]`
-//!   - `mo-rt test [--max-heap N] [--max-stack N] [--max-depth N] FILE.bc`
+//!   - `mo-rt run [--root DIR] [--max-heap N] [--max-stack N] [--max-depth N] FILE.bc [-- args...]`
+//!   - `mo-rt test [--root DIR] [--max-heap N] [--max-stack N] [--max-depth N] FILE.bc`
 
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mo_bytecode::{BytecodeFile, FunctionKind, NO_INDEX};
@@ -68,11 +68,16 @@ fn cmd_verify(args: &[String]) -> ExitCode {
     }
 }
 
-fn parse_run_or_test_args(
-    args: &[String],
-    allow_program_args: bool,
-) -> Result<(Limits, String, Vec<String>), String> {
+struct CliOptions {
+    limits: Limits,
+    root: Option<PathBuf>,
+    path: String,
+    prog_args: Vec<String>,
+}
+
+fn parse_run_or_test_args(args: &[String], allow_program_args: bool) -> Result<CliOptions, String> {
     let mut limits = Limits::default();
+    let mut root: Option<PathBuf> = None;
     let mut i = 0usize;
     let mut file: Option<String> = None;
     let mut prog_args: Vec<String> = Vec::new();
@@ -81,6 +86,11 @@ fn parse_run_or_test_args(
         let arg = &args[i];
         if file.is_none() {
             match arg.as_str() {
+                "--root" => {
+                    i += 1;
+                    let val = args.get(i).ok_or("--root needs a directory path")?;
+                    root = Some(PathBuf::from(val));
+                }
                 "--max-heap" => {
                     i += 1;
                     let val = args.get(i).ok_or("--max-heap needs a value")?;
@@ -123,11 +133,16 @@ fn parse_run_or_test_args(
     }
 
     let path = file.ok_or("expected FILE.bc")?;
-    Ok((limits, path, prog_args))
+    Ok(CliOptions {
+        limits,
+        root,
+        path,
+        prog_args,
+    })
 }
 
 fn cmd_run(args: &[String]) -> ExitCode {
-    let (limits, path, prog_args) = match parse_run_or_test_args(args, true) {
+    let opts = match parse_run_or_test_args(args, true) {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("mo-rt: {msg}");
@@ -135,7 +150,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         }
     };
 
-    let bc = match load_bc_file(&path) {
+    let bc = match load_bc_file(&opts.path) {
         Ok(f) => f,
         Err(msg) => {
             eprintln!("mo-rt: {msg}");
@@ -143,7 +158,16 @@ fn cmd_run(args: &[String]) -> ExitCode {
         }
     };
 
-    let image = match Image::init(bc, limits) {
+    let env_vars: Vec<(String, String)> = env::vars().collect();
+    let host = match make_host(opts.prog_args, env_vars, opts.root.as_deref()) {
+        Ok(h) => h,
+        Err(msg) => {
+            eprintln!("mo-rt: could not open --root folder: {msg}");
+            return ExitCode::from(1);
+        }
+    };
+
+    let image = match Image::init(bc, opts.limits) {
         Ok(img) => img,
         Err(err) => {
             let (file, defect) = *err;
@@ -158,9 +182,7 @@ fn cmd_run(args: &[String]) -> ExitCode {
         return ExitCode::from(1);
     };
 
-    let env_vars: Vec<(String, String)> = env::vars().collect();
-    let host = HostContext::stdio(prog_args, env_vars);
-    let mut process = Process::new(&image, limits, host);
+    let mut process = Process::new(&image, opts.limits, host);
     match process.call_main(main_fn) {
         Outcome::Returned(val) => {
             let status = val.as_int();
@@ -177,6 +199,24 @@ fn cmd_run(args: &[String]) -> ExitCode {
             ExitCode::from(70)
         }
     }
+}
+
+#[cfg(unix)]
+fn make_host(
+    prog_args: Vec<String>,
+    env_vars: Vec<(String, String)>,
+    root: Option<&Path>,
+) -> Result<HostContext, String> {
+    HostContext::stdio_with_root(prog_args, env_vars, root)
+}
+
+#[cfg(not(unix))]
+fn make_host(
+    prog_args: Vec<String>,
+    env_vars: Vec<(String, String)>,
+    _root: Option<&Path>,
+) -> Result<HostContext, String> {
+    Ok(HostContext::stdio(prog_args, env_vars))
 }
 
 /// Computes 1-based (line, column) from byte offset, matching `src/base/diag.c:mo_sources_position`.
@@ -377,7 +417,7 @@ fn format_test_stopped(file: &BytecodeFile, defect: &Defect) -> String {
 }
 
 fn cmd_test(args: &[String]) -> ExitCode {
-    let (limits, path, _) = match parse_run_or_test_args(args, false) {
+    let opts = match parse_run_or_test_args(args, false) {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("mo-rt: {msg}");
@@ -385,7 +425,14 @@ fn cmd_test(args: &[String]) -> ExitCode {
         }
     };
 
-    let bc = match load_bc_file(&path) {
+    if let Some(root) = opts.root.as_deref()
+        && let Err(msg) = make_host(Vec::new(), Vec::new(), Some(root))
+    {
+        eprintln!("mo-rt: could not open --root folder: {msg}");
+        return ExitCode::from(1);
+    }
+
+    let bc = match load_bc_file(&opts.path) {
         Ok(f) => f,
         Err(msg) => {
             eprintln!("mo-rt: {msg}");
@@ -393,7 +440,7 @@ fn cmd_test(args: &[String]) -> ExitCode {
         }
     };
 
-    let image = match Image::init(bc, limits) {
+    let image = match Image::init(bc, opts.limits) {
         Ok(img) => img,
         Err(err) => {
             let (file, defect) = *err;
@@ -422,8 +469,14 @@ fn cmd_test(args: &[String]) -> ExitCode {
         let name = file.string(fn_def.name);
         let loc = format_location(file, dbg.file, dbg.start);
 
-        let host = HostContext::stdio(Vec::new(), Vec::new());
-        let mut process = Process::new(&image, limits, host);
+        let host = match make_host(Vec::new(), Vec::new(), opts.root.as_deref()) {
+            Ok(h) => h,
+            Err(msg) => {
+                eprintln!("mo-rt: could not open --root folder: {msg}");
+                return ExitCode::from(1);
+            }
+        };
+        let mut process = Process::new(&image, opts.limits, host);
         match process.call(fn_idx, Vec::new()) {
             Outcome::Returned(_) => {
                 passed += 1;
