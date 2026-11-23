@@ -2,14 +2,16 @@
 
 //! Safe Rust Mo bytecode interpreter, image initialization, call frames, and defect reporting.
 
+#[cfg(test)]
+mod fuzz_tests;
 mod number;
 mod simulation;
 
 use std::collections::HashMap;
 
 use mo_bytecode::{
-    BytecodeFile, Capability, CaseShape, ConstantValue, FunctionKind, LayoutKind, OPCODE_MASK,
-    OPCODE_VARIABLE_SHIFT, ParamOwnership, TypeKind,
+    AnchorExpectation, BytecodeFile, Capability, CaseShape, ConstantValue, FunctionKind,
+    LayoutKind, OPCODE_MASK, OPCODE_VARIABLE_SHIFT, ParamOwnership, TypeKind,
 };
 use mo_def::limits::{MO_DEFAULT_CALL_DEPTH, MO_DEFAULT_HEAP_SIZE, MO_DEFAULT_STACK_SIZE};
 use mo_def::{HostOpId, Opcode, PrimId, SimOpId};
@@ -51,6 +53,7 @@ pub struct DefectFrame {
 pub struct DefectVariable {
     pub name: String,
     pub value: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +114,23 @@ pub struct Image {
 
 impl Image {
     pub fn init(file: BytecodeFile, limits: Limits) -> Result<Self, Box<(BytecodeFile, Defect)>> {
+        Self::init_with_budget(file, limits, None)
+    }
+
+    /// Initializes the image while capping total init instructions to `max_steps`.
+    pub fn init_bounded(
+        file: BytecodeFile,
+        limits: Limits,
+        max_steps: u64,
+    ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
+        Self::init_with_budget(file, limits, Some(max_steps))
+    }
+
+    fn init_with_budget(
+        file: BytecodeFile,
+        limits: Limits,
+        mut budget: Option<u64>,
+    ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
         let image_heap = Heap::new(limits.heap_size);
 
         // Pre-allocate immortal captureless closures for every 0-capture closure layout.
@@ -163,18 +183,19 @@ impl Image {
                         Err(_) => return Err(Box::new((file, oom_defect(limits.heap_size)))),
                     }
                 }
-                ConstantValue::Closure(fn_idx) => captureless_closures
-                    .get(fn_idx)
-                    .cloned()
-                    .unwrap_or_else(|| {
+                ConstantValue::Closure(fn_idx) => match captureless_closures.get(fn_idx) {
+                    Some(v) => v.clone(),
+                    None => {
                         let layout_idx = file
                             .types
                             .find_closure_layout(*fn_idx)
                             .expect("closure constant layout");
-                        image_heap
-                            .alloc_closure(layout_idx, *fn_idx, Vec::new())
-                            .expect("closure allocation")
-                    }),
+                        match image_heap.alloc_closure(layout_idx, *fn_idx, Vec::new()) {
+                            Ok(v) => v,
+                            Err(_) => return Err(Box::new((file, oom_defect(limits.heap_size)))),
+                        }
+                    }
+                },
             };
             image_heap.make_immortal(&val);
             constants.push(val);
@@ -192,7 +213,7 @@ impl Image {
         // Run init functions in order using the image's own heap.
         let init_fns: Vec<u32> = image.file.init.clone();
         for fn_idx in init_fns {
-            let outcome = run_init_function(&mut image, limits, fn_idx);
+            let outcome = run_init_function(&mut image, limits, fn_idx, &mut budget);
             match outcome {
                 Outcome::Returned(_) => {}
                 Outcome::Failed(d) | Outcome::Stopped(d) => return Err(Box::new((image.file, d))),
@@ -233,6 +254,40 @@ impl Image {
             })
             .collect()
     }
+
+    /// Returns all promise anchor functions (`allows`/`forbids`), covering both function-level
+    /// `FunctionKind::Anchor` entries and service-level `.service.promise.<N>.<allows|forbids>.<M>`
+    /// functions, matching `src/tools/run.c:mo_check_anchors`.
+    pub fn anchor_functions(&self) -> Vec<(u32, AnchorExpectation)> {
+        Self::anchor_functions_in_file(&self.file)
+    }
+
+    /// Inspects a loaded `BytecodeFile` for promise anchor functions without running global init.
+    pub fn anchor_functions_in_file(file: &BytecodeFile) -> Vec<(u32, AnchorExpectation)> {
+        let mut out = Vec::new();
+        for (i, f) in file.functions.iter().enumerate() {
+            if f.kind == FunctionKind::Anchor {
+                let exp = file.debug[i].expectation;
+                if matches!(exp, AnchorExpectation::Allows | AnchorExpectation::Forbids) {
+                    out.push((i as u32, exp));
+                }
+            } else if f.kind == FunctionKind::Function
+                && f.parameters.is_empty()
+                && file.types.get(f.result_type).kind == TypeKind::Int
+            {
+                let name = file.string(f.name);
+                if let Some(idx) = name.find(".service.promise.") {
+                    let tail = &name[idx + ".service.promise.".len()..];
+                    if tail.contains(".allows.") {
+                        out.push((i as u32, AnchorExpectation::Allows));
+                    } else if tail.contains(".forbids.") {
+                        out.push((i as u32, AnchorExpectation::Forbids));
+                    }
+                }
+            }
+        }
+        out
+    }
 }
 
 fn oom_defect(limit: usize) -> Defect {
@@ -247,7 +302,12 @@ fn oom_defect(limit: usize) -> Defect {
     }
 }
 
-fn run_init_function(image: &mut Image, limits: Limits, fn_idx: u32) -> Outcome {
+fn run_init_function(
+    image: &mut Image,
+    limits: Limits,
+    fn_idx: u32,
+    budget: &mut Option<u64>,
+) -> Outcome {
     let mut host = HostContext::stdio(Vec::new(), Vec::new());
     let mut frames: Vec<Frame> = Vec::new();
     let mut stack_bytes: usize = 0;
@@ -297,9 +357,21 @@ fn run_init_function(image: &mut Image, limits: Limits, fn_idx: u32) -> Outcome 
         limits,
         frames: &mut frames,
         stack_bytes: &mut stack_bytes,
-        work_remaining: None,
+        work_remaining: *budget,
     };
-    ctx.run()
+    let outcome = match ctx.run_controlled() {
+        ControlledOutcome::Returned(v) => Outcome::Returned(v),
+        ControlledOutcome::Failed(d) => Outcome::Failed(d),
+        ControlledOutcome::Stopped(d) => Outcome::Stopped(d),
+        ControlledOutcome::Cancelled => Outcome::Stopped(ctx.build_defect(
+            "internal error: instruction budget exhausted".to_string(),
+            None,
+            0,
+            None,
+        )),
+    };
+    *budget = ctx.work_remaining;
+    outcome
 }
 
 pub struct Process<'a> {
@@ -320,6 +392,14 @@ impl<'a> Process<'a> {
     }
 
     pub fn call_main(&mut self, main_fn: u32) -> Outcome {
+        self.call_main_inner(main_fn, None)
+    }
+
+    pub fn call_main_bounded(&mut self, main_fn: u32, max_steps: u64) -> Outcome {
+        self.call_main_inner(main_fn, Some(max_steps))
+    }
+
+    fn call_main_inner(&mut self, main_fn: u32, max_steps: Option<u64>) -> Outcome {
         let fn_def = &self.image.file.functions[main_fn as usize];
         let mut caps_by_kind: HashMap<u32, Value> = HashMap::new();
         let mut args = Vec::with_capacity(fn_def.parameters.len());
@@ -374,10 +454,24 @@ impl<'a> Process<'a> {
             };
             args.push(cap_val);
         }
-        self.call(main_fn, args)
+        self.call_inner(main_fn, args, max_steps)
     }
 
     pub fn call(&mut self, fn_idx: u32, args: Vec<Value>) -> Outcome {
+        self.call_inner(fn_idx, args, None)
+    }
+
+    /// Executes `fn_idx` with at most `max_steps` VM instructions.
+    pub fn call_bounded(&mut self, fn_idx: u32, args: Vec<Value>, max_steps: u64) -> Outcome {
+        self.call_inner(fn_idx, args, Some(max_steps))
+    }
+
+    fn call_inner(
+        &mut self,
+        fn_idx: u32,
+        args: Vec<Value>,
+        work_remaining: Option<u64>,
+    ) -> Outcome {
         let fn_def = &self.image.file.functions[fn_idx as usize];
         let bytes = frame_size_bytes(fn_def.register_types.len());
         if self.limits.call_depth < 1 {
@@ -438,9 +532,19 @@ impl<'a> Process<'a> {
             limits: self.limits,
             frames: &mut frames,
             stack_bytes: &mut stack_bytes,
-            work_remaining: None,
+            work_remaining,
         };
-        ctx.run()
+        match ctx.run_controlled() {
+            ControlledOutcome::Returned(v) => Outcome::Returned(v),
+            ControlledOutcome::Failed(d) => Outcome::Failed(d),
+            ControlledOutcome::Stopped(d) => Outcome::Stopped(d),
+            ControlledOutcome::Cancelled => Outcome::Stopped(ctx.build_defect(
+                "internal error: instruction budget exhausted".to_string(),
+                None,
+                0,
+                None,
+            )),
+        }
     }
 }
 
@@ -573,10 +677,12 @@ impl<'a> ExecCtx<'a> {
                                 && let Some(val) = &top.regs[reg]
                             {
                                 let ty = fn_def.register_types[reg];
-                                let rendered = format_defect_variable(&self.file.types, ty, val);
+                                let (rendered, truncated) =
+                                    format_defect_variable(&self.file.types, ty, val);
                                 variables.push(DefectVariable {
                                     name: self.file.string(rn.name).to_string(),
                                     value: rendered,
+                                    truncated,
                                 });
                             }
                         }
@@ -658,15 +764,6 @@ impl<'a> ExecCtx<'a> {
     fn read_reg(&self, reg: usize) -> &Value {
         let f = self.frames.last().unwrap();
         f.regs[reg].as_ref().expect("readable register holds value")
-    }
-
-    fn run(&mut self) -> Outcome {
-        match self.run_controlled() {
-            ControlledOutcome::Returned(v) => Outcome::Returned(v),
-            ControlledOutcome::Failed(d) => Outcome::Failed(d),
-            ControlledOutcome::Stopped(d) => Outcome::Stopped(d),
-            ControlledOutcome::Cancelled => unreachable!("uncontrolled run cannot be cancelled"),
-        }
     }
 
     pub(crate) fn run_controlled(&mut self) -> ControlledOutcome {
@@ -1361,7 +1458,7 @@ fn escape_quoted_scalar(bytes: &[u8], delimiter: u8) -> (usize, String) {
     (count, part)
 }
 
-fn format_defect_quoted(s: &str, delimiter: char, budget: usize) -> String {
+fn format_defect_quoted(s: &str, delimiter: char, budget: usize) -> (String, bool) {
     let delim_byte = delimiter as u8;
     let bytes = s.as_bytes();
     let mut total = 2usize;
@@ -1382,7 +1479,7 @@ fn format_defect_quoted(s: &str, delimiter: char, budget: usize) -> String {
         0
     };
     if budget < reserve {
-        return "<value unavailable>".to_string();
+        return ("<value unavailable>".to_string(), true);
     }
     let max_body = budget - reserve;
     let mut out = String::new();
@@ -1402,10 +1499,14 @@ fn format_defect_quoted(s: &str, delimiter: char, budget: usize) -> String {
         out.push_str(DEFECT_TRUNCATED_MARKER);
     }
     out.push(delimiter);
-    out
+    (out, clipped)
 }
 
-fn format_defect_variable(types: &mo_bytecode::types::TypeTable, ty: u32, val: &Value) -> String {
+fn format_defect_variable(
+    types: &mo_bytecode::types::TypeTable,
+    ty: u32,
+    val: &Value,
+) -> (String, bool) {
     match types.get(ty).kind {
         TypeKind::Text => format_defect_quoted(val.as_text(), '"', DEFECT_VAR_BUDGET),
         TypeKind::Char => {
@@ -1416,9 +1517,9 @@ fn format_defect_variable(types: &mo_bytecode::types::TypeTable, ty: u32, val: &
         _ => {
             let rendered = value_print_literal(types, ty, val);
             if rendered.len() > DEFECT_VAR_BUDGET {
-                "<value unavailable>".to_string()
+                ("<value unavailable>".to_string(), true)
             } else {
-                rendered
+                (rendered, false)
             }
         }
     }

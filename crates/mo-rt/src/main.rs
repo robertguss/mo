@@ -2,8 +2,9 @@
 
 //! Thin CLI driver for the pure-Rust Mo runtime:
 //!   - `mo-rt verify FILE.bc`
-//!   - `mo-rt run [--root DIR] [--max-heap N] [--max-stack N] [--max-depth N] FILE.bc [-- args...]`
-//!   - `mo-rt test [--root DIR] [--max-heap N] [--max-stack N] [--max-depth N] FILE.bc`
+//!   - `mo-rt anchors FILE.bc`
+//!   - `mo-rt run [--root DIR] [--state-dir DIR] [--max-heap N] [--max-stack N] [--max-depth N] FILE.bc [-- args...]`
+//!   - `mo-rt test [--root DIR] [--state-dir DIR] [--max-heap N] [--max-stack N] [--max-depth N] [--only NAME]... [--allow-empty] FILE.bc`
 
 use std::env;
 use std::fs;
@@ -11,7 +12,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use mo_bytecode::{BytecodeFile, FunctionKind, NO_INDEX};
+use mo_bytecode::{AnchorExpectation, BytecodeFile, FunctionKind, NO_INDEX};
+use mo_def::limits::MO_CLI_ANCHOR_INSTRUCTIONS;
 use mo_host::HostContext;
 use mo_vm::{Defect, Image, Limits, Outcome, Process, render_defect};
 
@@ -72,14 +74,22 @@ struct CliOptions {
     limits: Limits,
     root: Option<PathBuf>,
     state_dir: Option<PathBuf>,
+    only: Vec<String>,
+    allow_empty: bool,
     path: String,
     prog_args: Vec<String>,
 }
 
-fn parse_run_or_test_args(args: &[String], allow_program_args: bool) -> Result<CliOptions, String> {
+fn parse_run_or_test_args(
+    args: &[String],
+    allow_program_args: bool,
+    allow_test_flags: bool,
+) -> Result<CliOptions, String> {
     let mut limits = Limits::default();
     let mut root: Option<PathBuf> = None;
     let mut state_dir: Option<PathBuf> = None;
+    let mut only: Vec<String> = Vec::new();
+    let mut allow_empty = false;
     let mut i = 0usize;
     let mut file: Option<String> = None;
     let mut prog_args: Vec<String> = Vec::new();
@@ -113,6 +123,14 @@ fn parse_run_or_test_args(args: &[String], allow_program_args: bool) -> Result<C
                     let val = args.get(i).ok_or("--max-depth needs a value")?;
                     limits.call_depth = parse_count_limit(val)?;
                 }
+                "--only" if allow_test_flags => {
+                    i += 1;
+                    let val = args.get(i).ok_or("--only needs a test or example name")?;
+                    only.push(val.clone());
+                }
+                "--allow-empty" if allow_test_flags => {
+                    allow_empty = true;
+                }
                 "--" => {
                     i += 1;
                     let f = args.get(i).ok_or("expected FILE.bc")?;
@@ -144,13 +162,85 @@ fn parse_run_or_test_args(args: &[String], allow_program_args: bool) -> Result<C
         limits,
         root,
         state_dir,
+        only,
+        allow_empty,
         path,
         prog_args,
     })
 }
 
+fn check_anchors(image: &Image, limits: Limits) -> Result<usize, String> {
+    let anchors = image.anchor_functions();
+    let file = image.file();
+    for &(fn_idx, expectation) in &anchors {
+        let name = file.function_name(fn_idx);
+        let allows = expectation == AnchorExpectation::Allows;
+        let host = HostContext::stdio(Vec::new(), Vec::new());
+        let mut process = Process::new(image, limits, host);
+        match process.call_bounded(fn_idx, Vec::new(), MO_CLI_ANCHOR_INSTRUCTIONS) {
+            Outcome::Returned(val) => {
+                let answer = val.as_int();
+                if (answer <= 0) != allows {
+                    return Err(if allows {
+                        format!(
+                            "anchor failed: allows anchor {name} was rejected (condition {answer})"
+                        )
+                    } else {
+                        format!("anchor failed: forbids anchor {name} was accepted")
+                    });
+                }
+            }
+            Outcome::Failed(defect) | Outcome::Stopped(defect) => {
+                let report = render_defect(file, &defect);
+                return Err(format!("anchor stopped ({name}):\n{report}"));
+            }
+        }
+    }
+    Ok(anchors.len())
+}
+
+fn cmd_anchors(args: &[String]) -> ExitCode {
+    let opts = match parse_run_or_test_args(args, false, false) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("mo-rt: {msg}");
+            return ExitCode::from(2);
+        }
+    };
+    let bc = match load_bc_file(&opts.path) {
+        Ok(f) => f,
+        Err(msg) => {
+            eprintln!("mo-rt: {msg}");
+            return ExitCode::from(1);
+        }
+    };
+    if Image::anchor_functions_in_file(&bc).is_empty() {
+        println!("0 anchors passed");
+        return ExitCode::SUCCESS;
+    }
+    let image = match Image::init_bounded(bc, opts.limits, MO_CLI_ANCHOR_INSTRUCTIONS) {
+        Ok(img) => img,
+        Err(err) => {
+            let (file, defect) = *err;
+            let report = render_defect(&file, &defect);
+            let _ = io::stderr().write_all(report.as_bytes());
+            return ExitCode::from(70);
+        }
+    };
+    match check_anchors(&image, opts.limits) {
+        Ok(count) => {
+            println!("{count} anchors passed");
+            ExitCode::SUCCESS
+        }
+        Err(msg) => {
+            eprintln!("mo-rt: {msg}");
+            ExitCode::from(1)
+        }
+    }
+}
+
 fn cmd_run(args: &[String]) -> ExitCode {
-    let opts = match parse_run_or_test_args(args, true) {
+    let opts = match parse_run_or_test_args(args, true, false) {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("mo-rt: {msg}");
@@ -425,14 +515,19 @@ fn format_test_stopped(file: &BytecodeFile, defect: &Defect) -> String {
         out.push_str("  <variables unavailable>\n");
     } else {
         for var in &defect.variables {
-            out.push_str(&format!("  {} = {}\n", var.name, var.value));
+            let val = if var.truncated {
+                "<value unavailable>"
+            } else {
+                var.value.as_str()
+            };
+            out.push_str(&format!("  {} = {val}\n", var.name));
         }
     }
     out
 }
 
 fn cmd_test(args: &[String]) -> ExitCode {
-    let opts = match parse_run_or_test_args(args, false) {
+    let opts = match parse_run_or_test_args(args, false, true) {
         Ok(v) => v,
         Err(msg) => {
             eprintln!("mo-rt: {msg}");
@@ -470,8 +565,46 @@ fn cmd_test(args: &[String]) -> ExitCode {
         }
     };
 
-    let tests = image.test_and_example_functions();
+    if let Err(msg) = check_anchors(&image, opts.limits) {
+        eprintln!("mo-rt: {msg}");
+        return ExitCode::from(1);
+    }
+
+    let file = image.file();
+    let all_tests = image.test_and_example_functions();
+    let tests: Vec<u32> = if opts.only.is_empty() {
+        all_tests
+    } else {
+        let mut matched = vec![false; opts.only.len()];
+        let mut selected = Vec::new();
+        for fn_idx in all_tests {
+            let name = file.string(file.functions[fn_idx as usize].name);
+            let mut keep = false;
+            for (j, want) in opts.only.iter().enumerate() {
+                if name == want {
+                    matched[j] = true;
+                    keep = true;
+                }
+            }
+            if keep {
+                selected.push(fn_idx);
+            }
+        }
+        if let Some((j, _)) = matched.iter().enumerate().find(|(_, m)| !**m) {
+            eprintln!(
+                "mo-rt: --only does not name a test or example in bytecode: {}",
+                opts.only[j]
+            );
+            return ExitCode::from(2);
+        }
+        selected
+    };
+
     if tests.is_empty() {
+        if opts.allow_empty && opts.only.is_empty() {
+            println!("0 passed, 0 failed, 0 stopped");
+            return ExitCode::SUCCESS;
+        }
         eprintln!("mo-rt: bytecode contains no tests or examples");
         return ExitCode::from(2);
     }
@@ -479,7 +612,6 @@ fn cmd_test(args: &[String]) -> ExitCode {
     let mut passed = 0u32;
     let mut failed = 0u32;
     let mut stopped = 0u32;
-    let file = image.file();
     let stdout = io::stdout();
     let mut out = stdout.lock();
 
@@ -533,15 +665,16 @@ fn cmd_test(args: &[String]) -> ExitCode {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.is_empty() {
-        eprintln!("usage: mo-rt <verify|run|test> ...");
+        eprintln!("usage: mo-rt <verify|anchors|run|test> ...");
         return ExitCode::from(2);
     }
     match args[0].as_str() {
         "verify" => cmd_verify(&args[1..]),
+        "anchors" => cmd_anchors(&args[1..]),
         "run" => cmd_run(&args[1..]),
         "test" => cmd_test(&args[1..]),
         other => {
-            eprintln!("mo-rt: unknown command {other:?} (expected verify, run, or test)");
+            eprintln!("mo-rt: unknown command {other:?} (expected verify, anchors, run, or test)");
             ExitCode::from(2)
         }
     }

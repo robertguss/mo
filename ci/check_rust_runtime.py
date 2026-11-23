@@ -2,30 +2,46 @@
 """Differential test harness comparing the pure-Rust runtime (`mo-rt`) against C `mo`.
 
 Run from the repository root:
-    python3 ci/check_rust_runtime.py [--mo PATH] [--mo-rt PATH] [--skip-build] [--case=NAME ...]
+    python3 ci/check_rust_runtime.py [--mo PATH] [--mo-rt PATH] [--skip-build]
+                                     [--modb-dir PATH] [--case=NAME ...] [--jobs N]
 
-What this checks for Phase 1 (Slices 1A + 1B + 1C + 1D — 59/59 hostops, 87/87 opcodes):
+What this checks for Phase 1 (Slices 1A–1E — 59/59 hostops, 87/87 opcodes, 187/187 prims):
   1. Builds `target/release/mo-rt` (unless `--skip-build`) and locates or builds C `mo`.
-  2. Verifies `ldd target/release/mo-rt` has zero `libssl` / `libcrypto` linkage.
-  3. Runs the curated cohort of 209 golden suites from `tests/golden/`
-     (174 `run` + 35 `test`, covering all 187/187 primitives, all 87/87 opcodes,
-     and all 59/59 hostops including `Network`/`Connection`, `Sqlite`/`Sqlite.Database`,
-     `Command`, `Simulation` & live actors), emitting `.bc` via `mo emit` /
-     `mo emit --tests`, verifying each `.bc` with `mo-rt verify`, and asserting
-     exact byte-for-byte stdout, stderr, and exit-code parity between C `mo`,
-     Rust `mo-rt`, and the hand-written golden expectations.
-  4. Runs inline differential checks for `Env`, `--max-depth`, `BigInt`, `--root DIR`
+  2. Enforces static/binary invariants:
+       - `ldd target/release/mo-rt` has zero `libssl`, zero `libcrypto`, and zero `libsqlite3`.
+       - `#![forbid(unsafe_code)]` is present in every Rust crate entry point and workspace lints.
+  3. Dynamically discovers and accounts for 100% of `tests/golden/` (all 238/238 suites, 0 skips):
+       - Full runtime parity suites (209): emit `.bc`, `mo-rt verify`, `mo-rt anchors`,
+         run `mo-rt` (`run` / `test`), and assert exact byte-for-byte stdout, stderr, and
+         exit-status parity against C `mo` and golden expectations.
+       - Compile-time-only error goldens (5): assert `mo emit` rejects them with exact
+         expected compile error and exit status.
+       - Promise / service recovery `mo test` suites (24): emit `--tests` `.bc`,
+         `mo-rt verify`, execute all promise `allows`/`forbids` anchors via `mo-rt anchors`,
+         execute every `test`/`example` block via `mo-rt test`, and diff every executed
+         `test`/`example` byte-for-byte against C `mo test --only`.
+  4. Expands full runtime parity across ALL Phase 1 corpora:
+       - All 46 `tests/lower-source/*/main.mo` suites (`run` + `test` + `anchors`).
+       - All `examples/` programs (`examples/*.mo` + `examples/*/main.mo`).
+       - All 30 `lib/**/*.mo` standard library modules.
+       - All `tools/` and `services/` programs (`tools/*.mo`, `tools/*/main.mo`,
+         `services/mo-*/main.mo`, `services/task-queue/queue-tests.mo`).
+       - Optional `--modb-dir PATH`: all 5 MoDB suites (`src/modb.mo`, `src/modb/table.mo`,
+         `tests/test-modb.mo`, `tests/test-table.mo`, `examples/shop.mo`, 29/29 tests).
+  5. Runs inline differential checks for `Env`, `--max-depth`, `BigInt`, `--root DIR`
      real `Files`/`ReadFiles`/`Files.File`, `Clock`, `Random`, `SecureRandom`, `Crypto`,
-     `Unicode16`, real & fake `Network` (loopback TCP + loopback TLS with `SSL_CERT_FILE`
-     + `allow_hosts`), real & fake `Sqlite` (`--root`, `--state-dir`, WAL, CRUD,
-     authorizer, confinement), real & fake `Command` (`--root`, `within`, `allow_programs`,
-     timeout), `Simulation` (`start`/`send`/`advance`/`crash`/`restart`/timers/admission),
-     `services/task-queue/queue-tests.mo`, and `mo-rt verify` rejection of corrupted bytecode.
+     `Unicode16` (+ UCD 16.0.0 `--rust --check`), real & fake `Network` (loopback TCP +
+     loopback TLS with `SSL_CERT_FILE` + `allow_hosts`), real & fake `Sqlite` (`--root`,
+     `--state-dir`, WAL, CRUD, authorizer, confinement), real & fake `Command` (`--root`,
+     `within`, `allow_programs`, timeout), `Simulation` (`start`/`send`/`advance`/`crash`/
+     `restart`/timers/admission), and `mo-rt verify` rejection of corrupted bytecode.
 """
 
 import argparse
+import concurrent.futures
 import os
 import pathlib
+import re
 import shutil
 import socket
 import ssl
@@ -36,235 +52,40 @@ import threading
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GOLDEN = ROOT / "tests/golden"
+LOWER_SOURCE = ROOT / "tests/lower-source"
 
-# Curated Phase 1 (Slices 1A + 1B + 1C + 1D) golden cohort (209 suites: 174 run + 35 test).
-SLICE_1D_GOLDEN_CASES = [
-    # Actors & API Server
-    "actor-run",
-    "api-server",
-    # Capabilities: Args, Clock, Console, Env, Files, ReadFiles, Random, SecureRandom, Network
-    "cap-args-list",
-    "cap-args-none",
-    "cap-clock-fixed",
-    "cap-console-fake",
-    "cap-console-line-endings",
-    "cap-console-stdin",
-    "cap-console-stdin-invalid",
-    "cap-console-streams",
-    "cap-files-binary",
-    "cap-files-fake",
-    "cap-files-fake-folders",
-    "cap-files-read",
-    "cap-files-walk",
-    "cap-files-within-escape",
-    "cap-files-wordcount",
-    "cap-network-error",
-    "cap-network-forms",
-    "cap-record-of-capabilities",
-    # Collections: List, Map, Set, Range, Tuple
-    "col-args-lists",
-    "col-build-with-var",
-    "col-index-search",
-    "col-list-basics",
-    "col-list-enumerate-zip",
-    "col-list-map-find",
-    "col-list-order-ties",
-    "col-list-slicing",
-    "col-map-basics",
-    "col-map-counting",
-    "col-map-equality",
-    "col-map-order",
-    "col-nested",
-    "col-range-loops",
-    "col-set-basics",
-    "col-shared-values",
-    "col-stdin-lines",
-    "col-take-negative",
-    "col-test-failing",
-    "col-test-passing",
-    "col-tuple-keys",
-    "col-tuple-later-type",
-    "col-tuples",
-    "col-zip-pairs",
-    # Diagnostics / Bytes / closures
-    "dx-bytes-lambda-discard",
-    # Failure handling, defects, Option/Result, exit statuses
-    "fail-bug-constant-stop",
-    "fail-bug-decimal-divide-by-zero",
-    "fail-bug-decimal-overflow",
-    "fail-bug-decimal-places",
-    "fail-bug-divide-by-zero",
-    "fail-bug-drop-negative",
-    "fail-bug-duration-overflow",
-    "fail-bug-duration-unit-overflow",
-    "fail-bug-exit-range",
-    "fail-bug-map-duplicate",
-    "fail-bug-network-port",
-    "fail-bug-overflow",
-    "fail-bug-pow-negative",
-    "fail-bug-repeat-negative",
-    "fail-bug-replace-empty",
-    "fail-bug-slice-negative",
-    "fail-bug-split-empty",
-    "fail-bug-stop",
-    "fail-bug-take-negative",
-    "fail-bug-time-range",
-    "fail-file-error-forms",
-    "fail-main-exit-status",
-    "fail-main-result-error",
-    "fail-option-basics",
-    "fail-option-result-map",
-    "fail-result-declared",
-    "fail-test-failing",
-    "fail-test-results",
-    "fail-try-wrap",
-    # Samples, HTTP & JSON
-    "greet-sample",
-    "http-fake",
-    "json-ability",
-    # Core language: abilities, closures, control flow, enums, records, recursion, tests
-    "lang-abilities-custom-order",
-    "lang-abilities-custom-text",
-    "lang-abilities-hash",
-    "lang-abilities-order",
-    "lang-abilities-structural",
-    "lang-abilities-text-forms",
-    "lang-bindings",
-    "lang-case-guards",
-    "lang-closures",
-    "lang-constants",
-    "lang-dot-calls",
-    "lang-dot-calls-cases",
-    "lang-enum-shapes",
-    "lang-enum-tree",
-    "lang-expression-evaluator",
-    "lang-generic-functions",
-    "lang-generic-types",
-    "lang-is-and-if",
-    "lang-loop-control",
-    "lang-patterns-lists",
-    "lang-patterns-text",
-    "lang-patterns-tuples",
-    "lang-records",
-    "lang-records-order",
-    "lang-records-update",
-    "lang-recursion-depth",
-    "lang-recursion-tail",
-    "lang-stop",
-    "lang-test-failing",
-    "lang-test-passing",
-    "lang-while-is",
-    # Standard library: Crypto, Date, JSON, Unicode16
-    "lib-crypto-date",
-    "lib-json-errors",
-    "lib-json-lookup",
-    "lib-json-numbers",
-    "lib-json-query",
-    "lib-unicode16",
-    # Modules & visibility
-    "mod-brace-import",
-    "mod-chain",
-    "mod-choice-cases",
-    "mod-constants",
-    "mod-hidden-customized",
-    "mod-hidden-type",
-    "mod-path-words",
-    "mod-qualified",
-    "mod-same-name",
-    "mod-type-bare-after-use",
-    "mod-type-bare-local-first",
-    "mod-type-named-like-module",
-    "nested-choice-return",
-    # Numbers: Int, Float, Decimal, BigInt
-    "num-bigint",
-    "num-comparisons",
-    "num-decimal-boundaries",
-    "num-decimal-exact",
-    "num-decimal-int",
-    "num-decimal-limits",
-    "num-decimal-rounding",
-    "num-float-arithmetic",
-    "num-float-convert",
-    "num-int-checked",
-    "num-int-division",
-    "num-int-functions",
-    "num-int-literals",
-    "num-test-failing",
-    # Reference examples
-    "ref-abilities",
-    "ref-bigint",
-    "ref-capability-fakes",
-    "ref-case-receivers",
-    "ref-evaluation",
-    "ref-functions",
-    "ref-library-natives",
-    "ref-operators",
-    "ref-qualified-abilities",
-    "ref-shout",
-    "ref-source",
-    "ref-time",
-    "ref-unit-qualified",
-    # Sample programs
-    "sample-expenses",
-    "sample-expenses-malformed",
-    "sample-expenses-tests",
-    "sample-expenses-usage",
-    "sample-find",
-    "sample-find-count",
-    "sample-find-none",
-    "sample-find-tests",
-    "sample-find-unreadable",
-    "sample-find-usage",
-    "sample-greet-args",
-    "sample-greet-tests",
-    "sample-inventory",
-    "sample-inventory-tests",
-    "sample-json-query-missing",
-    "sample-json-query-path",
-    "sample-json-query-pretty",
-    "sample-json-query-tests",
-    "sample-json-query-trailing",
-    "sample-json-query-truncated",
-    "sample-json-query-usage",
-    "sample-kv",
-    "sample-todo-list-empty",
-    "sample-todo-missing-item",
-    "sample-todo-usage",
-    "sample-wc",
-    "sample-wc-missing",
-    "sample-wc-tests",
-    # Testing framework (test & example blocks)
-    "tst-assert-is-binding",
-    "tst-example-uses-text",
-    "tst-failing-assert",
-    "tst-failing-example",
-    "tst-fake-files-bugs",
-    "tst-fakes",
-    "tst-private-names",
-    "tst-stop-in-test",
-    "tst-two-failures",
-    # Text & Char
-    "txt-caesar",
-    "txt-case-chars",
-    "txt-chars-roundtrip",
-    "txt-counts",
-    "txt-escapes",
-    "txt-interpolation",
-    "txt-interpolation-case",
-    "txt-invalid-utf8-file",
-    "txt-lines-words",
-    "txt-multiline",
-    "txt-ordering",
-    "txt-parse-numbers",
-    "txt-replace-repeat",
-    "txt-search",
-    "txt-split-join",
-    "txt-test-pass",
-    "txt-trim-pad",
-    "txt-word-frequency",
-]
+MINIMUM_GOLDEN_SUITES = 238
+MINIMUM_LOWER_SOURCE_SUITES = 46
+MINIMUM_EXAMPLE_PROGRAMS = 13
+MINIMUM_LIB_MODULES = 30
+MINIMUM_TOOL_SERVICE_PROGRAMS = 16
 
-MINIMUM_COHORT = 200
+TEST_LINE_RE = re.compile(r"^(passed|failed|stopped) (\S+)  ", re.M)
+PROMISE_OR_SERVICE_OUT_RE = re.compile(
+    r"^(?:passed|failed|stopped) \S+(?:\.promise\.\d+|\.service\.promise\.\d+|\.service\.recovery)  ",
+    re.M,
+)
+PROMISE_OR_SERVICE_NAME_RE = re.compile(
+    r"(?:\.promise\.\d+|\.service\.promise\.\d+|\.service\.recovery)$"
+)
+ANCHOR_COUNT_RE = re.compile(r"^(\d+) anchors passed$", re.M)
+SUMMARY_RE = re.compile(r"^(\d+) passed, (\d+) failed, (\d+) stopped$", re.M)
+
+# Lower-source programs that also declare a `service` block: C `mo run` rejects them with E1408
+# ("mo run does not start services yet"), while `mo emit` + `mo-rt run` runs their `main` entry
+# and returns their exact Core-checked exit code (see ci/check_lower_source.py).
+SERVICE_MAIN_EXPECTED_EXIT = {
+    "service-descriptor": 19,
+    "service-simulation": 0,
+}
+
+MODB_SUITES = (
+    "src/modb.mo",
+    "src/modb/table.mo",
+    "tests/test-modb.mo",
+    "tests/test-table.mo",
+    "examples/shop.mo",
+)
 
 
 def read_bytes(case: pathlib.Path, name: str, default: bytes = b"") -> bytes:
@@ -314,17 +135,124 @@ def find_or_build_mo_rt(explicit: str | None, skip_build: bool) -> pathlib.Path:
     return built
 
 
-def check_no_openssl_linkage(mo_rt: pathlib.Path) -> None:
+def check_no_forbidden_linkage(mo_rt: pathlib.Path) -> None:
     ldd = shutil.which("ldd")
     if ldd is None:
         return
     res = subprocess.run([ldd, str(mo_rt)], capture_output=True, text=True, timeout=30)
     assert res.returncode == 0, f"ldd {mo_rt} failed: {res.stderr}"
     lower = res.stdout.lower()
-    for forbidden in ("libssl", "libcrypto"):
+    for forbidden in ("libssl", "libcrypto", "libsqlite3"):
         assert forbidden not in lower, (
             f"{mo_rt} unexpectedly links {forbidden}:\n{res.stdout}"
         )
+
+
+def check_forbid_unsafe_code() -> None:
+    workspace_toml = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+    assert 'unsafe_code = "forbid"' in workspace_toml, (
+        "Cargo.toml workspace lints must set unsafe_code = \"forbid\""
+    )
+    crate_dirs = sorted(p for p in (ROOT / "crates").iterdir() if p.is_dir())
+    assert len(crate_dirs) >= 7, f"expected >= 7 crates, found {len(crate_dirs)}"
+    checked = 0
+    for crate in crate_dirs:
+        entry_points = [
+            p
+            for p in (crate / "src/lib.rs", crate / "src/main.rs", crate / "build.rs")
+            if p.is_file()
+        ]
+        assert entry_points, f"{crate}: no Rust entry point found"
+        for ep in entry_points:
+            first_lines = ep.read_text(encoding="utf-8").splitlines()[:5]
+            assert any(line.strip() == "#![forbid(unsafe_code)]" for line in first_lines), (
+                f"{ep.relative_to(ROOT)} is missing #![forbid(unsafe_code)] at top of file"
+            )
+            checked += 1
+    assert checked >= 8, f"expected >= 8 crate entry points, checked {checked}"
+
+
+def parse_anchors_count(stdout: str) -> int:
+    m = ANCHOR_COUNT_RE.search(stdout)
+    assert m is not None, f"unexpected mo-rt anchors output: {stdout!r}"
+    return int(m.group(1))
+
+
+def classify_golden_case(case: pathlib.Path) -> str:
+    command = read_bytes(case, "command", b"run").decode().strip()
+    exp_stdout = read_bytes(case, "stdout")
+    exp_stderr = read_bytes(case, "stderr")
+    exp_status = int(read_bytes(case, "status", b"0").decode().strip())
+    if exp_status != 0 and exp_stdout == b"" and exp_stderr.startswith(b"error E"):
+        return "compile-only"
+    if command == "test" and PROMISE_OR_SERVICE_OUT_RE.search(exp_stdout.decode(errors="replace")):
+        return "promise-or-service"
+    return "full"
+
+
+def diff_test_only_batches(
+    mo: pathlib.Path,
+    mo_rt: pathlib.Path,
+    program: str,
+    bc_path: pathlib.Path,
+    names: list[str],
+    cwd: pathlib.Path,
+    rs_full: subprocess.CompletedProcess[bytes] | None = None,
+) -> list[str]:
+    """Compare executed `test`/`example` outcomes byte-for-byte against C `mo test --only`."""
+    problems: list[str] = []
+    if not names:
+        return problems
+    # C `mo` caps CLI options at 256 words (`--only NAME` is 2 words each -> batch <= 80 names).
+    if len(names) <= 80 and rs_full is not None:
+        c_cmd = [str(mo), "test"]
+        for name in names:
+            c_cmd.extend(["--only", name])
+        c_cmd.append(program)
+        c_res = subprocess.run(c_cmd, cwd=cwd, capture_output=True, timeout=120)
+        if rs_full.stdout != c_res.stdout:
+            problems.append(
+                "stdout mismatch vs C mo test --only\n"
+                f"--- C mo\n{c_res.stdout.decode(errors='replace')}"
+                f"--- mo-rt\n{rs_full.stdout.decode(errors='replace')}"
+            )
+        if rs_full.stderr != c_res.stderr:
+            problems.append(
+                "stderr mismatch vs C mo test --only\n"
+                f"--- C mo\n{c_res.stderr.decode(errors='replace')}"
+                f"--- mo-rt\n{rs_full.stderr.decode(errors='replace')}"
+            )
+        if rs_full.returncode != c_res.returncode:
+            problems.append(
+                f"exit status mismatch vs C mo test --only: C={c_res.returncode}, mo-rt={rs_full.returncode}"
+            )
+        return problems
+
+    for start in range(0, len(names), 80):
+        batch = names[start : start + 80]
+        c_cmd = [str(mo), "test"]
+        rs_cmd = [str(mo_rt), "test"]
+        for name in batch:
+            c_cmd.extend(["--only", name])
+            rs_cmd.extend(["--only", name])
+        c_cmd.append(program)
+        rs_cmd.append(str(bc_path))
+        c_res = subprocess.run(c_cmd, cwd=cwd, capture_output=True, timeout=120)
+        rs_res = subprocess.run(rs_cmd, cwd=cwd, capture_output=True, timeout=120)
+        if (rs_res.returncode, rs_res.stdout, rs_res.stderr) != (
+            c_res.returncode,
+            c_res.stdout,
+            c_res.stderr,
+        ):
+            problems.append(
+                f"batch [{start}:{start + len(batch)}] mismatch vs C mo test --only "
+                f"(C={c_res.returncode}, mo-rt={rs_res.returncode})\n"
+                f"--- C mo stdout\n{c_res.stdout.decode(errors='replace')}"
+                f"--- mo-rt stdout\n{rs_res.stdout.decode(errors='replace')}"
+                f"--- C mo stderr\n{c_res.stderr.decode(errors='replace')}"
+                f"--- mo-rt stderr\n{rs_res.stderr.decode(errors='replace')}"
+            )
+    return problems
 
 
 def check_golden_case(
@@ -332,7 +260,8 @@ def check_golden_case(
     mo_rt: pathlib.Path,
     case: pathlib.Path,
     tmpdir: pathlib.Path,
-) -> tuple[str, list[str]]:
+) -> tuple[str, str, int, int, list[str]]:
+    """Returns (category, command, tests_checked, anchors_checked, problems)."""
     entry = (case / "entry").read_text().strip() if (case / "entry").exists() else None
     program = entry or str((case / "main.mo").relative_to(ROOT))
     command = read_bytes(case, "command", b"run").decode().strip()
@@ -343,18 +272,48 @@ def check_golden_case(
     exp_stderr = read_bytes(case, "stderr")
     exp_status = int(read_bytes(case, "status", b"0").decode().strip())
 
-    bc_path = tmpdir / f"{case.name}.bc"
+    category = classify_golden_case(case)
+    bc_path = tmpdir / f"golden_{case.name}.bc"
     emit_cmd = [str(mo), "emit"]
     if command == "test":
         emit_cmd.append("--tests")
     emit_cmd.extend([program, "-o", str(bc_path)])
 
+    # 1. Compile-time-only error goldens (Phase 2 front-end scope): verify exact compile rejection.
+    if category == "compile-only":
+        emitted = subprocess.run(emit_cmd, cwd=ROOT, capture_output=True, timeout=60)
+        problems = []
+        if emitted.returncode != exp_status:
+            problems.append(
+                f"compile-only exit mismatch: expected {exp_status}, got {emitted.returncode}"
+            )
+        if emitted.stdout != exp_stdout:
+            problems.append(
+                "compile-only stdout mismatch\n"
+                f"--- expected\n{exp_stdout.decode(errors='replace')}"
+                f"--- actual\n{emitted.stdout.decode(errors='replace')}"
+            )
+        if emitted.stderr != exp_stderr:
+            problems.append(
+                "compile-only stderr mismatch\n"
+                f"--- expected\n{exp_stderr.decode(errors='replace')}"
+                f"--- actual\n{emitted.stderr.decode(errors='replace')}"
+            )
+        return category, command, 0, 0, problems
+
+    # 2. Emit `.bc` and verify it passes `mo-rt verify` and `mo-rt anchors`.
     emitted = subprocess.run(emit_cmd, cwd=ROOT, capture_output=True, timeout=60)
     if emitted.returncode != 0:
-        return command, [
-            f"mo emit failed (exit {emitted.returncode}): "
-            f"{emitted.stderr.decode(errors='replace')}"
-        ]
+        return (
+            category,
+            command,
+            0,
+            0,
+            [
+                f"mo emit failed (exit {emitted.returncode}): "
+                f"{emitted.stderr.decode(errors='replace')}"
+            ],
+        )
 
     verified = subprocess.run(
         [str(mo_rt), "verify", str(bc_path)],
@@ -363,12 +322,72 @@ def check_golden_case(
         timeout=30,
     )
     if verified.returncode != 0 or verified.stderr:
-        return command, [
-            f"mo-rt verify failed (exit {verified.returncode}): "
-            f"{verified.stderr.decode(errors='replace')}"
-        ]
+        return (
+            category,
+            command,
+            0,
+            0,
+            [
+                f"mo-rt verify failed (exit {verified.returncode}): "
+                f"{verified.stderr.decode(errors='replace')}"
+            ],
+        )
 
-    # Run C `mo` as live differential oracle.
+    anchors_res = subprocess.run(
+        [str(mo_rt), "anchors", str(bc_path)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if anchors_res.returncode != 0 or anchors_res.stderr:
+        return (
+            category,
+            command,
+            0,
+            0,
+            [
+                f"mo-rt anchors failed (exit {anchors_res.returncode}): "
+                f"{anchors_res.stderr}"
+            ],
+        )
+    anchors_checked = parse_anchors_count(anchors_res.stdout)
+
+    # 3. `mo test` goldens containing promises / service recovery blocks:
+    #    execute every `test`/`example` block in `.bc` and diff byte-for-byte against C `mo test --only`.
+    if category == "promise-or-service":
+        rs_res = subprocess.run(
+            [str(mo_rt), "test", "--allow-empty", str(bc_path)],
+            cwd=ROOT,
+            input=stdin_bytes,
+            capture_output=True,
+            timeout=120,
+        )
+        problems = []
+        if rs_res.returncode not in (0, 1):
+            problems.append(
+                f"mo-rt test --allow-empty unexpected exit {rs_res.returncode}: "
+                f"{rs_res.stderr.decode(errors='replace')}"
+            )
+            return category, command, 0, anchors_checked, problems
+
+        rs_names = [m.group(2) for m in TEST_LINE_RE.finditer(rs_res.stdout.decode(errors="replace"))]
+        exp_names = [
+            m.group(2)
+            for m in TEST_LINE_RE.finditer(exp_stdout.decode(errors="replace"))
+            if not PROMISE_OR_SERVICE_NAME_RE.search(m.group(2))
+        ]
+        if rs_names != exp_names:
+            problems.append(
+                f"executed test/example inventory mismatch: expected {exp_names}, got {rs_names}"
+            )
+        else:
+            problems.extend(
+                diff_test_only_batches(mo, mo_rt, program, bc_path, rs_names, ROOT, rs_full=rs_res)
+            )
+        return category, command, len(rs_names), anchors_checked, problems
+
+    # 4. Full runtime parity golden suite: exact byte-for-byte match vs C `mo` and golden files.
     c_res = subprocess.run(
         [str(mo), command, program, *arguments],
         cwd=ROOT,
@@ -377,7 +396,6 @@ def check_golden_case(
         timeout=120,
     )
 
-    # Run Rust `mo-rt` on the emitted `.bc` file.
     rt_cmd = [str(mo_rt), command, str(bc_path)]
     if command == "run" and arguments:
         rt_cmd.extend(["--", *arguments])
@@ -386,7 +404,7 @@ def check_golden_case(
         cwd=ROOT,
         input=stdin_bytes,
         capture_output=True,
-        timeout=60,
+        timeout=120,
     )
 
     problems = []
@@ -410,7 +428,247 @@ def check_golden_case(
         problems.append(
             f"exit status mismatch vs C mo: C={c_res.returncode}, mo-rt={rs_res.returncode}"
         )
-    return command, problems
+    tests_checked = (
+        len(TEST_LINE_RE.findall(rs_res.stdout.decode(errors="replace"))) if command == "test" else 0
+    )
+    return category, command, tests_checked, anchors_checked, problems
+
+
+def diff_test_program(
+    mo: pathlib.Path,
+    mo_rt: pathlib.Path,
+    label: str,
+    program: str,
+    cwd: pathlib.Path,
+    tmpdir: pathlib.Path,
+    allow_empty: bool = False,
+    require_all_pass: bool = True,
+) -> tuple[int, int, int, list[str]]:
+    """Emit `--tests` `.bc`, verify, check anchors, run `mo-rt test`, and diff against C `mo test`.
+
+    Returns (passed_count, total_tests_checked, anchors_checked, problems).
+    """
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)
+    bc_path = tmpdir / f"test_{safe_name}.bc"
+
+    emitted = subprocess.run(
+        [str(mo), "emit", "--tests", program, "-o", str(bc_path)],
+        cwd=cwd,
+        capture_output=True,
+        timeout=60,
+    )
+    if emitted.returncode != 0:
+        return (
+            0,
+            0,
+            0,
+            [
+                f"mo emit --tests failed (exit {emitted.returncode}): "
+                f"{emitted.stderr.decode(errors='replace')}"
+            ],
+        )
+
+    verified = subprocess.run(
+        [str(mo_rt), "verify", str(bc_path)],
+        cwd=cwd,
+        capture_output=True,
+        timeout=30,
+    )
+    if verified.returncode != 0 or verified.stderr:
+        return (
+            0,
+            0,
+            0,
+            [
+                f"mo-rt verify failed (exit {verified.returncode}): "
+                f"{verified.stderr.decode(errors='replace')}"
+            ],
+        )
+
+    anchors_res = subprocess.run(
+        [str(mo_rt), "anchors", str(bc_path)],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if anchors_res.returncode != 0 or anchors_res.stderr:
+        return (
+            0,
+            0,
+            0,
+            [f"mo-rt anchors failed (exit {anchors_res.returncode}): {anchors_res.stderr}"],
+        )
+    anchors_checked = parse_anchors_count(anchors_res.stdout)
+
+    rt_cmd = [str(mo_rt), "test"]
+    if allow_empty:
+        rt_cmd.append("--allow-empty")
+    rt_cmd.append(str(bc_path))
+    rs_res = subprocess.run(rt_cmd, cwd=cwd, capture_output=True, timeout=180)
+    rs_out = rs_res.stdout.decode(errors="replace")
+    rs_names = [m.group(2) for m in TEST_LINE_RE.finditer(rs_out)]
+
+    summary_match = SUMMARY_RE.search(rs_out)
+    passed = int(summary_match.group(1)) if summary_match else 0
+    failed = int(summary_match.group(2)) if summary_match else -1
+    stopped = int(summary_match.group(3)) if summary_match else -1
+
+    problems: list[str] = []
+    if require_all_pass:
+        if rs_res.returncode != 0 or failed != 0 or stopped != 0 or (not allow_empty and passed == 0):
+            problems.append(
+                f"mo-rt test did not pass cleanly (exit {rs_res.returncode}):\n"
+                f"{rs_out}{rs_res.stderr.decode(errors='replace')}"
+            )
+            return passed, len(rs_names), anchors_checked, problems
+    elif rs_res.returncode not in (0, 1):
+        problems.append(
+            f"mo-rt test unexpected exit {rs_res.returncode}:\n"
+            f"{rs_out}{rs_res.stderr.decode(errors='replace')}"
+        )
+        return passed, len(rs_names), anchors_checked, problems
+
+    if not rs_names:
+        return passed, 0, anchors_checked, problems
+
+    # Inspect C `mo test --list` to know whether promises or service recovery blocks exist.
+    listed = subprocess.run(
+        [str(mo), "test", "--list", program],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if listed.returncode != 0:
+        problems.append(f"mo test --list failed (exit {listed.returncode}): {listed.stderr}")
+        return passed, len(rs_names), anchors_checked, problems
+
+    list_names = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    has_non_bc_specs = any(PROMISE_OR_SERVICE_NAME_RE.search(n) for n in list_names)
+    expected_bc_names = [n for n in list_names if not PROMISE_OR_SERVICE_NAME_RE.search(n)]
+
+    if rs_names != expected_bc_names:
+        problems.append(
+            f"test/example inventory mismatch vs `mo test --list`: "
+            f"C={expected_bc_names}, mo-rt={rs_names}"
+        )
+        return passed, len(rs_names), anchors_checked, problems
+
+    if not has_non_bc_specs:
+        c_res = subprocess.run([str(mo), "test", program], cwd=cwd, capture_output=True, timeout=180)
+        if rs_res.stdout != c_res.stdout:
+            problems.append(
+                "stdout mismatch vs C mo test\n"
+                f"--- C mo\n{c_res.stdout.decode(errors='replace')}"
+                f"--- mo-rt\n{rs_out}"
+            )
+        if rs_res.stderr != c_res.stderr:
+            problems.append(
+                "stderr mismatch vs C mo test\n"
+                f"--- C mo\n{c_res.stderr.decode(errors='replace')}"
+                f"--- mo-rt\n{rs_res.stderr.decode(errors='replace')}"
+            )
+        if rs_res.returncode != c_res.returncode:
+            problems.append(
+                f"exit status mismatch vs C mo test: C={c_res.returncode}, mo-rt={rs_res.returncode}"
+            )
+    else:
+        problems.extend(
+            diff_test_only_batches(mo, mo_rt, program, bc_path, rs_names, cwd, rs_full=rs_res)
+        )
+
+    return passed, len(rs_names), anchors_checked, problems
+
+
+def check_lower_source_case(
+    mo: pathlib.Path,
+    mo_rt: pathlib.Path,
+    suite_dir: pathlib.Path,
+    tmpdir: pathlib.Path,
+) -> tuple[bool, int, int, list[str]]:
+    """Checks one `tests/lower-source/<name>/main.mo` suite (`run` and/or `test` + `anchors`)."""
+    name = suite_dir.name
+    main_mo = suite_dir / "main.mo"
+    program = str(main_mo.relative_to(ROOT))
+    source_text = main_mo.read_text(encoding="utf-8")
+    has_main = bool(re.search(r"^fn main\b", source_text, re.M))
+
+    problems: list[str] = []
+    ran_main = False
+
+    if has_main:
+        ran_main = True
+        run_bc = tmpdir / f"lower_run_{name}.bc"
+        emitted = subprocess.run(
+            [str(mo), "emit", program, "-o", str(run_bc)],
+            cwd=ROOT,
+            capture_output=True,
+            timeout=60,
+        )
+        if emitted.returncode != 0:
+            problems.append(
+                f"mo emit failed (exit {emitted.returncode}): "
+                f"{emitted.stderr.decode(errors='replace')}"
+            )
+        else:
+            verified = subprocess.run(
+                [str(mo_rt), "verify", str(run_bc)],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=30,
+            )
+            if verified.returncode != 0 or verified.stderr:
+                problems.append(
+                    f"mo-rt verify (run) failed (exit {verified.returncode}): "
+                    f"{verified.stderr.decode(errors='replace')}"
+                )
+            else:
+                c_res = subprocess.run(
+                    [str(mo), "run", program], cwd=ROOT, capture_output=True, timeout=60
+                )
+                rs_res = subprocess.run(
+                    [str(mo_rt), "run", str(run_bc)], cwd=ROOT, capture_output=True, timeout=60
+                )
+                if name in SERVICE_MAIN_EXPECTED_EXIT:
+                    expected_rc = SERVICE_MAIN_EXPECTED_EXIT[name]
+                    if b"E1408:" not in c_res.stderr:
+                        problems.append(
+                            f"expected C mo run E1408 for service+main suite, got {c_res.stderr!r}"
+                        )
+                    if rs_res.returncode != expected_rc or rs_res.stdout != b"" or rs_res.stderr != b"":
+                        problems.append(
+                            f"mo-rt run mismatch for service+main suite: expected exit {expected_rc}, "
+                            f"got exit={rs_res.returncode} stdout={rs_res.stdout!r} stderr={rs_res.stderr!r}"
+                        )
+                else:
+                    if (rs_res.returncode, rs_res.stdout, rs_res.stderr) != (
+                        c_res.returncode,
+                        c_res.stdout,
+                        c_res.stderr,
+                    ):
+                        problems.append(
+                            f"run mismatch vs C mo (C={c_res.returncode}, mo-rt={rs_res.returncode})\n"
+                            f"--- C stdout\n{c_res.stdout.decode(errors='replace')}"
+                            f"--- mo-rt stdout\n{rs_res.stdout.decode(errors='replace')}"
+                            f"--- C stderr\n{c_res.stderr.decode(errors='replace')}"
+                            f"--- mo-rt stderr\n{rs_res.stderr.decode(errors='replace')}"
+                        )
+
+    # Always emit `--tests` `.bc`, verify, check anchors, and diff any `test`/`example` blocks.
+    # (`network-error` has an intentionally failing equality test; diff it byte-for-byte vs C.)
+    _, tests_checked, anchors_checked, test_problems = diff_test_program(
+        mo,
+        mo_rt,
+        f"lower_{name}",
+        program,
+        ROOT,
+        tmpdir,
+        allow_empty=True,
+        require_all_pass=(name != "network-error"),
+    )
+    problems.extend(test_problems)
+    return ran_main, tests_checked, anchors_checked, problems
 
 
 def check_env_and_limits_differential(
@@ -746,7 +1004,7 @@ def check_slice_1d_differential(
     """Differential check for Slice 1D: real/fake Network (+ TLS via SSL_CERT_FILE),
     real/fake Sqlite (--root, --state-dir, WAL, authorizer, confinement),
     real/fake Command (--root, within, allow_programs, timeout),
-    Simulation (start/send/advance/timers/crash/restart/admission), and task-queue tests."""
+    and Simulation (start/send/advance/timers/crash/restart)."""
 
     # 1. Generate a local test CA + signed leaf cert (SAN=IP:127.0.0.1,DNS:localhost, CA:FALSE)
     #    for real TLS parity between OpenSSL (C mo) and pure-Rust rustls (mo-rt).
@@ -831,7 +1089,7 @@ def check_slice_1d_differential(
         )
         has_tls_fixture = g1.returncode == 0 and g2.returncode == 0 and g3.returncode == 0
 
-    # Spin up local TCP + TLS + plain-HTTP-for-TLS-error servers.
+    # Spin up local TCP + TLS servers.
     tcp_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcp_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     tcp_srv.bind(("127.0.0.1", 0))
@@ -1194,18 +1452,6 @@ end
             rs_test.stderr.decode(errors="replace"),
         )
         assert b"1 passed, 0 failed, 0 stopped" in rs_test.stdout, rs_test.stdout
-
-        # Verify services/task-queue/queue-tests.mo passes all 59 tests & examples on mo-rt!
-        q_bc = tmpdir / "queue_tests.bc"
-        subprocess.run(
-            [str(mo), "emit", "--tests", str(ROOT / "services/task-queue/queue-tests.mo"), "-o", str(q_bc)],
-            cwd=ROOT,
-            check=True,
-        )
-        subprocess.run([str(mo_rt), "verify", str(q_bc)], cwd=ROOT, check=True)
-        rs_q = subprocess.run([str(mo_rt), "test", str(q_bc)], cwd=ROOT, capture_output=True, timeout=60)
-        assert rs_q.returncode == 0, (rs_q.stdout.decode(errors="replace"), rs_q.stderr.decode(errors="replace"))
-        assert b"59 passed, 0 failed, 0 stopped" in rs_q.stdout, rs_q.stdout
     finally:
         stop_flag.set()
         tcp_srv.close()
@@ -1231,37 +1477,223 @@ def main() -> None:
         default=[],
         help="Run only the named golden case(s)",
     )
+    parser.add_argument(
+        "--modb-dir",
+        help="Optional path to a MoDB checkout to also verify all 5 MoDB suites (29/29 tests)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=min(8, os.cpu_count() or 4),
+        help="Maximum parallel workers (default: min(8, cpu_count))",
+    )
     args = parser.parse_args()
+    workers = max(1, args.jobs)
 
     mo = find_or_build_mo(args.mo)
     mo_rt = find_or_build_mo_rt(args.mo_rt, args.skip_build)
-    check_no_openssl_linkage(mo_rt)
+    check_no_forbidden_linkage(mo_rt)
+    check_forbid_unsafe_code()
 
-    selected = args.case if args.case else SLICE_1D_GOLDEN_CASES
-    if not args.case:
-        assert len(selected) >= MINIMUM_COHORT, (
-            f"Cohort has {len(selected)} cases, needs >= {MINIMUM_COHORT}"
+    all_golden_dirs = sorted(p for p in GOLDEN.iterdir() if p.is_dir())
+    if args.case:
+        wanted = set(args.case)
+        golden_dirs = [p for p in all_golden_dirs if p.name in wanted]
+        found = {p.name for p in golden_dirs}
+        missing = sorted(wanted - found)
+        assert not missing, f"missing golden case(s): {missing}"
+    else:
+        assert len(all_golden_dirs) >= MINIMUM_GOLDEN_SUITES, (
+            f"tests/golden has {len(all_golden_dirs)} suites, expected >= {MINIMUM_GOLDEN_SUITES}"
         )
-        assert len(selected) == len(set(selected)), "duplicate case in SLICE_1D_GOLDEN_CASES"
+        golden_dirs = all_golden_dirs
 
-    run_count = 0
-    test_count = 0
     failures: list[str] = []
+    golden_full_run = 0
+    golden_full_test = 0
+    golden_compile_only = 0
+    golden_promise_suites = 0
+    golden_promise_tests = 0
+    total_anchors = 0
 
-    with tempfile.TemporaryDirectory() as td:
+    lower_suites = 0
+    lower_mains = 0
+    lower_tests = 0
+    example_suites = 0
+    example_tests = 0
+    lib_suites = 0
+    lib_tests = 0
+    prog_suites = 0
+    prog_tests = 0
+    modb_suites = 0
+    modb_tests = 0
+
+    with tempfile.TemporaryDirectory(prefix="mo-rust-rt-") as td:
         tmpdir = pathlib.Path(td)
-        for name in selected:
-            case = GOLDEN / name
-            assert case.is_dir(), f"missing golden case: {case}"
-            command, problems = check_golden_case(mo, mo_rt, case, tmpdir)
-            if command == "run":
-                run_count += 1
-            else:
-                test_count += 1
-            if problems:
-                failures.append(f"{name} ({command}):\n  " + "\n  ".join(problems))
+
+        # 1. All 238/238 golden suites (parallelized, results collected in deterministic order).
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            golden_futs = [
+                (case, pool.submit(check_golden_case, mo, mo_rt, case, tmpdir))
+                for case in golden_dirs
+            ]
+            for case, fut in golden_futs:
+                category, command, tests_checked, anchors_checked, problems = fut.result()
+                total_anchors += anchors_checked
+                if category == "compile-only":
+                    golden_compile_only += 1
+                elif category == "promise-or-service":
+                    golden_promise_suites += 1
+                    golden_promise_tests += tests_checked
+                else:
+                    if command == "run":
+                        golden_full_run += 1
+                    else:
+                        golden_full_test += 1
+                if problems:
+                    failures.append(f"golden/{case.name} ({category}, {command}):\n  " + "\n  ".join(problems))
 
         if not args.case:
+            lower_dirs = sorted(p for p in LOWER_SOURCE.iterdir() if p.is_dir())
+            assert len(lower_dirs) >= MINIMUM_LOWER_SOURCE_SUITES, (
+                f"tests/lower-source has {len(lower_dirs)} suites, expected >= {MINIMUM_LOWER_SOURCE_SUITES}"
+            )
+            example_paths = sorted(
+                [*(ROOT / "examples").glob("*.mo"), *(ROOT / "examples").glob("*/main.mo")]
+            )
+            assert len(example_paths) >= MINIMUM_EXAMPLE_PROGRAMS, (
+                f"examples/ has {len(example_paths)} programs, expected >= {MINIMUM_EXAMPLE_PROGRAMS}"
+            )
+            lib_paths = sorted((ROOT / "lib").rglob("*.mo"))
+            assert len(lib_paths) >= MINIMUM_LIB_MODULES, (
+                f"lib/ has {len(lib_paths)} modules, expected >= {MINIMUM_LIB_MODULES}"
+            )
+            tool_service_paths = sorted(
+                [
+                    *ROOT.glob("tools/*.mo"),
+                    *ROOT.glob("tools/*/main.mo"),
+                    *ROOT.glob("services/mo-*/main.mo"),
+                    ROOT / "services/task-queue/queue-tests.mo",
+                ]
+            )
+            assert len(tool_service_paths) >= MINIMUM_TOOL_SERVICE_PROGRAMS, (
+                f"tools+services has {len(tool_service_paths)} programs, expected >= {MINIMUM_TOOL_SERVICE_PROGRAMS}"
+            )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                lower_futs = [
+                    (d, pool.submit(check_lower_source_case, mo, mo_rt, d, tmpdir))
+                    for d in lower_dirs
+                ]
+                example_futs = [
+                    (
+                        p,
+                        pool.submit(
+                            diff_test_program,
+                            mo,
+                            mo_rt,
+                            f"example_{p.relative_to(ROOT)}",
+                            str(p.relative_to(ROOT)),
+                            ROOT,
+                            tmpdir,
+                        ),
+                    )
+                    for p in example_paths
+                ]
+                lib_futs = [
+                    (
+                        p,
+                        pool.submit(
+                            diff_test_program,
+                            mo,
+                            mo_rt,
+                            f"lib_{p.relative_to(ROOT)}",
+                            str(p.relative_to(ROOT)),
+                            ROOT,
+                            tmpdir,
+                        ),
+                    )
+                    for p in lib_paths
+                ]
+                prog_futs = [
+                    (
+                        p,
+                        pool.submit(
+                            diff_test_program,
+                            mo,
+                            mo_rt,
+                            f"prog_{p.relative_to(ROOT)}",
+                            str(p.relative_to(ROOT)),
+                            ROOT,
+                            tmpdir,
+                        ),
+                    )
+                    for p in tool_service_paths
+                ]
+
+                modb_futs = []
+                if args.modb_dir:
+                    modb_root = pathlib.Path(args.modb_dir).resolve()
+                    assert modb_root.is_dir(), f"--modb-dir not found: {modb_root}"
+                    for rel in MODB_SUITES:
+                        assert (modb_root / rel).is_file(), f"missing MoDB suite: {modb_root / rel}"
+                        modb_futs.append(
+                            (
+                                rel,
+                                pool.submit(
+                                    diff_test_program,
+                                    mo,
+                                    mo_rt,
+                                    f"modb_{rel}",
+                                    rel,
+                                    modb_root,
+                                    tmpdir,
+                                ),
+                            )
+                        )
+
+                for d, fut in lower_futs:
+                    ran_main, n_tests, n_anchors, probs = fut.result()
+                    lower_suites += 1
+                    lower_mains += int(ran_main)
+                    lower_tests += n_tests
+                    total_anchors += n_anchors
+                    if probs:
+                        failures.append(f"lower-source/{d.name}:\n  " + "\n  ".join(probs))
+
+                for p, fut in example_futs:
+                    _, n_tests, n_anchors, probs = fut.result()
+                    example_suites += 1
+                    example_tests += n_tests
+                    total_anchors += n_anchors
+                    if probs:
+                        failures.append(f"{p.relative_to(ROOT)}:\n  " + "\n  ".join(probs))
+
+                for p, fut in lib_futs:
+                    _, n_tests, n_anchors, probs = fut.result()
+                    lib_suites += 1
+                    lib_tests += n_tests
+                    total_anchors += n_anchors
+                    if probs:
+                        failures.append(f"{p.relative_to(ROOT)}:\n  " + "\n  ".join(probs))
+
+                for p, fut in prog_futs:
+                    _, n_tests, n_anchors, probs = fut.result()
+                    prog_suites += 1
+                    prog_tests += n_tests
+                    total_anchors += n_anchors
+                    if probs:
+                        failures.append(f"{p.relative_to(ROOT)}:\n  " + "\n  ".join(probs))
+
+                for rel, fut in modb_futs:
+                    passed, n_tests, n_anchors, probs = fut.result()
+                    modb_suites += 1
+                    modb_tests += passed
+                    total_anchors += n_anchors
+                    if probs:
+                        failures.append(f"modb/{rel}:\n  " + "\n  ".join(probs))
+
+            # Inline capability & edge-case differential checks (Slices 1A–1D).
             check_env_and_limits_differential(mo, mo_rt, tmpdir)
             check_slice_1c_differential(mo, mo_rt, tmpdir)
             check_slice_1d_differential(mo, mo_rt, tmpdir)
@@ -1270,11 +1702,30 @@ def main() -> None:
         sys.stderr.write("\n\n".join(failures) + "\n")
         sys.exit(1)
 
-    total = run_count + test_count
+    golden_total = golden_full_run + golden_full_test + golden_compile_only + golden_promise_suites
+    parts = [
+        f"golden {golden_total}/{len(golden_dirs)} "
+        f"({golden_full_run + golden_full_test} full [{golden_full_run} run, {golden_full_test} test], "
+        f"{golden_promise_suites} promise/service [{golden_promise_tests} tests/examples], "
+        f"{golden_compile_only} compile-only)"
+    ]
+    if not args.case:
+        parts.extend(
+            [
+                f"lower-source {lower_suites} ({lower_mains} main, {lower_tests} tests)",
+                f"examples {example_suites} ({example_tests} tests)",
+                f"lib {lib_suites} ({lib_tests} tests)",
+                f"tools+services {prog_suites} ({prog_tests} tests)",
+            ]
+        )
+        if modb_suites:
+            parts.append(f"MoDB {modb_suites} ({modb_tests} tests)")
+        parts.append(f"{total_anchors} anchors")
+        parts.append("inline caps/TLS/Sqlite/Command/Sim/UCD/verify")
     print(
-        f"rust runtime: {total}/{total} golden suites matched C mo byte-for-byte "
-        f"({run_count} run, {test_count} test; + Env/limits/BigInt/Files/Clock/Random/Crypto/Unicode16/"
-        f"Network+TLS/Sqlite/Command/Simulation/task-queue/verify checks; 0 diffs; no libssl/libcrypto)"
+        "rust runtime: "
+        + "; ".join(parts)
+        + "; 0 diffs; #![forbid(unsafe_code)]; no libssl/libcrypto/libsqlite3"
     )
 
 
