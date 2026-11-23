@@ -211,7 +211,8 @@ MO_MUST_USE bool infer_finish_notes(struct inference *p, struct mo_inferred_expr
         if (n->output.type != NULL) {
             bool valid = literal(p, n);
             (void)valid;
-            if (!p->fatal && n->discarded && !infer_named(n->type, "Unit"))
+            if (!p->fatal && ((n->discarded && !infer_named(n->type, "Unit")) ||
+                              (n->discard_result && infer_named(n->type, "Result"))))
                 infer_defer(
                     p,
                     infer_named(n->type, "Result") ? MO_CODE_FAILURE_IGNORED : MO_CODE_UNUSED_VALUE,

@@ -67,8 +67,7 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             }
             struct name_slot *entry = base->kind == MO_S_NAME ? infer_slot(p, base, false) : NULL;
             struct local *variable = entry == NULL ? NULL : entry->active;
-            if (!fields || variable == NULL || !variable->variable ||
-                variable->function != p->lambda) {
+            if (!fields || variable == NULL || !variable->variable) {
                 bool reported =
                     infer_problem(p, MO_CODE_NOT_VARIABLE, name->span,
                                   "a field is assigned without an assignable var",
@@ -78,11 +77,13 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
                 (void)reported;
                 return (struct value){0};
             }
-            if (p->lambda != 0) {
+            if (variable->function != p->lambda) {
+                MO_ASSERT(p->lambda != 0);
                 bool reported = infer_problem(
-                    p, MO_CODE_LAMBDA_WRITE, name->span, "an anonymous function can't assign a var",
-                    "An anonymous function can read names in scope, but can't "
-                    "assign a var (reference 5.6).",
+                    p, MO_CODE_LAMBDA_WRITE, name->span,
+                    "an anonymous function can't assign an outer var",
+                    "An anonymous function can read names in scope and assign its own local var, "
+                    "but can't assign a var from an enclosing function (reference 5.6).",
                     variable->name);
                 (void)reported;
                 return (struct value){0};
@@ -171,20 +172,12 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
             return (struct value){0};
         }
         if (assignment && l->function != p->lambda) {
-            bool reported =
-                infer_problem(p, MO_CODE_NOT_VARIABLE, name->span,
-                              "a var is assigned outside the function that declares it",
-                              "A var can be assigned again within the function that declares "
-                              "it (reference 6.2).",
-                              l->name);
-            (void)reported;
-            return (struct value){0};
-        }
-        if (assignment && p->lambda != 0) {
+            MO_ASSERT(p->lambda != 0);
             bool reported = infer_problem(
-                p, MO_CODE_LAMBDA_WRITE, name->span, "an anonymous function can't assign a var",
-                "An anonymous function can read names in scope, but can't "
-                "assign a var (reference 5.6).",
+                p, MO_CODE_LAMBDA_WRITE, name->span,
+                "an anonymous function can't assign an outer var",
+                "An anonymous function can read names in scope and assign its own local var, "
+                "but can't assign a var from an enclosing function (reference 5.6).",
                 l->name);
             (void)reported;
             return (struct value){0};
@@ -219,6 +212,8 @@ static MO_MUST_USE struct value infer_node(struct inference *p, const struct mo_
         if (!assignment && !(node->kind == MO_S_VAR ? infer_bind(p, name, rhs.type, true)
                                                     : infer_binder(p, name, rhs.type)))
             return (struct value){0};
+        if (!assignment && node->kind == MO_S_BIND && name->kind == MO_S_UNDERSCORE && !rhs.never)
+            rhs.note->discard_result = true;
         if (!assignment && node->kind == MO_S_BIND && name->kind == MO_S_NAME)
             p->locals->statement = true;
         struct value result =

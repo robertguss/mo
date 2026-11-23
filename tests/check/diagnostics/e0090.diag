@@ -1,7 +1,7 @@
 E0090 5.6
 0:47..48
-an anonymous function can't assign a var
-An anonymous function can read names in scope, but can't assign a var (reference 5.6).
-an anonymous function can't assign a var
-secondary 0:41..42 declared here
+an anonymous function can't assign an outer var
+An anonymous function can read names in scope and assign its own local var, but can't assign a var from an enclosing function (reference 5.6).
+an anonymous function can't assign an outer var
+secondary 0:32..33 declared here
 fixes 0

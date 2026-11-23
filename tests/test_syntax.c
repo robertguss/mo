@@ -313,6 +313,11 @@ static void diagnostics(void) {
         {"n = 1\n", MO_CODE_SOURCE_HEADER, false},
         {"x is f(a)\n", MO_CODE_SOURCE_PATTERN, true},
         {"42 = 1\n", MO_CODE_SOURCE_TARGET, true},
+        {"_ += 1\n", MO_CODE_SOURCE_TARGET, true},
+        {"_ -= 1\n", MO_CODE_SOURCE_TARGET, true},
+        {"_.a = 1\n", MO_CODE_SOURCE_TARGET, true},
+        {"var _ = 1\n", MO_CODE_SOURCE_SYNTAX, true},
+        {"module M\n_ = 1\n", MO_CODE_SOURCE_BINDING, false},
         {"Some()\n", MO_CODE_SOURCE_CONSTRUCTION, true},
         {"f(x: 1)\n", MO_CODE_SOURCE_ARGUMENTS, true},
         {"struct Empty\nend\n", MO_CODE_SOURCE_STRUCT, true},
@@ -1228,6 +1233,15 @@ int main(void) {
     nesting_and_chains();
     lambda_lists();
     type_args_syntax();
+    {
+        struct fixture d;
+        init(&d, "_ = 1 + 2\n_ = if true\n  1\nelse\n  2\nend\n", true);
+        CHECK(d.module != NULL && !mo_diags_any(&d.diags) &&
+              d.module->tree->children[1]->count == 2 && item(&d, 0)->kind == MO_S_BIND &&
+              item(&d, 0)->children[0]->kind == MO_S_UNDERSCORE && item(&d, 1)->kind == MO_S_BIND &&
+              item(&d, 1)->children[0]->kind == MO_S_UNDERSCORE);
+        free_fixture(&d);
+    }
     performance();
     return mo_test_report("test_syntax");
 }

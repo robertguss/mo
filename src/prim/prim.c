@@ -228,6 +228,8 @@ enum mo_prim_status mo_prim_call(struct mo_heap *heap, const struct mo_types *ty
     case MO_PRIM_BYTES_U16_BE_AT:
     case MO_PRIM_BYTES_U32_BE_AT:
     case MO_PRIM_BYTES_I64_BE_AT:
+    case MO_PRIM_BYTES_IS_EMPTY:
+    case MO_PRIM_BYTES_COMPARE_SLICE_AT:
         status = mo_prim_text(&call, &result);
         break;
     case MO_PRIM_LIST_EMPTY:

@@ -50,7 +50,8 @@
     X(FROM_BASE64URL, "fromBase64url") X(EMPTY, "empty") X(ZEROED, "zeroed") \
     X(FROM_LIST, "fromList") X(TO_LIST, "toList") X(FROM_U16_BE, "fromU16Be") \
     X(FROM_U32_BE, "fromU32Be") X(FROM_I64_BE, "fromI64Be") X(U16_BE_AT, "u16BeAt") \
-    X(U32_BE_AT, "u32BeAt") X(I64_BE_AT, "i64BeAt")
+    X(U32_BE_AT, "u32BeAt") X(I64_BE_AT, "i64BeAt") X(IS_EMPTY, "isEmpty") \
+    X(COMPARE_SLICE_AT, "compareSliceAt")
 #define MO_CORE_UNICODE_OPS(X) \
     X(GRAPHEMES, "graphemes") X(DISPLAY_WIDTH, "displayWidth") X(NORMALIZE_NFC, "normalizeNfc") \
     X(LOWERCASE, "lowercase") X(UPPERCASE, "uppercase") X(LETTER, "letter") X(DIGIT, "digit")

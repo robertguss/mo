@@ -1650,7 +1650,9 @@ static void validate(struct parser *p, struct mo_syntax *n, bool pattern) {
         error(p, MO_CODE_SOURCE_EXAMPLES, n->span, "an example is a Boolean line",
               "An example is a Boolean line that must be true (reference 12.1).");
     if (kind == MO_S_BIND || kind == MO_S_ADD_ASSIGN || kind == MO_S_SUB_ASSIGN) {
-        if (!place(n->children[0]) && !(kind == MO_S_BIND && tuple_names(n->children[0])))
+        if (!place(n->children[0]) &&
+            !(kind == MO_S_BIND &&
+              (n->children[0]->kind == MO_S_UNDERSCORE || tuple_names(n->children[0]))))
             error(p, MO_CODE_SOURCE_TARGET, n->children[0]->span,
                   "assignment changes a var or its fields",
                   "A var declares a name that can be assigned again; assigning to a field builds a "

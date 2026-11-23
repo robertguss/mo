@@ -275,6 +275,7 @@ static void corpus(void) {
         {"e0072.mo", "e0072.diag", BODIES},
         {"e0073.mo", "e0073.diag", BODIES},
         {"e0074.mo", "e0074.diag", BODIES},
+        {"e0074-or-result.mo", "e0074-or-result.diag", BODIES},
         {"e0075.mo", "e0075.diag", BODIES},
         {"e0075-bool.mo", "e0075-bool.diag", BODIES},
         {"e0076.mo", "e0076.diag", BODIES},
@@ -1526,15 +1527,33 @@ static void capture_sources(void) {
          "if n == 0\nshow = fn() count end\nassert show() > 0\n"
          "else\ncount += 1\nend\nend\nend\n",
          "count end", MO_CODE_CAPTURE_ASSIGNMENT},
-        {"own var write", "fn main() : Int\nf = fn()\nvar n = 3\nn += 1\nn\nend\nf()\nend\n",
-         "n +=", MO_CODE_LAMBDA_WRITE},
+        {"own var write", "fn main() : Int\nf = fn()\nvar n = 3\nn += 1\nn\nend\nf()\nend\n", NULL,
+         0},
         {"own field write",
          "struct Box\nvalue: Int\nend\nfn main() : Int\n"
-         "f = fn()\nvar box = Box(value: 3)\nbox.value = 7\nbox.value\n"
+         "f = fn()\nvar box = Box(value: 3)\nbox.value = 7\nbox.value += 1\nbox.value\n"
          "end\nf()\nend\n",
-         "box.value =", MO_CODE_LAMBDA_WRITE},
+         NULL, 0},
         {"outer write", "fn main() : Int\nvar n = 3\nf = fn()\nn = 7\nend\nf()\nn\nend\n", "n = 7",
-         MO_CODE_NOT_VARIABLE},
+         MO_CODE_LAMBDA_WRITE},
+        {"outer field write",
+         "struct Box\nvalue: Int\nend\nfn main() : Int\n"
+         "var box = Box(value: 3)\nf = fn()\nbox.value = 7\nend\nf()\nbox.value\nend\n",
+         "box.value =", MO_CODE_LAMBDA_WRITE},
+        {"nested lambda outer write",
+         "fn main() : Int\nf = fn()\nvar n = 3\ng = fn()\nn += 1\nend\ng()\nn\nend\nf()\nend\n",
+         "n +=", MO_CODE_LAMBDA_WRITE},
+        {"nested lambda capture write",
+         "fn main() : Int\nf = fn()\nvar n = 3\ng = fn() n end\nn += 1\ng()\nend\nf()\nend\n",
+         "n end", MO_CODE_CAPTURE_ASSIGNMENT},
+        {"nested lambda capture before write",
+         "fn main() : Int\nf = fn()\nvar n = 3\nn += 1\ng = fn() n end\ng()\nend\nf()\nend\n", NULL,
+         0},
+        {"local var loop in lambda",
+         "fn apply(f: fn(List(Int)) : Int, xs: List(Int)) : Int\nf(xs)\nend\n"
+         "fn main() : Int\napply(fn(xs)\nvar total = 0\nfor x in xs\ntotal += x\nend\n"
+         "total\nend, [1, 2, 3])\nend\n",
+         NULL, 0},
         {"captured field update",
          "struct Box\nvalue: Int\nend\nfn main() : Int\n"
          "var box = Box(value: 3)\nf = fn() box.value end\n"

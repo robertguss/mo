@@ -640,7 +640,10 @@ def guide_claims(binary):
          "`Files.File` operation work identically in `mo test`",
          "`Bytes` also provides `Bytes.empty`, `Bytes.zeroed(count)`, `Bytes.from_list(bytes)`, "
          "`bytes.to_list`, `Bytes.from_u16_be(n)`, `Bytes.from_u32_be(n)`, `Bytes.from_i64_be(n)`, "
-         "`bytes.u16_be_at(offset)`, `bytes.u32_be_at(offset)` and `bytes.i64_be_at(offset)`")
+         "`bytes.u16_be_at(offset)`, `bytes.u32_be_at(offset)` and `bytes.i64_be_at(offset)`",
+         "`bytes.empty?` and `bytes.compare_slice_at(offset, len, other)`",
+         "Anonymous functions can declare and assign their own local `var` bindings",
+         "bare `_ = expr` discards a non-`Result` value while still rejecting an unhandled `Result` (E0412).")
     with tempfile.TemporaryDirectory() as folder:
         source = pathlib.Path(folder) / "main.mo"
         source.write_text(
@@ -648,6 +651,20 @@ def guide_claims(binary):
             "  files = Files.in_memory({})\n"
             "  hdr = Bytes.join([Bytes.from_u16_be(513), Bytes.from_u32_be(67305985), "
             "Bytes.from_i64_be(-42)])\n"
+            "  assert Bytes.empty.empty?\n"
+            "  assert not hdr.empty?\n"
+            "  assert hdr.compare_slice_at(0, 2, Bytes.from_u16_be(513)) == Some(Equal)\n"
+            "  assert hdr.compare_slice_at(0, 2, Bytes.from_u16_be(514)) == Some(Less)\n"
+            "  assert hdr.compare_slice_at(100, 1, Bytes.empty) == None\n"
+            "  sum_fn = fn(n)\n"
+            "    var total = 0\n"
+            "    for i in 0..n\n"
+            "      total += i\n"
+            "    end\n"
+            "    total\n"
+            "  end\n"
+            "  _ = sum_fn(5)\n"
+            "  assert sum_fn(5) == 10\n"
             "  assert hdr.u16_be_at(0) == Some(513)\n"
             "  assert hdr.u32_be_at(2) == Some(67305985)\n"
             "  assert hdr.i64_be_at(6) == Some(-42)\n"

@@ -262,9 +262,10 @@ static MO_MUST_USE bool check(struct lexer *lx, const struct node *n, struct mo_
         pending(stack, n->kids[1], false);
         return true;
     case K_BIND:
-        if (!is_place(n->kids[0]) && !is_name_tuple(n->kids[0])) {
+        if (!is_place(n->kids[0]) && n->kids[0]->kind != K_UNDERSCORE &&
+            !is_name_tuple(n->kids[0])) {
             return fail(lx, n->kids[0],
-                        "the left of = is a name, a var's field, or a tuple of names, as in "
+                        "the left of = is a name, _, a var's field, or a tuple of names, as in "
                         "(low, high)");
         }
         pending(stack, n->kids[1], false);

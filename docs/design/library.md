@@ -300,6 +300,8 @@ no functions, only tests that pin what reference section 14 says they do.
 | `u16_be_at(offset)` | primitive | `BYTES_U16_BE_AT` | reads 2 big-endian bytes as unsigned `Int` (`0..65535`), or `None` out of bounds |
 | `u32_be_at(offset)` | primitive | `BYTES_U32_BE_AT` | reads 4 big-endian bytes as unsigned `Int` (`0..4294967295`), or `None` out of bounds |
 | `i64_be_at(offset)` | primitive | `BYTES_I64_BE_AT` | reads 8 big-endian bytes as signed 64-bit `Int`, or `None` out of bounds |
+| `empty?` | primitive | `BYTES_IS_EMPTY` | `true` iff `size == 0`, matching `Text.empty?`, `List.empty?`, `Map.empty?`, and `Set.empty?` |
+| `compare_slice_at(offset, len, other)` | primitive | `BYTES_COMPARE_SLICE_AT` | zero-allocation unsigned lexicographic `memcmp` of a slice against `other`, or `None` out of bounds |
 
 ## Unit
 

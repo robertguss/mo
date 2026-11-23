@@ -213,6 +213,9 @@ int main(int argc, char **argv) {
                  "2.minutes\n  .  # chain\n  in_seconds\n");
     check_source("module Main\nfn f()\nvar x=1\nx=x+2\nx\nend\n",
                  "module Main\nfn f()\n  var x = 1\n  x += 2\n  x\nend\n");
+    check_source("module Main\nfn f(flag: Bool)\n_=1+2\n_=if flag\n1\nelse\n2\nend\nend\n",
+                 "module Main\nfn f(flag: Bool)\n  _ = 1 + 2\n  _ = if flag\n    1\n  else\n    "
+                 "2\n  end\nend\n");
     check_source("fn f()\ncart.total.net=cart.total.net+item.price\n"
                  "cart.total.net=cart.total.gross+item.price\nend\n",
                  "fn f()\n  cart.total.net += item.price\n"

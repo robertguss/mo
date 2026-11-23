@@ -252,5 +252,7 @@ PRIM(BYTES_FROM_I64_BE,         "Bytes",     "from_i64_be",        "fn(Int) : By
 PRIM(BYTES_U16_BE_AT,           "Bytes",     "u16_be_at",          "fn(Bytes, Int) : Option(Int)",               "bb",  "")
 PRIM(BYTES_U32_BE_AT,           "Bytes",     "u32_be_at",          "fn(Bytes, Int) : Option(Int)",               "bb",  "")
 PRIM(BYTES_I64_BE_AT,           "Bytes",     "i64_be_at",          "fn(Bytes, Int) : Option(Int)",               "bb",  "")
+PRIM(BYTES_IS_EMPTY,            "Bytes",     "empty?",             "fn(Bytes) : Bool",                           "b",   "")
+PRIM(BYTES_COMPARE_SLICE_AT,    "Bytes",     "compare_slice_at",   "fn(Bytes, Int, Int, Bytes) : Option(Ordering)", "bbbb", "")
 
 #undef PRIM

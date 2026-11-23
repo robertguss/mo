@@ -1629,6 +1629,11 @@ MO_MUST_USE struct value infer_binary(struct inference *p, enum mo_syntax_token 
         }
         return out;
     }
+    if (op == MO_T_OR && infer_named(a.type, "Result")) {
+        bool reported = infer_or_result(p, a.type);
+        (void)reported;
+        return (struct value){0};
+    }
     struct term *operand = logical             ? infer_native(p, "Bool", 0)
                            : op == MO_T_DOTDOT ? infer_native(p, "Int", 0)
                                                : a.type;

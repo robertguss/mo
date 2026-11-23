@@ -121,6 +121,7 @@ struct note {
     uint32_t binding_index;
     bool variable;
     bool discarded;
+    bool discard_result;
     bool negative;
 };
 
@@ -421,6 +422,7 @@ infer_checked_pattern(struct inference *p, const struct mo_syntax *syntax,
                       uint32_t note_count, const struct mo_checked_binding *bindings,
                       uint32_t binding_count, uint32_t depth);
 
+MO_MUST_USE bool infer_or_result(struct inference *p, struct term *found);
 MO_MUST_USE bool infer_solve_failure(struct inference *p, struct failure_check *at, bool defaults);
 MO_MUST_USE bool infer_finish_dispatches(struct inference *p);
 MO_MUST_USE bool infer_anchor_inputs(struct inference *p, const struct mo_syntax *anchor,

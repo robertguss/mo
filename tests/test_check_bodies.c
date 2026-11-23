@@ -763,7 +763,7 @@ static void scope_errors(void) {
         {"fn run(flag: Bool) : Bool\nif flag\ntrue\nend\nend\n", MO_CODE_RESULT_TYPE},
         {"fn run()\nwhile true\nf = fn()\nbreak\nend\nf()\nend\nend\n", MO_CODE_EXIT_OUTSIDE_LOOP},
         {"fn run()\nvar x = 0\nf = fn()\nx = 1\nend\nf()\nassert x == 1\nend\n",
-         MO_CODE_NOT_VARIABLE},
+         MO_CODE_LAMBDA_WRITE},
         {"fn own()\nend\nfn run(flag: Bool)\nif flag\nown = 1\nassert own == 1\nend\nown()\nend\n",
          MO_CODE_BIND_REPEATED},
     };
@@ -979,6 +979,10 @@ static void discarded_tails(void) {
         {"fn run(flag: Bool)\nif flag\n1\nend\nend\n", MO_CODE_UNUSED_VALUE},
         {"fn run(f: fn(Int) : Int)\nfor i in 0..3\nf(i)\nend\nend\n", MO_CODE_UNUSED_VALUE},
         {"fn run(f: fn() : Result(Int, Text))\nf()\nend\n", MO_CODE_FAILURE_IGNORED},
+        {"fn run(f: fn() : Result(Int, Text))\n_ = f()\nend\n", MO_CODE_FAILURE_IGNORED},
+        {"fn run(r: Result(Int, Text))\n_ = r\nend\n", MO_CODE_FAILURE_IGNORED},
+        {"fn run(flag: Bool, r: Result(Int, Text))\n_ = if flag\nr\nelse\nError(\"x\")\nend\nend\n",
+         MO_CODE_FAILURE_IGNORED},
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         char source[512];
@@ -989,6 +993,61 @@ static void discarded_tails(void) {
         CHECK(body(&f, "run") == NULL);
         CHECK(f.diags.count == 1 && f.diags.items[0].code == cases[i].code);
         finish(&f);
+    }
+    const char *const ok_discards[] = {
+        "module Main\nfn run()\n_ = 1\n_ = Unit\nend\n",
+        ("module Main\nfn run(f: fn() : Result(Int, Text)) : Result(Unit, Text)\n_ = try f()\n"
+         "Ok(Unit)\nend\n"),
+        "module Main\nfn run(flag: Bool)\n_ = if flag\n1\nelse\n2\nend\nend\n",
+        "module Main\nfn run()\n_ = stop \"never\"\nend\n",
+    };
+    for (size_t i = 0; i < sizeof(ok_discards) / sizeof(ok_discards[0]); i++) {
+        struct fixture f;
+        init(&f, ok_discards[i], NULL);
+        CHECK(body(&f, "run") != NULL && f.diags.count == 0);
+        finish(&f);
+    }
+    /* Tailored E0074 on Result `or` (direct and deferred) vs standard Bool message on `if`/`and` */
+    {
+        const char *const or_result_cases[] = {
+            "module Main\nfn run(r: Result(Int, Text)) : Int\nr or 0\nend\n",
+            ("module Main\nfn make(x: Int) : Result(Int, Text)\nOk(x)\nend\n"
+             "fn run(f: fn(Int) : Result(Int, Text)) : Int\n"
+             "g = fn(x) f(x) or 0 end\ng(1)\nend\n"),
+            ("module Main\nstruct Box\nv: Int\nend\n"
+             "fn fetch(b: Box) : Result(Int, Text)\nOk(b.v)\nend\n"
+             "fn run(f: fn(fn(Box) : Int) : Int) : Int\n"
+             "f(fn(b) b.fetch or 0 end)\nend\n"),
+        };
+        for (size_t i = 0; i < sizeof(or_result_cases) / sizeof(or_result_cases[0]); i++) {
+            struct fixture f;
+            init(&f, or_result_cases[i], NULL);
+            CHECK(body(&f, "run") == NULL);
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CONDITION_TYPE);
+            if (f.diags.count == 1) {
+                CHECK(strstr(f.diags.items[0].message, "not Result") != NULL);
+                CHECK(strstr(f.diags.items[0].reason, "try, case, or assert") != NULL);
+                CHECK(strstr(f.diags.items[0].primary.text,
+                             "expected Option or Bool, found Result") != NULL);
+            }
+            finish(&f);
+        }
+        const char *const plain_condition_cases[] = {
+            "module Main\nfn run(r: Result(Int, Text))\nif r\nend\nend\n",
+            "module Main\nfn run(r: Result(Int, Text)) : Bool\nr and true\nend\n",
+            "module Main\nfn run(x: Int) : Bool\nx or true\nend\n",
+        };
+        for (size_t i = 0; i < sizeof(plain_condition_cases) / sizeof(plain_condition_cases[0]);
+             i++) {
+            struct fixture f;
+            init(&f, plain_condition_cases[i], NULL);
+            CHECK(body(&f, "run") == NULL);
+            CHECK(f.diags.count == 1 && f.diags.items[0].code == MO_CODE_CONDITION_TYPE);
+            if (f.diags.count == 1)
+                CHECK(strcmp(f.diags.items[0].message, "a condition isn't a yes-or-no answer") ==
+                      0);
+            finish(&f);
+        }
     }
 }
 

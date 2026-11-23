@@ -1184,7 +1184,36 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
     (some_ tInt (int (-9223372036854775808)))) &&
   passes program (eq (tOpt tInt)
     (prim (.bytes .i64BeAt) [.lit (.bytes [0, 0, 0, 0, 0, 0, 0, 0]), int 9223372036854775807])
-    (none_ tInt))
+    (none_ tInt)) &&
+  passes program (prim (.bytes .isEmpty) [.lit (.bytes [])]) &&
+  passes program (not_ (prim (.bytes .isEmpty) [.lit (.bytes [0])])) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3, 4]), int 1, int 2, .lit (.bytes [2, 3])])
+    (some_ .ordering (.con .ordering "Equal" []))) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3, 4]), int 1, int 2, .lit (.bytes [2, 4])])
+    (some_ .ordering (.con .ordering "Less" []))) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 0x80, 3]), int 1, int 1, .lit (.bytes [0x7f])])
+    (some_ .ordering (.con .ordering "Greater" []))) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3]), int 0, int 2, .lit (.bytes [1, 2, 0])])
+    (some_ .ordering (.con .ordering "Less" []))) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3]), int 3, int 0, .lit (.bytes [])])
+    (some_ .ordering (.con .ordering "Equal" []))) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3]), int (-1), int 1, .lit (.bytes [1])])
+    (none_ .ordering)) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3]), int 0, int (-1), .lit (.bytes [])])
+    (none_ .ordering)) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3]), int 2, int 2, .lit (.bytes [3])])
+    (none_ .ordering)) &&
+  passes program (eq (tOpt .ordering)
+    (prim (.bytes .compareSliceAt) [.lit (.bytes [1, 2, 3]), int 9223372036854775807, int 1, .lit (.bytes [1])])
+    (none_ .ordering))
 
 #guard Text.exprRoundTrip (io .fileOpen [v "f", str "a.bin"]) &&
   typedAs? program [("f", tCap .files)] (io .writeBytes [v "f", str "a.bin", .lit (.bytes [1])])

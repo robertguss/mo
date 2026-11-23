@@ -455,7 +455,9 @@ mo_core_expr lower_cps_application(struct body *b, const struct mo_checked_expre
                      {"Bytes.from_i64_be", MO_CORE_BYTES_OP_FROM_I64_BE},
                      {"Bytes.u16_be_at", MO_CORE_BYTES_OP_U16_BE_AT},
                      {"Bytes.u32_be_at", MO_CORE_BYTES_OP_U32_BE_AT},
-                     {"Bytes.i64_be_at", MO_CORE_BYTES_OP_I64_BE_AT}};
+                     {"Bytes.i64_be_at", MO_CORE_BYTES_OP_I64_BE_AT},
+                     {"Bytes.empty?", MO_CORE_BYTES_OP_IS_EMPTY},
+                     {"Bytes.compare_slice_at", MO_CORE_BYTES_OP_COMPARE_SLICE_AT}};
         for (size_t i = 0; i < sizeof bytes / sizeof bytes[0]; i++) {
             lower_work(p, 1);
             if (strcmp(r->native, bytes[i].name) == 0)

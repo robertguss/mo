@@ -1,0 +1,4 @@
+passed Main.test.1  tests/golden/dx-bytes-lambda-discard/main.mo:27:1
+passed Main.test.2  tests/golden/dx-bytes-lambda-discard/main.mo:49:1
+passed Main.test.3  tests/golden/dx-bytes-lambda-discard/main.mo:97:1
+3 passed, 0 failed, 0 stopped

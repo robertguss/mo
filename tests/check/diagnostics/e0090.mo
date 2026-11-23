@@ -1,9 +1,9 @@
 module Main
 fn main() : Int
-f = fn()
 var n = 3
+f = fn()
 n += 1
-n
 end
 f()
+n
 end

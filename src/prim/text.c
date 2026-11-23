@@ -701,6 +701,24 @@ static MO_MUST_USE enum mo_prim_status bytes_be_at(struct mo_prim_call *c, struc
     return mo_prim_option(c, true, mo_cell_int(value), out);
 }
 
+static MO_MUST_USE enum mo_prim_status bytes_compare_slice_at(struct mo_prim_call *c,
+                                                              struct mo_cell *out) {
+    struct text bytes = view(c->args[0]);
+    int64_t offset = mo_cell_get_int(c->args[1]);
+    int64_t len = mo_cell_get_int(c->args[2]);
+    struct text other = view(c->args[3]);
+    if (offset < 0 || len < 0 || (uint64_t)offset > bytes.length ||
+        bytes.length - (size_t)offset < (uint64_t)len)
+        return mo_prim_option(c, false, mo_cell_unit(), out);
+    size_t slice_len = (size_t)len;
+    size_t common = slice_len < other.length ? slice_len : other.length;
+    int cmp = common == 0 ? 0 : memcmp(bytes.bytes + (size_t)offset, other.bytes, common);
+    if (cmp == 0)
+        cmp = slice_len < other.length ? -1 : slice_len > other.length ? 1 : 0;
+    uint32_t tag = cmp < 0 ? 0U : cmp > 0 ? 2U : 1U;
+    return mo_prim_option(c, true, mo_cell_case(tag, mo_cell_unit()), out);
+}
+
 static MO_MUST_USE enum mo_prim_status from_chars(struct mo_prim_call *c, struct mo_cell *out) {
     uint32_t count = mo_list_size(c->args[0]);
     size_t length = 0;
@@ -773,6 +791,12 @@ enum mo_prim_status mo_prim_text(struct mo_prim_call *c, struct mo_cell *out) {
     if (c->id == MO_PRIM_BYTES_U16_BE_AT || c->id == MO_PRIM_BYTES_U32_BE_AT ||
         c->id == MO_PRIM_BYTES_I64_BE_AT)
         return bytes_be_at(c, out);
+    if (c->id == MO_PRIM_BYTES_IS_EMPTY) {
+        *out = mo_cell_bool(view(c->args[0]).length == 0);
+        return MO_PRIM_RETURNED;
+    }
+    if (c->id == MO_PRIM_BYTES_COMPARE_SLICE_AT)
+        return bytes_compare_slice_at(c, out);
     if (c->id == MO_PRIM_TEXT_FROM_CHARS)
         return from_chars(c, out);
     struct text t = view(c->args[0]);

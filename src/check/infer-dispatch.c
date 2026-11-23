@@ -202,6 +202,8 @@ MO_MUST_USE bool infer_solve_failure(struct inference *p, struct failure_check *
         if (infer_root(input)->variable)
             return true;
         bool option = infer_named(input, "Option");
+        if (!option && infer_named(input, "Result"))
+            return infer_or_result(p, input);
         struct term *value = option ? infer_argument(p, input, 0) : infer_native(p, "Bool", 0);
         if (value == NULL ||
             (!option && !infer_unify_as(p, input, value, MO_CODE_CONDITION_TYPE)) ||
