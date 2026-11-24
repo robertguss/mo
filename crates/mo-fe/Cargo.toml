@@ -14,6 +14,7 @@ mo-base = { path = "../mo-base" }
 mo-core = { path = "../mo-core" }
 mo-syntax = { path = "../mo-syntax" }
 mo-prim = { path = "../mo-prim" }
+mo-check = { path = "../mo-check" }
 
 [lints]
 workspace = true

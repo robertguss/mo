@@ -447,6 +447,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mo-check"
+version = "0.1.0"
+dependencies = [
+ "mo-base",
+ "mo-def",
+ "mo-syntax",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
 name = "mo-core"
 version = "0.1.0"
 dependencies = [
@@ -464,6 +475,7 @@ name = "mo-fe"
 version = "0.1.0"
 dependencies = [
  "mo-base",
+ "mo-check",
  "mo-core",
  "mo-def",
  "mo-prim",

@@ -7,13 +7,14 @@
 use std::env;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mo_base::{
     DiagBag, Diagnostic, DisplayMetrics, NO_FILE, RenderFormat, SourceError, SourceMap, Span,
     TerminalEncoding, render_diagnostic_default,
 };
+use mo_check::{CheckStage, LibraryMode, LoadOptions, run_stage};
 use mo_core::{
     CoreDocument, CoreTextKind, check_program, detect_kind, parse_document, parse_program,
     parse_run, print_document,
@@ -81,7 +82,15 @@ fn print_usage(mut w: impl Write) -> io::Result<()> {
     )?;
     writeln!(w, "  mo-fe format [--stdout|--check] [--json] [FILE.mo|-]")?;
     writeln!(w, "  mo-fe parse-batch [--fragment|--header] [--] FILE...")?;
-    writeln!(w, "  mo-fe format-batch [--fragment] [--] FILE...")
+    writeln!(w, "  mo-fe format-batch [--fragment] [--] FILE...")?;
+    writeln!(
+        w,
+        "  mo-fe check [--stage=load|modules|signatures] [--library DIR|--no-library] [--json] FILE.mo"
+    )?;
+    writeln!(
+        w,
+        "  mo-fe check-batch [--stage=load|modules|signatures] [--library DIR|--no-library] [--] FILE..."
+    )
 }
 
 fn parse_check_kind(raw: &str) -> Result<CheckKind, String> {
@@ -1032,6 +1041,158 @@ fn run_format_batch(args: &[String], mut out: impl Write, mut err: impl Write) -
     if out.flush().is_err() { 8 } else { 0 }
 }
 
+fn run_check_stage(args: &[String], mut err: impl Write) -> u8 {
+    let mut stage = CheckStage::Signatures;
+    let mut library = LibraryMode::default_embedded();
+    let mut format = RenderFormat::Text;
+    let mut path: Option<&str> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--json" {
+            format = RenderFormat::Json;
+        } else if arg == "--no-library" {
+            library = LibraryMode::None;
+        } else if arg == "--library" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --library requires an argument");
+                return 2;
+            };
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if let Some(val) = arg.strip_prefix("--library=") {
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if arg == "--stage" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --stage requires an argument");
+                return 2;
+            };
+            let Some(parsed) = CheckStage::parse(val) else {
+                let _ = writeln!(
+                    err,
+                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                );
+                return 2;
+            };
+            stage = parsed;
+        } else if let Some(val) = arg.strip_prefix("--stage=") {
+            let Some(parsed) = CheckStage::parse(val) else {
+                let _ = writeln!(
+                    err,
+                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                );
+                return 2;
+            };
+            stage = parsed;
+        } else if arg == "--help" || arg == "-h" {
+            let _ = print_usage(&mut err);
+            return 0;
+        } else if arg.starts_with('-') {
+            let _ = writeln!(err, "error: unknown flag {arg:?}");
+            return 2;
+        } else if path.is_some() {
+            let _ = writeln!(err, "error: unexpected extra argument {arg:?}");
+            return 2;
+        } else {
+            path = Some(arg);
+        }
+        i += 1;
+    }
+
+    let Some(entry) = path else {
+        let _ = writeln!(err, "error: check requires a FILE.mo argument");
+        return 2;
+    };
+
+    let options = LoadOptions {
+        library,
+        ..LoadOptions::default()
+    };
+    let mut result = run_stage(entry, &options, stage);
+    if result.ok() {
+        return 0;
+    }
+    match render_sorted_diags(&mut result.diags, &result.sources, format, false, &mut err) {
+        Ok(_) => 1,
+        Err(_) => 2,
+    }
+}
+
+fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut stage = CheckStage::Signatures;
+    let mut library = LibraryMode::default_embedded();
+    let mut files: Vec<&str> = Vec::new();
+    let mut literal_only = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if !literal_only && arg == "--" {
+            literal_only = true;
+        } else if !literal_only && arg == "--no-library" {
+            library = LibraryMode::None;
+        } else if !literal_only && arg == "--library" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --library requires an argument");
+                return 2;
+            };
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if !literal_only && let Some(val) = arg.strip_prefix("--library=") {
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if !literal_only && arg == "--stage" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --stage requires an argument");
+                return 2;
+            };
+            let Some(parsed) = CheckStage::parse(val) else {
+                let _ = writeln!(
+                    err,
+                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                );
+                return 2;
+            };
+            stage = parsed;
+        } else if !literal_only && let Some(val) = arg.strip_prefix("--stage=") {
+            let Some(parsed) = CheckStage::parse(val) else {
+                let _ = writeln!(
+                    err,
+                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                );
+                return 2;
+            };
+            stage = parsed;
+        } else if !literal_only && arg.starts_with('-') {
+            let _ = writeln!(err, "error: unknown flag {arg:?}");
+            return 2;
+        } else {
+            files.push(arg);
+        }
+        i += 1;
+    }
+
+    let options = LoadOptions {
+        library,
+        ..LoadOptions::default()
+    };
+    for path in files {
+        let mut result = run_stage(path, &options, stage);
+        if result.ok() {
+            if writeln!(out, "0").is_err() {
+                return 8;
+            }
+        } else {
+            result.diags.sort();
+            let code = result.diags.items().first().map_or(0, |d| d.code.number());
+            if writeln!(out, "1 {} E{:04}", result.diags.len(), code).is_err() {
+                return 8;
+            }
+        }
+    }
+    if out.flush().is_err() { 8 } else { 0 }
+}
+
 fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
     let Some(cmd) = args.first().map(String::as_str) else {
         let _ = print_usage(&mut err);
@@ -1047,6 +1208,8 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
         "format" => run_format(rest, out, err),
         "parse-batch" => run_parse_batch(rest, out, err),
         "format-batch" => run_format_batch(rest, out, err),
+        "check" | "check-stage" => run_check_stage(rest, err),
+        "check-batch" | "check-stage-batch" => run_check_stage_batch(rest, out, err),
         "--help" | "-h" | "help" => {
             let _ = print_usage(out);
             0
@@ -1220,5 +1383,70 @@ mod tests {
         let code = dispatch(&["format".to_string(), missing], &mut out, &mut err);
         assert_eq!(code, 1);
         assert_eq!(err, expected_e1402);
+    }
+
+    #[test]
+    fn cli_check_stages_and_batch_parity() {
+        let greet = repo_root().join("examples/greet.mo");
+        let greet_str = greet.to_str().unwrap().to_string();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        for stage in ["load", "modules", "signatures"] {
+            out.clear();
+            err.clear();
+            let code = dispatch(
+                &[
+                    "check".to_string(),
+                    format!("--stage={stage}"),
+                    greet_str.clone(),
+                ],
+                &mut out,
+                &mut err,
+            );
+            assert_eq!(
+                code,
+                0,
+                "stage={stage}, stderr: {}",
+                String::from_utf8_lossy(&err)
+            );
+            assert!(out.is_empty() && err.is_empty());
+        }
+
+        // Batch mode on examples/greet.mo + tests/errors/e0084/main.mo.
+        let e0084 = repo_root().join("tests/errors/e0084/main.mo");
+        let e0084_str = e0084.to_str().unwrap().to_string();
+        out.clear();
+        err.clear();
+        let code = dispatch(
+            &[
+                "check-batch".to_string(),
+                "--stage=signatures".to_string(),
+                greet_str,
+                e0084_str.clone(),
+            ],
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        let lines: Vec<&str> = std::str::from_utf8(&out).unwrap().lines().collect();
+        assert_eq!(lines, vec!["0", "1 1 E0084"]);
+
+        // Single-file JSON mode on E0084 emits JSON diagnostic record.
+        out.clear();
+        err.clear();
+        let code = dispatch(
+            &[
+                "check".to_string(),
+                "--stage=signatures".to_string(),
+                "--json".to_string(),
+                e0084_str,
+            ],
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 1);
+        let json_err = String::from_utf8(err).unwrap();
+        assert!(json_err.contains("\"code\":\"E0084\""), "got: {json_err}");
     }
 }

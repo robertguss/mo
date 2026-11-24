@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Differential test harness for the pure-Rust Mo front end (`mo-base`, `mo-syntax`, `mo-core`, `mo-fe`).
+"""Differential test harness for the pure-Rust Mo front end (`mo-base`, `mo-syntax`, `mo-core`, `mo-check`, `mo-fe`).
 
 Run from the repository root:
     python3 ci/check_rust_frontend.py [--mo PATH] [--mo-fe PATH] [--mocore PATH]
                                       [--mo-grammar PATH] [--skip-build] [--require-lean]
                                       [--generated-count N] [--jobs N]
 
-What this checks across Phase 2 Slices 2A and 2B:
-  1. Workspace lint & safety policy audit (all 11 crates):
+What this checks across Phase 2 Slices 2A, 2B, and 2C:
+  1. Workspace lint & safety policy audit (all 12 crates):
        - Root `clippy.toml` configures test exemptions without weakening library lints.
        - Root `Cargo.toml` enforces hardened `writing-good-rust` `[workspace.lints]`
          including `unsafe_code = "forbid"` and `unwrap_used = "deny"`.
@@ -33,6 +33,14 @@ What this checks across Phase 2 Slices 2A and 2B:
        - Every syntax/lexer/format case in `tests/errors/` (including generated limit cases)
          matches `expected` stderr byte-for-byte and C `mo check --json` diagnostic records
          byte-for-byte.
+  9. Loader, module interface, signature, nonregular data, and signature-ability error
+     diagnostic parity (Slice 2C):
+       - Every pre-body checker case in `tests/errors/` (including generated limit cases and
+         `mo.toml` manifests) matches `expected` stderr and C `mo check --json` byte-for-byte.
+ 10. Whole-corpus `mo-fe check --stage=signatures` parity (Slice 2C):
+       - All 30 `lib/**/*.mo`, all 13 `examples/`, all 46 `tests/lower-source/*/main.mo`,
+         all `tools/` + `services/` entry points, and all 238 `tests/golden/` cases verified
+         against C `mo check` with 0 unexpected failures or diffs.
 """
 
 import argparse
@@ -119,7 +127,7 @@ def check_workspace_lint_policy() -> tuple[int, int]:
         assert rule in cargo_text, f"Cargo.toml missing required workspace lint: {rule}"
 
     crate_dirs = sorted(p for p in (ROOT / "crates").iterdir() if p.is_dir())
-    assert len(crate_dirs) >= 11, f"expected >= 11 workspace crates, found {len(crate_dirs)}"
+    assert len(crate_dirs) >= 12, f"expected >= 12 workspace crates, found {len(crate_dirs)}"
     entry_points_checked = 0
     for crate in crate_dirs:
         crate_toml = (crate / "Cargo.toml").read_text(encoding="utf-8")
@@ -1001,6 +1009,327 @@ def check_syntax_and_format_error_diagnostics(
     return len(outcomes), json_checked
 
 
+CHECK_STAGE_ERROR_CASES = (
+    "e0034",
+    "e0035",
+    "e0036",
+    "e0037",
+    "e0037-http",
+    "e0038",
+    "e0038-import-repeat",
+    "e0039",
+    "e0040",
+    "e0041",
+    "e0042",
+    "e0043",
+    "e0044",
+    "e0045",
+    "e0046",
+    "e0047",
+    "e0048",
+    "e0049",
+    "e0062",
+    "e0066",
+    "e0080",
+    "e0081",
+    "e0082",
+    "e0084",
+    "e1001",
+    "e1002",
+    "e1003",
+    "e1004",
+    "e1054",
+    "e1101",
+    "e1110",
+)
+
+PRE_BODY_ERROR_CODES = (
+    set(range(1, 50))
+    | {62, 66, 81, 82, 84, 96, 97}
+    | set(range(1001, 1012))
+    | {1054, 1059, 1060, 1100, 1101, 1102, 1110}
+)
+
+
+def _gen_program_too_big(folder: pathlib.Path) -> None:
+    _write_error_file(folder, "module Main\n" + "".join(f"use M{i}\n" for i in range(9)))
+    line = "a" * 1023 + "\n"
+    for i in range(9):
+        _write_error_file(folder, f'module M{i}\nbig = """\n' + line * 8190 + '"""\n', f"m{i}.mo")
+
+
+def _gen_syntax_arena(folder: pathlib.Path) -> None:
+    _write_error_file(folder, "module Main\n" + "".join(f"use M{i}\n" for i in range(10)))
+    for i in range(10):
+        _write_error_file(folder, f"module M{i}\n" + "# padding\n" * 700_000, f"m{i}.mo")
+
+
+def _gen_too_many_files(folder: pathlib.Path) -> None:
+    _write_error_file(folder, "module Main\n" + "".join(f"use M{i}\n" for i in range(4100)))
+    for i in range(4100):
+        _write_error_file(folder, f"module M{i}\n", f"m{i}.mo")
+
+
+def _gen_path_too_long(folder: pathlib.Path) -> None:
+    _write_error_file(folder, "module Main\nuse " + ".".join(["A" * 200] * 21) + "\n")
+
+
+def _gen_module_outside_root(folder: pathlib.Path) -> str:
+    (folder / "outside.mo").write_text("module Other\n", encoding="utf-8")
+    (folder / "project").mkdir()
+    (folder / "project/other.mo").symlink_to("../outside.mo")
+    _write_error_file(
+        folder, "module Main\nuse Other\nfn main()\nend\n", "project/main.mo"
+    )
+    return "project"
+
+
+CHECK_STAGE_GENERATORS = {
+    "file-too-big": SYNTAX_ERROR_GENERATORS["file-too-big"],
+    "program-too-big": _gen_program_too_big,
+    "syntax-arena": _gen_syntax_arena,
+    "too-many-files": _gen_too_many_files,
+    "path-too-long": _gen_path_too_long,
+    "module-outside-root": _gen_module_outside_root,
+}
+
+
+def _mask_library_dependent(text: bytes) -> bytes:
+    return re.sub(rb" +", b" ", re.sub(rb"\d+", b"N", text))
+
+
+def check_loader_module_signature_error_diagnostics(
+    mo_bin: pathlib.Path, mo_fe: pathlib.Path, jobs: int
+) -> tuple[int, int]:
+    """Verify byte-for-byte stderr & JSON diagnostic parity on all Slice 2C tests/errors/ cases."""
+    errors_dir = ROOT / "tests/errors"
+    cases = [errors_dir / name for name in CHECK_STAGE_ERROR_CASES]
+    for case in cases:
+        assert case.is_dir(), f"missing expected error case directory: {case}"
+
+    def run_one(case: pathlib.Path) -> tuple[str, bool]:
+        arguments = (
+            (case / "args").read_text().splitlines() if (case / "args").exists() else ["{main}"]
+        )
+        exp_err = (case / "expected").read_bytes()
+        exp_out = (case / "stdout").read_bytes() if (case / "stdout").exists() else b""
+        lib_dep = (case / "library-dependent").exists()
+        gen = case / "generated"
+
+        def verify_in(cwd: pathlib.Path, args: list[str]) -> None:
+            res = subprocess.run(
+                [str(mo_fe), "check", "--stage=signatures", *args],
+                cwd=cwd,
+                capture_output=True,
+                timeout=120,
+            )
+            assert res.returncode == 1, f"{case.name}: expected rc=1, got {res.returncode}"
+            assert res.stdout == exp_out, f"{case.name}: stdout mismatch"
+            if lib_dep:
+                assert _mask_library_dependent(res.stderr) == _mask_library_dependent(exp_err), (
+                    f"{case.name}: masked stderr mismatch\n"
+                    f"--- expected\n{exp_err.decode(errors='replace')}\n"
+                    f"--- actual\n{res.stderr.decode(errors='replace')}"
+                )
+            else:
+                assert res.stderr == exp_err, (
+                    f"{case.name}: stderr mismatch\n"
+                    f"--- expected\n{exp_err.decode(errors='replace')}\n"
+                    f"--- actual\n{res.stderr.decode(errors='replace')}"
+                )
+
+            rj = subprocess.run(
+                [str(mo_fe), "check", "--stage=signatures", "--json", *args],
+                cwd=cwd,
+                capture_output=True,
+                timeout=120,
+            )
+            cj = subprocess.run(
+                [str(mo_bin), "check", "--json", *args],
+                cwd=cwd,
+                capture_output=True,
+                timeout=120,
+            )
+            c_diags = [
+                ln
+                for ln in cj.stdout.splitlines()
+                if json.loads(ln).get("record") not in ("version", "totals")
+            ]
+            r_diags = rj.stderr.splitlines()
+            assert rj.returncode == 1, f"{case.name}: expected JSON rc=1, got {rj.returncode}"
+            if lib_dep:
+                assert len(r_diags) == len(c_diags) and len(r_diags) >= 1, (
+                    f"{case.name}: JSON record count mismatch: C={len(c_diags)}, Rust={len(r_diags)}"
+                )
+                for r_ln, c_ln in zip(r_diags, c_diags):
+                    r_obj = json.loads(r_ln)
+                    c_obj = json.loads(c_ln)
+                    assert (
+                        r_obj.get("record") == c_obj.get("record")
+                        and r_obj.get("code") == c_obj.get("code")
+                        and r_obj.get("message") == c_obj.get("message")
+                    ), f"{case.name}: JSON diagnostic mismatch: C={c_obj!r}, Rust={r_obj!r}"
+            else:
+                assert r_diags == c_diags, (
+                    f"{case.name}: JSON diagnostic mismatch\nC={c_diags!r}\nRust={r_diags!r}"
+                )
+
+        if gen.exists():
+            gen_name = gen.read_text().strip()
+            assert gen_name in CHECK_STAGE_GENERATORS, (
+                f"{case.name}: missing generator {gen_name!r} in CHECK_STAGE_GENERATORS"
+            )
+            with tempfile.TemporaryDirectory(prefix="mo-rust-2c-err-") as folder:
+                where = CHECK_STAGE_GENERATORS[gen_name](pathlib.Path(folder))
+                cwd = pathlib.Path(folder) / (where or ".")
+                args = [a.replace("{main}", "main.mo") for a in arguments]
+                verify_in(cwd, args)
+        else:
+            main = str((case / "main.mo").relative_to(ROOT))
+            args = [a.replace("{main}", main) for a in arguments]
+            verify_in(ROOT, args)
+        return case.name, True
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        outcomes = list(pool.map(run_one, cases))
+    return len(outcomes), sum(1 for _, did in outcomes if did)
+
+
+def check_whole_corpus_signatures_parity(
+    mo_bin: pathlib.Path, mo_fe: pathlib.Path, jobs: int
+) -> tuple[int, int, int, int, int]:
+    """Verify mo-fe check --stage=signatures across lib/, examples/, lower-source/, tools/+services/, and golden/."""
+    # 1. All 30 lib/**/*.mo
+    lib_files = sorted(str(p.relative_to(ROOT)) for p in (ROOT / "lib").rglob("*.mo"))
+    assert len(lib_files) == 30, f"expected 30 lib/**/*.mo files, found {len(lib_files)}"
+
+    # 2. All 13 examples/
+    example_files: list[str] = []
+    for p in sorted((ROOT / "examples").glob("*.mo")):
+        example_files.append(str(p.relative_to(ROOT)))
+    for d in sorted(p for p in (ROOT / "examples").iterdir() if p.is_dir()):
+        main_mo = d / "main.mo"
+        if main_mo.is_file():
+            example_files.append(str(main_mo.relative_to(ROOT)))
+    assert len(example_files) == 13, f"expected 13 examples/, found {len(example_files)}"
+
+    # 3. All 46 tests/lower-source/*/main.mo
+    lower_files = sorted(
+        str((d / "main.mo").relative_to(ROOT))
+        for d in (ROOT / "tests/lower-source").iterdir()
+        if d.is_dir() and (d / "main.mo").is_file()
+    )
+    assert len(lower_files) == 46, f"expected 46 tests/lower-source/*/main.mo, found {len(lower_files)}"
+
+    # 4. All 16+ tools/ + services/ entry points
+    tool_service_files: list[str] = []
+    for parent in ("tools", "services"):
+        base = ROOT / parent
+        for p in sorted(base.glob("*.mo")):
+            tool_service_files.append(str(p.relative_to(ROOT)))
+        for d in sorted(p for p in base.iterdir() if p.is_dir()):
+            if (d / "main.mo").is_file():
+                tool_service_files.append(str((d / "main.mo").relative_to(ROOT)))
+            if (d / "queue-tests.mo").is_file():
+                tool_service_files.append(str((d / "queue-tests.mo").relative_to(ROOT)))
+    assert len(tool_service_files) >= 16, (
+        f"expected >= 16 tools/+services/ entry points, found {len(tool_service_files)}"
+    )
+
+    must_pass = lib_files + example_files + lower_files + tool_service_files
+    verdicts = run_batch_lines(
+        [str(mo_fe), "check-batch", "--stage=signatures", "--"],
+        [str(ROOT / rel) for rel in must_pass],
+        jobs=jobs,
+    )
+    assert len(verdicts) == len(must_pass)
+    for rel, verdict in zip(must_pass, verdicts):
+        if verdict != "0":
+            detail = subprocess.run(
+                [str(mo_fe), "check", "--stage=signatures", rel],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            raise AssertionError(
+                f"mo-fe check --stage=signatures failed on {rel} ({verdict}):\n{detail.stderr}"
+            )
+
+    # 5. All 238 tests/golden/ directories
+    golden_dirs = sorted(p for p in (ROOT / "tests/golden").iterdir() if p.is_dir())
+    assert len(golden_dirs) == 238, f"expected 238 tests/golden/ dirs, found {len(golden_dirs)}"
+    golden_entries: list[tuple[pathlib.Path, str, bytes, int]] = []
+    for d in golden_dirs:
+        entry = (d / "entry").read_text().strip() if (d / "entry").exists() else None
+        rel = entry or str((d / "main.mo").relative_to(ROOT))
+        exp_stderr = (d / "stderr").read_bytes() if (d / "stderr").exists() else b""
+        exp_status = int((d / "status").read_text().strip()) if (d / "status").exists() else 0
+        golden_entries.append((d, rel, exp_stderr, exp_status))
+
+    golden_verdicts = run_batch_lines(
+        [str(mo_fe), "check-batch", "--stage=signatures", "--"],
+        [rel for _, rel, _, _ in golden_entries],
+        jobs=jobs,
+    )
+    assert len(golden_verdicts) == len(golden_entries)
+    for (d, rel, exp_stderr, exp_status), verdict in zip(golden_entries, golden_verdicts):
+        headers = [int(h) for h in re.findall(rb"^error E(\d{4}):", exp_stderr, re.M)]
+        is_pre_body_error = (
+            exp_status != 0
+            and bool(headers)
+            and all(code in PRE_BODY_ERROR_CODES for code in headers)
+        )
+        if is_pre_body_error:
+            assert verdict.startswith("1 "), (
+                f"golden/{d.name}: expected pre-body error {headers}, mo-fe passed ({verdict})"
+            )
+            rs = subprocess.run(
+                [str(mo_fe), "check", "--stage=signatures", rel],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=60,
+            )
+            c = subprocess.run(
+                [str(mo_bin), "check", rel],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=60,
+            )
+            assert rs.returncode == c.returncode == 1 and rs.stderr == c.stderr, (
+                f"golden/{d.name}: stderr mismatch vs C mo check\n"
+                f"--- C\n{c.stderr.decode(errors='replace')}\n"
+                f"--- Rust\n{rs.stderr.decode(errors='replace')}"
+            )
+        elif verdict != "0":
+            # Any other failure in mo-fe must also fail in C mo check with the same error code.
+            rs = subprocess.run(
+                [str(mo_fe), "check", "--stage=signatures", rel],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=60,
+            )
+            c = subprocess.run(
+                [str(mo_bin), "check", rel],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=60,
+            )
+            assert c.returncode == 1 and rs.stderr == c.stderr, (
+                f"golden/{d.name} ({rel}): unexpected mo-fe check --stage=signatures failure\n"
+                f"C rc={c.returncode}:\n{c.stderr.decode(errors='replace')}\n"
+                f"Rust rc={rs.returncode}:\n{rs.stderr.decode(errors='replace')}"
+            )
+
+    return (
+        len(lib_files),
+        len(example_files),
+        len(lower_files),
+        len(tool_service_files),
+        len(golden_entries),
+    )
+
+
 def main() -> None:
     started = time.monotonic()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1046,11 +1375,17 @@ def main() -> None:
     gram_n, gram_good, gram_bad = check_grammar_corpus_parity(mo_fe, mo_grammar)
     tracked_n, fmt_ok, fmt_refused = check_tracked_mo_format_parity(mo_bin, mo_fe, args.jobs)
     err_text_n, err_json_n = check_syntax_and_format_error_diagnostics(mo_bin, mo_fe, args.jobs)
+    c2_err_n, c2_json_n = check_loader_module_signature_error_diagnostics(
+        mo_bin, mo_fe, args.jobs
+    )
+    lib_n, ex_n, low_n, ts_n, gold_n = check_whole_corpus_signatures_parity(
+        mo_bin, mo_fe, args.jobs
+    )
 
     oracle_desc = "C + Lean mocore" if mocore is not None else "C (Lean mocore unavailable)"
     grammar_desc = "Bison mo-grammar" if mo_grammar is not None else "expected verdicts"
     print(
-        f"Rust front-end 2A+2B parity ({oracle_desc}, {grammar_desc}): "
+        f"Rust front-end 2A+2B+2C parity ({oracle_desc}, {grammar_desc}): "
         f"{crates_n} crates/{entries_n} entry points lint-audited; "
         f"{runs_n}/15 runs + {fuzz_n}/20 fuzz seeds round-tripped; "
         f"{diff_n} Core checker differential cases ({orig_n} corpus files, {prog_n} programs) matched; "
@@ -1059,6 +1394,8 @@ def main() -> None:
         f"{gram_n}/106 grammar fixtures ({gram_good} good, {gram_bad} bad) matched; "
         f"{tracked_n} tracked .mo files matched C mo format byte-for-byte ({fmt_ok} formatted+idempotent, {fmt_refused} refused); "
         f"{err_text_n} syntax/format error diagnostics ({err_json_n} JSON) matched byte-for-byte; "
+        f"{c2_err_n} load/module/signature error diagnostics ({c2_json_n} JSON) matched byte-for-byte; "
+        f"{lib_n} lib + {ex_n} examples + {low_n} lower-source + {ts_n} tools/services + {gold_n} golden passed signatures parity; "
         f"{time.monotonic() - started:.2f}s"
     )
 
