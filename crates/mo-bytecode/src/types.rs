@@ -20,6 +20,24 @@ pub struct TypeTable {
 }
 
 impl TypeTable {
+    /// Constructs an unindexed type table directly from raw type and layout vectors.
+    ///
+    /// Intended for serialization via [`crate::write::encode`] / [`crate::write::write()`],
+    /// which re-decodes and validates the encoded bytes rather than trusting cached tables.
+    #[must_use]
+    pub fn from_raw(items: Vec<TypeDef>, layouts: Vec<LayoutDef>) -> Self {
+        Self {
+            items,
+            layouts,
+            abilities: Vec::new(),
+            layout_keys: Vec::new(),
+            case_layouts: HashMap::new(),
+            closure_layouts: HashMap::new(),
+            tuple_layouts: HashMap::new(),
+            record_layouts: HashMap::new(),
+        }
+    }
+
     pub fn finish(mut items: Vec<TypeDef>, layouts: Vec<LayoutDef>) -> Result<Self, LoadError> {
         // Compute reference classification for every type (matches src/heap/types.c).
         let shapes_ref: Vec<bool> = (0..items.len())
@@ -171,7 +189,7 @@ fn initial_abilities(kind: TypeKind) -> u8 {
 }
 
 /// Exact port of `mo_heap_abilities` (`src/heap/abilities.c`).
-fn compute_abilities(items: &[TypeDef]) -> Result<Vec<u8>, LoadError> {
+pub fn compute_abilities(items: &[TypeDef]) -> Result<Vec<u8>, LoadError> {
     let n = items.len();
     let mut work: u64 = n as u64;
     let mut reverse_edges: Vec<Vec<u32>> = vec![Vec::new(); n];

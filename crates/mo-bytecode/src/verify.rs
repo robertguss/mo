@@ -2180,12 +2180,20 @@ impl<'a> Flow<'a> {
 
 /// Runs full section-9 verification over an already structurally decoded `BytecodeFile`.
 pub fn verify_module(file: &BytecodeFile) -> Result<(), LoadError> {
+    verify_module_with_site(file).map_err(|(err, _)| err)
+}
+
+/// Runs full section-9 verification and also reports the failing function index when applicable.
+pub(crate) fn verify_module_with_site(file: &BytecodeFile) -> Result<(), (LoadError, Option<u32>)> {
     // 1. Map keys and Set elements must have Hash ability.
     for t in &file.types.items {
         if matches!(t.kind, TypeKind::Set | TypeKind::Map)
             && (file.types.abilities(t.parameters[0]) & ABILITY_HASH) == 0
         {
-            return Err(LoadError::invalid(PAYLOAD_OFFSET, "map/set key lacks Hash"));
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "map/set key lacks Hash"),
+                None,
+            ));
         }
     }
 
@@ -2203,9 +2211,9 @@ pub fn verify_module(file: &BytecodeFile) -> Result<(), LoadError> {
                 .all(|(j, p)| fn_def.parameters[j].ty == p.ty)
             && fn_def.parameters[subject.parameters.len()].ty == subject.result_type;
         if !matches {
-            return Err(LoadError::invalid(
-                PAYLOAD_OFFSET,
-                "promise parameters differ from subject",
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "promise parameters differ from subject"),
+                Some(i as u32),
             ));
         }
     }
@@ -2216,20 +2224,21 @@ pub fn verify_module(file: &BytecodeFile) -> Result<(), LoadError> {
             && let ConstantValue::Closure(fn_idx) = c.value
             && file.types.find_layout(c.ty, fn_idx).is_none()
         {
-            return Err(LoadError::invalid(
-                PAYLOAD_OFFSET,
-                "closure constant layout is missing",
+            return Err((
+                LoadError::invalid(PAYLOAD_OFFSET, "closure constant layout is missing"),
+                None,
             ));
         }
     }
 
     // 4. Whole-program global initializer summaries.
-    let program = verify_program_init(file)?;
+    let program = verify_program_init(file).map_err(|e| (e, None))?;
 
     // 5. Per-function CFG, instruction types, known-case, and linear ownership/borrow/token flow.
     for i in 0..file.functions.len() as u32 {
         let mut flow = Flow::new(file, i, Some(&program), None, false);
-        flow.run::<fn(u32, &[bool]) -> bool>(None)?;
+        flow.run::<fn(u32, &[bool]) -> bool>(None)
+            .map_err(|e| (e, Some(i)))?;
     }
 
     Ok(())

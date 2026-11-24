@@ -11,11 +11,15 @@ path = "src/main.rs"
 [dependencies]
 mo-def = { path = "../mo-def" }
 mo-base = { path = "../mo-base" }
+mo-bytecode = { path = "../mo-bytecode" }
+mo-codegen = { path = "../mo-codegen" }
 mo-core = { path = "../mo-core" }
+mo-host = { path = "../mo-host" }
 mo-syntax = { path = "../mo-syntax" }
 mo-prim = { path = "../mo-prim" }
 mo-check = { path = "../mo-check" }
 mo-lower = { path = "../mo-lower" }
+mo-vm = { path = "../mo-vm" }
 
 [lints]
 workspace = true

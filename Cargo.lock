@@ -458,6 +458,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mo-codegen"
+version = "0.1.0"
+dependencies = [
+ "mo-base",
+ "mo-bytecode",
+ "mo-core",
+ "mo-def",
+ "mo-heap",
+ "mo-host",
+ "mo-vm",
+]
+
+[[package]]
 name = "mo-core"
 version = "0.1.0"
 dependencies = [
@@ -475,12 +488,16 @@ name = "mo-fe"
 version = "0.1.0"
 dependencies = [
  "mo-base",
+ "mo-bytecode",
  "mo-check",
+ "mo-codegen",
  "mo-core",
  "mo-def",
+ "mo-host",
  "mo-lower",
  "mo-prim",
  "mo-syntax",
+ "mo-vm",
 ]
 
 [[package]]
