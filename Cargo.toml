@@ -16,6 +16,7 @@ members = [
     "crates/mo-vm",
     "crates/mo-rt",
     "crates/mo-test",
+    "crates/mo-service",
     "crates/mo-cli",
 ]
 

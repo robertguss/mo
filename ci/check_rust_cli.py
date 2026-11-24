@@ -81,20 +81,16 @@ from cli_programs import (  # noqa: E402
     observations,
 )
 import cli_promises  # noqa: E402
+import cli_serve  # noqa: E402
 
-# Explicit disposition of the 9 non-Slice-3C `tests/errors/` folders (zero silently skipped).
+# Explicit disposition of the 5 remaining Slice-3E `tests/errors/` folders (zero silently skipped).
 DEFERRED_ERROR_CASES: dict[str, str] = {
-    # Slice 3D: crates/mo-service (serve, fetch, replay, query, history)
-    "e1409": "Slice 3D (mo serve)",
-    "e1409-data": "Slice 3D (mo serve --data)",
-    "e1409-token": "Slice 3D (mo serve token)",
-    "e1410": "Slice 3D (mo query)",
-    "e1411": "Slice 3D (mo query)",
-    "e1411-function": "Slice 3D (mo query)",
-    "e1412": "Slice 3D (mo query)",
-    "e1413": "Slice 3D (mo query)",
-    # Slice 3E: crates/mo-upgrade (emit --bundle, push, rehearse, diff)
-    "e1418": "Slice 3E (emit --bundle)",
+    # Slice 3E: crates/mo-upgrade (mo query / mo replay / mo rehearse / mo diff)
+    "e1410": "Slice 3E (mo query)",
+    "e1411": "Slice 3E (mo query)",
+    "e1411-function": "Slice 3E (mo query)",
+    "e1412": "Slice 3E (mo query)",
+    "e1413": "Slice 3E (mo query)",
 }
 
 FORBIDDEN_LIBS = ("libssl", "libcrypto", "libsqlite3")
@@ -340,15 +336,11 @@ def check_cli_goldens_and_matrix(binary: pathlib.Path) -> None:
         for value in ("1", "1B", "1KiB", "1MiB", "1GiB", "18446744073709551615"):
             run(binary, ["test", flag, value, good], 2)
 
-    # Deferred Slice 3D/3E commands parse cleanly and exit 1 with a clear message.
+    # Deferred Slice 3E commands parse cleanly and exit 1 with a clear message.
     for deferred_args in (
-        ["serve", "--port", "0", "--data", "state"],
-        ["fetch", "--admin-socket", "a.sock", "--export", "state", "--out", "o.bin"],
-        ["push", good, "--admin-socket", "a.sock"],
         ["replay", good, "--failure", "1", "--data", "d"],
         ["query", good, "f", "--export", "a"],
         ["rehearse", "--artifact", "a", "--old-bundle", "b", "--candidate", "c"],
-        ["history", "d"],
         ["diff", good],
     ):
         r = run(binary, deferred_args, 1)
@@ -851,6 +843,24 @@ def check_test_engine_suites(binary: pathlib.Path) -> None:
     )
 
 
+def check_service_suites(binary: pathlib.Path) -> None:
+    cli_serve.service_commands(binary)
+    cli_serve.service_refusals(binary)
+    cli_serve.serve_command(binary)
+    for script in (
+        "ci/check_operator.py",
+        "ci/check_fetch.py",
+        "ci/check_export.py",
+        "ci/check_task_queue.py",
+        "ci/check_kill_loop.py",
+    ):
+        subprocess.run([sys.executable, str(ROOT / script), str(binary)], cwd=ROOT, check=True)
+    print(
+        f"{binary}: Slice 3D mo-service suites passed "
+        f"(cli_serve, check_operator, check_fetch, check_export, check_task_queue, check_kill_loop)"
+    )
+
+
 def check_upstream_harnesses(binary: pathlib.Path) -> None:
     for cmd in (
         [sys.executable, str(ROOT / "ci/check_golden.py"), str(binary)],
@@ -952,11 +962,12 @@ def main() -> int:
     if not args.skip_format_corpus:
         check_format_corpus(binary)
     if not args.skip_upstream:
+        check_service_suites(binary)
         check_upstream_harnesses(binary)
     if args.modb_dir:
         check_modb_gate(binary, pathlib.Path(args.modb_dir), args.kill_count)
 
-    print(f"check_rust_cli.py: ALL Phase 3 Slice 3C checks passed on {binary}")
+    print(f"check_rust_cli.py: ALL Phase 3 Slice 3D checks passed on {binary}")
     return 0
 
 

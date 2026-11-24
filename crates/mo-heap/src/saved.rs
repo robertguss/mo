@@ -114,6 +114,7 @@ fn write_schema_inner(
     depth: u32,
     seen: &mut [Option<u32>],
     next: &mut u32,
+    name_overrides: Option<&[Option<&str>]>,
     w: &mut Writer<'_>,
 ) -> Result<(), SavedError> {
     if depth as u64 == MO_LIMIT_SAVED_DEPTH {
@@ -133,11 +134,14 @@ fn write_schema_inner(
     }
     w.write_u8(tag)?;
     if matches!(t.kind, TypeKind::Record | TypeKind::Choice) {
-        w.write_name(t.name.as_deref())?;
+        let override_name = name_overrides
+            .and_then(|ov| ov.get(index as usize))
+            .and_then(|v| *v);
+        w.write_name(override_name.or(t.name.as_deref()))?;
     }
     w.write_u32(t.parameters.len() as u32)?;
     for &p in &t.parameters {
-        write_schema_inner(types, p, depth + 1, seen, next, w)?;
+        write_schema_inner(types, p, depth + 1, seen, next, name_overrides, w)?;
     }
 
     let groups = if t.kind == TypeKind::Choice {
@@ -158,22 +162,33 @@ fn write_schema_inner(
         w.write_u32(fields.len() as u32)?;
         for f in fields {
             w.write_name(f.name.as_deref())?;
-            write_schema_inner(types, f.ty, depth + 1, seen, next, w)?;
+            write_schema_inner(types, f.ty, depth + 1, seen, next, name_overrides, w)?;
         }
     }
     Ok(())
 }
 
-pub fn write_schema(types: &TypeTable, ty: u32, out: &mut Vec<u8>) -> Result<(), SavedError> {
+/// Writes the canonical binary schema for `ty` with optional per-type name overrides
+/// (used when decoding persisted state into synthesized `UpgradeOld` types).
+pub fn write_schema_with_overrides(
+    types: &TypeTable,
+    ty: u32,
+    name_overrides: Option<&[Option<&str>]>,
+    out: &mut Vec<u8>,
+) -> Result<(), SavedError> {
     let start = out.len();
     let mut seen = vec![None; types.items.len()];
     let mut next = 0u32;
     let mut w = Writer::new(out, start + MO_LIMIT_SAVED_BYTES as usize, false);
-    if let Err(e) = write_schema_inner(types, ty, 0, &mut seen, &mut next, &mut w) {
+    if let Err(e) = write_schema_inner(types, ty, 0, &mut seen, &mut next, name_overrides, &mut w) {
         out.truncate(start);
         return Err(e);
     }
     Ok(())
+}
+
+pub fn write_schema(types: &TypeTable, ty: u32, out: &mut Vec<u8>) -> Result<(), SavedError> {
+    write_schema_with_overrides(types, ty, None, out)
 }
 
 fn encode_inner(
@@ -183,11 +198,12 @@ fn encode_inner(
     w: &mut Writer<'_>,
     depth: u32,
     nodes: &mut u32,
+    node_limit: u32,
 ) -> Result<(), SavedError> {
     if depth as u64 == MO_LIMIT_SAVED_DEPTH {
         return Err(SavedError::Depth);
     }
-    if *nodes as u64 == MO_LIMIT_SAVED_NODES {
+    if *nodes == node_limit {
         return Err(SavedError::Nodes);
     }
     *nodes += 1;
@@ -250,8 +266,8 @@ fn encode_inner(
             let map = val.as_map();
             w.write_u32(map.len() as u32)?;
             for (k, v) in map.iter() {
-                encode_inner(types, t.parameters[0], k, w, depth + 1, nodes)?;
-                encode_inner(types, t.parameters[1], v, w, depth + 1, nodes)?;
+                encode_inner(types, t.parameters[0], k, w, depth + 1, nodes, node_limit)?;
+                encode_inner(types, t.parameters[1], v, w, depth + 1, nodes, node_limit)?;
             }
             Ok(())
         }
@@ -259,7 +275,15 @@ fn encode_inner(
             let set = val.as_set();
             w.write_u32(set.len() as u32)?;
             for item in set.iter() {
-                encode_inner(types, t.parameters[0], item, w, depth + 1, nodes)?;
+                encode_inner(
+                    types,
+                    t.parameters[0],
+                    item,
+                    w,
+                    depth + 1,
+                    nodes,
+                    node_limit,
+                )?;
             }
             Ok(())
         }
@@ -267,7 +291,15 @@ fn encode_inner(
             let list = val.as_list();
             w.write_u32(list.len() as u32)?;
             for item in list.iter() {
-                encode_inner(types, t.parameters[0], item, w, depth + 1, nodes)?;
+                encode_inner(
+                    types,
+                    t.parameters[0],
+                    item,
+                    w,
+                    depth + 1,
+                    nodes,
+                    node_limit,
+                )?;
             }
             Ok(())
         }
@@ -277,7 +309,7 @@ fn encode_inner(
             };
             w.write_u32(fields.len() as u32)?;
             for (f, field_def) in fields.iter().zip(&t.fields) {
-                encode_inner(types, field_def.ty, f, w, depth + 1, nodes)?;
+                encode_inner(types, field_def.ty, f, w, depth + 1, nodes, node_limit)?;
             }
             Ok(())
         }
@@ -287,7 +319,7 @@ fn encode_inner(
             };
             w.write_u32(fields.len() as u32)?;
             for (f, &param_ty) in fields.iter().zip(&t.parameters) {
-                encode_inner(types, param_ty, f, w, depth + 1, nodes)?;
+                encode_inner(types, param_ty, f, w, depth + 1, nodes, node_limit)?;
             }
             Ok(())
         }
@@ -303,7 +335,7 @@ fn encode_inner(
                         let fty = case.fields[0].ty;
                         let child =
                             crate::hash::inline_payload_to_value(*payload, types.get(fty).kind);
-                        encode_inner(types, fty, &child, w, depth + 1, nodes)
+                        encode_inner(types, fty, &child, w, depth + 1, nodes, node_limit)
                     }
                     _ => Err(SavedError::Invalid),
                 },
@@ -311,7 +343,7 @@ fn encode_inner(
                     Value::ChoiceRef { payload, .. } => {
                         let fty = case.fields[0].ty;
                         let child = Value::Ref(payload.clone());
-                        encode_inner(types, fty, &child, w, depth + 1, nodes)
+                        encode_inner(types, fty, &child, w, depth + 1, nodes, node_limit)
                     }
                     _ => Err(SavedError::Invalid),
                 },
@@ -321,7 +353,7 @@ fn encode_inner(
                             return Err(SavedError::Invalid);
                         };
                         for (f, field_def) in fields.iter().zip(&case.fields) {
-                            encode_inner(types, field_def.ty, f, w, depth + 1, nodes)?;
+                            encode_inner(types, field_def.ty, f, w, depth + 1, nodes, node_limit)?;
                         }
                         Ok(())
                     }
@@ -331,6 +363,30 @@ fn encode_inner(
         }
         TypeKind::Function | TypeKind::Env | TypeKind::Capability => Err(SavedError::Invalid),
     }
+}
+
+/// Encodes `val` with explicit `byte_limit` and `node_limit`, returning the node count visited.
+pub fn encode_value_budget(
+    types: &TypeTable,
+    ty: u32,
+    val: &Value,
+    byte_limit: usize,
+    node_limit: u32,
+    out: &mut Vec<u8>,
+) -> Result<u32, SavedError> {
+    let mut shape = Vec::new();
+    write_schema(types, ty, &mut shape)?;
+
+    let mut bytes = Vec::new();
+    let mut w = Writer::new(&mut bytes, byte_limit, false);
+    w.append(SAVED_MAGIC)?;
+    let shape_len = u32::try_from(shape.len()).map_err(|_| SavedError::TooLarge)?;
+    w.write_u32(shape_len)?;
+    w.append(&shape)?;
+    let mut nodes = 0u32;
+    encode_inner(types, ty, val, &mut w, 0, &mut nodes, node_limit)?;
+    out.extend_from_slice(&bytes);
+    Ok(nodes)
 }
 
 pub fn encode_value_unshared(
@@ -349,7 +405,15 @@ pub fn encode_value_unshared(
     w.write_u32(shape_len)?;
     w.append(&shape)?;
     let mut nodes = 0u32;
-    encode_inner(types, ty, val, &mut w, 0, &mut nodes)?;
+    encode_inner(
+        types,
+        ty,
+        val,
+        &mut w,
+        0,
+        &mut nodes,
+        MO_LIMIT_SAVED_NODES as u32,
+    )?;
     let unshared = !w.shared;
     out.extend_from_slice(&bytes);
     Ok(unshared)
@@ -361,18 +425,14 @@ pub fn encode_value(
     val: &Value,
     out: &mut Vec<u8>,
 ) -> Result<(), SavedError> {
-    let mut shape = Vec::new();
-    write_schema(types, ty, &mut shape)?;
-
-    let mut bytes = Vec::new();
-    let mut w = Writer::new(&mut bytes, MO_LIMIT_SAVED_BYTES as usize, false);
-    w.append(SAVED_MAGIC)?;
-    let shape_len = u32::try_from(shape.len()).map_err(|_| SavedError::TooLarge)?;
-    w.write_u32(shape_len)?;
-    w.append(&shape)?;
-    let mut nodes = 0u32;
-    encode_inner(types, ty, val, &mut w, 0, &mut nodes)?;
-    out.extend_from_slice(&bytes);
+    encode_value_budget(
+        types,
+        ty,
+        val,
+        MO_LIMIT_SAVED_BYTES as usize,
+        MO_LIMIT_SAVED_NODES as u32,
+        out,
+    )?;
     Ok(())
 }
 
@@ -386,6 +446,7 @@ struct Decoder<'a> {
     bytes: &'a [u8],
     pos: usize,
     nodes: u32,
+    node_limit: u32,
 }
 
 impl<'a> Decoder<'a> {
@@ -419,7 +480,7 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
     if depth as u64 == MO_LIMIT_SAVED_DEPTH {
         return Err(SavedError::Depth);
     }
-    if d.nodes as u64 == MO_LIMIT_SAVED_NODES {
+    if d.nodes == d.node_limit {
         return Err(SavedError::Nodes);
     }
     d.nodes += 1;
@@ -500,7 +561,8 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
         }
         TypeKind::List => {
             let count = d.read_u32()? as u64;
-            if count > MO_LIMIT_COLLECTION_SIZE || count > MO_LIMIT_SAVED_NODES - u64::from(d.nodes)
+            if count > MO_LIMIT_COLLECTION_SIZE
+                || count > u64::from(d.node_limit) - u64::from(d.nodes)
             {
                 return Err(SavedError::Invalid);
             }
@@ -513,7 +575,8 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
         }
         TypeKind::Set => {
             let count = d.read_u32()? as u64;
-            if count > MO_LIMIT_COLLECTION_SIZE || count > MO_LIMIT_SAVED_NODES - u64::from(d.nodes)
+            if count > MO_LIMIT_COLLECTION_SIZE
+                || count > u64::from(d.node_limit) - u64::from(d.nodes)
             {
                 return Err(SavedError::Invalid);
             }
@@ -531,7 +594,8 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
         TypeKind::Map => {
             let count = d.read_u32()? as u64;
             let cells = count.saturating_mul(2);
-            if count > MO_LIMIT_COLLECTION_SIZE || cells > MO_LIMIT_SAVED_NODES - u64::from(d.nodes)
+            if count > MO_LIMIT_COLLECTION_SIZE
+                || cells > u64::from(d.node_limit) - u64::from(d.nodes)
             {
                 return Err(SavedError::Invalid);
             }
@@ -550,7 +614,8 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
         }
         TypeKind::Record => {
             let count = d.read_u32()? as usize;
-            if count != t.fields.len() || (count as u64) > MO_LIMIT_SAVED_NODES - u64::from(d.nodes)
+            if count != t.fields.len()
+                || (count as u64) > u64::from(d.node_limit) - u64::from(d.nodes)
             {
                 return Err(SavedError::Invalid);
             }
@@ -566,7 +631,7 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
         TypeKind::Tuple => {
             let count = d.read_u32()? as usize;
             if count != t.parameters.len()
-                || (count as u64) > MO_LIMIT_SAVED_NODES - u64::from(d.nodes)
+                || (count as u64) > u64::from(d.node_limit) - u64::from(d.nodes)
             {
                 return Err(SavedError::Invalid);
             }
@@ -587,7 +652,7 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
             let case = &t.cases[tag as usize];
             let count = d.read_u32()? as usize;
             if count != case.fields.len()
-                || (count as u64) > MO_LIMIT_SAVED_NODES - u64::from(d.nodes)
+                || (count as u64) > u64::from(d.node_limit) - u64::from(d.nodes)
             {
                 return Err(SavedError::Invalid);
             }
@@ -603,13 +668,18 @@ fn decode_inner(d: &mut Decoder<'_>, ty: u32, depth: u32) -> Result<Value, Saved
     }
 }
 
-pub fn decode_value(
+/// Decodes a saved value with explicit byte/node budgets and optional type-name overrides,
+/// returning `(decoded_value, nodes_visited)`.
+pub fn decode_value_budget(
     heap: &Heap,
     types: &TypeTable,
     ty: u32,
     bytes: &[u8],
-) -> Result<Value, SavedError> {
-    if bytes.len() as u64 > MO_LIMIT_SAVED_BYTES || bytes.len() < 9 || &bytes[..5] != SAVED_MAGIC {
+    name_overrides: Option<&[Option<&str>]>,
+    byte_limit: usize,
+    node_limit: u32,
+) -> Result<(Value, u32), SavedError> {
+    if bytes.len() > byte_limit || bytes.len() < 9 || &bytes[..5] != SAVED_MAGIC {
         return Err(SavedError::Invalid);
     }
     let mut d = Decoder {
@@ -618,11 +688,12 @@ pub fn decode_value(
         bytes,
         pos: 5,
         nodes: 0,
+        node_limit,
     };
     let shape_len = d.read_u32()? as usize;
     let shape_bytes = d.read_slice(shape_len)?;
     let mut expected_shape = Vec::new();
-    write_schema(types, ty, &mut expected_shape)?;
+    write_schema_with_overrides(types, ty, name_overrides, &mut expected_shape)?;
     if expected_shape.as_slice() != shape_bytes {
         return Err(SavedError::Invalid);
     }
@@ -630,6 +701,24 @@ pub fn decode_value(
     if d.pos != bytes.len() {
         return Err(SavedError::Invalid);
     }
+    Ok((val, d.nodes))
+}
+
+pub fn decode_value(
+    heap: &Heap,
+    types: &TypeTable,
+    ty: u32,
+    bytes: &[u8],
+) -> Result<Value, SavedError> {
+    let (val, _) = decode_value_budget(
+        heap,
+        types,
+        ty,
+        bytes,
+        None,
+        MO_LIMIT_SAVED_BYTES as usize,
+        MO_LIMIT_SAVED_NODES as u32,
+    )?;
     Ok(val)
 }
 

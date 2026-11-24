@@ -1,0 +1,35 @@
+[package]
+name = "mo-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+mo-base = { path = "../mo-base" }
+mo-bytecode = { path = "../mo-bytecode" }
+mo-check = { path = "../mo-check" }
+mo-codegen = { path = "../mo-codegen" }
+mo-core = { path = "../mo-core" }
+mo-def = { path = "../mo-def" }
+mo-heap = { path = "../mo-heap" }
+mo-host = { path = "../mo-host" }
+mo-lower = { path = "../mo-lower" }
+mo-prim = { path = "../mo-prim" }
+mo-syntax = { path = "../mo-syntax" }
+mo-vm = { path = "../mo-vm" }
+getrandom = "0.4"
+rusqlite = { version = "0.39", features = ["bundled", "hooks", "limits", "serialize", "blob"] }
+sha2 = { version = "0.11", features = ["zeroize"] }
+thiserror = "2"
+zeroize = "1.9"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["event", "fs", "net", "pipe", "process", "time"] }
+signal-hook = "0.3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = "0.4"
+
+[lints]
+workspace = true

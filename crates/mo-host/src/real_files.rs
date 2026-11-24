@@ -1602,3 +1602,27 @@ pub(crate) fn call_real_file(
         _ => unreachable!("unexpected real file op {op:?}"),
     }
 }
+
+/// Opens a regular file strictly confined inside `root_dir / mount_dir / subpath`
+/// (`src/host/files.c:mo_host_open_confined_file` parity).
+pub fn open_confined_file(
+    root_dir: &Path,
+    mount_dir: &str,
+    subpath: &str,
+) -> Option<(std::fs::File, u64, i64, i64)> {
+    let root_fd = open_root_dir(root_dir).ok()?;
+    let mut resolver = ResolverState::new();
+    let mount_fd = if mount_dir.is_empty() || mount_dir == "." {
+        root_fd
+    } else {
+        resolve(&mut resolver, root_fd.as_fd(), mount_dir, PathMode::Folder)
+            .ok()?
+            .fd
+    };
+    let res = resolve(&mut resolver, mount_fd.as_fd(), subpath, PathMode::Read).ok()?;
+    let size = u64::try_from(res.stat.st_size).ok()?;
+    let mtime_sec = res.stat.st_mtime;
+    let mtime_nsec = res.stat.st_mtime_nsec as i64;
+    let file = std::fs::File::from(res.fd);
+    Some((file, size, mtime_sec, mtime_nsec))
+}

@@ -517,12 +517,51 @@ impl<'a> Process<'a> {
         self.image
     }
 
+    /// Returns the configured execution limits for this process.
+    #[must_use]
+    pub fn limits(&self) -> Limits {
+        self.limits
+    }
+
+    /// Returns currently allocated heap bytes for this process.
+    #[must_use]
+    pub fn memory_used(&self) -> usize {
+        self.heap.budget().used()
+    }
+
+    /// Returns peak allocated heap bytes for this process.
+    #[must_use]
+    pub fn memory_peak(&self) -> usize {
+        self.heap.budget().peak()
+    }
+
+    /// Executes `fn_idx` with at most `max_steps` instructions and returns `(outcome, steps_used)`.
+    pub fn call_with_budget(
+        &mut self,
+        fn_idx: u32,
+        args: Vec<Value>,
+        max_steps: u64,
+    ) -> (Outcome, u64) {
+        self.call_inner_counted(fn_idx, args, Some(max_steps))
+    }
+
     pub fn call_main(&mut self, main_fn: u32) -> Outcome {
         self.call_main_inner(main_fn, None)
     }
 
     pub fn call_main_bounded(&mut self, main_fn: u32, max_steps: u64) -> Outcome {
         self.call_main_inner(main_fn, Some(max_steps))
+    }
+
+    /// Creates a live actor capability value on this process's heap for `service_idx`.
+    pub fn make_live_actor(&self, ty: u32, service_idx: u32) -> Result<Value, String> {
+        simulation::make_live_actor_capability(self.image, &self.heap, ty, service_idx)
+    }
+
+    /// Creates a real host capability value on this process's heap for type `ty`.
+    pub fn make_real_capability(&mut self, ty: u32) -> Result<Value, mo_host::HostError> {
+        self.host
+            .make_real_capability(&self.heap, &self.image.file.types, ty)
     }
 
     fn call_main_inner(&mut self, main_fn: u32, max_steps: Option<u64>) -> Outcome {
@@ -703,29 +742,45 @@ impl<'a> Process<'a> {
         args: Vec<Value>,
         work_remaining: Option<u64>,
     ) -> Outcome {
+        self.call_inner_counted(fn_idx, args, work_remaining).0
+    }
+
+    fn call_inner_counted(
+        &mut self,
+        fn_idx: u32,
+        args: Vec<Value>,
+        work_remaining: Option<u64>,
+    ) -> (Outcome, u64) {
+        let initial_budget = work_remaining.unwrap_or(0);
         let fn_def = &self.image.file.functions[fn_idx as usize];
         let bytes = frame_size_bytes(fn_def.register_types.len());
         if self.limits.call_depth < 1 {
-            return Outcome::Stopped(Defect {
-                reason: "out of stack".to_string(),
-                limit_name: Some("--max-depth"),
-                limit: self.limits.call_depth as usize,
-                detail: None,
-                frames: Vec::new(),
-                variables: Vec::new(),
-                variables_unavailable: false,
-            });
+            return (
+                Outcome::Stopped(Defect {
+                    reason: "out of stack".to_string(),
+                    limit_name: Some("--max-depth"),
+                    limit: self.limits.call_depth as usize,
+                    detail: None,
+                    frames: Vec::new(),
+                    variables: Vec::new(),
+                    variables_unavailable: false,
+                }),
+                0,
+            );
         }
         if bytes > self.limits.stack_size {
-            return Outcome::Stopped(Defect {
-                reason: "out of stack".to_string(),
-                limit_name: Some("--max-stack"),
-                limit: self.limits.stack_size,
-                detail: None,
-                frames: Vec::new(),
-                variables: Vec::new(),
-                variables_unavailable: false,
-            });
+            return (
+                Outcome::Stopped(Defect {
+                    reason: "out of stack".to_string(),
+                    limit_name: Some("--max-stack"),
+                    limit: self.limits.stack_size,
+                    detail: None,
+                    frames: Vec::new(),
+                    variables: Vec::new(),
+                    variables_unavailable: false,
+                }),
+                0,
+            );
         }
 
         let mut regs = vec![None; fn_def.register_types.len()];
@@ -777,7 +832,7 @@ impl<'a> Process<'a> {
             trace: self.image.trace.as_ref(),
             observer: None,
         };
-        match ctx.run_controlled() {
+        let outcome = match ctx.run_controlled() {
             ControlledOutcome::Returned(v) => Outcome::Returned(v),
             ControlledOutcome::Failed(d) => Outcome::Failed(d),
             ControlledOutcome::Stopped(d) => Outcome::Stopped(d),
@@ -787,7 +842,9 @@ impl<'a> Process<'a> {
                 0,
                 None,
             )),
-        }
+        };
+        let used = initial_budget.saturating_sub(ctx.work_remaining.unwrap_or(0));
+        (outcome, used)
     }
 }
 
