@@ -28,6 +28,7 @@ fn run() -> BuildResult<()> {
     let codes_path = repo_root.join("src/base/codes.h");
     let core_h_path = repo_root.join("src/core/core.h");
     let core_ops_path = repo_root.join("src/core/ops.def");
+    let cli_c_path = repo_root.join("src/tools/cli.c");
 
     for path in [
         &limits_path,
@@ -37,6 +38,7 @@ fn run() -> BuildResult<()> {
         &codes_path,
         &core_h_path,
         &core_ops_path,
+        &cli_c_path,
     ] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -48,6 +50,7 @@ fn run() -> BuildResult<()> {
     let codes_src = read_file(&codes_path)?;
     let core_h_src = read_file(&core_h_path)?;
     let core_ops_src = read_file(&core_ops_path)?;
+    let cli_c_src = read_file(&cli_c_path)?;
 
     let limits = parse_limits(&limits_src)?;
     let opcodes = parse_opcodes(&opcodes_src, &limits)?;
@@ -56,9 +59,11 @@ fn run() -> BuildResult<()> {
     let error_codes = parse_error_codes(&codes_src)?;
     let core_text_version = parse_core_text_version(&core_h_src)?;
     let (typed_ops, core_op_families) = parse_core_ops(&core_ops_src)?;
+    let mo_version = parse_mo_version(&cli_c_src)?;
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|e| format!("OUT_DIR: {e}"))?);
     let mut out = String::new();
+    writeln!(&mut out, "pub const MO_VERSION: &str = {mo_version:?};\n").map_err(fmt_err)?;
     emit_limits(&mut out, &limits)?;
     emit_opcodes(&mut out, &opcodes)?;
     emit_prims(&mut out, &prims)?;
@@ -1290,4 +1295,17 @@ fn emit_core_defs(
     }
     writeln!(out, "}}\n").map_err(fmt_err)?;
     Ok(())
+}
+
+fn parse_mo_version(src: &str) -> BuildResult<String> {
+    for line in src.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("#define MO_VERSION") {
+            let rest = rest.trim();
+            if let Some(inner) = rest.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+                return Ok(inner.to_string());
+            }
+        }
+    }
+    Err("could not find #define MO_VERSION in src/tools/cli.c".to_string())
 }

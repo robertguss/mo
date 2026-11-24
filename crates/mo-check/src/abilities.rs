@@ -185,6 +185,23 @@ struct CacheEntry {
     constraints: bool,
 }
 
+/// Reusable ability-proof cache shared across calls using the same [`AbilityArena`].
+#[derive(Debug, Clone, Default)]
+pub struct AbilityCache {
+    entries: HashMap<TypeId, CacheEntry>,
+}
+
+impl AbilityCache {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
 struct BoundCustomizerPlan {
     function: SymRef,
     arguments: Vec<TypeArgument>,
@@ -262,21 +279,58 @@ pub struct AbilityContext<'a> {
     pub interfaces: &'a ModuleInterfaces,
     pub signatures: &'a mut Signatures,
     pub work: u32,
-    cache: HashMap<TypeId, CacheEntry>,
+    pub cache: AbilityCache,
     pub error: Option<AbilityFailure>,
 }
 
 impl<'a> AbilityContext<'a> {
     #[must_use]
     pub fn new(interfaces: &'a ModuleInterfaces, signatures: &'a mut Signatures) -> Self {
+        Self::with_arena(AbilityArena::new(), interfaces, signatures, 0)
+    }
+
+    #[must_use]
+    pub fn with_arena(
+        arena: AbilityArena,
+        interfaces: &'a ModuleInterfaces,
+        signatures: &'a mut Signatures,
+        work: u32,
+    ) -> Self {
+        Self::with_parts(arena, AbilityCache::new(), interfaces, signatures, work)
+    }
+
+    #[must_use]
+    pub fn with_parts(
+        arena: AbilityArena,
+        cache: AbilityCache,
+        interfaces: &'a ModuleInterfaces,
+        signatures: &'a mut Signatures,
+        work: u32,
+    ) -> Self {
         Self {
-            arena: AbilityArena::new(),
+            arena,
             interfaces,
             signatures,
-            work: 0,
-            cache: HashMap::new(),
+            work,
+            cache,
             error: None,
         }
+    }
+
+    /// Extracts the arena, cache, work counter, and any failure from this context.
+    #[must_use]
+    pub fn into_parts(self) -> (AbilityArena, AbilityCache, u32, Option<AbilityFailure>) {
+        (self.arena, self.cache, self.work, self.error)
+    }
+
+    /// Formats `ty_id` into a bounded preview string (`<= 512` bytes), respecting depth/work limits.
+    #[must_use]
+    pub fn preview_type_string(&mut self, ty_id: TypeId) -> Option<String> {
+        let mut preview = TypePreview::new();
+        if !self.preview_type(&mut preview, ty_id, 0) {
+            return None;
+        }
+        Some(preview.text)
     }
 
     /// Discards cached proofs and any recorded error so provisional cyclic edges from a failed
@@ -337,7 +391,7 @@ impl<'a> AbilityContext<'a> {
         if !self.charge_work(height) {
             return false;
         }
-        if self.cache.contains_key(&ty_id) {
+        if self.cache.entries.contains_key(&ty_id) {
             return true;
         }
         let arg_count = self.signatures.types.get(ty_id).arguments.len();
@@ -347,7 +401,7 @@ impl<'a> AbilityContext<'a> {
                 return false;
             }
         }
-        self.cache.entry(ty_id).or_default();
+        self.cache.entries.entry(ty_id).or_default();
         true
     }
 
@@ -701,6 +755,7 @@ impl<'a> AbilityContext<'a> {
         }
         if let Some(existing) = self
             .cache
+            .entries
             .get(&ty_id)
             .and_then(|e| e.proofs[ability.index()])
         {
@@ -724,7 +779,7 @@ impl<'a> AbilityContext<'a> {
                 return None;
             }
             self.arena.get_mut(proof_id).kind = AbilityImplementationKind::Parameter;
-            self.cache.entry(ty_id).or_default().proofs[ability.index()] = Some(proof_id);
+            self.cache.entries.entry(ty_id).or_default().proofs[ability.index()] = Some(proof_id);
             return Some(proof_id);
         }
 
@@ -768,7 +823,7 @@ impl<'a> AbilityContext<'a> {
         }
 
         // Publish before descending: recursive nominal proofs form a shared graph.
-        self.cache.entry(ty_id).or_default().proofs[ability.index()] = Some(proof_id);
+        self.cache.entries.entry(ty_id).or_default().proofs[ability.index()] = Some(proof_id);
 
         // Json.Json and Json.JsonNumber have native Json ability.
         if ability == SourceAbility::Json {
@@ -1124,10 +1179,15 @@ impl<'a> AbilityContext<'a> {
         if !self.ensure_cached(ty_id) {
             return false;
         }
-        if self.cache.get(&ty_id).is_some_and(|e| e.constraints) {
+        if self
+            .cache
+            .entries
+            .get(&ty_id)
+            .is_some_and(|e| e.constraints)
+        {
             return true;
         }
-        self.cache.entry(ty_id).or_default().constraints = true;
+        self.cache.entries.entry(ty_id).or_default().constraints = true;
 
         let is_map_or_set = {
             let ty = self.signatures.types.get(ty_id);

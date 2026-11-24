@@ -470,7 +470,8 @@ impl SyntaxTree {
     }
 
     pub(crate) fn try_charge(&mut self, bytes: usize) -> bool {
-        let aligned = bytes.checked_add(7).map(|n| n & !7usize);
+        // `src/syntax/parser.c:allocate` aligns every allocation to `MO_ARENA_ALIGNMENT` (16).
+        let aligned = bytes.checked_add(15).map(|n| n & !15usize);
         let Some(cost) = aligned else {
             return false;
         };
@@ -510,10 +511,14 @@ impl SyntaxTree {
     }
 
     pub(crate) fn alloc_node(&mut self, node: SyntaxNode) -> Option<NodeId> {
-        let child_cost = node.children.len().checked_mul(CHILD_PTR_COST)?;
-        let total = NODE_ARENA_COST.checked_add(child_cost)?;
-        if !self.try_charge(total) {
+        if !self.try_charge(NODE_ARENA_COST) {
             return None;
+        }
+        if !node.children.is_empty() {
+            let child_cost = node.children.len().checked_mul(CHILD_PTR_COST)?;
+            if !self.try_charge(child_cost) {
+                return None;
+            }
         }
         let id = NodeId(u32::try_from(self.nodes.len()).ok()?);
         self.nodes.push(node);
