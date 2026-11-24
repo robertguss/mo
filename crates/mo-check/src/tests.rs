@@ -14,15 +14,21 @@ use crate::abilities::{
     AbilityContext, AbilityImplementationKind, SourceAbility, check_signature_abilities,
     snake_case_name,
 };
+use crate::checked::{
+    CheckedEntryResult, CheckedSpecKind, QueryEntryStatus, QueryInput, ServiceReply,
+};
 use crate::embedded::{DEFAULT_EMBEDDED_LIBRARY, default_embedded_library, default_library_root};
-use crate::ids::{ModuleId, SymRef};
+use crate::ids::{FuncSigId, ModuleId, SymRef};
+use crate::infer::infer_function;
 use crate::load::{
     LibraryMode, LoadOptions, LoadedModule, ModuleSet, load_program, load_program_sources,
 };
 use crate::modules::resolve_modules;
+use crate::program::check_program;
+use crate::services::{check_migration_entry, check_query_entry};
 use crate::signatures::{
-    check_data_recursion, json_type, prepare_available_signatures, prepare_signatures,
-    resolve_expression_type, resolve_service_type,
+    check_data_recursion, json_type, prepare_signatures, resolve_expression_type,
+    resolve_service_type,
 };
 use crate::types::{CAPABILITY_NAMES, SourceTypeKind};
 use crate::{CheckStage, run_stage};
@@ -393,7 +399,8 @@ fn corpus_diagnostics_byte_for_byte() {
         Loading,
         Interfaces,
         Signatures,
-        SignatureAbilities,
+        Bodies,
+        Program,
     }
     let cases: &[(&str, &str, Phase)] = &[
         ("e0025-and/main.mo", "e0025-and.diag", Phase::Loading),
@@ -412,8 +419,6 @@ fn corpus_diagnostics_byte_for_byte() {
         ("e0035/main.mo", "e0035.diag", Phase::Loading),
         ("e0036/main.mo", "e0036.diag", Phase::Loading),
         ("e0037/json.mo", "e0037.diag", Phase::Loading),
-        ("e0096/main.mo", "e0096.diag", Phase::Loading),
-        ("e0097/main.mo", "e0097.diag", Phase::Loading),
         ("e0038.mo", "e0038.diag", Phase::Interfaces),
         (
             "e0038-import-repeat.mo",
@@ -432,16 +437,82 @@ fn corpus_diagnostics_byte_for_byte() {
         ("e0047.mo", "e0047.diag", Phase::Interfaces),
         ("e0048.mo", "e0048.diag", Phase::Signatures),
         ("e0049.mo", "e0049.diag", Phase::Signatures),
+        ("e0050.mo", "e0050.diag", Phase::Bodies),
+        ("e0050-len.mo", "e0050-len.diag", Phase::Bodies),
+        ("e0050-length.mo", "e0050-length.diag", Phase::Bodies),
+        ("e0051.mo", "e0051.diag", Phase::Bodies),
+        ("e0051-var.mo", "e0051-var.diag", Phase::Bodies),
+        ("e0051-new-name.mo", "e0051-new-name.diag", Phase::Bodies),
+        ("e0051-lambda.mo", "e0051-lambda.diag", Phase::Bodies),
+        ("e0052.mo", "e0052.diag", Phase::Bodies),
+        ("e0053.mo", "e0053.diag", Phase::Bodies),
+        ("e0054.mo", "e0054.diag", Phase::Bodies),
+        (
+            "e0054-tuple-part.mo",
+            "e0054-tuple-part.diag",
+            Phase::Bodies,
+        ),
+        ("e0055.mo", "e0055.diag", Phase::Bodies),
+        ("e0056.mo", "e0056.diag", Phase::Bodies),
+        ("e0057.mo", "e0057.diag", Phase::Bodies),
+        ("e0058.mo", "e0058.diag", Phase::Bodies),
+        ("e0059.mo", "e0059.diag", Phase::Bodies),
+        ("e0060.mo", "e0060.diag", Phase::Bodies),
+        ("e0061.mo", "e0061.diag", Phase::Bodies),
         ("e0062.mo", "e0062.diag", Phase::Signatures),
+        ("e0063.mo", "e0063.diag", Phase::Bodies),
+        ("e0064.mo", "e0064.diag", Phase::Bodies),
+        ("e0065.mo", "e0065.diag", Phase::Bodies),
         ("e0066.mo", "e0066.diag", Phase::Signatures),
+        ("e0067.mo", "e0067.diag", Phase::Bodies),
+        ("e0068.mo", "e0068.diag", Phase::Bodies),
+        ("e0069.mo", "e0069.diag", Phase::Bodies),
+        ("e0070.mo", "e0070.diag", Phase::Bodies),
+        ("e0070-network.mo", "e0070-network.diag", Phase::Bodies),
+        ("e0071.mo", "e0071.diag", Phase::Bodies),
+        ("e0072.mo", "e0072.diag", Phase::Bodies),
+        ("e0073.mo", "e0073.diag", Phase::Bodies),
+        ("e0074.mo", "e0074.diag", Phase::Bodies),
+        ("e0074-or-result.mo", "e0074-or-result.diag", Phase::Bodies),
+        ("e0075.mo", "e0075.diag", Phase::Bodies),
+        ("e0075-bool.mo", "e0075-bool.diag", Phase::Bodies),
+        ("e0076.mo", "e0076.diag", Phase::Bodies),
+        ("e0077.mo", "e0077.diag", Phase::Bodies),
+        ("e0078.mo", "e0078.diag", Phase::Bodies),
+        ("e0079.mo", "e0079.diag", Phase::Program),
+        (
+            "e0079-connection.mo",
+            "e0079-connection.diag",
+            Phase::Program,
+        ),
+        ("e0079-database.mo", "e0079-database.diag", Phase::Program),
+        ("e0080.mo", "e0080.diag", Phase::Program),
         ("e0081.mo", "e0081.diag", Phase::Signatures),
         ("e0082.mo", "e0082.diag", Phase::Signatures),
+        ("e0083.mo", "e0083.diag", Phase::Program),
         ("e0084.mo", "e0084.diag", Phase::Signatures),
-        ("e0080.mo", "e0080.diag", Phase::SignatureAbilities),
+        ("e0085.mo", "e0085.diag", Phase::Program),
+        ("e0086.mo", "e0086.diag", Phase::Program),
+        ("e0087.mo", "e0087.diag", Phase::Program),
+        ("e0087-ambiguous.mo", "e0087-ambiguous.diag", Phase::Program),
+        ("e0088.mo", "e0088.diag", Phase::Program),
+        ("e0089.mo", "e0089.diag", Phase::Program),
+        ("e0090.mo", "e0090.diag", Phase::Bodies),
+        ("e0091.mo", "e0091.diag", Phase::Program),
+        ("e0092.mo", "e0092.diag", Phase::Program),
+        ("e0093.mo", "e0093.diag", Phase::Program),
+        ("e0094.mo", "e0094.diag", Phase::Bodies),
+        ("e0095.mo", "e0095.diag", Phase::Bodies),
+        ("e0096/main.mo", "e0096.diag", Phase::Loading),
+        ("e0097/main.mo", "e0097.diag", Phase::Loading),
+        ("e0098.mo", "e0098.diag", Phase::Bodies),
+        ("e0412.mo", "e0412.diag", Phase::Bodies),
+        ("e1103.mo", "e1103.diag", Phase::Bodies),
     ];
 
     let root = repo_root();
     let prefix = format!("{}/", root.to_string_lossy());
+    let mut failures = Vec::new();
 
     for &(input, expected_file, phase) in cases {
         let mut sources = SourceMap::new();
@@ -451,12 +522,12 @@ fn corpus_diagnostics_byte_for_byte() {
 
         match phase {
             Phase::Loading => {
-                assert!(
-                    load_program(&mut sources, &input_str, &no_lib_options(), &mut diags).is_none(),
-                    "{input}: expected loading failure"
-                );
+                if load_program(&mut sources, &input_str, &no_lib_options(), &mut diags).is_some() {
+                    failures.push(format!("{input}: expected loading failure"));
+                    continue;
+                }
             }
-            Phase::Interfaces | Phase::Signatures | Phase::SignatureAbilities => {
+            Phase::Interfaces | Phase::Signatures | Phase::Bodies | Phase::Program => {
                 let bytes0 = fs::read(&input_path).unwrap();
                 let second_rel = if input == "e0047.mo" {
                     "tests/check/interfaces/hidden.mo"
@@ -472,8 +543,7 @@ fn corpus_diagnostics_byte_for_byte() {
                     .as_ref()
                     .map_or(0, |h| m0.syntax.tree.node(h.uses).children.len());
                 m0.uses = vec![ModuleId(1); use_count];
-                let include_second =
-                    !(matches!(phase, Phase::SignatureAbilities) && use_count == 0);
+                let include_second = !(matches!(phase, Phase::Program) && use_count == 0);
                 let mut modules = vec![m0];
                 if include_second {
                     let m1 =
@@ -490,44 +560,111 @@ fn corpus_diagnostics_byte_for_byte() {
                     modules,
                     order,
                     manifests: Vec::new(),
+                    arena_remaining: 64 << 20,
                 };
-                let names = resolve_modules(&set, &mut diags);
                 match phase {
+                    Phase::Program => {
+                        if check_program(Some(&sources), set, &mut diags).is_some() {
+                            failures.push(format!("{input}: expected program failure"));
+                            continue;
+                        }
+                    }
                     Phase::Interfaces => {
-                        assert!(names.is_none(), "{input}: expected interface failure");
+                        if resolve_modules(&set, &mut diags).is_some() {
+                            failures.push(format!("{input}: expected interface failure"));
+                            continue;
+                        }
                     }
                     Phase::Signatures => {
-                        let names = names.expect("interfaces should pass");
-                        assert!(
-                            prepare_signatures(&set, &names, &mut diags).is_none(),
-                            "{input}: expected signature failure"
-                        );
+                        let Some(names) = resolve_modules(&set, &mut diags) else {
+                            failures.push(format!("{input}: interfaces failed unexpectedly"));
+                            continue;
+                        };
+                        if prepare_signatures(&set, &names, &mut diags).is_none() {
+                            // ok
+                        } else {
+                            failures.push(format!("{input}: expected signature failure"));
+                            continue;
+                        }
                     }
-                    Phase::SignatureAbilities => {
-                        let names = names.expect("interfaces should pass");
-                        let mut sigs = prepare_available_signatures(&set, &names, &mut diags)
-                            .expect("signatures should prepare");
-                        assert!(check_signature_abilities(
-                            &set, &names, &mut sigs, &mut diags
-                        ));
+                    Phase::Bodies => {
+                        let Some(names) = resolve_modules(&set, &mut diags) else {
+                            failures.push(format!("{input}: interfaces failed unexpectedly"));
+                            continue;
+                        };
+                        let Some(mut sigs) = prepare_signatures(&set, &names, &mut diags) else {
+                            failures.push(format!("{input}: signatures failed unexpectedly"));
+                            continue;
+                        };
+                        let mut arena_rem = 64 << 20;
+                        let count = sigs.functions.len();
+                        for j in 0..count {
+                            if sigs.functions[j].function.module == ModuleId(0)
+                                && infer_function(
+                                    &set,
+                                    &names,
+                                    &mut sigs,
+                                    FuncSigId(j as u32),
+                                    &mut diags,
+                                    &mut arena_rem,
+                                )
+                                .is_none()
+                            {
+                                break;
+                            }
+                        }
                     }
                     Phase::Loading => {}
                 }
             }
         }
 
-        assert_eq!(
-            diags.len(),
-            1,
-            "{input}: expected 1 diagnostic, got {}",
-            diags.len()
-        );
-        assert_eq!(diags.dropped(), 0);
+        if diags.len() != 1 || diags.dropped() != 0 {
+            failures.push(format!(
+                "{input}: expected 1 diagnostic, got {} (dropped {}): {:?}",
+                diags.len(),
+                diags.dropped(),
+                diags
+                    .items()
+                    .iter()
+                    .map(|d| (d.code, d.message.as_str_lossy().into_owned()))
+                    .collect::<Vec<_>>()
+            ));
+            continue;
+        }
         let actual = snapshot_diag(&diags.items()[0], Some(&prefix));
         let expected =
             fs::read_to_string(root.join("tests/check/diagnostics").join(expected_file)).unwrap();
-        assert_eq!(actual, expected, "diagnostic snapshot mismatch on {input}");
+        if actual != expected {
+            failures.push(format!(
+                "{input}: snapshot mismatch\n--- expected ---\n{expected}--- actual ---\n{actual}"
+            ));
+        }
     }
+
+    // Exhaustive check: every *.diag file on disk must be covered.
+    let mut disk_diags: Vec<String> = fs::read_dir(root.join("tests/check/diagnostics"))
+        .unwrap()
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().to_string_lossy().into_owned();
+            name.ends_with(".diag").then_some(name)
+        })
+        .collect();
+    disk_diags.sort();
+    for name in &disk_diags {
+        if !cases.iter().any(|(_, exp, _)| *exp == name) {
+            failures.push(format!(
+                "{name}: missing from corpus_diagnostics_byte_for_byte"
+            ));
+        }
+    }
+    assert_eq!(disk_diags.len(), 85, "expected 85 .diag snapshot files");
+    assert!(
+        failures.is_empty(),
+        "{} diagnostic snapshot failures:\n\n{}",
+        failures.len(),
+        failures.join("\n====================\n")
+    );
 }
 
 #[test]
@@ -550,15 +687,18 @@ fn samples_pass_embedded_and_disk_library() {
     for name in files {
         let entry = repo_str(&format!("examples/{name}.mo"));
         for options in [LoadOptions::default(), dir_lib_options(lib_dir.clone())] {
-            let out = run_stage(&entry, &options, CheckStage::Signatures);
+            let out = run_stage(&entry, &options, CheckStage::Full);
             assert!(
                 out.ok(),
                 "sample {name} failed: {:?}",
-                out.diags.items().first().map(|d| (&d.code, &d.message))
+                out.diags
+                    .items()
+                    .first()
+                    .map(|d| (&d.code, d.message.as_str_lossy().into_owned()))
             );
-            assert!(out.modules.is_some());
-            assert!(out.interfaces.is_some());
-            assert!(out.signatures.is_some());
+            let prog = out.program.expect("full stage must produce CheckedProgram");
+            assert!(!prog.modules.modules.is_empty());
+            assert!(!prog.functions.is_empty());
         }
     }
 }
@@ -863,6 +1003,7 @@ fn independent_errors_and_name_rules_with_fixes() {
         modules: vec![m0, m1],
         order: vec![ModuleId(0), ModuleId(1)],
         manifests: Vec::new(),
+        arena_remaining: mo_def::limits::MO_CLI_CHECK_SIZE as usize,
     };
     let mut diags = DiagBag::new();
     assert!(resolve_modules(&set, &mut diags).is_none());
@@ -898,6 +1039,7 @@ fn independent_errors_and_name_rules_with_fixes() {
             modules: vec![m0, m1],
             order: vec![ModuleId(1), ModuleId(0)],
             manifests: Vec::new(),
+            arena_remaining: mo_def::limits::MO_CLI_CHECK_SIZE as usize,
         };
         let mut d = DiagBag::new();
         assert!(resolve_modules(&set, &mut d).is_none());
@@ -925,6 +1067,7 @@ fn independent_errors_and_name_rules_with_fixes() {
             modules: vec![fm0, fm1],
             order: vec![ModuleId(1), ModuleId(0)],
             manifests: Vec::new(),
+            arena_remaining: mo_def::limits::MO_CLI_CHECK_SIZE as usize,
         };
         let mut d2 = DiagBag::new();
         assert!(resolve_modules(&fset, &mut d2).is_some() && !d2.has_any());
@@ -951,6 +1094,7 @@ fn function_signatures_and_native_table_parity() {
         modules: vec![m0],
         order: vec![ModuleId(0)],
         manifests: Vec::new(),
+        arena_remaining: mo_def::limits::MO_CLI_CHECK_SIZE as usize,
     };
     let mut diags = DiagBag::new();
     let interfaces = resolve_modules(&set, &mut diags).unwrap();
@@ -1574,19 +1718,392 @@ fn deterministic_fuzz_smoke_loader_modules_signatures_abilities() {
 
         sources.add_bytes("main.mo", main_src.as_bytes()).unwrap();
         sources.add_bytes("a.mo", mod_a.as_bytes()).unwrap();
-        if let Some(set) = load_program_sources(&mut sources, None, &mut diags)
-            && let Some(ifaces) = resolve_modules(&set, &mut diags)
-            && let Some(mut sigs) = prepare_available_signatures(&set, &ifaces, &mut diags)
-        {
-            let _ = check_signature_abilities(&set, &ifaces, &mut sigs, &mut diags);
-            let mut ctx = AbilityContext::new(&ifaces, &mut sigs);
-            let data_tys: Vec<_> = ctx.signatures.data.iter().map(|d| d.ty).collect();
-            for ty in data_tys {
-                for ability in SourceAbility::ALL {
-                    let _ = ctx.prove_ability(ty, ability);
-                    ctx.reset_cache();
-                }
-            }
+        if let Some(set) = load_program_sources(&mut sources, None, &mut diags) {
+            let _ = check_program(Some(&sources), set, &mut diags);
         }
     }
+}
+
+fn check_inline_program(
+    source: &str,
+    with_library: bool,
+) -> (Option<crate::CheckedProgram>, DiagBag) {
+    let ws = TempDir::new("inline");
+    let entry = ws.write("main.mo", source.as_bytes());
+    let options = if with_library {
+        LoadOptions::default()
+    } else {
+        no_lib_options()
+    };
+    let out = run_stage(entry.to_str().unwrap(), &options, CheckStage::Full);
+    (out.program, out.diags)
+}
+
+#[test]
+fn body_inference_literals_map_keys_and_nesting_depth() {
+    // 1. Exact Int / Byte / Decimal / Float literal boundaries (incl. 2^1024 - 2^970 binary/decimal).
+    let bin_ok = format!("0b{}{}", "1".repeat(53), "0".repeat(971));
+    let bin_over = format!("0b{}1{}", "1".repeat(53), "0".repeat(970));
+    let hex_over = format!("0x{}", "f".repeat(257));
+    let dec_over = "179769313486231580793728971405303415079934132710037826936173778980444968292764750946649\
+                    017977587207096330286416692887910946555547851940402630657488671505820681908902000708383\
+                    676273854845817711531764475730270069855571366959622842914819860834936475292719074168444\
+                    365510704342711559699508093042880177904174497792";
+    let dec_ok = format!("{}1", &dec_over[..dec_over.len() - 1]);
+    let cases: &[(&str, &str, bool)] = &[
+        ("Int", "9223372036854775807", true),
+        ("Int", "-9223372036854775808", true),
+        ("Int", "-9223372036854775809", false),
+        ("Byte", "255", true),
+        ("Byte", "256", false),
+        ("Decimal", "170141183460469231731.687303715884105727", true),
+        ("Decimal", "170141183460469231731.687303715884105728", false),
+        ("Decimal", "0.000000000000000001", true),
+        ("Decimal", "0.0000000000000000001", false),
+        ("Float", &bin_ok, true),
+        ("Float", &bin_over, false),
+        ("Float", &hex_over, false),
+        ("BigInt", &hex_over, true),
+        ("Float", dec_over, false),
+        ("Float", &dec_ok, true),
+    ];
+    for &(ty, lit, valid) in cases {
+        let src = format!("module Main\nfn run() : {ty}\n  {lit}\nend\nfn main()\nend\n");
+        let (prog, diags) = check_inline_program(&src, false);
+        assert_eq!(prog.is_some(), valid, "literal {lit} as {ty}");
+        if !valid {
+            assert_eq!(diags.items()[0].code, ErrorCode::LiteralRange);
+        }
+    }
+
+    // 2. Number parameter range fits narrowest Number (Int).
+    let (prog, diags) = check_inline_program(
+        "module Main\nfn f(x: T) : T where T: Number\n  x + 9223372036854775808\nend\nfn main() : Int\n  f(1)\nend\n",
+        false,
+    );
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::LiteralRange);
+
+    // 3. Canonical map literal key duplicate detection (0x1 == 1, 1.00 == 1, -0 == 0, \u{61} == 'a').
+    for (ty, keys, dup) in [
+        ("Int", "1: 3, 0x1: 5", true),
+        ("Int", "-0: 3, 0: 5", true),
+        ("Decimal", "1: 3, 1.00: 5", true),
+        ("Decimal", "1.1: 3, 11: 5", false),
+        ("Text", "\"a\": 3, \"\\u{61}\": 5", true),
+        ("Text", "\"a\\u{0}b\": 3, \"a\\u{0}c\": 5", false),
+    ] {
+        let src =
+            format!("module Main\nfn run() : Map({ty}, Int)\n  {{{keys}}}\nend\nfn main()\nend\n");
+        let (prog, diags) = check_inline_program(&src, false);
+        assert_eq!(prog.is_none(), dup, "map keys {keys} ({ty})");
+        if dup {
+            assert_eq!(diags.items()[0].code, ErrorCode::MapKeyRepeated);
+        }
+    }
+
+    // 4. 255-level expression nesting passes on MO_SOURCE_STACK_SIZE (matching C test_check_bodies.c).
+    let depth = (mo_def::limits::MO_LIMIT_NESTING_DEPTH as usize) - 1;
+    let mut deep = String::from(
+        "module Main\nfn run(a: Bool, b: Bool, c: Bool, d: Range, e: Int, f: Int, g: Int, h: fn(Bool) : Int) : Bool\n",
+    );
+    for _ in 0..depth {
+        deep.push_str("a implies b or c and not d == e .. f + g * -h(");
+    }
+    deep.push('a');
+    for _ in 0..depth {
+        deep.push(')');
+    }
+    deep.push_str("\nend\nfn main()\nend\n");
+    std::thread::Builder::new()
+        .stack_size(mo_def::limits::MO_SOURCE_STACK_SIZE as usize)
+        .spawn(move || {
+            let (prog, diags) = check_inline_program(&deep, false);
+            assert!(
+                prog.is_some() && !diags.has_any(),
+                "deep expr failed: {:?}",
+                diags.items()
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+
+    // 5. Tailored E0074 on Result `or`.
+    let (prog, diags) = check_inline_program(
+        "module Main\nfn run(r: Result(Int, Text)) : Int\n  r or 0\nend\nfn main()\nend\n",
+        false,
+    );
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::ConditionType);
+    assert!(
+        diags.items()[0]
+            .message
+            .as_str_lossy()
+            .contains("not Result")
+    );
+}
+
+#[test]
+fn maranget_pattern_exhaustiveness_byte_domain_and_work_budget() {
+    // 1. Byte 255 vs 256 complete coverage.
+    for count in [255u32, 256u32] {
+        let mut src = String::from("module Main\nfn run(value: Byte) : Int\n  case value\n");
+        for i in 0..count {
+            if i == 255 {
+                src.push_str("    0xff: 0\n");
+            } else {
+                src.push_str(&format!("    {i}: 0\n"));
+            }
+        }
+        src.push_str("  end\nend\nfn main()\nend\n");
+        let (prog, diags) = check_inline_program(&src, false);
+        assert_eq!(prog.is_some(), count == 256);
+        if count == 255 {
+            assert_eq!(diags.items()[0].code, ErrorCode::CaseIncomplete);
+            assert!(
+                diags.items()[0]
+                    .message
+                    .as_str_lossy()
+                    .contains("missing: 255")
+            );
+        }
+    }
+
+    // 2. Diagonal 20-column Bool matrix hits per-function work budget cleanly (E1104).
+    let mut diag_src = String::from("module Main\nfn run(value: (Bool");
+    for _ in 1..20 {
+        diag_src.push_str(", Bool");
+    }
+    diag_src.push_str(")) : Int\n  case value\n");
+    for i in 0..40 {
+        diag_src.push_str("    (");
+        for j in 0..20 {
+            if j != 0 {
+                diag_src.push_str(", ");
+            }
+            if i / 2 != j {
+                diag_src.push('_');
+            } else if i % 2 == 0 {
+                diag_src.push_str("true");
+            } else {
+                diag_src.push_str("false");
+            }
+        }
+        diag_src.push_str("): 0\n");
+    }
+    diag_src.push_str("  end\nend\nfn main()\nend\n");
+    let (prog, diags) = check_inline_program(&diag_src, false);
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::CheckWork);
+
+    // 3. Catch-all on choice type refused (E0078) and named-pattern fix (E0065) repairs source.
+    let (prog, diags) = check_inline_program(
+        "module Main\nfn run(opt: Option(Int)) : Int\n  case opt\n    _: 0\n  end\nend\nfn main()\nend\n",
+        false,
+    );
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::CaseCatchAll);
+
+    let broken = "module Main\nenum Reply\n  Yes(value: Int)\n  No\nend\n\
+                  fn run(reply: Reply) : Int\n  case reply\n    Yes(n): n\n    No: 0\n  end\nend\nfn main()\nend\n";
+    let (prog, diags) = check_inline_program(broken, false);
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::PatternFields);
+    assert_eq!(diags.items()[0].fixes.len(), 1);
+    let edit = &diags.items()[0].fixes[0].edits[0];
+    let fixed = format!(
+        "{}{}{}",
+        &broken[..edit.span.start as usize],
+        edit.replacement.as_str_lossy(),
+        &broken[edit.span.end as usize..]
+    );
+    let (prog2, diags2) = check_inline_program(&fixed, false);
+    assert!(prog2.is_some() && !diags2.has_any());
+}
+
+#[test]
+fn captures_polymorphic_recursion_and_constant_dag_ordering() {
+    // 1. Lambda cannot write captured outer `var` (E0090), nor pass capability-capturing lambda to
+    //    generic function that stores it (E0055/E0056/E0057).
+    let (prog, diags) = check_inline_program(
+        "module Main\nfn main()\n  var x = 0\n  f = fn()\n    x = 1\n  end\n  f()\n  assert x == 1\nend\n",
+        false,
+    );
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::LambdaWrite);
+
+    let (prog, diags) = check_inline_program(
+        "module Main\nfn store(x: T) : List(T)\n  [x]\nend\n\
+         fn main(console: Console)\n  _fs = store(fn() console.print(\"a\") end)\nend\n",
+        false,
+    );
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::CapabilityCapture);
+
+    // 2. Mutual polymorphic recursion cycle detected (E0083).
+    let (prog, diags) = check_inline_program(
+        "module Main\nfn a(x: T) : Int\n  b([x])\nend\nfn b(y: U) : Int\n  a(y)\nend\nfn main()\nend\n",
+        false,
+    );
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::PolymorphicRecursion);
+
+    // 3. 5,000-node deep constant dependency chain orders topologically without stack overflow.
+    let mut chain = String::from("module Main\n");
+    for i in 0..5000 {
+        if i + 1 < 5000 {
+            chain.push_str(&format!("c{i} = c{}\n", i + 1));
+        } else {
+            chain.push_str(&format!("c{i} = 13\n"));
+        }
+    }
+    chain.push_str("fn main() : Int\n  c0\nend\n");
+    let (prog, diags) = check_inline_program(&chain, false);
+    assert!(prog.is_some() && !diags.has_any());
+    let prog = prog.unwrap();
+    assert_eq!(prog.constants.len(), 5000);
+    assert_eq!(
+        prog.interfaces.symbol(prog.constants[0].symbol).name,
+        "c4999"
+    );
+    assert_eq!(
+        prog.interfaces.symbol(prog.constants[4999].symbol).name,
+        "c0"
+    );
+    assert_eq!(prog.entry.result, CheckedEntryResult::Status);
+
+    // 4. Constant cycle through library HOF (`List.map`) detected (E0089), and `?`-name Bool check (E0088).
+    let (prog, diags) = check_inline_program(
+        "module Main\nvalue = [1].map(reader).size\nfn reader(_n: Int) : Int\n  value\nend\nfn main()\nend\n",
+        true,
+    );
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::ConstantCycle);
+
+    let (prog, diags) = check_inline_program("module Main\nready? = 17\nfn main()\nend\n", false);
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::BoolName);
+}
+
+#[test]
+fn services_fixes_promises_queries_migrations_and_apis() {
+    // 1. Service handlers reply classification, promises/anchors, and query/migration entry helpers.
+    let svc_src = "module Main\n\
+                   struct State\n  value: Int\nend\n\
+                   struct OldState\n  value: Int\nend\n\
+                   service\n\
+                     state State = State(value: 0)\n\
+                     tools read, bump, maybe_bump\n\
+                     every 2.minutes tick\n\
+                     token from env \"SERVICE_TOKEN\"\n\
+                     promise \"bump adds n\" on bump\n\
+                       after.value == before.value + n\n\
+                       allows before: State(value: 1), after: State(value: 4), now: Time.parse(\"2026-01-01T00:00:00Z\") or stop \"t\", n: 3, reply: 1\n\
+                       forbids before: State(value: 1), after: State(value: 2), now: Time.parse(\"2026-01-01T00:00:00Z\") or stop \"t\", n: 3, reply: 1\n\
+                     end\n\
+                   end\n\
+                   fn read(state: State, _now: Time) : Int\n  state.value\nend\n\
+                   fn bump(state: State, _now: Time, n: Int) : (State, Int)\n  (State(value: state.value + n), state.value)\nend\n\
+                   fn maybe_bump(state: State, _now: Time) : Result((State, Bool), Text)\n  Ok((state, true))\nend\n\
+                   fn tick(state: State, _now: Time) : State\n  state\nend\n\
+                   fn inspect(state: State) : Int\n  state.value\nend\n\
+                   fn migrate(old: OldState) : State\n  State(value: old.value)\nend\n";
+    let (prog, diags) = check_inline_program(svc_src, false);
+    assert!(
+        prog.is_some() && !diags.has_any(),
+        "service failed: {:?}",
+        diags.items()
+    );
+    let mut prog = prog.unwrap();
+    assert_eq!(prog.services.len(), 1);
+    assert_eq!(prog.services[0].tools.len(), 3);
+    assert_eq!(prog.services[0].tools[0].reply, ServiceReply::ReadOnly);
+    assert_eq!(prog.services[0].tools[1].reply, ServiceReply::Update);
+    assert_eq!(prog.services[0].tools[2].reply, ServiceReply::ResultUpdate);
+    assert_eq!(prog.services[0].timers.len(), 1);
+    assert_eq!(prog.services[0].promises.len(), 1);
+    assert_eq!(
+        prog.services[0].promises[0].spec.kind,
+        CheckedSpecKind::Promise
+    );
+    assert_eq!(prog.services[0].promises[0].tool, Some(1));
+    assert_eq!(prog.services[0].promises[0].anchors.len(), 2);
+
+    let mut qdiags = DiagBag::new();
+    let qres = check_query_entry(&mut prog, b"inspect", QueryInput::State, None, &mut qdiags);
+    assert!(matches!(qres, QueryEntryStatus::Accepted(_)) && !qdiags.has_any());
+
+    let old_sym = SymRef::new(
+        ModuleId(0),
+        prog.interfaces
+            .scope(ModuleId(0))
+            .find_symbol_index(b"OldState")
+            .unwrap(),
+    );
+    let old_ty = prog
+        .signatures
+        .nominals
+        .iter()
+        .find(|n| prog.signatures.types.get(n.ty).owner.as_source() == Some(old_sym))
+        .unwrap()
+        .ty;
+    let mut mdiags = DiagBag::new();
+    let mres = check_migration_entry(&mut prog, b"migrate", old_ty, &mut mdiags);
+    assert!(matches!(mres, QueryEntryStatus::Accepted(_)) && !mdiags.has_any());
+
+    // 2. Bare `State` return in service tool produces E0103 with an auto-fix that compiles cleanly.
+    let bare_state = "module Main\n\
+                      service\n  state Int = 0\n  tools bump\n  token from env \"TOKEN\"\nend\n\
+                      fn bump(state: Int, _now: Time) : Int\n  state + 1\nend\n";
+    let (prog, diags) = check_inline_program(bare_state, false);
+    assert!(prog.is_none());
+    assert_eq!(diags.items()[0].code, ErrorCode::ServiceStateResult);
+    assert_eq!(diags.items()[0].fixes.len(), 2);
+    for fix in &diags.items()[0].fixes {
+        let mut edits = fix.edits.clone();
+        edits.sort_by_key(|b| std::cmp::Reverse(b.span.start));
+        let mut patched = bare_state.to_string();
+        for edit in edits {
+            patched.replace_range(
+                (edit.span.start as usize)..(edit.span.end as usize),
+                &edit.replacement.as_str_lossy(),
+            );
+        }
+        let (prog2, diags2) = check_inline_program(&patched, false);
+        assert!(
+            prog2.is_some() && !diags2.has_any(),
+            "patched bare-state failed:\n{patched}\n{:?}",
+            diags2.items()
+        );
+    }
+
+    // 3. HTTP `api` block with actor, route, `main` actor capability, and `ApiTest.send`.
+    let api_src = "module Main\n\
+                   use Api\n\
+                   struct CounterState\n  total: Int\nend\n\
+                   actor Counter\n  state CounterState = CounterState(total: 0)\n  calls inc, current\nend\n\
+                   fn inc(s: CounterState, _t: Time, d: Int) : (CounterState, Int)\n  (CounterState(total: s.total + d), s.total + d)\nend\n\
+                   fn current(s: CounterState, _t: Time) : Int\n  s.total\nend\n\
+                   api\n  actor ctr: Counter\n  get \"/c\" read_c\nend\n\
+                   fn read_c(ctr: Counter) : Int\n  ctr.current\nend\n\
+                   fn main(io: Console, ctr: Counter)\n  _v = ctr.inc(5)\n  io.print(\"#{ctr.current}\")\nend\n\
+                   test \"actor test\"\n\
+                     c = Actor.start(Counter)\n\
+                     assert c.inc(3) == 3\n\
+                     assert ApiTest.send(Main, Api.get(\"/c\"), c).text == \"3\"\n\
+                   end\n";
+    let (prog, diags) = check_inline_program(api_src, true);
+    assert!(
+        prog.is_some() && !diags.has_any(),
+        "api failed: {:?}",
+        diags.items()
+    );
+    let prog = prog.unwrap();
+    assert_eq!(prog.services.len(), 1);
+    assert!(prog.services[0].is_actor);
+    assert_eq!(prog.apis.len(), 1);
+    assert_eq!(prog.apis[0].routes.len(), 1);
+    assert_eq!(prog.apis[0].actors.len(), 1);
+    assert_eq!(prog.entry.capabilities.len(), 2);
 }

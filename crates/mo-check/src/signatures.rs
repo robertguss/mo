@@ -2466,26 +2466,50 @@ pub fn resolve_expression_type(
     syntax: NodeId,
     diags: &mut DiagBag,
 ) -> Option<TypeId> {
-    let fn_sym = signatures.functions[enclosing.index()].function;
-    let fn_ty = signatures.functions[enclosing.index()].ty;
+    let module = signatures.functions[enclosing.index()].function.module;
+    resolve_expression_type_in(
+        set,
+        interfaces,
+        signatures,
+        module,
+        Some(enclosing),
+        syntax,
+        diags,
+    )
+}
+
+/// Resolves an explicit type annotation inside any module body (function, test, constant, spec,
+/// or service initializer).
+#[must_use]
+pub fn resolve_expression_type_in(
+    set: &ModuleSet,
+    interfaces: &ModuleInterfaces,
+    signatures: &mut Signatures,
+    module: ModuleId,
+    enclosing: Option<FuncSigId>,
+    syntax: NodeId,
+    diags: &mut DiagBag,
+) -> Option<TypeId> {
     let mut parameters = [None; 26];
-    if let Some(ty_id) = fn_ty {
-        collect_function_parameters(
-            &signatures.types,
-            ty_id,
-            TypeOwner::Source(fn_sym),
-            &mut parameters,
-        );
+    if let Some(enclosing_id) = enclosing {
+        let fn_sym = signatures.functions[enclosing_id.index()].function;
+        let fn_ty = signatures.functions[enclosing_id.index()].ty;
+        if let Some(ty_id) = fn_ty {
+            collect_function_parameters(
+                &signatures.types,
+                ty_id,
+                TypeOwner::Source(fn_sym),
+                &mut parameters,
+            );
+        }
     }
-    let tree = &set.module(fn_sym.module).syntax.tree;
+    let tree = &set.module(module).syntax.tree;
     let span = tree.node(syntax).span;
     let mut p = Preparation {
         set,
         interfaces,
         diags,
-        owner: ResolveOwner::Synthetic {
-            module: fn_sym.module,
-        },
+        owner: ResolveOwner::Synthetic { module },
         parameters,
         signatures,
         span,

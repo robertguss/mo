@@ -146,6 +146,8 @@ pub struct ModuleSet {
     pub order: Vec<ModuleId>,
     /// Manifest (`mo.toml`) paths loaded during discovery.
     pub manifests: Vec<String>,
+    /// Remaining shared checking arena byte budget after syntax loading (`MO_CLI_CHECK_SIZE`).
+    pub arena_remaining: usize,
 }
 
 impl ModuleSet {
@@ -1891,6 +1893,7 @@ impl<'s, 'd> Loader<'s, 'd> {
             modules,
             order,
             manifests: self.manifests,
+            arena_remaining: self.arena_remaining,
         })
     }
 }

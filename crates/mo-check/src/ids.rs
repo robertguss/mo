@@ -101,3 +101,113 @@ impl ProofId {
         self.0 as usize
     }
 }
+
+/// Index of a [`crate::checked::CheckedExpression`] inside a [`crate::checked::CheckedBody`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedExprId(pub u32);
+
+impl CheckedExprId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedBinding`] inside a [`crate::checked::CheckedBody`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedBindingId(pub u32);
+
+impl CheckedBindingId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedPattern`] inside a [`crate::checked::CheckedBody`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedPatternId(pub u32);
+
+impl CheckedPatternId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedLambda`] inside a [`crate::checked::CheckedBody`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedLambdaId(pub u32);
+
+impl CheckedLambdaId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedMatch`] inside a [`crate::checked::CheckedBody`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedMatchId(pub u32);
+
+impl CheckedMatchId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedFunction`] inside [`crate::checked::CheckedProgram::functions`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedFuncId(pub u32);
+
+impl CheckedFuncId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedConstant`] inside [`crate::checked::CheckedProgram::constants`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedConstId(pub u32);
+
+impl CheckedConstId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedSpec`] inside [`crate::checked::CheckedProgram::specs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedSpecId(pub u32);
+
+impl CheckedSpecId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedService`] inside [`crate::checked::CheckedProgram::services`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedServiceId(pub u32);
+
+impl CheckedServiceId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Index of a [`crate::checked::CheckedApi`] inside [`crate::checked::CheckedProgram::apis`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CheckedApiId(pub u32);
+
+impl CheckedApiId {
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}

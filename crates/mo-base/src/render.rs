@@ -832,3 +832,29 @@ pub fn render_diagnostic_default(
         MO_CLI_DIAGNOSTIC_SIZE as usize,
     )
 }
+
+/// Renders the leading NDJSON version record matching `src/tools/render.c:mo_write_version`.
+#[must_use]
+pub fn render_version_json(command: &str, version: &str) -> Vec<u8> {
+    let mut w = BoundedWriter::new(MO_CLI_DIAGNOSTIC_SIZE as usize, true, DisplayMetrics::BASIC);
+    w.text("{\"record\":\"version\",\"format\":\"1.0\",\"mo\":");
+    json_bytes(&mut w, version.as_bytes());
+    w.text(",\"command\":");
+    json_bytes(&mut w, command.as_bytes());
+    w.text("}\n");
+    w.out
+}
+
+/// Renders the trailing NDJSON totals record matching `src/tools/render.c:mo_write_diagnostics`.
+#[must_use]
+pub fn render_totals_json(errors: u64, dropped: u64, status: i32) -> Vec<u8> {
+    let mut w = BoundedWriter::new(MO_CLI_DIAGNOSTIC_SIZE as usize, true, DisplayMetrics::BASIC);
+    w.text("{\"record\":\"totals\",\"errors\":");
+    w.u64_dec(errors);
+    w.text(",\"dropped\":");
+    w.u64_dec(dropped);
+    w.text(",\"status\":");
+    w.u64_dec(u64::from(u32::try_from(status).unwrap_or(1)));
+    w.text("}\n");
+    w.out
+}

@@ -1,20 +1,42 @@
 #![forbid(unsafe_code)]
 
-//! Pure-Rust Mo front-end checking — Part 1:
-//! whole-program module loader (including embedded `lib/`, lazy `on_use`, `mo.toml` path
-//! dependencies, and root confinement), module interfaces & exposure, shared interned type DAG,
-//! signature preparation & nonregular generic data detection, native signatures from `mo-def`,
-//! and ability proofs & customizers.
+//! Pure-Rust Mo front-end typechecker (`src/check/` full parity).
 //!
-//! Parity target: `src/check/{load.c,modules.c,signatures.c,recursion.c,abilities.c}` and
-//! `src/check/program.c:350-402`.
+//! Covers the entire front-end checking pipeline:
+//! - Whole-program module loader (`load`) including embedded `lib/`, lazy `on_use`, `mo.toml`
+//!   path dependencies, and root confinement.
+//! - Module interfaces, overloads, exposure, and imports (`modules`).
+//! - Shared interned type DAG (`types`), signature preparation & nonregular generic data
+//!   detection, and native signature table from `mo-def` (`signatures`).
+//! - Built-in ability proofs & customizers (`abilities`).
+//! - Bidirectional local body inference (`infer`), iterative Maranget pattern exhaustiveness
+//!   (`patterns`), map-literal key canonicalization (`map_keys`).
+//! - Constant dependency & cycle checking (`constants`), polymorphic recursion (`recursion`),
+//!   generic capability-capture flow & service purity (`captures`).
+//! - `service`/`actor` blocks (`services`), bare-`State` rewrite fixes (`service_fixes`),
+//!   service promises & anchors (`service_promises`), HTTP `api` blocks (`apis`),
+//!   `test`/`example`/`promise`/`anchor` specs, `main` entry contract, and unused imports
+//!   (`program`).
+//!
 //! Depends only on `mo-def`, `mo-base`, and `mo-syntax`.
 
 pub mod abilities;
+pub mod apis;
+pub mod captures;
+pub mod checked;
+pub mod constants;
 pub mod embedded;
 pub mod ids;
+pub mod infer;
 pub mod load;
+pub mod map_keys;
 pub mod modules;
+pub mod patterns;
+pub mod program;
+pub mod recursion;
+pub mod service_fixes;
+pub mod service_promises;
+pub mod services;
 pub mod signatures;
 pub mod types;
 
@@ -24,28 +46,53 @@ mod tests;
 use mo_base::{DiagBag, SourceMap};
 
 pub use abilities::{
-    AbilityArena, AbilityContext, AbilityFailure, AbilityImplementation, AbilityImplementationKind,
-    SourceAbility, TypeArgument, check_signature_abilities, snake_case_name,
+    AbilityArena, AbilityCache, AbilityContext, AbilityFailure, AbilityImplementation,
+    AbilityImplementationKind, SourceAbility, TypeArgument, check_signature_abilities,
+    snake_case_name,
+};
+pub use captures::{check_capture_arguments, check_service_purity};
+pub use checked::{
+    ApiAuthMode, ApiJobReplyKind, ApiMethod, ApiParamKind, ApiReplyKind, CheckedAbilityUse,
+    CheckedApi, CheckedApiActor, CheckedApiAuth, CheckedApiJob, CheckedApiParam, CheckedApiRoute,
+    CheckedApiSqlite, CheckedApiStatic, CheckedApiStatus, CheckedArm, CheckedBinding, CheckedBody,
+    CheckedCondition, CheckedConstant, CheckedEntry, CheckedEntryResult, CheckedExpression,
+    CheckedFunction, CheckedLambda, CheckedMatch, CheckedOr, CheckedPattern, CheckedPatternKind,
+    CheckedPatternPart, CheckedProgram, CheckedService, CheckedServicePromise, CheckedServiceTimer,
+    CheckedServiceTool, CheckedSpec, CheckedSpecKind, CheckedTry, ConstructorRef, InferredBody,
+    InferredExpression, PurityRule, QueryEntryStatus, QueryInput, ServiceReply, SpecText,
 };
 pub use embedded::{
     DEFAULT_EMBEDDED_LIBRARY, EmbeddedLibrary, EmbeddedSource, default_embedded_library,
     default_library_root,
 };
 pub use ids::{
-    DataSigId, FuncSigId, ModuleId, NativeSigId, NominalId, ProofId, SymIdx, SymRef, TypeId,
+    CheckedApiId, CheckedBindingId, CheckedConstId, CheckedExprId, CheckedFuncId, CheckedLambdaId,
+    CheckedMatchId, CheckedPatternId, CheckedServiceId, CheckedSpecId, DataSigId, FuncSigId,
+    ModuleId, NativeSigId, NominalId, ProofId, SymIdx, SymRef, TypeId,
+};
+pub use infer::{
+    ConstantContext, ProgramServicesView, check_constant, check_function, check_service_value,
+    infer_function,
 };
 pub use load::{
     LibraryMode, LoadOptions, LoadedModule, ModuleSet, ON_USE_LIBRARY_MODULES, is_loaded_on_use,
     is_reserved_on_use, load_program, load_program_sources,
 };
+pub use map_keys::{MapKeyBudget, MapKeyCategory, MapLiteralKey, canonicalize_map_literal_key};
 pub use modules::{
     ImportedName, ModuleAlias, ModuleInterfaces, ModuleScope, SOURCE_BUILTINS, Symbol,
     is_source_builtin, resolve_modules,
 };
+pub use patterns::{
+    CoverageOutcome, MatchPattern, MatchPatternArena, MatchPatternId, patterns_cover,
+};
+pub use program::check_program;
+pub use recursion::check_recursion;
+pub use services::{check_migration_entry, check_query_entry};
 pub use signatures::{
     DataSignature, FieldSignature, FunctionSignature, ImportUsage, NativeSignature,
     NominalSignature, Signatures, check_data_recursion, json_type, prepare_available_signatures,
-    prepare_signatures, resolve_expression_type, resolve_service_type,
+    prepare_signatures, resolve_expression_type, resolve_expression_type_in, resolve_service_type,
 };
 pub use types::{
     BUILTIN_CASES, BUILTIN_TYPES, BuiltinCase, CAPABILITY_NAMES, SourceType, SourceTypeKind,
@@ -53,7 +100,7 @@ pub use types::{
     builtin_case_by_type, builtin_type_arity, is_capability_name,
 };
 
-/// Front-end checking stage selectable via `mo-fe check-stage --stage=...`.
+/// Front-end checking stage selectable via `mo-fe check --stage=...`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CheckStage {
     /// Whole-program module loader (`load.rs`).
@@ -63,6 +110,8 @@ pub enum CheckStage {
     /// Loader + module interfaces + signatures, nonregular generic data, native table, and
     /// signature-level ability checks (`signatures.rs` + `abilities.rs`).
     Signatures,
+    /// Complete front-end typechecker (`program.rs` -> `CheckedProgram`).
+    Full,
 }
 
 impl CheckStage {
@@ -72,6 +121,7 @@ impl CheckStage {
             "load" => Some(Self::Load),
             "modules" => Some(Self::Modules),
             "signatures" => Some(Self::Signatures),
+            "full" => Some(Self::Full),
             _ => None,
         }
     }
@@ -82,6 +132,7 @@ impl CheckStage {
             Self::Load => "load",
             Self::Modules => "modules",
             Self::Signatures => "signatures",
+            Self::Full => "full",
         }
     }
 }
@@ -94,6 +145,7 @@ pub struct StageOutput {
     pub modules: Option<ModuleSet>,
     pub interfaces: Option<ModuleInterfaces>,
     pub signatures: Option<Signatures>,
+    pub program: Option<CheckedProgram>,
 }
 
 impl StageOutput {
@@ -116,6 +168,7 @@ pub fn run_stage(entry: &str, options: &LoadOptions, stage: CheckStage) -> Stage
             modules: None,
             interfaces: None,
             signatures: None,
+            program: None,
         };
     };
     if stage == CheckStage::Load {
@@ -125,6 +178,19 @@ pub fn run_stage(entry: &str, options: &LoadOptions, stage: CheckStage) -> Stage
             modules: Some(modules),
             interfaces: None,
             signatures: None,
+            program: None,
+        };
+    }
+
+    if stage == CheckStage::Full {
+        let program = check_program(Some(&sources), modules, &mut diags);
+        return StageOutput {
+            sources,
+            diags,
+            modules: None,
+            interfaces: None,
+            signatures: None,
+            program,
         };
     }
 
@@ -135,6 +201,7 @@ pub fn run_stage(entry: &str, options: &LoadOptions, stage: CheckStage) -> Stage
             modules: Some(modules),
             interfaces: None,
             signatures: None,
+            program: None,
         };
     };
     if stage == CheckStage::Modules {
@@ -144,6 +211,7 @@ pub fn run_stage(entry: &str, options: &LoadOptions, stage: CheckStage) -> Stage
             modules: Some(modules),
             interfaces: Some(interfaces),
             signatures: None,
+            program: None,
         };
     }
 
@@ -155,6 +223,7 @@ pub fn run_stage(entry: &str, options: &LoadOptions, stage: CheckStage) -> Stage
             modules: Some(modules),
             interfaces: Some(interfaces),
             signatures: None,
+            program: None,
         };
     };
     let _ = check_signature_abilities(&modules, &interfaces, &mut signatures, &mut diags);
@@ -165,5 +234,6 @@ pub fn run_stage(entry: &str, options: &LoadOptions, stage: CheckStage) -> Stage
         modules: Some(modules),
         interfaces: Some(interfaces),
         signatures: Some(signatures),
+        program: None,
     }
 }

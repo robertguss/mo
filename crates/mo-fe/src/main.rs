@@ -12,17 +12,17 @@ use std::process::ExitCode;
 
 use mo_base::{
     DiagBag, Diagnostic, DisplayMetrics, NO_FILE, RenderFormat, SourceError, SourceMap, Span,
-    TerminalEncoding, render_diagnostic_default,
+    TerminalEncoding, render_diagnostic_default, render_totals_json, render_version_json,
 };
 use mo_check::{CheckStage, LibraryMode, LoadOptions, run_stage};
 use mo_core::{
     CoreDocument, CoreTextKind, check_program, detect_kind, parse_document, parse_program,
     parse_run, print_document,
 };
-use mo_def::ErrorCode;
 use mo_def::limits::{
     MO_LIMIT_CORE_TEXT_SIZE, MO_LIMIT_DIAGNOSTICS, MO_LIMIT_FILE_SIZE, MO_LIMIT_PATH_SIZE,
 };
+use mo_def::{ErrorCode, MO_VERSION};
 use mo_prim::unicode16::{display_width_bytes, next_grapheme_bytes};
 use mo_syntax::{FormatOptions, format_module, parse_fragment, parse_module, read_header};
 
@@ -85,11 +85,11 @@ fn print_usage(mut w: impl Write) -> io::Result<()> {
     writeln!(w, "  mo-fe format-batch [--fragment] [--] FILE...")?;
     writeln!(
         w,
-        "  mo-fe check [--stage=load|modules|signatures] [--library DIR|--no-library] [--json] FILE.mo"
+        "  mo-fe check [--stage=load|modules|signatures|full] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo"
     )?;
     writeln!(
         w,
-        "  mo-fe check-batch [--stage=load|modules|signatures] [--library DIR|--no-library] [--] FILE..."
+        "  mo-fe check-batch [--stage=load|modules|signatures|full] [--library DIR|--lib DIR|--no-library] [--] FILE..."
     )
 }
 
@@ -1041,8 +1041,8 @@ fn run_format_batch(args: &[String], mut out: impl Write, mut err: impl Write) -
     if out.flush().is_err() { 8 } else { 0 }
 }
 
-fn run_check_stage(args: &[String], mut err: impl Write) -> u8 {
-    let mut stage = CheckStage::Signatures;
+fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut stage = CheckStage::Full;
     let mut library = LibraryMode::default_embedded();
     let mut format = RenderFormat::Text;
     let mut path: Option<&str> = None;
@@ -1053,14 +1053,17 @@ fn run_check_stage(args: &[String], mut err: impl Write) -> u8 {
             format = RenderFormat::Json;
         } else if arg == "--no-library" {
             library = LibraryMode::None;
-        } else if arg == "--library" {
+        } else if arg == "--library" || arg == "--lib" {
             i += 1;
             let Some(val) = args.get(i) else {
-                let _ = writeln!(err, "error: --library requires an argument");
+                let _ = writeln!(err, "error: {arg} requires an argument");
                 return 2;
             };
             library = LibraryMode::Directory(PathBuf::from(val));
-        } else if let Some(val) = arg.strip_prefix("--library=") {
+        } else if let Some(val) = arg
+            .strip_prefix("--library=")
+            .or_else(|| arg.strip_prefix("--lib="))
+        {
             library = LibraryMode::Directory(PathBuf::from(val));
         } else if arg == "--stage" {
             i += 1;
@@ -1071,7 +1074,7 @@ fn run_check_stage(args: &[String], mut err: impl Write) -> u8 {
             let Some(parsed) = CheckStage::parse(val) else {
                 let _ = writeln!(
                     err,
-                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                    "error: invalid --stage {val:?}: expected load, modules, signatures, or full"
                 );
                 return 2;
             };
@@ -1080,7 +1083,7 @@ fn run_check_stage(args: &[String], mut err: impl Write) -> u8 {
             let Some(parsed) = CheckStage::parse(val) else {
                 let _ = writeln!(
                     err,
-                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                    "error: invalid --stage {val:?}: expected load, modules, signatures, or full"
                 );
                 return 2;
             };
@@ -1110,17 +1113,91 @@ fn run_check_stage(args: &[String], mut err: impl Write) -> u8 {
         ..LoadOptions::default()
     };
     let mut result = run_stage(entry, &options, stage);
-    if result.ok() {
-        return 0;
+    result.diags.sort();
+
+    if format == RenderFormat::Json {
+        if out
+            .write_all(&render_version_json("check", MO_VERSION))
+            .is_err()
+        {
+            let _ = writeln!(err, "mo: could not write version record");
+            return 1;
+        }
+        let mut written = 0u64;
+        let mut dropped = result.diags.dropped();
+        let mut ok = true;
+        for diag in result.diags.items() {
+            match render_diagnostic_default(
+                &result.sources,
+                diag,
+                RenderFormat::Json,
+                TerminalEncoding::Utf8,
+                UNICODE16_METRICS,
+            ) {
+                Ok(rendered) => {
+                    if out.write_all(&rendered).is_ok() {
+                        written += 1;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                Err(_) => {
+                    dropped += 1;
+                }
+            }
+        }
+        let status = i32::from(result.diags.has_any() || dropped != 0 || !ok);
+        if ok {
+            ok = out
+                .write_all(&render_totals_json(written, u64::from(dropped), status))
+                .is_ok()
+                && out.flush().is_ok();
+        }
+        if !ok {
+            let _ = writeln!(err, "mo: could not write diagnostics");
+            return 1;
+        }
+        return status as u8;
     }
-    match render_sorted_diags(&mut result.diags, &result.sources, format, false, &mut err) {
-        Ok(_) => 1,
-        Err(_) => 2,
+
+    let mut dropped = result.diags.dropped();
+    let mut ok = true;
+    for diag in result.diags.items() {
+        match render_diagnostic_default(
+            &result.sources,
+            diag,
+            RenderFormat::Text,
+            TerminalEncoding::Utf8,
+            UNICODE16_METRICS,
+        ) {
+            Ok(rendered) => {
+                if err.write_all(&rendered).is_err() {
+                    ok = false;
+                    break;
+                }
+            }
+            Err(_) => {
+                dropped += 1;
+            }
+        }
     }
+    if ok && dropped != 0 {
+        ok = writeln!(
+            err,
+            "{dropped} diagnostics omitted: diagnostic storage or output limit"
+        )
+        .is_ok();
+    }
+    if !ok || err.flush().is_err() {
+        let _ = writeln!(err, "mo: could not write diagnostics");
+        return 1;
+    }
+    u8::from(result.diags.has_any() || dropped != 0)
 }
 
 fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
-    let mut stage = CheckStage::Signatures;
+    let mut stage = CheckStage::Full;
     let mut library = LibraryMode::default_embedded();
     let mut files: Vec<&str> = Vec::new();
     let mut literal_only = false;
@@ -1131,14 +1208,18 @@ fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Wri
             literal_only = true;
         } else if !literal_only && arg == "--no-library" {
             library = LibraryMode::None;
-        } else if !literal_only && arg == "--library" {
+        } else if !literal_only && (arg == "--library" || arg == "--lib") {
             i += 1;
             let Some(val) = args.get(i) else {
-                let _ = writeln!(err, "error: --library requires an argument");
+                let _ = writeln!(err, "error: {arg} requires an argument");
                 return 2;
             };
             library = LibraryMode::Directory(PathBuf::from(val));
-        } else if !literal_only && let Some(val) = arg.strip_prefix("--library=") {
+        } else if !literal_only
+            && let Some(val) = arg
+                .strip_prefix("--library=")
+                .or_else(|| arg.strip_prefix("--lib="))
+        {
             library = LibraryMode::Directory(PathBuf::from(val));
         } else if !literal_only && arg == "--stage" {
             i += 1;
@@ -1149,7 +1230,7 @@ fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Wri
             let Some(parsed) = CheckStage::parse(val) else {
                 let _ = writeln!(
                     err,
-                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                    "error: invalid --stage {val:?}: expected load, modules, signatures, or full"
                 );
                 return 2;
             };
@@ -1158,7 +1239,7 @@ fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Wri
             let Some(parsed) = CheckStage::parse(val) else {
                 let _ = writeln!(
                     err,
-                    "error: invalid --stage {val:?}: expected load, modules, or signatures"
+                    "error: invalid --stage {val:?}: expected load, modules, signatures, or full"
                 );
                 return 2;
             };
@@ -1208,7 +1289,7 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
         "format" => run_format(rest, out, err),
         "parse-batch" => run_parse_batch(rest, out, err),
         "format-batch" => run_format_batch(rest, out, err),
-        "check" | "check-stage" => run_check_stage(rest, err),
+        "check" | "check-stage" => run_check_stage(rest, out, err),
         "check-batch" | "check-stage-batch" => run_check_stage_batch(rest, out, err),
         "--help" | "-h" | "help" => {
             let _ = print_usage(out);
@@ -1224,13 +1305,23 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    let stdout = io::stdout();
-    let stderr = io::stderr();
-    let code = dispatch(
-        &args,
-        BufWriter::new(stdout.lock()),
-        BufWriter::new(stderr.lock()),
-    );
+    let run = move || -> u8 {
+        let stdout = io::stdout();
+        let stderr = io::stderr();
+        dispatch(
+            &args,
+            BufWriter::new(stdout.lock()),
+            BufWriter::new(stderr.lock()),
+        )
+    };
+    let code = match std::thread::Builder::new()
+        .name("mo-fe-main".to_string())
+        .stack_size(mo_def::limits::MO_SOURCE_STACK_SIZE as usize)
+        .spawn(run)
+    {
+        Ok(handle) => handle.join().unwrap_or(1),
+        Err(_) => 1,
+    };
     ExitCode::from(code)
 }
 
@@ -1432,7 +1523,7 @@ mod tests {
         let lines: Vec<&str> = std::str::from_utf8(&out).unwrap().lines().collect();
         assert_eq!(lines, vec!["0", "1 1 E0084"]);
 
-        // Single-file JSON mode on E0084 emits JSON diagnostic record.
+        // Single-file JSON mode on E0084 emits version, diagnostic, and totals on stdout.
         out.clear();
         err.clear();
         let code = dispatch(
@@ -1446,7 +1537,20 @@ mod tests {
             &mut err,
         );
         assert_eq!(code, 1);
-        let json_err = String::from_utf8(err).unwrap();
-        assert!(json_err.contains("\"code\":\"E0084\""), "got: {json_err}");
+        assert!(
+            err.is_empty(),
+            "unexpected stderr: {}",
+            String::from_utf8_lossy(&err)
+        );
+        let json_out = String::from_utf8(out).unwrap();
+        assert!(
+            json_out.contains("\"record\":\"version\""),
+            "got: {json_out}"
+        );
+        assert!(json_out.contains("\"code\":\"E0084\""), "got: {json_out}");
+        assert!(
+            json_out.contains("\"record\":\"totals\""),
+            "got: {json_out}"
+        );
     }
 }
