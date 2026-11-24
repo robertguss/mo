@@ -271,7 +271,10 @@ impl BcBuilder {
         idx
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test builder constructs full FunctionDef"
+    )]
     fn add_fn(
         &mut self,
         name: &str,
@@ -1323,7 +1326,7 @@ fn vm_stress_tight_limits_and_bounded_work_never_panic() {
             );
             assert!(defect.variables[0].value.contains("… <truncated>"));
         }
-        _ => panic!("expected stop_large to stop with truncated variable"),
+        _ => unreachable!("expected stop_large to stop with truncated variable"),
     }
 }
 

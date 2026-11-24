@@ -61,11 +61,7 @@ pub(crate) fn make_fixed_clock(heap: &Heap, ty: u32, time_us: i64) -> Result<Val
 }
 
 pub(crate) fn clock_now(cap: &Value) -> Result<Value, HostError> {
-    let state = cap
-        .as_capability()
-        .inner
-        .downcast_ref::<ClockState>()
-        .expect("Clock capability");
+    let state = crate::downcast_cap::<ClockState>(cap, "Clock capability");
     match state {
         ClockState::Fake(cell) => Ok(Value::Time(cell.get())),
         ClockState::Real => {
@@ -111,11 +107,7 @@ pub(crate) fn clock_sleep(cap: &Value, duration_us: i64) -> Result<Value, HostEr
             detail: None,
         });
     }
-    let state = cap
-        .as_capability()
-        .inner
-        .downcast_ref::<ClockState>()
-        .expect("Clock capability");
+    let state = crate::downcast_cap::<ClockState>(cap, "Clock capability");
     match state {
         ClockState::Fake(cell) => {
             let next = i128::from(cell.get()) + i128::from(duration_us);
@@ -176,11 +168,7 @@ pub(crate) fn random_int(cap: &Value, low: i64, high: i64) -> Result<Value, Host
             detail: None,
         });
     }
-    let state = cap
-        .as_capability()
-        .inner
-        .downcast_ref::<RandomState>()
-        .expect("Random capability");
+    let state = crate::downcast_cap::<RandomState>(cap, "Random capability");
     let mut words = state.words.borrow_mut();
     let initial = *words;
     let width = (high as u64).wrapping_sub(low as u64);
@@ -239,11 +227,7 @@ pub(crate) fn secure_random_bytes(
     let mut scratch = ScratchGuard::new(heap.budget());
     scratch.charge(length)?;
 
-    let state = cap
-        .as_capability()
-        .inner
-        .downcast_ref::<SecureRandomState>()
-        .expect("SecureRandom capability");
+    let state = crate::downcast_cap::<SecureRandomState>(cap, "SecureRandom capability");
 
     let mut buffer = Zeroizing::new(vec![0u8; length]);
     match state {

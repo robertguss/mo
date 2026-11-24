@@ -125,6 +125,10 @@ pub fn call(
         }
         PrimId::ListEnumerate => {
             let pair_ty = types.get(result_ty).parameters[0];
+            #[expect(
+                clippy::expect_used,
+                reason = "verified bytecode guarantees tuple layout exists"
+            )]
             let tuple_layout = types
                 .find_tuple_layout(pair_ty)
                 .expect("tuple layout for enumerate");
@@ -142,6 +146,10 @@ pub fn call(
         }
         PrimId::ListZip => {
             let pair_ty = types.get(result_ty).parameters[0];
+            #[expect(
+                clippy::expect_used,
+                reason = "verified bytecode guarantees tuple layout exists"
+            )]
             let tuple_layout = types
                 .find_tuple_layout(pair_ty)
                 .expect("tuple layout for zip");
@@ -297,6 +305,10 @@ pub fn call(
         }
         PrimId::MapEntries => {
             let pair_ty = types.get(result_ty).parameters[0];
+            #[expect(
+                clippy::expect_used,
+                reason = "verified bytecode guarantees tuple layout exists"
+            )]
             let tuple_layout = types
                 .find_tuple_layout(pair_ty)
                 .expect("tuple layout for Map.entries");

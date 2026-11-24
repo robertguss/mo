@@ -168,7 +168,9 @@ pub fn quote_structural(out: &mut String, s: &str, delimiter: Option<char>) {
                 i += 2;
             }
             _ => {
-                let ch = s[i..].chars().next().unwrap();
+                let Some(ch) = s[i..].chars().next() else {
+                    break;
+                };
                 let is_interp = c == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{';
                 if delimiter == Some(ch) || ch == '\\' || is_interp {
                     out.push('\\');
@@ -307,7 +309,9 @@ fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mu
 
     while !stack.is_empty() {
         let stack_len = stack.len();
-        let f = stack.last_mut().unwrap();
+        let Some(f) = stack.last_mut() else {
+            break;
+        };
         let t = types.get(f.ty);
         let kind = t.kind;
         let is_compound = matches!(

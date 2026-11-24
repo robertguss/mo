@@ -116,6 +116,10 @@ impl MoMap {
         self.get(types, hash_key, key).is_some()
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "verified bytecode guarantees Map keys implement the Hash ability"
+    )]
     pub fn set(&mut self, types: &TypeTable, hash_key: [u64; 2], key: Value, val: Value) {
         let hash = value_hash(types, hash_key, self.key_type, &key).expect("hashable map key");
         if self.slots.is_empty() || (self.active + self.tombstones + 1) * 2 > self.slots.len() {

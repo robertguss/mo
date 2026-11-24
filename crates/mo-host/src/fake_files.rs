@@ -205,6 +205,10 @@ pub(crate) fn call_fake_folder(
     };
 
     if matches!(op, HostOpId::FilesWithin | HostOpId::ReadfilesWithin) {
+        #[expect(
+            clippy::expect_used,
+            reason = "verified bytecode guarantees within returns a capability type"
+        )]
         let cap_kind = types
             .get(result_ty)
             .capability

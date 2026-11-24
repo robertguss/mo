@@ -11,6 +11,8 @@ mod unicode;
 #[rustfmt::skip]
 mod unicode16_data;
 
+pub use unicode::unicode16;
+
 use mo_bytecode::types::TypeTable;
 use mo_def::PrimId;
 use mo_heap::{Heap, HeapError, Value};

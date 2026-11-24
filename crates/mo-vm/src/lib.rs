@@ -160,7 +160,12 @@ impl Image {
                     TypeKind::Float => Value::Float(f64::from_le_bytes(*bytes)),
                     TypeKind::Char => {
                         let code = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                        Value::Char(char::from_u32(code).expect("validated char"))
+                        #[expect(
+                            clippy::expect_used,
+                            reason = "bytecode validator checks Char constant is a valid Unicode scalar"
+                        )]
+                        let ch = char::from_u32(code).expect("validated char");
+                        Value::Char(ch)
                     }
                     TypeKind::Time => Value::Time(i64::from_le_bytes(*bytes)),
                     TypeKind::Duration => Value::Duration(i64::from_le_bytes(*bytes)),
@@ -186,6 +191,10 @@ impl Image {
                 ConstantValue::Closure(fn_idx) => match captureless_closures.get(fn_idx) {
                     Some(v) => v.clone(),
                     None => {
+                        #[expect(
+                            clippy::expect_used,
+                            reason = "verified bytecode guarantees closure constant has a closure layout"
+                        )]
                         let layout_idx = file
                             .types
                             .find_closure_layout(*fn_idx)
@@ -617,7 +626,7 @@ impl Globals<'_> {
     fn set(&mut self, idx: usize, val: Value) {
         match self {
             Globals::Mutable(s) => s[idx] = Some(val),
-            Globals::ReadOnly(_) => panic!("SET_GLOBAL outside init function"),
+            Globals::ReadOnly(_) => unreachable!("SET_GLOBAL outside init function"),
         }
     }
 }
@@ -730,12 +739,39 @@ impl<'a> ExecCtx<'a> {
         )
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "execution loop maintains at least one active call frame"
+    )]
+    fn cur_frame(&self) -> &Frame {
+        self.frames.last().expect("active call frame")
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "execution loop maintains at least one active call frame"
+    )]
+    fn cur_frame_mut(&mut self) -> &mut Frame {
+        self.frames.last_mut().expect("active call frame")
+    }
+
+    #[expect(
+        clippy::expect_used,
+        reason = "execution loop maintains at least one active call frame"
+    )]
+    fn pop_frame(&mut self) -> Frame {
+        self.frames.pop().expect("active call frame")
+    }
+
     fn write_reg(&mut self, reg: usize, value: Value, borrowed: bool) {
-        let f = self.frames.last_mut().unwrap();
-        let fn_def = &self.file.functions[f.function as usize];
-        let ty = fn_def.register_types[reg];
+        let is_ref = {
+            let f = self.cur_frame();
+            let fn_def = &self.file.functions[f.function as usize];
+            self.file.types.is_reference(fn_def.register_types[reg])
+        };
+        let f = self.cur_frame_mut();
         f.regs[reg] = Some(value);
-        f.states[reg] = if self.file.types.is_reference(ty) {
+        f.states[reg] = if is_ref {
             if borrowed {
                 RegState::Borrowed
             } else {
@@ -746,11 +782,18 @@ impl<'a> ExecCtx<'a> {
         };
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "verified bytecode guarantees consumed register holds a live value"
+    )]
     fn consume_reg(&mut self, reg: usize) -> Value {
-        let f = self.frames.last_mut().unwrap();
-        let fn_def = &self.file.functions[f.function as usize];
-        let ty = fn_def.register_types[reg];
-        if self.file.types.is_reference(ty) {
+        let is_ref = {
+            let f = self.cur_frame();
+            let fn_def = &self.file.functions[f.function as usize];
+            self.file.types.is_reference(fn_def.register_types[reg])
+        };
+        let f = self.cur_frame_mut();
+        if is_ref {
             f.states[reg] = RegState::Moved;
             f.regs[reg].take().expect("owned register holds value")
         } else {
@@ -761,8 +804,12 @@ impl<'a> ExecCtx<'a> {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "verified bytecode guarantees readable register holds a live value"
+    )]
     fn read_reg(&self, reg: usize) -> &Value {
-        let f = self.frames.last().unwrap();
+        let f = self.cur_frame();
         f.regs[reg].as_ref().expect("readable register holds value")
     }
 
@@ -775,7 +822,7 @@ impl<'a> ExecCtx<'a> {
                 *rem -= 1;
             }
             let (fn_idx, pc) = {
-                let f = self.frames.last().unwrap();
+                let f = self.cur_frame();
                 (f.function, f.pc)
             };
             let fn_def = &self.file.functions[fn_idx as usize];
@@ -783,6 +830,10 @@ impl<'a> ExecCtx<'a> {
             let head = code[pc as usize];
             let op_num = (head & OPCODE_MASK) as u16;
             let var_count = (head >> OPCODE_VARIABLE_SHIFT) as usize;
+            #[expect(
+                clippy::expect_used,
+                reason = "bytecode verifier validates every instruction opcode"
+            )]
             let op = Opcode::from_u16(op_num).expect("validated opcode");
             let info = op.info();
             let fixed = info.fixed_count as usize;
@@ -860,7 +911,7 @@ impl<'a> ExecCtx<'a> {
                 }
                 Opcode::Move => {
                     let src = a[1] as usize;
-                    let borrowed = self.frames.last().unwrap().states[src] == RegState::Borrowed;
+                    let borrowed = self.cur_frame().states[src] == RegState::Borrowed;
                     let val = if borrowed {
                         self.read_reg(src).clone()
                     } else {
@@ -870,7 +921,7 @@ impl<'a> ExecCtx<'a> {
                 }
                 Opcode::Clear => {
                     let dst = a[0] as usize;
-                    let f = self.frames.last_mut().unwrap();
+                    let f = self.cur_frame_mut();
                     f.regs[dst] = None;
                     f.states[dst] = RegState::Undefined;
                 }
@@ -899,17 +950,17 @@ impl<'a> ExecCtx<'a> {
                     self.globals.set(a[0] as usize, val);
                 }
                 Opcode::Jump => {
-                    self.frames.last_mut().unwrap().pc = a[0];
+                    self.cur_frame_mut().pc = a[0];
                     continue;
                 }
                 Opcode::Branch => {
                     let cond = self.read_reg(a[0] as usize).as_bool();
-                    self.frames.last_mut().unwrap().pc = if cond { a[1] } else { a[2] };
+                    self.cur_frame_mut().pc = if cond { a[1] } else { a[2] };
                     continue;
                 }
                 Opcode::Switch => {
                     let tag = self.read_reg(a[0] as usize).as_tag() as usize;
-                    self.frames.last_mut().unwrap().pc = a[1 + tag];
+                    self.cur_frame_mut().pc = a[1 + tag];
                     continue;
                 }
                 Opcode::Call | Opcode::CallClosure | Opcode::TailCall | Opcode::TailCallClosure => {
@@ -920,7 +971,7 @@ impl<'a> ExecCtx<'a> {
                         let closure_val = self.read_reg(target_word as usize);
                         let HeapObj::Closure { function, .. } = closure_val.as_heap_ref().obj()
                         else {
-                            panic!("CALL_CLOSURE on non-closure");
+                            unreachable!("CALL_CLOSURE on non-closure");
                         };
                         *function
                     } else {
@@ -944,7 +995,7 @@ impl<'a> ExecCtx<'a> {
                         );
                     }
                     let base_stack = if tail {
-                        *self.stack_bytes - self.frames.last().unwrap().frame_bytes
+                        *self.stack_bytes - self.cur_frame().frame_bytes
                     } else {
                         *self.stack_bytes
                     };
@@ -999,7 +1050,7 @@ impl<'a> ExecCtx<'a> {
                     }
 
                     if tail {
-                        let old = self.frames.pop().unwrap();
+                        let old = self.pop_frame();
                         *self.stack_bytes -= old.frame_bytes;
                         *self.stack_bytes += new_frame_bytes;
                         self.frames.push(Frame {
@@ -1027,13 +1078,13 @@ impl<'a> ExecCtx<'a> {
                 }
                 Opcode::Ret => {
                     let ret_val = self.consume_reg(a[0] as usize);
-                    let done = self.frames.pop().unwrap();
+                    let done = self.pop_frame();
                     *self.stack_bytes -= done.frame_bytes;
                     if self.frames.is_empty() {
                         return ControlledOutcome::Returned(ret_val);
                     }
                     self.write_reg(done.destination as usize, ret_val, false);
-                    self.frames.last_mut().unwrap().pc = done.resume_pc;
+                    self.cur_frame_mut().pc = done.resume_pc;
                     continue;
                 }
                 Opcode::Stop => {
@@ -1087,6 +1138,10 @@ impl<'a> ExecCtx<'a> {
                         if !self.heap.can_alloc_fields(var_count) {
                             return self.oom();
                         }
+                        #[expect(
+                            clippy::expect_used,
+                            reason = "verified bytecode guarantees closure layout exists"
+                        )]
                         let layout_idx = self
                             .file
                             .types
@@ -1129,7 +1184,7 @@ impl<'a> ExecCtx<'a> {
                                 HeapObj::Record { fields, .. } | HeapObj::Tuple { fields, .. } => {
                                     fields.len()
                                 }
-                                _ => panic!("SET_FIELD on non-Record/Tuple"),
+                                _ => unreachable!("SET_FIELD on non-Record/Tuple"),
                             };
                             Some(count)
                         }
@@ -1156,7 +1211,7 @@ impl<'a> ExecCtx<'a> {
                 Opcode::Reset => {
                     let val = self.consume_reg(a[1] as usize);
                     let token = self.heap.reset(val);
-                    let f = self.frames.last_mut().unwrap();
+                    let f = self.cur_frame_mut();
                     let dst = a[0] as usize;
                     f.regs[dst] = Some(Value::Token(token));
                     f.states[dst] = RegState::Token;
@@ -1165,9 +1220,9 @@ impl<'a> ExecCtx<'a> {
                     let tok_reg = a[1] as usize;
                     let layout_idx = a[2];
                     let field_regs = &a[3..3 + var_count];
-                    let can_fit = match self.frames.last().unwrap().regs[tok_reg].as_ref() {
+                    let can_fit = match self.cur_frame().regs[tok_reg].as_ref() {
                         Some(Value::Token(t)) => self.heap.can_reuse(t, var_count),
-                        _ => panic!("expected ReuseToken"),
+                        _ => unreachable!("expected ReuseToken"),
                     };
                     if !can_fit {
                         return self.oom();
@@ -1177,11 +1232,11 @@ impl<'a> ExecCtx<'a> {
                         fields.push(self.consume_reg(reg as usize));
                     }
                     let token = {
-                        let f = self.frames.last_mut().unwrap();
+                        let f = self.cur_frame_mut();
                         f.states[tok_reg] = RegState::Moved;
-                        match f.regs[tok_reg].take().expect("token register") {
-                            Value::Token(t) => t,
-                            _ => panic!("expected ReuseToken"),
+                        match f.regs[tok_reg].take() {
+                            Some(Value::Token(t)) => t,
+                            _ => unreachable!("expected ReuseToken"),
                         }
                     };
                     match self
@@ -1194,13 +1249,17 @@ impl<'a> ExecCtx<'a> {
                 }
                 Opcode::FreeToken => {
                     let tok_reg = a[0] as usize;
-                    let f = self.frames.last_mut().unwrap();
+                    let f = self.cur_frame_mut();
                     f.states[tok_reg] = RegState::Moved;
                     if let Some(Value::Token(t)) = f.regs[tok_reg].take() {
                         self.heap.free_token(t);
                     }
                 }
                 Opcode::Prim => {
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "bytecode verifier validates every primitive id"
+                    )]
                     let prim = PrimId::from_u32(a[1]).expect("validated prim id");
                     let sig_ty = a[2];
                     let modes = prim.info().params.as_bytes();
@@ -1215,12 +1274,21 @@ impl<'a> ExecCtx<'a> {
                         }
                     }
                     {
-                        let f = self.frames.last_mut().unwrap();
+                        let types = &self.file.types;
+                        #[expect(
+                            clippy::expect_used,
+                            reason = "verified bytecode guarantees primitive operand registers hold values"
+                        )]
+                        let f = self.frames.last_mut().expect("active call frame");
                         for (i, &reg) in arg_regs.iter().enumerate() {
                             if modes[i] == b'o' {
                                 let r = reg as usize;
                                 let ty = fn_def.register_types[r];
-                                prim_args[i] = if self.file.types.is_reference(ty) {
+                                #[expect(
+                                    clippy::expect_used,
+                                    reason = "verified bytecode guarantees owned primitive operand holds a value"
+                                )]
+                                let v = if types.is_reference(ty) {
                                     f.regs[r].take().expect("owned register holds value")
                                 } else {
                                     f.regs[r]
@@ -1228,6 +1296,7 @@ impl<'a> ExecCtx<'a> {
                                         .expect("value register holds value")
                                         .clone()
                                 };
+                                prim_args[i] = v;
                             }
                         }
                     }
@@ -1236,12 +1305,13 @@ impl<'a> ExecCtx<'a> {
                     match result {
                         Ok(val) => {
                             {
-                                let f = self.frames.last_mut().unwrap();
+                                let types = &self.file.types;
+                                let f = self.cur_frame_mut();
                                 for (i, &reg) in arg_regs.iter().enumerate() {
                                     if modes[i] == b'o' {
                                         let r = reg as usize;
                                         let ty = fn_def.register_types[r];
-                                        if self.file.types.is_reference(ty) {
+                                        if types.is_reference(ty) {
                                             f.states[r] = RegState::Moved;
                                         }
                                     }
@@ -1251,12 +1321,13 @@ impl<'a> ExecCtx<'a> {
                         }
                         Err(err) => {
                             {
-                                let f = self.frames.last_mut().unwrap();
+                                let types = &self.file.types;
+                                let f = self.cur_frame_mut();
                                 for (i, &reg) in arg_regs.iter().enumerate() {
                                     if modes[i] == b'o' {
                                         let r = reg as usize;
                                         let ty = fn_def.register_types[r];
-                                        if self.file.types.is_reference(ty) && f.regs[r].is_none() {
+                                        if types.is_reference(ty) && f.regs[r].is_none() {
                                             f.regs[r] = Some(std::mem::replace(
                                                 &mut prim_args[i],
                                                 Value::Unit,
@@ -1302,6 +1373,10 @@ impl<'a> ExecCtx<'a> {
                     }
                 }
                 Opcode::Host => {
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "bytecode verifier validates every hostop id"
+                    )]
                     let host_op = HostOpId::from_u32(a[1]).expect("validated hostop id");
                     let modes = host_op.info().params.as_bytes();
                     let arg_regs = &a[2..2 + var_count];
@@ -1355,6 +1430,10 @@ impl<'a> ExecCtx<'a> {
                     }
                 }
                 Opcode::Sim => {
+                    #[expect(
+                        clippy::expect_used,
+                        reason = "bytecode verifier validates every simop id"
+                    )]
                     let sim_op = SimOpId::from_u32(a[1]).expect("validated simop id");
                     let descriptor = a[2];
                     let tool = a[3];
@@ -1379,7 +1458,7 @@ impl<'a> ExecCtx<'a> {
                 }
             }
 
-            self.frames.last_mut().unwrap().pc = next_pc;
+            self.cur_frame_mut().pc = next_pc;
         }
     }
 }
@@ -1453,7 +1532,9 @@ fn escape_quoted_scalar(bytes: &[u8], delimiter: u8) -> (usize, String) {
         b if b == delimiter || is_interp => format!("\\{}", b as char),
         b if b < 32 || b == 127 => format!("\\u{{{b:x}}}"),
         _ if is_c1 => format!("\\u{{{:x}}}", bytes[1]),
-        _ => std::str::from_utf8(&bytes[..count]).unwrap().to_string(),
+        _ => std::str::from_utf8(&bytes[..count])
+            .unwrap_or("")
+            .to_string(),
     };
     (count, part)
 }
@@ -1557,18 +1638,23 @@ fn escape_defect_text(out: &mut String, s: &str) {
 fn escape_filename(out: &mut String, bytes: &[u8]) {
     let mut i = 0;
     while i < bytes.len() {
-        if let Ok(s) = std::str::from_utf8(&bytes[i..]) {
-            escape_defect_text(out, s);
-            return;
-        }
-        let valid_up_to = std::str::from_utf8(&bytes[i..]).unwrap_err().valid_up_to();
-        if valid_up_to > 0 {
-            let valid = std::str::from_utf8(&bytes[i..i + valid_up_to]).unwrap();
-            escape_defect_text(out, valid);
-            i += valid_up_to;
-        } else {
-            out.push_str(&format!("\\x{:02x}", bytes[i]));
-            i += 1;
+        match std::str::from_utf8(&bytes[i..]) {
+            Ok(s) => {
+                escape_defect_text(out, s);
+                return;
+            }
+            Err(err) => {
+                let valid_up_to = err.valid_up_to();
+                if valid_up_to > 0 {
+                    if let Ok(valid) = std::str::from_utf8(&bytes[i..i + valid_up_to]) {
+                        escape_defect_text(out, valid);
+                    }
+                    i += valid_up_to;
+                } else {
+                    out.push_str(&format!("\\x{:02x}", bytes[i]));
+                    i += 1;
+                }
+            }
         }
     }
 }
@@ -1719,7 +1805,7 @@ mod tests {
         let mut proc = Process::new(&image, limits, HostContext::stdio(Vec::new(), Vec::new()));
         match proc.call(0, vec![Value::Int(500), Value::Int(0)]) {
             Outcome::Returned(v) => assert_eq!(v.as_int(), 500),
-            Outcome::Failed(d) | Outcome::Stopped(d) => panic!("unexpected stop: {d:?}"),
+            Outcome::Failed(d) | Outcome::Stopped(d) => unreachable!("unexpected stop: {d:?}"),
         }
     }
 
@@ -1758,7 +1844,7 @@ mod tests {
                 assert_eq!(d.limit, 5);
                 assert_eq!(d.frames.len(), 5);
             }
-            _ => panic!("expected --max-depth stop"),
+            _ => unreachable!("expected --max-depth stop"),
         }
     }
 
@@ -1886,7 +1972,7 @@ mod tests {
         let peak_before = proc.heap.budget().peak();
         let out_unique = match proc.call(0, vec![p_unique, Value::Int(99)]) {
             Outcome::Returned(v) => v,
-            Outcome::Failed(d) | Outcome::Stopped(d) => panic!("unexpected stop: {d:?}"),
+            Outcome::Failed(d) | Outcome::Stopped(d) => unreachable!("unexpected stop: {d:?}"),
         };
         assert_eq!(format!("{:p}", out_unique.as_heap_ref().obj()), addr_before);
         assert_eq!(proc.heap.budget().peak(), peak_before);
@@ -1901,7 +1987,7 @@ mod tests {
         let keeper = p_shared.clone();
         let out_shared = match proc.call(0, vec![p_shared, Value::Int(42)]) {
             Outcome::Returned(v) => v,
-            Outcome::Failed(d) | Outcome::Stopped(d) => panic!("unexpected stop: {d:?}"),
+            Outcome::Failed(d) | Outcome::Stopped(d) => unreachable!("unexpected stop: {d:?}"),
         };
         assert!(!keeper.as_heap_ref().ptr_eq(out_shared.as_heap_ref()));
         assert_eq!(proc.heap.extract_field(&keeper, 0).as_int(), 7);
@@ -2003,7 +2089,7 @@ mod tests {
                 assert_eq!(d.variables[1].name, "msg");
                 assert_eq!(d.variables[1].value, "\"boom\"");
             }
-            _ => panic!("expected Stop outcome"),
+            _ => unreachable!("expected Stop outcome"),
         }
     }
 }

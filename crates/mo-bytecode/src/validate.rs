@@ -391,9 +391,7 @@ fn validate_constants(raw: &DecodedRaw) -> Result<(), LoadError> {
             ConstantValue::Bytes(_) => {}
             ConstantValue::BigInt { sign, magnitude } => {
                 let is_zero = *sign == BigIntSign::Zero;
-                if is_zero != magnitude.is_empty()
-                    || (!magnitude.is_empty() && *magnitude.last().unwrap() == 0)
-                {
+                if is_zero != magnitude.is_empty() || magnitude.last() == Some(&0) {
                     return Err(refuse("noncanonical bigint literal"));
                 }
             }
@@ -497,7 +495,12 @@ fn validate_code_and_debug(raw: &DecodedRaw, index: usize) -> Result<(), LoadErr
     pc = 0;
     while pc < f.code.len() {
         let head = f.code[pc];
-        let info = Opcode::find(head & OPCODE_MASK).expect("validated opcode");
+        let Some(info) = Opcode::find(head & OPCODE_MASK) else {
+            return Err(LoadError::invalid(
+                code_base + (pc as u32) * 4,
+                "invalid instruction shape or instruction limit",
+            ));
+        };
         let var_count = (head >> OPCODE_VARIABLE_SHIFT) as usize;
         let total = info.fixed_count as usize + var_count;
         for j in 0..total {

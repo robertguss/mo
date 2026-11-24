@@ -56,7 +56,9 @@ struct SimStore {
 
 impl SimStore {
     fn open() -> Result<Self, ()> {
-        let mut count = OPEN_STORES.lock().expect("store counter lock");
+        let mut count = OPEN_STORES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if u64::from(*count) >= MO_LIMIT_STORES {
             return Err(());
         }
@@ -115,7 +117,9 @@ impl SimStore {
 
 impl Drop for SimStore {
     fn drop(&mut self) {
-        let mut count = OPEN_STORES.lock().expect("store counter lock");
+        let mut count = OPEN_STORES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         debug_assert!(*count > 0);
         *count = count.saturating_sub(1);
     }
@@ -421,7 +425,10 @@ fn extract_replacement(
     Some(heap.extract_field(&payload, 0))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal service handler helper forwards VM, service, and persistence state"
+)]
 fn call_handler(
     prog: &ProgramView<'_>,
     heap: &Heap,
@@ -460,7 +467,9 @@ fn call_handler(
     if !returned {
         return result;
     }
-    let val_ref = result.value.as_ref().expect("returned value");
+    let Some(val_ref) = result.value.as_ref() else {
+        return result;
+    };
     let Some(next) = extract_replacement(
         heap,
         prog.file,
@@ -527,7 +536,15 @@ impl ServiceLoop {
                     defect: defect.map(Box::new),
                 });
             }
-            let interval = val.unwrap().as_duration();
+            let Some(val) = val else {
+                return Err(FailureInfo {
+                    status: ServiceStatus::Defect,
+                    now: time.now,
+                    function: t.interval,
+                    defect: None,
+                });
+            };
+            let interval = val.as_duration();
             if interval <= 0 {
                 return Err(FailureInfo {
                     status: ServiceStatus::Interval,
@@ -691,7 +708,14 @@ impl ServiceLoop {
                         });
                     }
                     let mut encoded = Vec::new();
-                    let cur_state = state_opt.as_ref().expect("recovered state");
+                    let Some(cur_state) = state_opt.as_ref() else {
+                        return Err(FailureInfo {
+                            status: ServiceStatus::SavedInvalid,
+                            now: time.now,
+                            function: NO_INDEX,
+                            defect: None,
+                        });
+                    };
                     let call = call_handler(
                         prog,
                         &heap,
@@ -753,7 +777,14 @@ impl ServiceLoop {
                     defect: defect.map(Box::new),
                 });
             }
-            let raw_state = val.unwrap();
+            let Some(raw_state) = val else {
+                return Err(FailureInfo {
+                    status: ServiceStatus::Defect,
+                    now: time.now,
+                    function: service.start,
+                    defect: None,
+                });
+            };
             if store.is_some() {
                 match encoded_copy(
                     &heap,
@@ -1061,8 +1092,8 @@ impl ServiceLoop {
                         self.current_encoding = encoded;
                     }
                 }
-                if updated {
-                    self.state = call.new_state.expect("updated state");
+                if updated && let Some(next_state) = call.new_state {
+                    self.state = next_state;
                 }
             }
         }
@@ -1203,8 +1234,9 @@ impl SimulationInner {
                 }
             } else {
                 let copied = if reply.status == ServiceStatus::Ok {
-                    let to_heap = caller_heap.expect("caller heap for tool reply");
-                    let raw = reply.value.as_ref().expect("ok reply value");
+                    let (Some(to_heap), Some(raw)) = (caller_heap, reply.value.as_ref()) else {
+                        return Err("Simulation reply copy-out: missing reply state".to_string());
+                    };
                     match copy_saved(&prog.file.types, to_heap, reply.result_type, raw) {
                         Ok((v, _)) => Some(v),
                         Err(e) => {
@@ -1369,6 +1401,10 @@ pub(crate) fn exec_sim(
             .map_err(|_| "Simulation.start: handle allocation failed".to_string());
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "verified bytecode guarantees Simulation capability operand"
+    )]
     let handle = args[0]
         .as_capability()
         .inner
@@ -1422,7 +1458,15 @@ pub(crate) fn exec_sim(
             let mut copied = Vec::with_capacity(handler.argument_types.len());
             let mut message_bytes: u64 = LOG_RECORD_HEADER_BYTES as u64;
             {
-                let lp = actor.loop_state.as_ref().unwrap();
+                let Some(lp) = actor.loop_state.as_ref() else {
+                    return make_sim_send_error(
+                        caller_heap,
+                        file,
+                        result_type,
+                        true,
+                        "Actor call: allocation failed while returning error".to_string(),
+                    );
+                };
                 for (i, &arg_ty) in handler.argument_types.iter().enumerate() {
                     match copy_saved(&file.types, &lp.heap, arg_ty, &tool_args[i]) {
                         Ok((v, enc_len)) => {
@@ -1445,11 +1489,16 @@ pub(crate) fn exec_sim(
                 ));
             }
             let now = actor.clock();
-            let enq_status = actor
-                .loop_state
-                .as_mut()
-                .unwrap()
-                .enqueue(file, false, tool, &copied, now);
+            let Some(lp) = actor.loop_state.as_mut() else {
+                return make_sim_send_error(
+                    caller_heap,
+                    file,
+                    result_type,
+                    true,
+                    "Actor call: allocation failed while returning error".to_string(),
+                );
+            };
+            let enq_status = lp.enqueue(file, false, tool, &copied, now);
             drop(copied);
             if enq_status == ServiceStatus::Memory {
                 return Err("Actor admission refused; mailbox or memory full".to_string());
@@ -1493,7 +1542,9 @@ pub(crate) fn exec_sim(
             };
             match reply.status {
                 ServiceStatus::Ok => {
-                    let raw = reply.value.as_ref().expect("ok reply");
+                    let Some(raw) = reply.value.as_ref() else {
+                        return Err("Actor call: ok reply missing value".to_string());
+                    };
                     let (copied_reply, _) =
                         copy_saved(&file.types, caller_heap, reply.result_type, raw).map_err(
                             |e| {
@@ -1560,7 +1611,15 @@ pub(crate) fn exec_sim(
                     let mut copied = Vec::with_capacity(handler.argument_types.len());
                     let mut message_bytes: u64 = LOG_RECORD_HEADER_BYTES as u64;
                     {
-                        let lp = sim.loop_state.as_ref().unwrap();
+                        let Some(lp) = sim.loop_state.as_ref() else {
+                            return make_sim_send_error(
+                                caller_heap,
+                                file,
+                                result_type,
+                                true,
+                                "Simulation.send: allocation failed while returning ServiceDown; nothing was queued or committed".to_string(),
+                            );
+                        };
                         for (i, &arg_ty) in handler.argument_types.iter().enumerate() {
                             match copy_saved(&file.types, &lp.heap, arg_ty, &tool_args[i]) {
                                 Ok((v, enc_len)) => {
@@ -1583,11 +1642,16 @@ pub(crate) fn exec_sim(
                         ));
                     }
                     let sim_time = sim.time;
-                    let enq_status = sim
-                        .loop_state
-                        .as_mut()
-                        .unwrap()
-                        .enqueue(file, true, tool, &copied, sim_time);
+                    let Some(lp) = sim.loop_state.as_mut() else {
+                        return make_sim_send_error(
+                            caller_heap,
+                            file,
+                            result_type,
+                            true,
+                            "Simulation.send: allocation failed while returning ServiceDown; nothing was queued or committed".to_string(),
+                        );
+                    };
+                    let enq_status = lp.enqueue(file, true, tool, &copied, sim_time);
                     drop(copied);
                     if enq_status == ServiceStatus::Memory {
                         return Err(
@@ -1607,12 +1671,16 @@ pub(crate) fn exec_sim(
                         };
                     }
 
-                    let (reply, copied_reply) = sim
-                        .drain_all(prog, SimOpId::Send, Some(caller_heap))?
-                        .expect("tool call produced reply");
+                    let Some((reply, copied_reply)) =
+                        sim.drain_all(prog, SimOpId::Send, Some(caller_heap))?
+                    else {
+                        return Err("Simulation.send: tool call produced no reply".to_string());
+                    };
                     match reply.status {
                         ServiceStatus::Ok => {
-                            let val = copied_reply.expect("copied ok reply");
+                            let Some(val) = copied_reply else {
+                                return Err("Simulation.send: ok reply missing value".to_string());
+                            };
                             let upd = if reply.updated {
                                 "; its update was committed"
                             } else {

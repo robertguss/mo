@@ -334,7 +334,7 @@ pub fn decode(bytes: &[u8]) -> Result<BytecodeFile, LoadError> {
             TypeKind::Record => {
                 let (idx, name) = r
                     .canonical_name(&strings, &canonical_names, false)?
-                    .expect("required name");
+                    .ok_or_else(|| LoadError::invalid(r.field, "missing record name"))?;
                 td.name_idx = Some(idx);
                 td.name = Some(name);
                 td.fields = r.type_fields(&strings, &canonical_names, false)?;
@@ -342,7 +342,7 @@ pub fn decode(bytes: &[u8]) -> Result<BytecodeFile, LoadError> {
             TypeKind::Choice => {
                 let (idx, name) = r
                     .canonical_name(&strings, &canonical_names, false)?
-                    .expect("required name");
+                    .ok_or_else(|| LoadError::invalid(r.field, "missing choice name"))?;
                 td.name_idx = Some(idx);
                 td.name = Some(name);
                 let case_count = r.count(MO_LIMIT_CHOICE_CASES, 8)?;
@@ -353,7 +353,7 @@ pub fn decode(bytes: &[u8]) -> Result<BytecodeFile, LoadError> {
                 for _ in 0..case_count {
                     let (c_idx, c_name) = r
                         .canonical_name(&strings, &canonical_names, false)?
-                        .expect("required case name");
+                        .ok_or_else(|| LoadError::invalid(r.field, "missing choice case name"))?;
                     let fields = r.type_fields(&strings, &canonical_names, true)?;
                     let unnamed = fields.len() == 1 && fields[0].name.is_none();
                     td.has_fields |= !fields.is_empty();

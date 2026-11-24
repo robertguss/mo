@@ -110,15 +110,14 @@ impl BigInt {
         &self,
         scratch: &mut ScratchGuard<'_>,
     ) -> Result<(BigIntSign, Vec<u8>), BigIntError> {
-        if self.limbs.is_empty() {
+        let Some(&top) = self.limbs.last() else {
             return Ok((BigIntSign::Zero, Vec::new()));
-        }
+        };
         let max_bytes = self
             .limbs
             .len()
             .checked_mul(4)
             .ok_or(BigIntError::ExceedsValueBytes)?;
-        let top = *self.limbs.last().unwrap();
         let trailing_zeros = (top.leading_zeros() / 8) as usize;
         let byte_len = max_bytes - trailing_zeros;
         if (byte_len as u64) > MO_LIMIT_VALUE_BYTES {

@@ -72,7 +72,9 @@ fn quote_prim(s: &str, delimiter: u8) -> Result<String, PrimError> {
                 i += 1;
             }
             _ => {
-                let ch = s[i..].chars().next().unwrap();
+                let Some(ch) = s[i..].chars().next() else {
+                    break;
+                };
                 if b == delimiter
                     || b == b'\\'
                     || (b == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{')
@@ -282,7 +284,8 @@ pub fn call(
             Ok(heap.alloc_list(items)?)
         }
         PrimId::TextLines => {
-            let bytes = args[0].as_text().as_bytes();
+            let text = args[0].as_text();
+            let bytes = text.as_bytes();
             let mut items = VecDeque::new();
             let mut start = 0usize;
             for (i, &b) in bytes.iter().enumerate() {
@@ -291,32 +294,33 @@ pub fn call(
                     if end > start && bytes[end - 1] == b'\r' {
                         end -= 1;
                     }
-                    let piece = std::str::from_utf8(&bytes[start..end]).unwrap().to_string();
+                    let piece = text[start..end].to_string();
                     items.push_back(heap.alloc_text(piece)?);
                     start = i + 1;
                 }
             }
             if start < bytes.len() {
-                let piece = std::str::from_utf8(&bytes[start..]).unwrap().to_string();
+                let piece = text[start..].to_string();
                 items.push_back(heap.alloc_text(piece)?);
             }
             Ok(heap.alloc_list(items)?)
         }
         PrimId::TextWords => {
-            let bytes = args[0].as_text().as_bytes();
+            let text = args[0].as_text();
+            let bytes = text.as_bytes();
             let mut items = VecDeque::new();
             let mut start = 0usize;
             for (i, &b) in bytes.iter().enumerate() {
                 if is_ascii_white(u32::from(b)) {
                     if i > start {
-                        let piece = std::str::from_utf8(&bytes[start..i]).unwrap().to_string();
+                        let piece = text[start..i].to_string();
                         items.push_back(heap.alloc_text(piece)?);
                     }
                     start = i + 1;
                 }
             }
             if start < bytes.len() {
-                let piece = std::str::from_utf8(&bytes[start..]).unwrap().to_string();
+                let piece = text[start..].to_string();
                 items.push_back(heap.alloc_text(piece)?);
             }
             Ok(heap.alloc_list(items)?)
