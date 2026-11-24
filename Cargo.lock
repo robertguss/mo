@@ -467,6 +467,7 @@ dependencies = [
  "mo-core",
  "mo-def",
  "mo-prim",
+ "mo-syntax",
 ]
 
 [[package]]
@@ -522,6 +523,16 @@ dependencies = [
  "mo-host",
  "mo-prim",
  "mo-vm",
+]
+
+[[package]]
+name = "mo-syntax"
+version = "0.1.0"
+dependencies = [
+ "mo-base",
+ "mo-def",
+ "mo-prim",
+ "thiserror",
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ members = [
     "crates/mo-def",
     "crates/mo-base",
     "crates/mo-core",
+    "crates/mo-syntax",
     "crates/mo-fe",
     "crates/mo-bytecode",
     "crates/mo-heap",
