@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Differential test harness for the pure-Rust Mo front end (`mo-base`, `mo-syntax`, `mo-core`, `mo-check`, `mo-fe`).
+"""Differential test harness for the pure-Rust Mo front end (`mo-base`, `mo-syntax`, `mo-core`, `mo-check`, `mo-lower`, `mo-fe`).
 
 Run from the repository root:
     python3 ci/check_rust_frontend.py [--mo PATH] [--mo-fe PATH] [--mocore PATH]
@@ -7,8 +7,8 @@ Run from the repository root:
                                       [--skip-build] [--require-lean]
                                       [--generated-count N] [--jobs N]
 
-What this checks across Phase 2 Slices 2A, 2B, 2C, and 2D:
-  1. Workspace lint & safety policy audit (all 12 crates):
+What this checks across Phase 2 Slices 2A, 2B, 2C, 2D, and 2E:
+  1. Workspace lint & safety policy audit (all 13 crates):
        - Root `clippy.toml` configures test exemptions without weakening library lints.
        - Root `Cargo.toml` enforces hardened `writing-good-rust` `[workspace.lints]`
          including `unsafe_code = "forbid"` and `unwrap_used = "deny"`.
@@ -34,20 +34,30 @@ What this checks across Phase 2 Slices 2A, 2B, 2C, and 2D:
        - Every syntax/lexer/format case in `tests/errors/` (including generated limit cases)
          matches `expected` stderr byte-for-byte and C `mo check --json` diagnostic records
          byte-for-byte via `mo-fe parse` / `mo-fe format`.
-  9. Complete `tests/errors/` parity across ALL 235 folders (Slices 2C + 2D):
+  9. Complete `tests/errors/` parity across ALL 235 folders (Slices 2C + 2D + 2E):
        - Dynamically enumerates EVERY folder in `tests/errors/` with 0 silently skipped.
-       - Explicitly classifies the 20 non-`check` command folders and 7 post-`mo_check`
-         codegen/lowering/anchor-VM folders (asserting `mo-fe check` accepts the 7 post-check
-         cases cleanly with rc=0).
-       - Runs ALL 208 front-end `mo check` cases (including all generated limit cases) through
-         both `mo-fe check` and C `mo check`, asserting byte-for-byte text `stderr` vs `expected`
-         and byte-for-byte `--json` `stdout` (`version` + diagnostics + `totals`) vs C `mo check
-         --json` (masking numeric offsets only where `library-dependent` is marked).
+       - Explicitly classifies the 20 non-`check` command folders and 3 post-lowering
+         codegen/anchor-VM folders (`e1013`, `e1405`, `e1405-forbids`), asserting `mo-fe check`
+         accepts the 3 post-lowering cases cleanly with rc=0.
+       - Runs ALL 212 front-end + lowering `mo check` cases (including `e1150`–`e1153` and all
+         generated limit cases) through both `mo-fe check` and C `mo check`, asserting
+         byte-for-byte text `stderr` vs `expected` and byte-for-byte `--json` `stdout`
+         (`version` + diagnostics + `totals`) vs C `mo check --json` (masking numeric offsets
+         only where `library-dependent` is marked).
  10. Whole-corpus full `mo-fe check --json` parity vs C `mo check --json` (Slice 2D):
        - All 30 `lib/**/*.mo`, all 13 `examples/`, all 46 `tests/lower-source/*/main.mo`,
          all 17 `tools/` + `services/` entry points, and all 238 `tests/golden/` cases verified
          byte-for-byte against C `mo check --json` (plus `mo-fe check-batch` agreement), and
          optionally all `.mo` suites under `--modb-dir`.
+ 11. Pure-Rust lowering (`mo-lower` via `mo-fe lower` / `mo-fe check --emit=core`) verified
+     directly against Rust `mo-core`, C `test_core_check.test`, C `mo check --emit=core`, and
+     Lean `mocore` typechecking + semantic evaluation (Slice 2E):
+       - Lowers all 30 `lib/**/*.mo`, 13 `examples/`, 46 `tests/lower-source/`, 17 `tools/` +
+         `services/`, and all non-compile-error `tests/golden/` (plus all `--modb-dir` suites),
+         verifying 0 errors in Rust `mo-core`, C `test_core_check.test`, and Lean `mocore`.
+       - Evaluates all `CASES`, `SPEC_CASES`, `MODULE_CASES`, and `REFUSALS` from
+         `ci/check_lower_source.py` in Lean `mocore` (plus C `mo check --emit=core` semantic
+         comparison and metadata/linear-scaling invariants) with 0 diffs.
 """
 
 import argparse
@@ -69,6 +79,8 @@ sys.path.insert(0, str(ROOT / "ci"))
 
 import check_core_check  # noqa: E402
 import check_core_generated  # noqa: E402
+import check_lower_source  # noqa: E402
+import check_vm  # noqa: E402
 import gen_core  # noqa: E402
 
 BATCH = 128
@@ -134,7 +146,7 @@ def check_workspace_lint_policy() -> tuple[int, int]:
         assert rule in cargo_text, f"Cargo.toml missing required workspace lint: {rule}"
 
     crate_dirs = sorted(p for p in (ROOT / "crates").iterdir() if p.is_dir())
-    assert len(crate_dirs) >= 12, f"expected >= 12 workspace crates, found {len(crate_dirs)}"
+    assert len(crate_dirs) >= 13, f"expected >= 13 workspace crates, found {len(crate_dirs)}"
     entry_points_checked = 0
     for crate in crate_dirs:
         crate_toml = (crate / "Cargo.toml").read_text(encoding="utf-8")
@@ -1041,15 +1053,11 @@ NON_CHECK_COMMAND_ERROR_CASES = frozenset(
     }
 )
 
-# `mo check` cases that pass front-end checking (`mo_check`) and fail later in codegen (`e1013`),
-# lowering (`e1150`–`e1153`), or VM anchor execution (`e1405`, `e1405-forbids`).
+# `mo check` cases that pass front-end checking + lowering (`mo_check` + `mo_lower`) and fail
+# later in codegen (`e1013`) or VM anchor execution (`e1405`, `e1405-forbids`).
 POST_CHECK_ERROR_CASES = frozenset(
     {
         "e1013",
-        "e1150",
-        "e1151",
-        "e1152",
-        "e1153",
         "e1405",
         "e1405-forbids",
     }
@@ -1458,39 +1466,425 @@ def check_whole_corpus_full_parity(
     )
 
 
+def _wrap_program_as_run(raw: bytes, label: str) -> bytes:
+    prefix = f"(core {check_core_check.VERSION} ".encode()
+    assert raw.startswith(f"(core {check_core_check.VERSION} (Program ".encode()), (
+        f"unexpected lowered Core envelope on {label}: {raw[:120]!r}"
+    )
+    inner = raw[len(prefix) :].rstrip()
+    assert inner.endswith(b")"), f"malformed Core envelope on {label}"
+    return check_core_check.run(inner[:-1].decode("utf-8"))
+
+
+def _lean_oracle_eval(
+    mocore: pathlib.Path,
+    path: pathlib.Path,
+    world: pathlib.Path,
+    test: str | None = None,
+) -> list[str]:
+    args = [str(mocore), str(path), str(world), "--fuel", "10000"]
+    if test is not None:
+        args += ["--test", test]
+    res = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    assert res.returncode in (0, 1, 2), (path, res.returncode, res.stdout, res.stderr)
+    return check_vm.outcome_of(res.stdout)
+
+
+def run_lower_batch(
+    mo_fe: pathlib.Path, files: list[str], jobs: int, tests_mode: bool = False
+) -> list[tuple[bool, bytes | int]]:
+    batches = [files[start : start + BATCH] for start in range(0, len(files), BATCH)]
+    prefix = [str(mo_fe), "lower-batch", *(["--tests"] if tests_mode else []), "--"]
+
+    def one(batch: list[str]) -> list[tuple[bool, bytes | int]]:
+        res = subprocess.run(
+            [*prefix, *batch],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+            timeout=180,
+        )
+        return decode_format_batch(res.stdout)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        out: list[tuple[bool, bytes | int]] = []
+        for items in pool.map(one, batches):
+            out.extend(items)
+    return out
+
+
+def check_rust_lowering_and_lean_parity(
+    mo_bin: pathlib.Path,
+    mo_fe: pathlib.Path,
+    c_check: pathlib.Path,
+    mocore: pathlib.Path | None,
+    jobs: int,
+) -> tuple[int, int, int, int]:
+    """Slice 2E: verify Rust mo-lower across all corpora + Lean mocore typechecking & evaluation."""
+    # 1. Collect all non-compile-error real `.mo` entry points across lib/, examples/,
+    #    tests/lower-source/, tools/, services/, and tests/golden/.
+    corpus: list[tuple[str, str]] = []
+    for p in sorted((ROOT / "lib").rglob("*.mo")):
+        corpus.append((f"lib/{p.relative_to(ROOT / 'lib')}", str(p.relative_to(ROOT))))
+    for p in sorted((ROOT / "examples").glob("*.mo")):
+        corpus.append((f"example/{p.stem}", str(p.relative_to(ROOT))))
+    for d in sorted(p for p in (ROOT / "examples").iterdir() if p.is_dir()):
+        if (d / "main.mo").is_file():
+            corpus.append((f"example/{d.name}", str((d / "main.mo").relative_to(ROOT))))
+    for d in sorted(p for p in (ROOT / "tests/lower-source").iterdir() if p.is_dir()):
+        if (d / "main.mo").is_file():
+            corpus.append((f"lower-source/{d.name}", str((d / "main.mo").relative_to(ROOT))))
+    for parent in ("tools", "services"):
+        base = ROOT / parent
+        for p in sorted(base.glob("*.mo")):
+            corpus.append((f"{parent}/{p.stem}", str(p.relative_to(ROOT))))
+        for d in sorted(p for p in base.iterdir() if p.is_dir()):
+            if (d / "main.mo").is_file():
+                corpus.append((f"{parent}/{d.name}", str((d / "main.mo").relative_to(ROOT))))
+            if (d / "queue-tests.mo").is_file():
+                corpus.append(
+                    (f"{parent}/{d.name}/queue-tests", str((d / "queue-tests.mo").relative_to(ROOT)))
+                )
+    for d in sorted(p for p in (ROOT / "tests/golden").iterdir() if p.is_dir()):
+        exp_stdout = (d / "stdout").read_bytes() if (d / "stdout").exists() else b""
+        exp_stderr = (d / "stderr").read_bytes() if (d / "stderr").exists() else b""
+        exp_status = int((d / "status").read_text().strip()) if (d / "status").exists() else 0
+        if exp_status != 0 and exp_stdout == b"" and exp_stderr.startswith(b"error E"):
+            continue
+        entry = (d / "entry").read_text().strip() if (d / "entry").exists() else None
+        rel = entry or str((d / "main.mo").relative_to(ROOT))
+        if (ROOT / rel).is_file():
+            corpus.append((f"golden/{d.name}", rel))
+
+    assert len(corpus) >= 330, f"expected >= 330 lowerable .mo programs, found {len(corpus)}"
+
+    # Verify `mo-fe check --emit=core` CLI path directly on representative fixtures.
+    for sample in (
+        "examples/greet.mo",
+        "tests/lower-source/json-ability/main.mo",
+        "tests/lower-source/api-server/main.mo",
+    ):
+        res = subprocess.run(
+            [str(mo_fe), "check", "--emit=core", sample],
+            cwd=ROOT,
+            capture_output=True,
+            timeout=60,
+        )
+        assert res.returncode == 0 and res.stderr == b"", (
+            f"mo-fe check --emit=core failed on {sample}: {res.stderr.decode(errors='replace')}"
+        )
+        assert res.stdout.startswith(f"(core {check_core_check.VERSION} (Program ".encode()), (
+            f"unexpected check --emit=core output on {sample}"
+        )
+
+    rel_paths = [rel for _, rel in corpus]
+    lowered_results = run_lower_batch(mo_fe, rel_paths, jobs=jobs, tests_mode=False)
+    assert len(lowered_results) == len(corpus)
+
+    lean_typechecked = 0
+    with tempfile.TemporaryDirectory(prefix="mo-rust-2e-lower-") as tmp:
+        tmp_path = pathlib.Path(tmp)
+        prog_files: list[str] = []
+        run_files: list[str] = []
+        raw_docs: list[bytes] = []
+        for idx, ((label, rel), (ok, payload)) in enumerate(zip(corpus, lowered_results)):
+            assert ok and isinstance(payload, bytes), (
+                f"mo-fe lower-batch failed on {label} ({rel}): code={payload!r}"
+            )
+            pf = tmp_path / f"prog_{idx}.core"
+            pf.write_bytes(payload)
+            rf = tmp_path / f"run_{idx}.core"
+            rf.write_bytes(_wrap_program_as_run(payload, label))
+            prog_files.append(str(pf))
+            run_files.append(str(rf))
+            raw_docs.append(payload)
+
+        # Canonical round-trip check on every Rust-lowered Core Program.
+        printed = run_batch_printed(
+            [str(mo_fe), "core-print-batch", "--kind", "program"], prog_files, jobs
+        )
+        assert len(printed) == len(corpus)
+        for (label, _), raw, got in zip(corpus, raw_docs, printed):
+            assert got.encode("utf-8") == raw, f"canonical round-trip diff on Rust-lowered {label}"
+
+        # 2-way Rust mo-core == C test_core_check verification on every Rust-lowered Program.
+        rs_verdicts = run_batch_lines(
+            [str(mo_fe), "core-check-batch", "--kind", "program"], prog_files, jobs
+        )
+        c_verdicts = run_batch_lines([str(c_check)], run_files, jobs)
+        standalone_runs: list[tuple[str, str]] = []
+        for (label, _), raw, rf, rv, cv in zip(corpus, raw_docs, run_files, rs_verdicts, c_verdicts):
+            rs_parts = rv.split()
+            c_parts = cv.split()
+            assert rs_parts[0] == c_parts[0], (
+                f"{label}: Core verdict mismatch on Rust-lowered output: C={cv!r}, mo-fe={rv!r}"
+            )
+            if rs_parts[0] == "0":
+                standalone_runs.append((label, rf))
+            else:
+                assert b"(sim (start " in raw or b"(sim (send " in raw, (
+                    f"{label}: unexpected standalone Core refusal on Rust-lowered output: {rv!r}"
+                )
+                assert rs_parts[1] == c_parts[1] == "E1037", (
+                    f"{label}: expected E1037 on service-dependent Core, got C={cv!r}, mo-fe={rv!r}"
+                )
+
+        # Lean `mocore` typechecking across every standalone-checkable Rust-lowered Program.
+        if mocore is not None:
+            def check_lean_one(item: tuple[str, str]) -> None:
+                label, rf = item
+                res = subprocess.run([str(mocore), rf], capture_output=True, timeout=30)
+                assert res.returncode in (0, 1, 2, 3, 6), (
+                    f"{label}: Lean mocore refused Rust-lowered Core (rc={res.returncode}): "
+                    f"{res.stdout.decode(errors='replace')} {res.stderr.decode(errors='replace')}"
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+                list(pool.map(check_lean_one, standalone_runs))
+            lean_typechecked = len(standalone_runs)
+
+        # 2. Semantic evaluation & metadata parity on ALL check_lower_source.py suites:
+        #    CASES (107), SPEC_CASES (26 / 76 targets), MODULE_CASES (21 / 27 targets), REFUSALS (3).
+        world = tmp_path / "world.core"
+        world.write_text(f"(core {check_core_check.VERSION} {check_core_check.WORLD})\n")
+        eval_matched = 0
+        c_eval_matched = 0
+
+        # 2a. REFUSALS (all 3 must refuse with E1150)
+        for name, body in check_lower_source.REFUSALS.items():
+            ref_dir = tmp_path / f"refusal_{name}"
+            ref_dir.mkdir()
+            src = ref_dir / "main.mo"
+            src.write_text("module Main\n" + body + "\n")
+            res = subprocess.run(
+                [str(mo_fe), "lower", "--lib", str(ROOT / "lib"), str(src)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert res.returncode == 1 and res.stdout == "" and "E1150" in res.stderr, (
+                f"refusal {name}: expected E1150, got rc={res.returncode} stderr={res.stderr!r}"
+            )
+
+        # 2b. CASES (107 pure/fixture cases + linear scaling check + C comparison on pure fixtures)
+        lengths: dict[str, int] = {}
+
+        def eval_case(item: tuple[str, tuple[str, object]]) -> tuple[str, int, int, int]:
+            name, (body, status) = item
+            cdir = tmp_path / f"case_{name}"
+            cdir.mkdir()
+            src = cdir / "main.mo"
+            src.write_text("module Main\n" + body + "\n")
+            res = subprocess.run(
+                [str(mo_fe), "lower", "--lib", str(ROOT / "lib"), str(src)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert res.returncode == 0, f"case {name} failed mo-fe lower: {res.stderr}"
+            core_path = cdir / "lower.core"
+            core_path.write_text(res.stdout)
+            meta = check_core_check.parse(res.stdout)[2][-1]
+            assert meta[0] == "Metadata", (name, "missing Metadata")
+            cnames = [cl[1] for fn in meta[3] for cl in fn[4][4]]
+            assert len(cnames) == len(set(cnames)), (name, "duplicate closure names", cnames)
+            expected = ["returned", str(status)] if isinstance(status, int) else status
+            em = cm = 0
+            if mocore is not None:
+                got = _lean_oracle_eval(mocore, core_path, world)
+                assert got == expected, f"case {name}: Lean want={expected}, got={got}"
+                em = 1
+                # Cross-check against C `mo check --emit=core` on all pure tests/lower-source fixtures.
+                if (ROOT / "tests/lower-source" / name / "main.mo").is_file():
+                    c_res = subprocess.run(
+                        [str(mo_bin), "check", "--emit=core", "--lib", str(ROOT / "lib"), str(src)],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    assert c_res.returncode == 0, f"C emit=core failed on {name}: {c_res.stderr}"
+                    c_core = cdir / "c.core"
+                    c_core.write_text(c_res.stdout)
+                    c_got = _lean_oracle_eval(mocore, c_core, world)
+                    assert got == c_got, f"case {name}: Rust={got} != C={c_got}"
+                    cm = 1
+            return name, len(res.stdout.encode("utf-8")), em, cm
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            for name, size, em, cm in pool.map(eval_case, check_lower_source.CASES.items()):
+                lengths[name] = size
+                eval_matched += em
+                c_eval_matched += cm
+
+        for family in ("bool", "pattern"):
+            sizes = [lengths[f"linear_{family}_{n}"] for n in (4, 8, 16)]
+            assert all(b <= 3 * a for a, b in zip(sizes, sizes[1:])), (
+                f"non-linear lowering blowup in {family}: {sizes}"
+            )
+
+        # 2c. SPEC_CASES (26 programs / 76 targets + spec metadata invariants)
+        def eval_spec(item: tuple[str, tuple[str, dict[str | None, list[str]]]]) -> int:
+            name, (body, selections) = item
+            sdir = tmp_path / f"spec_{name}"
+            sdir.mkdir()
+            src = sdir / "main.mo"
+            original = ("module Main\n" + body + "\n").encode("utf-8")
+            src.write_bytes(original)
+            res = subprocess.run(
+                [str(mo_fe), "lower", "--tests", "--lib", str(ROOT / "lib"), str(src)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert res.returncode == 0, f"spec {name} failed mo-fe lower --tests: {res.stderr}"
+            core_path = sdir / "spec.core"
+            core_path.write_text(res.stdout)
+            prog = check_core_check.parse(res.stdout)[2]
+            meta = prog[-1]
+            assert meta[0] == "Metadata", name
+            fnames = [fn[1] for fn in prog[2]]
+            assert len(fnames) == len(set(fnames)), (name, "duplicate spec names")
+            matched = 0
+            if mocore is not None:
+                for target, expected in selections.items():
+                    actual_target, oracle_path = target, core_path
+                    if name == "service-descriptor" and target is not None:
+                        probe = check_core_check.parse(res.stdout)
+                        payload = probe[2]
+                        actual_target = "%lower.service.value"
+                        prim = "(int (toText))" if target.endswith(".start") else "(time (durToText))"
+                        payload[2].append(
+                            check_core_check.parse(
+                                f'(FunDecl {check_core_check.wire(actual_target)} () (unit) '
+                                f'(fail (prim {prim} ((call {check_core_check.wire(target)} ())))) '
+                                f'"Main" (test) {len(payload[3])})'
+                            )
+                        )
+                        payload[5] = check_core_check.parse("(noSource)")
+                        oracle_path = sdir / f"probe_{target}.core"
+                        oracle_path.write_text(check_core_check.wire(probe) + "\n")
+                    anchor = target is not None and any(
+                        f[1] == target and f[6][0] == "anchor" for f in prog[2]
+                    )
+                    if anchor:
+                        probe = check_core_check.parse(res.stdout)
+                        payload = probe[2]
+                        actual_target = "%lower.source.anchor.answer"
+                        payload[2].append(
+                            check_core_check.parse(
+                                f'(FunDecl {check_core_check.wire(actual_target)} () (unit) '
+                                f'(fail (prim (int (toText)) ((call {check_core_check.wire(target)} ())))) '
+                                f'"Main" (test) {len(payload[3])})'
+                            )
+                        )
+                        payload[5] = check_core_check.parse("(noSource)")
+                        oracle_path = sdir / f"anchor_{target}.core"
+                        oracle_path.write_text(check_core_check.wire(probe) + "\n")
+                    got = _lean_oracle_eval(mocore, oracle_path, world, actual_target)
+                    if anchor and got[0] == "failed":
+                        got[0] = "returned"
+                    assert got == expected, f"spec {name}/{target}: want={expected}, got={got}"
+                    matched += 1
+            return matched
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            eval_matched += sum(pool.map(eval_spec, check_lower_source.SPEC_CASES.items()))
+
+        # 2d. MODULE_CASES (21 multi-module programs / 27 targets + owner/export/span checks)
+        def eval_module(item: tuple[str, tuple[dict[str, str], dict[str | None, list[str]]]]) -> int:
+            name, (files, selections) = item
+            mdir = tmp_path / f"mod_{name}"
+            mdir.mkdir()
+            for fn, text in files.items():
+                (mdir / fn).write_text(text)
+            res = subprocess.run(
+                [str(mo_fe), "lower", "--tests", "--no-library", str(mdir / "main.mo")],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert res.returncode == 0, f"module {name} failed mo-fe lower: {res.stderr}"
+            core_path = mdir / "lower.core"
+            core_path.write_text(res.stdout)
+            prog = check_core_check.parse(res.stdout)[2]
+            meta = prog[-1]
+            assert meta[0] == "Metadata", name
+            assert {pathlib.Path(p).name for p in meta[1]} == set(files), (name, meta[1])
+            matched = 0
+            if mocore is not None:
+                for target, expected in selections.items():
+                    got = _lean_oracle_eval(mocore, core_path, world, target)
+                    assert got == expected, f"module {name}/{target}: want={expected}, got={got}"
+                    matched += 1
+            return matched
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            eval_matched += sum(pool.map(eval_module, check_lower_source.MODULE_CASES.items()))
+
+    return len(corpus), lean_typechecked, eval_matched, c_eval_matched
+
+
 def check_modb_full_parity(
-    mo_bin: pathlib.Path, mo_fe: pathlib.Path, modb_dir: pathlib.Path, jobs: int
-) -> int:
-    """Verify full `mo-fe check --json` byte-for-byte parity across all `.mo` suites in MoDB."""
+    mo_bin: pathlib.Path,
+    mo_fe: pathlib.Path,
+    mocore: pathlib.Path | None,
+    modb_dir: pathlib.Path,
+    jobs: int,
+) -> tuple[int, int]:
+    """Verify full `mo-fe check --json` parity AND `mo-fe lower` + Lean typecheck across MoDB."""
     root = modb_dir.resolve()
     assert root.is_dir(), f"--modb-dir is not a directory: {root}"
     files = sorted(root.rglob("*.mo"))
     assert len(files) >= 5, f"expected >= 5 .mo files in {root}, found {len(files)}"
 
-    def verify_one(path: pathlib.Path) -> str:
-        rel = str(path.relative_to(root))
-        rj = subprocess.run(
-            [str(mo_fe), "check", "--json", rel],
-            cwd=root,
-            capture_output=True,
-            timeout=60,
-        )
-        cj = subprocess.run(
-            [str(mo_bin), "check", "--json", rel],
-            cwd=root,
-            capture_output=True,
-            timeout=60,
-        )
-        assert rj.returncode == cj.returncode and rj.stdout == cj.stdout and rj.stderr == cj.stderr, (
-            f"MoDB {rel}: mo-fe check --json mismatch\n"
-            f"C rc={cj.returncode}: {cj.stdout.decode(errors='replace')}\n"
-            f"Rust rc={rj.returncode}: {rj.stdout.decode(errors='replace')}"
-        )
-        return rel
+    with tempfile.TemporaryDirectory(prefix="mo-rust-modb-2e-") as tmp:
+        tmp_path = pathlib.Path(tmp)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        checked = list(pool.map(verify_one, files))
-    return len(checked)
+        def verify_one(item: tuple[int, pathlib.Path]) -> tuple[str, int]:
+            idx, path = item
+            rel = str(path.relative_to(root))
+            rj = subprocess.run(
+                [str(mo_fe), "check", "--json", rel],
+                cwd=root,
+                capture_output=True,
+                timeout=60,
+            )
+            cj = subprocess.run(
+                [str(mo_bin), "check", "--json", rel],
+                cwd=root,
+                capture_output=True,
+                timeout=60,
+            )
+            assert rj.returncode == cj.returncode and rj.stdout == cj.stdout and rj.stderr == cj.stderr, (
+                f"MoDB {rel}: mo-fe check --json mismatch\n"
+                f"C rc={cj.returncode}: {cj.stdout.decode(errors='replace')}\n"
+                f"Rust rc={rj.returncode}: {rj.stdout.decode(errors='replace')}"
+            )
+            lean_ok = 0
+            if rj.returncode == 0:
+                lr = subprocess.run(
+                    [str(mo_fe), "lower", rel],
+                    cwd=root,
+                    capture_output=True,
+                    timeout=60,
+                )
+                assert lr.returncode == 0 and lr.stderr == b"", (
+                    f"MoDB {rel}: mo-fe lower failed: {lr.stderr.decode(errors='replace')}"
+                )
+                if mocore is not None and b"(sim (start " not in lr.stdout and b"(sim (send " not in lr.stdout:
+                    rf = tmp_path / f"modb_{idx}.core"
+                    rf.write_bytes(_wrap_program_as_run(lr.stdout, f"MoDB/{rel}"))
+                    mc = subprocess.run([str(mocore), str(rf)], capture_output=True, timeout=30)
+                    assert mc.returncode in (0, 1, 2, 3, 6), (
+                        f"MoDB {rel}: Lean mocore refused lowered Core (rc={mc.returncode}): "
+                        f"{mc.stdout.decode(errors='replace')} {mc.stderr.decode(errors='replace')}"
+                    )
+                    lean_ok = 1
+            return rel, lean_ok
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = list(pool.map(verify_one, enumerate(files)))
+    return len(results), sum(ok for _, ok in results)
 
 
 def main() -> None:
@@ -1545,15 +1939,23 @@ def main() -> None:
     lib_n, ex_n, low_n, ts_n, gold_n = check_whole_corpus_full_parity(
         mo_bin, mo_fe, args.jobs
     )
+    lower_corpus_n, lower_lean_n, lower_eval_n, lower_c_eval_n = (
+        check_rust_lowering_and_lean_parity(mo_bin, mo_fe, c_check, mocore, args.jobs)
+    )
     modb_summary = ""
     if args.modb_dir:
-        modb_n = check_modb_full_parity(mo_bin, mo_fe, pathlib.Path(args.modb_dir), args.jobs)
-        modb_summary = f" {modb_n} MoDB .mo files matched byte-for-byte;"
+        modb_n, modb_lean_n = check_modb_full_parity(
+            mo_bin, mo_fe, mocore, pathlib.Path(args.modb_dir), args.jobs
+        )
+        modb_summary = (
+            f" {modb_n} MoDB .mo files matched check --json + lowered"
+            f" ({modb_lean_n} Lean-checked);"
+        )
 
     oracle_desc = "C + Lean mocore" if mocore is not None else "C (Lean mocore unavailable)"
     grammar_desc = "Bison mo-grammar" if mo_grammar is not None else "expected verdicts"
     print(
-        f"Rust front-end 2A+2B+2C+2D parity ({oracle_desc}, {grammar_desc}): "
+        f"Rust front-end 2A+2B+2C+2D+2E parity ({oracle_desc}, {grammar_desc}): "
         f"{crates_n} crates/{entries_n} entry points lint-audited; "
         f"{runs_n}/15 runs + {fuzz_n}/20 fuzz seeds round-tripped; "
         f"{diff_n} Core checker differential cases ({orig_n} corpus files, {prog_n} programs) matched; "
@@ -1562,9 +1964,11 @@ def main() -> None:
         f"{gram_n}/106 grammar fixtures ({gram_good} good, {gram_bad} bad) matched; "
         f"{tracked_n} tracked .mo files matched C mo format byte-for-byte ({fmt_ok} formatted+idempotent, {fmt_refused} refused); "
         f"{err_text_n} syntax/format error diagnostics ({err_json_n} JSON) matched byte-for-byte; "
-        f"{err_total}/{err_total} tests/errors/ classified ({err_front} full check text+JSON byte-for-byte, "
-        f"{err_post} post-check accepted, {err_non_check} non-check commands); "
-        f"{lib_n} lib + {ex_n} examples + {low_n} lower-source + {ts_n} tools/services + {gold_n} golden matched full check --json byte-for-byte;"
+        f"{err_total}/{err_total} tests/errors/ classified ({err_front} full check+lower text+JSON byte-for-byte, "
+        f"{err_post} post-lower accepted, {err_non_check} non-check commands); "
+        f"{lib_n} lib + {ex_n} examples + {low_n} lower-source + {ts_n} tools/services + {gold_n} golden matched full check --json byte-for-byte; "
+        f"{lower_corpus_n} Rust-lowered programs verified ({lower_lean_n} Lean-typechecked, "
+        f"{lower_eval_n} Lean eval outcomes matched, {lower_c_eval_n} vs C --emit=core);"
         f"{modb_summary} {time.monotonic() - started:.2f}s"
     )
 

@@ -16,13 +16,14 @@ use mo_base::{
 };
 use mo_check::{CheckStage, LibraryMode, LoadOptions, run_stage};
 use mo_core::{
-    CoreDocument, CoreTextKind, check_program, detect_kind, parse_document, parse_program,
-    parse_run, print_document,
+    CoreDocument, CoreTextKind, check_program, check_program_services, detect_kind, parse_document,
+    parse_program, parse_run, print_document, print_program,
 };
 use mo_def::limits::{
     MO_LIMIT_CORE_TEXT_SIZE, MO_LIMIT_DIAGNOSTICS, MO_LIMIT_FILE_SIZE, MO_LIMIT_PATH_SIZE,
 };
 use mo_def::{ErrorCode, MO_VERSION};
+use mo_lower::{lower_services, lower_test_services};
 use mo_prim::unicode16::{display_width_bytes, next_grapheme_bytes};
 use mo_syntax::{FormatOptions, format_module, parse_fragment, parse_module, read_header};
 
@@ -85,11 +86,19 @@ fn print_usage(mut w: impl Write) -> io::Result<()> {
     writeln!(w, "  mo-fe format-batch [--fragment] [--] FILE...")?;
     writeln!(
         w,
-        "  mo-fe check [--stage=load|modules|signatures|full] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo"
+        "  mo-fe check [--stage=load|modules|signatures|full] [--emit=core] [--emit-tests] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo"
     )?;
     writeln!(
         w,
         "  mo-fe check-batch [--stage=load|modules|signatures|full] [--library DIR|--lib DIR|--no-library] [--] FILE..."
+    )?;
+    writeln!(
+        w,
+        "  mo-fe lower [--tests] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo"
+    )?;
+    writeln!(
+        w,
+        "  mo-fe lower-batch [--tests] [--library DIR|--lib DIR|--no-library] [--] FILE..."
     )
 }
 
@@ -1041,10 +1050,142 @@ fn run_format_batch(args: &[String], mut out: impl Write, mut err: impl Write) -
     if out.flush().is_err() { 8 } else { 0 }
 }
 
+fn lower_and_validate(
+    checked: &mo_check::CheckedProgram,
+    sources: &SourceMap,
+    tests_mode: bool,
+    emit_core: bool,
+    diags: &mut DiagBag,
+) -> Option<String> {
+    let lowered = if tests_mode {
+        lower_test_services(checked, Some(sources), diags)
+    } else {
+        lower_services(checked, Some(sources), diags)
+    }?;
+    if diags.has_any() {
+        return None;
+    }
+    if !check_program_services(
+        &lowered.arena,
+        &lowered.program,
+        Some(&lowered.services),
+        diags,
+    ) || diags.has_any()
+    {
+        return None;
+    }
+    if !emit_core {
+        return None;
+    }
+    match print_program(&lowered.arena, &lowered.program) {
+        Ok(text) => Some(text),
+        Err(_) => {
+            let _ = diags.push(Diagnostic::new(
+                ErrorCode::ToolPipeline,
+                Span::NONE,
+                "Core text exceeds its output budget",
+            ));
+            None
+        }
+    }
+}
+
+fn emit_check_diagnostics(
+    command: &str,
+    sources: &SourceMap,
+    diags: &mut DiagBag,
+    format: RenderFormat,
+    mut out: impl Write,
+    mut err: impl Write,
+) -> u8 {
+    diags.sort();
+    if format == RenderFormat::Json {
+        if out
+            .write_all(&render_version_json(command, MO_VERSION))
+            .is_err()
+        {
+            let _ = writeln!(err, "mo: could not write version record");
+            return 1;
+        }
+        let mut written = 0u64;
+        let mut dropped = diags.dropped();
+        let mut ok = true;
+        for diag in diags.items() {
+            match render_diagnostic_default(
+                sources,
+                diag,
+                RenderFormat::Json,
+                TerminalEncoding::Utf8,
+                UNICODE16_METRICS,
+            ) {
+                Ok(rendered) => {
+                    if out.write_all(&rendered).is_ok() {
+                        written += 1;
+                    } else {
+                        ok = false;
+                        break;
+                    }
+                }
+                Err(_) => {
+                    dropped += 1;
+                }
+            }
+        }
+        let status = i32::from(diags.has_any() || dropped != 0 || !ok);
+        if ok {
+            ok = out
+                .write_all(&render_totals_json(written, u64::from(dropped), status))
+                .is_ok()
+                && out.flush().is_ok();
+        }
+        if !ok {
+            let _ = writeln!(err, "mo: could not write diagnostics");
+            return 1;
+        }
+        return status as u8;
+    }
+
+    let mut dropped = diags.dropped();
+    let mut ok = true;
+    for diag in diags.items() {
+        match render_diagnostic_default(
+            sources,
+            diag,
+            RenderFormat::Text,
+            TerminalEncoding::Utf8,
+            UNICODE16_METRICS,
+        ) {
+            Ok(rendered) => {
+                if err.write_all(&rendered).is_err() {
+                    ok = false;
+                    break;
+                }
+            }
+            Err(_) => {
+                dropped += 1;
+            }
+        }
+    }
+    if ok && dropped != 0 {
+        ok = writeln!(
+            err,
+            "{dropped} diagnostics omitted: diagnostic storage or output limit"
+        )
+        .is_ok();
+    }
+    if !ok || err.flush().is_err() {
+        let _ = writeln!(err, "mo: could not write diagnostics");
+        return 1;
+    }
+    u8::from(diags.has_any() || dropped != 0)
+}
+
 fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
     let mut stage = CheckStage::Full;
     let mut library = LibraryMode::default_embedded();
     let mut format = RenderFormat::Text;
+    let mut emit_core = false;
+    let mut emit_tests = false;
     let mut path: Option<&str> = None;
     let mut i = 0usize;
     while i < args.len() {
@@ -1053,6 +1194,27 @@ fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) ->
             format = RenderFormat::Json;
         } else if arg == "--no-library" {
             library = LibraryMode::None;
+        } else if arg == "--emit-tests" {
+            emit_tests = true;
+        } else if arg == "--emit" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --emit requires an argument");
+                return 2;
+            };
+            if val == "core" {
+                emit_core = true;
+            } else {
+                let _ = writeln!(err, "error: unsupported --emit {val:?}: expected core");
+                return 2;
+            }
+        } else if let Some(val) = arg.strip_prefix("--emit=") {
+            if val == "core" {
+                emit_core = true;
+            } else {
+                let _ = writeln!(err, "error: unsupported --emit {val:?}: expected core");
+                return 2;
+            }
         } else if arg == "--library" || arg == "--lib" {
             i += 1;
             let Some(val) = args.get(i) else {
@@ -1113,87 +1275,40 @@ fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) ->
         ..LoadOptions::default()
     };
     let mut result = run_stage(entry, &options, stage);
-    result.diags.sort();
-
-    if format == RenderFormat::Json {
-        if out
-            .write_all(&render_version_json("check", MO_VERSION))
-            .is_err()
-        {
-            let _ = writeln!(err, "mo: could not write version record");
-            return 1;
-        }
-        let mut written = 0u64;
-        let mut dropped = result.diags.dropped();
-        let mut ok = true;
-        for diag in result.diags.items() {
-            match render_diagnostic_default(
-                &result.sources,
-                diag,
-                RenderFormat::Json,
-                TerminalEncoding::Utf8,
-                UNICODE16_METRICS,
-            ) {
-                Ok(rendered) => {
-                    if out.write_all(&rendered).is_ok() {
-                        written += 1;
-                    } else {
-                        ok = false;
-                        break;
-                    }
-                }
-                Err(_) => {
-                    dropped += 1;
-                }
-            }
-        }
-        let status = i32::from(result.diags.has_any() || dropped != 0 || !ok);
-        if ok {
-            ok = out
-                .write_all(&render_totals_json(written, u64::from(dropped), status))
-                .is_ok()
-                && out.flush().is_ok();
-        }
-        if !ok {
-            let _ = writeln!(err, "mo: could not write diagnostics");
-            return 1;
-        }
-        return status as u8;
-    }
-
-    let mut dropped = result.diags.dropped();
-    let mut ok = true;
-    for diag in result.diags.items() {
-        match render_diagnostic_default(
+    let mut emitted_core = None;
+    if stage == CheckStage::Full
+        && result.ok()
+        && let Some(checked) = result.program.as_ref()
+    {
+        emitted_core = lower_and_validate(
+            checked,
             &result.sources,
-            diag,
-            RenderFormat::Text,
-            TerminalEncoding::Utf8,
-            UNICODE16_METRICS,
-        ) {
-            Ok(rendered) => {
-                if err.write_all(&rendered).is_err() {
-                    ok = false;
-                    break;
-                }
-            }
-            Err(_) => {
-                dropped += 1;
-            }
-        }
+            emit_tests,
+            emit_core,
+            &mut result.diags,
+        );
     }
-    if ok && dropped != 0 {
-        ok = writeln!(
-            err,
-            "{dropped} diagnostics omitted: diagnostic storage or output limit"
-        )
-        .is_ok();
+
+    if let Some(text) = emitted_core
+        && !result.diags.has_any()
+        && format == RenderFormat::Text
+        && (out.write_all(text.as_bytes()).is_err() || out.flush().is_err())
+    {
+        let _ = result.diags.push(Diagnostic::new(
+            ErrorCode::ToolPipeline,
+            Span::NONE,
+            "compiled output could not be written",
+        ));
     }
-    if !ok || err.flush().is_err() {
-        let _ = writeln!(err, "mo: could not write diagnostics");
-        return 1;
-    }
-    u8::from(result.diags.has_any() || dropped != 0)
+
+    emit_check_diagnostics(
+        "check",
+        &result.sources,
+        &mut result.diags,
+        format,
+        out,
+        err,
+    )
 }
 
 fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
@@ -1259,6 +1374,12 @@ fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Wri
     };
     for path in files {
         let mut result = run_stage(path, &options, stage);
+        if stage == CheckStage::Full
+            && result.ok()
+            && let Some(checked) = result.program.as_ref()
+        {
+            let _ = lower_and_validate(checked, &result.sources, false, false, &mut result.diags);
+        }
         if result.ok() {
             if writeln!(out, "0").is_err() {
                 return 8;
@@ -1268,6 +1389,165 @@ fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Wri
             let code = result.diags.items().first().map_or(0, |d| d.code.number());
             if writeln!(out, "1 {} E{:04}", result.diags.len(), code).is_err() {
                 return 8;
+            }
+        }
+    }
+    if out.flush().is_err() { 8 } else { 0 }
+}
+
+fn run_lower(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut tests_mode = false;
+    let mut library = LibraryMode::default_embedded();
+    let mut format = RenderFormat::Text;
+    let mut path: Option<&str> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--tests" {
+            tests_mode = true;
+        } else if arg == "--json" {
+            format = RenderFormat::Json;
+        } else if arg == "--no-library" {
+            library = LibraryMode::None;
+        } else if arg == "--library" || arg == "--lib" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: {arg} requires an argument");
+                return 2;
+            };
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if let Some(val) = arg
+            .strip_prefix("--library=")
+            .or_else(|| arg.strip_prefix("--lib="))
+        {
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if arg == "--help" || arg == "-h" {
+            let _ = print_usage(&mut err);
+            return 0;
+        } else if arg.starts_with('-') {
+            let _ = writeln!(err, "error: unknown flag {arg:?}");
+            return 2;
+        } else if path.is_some() {
+            let _ = writeln!(err, "error: unexpected extra argument {arg:?}");
+            return 2;
+        } else {
+            path = Some(arg);
+        }
+        i += 1;
+    }
+
+    let Some(entry) = path else {
+        let _ = writeln!(err, "error: lower requires a FILE.mo argument");
+        return 2;
+    };
+
+    let options = LoadOptions {
+        library,
+        ..LoadOptions::default()
+    };
+    let mut result = run_stage(entry, &options, CheckStage::Full);
+    let mut emitted = None;
+    if result.ok()
+        && let Some(checked) = result.program.as_ref()
+    {
+        emitted = lower_and_validate(
+            checked,
+            &result.sources,
+            tests_mode,
+            true,
+            &mut result.diags,
+        );
+    }
+
+    if let Some(text) = emitted
+        && !result.diags.has_any()
+    {
+        if out.write_all(text.as_bytes()).is_err() || out.flush().is_err() {
+            let _ = writeln!(err, "mo: compiled output could not be written");
+            return 1;
+        }
+        return 0;
+    }
+
+    emit_check_diagnostics(
+        "lower",
+        &result.sources,
+        &mut result.diags,
+        format,
+        out,
+        err,
+    )
+}
+
+fn run_lower_batch(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut tests_mode = false;
+    let mut library = LibraryMode::default_embedded();
+    let mut files: Vec<&str> = Vec::new();
+    let mut literal_only = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if !literal_only && arg == "--" {
+            literal_only = true;
+        } else if !literal_only && arg == "--tests" {
+            tests_mode = true;
+        } else if !literal_only && arg == "--no-library" {
+            library = LibraryMode::None;
+        } else if !literal_only && (arg == "--library" || arg == "--lib") {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: {arg} requires an argument");
+                return 2;
+            };
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if !literal_only
+            && let Some(val) = arg
+                .strip_prefix("--library=")
+                .or_else(|| arg.strip_prefix("--lib="))
+        {
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if !literal_only && arg.starts_with('-') {
+            let _ = writeln!(err, "error: unknown flag {arg:?}");
+            return 2;
+        } else {
+            files.push(arg);
+        }
+        i += 1;
+    }
+
+    let options = LoadOptions {
+        library,
+        ..LoadOptions::default()
+    };
+    for path in files {
+        let mut result = run_stage(path, &options, CheckStage::Full);
+        let emitted = if result.ok()
+            && let Some(checked) = result.program.as_ref()
+        {
+            lower_and_validate(
+                checked,
+                &result.sources,
+                tests_mode,
+                true,
+                &mut result.diags,
+            )
+        } else {
+            None
+        };
+        match emitted {
+            Some(text) if !result.diags.has_any() => {
+                if writeln!(out, "R {}", text.len()).is_err()
+                    || out.write_all(text.as_bytes()).is_err()
+                {
+                    return 8;
+                }
+            }
+            _ => {
+                result.diags.sort();
+                let code = result.diags.items().first().map_or(0, |d| d.code.number());
+                if writeln!(out, "E {code}").is_err() {
+                    return 8;
+                }
             }
         }
     }
@@ -1291,6 +1571,8 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
         "format-batch" => run_format_batch(rest, out, err),
         "check" | "check-stage" => run_check_stage(rest, out, err),
         "check-batch" | "check-stage-batch" => run_check_stage_batch(rest, out, err),
+        "lower" => run_lower(rest, out, err),
+        "lower-batch" => run_lower_batch(rest, out, err),
         "--help" | "-h" | "help" => {
             let _ = print_usage(out);
             0
@@ -1552,5 +1834,63 @@ mod tests {
             json_out.contains("\"record\":\"totals\""),
             "got: {json_out}"
         );
+    }
+
+    #[test]
+    fn cli_lower_and_emit_core_and_e1150() {
+        let greet = repo_root().join("examples/greet.mo");
+        let greet_str = greet.to_str().unwrap().to_string();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        // `mo-fe check --emit=core` emits valid canonical Core text.
+        let code = dispatch(
+            &[
+                "check".to_string(),
+                "--emit=core".to_string(),
+                greet_str.clone(),
+            ],
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert!(err.is_empty());
+        let emitted = String::from_utf8(out.clone()).unwrap();
+        assert!(emitted.contains("(core 0.11 (Program "));
+        assert!(emitted.contains("Greet.main"));
+
+        // `mo-fe lower --tests` emits specs/examples/tests in Core text.
+        out.clear();
+        err.clear();
+        let code = dispatch(
+            &[
+                "lower".to_string(),
+                "--tests".to_string(),
+                greet_str.clone(),
+            ],
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        let test_core = String::from_utf8(out.clone()).unwrap();
+        assert!(test_core.contains("Greet.greeting.example."));
+        assert!(test_core.contains("Greet.test."));
+
+        // `mo-fe lower-batch` frames valid Core output with `R <len>\n`.
+        out.clear();
+        err.clear();
+        let code = dispatch(&["lower-batch".to_string(), greet_str], &mut out, &mut err);
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert!(out.starts_with(b"R "));
+
+        // `mo-fe check` surfaces lowering error E1150.
+        let e1150 = repo_root().join("tests/errors/e1150/main.mo");
+        let e1150_str = e1150.to_str().unwrap().to_string();
+        out.clear();
+        err.clear();
+        let code = dispatch(&["check".to_string(), e1150_str], &mut out, &mut err);
+        assert_eq!(code, 1);
+        let err_text = String::from_utf8(err).unwrap();
+        assert!(err_text.contains("E1150"), "got: {err_text}");
     }
 }

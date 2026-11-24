@@ -1,0 +1,15 @@
+[package]
+name = "mo-lower"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mo-def = { path = "../mo-def" }
+mo-base = { path = "../mo-base" }
+mo-syntax = { path = "../mo-syntax" }
+mo-check = { path = "../mo-check" }
+mo-core = { path = "../mo-core" }
+
+[lints]
+workspace = true
