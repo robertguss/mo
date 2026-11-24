@@ -68,7 +68,8 @@ pub struct RenderLimitError {
     pub limit: usize,
 }
 
-struct BoundedWriter {
+/// Bounded output writer shared by diagnostic, test-result, and defect renderers.
+pub struct RenderWriter {
     out: Vec<u8>,
     limit: usize,
     ok: bool,
@@ -76,18 +77,36 @@ struct BoundedWriter {
     metrics: DisplayMetrics,
 }
 
-impl BoundedWriter {
-    fn new(limit: usize, utf8: bool, metrics: DisplayMetrics) -> Self {
+impl RenderWriter {
+    #[must_use]
+    pub fn new(limit: usize, encoding: TerminalEncoding, metrics: DisplayMetrics) -> Self {
         Self {
             out: Vec::new(),
             limit,
             ok: true,
-            utf8,
+            utf8: matches!(encoding, TerminalEncoding::Utf8),
             metrics,
         }
     }
 
-    fn bytes(&mut self, data: &[u8]) {
+    #[must_use]
+    pub fn is_ok(&self) -> bool {
+        self.ok
+    }
+
+    pub fn mark_failed(&mut self) {
+        self.ok = false;
+    }
+
+    pub fn finish(self) -> Result<Vec<u8>, RenderLimitError> {
+        if self.ok {
+            Ok(self.out)
+        } else {
+            Err(RenderLimitError { limit: self.limit })
+        }
+    }
+
+    pub fn bytes(&mut self, data: &[u8]) {
         if !self.ok {
             return;
         }
@@ -98,11 +117,11 @@ impl BoundedWriter {
         self.out.extend_from_slice(data);
     }
 
-    fn text(&mut self, s: &str) {
+    pub fn text(&mut self, s: &str) {
         self.bytes(s.as_bytes());
     }
 
-    fn u64_dec(&mut self, n: u64) {
+    pub fn u64_dec(&mut self, n: u64) {
         if !self.ok {
             return;
         }
@@ -118,6 +137,56 @@ impl BoundedWriter {
             }
         }
         self.bytes(&buf[i..]);
+    }
+
+    pub fn json_bytes(&mut self, data: &[u8]) {
+        json_bytes(self, data);
+    }
+
+    pub fn json_str(&mut self, s: &str) {
+        json_bytes(self, s.as_bytes());
+    }
+
+    pub fn json_span(&mut self, sources: &SourceMap, span: Span) {
+        json_span(self, sources, span, None, false);
+    }
+
+    pub fn safe_bytes(&mut self, data: &[u8]) {
+        safe_bytes(self, data);
+    }
+
+    pub fn safe_str(&mut self, s: &str) {
+        safe_bytes(self, s.as_bytes());
+    }
+
+    /// Writes terminal-safe text while preserving `\n` line breaks (`src/tools/render.c:mo_render_terminal_text`).
+    pub fn terminal_bytes(&mut self, data: &[u8]) {
+        let mut c = DisplayCursor {
+            bytes: data,
+            at: 0,
+            safe_end: 0,
+        };
+        let mut cells = 0u32;
+        while self.ok && c.at < c.bytes.len() {
+            if c.bytes[c.at] == b'\n' {
+                self.text("\n");
+                c.at += 1;
+                cells = 0;
+            } else {
+                let p = inspect(&mut c, cells, self.utf8, self.metrics);
+                write_piece(self, &c.bytes[c.at..], &p);
+                cells = cells.saturating_add(p.width);
+                c.at += p.used;
+            }
+        }
+    }
+
+    pub fn write_location(&mut self, sources: &SourceMap, span: Span) {
+        write_location(self, sources, span);
+    }
+
+    pub fn text_label(&mut self, sources: &SourceMap, label: &Label) {
+        text_label(self, sources, label);
     }
 
     fn repeat(&mut self, ch: u8, count: u32) {
@@ -147,6 +216,8 @@ impl BoundedWriter {
         self.bytes(&buf[..digits]);
     }
 }
+
+type BoundedWriter = RenderWriter;
 
 /// Reference 2.1 refused characters plus line/terminal controls (`src/tools/render.c:escaped`).
 const fn is_escaped_cp(c: u32) -> bool {
@@ -770,8 +841,7 @@ pub fn render_diagnostic(
     metrics: DisplayMetrics,
     limit: usize,
 ) -> Result<Vec<u8>, RenderLimitError> {
-    let utf8 = matches!(encoding, TerminalEncoding::Utf8);
-    let mut w = BoundedWriter::new(limit, utf8, metrics);
+    let mut w = RenderWriter::new(limit, encoding, metrics);
     match format {
         RenderFormat::Json => json_diag(&mut w, sources, diag),
         RenderFormat::Text => {
@@ -836,7 +906,11 @@ pub fn render_diagnostic_default(
 /// Renders the leading NDJSON version record matching `src/tools/render.c:mo_write_version`.
 #[must_use]
 pub fn render_version_json(command: &str, version: &str) -> Vec<u8> {
-    let mut w = BoundedWriter::new(MO_CLI_DIAGNOSTIC_SIZE as usize, true, DisplayMetrics::BASIC);
+    let mut w = RenderWriter::new(
+        MO_CLI_DIAGNOSTIC_SIZE as usize,
+        TerminalEncoding::Utf8,
+        DisplayMetrics::BASIC,
+    );
     w.text("{\"record\":\"version\",\"format\":\"1.0\",\"mo\":");
     json_bytes(&mut w, version.as_bytes());
     w.text(",\"command\":");
@@ -848,7 +922,11 @@ pub fn render_version_json(command: &str, version: &str) -> Vec<u8> {
 /// Renders the trailing NDJSON totals record matching `src/tools/render.c:mo_write_diagnostics`.
 #[must_use]
 pub fn render_totals_json(errors: u64, dropped: u64, status: i32) -> Vec<u8> {
-    let mut w = BoundedWriter::new(MO_CLI_DIAGNOSTIC_SIZE as usize, true, DisplayMetrics::BASIC);
+    let mut w = RenderWriter::new(
+        MO_CLI_DIAGNOSTIC_SIZE as usize,
+        TerminalEncoding::Utf8,
+        DisplayMetrics::BASIC,
+    );
     w.text("{\"record\":\"totals\",\"errors\":");
     w.u64_dec(errors);
     w.text(",\"dropped\":");

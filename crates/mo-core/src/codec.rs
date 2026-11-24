@@ -1769,12 +1769,13 @@ impl<'a> Decoder<'a> {
                     });
                 }
 
-                Ok(Metadata::Source(SourceMetadata {
+                Ok(Metadata::Source(Box::new(SourceMetadata {
                     files,
+                    file_bytes: Vec::new(),
                     modules,
                     funs,
                     consts,
-                }))
+                })))
             }
             _ => {
                 Err(self
@@ -3512,6 +3513,13 @@ impl<'a> Printer<'a> {
         match meta {
             Metadata::NoSource => self.write_nullary("noSource", depth),
             Metadata::Source(m) => {
+                if !m.file_bytes.is_empty()
+                    && m.file_bytes
+                        .iter()
+                        .any(|raw| std::str::from_utf8(raw).is_err())
+                {
+                    return Err(CorePrintError::InvalidMetadata);
+                }
                 let cd = depth + 1;
                 self.begin_tagged("Metadata", depth)?;
                 self.push_byte(b' ')?;

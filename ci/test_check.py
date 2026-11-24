@@ -237,6 +237,7 @@ class RustGroup(unittest.TestCase):
                     "cargo test --workspace",
                     "python3 ci/check_rust_runtime.py --mo build/gcc/debug/mo",
                     "python3 ci/check_rust_frontend.py --mo build/gcc/debug/mo",
+                    "python3 ci/check_rust_cli.py",
                 ],
             )
 

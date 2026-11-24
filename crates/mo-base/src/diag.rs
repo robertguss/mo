@@ -378,4 +378,9 @@ impl DiagBag {
         self.items
             .sort_by_key(|d| (d.primary.span.file, d.primary.span.start));
     }
+
+    /// Retains only diagnostics satisfying `predicate`, preserving `dropped`.
+    pub fn retain(&mut self, predicate: impl FnMut(&Diagnostic) -> bool) {
+        self.items.retain(predicate);
+    }
 }

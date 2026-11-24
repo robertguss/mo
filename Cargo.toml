@@ -15,6 +15,7 @@ members = [
     "crates/mo-host",
     "crates/mo-vm",
     "crates/mo-rt",
+    "crates/mo-cli",
 ]
 
 [workspace.package]

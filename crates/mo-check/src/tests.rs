@@ -557,6 +557,7 @@ fn corpus_diagnostics_byte_for_byte() {
                 };
                 let set = ModuleSet {
                     root: String::new(),
+                    root_bytes: Vec::new(),
                     modules,
                     order,
                     manifests: Vec::new(),
@@ -1000,6 +1001,7 @@ fn independent_errors_and_name_rules_with_fixes() {
     );
     let set = ModuleSet {
         root: String::new(),
+        root_bytes: Vec::new(),
         modules: vec![m0, m1],
         order: vec![ModuleId(0), ModuleId(1)],
         manifests: Vec::new(),
@@ -1036,6 +1038,7 @@ fn independent_errors_and_name_rules_with_fixes() {
         let m1 = parse_into_module(&mut s, "money.mo", money.as_bytes(), 1, Vec::new(), false);
         let set = ModuleSet {
             root: String::new(),
+            root_bytes: Vec::new(),
             modules: vec![m0, m1],
             order: vec![ModuleId(1), ModuleId(0)],
             manifests: Vec::new(),
@@ -1064,6 +1067,7 @@ fn independent_errors_and_name_rules_with_fixes() {
         let fm1 = parse_into_module(&mut s2, "money.mo", money.as_bytes(), 1, Vec::new(), false);
         let fset = ModuleSet {
             root: String::new(),
+            root_bytes: Vec::new(),
             modules: vec![fm0, fm1],
             order: vec![ModuleId(1), ModuleId(0)],
             manifests: Vec::new(),
@@ -1091,6 +1095,7 @@ fn function_signatures_and_native_table_parity() {
     );
     let set = ModuleSet {
         root: String::new(),
+        root_bytes: Vec::new(),
         modules: vec![m0],
         order: vec![ModuleId(0)],
         manifests: Vec::new(),

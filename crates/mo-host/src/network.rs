@@ -17,7 +17,7 @@ use mo_def::limits::{
 };
 use mo_heap::{Heap, ScratchGuard, Value};
 use rustls::pki_types::{CertificateDer, ServerName};
-use rustls::{AlertDescription, ClientConfig, ClientConnection, RootCertStore};
+use rustls::{AlertDescription, CertificateError, ClientConfig, ClientConnection, RootCertStore};
 
 use crate::HostError;
 use crate::files_common::find_case_tag;
@@ -489,9 +489,40 @@ fn load_root_store() -> Result<RootCertStore, NetErr> {
 }
 
 fn map_rustls_error(err: rustls::Error) -> NetErr {
+    map_rustls_error_for_host(err, false)
+}
+
+fn map_rustls_error_for_host(err: rustls::Error, is_ip: bool) -> NetErr {
     match err {
         rustls::Error::InvalidCertificate(cert_err) => {
-            NetErr::Certificate(format!("certificate verification failed: {cert_err:?}"))
+            let reason = match cert_err {
+                CertificateError::Expired | CertificateError::ExpiredContext { .. } => {
+                    "certificate has expired".to_string()
+                }
+                CertificateError::NotValidYet | CertificateError::NotValidYetContext { .. } => {
+                    "certificate is not yet valid".to_string()
+                }
+                CertificateError::NotValidForName
+                | CertificateError::NotValidForNameContext { .. } => {
+                    if is_ip {
+                        "IP address mismatch".to_string()
+                    } else {
+                        "hostname mismatch".to_string()
+                    }
+                }
+                CertificateError::UnknownIssuer => {
+                    "self-signed certificate or unknown issuer".to_string()
+                }
+                other => {
+                    let dbg = format!("{other:?}");
+                    if dbg.contains("CaUsedAsEndEntity") {
+                        "self-signed certificate (CA used as end entity)".to_string()
+                    } else {
+                        format!("certificate verification failed: {dbg}")
+                    }
+                }
+            };
+            NetErr::Certificate(reason)
         }
         rustls::Error::AlertReceived(
             AlertDescription::BadCertificate
@@ -551,6 +582,7 @@ fn tls_handshake_with_store(
 
     let server_name = ServerName::try_from(host.to_string())
         .map_err(|_| NetErr::Broken("TLS host setup failed".to_string()))?;
+    let is_ip = matches!(server_name, ServerName::IpAddress(_));
 
     let conn = ClientConnection::new(Arc::new(config), server_name)
         .map_err(|e| NetErr::Broken(e.to_string()))?;
@@ -586,7 +618,9 @@ fn tls_handshake_with_store(
             match tls.conn.read_tls(&mut tls.stream) {
                 Ok(0) => return Err(NetErr::Closed),
                 Ok(_) => {
-                    tls.conn.process_new_packets().map_err(map_rustls_error)?;
+                    tls.conn
+                        .process_new_packets()
+                        .map_err(|e| map_rustls_error_for_host(e, is_ip))?;
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {
                     #[cfg(unix)]

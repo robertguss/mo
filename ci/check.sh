@@ -625,6 +625,8 @@ else
 		python3 ci/check_rust_runtime.py --mo "$mo_driver"
 		step "Rust front-end differential parity (ci/check_rust_frontend.py --mo $mo_driver)"
 		python3 ci/check_rust_frontend.py --mo "$mo_driver"
+		step "Rust unified mo CLI verification (ci/check_rust_cli.py)"
+		python3 ci/check_rust_cli.py
 	else
 		missing "no C compiler or mo executable is available for Rust differential checks"
 	fi
