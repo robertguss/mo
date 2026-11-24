@@ -98,6 +98,38 @@ pub(crate) enum OpenFileCap {
     Fake(FakeOpenFileCap),
 }
 
+/// Initial state for constructing a fake capability (`src/host/host.c:mo_host_fake_restore`).
+pub enum FakeCapInit {
+    /// `Args` capability backed by a `List Text` value.
+    Args(Value),
+    /// `Env` capability backed by a `Map Text Text` value.
+    Env(Value),
+    /// `Console` capability with pre-seeded input lines.
+    Console { input: Vec<String> },
+    /// `Files` capability backed by an in-memory file and folder tree.
+    Files {
+        files: Vec<(String, Vec<u8>)>,
+        folders: Vec<String>,
+    },
+    /// `ReadFiles` capability backed by an in-memory file and folder tree.
+    ReadFiles {
+        files: Vec<(String, Vec<u8>)>,
+        folders: Vec<String>,
+    },
+    /// `Clock` capability fixed at `time_us` microseconds since epoch.
+    Clock { time_us: i64 },
+    /// `Random` capability seeded from `seed`.
+    Random { seed: i64 },
+    /// `SecureRandom` capability seeded from `seed`.
+    SecureRandom { seed: i64 },
+    /// `Network` capability backed by a `Map Text (Map Bytes Bytes)` value.
+    Network(Value),
+    /// `Sqlite` capability backed by an optional `Map Text Bytes` value.
+    Sqlite(Option<Value>),
+    /// `Command` capability backed by a `Map Bytes Bytes` value.
+    Command(Value),
+}
+
 /// Real I/O handles and OS context for a process.
 pub struct HostContext {
     pub args: Vec<String>,
@@ -327,6 +359,54 @@ impl HostContext {
                 command::make_real_command(heap, &open_folders, root_fd.as_fd(), ty)
             }
             other => Err(HostError::UnimplementedCapability(other)),
+        }
+    }
+
+    /// Restores a fake capability value from `init` (`src/host/host.c:mo_host_fake_restore`).
+    pub fn restore_fake_capability(
+        &mut self,
+        heap: &Heap,
+        ty: u32,
+        init: FakeCapInit,
+    ) -> Result<Value, HostError> {
+        match init {
+            FakeCapInit::Args(list) => {
+                Ok(heap.alloc_capability(Capability::Args, ty, Rc::new(ArgsState { list }))?)
+            }
+            FakeCapInit::Env(map) => {
+                Ok(heap.alloc_capability(Capability::Env, ty, Rc::new(EnvState { map }))?)
+            }
+            FakeCapInit::Console { input } => {
+                let state = ConsoleState::Fake(RefCell::new(FakeConsoleState {
+                    input,
+                    cursor: 0,
+                    printed: Vec::new(),
+                    printed_errors: Vec::new(),
+                }));
+                Ok(heap.alloc_capability(Capability::Console, ty, Rc::new(state))?)
+            }
+            FakeCapInit::Files { files, folders } => fake_files::files_in_memory_with_folders(
+                heap,
+                Capability::Files,
+                ty,
+                &files,
+                &folders,
+            ),
+            FakeCapInit::ReadFiles { files, folders } => fake_files::files_in_memory_with_folders(
+                heap,
+                Capability::ReadFiles,
+                ty,
+                &files,
+                &folders,
+            ),
+            FakeCapInit::Clock { time_us } => clock_random::make_fixed_clock(heap, ty, time_us),
+            FakeCapInit::Random { seed } => clock_random::make_seeded_random(heap, ty, seed),
+            FakeCapInit::SecureRandom { seed } => {
+                clock_random::make_seeded_secure_random(heap, ty, seed)
+            }
+            FakeCapInit::Network(peers) => network::network_fake(heap, ty, peers),
+            FakeCapInit::Sqlite(map) => sqlite::sqlite_fake(heap, ty, map.as_ref()),
+            FakeCapInit::Command(replies) => command::command_fake(heap, ty, replies),
         }
     }
 

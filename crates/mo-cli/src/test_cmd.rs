@@ -1,334 +1,50 @@
-//! `mo test` Slice 3B bridge: complete observation selection (`--list`, `--in`, `--only`,
-//! `--json`) and plain `test` + `example` execution (`src/tools/tests.c` parity).
-//!
-//! Promise/property generation, service recovery simulation, mutation testing (`--mutants`),
-//! `--strength`, and upgrade bundles (`--bundle`) arrive in Slice 3C (`crates/mo-test`)
-//! and are rejected with a clear diagnostic when executed in Slice 3B.
+//! Thin `mo-cli` adapter over the pure-Rust `mo-test` engine (`crates/mo-test`).
 
+use std::fs;
 use std::io::Write;
-use std::time::Instant;
 
+use mo_base::utf8::is_valid_utf8;
 use mo_base::{DiagBag, Diagnostic, SourceMap, Span};
-use mo_bytecode::{BytecodeFile, FunctionKind, TypeKind, load as load_bytecode};
-use mo_check::{CheckedFuncId, CheckedProgram, CheckedSpec, CheckedSpecKind, ModuleId};
-use mo_codegen::compile_services;
-use mo_core::check_program_services;
+use mo_check::{CheckedProgram, LibraryMode, LoadOptions, check_program, load_bundle_with_library};
 use mo_def::ErrorCode;
 use mo_def::limits::{
-    MO_CLI_ANCHOR_INSTRUCTIONS, MO_CLI_DIAGNOSTIC_SIZE, MO_CLI_TEST_WORK, MO_LIMIT_CORE_NODES,
-    MO_LIMIT_DEFECT_TEXT_SIZE,
+    MO_CLI_CHECK_SIZE, MO_LIMIT_BUNDLE_BYTES, MO_LIMIT_BUNDLE_FILES, MO_LIMIT_BUNDLE_PATH_BYTES,
 };
-use mo_host::HostContext;
-use mo_lower::lower_test_services;
-use mo_syntax::SyntaxKind;
-use mo_vm::{Image, Outcome, Process, render_defect_raw};
+use mo_test::{TestConfig, TestSelection, TestTotals};
 
-use crate::anchors::{check_anchors, program_has_anchors};
 use crate::cli::Cli;
-use crate::render::{
-    Observation, ObservationKind, TestOutcome, TestResult, TestTotals, runtime_span,
-    write_test_result,
-};
+use crate::fs_util::bytes_to_path;
+use crate::identity::MO_VERSION;
 
-const RECOVERY_SUFFIX: &str = ".service.recovery";
-
-/// Result of [`select_tests`] matching `struct mo_test_selection`.
-#[derive(Debug, Clone)]
-pub struct TestSelection {
-    pub items: Vec<Observation>,
-    /// Usage mistake message (exit status `2`), e.g. unknown `--only` or empty match.
-    pub mistake: Option<&'static str>,
-}
-
-fn append_function_name(out: &mut String, program: &CheckedProgram, func_id: CheckedFuncId) {
-    let func = program.function(func_id);
-    let sym = program.interfaces.symbol(func.symbol);
-    let mod_name = &program.modules.module(sym.module).name;
-    out.push_str(mod_name);
-    out.push('.');
-    out.push_str(&sym.name);
-    let scope = program.interfaces.scope(sym.module);
-    if let Some(receiver_idx) = sym.receiver
-        && let Some(group) = scope.find_symbol(sym.name.as_bytes())
-        && group.overload_count > 1
-    {
-        out.push('@');
-        out.push_str(&scope.symbols[receiver_idx.index()].name);
+/// Builds a [`TestConfig`] from parsed CLI options.
+#[must_use]
+pub fn test_config_from_cli(cli: &Cli) -> TestConfig {
+    TestConfig {
+        json: cli.json,
+        only: cli.only.clone(),
+        module: cli.module.clone(),
+        calls: u64::from(cli.calls),
+        seconds: u64::from(cli.seconds),
+        sequences: u64::from(cli.sequences),
+        limits: cli.limits,
+        door_plan: cli.door_plan,
+        gated: false,
+        first_failure: false,
     }
 }
 
-fn format_spec_name(
-    program: &CheckedProgram,
-    spec: &CheckedSpec,
-    kind: ObservationKind,
-    work: &mut usize,
-) -> Option<String> {
-    let mut name = String::new();
-    match spec.subject {
-        Some(subj) => append_function_name(&mut name, program, subj),
-        None => name.push_str(&program.modules.module(spec.module).name),
-    }
-    name.push('.');
-    name.push_str(kind.as_str());
-    name.push('.');
-    name.push_str(&spec.number.to_string());
-    let cost = name.len() + 1;
-    if cost > (*work).min(MO_CLI_DIAGNOSTIC_SIZE as usize) {
-        return None;
-    }
-    *work -= cost;
-    Some(name)
-}
-
-fn format_service_name(
-    program: &CheckedProgram,
-    module: ModuleId,
-    promise_number: Option<u32>,
-    work: &mut usize,
-) -> Option<String> {
-    let mut name = String::from(program.modules.module(module).name.as_str());
-    match promise_number {
-        None => name.push_str(RECOVERY_SUFFIX),
-        Some(num) => {
-            name.push_str(".service.promise.");
-            name.push_str(&num.to_string());
-        }
-    }
-    let cost = name.len() + 1;
-    if cost > (*work).min(MO_CLI_DIAGNOSTIC_SIZE as usize) {
-        return None;
-    }
-    *work -= cost;
-    Some(name)
-}
-
-fn is_selected(
-    program: &CheckedProgram,
-    cli: &Cli,
-    module: ModuleId,
-    full: &str,
-    found: &mut [bool],
-    work: &mut usize,
-) -> Option<bool> {
-    let mut chosen = cli.only.is_empty();
-    let full_bytes = full.as_bytes();
-    for (j, pattern) in cli.only.iter().enumerate() {
-        let cost = if full_bytes.len() == pattern.len() {
-            full_bytes.len() + 1
-        } else {
-            1
-        };
-        if cost > *work {
-            return None;
-        }
-        *work -= cost;
-        if full_bytes == pattern.as_slice() {
-            chosen = true;
-            found[j] = true;
-        }
-    }
-    if !chosen {
-        return Some(false);
-    }
-    if let Some(filter_mod) = &cli.module {
-        let mod_name = program.modules.module(module).name.as_bytes();
-        return Some(filter_mod.as_slice() == mod_name);
-    }
-    Some(true)
-}
-
-/// Builds the ordered observation inventory and applies `--in` / `--only` filters
-/// (`src/tools/tests.c:mo_select_tests`).
+/// Selects tests/examples/promises/recovery observations according to `--only` and `--in`.
 #[must_use]
 pub fn select_tests(
     program: &CheckedProgram,
     cli: &Cli,
     diags: &mut DiagBag,
 ) -> Option<TestSelection> {
-    let mut candidates = (program.specs.len() as u64) + (program.services.len() as u64);
-    for svc in &program.services {
-        candidates += svc.promises.len() as u64;
-    }
-    if candidates > MO_LIMIT_CORE_NODES {
-        let _ = diags.push(Diagnostic::new(
-            ErrorCode::ToolPipeline,
-            Span::NONE,
-            "test inventory exceeds tool resources",
-        ));
-        return None;
-    }
-
-    let mut items = Vec::new();
-    let mut found = vec![false; cli.only.len()];
-    let mut work = MO_CLI_TEST_WORK as usize;
-
-    for (spec_idx, spec) in program.specs.iter().enumerate() {
-        let kind = match spec.kind {
-            CheckedSpecKind::Anchor => continue,
-            CheckedSpecKind::Test => ObservationKind::Test,
-            CheckedSpecKind::Example => ObservationKind::Example,
-            CheckedSpecKind::Promise => ObservationKind::Promise,
-        };
-        // A program's tests don't include the toolchain library's or path dependencies';
-        // `mo test lib/list.mo` does.
-        let m = program.modules.module(spec.module);
-        if spec.module.0 != 0 && (m.library || m.dependency) {
-            continue;
-        }
-        let Some(full) = format_spec_name(program, spec, kind, &mut work) else {
-            let _ = diags.push(Diagnostic::new(
-                ErrorCode::ToolPipeline,
-                Span::NONE,
-                "test inventory exceeds tool resources",
-            ));
-            return None;
-        };
-        let Some(keep) = is_selected(program, cli, spec.module, &full, &mut found, &mut work)
-        else {
-            let _ = diags.push(Diagnostic::new(
-                ErrorCode::ToolPipeline,
-                Span::NONE,
-                "test inventory exceeds tool resources",
-            ));
-            return None;
-        };
-        if keep {
-            let span = m.syntax.tree.node(spec.syntax).span;
-            items.push(Observation {
-                name: full,
-                kind,
-                span,
-                spec_index: Some(spec_idx),
-                service_index: None,
-                service_promise_index: None,
-            });
-        }
-    }
-
-    for (svc_idx, svc) in program.services.iter().enumerate() {
-        let m = program.modules.module(svc.module);
-        if svc.module.0 != 0 && m.library {
-            continue;
-        }
-        for j in 0..=svc.promises.len() {
-            let (kind, promise_num, span, sp_idx) = if j < svc.promises.len() {
-                let p = &svc.promises[j];
-                let sp = m.syntax.tree.node(p.spec.syntax).span;
-                (ObservationKind::Promise, Some(p.spec.number), sp, Some(j))
-            } else {
-                let sp = m.syntax.tree.node(svc.syntax).span;
-                (ObservationKind::Recovery, None, sp, None)
-            };
-            let Some(full) = format_service_name(program, svc.module, promise_num, &mut work)
-            else {
-                let _ = diags.push(Diagnostic::new(
-                    ErrorCode::ToolPipeline,
-                    Span::NONE,
-                    "test inventory exceeds tool resources",
-                ));
-                return None;
-            };
-            let Some(keep) = is_selected(program, cli, svc.module, &full, &mut found, &mut work)
-            else {
-                let _ = diags.push(Diagnostic::new(
-                    ErrorCode::ToolPipeline,
-                    Span::NONE,
-                    "test inventory exceeds tool resources",
-                ));
-                return None;
-            };
-            if keep {
-                items.push(Observation {
-                    name: full,
-                    kind,
-                    span,
-                    spec_index: None,
-                    service_index: Some(svc_idx),
-                    service_promise_index: sp_idx,
-                });
-            }
-        }
-    }
-
-    let mut mistake = None;
-    if found.iter().any(|&f| !f) {
-        mistake = Some("--only does not name an example, promise, test or recovery check");
-    } else if items.is_empty() {
-        mistake = Some("test selection matches no examples, promises, tests or recovery checks");
-    }
-
-    Some(TestSelection { items, mistake })
+    let cfg = test_config_from_cli(cli);
+    mo_test::select_tests(program, &cfg, diags)
 }
 
-fn test_report_error(diags: &mut DiagBag, message: &str, span: Span, detail: Option<&str>) {
-    let mut diag = Diagnostic::new(ErrorCode::ToolPipeline, span, message);
-    if let Some(d) = detail {
-        diag = diag.with_primary_text(d);
-    }
-    let _ = diags.push(diag);
-}
-
-fn bind_plain_observations(
-    file: &BytecodeFile,
-    sources: &SourceMap,
-    selection: &TestSelection,
-) -> Option<Vec<u32>> {
-    let mut functions = vec![u32::MAX; selection.items.len()];
-    for (idx, obs) in selection.items.iter().enumerate() {
-        let want_kind = match obs.kind {
-            ObservationKind::Test => FunctionKind::Test,
-            ObservationKind::Example => FunctionKind::Example,
-            ObservationKind::Promise | ObservationKind::Recovery => return None,
-        };
-        let mut matched = None;
-        for (fn_idx, func) in file.functions.iter().enumerate() {
-            if func.kind != want_kind {
-                continue;
-            }
-            if file.string(func.name) != obs.name.as_str() {
-                continue;
-            }
-            let dbg = &file.debug[fn_idx];
-            let span = runtime_span(file, sources, dbg.file, dbg.start, dbg.end);
-            if span != obs.span {
-                continue;
-            }
-            if !func.parameters.is_empty()
-                || file.types.get(func.result_type).kind != TypeKind::Unit
-                || matched.is_some()
-            {
-                return None;
-            }
-            matched = Some(fn_idx as u32);
-        }
-        functions[idx] = matched?;
-    }
-    Some(functions)
-}
-
-/// Finds the smallest `SyntaxKind::Assert` statement in `spec.body` enclosing `failed`
-/// (`src/tools/tests.c:assertion_span`).
-fn assertion_span(program: &CheckedProgram, spec: &CheckedSpec, failed: Span) -> Span {
-    let tree = &program.modules.module(spec.module).syntax.tree;
-    let mut best = Span::NONE;
-    for expr in &spec.body.items {
-        let node = tree.node(expr.syntax);
-        if node.kind == SyntaxKind::Assert
-            && node.span.file == failed.file
-            && node.span.start <= failed.start
-            && node.span.end >= failed.end
-            && (best.file == u32::MAX
-                || (node.span.end - node.span.start) < (best.end - best.start))
-        {
-            best = node.span;
-        }
-    }
-    best
-}
-
-/// Executes selected plain `test` and `example` observations (`src/tools/tests.c:mo_run_tests`).
-///
-/// Rejects promise and service-recovery observations with a clear diagnostic until Slice 3C.
+/// Runs all selected `mo test` observations (plain tests, examples, promises, recovery, service promises).
 pub fn run_tests(
     cli: &Cli,
     program: &CheckedProgram,
@@ -338,158 +54,285 @@ pub fn run_tests(
     diags: &mut DiagBag,
     totals: &mut TestTotals,
 ) {
-    for obs in &selection.items {
-        if matches!(
-            obs.kind,
-            ObservationKind::Promise | ObservationKind::Recovery
-        ) {
-            test_report_error(
-                diags,
-                "promise and service recovery test execution is deferred to Phase 3 Slice 3C (crates/mo-test)",
-                obs.span,
-                Some(&obs.name),
-            );
-            return;
+    let cfg = test_config_from_cli(cli);
+    mo_test::run_tests(&cfg, program, sources, selection, output, diags, totals);
+}
+
+/// Runs `mo test --mutants` (baseline traced run + mutation testing gates).
+pub fn run_gates(
+    cli: &Cli,
+    program: &CheckedProgram,
+    sources: &SourceMap,
+    selection: &TestSelection,
+    output: &mut dyn Write,
+    diags: &mut DiagBag,
+    totals: &mut TestTotals,
+) {
+    let cfg = test_config_from_cli(cli);
+    mo_test::run_gates(&cfg, program, sources, selection, output, diags, totals);
+}
+
+/// Lists candidate mutants and per-function counts for `mo test --mutants --list`.
+pub fn list_gates(
+    program: &CheckedProgram,
+    sources: &SourceMap,
+    json: bool,
+    output: &mut dyn Write,
+    diags: &mut DiagBag,
+) {
+    mo_test::list_gates(program, sources, json, output, diags);
+}
+
+/// Runs `mo test --strength FOLDER` against curated wrong versions.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "forwards CLI strength execution state cleanly to mo_test::run_strength"
+)]
+pub fn run_strength(
+    cli: &Cli,
+    strength_dir: &str,
+    library: &LibraryMode,
+    program: &CheckedProgram,
+    sources: &SourceMap,
+    output: &mut dyn Write,
+    diags: &mut DiagBag,
+    totals: &mut TestTotals,
+    version_written: &mut bool,
+    mistake: &mut Option<&'static str>,
+) {
+    let cfg = test_config_from_cli(cli);
+    mo_test::run_strength(
+        &cfg,
+        strength_dir,
+        library,
+        MO_VERSION,
+        program,
+        sources,
+        output,
+        diags,
+        totals,
+        version_written,
+        mistake,
+    );
+}
+
+fn read_u32_le(bytes: &[u8], pos: &mut usize) -> Option<usize> {
+    let end = pos.checked_add(4)?;
+    let slice = bytes.get(*pos..end)?;
+    *pos = end;
+    Some(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]) as usize)
+}
+
+fn read_bundle_span<'a>(bytes: &'a [u8], pos: &mut usize, limit: usize) -> Option<&'a [u8]> {
+    let len = read_u32_le(bytes, pos)?;
+    if len > limit {
+        return None;
+    }
+    let end = pos.checked_add(len)?;
+    let slice = bytes.get(*pos..end)?;
+    if !is_valid_utf8(slice) {
+        return None;
+    }
+    *pos = end;
+    Some(slice)
+}
+
+fn read_bundle_path<'a>(bytes: &'a [u8], pos: &mut usize) -> Option<&'a [u8]> {
+    let path = read_bundle_span(bytes, pos, MO_LIMIT_BUNDLE_PATH_BYTES as usize)?;
+    if path.is_empty() {
+        return None;
+    }
+    let mut start = 0usize;
+    for i in 0..=path.len() {
+        if i < path.len() && (path[i] == 0 || path[i] == b'\\') {
+            return None;
+        }
+        if i < path.len() && path[i] != b'/' {
+            continue;
+        }
+        let part = &path[start..i];
+        if part.is_empty()
+            || part == b"."
+            || part == b".."
+            || (start == 0 && (part == b"lib" || part == b"UpgradeOld" || part == b"UpgradeOld.mo"))
+        {
+            return None;
+        }
+        start = i + 1;
+    }
+    Some(path)
+}
+
+fn load_source_bundle(path_bytes: &[u8], sources: &mut SourceMap, diags: &mut DiagBag) -> bool {
+    let Ok(bytes) = fs::read(bytes_to_path(path_bytes).as_ref()) else {
+        let _ = diags.push(Diagnostic::new(
+            ErrorCode::UpgradeBundleFormat,
+            Span::NONE,
+            "source bundle is malformed or unreadable",
+        ));
+        return false;
+    };
+    let ok = parse_and_add_bundle(&bytes, sources);
+    if !ok {
+        let _ = diags.push(Diagnostic::new(
+            ErrorCode::UpgradeBundleFormat,
+            Span::NONE,
+            "source bundle is malformed or unreadable",
+        ));
+    }
+    ok
+}
+
+fn parse_and_add_bundle(bytes: &[u8], sources: &mut SourceMap) -> bool {
+    if bytes.len() < 13
+        || bytes.len() as u64 > MO_LIMIT_BUNDLE_BYTES
+        || !bytes.starts_with(b"MOSB\x01")
+    {
+        return false;
+    }
+    let mut pos = 5usize;
+    let Some(entry) = read_bundle_path(bytes, &mut pos) else {
+        return false;
+    };
+    let Some(count) = read_u32_le(bytes, &mut pos) else {
+        return false;
+    };
+    if count == 0 || count as u64 > MO_LIMIT_BUNDLE_FILES {
+        return false;
+    }
+    let mut files: Vec<(&[u8], &[u8])> = Vec::with_capacity(count);
+    let mut entry_idx = None;
+    for i in 0..count {
+        let Some(fpath) = read_bundle_path(bytes, &mut pos) else {
+            return false;
+        };
+        let Some(fsrc) = read_bundle_span(bytes, &mut pos, MO_LIMIT_BUNDLE_BYTES as usize) else {
+            return false;
+        };
+        if i != 0 && files[i - 1].0 >= fpath {
+            return false;
+        }
+        if fpath == entry {
+            entry_idx = Some(i);
+        }
+        files.push((fpath, fsrc));
+    }
+    if pos != bytes.len() {
+        return false;
+    }
+    let Some(entry_pos) = entry_idx else {
+        return false;
+    };
+    for n in 0..count {
+        let idx = if n == 0 {
+            entry_pos
+        } else if n <= entry_pos {
+            n - 1
+        } else {
+            n
+        };
+        let (fpath, fsrc) = files[idx];
+        if sources.add_bytes(fpath.to_vec(), fsrc.to_vec()).is_err() {
+            return false;
         }
     }
+    true
+}
 
-    let Some(lowered) = lower_test_services(program, Some(sources), diags) else {
+/// Runs door-plan checks over a `MOSB\1` source bundle (`mo test --bundle FILE`,
+/// `src/tools/upgrade-bundle.c:compile_bundle` + `run_checks`).
+pub fn run_bundle_test(
+    cli: &Cli,
+    library: &LibraryMode,
+    sources: &mut SourceMap,
+    diags: &mut DiagBag,
+) {
+    if !load_source_bundle(cli.file(0), sources, diags) {
+        return;
+    }
+    let candidate_count = sources.len();
+    let load_opts = LoadOptions {
+        library: library.clone(),
+        upgrade: false,
+        syntax_arena_limit: MO_CLI_CHECK_SIZE as usize,
+    };
+    let Some(set) = load_bundle_with_library(sources, &load_opts, diags) else {
+        return;
+    };
+    for m in &set.modules {
+        if m.syntax.span.file < candidate_count
+            && (m.name == "UpgradeOld" || m.name.starts_with("UpgradeOld."))
+        {
+            let _ = diags.push(Diagnostic::new(
+                ErrorCode::UpgradeBundleFormat,
+                Span::NONE,
+                "candidate declares the reserved UpgradeOld namespace",
+            ));
+        }
+    }
+    if diags.has_any() {
+        return;
+    }
+    let Some(program) = check_program(Some(sources), set, diags) else {
         return;
     };
     if diags.has_any() {
         return;
     }
-    let services_opt = (!lowered.services.items.is_empty()).then_some(&lowered.services);
-    if !check_program_services(&lowered.arena, &lowered.program, services_opt, diags) {
-        return;
-    }
-    let Some(wire) = compile_services(&lowered.arena, &lowered.program, services_opt, diags) else {
-        return;
-    };
 
-    let bc_file = match load_bytecode(&wire) {
-        Ok(f) => f,
-        Err(err) => {
-            test_report_error(
-                diags,
-                "compiled bytecode could not be loaded",
-                Span::NONE,
-                Some(err.reason),
-            );
-            return;
-        }
-    };
-
-    let Some(functions) = bind_plain_observations(&bc_file, sources, selection) else {
-        test_report_error(
-            diags,
-            "selected observations could not be bound to compiled functions",
-            Span::NONE,
-            None,
+    let mut run_diags = DiagBag::new();
+    let mut results = Vec::new();
+    let mut totals = TestTotals::default();
+    let selection = select_tests(&program, cli, &mut run_diags);
+    if let Some(ref sel) = selection {
+        run_tests(
+            cli,
+            &program,
+            sources,
+            sel,
+            &mut results,
+            &mut run_diags,
+            &mut totals,
         );
-        return;
-    };
+    }
+    let failed = totals.failed != 0
+        || totals.stopped != 0
+        || run_diags
+            .items()
+            .iter()
+            .any(|d| d.code == ErrorCode::ToolTestInitialization);
 
-    let anchors = program_has_anchors(program);
-    let init_res = if anchors {
-        Image::init_bounded(bc_file, cli.limits, MO_CLI_ANCHOR_INSTRUCTIONS)
-    } else {
-        Image::init(bc_file, cli.limits)
-    };
-
-    let image = match init_res {
-        Ok(img) => img,
-        Err(boxed) => {
-            let (bc_err_file, defect) = *boxed;
-            let raw = render_defect_raw(&bc_err_file, &defect);
-            let detail = if raw.len() <= MO_LIMIT_DEFECT_TEXT_SIZE as usize {
-                raw
-            } else {
-                defect.reason.clone()
-            };
-            let span = defect
-                .frames
-                .first()
-                .and_then(|f| f.span)
-                .map_or(Span::NONE, |(f, s, e)| {
-                    runtime_span(&bc_err_file, sources, f, s, e)
-                });
-            let _ = diags.push(
-                Diagnostic::new(
-                    ErrorCode::ToolTestInitialization,
-                    span,
-                    "program initialization stopped before tests could run",
-                )
-                .with_primary_text(detail),
-            );
-            return;
+    let mut first_fail_line = String::new();
+    if failed {
+        for raw_line in results.split(|&b| b == b'\n') {
+            if raw_line.starts_with(b"failed ") || raw_line.starts_with(b"stopped ") {
+                let mut len = raw_line.len().min(511);
+                while len != 0 && !is_valid_utf8(&raw_line[..len]) {
+                    len -= 1;
+                }
+                if let Ok(s) = std::str::from_utf8(&raw_line[..len]) {
+                    first_fail_line = s.to_string();
+                }
+                break;
+            }
         }
-    };
-
-    if !check_anchors(&image, cli, sources, program, diags) {
-        return;
     }
 
-    let file = image.file();
-    for (idx, obs) in selection.items.iter().enumerate() {
-        let fn_idx = functions[idx];
-        let start = Instant::now();
-        let host = HostContext::stdio(Vec::new(), Vec::new());
-        let mut process = Process::new(&image, cli.limits, host);
-        let outcome_raw = process.call(fn_idx, Vec::new());
-        let elapsed_us = start.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
-
-        let (outcome, defect_opt, line) = match outcome_raw {
-            Outcome::Returned(_) => {
-                totals.passed += 1;
-                (TestOutcome::Passed, None, Span::NONE)
-            }
-            Outcome::Failed(defect) => {
-                totals.failed += 1;
-                if obs.kind == ObservationKind::Example {
-                    totals.failed_examples += 1;
-                } else if obs.kind == ObservationKind::Test {
-                    totals.failed_tests += 1;
-                }
-                let line = if obs.kind == ObservationKind::Test
-                    && let Some(spec_idx) = obs.spec_index
-                {
-                    let failed_span = defect
-                        .frames
-                        .first()
-                        .and_then(|f| f.span)
-                        .map_or(Span::NONE, |(f, s, e)| runtime_span(file, sources, f, s, e));
-                    assertion_span(program, &program.specs[spec_idx], failed_span)
-                } else {
-                    Span::NONE
-                };
-                (TestOutcome::Failed, Some(defect), line)
-            }
-            Outcome::Stopped(defect) => {
-                totals.stopped += 1;
-                if obs.kind == ObservationKind::Test {
-                    totals.stopped_tests += 1;
-                }
-                (TestOutcome::Stopped, Some(defect), Span::NONE)
-            }
+    if failed || !run_diags.is_empty() || run_diags.dropped() != 0 || selection.is_none() {
+        let fallback_diag;
+        let reason: &str = if !first_fail_line.is_empty() {
+            &first_fail_line
+        } else if let Some(first) = run_diags.items().first() {
+            fallback_diag = first.message.as_str_lossy();
+            fallback_diag.as_ref()
+        } else {
+            "a check did not finish"
         };
-
-        let result = TestResult {
-            observation: obs,
-            file,
-            outcome,
-            defect: defect_opt.as_ref(),
-            line,
-            microseconds: elapsed_us,
+        let (code, msg) = if failed {
+            (ErrorCode::ChecksFailed, "the door's checks failed")
+        } else {
+            (ErrorCode::PlanUnfinished, "the plan did not finish")
         };
-        if !write_test_result(output, cli.json, sources, &result) {
-            test_report_error(
-                diags,
-                "test result could not be rendered or written completely",
-                obs.span,
-                Some(&obs.name),
-            );
-            break;
-        }
+        let _ = diags.push(Diagnostic::new(code, Span::NONE, msg).with_primary_text(reason));
     }
 }

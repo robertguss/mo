@@ -5,8 +5,9 @@
 #[cfg(test)]
 mod fuzz_tests;
 mod number;
-mod simulation;
+pub mod simulation;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use mo_bytecode::{
@@ -73,11 +74,56 @@ pub enum Outcome {
     Stopped(Defect),
 }
 
-pub(crate) enum ControlledOutcome {
+pub enum ControlledOutcome {
     Returned(Value),
     Failed(Defect),
     Stopped(Defect),
     Cancelled,
+}
+
+/// Execution trace counters and entered-function flags (`src/vm/vm.h:mo_vm_trace`).
+#[derive(Debug, Clone)]
+pub struct VmTrace {
+    pub entered: Option<Vec<bool>>,
+    pub steps: u64,
+    pub limit: u64,
+}
+
+/// Maximum completed calls recorded by a [`CallObserver`] (`MO_VM_OBSERVED_CALLS`).
+pub const VM_OBSERVED_CALLS: usize = 64;
+/// Maximum nested pending calls tracked by a [`CallObserver`] (`MO_VM_OBSERVED_PENDING`).
+pub const VM_OBSERVED_PENDING: usize = 16;
+
+/// One observed call's arguments and return value (`src/vm/vm.h:mo_observed_call`).
+#[derive(Clone)]
+pub struct ObservedCall {
+    pub arguments: Vec<Value>,
+    pub result: Value,
+}
+
+/// Records completed nested calls to `target` (`src/vm/vm.h:mo_call_observer`).
+pub struct CallObserver {
+    pub target: u32,
+    pub calls: Vec<ObservedCall>,
+    pending: Vec<(usize, Vec<Value>)>,
+}
+
+impl CallObserver {
+    /// Creates an empty observer watching calls to `target`.
+    #[must_use]
+    pub fn new(target: u32) -> Self {
+        Self {
+            target,
+            calls: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    /// Clears all pending and recorded calls.
+    pub fn clear(&mut self) {
+        self.pending.clear();
+        self.calls.clear();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,11 +156,12 @@ pub struct Image {
     constants: Vec<Value>,
     globals: Vec<Option<Value>>,
     captureless_closures: HashMap<u32, Value>,
+    trace: Option<RefCell<VmTrace>>,
 }
 
 impl Image {
     pub fn init(file: BytecodeFile, limits: Limits) -> Result<Self, Box<(BytecodeFile, Defect)>> {
-        Self::init_with_budget(file, limits, None)
+        Self::init_with_budget(file, limits, None, None)
     }
 
     /// Initializes the image while capping total init instructions to `max_steps`.
@@ -123,13 +170,48 @@ impl Image {
         limits: Limits,
         max_steps: u64,
     ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
-        Self::init_with_budget(file, limits, Some(max_steps))
+        Self::init_with_budget(file, limits, Some(max_steps), None)
+    }
+
+    /// Initializes the image with an attached [`VmTrace`] shared by all processes and simulations
+    /// run against this image (`src/vm/image.c:mo_image_init_traced`).
+    pub fn init_traced(
+        file: BytecodeFile,
+        limits: Limits,
+        trace: VmTrace,
+    ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
+        Self::init_with_budget(file, limits, None, Some(trace))
+    }
+
+    /// Configures the attached image trace before running a gated check.
+    pub fn set_trace_check(&self, limit: u64, clear_entered: bool) {
+        if let Some(ref cell) = self.trace {
+            let mut tr = cell.borrow_mut();
+            tr.steps = 0;
+            tr.limit = limit;
+            if clear_entered && let Some(ref mut entered) = tr.entered {
+                entered.fill(false);
+            }
+        }
+    }
+
+    /// Returns the number of VM steps recorded in the image trace, or 0 if untraced.
+    #[must_use]
+    pub fn trace_steps(&self) -> u64 {
+        self.trace.as_ref().map_or(0, |c| c.borrow().steps)
+    }
+
+    /// Clones the entered-function flags recorded in the image trace, if enabled.
+    #[must_use]
+    pub fn trace_entered(&self) -> Option<Vec<bool>> {
+        self.trace.as_ref().and_then(|c| c.borrow().entered.clone())
     }
 
     fn init_with_budget(
         file: BytecodeFile,
         limits: Limits,
         mut budget: Option<u64>,
+        trace: Option<VmTrace>,
     ) -> Result<Self, Box<(BytecodeFile, Defect)>> {
         let image_heap = Heap::new(limits.heap_size);
 
@@ -217,6 +299,7 @@ impl Image {
             constants,
             globals,
             captureless_closures,
+            trace: trace.map(RefCell::new),
         };
 
         // Run init functions in order using the image's own heap.
@@ -234,6 +317,12 @@ impl Image {
 
     pub fn file(&self) -> &BytecodeFile {
         &self.file
+    }
+
+    /// Returns the initialized global constant value at `idx`, if set (`src/vm/vm.h:mo_image_global`).
+    #[must_use]
+    pub fn global(&self, idx: u32) -> Option<Value> {
+        self.globals.get(idx as usize).and_then(Option::clone)
     }
 
     /// Finds `<module0>.main.entry`, matching `src/tools/run.c`.
@@ -345,6 +434,14 @@ fn run_init_function(
             variables_unavailable: false,
         });
     }
+    if let Some(ref cell) = image.trace {
+        let mut tr = cell.borrow_mut();
+        if let Some(ref mut entered) = tr.entered
+            && let Some(slot) = entered.get_mut(fn_idx as usize)
+        {
+            *slot = true;
+        }
+    }
     frames.push(Frame {
         function: fn_idx,
         pc: 0,
@@ -367,6 +464,9 @@ fn run_init_function(
         frames: &mut frames,
         stack_bytes: &mut stack_bytes,
         work_remaining: *budget,
+        keep_running: None,
+        trace: image.trace.as_ref(),
+        observer: None,
     };
     let outcome = match ctx.run_controlled() {
         ControlledOutcome::Returned(v) => Outcome::Returned(v),
@@ -398,6 +498,23 @@ impl<'a> Process<'a> {
             limits,
             host,
         }
+    }
+
+    /// Returns the process heap for constructing argument values.
+    #[must_use]
+    pub fn heap(&self) -> &Heap {
+        &self.heap
+    }
+
+    /// Returns the mutable host context for constructing fake capabilities.
+    pub fn host_mut(&mut self) -> &mut HostContext {
+        &mut self.host
+    }
+
+    /// Returns the initialized bytecode image bound to this process.
+    #[must_use]
+    pub fn image(&self) -> &'a Image {
+        self.image
     }
 
     pub fn call_main(&mut self, main_fn: u32) -> Outcome {
@@ -475,6 +592,111 @@ impl<'a> Process<'a> {
         self.call_inner(fn_idx, args, Some(max_steps))
     }
 
+    /// Executes `fn_idx` with optional cooperative cancellation and call observation.
+    pub fn call_controlled(
+        &mut self,
+        fn_idx: u32,
+        args: Vec<Value>,
+        mut keep_running: Option<&mut dyn FnMut() -> bool>,
+        mut observer: Option<&mut CallObserver>,
+    ) -> ControlledOutcome {
+        if let Some(ref mut keep) = keep_running
+            && !keep()
+        {
+            if let Some(ref mut obs) = observer {
+                obs.pending.clear();
+            }
+            return ControlledOutcome::Cancelled;
+        }
+        let fn_def = &self.image.file.functions[fn_idx as usize];
+        let bytes = frame_size_bytes(fn_def.register_types.len());
+        if self.limits.call_depth < 1 {
+            if let Some(ref mut obs) = observer {
+                obs.pending.clear();
+            }
+            return ControlledOutcome::Stopped(Defect {
+                reason: "out of stack".to_string(),
+                limit_name: Some("--max-depth"),
+                limit: self.limits.call_depth as usize,
+                detail: None,
+                frames: Vec::new(),
+                variables: Vec::new(),
+                variables_unavailable: false,
+            });
+        }
+        if bytes > self.limits.stack_size {
+            if let Some(ref mut obs) = observer {
+                obs.pending.clear();
+            }
+            return ControlledOutcome::Stopped(Defect {
+                reason: "out of stack".to_string(),
+                limit_name: Some("--max-stack"),
+                limit: self.limits.stack_size,
+                detail: None,
+                frames: Vec::new(),
+                variables: Vec::new(),
+                variables_unavailable: false,
+            });
+        }
+
+        if let Some(ref cell) = self.image.trace {
+            let mut tr = cell.borrow_mut();
+            if let Some(ref mut entered) = tr.entered
+                && let Some(slot) = entered.get_mut(fn_idx as usize)
+            {
+                *slot = true;
+            }
+        }
+
+        let mut regs = vec![None; fn_def.register_types.len()];
+        let mut states = vec![RegState::Undefined; fn_def.register_types.len()];
+        for (i, (param, val)) in fn_def.parameters.iter().zip(args).enumerate() {
+            regs[i] = Some(val);
+            states[i] = if self.image.file.types.is_reference(param.ty) {
+                match param.ownership {
+                    ParamOwnership::Owned => RegState::Owned,
+                    ParamOwnership::Borrowed => RegState::Borrowed,
+                }
+            } else {
+                RegState::Value
+            };
+        }
+
+        let mut frames = vec![Frame {
+            function: fn_idx,
+            pc: 0,
+            destination: 0,
+            resume_pc: 0,
+            frame_bytes: bytes,
+            regs,
+            states,
+        }];
+        let mut stack_bytes = bytes;
+
+        let outcome = {
+            let mut ctx = ExecCtx {
+                file: &self.image.file,
+                constants: &self.image.constants,
+                captureless: &self.image.captureless_closures,
+                globals: Globals::ReadOnly(&self.image.globals),
+                heap: &self.heap,
+                host: &mut self.host,
+                limits: self.limits,
+                frames: &mut frames,
+                stack_bytes: &mut stack_bytes,
+                work_remaining: None,
+                keep_running,
+                trace: self.image.trace.as_ref(),
+                observer: observer.as_deref_mut(),
+            };
+            ctx.run_controlled()
+        };
+        if let Some(obs) = observer {
+            obs.pending.clear();
+        }
+        outcome
+    }
+
     fn call_inner(
         &mut self,
         fn_idx: u32,
@@ -531,6 +753,15 @@ impl<'a> Process<'a> {
         }];
         let mut stack_bytes = bytes;
 
+        if let Some(ref cell) = self.image.trace {
+            let mut tr = cell.borrow_mut();
+            if let Some(ref mut entered) = tr.entered
+                && let Some(slot) = entered.get_mut(fn_idx as usize)
+            {
+                *slot = true;
+            }
+        }
+
         let mut ctx = ExecCtx {
             file: &self.image.file,
             constants: &self.image.constants,
@@ -542,6 +773,9 @@ impl<'a> Process<'a> {
             frames: &mut frames,
             stack_bytes: &mut stack_bytes,
             work_remaining,
+            keep_running: None,
+            trace: self.image.trace.as_ref(),
+            observer: None,
         };
         match ctx.run_controlled() {
             ControlledOutcome::Returned(v) => Outcome::Returned(v),
@@ -631,7 +865,7 @@ impl Globals<'_> {
     }
 }
 
-pub(crate) struct ExecCtx<'a> {
+pub(crate) struct ExecCtx<'a, 'k, 'f> {
     pub(crate) file: &'a BytecodeFile,
     pub(crate) constants: &'a [Value],
     pub(crate) captureless: &'a HashMap<u32, Value>,
@@ -642,9 +876,12 @@ pub(crate) struct ExecCtx<'a> {
     pub(crate) frames: &'a mut Vec<Frame>,
     pub(crate) stack_bytes: &'a mut usize,
     pub(crate) work_remaining: Option<u64>,
+    pub(crate) keep_running: Option<&'k mut (dyn FnMut() -> bool + 'f)>,
+    pub(crate) trace: Option<&'a RefCell<VmTrace>>,
+    pub(crate) observer: Option<&'a mut CallObserver>,
 }
 
-impl<'a> ExecCtx<'a> {
+impl ExecCtx<'_, '_, '_> {
     fn build_defect(
         &self,
         reason: String,
@@ -815,11 +1052,27 @@ impl<'a> ExecCtx<'a> {
 
     pub(crate) fn run_controlled(&mut self) -> ControlledOutcome {
         loop {
+            if let Some(ref mut keep) = self.keep_running
+                && !keep()
+            {
+                return ControlledOutcome::Cancelled;
+            }
             if let Some(ref mut rem) = self.work_remaining {
                 if *rem == 0 {
                     return ControlledOutcome::Cancelled;
                 }
                 *rem -= 1;
+            }
+            if let Some(cell) = self.trace {
+                let exceeded = {
+                    let mut tr = cell.borrow_mut();
+                    let prev = tr.steps;
+                    tr.steps = tr.steps.saturating_add(1);
+                    prev >= tr.limit
+                };
+                if exceeded {
+                    return self.stop("internal error: step limit reached", None, 0, None);
+                }
             }
             let (fn_idx, pc) = {
                 let f = self.cur_frame();
@@ -1016,6 +1269,18 @@ impl<'a> ExecCtx<'a> {
                     for &reg in arg_regs {
                         call_args.push(self.read_reg(reg as usize).clone());
                     }
+                    if let Some(ref mut obs) = self.observer
+                        && callee_idx == obs.target
+                        && obs.pending.len() < VM_OBSERVED_PENDING
+                        && obs.calls.len() + obs.pending.len() < VM_OBSERVED_CALLS
+                    {
+                        let return_depth = if tail {
+                            self.frames.len() - 1
+                        } else {
+                            self.frames.len()
+                        };
+                        obs.pending.push((return_depth, call_args.clone()));
+                    }
                     let env_val = if is_closure {
                         Some(self.read_reg(target_word as usize).clone())
                     } else {
@@ -1049,6 +1314,15 @@ impl<'a> ExecCtx<'a> {
                         new_states[env_slot] = RegState::Owned;
                     }
 
+                    if let Some(cell) = self.trace {
+                        let mut tr = cell.borrow_mut();
+                        if let Some(ref mut entered) = tr.entered
+                            && let Some(slot) = entered.get_mut(callee_idx as usize)
+                        {
+                            *slot = true;
+                        }
+                    }
+
                     if tail {
                         let old = self.pop_frame();
                         *self.stack_bytes -= old.frame_bytes;
@@ -1080,6 +1354,22 @@ impl<'a> ExecCtx<'a> {
                     let ret_val = self.consume_reg(a[0] as usize);
                     let done = self.pop_frame();
                     *self.stack_bytes -= done.frame_bytes;
+                    if let Some(ref mut obs) = self.observer {
+                        while obs
+                            .pending
+                            .last()
+                            .is_some_and(|(depth, _)| *depth == self.frames.len())
+                        {
+                            if let Some((_, pending_args)) = obs.pending.pop()
+                                && obs.calls.len() < VM_OBSERVED_CALLS
+                            {
+                                obs.calls.push(ObservedCall {
+                                    arguments: pending_args,
+                                    result: ret_val.clone(),
+                                });
+                            }
+                        }
+                    }
                     if self.frames.is_empty() {
                         return ControlledOutcome::Returned(ret_val);
                     }
@@ -1448,6 +1738,7 @@ impl<'a> ExecCtx<'a> {
                         constants: self.constants,
                         captureless: self.captureless,
                         globals: self.globals.as_slice(),
+                        trace: self.trace,
                     };
                     match simulation::exec_sim(
                         &prog, self.heap, sim_op, descriptor, tool, result_ty, &sim_args,

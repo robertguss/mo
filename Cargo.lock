@@ -472,6 +472,7 @@ dependencies = [
  "mo-lower",
  "mo-prim",
  "mo-syntax",
+ "mo-test",
  "mo-vm",
  "rustix",
  "sha2",
@@ -595,6 +596,25 @@ dependencies = [
  "mo-def",
  "mo-prim",
  "thiserror",
+]
+
+[[package]]
+name = "mo-test"
+version = "0.1.0"
+dependencies = [
+ "mo-base",
+ "mo-bytecode",
+ "mo-check",
+ "mo-codegen",
+ "mo-core",
+ "mo-def",
+ "mo-heap",
+ "mo-host",
+ "mo-lower",
+ "mo-prim",
+ "mo-syntax",
+ "mo-vm",
+ "sha2",
 ]
 
 [[package]]

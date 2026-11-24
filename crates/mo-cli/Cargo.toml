@@ -13,6 +13,14 @@ path = "src/lib.rs"
 name = "mo"
 path = "src/main.rs"
 
+[[bin]]
+name = "mo-test-deadline"
+path = "src/bin/test_deadline.rs"
+
+[[bin]]
+name = "mo-test-cli"
+path = "src/bin/test_cli.rs"
+
 [dependencies]
 mo-base = { path = "../mo-base" }
 mo-bytecode = { path = "../mo-bytecode" }
@@ -25,6 +33,7 @@ mo-host = { path = "../mo-host" }
 mo-lower = { path = "../mo-lower" }
 mo-prim = { path = "../mo-prim" }
 mo-syntax = { path = "../mo-syntax" }
+mo-test = { path = "../mo-test" }
 mo-vm = { path = "../mo-vm" }
 sha2 = { version = "0.11", features = ["zeroize"] }
 thiserror = "2"

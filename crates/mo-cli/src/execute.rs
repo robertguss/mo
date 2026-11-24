@@ -30,7 +30,9 @@ use crate::identity::{
 use crate::install::install_program;
 use crate::render::{TestTotals, write_diagnostics, write_test_item, write_version};
 use crate::run::{is_bytecode_path, run_bytecode, run_program};
-use crate::test_cmd::{run_tests, select_tests};
+use crate::test_cmd::{
+    list_gates, run_bundle_test, run_gates, run_strength, run_tests, select_tests,
+};
 
 fn tool_error(diags: &mut DiagBag, code: ErrorCode, message: &str, detail: Option<&str>) {
     let mut d = Diagnostic::new(code, Span::NONE, message);
@@ -163,12 +165,19 @@ fn execute_pipeline(
     }
 
     if cli.command == Command::Test {
-        if cli.strength.is_some() {
-            tool_error(
+        if let Some(strength_bytes) = &cli.strength {
+            let strength_dir = String::from_utf8_lossy(strength_bytes);
+            run_strength(
+                cli,
+                &strength_dir,
+                &load_opts.library,
+                &program,
+                sources,
+                output,
                 diags,
-                ErrorCode::ToolPipeline,
-                "mo test --strength is deferred to Phase 3 Slice 3C (crates/mo-test)",
-                None,
+                &mut out.totals,
+                &mut out.version,
+                &mut out.mistake,
             );
             return out;
         }
@@ -187,15 +196,6 @@ fn execute_pipeline(
             }
         }
         if cli.list {
-            if cli.mutants {
-                tool_error(
-                    diags,
-                    ErrorCode::ToolPipeline,
-                    "mo test --mutants is deferred to Phase 3 Slice 3C (crates/mo-test)",
-                    None,
-                );
-                return out;
-            }
             for obs in &selection.items {
                 if !write_test_item(output, cli.json, sources, obs) {
                     tool_error(
@@ -207,14 +207,20 @@ fn execute_pipeline(
                     return out;
                 }
             }
+            if cli.mutants {
+                list_gates(&program, sources, cli.json, output, diags);
+            }
             return out;
         }
         if cli.mutants {
-            tool_error(
+            run_gates(
+                cli,
+                &program,
+                sources,
+                &selection,
+                output,
                 diags,
-                ErrorCode::ToolPipeline,
-                "mo test --mutants is deferred to Phase 3 Slice 3C (crates/mo-test)",
-                None,
+                &mut out.totals,
             );
             return out;
         }
@@ -355,12 +361,16 @@ where
     F: FnOnce() -> R + Send,
     R: Send,
 {
+    let clock_mode = mo_test::deadline::thread_clock_mode();
     thread::scope(|scope| {
         let builder = thread::Builder::new()
             .name("mo-source".to_string())
             .stack_size(MO_SOURCE_STACK_SIZE as usize);
         let handle = builder
-            .spawn_scoped(scope, f)
+            .spawn_scoped(scope, move || {
+                mo_test::set_thread_clock_mode(clock_mode);
+                f()
+            })
             .map_err(|e| crate::fs_util::io_error_message(&e))?;
         handle
             .join()
@@ -502,6 +512,32 @@ pub fn execute_cli(
     errors: &mut (dyn Write + Send),
 ) -> i32 {
     if cli.source_bundle {
+        if cli.command == Command::Test && cli.old_bundle.is_none() && cli.compile_context.is_none()
+        {
+            let mut sources = SourceMap::new();
+            let mut diags = DiagBag::new();
+            let load_opts = load_options_for(cli);
+            let run_res = run_on_source_stack(|| {
+                run_bundle_test(cli, &load_opts.library, &mut sources, &mut diags);
+            });
+            if let Err(reason) = run_res {
+                tool_error(
+                    &mut diags,
+                    ErrorCode::ToolSourceStack,
+                    "could not prepare the source pipeline stack",
+                    Some(&reason),
+                );
+            }
+            return write_diagnostics(
+                output,
+                errors,
+                false,
+                Command::Emit,
+                &sources,
+                &mut diags,
+                None,
+            );
+        }
         return deferred_command_error(errors, "--bundle", "Slice 3E (crates/mo-upgrade)");
     }
     if cli.upgrade_from.is_some() {

@@ -182,6 +182,10 @@ impl<'a> TypeOverlay<'a> {
         id
     }
 
+    pub(crate) fn into_extra(self) -> Vec<SourceType> {
+        self.extra
+    }
+
     pub(crate) fn builtin(&mut self, name: &'static str) -> TypeId {
         self.builtin_applied(name, Vec::new())
     }

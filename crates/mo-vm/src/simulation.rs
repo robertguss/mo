@@ -130,7 +130,7 @@ impl Drop for SimStore {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ServiceStatus {
+pub enum ServiceStatus {
     Ok,
     Busy,
     Down,
@@ -143,7 +143,8 @@ pub(crate) enum ServiceStatus {
 }
 
 impl ServiceStatus {
-    fn text(self) -> &'static str {
+    #[must_use]
+    pub fn text(self) -> &'static str {
         match self {
             Self::Ok => "service message completed",
             Self::Busy => "service mailbox is full",
@@ -234,6 +235,7 @@ pub(crate) struct ProgramView<'a> {
     pub constants: &'a [Value],
     pub captureless: &'a HashMap<u32, Value>,
     pub globals: &'a [Option<Value>],
+    pub trace: Option<&'a RefCell<crate::VmTrace>>,
 }
 
 impl<'a> ProgramView<'a> {
@@ -243,6 +245,7 @@ impl<'a> ProgramView<'a> {
             constants: &image.constants,
             captureless: &image.captureless_closures,
             globals: &image.globals,
+            trace: image.trace.as_ref(),
         }
     }
 }
@@ -286,6 +289,15 @@ fn invoke_service_fn(
     let mut stack_bytes = bytes;
     let mut dummy_host = HostContext::stdio(Vec::new(), Vec::new());
 
+    if let Some(cell) = prog.trace {
+        let mut tr = cell.borrow_mut();
+        if let Some(ref mut entered) = tr.entered
+            && let Some(slot) = entered.get_mut(fn_idx as usize)
+        {
+            *slot = true;
+        }
+    }
+
     let mut ctx = ExecCtx {
         file: prog.file,
         constants: prog.constants,
@@ -297,6 +309,9 @@ fn invoke_service_fn(
         frames: &mut frames,
         stack_bytes: &mut stack_bytes,
         work_remaining: Some(MO_LIMIT_SERVICE_WORK + 1),
+        keep_running: None,
+        trace: prog.trace,
+        observer: None,
     };
 
     match ctx.run_controlled() {
@@ -1042,7 +1057,7 @@ impl ServiceLoop {
         prog: &ProgramView<'_>,
         store: Option<&mut SimStore>,
         time: ServiceTime,
-    ) -> Option<(StepReply, Option<FailureInfo>)> {
+    ) -> Option<(StepReply, Option<FailureInfo>, bool)> {
         if !self.running {
             return None;
         }
@@ -1113,15 +1128,16 @@ impl ServiceLoop {
             defect: call.defect,
         };
 
+        let mut restarted = false;
         if !call.returned || status == ServiceStatus::Memory {
-            self.supervise(time);
+            restarted = self.supervise(time);
         }
         if !self.running {
             self.drain_mailbox(false);
         } else {
             self.poll_timers(time);
         }
-        Some((reply, event_failure))
+        Some((reply, event_failure, restarted))
     }
 }
 
@@ -1216,7 +1232,7 @@ impl SimulationInner {
                 };
                 lp.step(prog, Some(&mut self.store), self.time)
             };
-            let Some((reply, event_failure)) = step_res else {
+            let Some((reply, event_failure, _)) = step_res else {
                 break;
             };
             if let Some(ev) = event_failure {
@@ -1272,6 +1288,405 @@ impl SimulationInner {
             }
             Err(f) => Err(self.format_failure(prog.file, op, &f)),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public Simulation API (`src/vm/vm.h:mo_simulation_*` / `src/vm/simulation.c`)
+// ---------------------------------------------------------------------------
+
+/// Outcome of a simulation lifecycle operation (`enum mo_simulation_outcome`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationOutcome {
+    Ok,
+    Running,
+    Down,
+    Duration,
+    Ticks,
+    Stopped,
+}
+
+/// Outcome of sending a tool call into a simulation (`enum mo_simulation_sent`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimulationSent {
+    Replied,
+    Rejected,
+    Down,
+    ToolFailed,
+    Failed,
+    Argument,
+    TooLarge,
+    Refused,
+    ReplyCopy,
+    Stopped,
+}
+
+/// Failure notification delivered to simulation hooks (`struct mo_simulation_failure`).
+#[derive(Debug, Clone)]
+pub struct SimulationFailure {
+    pub status: ServiceStatus,
+    pub now: i64,
+    pub function: u32,
+    pub defect: Option<Defect>,
+}
+
+/// Reply payload from [`Simulation::send`] (`struct mo_simulation_reply`).
+#[derive(Clone)]
+pub struct SimulationReply {
+    pub status: ServiceStatus,
+    pub updated: bool,
+    pub ty: u32,
+    pub reply: Option<Value>,
+    pub argument: u32,
+    pub bytes: u64,
+    pub refusal: Option<&'static str>,
+}
+
+impl Default for SimulationReply {
+    fn default() -> Self {
+        Self {
+            status: ServiceStatus::Down,
+            updated: false,
+            ty: 0,
+            reply: None,
+            argument: 0,
+            bytes: 0,
+            refusal: None,
+        }
+    }
+}
+
+/// Deterministic in-memory service simulation harness (`struct mo_simulation`).
+pub struct Simulation<'a> {
+    image: &'a Image,
+    descriptor: u32,
+    store: SimStore,
+    loop_state: Option<ServiceLoop>,
+    time: ServiceTime,
+    restarts: u64,
+}
+
+impl<'a> Simulation<'a> {
+    /// Creates a new stopped simulation for service `descriptor` at `now` microseconds.
+    #[must_use]
+    pub fn new(image: &'a Image, descriptor: u32, now: i64) -> Option<Self> {
+        let store = SimStore::open().ok()?;
+        Some(Self {
+            image,
+            descriptor,
+            store,
+            loop_state: None,
+            time: ServiceTime { now, elapsed: 0 },
+            restarts: 0,
+        })
+    }
+
+    /// Returns whether the service loop is currently running.
+    #[must_use]
+    pub fn running(&self) -> bool {
+        self.loop_state.as_ref().is_some_and(|l| l.running)
+    }
+
+    /// Returns the current simulated wall-clock timestamp in microseconds.
+    #[must_use]
+    pub fn now(&self) -> i64 {
+        self.time.now
+    }
+
+    /// Returns the total number of supervisor restarts (including a restart that stops the service).
+    #[must_use]
+    pub fn restarts(&self) -> u64 {
+        self.restarts
+    }
+
+    /// Encodes the live service state into `out` (`mo_simulation_encode`).
+    pub fn encode(&self, out: &mut Vec<u8>) -> bool {
+        let Some(ref lp) = self.loop_state else {
+            return false;
+        };
+        let state_ty = self.image.file.services[self.descriptor as usize].state_type;
+        encode_value(&self.image.file.types, state_ty, &lp.state, out).is_ok()
+    }
+
+    /// Opens (starts or recovers) the service from its in-memory store (`mo_simulation_open`).
+    pub fn open(
+        &mut self,
+        on_failure: &mut dyn FnMut(&SimulationFailure) -> bool,
+    ) -> SimulationOutcome {
+        if self.running() {
+            return SimulationOutcome::Running;
+        }
+        self.loop_state = None;
+        let prog = ProgramView::from_image(self.image);
+        match ServiceLoop::open(&prog, self.descriptor, Some(&mut self.store), self.time) {
+            Ok(lp) => {
+                self.loop_state = Some(lp);
+                SimulationOutcome::Ok
+            }
+            Err(f) => {
+                let failure = SimulationFailure {
+                    status: f.status,
+                    now: f.now,
+                    function: f.function,
+                    defect: f.defect.map(|d| *d),
+                };
+                let _ = on_failure(&failure);
+                SimulationOutcome::Down
+            }
+        }
+    }
+
+    fn drain_internal(
+        &mut self,
+        on_failure: &mut dyn FnMut(&SimulationFailure) -> bool,
+        caller_heap: Option<&Heap>,
+        reply_out: Option<&mut SimulationReply>,
+    ) -> (SimulationOutcome, bool, bool) {
+        let prog = ProgramView::from_image(self.image);
+        let service = &self.image.file.services[self.descriptor as usize];
+        let mut stopped = false;
+        let mut replied = false;
+        let mut refused = false;
+        let mut reply_slot = reply_out;
+
+        while !stopped {
+            let step_res = {
+                let Some(ref mut lp) = self.loop_state else {
+                    break;
+                };
+                lp.step(&prog, Some(&mut self.store), self.time)
+            };
+            let Some((step_reply, event_failure, restarted)) = step_res else {
+                break;
+            };
+            if restarted {
+                self.restarts = self.restarts.saturating_add(1);
+            }
+            if let Some(ev) = event_failure {
+                let failure = SimulationFailure {
+                    status: ev.status,
+                    now: ev.now,
+                    function: ev.function,
+                    defect: ev.defect.map(|d| *d),
+                };
+                if !on_failure(&failure) {
+                    stopped = true;
+                }
+            }
+            if step_reply.timer {
+                if step_reply.status != ServiceStatus::Ok
+                    && step_reply.status != ServiceStatus::Store
+                    && !stopped
+                {
+                    let failure = SimulationFailure {
+                        status: step_reply.status,
+                        now: self.time.now,
+                        function: service.timers[step_reply.handler as usize].function,
+                        defect: step_reply.defect,
+                    };
+                    if !on_failure(&failure) {
+                        stopped = true;
+                    }
+                }
+            } else {
+                replied = true;
+                if let Some(out) = reply_slot.as_deref_mut() {
+                    out.status = step_reply.status;
+                    out.updated = step_reply.updated;
+                    out.ty = step_reply.result_type;
+                    if step_reply.status == ServiceStatus::Ok {
+                        if let (Some(to_heap), Some(raw)) = (caller_heap, step_reply.value.as_ref())
+                        {
+                            match copy_saved(
+                                &self.image.file.types,
+                                to_heap,
+                                step_reply.result_type,
+                                raw,
+                            ) {
+                                Ok((copied, _)) => {
+                                    out.reply = Some(copied);
+                                }
+                                Err(err) => {
+                                    out.reply = None;
+                                    out.refusal = Some(err.refusal_message());
+                                    refused = true;
+                                    stopped = true;
+                                }
+                            }
+                        } else {
+                            out.reply = None;
+                            refused = true;
+                            stopped = true;
+                        }
+                    }
+                }
+            }
+        }
+        let outcome = if stopped {
+            SimulationOutcome::Stopped
+        } else {
+            SimulationOutcome::Ok
+        };
+        (outcome, replied, refused)
+    }
+
+    /// Drains any pending mailbox/timer work (`mo_simulation_drain`).
+    pub fn drain(
+        &mut self,
+        on_failure: &mut dyn FnMut(&SimulationFailure) -> bool,
+    ) -> SimulationOutcome {
+        if self.loop_state.is_none() {
+            return SimulationOutcome::Ok;
+        }
+        self.drain_internal(on_failure, None, None).0
+    }
+
+    /// Sends a tool call into the simulation and drains until it replies (`mo_simulation_send`).
+    pub fn send(
+        &mut self,
+        on_failure: &mut dyn FnMut(&SimulationFailure) -> bool,
+        heap: &Heap,
+        tool: u32,
+        arguments: &[Value],
+    ) -> (SimulationSent, SimulationReply) {
+        let mut out = SimulationReply::default();
+        if !self.running() {
+            return (SimulationSent::Down, out);
+        }
+        if self.drain(on_failure) != SimulationOutcome::Ok {
+            return (SimulationSent::Stopped, out);
+        }
+        let file = &self.image.file;
+        let handler = &file.services[self.descriptor as usize].tools[tool as usize];
+        let mut copied = Vec::with_capacity(handler.argument_types.len());
+        let mut message_bytes: u64 = LOG_RECORD_HEADER_BYTES as u64;
+        {
+            let Some(ref lp) = self.loop_state else {
+                return (SimulationSent::Down, out);
+            };
+            for (i, &arg_ty) in handler.argument_types.iter().enumerate() {
+                match copy_saved(&file.types, &lp.heap, arg_ty, &arguments[i]) {
+                    Ok((val, enc_len)) => {
+                        copied.push(val);
+                        message_bytes = message_bytes.saturating_add(4 + enc_len as u64);
+                    }
+                    Err(err) => {
+                        out.argument = i as u32;
+                        out.refusal = Some(err.refusal_message());
+                        return (SimulationSent::Argument, out);
+                    }
+                }
+            }
+        }
+        if !handler.read_only && message_bytes > MO_LIMIT_SAVED_BYTES {
+            out.bytes = message_bytes;
+            return (SimulationSent::TooLarge, out);
+        }
+        let enq_status = {
+            let Some(ref mut lp) = self.loop_state else {
+                return (SimulationSent::Down, out);
+            };
+            lp.enqueue(file, true, tool, &copied, self.time)
+        };
+        drop(copied);
+        out.status = enq_status;
+        if enq_status == ServiceStatus::Memory {
+            return (SimulationSent::Refused, out);
+        }
+        if enq_status == ServiceStatus::Ok {
+            let (drained, replied, refused) =
+                self.drain_internal(on_failure, Some(heap), Some(&mut out));
+            if refused {
+                return (SimulationSent::ReplyCopy, out);
+            }
+            if drained != SimulationOutcome::Ok {
+                out.reply = None;
+                return (SimulationSent::Stopped, out);
+            }
+            debug_assert!(replied);
+        }
+        let sent = match out.status {
+            ServiceStatus::Ok => {
+                if out.updated || handler.read_only {
+                    SimulationSent::Replied
+                } else {
+                    SimulationSent::Rejected
+                }
+            }
+            ServiceStatus::Down => SimulationSent::Down,
+            ServiceStatus::Defect | ServiceStatus::Work | ServiceStatus::Memory => {
+                SimulationSent::ToolFailed
+            }
+            ServiceStatus::Busy
+            | ServiceStatus::Interval
+            | ServiceStatus::Store
+            | ServiceStatus::SavedInvalid => SimulationSent::Failed,
+        };
+        (sent, out)
+    }
+
+    /// Counts how many timer firings advancing by `by` microseconds would trigger (`mo_simulation_firings`).
+    #[must_use]
+    pub fn firings(&self, by: i64) -> Option<u64> {
+        if by < 0 || i128::from(self.time.now) + i128::from(by) > i128::from(MO_TIME_MAX_US) {
+            return None;
+        }
+        let count = if self.running() {
+            self.loop_state
+                .as_ref()
+                .map_or(0, |lp| lp.deadlines(self.time.elapsed + by as u64).0)
+        } else {
+            0
+        };
+        Some(count)
+    }
+
+    /// Advances simulated time by `by` microseconds, firing due timers (`mo_simulation_advance`).
+    pub fn advance(
+        &mut self,
+        on_failure: &mut dyn FnMut(&SimulationFailure) -> bool,
+        by: i64,
+    ) -> (SimulationOutcome, u64) {
+        if by < 0 || i128::from(self.time.now) + i128::from(by) > i128::from(MO_TIME_MAX_US) {
+            return (SimulationOutcome::Duration, 0);
+        }
+        let until = self.time.elapsed + by as u64;
+        let target = self.time.now + by;
+        let mut firings = 0u64;
+        if self.running() {
+            if self.drain(on_failure) != SimulationOutcome::Ok {
+                return (SimulationOutcome::Stopped, 0);
+            }
+            firings = self.firings(by).unwrap_or(0);
+            if firings > MO_LIMIT_SIMULATION_TICKS {
+                return (SimulationOutcome::Ticks, firings);
+            }
+            loop {
+                let (due, next) = match self.loop_state.as_ref() {
+                    Some(lp) if lp.running => lp.deadlines(until),
+                    _ => (0, 0),
+                };
+                if due == 0 {
+                    break;
+                }
+                debug_assert!(next >= self.time.elapsed);
+                self.time.now += (next - self.time.elapsed) as i64;
+                self.time.elapsed = next;
+                if self.drain(on_failure) != SimulationOutcome::Ok {
+                    return (SimulationOutcome::Stopped, firings);
+                }
+            }
+        }
+        self.time = ServiceTime {
+            now: target,
+            elapsed: until,
+        };
+        (SimulationOutcome::Ok, firings)
+    }
+
+    /// Crashes the running service loop without touching its durable store (`mo_simulation_crash`).
+    pub fn crash(&mut self) {
+        self.loop_state = None;
     }
 }
 
@@ -1519,7 +1934,7 @@ pub(crate) fn exec_sim(
             let mut reply_opt: Option<StepReply> = None;
             loop {
                 let now = actor.clock();
-                let Some((r, _)) = actor
+                let Some((r, _, _)) = actor
                     .loop_state
                     .as_mut()
                     .and_then(|lp| lp.step(prog, None, now))

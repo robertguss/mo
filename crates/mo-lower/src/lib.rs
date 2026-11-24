@@ -55,6 +55,9 @@ pub struct LoweredPromise {
     pub spec: CheckedSpecId,
     pub name: String,
     pub parameters: Vec<SourceType>,
+    /// Closed source type IDs resolved against `CheckedProgram::signatures.types` +
+    /// [`LoweredProgram::extra_types`].
+    pub parameter_ids: Vec<TypeId>,
 }
 
 /// Output of lowering a [`CheckedProgram`] into Mo Core.
@@ -64,6 +67,8 @@ pub struct LoweredProgram {
     pub program: Program,
     pub services: Services,
     pub promises: Vec<LoweredPromise>,
+    /// Synthesized closed [`SourceType`] nodes appended past `CheckedProgram::signatures.types.len()`.
+    pub extra_types: Vec<SourceType>,
     pub query_index: Option<u32>,
 }
 
@@ -591,6 +596,7 @@ fn run_lowering(
                 .map(|pm| pm.ty)
                 .collect();
             let mut param_sources = Vec::with_capacity(subj_param_tys.len());
+            let mut param_ids = Vec::with_capacity(subj_param_tys.len());
             for ty_id in subj_param_tys {
                 p.work(1)?;
                 let Some(src_id) = lower_source_type(&p, ty_id) else {
@@ -600,11 +606,13 @@ fn run_lowering(
                     );
                 };
                 param_sources.push(p.source_type(src_id).clone());
+                param_ids.push(src_id);
             }
             promises.push(LoweredPromise {
                 spec: spec_id,
                 name: p.instances[i].fun.name.clone(),
                 parameters: param_sources,
+                parameter_ids: param_ids,
             });
         }
     }
@@ -620,6 +628,7 @@ fn run_lowering(
         program: core_program,
         services,
         promises,
+        extra_types: p.types_overlay.into_extra(),
         query_index,
     })
 }

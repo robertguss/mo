@@ -1,32 +1,40 @@
 #!/usr/bin/env python3
-"""Phase 3 Slice 3B verification harness for the unified pure-Rust `mo` CLI (`crates/mo-cli`).
+"""Phase 3 Slice 3C verification harness for the unified pure-Rust `mo` CLI (`crates/mo-cli` + `crates/mo-test`).
 
 Run from the repository root:
     python3 ci/check_rust_cli.py [--mo-bin PATH] [--modb-dir PATH] [--kill-count N]
                                  [--skip-build] [--skip-format-corpus] [--skip-upstream]
 
-Checks every Slice-3B contract directly on `target/release/mo` (with ZERO C binaries in the loop):
+Checks every Slice-3B & Slice-3C contract directly on `target/release/mo` (with ZERO C binaries in the loop):
   1. Dynamic linkage audit (`ldd`): zero `libssl`, zero `libcrypto`, zero `libsqlite3`.
   2. Version (`--version`, `-V`), embedded docs (`guide`, `guide --reference`, `EPIPE` exit 0).
-  3. CLI goldens & full flag/argument matrix (`ci/check_cli.py` Slice-3B surface):
+  3. CLI goldens & full flag/argument matrix (`ci/check_cli.py` Slice-3B + Slice-3C surface):
        - All 8 `tests/cli/{parse,load,modules,signatures,bodies,program,fix,multiline}/{text,json}.golden`
-       - `tests/cli/good`, `tests/cli/library`, `tests/cli/test/list.golden`, and all 5 non-promise
-         records of `tests/cli/test/json.golden` byte-for-byte
+       - `tests/cli/good`, `tests/cli/library`, `tests/cli/test/list.golden`, and ALL 6 records of
+         `tests/cli/test/json.golden` (including `Main.double.promise.1`) byte-for-byte
        - Full 44-flag acceptance/duplicate/limit/operand/budget matrix & non-UTF-8 escaping
        - Locale UTF-8/ASCII (`LC_ALL=C`, `POSIX`, invalid), unsafe JSON escapes, non-UTF-8 OS path
          bytes (`bad\\udcff`, `filenames` across `check`, `run`, `--emit=bytecode`, defect, `E1405`)
        - `source_stack` under `RLIMIT_STACK = 1 MiB`
        - `anchors`, `lower_source_fixtures`, `install_command`, `fix_command`
+       - `cli_promises` (all 11 suites), `cli_intent` (`promise_selection`, `recovery_checks`,
+         `service_promise_checks`, `strength_checks`, `fix_command`), `cli_gates.mutants`, and
+         `cli_programs` (`observations`, `captures`, `generic_imports`, `imported_constants`, `imports`)
        - `emit`, `run` (source + `.bc`, actors, broken pipe -> 70, `LC_ALL=C` defect escaping),
          `format` (`--stdin`, `E1402`, `E1403`, atomic rename/hardlink/mode/idempotency),
          and `test` (pass/fail/equality `left`/`right`/stopped variables 4094 vs 4095, `E1406`)
   4. Complete `tests/errors/` suite across all 235 cases (0 silently skipped):
-       - 220 Slice-3B cases (`215 check` + `e1402`, `e1403`, `e1406`, `e1407`, `e1408`) verified
-         byte-for-byte against `expected`
-       - 15 explicitly classified Slice 3C/3D/3E deferred cases verified accounted for
+       - 226 Slice-3B + Slice-3C cases (`215 check` + `e1400`, `e1400-simulation`, `e1402`, `e1403`,
+         `e1404`, `e1406`, `e1407`, `e1408`, `e1432`, `e1433`, `e1439`) verified byte-for-byte
+       - 9 explicitly classified Slice 3D/3E deferred cases verified accounted for
   5. Full corpus `mo format` audit across all tracked `.mo` files (idempotency, refused unchanged,
-     `check --json` preserved, `run` preserved, non-promise golden cases preserved).
+     `check --json` preserved, `run` preserved, all 238/238 golden cases preserved).
   6. Unmodified upstream harnesses directly on `target/release/mo`:
+       - `ci/check_golden.py` (238/238)
+       - `ci/check_lib.py` (30/30)
+       - `ci/check_programs.py` (16/16)
+       - `ci/check_simulation.py`
+       - `ci/check_tools.py`
        - `ci/check_crypto.py`
        - `ci/check_network.py`
        - `ci/check_reference_examples.py`
@@ -56,18 +64,26 @@ sys.path.insert(0, str(ROOT / "ci"))
 
 from cli_common import records, run, utf8_locale  # noqa: E402
 from cli_fixtures import anchors, lower_source_fixtures, source_stack  # noqa: E402
+from cli_gates import mutants  # noqa: E402
 from cli_guide import flags, install_command  # noqa: E402
-from cli_intent import fix_command  # noqa: E402
+from cli_intent import (  # noqa: E402
+    fix_command,
+    promise_selection,
+    recovery_checks,
+    service_promise_checks,
+    strength_checks,
+)
+from cli_programs import (  # noqa: E402
+    captures,
+    generic_imports,
+    imported_constants,
+    imports,
+    observations,
+)
+import cli_promises  # noqa: E402
 
-# Explicit disposition of the 15 non-Slice-3B `tests/errors/` folders (zero silently skipped).
+# Explicit disposition of the 9 non-Slice-3C `tests/errors/` folders (zero silently skipped).
 DEFERRED_ERROR_CASES: dict[str, str] = {
-    # Slice 3C: crates/mo-test (promises, recovery, strength, bundle, mutants)
-    "e1400": "Slice 3C (promise generator refusal)",
-    "e1400-simulation": "Slice 3C (service simulation test refusal)",
-    "e1404": "Slice 3C (promise result output budget)",
-    "e1432": "Slice 3C (--strength)",
-    "e1433": "Slice 3C (test --bundle)",
-    "e1439": "Slice 3C (--mutants)",
     # Slice 3D: crates/mo-service (serve, fetch, replay, query, history)
     "e1409": "Slice 3D (mo serve)",
     "e1409-data": "Slice 3D (mo serve --data)",
@@ -90,13 +106,19 @@ def find_or_build_rust_mo(explicit: str | None, skip_build: bool) -> pathlib.Pat
         assert path.is_file(), f"mo binary not found: {path}"
         return path
     target = ROOT / "target/release/mo"
-    if not skip_build or not target.is_file():
+    helper_deadline = ROOT / "target/release/mo-test-deadline"
+    helper_cli = ROOT / "target/release/mo-test-cli"
+    if not skip_build or not target.is_file() or not helper_deadline.is_file() or not helper_cli.is_file():
         subprocess.run(
-            ["cargo", "build", "--release", "--bin", "mo"],
+            ["cargo", "build", "--release", "--bin", "mo", "--bin", "mo-test-deadline", "--bin", "mo-test-cli"],
             cwd=ROOT,
             check=True,
         )
     assert target.is_file(), f"failed to build {target}"
+    tests_dir = target.parent / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    shutil.copy2(helper_deadline, tests_dir / "test_deadline.test")
+    shutil.copy2(helper_cli, tests_dir / "test_cli.test")
     return target
 
 
@@ -169,16 +191,8 @@ def check_cli_goldens_and_matrix(binary: pathlib.Path) -> None:
     assert listed_fixture.stdout == (ROOT / "tests/cli/test/list.golden").read_bytes()
     records(listed_fixture, "test")
 
-    # Verify every non-promise record of tests/cli/test/json.golden byte-for-byte.
-    non_promise_names = [
-        "Main.double.example.1",
-        "Main.double.example.2",
-        "Main.test.1",
-        "Main.test.2",
-        "Main.test.3",
-    ]
-    only_args = [arg for name in non_promise_names for arg in ("--only", name)]
-    ran_fixture = run(binary, ["test", "--json", *only_args, test_fixture], 1)
+    # Verify EVERY record of tests/cli/test/json.golden (including Main.double.promise.1) byte-for-byte.
+    ran_fixture = run(binary, ["test", "--json", test_fixture], 1)
     ran_items = records(ran_fixture, "test")
     for r in ran_items[1:-1]:
         assert type(r["microseconds"]) is int and r["microseconds"] >= 0
@@ -187,11 +201,7 @@ def check_cli_goldens_and_matrix(binary: pathlib.Path) -> None:
         json.loads(line)
         for line in (ROOT / "tests/cli/test/json.golden").read_text().splitlines()
     ]
-    expected_non_promise = [
-        item for item in golden_lines if item.get("name") != "Main.double.promise.1"
-    ]
-    expected_non_promise[-1]["failed"] -= 1
-    assert ran_items == expected_non_promise, (ran_items, expected_non_promise)
+    assert ran_items == golden_lines, (ran_items, golden_lines)
 
     # 4. Complete flag & argument refusal matrix (exit 2).
     def mistake(args, message=None):
@@ -661,8 +671,8 @@ def check_errors_suite(binary: pathlib.Path) -> tuple[int, int]:
 
     assert deferred == len(DEFERRED_ERROR_CASES), (deferred, len(DEFERRED_ERROR_CASES))
     print(
-        f"{binary}: tests/errors/ parity passed ({ran} Slice-3B cases byte-exact, "
-        f"{deferred} explicitly deferred to Slices 3C-3E, {ran + deferred}/{len(cases)} accounted)"
+        f"{binary}: tests/errors/ parity passed ({ran} Slice-3B+3C cases byte-exact, "
+        f"{deferred} explicitly deferred to Slices 3D-3E, {ran + deferred}/{len(cases)} accounted)"
     )
     return ran, deferred
 
@@ -746,7 +756,6 @@ def check_format_corpus(binary: pathlib.Path) -> None:
                 runs[path] = execute(folder, path)
 
         golden = []
-        skipped_golden = 0
         for case in sorted((folder / "tests/golden").iterdir()):
             if not case.is_dir():
                 continue
@@ -764,13 +773,6 @@ def check_format_corpus(binary: pathlib.Path) -> None:
             arguments = read("args").decode().splitlines()
             stdin = read("stdin")
             expected = execute(folder, path, command, arguments, stdin)
-            if (
-                command == "test"
-                and expected is not None
-                and b"Slice 3C" in expected[2]
-            ):
-                skipped_golden += 1
-                continue
             stdout = norm_test(read("stdout"), folder) if command == "test" else read("stdout")
             assert expected is not None and expected[:2] == (int(read("status", b"0")), stdout), (
                 f"golden {case.name}: baseline mismatch: {expected!r}"
@@ -818,12 +820,44 @@ def check_format_corpus(binary: pathlib.Path) -> None:
         f"{binary}: format corpus passed ({len(programs)} tracked .mo files, "
         f"{counts['formatted']} formatted, {counts['refused']} unchanged refusals, "
         f"{counts['runs']} run comparisons, {counts['no main']} modules without main, "
-        f"{len(golden)} golden comparisons, {skipped_golden} Slice-3C promise goldens deferred)"
+        f"{len(golden)}/238 golden comparisons)"
+    )
+
+
+def check_test_engine_suites(binary: pathlib.Path) -> None:
+    promise_suites = sorted(
+        name
+        for name in dir(cli_promises)
+        if callable(getattr(cli_promises, name))
+        and getattr(cli_promises, name).__module__ == "cli_promises"
+        and not name.startswith("_")
+    )
+    assert len(promise_suites) == 11, promise_suites
+    for name in promise_suites:
+        getattr(cli_promises, name)(binary)
+    promise_selection(binary)
+    recovery_checks(binary)
+    service_promise_checks(binary)
+    strength_checks(binary)
+    mutants(binary)
+    observations(binary)
+    captures(binary)
+    generic_imports(binary)
+    imported_constants(binary)
+    imports(binary)
+    print(
+        f"{binary}: Slice 3C mo-test CLI suites passed "
+        f"({len(promise_suites)} cli_promises, 4 cli_intent, cli_gates.mutants, 5 cli_programs)"
     )
 
 
 def check_upstream_harnesses(binary: pathlib.Path) -> None:
     for cmd in (
+        [sys.executable, str(ROOT / "ci/check_golden.py"), str(binary)],
+        [sys.executable, str(ROOT / "ci/check_lib.py"), str(binary)],
+        [sys.executable, str(ROOT / "ci/check_programs.py"), str(binary)],
+        [sys.executable, str(ROOT / "ci/check_simulation.py"), str(binary)],
+        [sys.executable, str(ROOT / "ci/check_tools.py"), str(binary)],
         [sys.executable, str(ROOT / "ci/check_crypto.py"), str(binary)],
         [sys.executable, str(ROOT / "ci/check_network.py"), str(binary)],
         [sys.executable, str(ROOT / "ci/check_reference_examples.py"), str(binary)],
@@ -913,6 +947,7 @@ def main() -> int:
     install_command(binary)
     fix_command(binary)
     check_emit_run_and_test_contracts(binary)
+    check_test_engine_suites(binary)
     check_errors_suite(binary)
     if not args.skip_format_corpus:
         check_format_corpus(binary)
@@ -921,7 +956,7 @@ def main() -> int:
     if args.modb_dir:
         check_modb_gate(binary, pathlib.Path(args.modb_dir), args.kill_count)
 
-    print(f"check_rust_cli.py: ALL Phase 3 Slice 3B checks passed on {binary}")
+    print(f"check_rust_cli.py: ALL Phase 3 Slice 3C checks passed on {binary}")
     return 0
 
 

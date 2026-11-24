@@ -256,7 +256,7 @@ fn fold_into_parent(
     }
 }
 
-pub(crate) fn inline_payload_to_value(payload: InlinePayload, ty_kind: TypeKind) -> Value {
+pub fn inline_payload_to_value(payload: InlinePayload, ty_kind: TypeKind) -> Value {
     match payload {
         InlinePayload::Empty | InlinePayload::Unit => Value::Unit,
         InlinePayload::Bool(b) => Value::Bool(b),

@@ -109,6 +109,43 @@ fn collect_prefixes(path: &str, include_self: bool, out: &mut Vec<String>) {
     }
 }
 
+pub(crate) fn files_in_memory_with_folders(
+    heap: &Heap,
+    cap: Capability,
+    result_ty: u32,
+    files: &[(String, Vec<u8>)],
+    folders: &[String],
+) -> Result<Value, HostError> {
+    let mut state = FakeFsState::new(heap.budget().clone());
+    for folder in folders {
+        let mut prefixes = Vec::new();
+        collect_prefixes(folder, true, &mut prefixes);
+        for p in prefixes {
+            if state.folders.insert(p.clone()) {
+                state.charge_meta(META_ENTRY_OVERHEAD + p.len())?;
+            }
+        }
+    }
+    for (path, bytes) in files {
+        let mut prefixes = Vec::new();
+        collect_prefixes(path, false, &mut prefixes);
+        for p in prefixes {
+            if state.folders.insert(p.clone()) {
+                state.charge_meta(META_ENTRY_OVERHEAD + p.len())?;
+            }
+        }
+        let val = heap.alloc_bytes(bytes.clone())?;
+        if state.files.insert(path.clone(), val).is_none() {
+            state.charge_meta(META_ENTRY_OVERHEAD + path.len())?;
+        }
+    }
+    let folder = FakeFolderCap {
+        fs: Rc::new(RefCell::new(state)),
+        prefix: Some(String::new()),
+    };
+    Ok(heap.alloc_capability(cap, result_ty, Rc::new(crate::FolderCap::Fake(folder)))?)
+}
+
 pub(crate) fn files_in_memory(
     heap: &Heap,
     types: &TypeTable,
