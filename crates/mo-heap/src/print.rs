@@ -135,10 +135,41 @@ pub fn format_bigint(out: &mut String, sign: BigIntSign, magnitude: &[u8]) {
     crate::bigint::format_bigint(out, sign, magnitude);
 }
 
+fn push_str_bounded(out: &mut String, s: &str, limit: Option<usize>) -> bool {
+    if let Some(max) = limit
+        && out.len().saturating_add(s.len()) > max
+    {
+        return false;
+    }
+    out.push_str(s);
+    true
+}
+
+fn push_char_bounded(out: &mut String, ch: char, limit: Option<usize>) -> bool {
+    if let Some(max) = limit
+        && out.len().saturating_add(ch.len_utf8()) > max
+    {
+        return false;
+    }
+    out.push(ch);
+    true
+}
+
 /// Quotes UTF-8 bytes matching `src/heap/print.c:quote` (including C1 escapes).
 pub fn quote_structural(out: &mut String, s: &str, delimiter: Option<char>) {
-    if let Some(d) = delimiter {
-        out.push(d);
+    let _ = quote_structural_bounded(out, s, delimiter, None);
+}
+
+fn quote_structural_bounded(
+    out: &mut String,
+    s: &str,
+    delimiter: Option<char>,
+    limit: Option<usize>,
+) -> bool {
+    if let Some(d) = delimiter
+        && !push_char_bounded(out, d, limit)
+    {
+        return false;
     }
     let bytes = s.as_bytes();
     let mut i = 0;
@@ -147,24 +178,36 @@ pub fn quote_structural(out: &mut String, s: &str, delimiter: Option<char>) {
         let is_c1 = c == 0xc2 && i + 1 < bytes.len() && (0x80..=0x9f).contains(&bytes[i + 1]);
         match c {
             b'\n' => {
-                out.push_str("\\n");
+                if !push_str_bounded(out, "\\n", limit) {
+                    return false;
+                }
                 i += 1;
             }
             b'\r' => {
-                out.push_str("\\r");
+                if !push_str_bounded(out, "\\r", limit) {
+                    return false;
+                }
                 i += 1;
             }
             b'\t' => {
-                out.push_str("\\t");
+                if !push_str_bounded(out, "\\t", limit) {
+                    return false;
+                }
                 i += 1;
             }
             b if b < 32 || b == 127 => {
-                out.push_str(&format!("\\u{{{b:x}}}"));
+                let esc = format!("\\u{{{b:x}}}");
+                if !push_str_bounded(out, &esc, limit) {
+                    return false;
+                }
                 i += 1;
             }
             _ if is_c1 => {
                 let code = bytes[i + 1];
-                out.push_str(&format!("\\u{{{code:x}}}"));
+                let esc = format!("\\u{{{code:x}}}");
+                if !push_str_bounded(out, &esc, limit) {
+                    return false;
+                }
                 i += 2;
             }
             _ => {
@@ -172,40 +215,63 @@ pub fn quote_structural(out: &mut String, s: &str, delimiter: Option<char>) {
                     break;
                 };
                 let is_interp = c == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{';
-                if delimiter == Some(ch) || ch == '\\' || is_interp {
-                    out.push('\\');
+                if (delimiter == Some(ch) || ch == '\\' || is_interp)
+                    && !push_char_bounded(out, '\\', limit)
+                {
+                    return false;
                 }
-                out.push(ch);
+                if !push_char_bounded(out, ch, limit) {
+                    return false;
+                }
                 i += ch.len_utf8();
             }
         }
     }
-    if let Some(d) = delimiter {
-        out.push(d);
+    if let Some(d) = delimiter
+        && !push_char_bounded(out, d, limit)
+    {
+        return false;
     }
+    true
 }
 
-fn scalar_text(kind: TypeKind, value: &Value, nested: bool, out: &mut String) {
+fn scalar_text_bounded(
+    kind: TypeKind,
+    value: &Value,
+    nested: bool,
+    limit: Option<usize>,
+    out: &mut String,
+) -> bool {
     match kind {
-        TypeKind::Unit => out.push_str("Unit"),
+        TypeKind::Unit => push_str_bounded(out, "Unit", limit),
         TypeKind::Bool => {
             if let Value::Bool(b) = value {
-                out.push_str(if *b { "true" } else { "false" });
+                push_str_bounded(out, if *b { "true" } else { "false" }, limit)
+            } else {
+                true
             }
         }
         TypeKind::Byte => {
             if let Value::Byte(b) = value {
-                out.push_str(&b.to_string());
+                push_str_bounded(out, &b.to_string(), limit)
+            } else {
+                true
             }
         }
         TypeKind::Int => {
             if let Value::Int(n) = value {
-                out.push_str(&n.to_string());
+                push_str_bounded(out, &n.to_string(), limit)
+            } else {
+                true
             }
         }
         TypeKind::Float => {
             if let Value::Float(x) = value {
-                format_float(*x, out);
+                let mut tmp = String::new();
+                format_float(*x, &mut tmp);
+                push_str_bounded(out, &tmp, limit)
+            } else {
+                true
             }
         }
         TypeKind::Char => {
@@ -213,32 +279,48 @@ fn scalar_text(kind: TypeKind, value: &Value, nested: bool, out: &mut String) {
                 let mut buf = [0u8; 4];
                 let s = c.encode_utf8(&mut buf);
                 if nested {
-                    quote_structural(out, s, Some('\''));
+                    quote_structural_bounded(out, s, Some('\''), limit)
                 } else {
-                    out.push_str(s);
+                    push_str_bounded(out, s, limit)
                 }
+            } else {
+                true
             }
         }
         TypeKind::Time => {
             if let Value::Time(t) = value {
-                format_time(out, *t);
+                let mut tmp = String::new();
+                format_time(&mut tmp, *t);
+                push_str_bounded(out, &tmp, limit)
+            } else {
+                true
             }
         }
         TypeKind::Duration => {
             if let Value::Duration(d) = value {
-                format_duration(out, *d);
+                let mut tmp = String::new();
+                format_duration(&mut tmp, *d);
+                push_str_bounded(out, &tmp, limit)
+            } else {
+                true
             }
         }
         TypeKind::Decimal => {
             if let Value::Decimal(d) = value {
-                format_decimal(out, *d);
+                let mut tmp = String::new();
+                format_decimal(&mut tmp, *d);
+                push_str_bounded(out, &tmp, limit)
+            } else {
+                true
             }
         }
         TypeKind::Range => {
             if let Value::Range(s, e) = value {
-                out.push_str(&s.to_string());
-                out.push_str("..");
-                out.push_str(&e.to_string());
+                push_str_bounded(out, &s.to_string(), limit)
+                    && push_str_bounded(out, "..", limit)
+                    && push_str_bounded(out, &e.to_string(), limit)
+            } else {
+                true
             }
         }
         TypeKind::Text => {
@@ -246,42 +328,56 @@ fn scalar_text(kind: TypeKind, value: &Value, nested: bool, out: &mut String) {
                 && let HeapObj::Text(s) = r.obj()
             {
                 if nested {
-                    quote_structural(out, s, Some('"'));
+                    quote_structural_bounded(out, s, Some('"'), limit)
                 } else {
-                    out.push_str(s);
+                    push_str_bounded(out, s, limit)
                 }
+            } else {
+                true
             }
         }
         TypeKind::Bytes => {
             if let Value::Ref(r) = value
                 && let HeapObj::Bytes(bytes) = r.obj()
             {
-                out.push_str("bytes[");
-                for (i, &b) in bytes.iter().enumerate() {
-                    if i != 0 {
-                        out.push_str(", ");
-                    }
-                    out.push_str(&b.to_string());
+                if !push_str_bounded(out, "bytes[", limit) {
+                    return false;
                 }
-                out.push(']');
+                for (i, &b) in bytes.iter().enumerate() {
+                    if i != 0 && !push_str_bounded(out, ", ", limit) {
+                        return false;
+                    }
+                    if !push_str_bounded(out, &b.to_string(), limit) {
+                        return false;
+                    }
+                }
+                push_char_bounded(out, ']', limit)
+            } else {
+                true
             }
         }
         TypeKind::BigInt => {
             if let Value::Ref(r) = value
                 && let HeapObj::BigInt { sign, magnitude } = r.obj()
             {
-                format_bigint(out, *sign, magnitude);
+                let mut tmp = String::new();
+                format_bigint(&mut tmp, *sign, magnitude);
+                push_str_bounded(out, &tmp, limit)
+            } else {
+                true
             }
         }
-        TypeKind::Function => out.push_str("<function>"),
-        TypeKind::Env => out.push_str("<environment>"),
+        TypeKind::Function => push_str_bounded(out, "<function>", limit),
+        TypeKind::Env => push_str_bounded(out, "<environment>", limit),
         TypeKind::Capability => {
             if let Value::Ref(r) = value
                 && let HeapObj::Capability(cap) = r.obj()
             {
-                out.push('<');
-                out.push_str(cap.kind.name());
-                out.push('>');
+                push_char_bounded(out, '<', limit)
+                    && push_str_bounded(out, cap.kind.name(), limit)
+                    && push_char_bounded(out, '>', limit)
+            } else {
+                true
             }
         }
         _ => unreachable!("compound type handled separately"),
@@ -297,7 +393,14 @@ struct PrintFrame {
     emitted: bool,
 }
 
-fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mut String) {
+fn print_impl(
+    types: &TypeTable,
+    ty: u32,
+    value: &Value,
+    literal: bool,
+    limit: Option<usize>,
+    out: &mut String,
+) -> bool {
     let mut stack = vec![PrintFrame {
         ty,
         value: value.clone(),
@@ -327,7 +430,9 @@ fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mu
             f.entered = true;
             if !is_compound {
                 let nested = literal || stack_len != 1;
-                scalar_text(kind, &f.value, nested, out);
+                if !scalar_text_bounded(kind, &f.value, nested, limit, out) {
+                    return false;
+                }
                 stack.pop();
                 continue;
             }
@@ -344,7 +449,9 @@ fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mu
             };
             collect_print_children(types, f.ty, &f.value, &mut f.children);
             if let Some(name) = header_name {
-                quote_structural(out, name, None);
+                if !quote_structural_bounded(out, name, None, limit) {
+                    return false;
+                }
                 if f.children.is_empty() {
                     stack.pop();
                     continue;
@@ -355,7 +462,9 @@ fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mu
                 TypeKind::List | TypeKind::Set => '[',
                 _ => '(',
             };
-            out.push(open);
+            if !push_char_bounded(out, open, limit) {
+                return false;
+            }
         }
 
         if f.next == f.children.len() {
@@ -365,7 +474,9 @@ fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mu
                 TypeKind::List => "]",
                 _ => ")",
             };
-            out.push_str(close);
+            if !push_str_bounded(out, close, limit) {
+                return false;
+            }
             stack.pop();
             continue;
         }
@@ -376,15 +487,19 @@ fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mu
             } else {
                 ", "
             };
-            out.push_str(sep);
+            if !push_str_bounded(out, sep, limit) {
+                return false;
+            }
         }
         let (label, child_ty, child_val) = f.children[f.next].clone();
         f.next += 1;
         f.emitted = true;
 
-        if let Some(lbl) = label {
-            quote_structural(out, &lbl, None);
-            out.push_str(": ");
+        if let Some(lbl) = label
+            && (!quote_structural_bounded(out, &lbl, None, limit)
+                || !push_str_bounded(out, ": ", limit))
+        {
+            return false;
         }
 
         stack.push(PrintFrame {
@@ -396,6 +511,7 @@ fn print_impl(types: &TypeTable, ty: u32, value: &Value, literal: bool, out: &mu
             emitted: false,
         });
     }
+    true
 }
 
 fn collect_print_children(
@@ -493,12 +609,29 @@ fn collect_print_children(
 
 pub fn value_print(types: &TypeTable, ty: u32, value: &Value) -> String {
     let mut out = String::new();
-    print_impl(types, ty, value, false, &mut out);
+    let _ = print_impl(types, ty, value, false, None, &mut out);
     out
 }
 
 pub fn value_print_literal(types: &TypeTable, ty: u32, value: &Value) -> String {
     let mut out = String::new();
-    print_impl(types, ty, value, true, &mut out);
+    let _ = print_impl(types, ty, value, true, None, &mut out);
     out
+}
+
+/// Renders `value` up to `limit` bytes, returning `None` if formatting exceeds `limit`.
+#[must_use]
+pub fn value_print_bounded(
+    types: &TypeTable,
+    ty: u32,
+    value: &Value,
+    literal: bool,
+    limit: usize,
+) -> Option<String> {
+    let mut out = String::new();
+    if print_impl(types, ty, value, literal, Some(limit), &mut out) {
+        Some(out)
+    } else {
+        None
+    }
 }

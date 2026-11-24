@@ -2125,6 +2125,66 @@ fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &[u8], options: &LoadOptio
     true
 }
 
+/// Loads an in-memory set of non-library modules already added to `sources`,
+/// then attaches the standard library from `options.library` (`src/check/load.c:mo_load_bundle_with_library`).
+#[must_use]
+pub fn load_bundle_with_library(
+    sources: &mut SourceMap,
+    options: &LoadOptions,
+    diags: &mut DiagBag,
+) -> Option<ModuleSet> {
+    let count = sources.len();
+    if count == 0 || u64::from(count) > MO_LIMIT_FILES {
+        return None;
+    }
+    let embedded = match &options.library {
+        LibraryMode::Embedded { library, .. } => Some(*library),
+        LibraryMode::None | LibraryMode::Directory(_) => None,
+    };
+    let mut loader = Loader::new(
+        sources,
+        diags,
+        embedded,
+        false,
+        options.upgrade,
+        options.syntax_arena_limit,
+    );
+    let mut ok = true;
+    for i in 0..count {
+        if loader.index_module(i, None, Span::NONE, false).is_none() {
+            ok = false;
+            break;
+        }
+    }
+    if ok {
+        match &options.library {
+            LibraryMode::Directory(lib_path) => {
+                let lib_bytes = path_to_bytes(lib_path);
+                if let Some(norm_lib) = loader.normal_path(&lib_bytes)
+                    && let Some(real_lib) = loader.real_path(&norm_lib, Span::NONE, true)
+                {
+                    loader.real_library = Some(real_lib);
+                    if !loader.library_files(&norm_lib) {
+                        ok = false;
+                    }
+                } else {
+                    ok = false;
+                }
+            }
+            LibraryMode::Embedded { library, .. } => {
+                if !loader.embedded_library_files(library) {
+                    ok = false;
+                }
+            }
+            LibraryMode::None => {}
+        }
+    }
+    loader.memory_only = true;
+    let set = if ok { loader.parse_modules() } else { None };
+    diags.sort();
+    set
+}
+
 /// Loads a closed in-memory set of sources already added to `sources`
 /// (`src/check/load.c:mo_load_program_sources`).
 #[must_use]

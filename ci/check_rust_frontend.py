@@ -136,7 +136,7 @@ def check_workspace_lint_policy() -> tuple[int, int]:
         assert rule in cargo_text, f"Cargo.toml missing required workspace lint: {rule}"
 
     crate_dirs = sorted(p for p in (ROOT / "crates").iterdir() if p.is_dir())
-    assert len(crate_dirs) >= 15, f"expected >= 15 workspace crates, found {len(crate_dirs)}"
+    assert len(crate_dirs) >= 16, f"expected >= 16 workspace crates, found {len(crate_dirs)}"
     entry_points_checked = 0
     for crate in crate_dirs:
         crate_toml = (crate / "Cargo.toml").read_text(encoding="utf-8")
@@ -148,6 +148,9 @@ def check_workspace_lint_policy() -> tuple[int, int]:
             for p in (crate / "src/lib.rs", crate / "src/main.rs", crate / "build.rs")
             if p.is_file()
         ]
+        bin_dir = crate / "src/bin"
+        if bin_dir.is_dir():
+            entries.extend(sorted(bin_dir.glob("*.rs")))
         assert entries, f"{crate.relative_to(ROOT)}: no Rust entry point found"
         for ep in entries:
             first_lines = ep.read_text(encoding="utf-8").splitlines()[:5]
