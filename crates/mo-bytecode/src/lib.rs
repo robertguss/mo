@@ -1,14 +1,21 @@
 #![forbid(unsafe_code)]
 
-//! Mo Bytecode v0.3 (`MOBC`) binary reader, structural validator, and type/layout table.
+//! Mo Bytecode v0.3 (`MOBC`) binary reader, writer, disassembler, structural validator, and verifier.
 
+pub mod disassemble;
 pub mod read;
 pub mod types;
 pub mod validate;
 pub mod verify;
+pub mod write;
 
 #[cfg(test)]
 mod verify_tests;
+#[cfg(test)]
+mod write_tests;
+
+pub use disassemble::{disassemble, disassemble_file};
+pub use write::{WriteError, encode, write};
 
 pub const BYTECODE_MAGIC: [u8; 4] = *b"MOBC";
 pub const BYTECODE_MAJOR: u16 = 0;

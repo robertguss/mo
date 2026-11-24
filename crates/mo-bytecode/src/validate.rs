@@ -819,7 +819,7 @@ fn validate_services(raw: &DecodedRaw) -> Result<(), LoadError> {
         }
     }
 
-    let reachable = service_reach(raw);
+    let reachable = service_reach(&raw.types, &raw.services);
     for (s, reach) in raw.services.iter().zip(&reachable) {
         validate_service_shapes(raw, s, reach)?;
     }
@@ -878,10 +878,14 @@ fn validate_service_shapes(
 
 /// Exact port of `mo_bytecode_service_reach` (`src/bytecode/service-reach.c`):
 /// Tarjan SCC + 64-wide bitmask propagation across services.
-fn service_reach(raw: &DecodedRaw) -> Vec<Vec<u32>> {
-    let count = raw.types.len();
+///
+/// For each service, returns all nominal (`Record`/`Choice`) type indices reachable from
+/// its tool argument and result types, in ascending type-index order.
+#[must_use]
+pub fn service_reach(types: &[TypeDef], services: &[ServiceDef]) -> Vec<Vec<u32>> {
+    let count = types.len();
     let mut adj: Vec<Vec<u32>> = Vec::with_capacity(count);
-    for t in &raw.types {
+    for t in types {
         let mut edges = Vec::new();
         edges.extend_from_slice(&t.parameters);
         for f in &t.fields {
@@ -950,14 +954,14 @@ fn service_reach(raw: &DecodedRaw) -> Vec<Vec<u32>> {
         }
     }
 
-    let mut result = vec![Vec::new(); raw.services.len()];
+    let mut result = vec![Vec::new(); services.len()];
     let mut masks = vec![0u64; groups.len()];
     let mut first = 0usize;
-    while first < raw.services.len() {
-        let width = (raw.services.len() - first).min(64);
+    while first < services.len() {
+        let width = (services.len() - first).min(64);
         masks.fill(0);
         for i in 0..width {
-            let s = &raw.services[first + i];
+            let s = &services[first + i];
             for tool in &s.tools {
                 for &arg in &tool.argument_types {
                     masks[comp[arg as usize] as usize] |= 1u64 << i;
@@ -976,7 +980,7 @@ fn service_reach(raw: &DecodedRaw) -> Vec<Vec<u32>> {
                 }
             }
         }
-        for (ty_idx, t) in raw.types.iter().enumerate() {
+        for (ty_idx, t) in types.iter().enumerate() {
             if !is_nominal(t) {
                 continue;
             }

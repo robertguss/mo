@@ -7,6 +7,7 @@ members = [
     "crates/mo-syntax",
     "crates/mo-check",
     "crates/mo-lower",
+    "crates/mo-codegen",
     "crates/mo-fe",
     "crates/mo-bytecode",
     "crates/mo-heap",

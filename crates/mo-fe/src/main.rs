@@ -11,21 +11,32 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mo_base::{
-    DiagBag, Diagnostic, DisplayMetrics, NO_FILE, RenderFormat, SourceError, SourceMap, Span,
-    TerminalEncoding, render_diagnostic_default, render_totals_json, render_version_json,
+    DiagBag, Diagnostic, DisplayMetrics, Label, NO_FILE, RenderFormat, SourceError, SourceMap,
+    Span, TerminalEncoding, render_diagnostic_default, render_totals_json, render_version_json,
 };
-use mo_check::{CheckStage, LibraryMode, LoadOptions, run_stage};
+use mo_bytecode::{
+    AnchorExpectation, BigIntSign, BytecodeFile, ConstantValue, FunctionKind, NO_INDEX,
+    disassemble as disassemble_bytecode, load as load_bytecode, write as write_bytecode,
+};
+use mo_check::{
+    CheckStage, CheckedProgram, CheckedSpec, CheckedSpecKind, LibraryMode, LoadOptions, ModuleId,
+    run_stage,
+};
+use mo_codegen::{compile as compile_core, compile_services as compile_core_services};
 use mo_core::{
     CoreDocument, CoreTextKind, check_program, check_program_services, detect_kind, parse_document,
     parse_program, parse_run, print_document, print_program,
 };
 use mo_def::limits::{
-    MO_LIMIT_CORE_TEXT_SIZE, MO_LIMIT_DIAGNOSTICS, MO_LIMIT_FILE_SIZE, MO_LIMIT_PATH_SIZE,
+    MO_CLI_ANCHOR_INSTRUCTIONS, MO_LIMIT_CORE_TEXT_SIZE, MO_LIMIT_DIAGNOSTICS, MO_LIMIT_FILE_SIZE,
+    MO_LIMIT_PATH_SIZE,
 };
 use mo_def::{ErrorCode, MO_VERSION};
+use mo_host::HostContext;
 use mo_lower::{lower_services, lower_test_services};
 use mo_prim::unicode16::{display_width_bytes, next_grapheme_bytes};
 use mo_syntax::{FormatOptions, format_module, parse_fragment, parse_module, read_header};
+use mo_vm::{Image, Limits, Outcome, Process, render_defect};
 
 const UNICODE16_METRICS: DisplayMetrics = DisplayMetrics {
     next_grapheme: next_grapheme_bytes,
@@ -59,6 +70,13 @@ enum FormatOutMode {
     Check,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EmitMode {
+    None,
+    Core,
+    Bytecode,
+}
+
 fn print_usage(mut w: impl Write) -> io::Result<()> {
     writeln!(w, "usage:")?;
     writeln!(
@@ -79,6 +97,15 @@ fn print_usage(mut w: impl Write) -> io::Result<()> {
     )?;
     writeln!(
         w,
+        "  mo-fe codegen-core [--kind auto|program|run] [--disassemble] FILE.core [-o OUT.bc]"
+    )?;
+    writeln!(
+        w,
+        "  mo-fe codegen-core-batch [--kind run|program|auto] [--out-dir DIR] [--] FILE..."
+    )?;
+    writeln!(w, "  mo-fe roundtrip-bc [--check] FILE.bc")?;
+    writeln!(
+        w,
         "  mo-fe parse [--fragment|--header] [--json] [FILE.mo|-]"
     )?;
     writeln!(w, "  mo-fe format [--stdout|--check] [--json] [FILE.mo|-]")?;
@@ -86,7 +113,7 @@ fn print_usage(mut w: impl Write) -> io::Result<()> {
     writeln!(w, "  mo-fe format-batch [--fragment] [--] FILE...")?;
     writeln!(
         w,
-        "  mo-fe check [--stage=load|modules|signatures|full] [--emit=core] [--emit-tests] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo"
+        "  mo-fe check [--stage=load|modules|signatures|full] [--emit=core|bytecode] [--emit-tests] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo"
     )?;
     writeln!(
         w,
@@ -99,6 +126,10 @@ fn print_usage(mut w: impl Write) -> io::Result<()> {
     writeln!(
         w,
         "  mo-fe lower-batch [--tests] [--library DIR|--lib DIR|--no-library] [--] FILE..."
+    )?;
+    writeln!(
+        w,
+        "  mo-fe emit [--tests] [--library DIR|--lib DIR|--no-library] [--json] FILE.mo -o OUT.bc"
     )
 }
 
@@ -1050,13 +1081,238 @@ fn run_format_batch(args: &[String], mut out: impl Write, mut err: impl Write) -
     if out.flush().is_err() { 8 } else { 0 }
 }
 
-fn lower_and_validate(
-    checked: &mo_check::CheckedProgram,
+fn in_library(program: &CheckedProgram, module: ModuleId) -> bool {
+    module.index() != 0 && program.modules.module(module).library
+}
+
+fn program_has_anchors(program: &CheckedProgram) -> bool {
+    for spec in &program.specs {
+        if spec.kind == CheckedSpecKind::Anchor && !in_library(program, spec.module) {
+            return true;
+        }
+    }
+    for service in &program.services {
+        if in_library(program, service.module) {
+            continue;
+        }
+        for promise in &service.promises {
+            if !promise.anchors.is_empty() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn runtime_span(
+    file: &BytecodeFile,
+    sources: &SourceMap,
+    path_idx: u32,
+    start: u32,
+    end: u32,
+) -> Span {
+    if path_idx != NO_INDEX
+        && let Some(path_bytes) = file.files.get(path_idx as usize)
+    {
+        for i in 0..sources.len() {
+            if let Some(src) = sources.get(i)
+                && src.path_bytes() == path_bytes.as_slice()
+            {
+                return Span::new(i, start, end);
+            }
+        }
+    }
+    Span::new(NO_FILE, start, end)
+}
+
+fn service_anchor_function(
+    file: &BytecodeFile,
+    module_name: &str,
+    promise_number: u32,
+    anchor: &CheckedSpec,
+) -> Option<u32> {
+    let kind = if anchor.allows { "allows" } else { "forbids" };
+    let target = format!(
+        "{module_name}.service.promise.{promise_number}.{kind}.{}",
+        anchor.number
+    );
+    for (i, f) in file.functions.iter().enumerate() {
+        if file.string(f.name) == target {
+            return Some(i as u32);
+        }
+    }
+    None
+}
+
+fn push_anchor_error(
+    file: &BytecodeFile,
+    sources: &SourceMap,
+    function: Option<u32>,
+    message: &str,
+    detail: &str,
+    line: Option<Span>,
+    diags: &mut DiagBag,
+) -> bool {
+    let span = match function {
+        Some(idx) => {
+            let dbg = &file.debug[idx as usize];
+            runtime_span(file, sources, dbg.file, dbg.start, dbg.end)
+        }
+        None => Span::NONE,
+    };
+    let mut diag = Diagnostic::new(ErrorCode::ToolAnchor, span, message).with_primary_text(detail);
+    if let Some(line_span) = line {
+        diag = diag.with_secondary(Label::with_text(
+            line_span,
+            "this promise condition was false",
+        ));
+    }
+    diags.push(diag).unwrap_or(false)
+}
+
+fn check_one_anchor(
+    image: &Image,
+    sources: &SourceMap,
+    function: u32,
+    allows: bool,
+    service_promise: Option<&CheckedSpec>,
+    diags: &mut DiagBag,
+) -> bool {
+    let file = image.file();
+    let host = HostContext::stdio(Vec::new(), Vec::new());
+    let mut process = Process::new(image, Limits::default(), host);
+    match process.call_bounded(function, Vec::new(), MO_CLI_ANCHOR_INSTRUCTIONS) {
+        Outcome::Returned(val) => {
+            let answer = val.as_int();
+            if (answer <= 0) != allows {
+                let line = if answer > 0 {
+                    let idx = (answer - 1) as usize;
+                    Some(match service_promise {
+                        Some(spec) => spec.conditions[idx].text.span,
+                        None => {
+                            let subject = file.debug[function as usize].subject as usize;
+                            let failed = &file.debug[subject].lines[idx];
+                            runtime_span(file, sources, failed.file, failed.start, failed.end)
+                        }
+                    })
+                } else {
+                    None
+                };
+                let message = if allows {
+                    "an allows anchor was rejected"
+                } else {
+                    "a forbids anchor was accepted"
+                };
+                return push_anchor_error(
+                    file,
+                    sources,
+                    Some(function),
+                    message,
+                    "allows must satisfy the promise; forbids must fail it (reference 12.2)",
+                    line,
+                    diags,
+                );
+            }
+            true
+        }
+        Outcome::Stopped(defect) | Outcome::Failed(defect) => {
+            let report = render_defect(file, &defect);
+            push_anchor_error(
+                file,
+                sources,
+                Some(function),
+                "an anchor could not be checked",
+                &report,
+                None,
+                diags,
+            )
+        }
+    }
+}
+
+fn check_anchors_for_wire(
+    wire: &[u8],
+    sources: &SourceMap,
+    program: &CheckedProgram,
+    diags: &mut DiagBag,
+) {
+    let bc = match load_bytecode(wire) {
+        Ok(f) => f,
+        Err(err) => {
+            let _ = diags.push(
+                Diagnostic::new(
+                    ErrorCode::ToolPipeline,
+                    Span::NONE,
+                    "compiled bytecode could not be loaded",
+                )
+                .with_primary_text(err.reason),
+            );
+            return;
+        }
+    };
+    let image = match Image::init_bounded(bc, Limits::default(), MO_CLI_ANCHOR_INSTRUCTIONS) {
+        Ok(img) => img,
+        Err(boxed) => {
+            let (file, defect) = *boxed;
+            let report = render_defect(&file, &defect);
+            let _ = push_anchor_error(
+                &file,
+                sources,
+                None,
+                "an anchor could not be checked",
+                &report,
+                None,
+                diags,
+            );
+            return;
+        }
+    };
+
+    let file = image.file();
+    for (i, f) in file.functions.iter().enumerate() {
+        if f.kind == FunctionKind::Anchor {
+            let allows = file.debug[i].expectation == AnchorExpectation::Allows;
+            if !check_one_anchor(&image, sources, i as u32, allows, None, diags) {
+                return;
+            }
+        }
+    }
+    for service in &program.services {
+        for promise in &service.promises {
+            let module = promise.spec.module;
+            if in_library(program, module) {
+                continue;
+            }
+            let mod_name = &program.modules.module(module).name;
+            for anchor in &promise.anchors {
+                if let Some(fn_idx) =
+                    service_anchor_function(file, mod_name, promise.spec.number, anchor)
+                    && !check_one_anchor(
+                        &image,
+                        sources,
+                        fn_idx,
+                        anchor.allows,
+                        Some(&promise.spec),
+                        diags,
+                    )
+                {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn compile_checked_program(
+    checked: &CheckedProgram,
     sources: &SourceMap,
     tests_mode: bool,
-    emit_core: bool,
+    emit: EmitMode,
+    force_compile: bool,
+    run_anchors: bool,
     diags: &mut DiagBag,
-) -> Option<String> {
+) -> Option<(Option<String>, Option<Vec<u8>>)> {
+    let anchors = run_anchors && program_has_anchors(checked);
     let lowered = if tests_mode {
         lower_test_services(checked, Some(sources), diags)
     } else {
@@ -1074,19 +1330,151 @@ fn lower_and_validate(
     {
         return None;
     }
-    if !emit_core {
-        return None;
+
+    if !force_compile && emit == EmitMode::None && !anchors {
+        return Some((None, None));
     }
-    match print_program(&lowered.arena, &lowered.program) {
-        Ok(text) => Some(text),
-        Err(_) => {
-            let _ = diags.push(Diagnostic::new(
+
+    let wire = if anchors || force_compile || emit == EmitMode::Bytecode {
+        let bytes = compile_core_services(
+            &lowered.arena,
+            &lowered.program,
+            Some(&lowered.services),
+            diags,
+        )?;
+        if diags.has_any() {
+            return None;
+        }
+        Some(bytes)
+    } else {
+        None
+    };
+
+    if anchors && let Some(bytes) = wire.as_deref() {
+        check_anchors_for_wire(bytes, sources, checked, diags);
+        if diags.has_any() {
+            return None;
+        }
+    }
+
+    let printed = match emit {
+        EmitMode::None => None,
+        EmitMode::Core => match print_program(&lowered.arena, &lowered.program) {
+            Ok(text) => Some(text),
+            Err(_) => {
+                let _ = diags.push(Diagnostic::new(
+                    ErrorCode::ToolPipeline,
+                    Span::NONE,
+                    "Core text exceeds its output budget",
+                ));
+                return None;
+            }
+        },
+        EmitMode::Bytecode => {
+            let bytes = wire.as_deref()?;
+            match disassemble_bytecode(bytes) {
+                Ok(text) => Some(text),
+                Err(err) => {
+                    let _ = diags.push(
+                        Diagnostic::new(
+                            ErrorCode::ToolPipeline,
+                            Span::NONE,
+                            "bytecode text could not be emitted",
+                        )
+                        .with_primary_text(err.reason),
+                    );
+                    return None;
+                }
+            }
+        }
+    };
+
+    Some((printed, wire))
+}
+
+fn names_a_source(path: &Path, sources: &SourceMap) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(out_meta) = fs::metadata(path) else {
+            return false;
+        };
+        for i in 0..sources.len() {
+            let Some(src) = sources.get(i) else {
+                continue;
+            };
+            let src_path = src.path_lossy();
+            if let Ok(in_meta) = fs::metadata(src_path.as_ref())
+                && out_meta.dev() == in_meta.dev()
+                && out_meta.ino() == in_meta.ino()
+            {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(unix))]
+    {
+        let Ok(out_canon) = fs::canonicalize(path) else {
+            return false;
+        };
+        for i in 0..sources.len() {
+            let Some(src) = sources.get(i) else {
+                continue;
+            };
+            let src_path = src.path_lossy();
+            if let Ok(in_canon) = fs::canonicalize(src_path.as_ref())
+                && out_canon == in_canon
+            {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn write_bytecode_file(path_str: &str, sources: &SourceMap, wire: &[u8], diags: &mut DiagBag) {
+    let path = Path::new(path_str);
+    if names_a_source(path, sources) {
+        let _ = diags.push(
+            Diagnostic::new(
                 ErrorCode::ToolPipeline,
                 Span::NONE,
-                "Core text exceeds its output budget",
-            ));
-            None
+                "bytecode can't replace a source file",
+            )
+            .with_primary_text(path_str),
+        );
+        return;
+    }
+    let mut file = match File::create(path) {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = diags.push(
+                Diagnostic::new(
+                    ErrorCode::ToolPipeline,
+                    Span::NONE,
+                    "bytecode could not be written to the file",
+                )
+                .with_primary_text(e.to_string()),
+            );
+            return;
         }
+    };
+    let is_regular = file.metadata().is_ok_and(|m| m.is_file());
+    let write_res = file.write_all(wire).and_then(|()| file.flush());
+    drop(file);
+    if let Err(e) = write_res {
+        if is_regular {
+            let _ = fs::remove_file(path);
+        }
+        let _ = diags.push(
+            Diagnostic::new(
+                ErrorCode::ToolPipeline,
+                Span::NONE,
+                "bytecode could not be written to the file",
+            )
+            .with_primary_text(e.to_string()),
+        );
     }
 }
 
@@ -1184,7 +1572,7 @@ fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) ->
     let mut stage = CheckStage::Full;
     let mut library = LibraryMode::default_embedded();
     let mut format = RenderFormat::Text;
-    let mut emit_core = false;
+    let mut emit = EmitMode::None;
     let mut emit_tests = false;
     let mut path: Option<&str> = None;
     let mut i = 0usize;
@@ -1202,18 +1590,28 @@ fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) ->
                 let _ = writeln!(err, "error: --emit requires an argument");
                 return 2;
             };
-            if val == "core" {
-                emit_core = true;
-            } else {
-                let _ = writeln!(err, "error: unsupported --emit {val:?}: expected core");
-                return 2;
+            match val.as_str() {
+                "core" => emit = EmitMode::Core,
+                "bytecode" => emit = EmitMode::Bytecode,
+                other => {
+                    let _ = writeln!(
+                        err,
+                        "error: unsupported --emit {other:?}: expected core or bytecode"
+                    );
+                    return 2;
+                }
             }
         } else if let Some(val) = arg.strip_prefix("--emit=") {
-            if val == "core" {
-                emit_core = true;
-            } else {
-                let _ = writeln!(err, "error: unsupported --emit {val:?}: expected core");
-                return 2;
+            match val {
+                "core" => emit = EmitMode::Core,
+                "bytecode" => emit = EmitMode::Bytecode,
+                other => {
+                    let _ = writeln!(
+                        err,
+                        "error: unsupported --emit {other:?}: expected core or bytecode"
+                    );
+                    return 2;
+                }
             }
         } else if arg == "--library" || arg == "--lib" {
             i += 1;
@@ -1265,6 +1663,14 @@ fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) ->
         i += 1;
     }
 
+    if format == RenderFormat::Json && emit != EmitMode::None {
+        let _ = writeln!(
+            err,
+            "--json and --emit cannot be combined: \"--json\" \"--emit\""
+        );
+        return 2;
+    }
+
     let Some(entry) = path else {
         let _ = writeln!(err, "error: check requires a FILE.mo argument");
         return 2;
@@ -1275,21 +1681,24 @@ fn run_check_stage(args: &[String], mut out: impl Write, mut err: impl Write) ->
         ..LoadOptions::default()
     };
     let mut result = run_stage(entry, &options, stage);
-    let mut emitted_core = None;
+    let mut emitted_text = None;
     if stage == CheckStage::Full
         && result.ok()
         && let Some(checked) = result.program.as_ref()
-    {
-        emitted_core = lower_and_validate(
+        && let Some((printed, _)) = compile_checked_program(
             checked,
             &result.sources,
             emit_tests,
-            emit_core,
+            emit,
+            false,
+            true,
             &mut result.diags,
-        );
+        )
+    {
+        emitted_text = printed;
     }
 
-    if let Some(text) = emitted_core
+    if let Some(text) = emitted_text
         && !result.diags.has_any()
         && format == RenderFormat::Text
         && (out.write_all(text.as_bytes()).is_err() || out.flush().is_err())
@@ -1378,7 +1787,15 @@ fn run_check_stage_batch(args: &[String], mut out: impl Write, mut err: impl Wri
             && result.ok()
             && let Some(checked) = result.program.as_ref()
         {
-            let _ = lower_and_validate(checked, &result.sources, false, false, &mut result.diags);
+            let _ = compile_checked_program(
+                checked,
+                &result.sources,
+                false,
+                EmitMode::None,
+                false,
+                true,
+                &mut result.diags,
+            );
         }
         if result.ok() {
             if writeln!(out, "0").is_err() {
@@ -1449,14 +1866,17 @@ fn run_lower(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
     let mut emitted = None;
     if result.ok()
         && let Some(checked) = result.program.as_ref()
-    {
-        emitted = lower_and_validate(
+        && let Some((printed, _)) = compile_checked_program(
             checked,
             &result.sources,
             tests_mode,
-            true,
+            EmitMode::Core,
+            false,
+            false,
             &mut result.diags,
-        );
+        )
+    {
+        emitted = printed;
     }
 
     if let Some(text) = emitted
@@ -1524,13 +1944,16 @@ fn run_lower_batch(args: &[String], mut out: impl Write, mut err: impl Write) ->
         let emitted = if result.ok()
             && let Some(checked) = result.program.as_ref()
         {
-            lower_and_validate(
+            compile_checked_program(
                 checked,
                 &result.sources,
                 tests_mode,
-                true,
+                EmitMode::Core,
+                false,
+                false,
                 &mut result.diags,
             )
+            .and_then(|(printed, _)| printed)
         } else {
             None
         };
@@ -1554,6 +1977,452 @@ fn run_lower_batch(args: &[String], mut out: impl Write, mut err: impl Write) ->
     if out.flush().is_err() { 8 } else { 0 }
 }
 
+fn run_emit(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut tests_mode = false;
+    let mut library = LibraryMode::default_embedded();
+    let mut format = RenderFormat::Text;
+    let mut path: Option<&str> = None;
+    let mut output_path: Option<&str> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--tests" {
+            tests_mode = true;
+        } else if arg == "--json" {
+            format = RenderFormat::Json;
+        } else if arg == "--no-library" {
+            library = LibraryMode::None;
+        } else if arg == "-o" || arg == "--output" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: {arg} requires an output path");
+                return 2;
+            };
+            output_path = Some(val.as_str());
+        } else if let Some(val) = arg.strip_prefix("--output=") {
+            output_path = Some(val);
+        } else if arg == "--library" || arg == "--lib" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: {arg} requires an argument");
+                return 2;
+            };
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if let Some(val) = arg
+            .strip_prefix("--library=")
+            .or_else(|| arg.strip_prefix("--lib="))
+        {
+            library = LibraryMode::Directory(PathBuf::from(val));
+        } else if arg == "--help" || arg == "-h" {
+            let _ = print_usage(&mut err);
+            return 0;
+        } else if arg.starts_with('-') {
+            let _ = writeln!(err, "error: unknown flag {arg:?}");
+            return 2;
+        } else if path.is_some() {
+            let _ = writeln!(err, "error: unexpected extra argument {arg:?}");
+            return 2;
+        } else {
+            path = Some(arg);
+        }
+        i += 1;
+    }
+
+    let Some(entry) = path else {
+        let _ = writeln!(err, "error: emit requires a FILE.mo argument");
+        return 2;
+    };
+    let Some(out_target) = output_path else {
+        let _ = writeln!(err, "error: emit requires -o OUT.bc");
+        return 2;
+    };
+
+    let options = LoadOptions {
+        library,
+        ..LoadOptions::default()
+    };
+    let mut result = run_stage(entry, &options, CheckStage::Full);
+    let mut wire = None;
+    if result.ok()
+        && let Some(checked) = result.program.as_ref()
+    {
+        let has_entry_service = checked
+            .services
+            .iter()
+            .any(|s| s.module.index() == 0 && !s.is_actor);
+        let has_entry_api = checked.apis.iter().any(|a| a.module.index() == 0);
+        if !tests_mode && !has_entry_service && !has_entry_api && checked.entry.function.is_none() {
+            let span = checked.modules.module(ModuleId(0)).syntax.span;
+            let _ = result.diags.push(
+                Diagnostic::new(
+                    ErrorCode::MainContract,
+                    span,
+                    "the entry module has no main function",
+                )
+                .with_primary_text("the entry module has no main function")
+                .with_reason("main declares the program's entry (reference 11.2)."),
+            );
+        } else if let Some((_, bytes)) = compile_checked_program(
+            checked,
+            &result.sources,
+            tests_mode,
+            EmitMode::None,
+            true,
+            true,
+            &mut result.diags,
+        ) {
+            wire = bytes;
+        }
+    }
+
+    if let Some(bytes) = wire
+        && !result.diags.has_any()
+    {
+        if out_target == "-" {
+            if out.write_all(&bytes).is_err() || out.flush().is_err() {
+                let _ = writeln!(err, "mo: compiled output could not be written");
+                return 1;
+            }
+            return 0;
+        }
+        write_bytecode_file(out_target, &result.sources, &bytes, &mut result.diags);
+    }
+
+    emit_check_diagnostics("emit", &result.sources, &mut result.diags, format, out, err)
+}
+
+fn run_codegen_core(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut kind = CheckKind::Auto;
+    let mut disasm = false;
+    let mut output_path: Option<&str> = None;
+    let mut path: Option<&str> = None;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--disassemble" {
+            disasm = true;
+        } else if arg == "-o" || arg == "--output" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: {arg} requires an argument");
+                return 2;
+            };
+            output_path = Some(val.as_str());
+        } else if arg == "--kind" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --kind requires an argument");
+                return 2;
+            };
+            match parse_check_kind(val) {
+                Ok(k) => kind = k,
+                Err(msg) => {
+                    let _ = writeln!(err, "error: {msg}");
+                    return 2;
+                }
+            }
+        } else if let Some(val) = arg.strip_prefix("--kind=") {
+            match parse_check_kind(val) {
+                Ok(k) => kind = k,
+                Err(msg) => {
+                    let _ = writeln!(err, "error: {msg}");
+                    return 2;
+                }
+            }
+        } else if arg != "-" && arg.starts_with('-') {
+            let _ = writeln!(err, "error: unknown flag {arg:?}");
+            return 2;
+        } else if path.is_some() {
+            let _ = writeln!(err, "error: unexpected extra argument {arg:?}");
+            return 2;
+        } else {
+            path = Some(arg);
+        }
+        i += 1;
+    }
+
+    let (label, bytes) = match read_core_input(path) {
+        Ok(res) => res,
+        Err(e) => {
+            let _ = writeln!(err, "error: cannot read {}: {e}", path.unwrap_or("<stdin>"));
+            return 2;
+        }
+    };
+    let target_kind = resolve_check_kind(kind, &bytes);
+    let mut diags = DiagBag::new();
+    let parsed = match target_kind {
+        CoreTextKind::Run => parse_run(&bytes, &mut diags).map(|r| (r.arena, r.value.program)),
+        _ => parse_program(&bytes, &mut diags).map(|p| (p.arena, p.value)),
+    };
+    let Some((arena, program)) = parsed else {
+        let mut sources = SourceMap::new();
+        let patch = sources
+            .add_bytes(label.into_bytes(), bytes.clone())
+            .ok()
+            .map(|id| (id, bytes.len()));
+        let _ = render_diags(&diags, &sources, patch, RenderFormat::Text, &mut err);
+        return 1;
+    };
+    let mut cdiags = DiagBag::new();
+    let Some(wire) = compile_core(&arena, &program, &mut cdiags) else {
+        let empty = SourceMap::new();
+        let _ = render_diags(&cdiags, &empty, None, RenderFormat::Text, &mut err);
+        return 1;
+    };
+    if disasm {
+        match disassemble_bytecode(&wire) {
+            Ok(text) => {
+                if out.write_all(text.as_bytes()).is_err() || out.flush().is_err() {
+                    return 2;
+                }
+            }
+            Err(e) => {
+                let _ = writeln!(err, "error: disassemble failed: {e}");
+                return 1;
+            }
+        }
+    } else if let Some(dest) = output_path {
+        if dest == "-" {
+            if out.write_all(&wire).is_err() || out.flush().is_err() {
+                return 2;
+            }
+        } else if let Err(e) = fs::write(dest, &wire) {
+            let _ = writeln!(err, "error: cannot write {dest}: {e}");
+            return 1;
+        }
+    }
+    0
+}
+
+fn run_codegen_core_batch(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut kind = CheckKind::Auto;
+    let mut bigints = false;
+    let mut out_dir: Option<PathBuf> = None;
+    let mut files: Vec<&str> = Vec::new();
+    let mut literal_only = false;
+    let mut i = 0usize;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if !literal_only && arg == "--" {
+            literal_only = true;
+        } else if !literal_only && arg == "--bigints" {
+            bigints = true;
+        } else if !literal_only && arg == "--out-dir" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --out-dir requires an argument");
+                return 2;
+            };
+            out_dir = Some(PathBuf::from(val));
+        } else if !literal_only && let Some(val) = arg.strip_prefix("--out-dir=") {
+            out_dir = Some(PathBuf::from(val));
+        } else if !literal_only && arg == "--kind" {
+            i += 1;
+            let Some(val) = args.get(i) else {
+                let _ = writeln!(err, "error: --kind requires an argument");
+                return 2;
+            };
+            match parse_check_kind(val) {
+                Ok(k) => kind = k,
+                Err(msg) => {
+                    let _ = writeln!(err, "error: {msg}");
+                    return 2;
+                }
+            }
+        } else if !literal_only && let Some(val) = arg.strip_prefix("--kind=") {
+            match parse_check_kind(val) {
+                Ok(k) => kind = k,
+                Err(msg) => {
+                    let _ = writeln!(err, "error: {msg}");
+                    return 2;
+                }
+            }
+        } else if !literal_only && arg.starts_with('-') {
+            let _ = writeln!(err, "error: unknown flag {arg:?}");
+            return 2;
+        } else {
+            files.push(arg);
+        }
+        i += 1;
+    }
+
+    for (idx, path) in files.iter().enumerate() {
+        let Ok(file) = File::open(Path::new(path)) else {
+            let _ = writeln!(out, "8");
+            return 8;
+        };
+        let Ok(bytes) = read_bounded(file, MO_LIMIT_CORE_TEXT_SIZE) else {
+            let _ = writeln!(out, "8");
+            return 8;
+        };
+        let target_kind = resolve_check_kind(kind, &bytes);
+        let mut diags = DiagBag::new();
+        let parsed = match target_kind {
+            CoreTextKind::Run => parse_run(&bytes, &mut diags).map(|r| (r.arena, r.value.program)),
+            _ => parse_program(&bytes, &mut diags).map(|p| (p.arena, p.value)),
+        };
+        let Some((arena, program)) = parsed else {
+            let code = diags.items().first().map_or(0, |d| d.code.number());
+            if writeln!(out, "4 E{code:04}").is_err() {
+                return 8;
+            }
+            continue;
+        };
+        let mut cdiags1 = DiagBag::new();
+        let Some(bc1) = compile_core(&arena, &program, &mut cdiags1) else {
+            let first = cdiags1.items().first();
+            let code = first.map_or(0, |d| d.code.number());
+            let detail = first
+                .and_then(|d| d.reason.as_ref().or(Some(&d.message)))
+                .map_or_else(String::new, |t| t.as_str_lossy().into_owned());
+            if writeln!(out, "5 E{code:04} {detail}").is_err() {
+                return 8;
+            }
+            continue;
+        };
+        let mut cdiags2 = DiagBag::new();
+        let Some(bc2) = compile_core(&arena, &program, &mut cdiags2) else {
+            if writeln!(out, "6 nondeterministic-failure").is_err() {
+                return 8;
+            }
+            continue;
+        };
+        if bc1 != bc2 {
+            if writeln!(out, "6 nondeterministic-bytes").is_err() {
+                return 8;
+            }
+            continue;
+        }
+        let Ok(decoded) = load_bytecode(&bc1) else {
+            if writeln!(out, "6 verify-failed").is_err() {
+                return 8;
+            }
+            continue;
+        };
+        let Ok(rewritten) = write_bytecode(&decoded) else {
+            if writeln!(out, "6 rewrite-failed").is_err() {
+                return 8;
+            }
+            continue;
+        };
+        if bc1 != rewritten {
+            if writeln!(out, "6 roundtrip-mismatch").is_err() {
+                return 8;
+            }
+            continue;
+        }
+        if let Some(dir) = out_dir.as_ref() {
+            let dest = dir.join(format!("{idx}.bc"));
+            if fs::write(&dest, &bc1).is_err() {
+                return 8;
+            }
+        }
+        if bigints {
+            let Some((sign, mag)) = decoded.constants.iter().find_map(|c| match &c.value {
+                ConstantValue::BigInt { sign, magnitude } => Some((*sign, magnitude.as_slice())),
+                _ => None,
+            }) else {
+                if writeln!(out, "6 missing-bigint-constant").is_err() {
+                    return 8;
+                }
+                continue;
+            };
+            let sign_num = match sign {
+                BigIntSign::Zero => 0u8,
+                BigIntSign::Positive => 1u8,
+                BigIntSign::Negative => 2u8,
+            };
+            let mut hex = String::with_capacity(mag.len().saturating_mul(2));
+            for &b in mag {
+                let _ = std::fmt::Write::write_fmt(&mut hex, format_args!("{b:02x}"));
+            }
+            if writeln!(out, "0 {sign_num}:{hex}").is_err() {
+                return 8;
+            }
+        } else if writeln!(out, "0 {}", bc1.len()).is_err() {
+            return 8;
+        }
+    }
+    if out.flush().is_err() { 8 } else { 0 }
+}
+
+fn run_roundtrip_bc(args: &[String], mut out: impl Write, mut err: impl Write) -> u8 {
+    let mut check_only = false;
+    let mut paths: Vec<&str> = Vec::new();
+    let mut literal_only = false;
+    for arg in args {
+        match arg.as_str() {
+            "--" if !literal_only => literal_only = true,
+            "--check" if !literal_only => check_only = true,
+            a if !literal_only && a.starts_with('-') => {
+                let _ = writeln!(err, "error: unknown flag {a:?}");
+                return 2;
+            }
+            a => paths.push(a),
+        }
+    }
+    if paths.is_empty() {
+        let _ = writeln!(
+            err,
+            "error: roundtrip-bc requires at least one FILE.bc argument"
+        );
+        return 2;
+    }
+    if !check_only && paths.len() > 1 {
+        let _ = writeln!(
+            err,
+            "error: roundtrip-bc without --check accepts only one FILE.bc"
+        );
+        return 2;
+    }
+    for file_path in paths {
+        let raw = match fs::read(file_path) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = writeln!(err, "error: cannot read {file_path}: {e}");
+                return 1;
+            }
+        };
+        let decoded = match load_bytecode(&raw) {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = writeln!(err, "error: {file_path}: bytecode load failed: {e}");
+                return 1;
+            }
+        };
+        let rewritten = match write_bytecode(&decoded) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = writeln!(err, "error: {file_path}: bytecode write failed: {e}");
+                return 1;
+            }
+        };
+        if raw != rewritten {
+            let _ = writeln!(
+                err,
+                "error: {file_path}: bytecode round-trip mismatch (in {} bytes, out {} bytes)",
+                raw.len(),
+                rewritten.len()
+            );
+            return 1;
+        }
+        if !check_only {
+            match disassemble_bytecode(&rewritten) {
+                Ok(text) => {
+                    if out.write_all(text.as_bytes()).is_err() || out.flush().is_err() {
+                        return 2;
+                    }
+                }
+                Err(e) => {
+                    let _ = writeln!(err, "error: {file_path}: disassemble failed: {e}");
+                    return 1;
+                }
+            }
+        }
+    }
+    0
+}
+
 fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
     let Some(cmd) = args.first().map(String::as_str) else {
         let _ = print_usage(&mut err);
@@ -1565,6 +2434,9 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
         "core-print" => run_core_print(rest, out, err),
         "core-check-batch" => run_core_check_batch(rest, out, err),
         "core-print-batch" => run_core_print_batch(rest, out, err),
+        "codegen-core" => run_codegen_core(rest, out, err),
+        "codegen-core-batch" => run_codegen_core_batch(rest, out, err),
+        "roundtrip-bc" => run_roundtrip_bc(rest, out, err),
         "parse" => run_parse(rest, err),
         "format" => run_format(rest, out, err),
         "parse-batch" => run_parse_batch(rest, out, err),
@@ -1573,6 +2445,7 @@ fn dispatch(args: &[String], out: impl Write, mut err: impl Write) -> u8 {
         "check-batch" | "check-stage-batch" => run_check_stage_batch(rest, out, err),
         "lower" => run_lower(rest, out, err),
         "lower-batch" => run_lower_batch(rest, out, err),
+        "emit" => run_emit(rest, out, err),
         "--help" | "-h" | "help" => {
             let _ = print_usage(out);
             0
@@ -1892,5 +2765,71 @@ mod tests {
         assert_eq!(code, 1);
         let err_text = String::from_utf8(err).unwrap();
         assert!(err_text.contains("E1150"), "got: {err_text}");
+    }
+
+    #[test]
+    fn cli_emit_bytecode_disasm_and_anchor_errors_exact_parity() {
+        let greet = repo_root().join("examples/greet.mo");
+        let greet_str = greet.to_str().unwrap().to_string();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+
+        // 1. `mo-fe check --emit=bytecode` prints canonical indexed bytecode disassembly.
+        let code = dispatch(
+            &[
+                "check".to_string(),
+                "--emit=bytecode".to_string(),
+                greet_str.clone(),
+            ],
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert!(err.is_empty());
+        let dis = String::from_utf8(out.clone()).unwrap();
+        assert!(dis.starts_with("bytecode 0.3 indexed\n"), "got: {dis}");
+        assert!(dis.contains("Greet.main.entry"), "got: {dis}");
+
+        // 2. `mo-fe emit FILE.mo -o -` produces verified MOBC v0.3 bytecode runnable on mo-vm.
+        out.clear();
+        err.clear();
+        let code = dispatch(
+            &[
+                "emit".to_string(),
+                greet_str,
+                "-o".to_string(),
+                "-".to_string(),
+            ],
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&err));
+        assert!(err.is_empty());
+        assert!(out.starts_with(b"MOBC"));
+        let decoded = load_bytecode(&out).expect("emitted bytecode must verify");
+        let rewritten = write_bytecode(&decoded).expect("roundtrip write");
+        assert_eq!(out, rewritten);
+
+        // 3. `e1405` and `e1405-forbids` match C `mo check` expectations byte-for-byte.
+        let root_prefix = format!("{}/", repo_root().display());
+        for case in ["e1405", "e1405-forbids"] {
+            let abs_path = repo_root()
+                .join(format!("tests/errors/{case}/main.mo"))
+                .to_str()
+                .unwrap()
+                .to_string();
+            let expected =
+                std::fs::read_to_string(repo_root().join(format!("tests/errors/{case}/expected")))
+                    .unwrap();
+            out.clear();
+            err.clear();
+            let code = dispatch(&["check".to_string(), abs_path], &mut out, &mut err);
+            assert_eq!(code, 1, "case {case}");
+            assert!(out.is_empty(), "case {case} unexpected stdout");
+            let normalized = String::from_utf8(err.clone())
+                .unwrap()
+                .replace(&root_prefix, "");
+            assert_eq!(normalized, expected, "case {case} mismatch");
+        }
     }
 }
