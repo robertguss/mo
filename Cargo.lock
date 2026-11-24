@@ -478,6 +478,7 @@ dependencies = [
  "mo-check",
  "mo-core",
  "mo-def",
+ "mo-lower",
  "mo-prim",
  "mo-syntax",
 ]
@@ -508,6 +509,17 @@ dependencies = [
  "sha2",
  "webpki-roots",
  "zeroize",
+]
+
+[[package]]
+name = "mo-lower"
+version = "0.1.0"
+dependencies = [
+ "mo-base",
+ "mo-check",
+ "mo-core",
+ "mo-def",
+ "mo-syntax",
 ]
 
 [[package]]
