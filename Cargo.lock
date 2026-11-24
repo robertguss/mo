@@ -458,6 +458,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "mo-cli"
+version = "0.1.0"
+dependencies = [
+ "mo-base",
+ "mo-bytecode",
+ "mo-check",
+ "mo-codegen",
+ "mo-core",
+ "mo-def",
+ "mo-heap",
+ "mo-host",
+ "mo-lower",
+ "mo-prim",
+ "mo-syntax",
+ "mo-vm",
+ "rustix",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "mo-codegen"
 version = "0.1.0"
 dependencies = [

@@ -248,6 +248,16 @@ pub fn metadata_valid(arena: &CoreArena, program: &Program) -> bool {
             return false;
         }
     }
+    if !meta.file_bytes.is_empty() {
+        if meta.file_bytes.len() != meta.files.len() {
+            return false;
+        }
+        for raw in &meta.file_bytes {
+            if raw.is_empty() || raw.contains(&0) {
+                return false;
+            }
+        }
+    }
     if !modules_valid(program, meta) {
         return false;
     }

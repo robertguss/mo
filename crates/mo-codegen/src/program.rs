@@ -151,15 +151,28 @@ impl<'a> Compiler<'a> {
         self.debug = (0..cap).map(|_| Self::empty_debug()).collect();
 
         if let Metadata::Source(meta) = &p.metadata {
-            self.files.reserve(meta.files.len());
-            for path in &meta.files {
-                if (path.len() as u64) > MO_LIMIT_STRING_SIZE {
-                    return self.fail(
-                        ErrorCode::BytecodeTooBig,
-                        "Filename exceeds the bytecode MO_LIMIT_STRING_SIZE bound.",
-                    );
+            if !meta.file_bytes.is_empty() {
+                self.files.reserve(meta.file_bytes.len());
+                for path in &meta.file_bytes {
+                    if (path.len() as u64) > MO_LIMIT_STRING_SIZE {
+                        return self.fail(
+                            ErrorCode::BytecodeTooBig,
+                            "Filename exceeds the bytecode MO_LIMIT_STRING_SIZE bound.",
+                        );
+                    }
+                    self.files.push(path.clone());
                 }
-                self.files.push(path.as_bytes().to_vec());
+            } else {
+                self.files.reserve(meta.files.len());
+                for path in &meta.files {
+                    if (path.len() as u64) > MO_LIMIT_STRING_SIZE {
+                        return self.fail(
+                            ErrorCode::BytecodeTooBig,
+                            "Filename exceeds the bytecode MO_LIMIT_STRING_SIZE bound.",
+                        );
+                    }
+                    self.files.push(path.as_bytes().to_vec());
+                }
             }
         }
 

@@ -21,7 +21,7 @@ pub use diag::{
 pub use mo_def::{ErrorCode, ErrorCodeInfo};
 pub use path::{ModulePath, ModulePathError, module_path};
 pub use render::{
-    DisplayMetrics, RenderFormat, RenderLimitError, TerminalEncoding, render_diagnostic,
-    render_diagnostic_default, render_totals_json, render_version_json,
+    DisplayMetrics, RenderFormat, RenderLimitError, RenderWriter, TerminalEncoding,
+    render_diagnostic, render_diagnostic_default, render_totals_json, render_version_json,
 };
 pub use source::{LineCol, NO_FILE, SourceError, SourceFile, SourceMap, Span};

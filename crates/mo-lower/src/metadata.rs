@@ -101,16 +101,18 @@ pub(crate) fn lower_metadata(
     sources: Option<&SourceMap>,
     core: &mut Program,
 ) -> LowerResult<()> {
-    let files: Vec<String> = if let Some(src_map) = sources {
+    let (files, file_bytes): (Vec<String>, Vec<Vec<u8>>) = if let Some(src_map) = sources {
         let mut out = Vec::with_capacity(src_map.len() as usize);
+        let mut raw_out = Vec::with_capacity(src_map.len() as usize);
         for i in 0..src_map.len() {
-            let path = src_map
+            let (path, raw) = src_map
                 .get(i)
-                .map(|f| f.path_lossy().into_owned())
+                .map(|f| (f.path_lossy().into_owned(), f.path_bytes().to_vec()))
                 .unwrap_or_default();
             out.push(p.copy_text(&path)?);
+            raw_out.push(raw);
         }
-        out
+        (out, raw_out)
     } else {
         // Fallback when called without SourceMap: reconstruct paths from module table.
         let max_file = p
@@ -125,7 +127,7 @@ pub(crate) fn lower_metadata(
         for m in &p.program.modules.modules {
             out[m.file as usize] = format!("{}.mo", m.name);
         }
-        out
+        (out, Vec::new())
     };
 
     let mut total_nodes = p.core_types.len();
@@ -291,11 +293,12 @@ pub(crate) fn lower_metadata(
         modules[sym.module.index()].consts.push(idx as u32);
     }
 
-    core.metadata = Metadata::Source(SourceMetadata {
+    core.metadata = Metadata::Source(Box::new(SourceMetadata {
         files,
+        file_bytes,
         modules,
         funs: fun_metas,
         consts: const_metas,
-    });
+    }));
     Ok(())
 }

@@ -1463,10 +1463,29 @@ impl<'a> ExecCtx<'a> {
     }
 }
 
-/// Formats a runtime defect report matching `src/vm/defect.c` + `src/tools/render.c:mo_write_defect`.
-pub fn render_defect(file: &BytecodeFile, defect: &Defect) -> String {
+/// Returns whether service descriptor `svc_idx` is a live actor (`token_env == "_MO_ACTOR"`).
+#[must_use]
+pub fn is_actor_service(file: &BytecodeFile, svc_idx: usize) -> bool {
+    file.services
+        .get(svc_idx)
+        .is_some_and(|svc| file.string(svc.token_env) == "_MO_ACTOR")
+}
+
+/// Resolves an actor parameter of `main` (`%actor.<Module>`) to its actor service index.
+#[must_use]
+pub fn find_actor_service_for_param(
+    file: &BytecodeFile,
+    main_fn: u32,
+    param_idx: u32,
+) -> Option<u32> {
+    simulation::find_actor_service_for_param(file, main_fn, param_idx)
+}
+
+/// Formats a runtime defect report without the leading `"bug: "` prefix, matching
+/// `src/vm/defect.c:mo_render_defect`.
+#[must_use]
+pub fn render_defect_raw(file: &BytecodeFile, defect: &Defect) -> String {
     let mut out = String::new();
-    out.push_str("bug: ");
     escape_defect_text(&mut out, &defect.reason);
     if let Some(limit_name) = defect.limit_name {
         out.push_str(&format!(" ({limit_name} = {})", defect.limit));
@@ -1505,6 +1524,14 @@ pub fn render_defect(file: &BytecodeFile, defect: &Defect) -> String {
         }
     }
 
+    out
+}
+
+/// Formats a runtime defect report matching `src/vm/defect.c` + `src/tools/render.c:mo_write_defect`.
+#[must_use]
+pub fn render_defect(file: &BytecodeFile, defect: &Defect) -> String {
+    let mut out = String::from("bug: ");
+    out.push_str(&render_defect_raw(file, defect));
     out
 }
 

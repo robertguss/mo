@@ -1582,7 +1582,7 @@ fn test_limits_and_metadata_in_checker() {
     assert_eq!(d.len(), 1);
 
     // Invalid empty source metadata is rejected with E1051.
-    p.metadata = Metadata::Source(SourceMetadata::default());
+    p.metadata = Metadata::Source(Box::default());
     assert!(!check_program(&arena, &p, &mut d));
     assert_eq!(d.len(), 2);
     assert_eq!(d.items()[1].code, ErrorCode::CoreCheckMetadata);
@@ -1597,8 +1597,9 @@ fn test_limits_and_metadata_in_checker() {
     // Metadata depth & duplicate module checks.
     p.funs[0].ret = ty_int;
     p.funs[0].module = "Main".to_string();
-    p.metadata = Metadata::Source(SourceMetadata {
+    p.metadata = Metadata::Source(Box::new(SourceMetadata {
         files: vec!["main.mo".to_string()],
+        file_bytes: Vec::new(),
         modules: vec![ModuleMeta {
             name: "Main".to_string(),
             data: Vec::new(),
@@ -1622,7 +1623,7 @@ fn test_limits_and_metadata_in_checker() {
             lines: Vec::new(),
         }],
         consts: Vec::new(),
-    });
+    }));
     assert!(metadata_valid(&arena, &p));
 
     p.funs[0].body = nodes[depth - 1];
@@ -1824,8 +1825,9 @@ fn test_source_span_and_nested_spans() {
                 Vec::new()
             },
             entry: "main".to_string(),
-            metadata: Metadata::Source(SourceMetadata {
+            metadata: Metadata::Source(Box::new(SourceMetadata {
                 files: vec!["main.mo".to_string()],
+                file_bytes: Vec::new(),
                 modules: vec![ModuleMeta {
                     name: "Main".to_string(),
                     data: Vec::new(),
@@ -1859,7 +1861,7 @@ fn test_source_span_and_nested_spans() {
                 } else {
                     Vec::new()
                 },
-            }),
+            })),
         };
         let mut d = DiagBag::new();
         assert!(metadata_valid(&arena, &p));
@@ -1980,8 +1982,9 @@ fn test_core_depth_boundary() {
             }],
             consts: Vec::new(),
             entry: "main".to_string(),
-            metadata: Metadata::Source(SourceMetadata {
+            metadata: Metadata::Source(Box::new(SourceMetadata {
                 files: Vec::new(),
+                file_bytes: Vec::new(),
                 modules: vec![ModuleMeta {
                     name: "M".to_string(),
                     data: Vec::new(),
@@ -2005,7 +2008,7 @@ fn test_core_depth_boundary() {
                     lines: Vec::new(),
                 }],
                 consts: Vec::new(),
-            }),
+            })),
         };
         (arena, prog)
     };

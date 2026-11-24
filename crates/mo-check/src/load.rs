@@ -7,9 +7,13 @@
 //! with an explicit stack (refusing cycles with every edge labeled), and parses full module
 //! syntax trees only after the complete graph succeeds.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use mo_base::{
@@ -138,8 +142,10 @@ pub struct LoadedModule {
 /// Complete, cycle-free, fully parsed module graph (`struct mo_module_set`).
 #[derive(Debug, Clone)]
 pub struct ModuleSet {
-    /// Derived module root prefix (empty `""` or ending with `'/'`).
+    /// Derived module root prefix (empty `""` or ending with `'/'`), UTF-8 lossy view.
     pub root: String,
+    /// Exact OS byte representation of the derived module root prefix.
+    pub root_bytes: Vec<u8>,
     /// Entry module at index 0, followed by library modules and discovered uses.
     pub modules: Vec<LoadedModule>,
     /// Dependency-first topological ordering (dependencies before their users).
@@ -174,10 +180,10 @@ impl ModuleSet {
 
 #[derive(Debug, Clone)]
 struct DepPackage {
-    real_dir: String,
+    real_dir: Vec<u8>,
     src_override: String,
-    root_slash: Vec<String>,
-    real_roots: Vec<String>,
+    root_slash: Vec<Vec<u8>>,
+    real_roots: Vec<Vec<u8>>,
     direct: Vec<usize>,
 }
 
@@ -198,10 +204,10 @@ struct Loader<'s, 'd> {
     diags: &'d mut DiagBag,
     items: Vec<PendingModule>,
     name_index: HashMap<String, usize>,
-    root: String,
-    real_root: Option<String>,
-    real_library: Option<String>,
-    real_entry: Option<String>,
+    root: Vec<u8>,
+    real_root: Option<Vec<u8>>,
+    real_library: Option<Vec<u8>>,
+    real_entry: Option<Vec<u8>>,
     entry_library_rel: Option<String>,
     embedded: Option<&'static EmbeddedLibrary>,
     entry_direct: Vec<usize>,
@@ -226,7 +232,7 @@ impl<'s, 'd> Loader<'s, 'd> {
             diags,
             items: Vec::new(),
             name_index: HashMap::new(),
-            root: String::new(),
+            root: Vec::new(),
             real_root: None,
             real_library: None,
             real_entry: None,
@@ -249,6 +255,17 @@ impl<'s, 'd> Loader<'s, 'd> {
         reason: Option<&str>,
         label: Option<&str>,
     ) {
+        self.report_bytes(code, span, message, reason, label.map(str::as_bytes));
+    }
+
+    fn report_bytes(
+        &mut self,
+        code: ErrorCode,
+        span: Span,
+        message: &str,
+        reason: Option<&str>,
+        label: Option<&[u8]>,
+    ) {
         let mut diag = Diagnostic::new(code, span, message);
         if let Some(lbl) = label {
             diag = diag.with_primary_text(lbl);
@@ -259,7 +276,7 @@ impl<'s, 'd> Loader<'s, 'd> {
         let _ = self.diags.push(diag);
     }
 
-    fn source_error(&mut self, error: SourceError, path: &str, span: Span) {
+    fn source_error(&mut self, error: SourceError, path: &[u8], span: Span) {
         let (code, message, reason) = match error {
             SourceError::Unreadable(_) => (
                 ErrorCode::ModuleMissing,
@@ -283,7 +300,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                 None,
             ),
         };
-        self.report(code, span, message, reason, Some(path));
+        self.report_bytes(code, span, message, reason, Some(path));
     }
 
     fn path_text(
@@ -346,13 +363,12 @@ impl<'s, 'd> Loader<'s, 'd> {
         }
     }
 
-    fn normal_path(&mut self, path: &str) -> Option<String> {
+    fn normal_path(&mut self, bytes: &[u8]) -> Option<Vec<u8>> {
         let limit = MO_LIMIT_PATH_SIZE as usize;
-        let bytes = path.as_bytes();
-        let mut out = String::with_capacity(bytes.len().min(limit));
+        let mut out = Vec::with_capacity(bytes.len().min(limit));
         let mut i = 0usize;
         if bytes.first() == Some(&b'/') {
-            out.push('/');
+            out.push(b'/');
             i = 1;
         }
         while i < bytes.len() {
@@ -364,11 +380,11 @@ impl<'s, 'd> Loader<'s, 'd> {
             while i < bytes.len() && bytes[i] != b'/' {
                 i += 1;
             }
-            let part = &path[start..i];
-            if part == "." {
+            let part = &bytes[start..i];
+            if part == b"." {
                 continue;
             }
-            if !out.is_empty() && !out.ends_with('/') {
+            if !out.is_empty() && !out.ends_with(b"/") {
                 if out.len() == limit {
                     self.report(
                         ErrorCode::PathTooLong,
@@ -379,7 +395,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                     );
                     return None;
                 }
-                out.push('/');
+                out.push(b'/');
             }
             if part.len() > limit.saturating_sub(out.len()) {
                 self.report(
@@ -391,22 +407,22 @@ impl<'s, 'd> Loader<'s, 'd> {
                 );
                 return None;
             }
-            out.push_str(part);
+            out.extend_from_slice(part);
         }
         Some(out)
     }
 
-    fn real_path(&mut self, path: &str, origin: Span, folder: bool) -> Option<String> {
-        let target = if path.is_empty() {
-            Path::new(".")
+    fn real_path(&mut self, path: &[u8], origin: Span, folder: bool) -> Option<Vec<u8>> {
+        let target: Cow<'_, Path> = if path.is_empty() {
+            Cow::Borrowed(Path::new("."))
         } else {
-            Path::new(path)
+            bytes_to_path(path)
         };
-        match canonicalize_path(target) {
+        match canonicalize_path(&target) {
             Some(resolved) => Some(resolved),
             None => {
                 if folder {
-                    self.report(
+                    self.report_bytes(
                         ErrorCode::LibraryUnreadable,
                         origin,
                         "the library folder can't be inspected",
@@ -425,7 +441,7 @@ impl<'s, 'd> Loader<'s, 'd> {
         }
     }
 
-    fn join(&mut self, root: &str, relative: &str, span: Span) -> Option<String> {
+    fn join(&mut self, root: &[u8], relative: &[u8], span: Span) -> Option<Vec<u8>> {
         let limit = MO_LIMIT_PATH_SIZE as usize;
         if root.len().saturating_add(relative.len()) > limit {
             self.report(
@@ -437,17 +453,17 @@ impl<'s, 'd> Loader<'s, 'd> {
             );
             return None;
         }
-        let mut out = String::with_capacity(root.len() + relative.len());
-        out.push_str(root);
-        out.push_str(relative);
+        let mut out = Vec::with_capacity(root.len() + relative.len());
+        out.extend_from_slice(root);
+        out.extend_from_slice(relative);
         Some(out)
     }
 
-    fn ensure_trailing_slash(&mut self, dir: &str) -> Option<String> {
-        if dir.ends_with('/') {
-            self.join(dir, "", Span::NONE)
+    fn ensure_trailing_slash(&mut self, dir: &[u8]) -> Option<Vec<u8>> {
+        if dir.ends_with(b"/") {
+            self.join(dir, b"", Span::NONE)
         } else {
-            self.join(dir, "/", Span::NONE)
+            self.join(dir, b"/", Span::NONE)
         }
     }
 
@@ -549,8 +565,8 @@ impl<'s, 'd> Loader<'s, 'd> {
 
     fn read_module_in_root(
         &mut self,
-        file_path: &str,
-        confine_root: Option<&str>,
+        file_path: &[u8],
+        confine_root: Option<&[u8]>,
         expected: Option<&str>,
         origin: Span,
         library: bool,
@@ -563,7 +579,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                 confine_root
             };
             let Some(root) = root else {
-                self.report(
+                self.report_bytes(
                     ErrorCode::ModuleOutsideRoot,
                     origin,
                     "a module's file is outside its root folder",
@@ -572,10 +588,10 @@ impl<'s, 'd> Loader<'s, 'd> {
                 );
                 return None;
             };
-            let root_owned = root.to_string();
+            let root_owned = root.to_vec();
             let real = self.real_path(file_path, origin, false)?;
             if !is_strictly_under_root(&root_owned, &real) {
-                self.report(
+                self.report_bytes(
                     ErrorCode::ModuleOutsideRoot,
                     origin,
                     "a module's file is outside its root folder",
@@ -597,7 +613,7 @@ impl<'s, 'd> Loader<'s, 'd> {
 
     fn read_module(
         &mut self,
-        file_path: &str,
+        file_path: &[u8],
         expected: Option<&str>,
         origin: Span,
         library: bool,
@@ -619,10 +635,10 @@ impl<'s, 'd> Loader<'s, 'd> {
         expected: Option<&str>,
         origin: Span,
     ) -> Option<usize> {
-        let virtual_path = self.join("<lib>/", src.path, origin)?;
+        let virtual_path = self.join(b"<lib>/", src.path.as_bytes(), origin)?;
         let file = match self
             .sources
-            .add_bytes(virtual_path.as_bytes().to_vec(), src.bytes.to_vec())
+            .add_bytes(virtual_path.clone(), src.bytes.to_vec())
         {
             Ok(id) => id,
             Err(err) => {
@@ -633,24 +649,24 @@ impl<'s, 'd> Loader<'s, 'd> {
         self.index_module(file, expected, origin, true)
     }
 
-    fn library_files(&mut self, root: &str) -> bool {
-        let mut pending: Vec<String> = vec![root.to_string()];
-        let mut files: Vec<String> = Vec::new();
+    fn library_files(&mut self, root: &[u8]) -> bool {
+        let mut pending: Vec<Vec<u8>> = vec![root.to_vec()];
+        let mut files: Vec<Vec<u8>> = Vec::new();
         let mut entries: u64 = 0;
 
         while let Some(path) = pending.pop() {
-            let suffix = if !path.is_empty() && path.ends_with('/') {
-                ""
+            let suffix: &[u8] = if !path.is_empty() && path.ends_with(b"/") {
+                b""
             } else {
-                "/"
+                b"/"
             };
             let Some(prefix) = self.join(&path, suffix, Span::NONE) else {
                 return false;
             };
-            let dir = match fs::read_dir(&path) {
+            let dir = match fs::read_dir(bytes_to_path(&path)) {
                 Ok(d) => d,
                 Err(_) => {
-                    self.report(
+                    self.report_bytes(
                         ErrorCode::LibraryUnreadable,
                         Span::NONE,
                         "the library folder can't be inspected",
@@ -664,7 +680,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                 let entry = match entry_res {
                     Ok(e) => e,
                     Err(_) => {
-                        self.report(
+                        self.report_bytes(
                             ErrorCode::LibraryUnreadable,
                             Span::NONE,
                             "the library folder can't be inspected",
@@ -675,13 +691,13 @@ impl<'s, 'd> Loader<'s, 'd> {
                     }
                 };
                 let name_os = entry.file_name();
-                let name = name_os.to_string_lossy();
-                if name == "." || name == ".." {
+                let name = os_str_to_bytes(&name_os);
+                if name == b"." || name == b".." {
                     continue;
                 }
                 entries += 1;
                 if entries > MO_LIMIT_LIBRARY_ENTRIES {
-                    self.report(
+                    self.report_bytes(
                         ErrorCode::LibraryTooBig,
                         Span::NONE,
                         "the library has too many directory entries",
@@ -693,10 +709,10 @@ impl<'s, 'd> Loader<'s, 'd> {
                 let Some(full) = self.join(&prefix, &name, Span::NONE) else {
                     return false;
                 };
-                let meta = match fs::symlink_metadata(&full) {
+                let meta = match fs::symlink_metadata(bytes_to_path(&full)) {
                     Ok(m) => m,
                     Err(_) => {
-                        self.report(
+                        self.report_bytes(
                             ErrorCode::LibraryUnreadable,
                             Span::NONE,
                             "the library folder can't be inspected",
@@ -710,11 +726,11 @@ impl<'s, 'd> Loader<'s, 'd> {
                     pending.push(full);
                 } else {
                     let ft = meta.file_type();
-                    if (!ft.is_file() && !ft.is_symlink()) || !full.ends_with(".mo") {
+                    if (!ft.is_file() && !ft.is_symlink()) || !full.ends_with(b".mo") {
                         continue;
                     }
                     if (files.len() as u64) == MO_LIMIT_FILES - 1 {
-                        self.report(
+                        self.report_bytes(
                             ErrorCode::TooManyFiles,
                             Span::NONE,
                             "the program has too many source files",
@@ -728,17 +744,22 @@ impl<'s, 'd> Loader<'s, 'd> {
             }
         }
 
-        files.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        files.sort();
         let root_len = root.len();
         for file_path in files {
             if let Some(real_entry) = &self.real_entry
-                && let Some(resolved) = canonicalize_path(Path::new(&file_path))
+                && let Some(resolved) = canonicalize_path(&bytes_to_path(&file_path))
                 && resolved == *real_entry
             {
                 continue;
             }
-            let actual = file_path[root_len..].trim_start_matches('/');
-            if file_loaded_on_use(actual) {
+            let mut actual_bytes = &file_path[root_len..];
+            while let Some(rest) = actual_bytes.strip_prefix(b"/") {
+                actual_bytes = rest;
+            }
+            if let Ok(actual_str) = std::str::from_utf8(actual_bytes)
+                && file_loaded_on_use(actual_str)
+            {
                 continue;
             }
             let Some(id) = self.read_module(&file_path, None, Span::NONE, true) else {
@@ -762,7 +783,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                 );
                 return false;
             };
-            if actual != relative {
+            if actual_bytes != relative.as_bytes() {
                 self.report(
                     ErrorCode::ModuleName,
                     header_path_span,
@@ -825,20 +846,23 @@ impl<'s, 'd> Loader<'s, 'd> {
         true
     }
 
-    fn manifest_error(&mut self, manifest_path: &str, message: &str, reason: Option<&str>) -> bool {
-        let mut shown = manifest_path.to_string();
+    fn manifest_error(
+        &mut self,
+        manifest_path: &[u8],
+        message: &str,
+        reason: Option<&str>,
+    ) -> bool {
+        let mut shown = manifest_path.to_vec();
         if let Some(real_root) = self.real_root.clone() {
             let rlen = real_root.len();
-            if manifest_path.starts_with(&real_root)
-                && manifest_path.as_bytes().get(rlen) == Some(&b'/')
-            {
+            if manifest_path.starts_with(&real_root) && manifest_path.get(rlen) == Some(&b'/') {
                 let root_prefix = self.root.clone();
                 if let Some(rel) = self.join(&root_prefix, &manifest_path[rlen + 1..], Span::NONE) {
                     shown = rel;
                 }
             }
         }
-        self.report(
+        self.report_bytes(
             ErrorCode::PackageManifest,
             Span::NONE,
             message,
@@ -850,20 +874,20 @@ impl<'s, 'd> Loader<'s, 'd> {
 
     fn resolve_dep_entry(
         &mut self,
-        manifest_path: &str,
-        real_manifest_dir: &str,
+        manifest_path: &[u8],
+        real_manifest_dir: &[u8],
         dep_path: &str,
         dep_src: Option<&str>,
-        stack_dirs: &mut Vec<String>,
+        stack_dirs: &mut Vec<Vec<u8>>,
     ) -> Option<usize> {
         let raw_dir = if dep_path.starts_with('/') {
-            dep_path.to_string()
+            dep_path.as_bytes().to_vec()
         } else {
             let base_slash = self.ensure_trailing_slash(real_manifest_dir)?;
-            self.join(&base_slash, dep_path, Span::NONE)?
+            self.join(&base_slash, dep_path.as_bytes(), Span::NONE)?
         };
-        let resolved_dir = match canonicalize_path(Path::new(&raw_dir)) {
-            Some(r) if fs::metadata(&r).is_ok_and(|m| m.is_dir()) => r,
+        let resolved_dir = match canonicalize_path(&bytes_to_path(&raw_dir)) {
+            Some(r) if fs::metadata(bytes_to_path(&r)).is_ok_and(|m| m.is_dir()) => r,
             _ => {
                 self.manifest_error(
                     manifest_path,
@@ -911,9 +935,9 @@ impl<'s, 'd> Loader<'s, 'd> {
                 return None;
             }
             let dep_slash = self.ensure_trailing_slash(&resolved_dir)?;
-            let sub_cand = self.join(&dep_slash, src_rel, Span::NONE)?;
-            let resolved_sub = match canonicalize_path(Path::new(&sub_cand)) {
-                Some(r) if fs::metadata(&r).is_ok_and(|m| m.is_dir()) => r,
+            let sub_cand = self.join(&dep_slash, src_rel.as_bytes(), Span::NONE)?;
+            let resolved_sub = match canonicalize_path(&bytes_to_path(&sub_cand)) {
+                Some(r) if fs::metadata(bytes_to_path(&r)).is_ok_and(|m| m.is_dir()) => r,
                 _ => {
                     self.manifest_error(
                         manifest_path,
@@ -940,10 +964,10 @@ impl<'s, 'd> Loader<'s, 'd> {
                 let cand = if sub.is_empty() {
                     resolved_dir.clone()
                 } else {
-                    self.join(&dep_slash, sub, Span::NONE)?
+                    self.join(&dep_slash, sub.as_bytes(), Span::NONE)?
                 };
-                if let Some(resolved_sub) = canonicalize_path(Path::new(&cand))
-                    && fs::metadata(&resolved_sub).is_ok_and(|m| m.is_dir())
+                if let Some(resolved_sub) = canonicalize_path(&bytes_to_path(&cand))
+                    && fs::metadata(bytes_to_path(&resolved_sub)).is_ok_and(|m| m.is_dir())
                     && is_under_or_equal(&resolved_dir, &resolved_sub)
                     && !real_roots.iter().any(|r| r == &resolved_sub)
                 {
@@ -964,8 +988,8 @@ impl<'s, 'd> Loader<'s, 'd> {
         });
 
         let dep_slash = self.ensure_trailing_slash(&resolved_dir)?;
-        let sub_manifest = self.join(&dep_slash, "mo.toml", Span::NONE)?;
-        if let Ok(meta) = fs::metadata(&sub_manifest) {
+        let sub_manifest = self.join(&dep_slash, b"mo.toml", Span::NONE)?;
+        if let Ok(meta) = fs::metadata(bytes_to_path(&sub_manifest)) {
             if !meta.is_file() {
                 self.manifest_error(&sub_manifest, "mo.toml is not a regular file", None);
                 return None;
@@ -981,11 +1005,11 @@ impl<'s, 'd> Loader<'s, 'd> {
 
     fn load_manifest_recursive(
         &mut self,
-        manifest_path: &str,
-        real_manifest_dir: &str,
-        stack_dirs: &mut Vec<String>,
+        manifest_path: &[u8],
+        real_manifest_dir: &[u8],
+        stack_dirs: &mut Vec<Vec<u8>>,
     ) -> Option<Vec<usize>> {
-        let file = match open_regular_nonblocking(Path::new(manifest_path)) {
+        let file = match open_regular_nonblocking(&bytes_to_path(manifest_path)) {
             Ok(f) => f,
             Err(ManifestOpenError::NotRegular) => {
                 self.manifest_error(manifest_path, "mo.toml is not a regular file", None);
@@ -1021,7 +1045,8 @@ impl<'s, 'd> Loader<'s, 'd> {
             return None;
         }
         if (self.manifests.len() as u64) < MO_LIMIT_DEPENDENCIES + 1 {
-            self.manifests.push(manifest_path.to_string());
+            self.manifests
+                .push(String::from_utf8_lossy(manifest_path).into_owned());
         }
         if raw.contains(&0) {
             self.manifest_error(manifest_path, "mo.toml contains a NUL byte", None);
@@ -1401,12 +1426,15 @@ impl<'s, 'd> Loader<'s, 'd> {
             return true;
         };
         loop {
-            let cand = if cur == "/" {
-                "/mo.toml".to_string()
+            let cand = if cur == b"/" {
+                b"/mo.toml".to_vec()
             } else {
-                format!("{cur}/mo.toml")
+                let mut v = Vec::with_capacity(cur.len() + 8);
+                v.extend_from_slice(&cur);
+                v.extend_from_slice(b"/mo.toml");
+                v
             };
-            if let Ok(meta) = fs::metadata(&cand) {
+            if let Ok(meta) = fs::metadata(bytes_to_path(&cand)) {
                 if !meta.is_file() {
                     return self.manifest_error(&cand, "mo.toml is not a regular file", None);
                 }
@@ -1418,10 +1446,10 @@ impl<'s, 'd> Loader<'s, 'd> {
                 self.entry_direct = direct;
                 return true;
             }
-            if cur == "/" {
+            if cur == b"/" {
                 break;
             }
-            let Some(slash) = cur.rfind('/') else {
+            let Some(slash) = cur.iter().rposition(|&b| b == b'/') else {
                 break;
             };
             if slash == 0 {
@@ -1501,7 +1529,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                     {
                         Ok(id) => id,
                         Err(err) => {
-                            self.source_error(err, &name, use_path_span);
+                            self.source_error(err, name.as_bytes(), use_path_span);
                             return None;
                         }
                     };
@@ -1530,7 +1558,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                 {
                     self.source_error(
                         SourceError::Unreadable("missing in-memory module".to_string()),
-                        &name,
+                        name.as_bytes(),
                         use_path_span,
                     );
                     return None;
@@ -1551,7 +1579,7 @@ impl<'s, 'd> Loader<'s, 'd> {
 
                 if is_lib_importer && target.is_none_or(|t| !self.items[t].library) {
                     let full = self.library_file_from_rel(rel_opt.as_deref(), use_path_span)?;
-                    self.report(
+                    self.report_bytes(
                         ErrorCode::ModuleMissing,
                         use_path_span,
                         "a library module's file can't be found",
@@ -1580,8 +1608,9 @@ impl<'s, 'd> Loader<'s, 'd> {
                     // 1. Local module root of the importing package.
                     if mod_pkg == 0 {
                         let root_prefix = self.root.clone();
-                        let local_cand = self.join(&root_prefix, &relative, use_path_span)?;
-                        if fs::symlink_metadata(&local_cand).is_ok() {
+                        let local_cand =
+                            self.join(&root_prefix, relative.as_bytes(), use_path_span)?;
+                        if fs::symlink_metadata(bytes_to_path(&local_cand)).is_ok() {
                             let confine = self.real_root.clone();
                             target = self.read_module_in_root(
                                 &local_cand,
@@ -1594,15 +1623,16 @@ impl<'s, 'd> Loader<'s, 'd> {
                             target?;
                         }
                     } else if mod_pkg <= self.deps.len() {
-                        let roots: Vec<(String, String)> = self.deps[mod_pkg - 1]
+                        let roots: Vec<(Vec<u8>, Vec<u8>)> = self.deps[mod_pkg - 1]
                             .root_slash
                             .iter()
                             .cloned()
                             .zip(self.deps[mod_pkg - 1].real_roots.iter().cloned())
                             .collect();
                         for (root_slash, real_root) in roots {
-                            let cand = self.join(&root_slash, &relative, use_path_span)?;
-                            if fs::symlink_metadata(&cand).is_ok() {
+                            let cand =
+                                self.join(&root_slash, relative.as_bytes(), use_path_span)?;
+                            if fs::symlink_metadata(bytes_to_path(&cand)).is_ok() {
                                 target = self.read_module_in_root(
                                     &cand,
                                     Some(&real_root),
@@ -1624,17 +1654,18 @@ impl<'s, 'd> Loader<'s, 'd> {
                         } else {
                             self.deps[mod_pkg - 1].direct.clone()
                         };
-                        let mut matched: Option<(usize, String, String)> = None;
+                        let mut matched: Option<(usize, Vec<u8>, Vec<u8>)> = None;
                         for dep_id in direct {
-                            let roots: Vec<(String, String)> = self.deps[dep_id - 1]
+                            let roots: Vec<(Vec<u8>, Vec<u8>)> = self.deps[dep_id - 1]
                                 .root_slash
                                 .iter()
                                 .cloned()
                                 .zip(self.deps[dep_id - 1].real_roots.iter().cloned())
                                 .collect();
                             for (root_slash, real_root) in roots {
-                                let cand = self.join(&root_slash, &relative, use_path_span)?;
-                                if fs::symlink_metadata(&cand).is_ok() {
+                                let cand =
+                                    self.join(&root_slash, relative.as_bytes(), use_path_span)?;
+                                if fs::symlink_metadata(bytes_to_path(&cand)).is_ok() {
                                     if let Some((prev_dep, _, _)) = &matched
                                         && *prev_dep != dep_id
                                     {
@@ -1691,7 +1722,7 @@ impl<'s, 'd> Loader<'s, 'd> {
                                 Some(self.deps[mod_pkg - 1].real_roots[0].clone()),
                             )
                         };
-                        let full = self.join(&miss_slash, &relative, use_path_span)?;
+                        let full = self.join(&miss_slash, relative.as_bytes(), use_path_span)?;
                         target = self.read_module_in_root(
                             &full,
                             miss_real.as_deref(),
@@ -1751,7 +1782,7 @@ impl<'s, 'd> Loader<'s, 'd> {
         Some(order)
     }
 
-    fn library_file_from_rel(&mut self, relative: Option<&str>, span: Span) -> Option<String> {
+    fn library_file_from_rel(&mut self, relative: Option<&str>, span: Span) -> Option<Vec<u8>> {
         let Some(relative) = relative else {
             self.report(
                 ErrorCode::PathTooLong,
@@ -1763,10 +1794,10 @@ impl<'s, 'd> Loader<'s, 'd> {
             return None;
         };
         match self.real_library.clone() {
-            None => self.join("lib/", relative, span),
+            None => self.join(b"lib/", relative.as_bytes(), span),
             Some(real_lib) => {
-                let prefix = self.join(&real_lib, "/", span)?;
-                self.join(&prefix, relative, span)
+                let prefix = self.join(&real_lib, b"/", span)?;
+                self.join(&prefix, relative.as_bytes(), span)
             }
         }
     }
@@ -1776,10 +1807,10 @@ impl<'s, 'd> Loader<'s, 'd> {
             return true;
         }
         if let Some(real_lib) = self.real_library.clone() {
-            let Some(prefix) = self.join(&real_lib, "/", Span::NONE) else {
+            let Some(prefix) = self.join(&real_lib, b"/", Span::NONE) else {
                 return false;
             };
-            let Some(full) = self.join(&prefix, file, Span::NONE) else {
+            let Some(full) = self.join(&prefix, file.as_bytes(), Span::NONE) else {
                 return false;
             };
             return self
@@ -1889,7 +1920,8 @@ impl<'s, 'd> Loader<'s, 'd> {
             .collect();
 
         Some(ModuleSet {
-            root: self.root,
+            root: String::from_utf8_lossy(&self.root).into_owned(),
+            root_bytes: self.root,
             modules,
             order,
             manifests: self.manifests,
@@ -1907,6 +1939,29 @@ impl<'s, 'd> Loader<'s, 'd> {
 pub fn load_program(
     sources: &mut SourceMap,
     entry: &str,
+    options: &LoadOptions,
+    diags: &mut DiagBag,
+) -> Option<ModuleSet> {
+    load_program_bytes(sources, entry.as_bytes(), options, diags)
+}
+
+/// Loads the entry module from an OS [`Path`], preserving arbitrary non-UTF-8 path bytes on Unix.
+#[must_use]
+pub fn load_program_path(
+    sources: &mut SourceMap,
+    entry: &Path,
+    options: &LoadOptions,
+    diags: &mut DiagBag,
+) -> Option<ModuleSet> {
+    let bytes = path_to_bytes(entry);
+    load_program_bytes(sources, &bytes, options, diags)
+}
+
+/// Loads the entry module from raw OS path bytes, preserving non-UTF-8 path bytes on Unix.
+#[must_use]
+pub fn load_program_bytes(
+    sources: &mut SourceMap,
+    entry: &[u8],
     options: &LoadOptions,
     diags: &mut DiagBag,
 ) -> Option<ModuleSet> {
@@ -1931,22 +1986,22 @@ pub fn load_program(
     set
 }
 
-fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &str, options: &LoadOptions) -> bool {
+fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &[u8], options: &LoadOptions) -> bool {
     let Some(entry) = loader.normal_path(raw_entry) else {
         return false;
     };
-    let mut disk_library: Option<String> = None;
+    let mut disk_library: Option<Vec<u8>> = None;
 
     match &options.library {
         LibraryMode::Directory(lib_path) => {
-            let lib_str = lib_path.to_string_lossy();
-            let Some(norm_lib) = loader.normal_path(&lib_str) else {
+            let lib_bytes = path_to_bytes(lib_path);
+            let Some(norm_lib) = loader.normal_path(&lib_bytes) else {
                 return false;
             };
             let Some(real_lib) = loader.real_path(&norm_lib, Span::NONE, true) else {
                 return false;
             };
-            if let Some(resolved) = canonicalize_path(Path::new(&entry))
+            if let Some(resolved) = canonicalize_path(&bytes_to_path(&entry))
                 && is_strictly_under_root(&real_lib, &resolved)
             {
                 let Some(real_entry) = loader.real_path(&entry, Span::NONE, false) else {
@@ -1962,15 +2017,17 @@ fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &str, options: &LoadOption
             ..
         } => {
             if let Some(lib_resolved) = canonicalize_path(entry_root)
-                && let Some(entry_resolved) = canonicalize_path(Path::new(&entry))
+                && let Some(entry_resolved) = canonicalize_path(&bytes_to_path(&entry))
                 && is_strictly_under_root(&lib_resolved, &entry_resolved)
             {
                 let Some(real_entry) = loader.real_path(&entry, Span::NONE, false) else {
                     return false;
                 };
-                let rel = real_entry[lib_resolved.len()..]
-                    .trim_start_matches('/')
-                    .to_string();
+                let mut rel_bytes = &real_entry[lib_resolved.len()..];
+                while let Some(rest) = rel_bytes.strip_prefix(b"/") {
+                    rel_bytes = rest;
+                }
+                let rel = String::from_utf8_lossy(rel_bytes).into_owned();
                 loader.real_entry = Some(real_entry);
                 loader.entry_library_rel = Some(rel);
             }
@@ -2010,7 +2067,7 @@ fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &str, options: &LoadOption
 
     let a = entry.len();
     let b = relative.len();
-    if a < b || entry[a - b..] != relative || (a > b && entry.as_bytes()[a - b - 1] != b'/') {
+    if a < b || entry[a - b..] != *relative.as_bytes() || (a > b && entry[a - b - 1] != b'/') {
         loader.report(
             ErrorCode::ModuleName,
             entry_path_span,
@@ -2024,7 +2081,7 @@ fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &str, options: &LoadOption
         return false;
     }
 
-    let root = entry[..a - b].to_string();
+    let root = entry[..a - b].to_vec();
     let Some(real_root) = loader.real_path(&root, entry_path_span, false) else {
         return false;
     };
@@ -2043,7 +2100,7 @@ fn load_entry(loader: &mut Loader<'_, '_>, raw_entry: &str, options: &LoadOption
         {
             Ok(id) => id,
             Err(err) => {
-                loader.source_error(err, "<UpgradeOld>", Span::NONE);
+                loader.source_error(err, b"<UpgradeOld>", Span::NONE);
                 return false;
             }
         };
@@ -2156,25 +2213,51 @@ fn extract_path_text(tree: &SyntaxTree, path_node: NodeId, filename: bool) -> Op
     }
 }
 
-fn canonicalize_path(path: &Path) -> Option<String> {
-    let resolved = fs::canonicalize(path).ok()?;
-    let s = resolved.to_string_lossy().into_owned();
-    if (s.len() as u64) > MO_LIMIT_PATH_SIZE {
-        None
-    } else {
-        Some(s)
+fn bytes_to_path(bytes: &[u8]) -> Cow<'_, Path> {
+    #[cfg(unix)]
+    {
+        Cow::Borrowed(Path::new(OsStr::from_bytes(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        Cow::Owned(PathBuf::from(String::from_utf8_lossy(bytes).into_owned()))
     }
 }
 
-fn is_strictly_under_root(root: &str, candidate: &str) -> bool {
-    let n = root.len();
-    candidate.starts_with(root) && (n == 1 || candidate.as_bytes().get(n) == Some(&b'/'))
+fn path_to_bytes(path: &Path) -> Vec<u8> {
+    os_str_to_bytes(path.as_os_str())
 }
 
-fn is_under_or_equal(root: &str, candidate: &str) -> bool {
+fn os_str_to_bytes(s: &OsStr) -> Vec<u8> {
+    #[cfg(unix)]
+    {
+        s.as_bytes().to_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        s.to_string_lossy().into_owned().into_bytes()
+    }
+}
+
+fn canonicalize_path(path: &Path) -> Option<Vec<u8>> {
+    let resolved = fs::canonicalize(path).ok()?;
+    let bytes = path_to_bytes(&resolved);
+    if (bytes.len() as u64) > MO_LIMIT_PATH_SIZE {
+        None
+    } else {
+        Some(bytes)
+    }
+}
+
+fn is_strictly_under_root(root: &[u8], candidate: &[u8]) -> bool {
+    let n = root.len();
+    candidate.starts_with(root) && (n == 1 || candidate.get(n) == Some(&b'/'))
+}
+
+fn is_under_or_equal(root: &[u8], candidate: &[u8]) -> bool {
     let n = root.len();
     candidate.starts_with(root)
-        && (n == 1 || candidate.len() == n || candidate.as_bytes().get(n) == Some(&b'/'))
+        && (n == 1 || candidate.len() == n || candidate.get(n) == Some(&b'/'))
 }
 
 enum ManifestOpenError {
@@ -2208,8 +2291,10 @@ fn open_regular_nonblocking(path: &Path) -> Result<fs::File, ManifestOpenError> 
 }
 
 #[cfg(unix)]
-fn read_regular_file_into_sources(sources: &mut SourceMap, path: &str) -> Result<u32, SourceError> {
-    let path_bytes = path.as_bytes();
+fn read_regular_file_into_sources(
+    sources: &mut SourceMap,
+    path_bytes: &[u8],
+) -> Result<u32, SourceError> {
     if u64::from(sources.len()) >= MO_LIMIT_FILES {
         return Err(SourceError::TooManyFiles);
     }
@@ -2217,7 +2302,7 @@ fn read_regular_file_into_sources(sources: &mut SourceMap, path: &str) -> Result
         return Err(SourceError::PathTooLong);
     }
     let fd = rustix::fs::open(
-        Path::new(path),
+        bytes_to_path(path_bytes).as_ref(),
         rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NONBLOCK,
         rustix::fs::Mode::empty(),
     )
@@ -2241,8 +2326,11 @@ fn read_regular_file_into_sources(sources: &mut SourceMap, path: &str) -> Result
 }
 
 #[cfg(not(unix))]
-fn read_regular_file_into_sources(sources: &mut SourceMap, path: &str) -> Result<u32, SourceError> {
-    sources.add_file(Path::new(path))
+fn read_regular_file_into_sources(
+    sources: &mut SourceMap,
+    path_bytes: &[u8],
+) -> Result<u32, SourceError> {
+    sources.add_file(&bytes_to_path(path_bytes))
 }
 
 fn toml_skip_ws(s: &[u8], pos: &mut usize) {

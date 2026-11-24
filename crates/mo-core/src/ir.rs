@@ -672,6 +672,9 @@ pub struct ModuleMeta {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SourceMetadata {
     pub files: Vec<String>,
+    /// Optional raw OS path bytes corresponding 1-to-1 with [`Self::files`] when lowered
+    /// from a [`mo_base::SourceMap`]. Empty when parsed from UTF-8 Core text.
+    pub file_bytes: Vec<Vec<u8>>,
     pub modules: Vec<ModuleMeta>,
     pub funs: Vec<FnMeta>,
     pub consts: Vec<ConstMeta>,
@@ -682,7 +685,7 @@ pub struct SourceMetadata {
 pub enum Metadata {
     #[default]
     NoSource,
-    Source(SourceMetadata),
+    Source(Box<SourceMetadata>),
 }
 
 /// Complete Core program (`struct mo_core`).

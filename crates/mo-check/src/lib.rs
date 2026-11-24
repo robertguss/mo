@@ -76,7 +76,7 @@ pub use infer::{
 };
 pub use load::{
     LibraryMode, LoadOptions, LoadedModule, ModuleSet, ON_USE_LIBRARY_MODULES, is_loaded_on_use,
-    is_reserved_on_use, load_program, load_program_sources,
+    is_reserved_on_use, load_program, load_program_bytes, load_program_path, load_program_sources,
 };
 pub use map_keys::{MapKeyBudget, MapKeyCategory, MapLiteralKey, canonicalize_map_literal_key};
 pub use modules::{
