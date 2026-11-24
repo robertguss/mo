@@ -1,0 +1,17 @@
+[package]
+name = "mo-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mo-base = { path = "../mo-base" }
+mo-def = { path = "../mo-def" }
+mo-syntax = { path = "../mo-syntax" }
+thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", default-features = false, features = ["std", "fs"] }
+
+[lints]
+workspace = true
