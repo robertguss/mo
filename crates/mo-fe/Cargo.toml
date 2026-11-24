@@ -12,6 +12,7 @@ path = "src/main.rs"
 mo-def = { path = "../mo-def" }
 mo-base = { path = "../mo-base" }
 mo-core = { path = "../mo-core" }
+mo-syntax = { path = "../mo-syntax" }
 mo-prim = { path = "../mo-prim" }
 
 [lints]

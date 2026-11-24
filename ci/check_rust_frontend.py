@@ -1,43 +1,43 @@
 #!/usr/bin/env python3
-"""Differential test harness for the pure-Rust Mo front end (`mo-base`, `mo-core`, `mo-fe`).
+"""Differential test harness for the pure-Rust Mo front end (`mo-base`, `mo-syntax`, `mo-core`, `mo-fe`).
 
 Run from the repository root:
     python3 ci/check_rust_frontend.py [--mo PATH] [--mo-fe PATH] [--mocore PATH]
-                                      [--skip-build] [--require-lean]
+                                      [--mo-grammar PATH] [--skip-build] [--require-lean]
                                       [--generated-count N] [--jobs N]
 
-What this checks for Phase 2, Slice 2A:
-  1. Workspace lint & safety policy audit:
+What this checks across Phase 2 Slices 2A and 2B:
+  1. Workspace lint & safety policy audit (all 11 crates):
        - Root `clippy.toml` configures test exemptions without weakening library lints.
        - Root `Cargo.toml` enforces hardened `writing-good-rust` `[workspace.lints]`
          including `unsafe_code = "forbid"` and `unwrap_used = "deny"`.
        - Every crate under `crates/` opts into `[lints] workspace = true` and puts
          `#![forbid(unsafe_code)]` in the first 5 lines of every entry point (`lib.rs`,
          `main.rs`, `build.rs`).
-  2. Lossless `.core` v0.11 canonical round-trip on all committed Lean fixtures:
+  2. Lossless `.core` v0.11 canonical round-trip on all committed Lean fixtures (Slice 2A):
        - 15/15 `tests/core/*.core` (`Run`) via `mo-fe core-print` (both `--kind run` and
          `--kind auto`) and `mo-fe core-check`.
        - 20/20 `fuzz/corpus/fuzz_core_text/*` across all explicit `CoreTextKind`s and
          `--kind auto`.
   3. Core typechecker differential parity (`mo-fe core-check-batch` vs C `test_core_check.test`
-     AND Lean `formal/.lake/build/bin/mocore`) across:
-       - Every signature, typed-tree, rule case, and corpus mutation from `ci/check_core_check.py`
-         (including `tests/core`, `fuzz/corpus/fuzz_core_text`, `fuzz/corpus/fuzz_core_check`).
-       - Exact verdict (`0` / `4` / `5`) agreement across Rust, C, and Lean, PLUS exact
-         error code (`E10xx`) agreement between Rust and C.
-  4. Generated well-typed Core programs (`ci/gen_core.py`) 3-way check & canonical print parity:
-       - Negative control (`ILL_TYPED`) refused by Rust, C, and Lean with status `5`.
-       - Every generated program accepted by Rust `mo-fe`, C `test_core_check.test`, and
-         Lean `mocore`, and printed byte-for-byte identically by Rust `mo-fe core-print-batch`,
-         C `test_core_print.test`, and Lean `mocore --canonical`.
-  5. C `mo check --emit=core` front-end seam verification across real Mo programs:
-       - All 13 `examples/` programs, all 46 `tests/lower-source/*/main.mo` suites, and all
-         non-error `tests/golden/` programs: emitted `.core` round-trips byte-for-byte through
-         `mo-fe core-print --kind program` and matches C `test_core_check.test` verdicts 100%.
+     AND Lean `formal/.lake/build/bin/mocore`) across all cases in `ci/check_core_check.py`.
+  4. Generated well-typed Core programs (`ci/gen_core.py`) 3-way check & canonical print parity.
+  5. C `mo check --emit=core` front-end seam verification across real Mo programs.
+  6. Grammar corpus parity (Slice 2B):
+       - 106/106 `grammar/tests/` (`good`, `bad`, `bad-files`) match Bison `mo-grammar` 100%.
+  7. Formatter byte-for-byte parity across all tracked `.mo` files (Slice 2B):
+       - Every tracked `.mo` file (`git ls-files '*.mo'`, 1,559 files) matches C `mo format`
+         accept/refuse and formatted bytes byte-for-byte, and a second `mo-fe format` pass is
+         idempotent on every accepted file.
+  8. Syntax, lexer, and formatter error diagnostic parity (Slice 2B):
+       - Every syntax/lexer/format case in `tests/errors/` (including generated limit cases)
+         matches `expected` stderr byte-for-byte and C `mo check --json` diagnostic records
+         byte-for-byte.
 """
 
 import argparse
 import concurrent.futures
+import json
 import os
 import pathlib
 import re
@@ -119,7 +119,7 @@ def check_workspace_lint_policy() -> tuple[int, int]:
         assert rule in cargo_text, f"Cargo.toml missing required workspace lint: {rule}"
 
     crate_dirs = sorted(p for p in (ROOT / "crates").iterdir() if p.is_dir())
-    assert len(crate_dirs) >= 10, f"expected >= 10 workspace crates, found {len(crate_dirs)}"
+    assert len(crate_dirs) >= 11, f"expected >= 11 workspace crates, found {len(crate_dirs)}"
     entry_points_checked = 0
     for crate in crate_dirs:
         crate_toml = (crate / "Cargo.toml").read_text(encoding="utf-8")
@@ -662,13 +662,353 @@ def check_c_emitted_core_programs(
         return len(emitted), accepted
 
 
+SYNTAX_AND_FORMAT_ERROR_CODES = (
+    set(range(1, 34)) | {96, 97, 1001} | set(range(1005, 1012)) | {1402, 1403}
+)
+
+
+def _write_error_file(folder: pathlib.Path, text: str, name: str = "main.mo") -> None:
+    (folder / name).write_text(text, encoding="utf-8")
+
+
+SYNTAX_ERROR_GENERATORS = {
+    "file-too-big": lambda f: _write_error_file(f, "module Main\n" + "# padding\n" * 1_000_000),
+    "line-too-long": lambda f: _write_error_file(f, "module Main\n# " + "x" * 70_000 + "\n"),
+    "nested-too-deeply": lambda f: _write_error_file(
+        f, "module Main\nfn run() : Int\n" + "(" * 300 + "1" + ")" * 300 + "\nend\n"
+    ),
+    "interpolations-too-deep": lambda f: _write_error_file(
+        f, "module Main\nfn run() : Text\n" + '"#{' * 20 + "1" + '}"' * 20 + "\nend\n"
+    ),
+    "too-many-names": lambda f: _write_error_file(
+        f, "module Main\n" + "".join(f"x{i} = {i}\n" for i in range(65536))
+    ),
+    "too-many-parameters": lambda f: _write_error_file(
+        f,
+        f"module Main\nfn f({', '.join(f'a{i}: Int' for i in range(256))}) : Int\n1\nend\n",
+    ),
+    "too-many-fields": lambda f: _write_error_file(
+        f, "module Main\nstruct S\n" + "".join(f"f{i}: Int\n" for i in range(65536)) + "end\n"
+    ),
+    "too-many-cases": lambda f: _write_error_file(
+        f, "module Main\nenum E\n" + "".join(f"C{i}\n" for i in range(65536)) + "end\n"
+    ),
+    "format-limit": lambda f: _write_error_file(
+        f,
+        "module Main\nfn run() : Int\n  [\n"
+        + ",\n".join(["[1,2,3]"] * 100_000)
+        + "\n].size\nend\n",
+    ),
+}
+
+
+def find_or_build_mo_grammar(
+    explicit: str | None, mo_bin: pathlib.Path, skip_build: bool, require_bison: bool
+) -> pathlib.Path | None:
+    """Locate or build the Bison executable grammar (`build/<cc>/debug/mo-grammar`)."""
+    if explicit:
+        path = pathlib.Path(explicit).resolve()
+        assert path.is_file(), f"mo-grammar binary not found: {path}"
+        return path
+    rel_parts = None
+    try:
+        rel_parts = mo_bin.resolve().relative_to(ROOT).parts
+    except ValueError:
+        pass
+    compiler = (
+        rel_parts[1]
+        if rel_parts and len(rel_parts) >= 3 and rel_parts[0] == "build"
+        else "gcc"
+    )
+    if compiler not in ("gcc", "clang", "cc"):
+        compiler = "gcc"
+    target = ROOT / "build" / compiler / "debug" / "mo-grammar"
+    if target.is_file():
+        return target
+    if not skip_build and shutil.which("bison") is not None:
+        subprocess.run(
+            ["make", "--no-print-directory", "-j8", f"CC={compiler}", str(target.relative_to(ROOT))],
+            cwd=ROOT,
+            check=True,
+        )
+        if target.is_file():
+            return target
+    if require_bison:
+        raise AssertionError(
+            "Bison mo-grammar binary not found and bison is unavailable (pass --mo-grammar or install bison)"
+        )
+    return None
+
+
+def decode_format_batch(data: bytes) -> list[tuple[bool, bytes | int]]:
+    """Decode `mo-fe format-batch` framed output: `R <len>\\n<bytes>` or `E <code>\\n`."""
+    results: list[tuple[bool, bytes | int]] = []
+    pos = 0
+    end = len(data)
+    while pos < end:
+        nl = data.index(b"\n", pos)
+        header = data[pos:nl].decode("ascii")
+        pos = nl + 1
+        kind, value = header.split(" ", 1)
+        if kind == "R":
+            length = int(value)
+            payload = data[pos : pos + length]
+            assert len(payload) == length, "truncated format-batch payload"
+            pos += length
+            results.append((True, payload))
+        elif kind == "E":
+            results.append((False, int(value)))
+        else:
+            raise AssertionError(f"unexpected format-batch header: {header!r}")
+    return results
+
+
+def run_format_batch(
+    mo_fe: pathlib.Path, files: list[str], jobs: int, fragment: bool = False
+) -> list[tuple[bool, bytes | int]]:
+    batches = [files[start : start + BATCH] for start in range(0, len(files), BATCH)]
+    prefix = [str(mo_fe), "format-batch", *(["--fragment"] if fragment else [])]
+
+    def one(batch: list[str]) -> list[tuple[bool, bytes | int]]:
+        res = subprocess.run(
+            [*prefix, *batch],
+            capture_output=True,
+            check=True,
+            timeout=120,
+        )
+        return decode_format_batch(res.stdout)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        out: list[tuple[bool, bytes | int]] = []
+        for items in pool.map(one, batches):
+            out.extend(items)
+    return out
+
+
+def check_grammar_corpus_parity(
+    mo_fe: pathlib.Path, mo_grammar: pathlib.Path | None
+) -> tuple[int, int, int]:
+    """Verify 106/106 grammar/tests/ (good, bad, bad-files) match Bison mo-grammar 100%."""
+    good = sorted((ROOT / "grammar/tests/good").glob("*.mo"))
+    bad = sorted((ROOT / "grammar/tests/bad").glob("*.mo"))
+    bad_files = sorted((ROOT / "grammar/tests/bad-files").glob("*.mo"))
+    total = len(good) + len(bad) + len(bad_files)
+    assert len(good) == 13 and len(bad) == 90 and len(bad_files) == 3, (
+        f"unexpected grammar/tests inventory: good={len(good)}, bad={len(bad)}, bad-files={len(bad_files)}"
+    )
+
+    good_lines = run_batch_lines(
+        [str(mo_fe), "parse-batch", "--fragment"], [str(p) for p in good], jobs=1
+    )
+    bad_lines = run_batch_lines(
+        [str(mo_fe), "parse-batch", "--fragment"], [str(p) for p in bad], jobs=1
+    )
+    bad_file_lines = run_batch_lines(
+        [str(mo_fe), "parse-batch"], [str(p) for p in bad_files], jobs=1
+    )
+
+    for p, line in zip(good, good_lines):
+        assert line == "0", f"mo-fe rejected good grammar fixture {p.relative_to(ROOT)}: {line!r}"
+    for p, line in zip(bad, bad_lines):
+        assert line.startswith("1 "), f"mo-fe accepted bad grammar fixture {p.relative_to(ROOT)}: {line!r}"
+    for p, line in zip(bad_files, bad_file_lines):
+        assert line.startswith("1 "), (
+            f"mo-fe accepted bad-files grammar fixture {p.relative_to(ROOT)}: {line!r}"
+        )
+
+    if mo_grammar is not None:
+        for paths, frag, want_ok in (
+            (good, True, True),
+            (bad, True, False),
+            (bad_files, False, False),
+        ):
+            for p in paths:
+                cmd = [str(mo_grammar), *(["--fragment"] if frag else []), str(p)]
+                res = subprocess.run(cmd, cwd=ROOT, capture_output=True, timeout=30)
+                bison_ok = res.returncode == 0
+                assert bison_ok == want_ok, (
+                    f"Bison mo-grammar mismatch on {p.relative_to(ROOT)}: "
+                    f"expected {want_ok}, got rc={res.returncode} ({res.stderr.decode(errors='replace')})"
+                )
+    return total, len(good), len(bad) + len(bad_files)
+
+
+def check_tracked_mo_format_parity(
+    mo_bin: pathlib.Path, mo_fe: pathlib.Path, jobs: int
+) -> tuple[int, int, int]:
+    """Compare mo-fe format vs C mo format byte-for-byte across all tracked .mo files + idempotence."""
+    tracked = [
+        p
+        for p in subprocess.check_output(
+            ["git", "ls-files", "*.mo"], cwd=ROOT, text=True
+        ).splitlines()
+        if p
+    ]
+    assert len(tracked) >= 1500, f"expected >= 1500 tracked .mo files, found {len(tracked)}"
+    abs_paths = [str(ROOT / rel) for rel in tracked]
+
+    rs_results = run_format_batch(mo_fe, abs_paths, jobs=jobs, fragment=False)
+    assert len(rs_results) == len(tracked)
+
+    def run_c_one(rel: str) -> tuple[bool, bytes, bytes]:
+        raw = (ROOT / rel).read_bytes()
+        res = subprocess.run(
+            [str(mo_bin), "format", "--stdin"],
+            cwd=ROOT,
+            input=raw,
+            capture_output=True,
+            timeout=60,
+        )
+        return res.returncode == 0, res.stdout, res.stderr
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        c_results = list(pool.map(run_c_one, tracked))
+
+    accepted_outputs: list[tuple[str, bytes]] = []
+    refused = 0
+    for rel, (rs_ok, rs_payload), (c_ok, c_out, c_err) in zip(tracked, rs_results, c_results):
+        assert rs_ok == c_ok, (
+            f"format accept/refuse mismatch on {rel}: C_ok={c_ok} (stderr={c_err[:200]!r}), "
+            f"Rust_ok={rs_ok} (code={rs_payload!r})"
+        )
+        if rs_ok:
+            assert isinstance(rs_payload, bytes)
+            assert rs_payload == c_out, (
+                f"byte-for-byte format diff on {rel}: C={len(c_out)}B, Rust={len(rs_payload)}B"
+            )
+            accepted_outputs.append((rel, rs_payload))
+        else:
+            refused += 1
+
+    # Verify idempotence: formatting every accepted output a second time yields identical bytes.
+    with tempfile.TemporaryDirectory(prefix="mo-rust-format-idemp-") as tmp:
+        tmp_path = pathlib.Path(tmp)
+        second_files: list[str] = []
+        for idx, (_, content) in enumerate(accepted_outputs):
+            p = tmp_path / f"{idx}.mo"
+            p.write_bytes(content)
+            second_files.append(str(p))
+        second_results = run_format_batch(mo_fe, second_files, jobs=jobs, fragment=False)
+        assert len(second_results) == len(accepted_outputs)
+        for (rel, once), (ok2, twice) in zip(accepted_outputs, second_results):
+            assert ok2 and twice == once, f"mo-fe format is not idempotent on {rel}"
+
+    return len(tracked), len(accepted_outputs), refused
+
+
+def check_syntax_and_format_error_diagnostics(
+    mo_bin: pathlib.Path, mo_fe: pathlib.Path, jobs: int
+) -> tuple[int, int]:
+    """Verify byte-for-byte stderr & JSON diagnostic parity on all syntax/lexer/format tests/errors/."""
+    errors_dir = ROOT / "tests/errors"
+    cases: list[pathlib.Path] = []
+    for case in sorted(p for p in errors_dir.iterdir() if p.is_dir()):
+        match = re.fullmatch(r"e(\d{4})(-[a-z0-9-]+)?", case.name)
+        assert match, f"unexpected tests/errors entry: {case.name}"
+        if int(match.group(1)) in SYNTAX_AND_FORMAT_ERROR_CODES:
+            cases.append(case)
+    assert len(cases) >= 60, f"expected >= 60 syntax/format error cases, found {len(cases)}"
+
+    def run_one(case: pathlib.Path) -> tuple[str, bool]:
+        cmd_name = (case / "command").read_text().strip() if (case / "command").exists() else "check"
+        mofe_cmd = "format" if cmd_name == "format" else "parse"
+        arguments = (case / "args").read_text().splitlines() if (case / "args").exists() else ["{main}"]
+        exp_err = (case / "expected").read_bytes()
+        exp_out = (case / "stdout").read_bytes() if (case / "stdout").exists() else b""
+        gen = case / "generated"
+
+        if gen.exists():
+            gen_name = gen.read_text().strip()
+            assert gen_name in SYNTAX_ERROR_GENERATORS, (
+                f"{case.name}: missing generator {gen_name!r} in SYNTAX_ERROR_GENERATORS"
+            )
+            with tempfile.TemporaryDirectory(prefix="mo-rust-err-") as folder:
+                SYNTAX_ERROR_GENERATORS[gen_name](pathlib.Path(folder))
+                args = [a.replace("{main}", "main.mo") for a in arguments]
+                res = subprocess.run(
+                    [str(mo_fe), mofe_cmd, *args], cwd=folder, capture_output=True, timeout=120
+                )
+                assert res.returncode == 1, f"{case.name}: expected rc=1, got {res.returncode}"
+                assert res.stdout == exp_out, f"{case.name}: stdout mismatch"
+                assert res.stderr == exp_err, (
+                    f"{case.name}: stderr mismatch\n--- expected\n{exp_err.decode(errors='replace')}\n"
+                    f"--- actual\n{res.stderr.decode(errors='replace')}"
+                )
+                if mofe_cmd == "parse":
+                    rj = subprocess.run(
+                        [str(mo_fe), "parse", "--json", *args],
+                        cwd=folder,
+                        capture_output=True,
+                        timeout=120,
+                    )
+                    cj = subprocess.run(
+                        [str(mo_bin), "check", "--json", *args],
+                        cwd=folder,
+                        capture_output=True,
+                        timeout=120,
+                    )
+                    c_diags = [
+                        ln
+                        for ln in cj.stdout.splitlines()
+                        if json.loads(ln).get("record") not in ("version", "totals")
+                    ]
+                    r_diags = rj.stderr.splitlines()
+                    assert rj.returncode == 1 and r_diags == c_diags, (
+                        f"{case.name}: JSON diagnostic mismatch\nC={c_diags!r}\nRust={r_diags!r}"
+                    )
+                    return case.name, True
+                return case.name, False
+
+        main = str((case / "main.mo").relative_to(ROOT))
+        args = [a.replace("{main}", main) for a in arguments]
+        res = subprocess.run(
+            [str(mo_fe), mofe_cmd, *args], cwd=ROOT, capture_output=True, timeout=120
+        )
+        assert res.returncode == 1, f"{case.name}: expected rc=1, got {res.returncode}"
+        assert res.stdout == exp_out, f"{case.name}: stdout mismatch"
+        assert res.stderr == exp_err, (
+            f"{case.name}: stderr mismatch\n--- expected\n{exp_err.decode(errors='replace')}\n"
+            f"--- actual\n{res.stderr.decode(errors='replace')}"
+        )
+        if mofe_cmd == "parse":
+            rj = subprocess.run(
+                [str(mo_fe), "parse", "--json", *args],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=120,
+            )
+            cj = subprocess.run(
+                [str(mo_bin), "check", "--json", *args],
+                cwd=ROOT,
+                capture_output=True,
+                timeout=120,
+            )
+            c_diags = [
+                ln
+                for ln in cj.stdout.splitlines()
+                if json.loads(ln).get("record") not in ("version", "totals")
+            ]
+            r_diags = rj.stderr.splitlines()
+            assert rj.returncode == 1 and r_diags == c_diags, (
+                f"{case.name}: JSON diagnostic mismatch\nC={c_diags!r}\nRust={r_diags!r}"
+            )
+            return case.name, True
+        return case.name, False
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        outcomes = list(pool.map(run_one, cases))
+    json_checked = sum(1 for _, did_json in outcomes if did_json)
+    return len(outcomes), json_checked
+
+
 def main() -> None:
     started = time.monotonic()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mo", help="Path to built C mo executable")
     parser.add_argument("--mo-fe", help="Path to built Rust mo-fe executable")
     parser.add_argument("--mocore", help="Path to built Lean mocore executable")
-    parser.add_argument("--skip-build", action="store_true", help="Do not build mo-fe or mocore")
+    parser.add_argument("--mo-grammar", help="Path to built Bison mo-grammar executable")
+    parser.add_argument("--skip-build", action="store_true", help="Do not build mo-fe, mocore, or mo-grammar")
     parser.add_argument(
         "--require-lean",
         action="store_true",
@@ -687,13 +1027,14 @@ def main() -> None:
         help="Worker threads for differential runs",
     )
     args = parser.parse_args()
-    require_lean = args.require_lean or os.environ.get("CI") == "1"
+    require_tools = args.require_lean or os.environ.get("CI") == "1"
 
     crates_n, entries_n = check_workspace_lint_policy()
     mo_bin = find_or_build_mo(args.mo)
     c_check, c_print = find_or_build_c_core_drivers(mo_bin)
     mo_fe = find_or_build_mo_fe(args.mo_fe, args.skip_build)
-    mocore = find_or_build_mocore(args.mocore, args.skip_build, require_lean)
+    mocore = find_or_build_mocore(args.mocore, args.skip_build, require_tools)
+    mo_grammar = find_or_build_mo_grammar(args.mo_grammar, mo_bin, args.skip_build, require_tools)
 
     runs_n, fuzz_n = check_committed_fixtures_and_fuzz_seeds(mo_fe)
     diff_n, orig_n, prog_n = check_core_checker_differential(mo_fe, c_check, mocore, args.jobs)
@@ -702,14 +1043,22 @@ def main() -> None:
     )
     emitted_n, accepted_n = check_c_emitted_core_programs(mo_bin, mo_fe, c_check, args.jobs)
 
+    gram_n, gram_good, gram_bad = check_grammar_corpus_parity(mo_fe, mo_grammar)
+    tracked_n, fmt_ok, fmt_refused = check_tracked_mo_format_parity(mo_bin, mo_fe, args.jobs)
+    err_text_n, err_json_n = check_syntax_and_format_error_diagnostics(mo_bin, mo_fe, args.jobs)
+
     oracle_desc = "C + Lean mocore" if mocore is not None else "C (Lean mocore unavailable)"
+    grammar_desc = "Bison mo-grammar" if mo_grammar is not None else "expected verdicts"
     print(
-        f"Rust front-end 2A parity ({oracle_desc}): "
+        f"Rust front-end 2A+2B parity ({oracle_desc}, {grammar_desc}): "
         f"{crates_n} crates/{entries_n} entry points lint-audited; "
         f"{runs_n}/15 runs + {fuzz_n}/20 fuzz seeds round-tripped; "
         f"{diff_n} Core checker differential cases ({orig_n} corpus files, {prog_n} programs) matched; "
         f"{gen_n} generated Core programs matched & printed identically; "
         f"{emitted_n} C-emitted .core programs round-tripped ({accepted_n} standalone-checked); "
+        f"{gram_n}/106 grammar fixtures ({gram_good} good, {gram_bad} bad) matched; "
+        f"{tracked_n} tracked .mo files matched C mo format byte-for-byte ({fmt_ok} formatted+idempotent, {fmt_refused} refused); "
+        f"{err_text_n} syntax/format error diagnostics ({err_json_n} JSON) matched byte-for-byte; "
         f"{time.monotonic() - started:.2f}s"
     )
 

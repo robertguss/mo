@@ -1,0 +1,16 @@
+[package]
+name = "mo-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mo-base = { path = "../mo-base" }
+mo-def = { path = "../mo-def" }
+thiserror = "2"
+
+[dev-dependencies]
+mo-prim = { path = "../mo-prim" }
+
+[lints]
+workspace = true
