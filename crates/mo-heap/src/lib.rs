@@ -370,6 +370,10 @@ pub enum Value {
     Token(ReuseToken),
 }
 
+#[expect(
+    clippy::panic,
+    reason = "verified bytecode guarantees runtime Value matches the static register type"
+)]
 impl Value {
     pub fn as_bool(&self) -> bool {
         match self {
@@ -518,6 +522,11 @@ pub struct Heap {
     hash_key: [u64; 2],
 }
 
+#[expect(
+    clippy::panic,
+    clippy::expect_used,
+    reason = "verified bytecode guarantees heap object kinds, case shapes, and unique reuse tokens"
+)]
 impl Heap {
     pub fn new(limit: usize) -> Self {
         Self {

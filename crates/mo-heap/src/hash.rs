@@ -32,7 +32,9 @@ pub fn siphash13(key: [u64; 2], bytes: &[u8]) -> u64 {
     let chunks = bytes.chunks_exact(8);
     let rem = chunks.remainder();
     for chunk in chunks {
-        let m = u64::from_le_bytes(chunk.try_into().unwrap());
+        let m = u64::from_le_bytes([
+            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+        ]);
         v3 ^= m;
         sip_round(&mut v0, &mut v1, &mut v2, &mut v3);
         v0 ^= m;

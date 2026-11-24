@@ -29,7 +29,7 @@
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, fuzz seeds, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)
-#   rust        pure-Rust runtime: fmt, clippy, unit/fuzz tests, and differential parity against C mo
+#   rust        pure-Rust runtime & front-end: fmt, clippy, unit/fuzz tests, and differential parity against C mo and Lean mocore
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "check.sh started: pid $$"
@@ -598,7 +598,7 @@ fi
 fi
 
 if enter rust; then
-step "Pure-Rust runtime: formatting, clippy, workspace tests, and differential parity"
+step "Pure-Rust runtime & front-end: formatting, clippy, workspace tests, and differential parity"
 if ! have cargo; then
 	missing "cargo is not installed"
 elif ! have python3; then
@@ -619,10 +619,12 @@ else
 		cargo fmt --all -- --check
 		step "Rust lints (cargo clippy --workspace --all-targets -- -D warnings)"
 		cargo clippy --workspace --all-targets -- -D warnings
-		step "Rust workspace tests and bytecode/VM fuzz smoke (cargo test --workspace)"
+		step "Rust workspace tests and bytecode/VM/Core fuzz smoke (cargo test --workspace)"
 		cargo test --workspace
 		step "Rust runtime differential parity (ci/check_rust_runtime.py --mo $mo_driver)"
 		python3 ci/check_rust_runtime.py --mo "$mo_driver"
+		step "Rust front-end differential parity (ci/check_rust_frontend.py --mo $mo_driver)"
+		python3 ci/check_rust_frontend.py --mo "$mo_driver"
 	else
 		missing "no C compiler or mo executable is available for Rust differential checks"
 	fi

@@ -1,7 +1,10 @@
 #![forbid(unsafe_code)]
 
 //! Build-time generated contract tables parsed directly from `src/bytecode/opcodes.def`,
-//! `src/base/prims.def`, `src/base/hostops.def`, and `src/base/limits.h`.
+//! `src/base/prims.def`, `src/base/hostops.def`, `src/base/limits.h`, `src/base/codes.h`,
+//! `src/core/core.h`, and `src/core/ops.def`.
+
+use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OperandKind {
@@ -90,7 +93,21 @@ pub struct SimOpInfo {
     pub spec_only: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ErrorCodeInfo {
+    pub code: ErrorCode,
+    pub number: u16,
+    pub id: &'static str,
+    pub section: Option<&'static str>,
+}
+
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+
+impl fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "E{:04}", self.number())
+    }
+}
 
 impl Opcode {
     pub const fn find(number: u32) -> Option<&'static OpcodeInfo> {
@@ -212,5 +229,152 @@ mod tests {
         assert_eq!(limits::MO_LIMIT_PATH_LINKS, 40);
         assert_eq!(limits::MO_LIMIT_OPEN_FOLDERS, 256);
         assert_eq!(limits::MO_LIMIT_OPEN_FILES, 64);
+
+        // Front-end & Core limits
+        assert_eq!(limits::MO_LIMIT_FILE_SIZE, 8 << 20);
+        assert_eq!(limits::MO_LIMIT_PROGRAM_SIZE, 64 << 20);
+        assert_eq!(limits::MO_LIMIT_FILES, 4096);
+        assert_eq!(limits::MO_LIMIT_PATH_SIZE, 4096);
+        assert_eq!(limits::MO_LIMIT_MODULES, 4096);
+        assert_eq!(limits::MO_LIMIT_DIAGNOSTICS, 1000);
+        assert_eq!(limits::MO_LIMIT_DIAGNOSTICS_SIZE, 64 << 20);
+        assert_eq!(limits::MO_LIMIT_FIX_EDITS, 1024);
+        assert_eq!(limits::MO_CLI_DIAGNOSTIC_SIZE, 1 << 20);
+        assert_eq!(limits::MO_LIMIT_CORE_DEPTH, 4096);
+        assert_eq!(limits::MO_LIMIT_CORE_TEXT_SIZE, 8 << 20);
+        assert_eq!(limits::MO_LIMIT_CORE_NODES, 1 << 20);
+        assert_eq!(limits::MO_LIMIT_CORE_SCRATCH_SIZE, 128 << 20);
+        assert_eq!(limits::MO_LIMIT_CORE_CHECK_SCRATCH_SIZE, 512 * (1 << 20));
+    }
+
+    #[test]
+    fn pin_error_codes_parity_with_codes_h() {
+        assert_eq!(ErrorCode::SourceUtf8.number(), 1);
+        assert_eq!(ErrorCode::SourceUtf8.section(), Some("2.1"));
+        assert_eq!(ErrorCode::SourceUtf8.to_string(), "E0001");
+        assert_eq!(ErrorCode::FailureIgnored.number(), 412);
+        assert_eq!(ErrorCode::FailureIgnored.section(), Some("8.3"));
+        assert_eq!(ErrorCode::FailureIgnored.to_string(), "E0412");
+        assert_eq!(ErrorCode::CoreTextLimit.number(), 1016);
+        assert_eq!(ErrorCode::CoreTextLimit.section(), None);
+        assert_eq!(ErrorCode::CoreCheckMetadata.number(), 1027);
+        assert_eq!(ErrorCode::CoreCheckMemory.number(), 1053);
+        assert_eq!(ErrorCode::MutantSurvived.number(), 1439);
+        assert_eq!(ErrorCode::MutantSurvived.section(), None);
+        assert_eq!(ErrorCode::from_u16(0), None);
+        assert_eq!(ErrorCode::from_u16(413), None);
+        assert_eq!(ErrorCode::from_u32(412), Some(ErrorCode::FailureIgnored));
+
+        for info in &ERROR_CODES {
+            assert_eq!(ErrorCode::from_u16(info.number), Some(info.code));
+            assert_eq!(info.code.info(), info);
+            assert_eq!(info.code.number(), info.number);
+            assert_eq!(info.code.id(), info.id);
+            assert_eq!(info.code.section(), info.section);
+            if info.number < 1000 {
+                assert!(
+                    info.section.is_some(),
+                    "language code {} must cite a section",
+                    info.code
+                );
+            } else {
+                assert!(
+                    info.section.is_none(),
+                    "implementation code {} must not cite a section",
+                    info.code
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pin_core_ops_and_version_parity() {
+        use core_ops::*;
+
+        assert_eq!(MO_CORE_TEXT_VERSION, "0.11");
+        assert_eq!(CoreTypedOp::ALL.len(), 2);
+        assert_eq!(CoreTypedOp::Eq.wire_name(), "eq");
+        assert_eq!(CoreTypedOp::Structural.wire_name(), "structural");
+
+        assert_eq!(CoreIntOp::ALL.len(), 32);
+        assert_eq!(CoreIntOp::Add.wire_name(), "add");
+        assert_eq!(CoreIntOp::Days.wire_name(), "days");
+
+        assert_eq!(CoreBigOp::ALL.len(), 14);
+        assert_eq!(CoreByteOp::ALL.len(), 2);
+        assert_eq!(CoreDecOp::ALL.len(), 16);
+        assert_eq!(CoreFloatOp::ALL.len(), 15);
+        assert_eq!(CoreBase::ALL.len(), 11);
+        assert_eq!(CoreCmpOp::ALL.len(), 4);
+        assert_eq!(CoreCharOp::ALL.len(), 7);
+        assert_eq!(CoreTextOp::ALL.len(), 28);
+        assert_eq!(CoreBytesOp::ALL.len(), 21);
+        assert_eq!(CoreUnicodeOp::ALL.len(), 7);
+        assert_eq!(CoreCryptoOp::ALL.len(), 7);
+        assert_eq!(CoreRangeOp::ALL.len(), 6);
+        assert_eq!(CoreTimeOp::ALL.len(), 13);
+        assert_eq!(CoreListNullaryOp::ALL.len(), 17);
+        assert_eq!(CoreMapNullaryOp::ALL.len(), 11);
+        assert_eq!(CoreSetOp::ALL.len(), 11);
+        assert_eq!(CoreIoNullaryOp::ALL.len(), 47);
+
+        // Verify round-trip wire_name <-> from_wire_name on every family.
+        for &op in CoreTypedOp::ALL {
+            assert_eq!(CoreTypedOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreIntOp::ALL {
+            assert_eq!(CoreIntOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreBigOp::ALL {
+            assert_eq!(CoreBigOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreByteOp::ALL {
+            assert_eq!(CoreByteOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreDecOp::ALL {
+            assert_eq!(CoreDecOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreFloatOp::ALL {
+            assert_eq!(CoreFloatOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreBase::ALL {
+            assert_eq!(CoreBase::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreCmpOp::ALL {
+            assert_eq!(CoreCmpOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreCharOp::ALL {
+            assert_eq!(CoreCharOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreTextOp::ALL {
+            assert_eq!(CoreTextOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreBytesOp::ALL {
+            assert_eq!(CoreBytesOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreUnicodeOp::ALL {
+            assert_eq!(CoreUnicodeOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreCryptoOp::ALL {
+            assert_eq!(CoreCryptoOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreRangeOp::ALL {
+            assert_eq!(CoreRangeOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreTimeOp::ALL {
+            assert_eq!(CoreTimeOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreListNullaryOp::ALL {
+            assert_eq!(CoreListNullaryOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreMapNullaryOp::ALL {
+            assert_eq!(CoreMapNullaryOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreSetOp::ALL {
+            assert_eq!(CoreSetOp::from_wire_name(op.wire_name()), Some(op));
+        }
+        for &op in CoreIoNullaryOp::ALL {
+            assert_eq!(CoreIoNullaryOp::from_wire_name(op.wire_name()), Some(op));
+        }
     }
 }

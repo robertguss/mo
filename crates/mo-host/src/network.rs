@@ -155,10 +155,15 @@ fn resolve_host_with_deadline(
     deadline: Instant,
 ) -> Result<Vec<SocketAddr>, NetErr> {
     let claimed = {
-        let pool = LOOKUP_POOL.lock().expect("lookup pool lock");
+        let pool = LOOKUP_POOL
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut chosen = None;
         for slot_arc in &pool.slots {
-            let mut slot = slot_arc.0.lock().expect("lookup slot lock");
+            let mut slot = slot_arc
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if slot.state == LookupState::Free {
                 slot.state = LookupState::Running;
                 slot.outcome = None;
@@ -191,7 +196,9 @@ fn resolve_host_with_deadline(
                 Err(e) => classify_dns_error(&e),
             };
             let (lock, cvar) = &*worker_slot;
-            let mut slot = lock.lock().expect("lookup slot lock");
+            let mut slot = lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if slot.state == LookupState::Abandoned {
                 slot.state = LookupState::Free;
                 slot.outcome = None;
@@ -203,14 +210,19 @@ fn resolve_host_with_deadline(
         });
 
     if let Err(e) = spawn_res {
-        let mut slot = slot_arc.0.lock().expect("lookup slot lock");
+        let mut slot = slot_arc
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         slot.state = LookupState::Free;
         slot.outcome = None;
         return Err(NetErr::Broken(e.to_string()));
     }
 
     let (lock, cvar) = &*slot_arc;
-    let mut slot = lock.lock().expect("lookup slot lock");
+    let mut slot = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     while slot.state == LookupState::Running {
         let now = Instant::now();
         if now >= deadline {
@@ -218,14 +230,21 @@ fn resolve_host_with_deadline(
             return Err(NetErr::TimedOut);
         }
         let rem = deadline - now;
-        let (guard, wait_res) = cvar.wait_timeout(slot, rem).expect("lookup condvar wait");
+        let (guard, wait_res) = cvar
+            .wait_timeout(slot, rem)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         slot = guard;
         if slot.state == LookupState::Running && wait_res.timed_out() {
             slot.state = LookupState::Abandoned;
             return Err(NetErr::TimedOut);
         }
     }
-    let outcome = slot.outcome.take().expect("completed lookup has outcome");
+    let Some(outcome) = slot.outcome.take() else {
+        slot.state = LookupState::Free;
+        return Err(NetErr::Broken(
+            "lookup completed without outcome".to_string(),
+        ));
+    };
     slot.state = LookupState::Free;
     drop(slot);
 
@@ -618,7 +637,10 @@ fn real_send_all(conn: &mut RealConnection, bytes: &[u8]) -> Result<(), NetErr> 
                     match send(stream.as_fd(), &bytes[sent..], flags) {
                         Ok(n) => sent += n,
                         Err(Errno::PIPE | Errno::CONNRESET) => return Err(NetErr::Closed),
-                        #[allow(unreachable_patterns)]
+                        #[expect(
+                            unreachable_patterns,
+                            reason = "EAGAIN and EWOULDBLOCK are identical on Linux but distinct on some Unix targets"
+                        )]
                         Err(Errno::INTR | Errno::AGAIN | Errno::WOULDBLOCK) => continue,
                         Err(e) => return Err(NetErr::Broken(e.to_string())),
                     }
@@ -919,11 +941,7 @@ pub(crate) fn call_network(
 ) -> Result<Value, HostError> {
     match op {
         HostOpId::NetworkAllowHosts => {
-            let net = args[0]
-                .as_capability()
-                .inner
-                .downcast_ref::<NetworkCap>()
-                .expect("Network capability");
+            let net = crate::downcast_cap::<NetworkCap>(&args[0], "Network capability");
             let existing = match net {
                 NetworkCap::Real { allowed } | NetworkCap::Fake { allowed, .. } => allowed,
             };
@@ -965,11 +983,7 @@ pub(crate) fn call_network(
 
         HostOpId::NetworkConnect | HostOpId::NetworkConnectSecure => {
             let secure = op == HostOpId::NetworkConnectSecure;
-            let net = args[0]
-                .as_capability()
-                .inner
-                .downcast_ref::<NetworkCap>()
-                .expect("Network capability");
+            let net = crate::downcast_cap::<NetworkCap>(&args[0], "Network capability");
             let host_str = args[1].as_text();
             let port = args[2].as_int();
             if !(1..=65535).contains(&port) {
@@ -1101,11 +1115,7 @@ pub(crate) fn call_network(
         }
 
         HostOpId::ConnectionSend => {
-            let conn_cap = args[0]
-                .as_capability()
-                .inner
-                .downcast_ref::<ConnectionCap>()
-                .expect("Connection capability");
+            let conn_cap = crate::downcast_cap::<ConnectionCap>(&args[0], "Connection capability");
             let bytes = args[1].as_bytes();
             match conn_cap {
                 ConnectionCap::Fake(cell) => {
@@ -1154,11 +1164,7 @@ pub(crate) fn call_network(
                 });
             }
             let most_usize = most as usize;
-            let conn_cap = args[0]
-                .as_capability()
-                .inner
-                .downcast_ref::<ConnectionCap>()
-                .expect("Connection capability");
+            let conn_cap = crate::downcast_cap::<ConnectionCap>(&args[0], "Connection capability");
             match conn_cap {
                 ConnectionCap::Fake(cell) => {
                     let mut fake = cell.borrow_mut();

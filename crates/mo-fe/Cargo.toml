@@ -1,0 +1,18 @@
+[package]
+name = "mo-fe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mo-fe"
+path = "src/main.rs"
+
+[dependencies]
+mo-def = { path = "../mo-def" }
+mo-base = { path = "../mo-base" }
+mo-core = { path = "../mo-core" }
+mo-prim = { path = "../mo-prim" }
+
+[lints]
+workspace = true

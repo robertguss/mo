@@ -85,7 +85,9 @@ impl Drop for DatabaseCap {
             serialize_close: true,
         } = &mut self.handle
         {
-            let _guard = SQLITE_OPEN_MUTEX.lock().expect("sqlite close lock");
+            let _guard = SQLITE_OPEN_MUTEX
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             drop(conn.take());
         }
         let cur = self.open_databases.get();
@@ -98,6 +100,10 @@ impl DatabaseCap {
     fn with_conn<R>(&self, f: impl FnOnce(&mut Connection) -> R) -> R {
         match &self.handle {
             DbHandle::Owned { conn, .. } => {
+                #[expect(
+                    clippy::expect_used,
+                    reason = "owned SQLite connection option is only taken in Drop"
+                )]
                 let mut borrow = conn
                     .as_ref()
                     .expect("database handle alive until drop")
@@ -528,7 +534,10 @@ impl AuthState {
     }
 
     fn deny(&self, reason: &'static str) -> Authorization {
-        let mut guard = self.denied_reason.lock().expect("auth lock");
+        let mut guard = self
+            .denied_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if guard.is_none() {
             *guard = Some(reason);
         }
@@ -536,7 +545,10 @@ impl AuthState {
     }
 
     fn denied(&self) -> Option<&'static str> {
-        *self.denied_reason.lock().expect("auth lock")
+        *self
+            .denied_reason
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -827,7 +839,10 @@ fn open_fake(
 }
 
 #[cfg(unix)]
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal SQLite open helper forwards host state and resolved path parameters"
+)]
 fn open_real(
     heap: &Heap,
     types: &TypeTable,
@@ -880,7 +895,9 @@ fn open_real(
         | OpenFlags::SQLITE_OPEN_NOFOLLOW
         | OpenFlags::SQLITE_OPEN_NO_MUTEX;
 
-    let guard = SQLITE_OPEN_MUTEX.lock().expect("sqlite open lock");
+    let guard = SQLITE_OPEN_MUTEX
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let conn = match Connection::open_with_flags(&full_path, open_flags) {
         Ok(c) => c,
         Err(e) => {
@@ -1061,11 +1078,7 @@ fn exec_sql(
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
-    let db_cap = args[0]
-        .as_capability()
-        .inner
-        .downcast_ref::<DatabaseCap>()
-        .expect("Sqlite.Database capability");
+    let db_cap = crate::downcast_cap::<DatabaseCap>(&args[0], "Sqlite.Database capability");
     let sql = args[1].as_text();
     let sql_bytes = sql.as_bytes();
     if sql_bytes.len() as u64 > MO_LIMIT_SQL_BYTES {
@@ -1184,6 +1197,10 @@ fn exec_sql(
                 let last_id = conn.last_insert_rowid();
                 let ok_tag = find_case_tag(types, result_ty, "Ok");
                 let tup_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
+                #[expect(
+                    clippy::expect_used,
+                    reason = "verified bytecode guarantees tuple layout for execute_raw"
+                )]
                 let layout = types
                     .find_tuple_layout(tup_ty)
                     .expect("tuple layout for execute_raw");
@@ -1293,6 +1310,10 @@ fn exec_sql(
         let mut rec_fields = vec![Value::Unit; 2];
         rec_fields[col_field] = columns_val;
         rec_fields[rows_field] = rows_list_val;
+        #[expect(
+            clippy::expect_used,
+            reason = "verified bytecode guarantees Sqlite.Rows record layout"
+        )]
         let layout = types
             .find_record_layout(rows_ty)
             .expect("Sqlite.Rows record layout");
@@ -1316,11 +1337,7 @@ pub(crate) fn call_sqlite(
 ) -> Result<Value, HostError> {
     match op {
         HostOpId::SqliteOpen => {
-            let cap = args[0]
-                .as_capability()
-                .inner
-                .downcast_ref::<SqliteCap>()
-                .expect("Sqlite capability");
+            let cap = crate::downcast_cap::<SqliteCap>(&args[0], "Sqlite capability");
             let raw = args[1].as_text();
             if raw == ":memory:" {
                 return open_ephemeral(heap, types, open_databases, result_ty);

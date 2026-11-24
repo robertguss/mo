@@ -640,6 +640,10 @@ fn resolve_folder_root(
                 if inner.forbidden {
                     return Err(FileProblem::not_allowed(false));
                 }
+                #[expect(
+                    clippy::expect_used,
+                    reason = "pending folders always retain their parent reference until resolved"
+                )]
                 let parent = inner
                     .parent
                     .as_ref()
@@ -934,7 +938,10 @@ fn real_listing(
     make_names_or_entries(heap, types, result_ty, items)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal host file helper forwards VM and host state"
+)]
 fn narrow_real_folder(
     heap: &Heap,
     types: &TypeTable,
@@ -1024,6 +1031,10 @@ fn narrow_real_folder(
     };
     open_folders.set(open_folders.get() + 1);
 
+    #[expect(
+        clippy::expect_used,
+        reason = "verified bytecode guarantees narrowed result is a capability type"
+    )]
     let cap_kind = types
         .get(result_ty)
         .capability
@@ -1032,7 +1043,10 @@ fn narrow_real_folder(
     Ok(heap.alloc_capability(cap_kind, result_ty, Rc::new(cap_obj))?)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal host file helper forwards VM and host state"
+)]
 fn real_write_bytes_or_open(
     heap: &Heap,
     types: &TypeTable,
@@ -1301,7 +1315,10 @@ fn real_rename(
     make_file_ok(heap, types, result_ty, Value::Unit)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal host file dispatch forwards VM and host state"
+)]
 pub(crate) fn call_real_folder(
     heap: &Heap,
     types: &TypeTable,

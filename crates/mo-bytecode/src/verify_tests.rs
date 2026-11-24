@@ -307,7 +307,10 @@ impl BcBuilder {
         idx
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test builder helper constructing synthetic bytecode functions"
+    )]
     fn add_fn(
         &mut self,
         name: &str,

@@ -35,6 +35,14 @@ use fake_files::{FakeFolderCap, FakeOpenFileCap};
 #[cfg(unix)]
 use real_files::{RealFolder, RealOpenFile, ResolverState};
 
+#[expect(
+    clippy::expect_used,
+    reason = "verified bytecode guarantees capability value matches host operation"
+)]
+pub(crate) fn downcast_cap<'a, T: 'static>(v: &'a Value, expected: &'static str) -> &'a T {
+    v.as_capability().inner.downcast_ref::<T>().expect(expected)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostError {
     Bug {
@@ -241,14 +249,13 @@ impl HostContext {
 
     #[cfg(unix)]
     fn ensure_root_fd(&mut self) -> Result<&OwnedFd, HostError> {
-        if self.root_fd.is_none() {
-            let fd =
-                real_files::open_root_dir(Path::new(".")).map_err(|_| HostError::Internal {
-                    reason: "could not open the starting folder",
-                })?;
-            self.root_fd = Some(fd);
+        if let Some(ref fd) = self.root_fd {
+            return Ok(fd);
         }
-        Ok(self.root_fd.as_ref().unwrap())
+        let fd = real_files::open_root_dir(Path::new(".")).map_err(|_| HostError::Internal {
+            reason: "could not open the starting folder",
+        })?;
+        Ok(self.root_fd.insert(fd))
     }
 
     #[cfg(unix)]
@@ -266,6 +273,10 @@ impl HostContext {
         ty: u32,
     ) -> Result<Value, HostError> {
         self.ensure_started();
+        #[expect(
+            clippy::expect_used,
+            reason = "verified bytecode guarantees capability type specifies kind"
+        )]
         let cap = types
             .get(ty)
             .capability
@@ -329,11 +340,7 @@ impl HostContext {
     ) -> Result<Value, HostError> {
         match op {
             HostOpId::ArgsList => {
-                let state = args[0]
-                    .as_capability()
-                    .inner
-                    .downcast_ref::<ArgsState>()
-                    .expect("Args capability");
+                let state = downcast_cap::<ArgsState>(&args[0], "Args capability");
                 Ok(state.list.clone())
             }
             HostOpId::ArgsOf => {
@@ -343,11 +350,7 @@ impl HostContext {
                 Ok(heap.alloc_capability(Capability::Args, result_ty, Rc::new(state))?)
             }
             HostOpId::EnvGet => {
-                let state = args[0]
-                    .as_capability()
-                    .inner
-                    .downcast_ref::<EnvState>()
-                    .expect("Env capability");
+                let state = downcast_cap::<EnvState>(&args[0], "Env capability");
                 let found = state
                     .map
                     .as_map()
@@ -363,11 +366,7 @@ impl HostContext {
             }
             HostOpId::ConsolePrint | HostOpId::ConsoleError => {
                 let is_err = op == HostOpId::ConsoleError;
-                let state = args[0]
-                    .as_capability()
-                    .inner
-                    .downcast_ref::<ConsoleState>()
-                    .expect("Console capability");
+                let state = downcast_cap::<ConsoleState>(&args[0], "Console capability");
                 let text = args[1].as_text();
                 match state {
                     ConsoleState::Fake(fake) => {
@@ -396,11 +395,7 @@ impl HostContext {
                 Ok(Value::Unit)
             }
             HostOpId::ConsoleReadLine => {
-                let state = args[0]
-                    .as_capability()
-                    .inner
-                    .downcast_ref::<ConsoleState>()
-                    .expect("Console capability");
+                let state = downcast_cap::<ConsoleState>(&args[0], "Console capability");
                 match state {
                     ConsoleState::Fake(fake) => {
                         let mut f = fake.borrow_mut();
@@ -418,11 +413,7 @@ impl HostContext {
             }
             HostOpId::ConsolePrinted | HostOpId::ConsolePrintedErrors => {
                 let is_err = op == HostOpId::ConsolePrintedErrors;
-                let state = args[0]
-                    .as_capability()
-                    .inner
-                    .downcast_ref::<ConsoleState>()
-                    .expect("Console capability");
+                let state = downcast_cap::<ConsoleState>(&args[0], "Console capability");
                 match state {
                     ConsoleState::Real => Err(HostError::Bug {
                         reason: "console observation needs a fake",
@@ -512,11 +503,7 @@ impl HostContext {
             | HostOpId::ReadfilesEntries
             | HostOpId::ReadfilesExists
             | HostOpId::ReadfilesWithin => {
-                let folder = args[0]
-                    .as_capability()
-                    .inner
-                    .downcast_ref::<FolderCap>()
-                    .expect("Files/ReadFiles capability");
+                let folder = downcast_cap::<FolderCap>(&args[0], "Files/ReadFiles capability");
                 match folder {
                     FolderCap::Fake(fake) => fake_files::call_fake_folder(
                         heap,
@@ -546,11 +533,7 @@ impl HostContext {
             | HostOpId::FilesSize
             | HostOpId::FilesTruncate
             | HostOpId::FilesSync => {
-                let fh = args[0]
-                    .as_capability()
-                    .inner
-                    .downcast_ref::<OpenFileCap>()
-                    .expect("Files.File capability");
+                let fh = downcast_cap::<OpenFileCap>(&args[0], "Files.File capability");
                 match fh {
                     OpenFileCap::Fake(fake) => {
                         fake_files::call_fake_file(heap, types, fake, op, result_ty, args)

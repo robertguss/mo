@@ -5,7 +5,7 @@
 use mo_def::limits::{
     MO_LIMIT_DEF_SIGNATURE_DEPTH, MO_LIMIT_FUNCTION_REGISTER_BLOCKS, MO_LIMIT_VERIFY_WORK_PER_WORD,
 };
-use mo_def::{HostOpId, Opcode, OperandAccess, PrimId, SIMOP_COUNT, SimOpId};
+use mo_def::{HostOpId, Opcode, OperandAccess, PrimId, SimOpId};
 
 use crate::{
     ABILITY_EQUAL, ABILITY_HASH, BYTECODE_HEADER_SIZE, BytecodeFile, Capability, CaseShape,
@@ -278,8 +278,9 @@ impl<'a> SigMatcher<'a> {
         }
 
         for cap_id in 0..Capability::COUNT as u32 {
-            let cap = Capability::from_u32(cap_id).unwrap();
-            if word == cap.name().as_bytes() {
+            if let Some(cap) = Capability::from_u32(cap_id)
+                && word == cap.name().as_bytes()
+            {
                 return t.kind == TypeKind::Capability && t.capability == Some(cap);
             }
         }
@@ -955,7 +956,9 @@ fn verify_instruction(
             }
         }
         Opcode::Prim => {
-            let prim = PrimId::from_u32(a[1]).expect("validated prim id");
+            let Some(prim) = PrimId::from_u32(a[1]) else {
+                return Err(err("unknown primitive operation"));
+            };
             let pinfo = prim.info();
             let t = file.types.get(a[2]);
             if t.kind != TypeKind::Function {
@@ -980,7 +983,9 @@ fn verify_instruction(
             .map_err(err)?;
         }
         Opcode::Host => {
-            let host_op = HostOpId::from_u32(a[1]).expect("validated hostop id");
+            let Some(host_op) = HostOpId::from_u32(a[1]) else {
+                return Err(err("unknown host operation"));
+            };
             let hinfo = host_op.info();
             if var_count != hinfo.params.len() {
                 return Err(err("host arity"));
@@ -999,10 +1004,9 @@ fn verify_instruction(
             .map_err(err)?;
         }
         Opcode::Sim => {
-            if (a[1] as usize) >= SIMOP_COUNT {
+            let Some(sim_op) = SimOpId::from_u32(a[1]) else {
                 return Err(err("unknown simulation operation"));
-            }
-            let sim_op = SimOpId::from_u32(a[1]).unwrap();
+            };
             if sim_op == SimOpId::Start {
                 if !fn_def.spec_code {
                     return Err(err("simulation start in non-spec code"));
@@ -1361,6 +1365,10 @@ impl<'a> Flow<'a> {
         Ok(())
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "block opcodes were validated in build_graph"
+    )]
     fn edge_count(&self, b: u32) -> u32 {
         let pc = self.blocks[b as usize].last;
         let head = self.fn_def.code[pc as usize];
@@ -1376,6 +1384,10 @@ impl<'a> Flow<'a> {
         }
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "block opcodes were validated in build_graph"
+    )]
     fn edge(&self, b: u32, e: u32) -> u32 {
         let pc = self.blocks[b as usize].last;
         let head = self.fn_def.code[pc as usize];
@@ -1388,6 +1400,10 @@ impl<'a> Flow<'a> {
         self.map[target as usize]
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "instruction opcode, prim, and host IDs were validated before ownership analysis"
+    )]
     fn operand_access(&self, pc: u32, i: u32) -> OperandAccess {
         let head = self.fn_def.code[pc as usize];
         let info = Opcode::find(head & OPCODE_MASK).expect("validated opcode");
@@ -1454,7 +1470,9 @@ impl<'a> Flow<'a> {
                 verify_instruction(self.file, self.fn_def, self.base, pc)?;
             }
             let head = self.fn_def.code[pc as usize];
-            let op = Opcode::from_u16((head & OPCODE_MASK) as u16).expect("validated opcode");
+            let Some(op) = Opcode::from_u16((head & OPCODE_MASK) as u16) else {
+                return Err(self.refuse(pc, "invalid opcode"));
+            };
             if is_transfer(op) {
                 is_block_start[end as usize] = 1;
             }
@@ -1622,8 +1640,10 @@ impl<'a> Flow<'a> {
                 let mut pc = self.blocks[b as usize].start;
                 let end = self.blocks[b as usize].end;
                 while pc < end {
-                    let info =
-                        Opcode::find(self.fn_def.code[pc as usize] & OPCODE_MASK).expect("opcode");
+                    let Some(info) = Opcode::find(self.fn_def.code[pc as usize] & OPCODE_MASK)
+                    else {
+                        return Err(self.refuse(pc, "invalid opcode"));
+                    };
                     self.charge(pc, 1 + u64::from(info.fixed_count))?;
                     if info.opcode == Opcode::CaseField || info.opcode == Opcode::Reset {
                         let r = self.fn_def.code[pc as usize + 2] as usize;
@@ -1807,8 +1827,10 @@ impl<'a> Flow<'a> {
 
         let mut pc = 0u32;
         while (pc as usize) < code_len {
-            let op = Opcode::from_u16((self.fn_def.code[pc as usize] & OPCODE_MASK) as u16)
-                .expect("validated opcode");
+            let Some(op) = Opcode::from_u16((self.fn_def.code[pc as usize] & OPCODE_MASK) as u16)
+            else {
+                return Err(self.refuse(pc, "invalid opcode"));
+            };
             if op == Opcode::CaseField
                 && self.known[pc as usize] != self.fn_def.code[pc as usize + 3]
             {
@@ -1867,7 +1889,9 @@ impl<'a> Flow<'a> {
         visitor: &mut Option<F>,
     ) -> Result<(), LoadError> {
         let head = self.fn_def.code[pc as usize];
-        let op = Opcode::from_u16((head & OPCODE_MASK) as u16).expect("validated opcode");
+        let Some(op) = Opcode::from_u16((head & OPCODE_MASK) as u16) else {
+            return Err(self.refuse(pc, "invalid opcode"));
+        };
         let info = op.info();
         let fixed_count = u32::from(info.fixed_count);
         let count = fixed_count + (head >> OPCODE_VARIABLE_SHIFT);
@@ -2097,9 +2121,16 @@ impl<'a> Flow<'a> {
             }
 
             let ec = self.edge_count(b);
-            let frame_edge = stack.last().unwrap().edge;
-            if frame_edge < ec {
-                stack.last_mut().unwrap().edge = frame_edge + 1;
+            let next_edge = if let Some(top) = stack.last_mut()
+                && top.edge < ec
+            {
+                let e = top.edge;
+                top.edge = e + 1;
+                Some(e)
+            } else {
+                None
+            };
+            if let Some(frame_edge) = next_edge {
                 let to = self.edge(b, frame_edge);
                 if !self.blocks[to as usize].visited {
                     stack.push(WalkFrame {
@@ -2110,18 +2141,18 @@ impl<'a> Flow<'a> {
                 } else {
                     let to_start = self.blocks[to as usize].start;
                     self.charge(to_start, slots as u64)?;
-                    let expected = self.blocks[to as usize]
-                        .state
-                        .as_deref()
-                        .expect("visited join block has saved state");
+                    let Some(expected) = self.blocks[to as usize].state.as_deref() else {
+                        return Err(self.refuse(to_start, "visited join block missing saved state"));
+                    };
                     if state.as_slice() != expected {
                         return Err(self.refuse(to_start, "register states disagree at join"));
                     }
                 }
-            } else {
-                let mark = stack.pop().unwrap().mark;
-                while undo.len() != mark {
-                    let change = undo.pop().unwrap();
+            } else if let Some(frame) = stack.pop() {
+                while undo.len() > frame.mark {
+                    let Some(change) = undo.pop() else {
+                        break;
+                    };
                     let r = change.reg as usize;
                     state[r] = change.state;
                     if visitor.is_some() && r < reg_count {

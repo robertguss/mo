@@ -123,6 +123,10 @@ fn command_ok_tuple(
     let tup_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
     let out_val = heap.alloc_bytes(stdout_bytes)?;
     let err_val = heap.alloc_bytes(stderr_bytes)?;
+    #[expect(
+        clippy::expect_used,
+        reason = "verified bytecode guarantees tuple layout exists"
+    )]
     let layout = types
         .find_tuple_layout(tup_ty)
         .expect("tuple layout for Command.run_raw");
@@ -343,11 +347,7 @@ fn command_allow_programs(
     result_ty: u32,
     args: &[Value],
 ) -> Result<Value, HostError> {
-    let cap = args[0]
-        .as_capability()
-        .inner
-        .downcast_ref::<CommandCap>()
-        .expect("Command capability");
+    let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
     let existing = match cap {
         #[cfg(unix)]
         CommandCap::Real(r) => &r.allowed,
@@ -649,17 +649,13 @@ fn command_run_real(
         return command_error_tag(heap, types, result_ty, "not_permitted:", prog);
     }
 
-    let resolved_dir_fd: Option<OwnedFd>;
-    let workdir_fd: BorrowedFd<'_> = if root.pending {
+    let resolved_dir_fd: Option<OwnedFd> = if root.pending {
         let rel = root.prefix.as_deref().unwrap_or("");
         if rel.len() >= MO_LIMIT_HOST_PATH_SIZE as usize {
             return command_error_tag(heap, types, result_ty, "spawn_failed:path too long", "");
         }
         match resolve(resolver, root.fd.as_fd(), rel, PathMode::Folder) {
-            Ok(r) => {
-                resolved_dir_fd = Some(r.fd);
-                resolved_dir_fd.as_ref().unwrap().as_fd()
-            }
+            Ok(r) => Some(r.fd),
             Err(rerr) if rerr.containment || rerr.status == FileStatus::NotAllowed => {
                 return command_error_tag(heap, types, result_ty, "outside_folder:", rel);
             }
@@ -674,7 +670,11 @@ fn command_run_real(
             }
         }
     } else {
-        root.fd.as_fd()
+        None
+    };
+    let workdir_fd: BorrowedFd<'_> = match resolved_dir_fd.as_ref() {
+        Some(fd) => fd.as_fd(),
+        None => root.fd.as_fd(),
     };
 
     let cmd_args = args[2].as_list();
@@ -909,7 +909,10 @@ fn command_run_real(
         drop(io_scratch);
         return command_error_tag(heap, types, result_ty, "output_too_large", "");
     }
-    let st = exit_status.expect("reaped child exit status");
+    let Some(st) = exit_status else {
+        drop(io_scratch);
+        return command_error_tag(heap, types, result_ty, "spawn_failed:child wait failed", "");
+    };
     if timed_out || st.signal() == Some(24) {
         drop(io_scratch);
         return command_error_tag(heap, types, result_ty, "timed_out", "");
@@ -941,11 +944,7 @@ pub(crate) fn call_command(
             command_allow_programs(heap, open_folders, result_ty, args)
         }
         HostOpId::CommandWithin => {
-            let cap = args[0]
-                .as_capability()
-                .inner
-                .downcast_ref::<CommandCap>()
-                .expect("Command capability");
+            let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
             let raw = args[1].as_text();
             match cap {
                 CommandCap::Fake(f) => command_within_fake(heap, f, result_ty, raw),
@@ -969,11 +968,7 @@ pub(crate) fn call_command(
                     detail: None,
                 });
             }
-            let cap = args[0]
-                .as_capability()
-                .inner
-                .downcast_ref::<CommandCap>()
-                .expect("Command capability");
+            let cap = crate::downcast_cap::<CommandCap>(&args[0], "Command capability");
             match cap {
                 CommandCap::Fake(f) => command_run_fake(heap, types, f, result_ty, args),
                 #[cfg(unix)]

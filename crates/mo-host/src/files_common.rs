@@ -107,6 +107,10 @@ pub(crate) fn normalize_path(bytes: &[u8]) -> Result<String, FileProblem> {
         }
         at = end + 1;
     }
+    #[expect(
+        clippy::expect_used,
+        reason = "normalized segments of valid UTF-8 input preserve valid UTF-8"
+    )]
     Ok(String::from_utf8(out).expect("normalized slice of valid UTF-8 is valid UTF-8"))
 }
 
@@ -216,6 +220,10 @@ pub(crate) fn make_names_or_entries(
 
     let mut out_list = VecDeque::with_capacity(items.len());
     if is_records {
+        #[expect(
+            clippy::expect_used,
+            reason = "verified bytecode guarantees Entry record layout exists"
+        )]
         let layout = types
             .find_record_layout(elem_ty)
             .expect("Entry record layout must exist");

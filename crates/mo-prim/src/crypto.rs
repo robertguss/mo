@@ -71,6 +71,7 @@ fn crypto_sha256(heap: &Heap, data: &[u8]) -> Result<Value, PrimError> {
 }
 
 fn crypto_hmac_sha256(heap: &Heap, key: &[u8], data: &[u8]) -> Result<Value, PrimError> {
+    #[expect(clippy::expect_used, reason = "HMAC accepts any key length")]
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     let tag: Zeroizing<[u8; 32]> = Zeroizing::new(mac.finalize().into_bytes().into());
@@ -117,8 +118,18 @@ fn crypto_seal_raw(
     let mut scratch = ScratchGuard::new(heap.budget());
     scratch.charge(total)?;
 
-    let cipher = Aes256Gcm::new_from_slice(key).expect("validated 32-byte key");
-    let nonce = Nonce::<Aes256Gcm>::try_from(nonce_bytes).expect("validated 12-byte nonce");
+    let Ok(cipher) = Aes256Gcm::new_from_slice(key) else {
+        return err_length(heap, types, result_ty, "invalid_key_length", key.len());
+    };
+    let Ok(nonce) = Nonce::<Aes256Gcm>::try_from(nonce_bytes) else {
+        return err_length(
+            heap,
+            types,
+            result_ty,
+            "invalid_nonce_length",
+            nonce_bytes.len(),
+        );
+    };
 
     let mut sealed = Zeroizing::new(Vec::with_capacity(total));
     sealed.extend_from_slice(plaintext);
@@ -165,8 +176,18 @@ fn crypto_open_raw(
     let mut scratch = ScratchGuard::new(heap.budget());
     scratch.charge(ciphertext.len().max(1))?;
 
-    let cipher = Aes256Gcm::new_from_slice(key).expect("validated 32-byte key");
-    let nonce = Nonce::<Aes256Gcm>::try_from(nonce_bytes).expect("validated 12-byte nonce");
+    let Ok(cipher) = Aes256Gcm::new_from_slice(key) else {
+        return err_length(heap, types, result_ty, "invalid_key_length", key.len());
+    };
+    let Ok(nonce) = Nonce::<Aes256Gcm>::try_from(nonce_bytes) else {
+        return err_length(
+            heap,
+            types,
+            result_ty,
+            "invalid_nonce_length",
+            nonce_bytes.len(),
+        );
+    };
 
     let mut buf = Zeroizing::new(ciphertext.to_vec());
     // `decrypt_in_place` verifies the 16-byte GCM tag before succeeding; on error

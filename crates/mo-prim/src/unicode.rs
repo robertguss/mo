@@ -272,7 +272,9 @@ pub(crate) fn casing_str(s: &str, lower: bool) -> Result<String, PrimError> {
             }
         };
         for &v in values {
-            out.push(char::from_u32(v).expect("valid Unicode scalar in table"));
+            if let Some(c) = char::from_u32(v) {
+                out.push(c);
+            }
         }
     }
     debug_assert_eq!(out.len(), needed);
@@ -407,8 +409,10 @@ fn normalize_nfc(heap: &Heap, s: &str) -> Result<Value, PrimError> {
             }
             _ => 0,
         };
-        if combined != 0 {
-            values[starter.unwrap()] = combined;
+        if let Some(st) = starter
+            && combined != 0
+        {
+            values[st] = combined;
         } else {
             if cls == 0 {
                 starter = Some(wrote);
@@ -430,7 +434,9 @@ fn normalize_nfc(heap: &Heap, s: &str) -> Result<Value, PrimError> {
     scratch.charge(needed)?;
     let mut out = String::with_capacity(needed);
     for &v in &values[..wrote] {
-        out.push(char::from_u32(v & SCALAR_MASK).expect("valid Unicode scalar"));
+        if let Some(c) = char::from_u32(v & SCALAR_MASK) {
+            out.push(c);
+        }
     }
     debug_assert_eq!(out.len(), needed);
     drop(values);
@@ -446,6 +452,106 @@ pub(crate) fn is_digit(c: char) -> bool {
     (properties(c as u32) & UCD_DIGIT) != 0
 }
 
+fn decode_utf8_scalar(bytes: &[u8]) -> Option<(u32, usize)> {
+    let b0 = *bytes.first()?;
+    if b0 < 0x80 {
+        return Some((u32::from(b0), 1));
+    }
+    if (0xc2..=0xdf).contains(&b0) {
+        let b1 = *bytes.get(1)?;
+        if (b1 & 0xc0) != 0x80 {
+            return None;
+        }
+        return Some((((u32::from(b0 & 0x1f)) << 6) | u32::from(b1 & 0x3f), 2));
+    }
+    if (0xe0..=0xef).contains(&b0) {
+        let b1 = *bytes.get(1)?;
+        let b2 = *bytes.get(2)?;
+        if (b1 & 0xc0) != 0x80 || (b2 & 0xc0) != 0x80 {
+            return None;
+        }
+        let cp =
+            ((u32::from(b0 & 0x0f)) << 12) | ((u32::from(b1 & 0x3f)) << 6) | u32::from(b2 & 0x3f);
+        if cp < 0x800 || (0xd800..=0xdfff).contains(&cp) {
+            return None;
+        }
+        return Some((cp, 3));
+    }
+    if (0xf0..=0xf4).contains(&b0) {
+        let b1 = *bytes.get(1)?;
+        let b2 = *bytes.get(2)?;
+        let b3 = *bytes.get(3)?;
+        if (b1 & 0xc0) != 0x80 || (b2 & 0xc0) != 0x80 || (b3 & 0xc0) != 0x80 {
+            return None;
+        }
+        let cp = ((u32::from(b0 & 0x07)) << 18)
+            | ((u32::from(b1 & 0x3f)) << 12)
+            | ((u32::from(b2 & 0x3f)) << 6)
+            | u32::from(b3 & 0x3f);
+        if !(0x1_0000..=0x10_ffff).contains(&cp) {
+            return None;
+        }
+        return Some((cp, 4));
+    }
+    None
+}
+
+/// Public Unicode 16.0.0 grapheme-boundary and display-width helpers shared with
+/// diagnostic renderers (`mo-base`, `mo-fe`).
+pub mod unicode16 {
+    use super::{Boundary, decode_utf8_scalar, display_width_str, properties};
+
+    /// Byte length of the next grapheme cluster in `s` (0 if `s` is empty).
+    #[must_use]
+    pub fn next_grapheme(s: &str) -> usize {
+        if s.is_empty() {
+            return 0;
+        }
+        let mut state = Boundary::default();
+        for (idx, ch) in s.char_indices() {
+            if state.next(properties(ch as u32)) && idx != 0 {
+                return idx;
+            }
+        }
+        s.len()
+    }
+
+    /// Byte length of the next grapheme cluster in `bytes`, or `None` if `bytes`
+    /// is empty or invalid UTF-8 is encountered before the cluster ends.
+    /// Matches `src/prim/unicode.c:mo_unicode16_next_grapheme`.
+    #[must_use]
+    pub fn next_grapheme_bytes(bytes: &[u8]) -> Option<usize> {
+        if bytes.is_empty() {
+            return None;
+        }
+        let mut state = Boundary::default();
+        let mut at = 0usize;
+        while at < bytes.len() {
+            let here = at;
+            let (cp, width) = decode_utf8_scalar(&bytes[at..])?;
+            at += width;
+            if state.next(properties(cp)) && here != 0 {
+                return Some(here);
+            }
+        }
+        Some(bytes.len())
+    }
+
+    /// Terminal display column width of `s` under Unicode 16.0.0.
+    #[must_use]
+    pub fn display_width(s: &str) -> u64 {
+        display_width_str(s)
+    }
+
+    /// Terminal display column width of `bytes`, or `None` if `bytes` is not valid UTF-8.
+    /// Matches `src/prim/unicode.c:mo_unicode16_display_width`.
+    #[must_use]
+    pub fn display_width_bytes(bytes: &[u8]) -> Option<u64> {
+        let s = std::str::from_utf8(bytes).ok()?;
+        Some(display_width_str(s))
+    }
+}
+
 pub fn call(heap: &Heap, prim: PrimId, args: &[Value]) -> Result<Value, PrimError> {
     match prim {
         PrimId::Unicode16Letter => Ok(Value::Bool(is_letter(args[0].as_char()))),
@@ -453,7 +559,7 @@ pub fn call(heap: &Heap, prim: PrimId, args: &[Value]) -> Result<Value, PrimErro
         PrimId::Unicode16Graphemes => graphemes(heap, args[0].as_text()),
         PrimId::Unicode16DisplayWidth => {
             let width = display_width_str(args[0].as_text());
-            Ok(Value::Int(i64::try_from(width).expect("width fits i64")))
+            Ok(Value::Int(i64::try_from(width).unwrap_or(i64::MAX)))
         }
         PrimId::Unicode16NormalizeNfc => normalize_nfc(heap, args[0].as_text()),
         PrimId::Unicode16Lowercase => {
