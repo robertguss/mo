@@ -194,5 +194,88 @@ class SanitizeCompiler(unittest.TestCase):
         self.assertEqual(self.run_group("mo-no-such-compiler"), (1, []))
 
 
+class RustGroup(unittest.TestCase):
+    def test_rust_runs_fmt_clippy_test_and_differential_harness(self):
+        with tempfile.TemporaryDirectory(prefix="mo-check-rust-") as temporary:
+            root = pathlib.Path(temporary)
+            (root / "ci").mkdir()
+            shutil.copyfile(ROOT / "ci/check.sh", root / "ci/check.sh")
+            commands = root / "commands"
+            commands.mkdir()
+            calls = root / "calls"
+            calls.touch()
+            for name in ("cargo", "python3", "gcc", "make"):
+                (commands / name).write_text(f'#!/bin/sh\necho "{name} $*" >>"$CALLS"\n')
+                (commands / name).chmod(0o755)
+            mo_bin = root / "build/gcc/debug/mo"
+            mo_bin.parent.mkdir(parents=True, exist_ok=True)
+            mo_bin.write_text("#!/bin/sh\nexit 0\n")
+            mo_bin.chmod(0o755)
+            environment = dict(
+                os.environ,
+                PATH=f"{commands}:{os.environ['PATH']}",
+                CI="1",
+                CALLS=str(calls),
+            )
+            for name in ("MO_ALL_DRIVERS", "MO_DRIVERS"):
+                environment.pop(name, None)
+            result = subprocess.run(
+                ["bash", "ci/check.sh", "rust"],
+                cwd=root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertTrue(result.stdout.rstrip().endswith("check.sh finished: pass"))
+            self.assertEqual(
+                calls.read_text().splitlines(),
+                [
+                    "cargo fmt --all -- --check",
+                    "cargo clippy --workspace --all-targets -- -D warnings",
+                    "cargo test --workspace",
+                    "python3 ci/check_rust_runtime.py --mo build/gcc/debug/mo",
+                ],
+            )
+
+    def test_missing_cargo_respects_ci(self):
+        cargo_path = shutil.which("cargo")
+        cargo_dir = os.path.realpath(os.path.dirname(cargo_path)) if cargo_path else None
+        filtered = [
+            entry
+            for entry in os.environ.get("PATH", "").split(os.pathsep)
+            if entry and (cargo_dir is None or os.path.realpath(entry) != cargo_dir)
+        ]
+        if shutil.which("cargo", path=os.pathsep.join(filtered)) is not None:
+            self.skipTest("cargo shares a system PATH directory with core utilities")
+        with tempfile.TemporaryDirectory(prefix="mo-check-rust-nocargo-") as temporary:
+            root = pathlib.Path(temporary)
+            (root / "ci").mkdir()
+            shutil.copyfile(ROOT / "ci/check.sh", root / "ci/check.sh")
+            env_base = dict(os.environ, PATH=os.pathsep.join(filtered))
+            env_base.pop("CI", None)
+            skip_res = subprocess.run(
+                ["bash", "ci/check.sh", "rust"],
+                cwd=root,
+                env=env_base,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(skip_res.returncode, 0, skip_res.stdout + skip_res.stderr)
+            self.assertIn("skipped: cargo is not installed", skip_res.stdout)
+            fail_res = subprocess.run(
+                ["bash", "ci/check.sh", "rust"],
+                cwd=root,
+                env=dict(env_base, CI="1"),
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(fail_res.returncode, 1, fail_res.stdout + fail_res.stderr)
+            self.assertIn("error: cargo is not installed", fail_res.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

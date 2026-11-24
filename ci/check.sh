@@ -29,11 +29,12 @@
 #   lean        Mo Core in Lean, and the checks that compare the test executables with it
 #   static      grammar, module dependencies, library map, fuzz seeds, formatting, clang-tidy
 #   cbmc        the CBMC proofs of the bytecode reader, the arena, the verifier, the primitives, path containment and resolution, reference counts and hash tables (cbmc/README.md)
+#   rust        pure-Rust runtime: fmt, clippy, unit/fuzz tests, and differential parity against C mo
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 echo "check.sh started: pid $$"
 
-all_groups=" gcc clang sanitize fuzz drivers bench lean static cbmc models "
+all_groups=" gcc clang sanitize fuzz drivers bench lean static cbmc models rust "
 groups="$*"
 for group in $groups; do
 	if [[ "$all_groups" != *" $group "* ]]; then
@@ -593,6 +594,38 @@ if ((model_status == 77)); then
     missing "Java or pinned TLC jar is not installed (see models/README.md)"
 elif ((model_status != 0)); then
     exit "$model_status"
+fi
+fi
+
+if enter rust; then
+step "Pure-Rust runtime: formatting, clippy, workspace tests, and differential parity"
+if ! have cargo; then
+	missing "cargo is not installed"
+elif ! have python3; then
+	missing "python3 is not installed"
+else
+	built mo
+	if ((${#drivers[@]} == 0)); then
+		if have gcc; then
+			make --no-print-directory CC=gcc
+		elif have clang; then
+			make --no-print-directory CC=clang
+		fi
+		built mo
+	fi
+	if ((${#drivers[@]})); then
+		mo_driver="${drivers[0]}"
+		step "Rust formatting (cargo fmt --all -- --check)"
+		cargo fmt --all -- --check
+		step "Rust lints (cargo clippy --workspace --all-targets -- -D warnings)"
+		cargo clippy --workspace --all-targets -- -D warnings
+		step "Rust workspace tests and bytecode/VM fuzz smoke (cargo test --workspace)"
+		cargo test --workspace
+		step "Rust runtime differential parity (ci/check_rust_runtime.py --mo $mo_driver)"
+		python3 ci/check_rust_runtime.py --mo "$mo_driver"
+	else
+		missing "no C compiler or mo executable is available for Rust differential checks"
+	fi
 fi
 fi
 
