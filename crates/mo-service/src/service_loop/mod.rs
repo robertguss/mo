@@ -222,19 +222,52 @@ impl ServiceLoop {
     pub fn open(
         image: Image,
         service_idx: u32,
-        mut store: ServiceStore,
+        store: ServiceStore,
         limits: Limits,
         build_digest: [u8; 32],
         build_label: String,
         now_mono_us: u64,
         defer_initial_snapshot: bool,
     ) -> Result<(Self, bool /* was_empty */), ServiceStatus> {
+        let (svc, was_empty, _replayed) = Self::open_with_expected_image(
+            image,
+            service_idx,
+            store,
+            limits,
+            build_digest,
+            build_label,
+            now_mono_us,
+            defer_initial_snapshot,
+            None,
+        )?;
+        Ok((svc, was_empty))
+    }
+
+    /// Opens or recovers a durable service, verifying snapshot and log frames against
+    /// `expected_image_key` when provided (used for verified adoption when `head.image`
+    /// differs from the newly compiled image key). Returns `(service, was_empty, replayed_count)`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "service recovery needs explicit image, store, limits, identity, timestamps, and optional expected image key"
+    )]
+    pub fn open_with_expected_image(
+        image: Image,
+        service_idx: u32,
+        mut store: ServiceStore,
+        limits: Limits,
+        build_digest: [u8; 32],
+        build_label: String,
+        now_mono_us: u64,
+        defer_initial_snapshot: bool,
+        expected_image_key: Option<u64>,
+    ) -> Result<(Self, bool /* was_empty */, u64 /* replayed */), ServiceStatus> {
         let svc = image
             .file()
             .services
             .get(service_idx as usize)
             .ok_or(ServiceStatus::Corrupt)?;
         let image_key = image.file().program_checksum ^ (u64::from(service_idx) << 32);
+        let verify_key = expected_image_key.unwrap_or(image_key);
         let state_ty = svc.state_type;
         let start_fn = svc.start;
 
@@ -242,6 +275,7 @@ impl ServiceLoop {
         let was_empty = records.is_empty();
 
         let state_heap = Heap::new(limits.heap_size);
+        let mut replayed_count = 0u64;
         let (state, encoded_state, sequence, snapshot_sequence, recent_log) = if was_empty {
             let mut proc = Process::new(&image, limits, HostContext::stdio(Vec::new(), Vec::new()));
             let (outcome, _work) =
@@ -275,7 +309,7 @@ impl ServiceLoop {
             (copied, enc, 0u64, 0u64, VecDeque::new())
         } else {
             let snap = &records[0];
-            if snap.kind != StoreRecordKind::State || snap.image != image_key {
+            if snap.kind != StoreRecordKind::State || snap.image != verify_key {
                 return Err(ServiceStatus::Corrupt);
             }
             let mut cur_enc = snap.bytes.clone();
@@ -287,13 +321,13 @@ impl ServiceLoop {
 
             for rec in &records[1..] {
                 if rec.kind != StoreRecordKind::Log
-                    || rec.image != image_key
+                    || rec.image != verify_key
                     || rec.sequence != cur_seq + 1
                 {
                     return Err(ServiceStatus::Corrupt);
                 }
                 let parsed = read_log_record(&rec.bytes).ok_or(ServiceStatus::Corrupt)?;
-                let (next_enc, handler_name) = replay_one_message(
+                let (next_enc, handler_name) = match replay_one_message(
                     &image,
                     service_idx,
                     limits,
@@ -302,15 +336,37 @@ impl ServiceLoop {
                     parsed.header.handler,
                     parsed.header.arrival,
                     &parsed.arguments,
-                )?;
+                ) {
+                    Ok(v) => v,
+                    Err(st) => {
+                        let hname = replay_handler_label(
+                            image.file(),
+                            service_idx,
+                            parsed.header.timer,
+                            parsed.header.handler,
+                        );
+                        eprintln!(
+                            "mo serve: failure: log record {}: {}: {}",
+                            rec.sequence,
+                            hname,
+                            service_status_text(st)
+                        );
+                        return Err(st);
+                    }
+                };
                 let checksum = fnv1a(FNV_OFFSET, &next_enc);
                 if checksum != parsed.header.state_checksum {
+                    eprintln!(
+                        "mo serve: failure: log record {}: {}: saved service data is damaged or was written by a different program; recovery refused",
+                        rec.sequence, handler_name
+                    );
                     return Err(ServiceStatus::Corrupt);
                 }
                 cur_state = decode_value(&state_heap, &image.file().types, state_ty, &next_enc)
                     .map_err(|_| ServiceStatus::Corrupt)?;
                 cur_enc = next_enc;
                 cur_seq = rec.sequence;
+                replayed_count += 1;
 
                 if log_ring.len() >= 128 {
                     let _ = log_ring.pop_front();
@@ -329,32 +385,7 @@ impl ServiceLoop {
         };
 
         let schema_digest = export_schema_digest(&encoded_state).ok_or(ServiceStatus::Corrupt)?;
-
-        let svc = &image.file().services[service_idx as usize];
-        let mut timers = Vec::with_capacity(svc.timers.len());
-        for t in &svc.timers {
-            let mut proc = Process::new(&image, limits, HostContext::stdio(Vec::new(), Vec::new()));
-            let (outcome, _) = proc.call_with_budget(t.interval, Vec::new(), MO_LIMIT_SERVICE_WORK);
-            let interval_us = match outcome {
-                Outcome::Returned(v) => {
-                    let us = v.as_duration();
-                    if us <= 0 {
-                        return Err(ServiceStatus::Invalid);
-                    }
-                    us as u64
-                }
-                Outcome::Failed(defect) | Outcome::Stopped(defect) => {
-                    let tname = short_handler_name(image.file().function_name(t.function));
-                    let raw = mo_vm::render_defect_raw(image.file(), &defect);
-                    eprintln!("mo serve: failure: {tname}: service handler failed\nbug: {raw}");
-                    return Err(ServiceStatus::Failed);
-                }
-            };
-            timers.push(TimerSlot {
-                interval_us,
-                next_due_us: now_mono_us,
-            });
-        }
+        let timers = eval_service_timers(&image, service_idx, limits, now_mono_us)?;
 
         let metrics = ServiceMetrics {
             diagnostic_scratch_peak: encoded_state.len().max(64),
@@ -387,7 +418,71 @@ impl ServiceLoop {
                 started_mono_us: now_mono_us,
             },
             was_empty,
+            replayed_count,
         ))
+    }
+
+    /// Constructs a [`ServiceLoop`] directly from already-activated state bytes at `sequence`
+    /// without running recovery replay (used after empty-tail fallback startup upgrade).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "direct service loop construction needs image, store, limits, identity, sequence, state bytes, and timestamp"
+    )]
+    pub fn open_from_state(
+        image: Image,
+        service_idx: u32,
+        store: ServiceStore,
+        limits: Limits,
+        build_digest: [u8; 32],
+        build_label: String,
+        sequence: u64,
+        encoded_state: Vec<u8>,
+        now_mono_us: u64,
+    ) -> Result<Self, ServiceStatus> {
+        let svc = image
+            .file()
+            .services
+            .get(service_idx as usize)
+            .ok_or(ServiceStatus::Corrupt)?;
+        let image_key = image.file().program_checksum ^ (u64::from(service_idx) << 32);
+        let state_heap = Heap::new(limits.heap_size);
+        let state = decode_value(
+            &state_heap,
+            &image.file().types,
+            svc.state_type,
+            &encoded_state,
+        )
+        .map_err(|_| ServiceStatus::Corrupt)?;
+        let schema_digest = export_schema_digest(&encoded_state).ok_or(ServiceStatus::Corrupt)?;
+        let timers = eval_service_timers(&image, service_idx, limits, now_mono_us)?;
+        let metrics = ServiceMetrics {
+            diagnostic_scratch_peak: encoded_state.len().max(64),
+            snapshots: 1,
+            ..ServiceMetrics::default()
+        };
+        Ok(Self {
+            image,
+            service_idx,
+            store,
+            limits,
+            build_digest,
+            build_label,
+            schema_digest,
+            image_key,
+            state_heap,
+            state,
+            sequence,
+            snapshot_sequence: sequence,
+            encoded_sequence: sequence,
+            encoded_state,
+            timers,
+            supervisor: SupervisorState::default(),
+            recent_log: VecDeque::new(),
+            event_log: VecDeque::new(),
+            next_event_number: 1,
+            metrics,
+            started_mono_us: now_mono_us,
+        })
     }
 
     /// Returns the active [`BytecodeFile`].
@@ -1309,7 +1404,10 @@ impl ServiceLoop {
     }
 }
 
-fn classify_defect(defect: &Defect) -> u8 {
+/// Classifies a VM [`Defect`] into the canonical failure signature class (`0` = defect,
+/// `1` = work, `2` = memory).
+#[must_use]
+pub fn classify_defect(defect: &Defect) -> u8 {
     if defect.reason.contains("instruction budget") {
         1 // work
     } else if defect.limit_name.is_some() || defect.reason.contains("out of memory") {
@@ -1319,7 +1417,9 @@ fn classify_defect(defect: &Defect) -> u8 {
     }
 }
 
-fn extract_choice_field(
+/// Extracts payload field `field` from a `Choice` value (`Result`/`Option`/enum).
+#[must_use]
+pub fn extract_choice_field(
     types: &mo_bytecode::types::TypeTable,
     ty: u32,
     val: &Value,
@@ -1371,10 +1471,82 @@ fn sanitize_defect_text(raw: &str) -> String {
 
 /// Extracts the short user-visible handler name from a compiled bytecode function name
 /// (e.g. `"Overloaded.tick@Count"` -> `"tick"`).
-pub(crate) fn short_handler_name(full: &str) -> &str {
+#[must_use]
+pub fn short_handler_name(full: &str) -> &str {
     let before_at = full.split('@').next().unwrap_or(full);
     let after_dot = before_at.rsplit('.').next().unwrap_or(before_at);
     after_dot.split('#').next().unwrap_or(after_dot)
+}
+
+pub(crate) fn eval_service_timers(
+    image: &Image,
+    service_idx: u32,
+    limits: Limits,
+    now_mono_us: u64,
+) -> Result<Vec<TimerSlot>, ServiceStatus> {
+    let svc = &image.file().services[service_idx as usize];
+    let mut timers = Vec::with_capacity(svc.timers.len());
+    for t in &svc.timers {
+        let mut proc = Process::new(image, limits, HostContext::stdio(Vec::new(), Vec::new()));
+        let (outcome, _) = proc.call_with_budget(t.interval, Vec::new(), MO_LIMIT_SERVICE_WORK);
+        let interval_us = match outcome {
+            Outcome::Returned(v) => {
+                let us = v.as_duration();
+                if us <= 0 {
+                    return Err(ServiceStatus::Invalid);
+                }
+                us as u64
+            }
+            Outcome::Failed(defect) | Outcome::Stopped(defect) => {
+                let tname = short_handler_name(image.file().function_name(t.function));
+                let raw = mo_vm::render_defect_raw(image.file(), &defect);
+                eprintln!("mo serve: failure: {tname}: service handler failed\nbug: {raw}");
+                return Err(ServiceStatus::Failed);
+            }
+        };
+        timers.push(TimerSlot {
+            interval_us,
+            next_due_us: now_mono_us,
+        });
+    }
+    Ok(timers)
+}
+
+fn replay_handler_label(
+    file: &BytecodeFile,
+    service_idx: u32,
+    timer: bool,
+    handler: u32,
+) -> String {
+    let svc = &file.services[service_idx as usize];
+    if timer {
+        svc.timers
+            .get(handler as usize)
+            .map(|t| short_handler_name(file.function_name(t.function)).to_string())
+            .unwrap_or_else(|| "service".to_string())
+    } else {
+        svc.tools
+            .get(handler as usize)
+            .map(|t| file.string(t.name).to_string())
+            .unwrap_or_else(|| "service".to_string())
+    }
+}
+
+/// Human-readable description for [`ServiceStatus`] (`mo_service_status_text`).
+#[must_use]
+pub fn service_status_text(st: ServiceStatus) -> &'static str {
+    match st {
+        ServiceStatus::Ok => "ok",
+        ServiceStatus::Failed => "service handler failed",
+        ServiceStatus::Stopped => "service stopped",
+        ServiceStatus::StoreIo => "service store I/O failed",
+        ServiceStatus::Corrupt => {
+            "saved service data is damaged or was written by a different program; recovery refused"
+        }
+        ServiceStatus::Memory => "service ran out of memory",
+        ServiceStatus::Full => "service mailbox is full",
+        ServiceStatus::Invalid => "invalid service call",
+    }
 }
 
 fn store_to_service(st: StoreStatus) -> ServiceStatus {

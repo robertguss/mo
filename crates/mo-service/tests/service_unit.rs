@@ -198,7 +198,11 @@ fn upload_stage_paging_and_hex_helpers() {
     let digest = sha256_bytes(b"helloworld");
     let hex = hex_encode(&digest);
     assert_eq!(hex_decode_exact::<32>(&hex), Some(digest));
-    assert_eq!(sanitize_terminal_text("ok\x1b[31m"), "ok\\u{1b}[31m");
+    assert_eq!(sanitize_terminal_text("ok\x1b[31m"), "ok\\x1b[31m");
+    assert_eq!(
+        sanitize_terminal_text("a\u{009b}b\u{202e}c\x7f"),
+        "a\\u{09b}b\\u{202e}c\\x7f"
+    );
 }
 
 #[test]

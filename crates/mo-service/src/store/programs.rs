@@ -1,14 +1,19 @@
 //! Transactional program, activation, and adoption storage (`src/host/store-programs.c` parity).
 
-use mo_def::limits::{MO_LIMIT_UPGRADE_MIGRATION_NAME, MO_LIMIT_UPGRADE_REPORT_BYTES};
+use mo_def::limits::{
+    MO_LIMIT_FAILURE_RECORDS, MO_LIMIT_UPGRADE_MIGRATION_NAME, MO_LIMIT_UPGRADE_PREVIOUS,
+    MO_LIMIT_UPGRADE_REPORT_JSON_BYTES, MO_LIMIT_UPGRADE_RETAINED_BYTES,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::binary::bundle::validate_bundle;
 use crate::binary::compile_context::{read_compile_context, read_compile_metadata};
+use crate::binary::export::export_schema_digest;
+use crate::binary::failure::read_failure_record;
 use crate::binary::sha256_bytes;
 
 use super::{
-    ServiceStore, StoreRecord, StoreRecordKind, StoreStatus, TableState, decode_frame,
+    CORE_TABLES, ServiceStore, StoreRecord, StoreRecordKind, StoreStatus, TableState, decode_frame,
     encode_frame, ensure_table_ready, map_sqlite_error, read_user_version, table_state,
 };
 
@@ -191,6 +196,30 @@ fn ensure_upgrade_tables(conn: &Connection) -> Result<(), StoreStatus> {
 }
 
 impl ServiceStore {
+    /// Reads the current head sequence and authoritative snapshot frame without replaying log
+    /// entries (`src/tools/upgrade-commands.c:read_restart_head` helper).
+    pub fn read_head_snapshot(&self) -> Result<Option<(u64, StoreRecord)>, StoreStatus> {
+        if self.is_unsafe {
+            return Err(StoreStatus::Io);
+        }
+        let Some(head) = self.current_head()? else {
+            return Ok(None);
+        };
+        let snap_blob: Option<Vec<u8>> = self
+            .conn
+            .query_row("SELECT record FROM snapshot WHERE id=1", [], |r| r.get(0))
+            .optional()
+            .map_err(|e| map_sqlite_error(&e))?;
+        let Some(bytes) = snap_blob else {
+            return Err(StoreStatus::Corrupt);
+        };
+        let snap = decode_frame(StoreRecordKind::State, &bytes).ok_or(StoreStatus::Corrupt)?;
+        if snap.sequence > head {
+            return Err(StoreStatus::Corrupt);
+        }
+        Ok(Some((head, snap)))
+    }
+
     /// Reads the active recorded program from the open store (`mo_store_program_read`).
     pub fn read_program(&self) -> Result<Option<StoredProgram>, StoreStatus> {
         if self.is_unsafe {
@@ -357,13 +386,24 @@ impl ServiceStore {
         if !program_valid(&act.candidate)
             || (!legacy && !program_valid(&act.previous))
             || act.migration.len() as u64 > MO_LIMIT_UPGRADE_MIGRATION_NAME
-            || act.report_json.len() as u64 > MO_LIMIT_UPGRADE_REPORT_BYTES
+            || act.report_json.len() as u64 > MO_LIMIT_UPGRADE_REPORT_JSON_BYTES
             || act.previous_state.kind != StoreRecordKind::State
             || act.candidate_state.kind != StoreRecordKind::State
             || act.candidate_state.image != act.candidate.image
         {
             return ActivationStatus::Refused;
         }
+        let legacy_old_schema = if legacy {
+            let Some(s) = export_schema_digest(&act.previous_state.bytes) else {
+                return ActivationStatus::Refused;
+            };
+            if s != act.candidate.schema {
+                return ActivationStatus::Refused;
+            }
+            s
+        } else {
+            act.previous.schema
+        };
         let Some(prev_frame) = encode_frame(
             act.previous_state.kind,
             act.previous_state.sequence,
@@ -397,6 +437,18 @@ impl ServiceStore {
                 if !is_adopt || existing.is_some() || act.candidate.ordinal != 1 {
                     return Err(());
                 }
+                let stored_snap: Option<Vec<u8>> = self
+                    .conn
+                    .query_row("SELECT record FROM snapshot WHERE id=1", [], |r| r.get(0))
+                    .optional()
+                    .map_err(|_| ())?;
+                let Some(sb) = stored_snap else {
+                    return Err(());
+                };
+                let decoded = decode_frame(StoreRecordKind::State, &sb).ok_or(())?;
+                if decoded != act.previous_state {
+                    return Err(());
+                }
             } else {
                 let Some(cur) = existing else {
                     return Err(());
@@ -425,12 +477,13 @@ impl ServiceStore {
                     return Err(());
                 }
 
+                // Store previous program under `candidate.ordinal` (`src/host/store-programs.c:482`).
                 self.conn
                     .execute(
                         "INSERT INTO previous_programs(ordinal,source,image,build,schema,bundle,context_digest,context) \
                          VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
                         params![
-                            cur.ordinal as i64,
+                            act.candidate.ordinal as i64,
                             cur.source.as_slice(),
                             cur.image.to_le_bytes().as_slice(),
                             cur.build.as_slice(),
@@ -443,13 +496,15 @@ impl ServiceStore {
                     .map_err(|_| ())?;
             }
 
-            let prev_ordinal = if legacy { 0 } else { act.previous.ordinal };
+            // Store previous snapshot under `candidate.ordinal` (`src/host/store-programs.c:485`).
             self.conn
                 .execute(
                     "INSERT INTO previous_snapshots(ordinal,record) VALUES(?1,?2)",
-                    params![prev_ordinal as i64, prev_frame.as_slice()],
+                    params![act.candidate.ordinal as i64, prev_frame.as_slice()],
                 )
                 .map_err(|_| ())?;
+
+            retain_programs(&self.conn, act.candidate.ordinal)?;
 
             let old_source = if legacy {
                 [0u8; 32]
@@ -461,11 +516,7 @@ impl ServiceStore {
             } else {
                 act.previous.image
             };
-            let old_schema = if legacy {
-                [0u8; 32]
-            } else {
-                act.previous.schema
-            };
+            let old_schema = legacy_old_schema;
 
             self.conn
                 .execute(
@@ -561,4 +612,78 @@ impl ServiceStore {
         }
         ActivationStatus::Refused
     }
+}
+
+/// Enforces `MO_LIMIT_UPGRADE_PREVIOUS` retention while keeping any older previous program
+/// pinned by a retained failure record (`src/host/store-programs.c:retain_programs`).
+fn retain_programs(conn: &Connection, ordinal: u64) -> Result<(), ()> {
+    // Load all retained failure identities once if the failure table exists.
+    let mut failure_pins: Vec<(u64, [u8; 32], [u8; 32])> = Vec::new();
+    if table_state(conn, CORE_TABLES[3].0, CORE_TABLES[3].1).0 == TableState::Same {
+        let mut fstmt = conn
+            .prepare("SELECT message FROM failure ORDER BY id")
+            .map_err(|_| ())?;
+        let mut frows = fstmt.query([]).map_err(|_| ())?;
+        while let Some(row) = frows.next().map_err(|_| ())? {
+            let blob: Vec<u8> = row.get(0).map_err(|_| ())?;
+            let frame = decode_frame(StoreRecordKind::FailureMessage, &blob).ok_or(())?;
+            let parsed = read_failure_record(&frame.bytes).ok_or(())?;
+            failure_pins.push((parsed.program, parsed.build, parsed.schema));
+        }
+    }
+
+    let mut to_remove: Vec<u64> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT ordinal,source,image,build,schema,bundle,context_digest,context \
+                 FROM previous_programs ORDER BY ordinal DESC",
+            )
+            .map_err(|_| ())?;
+        let mut rows = stmt.query([]).map_err(|_| ())?;
+        let mut count = 0u64;
+        let max_rows = MO_LIMIT_FAILURE_RECORDS + MO_LIMIT_UPGRADE_PREVIOUS + 1;
+        while let Some(row) = rows.next().map_err(|_| ())? {
+            count += 1;
+            let prog = parse_program_row(row).ok_or(())?;
+            if count > max_rows || prog.ordinal == 0 || prog.ordinal > ordinal {
+                return Err(());
+            }
+            if count <= MO_LIMIT_UPGRADE_PREVIOUS {
+                continue;
+            }
+            let pinned = failure_pins.iter().any(|(img, bld, sch)| {
+                *img == prog.image && *bld == prog.build && *sch == prog.schema
+            });
+            if !pinned {
+                to_remove.push(prog.ordinal);
+            }
+        }
+    }
+
+    for rem in to_remove {
+        conn.execute(
+            "DELETE FROM previous_programs WHERE ordinal=?1",
+            params![rem as i64],
+        )
+        .map_err(|_| ())?;
+    }
+    if ordinal > MO_LIMIT_UPGRADE_PREVIOUS {
+        conn.execute(
+            "DELETE FROM previous_snapshots WHERE ordinal<=?1",
+            params![(ordinal - MO_LIMIT_UPGRADE_PREVIOUS) as i64],
+        )
+        .map_err(|_| ())?;
+    }
+    let total_snap_bytes: i64 = conn
+        .query_row(
+            "SELECT coalesce(sum(length(record)),0) FROM previous_snapshots",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|_| ())?;
+    if total_snap_bytes < 0 || total_snap_bytes as u64 > MO_LIMIT_UPGRADE_RETAINED_BYTES {
+        return Err(());
+    }
+    Ok(())
 }

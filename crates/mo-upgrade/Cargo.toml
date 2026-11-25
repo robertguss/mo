@@ -1,0 +1,28 @@
+[package]
+name = "mo-upgrade"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+mo-base = { path = "../mo-base" }
+mo-bytecode = { path = "../mo-bytecode" }
+mo-check = { path = "../mo-check" }
+mo-codegen = { path = "../mo-codegen" }
+mo-core = { path = "../mo-core" }
+mo-def = { path = "../mo-def" }
+mo-heap = { path = "../mo-heap" }
+mo-host = { path = "../mo-host" }
+mo-lower = { path = "../mo-lower" }
+mo-prim = { path = "../mo-prim" }
+mo-service = { path = "../mo-service" }
+mo-syntax = { path = "../mo-syntax" }
+mo-test = { path = "../mo-test" }
+mo-vm = { path = "../mo-vm" }
+getrandom = "0.4"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
+
+[lints]
+workspace = true

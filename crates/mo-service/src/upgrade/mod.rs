@@ -5,6 +5,7 @@
 pub mod bundle;
 pub mod commands;
 pub mod compile;
+pub mod schema;
 pub mod types;
 
 use std::fmt::Write as _;
@@ -12,8 +13,9 @@ use std::fmt::Write as _;
 use mo_bytecode::{BytecodeFile, load as load_bytecode};
 use mo_def::ErrorCode;
 use mo_def::limits::{
-    MO_LIMIT_SAVED_BYTES, MO_LIMIT_UPGRADE_LIVE_HEAP, MO_LIMIT_UPGRADE_LIVE_WORK,
-    MO_LIMIT_UPGRADE_REPORT_BYTES,
+    MO_LIMIT_SAVED_BYTES, MO_LIMIT_SAVED_NODES, MO_LIMIT_UPGRADE_LIVE_HEAP,
+    MO_LIMIT_UPGRADE_LIVE_WORK, MO_LIMIT_UPGRADE_REPORT_BYTES, MO_LIMIT_UPGRADE_RESTART_HEAP,
+    MO_LIMIT_UPGRADE_RESTART_WORK,
 };
 use mo_heap::Heap;
 use mo_heap::saved::{decode_value_budget, encode_value_budget};
@@ -23,7 +25,9 @@ use mo_vm::{Image, Limits, Outcome, Process};
 use crate::binary::compile_context::{
     CompileMetadata, read_compile_context, read_compile_metadata,
 };
-use crate::binary::{hex_encode, push_json_string, sanitize_terminal_text, sha256_bytes};
+use crate::binary::{
+    hex_decode_exact, hex_encode, push_json_string, sanitize_terminal_text, sha256_bytes,
+};
 use crate::store::programs::StoredProgram;
 
 /// Confinement mode for upgrade compile children (`enum mo_upgrade_children`).
@@ -264,21 +268,20 @@ impl UpgradeReport {
         if self.compared {
             let _ = write!(
                 out,
-                "\n  descriptor differences: {}\n  implementation changed: {}",
+                "\n  descriptor differences: {}\n  implementation {}",
                 self.differences_json,
                 if self.implementation_changed {
-                    "yes"
+                    "changed"
                 } else {
-                    "no"
+                    "unchanged"
                 }
             );
         }
+        if self.rehearsal {
+            out.push_str("\n  rehearsal is not upgrade acceptance");
+        }
         if self.unconfined {
             out.push_str("\n  the compile children were not confined (--unconfined)");
-        }
-        if !self.detail.is_empty() && self.code != 0 {
-            out.push('\n');
-            out.push_str(&sanitize_terminal_text(&self.detail));
         }
         out.push('\n');
         out
@@ -331,6 +334,13 @@ pub fn compare_programs(
     migration: Option<&str>,
     report: &mut UpgradeReport,
 ) -> bool {
+    report.base = Some(old.source);
+    report.candidate = Some(next.source);
+    report.compared = true;
+    report.old_schema = old.schema;
+    report.new_schema = next.schema;
+    report.implementation_changed = old.image != next.image;
+
     let Some(om) = old_meta else {
         report.refuse(
             ErrorCode::UpgradeInvalidValue as u16,
@@ -348,62 +358,86 @@ pub fn compare_programs(
         return false;
     };
 
-    report.compared = true;
-    report.old_schema = old.schema;
-    report.new_schema = next.schema;
-    report.implementation_changed = old.image != next.image || old.source != next.source;
-
+    // Emit descriptor differences in sorted merge order matching `src/tools/upgrade.c:378-433`:
+    // tools first, then timers. Token and state schema changes are NOT placed in `differences`.
     let mut diffs: Vec<String> = Vec::new();
-    if om.token != nm.token {
-        diffs.push(format!(
-            "{{\"kind\":\"token_changed\",\"from\":{},\"to\":{}}}",
-            json_quoted(&om.token),
-            json_quoted(&nm.token)
-        ));
-    }
-    if old.schema != next.schema {
-        diffs.push("{\"kind\":\"state_schema_changed\"}".to_string());
-    }
-    for t in &om.tools {
-        match nm.tools.iter().find(|n| n.name == t.name) {
-            None => diffs.push(format!(
-                "{{\"kind\":\"tool_removed\",\"name\":{}}}",
-                json_quoted(&t.name)
-            )),
-            Some(nt) if nt.digest != t.digest => diffs.push(format!(
-                "{{\"kind\":\"tool_changed\",\"name\":{}}}",
-                json_quoted(&t.name)
-            )),
-            Some(_) => {}
+    let mut old_tools: Vec<_> = om.tools.iter().collect();
+    let mut new_tools: Vec<_> = nm.tools.iter().collect();
+    old_tools.sort_by(|a, b| a.name.cmp(&b.name));
+    new_tools.sort_by(|a, b| a.name.cmp(&b.name));
+    let (mut oi, mut ni) = (0usize, 0usize);
+    while oi < old_tools.len() || ni < new_tools.len() {
+        let cmp = match (old_tools.get(oi), new_tools.get(ni)) {
+            (Some(o), Some(n)) => o.name.cmp(&n.name),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => break,
+        };
+        match cmp {
+            std::cmp::Ordering::Less => {
+                diffs.push(format!(
+                    "{{\"kind\":\"tool\",\"name\":{},\"change\":\"removed\"}}",
+                    json_quoted(&old_tools[oi].name)
+                ));
+                oi += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                diffs.push(format!(
+                    "{{\"kind\":\"tool\",\"name\":{},\"change\":\"added\"}}",
+                    json_quoted(&new_tools[ni].name)
+                ));
+                ni += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                if old_tools[oi].digest != new_tools[ni].digest {
+                    diffs.push(format!(
+                        "{{\"kind\":\"tool\",\"name\":{},\"change\":\"schema_or_description_changed\"}}",
+                        json_quoted(&old_tools[oi].name)
+                    ));
+                }
+                oi += 1;
+                ni += 1;
+            }
         }
     }
-    for nt in &nm.tools {
-        if !om.tools.iter().any(|t| t.name == nt.name) {
-            diffs.push(format!(
-                "{{\"kind\":\"tool_added\",\"name\":{}}}",
-                json_quoted(&nt.name)
-            ));
-        }
-    }
-    for t in &om.timers {
-        match nm.timers.iter().find(|n| n.name == t.name) {
-            None => diffs.push(format!(
-                "{{\"kind\":\"timer_removed\",\"name\":{}}}",
-                json_quoted(&t.name)
-            )),
-            Some(nt) if nt.interval != t.interval => diffs.push(format!(
-                "{{\"kind\":\"timer_changed\",\"name\":{}}}",
-                json_quoted(&t.name)
-            )),
-            Some(_) => {}
-        }
-    }
-    for nt in &nm.timers {
-        if !om.timers.iter().any(|t| t.name == nt.name) {
-            diffs.push(format!(
-                "{{\"kind\":\"timer_added\",\"name\":{}}}",
-                json_quoted(&nt.name)
-            ));
+
+    let mut old_timers: Vec<_> = om.timers.iter().collect();
+    let mut new_timers: Vec<_> = nm.timers.iter().collect();
+    old_timers.sort_by(|a, b| a.name.cmp(&b.name));
+    new_timers.sort_by(|a, b| a.name.cmp(&b.name));
+    let (mut oi, mut ni) = (0usize, 0usize);
+    while oi < old_timers.len() || ni < new_timers.len() {
+        let cmp = match (old_timers.get(oi), new_timers.get(ni)) {
+            (Some(o), Some(n)) => o.name.cmp(&n.name),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => break,
+        };
+        match cmp {
+            std::cmp::Ordering::Less => {
+                diffs.push(format!(
+                    "{{\"kind\":\"timer\",\"name\":{},\"change\":\"removed\"}}",
+                    json_quoted(&old_timers[oi].name)
+                ));
+                oi += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                diffs.push(format!(
+                    "{{\"kind\":\"timer\",\"name\":{},\"change\":\"added\"}}",
+                    json_quoted(&new_timers[ni].name)
+                ));
+                ni += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                if old_timers[oi].interval != new_timers[ni].interval {
+                    diffs.push(format!(
+                        "{{\"kind\":\"timer\",\"name\":{},\"change\":\"interval_changed\"}}",
+                        json_quoted(&old_timers[oi].name)
+                    ));
+                }
+                oi += 1;
+                ni += 1;
+            }
         }
     }
     report.differences_json = format!("[{}]", diffs.join(","));
@@ -422,7 +456,11 @@ pub fn compare_programs(
         report.refuse(
             ErrorCode::UpgradeMissingMigration as u16,
             "schema",
-            "state type changed; supply --migrate with a pure migration function",
+            format!(
+                "state type changed from {} to {}; supply --migrate with a pure migration function",
+                hex_encode(&old.schema),
+                hex_encode(&next.schema)
+            ),
         );
         return false;
     }
@@ -436,26 +474,46 @@ fn json_quoted(s: &str) -> String {
 }
 
 /// Runs a candidate migration function (or verifies state compatibility when `migration` is `None`)
-/// against saved state bytes (`mo_upgrade_migration_state`).
+/// against saved state bytes (`src/tools/upgrade.c:mo_upgrade_migration_state`).
 ///
-/// `old_state_type_name` is the nominal type name of the previous service's state type
-/// (e.g. `"Main.State"`), used to map `UpgradeOld.<Type>` back to `<OldOwner>.<Type>` when
-/// decoding persisted `MOSV\x01` state bytes.
+/// `live_or_rehearsal` selects the tighter live/rehearsal budget (`MO_LIMIT_UPGRADE_LIVE_HEAP` /
+/// `MO_LIMIT_UPGRADE_LIVE_WORK`) vs checked restart budget (`MO_LIMIT_UPGRADE_RESTART_HEAP` /
+/// `MO_LIMIT_UPGRADE_RESTART_WORK`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "migration execution needs candidate image, service, migration name, old state metadata, live flag, and report"
+)]
 pub fn run_migration_state(
     next_image: &Image,
     next_service_idx: u32,
     migration: Option<&str>,
     old_state_type_name: Option<&str>,
     old_state_bytes: &[u8],
+    live_or_rehearsal: bool,
+    schema_synthesized: bool,
     report: &mut UpgradeReport,
 ) -> Option<Vec<u8>> {
     let file = next_image.file();
     let svc = file.services.get(next_service_idx as usize)?;
     let new_state_ty = svc.state_type;
 
+    let (heap_limit, work_budget) = if live_or_rehearsal {
+        (
+            MO_LIMIT_UPGRADE_LIVE_HEAP as usize,
+            MO_LIMIT_UPGRADE_LIVE_WORK,
+        )
+    } else {
+        (
+            MO_LIMIT_UPGRADE_RESTART_HEAP as usize,
+            MO_LIMIT_UPGRADE_RESTART_WORK,
+        )
+    };
+    let mut remaining = work_budget;
+
     let Some(mig_name) = migration.filter(|m| !m.is_empty()) else {
-        // No migration: decode directly under candidate state type to verify compatibility.
-        let heap = Heap::new(MO_LIMIT_UPGRADE_LIVE_HEAP as usize);
+        // No migration: decode directly under candidate state type and check timer intervals.
+        let heap = Heap::new(heap_limit);
+        let max_nodes = remaining.min(MO_LIMIT_SAVED_NODES) as u32;
         match decode_value_budget(
             &heap,
             &file.types,
@@ -463,13 +521,13 @@ pub fn run_migration_state(
             old_state_bytes,
             None,
             MO_LIMIT_SAVED_BYTES as usize,
-            mo_def::limits::MO_LIMIT_SAVED_NODES as u32,
+            max_nodes,
         ) {
             Ok((_v, nodes)) => {
                 report.native_work = u64::from(nodes);
+                remaining = remaining.saturating_sub(u64::from(nodes));
                 report.heap_peak = heap.budget().peak();
                 report.encoded_bytes = old_state_bytes.len();
-                return Some(old_state_bytes.to_vec());
             }
             Err(_) => {
                 report.refuse(
@@ -480,15 +538,33 @@ pub fn run_migration_state(
                 return None;
             }
         }
+        if !validate_timer_intervals(
+            next_image,
+            next_service_idx,
+            heap_limit,
+            &mut remaining,
+            report,
+        ) {
+            return None;
+        }
+        return Some(old_state_bytes.to_vec());
     };
 
-    let owner_prefix: Option<&str> = old_state_type_name.and_then(|root| {
+    let inferred_root;
+    let effective_root = match old_state_type_name {
+        Some(r) => Some(r),
+        None => {
+            inferred_root = schema::schema_root_name(old_state_bytes);
+            inferred_root.as_deref()
+        }
+    };
+    let owner_prefix: Option<&str> = effective_root.and_then(|root| {
         let head = root.split('(').next().unwrap_or(root);
         head.rfind('.').map(|idx| &head[..idx])
     });
 
     // Rewrite `UpgradeOld.` nominal type names back to the original persisted `MOSV\x01` schema
-    // names (exact parity with `src/tools/upgrade.c:550-595`).
+    // names (exact parity with `src/tools/upgrade.c:550-595`, including `Saved_<hex>` un-hexing).
     let stripped_names: Vec<Option<String>> = file
         .types
         .items
@@ -497,13 +573,13 @@ pub fn run_migration_state(
             t.name
                 .as_deref()
                 .filter(|n| n.contains("UpgradeOld."))
-                .map(|n| rewrite_upgrade_old_name(n, owner_prefix))
+                .map(|n| rewrite_upgrade_old_name(n, owner_prefix, schema_synthesized))
         })
         .collect();
     let overrides: Vec<Option<&str>> = stripped_names.iter().map(|o| o.as_deref()).collect();
 
     let limits = Limits {
-        heap_size: MO_LIMIT_UPGRADE_LIVE_HEAP as usize,
+        heap_size: heap_limit,
         ..Limits::default()
     };
     let mut proc = Process::new(
@@ -516,6 +592,7 @@ pub fn run_migration_state(
     let qualified = mig_name.contains('.');
     let mut found_sig = false;
     let mut selected: Option<(u32, mo_heap::Value, u32)> = None;
+    let max_decode_nodes = remaining.min(MO_LIMIT_SAVED_NODES) as u32;
     for (idx, func) in file.functions.iter().enumerate() {
         let full = file.string(func.name);
         let head = full.split('@').next().unwrap_or(full);
@@ -538,7 +615,7 @@ pub fn run_migration_state(
             old_state_bytes,
             Some(&overrides),
             MO_LIMIT_SAVED_BYTES as usize,
-            mo_def::limits::MO_LIMIT_SAVED_NODES as u32,
+            max_decode_nodes,
         ) {
             selected = Some((idx as u32, val, nodes));
             break;
@@ -564,11 +641,22 @@ pub fn run_migration_state(
         return None;
     };
 
-    let (outcome, work) =
-        proc.call_with_budget(mig_fn_idx, vec![old_val], MO_LIMIT_UPGRADE_LIVE_WORK);
-    report.vm_work = work;
-    report.heap_peak = proc.memory_peak();
     report.native_work = u64::from(decode_nodes);
+    remaining = remaining.saturating_sub(u64::from(decode_nodes));
+    if remaining == 0 {
+        report.heap_peak = proc.memory_peak();
+        report.refuse(
+            ErrorCode::UpgradeMigrationBudget as u16,
+            "budget",
+            "migration exceeded its work budget",
+        );
+        return None;
+    }
+
+    let (outcome, work) = proc.call_with_budget(mig_fn_idx, vec![old_val], remaining);
+    report.vm_work = work;
+    remaining = remaining.saturating_sub(work);
+    report.heap_peak = proc.memory_peak();
 
     let new_val = match outcome {
         Outcome::Returned(v) => v,
@@ -581,46 +669,145 @@ pub fn run_migration_state(
             return None;
         }
         Outcome::Stopped(d) => {
-            let code = if d.reason.contains("instruction budget")
+            let is_budget = remaining == 0
+                || d.reason.contains("instruction budget")
+                || d.reason.contains("out of work")
                 || d.limit_name.is_some()
-                || d.reason.contains("out of memory")
-            {
-                ErrorCode::UpgradeMigrationBudget as u16
+                || d.reason.contains("out of memory");
+            let (code, class) = if is_budget {
+                (ErrorCode::UpgradeMigrationBudget as u16, "budget")
             } else {
-                ErrorCode::UpgradeMigrationTrap as u16
+                (ErrorCode::UpgradeMigrationTrap as u16, "migration")
             };
-            report.refuse(
-                code,
-                "migration",
-                format!("migration stopped: {}", d.reason),
-            );
+            report.refuse(code, class, format!("migration stopped: {}", d.reason));
             return None;
         }
     };
 
+    let max_encode_nodes = remaining.min(MO_LIMIT_SAVED_NODES) as u32;
     let mut out = Vec::new();
     match encode_value_budget(
         &file.types,
         new_state_ty,
         &new_val,
         MO_LIMIT_SAVED_BYTES as usize,
-        mo_def::limits::MO_LIMIT_SAVED_NODES as u32,
+        max_encode_nodes,
         &mut out,
     ) {
         Ok(enc_nodes) => {
             report.native_work = report.native_work.saturating_add(u64::from(enc_nodes));
+            remaining = remaining.saturating_sub(u64::from(enc_nodes));
             report.encoded_bytes = out.len();
-            Some(out)
         }
         Err(_) => {
             report.refuse(
                 ErrorCode::UpgradeMigrationBudget as u16,
-                "migration",
-                "migrated state exceeded MO_LIMIT_SAVED_BYTES",
+                "budget",
+                "migrated state exceeded MO_LIMIT_SAVED_BYTES or migration work budget",
             );
-            None
+            return None;
         }
     }
+
+    // Validate the encoded migrated state round-trips cleanly within the remaining work budget.
+    let val_heap = Heap::new(heap_limit);
+    let max_val_nodes = remaining.min(MO_LIMIT_SAVED_NODES) as u32;
+    match decode_value_budget(
+        &val_heap,
+        &file.types,
+        new_state_ty,
+        &out,
+        None,
+        MO_LIMIT_SAVED_BYTES as usize,
+        max_val_nodes,
+    ) {
+        Ok((_v, val_nodes)) => {
+            report.native_work = report.native_work.saturating_add(u64::from(val_nodes));
+            remaining = remaining.saturating_sub(u64::from(val_nodes));
+            report.heap_peak = report.heap_peak.max(val_heap.budget().peak());
+        }
+        Err(_) => {
+            report.refuse(
+                ErrorCode::UpgradeMigrationBudget as u16,
+                "budget",
+                "migrated state validation failed or exceeded its work budget",
+            );
+            return None;
+        }
+    }
+
+    if !validate_timer_intervals(
+        next_image,
+        next_service_idx,
+        heap_limit,
+        &mut remaining,
+        report,
+    ) {
+        return None;
+    }
+
+    Some(out)
+}
+
+fn validate_timer_intervals(
+    next_image: &Image,
+    next_service_idx: u32,
+    heap_limit: usize,
+    remaining: &mut u64,
+    report: &mut UpgradeReport,
+) -> bool {
+    let svc = &next_image.file().services[next_service_idx as usize];
+    for t in &svc.timers {
+        if *remaining == 0 {
+            report.refuse(
+                ErrorCode::UpgradeMigrationBudget as u16,
+                "budget",
+                "candidate timer interval check exceeded the migration work budget",
+            );
+            return false;
+        }
+        let limits = Limits {
+            heap_size: heap_limit,
+            ..Limits::default()
+        };
+        let mut proc = Process::new(
+            next_image,
+            limits,
+            HostContext::stdio(Vec::new(), Vec::new()),
+        );
+        let (outcome, work) = proc.call_with_budget(t.interval, Vec::new(), *remaining);
+        report.vm_work = report.vm_work.saturating_add(work);
+        *remaining = remaining.saturating_sub(work);
+        report.heap_peak = report.heap_peak.max(proc.memory_peak());
+        match outcome {
+            Outcome::Returned(v) if v.as_duration() > 0 => {}
+            Outcome::Returned(_) => {
+                report.refuse(
+                    ErrorCode::UpgradeTimerInterval as u16,
+                    "timer",
+                    "candidate timer interval must be positive",
+                );
+                return false;
+            }
+            Outcome::Failed(d) | Outcome::Stopped(d) => {
+                if *remaining == 0 {
+                    report.refuse(
+                        ErrorCode::UpgradeMigrationBudget as u16,
+                        "budget",
+                        format!("timer interval exceeded budget: {}", d.reason),
+                    );
+                } else {
+                    report.refuse(
+                        ErrorCode::UpgradeTimerInterval as u16,
+                        "timer",
+                        format!("candidate timer interval failed: {}", d.reason),
+                    );
+                }
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Rewrites `UpgradeOld.` module prefixes in synthesized nominal type names back to the
@@ -628,8 +815,12 @@ pub fn run_migration_state(
 ///
 /// - `UpgradeOld.State` (no dot after `UpgradeOld.`) -> `<owner_prefix>.State`
 /// - `UpgradeOld.Sub.Item` (has dot after `UpgradeOld.`) -> `Sub.Item`
-/// - Preserves punctuation `(`, `)`, `,`, ` ` and generic arguments inside `(...)`.
-fn rewrite_upgrade_old_name(name: &str, owner_prefix: Option<&str>) -> String {
+/// - When `schema_synthesized` is true, `Saved_<hex>` tokens are decoded back to UTF-8.
+fn rewrite_upgrade_old_name(
+    name: &str,
+    owner_prefix: Option<&str>,
+    schema_synthesized: bool,
+) -> String {
     let mut out = String::with_capacity(name.len() + 16);
     let bytes = name.as_bytes();
     let mut at = 0usize;
@@ -646,6 +837,16 @@ fn rewrite_upgrade_old_name(name: &str, owner_prefix: Option<&str>) -> String {
         }
         let token = &name[start..at];
         if let Some(after) = token.strip_prefix("UpgradeOld.") {
+            if schema_synthesized
+                && let Some(hex_part) = after
+                    .rsplit('.')
+                    .next()
+                    .and_then(|s| s.strip_prefix("Saved_"))
+                && let Some(decoded) = decode_hex_utf8(hex_part)
+            {
+                out.push_str(&decoded);
+                continue;
+            }
             if !after.contains('.')
                 && let Some(owner) = owner_prefix
                 && !owner.is_empty()
@@ -659,6 +860,19 @@ fn rewrite_upgrade_old_name(name: &str, owner_prefix: Option<&str>) -> String {
         }
     }
     out
+}
+
+fn decode_hex_utf8(hex: &str) -> Option<String> {
+    if hex.is_empty() || !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for pair in hex.as_bytes().chunks_exact(2) {
+        let s = std::str::from_utf8(pair).ok()?;
+        let one = hex_decode_exact::<1>(s)?;
+        bytes.push(one[0]);
+    }
+    String::from_utf8(bytes).ok()
 }
 
 /// Loads bytecode bytes and initializes an [`Image`] bounded by restart budgets.

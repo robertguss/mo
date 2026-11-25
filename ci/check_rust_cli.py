@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Phase 3 Slice 3C verification harness for the unified pure-Rust `mo` CLI (`crates/mo-cli` + `crates/mo-test`).
+"""Phase 3 Slice 3E verification harness for the unified pure-Rust `mo` CLI
+(`crates/mo-cli` + `crates/mo-test` + `crates/mo-service` + `crates/mo-upgrade`).
 
 Run from the repository root:
     python3 ci/check_rust_cli.py [--mo-bin PATH] [--modb-dir PATH] [--kill-count N]
                                  [--skip-build] [--skip-format-corpus] [--skip-upstream]
 
-Checks every Slice-3B & Slice-3C contract directly on `target/release/mo` (with ZERO C binaries in the loop):
+Checks every Phase 3 contract directly on `target/release/mo` (with ZERO C binaries in the loop):
   1. Dynamic linkage audit (`ldd`): zero `libssl`, zero `libcrypto`, zero `libsqlite3`.
   2. Version (`--version`, `-V`), embedded docs (`guide`, `guide --reference`, `EPIPE` exit 0).
-  3. CLI goldens & full flag/argument matrix (`ci/check_cli.py` Slice-3B + Slice-3C surface):
+  3. CLI goldens & full flag/argument matrix (`ci/check_cli.py` complete surface):
        - All 8 `tests/cli/{parse,load,modules,signatures,bodies,program,fix,multiline}/{text,json}.golden`
        - `tests/cli/good`, `tests/cli/library`, `tests/cli/test/list.golden`, and ALL 6 records of
          `tests/cli/test/json.golden` (including `Main.double.promise.1`) byte-for-byte
@@ -16,20 +17,25 @@ Checks every Slice-3B & Slice-3C contract directly on `target/release/mo` (with 
        - Locale UTF-8/ASCII (`LC_ALL=C`, `POSIX`, invalid), unsafe JSON escapes, non-UTF-8 OS path
          bytes (`bad\\udcff`, `filenames` across `check`, `run`, `--emit=bytecode`, defect, `E1405`)
        - `source_stack` under `RLIMIT_STACK = 1 MiB`
-       - `anchors`, `lower_source_fixtures`, `install_command`, `fix_command`
+       - `anchors`, `lower_source_fixtures`, `install_command`, `fix_command`, `diff_command`
        - `cli_promises` (all 11 suites), `cli_intent` (`promise_selection`, `recovery_checks`,
-         `service_promise_checks`, `strength_checks`, `fix_command`), `cli_gates.mutants`, and
-         `cli_programs` (`observations`, `captures`, `generic_imports`, `imported_constants`, `imports`)
+         `service_promise_checks`, `strength_checks`, `fix_command`, `diff_command`),
+         `cli_gates.mutants`, and `cli_programs` (`observations`, `captures`, `generic_imports`,
+         `imported_constants`, `imports`)
        - `emit`, `run` (source + `.bc`, actors, broken pipe -> 70, `LC_ALL=C` defect escaping),
          `format` (`--stdin`, `E1402`, `E1403`, atomic rename/hardlink/mode/idempotency),
          and `test` (pass/fail/equality `left`/`right`/stopped variables 4094 vs 4095, `E1406`)
-  4. Complete `tests/errors/` suite across all 235 cases (0 silently skipped):
-       - 226 Slice-3B + Slice-3C cases (`215 check` + `e1400`, `e1400-simulation`, `e1402`, `e1403`,
-         `e1404`, `e1406`, `e1407`, `e1408`, `e1432`, `e1433`, `e1439`) verified byte-for-byte
-       - 9 explicitly classified Slice 3D/3E deferred cases verified accounted for
+  4. Complete `tests/errors/` suite across all 235/235 cases byte-for-byte (ZERO deferred).
   5. Full corpus `mo format` audit across all tracked `.mo` files (idempotency, refused unchanged,
      `check --json` preserved, `run` preserved, all 238/238 golden cases preserved).
-  6. Unmodified upstream harnesses directly on `target/release/mo`:
+  6. Complete service, offline, and upgrade suites (`crates/mo-service` + `crates/mo-upgrade`):
+       - `cli_serve` (`service_commands`, `service_refusals`, `serve_command`)
+       - `ci/check_operator.py`, `ci/check_fetch.py`, `ci/check_export.py`,
+         `ci/check_task_queue.py`, `ci/check_kill_loop.py`
+       - `ci/check_offline.py`, `ci/check_offline_core.py` (when Lean `mocore` is built)
+       - `ci/check_upgrades.py`, `ci/check_upgrade_fallback.py`, `ci/check_upgrade_adoption.py`,
+         `ci/check_upgrade_context.py`, `ci/check_upgrade_live.py`, `ci/check_upgrade_remote.py`
+  7. Unmodified upstream harnesses directly on `target/release/mo`:
        - `ci/check_golden.py` (238/238)
        - `ci/check_lib.py` (30/30)
        - `ci/check_programs.py` (16/16)
@@ -40,7 +46,7 @@ Checks every Slice-3B & Slice-3C contract directly on `target/release/mo` (with 
        - `ci/check_reference_examples.py`
        - `bench/v0/grade.py --check --mo`
        - `ci/check_check_time.py` (run sequentially alone at the end; < 0.100 s on all 12 samples)
-  7. Optional `--modb-dir` real-world gate: all MoDB test suites via `mo test`, `bench-modb.mo`,
+  8. Optional `--modb-dir` real-world gate: all MoDB test suites via `mo test`, `bench-modb.mo`,
      and `bench/kill_loop.py` crash-survival loop.
 """
 
@@ -67,6 +73,7 @@ from cli_fixtures import anchors, lower_source_fixtures, source_stack  # noqa: E
 from cli_gates import mutants  # noqa: E402
 from cli_guide import flags, install_command  # noqa: E402
 from cli_intent import (  # noqa: E402
+    diff_command,
     fix_command,
     promise_selection,
     recovery_checks,
@@ -83,15 +90,8 @@ from cli_programs import (  # noqa: E402
 import cli_promises  # noqa: E402
 import cli_serve  # noqa: E402
 
-# Explicit disposition of the 5 remaining Slice-3E `tests/errors/` folders (zero silently skipped).
-DEFERRED_ERROR_CASES: dict[str, str] = {
-    # Slice 3E: crates/mo-upgrade (mo query / mo replay / mo rehearse / mo diff)
-    "e1410": "Slice 3E (mo query)",
-    "e1411": "Slice 3E (mo query)",
-    "e1411-function": "Slice 3E (mo query)",
-    "e1412": "Slice 3E (mo query)",
-    "e1413": "Slice 3E (mo query)",
-}
+# All 235 tests/errors/ cases run byte-for-byte with ZERO deferred cases!
+DEFERRED_ERROR_CASES: dict[str, str] = {}
 
 FORBIDDEN_LIBS = ("libssl", "libcrypto", "libsqlite3")
 
@@ -335,16 +335,6 @@ def check_cli_goldens_and_matrix(binary: pathlib.Path) -> None:
         mistake(["test", flag, "18014398509481984KiB", good])
         for value in ("1", "1B", "1KiB", "1MiB", "1GiB", "18446744073709551615"):
             run(binary, ["test", flag, value, good], 2)
-
-    # Deferred Slice 3E commands parse cleanly and exit 1 with a clear message.
-    for deferred_args in (
-        ["replay", good, "--failure", "1", "--data", "d"],
-        ["query", good, "f", "--export", "a"],
-        ["rehearse", "--artifact", "a", "--old-bundle", "b", "--candidate", "c"],
-        ["diff", good],
-    ):
-        r = run(binary, deferred_args, 1)
-        assert not r.stdout and b"Phase 3" in r.stderr, (deferred_args, r)
 
     # Option budgets & forwarded arguments.
     run(binary, ["run", good, "--bad", ""], 0)
@@ -624,7 +614,7 @@ def check_emit_run_and_test_contracts(binary: pathlib.Path) -> None:
 
 
 def check_errors_suite(binary: pathlib.Path) -> tuple[int, int]:
-    """Run all 220 Slice-3B tests/errors/ cases byte-for-byte; account for all 235 folders."""
+    """Run all 235 tests/errors/ cases byte-for-byte with zero deferred cases."""
     # Reuse generators from ci/check_errors.py without executing its top-level main().
     errors_dir = ROOT / "tests/errors"
     cases = sorted(p for p in errors_dir.iterdir() if p.is_dir())
@@ -663,8 +653,8 @@ def check_errors_suite(binary: pathlib.Path) -> tuple[int, int]:
 
     assert deferred == len(DEFERRED_ERROR_CASES), (deferred, len(DEFERRED_ERROR_CASES))
     print(
-        f"{binary}: tests/errors/ parity passed ({ran} Slice-3B+3C cases byte-exact, "
-        f"{deferred} explicitly deferred to Slices 3D-3E, {ran + deferred}/{len(cases)} accounted)"
+        f"{binary}: tests/errors/ parity passed ({ran}/{len(cases)} cases byte-exact, "
+        f"{deferred} deferred)"
     )
     return ran, deferred
 
@@ -847,17 +837,28 @@ def check_service_suites(binary: pathlib.Path) -> None:
     cli_serve.service_commands(binary)
     cli_serve.service_refusals(binary)
     cli_serve.serve_command(binary)
-    for script in (
+    diff_command(binary)
+    scripts = [
         "ci/check_operator.py",
         "ci/check_fetch.py",
         "ci/check_export.py",
         "ci/check_task_queue.py",
         "ci/check_kill_loop.py",
-    ):
+        "ci/check_offline.py",
+        "ci/check_upgrades.py",
+        "ci/check_upgrade_fallback.py",
+        "ci/check_upgrade_adoption.py",
+        "ci/check_upgrade_context.py",
+        "ci/check_upgrade_live.py",
+        "ci/check_upgrade_remote.py",
+    ]
+    if (ROOT / "formal/.lake/build/bin/mocore").is_file():
+        scripts.append("ci/check_offline_core.py")
+    for script in scripts:
         subprocess.run([sys.executable, str(ROOT / script), str(binary)], cwd=ROOT, check=True)
     print(
-        f"{binary}: Slice 3D mo-service suites passed "
-        f"(cli_serve, check_operator, check_fetch, check_export, check_task_queue, check_kill_loop)"
+        f"{binary}: Slice 3D+3E mo-service & mo-upgrade suites passed "
+        f"(cli_serve, cli_intent.diff_command, {len(scripts)} black-box service/offline/upgrade scripts)"
     )
 
 
@@ -967,7 +968,7 @@ def main() -> int:
     if args.modb_dir:
         check_modb_gate(binary, pathlib.Path(args.modb_dir), args.kill_count)
 
-    print(f"check_rust_cli.py: ALL Phase 3 Slice 3D checks passed on {binary}")
+    print(f"check_rust_cli.py: ALL Phase 3 Slice 3E checks passed on {binary}")
     return 0
 
 
