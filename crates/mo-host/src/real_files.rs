@@ -1208,15 +1208,6 @@ fn real_rename(
             FileProblem::failed("is a folder"),
         );
     }
-    if to_path.is_empty() {
-        return make_file_error(
-            heap,
-            types,
-            result_ty,
-            &args[2],
-            FileProblem::failed("is a folder"),
-        );
-    }
     let from_res = match resolve(
         resolver,
         root_fd.as_fd(),
@@ -1265,6 +1256,15 @@ fn real_rename(
         }
     }
 
+    if to_path.is_empty() {
+        return make_file_error(
+            heap,
+            types,
+            result_ty,
+            &args[2],
+            FileProblem::failed("is a folder"),
+        );
+    }
     let to_res = match resolve(resolver, root_fd.as_fd(), &to_path, PathMode::StrictParent) {
         Ok(r) => r,
         Err(p) => return make_file_error(heap, types, result_ty, &args[2], p),

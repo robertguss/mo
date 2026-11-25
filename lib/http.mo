@@ -343,10 +343,7 @@ fn send(request: Request, network: Network) : Result(Response, HttpError)
       end
     end
   end
-  if named(headers, "content-length") is Some(written_length)
-    length = try number(written_length).or_fail(
-      BadResponse(reason: "the Content-Length is not a number")
-    )
+  if try content_length(headers) is Some(length)
     return Error(TooLarge(limit: bound.body)) if length > bound.body
     var parts = if first_rest.size == 0: [] else: [first_rest]
     var received_size = first_rest.size
@@ -701,8 +698,7 @@ fn content(headers: List((Text, Text)), rest: Bytes, finished: Bool, limits: Lim
     end
     return chunks(rest, limits, from)
   end
-  if named(headers, "content-length") is Some(written)
-    length = try number(written).or_fail(bad("the Content-Length is not a number"))
+  if try content_length(headers).map_error(fn(e) Bad(e) end) is Some(length)
     return Error(Bad(TooLarge(limit: limits.body))) if length > limits.body
     return Error(More(from)) if rest.size < length
     return Ok(rest.slice(0, length))
@@ -710,6 +706,32 @@ fn content(headers: List((Text, Text)), rest: Bytes, finished: Bool, limits: Lim
   return Error(Bad(TooLarge(limit: limits.body))) if rest.size > limits.body
   return Error(More(from)) if not finished
   Ok(rest)
+end
+
+## The single Content-Length value agreed on by all `Content-Length` headers, or an error when
+## any header is not a non-negative integer or two headers disagree (RFC 9112 section 6.3).
+fn content_length(headers: List((Text, Text))) : Result(Option(Int), HttpError)
+  examples
+    content_length([]) == Ok(None)
+    content_length([("Content-Length", "5")]) == Ok(Some(5))
+    content_length([("Content-Length", "5"), ("content-length", "5")]) == Ok(Some(5))
+    content_length([("Content-Length", "2"), ("Content-Length", "5")]) ==
+      Error(BadResponse(reason: "conflicting Content-Length headers"))
+    content_length([("Content-Length", "2"), ("Content-Length", "bad")]) ==
+      Error(BadResponse(reason: "the Content-Length is not a number"))
+  end
+
+  lengths = headers.filter(fn(h) h.0.ascii_lowercase == "content-length" end)
+  return Ok(None) if lengths.empty?
+  var agreed = -1
+  for h in lengths
+    n = try number(h.1).or_fail(BadResponse(reason: "the Content-Length is not a number"))
+    if agreed >= 0 and n != agreed
+      return Error(BadResponse(reason: "conflicting Content-Length headers"))
+    end
+    agreed = n
+  end
+  Ok(Some(agreed))
 end
 
 ## The data of a chunked body, once its last chunk and the line that ends its trailers are in.
@@ -1235,4 +1257,24 @@ test "form requests and repeated Link pagination headers round-trip over Network
     "<https://lms.example.edu/api/v1/courses?page=2>; rel=\"next\"",
     "<https://lms.example.edu/api/v1/courses?page=9>; rel=\"last\""
   ]
+end
+
+test "conflicting Content-Length headers are rejected while identical ones agree"
+  asked = get("http://example.org/")
+  conflict = Response(
+    status: 200,
+    headers: [("Content-Length", "2"), ("Content-Length", "5")],
+    body: "hello".bytes
+  )
+  assert asked.send(Network.fake(replies([(asked, conflict)]))) ==
+    Error(BadResponse(reason: "conflicting Content-Length headers"))
+  assert read("GET", answered(conflict), true, limits(), start()) ==
+    Error(Bad(BadResponse(reason: "conflicting Content-Length headers")))
+  same = Response(
+    status: 200,
+    headers: [("Content-Length", "5"), ("content-length", "5")],
+    body: "hello".bytes
+  )
+  assert asked.send(Network.fake(replies([(asked, same)]))) == Ok(same)
+  assert read("GET", answered(same), true, limits(), start()) == Ok(same)
 end

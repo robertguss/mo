@@ -2644,4 +2644,113 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn fake_and_real_files_match_on_nul_paths_and_rename_precedence() {
+        let base =
+            std::env::temp_dir().join(format!("mo_host_nul_rename_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        let fx = HostFixture::new();
+        let heap = Heap::new(8 * 1024 * 1024);
+        let mut fake_ctx = HostContext::stdio(Vec::new(), Vec::new());
+        let mut real_ctx =
+            HostContext::stdio_with_root(Vec::new(), Vec::new(), Some(&base)).unwrap();
+
+        let fake_files = fake_ctx
+            .restore_fake_capability(
+                &heap,
+                fx.files_cap,
+                FakeCapInit::Files {
+                    files: Vec::new(),
+                    folders: Vec::new(),
+                },
+            )
+            .unwrap();
+        let real_files = real_ctx
+            .make_real_capability(&heap, &fx.types, fx.files_cap)
+            .unwrap();
+
+        // 1. Embedded NUL byte in path must return Error(NotAllowed) on both FakeFiles and RealFiles.
+        let nul_path = heap.alloc_text("a\0b".into()).unwrap();
+        let hello = heap.alloc_text("hello".into()).unwrap();
+        let fake_write = fake_ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesWriteText,
+                fx.res_unit,
+                &[fake_files.clone(), nul_path.clone(), hello.clone()],
+            )
+            .unwrap();
+        let real_write = real_ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesWriteText,
+                fx.res_unit,
+                &[real_files.clone(), nul_path.clone(), hello],
+            )
+            .unwrap();
+        assert_eq!(
+            mo_heap::print::value_print(&fx.types, fx.res_unit, &fake_write),
+            "Error(NotAllowed(path: \"a\\u{0}b\"))"
+        );
+        assert_eq!(
+            mo_heap::print::value_print(&fx.types, fx.res_unit, &real_write),
+            "Error(NotAllowed(path: \"a\\u{0}b\"))"
+        );
+
+        // Files.in_memory must reject NUL bytes in initial keys as a bug.
+        let mut map = MoMap::new(fx.text, fx.text);
+        map.set(
+            &fx.types,
+            heap.hash_key(),
+            nul_path,
+            heap.alloc_text("x".into()).unwrap(),
+        );
+        let map_val = heap.alloc_map(map).unwrap();
+        let init_res = fake_ctx.call(
+            &heap,
+            &fx.types,
+            HostOpId::FilesInMemory,
+            fx.files_cap,
+            &[map_val],
+        );
+        assert!(matches!(init_res, Err(HostError::Bug { .. })));
+
+        // 2. rename("missing", ".") must return Error(NotFound(path: "missing")) on both backends.
+        let missing = heap.alloc_text("missing".into()).unwrap();
+        let dot = heap.alloc_text(".".into()).unwrap();
+        let fake_ren = fake_ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesRename,
+                fx.res_unit,
+                &[fake_files, missing.clone(), dot.clone()],
+            )
+            .unwrap();
+        let real_ren = real_ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesRename,
+                fx.res_unit,
+                &[real_files, missing, dot],
+            )
+            .unwrap();
+        assert_eq!(
+            mo_heap::print::value_print(&fx.types, fx.res_unit, &fake_ren),
+            "Error(NotFound(path: \"missing\"))"
+        );
+        assert_eq!(
+            mo_heap::print::value_print(&fx.types, fx.res_unit, &real_ren),
+            "Error(NotFound(path: \"missing\"))"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

@@ -711,7 +711,7 @@ pub(crate) fn attach_trivia(
 
     let mut starts = Vec::with_capacity(nodes);
     collect_candidates(tree, root, &mut starts);
-    starts.sort_by_key(|c| (c.indentation, c.start, Reverse(c.end), c.kind));
+    starts.sort_by_key(|c| (c.start, Reverse(c.end), c.kind));
 
     let bytes = source.bytes();
     let mut offset = 0u32;
@@ -733,9 +733,11 @@ pub(crate) fn attach_trivia(
         }
         cand.indentation = column;
     }
-    starts.sort_by_key(|c| (c.indentation, c.start, Reverse(c.end), c.kind));
 
-    // Attach in source order (equivalent to C's backward walk + prepend).
+    // Attach in source order: an own-line comment attaches to the immediately following AST node
+    // inside `enclosing`, rather than skipping ahead to an indentation-matched descendant or
+    // falling to `enclosing.ending`. Only at a branch boundary (`Else`/`IfPart`/`Arm` starting at
+    // `end`) does deeper indentation keep the comment inside the closing branch's `ending`.
     for raw in raw_comments {
         let anchor = raw.comment.anchor;
         let span = raw.comment.span;
@@ -750,21 +752,20 @@ pub(crate) fn attach_trivia(
         }
         let mut end = tree.node(root).span.end;
         let enclosing = find_owner(tree, root, span.start, root, &mut end);
-        let mut low = 0usize;
-        let mut high = starts.len();
-        while low < high {
-            let mid = low + (high - low) / 2;
-            let before = starts[mid].indentation < indentation
-                || (starts[mid].indentation == indentation && starts[mid].start < span.end);
-            if before {
-                low = mid + 1;
+        let low = starts.partition_point(|cand| cand.start < span.end);
+        if low < starts.len() && starts[low].start <= end {
+            let next = &starts[low];
+            let at_branch_boundary = next.start == end
+                && matches!(
+                    next.kind,
+                    SyntaxKind::Else | SyntaxKind::IfPart | SyntaxKind::Arm
+                )
+                && indentation > next.indentation;
+            if at_branch_boundary {
+                tree.node_mut(enclosing).ending.push(cid);
             } else {
-                high = mid;
+                tree.node_mut(next.node).leading.push(cid);
             }
-        }
-        if low < starts.len() && starts[low].indentation == indentation && starts[low].start <= end
-        {
-            tree.node_mut(starts[low].node).leading.push(cid);
         } else {
             tree.node_mut(enclosing).ending.push(cid);
         }

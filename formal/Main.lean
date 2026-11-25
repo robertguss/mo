@@ -69,11 +69,9 @@ def primitiveEval (p : Sexp) (vs : List Value) : Parse Outcome := do
       if (mapGet k es).isSome then pure (.stopped .repeatedKey {})
       else pure (evalMapOp .set [.map es, k, v] {})
   | .node [.atom "quotedText"], [.text s] =>
-      pure (.ok (.text ((quote s).replace "#{" "\\#{")) {})
+      pure (.ok (.text (referenceQuote s '"')) {})
   | .node [.atom "quotedChar"], [.char c] =>
-      let body := if c == '\'' then "\\'" else if c == '"' then "\"" else
-        (quote (String.singleton c)).drop 1 |>.toString |>.dropEnd 1 |>.toString
-      pure (.ok (.text ("'" ++ body ++ "'")) {})
+      pure (.ok (.text (referenceQuote (String.singleton c) '\'')) {})
   | .node [.atom "structural", t], [v] =>
       let s ← structural {data := [], funs := []} (← tyIn t) v false true
       pure (.ok (.text s) {})

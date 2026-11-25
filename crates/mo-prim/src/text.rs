@@ -26,22 +26,29 @@ fn ordering_value(ord: Ordering) -> Value {
     }
 }
 
-/// Exact port of `src/prim/text.c:quoted`.
+fn hex_digit_count(mut n: u32) -> usize {
+    let mut digits = 1usize;
+    while n >= 16 {
+        n >>= 4;
+        digits += 1;
+    }
+    digits
+}
+
+/// Quotes and escapes `s` as a valid Mo string/char literal (reference 2.1 and 9.2),
+/// escaping C0/C1 controls, invisible/bidi scalars, delimiter, backslash, and `#{`.
 fn quote_prim(s: &str, delimiter: u8) -> Result<String, PrimError> {
     let bytes = s.as_bytes();
+    let delim_char = char::from(delimiter);
     let mut len: usize = 2;
-    for (i, &b) in bytes.iter().enumerate() {
-        let extra = if matches!(b, b'\n' | b'\r' | b'\t') {
-            2
-        } else if b < 32 || b == 127 {
-            if b < 16 { 5 } else { 6 }
-        } else if b == delimiter
-            || b == b'\\'
-            || (b == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{')
-        {
-            2
-        } else {
-            1
+    for (i, ch) in s.char_indices() {
+        let extra = match ch {
+            '\n' | '\r' | '\t' => 2,
+            c if mo_def::is_invisible_scalar(c as u32) => 4 + hex_digit_count(c as u32),
+            c if c == delim_char || c == '\\' || (c == '#' && bytes.get(i + 1) == Some(&b'{')) => {
+                1 + c.len_utf8()
+            }
+            c => c.len_utf8(),
         };
         len = len.checked_add(extra).ok_or(PrimError::OutOfMemory(Some(
             "result exceeds MO_LIMIT_VALUE_BYTES (u32 byte length)",
@@ -50,43 +57,25 @@ fn quote_prim(s: &str, delimiter: u8) -> Result<String, PrimError> {
     }
 
     let mut out = String::with_capacity(len);
-    out.push(delimiter as char);
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        match b {
-            b'\n' => {
-                out.push_str("\\n");
-                i += 1;
+    out.push(delim_char);
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if mo_def::is_invisible_scalar(c as u32) => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{{{:x}}}", c as u32);
             }
-            b'\r' => {
-                out.push_str("\\r");
-                i += 1;
-            }
-            b'\t' => {
-                out.push_str("\\t");
-                i += 1;
-            }
-            b if b < 32 || b == 127 => {
-                out.push_str(&format!("\\u{{{b:x}}}"));
-                i += 1;
-            }
-            _ => {
-                let Some(ch) = s[i..].chars().next() else {
-                    break;
-                };
-                if b == delimiter
-                    || b == b'\\'
-                    || (b == b'#' && i + 1 < bytes.len() && bytes[i + 1] == b'{')
-                {
+            c => {
+                if c == delim_char || c == '\\' || (c == '#' && bytes.get(i + 1) == Some(&b'{')) {
                     out.push('\\');
                 }
-                out.push(ch);
-                i += ch.len_utf8();
+                out.push(c);
             }
         }
     }
-    out.push(delimiter as char);
+    out.push(delim_char);
     Ok(out)
 }
 
@@ -740,5 +729,31 @@ pub fn call(
             Ok(heap.make_option(types, result_ty, Some(ord))?)
         }
         _ => unreachable!("unexpected text/char/bytes primitive {prim:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_prim;
+
+    #[test]
+    fn quote_prim_escapes_c0_c1_and_invisible_scalars() {
+        let raw = "a\0\x07\x7f\u{80}\u{9f}\u{ad}\u{61c}\u{180e}\u{200b}\u{202e}\u{2060}\u{feff}\u{fff9}\u{e0001}\u{e0020}#{x}\\\"'\n\r\tz";
+        let q = quote_prim(raw, b'"').expect("quote text");
+        assert_eq!(
+            q,
+            "\"a\\u{0}\\u{7}\\u{7f}\\u{80}\\u{9f}\\u{ad}\\u{61c}\\u{180e}\\u{200b}\\u{202e}\\u{2060}\\u{feff}\\u{fff9}\\u{e0001}\\u{e0020}\\#{x}\\\\\\\"'\\n\\r\\tz\""
+        );
+        assert_eq!(quote_prim("\u{80}", b'\'').expect("c1 char"), "'\\u{80}'");
+        assert_eq!(
+            quote_prim("\u{200b}", b'\'').expect("zwsp char"),
+            "'\\u{200b}'"
+        );
+        assert_eq!(
+            quote_prim("\u{202e}", b'\'').expect("bidi char"),
+            "'\\u{202e}'"
+        );
+        assert_eq!(quote_prim("'", b'\'').expect("apos"), "'\\''");
+        assert_eq!(quote_prim("\"", b'\'').expect("dquote"), "'\"'");
     }
 }

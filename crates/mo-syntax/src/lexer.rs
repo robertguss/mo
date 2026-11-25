@@ -92,20 +92,7 @@ pub(crate) fn decode_utf8(bytes: &[u8]) -> Option<(u32, u32)> {
 }
 
 const fn is_invisible(c: u32) -> bool {
-    (c < 32 && c != 9 && c != 10 && c != 13)
-        || c == 127
-        || (c >= 128 && c <= 159)
-        || c == 0xad
-        || c == 0x61c
-        || c == 0x180e
-        || (c >= 0x200b && c <= 0x200f)
-        || (c >= 0x2028 && c <= 0x202e)
-        || (c >= 0x2060 && c <= 0x2064)
-        || (c >= 0x2066 && c <= 0x206f)
-        || c == 0xfeff
-        || (c >= 0xfff9 && c <= 0xfffb)
-        || c == 0xe0001
-        || (c >= 0xe0020 && c <= 0xe007f)
+    mo_def::is_invisible_scalar(c)
 }
 
 const fn is_lower(c: u8) -> bool {

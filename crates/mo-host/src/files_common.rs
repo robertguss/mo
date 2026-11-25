@@ -70,9 +70,10 @@ impl EntryKind {
     }
 }
 
-/// Exact port of `src/host/files.c:mo_host_normalize`.
+/// Normalizes a relative capability path, rejecting empty paths, NUL bytes, leading/trailing/
+/// doubled slashes, and `..` escapes above the capability root.
 pub(crate) fn normalize_path(bytes: &[u8]) -> Result<String, FileProblem> {
-    if bytes.is_empty() {
+    if bytes.is_empty() || bytes.contains(&0) {
         return Err(FileProblem::not_allowed(true));
     }
     let mut out = Vec::with_capacity(bytes.len());
@@ -122,8 +123,11 @@ pub(crate) fn prepare_real_path(bytes: &[u8]) -> Result<String, FileProblem> {
     normalize_path(bytes)
 }
 
-/// Exact port of `src/host/fake-files.c:plain_relative`.
+/// Returns whether `bytes` is a plain relative path (no NUL bytes, empty/`.`/`..` segments).
 pub(crate) fn plain_relative(bytes: &[u8]) -> bool {
+    if bytes.contains(&0) {
+        return false;
+    }
     let mut start = 0usize;
     let length = bytes.len();
     for end in 0..=length {
