@@ -34,9 +34,9 @@ use crate::embedded::{
 };
 use crate::ids::ModuleId;
 
-/// Library modules loaded lazily only when a `use` line (or implicit `api`/`Sqlite` mention)
+/// Library modules loaded lazily only when a `use` line (or implicit `api`/`Sqlite`/`Network` mention)
 /// requests them (`src/check/load.c:on_use`).
-pub const ON_USE_LIBRARY_MODULES: [&str; 20] = [
+pub const ON_USE_LIBRARY_MODULES: [&str; 21] = [
     "Api",
     "Arvo.Audit",
     "Arvo.Auth",
@@ -55,6 +55,7 @@ pub const ON_USE_LIBRARY_MODULES: [&str; 20] = [
     "Date",
     "Http",
     "Json",
+    "Network",
     "Sqlite",
     "Unicode16",
 ];
@@ -1840,6 +1841,7 @@ impl<'s, 'd> Loader<'s, 'd> {
         let before = self.diags.len();
         let mut has_api = false;
         let mut has_sqlite = false;
+        let mut has_network = false;
         let mut parsed_syntax: Vec<ModuleSyntax> = Vec::with_capacity(self.items.len());
 
         for i in 0..self.items.len() {
@@ -1866,6 +1868,12 @@ impl<'s, 'd> Loader<'s, 'd> {
             if self.items[i].name != "Sqlite" && syntax_mentions_sqlite(&module.tree) {
                 has_sqlite = true;
             }
+            if self.items[i].name != "Network"
+                && self.items[i].name != "Http"
+                && syntax_mentions_network(&module.tree)
+            {
+                has_network = true;
+            }
             parsed_syntax.push(module);
         }
 
@@ -1874,8 +1882,12 @@ impl<'s, 'd> Loader<'s, 'd> {
             && (self.find("Sqlite").is_none()
                 || self.find("Json").is_none()
                 || self.find("Date").is_none());
+        let need_network = has_network
+            && (self.find("Network").is_none()
+                || self.find("Http").is_none()
+                || self.find("Json").is_none());
 
-        if need_api || need_sqlite {
+        if need_api || need_sqlite || need_network {
             let prev_count = self.items.len();
             if need_api
                 && (!self.load_named_library("Json", "json.mo")
@@ -1887,6 +1899,13 @@ impl<'s, 'd> Loader<'s, 'd> {
                 && (!self.load_named_library("Json", "json.mo")
                     || !self.load_named_library("Date", "date.mo")
                     || !self.load_named_library("Sqlite", "sqlite.mo"))
+            {
+                return None;
+            }
+            if need_network
+                && (!self.load_named_library("Json", "json.mo")
+                    || !self.load_named_library("Http", "http.mo")
+                    || !self.load_named_library("Network", "network.mo"))
             {
                 return None;
             }
@@ -2274,6 +2293,17 @@ fn syntax_mentions_apitest(tree: &SyntaxTree) -> bool {
         let nid = NodeId(idx as u32);
         let node = tree.node(nid);
         if node.kind == SyntaxKind::CapName && tree.node_text(nid) == Some(b"ApiTest") {
+            return true;
+        }
+    }
+    false
+}
+
+fn syntax_mentions_network(tree: &SyntaxTree) -> bool {
+    for idx in 0..tree.node_count() {
+        let nid = NodeId(idx as u32);
+        let node = tree.node(nid);
+        if node.kind == SyntaxKind::CapName && tree.node_text(nid) == Some(b"Network") {
             return true;
         }
     }

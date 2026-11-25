@@ -970,6 +970,20 @@ impl<'a> InferState<'a> {
     }
 
     pub(crate) fn allows_empty_dot_parens(&self, resolved: &InferValue) -> bool {
+        if let Some(sym_ref) = resolved.symbol {
+            let sym = self.interfaces.symbol(sym_ref);
+            let scope = self.interfaces.scope(sym.module);
+            if scope.library
+                && matches!(
+                    (scope.name.as_deref(), sym.name.as_str()),
+                    (Some("Network"), "recorded_calls")
+                        | (Some("Sqlite"), "stats" | "reset_stats")
+                        | (Some("Command"), "allow_loopback" | "kill")
+                )
+            {
+                return true;
+            }
+        }
         let Some(gid) = resolved.graph else {
             return false;
         };

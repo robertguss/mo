@@ -580,6 +580,10 @@ Both real and fake network capabilities live in `crates/mo-host/` (with TLS 1.2+
 | `connect_secure(host, port, within)` | host | `NETWORK_CONNECT_SECURE` | |
 | `allow_hosts(hosts)` | host | `NETWORK_ALLOW_HOSTS` | |
 | `Network.fake(peers)` | host | `NETWORK_FAKE` | a fake, for spec code only (reference 12.4) |
+| `Network.fake_scripted_raw(scripts)` | host | `NETWORK_FAKE_SCRIPTED` | builds a scripted fake `Network` with per-target `(method, url_prefix)` reply/fault queues |
+| `Network.recorded_calls_raw(net)` | host | `NETWORK_RECORDED_CALLS` | returns recorded `(method, url, headers, body)` tuples for a fake `Network` |
+| `Network.fake_scripted(scripts)` | lowering | `crates/mo-lower/src/applications.rs`, `lib/network.mo` | encodes `Network.FakeReply` scripts and calls `NETWORK_FAKE_SCRIPTED` in spec code |
+| `Network.recorded_calls(net)` | lowering | `crates/mo-lower/src/applications.rs`, `lib/network.mo` | calls `NETWORK_RECORDED_CALLS` in spec code and maps tuples to `Network.RecordedCall` |
 
 ## Connection
 

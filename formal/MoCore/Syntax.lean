@@ -386,7 +386,8 @@ inductive IoOp where
   | fileLockShared | fileLockExclusive | fileUnlock | readFileOpen
   /-- Fake constructors: only spec code may allocate these handles. -/
   | consoleFake | consoleFakeInput | filesInMemory | clockFixed | randomSeeded | argsOf | envOf
-  | networkFake | sqliteFake | commandFake | secureRandomSeeded
+  | networkFake | networkFakeScripted | networkRecordedCalls
+  | sqliteFake | commandFake | secureRandomSeeded
   deriving DecidableEq, Repr, Inhabited
 
 inductive SimOp where
@@ -625,6 +626,11 @@ def IoOp.sig : IoOp → List Ty × Ty
   | .argsOf => ([.list .text], .cap .args)
   | .envOf => ([.map .text .text], .cap .env)
   | .networkFake => ([.map .text (.map .bytes .bytes)], .cap .network)
+  | .networkFakeScripted =>
+    ([.list (.tuple [.text, .text, .list (.tuple [.int, .int, .bytes, .networkError])])],
+     .cap .network)
+  | .networkRecordedCalls =>
+    ([.cap .network], .list (.tuple [.text, .text, .list (.tuple [.text, .text]), .bytes]))
   | .sqliteOpen => ([.cap .sqlite, .text], .result (.cap .database) .sqliteError)
   | .sqliteFake => ([], .cap .sqlite)
   | .sqliteRun => ([.cap .database, .text, .list .sqliteValue], .result .unit .sqliteError)
@@ -848,8 +854,9 @@ def Prim.specOnly : Prim → Bool
   | .sim (.start _) => true
   | .io .printed | .io .printedErrors => true
   | .io .consoleFake | .io .consoleFakeInput | .io .filesInMemory | .io .clockFixed
-  | .io .randomSeeded | .io .argsOf | .io .envOf | .io .networkFake | .io .sqliteFake
-  | .io .commandFake | .io .secureRandomSeeded => true
+  | .io .randomSeeded | .io .argsOf | .io .envOf
+  | .io .networkFake | .io .networkFakeScripted | .io .networkRecordedCalls
+  | .io .sqliteFake | .io .commandFake | .io .secureRandomSeeded => true
   | _ => false
 
 /-! ## Lookups -/

@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::VecDeque;
 use std::io::{self, BufReader, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 #[cfg(unix)]
@@ -28,12 +29,43 @@ struct TargetRule {
     port: u16, // 0 = any port 1..=65535
 }
 
+#[derive(Clone, Debug)]
+struct RecordedCallEntry {
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+enum ScriptedReply {
+    Respond(Vec<u8>),
+    Fail(Value),
+    TruncateAfter(i64),
+}
+
+struct ScriptEntry {
+    method: String,
+    url_prefix: String,
+    replies: Vec<ScriptedReply>,
+    cursor: usize,
+}
+
+struct FakeScriptedState {
+    scripts: Vec<ScriptEntry>,
+    recorded: Vec<RecordedCallEntry>,
+}
+
 enum NetworkCap {
     Real {
         allowed: Option<Vec<TargetRule>>,
     },
     Fake {
         peers: Value, // Map(Text, Map(Bytes, Bytes))
+        recorded: Rc<RefCell<Vec<RecordedCallEntry>>>,
+        allowed: Option<Vec<TargetRule>>,
+    },
+    FakeScripted {
+        state: Rc<RefCell<FakeScriptedState>>,
         allowed: Option<Vec<TargetRule>>,
     },
 }
@@ -71,13 +103,34 @@ impl Drop for RealConnection {
 
 struct FakeConnection {
     replies: Value, // Map(Bytes, Bytes)
+    recorded: Rc<RefCell<Vec<RecordedCallEntry>>>,
+    secure: bool,
+    host: String,
+    port: u16,
+    recorded_yet: bool,
     sent: Vec<u8>,
     position: i64, // -1 before first receive
+}
+
+enum ActiveScriptedReply {
+    Pending,
+    Bytes { wire: Vec<u8>, pos: usize },
+}
+
+struct ScriptedConnection {
+    state: Rc<RefCell<FakeScriptedState>>,
+    secure: bool,
+    host_val: Value,
+    host: String,
+    port: u16,
+    sent: Vec<u8>,
+    active: ActiveScriptedReply,
 }
 
 enum ConnectionCap {
     Real(RefCell<RealConnection>),
     Fake(RefCell<FakeConnection>),
+    Scripted(RefCell<ScriptedConnection>),
 }
 
 #[derive(Debug)]
@@ -995,6 +1048,70 @@ fn make_network_error(
     Ok(heap.make_case(types, result_ty, err_tag, vec![err_val])?)
 }
 
+fn parse_sent_http_request(
+    sent: &[u8],
+    secure: bool,
+    default_host: &str,
+    port: u16,
+) -> (RecordedCallEntry, String) {
+    let scheme = if secure { "https" } else { "http" };
+    let default_auth = if (secure && port == 443) || (!secure && port == 80) {
+        default_host.to_string()
+    } else {
+        format!("{default_host}:{port}")
+    };
+    let Some(cut) = sent.windows(4).position(|w| w == b"\r\n\r\n") else {
+        let url = format!("{scheme}://{default_auth}/");
+        return (
+            RecordedCallEntry {
+                method: String::new(),
+                url,
+                headers: Vec::new(),
+                body: sent.to_vec(),
+            },
+            "/".to_string(),
+        );
+    };
+    let head = String::from_utf8_lossy(&sent[..cut]);
+    let body = sent[cut + 4..].to_vec();
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next().unwrap_or("");
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("").to_string();
+    let raw_target = parts.next().unwrap_or("/");
+    let mut headers = Vec::new();
+    let mut host_header: Option<String> = None;
+    for line in lines {
+        if let Some((name, val)) = line.split_once(':') {
+            let trimmed = val.trim().to_string();
+            if host_header.is_none() && name.eq_ignore_ascii_case("host") && !trimmed.is_empty() {
+                host_header = Some(trimmed.clone());
+            }
+            headers.push((name.to_string(), trimmed));
+        }
+    }
+    let authority = host_header.unwrap_or(default_auth);
+    let path = if raw_target.starts_with('/') {
+        raw_target.to_string()
+    } else {
+        format!("/{raw_target}")
+    };
+    let url = if raw_target.starts_with("http://") || raw_target.starts_with("https://") {
+        raw_target.to_string()
+    } else {
+        format!("{scheme}://{authority}{path}")
+    };
+    (
+        RecordedCallEntry {
+            method,
+            url,
+            headers,
+            body,
+        },
+        path,
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Public entry points for crates/mo-host
 // ---------------------------------------------------------------------------
@@ -1013,6 +1130,51 @@ pub(crate) fn network_fake(heap: &Heap, result_ty: u32, peers: Value) -> Result<
         result_ty,
         Rc::new(NetworkCap::Fake {
             peers,
+            recorded: Rc::new(RefCell::new(Vec::new())),
+            allowed: None,
+        }),
+    )?)
+}
+
+pub(crate) fn network_fake_scripted(
+    heap: &Heap,
+    result_ty: u32,
+    scripts_val: &Value,
+) -> Result<Value, HostError> {
+    let mut scripts = Vec::new();
+    for script_tup in scripts_val.as_list().iter() {
+        let method = heap.extract_field(script_tup, 0).as_text().to_string();
+        let url_prefix = heap.extract_field(script_tup, 1).as_text().to_string();
+        let replies_val = heap.extract_field(script_tup, 2);
+        let mut replies = Vec::new();
+        for reply_tup in replies_val.as_list().iter() {
+            let kind = heap.extract_field(reply_tup, 0).as_int();
+            let count = heap.extract_field(reply_tup, 1).as_int();
+            let bytes = heap.extract_field(reply_tup, 2).as_bytes().to_vec();
+            let err_val = heap.extract_field(reply_tup, 3);
+            let item = match kind {
+                0 => ScriptedReply::Respond(bytes),
+                1 => ScriptedReply::Fail(err_val),
+                _ => ScriptedReply::TruncateAfter(count),
+            };
+            replies.push(item);
+        }
+        scripts.push(ScriptEntry {
+            method,
+            url_prefix,
+            replies,
+            cursor: 0,
+        });
+    }
+    let state = Rc::new(RefCell::new(FakeScriptedState {
+        scripts,
+        recorded: Vec::new(),
+    }));
+    Ok(heap.alloc_capability(
+        Capability::Network,
+        result_ty,
+        Rc::new(NetworkCap::FakeScripted {
+            state,
             allowed: None,
         }),
     )?)
@@ -1027,10 +1189,64 @@ pub(crate) fn call_network(
     args: &[Value],
 ) -> Result<Value, HostError> {
     match op {
+        HostOpId::NetworkRecordedCalls => {
+            let net = crate::downcast_cap::<NetworkCap>(&args[0], "Network capability");
+            let entries: Vec<RecordedCallEntry> = match net {
+                NetworkCap::Real { .. } => {
+                    return Err(HostError::Bug {
+                        reason: "network observation needs a fake",
+                        detail: None,
+                    });
+                }
+                NetworkCap::Fake { recorded, .. } => recorded.borrow().clone(),
+                NetworkCap::FakeScripted { state, .. } => state.borrow().recorded.clone(),
+            };
+            let outer_tup_ty = types.get(result_ty).parameters[0];
+            #[expect(
+                clippy::expect_used,
+                reason = "verified bytecode guarantees tuple layout for recorded_calls_raw"
+            )]
+            let outer_tup_layout = types
+                .find_tuple_layout(outer_tup_ty)
+                .expect("outer tuple layout for recorded_calls_raw");
+            let headers_list_ty = types.get(outer_tup_ty).parameters[2];
+            let pair_tup_ty = types.get(headers_list_ty).parameters[0];
+            #[expect(
+                clippy::expect_used,
+                reason = "verified bytecode guarantees header pair tuple layout for recorded_calls_raw"
+            )]
+            let pair_tup_layout = types
+                .find_tuple_layout(pair_tup_ty)
+                .expect("header pair tuple layout for recorded_calls_raw");
+
+            let mut out = VecDeque::with_capacity(entries.len());
+            for entry in entries {
+                let method_val = heap.alloc_text(entry.method)?;
+                let url_val = heap.alloc_text(entry.url)?;
+                let mut hdr_items = VecDeque::with_capacity(entry.headers.len());
+                for (k, v) in entry.headers {
+                    let kv = heap.alloc_text(k)?;
+                    let vv = heap.alloc_text(v)?;
+                    hdr_items.push_back(heap.construct(types, pair_tup_layout, vec![kv, vv])?);
+                }
+                let hdrs_val = heap.alloc_list(hdr_items)?;
+                let body_val = heap.alloc_bytes(entry.body)?;
+                let tup = heap.construct(
+                    types,
+                    outer_tup_layout,
+                    vec![method_val, url_val, hdrs_val, body_val],
+                )?;
+                out.push_back(tup);
+            }
+            Ok(heap.alloc_list(out)?)
+        }
+
         HostOpId::NetworkAllowHosts => {
             let net = crate::downcast_cap::<NetworkCap>(&args[0], "Network capability");
             let existing = match net {
-                NetworkCap::Real { allowed } | NetworkCap::Fake { allowed, .. } => allowed,
+                NetworkCap::Real { allowed }
+                | NetworkCap::Fake { allowed, .. }
+                | NetworkCap::FakeScripted { allowed, .. } => allowed,
             };
             let mut next_rules = Vec::new();
             for item in args[1].as_list().iter() {
@@ -1060,8 +1276,15 @@ pub(crate) fn call_network(
                 NetworkCap::Real { .. } => NetworkCap::Real {
                     allowed: Some(next_rules),
                 },
-                NetworkCap::Fake { peers, .. } => NetworkCap::Fake {
+                NetworkCap::Fake {
+                    peers, recorded, ..
+                } => NetworkCap::Fake {
                     peers: peers.clone(),
+                    recorded: Rc::clone(recorded),
+                    allowed: Some(next_rules),
+                },
+                NetworkCap::FakeScripted { state, .. } => NetworkCap::FakeScripted {
+                    state: Rc::clone(state),
                     allowed: Some(next_rules),
                 },
             };
@@ -1081,7 +1304,9 @@ pub(crate) fn call_network(
             }
             let port_u16 = port as u16;
             let allowed = match net {
-                NetworkCap::Real { allowed } | NetworkCap::Fake { allowed, .. } => allowed,
+                NetworkCap::Real { allowed }
+                | NetworkCap::Fake { allowed, .. }
+                | NetworkCap::FakeScripted { allowed, .. } => allowed,
             };
             if !is_host_allowed(allowed, host_str, port_u16) {
                 return make_network_error(heap, types, result_ty, NetErr::Refused, &args[1], port);
@@ -1091,7 +1316,9 @@ pub(crate) fn call_network(
             let conn_ty = types.get(result_ty).cases[ok_tag as usize].fields[0].ty;
 
             match net {
-                NetworkCap::Fake { peers, .. } => {
+                NetworkCap::Fake {
+                    peers, recorded, ..
+                } => {
                     if !host_named(host_str.as_bytes()) {
                         return make_network_error(
                             heap,
@@ -1120,8 +1347,37 @@ pub(crate) fn call_network(
                     };
                     let conn_cap = ConnectionCap::Fake(RefCell::new(FakeConnection {
                         replies,
+                        recorded: Rc::clone(recorded),
+                        secure,
+                        host: host_str.to_string(),
+                        port: port_u16,
+                        recorded_yet: false,
                         sent: Vec::new(),
                         position: -1,
+                    }));
+                    let val =
+                        heap.alloc_capability(Capability::Connection, conn_ty, Rc::new(conn_cap))?;
+                    make_network_ok(heap, types, result_ty, val)
+                }
+                NetworkCap::FakeScripted { state, .. } => {
+                    if !host_named(host_str.as_bytes()) {
+                        return make_network_error(
+                            heap,
+                            types,
+                            result_ty,
+                            NetErr::UnknownHost,
+                            &args[1],
+                            port,
+                        );
+                    }
+                    let conn_cap = ConnectionCap::Scripted(RefCell::new(ScriptedConnection {
+                        state: Rc::clone(state),
+                        secure,
+                        host_val: args[1].clone(),
+                        host: host_str.to_string(),
+                        port: port_u16,
+                        sent: Vec::new(),
+                        active: ActiveScriptedReply::Pending,
                     }));
                     let val =
                         heap.alloc_capability(Capability::Connection, conn_ty, Rc::new(conn_cap))?;
@@ -1230,6 +1486,31 @@ pub(crate) fn call_network(
                     }
                     make_network_ok(heap, types, result_ty, Value::Unit)
                 }
+                ConnectionCap::Scripted(cell) => {
+                    let mut scripted = cell.borrow_mut();
+                    if !matches!(scripted.active, ActiveScriptedReply::Pending) {
+                        return make_network_error(
+                            heap,
+                            types,
+                            result_ty,
+                            NetErr::Closed,
+                            &Value::Unit,
+                            0,
+                        );
+                    }
+                    if !bytes.is_empty() {
+                        let new_len = scripted.sent.len().saturating_add(bytes.len());
+                        if new_len as u64 > mo_def::limits::MO_LIMIT_VALUE_BYTES {
+                            return Err(HostError::OutOfMemory {
+                                value_bytes_limit: true,
+                            });
+                        }
+                        let mut scratch = ScratchGuard::new(heap.budget());
+                        scratch.charge(new_len)?;
+                        scripted.sent.extend_from_slice(bytes);
+                    }
+                    make_network_ok(heap, types, result_ty, Value::Unit)
+                }
                 ConnectionCap::Real(cell) => {
                     let mut real = cell.borrow_mut();
                     match real_send_all(&mut real, bytes) {
@@ -1255,6 +1536,12 @@ pub(crate) fn call_network(
             match conn_cap {
                 ConnectionCap::Fake(cell) => {
                     let mut fake = cell.borrow_mut();
+                    if !fake.recorded_yet {
+                        fake.recorded_yet = true;
+                        let (entry, _) =
+                            parse_sent_http_request(&fake.sent, fake.secure, &fake.host, fake.port);
+                        fake.recorded.borrow_mut().push(entry);
+                    }
                     let pos = if fake.position < 0 { 0 } else { fake.position };
                     let sent_val = heap.alloc_bytes(fake.sent.clone())?;
                     let found = fake
@@ -1284,6 +1571,109 @@ pub(crate) fn call_network(
                         fake.position = pos;
                         Ok(res)
                     }
+                }
+                ConnectionCap::Scripted(cell) => {
+                    let mut scripted = cell.borrow_mut();
+                    if matches!(scripted.active, ActiveScriptedReply::Pending) {
+                        let (entry, path) = parse_sent_http_request(
+                            &scripted.sent,
+                            scripted.secure,
+                            &scripted.host,
+                            scripted.port,
+                        );
+                        let mut state_mut = scripted.state.borrow_mut();
+                        state_mut.recorded.push(entry.clone());
+                        let matched_idx = state_mut.scripts.iter().position(|s| {
+                            (s.method == "*" || s.method.eq_ignore_ascii_case(&entry.method))
+                                && (entry.url.starts_with(&s.url_prefix)
+                                    || (s.url_prefix.starts_with('/')
+                                        && path.starts_with(&s.url_prefix)))
+                        });
+                        let Some(sidx) = matched_idx else {
+                            drop(state_mut);
+                            scripted.active = ActiveScriptedReply::Bytes {
+                                wire: Vec::new(),
+                                pos: 0,
+                            };
+                            let host_val = scripted.host_val.clone();
+                            let port = i64::from(scripted.port);
+                            return make_network_error(
+                                heap,
+                                types,
+                                result_ty,
+                                NetErr::Refused,
+                                &host_val,
+                                port,
+                            );
+                        };
+                        if state_mut.scripts[sidx].replies.is_empty() {
+                            drop(state_mut);
+                            scripted.active = ActiveScriptedReply::Bytes {
+                                wire: Vec::new(),
+                                pos: 0,
+                            };
+                            let host_val = scripted.host_val.clone();
+                            let port = i64::from(scripted.port);
+                            return make_network_error(
+                                heap,
+                                types,
+                                result_ty,
+                                NetErr::Refused,
+                                &host_val,
+                                port,
+                            );
+                        }
+                        let ridx = state_mut.scripts[sidx]
+                            .cursor
+                            .min(state_mut.scripts[sidx].replies.len() - 1);
+                        if state_mut.scripts[sidx].cursor + 1
+                            < state_mut.scripts[sidx].replies.len()
+                        {
+                            state_mut.scripts[sidx].cursor += 1;
+                        }
+                        match &state_mut.scripts[sidx].replies[ridx] {
+                            ScriptedReply::Fail(err_val) => {
+                                let cloned_err = err_val.clone();
+                                drop(state_mut);
+                                scripted.active = ActiveScriptedReply::Bytes {
+                                    wire: Vec::new(),
+                                    pos: 0,
+                                };
+                                let err_tag = find_case_tag(types, result_ty, "Error");
+                                return Ok(heap.make_case(
+                                    types,
+                                    result_ty,
+                                    err_tag,
+                                    vec![cloned_err],
+                                )?);
+                            }
+                            ScriptedReply::Respond(wire_bytes) => {
+                                let wire = wire_bytes.clone();
+                                drop(state_mut);
+                                scripted.active = ActiveScriptedReply::Bytes { wire, pos: 0 };
+                            }
+                            ScriptedReply::TruncateAfter(n) => {
+                                let prefix_len =
+                                    (*n).clamp(0, MO_LIMIT_RECEIVE_BYTES as i64) as usize;
+                                let declared_len = prefix_len.saturating_add(64);
+                                let mut wire = format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Length: {declared_len}\r\n\r\n"
+                                )
+                                .into_bytes();
+                                wire.resize(wire.len() + prefix_len, b'x');
+                                drop(state_mut);
+                                scripted.active = ActiveScriptedReply::Bytes { wire, pos: 0 };
+                            }
+                        }
+                    }
+                    let ActiveScriptedReply::Bytes { wire, pos } = &mut scripted.active else {
+                        unreachable!("scripted reply resolved above");
+                    };
+                    let left = wire.len().saturating_sub(*pos).min(most_usize);
+                    let chunk = wire[*pos..*pos + left].to_vec();
+                    *pos += left;
+                    let val = heap.alloc_bytes(chunk)?;
+                    make_network_ok(heap, types, result_ty, val)
                 }
                 ConnectionCap::Real(cell) => {
                     let mut scratch = ScratchGuard::new(heap.budget());

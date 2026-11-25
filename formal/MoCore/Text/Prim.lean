@@ -123,7 +123,8 @@ def ioOps : List (String × IoOp) :=
    ("fileReadAt", .fileReadAt), ("fileWriteAt", .fileWriteAt), ("fileSize", .fileSize),
    ("fileTruncate", .fileTruncate), ("fileSync", .fileSync),
    ("fileLockShared", .fileLockShared), ("fileLockExclusive", .fileLockExclusive),
-   ("fileUnlock", .fileUnlock), ("readFileOpen", .readFileOpen)]
+   ("fileUnlock", .fileUnlock), ("readFileOpen", .readFileOpen),
+   ("networkFakeScripted", .networkFakeScripted), ("networkRecordedCalls", .networkRecordedCalls)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

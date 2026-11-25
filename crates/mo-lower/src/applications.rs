@@ -831,6 +831,67 @@ pub(crate) fn lower_cps_application(
             );
         }
 
+        if is_lib
+            && mod_name.as_deref() == Some("Network")
+            && matches!(fn_name.as_str(), "fake_scripted" | "recorded_calls")
+        {
+            let helper_name = if fn_name == "fake_scripted" {
+                "encode_scripts"
+            } else {
+                "decode_recorded_calls"
+            };
+            let Some(helper_idx) = b.p.program.interfaces.scopes[sym.module.index()]
+                .find_symbol_index(helper_name.as_bytes())
+            else {
+                return b
+                    .p
+                    .refuse(ErrorCode::LowerUnfinished, "missing Network helper symbol");
+            };
+            let helper_sym = mo_check::SymRef::new(sym.module, helper_idx);
+            let helper_inst = lower_instance(b.p, helper_sym, &[], None, &[], b.owner, b.depth)?;
+            let helper_fn = b.p.instances[helper_inst].fun.name.clone();
+            let io_prim = if fn_name == "fake_scripted" {
+                Prim::Io(IoOp::Nullary(CoreIoNullaryOp::NetworkFakeScripted))
+            } else {
+                Prim::Io(IoOp::Nullary(CoreIoNullaryOp::NetworkRecordedCalls))
+            };
+            if r.operands.is_empty() {
+                let param_ty = match b.p.core_ty(result) {
+                    Ty::Fn { params, .. } if params.len() == 1 => params[0],
+                    _ => {
+                        return b.p.refuse(
+                            ErrorCode::LowerUnfinished,
+                            "expected unary function type for Network spec operation",
+                        );
+                    }
+                };
+                let p_name = b.p.fresh()?;
+                let pv = b.p.expr_var(p_name.clone())?;
+                let body = if fn_name == "fake_scripted" {
+                    let encoded = b.p.expr_call(helper_fn, vec![pv])?;
+                    b.p.expr_prim(io_prim, vec![encoded])?
+                } else {
+                    let raw = b.p.expr_prim(io_prim, vec![pv])?;
+                    b.p.expr_call(helper_fn, vec![raw])?
+                };
+                return b.p.alloc_expr(Expr::Lam {
+                    params: vec![mo_core::Param {
+                        name: p_name,
+                        ty: param_ty,
+                    }],
+                    body,
+                });
+            }
+            let arg_expr = args[args.len() - 1];
+            return if fn_name == "fake_scripted" {
+                let encoded = b.p.expr_call(helper_fn, vec![arg_expr])?;
+                b.p.expr_prim(io_prim, vec![encoded])
+            } else {
+                let raw = b.p.expr_prim(io_prim, vec![arg_expr])?;
+                b.p.expr_call(helper_fn, vec![raw])
+            };
+        }
+
         let next_depth = b.depth + u32::from(!r.arguments.is_empty());
         let inst = lower_instance(
             b.p,
@@ -1064,6 +1125,12 @@ fn match_static_prim(native: &str) -> Option<Prim> {
         "Network.connect_secure" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::ConnectSecure))),
         "Network.allow_hosts" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::AllowHosts))),
         "Network.fake" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::NetworkFake))),
+        "Network.fake_scripted_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::NetworkFakeScripted,
+        ))),
+        "Network.recorded_calls_raw" => Some(Prim::Io(IoOp::Nullary(
+            CoreIoNullaryOp::NetworkRecordedCalls,
+        ))),
         "Connection.send" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::Send))),
         "Connection.receive" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::Receive))),
         "Sqlite.open" => Some(Prim::Io(IoOp::Nullary(CoreIoNullaryOp::SqliteOpen))),

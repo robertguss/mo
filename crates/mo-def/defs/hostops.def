@@ -116,6 +116,8 @@ HOSTOP(FILES_LOCK_SHARED,      "Files",     "lock_shared",    "fn(Files.File) : 
 HOSTOP(FILES_LOCK_EXCLUSIVE,   "Files",     "lock_exclusive", "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
 HOSTOP(FILES_UNLOCK,           "Files",     "unlock",         "fn(Files.File) : Result(Unit, FileError)",                "b",   "",                                   false)
 HOSTOP(READFILES_OPEN,         "ReadFiles", "open",           "fn(ReadFiles, Text) : Result(Files.File, FileError)",     "bb",  "too many files open at once",        false)
+HOSTOP(NETWORK_FAKE_SCRIPTED,  "Network",   "fake_scripted_raw",  "fn(List((Text, Text, List((Int, Int, Bytes, NetworkError))))) : Network", "o", "",                 true)
+HOSTOP(NETWORK_RECORDED_CALLS, "Network",   "recorded_calls_raw", "fn(Network) : List((Text, Text, List((Text, Text)), Bytes))",             "b", "network observation needs a fake", true)
 
 #undef HOSTOP
 

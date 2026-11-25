@@ -297,6 +297,20 @@ def signatures():
     add("io", "send", C("connection") + "|(bytes)", failed(U))
     add("io", "receive", C("connection") + "|" + I, failed("(bytes)"))
     add("io", "networkFake", f"(map {T} (map (bytes) (bytes)))", C("network"), True)
+    add(
+        "io",
+        "networkFakeScripted",
+        L(f"(tuple ({T} {T} " + L(f"(tuple ({I} {I} (bytes) (networkError)))") + "))"),
+        C("network"),
+        True,
+    )
+    add(
+        "io",
+        "networkRecordedCalls",
+        C("network"),
+        L(f"(tuple ({T} {T} " + L(f"(tuple ({T} {T}))") + " (bytes)))"),
+        True,
+    )
     sqlite_err = lambda ok: f"(result {ok} (sqliteError))"
     add("io", "sqliteOpen", C("sqlite") + "|" + T, sqlite_err(C("database")))
     add("io", "sqliteFake", "", C("sqlite"), True)

@@ -1426,6 +1426,39 @@ impl<'a> Checker<'a> {
                     let outer = self.binary(TyTag::Map, s_text, inner);
                     self.sig1(net, outer)
                 }
+                CoreIoNullaryOp::NetworkFakeScripted => {
+                    spec = true;
+                    let net = self.cap_ty(Cap::Network);
+                    let reply_tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_int, s_int, s_bytes, s_nerr],
+                        "",
+                        Cap::Console,
+                    );
+                    let reply_list = self.unary(TyTag::List, reply_tup);
+                    let script_tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_text, s_text, reply_list],
+                        "",
+                        Cap::Console,
+                    );
+                    let scripts_list = self.unary(TyTag::List, script_tup);
+                    self.sig1(net, scripts_list)
+                }
+                CoreIoNullaryOp::NetworkRecordedCalls => {
+                    spec = true;
+                    let net = self.cap_ty(Cap::Network);
+                    let hdr_pair = self.binary(TyTag::Tuple, s_text, s_text);
+                    let hdr_list = self.unary(TyTag::List, hdr_pair);
+                    let rec_tup = self.intern(
+                        TyTag::Tuple,
+                        vec![s_text, s_text, hdr_list, s_bytes],
+                        "",
+                        Cap::Console,
+                    );
+                    let rec_list = self.unary(TyTag::List, rec_tup);
+                    self.sig1(rec_list, net)
+                }
                 CoreIoNullaryOp::AllowHosts => {
                     let net = self.cap_ty(Cap::Network);
                     let lt = self.unary(TyTag::List, s_text);

@@ -783,6 +783,36 @@ impl<'a> InferState<'a> {
         out.symbol = Some(sym_ref);
         let sym = self.interfaces.symbol(sym_ref);
         let fn_scope = self.interfaces.scope(sym.module);
+        if !self.spec
+            && fn_scope.library
+            && fn_scope.name.as_deref() == Some("Network")
+            && (sym.name == "fake_scripted" || sym.name == "recorded_calls")
+        {
+            if sym.name == "recorded_calls" {
+                let _ = self.problem(
+                    ErrorCode::FakeOutsideSpec,
+                    self.span,
+                    "recorded_calls is read only in a test, example or promise",
+                    Some(
+                        "Network.recorded_calls can be used only where a network is a fake: in \
+                         tests, examples and promises (reference 12.4).",
+                    ),
+                    None,
+                );
+            } else {
+                let _ = self.problem(
+                    ErrorCode::FakeOutsideSpec,
+                    self.span,
+                    "a fake capability is made only in a test, example or promise",
+                    Some(
+                        "Fakes are made only in tests, examples and promises, never in a \
+                         module's constants or its functions (reference 12.4).",
+                    ),
+                    None,
+                );
+            }
+            return InferValue::none();
+        }
         if let Some(out_ty) = out.ty
             && fn_scope.library
             && fn_scope.name.as_deref() == Some("Json")

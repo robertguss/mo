@@ -599,6 +599,8 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
                     CoreIoNullaryOp::FileLockExclusive => HostOpId::FilesLockExclusive,
                     CoreIoNullaryOp::FileUnlock => HostOpId::FilesUnlock,
                     CoreIoNullaryOp::ReadFileOpen => HostOpId::ReadfilesOpen,
+                    CoreIoNullaryOp::NetworkFakeScripted => HostOpId::NetworkFakeScripted,
+                    CoreIoNullaryOp::NetworkRecordedCalls => HostOpId::NetworkRecordedCalls,
                 },
                 IoOp::ReadText { ro: false } => HostOpId::FilesReadText,
                 IoOp::ReadText { ro: true } => HostOpId::ReadfilesReadText,

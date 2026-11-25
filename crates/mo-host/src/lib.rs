@@ -633,11 +633,15 @@ impl HostContext {
                 }
             }
 
-            // Network & Connection (6 ops)
+            // Network & Connection (8 ops)
             HostOpId::NetworkFake => network::network_fake(heap, result_ty, args[0].clone()),
+            HostOpId::NetworkFakeScripted => {
+                network::network_fake_scripted(heap, result_ty, &args[0])
+            }
             HostOpId::NetworkConnect
             | HostOpId::NetworkConnectSecure
             | HostOpId::NetworkAllowHosts
+            | HostOpId::NetworkRecordedCalls
             | HostOpId::ConnectionSend
             | HostOpId::ConnectionReceive => {
                 network::call_network(heap, types, &self.open_connections, op, result_ty, args)

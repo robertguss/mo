@@ -520,6 +520,18 @@ impl<'a, 'd> Preparation<'a, 'd> {
         None
     }
 
+    fn network_library_symbol(&self, member: &[u8]) -> Option<SymRef> {
+        for (i, lib) in self.interfaces.scopes.iter().enumerate() {
+            if !lib.library || lib.name.as_deref() != Some("Network") {
+                continue;
+            }
+            let idx = lib.find_symbol_index(member)?;
+            let sym = lib.symbol(idx);
+            return sym.exported.then_some(SymRef::new(ModuleId(i as u32), idx));
+        }
+        None
+    }
+
     fn module_member(
         &mut self,
         scope: &ModuleScope,
@@ -533,6 +545,9 @@ impl<'a, 'd> Preparation<'a, 'd> {
         let Some(used) = scope.find_alias(prefix) else {
             if prefix == b"Sqlite" {
                 return Ok(self.sqlite_library_symbol(member));
+            }
+            if prefix == b"Network" {
+                return Ok(self.network_library_symbol(member));
             }
             return Ok(None);
         };
