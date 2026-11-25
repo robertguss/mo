@@ -60,6 +60,8 @@
     X(SHA256, "sha256") X(HMAC_SHA256, "hmacSha256") X(CONSTANT_TIME_EQ, "constantTimeEq") \
     X(SEAL_RAW, "sealRaw") X(OPEN_RAW, "openRaw") X(HASH_PASSWORD_RAW, "hashPasswordRaw") \
     X(VERIFY_PASSWORD, "verifyPassword")
+#define MO_CORE_JSON_OPS(X) \
+    X(QUOTE_RAW, "quoteRaw") X(PARSE_RAW, "parseRaw")
 #define MO_CORE_RANGE_OPS(X) \
     X(MAKE, "make") X(START, "start") X(END, "end") X(TO_LIST, "toList") X(CONTAINS, "contains") \
     X(TO_TEXT, "toText")

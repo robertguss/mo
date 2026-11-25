@@ -501,18 +501,6 @@ fn schema_tagged_case(tag: Text, payload: Json) : Json
   })
 end
 
-## Where reading stopped, as a position in the document's characters.
-struct Halt
-  at: Int
-  problem: JsonProblem
-end
-
-struct Source
-  chars: List(Char)
-  closed: List(Text)
-  controls: List(Text)
-end
-
 ## The JSON value the text holds, with nothing but white space around it.
 fn parse(text: Text) : Result(Json, JsonError)
   examples
@@ -528,329 +516,74 @@ fn parse(text: Text) : Result(Json, JsonError)
     parse("[".repeat(129)) == Error(JsonError(line: 1, column: 129, problem: TooDeep))
   end
 
-  chars = text.chars
-  parts = text.split("\"")
-  source = Source(chars: chars, closed: parts.take(parts.size - 1), controls: controls(text))
-  document(source).map_error(fn(halt) located(chars, halt) end)
-end
-
-fn controls(text: Text) : List(Text)
-  var found = []
-  for code in 0..32
-    case code.to_char
-      Some(c):
-        if text.contains?(c.to_text)
-          found = found.append(c.to_text)
-        end
-      None: stop "a code below 32 is a character"
-    end
-  end
-  found
-end
-
-fn document(source: Source) : Result(Json, Halt)
-  chars = source.chars
-  (value, after, _) = try value_at(source, skip_space(chars, 0), 0, 0)
-  rest = skip_space(chars, after)
-  case chars.get(rest)
-    Some(c): Error(Halt(at: rest, problem: Unexpected(found: c)))
-    None: Ok(value)
+  case Json.parse_raw(text)
+    Ok((tags, texts)):
+      (value, _, _) = materialize_value(tags, texts, 0, 0)
+      Ok(value)
+    Error((line, column, kind, detail)): Error(
+      JsonError(line: line, column: column, problem: decode_problem(kind, detail))
+    )
   end
 end
 
-## The halt's position as a line and a column, each counted from 1. Reading stops at the
-## character that can't be there, or at the end; a number stops at the character that breaks its
-## syntax, an escape at its backslash, and a duplicate key at its opening quote.
-fn located(chars: List(Char), halt: Halt) : JsonError
-  var line = 1
-  var column = 1
-  for c in chars.take(halt.at)
-    if c == '\n'
-      line += 1
-      column = 1
-    else
-      column += 1
-    end
-  end
-  JsonError(line: line, column: column, problem: halt.problem)
-end
-
-fn ended(chars: List(Char)) : Halt
-  Halt(at: chars.size, problem: UnexpectedEnd)
-end
-
-## The halt at a character that can't be there, or at the end.
-fn unexpected(chars: List(Char), at: Int) : Halt
-  case chars.get(at)
-    Some(c): Halt(at: at, problem: Unexpected(found: c))
-    None: ended(chars)
+fn decode_problem(kind: Int, detail: Text) : JsonProblem
+  case kind
+    0: UnexpectedEnd
+    1: Unexpected(found: detail.chars.first or '\u{0}')
+    2: BadNumber
+    3: BadEscape
+    4: DuplicateKey(key: detail)
+    5: TooDeep
+    _: stop "unknown JSON parse error kind"
   end
 end
 
-## JSON's white space: space, tab, line feed and carriage return.
-fn skip_space(chars: List(Char), at: Int) : Int
-  if (chars.get(at) or 'x') > ' '
-    at
-  else
-    skip_spaces(chars, at)
-  end
-end
-
-fn skip_spaces(chars: List(Char), from: Int) : Int
-  var at = from
-  while true
-    case chars.get(at)
-      Some(' ') | Some('\t') | Some('\n') | Some('\r'): at += 1
-      Some(_) | None: return at
-    end
-  end
-  at
-end
-
-## The value starting at a character that isn't white space, inside `depth` arrays and
-## objects, the position after it, and the quotes up to there. `seen` is the number of quotes
-## before `at`. Arrays and objects nest at most 128 deep (reference 14).
-fn value_at(source: Source, at: Int, seen: Int, depth: Int) : Result((Json, Int, Int), Halt)
-  if source.chars.get(at) == Some('"')
-    (text, after, passed) = try string_at(source, at, seen)
-    Ok((String(text), after, passed))
-  else
-    unquoted_value_at(source, at, seen, depth)
-  end
-end
-
-fn unquoted_value_at(source: Source, at: Int, seen: Int, depth: Int) : Result(
-  (Json, Int, Int),
-  Halt
+fn materialize_value(tags: List(Int), texts: List(Text), tag_pos: Int, text_pos: Int) : (
+  Json,
+  Int,
+  Int
 )
-  chars = source.chars
-  case chars.get(at)
-    None: Error(ended(chars))
-    Some('n'): word_at(chars, at, seen, "null", Null)
-    Some('t'): word_at(chars, at, seen, "true", Boolean(true))
-    Some('f'): word_at(chars, at, seen, "false", Boolean(false))
-    Some('['):
-      return Error(Halt(at: at, problem: TooDeep)) if depth >= 128
-      array_at(source, at, seen, depth + 1)
-    Some('{'):
-      return Error(Halt(at: at, problem: TooDeep)) if depth >= 128
-      object_at(source, at, seen, depth + 1)
-    Some(c) if c == '-' or c.ascii_digit?: number_at(chars, at, seen)
-    Some(c): Error(Halt(at: at, problem: Unexpected(found: c)))
-  end
-end
-
-fn word_at(chars: List(Char), at: Int, seen: Int, word: Text, value: Json) : Result(
-  (Json, Int, Int),
-  Halt
-)
-  var next = at
-  for wanted in word.chars
-    return Error(unexpected(chars, next)) if chars.get(next) != Some(wanted)
-    next += 1
-  end
-  Ok((value, next, seen))
-end
-
-## A string's text, from its opening quote at `quote`, the position after its closing quote, and
-## the quotes up to there. The text between two quotes is the string when it holds no backslash
-## and no control character.
-fn string_at(source: Source, quote: Int, seen: Int) : Result((Text, Int, Int), Halt)
-  case source.closed.get(seen + 1)
-    Some(part) if not part.contains?("\\") and (
-      source.controls.empty? or clean?(part, source.controls)
-    ): Ok((part, quote + part.char_count + 2, seen + 2))
-    Some(_) | None: walked_string_at(source.chars, quote, seen)
-  end
-end
-
-fn clean?(part: Text, controls: List(Text)) : Bool
-  for control in controls
-    return false if part.contains?(control)
-  end
-  true
-end
-
-fn walked_string_at(chars: List(Char), quote: Int, seen: Int) : Result((Text, Int, Int), Halt)
-  var read = []
-  var at = quote + 1
-  var passed = seen + 1
-  while true
-    c = try chars.get(at).or_fail(ended(chars))
-    if c == '"'
-      return Ok((Text.from_chars(read), at + 1, passed + 1))
-    else if c == '\\'
-      (plain, after) = try escape_at(chars, at)
-      if plain == '"' and after == at + 2
-        passed += 1
-      end
-      read = read.append(plain)
-      at = after
-    else if c.code < 32
-      return Error(Halt(at: at, problem: Unexpected(found: c)))
-    else
-      read = read.append(c)
-      at += 1
+  tag = tags.get(tag_pos) or stop "valid JSON token tag"
+  if tag == 0
+    (Null, tag_pos + 1, text_pos)
+  else if tag == 1
+    (Boolean(false), tag_pos + 1, text_pos)
+  else if tag == 2
+    (Boolean(true), tag_pos + 1, text_pos)
+  else if tag == 3
+    num = texts.get(text_pos) or stop "valid JSON number text"
+    (Number(JsonNumber(text: num)), tag_pos + 1, text_pos + 1)
+  else if tag == 4
+    s = texts.get(text_pos) or stop "valid JSON string text"
+    (String(s), tag_pos + 1, text_pos + 1)
+  else if tag >= 10 and tag % 2 == 0
+    count = (tag - 10) / 2
+    var items = []
+    var tp = tag_pos + 1
+    var sp = text_pos
+    for _i in 0..count
+      (item, next_tp, next_sp) = materialize_value(tags, texts, tp, sp)
+      items = items.append(item)
+      tp = next_tp
+      sp = next_sp
     end
-  end
-  Ok((Text.from_chars(read), at, passed))
-end
-
-## The character an escape at `at` stands for, and the position after it. A `\u` escape of a
-## surrogate needs its pair right after it.
-fn escape_at(chars: List(Char), at: Int) : Result((Char, Int), Halt)
-  bad = Halt(at: at, problem: BadEscape)
-  escaped = try chars.get(at + 1).or_fail(ended(chars))
-  if escaped != 'u'
-    plain = try unescape(escaped).or_fail(bad)
-    return Ok((plain, at + 2))
-  end
-  code = try hex_at(chars, at + 2, bad)
-  if code >= 0xD800 and code < 0xDC00
-    return Error(bad) if chars.get(at + 6) != Some('\\') or chars.get(at + 7) != Some('u')
-    low = try hex_at(chars, at + 8, bad)
-    return Error(bad) if low < 0xDC00 or low >= 0xE000
-    joined = try (0x10000 + (code - 0xD800) * 0x400 + (low - 0xDC00)).to_char.or_fail(bad)
-    return Ok((joined, at + 12))
-  end
-  plain = try code.to_char.or_fail(bad)
-  Ok((plain, at + 6))
-end
-
-## The value of the four hexadecimal digits at `at`.
-fn hex_at(chars: List(Char), at: Int, bad: Halt) : Result(Int, Halt)
-  var value = 0
-  for i in at..at + 4
-    digit = try chars.get(i).or_fail(ended(chars))
-    value = value * 16 + try hex_digit_value(digit).or_fail(bad)
-  end
-  Ok(value)
-end
-
-fn hex_digit_value(c: Char) : Option(Int)
-  lower = c.ascii_lowercase
-  if c.ascii_digit?
-    Some(c.code - '0'.code)
-  else if lower >= 'a' and lower <= 'f'
-    Some(lower.code - 'a'.code + 10)
+    (Array(items), tp, sp)
+  else if tag >= 11 and tag % 2 == 1
+    count = (tag - 11) / 2
+    var fields = {}
+    var tp = tag_pos + 1
+    var sp = text_pos
+    for _i in 0..count
+      key = texts.get(sp) or stop "valid JSON object key"
+      (val, next_tp, next_sp) = materialize_value(tags, texts, tp, sp + 1)
+      fields = fields.set(key, val)
+      tp = next_tp
+      sp = next_sp
+    end
+    (Object(fields), tp, sp)
   else
-    None
+    stop "unknown JSON token tag"
   end
-end
-
-fn unescape(c: Char) : Option(Char)
-  case c
-    '"' | '\\' | '/': Some(c)
-    'b': Some('\u{8}')
-    'f': Some('\u{C}')
-    'n': Some('\n')
-    'r': Some('\r')
-    't': Some('\t')
-    _: None
-  end
-end
-
-## A number: an optional minus, an integer part with no leading zero, then an optional fraction
-## and exponent.
-fn number_at(chars: List(Char), start: Int, seen: Int) : Result((Json, Int, Int), Halt)
-  var at = start
-  if chars.get(at) == Some('-')
-    at += 1
-  end
-  if chars.get(at) == Some('0')
-    at += 1
-  else
-    at = try digits_at(chars, at)
-  end
-  if chars.get(at) == Some('.')
-    at = try digits_at(chars, at + 1)
-  end
-  if chars.get(at) == Some('e') or chars.get(at) == Some('E')
-    at += 1
-    if chars.get(at) == Some('+') or chars.get(at) == Some('-')
-      at += 1
-    end
-    at = try digits_at(chars, at)
-  end
-  return Error(Halt(at: at, problem: BadNumber)) if digit_at?(chars, at)
-  Ok((Number(JsonNumber(text: slice(chars, start, at))), at, seen))
-end
-
-## The characters from `start` up to `after` as a text. Unlike `drop`, it doesn't copy the rest of
-## the document.
-fn slice(chars: List(Char), start: Int, after: Int) : Text
-  var part = []
-  for i in start..after
-    case chars.get(i)
-      Some(c): part = part.append(c)
-      None: stop "a slice ends inside the document"
-    end
-  end
-  Text.from_chars(part)
-end
-
-## The position after one or more digits starting at `at`.
-fn digits_at(chars: List(Char), from: Int) : Result(Int, Halt)
-  return Error(Halt(at: from, problem: BadNumber)) if not digit_at?(chars, from)
-  var at = from
-  while digit_at?(chars, at)
-    at += 1
-  end
-  Ok(at)
-end
-
-fn digit_at?(chars: List(Char), at: Int) : Bool
-  case chars.get(at)
-    Some(c): c.ascii_digit?
-    None: false
-  end
-end
-
-## The rest of an array, from its opening bracket.
-fn array_at(source: Source, bracket: Int, quotes: Int, depth: Int) : Result((Json, Int, Int), Halt)
-  chars = source.chars
-  var items = []
-  var at = skip_space(chars, bracket + 1)
-  var seen = quotes
-  return Ok((Array(items), at + 1, seen)) if chars.get(at) == Some(']')
-  while true
-    (item, after, passed) = try value_at(source, at, seen, depth)
-    items = items.append(item)
-    seen = passed
-    next = skip_space(chars, after)
-    case chars.get(next)
-      Some(','): at = skip_space(chars, next + 1)
-      Some(']'): return Ok((Array(items), next + 1, seen))
-      Some(_) | None: return Error(unexpected(chars, next))
-    end
-  end
-  Ok((Array(items), at, seen))
-end
-
-## The rest of an object, from its opening brace. A key given twice is an error.
-fn object_at(source: Source, brace: Int, quotes: Int, depth: Int) : Result((Json, Int, Int), Halt)
-  chars = source.chars
-  var fields = {}
-  var at = skip_space(chars, brace + 1)
-  var seen = quotes
-  return Ok((Object(fields), at + 1, seen)) if chars.get(at) == Some('}')
-  while true
-    return Error(unexpected(chars, at)) if chars.get(at) != Some('"')
-    (key, after_key, after_quotes) = try string_at(source, at, seen)
-    return Error(Halt(at: at, problem: DuplicateKey(key: key))) if fields.has?(key)
-    colon = skip_space(chars, after_key)
-    return Error(unexpected(chars, colon)) if chars.get(colon) != Some(':')
-    (value, after, passed) = try value_at(source, skip_space(chars, colon + 1), after_quotes, depth)
-    fields = fields.set(key, value)
-    seen = passed
-    next = skip_space(chars, after)
-    case chars.get(next)
-      Some(','): at = skip_space(chars, next + 1)
-      Some('}'): return Ok((Object(fields), next + 1, seen))
-      Some(_) | None: return Error(unexpected(chars, next))
-    end
-  end
-  Ok((Object(fields), at, seen))
 end
 
 ## The number n.
@@ -892,6 +625,10 @@ fn to_int(number: JsonNumber) : Option(Int)
     JsonNumber(text: "99999999999999999999").to_int == None
   end
 
+  case number.text.to_int
+    Some(n): return Some(n)
+    None: Unit
+  end
   (negative, whole, fraction) = try plain(number)
   return None if not fraction.empty?
   "#{if negative: "-" else: ""}#{Text.from_chars(whole)}".to_int
@@ -906,6 +643,10 @@ fn to_decimal(number: JsonNumber) : Option(Decimal)
     JsonNumber(text: "1e-19").to_decimal == None
   end
 
+  case number.text.to_decimal
+    Some(d): return Some(d)
+    None: Unit
+  end
   (negative, whole, fraction) = try plain(number)
   sign = if negative: "-" else: ""
   return "#{sign}#{Text.from_chars(whole)}".to_decimal if fraction.empty?
@@ -1003,13 +744,42 @@ fn to_text(value: Json) : Text
 
   case value
     Null: "null"
-    Boolean(b): b.to_text
+    Boolean(b): if b: "true" else: "false"
     Number(n): n.text
-    String(s): quoted(s)
-    Array(items): "[#{items.map(fn(item) item.to_text end).join(",")}]"
+    String(s): Json.quote_raw(s)
+    Array(_) | Object(_): write_compact(value, []).join("")
+  end
+end
+
+fn write_compact(value: Json, parts: List(Text)) : List(Text)
+  case value
+    Null: parts.append("null")
+    Boolean(b): parts.append(if b: "true" else: "false")
+    Number(n): parts.append(n.text)
+    String(s): parts.append(Json.quote_raw(s))
+    Array(items):
+      var out = parts.append("[")
+      var first = true
+      for item in items
+        if not first
+          out = out.append(",")
+        end
+        first = false
+        out = write_compact(item, out)
+      end
+      out.append("]")
     Object(fields):
-      parts = fields.entries.map(fn(entry) "#{quoted(entry.0)}:#{entry.1.to_text}" end)
-      "{#{parts.join(",")}}"
+      var out = parts.append("{")
+      var first = true
+      for (k, v) in fields.entries
+        if not first
+          out = out.append(",")
+        end
+        first = false
+        out = out.append(Json.quote_raw(k)).append(":")
+        out = write_compact(v, out)
+      end
+      out.append("}")
   end
 end
 
@@ -1020,21 +790,36 @@ fn pretty(value: Json) : Text
     Object({"a": Array([int(1), Object({})])}).pretty == "{\n  \"a\": [\n    1,\n    {}\n  ]\n}"
   end
 
-  laid_out(value, "")
+  write_pretty(value, "", []).join("")
 end
 
-fn laid_out(value: Json, indent: Text) : Text
-  inner = "#{indent}  "
+fn write_pretty(value: Json, indent: Text, parts: List(Text)) : List(Text)
   case value
     Array(items) if not items.empty?:
-      lines = items.map(fn(item) "#{inner}#{laid_out(item, inner)}" end)
-      "[\n#{lines.join(",\n")}\n#{indent}]"
+      inner = "#{indent}  "
+      var out = parts.append("[\n")
+      var first = true
+      for item in items
+        if not first
+          out = out.append(",\n")
+        end
+        first = false
+        out = write_pretty(item, inner, out.append(inner))
+      end
+      out.append("\n").append(indent).append("]")
     Object(fields) if not fields.empty?:
-      lines = fields.entries.map(
-        fn(entry) "#{inner}#{quoted(entry.0)}: #{laid_out(entry.1, inner)}" end
-      )
-      "{\n#{lines.join(",\n")}\n#{indent}}"
-    Null | Boolean(_) | Number(_) | String(_) | Array(_) | Object(_): value.to_text
+      inner = "#{indent}  "
+      var out = parts.append("{\n")
+      var first = true
+      for (k, v) in fields.entries
+        if not first
+          out = out.append(",\n")
+        end
+        first = false
+        out = write_pretty(v, inner, out.append(inner).append(Json.quote_raw(k)).append(": "))
+      end
+      out.append("\n").append(indent).append("}")
+    Null | Boolean(_) | Number(_) | String(_) | Array(_) | Object(_): write_compact(value, parts)
   end
 end
 
@@ -1047,29 +832,7 @@ fn quoted(text: Text) : Text
     quoted("\u{10}") == "\"\\u0010\""
   end
 
-  "\"#{text.chars.map(escape_char).join("")}\""
-end
-
-## A character as JSON writes it inside a string.
-fn escape_char(c: Char) : Text
-  case c
-    '"': "\\\""
-    '\\': "\\\\"
-    '\n': "\\n"
-    '\r': "\\r"
-    '\t': "\\t"
-    '\u{8}': "\\b"
-    '\u{C}': "\\f"
-    _ if c.code < 32: "\\u00#{hex_digit(c.code / 16)}#{hex_digit(c.code % 16)}"
-    _: c.to_text
-  end
-end
-
-fn hex_digit(n: Int) : Text
-  case "0123456789abcdef".chars.get(n)
-    Some(digit): digit.to_text
-    None: stop "a hexadecimal digit is from 0 to 15"
-  end
+  Json.quote_raw(text)
 end
 
 ## The field of an object with this key, or None when the value isn't an object that has it.
@@ -1453,4 +1216,20 @@ test "from_json and from_json_strict decode Json values directly, by dot call an
   assert [doc].map(from_json_strict[UserPatch]) == [
     Error(Mismatch(path: "extra", message: "unknown field 'extra'"))
   ]
+end
+
+test "large payloads with escapes, UTF-8, and >20 keys round-trip cleanly"
+  big_hex = "0123456789abcdef".repeat(2048)
+  var wide = {}
+  for i in 0..24
+    wide = wide.set("field_#{i}", String("val_#{i}_\"quoted\"_\n\t\u{7}_é_😀"))
+  end
+  wide = wide.set("payload", String(big_hex))
+  doc = Object(wide)
+  encoded = doc.to_text
+  assert parse(encoded) == Ok(doc)
+  assert parse(doc.pretty) == Ok(doc)
+  assert problem_at(
+    "{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\":9,\"j\":10,\"k\":11,\"l\":12,\"m\":13,\"n\":14,\"o\":15,\"p\":16,\"q\":17,\"r\":18,\"c\":19}"
+  ) == (1, 119, "DuplicateKey(key: \"c\")")
 end

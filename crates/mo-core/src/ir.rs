@@ -4,8 +4,8 @@
 use mo_base::Span;
 use mo_def::core_ops::{
     CoreBase, CoreBigOp, CoreByteOp, CoreBytesOp, CoreCharOp, CoreCmpOp, CoreCryptoOp, CoreDecOp,
-    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp,
-    CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
+    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreJsonOp, CoreListNullaryOp, CoreMapNullaryOp,
+    CoreRangeOp, CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
 };
 
 /// Arena index for a [`Ty`] node.
@@ -450,6 +450,7 @@ pub enum Prim {
     Range(CoreRangeOp),
     Unicode16(CoreUnicodeOp),
     Crypto(CoreCryptoOp),
+    Json(CoreJsonOp),
     Sim(SimOp),
     Time(CoreTimeOp),
     List { ty: TyId, op: ListOp },

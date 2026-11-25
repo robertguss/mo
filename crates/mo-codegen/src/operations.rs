@@ -4,8 +4,8 @@
 use mo_core::{IoOp, ListOp, MapOp, Prim};
 use mo_def::core_ops::{
     CoreBase, CoreBigOp, CoreByteOp, CoreBytesOp, CoreCharOp, CoreCmpOp, CoreCryptoOp, CoreDecOp,
-    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreListNullaryOp, CoreMapNullaryOp, CoreRangeOp,
-    CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
+    CoreFloatOp, CoreIntOp, CoreIoNullaryOp, CoreJsonOp, CoreListNullaryOp, CoreMapNullaryOp,
+    CoreRangeOp, CoreSetOp, CoreTextOp, CoreTimeOp, CoreUnicodeOp,
 };
 use mo_def::{HostOpId, Opcode, PrimId};
 
@@ -411,6 +411,10 @@ pub fn resolve_operation(prim: &Prim) -> Option<Operation> {
             CoreCryptoOp::OpenRaw => PrimId::CryptoOpenRaw,
             CoreCryptoOp::HashPasswordRaw => PrimId::CryptoHashPasswordRaw,
             CoreCryptoOp::VerifyPassword => PrimId::CryptoVerifyPassword,
+        },
+        Prim::Json(op) => match op {
+            CoreJsonOp::QuoteRaw => PrimId::JsonQuoteRaw,
+            CoreJsonOp::ParseRaw => PrimId::JsonParseRaw,
         },
         Prim::Range(op) => match op {
             CoreRangeOp::Make => {

@@ -1143,6 +1143,14 @@ def sqliteTy (ok : Ty) : Ty := .result ok .sqliteError
   stops program (prim (.crypto .sha256) [.lit (.bytes [])]) tBytes
     (.outside "Crypto is a trusted primitive unavailable in mocore")
 
+#guard Text.exprRoundTrip (prim (.json .quoteRaw) [str "hi"]) &&
+  Text.exprRoundTrip (prim (.json .parseRaw) [str "{}"]) &&
+  typedAs? program [] (prim (.json .quoteRaw) [str "hi"]) tText &&
+  typedAs? program [] (prim (.json .parseRaw) [str "{}"])
+    (.result (.tuple [.list .int, .list .text]) (.tuple [.int, .int, .int, .text])) &&
+  stops program (prim (.json .quoteRaw) [str "hi"]) tText
+    (.outside "Json is a trusted primitive unavailable in mocore")
+
 #guard Text.exprRoundTrip (io .secureRandomBytes [v "r", int 16]) &&
   Text.exprRoundTrip (io .secureRandomSeeded [int 42]) &&
   typedAs? program [("r", tCap .secureRandom)] (io .secureRandomBytes [v "r", int 16]) tBytes &&

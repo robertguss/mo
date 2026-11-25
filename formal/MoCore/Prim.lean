@@ -890,6 +890,7 @@ def Prim.eval (p : Prim) (vs : List Value) (w : World)
   | .bytes op, vs, w => evalBytesOp op vs w
   | .unicode16 _, _, w => outside "Unicode16 is a trusted primitive unavailable in mocore" w
   | .crypto _, _, w => outside "Crypto is a trusted primitive unavailable in mocore" w
+  | .json _, _, w => outside "Json is a trusted primitive unavailable in mocore" w
   | .sim _, _, w => outside "Simulation is not modeled by mocore" w
   | .range op, vs, w => evalRangeOp op vs w
   | .time op, vs, w => evalTimeOp op vs w

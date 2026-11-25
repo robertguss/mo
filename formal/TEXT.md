@@ -74,7 +74,9 @@ effects; `secureRandomSeeded` is spec-only. The twelve binary `Files` /
 `Files binary handles are not modeled by mocore`, keeping prior effects;
 `Files.File` (`(file)`) is never a parameter of the entry function. The
 `(crypto CryptoOp)` primitives stop with
-`Crypto is a trusted primitive unavailable in mocore`.
+`Crypto is a trusted primitive unavailable in mocore`, and the
+`(json JsonOp)` primitives stop with
+`Json is a trusted primitive unavailable in mocore`.
 
 ### Earlier changes from 0.9
 
@@ -452,7 +454,7 @@ bindings, and an absent span. The other Lean-written fixtures use `noSource`.
 P := (int IntOp) | (big BigOp) | (byte ByteOp) | (dec DecOp)
    | (float FloatOp) | (not) | (cmp Base CmpOp) | (char CharOp)
    | (text TextOp) | (bytes BytesOp) | (range RangeOp) | (time TimeOp)
-   | (unicode16 UnicodeOp) | (crypto CryptoOp)
+   | (unicode16 UnicodeOp) | (crypto CryptoOp) | (json JsonOp)
    | (list T ListOp) | (map T T MapOp) | (set T SetOp) | (eq T)
    | (structural T) | (io IoOp)
 ```
