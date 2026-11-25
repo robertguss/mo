@@ -121,7 +121,9 @@ def ioOps : List (String × IoOp) :=
    ("secureRandomBytes", .secureRandomBytes), ("secureRandomSeeded", .secureRandomSeeded),
    ("writeBytes", .writeBytes), ("rename", .rename), ("fileOpen", .fileOpen),
    ("fileReadAt", .fileReadAt), ("fileWriteAt", .fileWriteAt), ("fileSize", .fileSize),
-   ("fileTruncate", .fileTruncate), ("fileSync", .fileSync)]
+   ("fileTruncate", .fileTruncate), ("fileSync", .fileSync),
+   ("fileLockShared", .fileLockShared), ("fileLockExclusive", .fileLockExclusive),
+   ("fileUnlock", .fileUnlock), ("readFileOpen", .readFileOpen)]
 def ioOut : IoOp → Sexp
   | .readText ro => tag "readText" [boolean ro]
   | .readBytes ro => tag "readBytes" [boolean ro]

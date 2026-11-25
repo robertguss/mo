@@ -245,3 +245,76 @@ end
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn cli_help_flags_and_serve_root_hint() {
+    // Top-level --help and -h exit 0 and print usage + subcommands.
+    for flag in ["--help", "-h"] {
+        let cli = parse_cli(&argv(&["mo", flag])).expect("top-level help");
+        assert!(cli.help);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        assert_eq!(execute_cli(&cli, &mut out, &mut err), 0);
+        assert!(err.is_empty());
+        let text = String::from_utf8(out).expect("utf8 help");
+        assert!(text.contains("usage: mo <command>"), "{text}");
+        assert!(text.contains("serve"), "{text}");
+        assert!(text.contains("install"), "{text}");
+    }
+
+    // Every subcommand supports --help and -h and exits 0 with accepted flags derived from FLAGS_TABLE.
+    let subcommands = [
+        ("check", "--emit=core|bytecode"),
+        ("run", "--root DIR"),
+        ("test", "--only NAME"),
+        ("format", "--stdin"),
+        ("fix", "--lib DIR"),
+        ("guide", "--reference"),
+        ("emit", "-o FILE"),
+        ("serve", "--data DIR"),
+        ("fetch", "--admin-socket PATH"),
+        ("push", "--admin-socket PATH"),
+        ("replay", "--failure ID"),
+        ("query", "--max-work N"),
+        ("rehearse", "--candidate FILE"),
+        ("history", "--recover"),
+        ("diff", "--json"),
+        ("install", "--bin-dir DIR"),
+    ];
+    for (cmd, expected_flag) in subcommands {
+        for flag in ["--help", "-h"] {
+            let cli = parse_cli(&argv(&["mo", cmd, flag])).expect("subcommand help");
+            assert!(cli.help, "cmd={cmd} flag={flag}");
+            let mut out = Vec::new();
+            let mut err = Vec::new();
+            assert_eq!(execute_cli(&cli, &mut out, &mut err), 0);
+            assert!(err.is_empty());
+            let text = String::from_utf8(out).expect("utf8 help");
+            assert!(
+                text.contains(&format!("usage: mo {cmd}")),
+                "cmd={cmd} text={text}"
+            );
+            assert!(text.contains(expected_flag), "cmd={cmd} text={text}");
+        }
+    }
+
+    // `mo run app.mo --help` still forwards --help to the program's Args capability.
+    let run_cli = parse_cli(&argv(&["mo", "run", "app.mo", "--help"])).expect("run with arg");
+    assert!(!run_cli.help);
+    assert_eq!(run_cli.arguments, argv(&["--help"]));
+
+    // `mo serve --root` and `mo serve --state-dir` include a concise one-line hint pointing to `--data DIR`.
+    for wrong in ["--root", "--state-dir"] {
+        let err = parse_cli(&argv(&["mo", "serve", wrong, "/tmp/data", "app.mo"]))
+            .expect_err("serve rejects --root/--state-dir");
+        assert!(
+            err.message.starts_with(&format!(
+                "flag is not accepted by this command: \"{wrong}\""
+            )),
+            "{}",
+            err.message
+        );
+        assert!(err.message.contains("--data DIR"), "{}", err.message);
+        assert!(!err.message.contains('\n'), "{}", err.message);
+    }
+}

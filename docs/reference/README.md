@@ -1055,7 +1055,7 @@ the same arguments, it always gives the same result.
 | `Sqlite.Database` | run SQL statements and queries on one open database |
 | `Command` | run confined external programs inside one folder (with `use Command`) |
 | `SecureRandom` | draw cryptographically secure random bytes |
-| `Files.File` | read, write, resize and sync bytes at arbitrary offsets on one open file |
+| `Files.File` | read, write, resize, sync and lock bytes at arbitrary offsets on one open file |
 
 ### 11.2 main
 
@@ -1063,7 +1063,7 @@ the same arguments, it always gives the same result.
 of each type. The runtime hands over exactly those, so a program's whole
 authority is on its first line. The `Files`, `ReadFiles`, `Sqlite` or `Command` it gets reach the
 folder the program was started in. `main` can't list a `Connection`, a `Sqlite.Database`
-or a `Files.File`: a program gets them only from a `Network`, a `Sqlite` or a `Files`.
+or a `Files.File`: a program gets them only from a `Network`, a `Sqlite`, a `Files` or a `ReadFiles`.
 
 `main` returns nothing, and the program exits with status 0; or an `Int`, the
 exit status, from 0 to 255; or `Result(Unit, E)`, where `Error(e)` prints `e`'s
@@ -2010,7 +2010,7 @@ if the folder already exists. `write_bytes`, `rename` and `open` refuse any
 symbolic link (final or intermediate) with `Error(NotAllowed(path: path))` and
 sync the parent folder on creation or rename.
 **Files.File** is an open random-access binary file capability returned by
-`Files.open`, closed when dropped. Up to 64 files may be open at once; opening
+`Files.open` or `ReadFiles.open`, closed when dropped. Up to 64 files may be open at once; opening
 another is a bug (13.2). `read_at(offset: Int, count: Int) : Result(Bytes, FileError)`
 reads up to `count` bytes starting at `offset` (giving shorter or empty `Bytes`
 at or past the end; a negative `offset`, negative `count`, or `count` above
@@ -2020,6 +2020,14 @@ end (a negative `offset` is a bug). `size : Result(Int, FileError)` gives the
 current byte length. `truncate(size: Int) : Result(Unit, FileError)` shrinks or
 zero-extends the file to `size` bytes (a negative `size` is a bug).
 `sync : Result(Unit, FileError)` flushes the file's bytes to durable storage.
+`lock_shared : Result(Unit, FileError)`, `lock_exclusive : Result(Unit, FileError)`
+and `unlock : Result(Unit, FileError)` acquire and release advisory file locks bound
+to the open handle (BSD `flock` on real files, released automatically when the handle
+is dropped; in-memory fakes return `Error(Failed(path: path, reason: ...))` on
+conflicting handles instead of deadlocking, and `unlock` succeeds on an unlocked
+handle). On a read-only handle returned by `ReadFiles.open`, `write_at`, `truncate`,
+`sync` and `lock_exclusive` return `Error(NotAllowed(path: path))` without touching
+the file, while `read_at`, `size`, `lock_shared` and `unlock` work normally.
 `entries(folder: Text) : Result(List(Entry), FileError)` gives the folder's
 entries in `list`'s order, each an `Entry(name: Text, kind: EntryKind)` whose
 kind is `File`, `Folder`, `Link` or `Other`; a link is reported, never
@@ -2038,7 +2046,7 @@ directly inside a folder, each subfolder once. Files that make one path both a
 file and a folder, as `{"a": "x", "a/b": "y"}` do, are a bug (13.2).
 So are keys that aren't plain relative paths, such as `"/a"`, `"./a"`, `"a/"` or `"a//b"`.
 **ReadFiles** has `read_text`,
-`read_bytes`, `list`, `entries`, `walk`, `exists?` and `within`. Paths are relative and use `/`; `"."` is the capability's own
+`read_bytes`, `open` (opening an existing confined regular file read-only as a `Files.File`, giving `Error(NotFound(path: path))` if missing), `list`, `entries`, `walk`, `exists?` and `within`. Paths are relative and use `/`; `"."` is the capability's own
 folder, and no path can leave it. Given a path that would leave the folder,
 such as `"../a.txt"`, reading, writing, removing and listing give
 `Error(NotAllowed(path: path))`, and `exists?` gives `false`. Calling `within` with

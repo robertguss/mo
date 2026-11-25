@@ -242,7 +242,7 @@ rule	accepts	refuses	stops	gap	drivers	cost	untestable
 14/15	ref-time			
 14/16	cap-args-list,ref-capability-fakes			
 14/17	cap-console-streams,cap-console-line-endings,cap-console-stdin,cap-console-fake,cap-console-stdin-invalid	e0098-printed		
-14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape,cap-files-binary	tst-fake-files-bugs			crates/mo-host/src/lib.rs:real_files_confinement_symlinks_and_limits,crates/mo-host/src/lib.rs:fake_files_and_file_handles_parity
+14/18	cap-files-fake,cap-files-fake-folders,cap-files-read,cap-files-walk,cap-files-within-escape,cap-files-binary,cap-files-locks-readonly	tst-fake-files-bugs			crates/mo-host/src/lib.rs:real_files_confinement_symlinks_and_limits,crates/mo-host/src/lib.rs:fake_files_and_file_handles_parity,crates/mo-host/src/lib.rs:fake_file_locks_and_readfiles_open,crates/mo-host/src/lib.rs:real_readfiles_open_and_attenuation,crates/mo-host/src/lib.rs:real_flock_multithreaded_and_drop_release
 14/19	fail-option-result-map,fail-result-declared,fail-file-error-forms,txt-invalid-utf8-file,cap-files-within-escape	fail-main-result-error		
 14/20	cap-clock-fixed,cap-args-list,ref-capability-fakes				crates/mo-host/src/lib.rs:clock_random_and_secure_random_parity		No program can move the system clock outside the years 1 to 9999; Clock.fixed, Clock.sleep, Args, Env and Random fakes are asserted.
 14/21	cap-network-fake,cap-network-forms		fail-bug-network-port		crates/mo-host/src/slice1d_tests.rs:network_real_tcp_allowlist_limits_and_fake_parity

@@ -1,0 +1,4 @@
+passed Main.test.1  tests/golden/cap-files-locks-readonly/main.mo:42:1
+passed Main.test.2  tests/golden/cap-files-locks-readonly/main.mo:65:1
+passed Main.test.3  tests/golden/cap-files-locks-readonly/main.mo:84:1
+3 passed, 0 failed, 0 stopped

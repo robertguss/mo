@@ -36,6 +36,7 @@ pub enum Command {
     Diff = 14,
     Install = 15,
     Version = 16,
+    Help = 17,
 }
 
 impl Command {
@@ -63,7 +64,8 @@ impl Command {
             | Self::Serve
             | Self::Fetch
             | Self::Install
-            | Self::Version => None,
+            | Self::Version
+            | Self::Help => None,
         }
     }
 
@@ -88,6 +90,7 @@ impl Command {
             Self::Diff => "diff",
             Self::Install => "install",
             Self::Version => "--version",
+            Self::Help => "--help",
         }
     }
 }
@@ -108,6 +111,7 @@ pub enum EmitKind {
 #[derive(Debug, Clone)]
 pub struct Cli {
     pub command: Command,
+    pub help: bool,
     pub json: bool,
     pub list: bool,
     pub reference: bool,
@@ -165,6 +169,7 @@ impl Default for Cli {
     fn default() -> Self {
         Self {
             command: Command::Check,
+            help: false,
             json: false,
             list: false,
             reference: false,
@@ -1167,6 +1172,12 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
         return Ok(out);
     }
 
+    if command == b"--help" || command == b"-h" {
+        out.command = Command::Help;
+        out.help = true;
+        return Ok(out);
+    }
+
     if command == b"fetch" {
         out.command = Command::Fetch;
         let mut seen_socket = false;
@@ -1178,6 +1189,10 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
         while i < argv.len() {
             let arg = argv[i].as_slice();
             check_option_budget(arg, &mut count, &mut total)?;
+            if arg == b"--help" || arg == b"-h" {
+                out.help = true;
+                return Ok(out);
+            }
             if arg == b"--admin-socket" && !seen_socket && i + 1 < argv.len() {
                 seen_socket = true;
                 i += 1;
@@ -1265,6 +1280,10 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
         }
         if flags && arg.first() == Some(&b'-') {
             check_option_budget(arg, &mut count, &mut total)?;
+            if arg == b"--help" || arg == b"-h" {
+                out.help = true;
+                return Ok(out);
+            }
             let Some(spec) = FLAGS_TABLE.iter().find(|spec| {
                 if spec.prefix {
                     arg.starts_with(spec.name)
@@ -1275,11 +1294,13 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
                 return Err(refuse("unknown flag", Some(arg), None));
             };
             if (spec.commands & out.command.bit()) == 0 {
-                return Err(refuse(
-                    "flag is not accepted by this command",
-                    Some(arg),
-                    None,
-                ));
+                let mut err = refuse("flag is not accepted by this command", Some(arg), None);
+                if out.command == Command::Serve
+                    && matches!(spec.id, FlagId::Root | FlagId::StateDir)
+                {
+                    push_bounded(&mut err.message, " (hint: mo serve uses --data DIR)");
+                }
+                return Err(err);
             }
             let bit = spec.id.bit();
             if !spec.repeated && (seen & bit) != 0 {
@@ -1571,4 +1592,239 @@ pub fn parse_cli(argv: &[Vec<u8>]) -> Result<Cli, CliParseError> {
         out.calls
     };
     Ok(out)
+}
+
+fn flag_help_meta(id: FlagId) -> (&'static str, &'static str) {
+    match id {
+        FlagId::Json => ("", "emit newline-delimited JSON output"),
+        FlagId::List => (
+            "",
+            "list selected tests, promises, and examples without running them",
+        ),
+        FlagId::Reference => (
+            "",
+            "print the Mo Language Reference instead of the agent guide",
+        ),
+        FlagId::Only => ("NAME", "run only checks matching NAME (repeatable)"),
+        FlagId::In => ("MODULE", "run only checks declared in MODULE"),
+        FlagId::MaxStack => ("BYTES", "VM stack limit (e.g. 8MiB)"),
+        FlagId::MaxDepth => ("N", "VM call depth limit"),
+        FlagId::MaxHeap => ("BYTES", "VM heap limit (e.g. 1GiB)"),
+        FlagId::Calls => (
+            "N",
+            "maximum inputs/sequences per promise or recovery check",
+        ),
+        FlagId::Seconds => ("N", "time budget per promise in seconds"),
+        FlagId::Output => ("FILE", "output bytecode file path"),
+        FlagId::Port => ("N", "TCP port to listen on (0..65535)"),
+        FlagId::Data => (
+            "DIR",
+            "data/root directory for server files, state, and SQLite",
+        ),
+        FlagId::AllowHost => (
+            "HOST",
+            "additional allowed HTTP Host header for service requests",
+        ),
+        FlagId::Emit => (
+            "core|bytecode",
+            "print lowered Mo Core or disassembled bytecode",
+        ),
+        FlagId::Failure => ("ID", "recorded failure record ID"),
+        FlagId::Export => ("FILE", "MOEX state/failure export artifact path"),
+        FlagId::Fix => ("FILE", "revised source file to replay against"),
+        FlagId::Recover => (
+            "",
+            "reconstruct state from recovery log instead of snapshot",
+        ),
+        FlagId::MaxWork => ("N", "maximum query VM work steps"),
+        FlagId::Bundle => ("", "treat FILE as a service source bundle"),
+        FlagId::UpgradeFrom => (
+            "FILE",
+            "check upgrade compatibility from an existing source file",
+        ),
+        FlagId::OldBundle => ("FILE", "previous service source bundle"),
+        FlagId::Migrate => ("MOD.FN", "migration function for state upgrade"),
+        FlagId::Upgrade => ("", "upgrade saved service state on startup"),
+        FlagId::Adopt => ("", "adopt existing service data directory"),
+        FlagId::Unconfined => ("", "disable child confinement where unavailable"),
+        FlagId::Context => ("FILE", "recorded compile context file"),
+        FlagId::Artifact => ("FILE", "MOEX state export artifact file"),
+        FlagId::Candidate => ("FILE", "candidate source file to rehearse"),
+        FlagId::AdminSocket => ("PATH", "Unix domain socket path for operator/admin tools"),
+        FlagId::Base => ("DIGEST", "expected active program source digest"),
+        FlagId::Strength => (
+            "DIR",
+            "directory of wrong versions for intent strength measurement",
+        ),
+        FlagId::Mutants => ("", "run mutation checks after all tests pass"),
+        FlagId::Lib => ("DIR", "override embedded standard library with DIR"),
+        FlagId::Root => ("DIR", "starting folder for Files, ReadFiles, and Command"),
+        FlagId::StateDir => ("DIR", "separate folder for Sqlite databases"),
+        FlagId::Name => ("NAME", "installed launcher executable name"),
+        FlagId::BinDir => ("DIR", "destination directory for installed launcher"),
+        FlagId::Stdin => (
+            "",
+            "read Mo source from stdin and write formatted source to stdout",
+        ),
+        FlagId::Bind => (
+            "HOST",
+            "IPv4 bind address for api servers (default 127.0.0.1)",
+        ),
+        FlagId::Workers => (
+            "N",
+            "worker thread count for api servers (1..64, default 8)",
+        ),
+        FlagId::Watch => ("", "reload modified .mo modules automatically"),
+        FlagId::Tests => ("", "emit bytecode including test functions"),
+        FlagId::ConfineChild => ("", "confine internal compile child process"),
+        FlagId::RlimitChild => (
+            "",
+            "apply resource limits to internal compile child process",
+        ),
+    }
+}
+
+fn command_help_summary(command: Command) -> (&'static str, &'static str) {
+    match command {
+        Command::Check => (
+            "usage: mo check [FLAGS] FILE",
+            "Check a Mo program for syntax, type, and rule errors.",
+        ),
+        Command::Run => (
+            "usage: mo run [FLAGS] FILE [ARGS...]",
+            "Compile and run a Mo program or emitted bytecode file.",
+        ),
+        Command::Test => (
+            "usage: mo test [FLAGS] FILE",
+            "Run examples, promises, tests, and service/actor recovery checks.",
+        ),
+        Command::Format => (
+            "usage: mo format [--stdin | FILE...]",
+            "Format Mo source files in place (or stdin to stdout).",
+        ),
+        Command::Fix => (
+            "usage: mo fix [FLAGS] FILE...",
+            "Apply unambiguous compiler fixes to Mo source files.",
+        ),
+        Command::Guide => (
+            "usage: mo guide [--reference]",
+            "Print the embedded Mo agent guide or Language Reference.",
+        ),
+        Command::Emit => (
+            "usage: mo emit [FLAGS] FILE -o FILE",
+            "Compile a Mo program to verified bytecode.",
+        ),
+        Command::Serve => (
+            "usage: mo serve [FLAGS] [FILE]",
+            "Serve an api HTTP server or persistent service (use --data DIR for files/state).",
+        ),
+        Command::Fetch => (
+            "usage: mo fetch --admin-socket PATH --export state|failure ID --out FILE",
+            "Fetch a verified state or failure export from a running service.",
+        ),
+        Command::Push => (
+            "usage: mo push FILE --admin-socket PATH [FLAGS]",
+            "Push a live upgrade to a running service.",
+        ),
+        Command::Replay => (
+            "usage: mo replay [FILE] --failure ID (--data DIR | --export FILE) [FLAGS]",
+            "Replay a recorded service failure offline.",
+        ),
+        Command::Query => (
+            "usage: mo query FILE FUNCTION (--data DIR --failure ID | --export FILE | --admin-socket PATH) [FLAGS]",
+            "Run a pure query function against service state or a failure record.",
+        ),
+        Command::Rehearse => (
+            "usage: mo rehearse --artifact FILE --old-bundle FILE --candidate FILE [FLAGS]",
+            "Rehearse a service upgrade offline against an exported state artifact.",
+        ),
+        Command::History => (
+            "usage: mo history [FLAGS] DIR",
+            "Inspect saved service history in a stopped data directory.",
+        ),
+        Command::Diff => (
+            "usage: mo diff [FLAGS] [OLD] NEW",
+            "Check authority, wire, state, and contract changes between revisions.",
+        ),
+        Command::Install => (
+            "usage: mo install [FLAGS] FILE",
+            "Compile a Mo program to bytecode and install an executable launcher.",
+        ),
+        Command::Version | Command::Help => (
+            "usage: mo <command> [FLAGS] [ARGS...]",
+            "Pure-Rust Mo compiler, tester, and runtime.",
+        ),
+    }
+}
+
+/// Renders concise `--help` / `-h` usage text for top-level `mo` (`None`) or a subcommand (`Some`),
+/// deriving accepted flags directly from `FLAGS_TABLE`.
+#[must_use]
+pub fn format_help(command: Option<Command>) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    match command {
+        None => {
+            out.push_str("usage: mo <command> [FLAGS] [ARGS...]\n");
+            out.push_str("       mo --version | -V\n");
+            out.push_str("       mo --help | -h\n\n");
+            out.push_str("Commands:\n");
+            const ALL_COMMANDS: &[Command] = &[
+                Command::Check,
+                Command::Run,
+                Command::Test,
+                Command::Format,
+                Command::Fix,
+                Command::Guide,
+                Command::Emit,
+                Command::Serve,
+                Command::Fetch,
+                Command::Push,
+                Command::Replay,
+                Command::Query,
+                Command::Rehearse,
+                Command::History,
+                Command::Diff,
+                Command::Install,
+            ];
+            for &cmd in ALL_COMMANDS {
+                let (_, desc) = command_help_summary(cmd);
+                let _ = writeln!(out, "  {:<10} {desc}", cmd.as_str());
+            }
+            out.push_str("\nRun `mo <command> --help` for accepted flags.\n");
+        }
+        Some(Command::Fetch) => {
+            let (usage, desc) = command_help_summary(Command::Fetch);
+            let _ = writeln!(out, "{usage}\n\n{desc}\n\nFlags:");
+            out.push_str(
+                "  --admin-socket PATH       Unix domain socket path for operator/admin tools\n",
+            );
+            out.push_str("  --export state|failure ID export kind (state or failure ID)\n");
+            out.push_str("  --out FILE                destination artifact path\n");
+            out.push_str("  -h, --help                print this help message\n");
+        }
+        Some(cmd) => {
+            let (usage, desc) = command_help_summary(cmd);
+            let _ = writeln!(out, "{usage}\n\n{desc}\n\nFlags:");
+            let bit = cmd.bit();
+            for spec in FLAGS_TABLE {
+                if (spec.commands & bit) == 0 {
+                    continue;
+                }
+                let name = std::str::from_utf8(spec.name).unwrap_or("");
+                let (placeholder, flag_desc) = flag_help_meta(spec.id);
+                let label = if spec.prefix {
+                    format!("{name}{placeholder}")
+                } else if placeholder.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{name} {placeholder}")
+                };
+                let _ = writeln!(out, "  {label:<25} {flag_desc}");
+            }
+            out.push_str("  -h, --help                print this help message\n");
+        }
+    }
+    out
 }

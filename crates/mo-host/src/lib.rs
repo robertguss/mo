@@ -563,7 +563,7 @@ impl HostContext {
                 clock_random::secure_random_bytes(heap, &args[0], args[1].as_int())
             }
 
-            // Files, ReadFiles, Files.File (26 ops)
+            // Files, ReadFiles, Files.File (30 ops)
             HostOpId::FilesInMemory => {
                 fake_files::files_in_memory(heap, types, result_ty, &args[0])
             }
@@ -586,7 +586,8 @@ impl HostContext {
             | HostOpId::ReadfilesList
             | HostOpId::ReadfilesEntries
             | HostOpId::ReadfilesExists
-            | HostOpId::ReadfilesWithin => {
+            | HostOpId::ReadfilesWithin
+            | HostOpId::ReadfilesOpen => {
                 let folder = downcast_cap::<FolderCap>(&args[0], "Files/ReadFiles capability");
                 match folder {
                     FolderCap::Fake(fake) => fake_files::call_fake_folder(
@@ -616,7 +617,10 @@ impl HostContext {
             | HostOpId::FilesWriteAt
             | HostOpId::FilesSize
             | HostOpId::FilesTruncate
-            | HostOpId::FilesSync => {
+            | HostOpId::FilesSync
+            | HostOpId::FilesLockShared
+            | HostOpId::FilesLockExclusive
+            | HostOpId::FilesUnlock => {
                 let fh = downcast_cap::<OpenFileCap>(&args[0], "Files.File capability");
                 match fh {
                     OpenFileCap::Fake(fake) => {
@@ -1780,6 +1784,863 @@ mod tests {
             drop(files);
             assert_eq!(ctx.open_folders(), 0);
         }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn fake_file_locks_and_readfiles_open() {
+        let fx = HostFixture::new();
+        let heap = Heap::new(16 * 1024 * 1024);
+        let mut ctx = HostContext::with_io(Vec::new(), Vec::new(), &[][..], Vec::new(), Vec::new());
+
+        let mut init_map = MoMap::new(fx.text, fx.text);
+        init_map.set(
+            &fx.types,
+            heap.hash_key(),
+            heap.alloc_text("sub/data.bin".into()).unwrap(),
+            heap.alloc_text("abcdef".into()).unwrap(),
+        );
+        let mv = heap.alloc_map(init_map).unwrap();
+        let files = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesInMemory,
+                fx.files_cap,
+                &[mv],
+            )
+            .unwrap();
+        let ro = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesReadOnly,
+                fx.readfiles_cap,
+                std::slice::from_ref(&files),
+            )
+            .unwrap();
+
+        // ReadFiles.open error cases: missing (never creates), escape, folder.
+        let p_missing = heap.alloc_text("missing.bin".into()).unwrap();
+        let r_missing = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ReadfilesOpen,
+                fx.res_file,
+                &[ro.clone(), p_missing.clone()],
+            )
+            .unwrap();
+        assert_eq!(
+            value_print(&fx.types, fx.res_file, &r_missing),
+            "Error(NotFound(path: \"missing.bin\"))"
+        );
+        let exists_missing = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ReadfilesExists,
+                fx.text, // ignored for Bool
+                &[ro.clone(), p_missing],
+            )
+            .unwrap();
+        assert!(!exists_missing.as_bool());
+
+        let p_escape = heap.alloc_text("../escape.bin".into()).unwrap();
+        let r_escape = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ReadfilesOpen,
+                fx.res_file,
+                &[ro.clone(), p_escape],
+            )
+            .unwrap();
+        assert_eq!(
+            value_print(&fx.types, fx.res_file, &r_escape),
+            "Error(NotAllowed(path: \"../escape.bin\"))"
+        );
+
+        let p_dir = heap.alloc_text("sub".into()).unwrap();
+        let r_dir = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ReadfilesOpen,
+                fx.res_file,
+                &[ro.clone(), p_dir],
+            )
+            .unwrap();
+        assert_eq!(
+            value_print(&fx.types, fx.res_file, &r_dir),
+            "Error(Failed(path: \"sub\", reason: \"is a folder\"))"
+        );
+
+        // Open one read-only handle and two writable handles to the same file.
+        let p_data = heap.alloc_text("sub/data.bin".into()).unwrap();
+        let ro_open = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::ReadfilesOpen,
+                fx.res_file,
+                &[ro.clone(), p_data.clone()],
+            )
+            .unwrap();
+        assert_eq!(ro_open.as_tag(), 0);
+        let ro_fh = heap.extract_case_field(&fx.types, fx.res_file, &ro_open, 0, 0);
+
+        // Read-only handle allows read_at, size, lock_shared, unlock; refuses mutations & lock_exclusive.
+        let sz = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesSize,
+                fx.res_int,
+                std::slice::from_ref(&ro_fh),
+            )
+            .unwrap();
+        assert_eq!(value_print(&fx.types, fx.res_int, &sz), "Ok(6)");
+        let rd = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesReadAt,
+                fx.res_bytes,
+                &[ro_fh.clone(), Value::Int(1), Value::Int(3)],
+            )
+            .unwrap();
+        assert_eq!(
+            heap.extract_case_field(&fx.types, fx.res_bytes, &rd, 0, 0)
+                .as_bytes(),
+            b"bcd"
+        );
+        let payload = heap.alloc_bytes(vec![1, 2]).unwrap();
+        for (op, args) in [
+            (
+                HostOpId::FilesWriteAt,
+                vec![ro_fh.clone(), Value::Int(0), payload],
+            ),
+            (HostOpId::FilesTruncate, vec![ro_fh.clone(), Value::Int(2)]),
+            (HostOpId::FilesSync, vec![ro_fh.clone()]),
+            (HostOpId::FilesLockExclusive, vec![ro_fh.clone()]),
+        ] {
+            let res = ctx.call(&heap, &fx.types, op, fx.res_unit, &args).unwrap();
+            assert_eq!(
+                value_print(&fx.types, fx.res_unit, &res),
+                "Error(NotAllowed(path: \"sub/data.bin\"))",
+                "op={op:?}"
+            );
+        }
+
+        // Unlocking an unlocked handle succeeds.
+        let un_idle = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesUnlock,
+                fx.res_unit,
+                std::slice::from_ref(&ro_fh),
+            )
+            .unwrap();
+        assert_eq!(value_print(&fx.types, fx.res_unit, &un_idle), "Ok(Unit)");
+
+        // Shared concurrency + exclusive conflict + upgrade + downgrade + drop auto-unlock.
+        let rw1_open = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesOpen,
+                fx.res_file,
+                &[files.clone(), p_data.clone()],
+            )
+            .unwrap();
+        let rw1 = heap.extract_case_field(&fx.types, fx.res_file, &rw1_open, 0, 0);
+        let rw2_open = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesOpen,
+                fx.res_file,
+                &[files.clone(), p_data.clone()],
+            )
+            .unwrap();
+        let rw2 = heap.extract_case_field(&fx.types, fx.res_file, &rw2_open, 0, 0);
+
+        // Two handles can hold lock_shared concurrently.
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockShared,
+                    fx.res_unit,
+                    std::slice::from_ref(&ro_fh),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockShared,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw1),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        // Exclusive fails while another handle holds shared.
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockExclusive,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw1),
+                )
+                .unwrap()
+            ),
+            "Error(Failed(path: \"sub/data.bin\", reason: \"file is locked\"))"
+        );
+        // Dropping ro_fh releases its shared lock so rw1 can upgrade to exclusive!
+        drop(ro_fh);
+        drop(ro_open);
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockExclusive,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw1),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        // Re-locking exclusive on same handle is idempotent.
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockExclusive,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw1),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        // Another handle cannot acquire shared or exclusive while rw1 holds exclusive.
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockShared,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw2),
+                )
+                .unwrap()
+            ),
+            "Error(Failed(path: \"sub/data.bin\", reason: \"file is locked exclusively\"))"
+        );
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockExclusive,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw2),
+                )
+                .unwrap()
+            ),
+            "Error(Failed(path: \"sub/data.bin\", reason: \"file is locked\"))"
+        );
+        // Downgrade rw1 exclusive -> shared lets rw2 also acquire shared.
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockShared,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw1),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockShared,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw2),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        // Unlock rw2, re-lock rw1 exclusive, then drop rw1 without unlock -> rw2 can lock exclusive.
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesUnlock,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw2),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockExclusive,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw1),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        drop(rw1);
+        drop(rw1_open);
+        assert_eq!(
+            value_print(
+                &fx.types,
+                fx.res_unit,
+                &ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesLockExclusive,
+                    fx.res_unit,
+                    std::slice::from_ref(&rw2),
+                )
+                .unwrap()
+            ),
+            "Ok(Unit)"
+        );
+        drop(rw2);
+        drop(rw2_open);
+        assert_eq!(ctx.open_files(), 0);
+
+        // Enforce MO_LIMIT_OPEN_FILES on ReadFiles.open too.
+        let mut ro_handles = Vec::new();
+        for _ in 0..MO_LIMIT_OPEN_FILES {
+            let r = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::ReadfilesOpen,
+                    fx.res_file,
+                    &[ro.clone(), p_data.clone()],
+                )
+                .unwrap();
+            ro_handles.push(r);
+        }
+        assert_eq!(
+            ctx.call(
+                &heap,
+                &fx.types,
+                HostOpId::ReadfilesOpen,
+                fx.res_file,
+                &[ro, p_data],
+            )
+            .err(),
+            Some(HostError::Bug {
+                reason: "too many files open at once",
+                detail: None
+            })
+        );
+        ro_handles.clear();
+        assert_eq!(ctx.open_files(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_readfiles_open_and_attenuation() {
+        use std::os::unix::fs::symlink;
+        let fx = HostFixture::new();
+        let heap = Heap::new(16 * 1024 * 1024);
+
+        let base = std::env::temp_dir().join(format!(
+            "mo-rust-ro-open-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.bin"), b"secret").unwrap();
+        std::fs::write(root.join("data.bin"), b"0123456789").unwrap();
+        symlink("../outside/secret.bin", root.join("escape_rel")).unwrap();
+        symlink("/etc/hosts", root.join("escape_abs")).unwrap();
+
+        for force_fallback in [false, true] {
+            let mut ctx =
+                HostContext::stdio_with_root(Vec::new(), Vec::new(), Some(&root)).unwrap();
+            ctx.set_force_fallback(force_fallback);
+            let ro = ctx
+                .make_real_capability(&heap, &fx.types, fx.readfiles_cap)
+                .unwrap();
+
+            let open_str = |ctx: &mut HostContext, path: &str| -> String {
+                let p = heap.alloc_text(path.into()).unwrap();
+                let res = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::ReadfilesOpen,
+                        fx.res_file,
+                        &[ro.clone(), p],
+                    )
+                    .unwrap();
+                value_print(&fx.types, fx.res_file, &res)
+            };
+
+            assert_eq!(
+                open_str(&mut ctx, "missing.bin"),
+                "Error(NotFound(path: \"missing.bin\"))"
+            );
+            assert!(!root.join("missing.bin").exists());
+            assert_eq!(
+                open_str(&mut ctx, "../outside/secret.bin"),
+                "Error(NotAllowed(path: \"../outside/secret.bin\"))"
+            );
+            assert_eq!(
+                open_str(&mut ctx, "escape_rel"),
+                "Error(NotAllowed(path: \"escape_rel\"))"
+            );
+            assert_eq!(
+                open_str(&mut ctx, "escape_abs"),
+                "Error(NotAllowed(path: \"escape_abs\"))"
+            );
+            assert_eq!(
+                open_str(&mut ctx, "dir"),
+                "Error(Failed(path: \"dir\", reason: \"is a folder\"))"
+            );
+
+            let p_ok = heap.alloc_text("data.bin".into()).unwrap();
+            let opened = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::ReadfilesOpen,
+                    fx.res_file,
+                    &[ro.clone(), p_ok.clone()],
+                )
+                .unwrap();
+            assert_eq!(opened.as_tag(), 0);
+            let fh = heap.extract_case_field(&fx.types, fx.res_file, &opened, 0, 0);
+            assert_eq!(ctx.open_files(), 1);
+
+            // Allowed operations: size, read_at, lock_shared, unlock.
+            let sz = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesSize,
+                    fx.res_int,
+                    std::slice::from_ref(&fh),
+                )
+                .unwrap();
+            assert_eq!(value_print(&fx.types, fx.res_int, &sz), "Ok(10)");
+            let rd = ctx
+                .call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::FilesReadAt,
+                    fx.res_bytes,
+                    &[fh.clone(), Value::Int(2), Value::Int(4)],
+                )
+                .unwrap();
+            assert_eq!(
+                heap.extract_case_field(&fx.types, fx.res_bytes, &rd, 0, 0)
+                    .as_bytes(),
+                b"2345"
+            );
+            assert_eq!(
+                value_print(
+                    &fx.types,
+                    fx.res_unit,
+                    &ctx.call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesLockShared,
+                        fx.res_unit,
+                        std::slice::from_ref(&fh),
+                    )
+                    .unwrap()
+                ),
+                "Ok(Unit)"
+            );
+            assert_eq!(
+                value_print(
+                    &fx.types,
+                    fx.res_unit,
+                    &ctx.call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesUnlock,
+                        fx.res_unit,
+                        std::slice::from_ref(&fh),
+                    )
+                    .unwrap()
+                ),
+                "Ok(Unit)"
+            );
+            // Unlocking an already-unlocked handle succeeds.
+            assert_eq!(
+                value_print(
+                    &fx.types,
+                    fx.res_unit,
+                    &ctx.call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesUnlock,
+                        fx.res_unit,
+                        std::slice::from_ref(&fh),
+                    )
+                    .unwrap()
+                ),
+                "Ok(Unit)"
+            );
+
+            // Refused operations: write_at, truncate, sync, lock_exclusive.
+            let bytes = heap.alloc_bytes(b"XXXX".to_vec()).unwrap();
+            for (op, args) in [
+                (
+                    HostOpId::FilesWriteAt,
+                    vec![fh.clone(), Value::Int(0), bytes],
+                ),
+                (HostOpId::FilesTruncate, vec![fh.clone(), Value::Int(1)]),
+                (HostOpId::FilesSync, vec![fh.clone()]),
+                (HostOpId::FilesLockExclusive, vec![fh.clone()]),
+            ] {
+                let res = ctx.call(&heap, &fx.types, op, fx.res_unit, &args).unwrap();
+                assert_eq!(
+                    value_print(&fx.types, fx.res_unit, &res),
+                    "Error(NotAllowed(path: \"data.bin\"))",
+                    "fallback={force_fallback} op={op:?}"
+                );
+            }
+            assert_eq!(std::fs::read(root.join("data.bin")).unwrap(), b"0123456789");
+            drop(fh);
+            drop(opened);
+            assert_eq!(ctx.open_files(), 0);
+
+            // Open file handle limit enforced.
+            let mut handles = Vec::new();
+            for _ in 0..MO_LIMIT_OPEN_FILES {
+                let r = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::ReadfilesOpen,
+                        fx.res_file,
+                        &[ro.clone(), p_ok.clone()],
+                    )
+                    .unwrap();
+                handles.push(r);
+            }
+            assert_eq!(
+                ctx.call(
+                    &heap,
+                    &fx.types,
+                    HostOpId::ReadfilesOpen,
+                    fx.res_file,
+                    &[ro.clone(), p_ok],
+                )
+                .err(),
+                Some(HostError::Bug {
+                    reason: "too many files open at once",
+                    detail: None
+                })
+            );
+            handles.clear();
+            assert_eq!(ctx.open_files(), 0);
+            drop(ro);
+            assert_eq!(ctx.open_folders(), 0);
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_flock_multithreaded_and_drop_release() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let base = std::env::temp_dir().join(format!(
+            "mo-rust-flock-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("counter.bin"), 0u64.to_be_bytes()).unwrap();
+
+        const THREADS: usize = 8;
+        const ITERS: usize = 25;
+
+        // 1. 8-thread exclusive lock contention: strict mutual exclusion + lost-update-free RMW.
+        let start_barrier = Arc::new(Barrier::new(THREADS));
+        let active_writers = Arc::new(AtomicUsize::new(0));
+        let max_writers = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::with_capacity(THREADS);
+        for _ in 0..THREADS {
+            let dir = base.clone();
+            let barrier = Arc::clone(&start_barrier);
+            let active = Arc::clone(&active_writers);
+            let max_seen = Arc::clone(&max_writers);
+            handles.push(thread::spawn(move || {
+                let fx = HostFixture::new();
+                let heap = Heap::new(8 * 1024 * 1024);
+                let mut ctx =
+                    HostContext::stdio_with_root(Vec::new(), Vec::new(), Some(&dir)).unwrap();
+                let files = ctx
+                    .make_real_capability(&heap, &fx.types, fx.files_cap)
+                    .unwrap();
+                let p = heap.alloc_text("counter.bin".into()).unwrap();
+                let opened = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesOpen,
+                        fx.res_file,
+                        &[files, p],
+                    )
+                    .unwrap();
+                let fh = heap.extract_case_field(&fx.types, fx.res_file, &opened, 0, 0);
+
+                barrier.wait();
+                for _ in 0..ITERS {
+                    let lk = ctx
+                        .call(
+                            &heap,
+                            &fx.types,
+                            HostOpId::FilesLockExclusive,
+                            fx.res_unit,
+                            std::slice::from_ref(&fh),
+                        )
+                        .unwrap();
+                    assert_eq!(lk.as_tag(), 0);
+                    let cur = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_seen.fetch_max(cur, Ordering::SeqCst);
+                    assert_eq!(cur, 1, "exclusive lock violated mutual exclusion");
+
+                    let rd = ctx
+                        .call(
+                            &heap,
+                            &fx.types,
+                            HostOpId::FilesReadAt,
+                            fx.res_bytes,
+                            &[fh.clone(), Value::Int(0), Value::Int(8)],
+                        )
+                        .unwrap();
+                    let raw = heap.extract_case_field(&fx.types, fx.res_bytes, &rd, 0, 0);
+                    let val = u64::from_be_bytes(raw.as_bytes().try_into().unwrap());
+                    thread::yield_now();
+                    let next = heap.alloc_bytes((val + 1).to_be_bytes().to_vec()).unwrap();
+                    let wr = ctx
+                        .call(
+                            &heap,
+                            &fx.types,
+                            HostOpId::FilesWriteAt,
+                            fx.res_unit,
+                            &[fh.clone(), Value::Int(0), next],
+                        )
+                        .unwrap();
+                    assert_eq!(wr.as_tag(), 0);
+
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    let un = ctx
+                        .call(
+                            &heap,
+                            &fx.types,
+                            HostOpId::FilesUnlock,
+                            fx.res_unit,
+                            std::slice::from_ref(&fh),
+                        )
+                        .unwrap();
+                    assert_eq!(un.as_tag(), 0);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(max_writers.load(Ordering::SeqCst), 1);
+        let final_bytes = std::fs::read(base.join("counter.bin")).unwrap();
+        let final_count = u64::from_be_bytes(final_bytes.as_slice().try_into().unwrap());
+        assert_eq!(final_count, (THREADS * ITERS) as u64);
+
+        // 2. 8-thread concurrent lock_shared readers via ReadFiles.open:
+        //    All 8 threads hold lock_shared simultaneously and meet at a barrier before unlocking.
+        let shared_barrier = Arc::new(Barrier::new(THREADS));
+        let mut reader_handles = Vec::with_capacity(THREADS);
+        for _ in 0..THREADS {
+            let dir = base.clone();
+            let barrier = Arc::clone(&shared_barrier);
+            reader_handles.push(thread::spawn(move || {
+                let fx = HostFixture::new();
+                let heap = Heap::new(8 * 1024 * 1024);
+                let mut ctx =
+                    HostContext::stdio_with_root(Vec::new(), Vec::new(), Some(&dir)).unwrap();
+                let ro = ctx
+                    .make_real_capability(&heap, &fx.types, fx.readfiles_cap)
+                    .unwrap();
+                let p = heap.alloc_text("counter.bin".into()).unwrap();
+                let opened = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::ReadfilesOpen,
+                        fx.res_file,
+                        &[ro, p],
+                    )
+                    .unwrap();
+                let fh = heap.extract_case_field(&fx.types, fx.res_file, &opened, 0, 0);
+
+                let lk = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesLockShared,
+                        fx.res_unit,
+                        std::slice::from_ref(&fh),
+                    )
+                    .unwrap();
+                assert_eq!(lk.as_tag(), 0);
+                // If lock_shared were exclusive, this barrier would deadlock.
+                barrier.wait();
+                let rd = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesReadAt,
+                        fx.res_bytes,
+                        &[fh.clone(), Value::Int(0), Value::Int(8)],
+                    )
+                    .unwrap();
+                let raw = heap.extract_case_field(&fx.types, fx.res_bytes, &rd, 0, 0);
+                assert_eq!(
+                    u64::from_be_bytes(raw.as_bytes().try_into().unwrap()),
+                    (THREADS * ITERS) as u64
+                );
+                let un = ctx
+                    .call(
+                        &heap,
+                        &fx.types,
+                        HostOpId::FilesUnlock,
+                        fx.res_unit,
+                        std::slice::from_ref(&fh),
+                    )
+                    .unwrap();
+                assert_eq!(un.as_tag(), 0);
+            }));
+        }
+        for h in reader_handles {
+            h.join().unwrap();
+        }
+
+        // 3. Automatic lock release when RealOpenFile drops without explicit unlock.
+        let fx = HostFixture::new();
+        let heap = Heap::new(8 * 1024 * 1024);
+        let mut ctx = HostContext::stdio_with_root(Vec::new(), Vec::new(), Some(&base)).unwrap();
+        let files = ctx
+            .make_real_capability(&heap, &fx.types, fx.files_cap)
+            .unwrap();
+        let p = heap.alloc_text("counter.bin".into()).unwrap();
+        let opened = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesOpen,
+                fx.res_file,
+                &[files.clone(), p.clone()],
+            )
+            .unwrap();
+        let fh = heap.extract_case_field(&fx.types, fx.res_file, &opened, 0, 0);
+        let lk = ctx
+            .call(
+                &heap,
+                &fx.types,
+                HostOpId::FilesLockExclusive,
+                fx.res_unit,
+                std::slice::from_ref(&fh),
+            )
+            .unwrap();
+        assert_eq!(lk.as_tag(), 0);
+
+        // Verify another open file description cannot acquire a non-blocking flock while fh lives.
+        let probe = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(base.join("counter.bin"))
+            .unwrap();
+        assert_eq!(
+            rustix::fs::flock(&probe, rustix::fs::FlockOperation::NonBlockingLockExclusive),
+            Err(rustix::io::Errno::WOULDBLOCK)
+        );
+        // Drop fh without calling unlock -> OwnedFd closes -> flock releases immediately.
+        drop(fh);
+        drop(opened);
+        assert_eq!(ctx.open_files(), 0);
+        assert_eq!(
+            rustix::fs::flock(&probe, rustix::fs::FlockOperation::NonBlockingLockExclusive),
+            Ok(())
+        );
+        let _ = rustix::fs::flock(&probe, rustix::fs::FlockOperation::Unlock);
+        drop(probe);
+        drop(files);
 
         let _ = std::fs::remove_dir_all(&base);
     }

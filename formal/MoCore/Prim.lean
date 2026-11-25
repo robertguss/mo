@@ -840,7 +840,8 @@ def evalHostIoOp (op : IoOp) (vs : List Value) (w : World) : Outcome :=
   | .secureRandomBytes, _ | .secureRandomSeeded, _ =>
     outside "SecureRandom is not modeled by mocore" w
   | .writeBytes, _ | .rename, _ | .fileOpen, _ | .fileReadAt, _ | .fileWriteAt, _
-  | .fileSize, _ | .fileTruncate, _ | .fileSync, _ =>
+  | .fileSize, _ | .fileTruncate, _ | .fileSync, _
+  | .fileLockShared, _ | .fileLockExclusive, _ | .fileUnlock, _ | .readFileOpen, _ =>
     outside "Files binary handles are not modeled by mocore" w
   | _, _ => wrongArgs "capability primitive"
 

@@ -266,6 +266,34 @@ impl<'a, 'd> Parser<'a, 'd> {
         Ok(())
     }
 
+    fn report_reserved_name(
+        &mut self,
+        code: ErrorCode,
+        note_reserved: bool,
+    ) -> Result<(), ParseAbort> {
+        let kw = self.current.kind.diagnostic_name();
+        let sec = code.section().unwrap_or("");
+        let rule = match code {
+            ErrorCode::SourceFunction => {
+                "A signature gives each parameter's type and uses : before its result"
+            }
+            _ => "Use the declaration or statement's syntax and close its delimiters",
+        };
+        let message = if note_reserved {
+            format!("expected snake_case name, found {kw}; {kw} is a reserved keyword")
+        } else {
+            format!("expected snake_case name, found {kw}")
+        };
+        let reason = format!("{rule} (reference {sec}).");
+        self.lx
+            .error(self.diags, code, self.current.span, &message, Some(&reason));
+        if self.lx.fatal {
+            return Err(ParseAbort);
+        }
+        self.lx.failed = false;
+        Ok(())
+    }
+
     fn enter(&mut self) -> Result<(), ParseAbort> {
         if u64::from(self.depth) == MO_LIMIT_NESTING_DEPTH {
             let at = self.current.span;
@@ -1572,8 +1600,10 @@ impl<'a, 'd> Parser<'a, 'd> {
         ) {
             if matches!(
                 self.current.kind,
-                TokenKind::Struct | TokenKind::Enum | TokenKind::Test | TokenKind::Actor
-            ) || (self.current.kind == TokenKind::Fn && self.peek_next() == TokenKind::Name)
+                TokenKind::Struct | TokenKind::Enum | TokenKind::Test
+            ) || (self.current.kind == TokenKind::Actor
+                && self.peek_next() == TokenKind::CapName)
+                || (self.current.kind == TokenKind::Fn && self.peek_next() == TokenKind::Name)
             {
                 break;
             }
@@ -1621,12 +1651,31 @@ impl<'a, 'd> Parser<'a, 'd> {
                 let params = self.sequence()?;
                 if self.current.kind != TokenKind::RParen {
                     loop {
-                        let v = self.name(TokenKind::Name)?;
-                        let v_span = self.tree.node(v).span;
-                        self.expect(TokenKind::Colon)?;
-                        let ty = self.parse_type()?;
-                        let param = self.node(SyntaxKind::Param, v_span, &[Some(v), Some(ty)])?;
-                        self.append(params, Some(param))?;
+                        if self.current.kind.is_keyword()
+                            && matches!(
+                                self.peek_next(),
+                                TokenKind::Colon | TokenKind::Comma | TokenKind::RParen
+                            )
+                        {
+                            let note_reserved = matches!(
+                                self.current.kind,
+                                TokenKind::Actor | TokenKind::Service | TokenKind::Api
+                            );
+                            self.report_reserved_name(ErrorCode::SourceFunction, note_reserved)?;
+                            self.tree.node_mut(params).incomplete = true;
+                            self.next_tok();
+                            if self.take(TokenKind::Colon) {
+                                let _ = self.parse_type()?;
+                            }
+                        } else {
+                            let v = self.name(TokenKind::Name)?;
+                            let v_span = self.tree.node(v).span;
+                            self.expect(TokenKind::Colon)?;
+                            let ty = self.parse_type()?;
+                            let param =
+                                self.node(SyntaxKind::Param, v_span, &[Some(v), Some(ty)])?;
+                            self.append(params, Some(param))?;
+                        }
                         if !self.take(TokenKind::Comma) || self.current.kind == TokenKind::RParen {
                             break;
                         }
@@ -1795,15 +1844,27 @@ impl<'a, 'd> Parser<'a, 'd> {
         Ok(spec)
     }
 
-    fn member(&mut self, record: bool) -> Result<NodeId, ParseAbort> {
+    fn member(&mut self, record: bool) -> Result<Option<NodeId>, ParseAbort> {
         if record {
+            if self.current.kind.is_keyword()
+                && self.current.kind != TokenKind::End
+                && matches!(self.peek_next(), TokenKind::Colon | TokenKind::Nl)
+            {
+                self.report_reserved_name(ErrorCode::SourceStruct, true)?;
+                self.next_tok();
+                if self.take(TokenKind::Colon) {
+                    let _ = self.parse_type()?;
+                }
+                self.expect(TokenKind::Nl)?;
+                return Ok(None);
+            }
             let field = self.name(TokenKind::Name)?;
             let field_span = self.tree.node(field).span;
             self.expect(TokenKind::Colon)?;
             let ty = self.parse_type()?;
             let n = self.node(SyntaxKind::Field, field_span, &[Some(field), Some(ty)])?;
             self.expect(TokenKind::Nl)?;
-            return Ok(n);
+            return Ok(Some(n));
         }
         let id = self.name(TokenKind::CapName)?;
         let id_span = self.tree.node(id).span;
@@ -1811,15 +1872,32 @@ impl<'a, 'd> Parser<'a, 'd> {
         if self.current.kind == TokenKind::LParen {
             self.enter()?;
             self.next_tok();
-            if self.current.kind == TokenKind::Name {
+            if self.current.kind == TokenKind::Name
+                || (self.current.kind.is_keyword() && self.peek_next() == TokenKind::Colon)
+            {
                 let seq = self.sequence()?;
                 loop {
-                    let field = self.name(TokenKind::Name)?;
-                    let field_span = self.tree.node(field).span;
-                    self.expect(TokenKind::Colon)?;
-                    let ty = self.parse_type()?;
-                    let f = self.node(SyntaxKind::Field, field_span, &[Some(field), Some(ty)])?;
-                    self.append(seq, Some(f))?;
+                    if self.current.kind.is_keyword()
+                        && matches!(
+                            self.peek_next(),
+                            TokenKind::Colon | TokenKind::Comma | TokenKind::RParen
+                        )
+                    {
+                        self.report_reserved_name(ErrorCode::SourceEnum, true)?;
+                        self.tree.node_mut(seq).incomplete = true;
+                        self.next_tok();
+                        if self.take(TokenKind::Colon) {
+                            let _ = self.parse_type()?;
+                        }
+                    } else {
+                        let field = self.name(TokenKind::Name)?;
+                        let field_span = self.tree.node(field).span;
+                        self.expect(TokenKind::Colon)?;
+                        let ty = self.parse_type()?;
+                        let f =
+                            self.node(SyntaxKind::Field, field_span, &[Some(field), Some(ty)])?;
+                        self.append(seq, Some(f))?;
+                    }
                     if !self.take(TokenKind::Comma) || self.current.kind == TokenKind::RParen {
                         break;
                     }
@@ -1839,7 +1917,7 @@ impl<'a, 'd> Parser<'a, 'd> {
         }
         let n = self.node(SyntaxKind::CaseDecl, id_span, &[Some(id), fields])?;
         self.expect(TokenKind::Nl)?;
-        Ok(n)
+        Ok(Some(n))
     }
 
     fn service_clause(&mut self) -> Result<NodeId, ParseAbort> {
@@ -3025,7 +3103,11 @@ impl<'a, 'd> Parser<'a, 'd> {
         false
     }
 
-    fn read_item_inner(&mut self, context: ItemContext, start: Span) -> Result<NodeId, ParseAbort> {
+    fn read_item_inner(
+        &mut self,
+        context: ItemContext,
+        start: Span,
+    ) -> Result<Option<NodeId>, ParseAbort> {
         self.expect_code = match context {
             ItemContext::Field => Some(ErrorCode::SourceStruct),
             ItemContext::CaseDecl => Some(ErrorCode::SourceEnum),
@@ -3041,7 +3123,7 @@ impl<'a, 'd> Parser<'a, 'd> {
             | ItemContext::Api
             | ItemContext::ApiScope => None,
         };
-        let n = match context {
+        let n_opt = match context {
             ItemContext::Case => {
                 let mut stmt = self.statement(false)?;
                 if self.tree.node(stmt).kind == SyntaxKind::ExprStmt
@@ -3079,27 +3161,30 @@ impl<'a, 'd> Parser<'a, 'd> {
                     stmt = self.node(SyntaxKind::Arm, start, &[Some(alternatives), guard, body])?;
                 }
                 self.expect(TokenKind::Nl)?;
-                stmt
+                Some(stmt)
             }
             ItemContext::Field | ItemContext::CaseDecl => {
                 self.member(context == ItemContext::Field)?
             }
-            ItemContext::Service => self.service_clause()?,
-            ItemContext::Actor => self.actor_clause()?,
+            ItemContext::Service => Some(self.service_clause()?),
+            ItemContext::Actor => Some(self.actor_clause()?),
             ItemContext::Api | ItemContext::ApiScope => {
-                self.api_clause(context == ItemContext::ApiScope)?
+                Some(self.api_clause(context == ItemContext::ApiScope)?)
             }
-            ItemContext::Spec => self.specification_item()?,
-            ItemContext::Anchor => self.anchor()?,
+            ItemContext::Spec => Some(self.specification_item()?),
+            ItemContext::Anchor => Some(self.anchor()?),
             ItemContext::Expr => {
                 let e = self.expr(0)?;
                 self.expect(TokenKind::Nl)?;
-                e
+                Some(e)
             }
-            ItemContext::Statement => self.statement(true)?,
+            ItemContext::Statement => Some(self.statement(true)?),
             ItemContext::Module | ItemContext::Fragment => {
-                self.declaration(context == ItemContext::Fragment)?
+                Some(self.declaration(context == ItemContext::Fragment)?)
             }
+        };
+        let Some(n) = n_opt else {
+            return Ok(None);
         };
         self.validate(n, false)?;
         if matches!(context, ItemContext::Module | ItemContext::Fragment) {
@@ -3124,7 +3209,7 @@ impl<'a, 'd> Parser<'a, 'd> {
                 }
             }
         }
-        Ok(n)
+        Ok(Some(n))
     }
 
     fn read_item(&mut self, context: ItemContext) -> Result<Option<NodeId>, ParseAbort> {
@@ -3136,7 +3221,7 @@ impl<'a, 'd> Parser<'a, 'd> {
         match self.read_item_inner(context, start) {
             Ok(n) => {
                 self.expect_code = saved_code;
-                Ok(Some(n))
+                Ok(n)
             }
             Err(ParseAbort) => {
                 self.depth = saved_depth;

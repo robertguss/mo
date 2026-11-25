@@ -1533,10 +1533,19 @@ impl<'a> Checker<'a> {
                     let res = self.binary(TyTag::Result, s_unit, s_ferr);
                     self.sig2(res, fh, s_int)
                 }
-                CoreIoNullaryOp::FileSync => {
+                CoreIoNullaryOp::FileSync
+                | CoreIoNullaryOp::FileLockShared
+                | CoreIoNullaryOp::FileLockExclusive
+                | CoreIoNullaryOp::FileUnlock => {
                     let fh = self.cap_ty(Cap::File);
                     let res = self.binary(TyTag::Result, s_unit, s_ferr);
                     self.sig1(res, fh)
+                }
+                CoreIoNullaryOp::ReadFileOpen => {
+                    let rf = self.cap_ty(Cap::ReadFiles);
+                    let fh = self.cap_ty(Cap::File);
+                    let res = self.binary(TyTag::Result, fh, s_ferr);
+                    self.sig2(res, rf, s_text)
                 }
             },
         };

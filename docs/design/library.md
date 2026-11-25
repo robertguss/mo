@@ -531,8 +531,11 @@ spec code (reference 12.4).
 | `read_at(offset, count)` | host | `FILES_READ_AT` | positional read on `Files.File` (`pread` loop on real files), capped at `MO_LIMIT_FILE_IO_BYTES` |
 | `write_at(offset, data)` | host | `FILES_WRITE_AT` | positional write on `Files.File` (`pwrite` loop on real files), zero-extending past EOF |
 | `size` | host | `FILES_SIZE` | current byte length of an open `Files.File` |
-| `truncate(size)` | host | `FILES_TRUNCATE` | resizes an open `Files.File` (truncating or zero-extending) |
-| `sync` | host | `FILES_SYNC` | flushes `Files.File` data to durable storage (`F_FULLFSYNC` with `fsync` fallback on macOS, `fsync` on Linux) |
+| `truncate(size)` | host | `FILES_TRUNCATE` | resizes an open `Files.File` (truncating or zero-extending); refused with `NotAllowed` on read-only handles |
+| `sync` | host | `FILES_SYNC` | flushes `Files.File` data to durable storage (`F_FULLFSYNC` with `fsync` fallback on macOS, `fsync` on Linux); refused with `NotAllowed` on read-only handles |
+| `lock_shared` | host | `FILES_LOCK_SHARED` | acquires a blocking BSD `flock` shared lock on an open `Files.File` (in-memory fake returns `Failed` instead of deadlocking if another handle holds an exclusive lock) |
+| `lock_exclusive` | host | `FILES_LOCK_EXCLUSIVE` | acquires a blocking BSD `flock` exclusive lock on a writable `Files.File`; refused with `NotAllowed` on read-only handles |
+| `unlock` | host | `FILES_UNLOCK` | releases any BSD `flock` lock held by the `Files.File` handle (succeeds on unlocked handles; dropping the handle also releases locks automatically) |
 | `Files.in_memory(files)` | host | `FILES_IN_MEMORY` | a fake, for spec code only (reference 12.4); stores raw bytes so binary and `Files.File` ops match real files |
 
 ## ReadFiles
@@ -545,6 +548,7 @@ the same code as `Files`'s, on a handle marked read-only (`bytecode.md` 7).
 | --- | --- | --- | --- |
 | `read_text(path)` | host | `READFILES_READ_TEXT` | |
 | `read_bytes(path)` | host | `READFILES_READ_BYTES` | |
+| `open(path)` | host | `READFILES_OPEN` | opens an existing confined regular file read-only (`Files.File` with host-enforced read-only attenuation) |
 | `list(folder)` | host | `READFILES_LIST` | |
 | `entries(folder)` | host | `READFILES_ENTRIES` | |
 | `walk(folder)` | Mo | `lib/read-files.mo` | written over `entries` one folder at a time, entering folders by path rather than with `within`, so it holds no folder open (D232) |
